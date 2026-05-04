@@ -1,6 +1,6 @@
 # 表情包 RAG 系统（Sticker RAG System）
 
-> 版本：1.1.0
+> 版本：1.2.0
 > 作者：Sirius Chat
 > 最后更新：2026-05-04
 
@@ -12,6 +12,7 @@
 
 核心设计理念：
 - **观察学习**：AI 像人类一样，通过观察群友在什么情境下发什么表情包来学习
+- **场景概括**：累积足够观察后，LLM 自动生成概括性场景描述，大幅提升检索泛化能力
 - **人格化**：不同人格有不同的表情包品味，系统自动维护偏好档案
 - **动态适应**：根据群友反馈不断调整，模拟"喜新厌旧"等人类习惯
 - **框架层决策**：表情包发送时机与选择完全由框架层独立判断，模型无需感知表情包系统存在
@@ -74,9 +75,13 @@ class StickerRecord:
     last_used_at: str | None           # 上次使用时间
     usage_count: int                   # 被当前人格使用次数
     tags: list[str]                    # LLM 提取的标签（情绪/场景/风格）
-    usage_context_embedding: list[float]  # 核心检索向量：usage_context 的语义向量（512 维）
+    usage_context_embedding: list[float]  # 情境检索向量：usage_context 的语义向量
     caption_embedding: list[float]     # 辅助向量：caption 的语义向量
     novelty_score: float               # 新鲜度（0-1，1=全新）
+    # --- 场景概括（v1.2 新增） ---
+    scene_summary: str                 # LLM 生成的概括性场景描述（100-200字）
+    scene_summary_embedding: list[float]  # 场景概括的语义向量
+    scene_generalize_count: int        # 已概括次数（上限 3）
 ```
 
 **存储位置**：`data/personas/{persona_name}/skill_data/stickers/records/{sticker_id}.json`
@@ -121,42 +126,43 @@ collection_name = f"sticker_{persona_name}"  # 如 "sticker_傲娇少女"
 
 ```mermaid
 flowchart TD
-    Start([输入: current_context + emotion_hint]) --> BuildCtx[构建情境<br/>最近消息 + 当前消息 + 情绪]
-    BuildCtx --> Encode[语义编码<br/>BAAI/bge-small-zh]
-    Encode --> SemanticSearch[向量检索<br/>ChromaDB top_k=40<br/>按 usage_context 匹配]
+    Start([输入: current_context + emotion_hint + scene_query]) --> BuildCtx[构建 Query A<br/>最近消息 + 当前消息]
+    Start --> BuildScene[构建 Query B<br/>情绪 + 意图 + 子类型 + 消息内容]
+    BuildCtx --> EncodeA[语义编码 Query A]
+    BuildScene --> EncodeB[语义编码 Query B]
+    EncodeA --> ContextSearch[usage_context 语义检索]
+    EncodeB --> SceneSearch[scene_summary 语义检索]
     BuildCtx --> KeywordSearch[关键词检索<br/>usage_context/tags/trigger_message]
-    SemanticSearch --> Merge[候选合并<br/>语义 ∪ 关键词]
+    ContextSearch --> Merge[候选合并]
+    SceneSearch --> Merge
     KeywordSearch --> Merge
     Merge --> Score[多维度评分<br/>见 4.2.2]
-    Score --> Filter[阈值过滤<br/>score >= 0.5]
-    Filter --> WeightedRandom[加权随机选择<br/>按 score² 加权]
+    Score --> Dedup[按 sticker_id 去重]
+    Dedup --> WeightedRandom[加权随机选择<br/>按 score² 加权]
     WeightedRandom --> Output([输出: StickerRecord])
 
     style Start fill:#e1f5fe
     style Output fill:#e8f5e9
     style Score fill:#fff3e0
-    style BuildCtx fill:#e3f2fd
+    style BuildScene fill:#fce4ec
 ```
 
 #### 4.2.2 评分公式
 
 ```python
-final_score = (
-    base_score * 0.5 +                    # 语义相似度(60%) + 关键词(40%)
-    tag_bonus - tag_penalty +             # 人格偏好匹配
-    tag_success_bonus +                   # 标签成功率加权
-    emotion_bonus +                       # 情绪匹配
-    novelty_boost -                       # 新鲜度（喜新厌旧）
-    overuse_penalty -                     # 使用频率惩罚
-    recent_penalty +                      # 近期使用惩罚
-    group_feedback_bonus                  # 群聊反馈加权
+base_score = (
+    0.3  * context_score              # Query A ↔ usage_context 语义相似度
+  + 0.45 * scene_score                # Query B ↔ scene_summary 语义相似度（最可信）
+  + 0.15 * keyword_score              # 关键词匹配
 )
+final_score = base_score + 偏好/情绪/新鲜度/反馈等独立维度
 ```
 
 | 维度 | 说明 | 权重 |
 |------|------|------|
-| 语义相似度 | current_context 与 usage_context 的 cosine similarity | 0.6 |
-| 关键词匹配 | current_context 在 usage_context/tags/trigger_message 中的匹配 | 0.4 |
+| 情境语义相似度 | Query A 与 usage_context 的 cosine similarity | 0.3 |
+| 场景概括相似度 | Query B 与 scene_summary 的 cosine similarity（LLM 概括，可信度最高） | 0.45 |
+| 关键词匹配 | current_context 在 usage_context/tags/trigger_message 中的匹配 | 0.15 |
 | 偏好标签奖励 | preferred_tags 命中 +0.12/个 | - |
 | 回避标签惩罚 | avoided_tags 命中 -0.2/个 | - |
 | 标签成功率 | tag_success_rate 偏离 0.5 的部分 * 0.1 | - |
@@ -220,6 +226,48 @@ prompt = f"""
 **无 LLM 时**（降级）：基于关键词映射的简单提取：
 - 情绪关键词：开心、难过、生气、无奈、疲惫、惊讶...
 - 风格关键词：猫咪、狗狗、可爱、沙雕、正经...
+
+#### 4.3.4 场景概括学习（v1.2 新增）
+
+**核心问题**：原始的 usage_context 只记录"这一次的对话情境"，embedding 只能匹配极其相似的对话。场景概括通过 LLM 综合多次观察，生成概括性的场景描述，大幅提升检索泛化能力。
+
+**触发条件**：
+- 该 `sticker_id` 的总观察记录数 >= 8（每次学习是一条新记录）
+- 已概括次数 < 3（每个表情包最多概括 3 次）
+- 每累积 8 次观察触发一次概括（第 8、16、24 次）
+
+**概括流程**：
+1. 收集该 `sticker_id` 的所有已有 usage_context
+2. 调用 LLM 生成 100-200 字的场景概括（含情绪氛围、社交意图、适合话题等）
+3. 第 2/3 次概括时，将之前的概括也传给 LLM，让它扩展而非重写
+4. 计算场景概括的 embedding（`bge-small-zh`，与其他 embedding 共用模型）
+5. 同步更新该 `sticker_id` 下所有记录的 `scene_summary` 和 `scene_summary_embedding`
+
+**示例效果**：
+
+| 观察次数 | 场景概括 |
+|---------|---------|
+| 8次 | "适合在表达不想工作、疲惫、慵懒时使用，也适合在轻松闲聊中卖萌或表达无奈时使用" |
+| 16次 | "适合在朋友间互相抱怨工作压力、表达疲惫不想动、午睡犯困时使用。也适合在轻松闲聊中表达慵懒、卖萌或无奈的情绪，带有可爱和放松的氛围。在讨论摸鱼、摆烂、不想上班等话题时也能自然融入" |
+
+**LLM Prompt**：
+```python
+_SCENE_GENERALIZE_PROMPT = """
+你是一个表情包使用场景分析专家。根据以下信息，概括这个表情包适合使用的场景。
+
+图片描述：{caption}
+已有标签：{tags}
+使用情境记录：
+{usage_contexts}
+
+{previous_summary_section}  # 第 2/3 次时包含之前的概括
+
+要求：
+1. 不要局限于已有情境，要推理出更多相似的使用场景
+2. 涵盖情绪氛围、对话节奏、社交意图、适合的话题等维度
+3. 用一段自然流畅的中文描述，100-200字
+"""
+```
 
 ### 4.4 StickerPreferenceManager（偏好管理）
 
@@ -303,12 +351,19 @@ novelty_score = max(0.1, base_decay * usage_decay * time_decay)
 # 1. 判断是否适合发送表情包
 if self._should_send_sticker(decision, emotion, intent, group_id):
     emotion_hint = self._emotion_to_sticker_hint(emotion)
-    # 2. 构建当前对话上下文
+    # 2. 构建当前对话上下文（Query A）
     current_context = "\n".join(recent_messages)
-    # 3. 异步发送（fire-and-forget）
+    # 3. 构建场景查询（Query B，从 cognition 结果提取，无额外 LLM 调用）
+    scene_query = self._build_sticker_scene_query(emotion, intent, message_content)
+    # 4. 双路检索异步发送（fire-and-forget）
     asyncio.create_task(
-        self._send_sticker_via_bridge(group_id, emotion_hint, current_context)
+        self._send_sticker_via_bridge(group_id, emotion_hint, current_context, scene_query)
     )
+```
+
+**Query B 构建**（`_build_sticker_scene_query`）：从已有的 emotion/intent 结果中提取场景特征，无需额外 LLM 调用：
+```
+"情绪: sadness | 意图: emotional | 子类型: seeking_empathy | 对话内容: 今天又要加班，好累啊"
 ```
 
 ### 5.2 时机判断规则（`_should_send_sticker`）
@@ -339,13 +394,14 @@ if self._should_send_sticker(decision, emotion, intent, group_id):
 ```python
 # 1. 加载人格偏好
 preference = preference_manager.load()
-# 2. 检索最匹配的表情包
+# 2. 双路检索最匹配的表情包
 record = indexer.search(
     current_context=current_context,
     preference=preference,
     emotion_hint=emotion_hint,
     top_k=20,
     similarity_threshold=0.5,
+    scene_query=scene_query,
 )
 # 3. 通过 NapCatBridge 发送
 msg = [{"type": "image", "data": {"file": str(file_path), "sub_type": "1"}}]
@@ -386,9 +442,10 @@ def _init_sticker_system(self) -> None:
 # _execution 阶段末尾：框架层独立决策表情包
 if self._should_send_sticker(decision, emotion, intent, group_id):
     emotion_hint = self._emotion_to_sticker_hint(emotion)
-    # ...构建 current_context...
+    # ...构建 current_context（Query A）...
+    scene_query = self._build_sticker_scene_query(emotion, intent, message.content)
     asyncio.create_task(
-        self._send_sticker_via_bridge(group_id, emotion_hint, current_context)
+        self._send_sticker_via_bridge(group_id, emotion_hint, current_context, scene_query)
     )
 
 # _background_update：学习新表情包
@@ -486,12 +543,13 @@ sequenceDiagram
     Engine->>SD: _send_sticker_via_bridge()
     SD->>SP: 加载人格偏好
     SP-->>SD: preferred_tags, avoided_tags, emotion_tag_map
-    SD->>SI: search(current_context="群友B: 今天又要加班，好累啊", emotion="sadness")
+    SD->>SI: search(current_context, scene_query, emotion="sadness")
+    Note over SI: 双路检索:<br/>Query A → usage_context<br/>Query B → scene_summary
     SI->>SVS: 向量检索 top_k=40
     SVS-->>SI: 候选列表
-    SI->>SI: 关键词检索
+    SI->>SI: 关键词检索 + 场景概括检索
     SI->>SI: 多维度评分
-    Note over SI: 语义60% + 关键词40%<br/>+ 偏好匹配 + 情绪匹配<br/>+ 新鲜度 - 使用频率惩罚
+    Note over SI: 情境语义 30% + 场景概括 45%<br/>+ 关键词 15%<br/>+ 偏好匹配 + 情绪匹配<br/>+ 新鲜度 - 使用频率惩罚
     SI->>SI: 加权随机选择
     SI-->>SD: 选中橘猫表情包
     SD->>Bridge: 发送图片
