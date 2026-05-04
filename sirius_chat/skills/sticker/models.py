@@ -32,6 +32,10 @@ class StickerRecord:
     usage_context_embedding: list[float] | None = None  # 使用情境的语义向量（检索核心）
     caption_embedding: list[float] | None = None        # 图片描述的语义向量（辅助）
     novelty_score: float = 1.0  # 新鲜度分数（0-1）
+    # --- 场景概括（LLM 生成，跨记录共享） ---
+    scene_summary: str = ""                                    # 概括性场景描述（100-200字）
+    scene_summary_embedding: list[float] | None = None         # 场景描述的语义向量
+    scene_generalize_count: int = 0                            # 已概括次数（上限 3）
 
     @property
     def record_id(self) -> str:
@@ -57,12 +61,16 @@ class StickerRecord:
             "usage_context_embedding": list(self.usage_context_embedding) if self.usage_context_embedding else None,
             "caption_embedding": list(self.caption_embedding) if self.caption_embedding else None,
             "novelty_score": self.novelty_score,
+            "scene_summary": self.scene_summary,
+            "scene_summary_embedding": list(self.scene_summary_embedding) if self.scene_summary_embedding else None,
+            "scene_generalize_count": self.scene_generalize_count,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "StickerRecord":
         usage_emb = data.get("usage_context_embedding")
         cap_emb = data.get("caption_embedding")
+        scene_emb = data.get("scene_summary_embedding")
         return cls(
             sticker_id=data.get("sticker_id", ""),
             file_path=data.get("file_path", ""),
@@ -79,6 +87,9 @@ class StickerRecord:
             usage_context_embedding=list(usage_emb) if isinstance(usage_emb, list) else None,
             caption_embedding=list(cap_emb) if isinstance(cap_emb, list) else None,
             novelty_score=float(data.get("novelty_score", 1.0)),
+            scene_summary=str(data.get("scene_summary", "")),
+            scene_summary_embedding=list(scene_emb) if isinstance(scene_emb, list) else None,
+            scene_generalize_count=int(data.get("scene_generalize_count", 0)),
         )
 
 
