@@ -548,6 +548,7 @@ async def api_persona_stickers_get(request: web.Request, persona_manager: Any) -
     groups: set[str] = set()
     tags_counter: dict[str, int] = {}
     total_usage = 0
+    generalized_count = 0
 
     if records_dir.exists():
         for path in records_dir.glob("*.json"):
@@ -556,12 +557,15 @@ async def api_persona_stickers_get(request: web.Request, persona_manager: Any) -
                 # 脱敏：不返回 embedding 向量
                 data.pop("usage_context_embedding", None)
                 data.pop("caption_embedding", None)
+                data.pop("scene_summary_embedding", None)
                 records.append(data)
                 if data.get("source_group"):
                     groups.add(data["source_group"])
                 for tag in data.get("tags", []):
                     tags_counter[tag] = tags_counter.get(tag, 0) + 1
                 total_usage += data.get("usage_count", 0)
+                if data.get("scene_generalize_count", 0) > 0:
+                    generalized_count += 1
             except Exception:
                 pass
 
@@ -586,6 +590,7 @@ async def api_persona_stickers_get(request: web.Request, persona_manager: Any) -
         "groups": len(groups),
         "total_usage": total_usage,
         "top_tags": sorted(tags_counter.items(), key=lambda x: x[1], reverse=True)[:10],
+        "generalized_count": generalized_count,
     }
 
     return _json_response({
@@ -616,6 +621,7 @@ async def api_persona_sticker_detail_get(request: web.Request, persona_manager: 
         data = json.loads(record_path.read_text(encoding="utf-8"))
         data.pop("usage_context_embedding", None)
         data.pop("caption_embedding", None)
+        data.pop("scene_summary_embedding", None)
         return _json_response({"record": data})
     except Exception as exc:
         LOG.warning("读取表情包详情失败 %s/%s: %s", name, sticker_id, exc)

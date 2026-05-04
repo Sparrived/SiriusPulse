@@ -1106,6 +1106,7 @@ async function loadStickers() {
     $('ssUsage').textContent = stats.total_usage || 0;
     const vs = data.vector_store || {};
     $('ssVector').textContent = vs.available ? `${vs.total_entries} 条` : '未启用';
+    $('ssGeneralized').textContent = stats.generalized_count || 0;
 
     // 偏好信息
     const pref = data.preference || {};
@@ -1116,12 +1117,42 @@ async function loadStickers() {
       const preferred = (pref.preferred_tags || []).join('、') || '无';
       const avoided = (pref.avoided_tags || []).join('、') || '无';
       const novelty = ((pref.novelty_preference || 0.5) * 100).toFixed(0);
+      const emotionMap = pref.emotion_tag_map || {};
+      const emotionHtml = Object.keys(emotionMap).length > 0
+        ? Object.entries(emotionMap).map(([k, v]) => `<span class="tag">${k} → ${(v||[]).join(',')}</span>`).join(' ')
+        : '<span style="color:var(--text-2)">尚未学习</span>';
+      const tagSuccess = pref.tag_success_rate || {};
+      const topSuccess = Object.entries(tagSuccess).sort((a,b) => b[1]-a[1]).slice(0, 8);
+      const successHtml = topSuccess.length > 0
+        ? topSuccess.map(([tag, rate]) => `<span class="tag">${tag} ${(rate*100).toFixed(0)}%</span>`).join(' ')
+        : '<span style="color:var(--text-2)">尚未学习</span>';
+      const groupFeedback = pref.group_tag_feedback || {};
+      const topFeedback = Object.entries(groupFeedback).sort((a,b) => b[1]-a[1]).slice(0, 8);
+      const feedbackHtml = topFeedback.length > 0
+        ? topFeedback.map(([tag, rate]) => {
+            const color = rate >= 0.6 ? 'var(--accent)' : rate <= 0.4 ? 'var(--danger)' : 'var(--text-2)';
+            return `<span class="tag" style="border-color:${color}">${tag} ${(rate*100).toFixed(0)}%</span>`;
+          }).join(' ')
+        : '<span style="color:var(--text-2)">尚未学习</span>';
+      const styleWeights = pref.style_weights || {};
+      const styleHtml = Object.keys(styleWeights).length > 0
+        ? Object.entries(styleWeights).map(([k, v]) => `<span class="tag">${k}: ${(v).toFixed(2)}</span>`).join(' ')
+        : '<span style="color:var(--text-2)">尚未生成</span>';
       prefBody.innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">
           <div><strong>偏好标签：</strong><span style="color:var(--accent)">${preferred}</span></div>
           <div><strong>回避标签：</strong><span style="color:var(--danger)">${avoided}</span></div>
           <div><strong>喜新程度：</strong><span>${novelty}%</span></div>
-          <div><strong>情绪标签映射：</strong><span>${JSON.stringify(pref.emotion_tag_map || {})}</span></div>
+          <div><strong>风格权重：</strong><span>${styleHtml}</span></div>
+        </div>
+        <div style="margin-top:10px;font-size:13px">
+          <strong>情绪→标签映射：</strong><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${emotionHtml}</div>
+        </div>
+        <div style="margin-top:10px;font-size:13px">
+          <strong>标签成功率（群友反馈）：</strong><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${successHtml}</div>
+        </div>
+        <div style="margin-top:10px;font-size:13px">
+          <strong>群聊标签反馈：</strong><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">${feedbackHtml}</div>
         </div>
       `;
     } else {
@@ -1157,6 +1188,10 @@ function renderStickerList(records) {
     const tags = (r.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
     const usage = r.usage_count || 0;
     const contextPreview = (r.usage_context || '').substring(0, 60).replace(/\n/g, ' ');
+    const sceneCount = r.scene_generalize_count || 0;
+    const sceneBadge = sceneCount > 0
+      ? `<span class="tag" style="background:var(--accent);color:#fff;border-color:var(--accent)">场景概括 ${sceneCount}/3</span>`
+      : '';
     return `
       <div class="sticker-item" style="display:flex;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer;align-items:flex-start"
            onclick="openStickerDetail('${r.sticker_id}')"
@@ -1171,7 +1206,7 @@ function renderStickerList(records) {
           <div style="font-size:12px;color:var(--text-2);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
             情境：${contextPreview}...
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px">${tags}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">${sceneBadge}${tags}</div>
         </div>
       </div>
     `;
@@ -1187,10 +1222,17 @@ async function openStickerDetail(stickerId) {
     const r = data.record || {};
     $('stickerDetailTitle').textContent = r.caption || '表情包详情';
     const tags = (r.tags || []).map(t => `<span class="tag">${t}</span>`).join('') || '无';
+    const sceneCount = r.scene_generalize_count || 0;
+    const sceneSummary = r.scene_summary || '';
+    const sceneHtml = sceneSummary
+      ? `<div><strong>场景概括：</strong><pre style="background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin:4px 0;border-left:3px solid var(--accent)">${sceneSummary}</pre></div>`
+      : '<div><strong>场景概括：</strong><span style="color:var(--text-2)">尚未生成（需累积 8 次观察）</span></div>';
     $('stickerDetailBody').innerHTML = `
       <div style="display:grid;gap:10px;font-size:13px">
         <div><strong>ID：</strong><code>${r.sticker_id}</code></div>
         <div><strong>图片描述：</strong>${r.caption || '无'}</div>
+        ${sceneHtml}
+        <div><strong>场景概括次数：</strong>${sceneCount} / 3</div>
         <div><strong>使用情境：</strong><pre style="background:var(--surface-2);padding:8px;border-radius:6px;white-space:pre-wrap;margin:4px 0">${r.usage_context || '无'}</pre></div>
         <div><strong>触发消息：</strong>${r.trigger_message || '无'}</div>
         <div><strong>触发情绪：</strong>${r.trigger_emotion || '无'}</div>
