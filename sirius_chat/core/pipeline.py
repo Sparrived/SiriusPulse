@@ -506,8 +506,9 @@ class PipelineMixin:
             if message.content:
                 context_parts.append(f"{message.speaker or '用户'}: {message.content}")
             current_context = "\n".join(context_parts)
+            scene_query = self._build_sticker_scene_query(emotion, intent, message.content or "")
             asyncio.create_task(
-                self._send_sticker_via_bridge(group_id, emotion_hint, current_context)
+                self._send_sticker_via_bridge(group_id, emotion_hint, current_context, scene_query)
             )
             self._log_inner_thought("这个情境很适合发表情包，我来挑一个～")
 

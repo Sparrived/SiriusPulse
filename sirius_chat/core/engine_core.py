@@ -822,11 +822,43 @@ class _EmotionalGroupChatEngineBase:
             return "anger"
         return "neutral"
 
+    def _build_sticker_scene_query(
+        self,
+        emotion: EmotionState,
+        intent: Any,
+        message_content: str,
+    ) -> str:
+        """从 cognition 结果中提取场景特征，构建场景级查询。
+
+        不需要额外 LLM 调用，直接从已有的 emotion/intent 字段拼接。
+        """
+        parts: list[str] = []
+
+        emotion_hint = self._emotion_to_sticker_hint(emotion)
+        if emotion_hint != "neutral":
+            parts.append(f"情绪: {emotion_hint}")
+
+        social_intent = getattr(intent, "social_intent", None)
+        if social_intent is not None:
+            intent_name = getattr(social_intent, "value", "")
+            if intent_name:
+                parts.append(f"意图: {intent_name}")
+
+        intent_subtype = getattr(intent, "intent_subtype", "")
+        if intent_subtype:
+            parts.append(f"子类型: {intent_subtype}")
+
+        if message_content:
+            parts.append(f"对话内容: {message_content}")
+
+        return " | ".join(parts) if parts else message_content
+
     async def _send_sticker_via_bridge(
         self,
         group_id: str,
         emotion_hint: str,
         current_context: str,
+        scene_query: str = "",
     ) -> dict[str, Any]:
         """Search and send a sticker through the registered bridge."""
         if self._sticker_system is None:
@@ -846,6 +878,7 @@ class _EmotionalGroupChatEngineBase:
             emotion_hint=emotion_hint,
             top_k=20,
             similarity_threshold=0.5,
+            scene_query=scene_query,
         )
 
         if record is None:
