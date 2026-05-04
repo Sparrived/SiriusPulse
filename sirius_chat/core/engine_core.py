@@ -886,6 +886,21 @@ class _EmotionalGroupChatEngineBase:
                     feedback_observer.observe(record.sticker_id, group_id, sent_at, wait_seconds=15.0)
                 )
 
+            # Persist sticker send into basic memory so the model knows it sent one
+            if self.basic_memory is not None:
+                self.basic_memory.add_entry(
+                    group_id=group_id,
+                    user_id="assistant",
+                    role="assistant",
+                    content="[动画表情]",
+                    speaker_name=self.persona.name if self.persona else "assistant",
+                    multimodal_inputs=[{
+                        "type": "image",
+                        "sub_type": "1",
+                        "caption": record.caption or "动画表情",
+                    }],
+                )
+
             return {
                 "success": True,
                 "sticker_id": record.sticker_id,

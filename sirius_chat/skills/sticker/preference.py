@@ -97,6 +97,7 @@ class StickerPreferenceManager:
         if provider_async is None:
             logger.warning("无 provider，使用默认偏好")
             self._preference = preference
+            self.save()
             return preference
 
         try:

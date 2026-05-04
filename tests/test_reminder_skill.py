@@ -93,13 +93,13 @@ def test_create_weekly(store: MockDataStore):
         content="weekly report",
         mode="weekly",
         time="18:00",
-        weekday=4,
+        weekdays=[4],
         data_store=store,
     )
     assert result["success"] is True
     reminders = store.get("reminders")
     assert reminders[0]["mode"] == "weekly"
-    assert reminders[0]["weekday"] == 4
+    assert reminders[0]["weekdays"] == [4]
 
 
 def test_create_missing_content(store: MockDataStore):

@@ -2,6 +2,21 @@
 let _ttState = { range: 'all', page: 0, data: null };
 let _ttAbort = null;
 
+const _TASK_LABELS = {
+  response_generate: '主模型调用',
+  cognition_analyze: '认知分析',
+  diary_generate: '日记生成',
+  diary_consolidate: '日记合并',
+  proactive_generate: '主动/提醒生成',
+  persona_generate: '人格生成',
+  sticker_preference_generate: '表情包偏好生成',
+  sticker_tag_extract: '表情包标签提取',
+};
+
+function _translateTaskLabel(name) {
+  return _TASK_LABELS[name] || name;
+}
+
 async function loadTokenTracker() {
   renderPersonaSelect();
   if (!currentPersona && personas.length > 0) {
@@ -159,7 +174,7 @@ function ttRenderDimensionList(containerId, items) {
   const sorted = [...items].sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0)).slice(0, 10);
   const data = sorted.map((it) => ({
     value: it.total_tokens || 0,
-    name: it.name || '未知',
+    name: _translateTaskLabel(it.name || '未知'),
     calls: it.calls || 0,
     prompt: it.prompt_tokens || 0,
     completion: it.completion_tokens || 0,
@@ -242,19 +257,10 @@ function renderTaskHierarchy(containerId, items) {
     return;
   }
 
-  const labels = {
-    response_generate: '主模型调用',
-    cognition_analyze: '认知分析',
-    diary_generate: '日记生成',
-    diary_consolidate: '日记合并',
-    proactive_generate: '主动/提醒生成',
-    persona_generate: '人格生成',
-  };
-
   const colors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#a371f7', '#e3b341'];
   const data = items.map((it, i) => ({
     value: it.total_tokens || 0,
-    name: labels[it.name] || it.name,
+    name: _translateTaskLabel(it.name),
     calls: it.calls || 0,
     prompt: it.prompt_tokens || 0,
     completion: it.completion_tokens || 0,

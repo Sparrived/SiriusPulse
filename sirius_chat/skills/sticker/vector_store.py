@@ -54,8 +54,11 @@ class StickerVectorStore:
         return self._client is not None
 
     def _collection_name(self) -> str:
-        safe = "".join(c if c.isalnum() or c in "_-" else "_" for c in self._persona_name)
-        name = f"{self.COLLECTION_PREFIX}{safe}"
+        import hashlib
+        # ChromaDB requires names matching [a-zA-Z0-9._-]{3,512}
+        # Hash the persona name to ensure ASCII-only and stability.
+        hashed = hashlib.md5(self._persona_name.encode("utf-8")).hexdigest()[:12]
+        name = f"{self.COLLECTION_PREFIX}{hashed}"
         if len(name) < 3:
             name = name + "_sticker"
         if len(name) > 63:
