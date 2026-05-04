@@ -115,6 +115,7 @@ async def run(
         result = await send_image_run(
             image_path=str(file_path),
             caption="",
+            sub_type="1",
             data_store=data_store,
             bridge=bridge,
             chat_context=chat_context,

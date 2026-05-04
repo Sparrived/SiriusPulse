@@ -11,10 +11,9 @@ SKILL_META = {
     "description": (
         "设置定时提醒，支持一次性、间隔重复、每日、每周重复提醒。"
         "到达指定时间后会通知对应的用户。"
-        "例如：'三分钟后叫我吃饭'、'每10分钟提醒我喝水'、'每天早上8点叫我起床'、'每周一提醒开会'。"
         "可以用 list 查看所有提醒，用 cancel 取消指定提醒。"
     ),
-    "version": "1.1.0",
+    "version": "1.2.0",
     "tags": ["utility", "time"],
     "developer_only": False,
     "dependencies": [],
@@ -26,7 +25,7 @@ SKILL_META = {
         },
         "content": {
             "type": "str",
-            "description": "提醒内容，例如'该吃饭啦'、'起床啦'",
+            "description": "提醒内容，格式为'我要提醒 <提醒人>（自己或用户名） <提醒内容>'",
             "required": False,
         },
         "mode": {
@@ -50,9 +49,9 @@ SKILL_META = {
             "description": "触发时间 HH:MM，例如 08:00、21:30（daily/weekly 模式必填）",
             "required": False,
         },
-        "weekday": {
-            "type": "int",
-            "description": "星期几 0=周一, 1=周二, ..., 6=周日（仅 weekly 模式必填）",
+        "weekdays": {
+            "type": "list[int]",
+            "description": "星期列表 [0,1,2,3,4,5,6]，0=周一, 6=周日（仅 weekly 模式必填，支持多选如 [0,2,4] 表示周一三五）",
             "required": False,
         },
         "reminder_id": {
@@ -91,7 +90,7 @@ def run(
     minutes_after: int = 0,
     trigger_at: str = "",
     time: str = "",
-    weekday: int = -1,
+    weekdays: list[int] | None = None,
     reminder_id: str = "",
     target: str = "user",
     skill_chain: list[dict[str, Any]] | None = None,
@@ -114,7 +113,7 @@ def run(
             minutes_after=minutes_after,
             trigger_at=trigger_at,
             time=time,
-            weekday=weekday,
+            weekdays=weekdays,
             user_id=user_id,
             user_name=user_name,
             target=target,
@@ -144,7 +143,7 @@ def _do_create(
     minutes_after: int,
     trigger_at: str,
     time: str,
-    weekday: int,
+    weekdays: list[int] | None,
     user_id: str,
     user_name: str,
     target: str,
@@ -225,14 +224,15 @@ def _do_create(
                 "error": "每周提醒需要指定有效的时间 HH:MM",
                 "summary": "创建提醒失败：时间格式错误",
             }
-        if weekday < 0 or weekday > 6:
+        parsed_weekdays = _parse_weekdays(weekdays)
+        if not parsed_weekdays:
             return {
                 "success": False,
-                "error": "每周提醒需要指定 weekday (0=周一 ~ 6=周日)",
+                "error": "每周提醒需要指定 weekdays 列表，如 [0,2,4] 表示周一三五",
                 "summary": "创建提醒失败：星期参数错误",
             }
         reminder["time"] = time
-        reminder["weekday"] = weekday
+        reminder["weekdays"] = parsed_weekdays
 
     _save_reminder(reminder, data_store)
 
@@ -242,8 +242,11 @@ def _do_create(
         fire_desc = f"，将在 {reminder['fire_at']} 触发"
     elif mode == "interval":
         fire_desc = f"，每隔 {minutes_after} 分钟提醒一次"
-    elif mode in ("daily", "weekly"):
-        fire_desc = f"，将在每天 {time} 触发" if mode == "daily" else f"，将在每周{_weekday_name(weekday)} {time} 触发"
+    elif mode == "daily":
+        fire_desc = f"，将在每天 {time} 触发"
+    elif mode == "weekly":
+        wd_names = [_weekday_name(d) for d in parsed_weekdays]
+        fire_desc = f"，将在每周{','.join(wd_names)} {time} 触发"
 
     who = f"给 {user_name}" if user_name else ""
     target_desc = "提醒用户" if target == "user" else "提醒自己"
@@ -279,7 +282,10 @@ def _do_list(data_store: Any | None) -> dict[str, Any]:
             detail += f" | 触发: {r['fire_at']}"
         if r.get("time"):
             detail += f" | 时间: {r['time']}"
-        if r.get("weekday") is not None:
+        if r.get("weekdays"):
+            wd_names = [_weekday_name(d) for d in r["weekdays"]]
+            detail += f" ({','.join(wd_names)})"
+        elif r.get("weekday") is not None:
             detail += f" ({_weekday_name(r['weekday'])}"
         lines.append(detail)
 
@@ -339,6 +345,38 @@ def _is_valid_hhmm(value: str) -> bool:
 def _weekday_name(d: int) -> str:
     names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
     return names[d] if 0 <= d <= 6 else str(d)
+
+
+def _parse_weekdays(value: list[int] | None) -> list[int]:
+    """Parse and validate weekdays list, returning sorted unique valid values."""
+    if value is None:
+        return []
+    if isinstance(value, int):
+        if 0 <= value <= 6:
+            return [value]
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = __import__("json").loads(value)
+            if isinstance(parsed, list):
+                value = parsed
+            elif isinstance(parsed, int):
+                value = [parsed]
+            else:
+                return []
+        except Exception:
+            return []
+    if not isinstance(value, list):
+        return []
+    result: set[int] = set()
+    for item in value:
+        try:
+            d = int(item)
+            if 0 <= d <= 6:
+                result.add(d)
+        except (ValueError, TypeError):
+            continue
+    return sorted(result)
 
 
 def _load_reminders(data_store: Any | None) -> list[dict[str, Any]]:

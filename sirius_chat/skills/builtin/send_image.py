@@ -34,6 +34,7 @@ async def run(
     chat_context: dict[str, Any] | None = None,
     image_path: str = "",
     caption: str = "",
+    sub_type: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Send an image to the current chat via NapCat.
@@ -43,6 +44,7 @@ async def run(
         chat_context: Current chat context injected by SkillExecutor.
         image_path: Absolute path to a local image or a remote URL.
         caption: Optional text caption to send before the image.
+        sub_type: Optional sub_type for the image segment (e.g. "1" for sticker).
     """
     if not bridge:
         return {
@@ -87,7 +89,10 @@ async def run(
     caption = caption.strip()
     if caption:
         msg.append({"type": "text", "data": {"text": caption}})
-    msg.append({"type": "image", "data": {"file": image_path}})
+    image_data: dict[str, Any] = {"file": image_path}
+    if sub_type is not None:
+        image_data["sub_type"] = sub_type
+    msg.append({"type": "image", "data": image_data})
 
     try:
         if target_type == "group":

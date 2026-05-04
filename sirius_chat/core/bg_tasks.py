@@ -1394,9 +1394,15 @@ def _is_reminder_due(reminder: dict[str, Any], now: datetime) -> bool:
             except ValueError:
                 pass
         if mode == "weekly":
-            weekday = reminder.get("weekday")
-            if weekday is not None and now_local.weekday() != int(weekday):
-                return False
+            weekdays = reminder.get("weekdays")
+            if weekdays is not None:
+                if now_local.weekday() not in [int(d) for d in weekdays]:
+                    return False
+            else:
+                # Legacy single weekday support
+                weekday = reminder.get("weekday")
+                if weekday is not None and now_local.weekday() != int(weekday):
+                    return False
         return True
 
     return False

@@ -477,7 +477,6 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
     """Return glossary terms for a persona.
 
     Query params:
-      - group_id: filter by group (optional)
       - search: text search (optional)
       - limit: max terms (default 200)
     """
@@ -490,34 +489,19 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
 
     glossary_dir = paths.dir / "glossary"
     if not glossary_dir.exists():
-        return _json_response({"terms": [], "groups": [], "stats": {}})
+        return _json_response({"terms": [], "stats": {}})
 
     try:
-        group_id = request.query.get("group_id", "")
         search = request.query.get("search", "")
         limit = int(request.query.get("limit", "200"))
 
         manager = GlossaryManager(paths.dir, persona_name=name)
 
         terms: list[dict[str, Any]] = []
-        groups: set[str] = set()
-
-        # Discover all group files
-        persona_glossary_dir = glossary_dir / manager._safe_name(name)
-        if persona_glossary_dir.exists():
-            for path in persona_glossary_dir.glob("*.json"):
-                if path.suffix == ".json" and not path.name.endswith(".migrated"):
-                    g_id = path.stem
-                    groups.add(g_id)
-
-        target_groups = [group_id] if group_id else sorted(groups)
-
-        for g_id in target_groups:
-            group_terms = manager._group_terms(g_id)
-            for term in group_terms.values():
-                term_dict = term.to_dict()
-                term_dict["group_id"] = g_id
-                terms.append(term_dict)
+        all_terms = manager._load()
+        for term in all_terms.values():
+            term_dict = term.to_dict()
+            terms.append(term_dict)
 
         if search:
             search_lower = search.lower()
@@ -532,10 +516,9 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
 
         stats = {
             "total": len(terms),
-            "groups": len(groups),
         }
 
-        return _json_response({"terms": terms, "groups": sorted(groups), "stats": stats})
+        return _json_response({"terms": terms, "stats": stats})
     except Exception as exc:
         LOG.warning("读取名词解释失败 %s: %s", name, exc)
         return _json_response({"error": str(exc)}, 500)

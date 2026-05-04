@@ -287,11 +287,19 @@ class NapCatBridge:
             if seg.get("type") == "image":
                 data = seg.get("data", {})
                 url = data.get("url", "") or data.get("file", "")
+                sub_type = data.get("sub_type", "")
+                LOG.info(
+                    "收到图片消息段: url=%s file=%s sub_type=%s data=%s",
+                    data.get("url", ""),
+                    data.get("file", ""),
+                    sub_type,
+                    data,
+                )
                 if url:
                     local_path = await self._cache_image(str(url))
                     # sub_type=1 indicates animated sticker/emoji from QQ;
                     # mark it so downstream can skip vision analysis.
-                    is_sticker = str(data.get("sub_type", "")) == "1"
+                    is_sticker = str(sub_type) == "1"
                     mm_item: dict[str, str] = {
                         "type": "image",
                         "value": local_path,
