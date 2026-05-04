@@ -12,7 +12,7 @@ from sirius_chat.skills.security import ensure_developer_access
 
 SKILL_META = {
     "name": "desktop_screenshot",
-    "description": "捕获当前主机桌面截图并返回给模型进行内部分析",
+    "description": "捕获当前主机桌面截图并返回图片和图片路径给模型进行内部分析",
     "version": "1.1.0",
     "tags": ["system", "image"],
     "developer_only": True,
@@ -79,6 +79,11 @@ def run(
                     "优先观察前台窗口、可见应用、页面标题、编辑器或终端内容；"
                     "如果截图不足以确认后台任务或隐含动作，请明确说明不确定，不要臆测。"
                 ),
+            },
+            {
+                "type": "text",
+                "label": "artifact_path",
+                "value": f"截图已保存到本地路径：{output_path}",
             }
         ],
         "multimodal_blocks": [

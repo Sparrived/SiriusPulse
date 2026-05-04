@@ -8,10 +8,11 @@ from typing import Any
 SKILL_META = {
     "name": "send_image",
     "description": (
-        "发送图片到当前对话（群聊或私聊）。"
+        "发送图片到当前对话。"
     ),
     "version": "1.0.0",
     "tags": ["napcat", "image", "messaging"],
+    "silent": True,
     "adapter_types": ["napcat"],
     "dependencies": [],
     "parameters": {
@@ -19,11 +20,6 @@ SKILL_META = {
             "type": "str",
             "description": "本地图片绝对路径或网络图片 URL",
             "required": True,
-        },
-        "caption": {
-            "type": "str",
-            "description": "图片附带的文字说明（可选）",
-            "required": False,
         },
     },
 }
@@ -33,8 +29,6 @@ async def run(
     bridge: Any,
     chat_context: dict[str, Any] | None = None,
     image_path: str = "",
-    caption: str = "",
-    sub_type: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Send an image to the current chat via NapCat.
@@ -86,12 +80,7 @@ async def run(
             image_path = str(p.resolve())
 
     msg: list[dict[str, Any]] = []
-    caption = caption.strip()
-    if caption:
-        msg.append({"type": "text", "data": {"text": caption}})
     image_data: dict[str, Any] = {"file": image_path}
-    if sub_type is not None:
-        image_data["sub_type"] = sub_type
     msg.append({"type": "image", "data": image_data})
 
     try:

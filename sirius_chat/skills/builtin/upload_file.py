@@ -8,7 +8,7 @@ from typing import Any
 SKILL_META = {
     "name": "upload_file",
     "description": (
-        "上传本地文件到当前对话（群聊或私聊）"
+        "上传本地文件到当前对话"
     ),
     "version": "1.0.0",
     "tags": ["napcat", "file", "messaging"],

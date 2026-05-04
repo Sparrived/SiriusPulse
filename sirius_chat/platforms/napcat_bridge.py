@@ -367,28 +367,30 @@ class NapCatBridge:
                     elif event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
                         gid = str(event.data.get("group_id", ""))
                         # 事件仅携带触发信号，需要调用 tick_delayed_queue 生成实际回复
+                        async def _send_partial(text: str) -> None:
+                            if gid.startswith("private_"):
+                                uid = gid.replace("private_", "").replace("qq_", "")
+                                await self._send_private_text_raw(uid, text)
+                                LOG.info("Private partial 回复已发送: %s", text[:80])
+                            elif gid in self._get_allowed_group_ids():
+                                await self._send_group_text_raw(gid, text)
+                                LOG.info("Partial 回复已发送: %s", text[:80])
+
                         try:
-                            results = await self.runtime.engine.tick_delayed_queue(gid)
+                            results = await self.runtime.engine.tick_delayed_queue(
+                                gid, on_partial_reply=_send_partial
+                            )
                         except Exception as exc:
                             LOG.warning("Delayed queue tick 失败 (%s): %s", gid, exc)
                             results = []
                         for result in results:
                             reply = result.get("reply", "")
-                            partials = result.get("partial_replies", [])
                             if gid.startswith("private_"):
                                 uid = gid.replace("private_", "").replace("qq_", "")
-                                for partial in partials:
-                                    if partial:
-                                        await self._send_private_text_raw(uid, partial)
-                                        LOG.info("Private partial 回复已发送: %s", partial[:80])
                                 if reply:
                                     await self._send_private_text_raw(uid, reply)
                                     LOG.info("Private 回复已发送: %s", reply[:80])
                             elif gid in self._get_allowed_group_ids():
-                                for partial in partials:
-                                    if partial:
-                                        await self._send_group_text_raw(gid, partial)
-                                        LOG.info("Partial 回复已发送: %s", partial[:80])
                                 if reply:
                                     await self._send_group_text_raw(gid, reply)
                                     LOG.info("Delayed 回复已发送: %s", reply[:80])
