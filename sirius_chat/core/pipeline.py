@@ -564,7 +564,9 @@ class PipelineMixin:
 
         # Sticker learning: learn from animated stickers (sub_type=1) only.
         # Normal images are not treated as stickers and should not be learned.
-        if intent.image_caption and getattr(message, "multimodal_inputs", None):
+        mm_inputs = getattr(message, "multimodal_inputs", None)
+        if intent.image_caption and mm_inputs:
+            logger.debug("尝试学习表情包: group=%s user=%s caption=%.20s...", group_id, user_id, intent.image_caption)
             self._learn_sticker_from_message(message, intent, group_id, user_id)
 
     def _learn_sticker_from_message(
@@ -581,22 +583,29 @@ class PipelineMixin:
         the expressive nature of animated stickers.
         """
         if self._sticker_system is None:
+            logger.debug("表情包学习跳过: 系统未初始化")
             return
         learner = self._sticker_system.get("learner")
         if learner is None:
+            logger.debug("表情包学习跳过: learner 未初始化")
             return
         try:
             # Extract animated sticker info from multimodal_inputs
             multimodal = getattr(message, "multimodal_inputs", []) or []
+            logger.debug("表情包学习: 检测到 %d 个 multimodal 项", len(multimodal))
             for item in multimodal:
                 if item.get("type") != "image":
+                    logger.debug("表情包学习跳过: type=%s (非 image)", item.get("type"))
                     continue
                 # Only process animated stickers (sub_type=1), skip normal images
-                if item.get("sub_type") != "1":
+                sub_type = item.get("sub_type")
+                if sub_type != "1":
+                    logger.debug("表情包学习跳过: sub_type=%s (非动画表情)", sub_type)
                     continue
                 # Use file_path or url as sticker_id source
                 file_path = item.get("file_path", "") or item.get("url", "")
                 if not file_path:
+                    logger.warning("表情包学习跳过: file_path 为空, item=%s", item)
                     continue
                 # Generate a stable sticker_id from file_path
                 import hashlib
@@ -606,6 +615,7 @@ class PipelineMixin:
                 trigger_emotion = getattr(intent, "emotion", "") or ""
                 source_user = user_id or getattr(message, "speaker", "") or ""
                 source_group = group_id
+                logger.info("表情包学习启动: sticker_id=%s file=%s", sticker_id, file_path)
                 asyncio.create_task(
                     learner.learn_from_message(
                         sticker_id=sticker_id,

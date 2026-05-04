@@ -60,6 +60,9 @@ class StickerLearner:
     ) -> StickerRecord | None:
         """从一条消息中学习表情包的使用情境。
 
+        同一个 sticker_id 的不同使用情境会作为独立记录存储，
+        以 record_id（sticker_id + usage_context_hash）为键。
+
         Args:
             sticker_id: 表情包唯一标识（MD5 哈希）
             file_path: 本地文件路径
@@ -70,20 +73,20 @@ class StickerLearner:
             source_group: 群号
 
         Returns:
-            学习到的 StickerRecord，如果已存在则返回 None
+            学习到的 StickerRecord，如果该情境已存在则返回 None
         """
+        logger.debug("表情包学习进入: sticker_id=%s file=%s", sticker_id, file_path)
         if sticker_id in self._learned_ids:
-            return None
-
-        if self._indexer.get(sticker_id) is not None:
-            self._learned_ids.add(sticker_id)
+            logger.debug("表情包学习跳过: sticker_id=%s 已在本次运行中学习过", sticker_id)
             return None
 
         # 构建使用情境：前3条消息 + 当前触发消息
         usage_context = self._build_usage_context(source_group, trigger_message, source_user)
+        logger.info("表情包学习: sticker_id=%s 使用情境构建完成, length=%d", sticker_id, len(usage_context))
 
         # 生成标签（基于使用情境而非图片描述）
         tags = await self._generate_tags(usage_context, trigger_message, source_user, trigger_emotion)
+        logger.info("表情包学习: sticker_id=%s 标签生成完成, tags=%s", sticker_id, tags)
 
         record = StickerRecord(
             sticker_id=sticker_id,
@@ -98,6 +101,12 @@ class StickerLearner:
             tags=tags,
             novelty_score=1.0,
         )
+
+        # 检查该情境是否已存在（以 record_id 去重）
+        if self._indexer.get(record.record_id) is not None:
+            logger.debug("表情包学习跳过: record_id=%s 已存在于索引中", record.record_id)
+            self._learned_ids.add(sticker_id)
+            return None
 
         self._indexer.add(record)
         self._learned_ids.add(sticker_id)

@@ -86,7 +86,15 @@ class StickerIndexer:
         return self._model is not None
 
     def add(self, record: StickerRecord) -> bool:
-        """添加表情包到索引，计算 usage_context_embedding。"""
+        """添加表情包到索引，计算 usage_context_embedding。
+
+        同一个 sticker_id 的不同使用情境会作为独立记录存储，
+        以 record_id 为键，支持多情境检索。
+
+        添加时会自动检查同一 sticker_id 下是否有语义相似的
+        已有记录，相似则合并，避免重复存储。
+        """
+        logger.debug("表情包索引添加: record_id=%s sticker_id=%s file=%s", record.record_id, record.sticker_id, record.file_path)
         self._ensure_model_loaded()
         recomputed = False
         if self._model is not None:
@@ -100,6 +108,7 @@ class StickerIndexer:
                     vec = self._model.encode(record.usage_context, convert_to_tensor=False)
                     record.usage_context_embedding = [float(v) for v in vec]
                     recomputed = True
+                    logger.debug("表情包索引: record_id=%s usage_context_embedding 计算完成", record.record_id)
                 except Exception as exc:
                     logger.warning("表情包 usage_context embedding 计算失败: %s", exc)
 
@@ -110,11 +119,69 @@ class StickerIndexer:
                 except Exception as exc:
                     logger.warning("表情包 caption embedding 计算失败: %s", exc)
 
+        # 检查同一 sticker_id 下是否有语义相似的记录，有则合并
+        merged = self._try_merge_on_add(record)
+        if merged:
+            logger.info("表情包学习时合并: %s -> %s", record.record_id, merged.record_id)
+            # 更新被合并记录的向量存储
+            if self._vector_store.available:
+                self._vector_store.add(merged)
+            return recomputed
+
         if self._vector_store.available:
             self._vector_store.add(record)
+            logger.debug("表情包索引: record_id=%s 已存入向量存储", record.record_id)
+        else:
+            logger.debug("表情包索引: record_id=%s 向量存储不可用，仅存入内存", record.record_id)
 
-        self._records[record.sticker_id] = record
+        self._records[record.record_id] = record
+        logger.info("表情包索引添加完成: record_id=%s 总记录数=%d", record.record_id, len(self._records))
         return recomputed
+
+    def _try_merge_on_add(
+        self,
+        record: StickerRecord,
+        similarity_threshold: float = 0.85,
+        max_context_length: int = 800,
+    ) -> StickerRecord | None:
+        """尝试将新记录合并到同一 sticker_id 的相似记录中。
+
+        遍历该 sticker_id 的所有已有记录，计算语义相似度，
+        超过阈值则合并并返回被合并的目标记录，否则返回 None。
+        """
+        if self._model is None or not record.usage_context_embedding:
+            return None
+
+        for existing in self._records.values():
+            if existing.sticker_id != record.sticker_id:
+                continue
+            if not existing.usage_context_embedding:
+                continue
+            sim = self._cosine_sim(record.usage_context_embedding, existing.usage_context_embedding)
+            if sim >= similarity_threshold:
+                # 合并到已有记录
+                combined = existing.usage_context + "\n---\n" + record.usage_context
+                if len(combined) > max_context_length:
+                    combined = combined[:max_context_length]
+                existing.usage_context = combined
+                existing.tags = list(set(existing.tags + record.tags))
+                existing.usage_count += record.usage_count
+                # 重新计算 embedding
+                try:
+                    vec = self._model.encode(existing.usage_context, convert_to_tensor=False)
+                    existing.usage_context_embedding = [float(v) for v in vec]
+                except Exception as exc:
+                    logger.warning("合并后 embedding 重算失败: %s", exc)
+                logger.info(
+                    "表情包记录合并: %s | %s -> %s (sim=%.3f)",
+                    record.sticker_id,
+                    record.record_id,
+                    existing.record_id,
+                    sim,
+                )
+                return existing
+
+        return None
 
     def search(
         self,
@@ -124,7 +191,12 @@ class StickerIndexer:
         top_k: int = 20,
         similarity_threshold: float = 0.6,
     ) -> StickerRecord | None:
-        """按当前情境检索最匹配的表情包，返回加权随机选择的结果。"""
+        """按当前情境检索最匹配的表情包，返回加权随机选择的结果。
+
+        同一个 sticker_id 可能有多个使用情境记录，检索时会找到
+        最匹配的情境记录，但最终按 sticker_id 去重，避免重复推荐
+        同一个表情包的不同情境。
+        """
         self._ensure_model_loaded()
 
         if not self._records:
@@ -136,8 +208,8 @@ class StickerIndexer:
         if self._model is not None and self._vector_store.available:
             try:
                 query_vec = self._model.encode(current_context, convert_to_tensor=False)
-                for sid, score in self._vector_store.search(query_vec, top_k=top_k * 2):
-                    semantic_scores[sid] = score
+                for rid, score in self._vector_store.search(query_vec, top_k=top_k * 2):
+                    semantic_scores[rid] = score
             except Exception as exc:
                 logger.warning("向量存储检索失败，回退到内存检索: %s", exc)
                 semantic_scores = self._semantic_search(current_context, top_k * 2)
@@ -147,22 +219,22 @@ class StickerIndexer:
         # 2. 关键词检索（作为补充）
         keyword_scores = self._keyword_search(current_context, top_k * 2)
 
-        # 3. 合并候选
+        # 3. 合并候选（按 record_id）
         candidates: dict[str, StickerRecord] = {}
-        for sid in set(semantic_scores) | set(keyword_scores):
-            if sid in self._records:
-                candidates[sid] = self._records[sid]
+        for rid in set(semantic_scores) | set(keyword_scores):
+            if rid in self._records:
+                candidates[rid] = self._records[rid]
 
         if not candidates:
             return None
 
-        # 4. 多维度评分
+        # 4. 多维度评分（按 record_id）
         scored: list[tuple[StickerRecord, float]] = []
-        for sid, record in candidates.items():
+        for rid, record in candidates.items():
             score = self._score_sticker(
                 record,
-                semantic_scores.get(sid, 0.0),
-                keyword_scores.get(sid, 0.0),
+                semantic_scores.get(rid, 0.0),
+                keyword_scores.get(rid, 0.0),
                 preference,
                 emotion_hint,
             )
@@ -173,9 +245,18 @@ class StickerIndexer:
             return None
 
         scored.sort(key=lambda x: x[1], reverse=True)
-        top_candidates = scored[:top_k]
 
-        # 5. 加权随机选择
+        # 5. 按 sticker_id 去重，保留每个表情包的最高分记录
+        seen_stickers: set[str] = set()
+        deduped: list[tuple[StickerRecord, float]] = []
+        for record, score in scored:
+            if record.sticker_id not in seen_stickers:
+                seen_stickers.add(record.sticker_id)
+                deduped.append((record, score))
+
+        top_candidates = deduped[:top_k]
+
+        # 6. 加权随机选择
         weights = [s ** 2 for _, s in top_candidates]  # 平方放大差异
         total = sum(weights)
         if total == 0:
@@ -206,18 +287,18 @@ class StickerIndexer:
             return {}
 
         scores: dict[str, float] = {}
-        for sid, record in self._records.items():
+        for rid, record in self._records.items():
             if not record.usage_context_embedding:
                 continue
             score = self._cosine_sim(query_vec, record.usage_context_embedding)
             if score > 0.25:
-                scores[sid] = score
+                scores[rid] = score
         return scores
 
     def _keyword_search(self, current_context: str, top_k: int) -> dict[str, float]:
         query_lower = current_context.lower()
         scores: dict[str, float] = {}
-        for sid, record in self._records.items():
+        for rid, record in self._records.items():
             score = 0.0
             if query_lower in record.usage_context.lower():
                 score += 1.0
@@ -227,7 +308,7 @@ class StickerIndexer:
             if query_lower in record.trigger_message.lower():
                 score += 0.5
             if score > 0:
-                scores[sid] = score
+                scores[rid] = score
         return scores
 
     def _score_sticker(
@@ -355,8 +436,94 @@ class StickerIndexer:
             except Exception as exc:
                 logger.warning("保存表情包记录失败 %s: %s", file_path, exc)
 
-    def remove(self, sticker_id: str) -> None:
-        if sticker_id in self._records:
-            del self._records[sticker_id]
+    def remove(self, record_id: str) -> None:
+        if record_id in self._records:
+            del self._records[record_id]
         if self._vector_store.available:
-            self._vector_store.remove([sticker_id])
+            self._vector_store.remove([record_id])
+
+    def merge_similar_records(
+        self,
+        similarity_threshold: float = 0.85,
+        max_context_length: int = 800,
+    ) -> int:
+        """合并同一 sticker_id 下语义相似的使用情境记录。
+
+        扫描所有记录，对同一表情包的不同情境计算语义相似度，
+        相似度超过阈值的记录合并为一条，更新 embedding。
+
+        Args:
+            similarity_threshold: 相似度阈值，超过则合并
+            max_context_length: 合并后 usage_context 的最大长度
+
+        Returns:
+            合并掉的记录数量
+        """
+        self._ensure_model_loaded()
+        if self._model is None:
+            logger.debug("模型未加载，跳过合并")
+            return 0
+
+        # 按 sticker_id 分组
+        groups: dict[str, list[StickerRecord]] = {}
+        for record in self._records.values():
+            groups.setdefault(record.sticker_id, []).append(record)
+
+        merged_count = 0
+        to_remove: list[str] = []
+
+        for sticker_id, records in groups.items():
+            if len(records) <= 1:
+                continue
+
+            # 计算每对记录的相似度，贪婪合并
+            merged: list[StickerRecord] = []
+            for record in sorted(records, key=lambda r: r.discovered_at):
+                if record.record_id in to_remove:
+                    continue
+
+                found_similar = False
+                for target in merged:
+                    if not record.usage_context_embedding or not target.usage_context_embedding:
+                        continue
+                    sim = self._cosine_sim(record.usage_context_embedding, target.usage_context_embedding)
+                    if sim >= similarity_threshold:
+                        # 合并到 target
+                        combined = target.usage_context + "\n---\n" + record.usage_context
+                        if len(combined) > max_context_length:
+                            combined = combined[:max_context_length]
+                        target.usage_context = combined
+                        target.tags = list(set(target.tags + record.tags))
+                        target.usage_count += record.usage_count
+                        # 重新计算 embedding
+                        try:
+                            vec = self._model.encode(target.usage_context, convert_to_tensor=False)
+                            target.usage_context_embedding = [float(v) for v in vec]
+                        except Exception as exc:
+                            logger.warning("合并后 embedding 重算失败: %s", exc)
+                        to_remove.append(record.record_id)
+                        merged_count += 1
+                        found_similar = True
+                        logger.info(
+                            "表情包记录合并: %s | %s -> %s (sim=%.3f)",
+                            sticker_id,
+                            record.record_id,
+                            target.record_id,
+                            sim,
+                        )
+                        break
+
+                if not found_similar:
+                    merged.append(record)
+
+        # 清理被合并的记录
+        for rid in to_remove:
+            self.remove(rid)
+
+        # 重新保存向量存储
+        if self._vector_store.available and to_remove:
+            for record in self._records.values():
+                self._vector_store.add(record)
+            logger.info("表情包相似记录合并完成: 合并 %d 条，剩余 %d 条", merged_count, len(self._records))
+
+        return merged_count

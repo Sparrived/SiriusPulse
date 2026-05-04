@@ -89,10 +89,11 @@ class StickerVectorStore:
 
         try:
             coll.upsert(
-                ids=[record.sticker_id],
+                ids=[record.record_id],
                 embeddings=[embedding],
                 documents=[record.usage_context],  # 文档存储使用情境（用于关键词检索）
                 metadatas=[{
+                    "sticker_id": record.sticker_id,
                     "file_path": record.file_path,
                     "caption": record.caption,
                     "usage_context": record.usage_context,
@@ -107,9 +108,9 @@ class StickerVectorStore:
                     "novelty_score": record.novelty_score,
                 }],
             )
-            logger.debug("表情包向量已存储: %s", record.sticker_id)
+            logger.debug("表情包向量已存储: record_id=%s sticker_id=%s", record.record_id, record.sticker_id)
         except Exception as exc:
-            logger.warning("表情包向量存储失败: %s | %s", record.sticker_id, exc)
+            logger.warning("表情包向量存储失败: %s | %s", record.record_id, exc)
 
     def add_many(self, records: list[StickerRecord]) -> int:
         if self._client is None or not records:
@@ -124,10 +125,11 @@ class StickerVectorStore:
 
         try:
             coll.upsert(
-                ids=[r.sticker_id for r in valid],
+                ids=[r.record_id for r in valid],
                 embeddings=[r.usage_context_embedding for r in valid],
                 documents=[r.usage_context for r in valid],
                 metadatas=[{
+                    "sticker_id": r.sticker_id,
                     "file_path": r.file_path,
                     "caption": r.caption,
                     "usage_context": r.usage_context,
@@ -153,7 +155,7 @@ class StickerVectorStore:
         query_embedding: list[float],
         top_k: int = 20,
     ) -> list[tuple[str, float]]:
-        """Semantic search by usage_context_embedding returning (sticker_id, score) tuples.
+        """Semantic search by usage_context_embedding returning (record_id, score) tuples.
 
         Score is cosine similarity in [0, 1].
         """
@@ -175,24 +177,24 @@ class StickerVectorStore:
             ids = results.get("ids", [[]])[0]
             distances = results.get("distances", [[]])[0]
             scored: list[tuple[str, float]] = []
-            for sid, dist in zip(ids, distances):
+            for rid, dist in zip(ids, distances):
                 if dist is None:
                     continue
                 score = max(0.0, 1.0 - (float(dist) ** 2) / 2.0)
-                scored.append((sid, score))
+                scored.append((rid, score))
             return scored
         except Exception as exc:
             logger.warning("表情包向量检索失败: %s", exc)
             return []
 
-    def remove(self, sticker_ids: list[str]) -> None:
-        if self._client is None or not sticker_ids:
+    def remove(self, record_ids: list[str]) -> None:
+        if self._client is None or not record_ids:
             return
         coll = self._get_collection()
         if coll is None:
             return
         try:
-            coll.delete(ids=sticker_ids)
+            coll.delete(ids=record_ids)
         except Exception as exc:
             logger.warning("表情包向量删除失败: %s", exc)
 

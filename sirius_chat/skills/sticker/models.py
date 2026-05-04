@@ -8,7 +8,11 @@ from typing import Any
 
 @dataclass(slots=True)
 class StickerRecord:
-    """表情包记录，核心是学习"在什么情境下使用这个表情包"。"""
+    """表情包记录，核心是学习"在什么情境下使用这个表情包"。
+
+    同一个 sticker_id 可以对应多条记录（不同使用情境），
+    向量存储和检索以 record_id 为主键。
+    """
 
     sticker_id: str          # MD5 哈希（复用 NapCatBridge 的缓存哈希）
     file_path: str           # 本地路径（sticker_cache/ 下）
@@ -28,6 +32,13 @@ class StickerRecord:
     usage_context_embedding: list[float] | None = None  # 使用情境的语义向量（检索核心）
     caption_embedding: list[float] | None = None        # 图片描述的语义向量（辅助）
     novelty_score: float = 1.0  # 新鲜度分数（0-1）
+
+    @property
+    def record_id(self) -> str:
+        """唯一记录 ID: sticker_id + usage_context 的 MD5 前 8 位。"""
+        import hashlib
+        ctx_hash = hashlib.md5(self.usage_context.encode()).hexdigest()[:8]
+        return f"{self.sticker_id}_{ctx_hash}"
 
     def to_dict(self) -> dict[str, Any]:
         return {
