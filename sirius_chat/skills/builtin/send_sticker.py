@@ -19,6 +19,7 @@ SKILL_META = {
     "version": "1.0.0",
     "tags": ["image", "emotion", "napcat"],
     "adapter_types": ["napcat"],
+    "silent": True,
     "parameters": {
         "emotion_hint": {
             "type": "str",
@@ -207,6 +208,8 @@ def init_sticker_system(
     persona_name: str,
     provider_async: Any | None = None,
     basic_memory: Any | None = None,
+    model_name: str = "gpt-4o-mini",
+    token_callback: Any | None = None,
 ) -> dict[str, Any]:
     """初始化表情包系统。
 
@@ -217,6 +220,7 @@ def init_sticker_system(
         persona_name: 人格名称
         provider_async: LLM provider
         basic_memory: 基础记忆管理器（用于反馈观察）
+        model_name: 标签提取和偏好生成使用的模型
 
     Returns:
         包含所有组件的字典
@@ -238,11 +242,15 @@ def init_sticker_system(
     preference_manager = StickerPreferenceManager(
         work_path=sticker_work_path,
         persona_name=persona_name,
+        model_name=model_name,
+        token_callback=token_callback,
     )
 
     learner = StickerLearner(
         indexer=indexer,
         provider_async=provider_async,
+        model_name=model_name,
+        token_callback=token_callback,
     )
 
     feedback_observer = StickerFeedbackObserver(

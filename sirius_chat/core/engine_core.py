@@ -114,6 +114,9 @@ class _EmotionalGroupChatEngineBase:
             "proactive_generate": chat_model,
             # 多模态覆盖
             "vision": vision_model,
+            # 表情包系统
+            "sticker_tag_extract": analysis_model,
+            "sticker_preference_generate": analysis_model,
         }
         # 优先使用 orchestration.json 中的 task_models 细粒度覆盖
         orch_task_models = orch.get("task_models")
@@ -714,6 +717,8 @@ class _EmotionalGroupChatEngineBase:
                 persona_name=self.persona.name if self.persona else "default",
                 provider_async=self.provider_async,
                 basic_memory=self.basic_memory,
+                model_name=self._task_models.get("sticker_tag_extract", self._default_model),
+                token_callback=self._record_sticker_subtask_tokens,
             )
             logger.info("表情包系统初始化完成: %s", self.persona.name if self.persona else "default")
 
@@ -725,6 +730,27 @@ class _EmotionalGroupChatEngineBase:
                 )
         except Exception as exc:
             logger.warning("表情包系统初始化失败: %s", exc)
+
+    def _record_sticker_subtask_tokens(
+        self,
+        task_name: str,
+        model_name: str,
+        group_id: str,
+        request: Any | None = None,
+        duration_ms: float = 0.0,
+    ) -> None:
+        """Token recording callback for sticker sub-tasks.
+
+        Delegates to _record_subtask_tokens so that sticker LLM calls
+        are tracked in the same way as other sub-tasks.
+        """
+        self._record_subtask_tokens(
+            task_name=task_name,
+            model_name=model_name,
+            group_id=group_id,
+            request=request,
+            duration_ms=duration_ms,
+        )
 
     # ------------------------------------------------------------------
     # Proactive state persistence

@@ -377,6 +377,14 @@ const ORCH_TASK_GROUPS = [
       { key: 'vision', label: '多模态' },
     ],
   },
+  {
+    title: '表情包',
+    generalKey: 'analysis_model',
+    tasks: [
+      { key: 'sticker_tag_extract', label: '标签提取' },
+      { key: 'sticker_preference_generate', label: '偏好生成' },
+    ],
+  },
 ];
 
 let _orchChoices = [];

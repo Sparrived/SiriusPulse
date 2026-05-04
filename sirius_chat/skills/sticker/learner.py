@@ -38,10 +38,14 @@ class StickerLearner:
         indexer: StickerIndexer,
         provider_async: Any | None = None,
         basic_memory: Any | None = None,
+        model_name: str = "gpt-4o-mini",
+        token_callback: Any | None = None,
     ) -> None:
         self._indexer = indexer
         self._provider_async = provider_async
         self._basic_memory = basic_memory
+        self._model_name = model_name
+        self._token_callback = token_callback
         self._learned_ids: set[str] = set()
 
     async def learn_from_message(
@@ -156,7 +160,7 @@ class StickerLearner:
             from sirius_chat.providers.base import GenerationRequest
 
             request = GenerationRequest(
-                model="gpt-4o-mini",
+                model=self._model_name,
                 system_prompt=prompt,
                 messages=[{"role": "user", "content": "提取标签"}],
                 temperature=0.2,
@@ -164,7 +168,24 @@ class StickerLearner:
                 purpose="sticker_tag_extract",
             )
 
+            import time
+
+            t0 = time.perf_counter()
             raw = await self._provider_async.generate_async(request)
+            duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+            if self._token_callback is not None:
+                try:
+                    self._token_callback(
+                        task_name="sticker_tag_extract",
+                        model_name=self._model_name,
+                        group_id=source_user or "",
+                        request=request,
+                        duration_ms=duration_ms,
+                    )
+                except Exception:
+                    pass
+
             if "```json" in raw:
                 raw = raw.split("```json")[1].split("```")[0]
             elif "```" in raw:
