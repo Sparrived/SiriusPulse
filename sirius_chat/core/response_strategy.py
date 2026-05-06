@@ -24,6 +24,7 @@ class ResponseStrategyEngine:
         is_mentioned: bool = False,
         weak_directed_threshold: float = 0.4,
         is_developer: bool = False,
+        heat_level: str = "warm",
         sender_type: str = "human",
     ) -> StrategyDecision:
         """Decide response strategy from intent analysis.
@@ -33,6 +34,10 @@ class ResponseStrategyEngine:
             urgency >= 60 and relevance >= 0.55 → DELAYED (high priority)
             urgency >= 35 and relevance >= 0.5  → DELAYED (low priority)
             else                                → SILENT
+
+        Heat suppression:
+            hot:       urgency × 0.85, relevance × 0.92
+            overheated: urgency × 0.68, relevance × 0.85
         """
         urgency = intent.urgency_score
         relevance = intent.relevance_score
@@ -42,6 +47,12 @@ class ResponseStrategyEngine:
         # 以 sensitivity=0.5 时的典型 threshold=0.45 为基准
         scale = 0.45 / max(threshold, 0.1)
         scaled_urgency = urgency * scale
+
+        # Heat suppression: reduce scores in hot/overheated groups
+        heat_mult = {"cold": 1.0, "warm": 1.0, "hot": 0.85, "overheated": 0.68}
+        rel_mult = {"cold": 1.0, "warm": 1.0, "hot": 0.92, "overheated": 0.85}
+        scaled_urgency *= heat_mult.get(heat_level, 1.0)
+        relevance *= rel_mult.get(heat_level, 1.0)
 
         # Special rules
         if is_mentioned and intent.social_intent == SocialIntent.HELP_SEEKING:

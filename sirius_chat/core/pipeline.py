@@ -232,6 +232,7 @@ class PipelineMixin:
             intent,
             is_mentioned=is_mentioned,
             weak_directed_threshold=self.expressiveness.weak_directed_threshold,
+            heat_level=rhythm.heat_level,
             sender_type=sender_type,
         )
 
