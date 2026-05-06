@@ -34,12 +34,11 @@ class ThresholdEngine:
         relationship_state: RelationshipState | None = None,
         hour_of_day: int | None = None,
         sender_type: str = "human",
-        is_developer: bool = False,
     ) -> float:
         """Compute dynamic threshold."""
         base = self.base_high - sensitivity * (self.base_high - self.base_low)
         activity = self._activity_factor(heat_level, messages_per_minute)
-        relationship = self._relationship_factor(relationship_state, is_developer)
+        relationship = self._relationship_factor(relationship_state)
         time_f = self._time_factor(hour_of_day)
         # peer-AI 消息的阈值更高（更难触发回复）
         peer_factor = 1.3 if sender_type == "other_ai" else 1.0
@@ -63,10 +62,7 @@ class ThresholdEngine:
         return base
 
     @staticmethod
-    def _relationship_factor(state: RelationshipState | None, is_developer: bool = False) -> float:
-        if is_developer:
-            return 0.5  # Developer gets highest priority
-
+    def _relationship_factor(state: RelationshipState | None) -> float:
         if state is None:
             return 1.0
 

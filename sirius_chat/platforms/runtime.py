@@ -240,6 +240,7 @@ class EngineRuntime:
             "diary_token_budget": int(self.plugin_config.get("diary_token_budget", exp.diary_token_budget)),
             # 行为控制
             "sensitivity": float(self.plugin_config.get("sensitivity", 0.5)),
+            "expressiveness": {"expressiveness": exp.expressiveness},
             "reply_cooldown_seconds": int(self.plugin_config.get("reply_cooldown_seconds", 12)),
             "max_skill_rounds": int(self.plugin_config.get("max_skill_rounds", 3)),
             "cross_group_memory_enabled": bool(self.plugin_config.get("cross_group_memory_enabled", True)),

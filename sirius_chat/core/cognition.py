@@ -1168,6 +1168,12 @@ class CognitionAnalyzer:
                     break
         scores["mention_score"] = mention
 
+        # other_mention_score: message clearly addresses someone other than AI
+        other_mention = 0.0
+        if mention < 0.5 and re.search(r"@\S+", text):
+            other_mention = 1.0
+        scores["other_mention_score"] = other_mention
+
         # at_all_score: @all / @everyone / @所有人
         at_all = 0.0
         if re.search(r"@\s*(all|everyone|所有人|全体)", text_lower):
@@ -1303,33 +1309,50 @@ class CognitionAnalyzer:
             - otherwise: weak signals → LLM as auxiliary, capped +0.15
         """
         mention_score = rule_scores.get("mention_score", 0.0)
+        other_mention = rule_scores.get("other_mention_score", 0.0)
+
+        # @others guard: message explicitly addresses someone other than AI
+        # → force low directed_score regardless of LLM prediction
+        if other_mention >= 0.5 and mention_score < 0.5:
+            return min(0.3, max(
+                0.0,
+                rule_scores.get("recency_score", 0.0) * 0.15,
+            ))
+
+        name_match = rule_scores.get("name_match_score", 0.0)
+        second_person = rule_scores.get("second_person_score", 0.0)
+        question = rule_scores.get("question_score", 0.0)
+        imperative = rule_scores.get("imperative_score", 0.0)
+
+        # Strong linguistic signals: name match or imperative patterns
+        strong_linguistic = max(name_match, imperative)
+        # Weak linguistic signals: "你" or question alone (not sufficient without name)
+        weak_linguistic = max(second_person, question)
+
         structural = max(
             mention_score,
             rule_scores.get("reference_score", 0.0),
             rule_scores.get("at_all_score", 0.0) * 0.5,
         )
-        linguistic = max(
-            rule_scores.get("name_match_score", 0.0),
-            rule_scores.get("second_person_score", 0.0),
-            rule_scores.get("question_score", 0.0),
-            rule_scores.get("imperative_score", 0.0),
-        )
+        # Only signals that convey direct addressee intent count here.
+        # topic_relevance is excluded: discussing AI-related topics ≠ addressing the AI.
+        # attention_seeking ("有人吗", "在吗") implies wanting a response but not
+        # necessarily targeting the AI specifically, so it contributes minimally.
         semantic = max(
-            rule_scores.get("topic_relevance_score", 0.0),
             rule_scores.get("emotional_disclosure_score", 0.0),
-            rule_scores.get("attention_seeking_score", 0.0),
+            rule_scores.get("attention_seeking_score", 0.0) * 0.3,
         )
         contextual = max(
             rule_scores.get("recency_score", 0.0),
             rule_scores.get("turn_taking_score", 0.0),
-        ) * 0.4
+        ) * 0.15
 
-        base = max(structural, linguistic)
+        base = max(structural, strong_linguistic)
 
         if base >= 0.5:
             score = min(1.0, base + semantic * 0.15 + contextual)
         elif semantic >= 0.6:
-            score = min(0.7, 0.4 + semantic * 0.3 + contextual)
+            score = min(0.65, 0.35 + semantic * 0.3 + contextual)
         else:
             score = base + contextual
 
@@ -1341,8 +1364,14 @@ class CognitionAnalyzer:
                 score = max(score, min(0.92, llm_score * coef))
             elif structural < 0.3 and llm_score >= 0.6:
                 # Implicit directedness (e.g. "你觉得呢"): conservative trust
-                coef = 0.5 + 0.3 * llm_confidence
-                score = max(score, min(0.75, llm_score * coef))
+                # Zero signal guard: when no rule signals at all, LLM alone is
+                # unreliable (e.g. "yuki有没有作业" is about another person, not AI)
+                if base < 0.1 and semantic < 0.3:
+                    blend = score * 0.7 + llm_score * 0.3 * llm_confidence
+                    score = max(score, min(score + 0.15, blend))
+                else:
+                    coef = 0.5 + 0.3 * llm_confidence
+                    score = max(score, min(0.75, llm_score * coef))
             else:
                 # Weak signals: LLM is auxiliary, capped at +0.15 above rule score
                 blend = score * 0.7 + llm_score * 0.3 * llm_confidence
