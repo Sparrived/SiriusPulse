@@ -73,7 +73,8 @@ quality = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-n auto --dist=load"
+asyncio_mode = "strict"
+addopts = "--basetemp=.pytest_tmp"
 
 [build-system]
 requires = ["setuptools>=61.0"]

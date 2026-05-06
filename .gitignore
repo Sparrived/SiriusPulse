@@ -21,6 +21,7 @@ logs/
 null
 napcat_instance_registry.json
 .pytest_cache/
+.pytest_tmp/
 .coverage
 coverage.xml
 htmlcov/

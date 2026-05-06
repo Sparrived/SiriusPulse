@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import tempfile
 from pathlib import Path
@@ -22,24 +21,26 @@ if str(project_root) not in sys.path:
 
 
 @pytest.fixture
-def ram_tmp_path() -> Path:
+def ram_tmp_path(tmp_path: Path) -> Path:
     """RAM-based temp directory for I/O-heavy tests.
 
-    Falls back to default tempfile location if RAM disk is unavailable.
+    Uses pytest's tmp_path (respecting basetemp) so that all temp files
+    land in the project-local ``.pytest_tmp`` directory rather than
+    ``%TEMP%`` where Windows Defender real-time scanning adds ~20s per call.
+
+    Falls back to RAM disk if available; otherwise returns tmp_path directly.
     """
     import os
 
-    # Try common RAM disk paths on Windows
     ram_paths = ["R:\\", "T:\\"]
     for ram in ram_paths:
         if os.path.exists(ram):
+            import tempfile
             with tempfile.TemporaryDirectory(dir=ram) as td:
                 yield Path(td)
             return
 
-    # Fallback to regular temp directory
-    with tempfile.TemporaryDirectory() as td:
-        yield Path(td)
+    yield tmp_path
 
 
 # ---------------------------------------------------------------------------
