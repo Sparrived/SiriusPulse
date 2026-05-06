@@ -189,12 +189,6 @@ class PipelineMixin:
             getattr(user_profile, "relationship_state", None) if user_profile else None
         )
 
-        # Determine if sender is a developer
-        caller_is_developer = False
-        if user_id:
-            caller = self.user_manager.get_user(user_id, group_id)
-            caller_is_developer = bool(caller and caller.is_developer)
-
         # Message rate (per minute) from recent messages
         msg_rate = self._message_rate_per_minute(recent_msgs)
 
@@ -204,7 +198,6 @@ class PipelineMixin:
             messages_per_minute=msg_rate,
             relationship_state=relationship_state,
             sender_type=sender_type,
-            is_developer=caller_is_developer,
         )
 
         # Persona reply frequency bias
@@ -228,17 +221,17 @@ class PipelineMixin:
         intent.time_factor = self.threshold_engine._time_factor(None)
         if relationship_state:
             intent.relationship_factor = self.threshold_engine._relationship_factor(
-                relationship_state, is_developer=caller_is_developer
+                relationship_state
             )
 
-        # Check if directly mentioned (using continuous directed_score)
-        is_mentioned = intent.directed_score >= self.expressiveness.directed_threshold
+        sensitivity = self.config.get("sensitivity", 0.5)
+        directed_gate = self.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
+        is_mentioned = intent.directed_score >= directed_gate
 
         decision = self.strategy_engine.decide(
             intent,
             is_mentioned=is_mentioned,
             weak_directed_threshold=self.expressiveness.weak_directed_threshold,
-            heat_level=rhythm.heat_level,
             sender_type=sender_type,
         )
 
@@ -277,7 +270,8 @@ class PipelineMixin:
         # 结构化日志：记录关键决策参数到后台
         logger.info(
             "[决策参数] group=%s user=%s strategy=%s score=%.3f threshold=%.3f "
-            "directed_score=%.3f directed=%s urgency=%.1f entitlement=%.3f sarcasm=%.3f "
+            "directed_score=%.3f directed_gate=%.3f directed=%s urgency=%.1f "
+            "entitlement=%.3f sarcasm=%.3f "
             "heat_level=%s msg_rate=%.2f cooldown=%.1fs since_reply=%.1fs "
             "expressiveness=%.2f sensitivity=%.2f reason=%s",
             group_id,
@@ -286,6 +280,7 @@ class PipelineMixin:
             decision.score,
             decision.threshold,
             intent.directed_score,
+            directed_gate,
             intent.directed_at_current_ai,
             intent.urgency_score,
             intent.entitlement_score,

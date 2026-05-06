@@ -30,7 +30,7 @@ class TestDelayedQueueMerge:
         # Strategy upgraded to IMMEDIATE
         assert item1.strategy_decision.strategy == ResponseStrategy.IMMEDIATE
         # Window shortened to immediate debounce
-        assert item1.window_seconds == 8.0
+        assert item1.window_seconds == 5.0
 
     def test_delayed_merges_into_pending_immediate(self):
         """A DELAYED item should merge into an existing pending IMMEDIATE item."""
@@ -39,15 +39,15 @@ class TestDelayedQueueMerge:
         dec_delayed = StrategyDecision(strategy=ResponseStrategy.DELAYED, urgency=50)
 
         item1 = q.enqueue("g1", "u1", "hello", dec_imm)
-        assert item1.window_seconds == 8.0
+        assert item1.window_seconds == 5.0
 
         item2 = q.enqueue("g1", "u2", "world", dec_delayed)
         assert item2 is item1
         assert item1.message_content == "hello\nworld"
         # Strategy stays IMMEDIATE (more urgent)
         assert item1.strategy_decision.strategy == ResponseStrategy.IMMEDIATE
-        # Window stays 8.0 (min of 8 and 30)
-        assert item1.window_seconds == 8.0
+        # Window stays 5.0 (min of 5 and 30)
+        assert item1.window_seconds == 5.0
 
     def test_multiple_delayed_merge(self):
         """Multiple DELAYED items in the same group should merge."""

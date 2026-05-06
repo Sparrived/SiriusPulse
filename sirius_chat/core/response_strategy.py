@@ -24,7 +24,6 @@ class ResponseStrategyEngine:
         is_mentioned: bool = False,
         weak_directed_threshold: float = 0.4,
         is_developer: bool = False,
-        heat_level: str = "warm",
         sender_type: str = "human",
     ) -> StrategyDecision:
         """Decide response strategy from intent analysis.
@@ -34,10 +33,6 @@ class ResponseStrategyEngine:
             urgency >= 60 and relevance >= 0.55 → DELAYED (high priority)
             urgency >= 35 and relevance >= 0.5  → DELAYED (low priority)
             else                                → SILENT
-
-        Heat suppression:
-            hot:       urgency × 0.85, relevance × 0.92
-            overheated: urgency × 0.68, relevance × 0.85
         """
         urgency = intent.urgency_score
         relevance = intent.relevance_score
@@ -48,24 +43,8 @@ class ResponseStrategyEngine:
         scale = 0.45 / max(threshold, 0.1)
         scaled_urgency = urgency * scale
 
-        # Heat suppression: reduce scores in hot/overheated groups
-        heat_mult = {"cold": 1.0, "warm": 1.0, "hot": 0.85, "overheated": 0.68}
-        rel_mult = {"cold": 1.0, "warm": 1.0, "hot": 0.92, "overheated": 0.85}
-        scaled_urgency *= heat_mult.get(heat_level, 1.0)
-        relevance *= rel_mult.get(heat_level, 1.0)
-
         # Special rules
         if is_mentioned and intent.social_intent == SocialIntent.HELP_SEEKING:
-            # In overheated groups, even direct help-seeking mentions go delayed
-            if heat_level == "overheated":
-                return StrategyDecision(
-                    strategy=ResponseStrategy.DELAYED,
-                    score=0.7,
-                    threshold=threshold,
-                    urgency=urgency,
-                    relevance=relevance,
-                    reason="direct_mention_help_seeking_overheated",
-                )
             return StrategyDecision(
                 strategy=ResponseStrategy.IMMEDIATE,
                 score=1.0,
@@ -76,16 +55,6 @@ class ResponseStrategyEngine:
             )
 
         if intent.social_intent == SocialIntent.EMOTIONAL and scaled_urgency >= 70:
-            # Emotional crisis stays immediate unless severely overheated
-            if heat_level == "overheated":
-                return StrategyDecision(
-                    strategy=ResponseStrategy.DELAYED,
-                    score=0.8,
-                    threshold=threshold,
-                    urgency=urgency,
-                    relevance=relevance,
-                    reason="emotional_crisis_overheated",
-                )
             return StrategyDecision(
                 strategy=ResponseStrategy.IMMEDIATE,
                 score=0.95,
@@ -107,15 +76,6 @@ class ResponseStrategyEngine:
 
         # Direct mention override
         if is_mentioned:
-            if heat_level == "overheated":
-                return StrategyDecision(
-                    strategy=ResponseStrategy.DELAYED,
-                    score=0.8,
-                    threshold=threshold,
-                    urgency=urgency,
-                    relevance=relevance,
-                    reason="direct_mention_overheated",
-                )
             # peer-AI @ 你时降级为 DELAYED，避免 AI 互聊过热
             if sender_type == "other_ai":
                 return StrategyDecision(
@@ -136,6 +96,8 @@ class ResponseStrategyEngine:
             )
 
         # Standard matrix (with higher thresholds for peer-AI messages)
+        directed_score = getattr(intent, "directed_score", 0.0)
+        undirected = not is_mentioned and directed_score < weak_directed_threshold
         if sender_type == "other_ai":
             if scaled_urgency >= 90 and relevance >= 0.75:
                 strategy = ResponseStrategy.IMMEDIATE
@@ -156,7 +118,7 @@ class ResponseStrategyEngine:
             elif scaled_urgency >= 60 and relevance >= 0.55:
                 strategy = ResponseStrategy.DELAYED
                 reason = "medium_urgency_delayed"
-            elif scaled_urgency >= 35 and relevance >= 0.5:
+            elif scaled_urgency >= (55 if undirected else 35) and relevance >= 0.5:
                 strategy = ResponseStrategy.DELAYED
                 reason = "low_urgency_delayed"
             else:
@@ -165,7 +127,6 @@ class ResponseStrategyEngine:
 
         # 社交底线：没被弱指向（<weak_directed_threshold）就没有抢话权，最高只能 delayed
         # 弱指向保留 IMMEDIATE 资格，强指向（>=directed_threshold）已由 is_mentioned 处理
-        directed_score = getattr(intent, "directed_score", 0.0)
         if not is_mentioned and directed_score < weak_directed_threshold and strategy == ResponseStrategy.IMMEDIATE:
             strategy = ResponseStrategy.DELAYED
             reason = f"not_directed_{reason}"

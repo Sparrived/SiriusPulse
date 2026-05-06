@@ -5,8 +5,8 @@ Monitors conversation during the wait window:
 - If topic gap appears → trigger immediately
 - If topic drifts to AI-relevant → trigger early
 
-v1.0+ 新增：IMMEDIATE 策略也走本队列，但使用极短的防抖窗口（3s），
-在同 group 内合并连续 IMMEDIATE 消息，避免刷屏。
+IMMEDIATE 策略使用 5s 防抖窗口，窗口期内每收到一条新消息增加 1s，上限 12s。
+在同 group 内合并连续消息，避免刷屏。
 """
 
 from __future__ import annotations
@@ -25,7 +25,8 @@ from sirius_chat.core.rhythm import RhythmAnalysis
 
 logger = logging.getLogger(__name__)
 
-_IMMEDIATE_DEBOUNCE_SECONDS = 8.0
+_IMMEDIATE_DEBOUNCE_SECONDS = 5.0
+_IMMEDIATE_WINDOW_MAX = 12.0
 
 # Heat-based window multipliers: hotter groups = longer wait
 _HEAT_WINDOW_MULT = {
@@ -77,9 +78,8 @@ class DelayedResponseQueue:
         """Add an item to the delayed queue.
 
         For IMMEDIATE strategy, if the same group already has a pending
-        item, merge the message content. The debounce timer is NOT reset
-        on merge (prevents infinite postponement in busy groups), but
-        window may shorten if the new message is more urgent.
+        item, merge the message content.  Each additional IMMEDIATE
+        message extends the window by 1 second (capped at 12s).
         """
         from sirius_chat.core.utils import now_iso
 
@@ -91,14 +91,17 @@ class DelayedResponseQueue:
         for item in queue:
             if item.status == "pending":
                 item.message_content += f"\n{message_content}"
-                # CRITICAL: do NOT reset enqueue_time on merge.
-                # Otherwise busy groups would postpone the reply forever.
-                # Keep the shorter window so urgent messages are not delayed
-                new_window = self._window_for_item(strategy_decision, heat_level)
-                item.window_seconds = min(item.window_seconds, new_window)
-                # Upgrade strategy to IMMEDIATE if any merged message is immediate
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
+                    if item.strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
+                        item.window_seconds = min(
+                            item.window_seconds + 1.0, _IMMEDIATE_WINDOW_MAX
+                        )
+                    else:
+                        item.window_seconds = _IMMEDIATE_DEBOUNCE_SECONDS
                     item.strategy_decision = strategy_decision
+                else:
+                    new_window = self._window_for_item(strategy_decision, heat_level)
+                    item.window_seconds = min(item.window_seconds, new_window)
                 # Update heat/pace to the latest state
                 item.heat_level = heat_level
                 item.pace = pace
