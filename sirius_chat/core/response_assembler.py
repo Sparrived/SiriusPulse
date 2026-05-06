@@ -358,9 +358,9 @@ class ResponseAssembler:
         # 1c. Output constraint to prevent the model from imitating speaker prefixes
         _add(
             "[输出约束]\n"
-            "历史对话中会出现 ``[上下文] 下一条消息来自...`` 的系统标注，"
-            "这只是为了帮你识别不同说话者，你的回复中绝对不要输出任何 ``[上下文]`` 开头的内容。\n"
-            "直接输出你要说的话即可，不要添加任何说话者前缀或系统标记。",
+            "当前消息和历史对话均使用 ``<message speaker=... user_id=... role=...>`` XML 标签标注发送者，"
+            "这只是为了帮你识别不同说话者，你的回复中绝对不要输出任何 ``<message>`` 或 ``[上下文]`` 开头的内容。\n"
+            "直接输出你要说的话即可，不要添加任何说话者前缀、XML 标签或系统标记。",
             "output_constraint",
         )
 
@@ -424,8 +424,8 @@ class ResponseAssembler:
 
         # Current user message content (will be appended as the last user
         # message in the standard OpenAI messages array by the engine).
-        sender_info = self._build_sender_line(message)
-        user_content = f"{sender_info}{message.content}"
+        sender_line = self._build_sender_line(message)
+        user_content = f"{sender_line}\n{message.content}\n</message>"
         bd.user_message = estimate_tokens(user_content)
 
         return PromptBundle(
@@ -452,16 +452,13 @@ class ResponseAssembler:
 
     @staticmethod
     def _build_sender_line(message: Message) -> str:
-        """Build a [消息] prefix that includes sender identity if available."""
+        """Build an opening XML tag that includes sender identity."""
+        import html as _html
         speaker = message.speaker or "有人"
-        is_private = bool(message.group_id and message.group_id.startswith("private_"))
-        parts: list[str] = ["[消息]"]
-        parts.append(f"群名片：{speaker}")
-        if message.channel_user_id:
-            parts.append(f"QQ（唯一标识）：{message.channel_user_id}")
-        if message.group_id and not is_private:
-            parts.append(f"群：{message.group_id}")
-        return " ".join(parts) + "\n内容："
+        uid = message.channel_user_id or ""
+        safe_speaker = _html.escape(speaker, quote=True)
+        safe_uid = _html.escape(uid, quote=True)
+        return f'<message speaker="{safe_speaker}" user_id="{safe_uid}" role="user">'
 
     @staticmethod
     def _build_emotion_context(

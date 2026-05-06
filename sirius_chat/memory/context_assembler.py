@@ -171,10 +171,22 @@ class ContextAssembler:
     # ------------------------------------------------------------------
 
     def _build_history_xml(self, group_id: str, n: int = 5) -> str:
-        """Convert recent basic memory entries into an XML block."""
+        """Convert recent basic memory entries into an XML block.
+
+        Trailing entries after the last assistant reply are excluded, because
+        those are the pending (unanswered) user messages that will be passed
+        separately as the ``user`` role content by the caller.
+        """
         recent = self._basic.get_context(group_id, n=n)
         if not recent:
             return ""
+        last_assistant_idx = -1
+        for i in range(len(recent) - 1, -1, -1):
+            if recent[i].role == "assistant":
+                last_assistant_idx = i
+                break
+        if last_assistant_idx >= 0:
+            recent = recent[: last_assistant_idx + 1]
         return self._entries_to_xml(recent, tag="conversation_history")
 
     def _build_cross_group_history_xml(
