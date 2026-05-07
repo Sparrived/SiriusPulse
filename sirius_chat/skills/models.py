@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import enum
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Awaitable, Protocol
 
 from sirius_chat.memory import UserProfile
 
@@ -181,6 +183,8 @@ class SkillDefinition:
     adapter_types: list[str] = field(default_factory=list)
     source_path: Path | None = None
     _run_func: Callable[..., Any] | None = field(default=None, repr=False)
+    _background_task_factory: Callable[..., Any] | None = field(default=None, repr=False)
+    _trigger_factory: Callable[..., Any] | None = field(default=None, repr=False)
 
     def get_parameter_schema(self) -> list[dict[str, Any]]:
         """Return parameter definitions as dicts for prompt rendering."""
@@ -196,6 +200,140 @@ class SkillDefinition:
                 entry["default"] = param.default
             schema.append(entry)
         return schema
+
+    @property
+    def is_passive(self) -> bool:
+        """是否为被动 SKILL（拥有后台任务或触发器，不由模型直接调用）。"""
+        return self._background_task_factory is not None or self._trigger_factory is not None
+
+
+class SkillPassiveType(enum.Enum):
+    """被动 SKILL 的子类型。"""
+
+    PERIODIC = "periodic"
+    TRIGGER = "trigger"
+    BOTH = "both"
+
+
+@dataclass(slots=True)
+class BackgroundTaskSpec:
+    """描述一个由被动 SKILL 注册的后台定时任务。"""
+
+    name: str
+    interval_seconds: float
+    task_func: Callable[..., Awaitable[None]]
+
+    async def run_loop(self, running_check: Callable[[], bool]) -> None:
+        """在循环中周期性执行 task_func，直到 running_check() 返回 False。"""
+        try:
+            while running_check():
+                await asyncio.sleep(self.interval_seconds)
+                if not running_check():
+                    break
+                await self.task_func()
+        except asyncio.CancelledError:
+            raise
+
+
+@dataclass(slots=True)
+class TriggerSpec:
+    """描述一个由被动 SKILL 注册的事件触发器。
+
+    trigger_func 在每次收到对应事件时被调用，接收事件数据字典。
+    """
+
+    name: str
+    event_type: str
+    trigger_func: Callable[..., Awaitable[None]]
+
+
+class SkillEngineContext(Protocol):
+    """被动 SKILL 与引擎交互的上下文接口。
+
+    由引擎层实现，注入到被动 SKILL 的 create_background_tasks / create_triggers 中。
+    被动 SKILL 通过此接口访问引擎能力，而无需直接依赖引擎类。
+    """
+
+    @property
+    def skill_registry(self) -> Any:
+        """当前 SkillRegistry 实例。"""
+        ...
+
+    @property
+    def skill_executor(self) -> Any:
+        """当前 SkillExecutor 实例。"""
+        ...
+
+    def get_data_store(self, skill_name: str) -> Any:
+        """获取指定 SKILL 的持久化数据存储。"""
+        ...
+
+    async def generate_text(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        group_id: str,
+        task_name: str = "passive_skill",
+        **kwargs: Any,
+    ) -> str:
+        """调用 LLM 生成文本。"""
+        ...
+
+    def queue_pending_message(
+        self, group_id: str, text: str, adapter_type: str = ""
+    ) -> None:
+        """将待发送消息放入引擎的待处理队列。"""
+        ...
+
+    async def emit_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """通过引擎事件总线发送事件。"""
+        ...
+
+    def get_active_groups(self) -> list[str]:
+        """获取当前活跃的群组 ID 列表。"""
+        ...
+
+    def get_config_value(self, key: str, default: Any = None) -> Any:
+        """读取引擎配置项。"""
+        ...
+
+    def get_persona(self) -> Any:
+        """获取当前人格实例。"""
+        ...
+
+    def log_inner_thought(self, text: str) -> None:
+        """记录引擎内部日志（内心活动）。"""
+        ...
+
+    def add_memory_entry(
+        self, group_id: str, user_id: str, role: str, content: str, speaker_name: str = ""
+    ) -> None:
+        """向基础记忆追加一条记录。"""
+        ...
+
+    def record_reply_timestamp(self, group_id: str) -> None:
+        """记录回复时间戳，用于冷却追踪。"""
+        ...
+
+    def persist_group_state(self, group_id: str) -> None:
+        """持久化指定群组的运行时状态。"""
+        ...
+
+    def get_user_communication_style(self, group_id: str, user_id: str) -> str:
+        """获取用户的沟通风格。"""
+        ...
+
+    def get_skill_descriptions(self, caller_is_developer: bool = False) -> str:
+        """获取当前可用的 SKILL 描述文本（用于注入 prompt）。"""
+        ...
+
+    def get_current_adapter_type(self) -> str:
+        """获取当前活跃的适配器类型。"""
+        ...
+
+    def activate_private_group(self, group_id: str) -> None:
+        """将私聊群组标记为活跃（以便延迟队列轮询）。"""
+        ...
 
 
 @dataclass(slots=True)

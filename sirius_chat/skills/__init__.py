@@ -13,11 +13,15 @@ Key components:
 """
 
 from sirius_chat.skills.models import (
+    BackgroundTaskSpec,
     SkillDefinition,
+    SkillEngineContext,
     SkillInvocationContext,
     SkillParameter,
+    SkillPassiveType,
     SkillResult,
     SkillChainContext,
+    TriggerSpec,
 )
 from sirius_chat.skills.registry import SkillRegistry
 from sirius_chat.skills.executor import SkillExecutor
@@ -25,11 +29,15 @@ from sirius_chat.skills.data_store import SkillDataStore
 from sirius_chat.skills.dependency_resolver import resolve_skill_dependencies
 
 __all__ = [
+    "BackgroundTaskSpec",
     "SkillDefinition",
+    "SkillEngineContext",
     "SkillInvocationContext",
     "SkillParameter",
+    "SkillPassiveType",
     "SkillResult",
     "SkillChainContext",
+    "TriggerSpec",
     "SkillRegistry",
     "SkillExecutor",
     "SkillDataStore",

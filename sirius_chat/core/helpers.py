@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -33,10 +34,74 @@ class HelpersMixin:
         """Attach SKILL registry and executor to the engine."""
         self._skill_registry = skill_registry
         self._skill_executor = skill_executor
-        # Propagate skill registry to response assembler so it can include
-        # skill descriptions in the system prompt.
         if skill_registry is not None:
             self.response_assembler.skill_registry = skill_registry
+            self._register_passive_skills()
+
+    def _register_passive_skills(self) -> None:
+        """Discover passive SKILLs and instantiate their background tasks / triggers."""
+        if self._skill_registry is None:
+            return
+        from sirius_chat.core.skill_engine_context import SkillEngineContextImpl
+
+        ctx = SkillEngineContextImpl(self)
+        for skill in self._skill_registry.passive_skills():
+            try:
+                if skill._background_task_factory is not None:
+                    specs = skill._background_task_factory(ctx)
+                    if specs is None:
+                        continue
+                    if not isinstance(specs, list):
+                        specs = [specs]
+                    for spec in specs:
+                        task = asyncio.create_task(
+                            spec.run_loop(lambda: self._bg_running),
+                            name=f"passive_skill_{spec.name}",
+                        )
+                        self._passive_skill_tasks[spec.name] = task
+                        self._bg_tasks.add(task)
+                        task.add_done_callback(self._bg_tasks.discard)
+                        logger.info("被动SKILL后台任务已注册: %s (间隔 %.1fs)", spec.name, spec.interval_seconds)
+
+                if skill._trigger_factory is not None:
+                    trigger_specs = skill._trigger_factory(ctx)
+                    if trigger_specs is None:
+                        continue
+                    if not isinstance(trigger_specs, list):
+                        trigger_specs = [trigger_specs]
+                    for spec in trigger_specs:
+                        self._passive_skill_triggers.setdefault(spec.event_type, []).append(spec)
+                        logger.info("被动SKILL触发器已注册: %s (事件: %s)", spec.name, spec.event_type)
+            except Exception as exc:
+                logger.warning("注册被动SKILL失败 (%s): %s", skill.name, exc)
+
+        if self._passive_skill_triggers:
+            self._wrap_event_bus_for_triggers()
+
+    def _wrap_event_bus_for_triggers(self) -> None:
+        """Wrap event_bus.emit so passive SKILL triggers fire on matching events."""
+        original_emit = self.event_bus.emit
+        dispatch = self._dispatch_passive_triggers
+
+        async def _dispatching_emit(event: Any) -> None:
+            await original_emit(event)
+            try:
+                await dispatch(event.type.value, event.data)
+            except Exception as exc:
+                logger.warning("被动SKILL触发分发失败: %s", exc)
+
+        self.event_bus.emit = _dispatching_emit  # type: ignore[assignment]
+
+    async def _dispatch_passive_triggers(self, event_type: str, data: dict[str, Any]) -> None:
+        """Dispatch registered passive SKILL triggers for the given event type."""
+        triggers = self._passive_skill_triggers.get(event_type)
+        if not triggers:
+            return
+        for spec in triggers:
+            try:
+                await spec.trigger_func(data)
+            except Exception as exc:
+                logger.warning("被动SKILL触发器执行失败 (%s): %s", spec.name, exc)
 
     def _get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
         entries = self.basic_memory.get_all(group_id)[-n:]

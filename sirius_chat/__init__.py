@@ -89,13 +89,17 @@ from sirius_chat.utils.layout import WorkspaceLayout
 
 # ── Skills ──
 from sirius_chat.skills import (
+    BackgroundTaskSpec,
     SkillDataStore,
     SkillDefinition,
+    SkillEngineContext,
     SkillExecutor,
     SkillInvocationContext,
     SkillParameter,
+    SkillPassiveType,
     SkillRegistry,
     SkillResult,
+    TriggerSpec,
 )
 
 # ── Token usage ──
@@ -232,13 +236,17 @@ __all__ = [
     "SqliteSessionStore",
     "WorkspaceLayout",
     # Skills
+    "BackgroundTaskSpec",
     "SkillDataStore",
     "SkillDefinition",
+    "SkillEngineContext",
     "SkillExecutor",
     "SkillInvocationContext",
     "SkillParameter",
+    "SkillPassiveType",
     "SkillRegistry",
     "SkillResult",
+    "TriggerSpec",
     # Token
     "TokenUsageStore",
     "AnalyticsReport",

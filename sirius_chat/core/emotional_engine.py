@@ -18,7 +18,8 @@ from sirius_chat.core.engine_core import (
     _EmotionalGroupChatEngineBase,
 )
 from sirius_chat.core.pipeline import PipelineMixin
-from sirius_chat.core.bg_tasks import BackgroundTasksMixin, _is_reminder_due
+from sirius_chat.core.bg_tasks import BackgroundTasksMixin
+from sirius_chat.skills.builtin.reminder import _is_reminder_due
 from sirius_chat.core.prompt_builders import PromptBuildersMixin
 from sirius_chat.core.helpers import HelpersMixin
 

@@ -1,10 +1,22 @@
-"""Built-in skill for creating timed reminders."""
+"""Built-in skill for creating timed reminders.
+
+Supports both active (model-callable) and passive (background task) modes.
+- Active: AI calls [SKILL_CALL: reminder | {...}] to create/list/cancel.
+- Passive: create_background_tasks() registers a periodic checker that
+  scans for due reminders, generates persona-styled messages, and queues
+  them for delivery.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 SKILL_META = {
     "name": "reminder",
@@ -13,7 +25,7 @@ SKILL_META = {
         "到达指定时间后会通知对应的用户。"
         "可以用 list 查看所有提醒，用 cancel 取消指定提醒。"
     ),
-    "version": "1.2.0",
+    "version": "2.0.0",
     "tags": ["utility", "time"],
     "developer_only": False,
     "dependencies": [],
@@ -83,6 +95,8 @@ SKILL_META = {
 }
 
 
+# ── Active: model-callable run() ──────────────────────────────────────
+
 def run(
     action: str = "create",
     content: str = "",
@@ -99,7 +113,6 @@ def run(
     invocation_context: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Create, list, or cancel reminders."""
     action = action.strip().lower()
 
     caller = invocation_context.caller if invocation_context else None
@@ -136,6 +149,285 @@ def run(
         "summary": "提醒操作失败：未知操作类型",
     }
 
+
+# ── Passive: background task factory ──────────────────────────────────
+
+def create_background_tasks(ctx: Any) -> list[Any]:
+    """Register a periodic reminder checker as a background task.
+
+    Returns a BackgroundTaskSpec that polls for due reminders every
+    10 seconds (configurable via 'reminder_check_interval_seconds').
+    """
+    from sirius_chat.skills.models import BackgroundTaskSpec
+
+    async def _check_due_reminders() -> None:
+        await _check_and_fire_reminders(ctx)
+
+    interval = ctx.get_config_value("reminder_check_interval_seconds", 10)
+
+    return [BackgroundTaskSpec(
+        name="reminder_check",
+        interval_seconds=interval,
+        task_func=_check_due_reminders,
+    )]
+
+
+async def _check_and_fire_reminders(ctx: Any) -> None:
+    """Scan reminders and queue due ones for delivery."""
+    store = ctx.get_data_store("reminder")
+    reminders = list(store.get("reminders", []))
+    now = datetime.now(timezone.utc)
+    triggered: list[tuple[str, str, str, str, str, str, list[dict[str, Any]]]] = []
+    remaining: list[dict[str, Any]] = []
+
+    for r in reminders:
+        if _is_reminder_due(r, now):
+            gid = r.get("group_id")
+            if gid:
+                content = r.get("content", "提醒时间到啦")
+                user_id = r.get("user_id", "")
+                user_name = r.get("user_name", "")
+                adapter_type = r.get("adapter_type", "")
+                target = r.get("target", "user")
+                skill_chain = r.get("skill_chain")
+                skill_results: list[dict[str, Any]] = []
+                if skill_chain:
+                    skill_results = await _execute_skill_chain(
+                        ctx, gid, user_id, user_name, r.get("id"), skill_chain
+                    )
+                triggered.append(
+                    (gid, content, user_id, user_name, adapter_type, target, skill_results)
+                )
+                r["last_fired_at"] = now.isoformat()
+                r["fire_count"] = r.get("fire_count", 0) + 1
+                mode = r.get("mode", "once")
+                if mode == "once":
+                    continue
+                if mode == "interval":
+                    interval = r.get("minutes_after", 1)
+                    next_fire = now + timedelta(minutes=interval)
+                    r["fire_at"] = next_fire.isoformat()
+            else:
+                logger.warning("Reminder %s has no group_id, skipping", r.get("id"))
+        remaining.append(r)
+
+    if len(remaining) != len(reminders):
+        store.set("reminders", remaining)
+        store.save()
+
+    for gid, content, user_id, user_name, adapter_type, target, skill_results in triggered:
+        reply = await _generate_reminder_message(
+            ctx, gid, content, user_id, user_name, target, skill_results
+        )
+        if reply:
+            ctx.queue_pending_message(gid, reply, adapter_type)
+            ctx.log_inner_thought(f"AI 生成提醒：{reply[:40]}")
+            if gid.startswith("private_"):
+                ctx.activate_private_group(gid)
+            await ctx.emit_event(
+                "reminder_triggered",
+                {"group_id": gid, "reply": reply, "adapter_type": adapter_type},
+            )
+
+
+async def _execute_skill_chain(
+    ctx: Any,
+    group_id: str,
+    user_id: str,
+    user_name: str,
+    reminder_id: str | None,
+    skill_chain: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Execute a skill chain defined in a reminder."""
+    executor = ctx.skill_executor
+    if executor is None:
+        return []
+
+    from sirius_chat.skills.models import SkillInvocationContext
+    from sirius_chat.memory.user.models import UserProfile
+
+    caller = UserProfile(user_id=user_id, name=user_name)
+    inv_ctx = SkillInvocationContext(caller=caller)
+
+    logger.info("Reminder %s skill_chain start: %d items", reminder_id, len(skill_chain))
+    skill_results: list[dict[str, Any]] = []
+    for item in skill_chain:
+        if not isinstance(item, dict):
+            continue
+        skill_name = item.get("skill", "")
+        params = item.get("params", {}) or {}
+        if not skill_name:
+            continue
+        try:
+            skill = ctx.skill_registry.get(skill_name)
+            if skill is None:
+                logger.warning("Reminder %s skill '%s' not found", reminder_id, skill_name)
+                skill_results.append({"skill": skill_name, "params": params, "error": "未找到"})
+                continue
+            result = await executor.execute_async(
+                skill, params, invocation_context=inv_ctx
+            )
+            skill_results.append({
+                "skill": skill_name,
+                "params": params,
+                "result": result.to_display_text() if result.success else result.error,
+            })
+        except Exception as exc:
+            logger.warning("Reminder %s skill_chain failed: %s -> %s", reminder_id, skill_name, exc)
+            skill_results.append({"skill": skill_name, "params": params, "error": str(exc)})
+
+    logger.info(
+        "Reminder %s skill_chain finished: %d/%d succeeded",
+        reminder_id,
+        sum(1 for sr in skill_results if "error" not in sr),
+        len(skill_results),
+    )
+    return skill_results
+
+
+async def _generate_reminder_message(
+    ctx: Any,
+    group_id: str,
+    content: str,
+    user_id: str,
+    user_name: str,
+    target: str = "user",
+    skill_results: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Generate a persona-styled reminder message via LLM."""
+    from sirius_chat.skills.executor import strip_skill_calls
+
+    try:
+        persona = ctx.get_persona()
+        identity = persona.build_system_prompt() if persona else ""
+        sections: list[str] = []
+        if identity:
+            sections.append(identity)
+        who = user_name or user_id or "用户"
+        if target == "self":
+            sections.append(
+                f"到时间了，该去做之前答应 {who} 的事了：{content}。"
+                f"随便说两句就行，不用太正式，就像平时聊天一样。"
+            )
+        else:
+            sections.append(
+                f"到时间了，该提醒 {who} 了：{content}。"
+                f"随便说两句就行，不用太正式，就像平时聊天一样。"
+            )
+
+        if skill_results:
+            results_text = "\n".join(
+                f"- [{i+1}] {sr['skill']}({json.dumps(sr.get('params', {}), ensure_ascii=False)}): "
+                f"{json.dumps(sr.get('result') or sr.get('error'), ensure_ascii=False, default=str)}"
+                for i, sr in enumerate(skill_results)
+            )
+            sections.append(
+                f"顺便一提，刚才已经执行了这些操作：\n{results_text}\n"
+                f"有结果的话直接带进去说，不用刻意汇报。"
+            )
+
+        skill_desc = ctx.get_skill_descriptions(caller_is_developer=False)
+        if skill_desc:
+            sections.append(skill_desc)
+
+        system_prompt = "\n\n".join(sections)
+        messages = [{"role": "user", "content": "（提醒时间到了）"}]
+
+        user_comm_style = ctx.get_user_communication_style(group_id, user_id)
+
+        raw_reply = await ctx.generate_text(
+            system_prompt, messages, group_id,
+            task_name="proactive_generate",
+            user_communication_style=user_comm_style,
+        )
+        reply = strip_skill_calls(raw_reply).strip()
+        if reply:
+            persona_name = persona.name if persona else "assistant"
+            ctx.add_memory_entry(group_id, "assistant", "assistant", reply, persona_name)
+            ctx.record_reply_timestamp(group_id)
+            ctx.persist_group_state(group_id)
+        return reply or None
+    except Exception as exc:
+        logger.warning("Failed to generate reminder message: %s", exc)
+        return None
+
+
+# ── Reminder due-detection ────────────────────────────────────────────
+
+def _is_reminder_due(reminder: dict[str, Any], now: datetime) -> bool:
+    """Check whether a single reminder should fire at *now*."""
+    mode = reminder.get("mode", "once")
+    if mode == "once":
+        fire_at_str = reminder.get("fire_at")
+        if not fire_at_str:
+            return False
+        try:
+            fire_at = datetime.fromisoformat(str(fire_at_str).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        return now >= fire_at
+
+    if mode == "interval":
+        fire_at_str = reminder.get("fire_at")
+        if not fire_at_str:
+            return False
+        try:
+            fire_at = datetime.fromisoformat(str(fire_at_str).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if now < fire_at:
+            return False
+        last_fired = reminder.get("last_fired_at")
+        if last_fired:
+            try:
+                last_dt = datetime.fromisoformat(str(last_fired).replace("Z", "+00:00"))
+                if (now - last_dt).total_seconds() < 60:
+                    return False
+            except ValueError:
+                pass
+        return True
+
+    if mode in ("daily", "weekly"):
+        time_str = reminder.get("time", "")
+        if not time_str or ":" not in time_str:
+            return False
+        try:
+            h, m = map(int, str(time_str).split(":"))
+        except ValueError:
+            return False
+        now_local = now.astimezone()
+        if now_local.hour != h or now_local.minute != m:
+            return False
+        last_fired = reminder.get("last_fired_at")
+        if last_fired:
+            try:
+                last_dt = datetime.fromisoformat(str(last_fired).replace("Z", "+00:00"))
+                last_local = last_dt.astimezone()
+                if (
+                    last_local.year == now_local.year
+                    and last_local.month == now_local.month
+                    and last_local.day == now_local.day
+                    and last_local.hour == now_local.hour
+                    and last_local.minute == now_local.minute
+                ):
+                    return False
+            except ValueError:
+                pass
+        if mode == "weekly":
+            weekdays = reminder.get("weekdays")
+            if weekdays is not None:
+                if now_local.weekday() not in [int(d) for d in weekdays]:
+                    return False
+            else:
+                weekday = reminder.get("weekday")
+                if weekday is not None and now_local.weekday() != int(weekday):
+                    return False
+        return True
+
+    return False
+
+
+# ── CRUD helpers ──────────────────────────────────────────────────────
 
 def _do_create(
     content: str,
@@ -333,6 +625,8 @@ def _do_cancel(
     }
 
 
+# ── Utilities ─────────────────────────────────────────────────────────
+
 def _is_valid_hhmm(value: str) -> bool:
     try:
         h, m = value.split(":")
@@ -348,7 +642,6 @@ def _weekday_name(d: int) -> str:
 
 
 def _parse_weekdays(value: list[int] | None) -> list[int]:
-    """Parse and validate weekdays list, returning sorted unique valid values."""
     if value is None:
         return []
     if isinstance(value, int):
@@ -357,7 +650,7 @@ def _parse_weekdays(value: list[int] | None) -> list[int]:
         return []
     if isinstance(value, str):
         try:
-            parsed = __import__("json").loads(value)
+            parsed = json.loads(value)
             if isinstance(parsed, list):
                 value = parsed
             elif isinstance(parsed, int):

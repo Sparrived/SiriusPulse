@@ -65,6 +65,10 @@ class SkillRegistry:
     def all_skills(self) -> list[SkillDefinition]:
         return list(self._skills.values())
 
+    def passive_skills(self) -> list[SkillDefinition]:
+        """Return all passive skills (those with background tasks or triggers)."""
+        return [s for s in self._skills.values() if s.is_passive]
+
     def register(self, skill: SkillDefinition) -> None:
         """Manually register a skill definition."""
         self._skills[skill.name] = skill
@@ -213,9 +217,14 @@ class SkillRegistry:
             return None
 
         run_func = getattr(module, "run", None)
-        if not callable(run_func):
+        bg_task_factory = getattr(module, "create_background_tasks", None)
+        trigger_factory = getattr(module, "create_triggers", None)
+        has_active = callable(run_func)
+        has_passive = callable(bg_task_factory) or callable(trigger_factory)
+
+        if not has_active and not has_passive:
             sys.modules.pop(module_name, None)
-            logger.warning("SKILL文件缺少 run() 函数: %s", file_path.name)
+            logger.warning("SKILL文件缺少 run()/create_background_tasks()/create_triggers(): %s", file_path.name)
             return None
 
         name = str(meta.get("name", file_path.stem)).strip()
@@ -274,7 +283,9 @@ class SkillRegistry:
             tags=tags,
             adapter_types=adapter_types,
             source_path=file_path,
-            _run_func=run_func,
+            _run_func=run_func if has_active else None,
+            _background_task_factory=bg_task_factory if callable(bg_task_factory) else None,
+            _trigger_factory=trigger_factory if callable(trigger_factory) else None,
         )
 
     def build_tool_descriptions(
@@ -301,6 +312,9 @@ class SkillRegistry:
 
         lines: list[str] = []
         for skill in self._skills.values():
+            # Passive-only skills (has factories but no run func) are not callable by the model
+            if skill._run_func is None and skill.is_passive:
+                continue
             if (
                 skill.developer_only
                 and invocation_context is not None

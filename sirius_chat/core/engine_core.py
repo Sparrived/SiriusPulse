@@ -232,6 +232,8 @@ class _EmotionalGroupChatEngineBase:
         # SKILL system
         self._skill_registry: Any | None = None
         self._skill_executor: Any | None = None
+        self._passive_skill_tasks: dict[str, asyncio.Task] = {}
+        self._passive_skill_triggers: dict[str, list[Any]] = {}
 
         # Sticker RAG system
         self._sticker_system: Any | None = None
