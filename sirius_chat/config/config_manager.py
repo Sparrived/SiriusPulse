@@ -234,7 +234,7 @@ class ConfigManager:
         overrides: dict[str, Any] | None = None,
     ) -> SessionConfig:
         """Build a runtime SessionConfig from workspace config + roleplay assets."""
-        from sirius_chat.roleplay_prompting import load_generated_agent_library
+        from sirius_chat.persona_generation import load_generated_agent_library
 
         config_root = Path(work_path)
         runtime_root = Path(data_path) if data_path is not None else config_root

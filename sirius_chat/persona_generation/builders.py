@@ -10,7 +10,7 @@ from typing import Awaitable, Callable, cast
 
 from sirius_chat.config import Agent, OrchestrationPolicy, SessionConfig
 from sirius_chat.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
-from sirius_chat.prompt_templates import (
+from sirius_chat.persona_generation.templates import (
     DependencyFileSnapshot,
     GeneratedSessionPreset,
     PersonaGenerationResponseError,
