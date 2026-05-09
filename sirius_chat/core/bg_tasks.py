@@ -335,7 +335,6 @@ class BackgroundTasksMixin:
         # Generate proactive message
         bundle = self._build_proactive_prompt(trigger, group_id)
         style = self.style_adapter.adapt(
-            heat_level="warm",
             pace="steady",
             is_group_chat=True,
         )
@@ -490,7 +489,7 @@ class BackgroundTasksMixin:
 
         system_prompt = "\n\n".join(sections)
         messages = [{"role": "user", "content": "（你决定主动开口）"}]
-        style = self.style_adapter.adapt(heat_level="warm", pace="steady", is_group_chat=False)
+        style = self.style_adapter.adapt(pace="steady", is_group_chat=False)
 
         from sirius_chat.token.utils import PromptTokenBreakdown, estimate_tokens
 
@@ -1103,17 +1102,17 @@ class BackgroundTasksMixin:
         is_first_interaction: bool = False,
     ):
         """构建延迟响应的 PromptBundle。"""
-        from sirius_chat.core.prompt_factory import PromptBundle
-
         if not isinstance(items, list):
             items = [items]
         if len(items) == 1:
             message_content = items[0].message_content
             speaker_name = items[0].speaker_name
+            channel_user_id = getattr(items[0], "channel_user_id", "") or ""
         else:
             parts = [item.message_content for item in items]
             message_content = "\n".join(parts)
             speaker_name = items[-1].speaker_name
+            channel_user_id = getattr(items[-1], "channel_user_id", "") or ""
         glossary = self.glossary_manager.build_prompt_section(
             group_id, text=message_content, max_terms=5
         )
@@ -1129,27 +1128,36 @@ class BackgroundTasksMixin:
             if prof:
                 delayed_user_profiles.append(prof)
 
-        persona_prompt = self.persona.build_system_prompt() if self.persona else PromptFactory.build_scene_fallback()
+        # 收集候选记忆
+        candidate_memories: list[dict[str, Any]] = []
+        for item in items:
+            for cm in getattr(item, "candidate_memories", []) or []:
+                if cm:
+                    candidate_memories.append({"source": "working_memory", "content": cm})
+
+        persona_prompt = self.persona.build_system_prompt()
         style_params = self.style_adapter.adapt(
-            heat_level="warm",
             pace="decelerating",
             persona=self.persona,
             is_group_chat=True,
         )
-        return PromptFactory.assemble_delayed(
+        return PromptFactory.assemble_chat(
             persona_prompt=persona_prompt,
             message_content=message_content,
+            speaker_name=speaker_name,
+            channel_user_id=channel_user_id,
+            content_is_tagged=True,
+            memories=candidate_memories or None,
             group_profile=self.semantic_memory.get_group_profile(group_id),
             style_params=style_params,
             other_ai_names=self._other_ai_names,
+            user_profiles=delayed_user_profiles,
             skill_registry=self._skill_registry,
-            is_group_chat=True,
             caller_is_developer=caller_is_developer,
             glossary_section=glossary,
             adapter_type=adapter_type,
+            scene_description="群里的话题有了自然间隙，你决定插一句。",
             is_first_interaction=is_first_interaction,
-            user_profiles=delayed_user_profiles,
-            speaker_name=speaker_name,
         )
 
     def _pick_proactive_topic(self, group_id: str) -> str:
@@ -1199,7 +1207,7 @@ class BackgroundTasksMixin:
             group_id, text=trigger.get("trigger_type", ""), max_terms=3
         )
         topic = self._pick_proactive_topic(group_id)
-        persona_prompt = self.persona.build_system_prompt() if self.persona else PromptFactory.build_scene_fallback()
+        persona_prompt = self.persona.build_system_prompt()
         return PromptFactory.assemble_proactive(
             persona_prompt=persona_prompt,
             trigger_reason=trigger.get("trigger_type", "silence"),

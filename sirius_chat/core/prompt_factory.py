@@ -44,7 +44,7 @@ TAG_SCENE_BEHAVIOR = "【场景行为】"
 TAG_SCENE_LOCATION = "【场景定位】"
 TAG_IDENTITY_VERIFY = "【身份识别】"
 TAG_OUTPUT_SPEC = "【输出规范】"
-TAG_CURRENT_EMOTION = "【当下的感觉】"
+TAG_CURRENT_EMOTION = "【发言者情绪】"
 TAG_RELATIONSHIP_STATUS = "【关系状态】"
 TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_GROUP_STYLE = "【群体风格】"
@@ -78,11 +78,6 @@ TAG_CURRENT_TIME = "【当前时间】"
 TAG_FACE = "【表情：{name}】"
 TAG_IMAGE = "【图片：{name}】"
 TAG_STICKER = "【动画表情：{name}】"
-TAG_MESSAGE = "【{speaker}】{content}"
-
-# 日记渲染
-TAG_DIARY_ENTRY = "【{user_id} ({name})】{content}"
-TAG_DIARY_FORMAT = "以下是对话记录（格式：【稳定ID (显示名称)】内容）："
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -116,52 +111,43 @@ class StyleParams:
 
 
 class StyleAdapter:
-    """根据节奏、热度、用户偏好适配回复长度与语气。"""
+    """根据对话节奏、用户偏好适配回复语气与长度指令。
 
-    # 热度级别 → token 上限（论文 §5.4.2）
-    _HEAT_LIMITS: dict[str, int] = {
-        "cold": 1024,
-        "warm": 512,
-        "hot": 256,
-        "overheated": 128,
-    }
+    max_tokens 由 ModelRouter 按任务类型决定，此处不再动态缩减，
+    避免在 SKILL 调用场景下因 token 预算不足导致技能标记被截断。
+    对话节奏（pace）信号转为 prompt 级长度指令，引导模型自主控制输出长度。
+    """
 
-    # 对话节奏 → token 上限
-    _PACE_LIMITS: dict[str, int] = {
-        "accelerating": 256,
-        "steady": 512,
-        "decelerating": 1024,
-        "silent": 1024,
+    _DEFAULT_MAX_TOKENS: int = 4096
+
+    # 对话节奏 → prompt 长度引导
+    _PACE_LENGTH_HINTS: dict[str, str] = {
+        "accelerating": "对话节奏在加快，请保持简短，跟上节奏。",
+        "steady": "",
+        "decelerating": "对话节奏在放缓，可以适当展开说说。",
+        "silent": "群里比较安静，可以多说一些。",
     }
 
     def adapt(
         self,
         *,
-        heat_level: str,
         pace: str,
-        topic_stability: float = 0.5,
         persona: Any | None = None,
         is_group_chat: bool = False,
     ) -> StyleParams:
         """根据当前上下文计算风格参数。"""
-        base_limit = min(
-            self._HEAT_LIMITS.get(heat_level, 128),
-            self._PACE_LIMITS.get(pace, 128),
-        )
-
-        # 冷场 + 话题稳定 → 允许更长回复
-        if heat_level == "cold" and topic_stability > 0.7:
-            base_limit = min(400, int(base_limit * 1.5))
-
-        max_tokens = base_limit
+        max_tokens = self._DEFAULT_MAX_TOKENS
         temperature = 0.7
         tone_instruction = "保持自然友好"
-        length_instruction = ""
+        length_instructions: list[str] = []
 
-        # 群聊短句偏好（上限 50 中文字）
-        if is_group_chat:
-            max_tokens = min(max_tokens, 512)
-            length_instruction = "群聊回复请控制在 30 字以内，不要换行，像真实群友一样自然接话。"
+        # 节奏信号 → prompt 级长度引导（不截断 max_tokens）
+        pace_hint = self._PACE_LENGTH_HINTS.get(pace, "")
+        if pace_hint:
+            length_instructions.append(pace_hint)
+
+        # 群聊短句偏好
+        group_short = is_group_chat
 
         # 人格风格覆盖（最高优先级）
         if persona:
@@ -172,9 +158,9 @@ class StyleAdapter:
             if persona.communication_style:
                 style = persona.communication_style.strip().lower()
                 if style == "concise":
-                    length_instruction = "请控制在 30 字以内，用1-2句话简洁回复，不要换行。"
+                    group_short = True
                 elif style == "detailed":
-                    length_instruction = "可以给出较详细的解释。"
+                    length_instructions.append("可以给出较详细的解释。")
                 elif style == "formal":
                     tone_instruction = "保持礼貌正式的语气"
                 elif style == "casual":
@@ -188,11 +174,15 @@ class StyleAdapter:
                 elif persona.emoji_preference == "none":
                     tone_instruction += "，不用表情包"
 
+        # 群聊或简洁风格统一收口，避免重复
+        if group_short:
+            length_instructions.append("群聊回复请控制在 30 字以内，不要换行，像真实群友一样自然接话。")
+
         return StyleParams(
             max_tokens=max_tokens,
             temperature=temperature,
             tone_instruction=tone_instruction,
-            length_instruction=length_instruction,
+            length_instruction=" ".join(length_instructions),
         )
 
 
@@ -355,15 +345,6 @@ class PromptFactory:
             prompt = prompt[:1197] + "…"
         return prompt
 
-    @staticmethod
-    def build_scene_fallback() -> str:
-        """无人格时的默认场景 prompt。"""
-        return (
-            f"{TAG_SCENE_LOCATION}\n"
-            "你在一个多人聊天场景里。看到消息时，按自己的性格和情绪决定是否回应。\n"
-            "回应时请控制在 30 字以内，用自然口语，短句优先，不解释、不总结、不机械关怀，不要换行。"
-        )
-
     # ──────────────────────────────────────────────────────────────────
     # Section 构建器（原子级）
     # ──────────────────────────────────────────────────────────────────
@@ -384,7 +365,7 @@ class PromptFactory:
         return (
             f"{TAG_OUTPUT_SPEC}\n"
             "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
-            "2. 直接输出你要说的话，控制在 30 字以内，禁止换行。\n"
+            "2. 直接输出你要说的话，禁止换行。\n"
             "3. 如果不需要回复（话题与你无关或有人@其他AI），直接输出 <skip/>。"
         )
 
@@ -503,7 +484,6 @@ class PromptFactory:
             "balanced": "自然平衡",
         }.get(style, style)
         lines.append(f"群体典型风格：{style_desc}")
-        lines.append(f"回复长度限制：{style_params.max_tokens} tokens")
         if style_params.length_instruction:
             lines.append(f"长度要求：{style_params.length_instruction}")
         if style_params.tone_instruction:
@@ -514,7 +494,6 @@ class PromptFactory:
     def build_style_fallback(style_params: Any) -> str:
         """无群体画像时的回复风格 fallback。"""
         lines = [TAG_REPLY_STYLE]
-        lines.append(f"回复长度限制：{style_params.max_tokens} tokens")
         if style_params.length_instruction:
             lines.append(f"长度要求：{style_params.length_instruction}")
         if style_params.tone_instruction:
@@ -592,15 +571,6 @@ class PromptFactory:
             "不能把 SKILL_CALL 标记作为回复的唯一内容。"
             "调用格式：[SKILL_CALL: 技能名 | {\"参数\": \"值\"}]"
         )
-
-    @staticmethod
-    def build_sender_line(message: Any) -> str:
-        """构建消息发送者 XML 标签。"""
-        speaker = message.speaker or "有人"
-        uid = message.channel_user_id or ""
-        safe_speaker = _html.escape(speaker, quote=True)
-        safe_uid = _html.escape(uid, quote=True)
-        return f'<message speaker="{safe_speaker}" user_id="{safe_uid}" role="user">'
 
     @staticmethod
     def build_first_interaction_hint(speaker_name: str) -> str:
@@ -689,22 +659,51 @@ class PromptFactory:
     # ──────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def assemble_immediate(
+    def assemble_chat(
         *,
         persona_prompt: str,
-        message: Any,
-        emotion: Any,
-        memories: list[dict[str, Any]],
+        message_content: str,
+        speaker_name: str = "",
+        channel_user_id: str = "",
+        content_is_tagged: bool = False,
+        emotion: Any = None,
+        memories: list[dict[str, Any]] | None = None,
         group_profile: Any | None,
-        user_profile: Any | None,
         style_params: Any,
         other_ai_names: list[str],
+        user_profiles: list[Any] | None = None,
         skill_registry: Any | None = None,
         caller_is_developer: bool = False,
         glossary_section: str = "",
         cross_group_context: str = "",
-    ) -> Any:
-        """组装即时响应 prompt。返回 PromptBundle。"""
+        adapter_type: str | None = None,
+        scene_description: str = "",
+        is_first_interaction: bool = False,
+    ) -> PromptBundle:
+        """统一组装聊天响应 prompt。返回 PromptBundle。
+
+        Args:
+            persona_prompt: 人格系统提示词。
+            message_content: 消息文本内容。
+            speaker_name: 发言者显示名称。
+            channel_user_id: 发言者平台 ID（用于身份锚定）。
+            content_is_tagged: 若 True 表示 message_content 已经是
+                <message> XML 格式（延迟队列合并后），无需再包装；
+                若 False（默认）则用 speaker_name/channel_user_id 包装。
+            emotion: 当前情绪分析结果（EmotionState 或 None）。
+            memories: 相关记忆列表。
+            group_profile: 群体画像。
+            style_params: 风格适配结果（StyleParams）。
+            other_ai_names: 群内其他 AI 名称。
+            user_profiles: 相关用户语义画像列表。
+            skill_registry: 技能注册表。
+            caller_is_developer: 调用者是否为开发者。
+            glossary_section: 术语表 prompt 段落。
+            cross_group_context: 跨群上下文。
+            adapter_type: 适配器类型（用于技能过滤）。
+            scene_description: 当前场景描述（延迟/主动响应时填充，即时响应留空）。
+            is_first_interaction: 是否为首次互动。
+        """
 
         sections: list[str] = []
         bd = PromptTokenBreakdown()
@@ -719,13 +718,20 @@ class PromptFactory:
         if other_ai:
             _add(other_ai, "identity")
         _add(PromptFactory.build_output_spec(), "output_constraint")
-        _add(
-            PromptFactory.build_emotion_context(emotion, group_profile, speaker_name=message.speaker or ""),
-            "emotion",
-        )
 
-        rel_ctx = PromptFactory.build_relationship_context(
-            user_profile, caller_is_developer, speaker_name=message.speaker or "",
+        if scene_description:
+            _add(f"{TAG_CURRENT_SCENE}{scene_description}", "emotion")
+        elif emotion is not None:
+            _add(
+                PromptFactory.build_emotion_context(emotion, group_profile, speaker_name=speaker_name),
+                "emotion",
+            )
+
+        if is_first_interaction:
+            _add(PromptFactory.build_first_interaction_hint(speaker_name), "emotion")
+
+        rel_ctx = PromptFactory.build_relationship_contexts(
+            user_profiles or [], caller_is_developer, speaker_name=speaker_name,
         )
         if rel_ctx:
             _add(rel_ctx, "relationship")
@@ -743,9 +749,7 @@ class PromptFactory:
 
         if skill_registry is not None:
             skill_desc = PromptFactory.build_skill_descriptions(
-                skill_registry,
-                caller_is_developer=caller_is_developer,
-                adapter_type=getattr(message, "adapter_type", None),
+                skill_registry, caller_is_developer=caller_is_developer, adapter_type=adapter_type,
             )
             if skill_desc:
                 _add(skill_desc, "skills")
@@ -756,78 +760,18 @@ class PromptFactory:
         system_prompt = "\n\n".join(sections)
         bd.system_prompt_total = estimate_tokens(system_prompt)
 
-        sender_line = PromptFactory.build_sender_line(message)
-        user_content = f"{sender_line}\n{message.content}\n</message>"
+        if content_is_tagged:
+            user_content = message_content
+        else:
+            safe_speaker = _html.escape(speaker_name or "有人", quote=True)
+            safe_uid = _html.escape(channel_user_id or "", quote=True)
+            sender_line = f'<message speaker="{safe_speaker}" user_id="{safe_uid}" role="user">'
+            user_content = f"{sender_line}\n{message_content}\n</message>"
         bd.user_message = estimate_tokens(user_content)
 
         return PromptBundle(
             system_prompt=system_prompt,
             user_content=user_content,
-            token_breakdown=bd,
-        )
-
-    @staticmethod
-    def assemble_delayed(
-        *,
-        persona_prompt: str,
-        message_content: str,
-        group_profile: Any | None,
-        style_params: Any,
-        other_ai_names: list[str],
-        skill_registry: Any | None = None,
-        is_group_chat: bool = False,
-        caller_is_developer: bool = False,
-        glossary_section: str = "",
-        adapter_type: str | None = None,
-        is_first_interaction: bool = False,
-        user_profiles: list[Any] | None = None,
-        speaker_name: str = "",
-    ) -> Any:
-        """组装延迟响应 prompt。返回 PromptBundle。"""
-
-        bd = PromptTokenBreakdown()
-        sections: list[str] = []
-
-        def _add(section_text: str, attr: str) -> None:
-            sections.append(section_text)
-            setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
-
-        _add(persona_prompt, "persona")
-        _add(f"{TAG_CURRENT_SCENE}群里的话题有了自然间隙，你决定插一句。", "emotion")
-        if is_first_interaction:
-            _add(PromptFactory.build_first_interaction_hint(speaker_name), "emotion")
-        rel_ctx = PromptFactory.build_relationship_contexts(
-            user_profiles or [], caller_is_developer, speaker_name=speaker_name,
-        )
-        if rel_ctx:
-            _add(rel_ctx, "relationship")
-        other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
-        if other_ai:
-            _add(other_ai, "identity")
-        if group_profile:
-            style = group_profile.typical_interaction_style or "balanced"
-            style_desc = {"humorous": "轻松幽默", "formal": "正式严谨", "balanced": "自然平衡"}.get(style, style)
-            _add(f"{TAG_GROUP_STYLE}{style_desc}", "group_style")
-        if skill_registry is not None:
-            skill_desc = PromptFactory.build_skill_descriptions(
-                skill_registry, caller_is_developer=caller_is_developer, adapter_type=adapter_type,
-            )
-            if skill_desc:
-                _add(skill_desc, "skills")
-        _add(
-            f"{TAG_LENGTH_REQ}{style_params.length_instruction or '保持简洁，控制在 30 字以内，禁止换行'}",
-            "output_constraint",
-        )
-        if glossary_section:
-            _add(glossary_section, "glossary")
-
-        system_prompt = "\n\n".join(sections)
-        bd.system_prompt_total = estimate_tokens(system_prompt)
-        bd.user_message = estimate_tokens(message_content)
-
-        return PromptBundle(
-            system_prompt=system_prompt,
-            user_content=message_content,
             token_breakdown=bd,
         )
 
@@ -903,18 +847,6 @@ class PromptFactory:
     def render_image_label(label_prefix: str, display_name: str) -> str:
         """渲染图片/动画表情标签。"""
         return f"【{label_prefix}：{display_name}】"
-
-    @staticmethod
-    def render_message(sender: str, content: str) -> str:
-        """渲染单条消息（sender + content）。"""
-        return TAG_MESSAGE.format(speaker=sender, content=content)
-
-    @staticmethod
-    def render_chat_history_message(message: Any) -> str:
-        """渲染聊天历史中的单条消息。"""
-        if message.speaker:
-            return f"【{message.speaker}】{message.content}"
-        return message.content
 
     @staticmethod
     def render_multimodal_item(mtype: str, value: str) -> str:
@@ -1063,10 +995,9 @@ class PromptFactory:
             full_text_count = min(5, len(entries))
             parts.extend(["", TAG_HISTORY_DIARY])
             for i, entry in enumerate(entries, 1):
-                if i <= full_text_count and entry.content:
-                    parts.append(f"{i}. {entry.content}")
-                else:
-                    parts.append(f"{i}. {entry.summary}")
+                ts = (entry.created_at or "")[:16].replace("T", " ")
+                text = entry.content if (i <= full_text_count and entry.content) else entry.summary
+                parts.append(f"{i}. [{ts}] {text}" if ts else f"{i}. {text}")
             parts.append(TAG_HISTORY_DIARY_END)
 
         if cross_group_xml:
@@ -1088,27 +1019,3 @@ class PromptFactory:
             ])
 
         return "\n".join(parts)
-
-    # ──────────────────────────────────────────────────────────────────
-    # 日记渲染
-    # ──────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def render_diary_entry(user_id: str, name: str, content: str) -> str:
-        """渲染日记对话记录中的单条消息。"""
-        return TAG_DIARY_ENTRY.format(user_id=user_id, name=name, content=content)
-
-    @staticmethod
-    def build_diary_format_hint() -> str:
-        """日记格式说明。"""
-        return TAG_DIARY_FORMAT
-
-    # ──────────────────────────────────────────────────────────────────
-    # 认知层对话上下文
-    # ──────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def render_conversation_line(ts: str, display_name: str, content: str) -> str:
-        """渲染认知层对话上下文中的单行。"""
-        time_str = f"【{ts}】" if ts else ""
-        return f"{time_str}【{display_name}】{content}"

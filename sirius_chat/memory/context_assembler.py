@@ -143,8 +143,12 @@ class ContextAssembler:
 
         breakdown: dict[str, int] = {}
         if diary_entries:
+            full_count = min(5, len(diary_entries))
             diary_text = "\n".join(
-                f"{i}. {e.content if i <= 5 else e.summary}"
+                f"{i}. [{(e.created_at or '')[:16].replace('T', ' ')}] "
+                f"{e.content if (i <= full_count and e.content) else e.summary}"
+                if e.created_at
+                else f"{i}. {e.content if (i <= full_count and e.content) else e.summary}"
                 for i, e in enumerate(diary_entries[:12], 1)
             )
             breakdown["diary"] = estimate_tokens(diary_text)

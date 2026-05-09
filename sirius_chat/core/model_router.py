@@ -115,11 +115,12 @@ class ModelRouter:
         Escalation rules:
             - urgency > 80: upgrade to stronger model, lower temperature
             - urgency > 95: strongest model, more tokens
-            - heat=overheated: reduce max_tokens by 50%
+
+        heat_level 不再影响 max_tokens：长度控制已移至 StyleAdapter 的 prompt 指令层，
+        避免在 SKILL 调用场景下因 token 预算不足导致技能标记被截断。
         """
         base = self._registry.get(task_name)
         if base is None:
-            # Unknown task → fallback to response_generate defaults
             base = self._registry.get("response_generate", TaskConfig(
                 model_name="gpt-4o", temperature=0.7, max_tokens=512
             ))
@@ -132,21 +133,13 @@ class ModelRouter:
 
         # Urgency escalation
         if urgency > _URGENCY_CRITICAL:
-            # Critical → strongest available, very focused
             model = self._stronger_model(model)
             temperature = max(0.1, temperature - 0.3)
             max_tokens = max(max_tokens, min(8192, int(max_tokens * 1.3)))
         elif urgency > _URGENCY_ESCALATE:
-            # High urgency → stronger model, slightly lower temperature
             model = self._stronger_model(model)
             temperature = max(0.2, temperature - 0.2)
             max_tokens = max(max_tokens, min(4096, int(max_tokens * 1.1)))
-
-        # Heat adaptation
-        if heat_level == "overheated":
-            max_tokens = max(50, int(max_tokens * 0.5))
-        elif heat_level == "hot":
-            max_tokens = max(80, int(max_tokens * 0.7))
 
         return TaskConfig(
             model_name=model,

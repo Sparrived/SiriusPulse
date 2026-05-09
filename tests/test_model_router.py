@@ -53,19 +53,12 @@ class TestUrgencyEscalation:
 
 
 class TestHeatAdaptation:
-    def test_overheated_halves_tokens(self):
+    def test_heat_does_not_affect_max_tokens(self):
+        """热度不再缩减 max_tokens，长度控制移至 prompt 指令层。"""
         router = ModelRouter()
         normal = router.resolve("response_generate", heat_level="warm")
         hot = router.resolve("response_generate", heat_level="overheated")
-        assert hot.max_tokens <= normal.max_tokens // 2 + 1
-        assert hot.max_tokens >= 50
-
-    def test_hot_reduces_tokens(self):
-        router = ModelRouter()
-        normal = router.resolve("response_generate", heat_level="warm")
-        hot = router.resolve("response_generate", heat_level="hot")
-        assert hot.max_tokens < normal.max_tokens
-        assert hot.max_tokens >= 80
+        assert hot.max_tokens == normal.max_tokens
 
 
 class TestOverrides:

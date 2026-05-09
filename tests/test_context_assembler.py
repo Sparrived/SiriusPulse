@@ -117,12 +117,13 @@ class TestContextAssembler:
         for i in range(13, 16):
             assert not any(f"摘要{i}" in line for line in lines)
 
-        # 前 5 条注入完整 content，不显示 summary
+        # 前 5 条注入完整 content，不显示 summary，且带时间戳
         for i in range(1, 6):
-            assert f"{i}. query日记正文{i}" in lines
-            assert f"{i}. 摘要{i}" not in lines
+            assert f"query日记正文{i}" in "\n".join(lines)
+            assert f"[2026-04-22 10:0{i}]" in "\n".join(lines)
+            assert f"摘要{i}" not in lines
 
         # 第 6 条及以后仅注入摘要，不含正文
         for i in range(6, 13):
-            assert f"{i}. 摘要{i}" in lines
-            assert f"{i}. query日记正文{i}" not in lines
+            assert f"摘要{i}" in "\n".join(lines)
+            assert f"query日记正文{i}" not in lines
