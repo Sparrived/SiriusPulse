@@ -22,7 +22,7 @@ from sirius_chat.core.events import SessionEvent, SessionEventBus, SessionEventT
 from sirius_chat.core.identity_resolver import IdentityContext, IdentityResolver
 from sirius_chat.core.model_router import ModelRouter, TaskConfig
 from sirius_chat.core.proactive_trigger import ProactiveTrigger
-from sirius_chat.core.response_assembler import ResponseAssembler, StyleAdapter, StyleParams
+from sirius_chat.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
 from sirius_chat.core.response_strategy import ResponseStrategyEngine
 from sirius_chat.core.rhythm import RhythmAnalyzer
 from sirius_chat.core.threshold_engine import ThresholdEngine
@@ -169,10 +169,7 @@ class _EmotionalGroupChatEngineBase:
         self.rhythm_analyzer = RhythmAnalyzer()
 
         # Execution layer (persona-injected)
-        self.response_assembler = ResponseAssembler(
-            persona=self.persona,
-            other_ai_names=self.config.get("other_ai_names", []),
-        )
+        self._other_ai_names = list(self.config.get("other_ai_names", []))
         self.style_adapter = StyleAdapter()
         task_overrides: dict[str, dict[str, Any]] = {}
         orch_task_temperatures = orch.get("task_temperatures")
@@ -338,7 +335,7 @@ class _EmotionalGroupChatEngineBase:
                 recent = self.basic_memory.get_context(group_id, n=1)
                 if recent:
                     last_entry = recent[0]
-                    last_entry.content = f"[图片] [图片描述：{intent.image_caption}]"
+                    last_entry.content = f"【图片】【图片描述：{intent.image_caption}】"
                     if last_entry.multimodal_inputs:
                         for m in last_entry.multimodal_inputs:
                             if m.get("type") == "image":
@@ -364,9 +361,9 @@ class _EmotionalGroupChatEngineBase:
                 last_entry = recent[0]
                 original_content = last_entry.content or ""
                 if self._is_pure_image_message(original_content):
-                    last_entry.content = f"[图片] [图片描述：{intent.image_caption}]"
+                    last_entry.content = f"【图片】【图片描述：{intent.image_caption}】"
                 else:
-                    last_entry.content = f"{original_content} [图片描述：{intent.image_caption}]"
+                    last_entry.content = f"{original_content} 【图片描述：{intent.image_caption}】"
                 # 将 caption 也存入 multimodal_inputs 供 XML 渲染使用
                 if last_entry.multimodal_inputs:
                     for m in last_entry.multimodal_inputs:
@@ -701,7 +698,6 @@ class _EmotionalGroupChatEngineBase:
             loaded = PersonaStore.load(self.work_path)
             if loaded:
                 self.persona = loaded
-                self.response_assembler.persona = loaded
                 logger.info("我的人设已经加载好了，我是 %s～", loaded.name)
 
             logger.info(
@@ -741,6 +737,189 @@ class _EmotionalGroupChatEngineBase:
                 )
         except Exception as exc:
             logger.warning("表情包系统初始化失败: %s", exc)
+
+    async def _generate(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        group_id: str,
+        style_params: StyleParams | None = None,
+        task_name: str = "response_generate",
+        urgency: int = 0,
+        user_communication_style: str = "",
+        token_breakdown: dict[str, int] | None = None,
+    ) -> str:
+        """调用 LLM provider 生成回复。
+
+        Args:
+            system_prompt: 指令级上下文（人格、情绪、技能等）。
+            messages: 标准 OpenAI 格式会话历史，以当前用户消息结尾。
+            group_id: 目标群组标识。
+            style_params: 可选风格参数（max_tokens、temperature）。
+            task_name: 认知任务类型，用于模型路由。
+            urgency: 紧急度 (0-100)，用于动态升级。
+        """
+        if self.provider_async is None:
+            return "[未配置 provider]"
+
+        # 语气对齐：适配当前群聊情绪基调
+        tone_hint = self._get_tone_alignment(group_id)
+        if tone_hint:
+            system_prompt = system_prompt + "\n\n" + tone_hint
+
+        # 注入当前时间（中国时区 UTC+8）
+        china_tz = timezone(timedelta(hours=8))
+        now_str = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S")
+        system_prompt = f"{PromptFactory.build_current_time_section(now_str)}\n\n{system_prompt}"
+
+        # 模型路由
+        recent = self._get_recent_messages(group_id, n=5)
+        rhythm = self.rhythm_analyzer.analyze(group_id, recent)
+        cfg = self.model_router.resolve(
+            task_name,
+            urgency=urgency,
+            heat_level=rhythm.heat_level,
+            user_communication_style=user_communication_style,
+        )
+
+        # 应用风格参数（覆盖路由器的 max_tokens）
+        if style_params:
+            effective_max_tokens = min(cfg.max_tokens, style_params.max_tokens)
+            effective_temperature = style_params.temperature
+        else:
+            effective_max_tokens = cfg.max_tokens
+            effective_temperature = cfg.temperature
+
+        # 构建 GenerationRequest
+        from sirius_chat.providers.base import GenerationRequest, LLMProvider
+
+        request = GenerationRequest(
+            model=cfg.model_name,
+            system_prompt=system_prompt.strip(),
+            messages=messages,
+            temperature=effective_temperature,
+            max_tokens=effective_max_tokens,
+            timeout_seconds=cfg.timeout,
+            purpose=task_name,
+        )
+
+        # 估算输入 token
+        from sirius_chat.providers.base import estimate_generation_request_input_tokens
+
+        estimated_input_tokens = estimate_generation_request_input_tokens(request)
+
+        # 调试：记录完整 prompt
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "LLM prompt for group=%s:\nSYSTEM:\n%s\n\nMESSAGES:\n%s",
+                group_id,
+                system_prompt,
+                "\n".join(f"  [{m.get('role')}] {m.get('content', '')[:200]}" for m in messages),
+            )
+
+        # 调用 provider
+        reply = ""
+        duration_ms = 0.0
+        try:
+            t0 = time.perf_counter()
+            if hasattr(self.provider_async, "generate_async"):
+                reply = await self.provider_async.generate_async(request)
+            elif isinstance(self.provider_async, LLMProvider):
+                reply = await asyncio.to_thread(self.provider_async.generate, request)
+            else:
+                raise RuntimeError("配置的提供商未实现 generate/generate_async 方法。")
+            duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+        except Exception as exc:
+            error_type = self._classify_exception(exc)
+            error_message = str(exc)[:200]
+            logger.warning("[%s] 生成失败: %s | %s", task_name, error_type, error_message)
+            raise
+
+        # 清理：剥离模型回显的 <conversation_history> XML 块
+        reply = self._strip_conversation_history_xml(reply)
+
+        # LLM 自选跳过
+        if re.search(r"<\s*skip\s*/?\s*>", reply, flags=re.IGNORECASE):
+            logger.info("[%s] LLM 主动选择跳过回复（输出 skip 标签）。", task_name)
+            reply = ""
+
+        # 计算对话深度
+        now_ts = time.time()
+        last_reply_ts = self._last_reply_at.get(group_id, 0)
+        conversation_depth = (
+            self._last_reply_depth.get(group_id, 0) + 1
+            if now_ts - last_reply_ts < 60
+            else 1
+        )
+        self._last_reply_depth[group_id] = conversation_depth
+
+        # 记录 token 用量
+        from sirius_chat.config import TokenUsageRecord
+        from sirius_chat.providers.base import get_last_generation_usage
+        from sirius_chat.token.utils import estimate_tokens
+
+        output_chars = len(reply)
+        estimated_output_tokens = estimate_tokens(reply) if reply else 0
+        real_usage = get_last_generation_usage()
+        if real_usage and isinstance(real_usage, dict):
+            prompt_tokens = int(real_usage.get("prompt_tokens", estimated_input_tokens))
+            completion_tokens = int(real_usage.get("completion_tokens", estimated_output_tokens))
+            total_tokens = int(real_usage.get("total_tokens", prompt_tokens + completion_tokens))
+            estimation_method = "provider_real"
+        else:
+            prompt_tokens = estimated_input_tokens
+            completion_tokens = estimated_output_tokens
+            total_tokens = estimated_input_tokens + estimated_output_tokens
+            estimation_method = "tiktoken" if estimated_output_tokens > 0 else "char_div4"
+
+        persona_name = self.persona.name if self.persona else ""
+        provider_name = getattr(
+            self.provider_async, "_last_provider_name",
+            getattr(self.provider_async, "_provider_name", "unknown"),
+        )
+
+        # 构建 breakdown JSON
+        breakdown_json = ""
+        if token_breakdown:
+            from sirius_chat.token.utils import PromptTokenBreakdown
+
+            bd = PromptTokenBreakdown(**token_breakdown)
+            bd.system_prompt_total = estimate_tokens(system_prompt)
+            bd.user_message = sum(
+                estimate_tokens(str(m.get("content", ""))) for m in messages
+            )
+            bd.output_total = completion_tokens
+            bd.total = bd.system_prompt_total + bd.user_message + bd.output_total
+            breakdown_json = bd.to_json()
+
+        record = TokenUsageRecord(
+            actor_id="assistant",
+            task_name=task_name,
+            model=cfg.model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            input_chars=len(system_prompt)
+            + sum(len(str(m.get("content", ""))) for m in messages),
+            output_chars=output_chars,
+            estimation_method=estimation_method,
+            retries_used=0,
+            persona_name=persona_name,
+            group_id=group_id,
+            provider_name=provider_name,
+            breakdown_json=breakdown_json,
+            duration_ms=duration_ms,
+            conversation_depth=conversation_depth,
+        )
+        self.token_usage_records.append(record)
+
+        if self.token_store is not None:
+            try:
+                self.token_store.add(record)
+            except Exception:
+                pass
+
+        return reply
 
     def _record_sticker_subtask_tokens(
         self,
@@ -936,7 +1115,7 @@ class _EmotionalGroupChatEngineBase:
                     group_id=group_id,
                     user_id="assistant",
                     role="assistant",
-                    content="[动画表情]",
+                    content=PromptFactory.render_sticker_reference(),
                     speaker_name=self.persona.name if self.persona else "assistant",
                     multimodal_inputs=[{
                         "type": "image",

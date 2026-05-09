@@ -13,6 +13,7 @@ from typing import Any
 
 from sirius_chat.core.delayed_response_queue import _parse_iso
 from sirius_chat.core.events import SessionEvent, SessionEventType
+from sirius_chat.core.prompt_factory import PromptFactory
 from sirius_chat.skills.executor import strip_skill_calls
 
 logger = logging.getLogger(__name__)
@@ -482,24 +483,10 @@ class BackgroundTasksMixin:
         if not topic:
             return None
 
-        identity = self.persona.build_system_prompt() if self.persona else ""
-        sections: list[str] = []
-        if identity:
-            sections.append(identity)
-        sections.extend(
-            [
-                "[当前场景] 你突然想起了开发者，想主动找他聊聊，分享一个话题或回忆。",
-                "[语气] 亲密、自然、像老朋友一样。不要机械，不要过度热情。",
-                f"[话题] {topic}",
-            ]
-        )
+        from sirius_chat.core.prompt_factory import PromptFactory
 
-        if user_profile and user_profile.relationship_state:
-            familiarity = user_profile.relationship_state.compute_familiarity()
-            if familiarity > 0.7:
-                sections.append("[关系] 你们已经很熟了，可以用更随意的语气。")
-            elif familiarity > 0.4:
-                sections.append("[关系] 你们关系不错，保持友好自然的语气。")
+        identity = self.persona.build_system_prompt() if self.persona else ""
+        sections = PromptFactory.build_developer_chat_sections(identity, topic, user_profile)
 
         system_prompt = "\n\n".join(sections)
         messages = [{"role": "user", "content": "（你决定主动开口）"}]
@@ -873,21 +860,21 @@ class BackgroundTasksMixin:
                     err = f"SKILL '{skill_name}' 未找到"
                     logger.warning(err)
                     if not all_silent:
-                        skill_results.append(f"[{err}]")
+                        skill_results.append(PromptFactory.build_skill_status_message(err))
                     continue
                 # Trust-based permission: low-trust non-developers cannot invoke skills
                 if caller_trust < 0.3 and not caller_is_developer:
                     err = f"SKILL '{skill_name}' 被拒绝：信任度不足 ({caller_trust:.2f})"
                     logger.warning(err)
                     if not all_silent:
-                        skill_results.append(f"[SKILL '{skill_name}' 拒绝] 你还不够熟，这个技能暂不可用")
+                        skill_results.append(PromptFactory.build_skill_status_message("拒绝", skill_name, "你还不够熟，这个技能暂不可用"))
                     continue
 
                 if skill.developer_only and not caller_is_developer:
                     err = f"SKILL '{skill_name}' 被拒绝：caller 不是 developer"
                     logger.warning(err)
                     if not all_silent:
-                        skill_results.append(f"[SKILL '{skill_name}' 拒绝] 该技能仅 developer 可用")
+                        skill_results.append(PromptFactory.build_skill_status_message("拒绝", skill_name, "该技能仅 developer 可用"))
                     continue
                 ctx = SkillInvocationContext(
                     caller=skill_caller,
@@ -912,7 +899,7 @@ class BackgroundTasksMixin:
                     if result.success:
                         if not skill.silent:
                             skill_results.append(
-                                f"[SKILL '{skill_name}' 结果] {result.to_display_text()}"
+                                PromptFactory.build_skill_status_message("结果", skill_name, result.to_display_text())
                             )
                             for block in result.multimodal_blocks:
                                 skill_multimodal.append(
@@ -942,11 +929,11 @@ class BackgroundTasksMixin:
                         err = result.error or "未知错误"
                         logger.warning("SKILL '%s' 执行失败: %s", skill_name, err)
                         if not skill.silent:
-                            skill_results.append(f"[SKILL '{skill_name}' 失败] {err}")
+                            skill_results.append(PromptFactory.build_skill_status_message("失败", skill_name, err))
                 except Exception as exc:
                     logger.error("SKILL '%s' 执行异常: %s", skill_name, exc)
                     if not skill.silent:
-                        skill_results.append(f"[SKILL '{skill_name}' 异常] {exc}")
+                        skill_results.append(PromptFactory.build_skill_status_message("异常", skill_name, str(exc)))
 
                 # 链式调用中间增加延迟，避免回复过快
                 if idx < len(calls) - 1:
@@ -1009,14 +996,13 @@ class BackgroundTasksMixin:
                         _truncated = _truncated[:_last_nl]
                     _raw = (
                         f"{_truncated}\n\n"
-                        f"[注：技能结果过长，已截断至前 {_MEMORY_SKILL_RESULT_CHAR_LIMIT} 字符，"
-                        f"原始长度 {len(_raw)} 字符]"
+                        f"{PromptFactory.build_memory_skill_truncation(_MEMORY_SKILL_RESULT_CHAR_LIMIT, len(_raw))}"
                     )
                 self.basic_memory.add_entry(
                     group_id=group_id,
                     user_id="skill_system",
                     role="system",
-                    content=f"[技能执行结果]\n{_raw}",
+                    content=PromptFactory.build_memory_skill_result(_raw, _MEMORY_SKILL_RESULT_CHAR_LIMIT),
                 )
 
         # If the loop ended because max rounds were exhausted and the last round
@@ -1107,5 +1093,136 @@ class BackgroundTasksMixin:
                 "partial_replies": partial_replies,
             }
         ]
+
+    # ------------------------------------------------------------------
+    # Prompt builders (migrated from PromptBuildersMixin)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_skill_result_content(
+        skill_results: list[str],
+        multimodal_blocks: list[dict[str, Any]],
+        suffix: str = "",
+    ) -> str | list[dict[str, Any]]:
+        """组装技能执行结果为消息内容，委托 PromptFactory。"""
+        return PromptFactory.build_skill_result_content(skill_results, multimodal_blocks, suffix)
+
+    def _build_delayed_prompt(
+        self,
+        items: Any,
+        group_id: str,
+        caller_is_developer: bool = False,
+        adapter_type: str | None = None,
+        is_first_interaction: bool = False,
+    ):
+        """构建延迟响应的 PromptBundle。"""
+        from sirius_chat.core.prompt_factory import PromptBundle
+
+        if not isinstance(items, list):
+            items = [items]
+        if len(items) == 1:
+            message_content = items[0].message_content
+            speaker_name = items[0].speaker_name
+        else:
+            parts = [item.message_content for item in items]
+            message_content = "\n".join(parts)
+            speaker_name = items[-1].speaker_name
+        glossary = self.glossary_manager.build_prompt_section(
+            group_id, text=message_content, max_terms=5
+        )
+        # 收集触发批次中所有用户的语义画像
+        related_uids: set[str] = set()
+        for item in items:
+            for uid in getattr(item, "related_user_ids", []):
+                if uid:
+                    related_uids.add(uid)
+        delayed_user_profiles: list[Any] = []
+        for uid in related_uids:
+            prof = self.semantic_memory.get_user_profile(group_id, uid)
+            if prof:
+                delayed_user_profiles.append(prof)
+
+        persona_prompt = self.persona.build_system_prompt() if self.persona else PromptFactory.build_scene_fallback()
+        style_params = self.style_adapter.adapt(
+            heat_level="warm",
+            pace="decelerating",
+            persona=self.persona,
+            is_group_chat=True,
+        )
+        return PromptFactory.assemble_delayed(
+            persona_prompt=persona_prompt,
+            message_content=message_content,
+            group_profile=self.semantic_memory.get_group_profile(group_id),
+            style_params=style_params,
+            other_ai_names=self._other_ai_names,
+            skill_registry=self._skill_registry,
+            is_group_chat=True,
+            caller_is_developer=caller_is_developer,
+            glossary_section=glossary,
+            adapter_type=adapter_type,
+            is_first_interaction=is_first_interaction,
+            user_profiles=delayed_user_profiles,
+            speaker_name=speaker_name,
+        )
+
+    def _pick_proactive_topic(self, group_id: str) -> str:
+        """从语义记忆中选取主动发起话题，随机从前 3 名中选择以避免重复。"""
+        import random
+
+        group_profile = self.semantic_memory.get_group_profile(group_id)
+        if group_profile is None:
+            return ""
+
+        candidates: list[str] = []
+
+        if group_profile.interest_topics:
+            candidates.extend(group_profile.interest_topics)
+
+        for profile in self.semantic_memory.list_group_user_profiles(group_id):
+            for node in profile.interest_graph:
+                if node.participation >= 0.3 and node.topic:
+                    candidates.append(node.topic)
+
+        dominant = group_profile.group_norms.get("dominant_topic", "")
+        if dominant:
+            candidates.append(dominant)
+
+        if not candidates:
+            return ""
+
+        taboo = set(group_profile.taboo_topics or [])
+        candidates = [t for t in candidates if t not in taboo]
+
+        if not candidates:
+            return ""
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for t in candidates:
+            if t not in seen:
+                seen.add(t)
+                unique.append(t)
+
+        pool = unique[:3] if len(unique) >= 3 else unique
+        return random.choice(pool)
+
+    def _build_proactive_prompt(self, trigger: dict[str, Any], group_id: str, adapter_type: str | None = None):
+        """构建主动发起的 PromptBundle。"""
+        glossary = self.glossary_manager.build_prompt_section(
+            group_id, text=trigger.get("trigger_type", ""), max_terms=3
+        )
+        topic = self._pick_proactive_topic(group_id)
+        persona_prompt = self.persona.build_system_prompt() if self.persona else PromptFactory.build_scene_fallback()
+        return PromptFactory.assemble_proactive(
+            persona_prompt=persona_prompt,
+            trigger_reason=trigger.get("trigger_type", "silence"),
+            group_profile=self.semantic_memory.get_group_profile(group_id),
+            suggested_tone=trigger.get("suggested_tone", "casual"),
+            other_ai_names=self._other_ai_names,
+            is_group_chat=True,
+            glossary_section=glossary,
+            topic_context=topic,
+            adapter_type=adapter_type,
+        )
 
 

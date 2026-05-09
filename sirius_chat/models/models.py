@@ -139,6 +139,8 @@ class Transcript:
         return self.user_memory.get_user(user_id, group_id=group_id)
 
     def _generate_summary(self, archived_messages: list[Message], max_items: int = 8) -> str:
+        from sirius_chat.core.prompt_factory import PromptFactory
+
         items: list[str] = []
         for message in archived_messages:
             if not message.speaker:
@@ -146,10 +148,10 @@ class Transcript:
             text = message.content.replace("\n", " ").strip()
             if not text:
                 continue
-            items.append(f"[{message.speaker}] {text[:60]}")
+            items.append(PromptFactory.render_speaker_line(message.speaker, text[:60]))
             if len(items) >= max_items:
                 break
-        return " | ".join(items)
+        return PromptFactory.render_speaker_lines_summary(items)
 
     def compress_for_budget(self, *, max_messages: int, max_chars: int) -> None:
         if max_messages <= 0 or max_chars <= 0:
@@ -260,21 +262,15 @@ class Transcript:
         return transcript
 
     def as_chat_history(self) -> list[dict[str, str]]:
+        from sirius_chat.core.prompt_factory import PromptFactory
+
         history: list[dict[str, str]] = []
         for message in self.messages:
             if message.speaker:
-                content = f"[{message.speaker}] {message.content}"
+                content = PromptFactory.render_speaker_line(message.speaker, message.content)
             else:
                 content = message.content
-            # Append multimodal input descriptions so the model is aware of them
             if message.multimodal_inputs:
-                parts: list[str] = []
-                for item in message.multimodal_inputs:
-                    mtype = item.get("type", "unknown")
-                    mvalue = item.get("value", "")
-                    if mvalue:
-                        parts.append(f"[{mtype}: {mvalue}]")
-                if parts:
-                    content = f"{content}\n附件: {' '.join(parts)}"
+                content = PromptFactory.append_multimodal_descriptions(content, message.multimodal_inputs)
             history.append({"role": message.role, "content": content})
         return history

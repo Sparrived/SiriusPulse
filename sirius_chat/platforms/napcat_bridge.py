@@ -71,9 +71,11 @@ _QQ_FACE_NAMES: dict[str, str] = {
 
 
 def _face_to_text(data: dict[str, Any]) -> str:
+    from sirius_chat.core.prompt_factory import PromptFactory
+
     face_id = str(data.get("id", ""))
     name = _QQ_FACE_NAMES.get(face_id)
-    return f"[表情：{name}]" if name else f"[表情：{face_id}]"
+    return PromptFactory.render_face(face_id, name)
 
 
 def _extract_text_from_segments(message: list[dict[str, Any]]) -> str:
@@ -789,6 +791,8 @@ class NapCatBridge:
         return f"{name}#{seen}"
 
     def _build_image_label(self, seg: dict[str, Any], index: int, label_prefix: str, counter: dict[str, int]) -> str:
+        from sirius_chat.core.prompt_factory import PromptFactory
+
         image_name = self._extract_image_name(seg, index)
         display_name = self._dedupe_image_name(image_name, counter)
-        return f"[{label_prefix}: {display_name}]"
+        return PromptFactory.render_image_label(label_prefix, display_name)

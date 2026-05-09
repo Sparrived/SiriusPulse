@@ -174,7 +174,7 @@ class PromptTokenBreakdown:
     enabling precise budget diagnosis and optimisation.
     """
 
-    # ResponseAssembler sections
+    # PromptFactory sections
     persona: int = 0
     identity: int = 0
     output_constraint: int = 0

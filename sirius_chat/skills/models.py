@@ -50,7 +50,7 @@ class SkillResult:
     def to_display_text(self) -> str:
         """Convert result to a human-readable text for AI consumption."""
         if not self.success:
-            return f"[SKILL执行失败] {self.error}"
+            return f"【SKILL执行失败】{self.error}"
         if self.text_blocks:
             lines = [block.value.strip() for block in self.text_blocks if block.value.strip()]
             if lines:

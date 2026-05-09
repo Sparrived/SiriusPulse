@@ -102,8 +102,9 @@ class SkillEngineContextImpl:
         return getattr(profile, "communication_style", "") if profile else ""
 
     def get_skill_descriptions(self, caller_is_developer: bool = False) -> str:
-        assembler = self._engine.response_assembler
-        return assembler._build_skill_descriptions(
+        from sirius_chat.core.prompt_factory import PromptFactory
+        return PromptFactory.build_skill_descriptions(
+            skill_registry=self._engine._skill_registry,
             caller_is_developer=caller_is_developer,
             adapter_type=self._engine._current_adapter_type or None,
         )

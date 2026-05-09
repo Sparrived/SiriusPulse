@@ -117,7 +117,7 @@ def run(
         return {
             "success": True,
             "summary": f"已读取图片 '{name}'（{size} 字节）",
-            "text_blocks": [f"[图片] {name} — 已通过多模态通道发送给模型分析"],
+            "text_blocks": [f"【图片】{name} — 已通过多模态通道发送给模型分析"],
             "multimodal_blocks": [
                 {
                     "type": "image",

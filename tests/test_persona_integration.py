@@ -8,7 +8,7 @@ from unittest.mock import Mock
 from sirius_chat.models.persona import PersonaProfile
 from sirius_chat.core.persona_generator import PersonaGenerator
 from sirius_chat.core.persona_store import PersonaStore
-from sirius_chat.core.response_assembler import ResponseAssembler, StyleAdapter
+from sirius_chat.core.prompt_factory import StyleAdapter
 from sirius_chat.models.emotion import EmotionState, EmpathyStrategy
 from sirius_chat.models.models import Message
 

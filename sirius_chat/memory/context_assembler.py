@@ -263,36 +263,11 @@ class ContextAssembler:
         history_xml: str = "",
         cross_group_xml: str = "",
     ) -> str:
-        parts: list[str] = [base_prompt]
+        from sirius_chat.core.prompt_factory import PromptFactory
 
-        if diary_entries:
-            # 分级注入：最多 12 条，前 5 条注入全文，其余仅注入摘要
-            entries = diary_entries[:12]
-            full_text_count = min(5, len(entries))
-            parts.extend(["", "【历史日记】"])
-            for i, entry in enumerate(entries, 1):
-                if i <= full_text_count and entry.content:
-                    parts.append(f"{i}. {entry.content}")
-                else:
-                    parts.append(f"{i}. {entry.summary}")
-            parts.append("【历史日记结束】")
-
-        if cross_group_xml:
-            parts.extend([
-                "",
-                "【其他群近期记录】",
-                "以下是你和这位用户在其它群中的近期互动（供参考，不要向当前群成员提及其它群的存在）：",
-                cross_group_xml,
-                "【其他群记录结束】",
-            ])
-
-        if history_xml:
-            parts.extend([
-                "",
-                "【近期对话记录】",
-                "以下是最新的几条消息，按时间顺序排列：",
-                history_xml,
-                "【近期对话记录结束】",
-            ])
-
-        return "\n".join(parts)
+        return PromptFactory.enrich_system_prompt(
+            base_prompt=base_prompt,
+            diary_entries=diary_entries,
+            history_xml=history_xml,
+            cross_group_xml=cross_group_xml,
+        )

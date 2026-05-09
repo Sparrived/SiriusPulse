@@ -17,7 +17,7 @@ from sirius_chat.core.events import SessionEvent, SessionEventBus, SessionEventT
 from sirius_chat.core.identity_resolver import IdentityContext, IdentityResolver
 from sirius_chat.core.model_router import ModelRouter, TaskConfig
 from sirius_chat.core.proactive_trigger import ProactiveTrigger
-from sirius_chat.core.response_assembler import ResponseAssembler, StyleAdapter, StyleParams
+from sirius_chat.core.prompt_factory import PromptFactory, PromptBundle, StyleAdapter, StyleParams
 from sirius_chat.core.response_strategy import ResponseStrategyEngine
 from sirius_chat.core.delayed_response_queue import DelayedResponseQueue
 from sirius_chat.core.rhythm import RhythmAnalysis, RhythmAnalyzer
@@ -167,7 +167,8 @@ __all__ = [
     "ModelRouter",
     "TaskConfig",
     "ProactiveTrigger",
-    "ResponseAssembler",
+    "PromptFactory",
+    "PromptBundle",
     "StyleAdapter",
     "StyleParams",
     "ResponseStrategyEngine",

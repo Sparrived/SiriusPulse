@@ -295,43 +295,22 @@ async def _generate_reminder_message(
     skill_results: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Generate a persona-styled reminder message via LLM."""
+    from sirius_chat.core.prompt_factory import PromptFactory
     from sirius_chat.skills.executor import strip_skill_calls
 
     try:
         persona = ctx.get_persona()
         identity = persona.build_system_prompt() if persona else ""
-        sections: list[str] = []
-        if identity:
-            sections.append(identity)
-        who = user_name or user_id or "用户"
-        if target == "self":
-            sections.append(
-                f"到时间了，该去做之前答应 {who} 的事了：{content}。"
-                f"随便说两句就行，不用太正式，就像平时聊天一样。"
-            )
-        else:
-            sections.append(
-                f"到时间了，该提醒 {who} 了：{content}。"
-                f"随便说两句就行，不用太正式，就像平时聊天一样。"
-            )
-
-        if skill_results:
-            results_text = "\n".join(
-                f"- [{i+1}] {sr['skill']}({json.dumps(sr.get('params', {}), ensure_ascii=False)}): "
-                f"{json.dumps(sr.get('result') or sr.get('error'), ensure_ascii=False, default=str)}"
-                for i, sr in enumerate(skill_results)
-            )
-            sections.append(
-                f"顺便一提，刚才已经执行了这些操作：\n{results_text}\n"
-                f"有结果的话直接带进去说，不用刻意汇报。"
-            )
-
         skill_desc = ctx.get_skill_descriptions(caller_is_developer=False)
-        if skill_desc:
-            sections.append(skill_desc)
-
-        system_prompt = "\n\n".join(sections)
-        messages = [{"role": "user", "content": "（提醒时间到了）"}]
+        system_prompt, messages = PromptFactory.build_reminder_sections(
+            identity=identity,
+            content=content,
+            user_name=user_name,
+            user_id=user_id,
+            target=target,
+            skill_results=skill_results,
+            skill_desc=skill_desc,
+        )
 
         user_comm_style = ctx.get_user_communication_style(group_id, user_id)
 
@@ -568,8 +547,8 @@ def _do_list(data_store: Any | None) -> dict[str, Any]:
     lines = [f"共 {len(reminders)} 个提醒任务："]
     for r in reminders:
         mode_desc = {"once": "一次性", "daily": "每日", "weekly": "每周"}.get(r["mode"], r["mode"])
-        who = f"[{r.get('user_name') or r.get('user_id', '?')}] "
-        detail = f"[{r['id']}] {who}{mode_desc} | {r['content']}"
+        who = f"【{r.get('user_name') or r.get('user_id', '?')}】"
+        detail = f"【{r['id']}】{who}{mode_desc} | {r['content']}"
         if r.get("fire_at"):
             detail += f" | 触发: {r['fire_at']}"
         if r.get("time"):

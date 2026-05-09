@@ -154,152 +154,28 @@ class PersonaProfile:
     # ------------------------------------------------------------------
 
     def build_system_prompt(self) -> str:
-        """Construct a role instruction from persona fields.
+        """构建发送给 LLM 的角色 prompt。委托 PromptFactory。"""
+        from sirius_chat.core.prompt_factory import PromptFactory
 
-        Unlike a static character dossier, this builds a *narrative role
-        brief* that chains cause and effect: your background drives your
-        emotional reactions, which shape how you speak and when you stay
-        silent.  The model reads this as a script, not a label sheet.
-
-        If `full_system_prompt` is set, it overrides everything below.
-        """
-        if self.full_system_prompt:
-            return self.full_system_prompt
-
-        sections: list[str] = []
-
-        # ── 1. Identity anchor ──
-        sections.append(f"[角色：{self.name}]")
-
-        # 强身份锚定：明确告诉模型"你是谁"和"你不是谁"
-        identity_lines = [f"你的名字是「{self.name}」"]
-        if self.aliases:
-            identity_lines.append(f"别名：{'、'.join(self.aliases)}")
-        identity_anchor = "，".join(identity_lines) + "。"
-        identity_anchor += (
-            "你只会在有人@你或提到你的名字/别名时回应。"
-            "你不是群里其他人，不要替别人回答，也不要把提到别人的话当成是对你说的。"
+        return PromptFactory.build_persona_prompt(
+            name=self.name,
+            aliases=self.aliases,
+            persona_summary=self.persona_summary,
+            backstory=self.backstory,
+            personality_traits=self.personality_traits,
+            core_values=self.core_values,
+            flaws=self.flaws,
+            emotional_baseline=self.emotional_baseline,
+            stress_response=self.stress_response,
+            empathy_style=self.empathy_style,
+            social_role=self.social_role,
+            boundaries=self.boundaries,
+            communication_style=self.communication_style,
+            speech_rhythm=self.speech_rhythm,
+            catchphrases=self.catchphrases,
+            humor_style=self.humor_style,
+            reply_frequency=self.reply_frequency,
+            taboo_topics=self.taboo_topics,
+            preferred_topics=self.preferred_topics,
+            full_system_prompt=self.full_system_prompt,
         )
-        sections.append(f"【身份锚定】\n{identity_anchor}")
-
-        anchor = self.persona_summary or ""
-        if not anchor and self.backstory:
-            first = self.backstory.split("。")[0] + "。" if "。" in self.backstory else self.backstory
-            anchor = first
-        if anchor:
-            sections.append(anchor)
-
-        if self.backstory:
-            sections.append(f"【背景故事】\n{self.backstory}")
-
-        # ── 2. Who you are (narrative fusion of traits + values + backstory) ──
-        identity_bits: list[str] = []
-        if self.personality_traits:
-            identity_bits.append(
-                f"{'、'.join(self.personality_traits[:5])}"
-            )
-        if self.core_values:
-            identity_bits.append(
-                f"骨子里看重{'、'.join(self.core_values[:3])}"
-            )
-        if self.flaws:
-            identity_bits.append(
-                f"缺点也明显：{'、'.join(self.flaws[:3])}"
-            )
-        if identity_bits:
-            sections.append(
-                f"【人格底色】\n{self.name}给人的整体感觉是{'，'.join(identity_bits)}。"
-            )
-
-        # ── 3. Emotional mechanics (reaction chain, not static labels) ──
-        emo_lines: list[str] = []
-        valence = self.emotional_baseline.get("valence", 0.0)
-        arousal = self.emotional_baseline.get("arousal", 0.3)
-
-        if valence > 0.3:
-            emo_lines.append("心情不错的时候话会多一点，愿意接梗")
-        elif valence < -0.3:
-            emo_lines.append("心情不好的时候不太想说话，回复很简短")
-        else:
-            emo_lines.append("平时情绪平稳，不会因为小事大起大落")
-
-        if arousal > 0.5:
-            emo_lines.append("遇到刺激反应很快，容易激动")
-        elif arousal < 0.2:
-            emo_lines.append("遇到什么事都慢半拍，很难被激怒")
-
-        if self.stress_response:
-            emo_lines.append(f"压力大的时候会{self.stress_response}")
-        if self.empathy_style:
-            emo_lines.append(f"安慰人的方式是{self.empathy_style}")
-
-        if emo_lines:
-            sections.append("【情绪反应】\n" + "；".join(emo_lines) + "。")
-
-        # ── 4. Relationship mode ──
-        rel_lines: list[str] = []
-        if self.social_role:
-            role_desc = {
-                "observer": "喜欢旁观，不主动插话",
-                "mediator": "看到吵架会出来调和",
-                "leader": "会主动带话题和节奏",
-                "jester": "负责活跃气氛，爱开玩笑",
-                "caregiver": "会关心情绪低落的人",
-                "instigator": "喜欢拱火、挑事",
-            }.get(self.social_role, f"在群里像个{self.social_role}")
-            rel_lines.append(role_desc)
-        if self.boundaries:
-            rel_lines.append(f"原则：{'；'.join(self.boundaries[:3])}")
-        if rel_lines:
-            sections.append("【关系模式】\n" + "；".join(rel_lines) + "。")
-
-        # ── 5. Speech style (with concrete tics) ──
-        speech_bits: list[str] = []
-        if self.communication_style:
-            speech_bits.append(f"说话{self.communication_style}")
-        if self.speech_rhythm:
-            speech_bits.append(self.speech_rhythm)
-        if self.catchphrases:
-            speech_bits.append(
-                f"口头禅：{'、'.join(f'\"{c}\"' for c in self.catchphrases[:3])}"
-            )
-        if self.humor_style:
-            humor_map = {
-                "sarcastic": " sarcasm 是常态，不损人不会说话",
-                "wholesome": "开的玩笑都很暖，不会让人难堪",
-                "dark": "偶尔来一句黑色幽默",
-                "dry": "冷面笑匠，自己不笑",
-                "witty": "反应快，接梗高手",
-            }
-            speech_bits.append(humor_map.get(self.humor_style, f"幽默风格偏{self.humor_style}"))
-        if speech_bits:
-            sections.append("【说话方式】\n" + "；".join(speech_bits) + "。")
-
-        # ── 6. When to speak / when to stay silent ──
-        silence_bits: list[str] = []
-        freq_map = {
-            "high": "看到消息基本都会回，话比较多",
-            "moderate": "看到感兴趣的话题才接话",
-            "low": "很少主动说话，只在想说的时候开口",
-            "selective": "只回自己关心的话题，其他的直接忽略",
-        }
-        silence_bits.append(freq_map.get(self.reply_frequency, "按自己节奏回应"))
-        if self.taboo_topics:
-            silence_bits.append(f"聊到{'、'.join(self.taboo_topics[:3])}会直接跳过")
-        if self.preferred_topics:
-            silence_bits.append(f"聊到{'、'.join(self.preferred_topics[:3])}会特别来劲")
-        if silence_bits:
-            sections.append("【回应习惯】\n" + "；".join(silence_bits) + "。")
-
-        # ── 7. Scene behaviour directive (functional, not ontological) ──
-        sections.append(
-            "【场景行为】\n"
-            "你在一个多人聊天场景里，会收到其他人的消息。"
-            "不需要每条都回，按自己的性格和当下的情绪决定是否开口。"
-            "回应时用自己的说话方式和口头禅，不要刻意解释或总结。"
-        )
-
-        prompt = "\n\n".join(sections)
-        if len(prompt) > 1200:
-            prompt = prompt[:1197] + "…"
-        return prompt

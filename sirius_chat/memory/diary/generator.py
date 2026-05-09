@@ -52,11 +52,11 @@ def _build_diary_user_prompt(
     for e in candidates:
         # user_id is the stable identity key; speaker_name is the display nickname
         name = e.speaker_name if e.speaker_name else e.user_id
-        lines.append(f"[{e.user_id} ({name})] {e.content}")
+        lines.append(f"【{e.user_id} ({name})】{e.content}")
     conversation = "\n".join(lines)
     return (
         f"人格设定：{persona_name}，{persona_description}\n\n"
-        f"以下是对话记录（格式：[稳定ID (显示名称)] 内容）：\n"
+        f"以下是对话记录（格式：【稳定ID (显示名称)】内容）：\n"
         f"{conversation}\n\n"
         "请整理成日记并分析话题。记住：稳定ID是识别人的主要依据，显示名称只是辅助。"
     )

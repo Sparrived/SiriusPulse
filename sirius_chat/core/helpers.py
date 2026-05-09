@@ -34,9 +34,7 @@ class HelpersMixin:
         """Attach SKILL registry and executor to the engine."""
         self._skill_registry = skill_registry
         self._skill_executor = skill_executor
-        if skill_registry is not None:
-            self.response_assembler.skill_registry = skill_registry
-            self._register_passive_skills()
+        self._register_passive_skills()
 
     def _register_passive_skills(self) -> None:
         """Discover passive SKILLs and instantiate their background tasks / triggers."""
@@ -225,11 +223,12 @@ class HelpersMixin:
     def _is_pure_image_message(content: str) -> bool:
         """Check if content contains only image placeholders with no substantive text.
 
-        Image placeholder format: [图片: filename.png] or [图片1: filename.png]
+        Image placeholder format: 【图片: filename.png】 or 【图片描述：...】
+        Also matches legacy [图片: filename.png] format.
         """
         if not content:
             return False
-        cleaned = re.sub(r"\[图片\d*: [^\]]+\]", "", content).strip()
+        cleaned = re.sub(r"[【\[]图片\d*[：:]\s*[^\]】]+[】\]]", "", content).strip()
         return not cleaned
 
     @staticmethod
