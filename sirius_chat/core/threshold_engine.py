@@ -1,6 +1,6 @@
 """Threshold engine: multi-factor dynamic threshold (paper §2.2.3).
 
-    threshold = base_threshold × activity_factor × relationship_factor × time_factor
+    threshold = base_threshold × activity_factor × engagement_factor × time_factor
 """
 
 from __future__ import annotations
@@ -37,10 +37,10 @@ class ThresholdEngine:
     ) -> float:
         base = self.base_high - sensitivity * (self.base_high - self.base_low)
         activity = self._activity_factor(heat_level, messages_per_minute)
-        relationship = self._engagement_factor(user_profile)
+        engagement = self._engagement_factor(user_profile)
         time_f = self._time_factor(hour_of_day)
         peer_factor = 1.3 if sender_type == "other_ai" else 1.0
-        threshold = base * activity * relationship * time_f * peer_factor
+        threshold = base * activity * engagement * time_f * peer_factor
         return round(max(0.1, min(0.9, threshold)), 4)
 
     @staticmethod

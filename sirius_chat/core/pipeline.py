@@ -217,7 +217,7 @@ class PipelineMixin:
         intent.activity_factor = self.threshold_engine._activity_factor(rhythm.heat_level, msg_rate)
         intent.time_factor = self.threshold_engine._time_factor(None)
         if user_profile:
-            intent.relationship_factor = self.threshold_engine._engagement_factor(
+            intent.engagement_factor = self.threshold_engine._engagement_factor(
                 user_profile
             )
 

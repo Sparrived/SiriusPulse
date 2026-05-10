@@ -72,7 +72,7 @@ class IntentAnalysisV3:
 
     # === multi-factor decision support ===
     activity_factor: float = 1.0
-    relationship_factor: float = 1.0
+    engagement_factor: float = 1.0
     time_factor: float = 1.0
     threshold: float = 0.5
 
@@ -123,7 +123,7 @@ class IntentAnalysisV3:
             "estimated_response_time": self.estimated_response_time,
             "search_query": self.search_query,
             "activity_factor": self.activity_factor,
-            "relationship_factor": self.relationship_factor,
+            "engagement_factor": self.engagement_factor,
             "time_factor": self.time_factor,
             "threshold": self.threshold,
             # directedness dimensions
@@ -167,7 +167,7 @@ class IntentAnalysisV3:
             estimated_response_time=data.get("estimated_response_time", 0.0),
             search_query=data.get("search_query", ""),
             activity_factor=data.get("activity_factor", 1.0),
-            relationship_factor=data.get("relationship_factor", 1.0),
+            engagement_factor=data.get("engagement_factor", 1.0),
             time_factor=data.get("time_factor", 1.0),
             threshold=data.get("threshold", 0.5),
             # directedness dimensions

@@ -812,18 +812,15 @@ function usersRenderList(users) {
     return;
   }
   listEl.innerHTML = users.map((u) => {
-    const rs = u.relationship_state || {};
-    const familiarity = Math.min(1.0, 0.3 + (rs.interaction_frequency_7d || 0) * 0.5 + (rs.emotional_intimacy || 0) * 0.2);
-    const _STYLE_CN = {
-      concise: '简洁', detailed: '详细', formal: '正式', casual: '随意',
-      humorous: '幽默', emotional: '感性', questioning: '追问型', neutral: '中性',
-    };
+    const engagement = u.engagement_rate || 0;
+    const count = u.interaction_count || 0;
+    const familiarity = Math.min(1.0, Math.log1p(count) / Math.log1p(50));
     const displayName = (u.name || u.user_id || '未知用户');
     const userId = u.user_id || '';
-    const styleLabel = u.communication_style ? (_STYLE_CN[u.communication_style.toLowerCase()] || u.communication_style) : '';
     const interests = (u.interest_graph || []).map((n) => `
       <span style="background:var(--bg-2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:10px;color:var(--text-2)">${n.topic || ''}</span>
     `).join('');
+    const lastAt = u.last_interaction_at ? new Date(u.last_interaction_at).toLocaleDateString('zh-CN') : '-';
 
     const bar = (label, score) => `
       <div style="display:flex;align-items:center;gap:6px">
@@ -843,7 +840,7 @@ function usersRenderList(users) {
             <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
               <div style="min-width:0">
                 <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${displayName}</div>
-                <div style="font-size:10px;color:var(--text-3);margin-top:1px">${userId}${styleLabel ? ' · ' + styleLabel : ''}</div>
+                <div style="font-size:10px;color:var(--text-3);margin-top:1px">${userId} · ${count}次互动 · 最近${lastAt}</div>
               </div>
               <div style="text-align:right;flex-shrink:0">
                 <div style="font-size:16px;font-weight:700;color:${usersBarColor(familiarity)}">${(familiarity * 100).toFixed(0)}%</div>
@@ -851,10 +848,7 @@ function usersRenderList(users) {
               </div>
             </div>
             <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">
-              ${bar('信任', rs.trust_score || 0)}
-              ${bar('亲密', rs.emotional_intimacy || 0)}
-              ${bar('依赖', rs.dependency_score || 0)}
-              ${bar('互动', rs.interaction_frequency_7d || 0)}
+              ${bar('互动率', engagement)}
             </div>
             ${interests ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px">${interests}</div>` : ''}
           </div>

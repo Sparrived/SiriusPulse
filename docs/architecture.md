@@ -132,7 +132,7 @@ Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架
 
 1. **感知层**：`IdentityResolver.resolve()` 解析跨平台身份；`UserManager.register()` 注册参与者（群隔离）；`BasicMemoryManager.add_entry()` 写入按群滑动窗口（硬限制 30 条，上下文窗口 5 条）；`RhythmAnalyzer.analyze()` 更新群体热度与节奏；更新 `group_last_message_at`。
 2. **认知层（统一）**：`CognitionAnalyzer` 联合规则引擎分析情绪+意图（零成本热路径，~90% 命中）；LLM fallback 处理复杂情况（~10% 命中）。
-3. **决策层**：`RhythmAnalyzer` 分析对话节奏；`ThresholdEngine` 计算动态阈值（base × activity × relationship × time）；`ResponseStrategyEngine` 选择 IMMEDIATE / DELAYED / SILENT / PROACTIVE；更新 `AssistantEmotionState`。
+3. **决策层**：`RhythmAnalyzer` 分析对话节奏；`ThresholdEngine` 计算动态阈值（base × activity × engagement × time）；`ResponseStrategyEngine` 选择 IMMEDIATE / DELAYED / SILENT / PROACTIVE；更新 `AssistantEmotionState`。
 4. **执行层**：`PromptFactory.assemble_chat()` 返回 `PromptBundle`（`system_prompt` 包含 persona、情绪、记忆、术语表、skill 描述与输出格式指令；`user_content` 为当前消息的 XML 格式内容，使用 `<message speaker=... user_id=... role=...>` 标签标注发送者身份）。`ContextAssembler.build_messages()` 将基础记忆最近 n 条以 XML 格式嵌入 system prompt，日记检索 top_k 条同样注入 system prompt，最终只返回 `[{"role":"system","content":...}, {"role":"user","content":...}]` 2 条消息；`_generate()` 自动清洗模型仿写的 `<conversation_history>` 标签。`StyleAdapter` 输出 prompt 级长度与语气指令（不再动态缩减 max_tokens）。`ModelRouter` 按任务感知选择模型，调用 provider 生成回复。
 5. **后台层（异步）**：`_bg_diary_promoter` 检查群体变冷（heat < 0.25 且沉默 > 300s）的基础记忆归档，经 `DiaryGenerator` 生成日记并写入 `DiaryManager`；群氛围与规范学习随消息实时更新。`_bg_sticker_novelty_updater` 定期衰减表情包新鲜度，模拟人类"喜新厌旧"行为。
 

@@ -45,7 +45,7 @@ TAG_SCENE_LOCATION = "【场景定位】"
 TAG_IDENTITY_VERIFY = "【身份识别】"
 TAG_OUTPUT_SPEC = "【输出规范】"
 TAG_CURRENT_EMOTION = "【发言者情绪】"
-TAG_RELATIONSHIP_STATUS = "【关系状态】"
+TAG_RELATIONSHIP_STATUS = "【互动指导】"
 TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_GROUP_STYLE = "【群体风格】"
 TAG_REPLY_STYLE = "【回复风格】"
@@ -400,7 +400,7 @@ class PromptFactory:
         caller_is_developer: bool = False,
         speaker_name: str = "",
     ) -> str | None:
-        """构建单用户交互指导（基于真实反馈数据）。"""
+        """构建单用户互动指导（基于真实反馈数据）。"""
         who = speaker_name or "该用户"
         if caller_is_developer:
             return f"{TAG_RELATIONSHIP_STATUS}{who}是你的开发者，你们关系很亲密，可以畅所欲言。"

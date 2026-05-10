@@ -97,7 +97,7 @@ class TestPersonaBiasesThreshold:
         intent_mod = IntentAnalysisV3(urgency_score=30, relevance_score=0.4)
         emotion = EmotionState()
 
-        # Prime both engines with the same user state so relationship_factor
+        # Prime both engines with the same user state so engagement_factor
         # is identical; only the persona frequency bias should differ.
         mod_engine._decision(intent_mod, emotion, "g1", "u1")
         intent_mod2 = IntentAnalysisV3(urgency_score=30, relevance_score=0.4)

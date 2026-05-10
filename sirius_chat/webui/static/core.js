@@ -429,7 +429,7 @@ function renderSectionBars(container, breakdown, breakdownByTask) {
 
   const labels = {
     persona: '人格设定', identity: '身份识别', output_constraint: '输出约束',
-    emotion: '情感上下文', empathy: '共情策略', relationship: '关系上下文',
+    emotion: '情感上下文', empathy: '共情策略', relationship: '互动指导',
     memory: '记忆引用', interests: '用户兴趣', group_style: '群体风格',
     participants: '近期参与者', cross_group: '跨群认知', skills: '可用技能',
     glossary: '名词解释', output_format: '输出格式', diary: '日记记忆',
