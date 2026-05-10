@@ -2,6 +2,25 @@
 
 本文档记录 Sirius Chat 的所有版本变更。采用 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 规范。
 
+## [Unreleased]
+
+### Added
+
+- **记忆可视化 WebUI 页面**：新增 `memory-viz.html` 记忆浏览器与知识图谱可视化，后端 `memory_api.py` 提供记忆 CRUD、搜索、知识图谱、统计 API。
+- **技能管理 WebUI 页面**：新增 `skills.html` 技能管理页面（状态/安装/配置卡片），后端 `server_skill_api.py` 提供技能状态、安装、配置管理 API。
+- **Token 用量分析图表**：`analytics.js` 新增 Token 用量可视化模块。
+
+### Fixed
+
+- **Pylance mixin 类型错误**：`engine_core.py` 添加 `TYPE_CHECKING` 条件桩方法声明；`pipeline.py`/`bg_tasks.py`/`helpers.py` 添加条件继承，消除 mixin 方法不可见诊断。
+- **Pylance 真实代码 bug**：`bg_tasks.py` 修复 `resolved_uid` 未绑定、`build_skill_status_message` 参数缺失、`_round`/`calls`/`reply` 未初始化；`cognition.py`/`bg_tasks.py` 添加 `provider_async` None 守卫。
+- **Pylance server_core 子类方法不可见**：`server_core.py` 添加 `TYPE_CHECKING` 桩方法声明；`FileResponse` 返回类型改为 `StreamResponse`。
+- **Pylance napcat_bridge 缺失导入**：补充 `Callable` 导入。
+- **表情包系统**：修复标签解析、缓存策略、上下文注入与过滤条件。
+- **embedding 重试退避**：`client.py` 添加连接失败重试与指数退避策略；`server.py` 优化请求队列处理。
+- **上下文截断**：`context_assembler.py` 修复截断逻辑。
+- **技能执行器**：`executor.py` 修复 `parse_skill_calls` 返回类型与 `strip_skill_calls` 边界处理。
+
 ## [1.1.0] - 2026-05-01
 
 ### Added
