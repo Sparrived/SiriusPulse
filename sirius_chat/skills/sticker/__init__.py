@@ -69,6 +69,7 @@ def init_sticker_system(
     learner = StickerLearner(
         indexer=indexer,
         provider_async=provider_async,
+        basic_memory=basic_memory,
         model_name=model_name,
         token_callback=token_callback,
     )

@@ -324,18 +324,28 @@ class StickerLearner:
         trigger_message: str,
         source_user: str,
     ) -> str:
-        """构建使用情境：前3条消息 + 当前触发消息。"""
+        """构建使用情境：前3条消息 + 当前触发消息。
+
+        过滤掉包含表情包/图片的消息，避免其他表情包的描述污染当前表情包的标签生成。
+        """
         context_parts: list[str] = []
 
         # 获取前3条消息
         if self._basic_memory is not None:
             try:
-                recent = self._basic_memory.get_recent_messages(group_id, limit=3)
+                # BasicMemoryManager 使用 get_context 方法获取最近消息
+                recent = self._basic_memory.get_context(group_id, n=6)
                 for msg in recent:
-                    speaker = getattr(msg, "speaker", "") or ""
+                    speaker = getattr(msg, "speaker_name", "") or ""
                     content = getattr(msg, "content", "") or ""
-                    if content:
-                        context_parts.append(f"{speaker}: {content}")
+                    if not content:
+                        continue
+                    # 跳过包含其他表情包/图片描述的消息
+                    if self._is_sticker_or_image_message(msg):
+                        continue
+                    context_parts.append(f"{speaker}: {content}")
+                    if len(context_parts) >= 3:
+                        break
             except Exception:
                 pass
 
@@ -344,6 +354,26 @@ class StickerLearner:
             context_parts.append(f"{source_user}: {trigger_message}")
 
         return "\n".join(context_parts) if context_parts else trigger_message
+
+    @staticmethod
+    def _is_sticker_or_image_message(msg: Any) -> bool:
+        """判断消息是否包含表情包或图片。
+
+        检查规则：
+        1. content 中包含【动画表情】或【图片】前缀
+        2. multimodal_inputs 中包含图片类型
+        """
+        content = getattr(msg, "content", "") or ""
+        # 检查 content 中的图片标记
+        if content.startswith("【动画表情】") or content.startswith("【图片】"):
+            return True
+        # 检查 multimodal_inputs
+        mm_inputs = getattr(msg, "multimodal_inputs", None)
+        if mm_inputs:
+            for item in mm_inputs:
+                if isinstance(item, dict) and item.get("type") == "image":
+                    return True
+        return False
 
     async def _generate_tags(
         self,
@@ -412,8 +442,8 @@ class StickerLearner:
                 raise ValueError("LLM 返回的 tags 为空")
             return tags[:5]
         except Exception as exc:
-            logger.warning("生成表情包标签失败: %s", exc)
-            raise
+            logger.warning("生成表情包标签失败: %s，降级到简单标签提取", exc)
+            return self._extract_simple_tags(usage_context)
 
     @staticmethod
     def _extract_simple_tags(text: str) -> list[str]:

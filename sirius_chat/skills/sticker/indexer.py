@@ -430,20 +430,34 @@ class StickerIndexer:
             return 0.0
         return dot / (norm_a * norm_b)
 
-    def get(self, sticker_id: str) -> StickerRecord | None:
-        return self._records.get(sticker_id)
+    def get(self, record_id: str) -> StickerRecord | None:
+        """按 record_id 获取记录。"""
+        return self._records.get(record_id)
+
+    def get_by_sticker_id(self, sticker_id: str) -> StickerRecord | None:
+        """按 sticker_id 获取记录（返回第一条匹配）。"""
+        for record in self._records.values():
+            if record.sticker_id == sticker_id:
+                return record
+        return None
 
     def list_all(self) -> list[StickerRecord]:
         return list(self._records.values())
 
     def update_record(self, record: StickerRecord) -> None:
         """更新记录（如使用次数、新鲜度等）。"""
-        self._records[record.sticker_id] = record
+        self._records[record.record_id] = record
         if self._vector_store.available:
             self._vector_store.add(record)
 
     def load_from_disk(self) -> int:
-        """从磁盘加载所有表情包记录。"""
+        """从磁盘加载所有表情包记录。
+
+        支持两种历史文件格式：
+        - 旧格式：按 sticker_id 保存的单条记录（sticker_id.json）
+        - 新格式：按 record_id 保存的单条记录（record_id.json）
+        加载时统一使用 record_id 作为内部字典键。
+        """
         sticker_dir = self._work_path / "records"
         if not sticker_dir.exists():
             return 0
@@ -454,7 +468,8 @@ class StickerIndexer:
                 import json
                 data = json.loads(file_path.read_text(encoding="utf-8"))
                 record = StickerRecord.from_dict(data)
-                self._records[record.sticker_id] = record
+                # 统一使用 record_id 作为键，避免与 add() 方法不一致
+                self._records[record.record_id] = record
                 count += 1
             except Exception as exc:
                 logger.warning("加载表情包记录失败 %s: %s", file_path, exc)
@@ -463,21 +478,34 @@ class StickerIndexer:
         return count
 
     def save_to_disk(self) -> None:
-        """保存所有表情包记录到磁盘。"""
+        """保存所有表情包记录到磁盘。
+
+        按 record_id 分文件保存，确保同一 sticker_id 的不同使用情境不会互相覆盖。
+        """
         import json
 
         sticker_dir = self._work_path / "records"
         sticker_dir.mkdir(parents=True, exist_ok=True)
 
+        # 清理旧格式的 sticker_id 命名文件（避免残留）
+        existing_files = {f.name for f in sticker_dir.glob("*.json")}
+        current_record_files = {f"{record.record_id}.json" for record in self._records.values()}
+        stale_files = existing_files - current_record_files
+        for stale in stale_files:
+            try:
+                (sticker_dir / stale).unlink()
+            except Exception:
+                pass
+
         for record in self._records.values():
-            file_path = sticker_dir / f"{record.sticker_id}.json"
+            file_path = sticker_dir / f"{record.record_id}.json"
             try:
                 file_path.write_text(
                     json.dumps(record.to_dict(), ensure_ascii=False, indent=2),
                     encoding="utf-8",
                 )
             except Exception as exc:
-                logger.warning("保存表情包记录失败 %s: %s", record.sticker_id, exc)
+                logger.warning("保存表情包记录失败 %s: %s", record.record_id, exc)
 
     def remove(self, record_id: str) -> None:
         """删除指定记录。"""
