@@ -65,6 +65,33 @@ function initTheme() {
   applyTheme(theme);
 }
 
+// ── Embedding 状态 ─────────────────────────────────────
+async function loadEmbeddingStatus() {
+  const el = $('dashEmbeddingStatus');
+  const detail = $('dashEmbeddingDetail');
+  if (!el) return;
+  try {
+    const res = await get('/embedding/status');
+    if (res.ready) {
+      el.textContent = '✅ 正常';
+      el.style.color = '#2ecc71';
+      if (detail) detail.textContent = '';
+    } else if (res.running) {
+      el.textContent = '⏳ 加载中';
+      el.style.color = '#f39c12';
+      if (detail) detail.textContent = res.error || '模型加载中';
+    } else {
+      el.textContent = '❌ 不可用';
+      el.style.color = '#e74c3c';
+      if (detail) detail.textContent = res.error || '未启动';
+    }
+  } catch (e) {
+    el.textContent = '⚠️ 检测失败';
+    el.style.color = '#e74c3c';
+    if (detail) detail.textContent = '';
+  }
+}
+
 // ── Init ──────────────────────────────────────────────
 (async function init() {
   initTheme();
@@ -73,9 +100,11 @@ function initTheme() {
   await loadGlobalSettings();
   await ncLoadStatus();
   await navTo('dashboard');
+  loadEmbeddingStatus();
   setInterval(() => {
     loadPersonas();
     loadTokenStats();
     ncLoadLogs();
+    loadEmbeddingStatus();
   }, 5000);
 })();

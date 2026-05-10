@@ -1050,9 +1050,531 @@ async function glossaryLoadData() {
   }
 }
 
+// ── 记忆可视化 ───────────────────────────────────────
+let _mvChartBasic = null;
+let _mvChartDiary = null;
+let _mvChartUser = null;
+let _mvGroupFilter = '';
+let _mvDataCache = null;
+
+function mvToggleDropdown() {
+  const list = $('mvDropdownList');
+  const arrow = $('mvDropdownArrow');
+  if (!list) return;
+  const open = list.style.display === 'block';
+  list.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.style.transform = open ? 'rotate(0deg)' : 'rotate(180deg)';
+  if (!open) {
+    const close = (e) => {
+      if (!list.contains(e.target) && !$('mvGroupDropdown').contains(e.target)) {
+        list.style.display = 'none';
+        if (arrow) arrow.style.transform = 'rotate(0deg)';
+        document.removeEventListener('click', close);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close), 0);
+  }
+}
+
+function mvSelectGroup(gid) {
+  _mvGroupFilter = gid;
+  const label = $('mvDropdownLabel');
+  if (label) label.textContent = gid || '全部群聊';
+  const list = $('mvDropdownList');
+  const arrow = $('mvDropdownArrow');
+  if (list) list.style.display = 'none';
+  if (arrow) arrow.style.transform = 'rotate(0deg)';
+  loadMemoryViz();
+}
+
+async function loadMemoryViz() {
+  renderPersonaSelect();
+  if (!currentPersona && personas.length > 0) {
+    selectPersona(personas[0].name);
+  }
+  if (!currentPersona) return;
+
+  [_mvChartBasic, _mvChartDiary, _mvChartUser].forEach((c) => { if (c) c.dispose(); });
+  _mvChartBasic = null;
+  _mvChartDiary = null;
+  _mvChartUser = null;
+
+  try {
+    const qs = _mvGroupFilter ? `?group_id=${encodeURIComponent(_mvGroupFilter)}` : '';
+    const res = await get(`/personas/${currentPersona}/memory-viz${qs}`);
+    _mvDataCache = res;
+
+    // 填充群组下拉
+    const listEl = $('mvDropdownList');
+    const labelEl = $('mvDropdownLabel');
+    if (listEl) {
+      const groups = res.groups || [];
+      const items = [{ gid: '', label: '全部群聊' }].concat(groups.map((g) => ({ gid: g, label: g })));
+      listEl.innerHTML = items.map((it) => {
+        const active = it.gid === _mvGroupFilter;
+        return `<div onclick="mvSelectGroup('${it.gid.replace(/'/g, "\\'")}')" style="padding:8px 12px;font-size:13px;cursor:pointer;color:${active ? 'var(--accent)' : 'var(--text)'};background:${active ? 'var(--surface-2)' : 'transparent'};border-radius:6px;margin:2px 4px"
+          onmouseenter="this.style.background='var(--surface-2)'" onmouseleave="this.style.background='${active ? 'var(--surface-2)' : 'transparent'}'">${it.label}</div>`;
+      }).join('');
+    }
+    if (labelEl) labelEl.textContent = _mvGroupFilter || '全部群聊';
+
+    mvRenderTimeline(res.basic_timeline || {});
+    mvRenderDiaryCluster(res.diary_entries || [], res.diary_top_keywords || []);
+    mvRenderBipartite(res.user_nodes || [], res.topic_nodes || [], res.user_topic_links || []);
+  } catch (e) {
+    console.error('loadMemoryViz', e);
+    ['basicTimelineChart', 'diaryClusterChart', 'userNetworkChart'].forEach((id) => {
+      const el = $(id);
+      if (el) el.innerHTML = '<div style="color:var(--text-2);padding:40px;text-align:center">加载失败</div>';
+    });
+  }
+}
+
+// ── 基础记忆时间线：散点图，按群分组，支持缩放 ───────
+const MV_ROLE_COLORS = { human: '#58a6ff', assistant: '#3fb950', system: '#d2a8ff' };
+const MV_ROLE_LABELS = { human: '用户', assistant: '助手', system: '系统' };
+
+function mvRenderTimeline(timeline) {
+  const el = $('basicTimelineChart');
+  if (!el) return;
+
+  const recent = timeline.recent || [];
+  if (!recent.length) {
+    el.innerHTML = '<div style="color:var(--text-2);padding:40px;text-align:center">暂无基础记忆数据</div>';
+    return;
+  }
+
+  if (!_mvChartBasic) {
+    el.innerHTML = '';
+    _mvChartBasic = echarts.init(el, 'dark');
+    const onResize = () => _mvChartBasic.resize();
+    window.removeEventListener('resize', el._mvResizeBasic);
+    window.addEventListener('resize', onResize);
+    el._mvResizeBasic = onResize;
+  }
+
+  const groups = Array.from(new Set(recent.map((e) => e.group_id).filter(Boolean)));
+  const isMultiGroup = groups.length > 1;
+  const roles = ['human', 'assistant', 'system'];
+  const roleOrder = { human: 0, assistant: 1, system: 2 };
+
+  // 按群分组，每群一个 scatter 系列
+  const series = [];
+  for (const gid of groups) {
+    const gEntries = recent.filter((e) => e.group_id === gid);
+    series.push({
+      name: gid,
+      type: 'scatter',
+      symbolSize: (val) => Math.min(18, 6 + (val[3] || '').length / 8),
+      data: gEntries.map((e) => ({
+        value: [
+          e.timestamp ? new Date(e.timestamp).getTime() : 0,
+          isMultiGroup ? gid : (roleOrder[e.role] ?? 1),
+          e.speaker_name || '—',
+          e.content || '',
+          e.role,
+        ],
+      })),
+      itemStyle: {
+        color: (params) => MV_ROLE_COLORS[params.value[4]] || '#8b949e',
+        opacity: 0.85,
+      },
+    });
+  }
+
+  _mvChartBasic.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      formatter: (params) => {
+        const v = params.value;
+        const ts = v[0] ? new Date(v[0]).toLocaleString('zh-CN') : '—';
+        const role = MV_ROLE_LABELS[v[4]] || v[4];
+        const content = (v[3] || '').slice(0, 150);
+        return `<b>${v[2]}</b> <span style="color:${MV_ROLE_COLORS[v[4]] || '#8b949e'}">(${role})</span><br/>时间: ${ts}<br/><div style="margin-top:4px;max-width:320px;white-space:pre-wrap;font-size:12px;color:#c9d1d9">${content}</div>`;
+      },
+    },
+    legend: {
+      data: isMultiGroup ? groups : ['用户', '助手', '系统'],
+      textStyle: { color: '#c9d1d9', fontSize: 11 },
+      top: 0,
+      type: 'scroll',
+    },
+    grid: { top: 36, bottom: 24, left: 12, right: 24, containLabel: true },
+    xAxis: {
+      type: 'time',
+      axisLabel: { fontSize: 11, color: '#8b949e', formatter: '{MM}-{dd}' },
+      splitLine: { lineStyle: { color: '#30363d' } },
+    },
+    yAxis: isMultiGroup ? {
+      type: 'category',
+      data: groups,
+      axisLabel: { fontSize: 11, color: '#c9d1d9', width: 120, overflow: 'truncate' },
+      axisLine: { show: false },
+      axisTick: { show: false },
+    } : {
+      type: 'category',
+      data: roles.map((r) => MV_ROLE_LABELS[r]),
+      axisLabel: { fontSize: 11, color: '#c9d1d9' },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: false },
+    },
+    dataZoom: [
+      { type: 'inside', xAxisIndex: 0 },
+      { type: 'slider', xAxisIndex: 0, height: 18, bottom: 0, borderColor: '#30363d', fillerColor: 'rgba(88,166,255,0.15)', handleStyle: { color: '#58a6ff' }, textStyle: { color: '#8b949e', fontSize: 10 } },
+    ],
+    series,
+  }, true);
+}
+
+// ── 3D 语义聚类：球面投影 + 随机正交基降维 ───────────
+function mvSphereProject(vectors, nComponents) {
+  if (!vectors || !vectors.length) return [];
+  const dim = vectors[0].length;
+  const n = vectors.length;
+  const k = Math.min(nComponents, dim, n);
+
+  // Step 1: 球面归一化 — 消除向量长度差异，保留方向信息
+  const sphere = vectors.map((v) => {
+    let norm = 0;
+    for (let j = 0; j < dim; j++) norm += v[j] * v[j];
+    norm = Math.sqrt(norm) || 1;
+    return v.map((x) => x / norm);
+  });
+
+  // Step 2: 中心化
+  const means = new Float64Array(dim);
+  for (const v of sphere) for (let j = 0; j < dim; j++) means[j] += v[j];
+  for (let j = 0; j < dim; j++) means[j] /= n;
+  const centered = sphere.map((v) => v.map((x, j) => x - means[j]));
+
+  // Step 3: 生成随机正交基（避免 PCA 第一主成分压倒性主导）
+  // 使用 Gram-Schmidt 正交化生成 k 个随机正交方向
+  function randomUnitVector(size) {
+    const v = new Float64Array(size);
+    for (let i = 0; i < size; i++) v[i] = Math.random() * 2 - 1;
+    let norm = 0;
+    for (let i = 0; i < size; i++) norm += v[i] * v[i];
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < size; i++) v[i] /= norm;
+    return v;
+  }
+
+  function dot(a, b) {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  }
+
+  const bases = [];
+  for (let b = 0; b < k; b++) {
+    let vec = randomUnitVector(dim);
+    // 对已有基做 Gram-Schmidt 正交化
+    for (let prev = 0; prev < bases.length; prev++) {
+      const proj = dot(vec, bases[prev]);
+      for (let i = 0; i < dim; i++) vec[i] -= proj * bases[prev][i];
+    }
+    // 重新归一化
+    let norm = 0;
+    for (let i = 0; i < dim; i++) norm += vec[i] * vec[i];
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < dim; i++) vec[i] /= norm;
+    bases.push(vec);
+  }
+
+  // Step 4: 投影到正交基
+  let pts = centered.map((row) => {
+    const pt = [];
+    for (let c = 0; c < k; c++) {
+      let v = 0;
+      for (let j = 0; j < dim; j++) v += row[j] * bases[c][j];
+      pt.push(v);
+    }
+    return pt;
+  });
+
+  // Step 5: 归一化到 [-1, 1]
+  for (let c = 0; c < k; c++) {
+    const vals = pts.map((p) => p[c]);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min || 1;
+    pts.forEach((p) => { p[c] = ((p[c] - min) / range) * 2 - 1; });
+  }
+
+  return pts;
+}
+
+function mvRenderDiaryCluster(entries, topKeywords) {
+  const el = $('diaryClusterChart');
+  const kwEl = $('diaryKeywordsCloud');
+  if (!el) return;
+
+  if (kwEl && topKeywords.length) {
+    const maxCnt = Math.max(...topKeywords.map(([, c]) => c));
+    kwEl.innerHTML = topKeywords.map(([kw, cnt]) => {
+      const size = 11 + Math.round((cnt / maxCnt) * 9);
+      const opacity = 0.5 + (cnt / maxCnt) * 0.5;
+      return `<span style="background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:3px 10px;font-size:${size}px;color:var(--text);opacity:${opacity}">${kw} <span style="opacity:0.6;font-size:${Math.max(10, size - 2)}px">${cnt}</span></span>`;
+    }).join('');
+  }
+
+  if (!entries.length) {
+    el.innerHTML = '<div style="color:var(--text-2);padding:40px;text-align:center">暂无日记数据</div>';
+    return;
+  }
+
+  const withEmb = entries.filter((e) => e.embedding && e.embedding.length >= 3);
+  const withoutEmb = entries.filter((e) => !e.embedding || e.embedding.length < 3);
+
+  let points3d = [];
+  if (withEmb.length >= 3) {
+    points3d = mvSphereProject(withEmb.map((e) => e.embedding), 3);
+  } else if (withEmb.length > 0) {
+    points3d = withEmb.map((e) => {
+      const p = e.embedding;
+      return [p[0] || 0, p[1] || 0, p[2] || 0];
+    });
+  }
+
+  const allKws = topKeywords.map(([k]) => k);
+  const palette = ['#58a6ff', '#3fb950', '#d2a8ff', '#f0883e', '#f778ba', '#79c0ff', '#56d364', '#d29922', '#ff7b72', '#bc8cff'];
+  const kwColorMap = {};
+  allKws.forEach((kw, i) => { kwColorMap[kw] = palette[i % palette.length]; });
+
+  const scatter3dData = withEmb.map((e, i) => {
+    const pt = points3d[i] || [0, 0, 0];
+    const primaryKw = (e.keywords || []).find((k) => allKws.includes(k)) || '';
+    return {
+      value: [pt[0], pt[1], pt[2]],
+      name: (e.summary || e.content.slice(0, 40)).replace(/"/g, ''),
+      itemStyle: { color: kwColorMap[primaryKw] || '#8b949e' },
+      _meta: {
+        summary: e.summary || '',
+        content: (e.content || '').slice(0, 200),
+        group_id: e.group_id || '',
+        created_at: e.created_at || '',
+        keywords: (e.keywords || []).join(', '),
+      },
+    };
+  });
+
+  if (!_mvChartDiary) {
+    el.innerHTML = '';
+    _mvChartDiary = echarts.init(el, 'dark');
+    const onResize = () => _mvChartDiary.resize();
+    window.removeEventListener('resize', el._mvResizeDiary);
+    window.addEventListener('resize', onResize);
+    el._mvResizeDiary = onResize;
+  }
+
+  _mvChartDiary.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: 'rgba(22,27,34,0.95)',
+      borderColor: '#30363d',
+      borderWidth: 1,
+      padding: [10, 14],
+      textStyle: { color: '#e6edf3', fontSize: 12 },
+      extraCssText: 'max-width:360px;word-break:break-all;white-space:normal;line-height:1.6;box-shadow:0 4px 12px rgba(0,0,0,0.4);',
+      formatter: (p) => {
+        const m = p.data._meta || {};
+        const title = (p.data.name || '').slice(0, 60);
+        const ts = m.created_at ? new Date(m.created_at).toLocaleString('zh-CN') : '—';
+        const content = (m.content || '').slice(0, 180);
+        return `<div style="max-width:340px">
+          <div style="font-weight:600;color:#e6edf3;margin-bottom:6px;font-size:13px;word-break:break-all">${title}</div>
+          <div style="color:#8b949e;font-size:11px;margin-bottom:4px">群: ${m.group_id || '—'} · ${ts}</div>
+          <div style="color:#58a6ff;font-size:11px;margin-bottom:6px">${m.keywords || '—'}</div>
+          <div style="color:#c9d1d9;font-size:12px;white-space:pre-wrap;word-break:break-all;line-height:1.5">${content}</div>
+        </div>`;
+      },
+    },
+    xAxis3D: {
+      type: 'value',
+      min: -1.2, max: 1.2,
+      axisLine: { lineStyle: { color: '#484f58' } },
+      axisLabel: { show: false },
+      splitLine: { show: false },
+    },
+    yAxis3D: {
+      type: 'value',
+      min: -1.2, max: 1.2,
+      axisLine: { lineStyle: { color: '#484f58' } },
+      axisLabel: { show: false },
+      splitLine: { show: false },
+    },
+    zAxis3D: {
+      type: 'value',
+      min: -1.2, max: 1.2,
+      axisLine: { lineStyle: { color: '#484f58' } },
+      axisLabel: { show: false },
+      splitLine: { show: false },
+    },
+    grid3D: {
+      boxWidth: 140,
+      boxHeight: 120,
+      boxDepth: 120,
+      viewControl: {
+        autoRotate: false,
+        distance: 280,
+        alpha: 30,
+        beta: 40,
+      },
+      light: {
+        main: { intensity: 1.2, shadow: false },
+        ambient: { intensity: 0.5 },
+      },
+      environment: '#0d1117',
+    },
+    series: [{
+      type: 'scatter3D',
+      symbolSize: 14,
+      data: scatter3dData,
+      emphasis: {
+        itemStyle: { borderColor: '#fff', borderWidth: 2 },
+        label: {
+          show: true,
+          formatter: (p) => (p.data.name || '').slice(0, 20),
+          fontSize: 11,
+          color: '#e6edf3',
+          distance: 8,
+        },
+      },
+    }],
+  }, true);
+
+  if (withoutEmb.length) {
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:11px;color:var(--text-2);text-align:center;margin-top:4px';
+    info.textContent = `${withoutEmb.length} 条日记缺少 embedding 向量，未显示`;
+    el.parentElement.appendChild(info);
+  }
+}
+
+// ── 用户-话题二部图：力导向 + 过滤低频话题 ────────────
+function mvRenderBipartite(userNodes, topicNodes, links) {
+  const el = $('userNetworkChart');
+  if (!el) return;
+
+  if (!userNodes.length && !topicNodes.length) {
+    el.innerHTML = '<div style="color:var(--text-2);padding:40px;text-align:center">暂无用户画像数据</div>';
+    return;
+  }
+
+  if (!_mvChartUser) {
+    el.innerHTML = '';
+    _mvChartUser = echarts.init(el, 'dark');
+    const onResize = () => _mvChartUser.resize();
+    window.removeEventListener('resize', el._mvResizeUser);
+    window.addEventListener('resize', onResize);
+    el._mvResizeUser = onResize;
+  }
+
+  // 统计话题关注度，过滤只被 1 个用户关注的话题
+  const topicUsage = {};
+  links.forEach((l) => { topicUsage[l.topic] = (topicUsage[l.topic] || 0) + 1; });
+  const filteredTopics = topicNodes.filter((t) => (topicUsage[t.id] || 0) >= 2);
+  const keptTopicIds = new Set(filteredTopics.map((t) => t.id));
+  const filteredLinks = links.filter((l) => keptTopicIds.has(l.topic));
+
+  const maxCount = Math.max(...userNodes.map((n) => n.interaction_count || 0), 1);
+  const maxTopicUsage = Math.max(...Object.values(topicUsage), 1);
+
+  const graphNodes = [];
+
+  // 用户节点
+  userNodes.forEach((n) => {
+    const engRate = n.engagement_rate || 0;
+    const size = 24 + Math.round(((n.interaction_count || 0) / maxCount) * 46);
+    graphNodes.push({
+      id: `u_${n.user_id}`,
+      name: n.name || n.user_id,
+      symbolSize: size,
+      value: n.interaction_count || 0,
+      category: 0,
+      itemStyle: {
+        color: engRate > 0.5 ? '#3fb950' : engRate > 0.2 ? '#58a6ff' : engRate > 0 ? '#d29922' : '#8b949e',
+        borderColor: '#21262d',
+        borderWidth: 2,
+      },
+      label: { show: true, fontSize: 12, color: '#c9d1d9' },
+      tooltip: {
+        formatter: () =>
+          `<b>${n.name || n.user_id}</b><br/>`
+          + `互动率: ${(engRate * 100).toFixed(1)}%<br/>`
+          + `互动次数: ${n.interaction_count || 0}`,
+      },
+    });
+  });
+
+  // 话题节点
+  filteredTopics.forEach((t) => {
+    const usage = topicUsage[t.id] || 0;
+    const size = 18 + Math.round((usage / maxTopicUsage) * 32);
+    graphNodes.push({
+      id: `t_${t.id}`,
+      name: t.name,
+      symbolSize: size,
+      value: usage,
+      category: 1,
+      itemStyle: {
+        color: '#d2a8ff',
+        borderColor: '#21262d',
+        borderWidth: 2,
+      },
+      label: { show: true, fontSize: 11, color: '#c9d1d9' },
+      tooltip: {
+        formatter: () => `<b>${t.name}</b><br/>被 ${usage} 个用户关注`,
+      },
+    });
+  });
+
+  const graphEdges = filteredLinks.map((l) => ({
+    source: `u_${l.user_id}`,
+    target: `t_${l.topic}`,
+    lineStyle: { color: '#484f58', width: 1.2, opacity: 0.45 },
+  }));
+
+  _mvChartUser.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'item' },
+    legend: {
+      data: ['用户', '兴趣话题'],
+      textStyle: { color: '#c9d1d9', fontSize: 11 },
+      top: 0,
+    },
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      force: {
+        repulsion: 350,
+        edgeLength: [60, 180],
+        gravity: 0.08,
+      },
+      categories: [
+        { name: '用户', itemStyle: { color: '#58a6ff' } },
+        { name: '兴趣话题', itemStyle: { color: '#d2a8ff' } },
+      ],
+      label: { show: true, fontSize: 12, color: '#c9d1d9' },
+      lineStyle: { opacity: 0.45, curveness: 0.05 },
+      emphasis: {
+        focus: 'adjacency',
+        lineStyle: { width: 3, opacity: 0.9 },
+      },
+      data: graphNodes,
+      links: graphEdges,
+    }],
+  }, true);
+}
+
 // ── Page Loader Registrations (analytics) ─────────────
 registerPageLoader('token-tracker', { init: loadTokenTracker, refresh: ttLoadData });
 registerPageLoader('cognition', { init: loadCognition });
 registerPageLoader('diary', { init: diaryLoadData });
 registerPageLoader('users', { init: loadUsers });
 registerPageLoader('glossary', { init: loadGlossary });
+registerPageLoader('memory-viz', { init: loadMemoryViz });

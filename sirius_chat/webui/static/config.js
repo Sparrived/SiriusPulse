@@ -906,11 +906,76 @@ async function loadSkills() {
     const skills = res.skills || [];
     _skillsCache = skills;
     renderSkillsList(skills);
+    _populateSkillHistoryFilter(skills);
   } catch (e) {
     console.error('loadSkills', e);
     $('skillsList').innerHTML = '<div style="color:var(--text-2);padding:12px">加载 Skill 列表失败</div>';
   }
   loadTelemetry();
+  loadSkillHistory();
+}
+
+function _populateSkillHistoryFilter(skills) {
+  const sel = $('skillHistoryFilter');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">全部 Skill</option>';
+  for (const s of skills) {
+    sel.innerHTML += `<option value="${s.name}">${s.name}</option>`;
+  }
+  sel.value = prev;
+}
+
+async function loadSkillHistory() {
+  const el = $('skillHistoryList');
+  if (!el || !currentPersona) return;
+  const filter = $('skillHistoryFilter');
+  const skillName = filter ? filter.value : '';
+  const qs = skillName ? `?skill_name=${encodeURIComponent(skillName)}` : '';
+  try {
+    const res = await get(pApi(`/skill-history${qs}`));
+    const history = res.history || [];
+    if (!history.length) {
+      el.innerHTML = '<div style="color:var(--text-2);padding:12px">暂无执行记录</div>';
+      return;
+    }
+    el.innerHTML = history.map((h) => {
+      const ts = h.timestamp ? new Date(h.timestamp * 1000).toLocaleString('zh-CN', {
+        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }) : '-';
+      const statusColor = h.success ? 'var(--success)' : 'var(--danger)';
+      const statusText = h.success ? '成功' : '失败';
+      const duration = h.duration_ms >= 1000 ? `${(h.duration_ms / 1000).toFixed(1)}s` : `${Math.round(h.duration_ms)}ms`;
+      const paramsStr = h.params ? JSON.stringify(h.params, null, 2) : '';
+      const resultStr = h.result_summary || (h.error || '');
+      const caller = h.caller_user_id ? `<span style="color:var(--text-3)">${h.caller_user_id}</span>` : '';
+
+      return `
+        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px;font-size:13px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <span style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 8px;font-weight:600;font-size:12px;white-space:nowrap">${h.skill_name}</span>
+              <span style="color:${statusColor};font-size:12px;font-weight:600">${statusText}</span>
+              ${caller}
+            </div>
+            <div style="display:flex;gap:10px;font-size:11px;color:var(--text-3);flex-shrink:0">
+              <span>${duration}</span>
+              <span>${ts}</span>
+            </div>
+          </div>
+          ${paramsStr ? `<details style="margin-top:6px"><summary style="font-size:11px;color:var(--text-3);cursor:pointer">参数</summary><pre style="margin:4px 0 0;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto">${_escapeHtml(paramsStr)}</pre></details>` : ''}
+          ${resultStr ? `<details style="margin-top:2px"><summary style="font-size:11px;color:var(--text-3);cursor:pointer">${h.success ? '结果' : '错误'}</summary><pre style="margin:4px 0 0;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:150px;overflow:auto;color:${h.success ? 'var(--text)' : 'var(--danger)'}">${_escapeHtml(resultStr)}</pre></details>` : ''}
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('loadSkillHistory', e);
+    el.innerHTML = '<div style="color:var(--text-2);padding:12px">加载执行历史失败</div>';
+  }
+}
+
+function _escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function renderSkillsList(skills) {

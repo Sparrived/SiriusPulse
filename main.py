@@ -69,13 +69,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
 
     persona_manager = PersonaManager(DATA_DIR, global_config=config)
 
-    # ── 启动所有已启用人格（worker 子进程会自动管理 NapCat 实例）──
-    LOG.info("正在启动已启用人格...")
-    results = persona_manager.start_all()
-    for name, ok in results.items():
-        LOG.info("  %s %s", "✓" if ok else "✗", name)
-
-    # ── 启动 WebUI ────────────────────────────────────────
+    # ── 先启动 WebUI（含 Embedding 服务），确保子进程能连上 ──
     napcat_dir = config.get("napcat_install_dir")
     from sirius_chat.platforms.napcat_manager import NapCatManager
     napcat_mgr = NapCatManager(napcat_dir) if napcat_dir else None
@@ -87,6 +81,37 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     )
     await webui.start()
     LOG.info("WebUI: http://localhost:%s", webui.port)
+
+    # 等待 Embedding 服务就绪（模型加载完成 + /embed 可用）
+    import time
+    from sirius_chat.embedding.client import EmbeddingClient
+    emb_url = config.get("embedding_url", "http://127.0.0.1:18900")
+    emb_client = EmbeddingClient(base_url=emb_url)
+    LOG.info("等待 Embedding 服务就绪: %s ...", emb_url)
+    for _attempt in range(120):
+        if emb_client.check_health():
+            # 额外验证 /embed 接口真正可用（模型已加载）
+            try:
+                _ = emb_client.encode(["ping"])
+                LOG.info("Embedding 服务已就绪: %s", emb_url)
+                break
+            except Exception:
+                pass
+        time.sleep(0.5)
+    else:
+        LOG.error("Embedding 服务在 60 秒内未就绪，无法启动人格")
+        await webui.stop()
+        raise RuntimeError(
+            f"Embedding 服务不可用 ({emb_url})。"
+            "请检查日志或手动启动: python -m sirius_chat.embedding.server"
+        )
+
+    # ── 启动所有已启用人格（worker 子进程会自动管理 NapCat 实例）──
+    LOG.info("正在启动已启用人格...")
+    results = persona_manager.start_all()
+    for name, ok in results.items():
+        LOG.info("  %s %s", "✓" if ok else "✗", name)
+
     LOG.info("按 Ctrl+C 停止所有服务")
 
     try:

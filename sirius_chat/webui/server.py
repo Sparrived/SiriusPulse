@@ -54,6 +54,7 @@ from sirius_chat.webui.memory_api import (
     api_persona_stickers_get,
     api_persona_sticker_detail_get,
     api_persona_sticker_delete,
+    api_persona_memory_viz,
 )
 from sirius_chat.webui.napcat_api import (
     api_napcat_status,
@@ -68,6 +69,7 @@ from sirius_chat.webui.server_skill_api import (
     api_persona_skill_toggle,
     api_persona_skill_config_get,
     api_persona_skill_config_post,
+    api_persona_skill_history_get,
 )
 
 
@@ -181,6 +183,9 @@ class WebUIServer(_WebUIServer):
     async def api_persona_sticker_delete(self, request):
         return await api_persona_sticker_delete(request, self.persona_manager)
 
+    async def api_persona_memory_viz(self, request):
+        return await api_persona_memory_viz(request, self.persona_manager)
+
     # ─── 多人格 API: 桥接配置 ─────────────────────────────
 
     async def api_config_post(self, request):
@@ -220,6 +225,9 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_skill_config_post(self, request):
         return await api_persona_skill_config_post(request, self.persona_manager)
+
+    async def api_persona_skill_history_get(self, request):
+        return await api_persona_skill_history_get(request, self.persona_manager)
 
 
 __all__ = ["WebUIServer"]

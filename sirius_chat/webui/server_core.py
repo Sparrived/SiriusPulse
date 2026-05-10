@@ -7,7 +7,7 @@ import logging
 import socket
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -15,6 +15,7 @@ from sirius_chat.providers.routing import WorkspaceProviderManager
 from sirius_chat.webui.server_skill_api import (
     api_persona_skill_config_get,
     api_persona_skill_config_post,
+    api_persona_skill_history_get,
     api_persona_skills_get,
     api_persona_skill_toggle,
 )
@@ -60,10 +61,55 @@ class WebUIServer:
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
         self._embedding_thread: threading.Thread | None = None
+        self._embedding_ready: bool = False  # 线程启动后模型是否加载成功
+        self._embedding_error: str = ""  # 启动失败的具体原因
         self._embedding_port: int = int(
             persona_manager.global_config.get("embedding_port", 18900)
         )
         self._setup_routes()
+
+    # ─── 子类 API 桩方法（Pylance 类型提示用，运行时由 server.py 覆盖）───
+
+    if TYPE_CHECKING:
+        async def api_napcat_status(self, request: web.Request) -> web.Response: ...
+        async def api_napcat_install(self, request: web.Request) -> web.Response: ...
+        async def api_napcat_configure(self, request: web.Request) -> web.Response: ...
+        async def api_napcat_start(self, request: web.Request) -> web.Response: ...
+        async def api_napcat_stop(self, request: web.Request) -> web.Response: ...
+        async def api_napcat_logs(self, request: web.Request) -> web.Response: ...
+        async def api_tokens_get(self, request: web.Request) -> web.Response: ...
+        async def api_telemetry_get(self, request: web.Request) -> web.Response: ...
+        async def api_personas_get(self, request: web.Request) -> web.Response: ...
+        async def api_personas_post(self, request: web.Request) -> web.Response: ...
+        async def api_personas_delete(self, request: web.Request) -> web.Response: ...
+        async def api_persona_get_single(self, request: web.Request) -> web.Response: ...
+        async def api_persona_status_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_start(self, request: web.Request) -> web.Response: ...
+        async def api_persona_stop(self, request: web.Request) -> web.Response: ...
+        async def api_persona_restart(self, request: web.Request) -> web.Response: ...
+        async def api_persona_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_post(self, request: web.Request) -> web.Response: ...
+        async def api_persona_interview_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_interview(self, request: web.Request) -> web.Response: ...
+        async def api_orchestration_get(self, request: web.Request) -> web.Response: ...
+        async def api_orchestration_post(self, request: web.Request) -> web.Response: ...
+        async def api_experience_get(self, request: web.Request) -> web.Response: ...
+        async def api_experience_post(self, request: web.Request) -> web.Response: ...
+        async def api_adapters_get(self, request: web.Request) -> web.Response: ...
+        async def api_adapters_post(self, request: web.Request) -> web.Response: ...
+        async def api_engine_reload(self, request: web.Request) -> web.Response: ...
+        async def api_persona_tokens_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_cognition_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_diary_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_vector_store_status_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_users_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_user_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_glossary_get(self, request: web.Request) -> web.Response: ...
+        async def api_config_post(self, request: web.Request) -> web.Response: ...
+        async def api_persona_memory_viz(self, request: web.Request) -> web.Response: ...
+        async def api_persona_stickers_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_sticker_detail_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_sticker_delete(self, request: web.Request) -> web.Response: ...
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
@@ -83,6 +129,7 @@ class WebUIServer:
         self.app.router.add_get("/api/napcat/logs", self.api_napcat_logs)
         self.app.router.add_get("/api/tokens", self.api_tokens_get)
         self.app.router.add_get("/api/telemetry", self.api_telemetry_get)
+        self.app.router.add_get("/api/embedding/status", self.api_embedding_status)
 
         # 多人格 API: 列表 / 创建 / 删除 / 状态
         self.app.router.add_get("/api/personas", self.api_personas_get)
@@ -135,6 +182,10 @@ class WebUIServer:
         self.app.router.add_post("/api/personas/{name}/skills/{skill_name}/toggle", self.api_persona_skill_toggle)
         self.app.router.add_get("/api/personas/{name}/skills/{skill_name}/config", self.api_persona_skill_config_get)
         self.app.router.add_post("/api/personas/{name}/skills/{skill_name}/config", self.api_persona_skill_config_post)
+        self.app.router.add_get("/api/personas/{name}/skill-history", self.api_persona_skill_history_get)
+
+        # 记忆可视化
+        self.app.router.add_get("/api/personas/{name}/memory-viz", self.api_persona_memory_viz)
 
         # 表情包管理（每人格独立）
         self.app.router.add_get("/api/personas/{name}/stickers", self.api_persona_stickers_get)
@@ -170,28 +221,81 @@ class WebUIServer:
         except OSError:
             return False
 
+    def get_embedding_status(self) -> dict[str, Any]:
+        """返回 embedding 服务的真实健康状态。"""
+        # 线程不存在 → 未启动
+        if self._embedding_thread is None:
+            return {"running": False, "ready": False, "error": self._embedding_error or "未启动"}
+        # 线程已死亡（启动失败）→ 检查是否还在运行
+        if not self._embedding_thread.is_alive():
+            return {
+                "running": False,
+                "ready": False,
+                "error": self._embedding_error or "服务线程已退出",
+            }
+        # 线程存活但模型还没加载完
+        if not self._embedding_ready:
+            return {"running": True, "ready": False, "error": "模型加载中..."}
+        return {"running": True, "ready": True, "error": ""}
+
     def _start_embedding_service(self) -> None:
         if self._embedding_thread is not None:
             LOG.warning("Embedding 服务已在运行")
             return
 
         if not self._is_port_free(self._embedding_port):
-            LOG.info("Embedding 服务端口 %d 已被占用，跳过内部启动", self._embedding_port)
+            # 端口被占用：可能是外部已启动，尝试健康检查
+            import urllib.request
+            import json as _json
+            try:
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{self._embedding_port}/health", method="GET"
+                )
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+                    if data.get("status") == "ok":
+                        self._embedding_ready = True
+                        LOG.info(
+                            "Embedding 服务端口 %d 已被外部进程占用且健康，跳过内部启动",
+                            self._embedding_port,
+                        )
+                        return
+            except Exception:
+                pass
+            LOG.warning(
+                "Embedding 服务端口 %d 已被占用但不健康，可能有残留进程",
+                self._embedding_port,
+            )
+            self._embedding_error = f"端口 {self._embedding_port} 已被占用且不可用"
             return
 
         def _run_server() -> None:
-            try:
-                from sirius_chat.embedding.server import create_app
-                app = create_app()
-                web.run_app(app, port=self._embedding_port, print=None)
-            except Exception as exc:
-                LOG.error("Embedding 服务启动失败: %s", exc)
+            import time as _time
+            from sirius_chat.embedding.server import create_app
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    app = create_app()
+                    self._embedding_ready = True
+                    if attempt == 0:
+                        LOG.info("Embedding 模型加载完成，启动 HTTP 服务...")
+                    else:
+                        LOG.info("Embedding 服务重启 (第 %d 次)", attempt)
+                    # 显式绑定 127.0.0.1，确保子进程通过 localhost/127.0.0.1 可访问
+                    web.run_app(app, host="127.0.0.1", port=self._embedding_port, print=None)
+                    break  # 正常退出（不应发生）
+                except Exception as exc:
+                    self._embedding_error = str(exc)
+                    self._embedding_ready = False
+                    LOG.error("Embedding 服务异常 (第 %d/%d 次): %s", attempt + 1, max_retries, exc)
+                    if attempt < max_retries - 1:
+                        _time.sleep(5)
 
         self._embedding_thread = threading.Thread(
             target=_run_server, daemon=True, name="embedding-server"
         )
         self._embedding_thread.start()
-        LOG.info("Embedding 服务已在后台线程启动 (port=%d)", self._embedding_port)
+        LOG.info("Embedding 服务后台线程已启动 (host=127.0.0.1 port=%d)", self._embedding_port)
 
     def _stop_embedding_service(self) -> None:
         if self._embedding_thread is not None:
@@ -200,7 +304,7 @@ class WebUIServer:
 
     # ─── 静态页面 ─────────────────────────────────────────
 
-    async def index(self, request: web.Request) -> web.Response:
+    async def index(self, request: web.Request) -> web.StreamResponse:
         html_path = Path(__file__).parent / "static" / "index.html"
         if html_path.exists():
             return web.FileResponse(html_path)
@@ -249,6 +353,11 @@ class WebUIServer:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
         return _json_response({"success": True})
+
+    # ─── 全局 API: Embedding 状态 ──────────────────────────
+
+    async def api_embedding_status(self, request: web.Request) -> web.Response:
+        return _json_response(self.get_embedding_status())
 
     # ─── 全局 API: Provider 配置 ──────────────────────────
 
@@ -369,3 +478,6 @@ class WebUIServer:
 
     async def api_persona_skill_config_post(self, request: web.Request) -> web.Response:
         return await api_persona_skill_config_post(request, self.persona_manager)
+
+    async def api_persona_skill_history_get(self, request: web.Request) -> web.Response:
+        return await api_persona_skill_history_get(request, self.persona_manager)

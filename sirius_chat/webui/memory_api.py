@@ -632,6 +632,163 @@ async def api_persona_sticker_detail_get(request: web.Request, persona_manager: 
         return _json_response({"error": str(exc)}, 500)
 
 
+async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> web.Response:
+    """GET /api/personas/{name}/memory-viz — 记忆可视化数据聚合接口。
+
+    Query params:
+        group_id     : 按群过滤（为空则全部）
+        basic_limit  : 基础记忆条数上限（默认 500，最大 2000）
+        diary_limit  : 日记条数上限（默认 200，最大 500）
+    """
+    name = _get_name(request)
+    group_filter = request.query.get("group_id", "").strip()
+    limit_basic = min(int(request.query.get("basic_limit", "500")), 2000)
+    limit_diary = min(int(request.query.get("diary_limit", "200")), 500)
+
+    paths = persona_manager.get_persona_paths(name)
+    if paths is None:
+        return _json_response({"error": "人格不存在"}, 404)
+
+    try:
+        # ── 1. 基础记忆：按群+天聚合为柱状图数据 ──
+        archive_dir = paths.dir / "archive"
+        all_groups: set[str] = set()
+        # day_bucket[date][group_id] = {human: N, assistant: N, system: N}
+        day_bucket: dict[str, dict[str, dict[str, int]]] = {}
+        # 最近 N 条明细（仅用于 tooltip 展示）
+        recent_entries: list[dict[str, Any]] = []
+
+        if archive_dir.exists():
+            for path in archive_dir.glob("*.jsonl"):
+                gid = path.stem
+                all_groups.add(gid)
+                if group_filter and gid != group_filter:
+                    continue
+                try:
+                    with path.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                                ts = data.get("timestamp", "")
+                                role = data.get("role", "human")
+                                day = ts[:10] if ts else "unknown"
+                                if day not in day_bucket:
+                                    day_bucket[day] = {}
+                                if gid not in day_bucket[day]:
+                                    day_bucket[day][gid] = {"human": 0, "assistant": 0, "system": 0}
+                                day_bucket[day][gid][role] = day_bucket[day][gid].get(role, 0) + 1
+
+                                recent_entries.append({
+                                    "group_id": gid,
+                                    "speaker_name": data.get("speaker_name", ""),
+                                    "role": role,
+                                    "content": data.get("content", "")[:120],
+                                    "timestamp": ts,
+                                })
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                except OSError:
+                    continue
+
+        recent_entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+        recent_entries = recent_entries[:limit_basic]
+
+        days_sorted = sorted(day_bucket.keys())
+        groups_in_data = sorted({g for bucket in day_bucket.values() for g in bucket})
+
+        # ── 2. 日记聚类：embedding + 关键词频率 ──
+        diary_dir = paths.dir / "diary"
+        diary_entries: list[dict[str, Any]] = []
+        keyword_freq: dict[str, int] = {}
+        if diary_dir.exists():
+            for path in diary_dir.glob("*.json"):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    g_id = data.get("group_id", "")
+                    if group_filter and g_id != group_filter:
+                        continue
+                    for item in data.get("entries", []):
+                        if not isinstance(item, dict):
+                            continue
+                        emb = item.get("embedding")
+                        diary_entries.append({
+                            "entry_id": item.get("entry_id", ""),
+                            "group_id": g_id,
+                            "created_at": item.get("created_at", ""),
+                            "summary": item.get("summary", ""),
+                            "content": item.get("content", "")[:300],
+                            "keywords": item.get("keywords", []),
+                            "embedding": emb,
+                        })
+                        for kw in item.get("keywords", []):
+                            keyword_freq[kw] = keyword_freq.get(kw, 0) + 1
+                except (OSError, json.JSONDecodeError):
+                    continue
+        diary_entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+        diary_entries = diary_entries[:limit_diary]
+        top_keywords = sorted(keyword_freq.items(), key=lambda x: x[1], reverse=True)[:20]
+
+        # ── 3. 用户-话题二部图 ──
+        semantic_base = paths.dir / "memory" / "semantic"
+        user_nodes: list[dict[str, Any]] = []
+        topic_nodes: list[dict[str, str]] = []  # {id, name}
+        user_topic_links: list[dict[str, Any]] = []
+        if semantic_base.exists():
+            users_dir = semantic_base / "users"
+            if users_dir.exists():
+                seen: set[str] = set()
+                topic_set: set[str] = set()
+                for g_dir in users_dir.iterdir():
+                    if not g_dir.is_dir():
+                        continue
+                    if group_filter and g_dir.name != group_filter:
+                        continue
+                    for u_file in g_dir.glob("*.json"):
+                        try:
+                            u_data = json.loads(u_file.read_text(encoding="utf-8"))
+                            uid = u_data.get("user_id", "")
+                            if not uid or uid in seen:
+                                continue
+                            seen.add(uid)
+                            engagement = u_data.get("engagement_rate", 0)
+                            count = u_data.get("interaction_count", 0)
+                            interests = [i.get("topic", "") for i in u_data.get("interest_graph", []) if i.get("topic")]
+                            user_nodes.append({
+                                "user_id": uid,
+                                "name": u_data.get("name", uid),
+                                "engagement_rate": engagement,
+                                "interaction_count": count,
+                            })
+                            for topic in interests:
+                                topic_set.add(topic)
+                                user_topic_links.append({"user_id": uid, "topic": topic})
+                        except (OSError, json.JSONDecodeError, TypeError):
+                            continue
+                for t in sorted(topic_set):
+                    topic_nodes.append({"id": t, "name": t})
+
+        return _json_response({
+            "groups": sorted(all_groups),
+            "basic_timeline": {
+                "days": days_sorted,
+                "groups": groups_in_data,
+                "buckets": day_bucket,
+                "recent": recent_entries,
+            },
+            "diary_entries": diary_entries,
+            "diary_top_keywords": top_keywords,
+            "user_nodes": user_nodes,
+            "topic_nodes": topic_nodes,
+            "user_topic_links": user_topic_links,
+        })
+    except Exception as exc:
+        LOG.warning("读取记忆可视化数据失败 %s: %s", name, exc)
+        return _json_response({"error": str(exc)}, 500)
+
+
 async def api_persona_sticker_delete(request: web.Request, persona_manager: Any) -> web.Response:
     """删除单个表情包。"""
     name = _get_name(request)

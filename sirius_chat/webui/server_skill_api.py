@@ -181,6 +181,48 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
         return _json_response({"error": str(exc)}, 500)
 
 
+async def api_persona_skill_history_get(request: web.Request, persona_manager: Any) -> web.Response:
+    """GET /api/personas/{name}/skill-history — 返回 SKILL 执行历史详情。"""
+    from sirius_chat.skills.telemetry import SkillTelemetry
+
+    name = _get_name(request)
+    skill_name = request.query.get("skill_name", "").strip() or None
+    limit = min(int(request.query.get("limit", "50")), 200)
+
+    paths = persona_manager.get_persona_paths(name)
+    if paths is None:
+        return _json_response({"error": "人格不存在"}, 404)
+
+    telemetry_path = paths.dir / "skill_data" / ".telemetry.jsonl"
+    if not telemetry_path.exists():
+        return _json_response({"history": []})
+
+    try:
+        telemetry = SkillTelemetry(telemetry_path)
+        records = telemetry.query(skill_name=skill_name, limit=limit)
+        items: list[dict[str, Any]] = []
+        for rec in reversed(records):
+            item: dict[str, Any] = {
+                "skill_name": rec.skill_name,
+                "timestamp": rec.timestamp,
+                "success": rec.success,
+                "duration_ms": rec.duration_ms,
+                "caller_user_id": rec.caller_user_id,
+            }
+            if rec.params:
+                item["params"] = rec.params
+            if rec.result_summary:
+                item["result_summary"] = rec.result_summary
+            if rec.error:
+                item["error"] = rec.error
+            items.append(item)
+
+        return _json_response({"history": items})
+    except Exception as exc:
+        LOG.warning("读取 Skill 执行历史失败 %s: %s", name, exc)
+        return _json_response({"error": str(exc)}, 500)
+
+
 async def api_persona_skill_config_post(request: web.Request, persona_manager: Any) -> web.Response:
     """POST /api/personas/{name}/skills/{skill_name}/config — 保存 skill 配置。"""
     name = _get_name(request)

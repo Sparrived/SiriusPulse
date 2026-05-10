@@ -127,6 +127,7 @@ const pageTitles = {
   'users': ['用户画像', 'Analytics / Users'],
   'glossary': ['名词解释', 'Analytics / Glossary'],
   'stickers': ['表情包库', 'Analytics / Stickers'],
+  'memory-viz': ['记忆可视化', 'Analytics / Memory Viz'],
 };
 
 async function navTo(page) {

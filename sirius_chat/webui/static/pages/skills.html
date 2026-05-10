@@ -22,6 +22,20 @@
     </div>
   </div>
 
+  <!-- Skill 执行历史 -->
+  <div class="card">
+    <h2 style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <span>Skill 执行历史</span>
+      <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+        <select id="skillHistoryFilter" onchange="loadSkillHistory()" style="background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px">
+          <option value="">全部 Skill</option>
+        </select>
+        <button class="btn small" onclick="loadSkillHistory()" style="padding:3px 10px;font-size:12px">刷新</button>
+      </div>
+    </h2>
+    <div id="skillHistoryList" style="color:var(--text-2);padding:12px">加载中...</div>
+  </div>
+
   <!-- Skill 配置模态框 -->
   <div id="skillConfigModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:90%;max-width:560px;max-height:80vh;overflow:auto">
