@@ -49,6 +49,7 @@ class ContextAssembler:
         diary_token_budget: int = 800,
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
+        include_pending: bool = False,
     ) -> list[dict[str, str]]:
         """Build OpenAI messages array with history embedded in system prompt.
 
@@ -82,7 +83,7 @@ class ContextAssembler:
                 )
 
         # 2. Build XML conversation history from recent basic memory
-        history_xml = self._build_history_xml(group_id, n=recent_n)
+        history_xml = self._build_history_xml(group_id, n=recent_n, include_pending=include_pending)
 
         # 2b. Cross-group history for the current user
         cross_group_xml = ""
@@ -113,6 +114,7 @@ class ContextAssembler:
         diary_token_budget: int = 800,
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
+        include_pending: bool = False,
     ) -> tuple[list[dict[str, str]], dict[str, int]]:
         """Build OpenAI messages array and return per-module token breakdown.
 
@@ -126,7 +128,7 @@ class ContextAssembler:
             max_tokens_budget=diary_token_budget,
         )
 
-        history_xml = self._build_history_xml(group_id, n=recent_n)
+        history_xml = self._build_history_xml(group_id, n=recent_n, include_pending=include_pending)
 
         cross_group_xml = ""
         if cross_group_enabled and cross_group_user_id:
@@ -162,35 +164,43 @@ class ContextAssembler:
             {"role": "user", "content": current_query},
         ], breakdown
 
-    def build_history_xml(self, group_id: str, n: int = 10) -> str:
+    def build_history_xml(self, group_id: str, n: int = 10, *, include_pending: bool = False) -> str:
         """Build XML representation of recent conversation history.
 
         Exported for callers (e.g. proactive / delayed responses) that want
         to embed history into their own system prompts.
         """
-        return self._build_history_xml(group_id, n=n)
+        return self._build_history_xml(group_id, n=n, include_pending=include_pending)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_history_xml(self, group_id: str, n: int = 5) -> str:
+    def _build_history_xml(
+        self, group_id: str, n: int = 5, *, include_pending: bool = False,
+    ) -> str:
         """Convert recent basic memory entries into an XML block.
 
-        Trailing entries after the last assistant reply are excluded, because
-        those are the pending (unanswered) user messages that will be passed
-        separately as the ``user`` role content by the caller.
+        By default, trailing entries after the last assistant reply are excluded,
+        because those are the pending (unanswered) user messages that will be
+        passed separately as the ``user`` role content by the caller.
+
+        When ``include_pending=True`` (used by delayed/proactive responses),
+        all recent entries are included — the caller's user content does not
+        contain the pending messages, so excluding them from history would
+        lose critical conversational context.
         """
         recent = self._basic.get_context(group_id, n=n)
         if not recent:
             return ""
-        last_assistant_idx = -1
-        for i in range(len(recent) - 1, -1, -1):
-            if recent[i].role == "assistant":
-                last_assistant_idx = i
-                break
-        if last_assistant_idx >= 0:
-            recent = recent[: last_assistant_idx + 1]
+        if not include_pending:
+            last_assistant_idx = -1
+            for i in range(len(recent) - 1, -1, -1):
+                if recent[i].role == "assistant":
+                    last_assistant_idx = i
+                    break
+            if last_assistant_idx >= 0:
+                recent = recent[: last_assistant_idx + 1]
         return self._entries_to_xml(recent, tag="conversation_history")
 
     def _build_cross_group_history_xml(

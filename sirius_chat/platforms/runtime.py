@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,9 @@ class EngineRuntime:
         self.plugin_config = dict(plugin_config or {})
         self._engine: EmotionalGroupChatEngine | None = None
         self._running = False
+        self._embedding_build_failed: bool = False
+        self._embedding_last_fail_at: float = 0.0
+        self._embedding_fail_count: int = 0
         self.token_store = TokenUsageStore(
             self.work_path / "token" / "token_usage.db",
             session_id="default",
@@ -135,6 +139,12 @@ class EngineRuntime:
         if not self.has_persona():
             LOG.warning("引擎未就绪: 未找到人格配置。请在 WebUI 的「人格配置」页面保存人格，或检查 %s/engine_state/persona.json 是否存在。", self.work_path)
             return False
+        # embedding 服务在冷却期内 → 静默返回，避免每秒刷 WARNING
+        if self._embedding_build_failed:
+            now = time.monotonic()
+            cooldown = min(300.0, 30.0 * (2 ** self._embedding_fail_count))
+            if (now - self._embedding_last_fail_at) < cooldown:
+                return False
         try:
             _ = self.engine
             return True
@@ -268,14 +278,34 @@ class EngineRuntime:
         embedding_url = os.environ.get(
             "SIRIUS_EMBEDDING_URL", "http://127.0.0.1:18900"
         )
+
+        # 指数退避：失败后冷却，避免每次消息都阻塞 60 秒
+        now = time.monotonic()
+        cooldown = min(300.0, 30.0 * (2 ** self._embedding_fail_count))
+        if self._embedding_build_failed and (now - self._embedding_last_fail_at) < cooldown:
+            remaining = int(cooldown - (now - self._embedding_last_fail_at))
+            raise RuntimeError(
+                f"Embedding 服务不可用 ({embedding_url})，{remaining}秒后重试。"
+            )
+
         embedding_client = EmbeddingClient(base_url=embedding_url)
-        if embedding_client.available:
-            LOG.info("共享 Embedding 服务已连接: %s", embedding_url)
+        LOG.info("等待共享 Embedding 服务就绪: %s ...", embedding_url)
+        # 阻塞等待 Embedding 服务就绪（最多 30 秒）
+        for _attempt in range(60):
+            if embedding_client.check_health():
+                LOG.info("共享 Embedding 服务已连接: %s", embedding_url)
+                self._embedding_build_failed = False
+                self._embedding_fail_count = 0
+                break
+            time.sleep(0.5)
         else:
-            LOG.error("共享 Embedding 服务不可用: %s", embedding_url)
+            self._embedding_build_failed = True
+            self._embedding_last_fail_at = time.monotonic()
+            self._embedding_fail_count = min(self._embedding_fail_count + 1, 4)
+            LOG.error("共享 Embedding 服务不可用: %s (连续失败 %d 次)", embedding_url, self._embedding_fail_count)
             raise RuntimeError(
                 f"Embedding 服务不可用 ({embedding_url})。"
-                "Sirius Chat 强依赖 Embedding 服务，请先启动: "
+                "请在 WebUI 检查 Embedding 状态，或手动启动: "
                 "python -m sirius_chat.embedding.server"
             )
 
@@ -340,6 +370,9 @@ class EngineRuntime:
                 LOG.warning("停止后台任务失败: %s", exc)
             self._engine = None
             LOG.info("引擎已标记为重建，下次访问时将重新初始化")
+        # 重置 embedding 失败缓存，让 reload 后能立即重试
+        self._embedding_build_failed = False
+        self._embedding_fail_count = 0
 
     async def stop(self) -> None:
         self._running = False

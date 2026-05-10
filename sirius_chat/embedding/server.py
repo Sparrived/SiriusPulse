@@ -55,17 +55,20 @@ class _BatchProcessor:
         default_factory=asyncio.Queue, init=False, repr=False
     )
 
-    def _ensure_model(self) -> None:
-        """懒加载 sentence-transformers 模型。"""
+    def _load_model(self) -> None:
+        """预加载 sentence-transformers 模型（启动时调用，非懒加载）。"""
         if self._model is not None:
             return
         from sentence_transformers import SentenceTransformer
+        logger.info("Embedding 服务正在加载模型: %s ...", self.model_name)
+        t0 = time.monotonic()
         self._model = SentenceTransformer(self.model_name, local_files_only=True)
-        logger.info("Embedding 服务已加载模型: %s", self.model_name)
+        duration_ms = round((time.monotonic() - t0) * 1000, 1)
+        logger.info("Embedding 服务模型加载完成: %s (%.1fms)", self.model_name, duration_ms)
 
     def _encode_sync(self, texts: list[str]) -> list[list[float]]:
         """同步 encode，供线程池调用。支持大 batch 自动分片。"""
-        self._ensure_model()
+        # 模型已在启动时预加载，此处不应再触发加载
         if len(texts) <= MAX_ENCODE_BATCH:
             vecs = self._model.encode(texts, convert_to_tensor=False)
             return [v.tolist() for v in vecs]
@@ -224,6 +227,8 @@ def create_app(
         max_batch_size=max_batch_size,
         max_wait_ms=max_wait_ms,
     )
+    # 预加载模型，避免首次请求时阻塞
+    _processor._load_model()
 
     app = web.Application()
     app.router.add_post("/embed", _handle_embed)

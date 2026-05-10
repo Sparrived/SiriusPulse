@@ -42,6 +42,11 @@ class EmbeddingClient:
             self._available = self._check_health()
         return self._available
 
+    def check_health(self) -> bool:
+        """强制重新检查服务健康状态并更新缓存。"""
+        self._available = self._check_health()
+        return self._available
+
     def encode(self, texts: list[str]) -> list[list[float]]:
         """调用远程 encode，返回嵌入向量列表。
 

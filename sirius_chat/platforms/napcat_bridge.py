@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
 
@@ -388,7 +388,6 @@ class NapCatBridge:
                         await self._send_group_text_raw(group_id, clean_reply)
                     else:
                         await self._send_private_text_raw(user_id, clean_reply)
-            LOG.info("%s 消息处理完成 | strategy=%s | speaker=%s", group_id, result.get("strategy"), speaker_name)
         except asyncio.CancelledError:
             raise
         except RuntimeError as exc:
@@ -401,11 +400,14 @@ class NapCatBridge:
 
     async def _event_bus_listener(self) -> None:
         """订阅引擎事件总线，投递所有异步事件（主动消息、延迟回复、提醒等）。"""
+        not_ready_backoff = 1.0  # 未就绪时指数退避
         while self._running:
             try:
                 if not self.runtime.is_ready():
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(not_ready_backoff)
+                    not_ready_backoff = min(not_ready_backoff * 2, 30.0)
                     continue
+                not_ready_backoff = 1.0  # 恢复后重置退避
                 async for event in self.runtime.engine.event_bus.subscribe():
                     if not self._running:
                         break
