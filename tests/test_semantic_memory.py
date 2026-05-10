@@ -11,7 +11,7 @@ from sirius_chat.memory.semantic.manager import SemanticMemoryManager
 from sirius_chat.memory.semantic.models import (
     AtmosphereSnapshot,
     GroupSemanticProfile,
-    RelationshipState,
+    ResponseRecord,
     UserSemanticProfile,
 )
 
@@ -37,7 +37,6 @@ class TestGroupProfilePersistence:
         profile.group_norms["test_key"] = "test_value"
         manager.save_group_profile("g1")
 
-        # New manager should load from disk
         manager2 = SemanticMemoryManager(manager._store._base.parent.parent)
         loaded = manager2.ensure_group_profile("g1")
         assert loaded.group_norms.get("test_key") == "test_value"
@@ -62,12 +61,12 @@ class TestUserProfilePersistence:
 
     def test_user_profile_persists_to_disk(self, manager):
         profile = manager.get_user_profile("g1", "u1")
-        profile.communication_style = "casual"
+        profile.name = "test_user"
         manager.save_user_profile("g1", "u1")
 
         manager2 = SemanticMemoryManager(manager._store._base.parent.parent)
         loaded = manager2.get_user_profile("g1", "u1")
-        assert loaded.communication_style == "casual"
+        assert loaded.name == "test_user"
 
     def test_list_group_user_profiles(self, manager):
         manager.get_user_profile("g1", "u1")
@@ -111,12 +110,6 @@ class TestPassiveLearning:
         assert profile.group_norms.get("mention_total") == 1
         assert profile.group_norms.get("mention_rate") == 0.5
 
-    def test_interaction_style_active(self, manager):
-        for _ in range(10):
-            manager.learn_from_message("g1", "ok", social_intent="chat")
-        profile = manager.ensure_group_profile("g1")
-        assert profile.typical_interaction_style == "active"
-
     def test_topic_switch_tracking(self, manager):
         manager.learn_from_message("g1", "a", social_intent="chat")
         manager.learn_from_message("g1", "b", social_intent="help")
@@ -125,12 +118,9 @@ class TestPassiveLearning:
         assert profile.group_norms.get("topic_switches") == 2
 
     def test_keyword_extraction_no_longer_in_passive_learning(self, manager):
-        # Interest topics are now extracted via LLM in DiaryGenerator.
-        # Passive learning only tracks message stats.
         for _ in range(5):
             manager.learn_from_message("g1", "python asyncio", social_intent="chat")
         profile = manager.ensure_group_profile("g1")
-        # interest_topics and dominant_topic should be empty (set by LLM only)
         assert profile.interest_topics == []
         assert profile.dominant_topic == ""
 
@@ -152,35 +142,83 @@ class TestAtmosphereRecording:
 
 
 # ==================================================================
-# Relationship updates
+# User interaction recording
 # ==================================================================
 
-class TestRelationshipUpdates:
-    def test_update_relationship_basic(self, manager):
-        manager.update_relationship("g1", "u1", valence=0.5, urgency_score=50, social_intent="chat")
+class TestUserInteraction:
+    def test_record_interaction_increments_count(self, manager):
+        manager.record_user_interaction("g1", "u1")
+        manager.record_user_interaction("g1", "u1")
         profile = manager.get_user_profile("g1", "u1")
-        rs = profile.relationship_state
-        assert rs.interaction_frequency_7d > 0
-        assert rs.emotional_intimacy > 0
-        assert rs.first_interaction_at != ""
-        assert rs.last_interaction_at != ""
+        assert profile.interaction_count == 2
+        assert profile.first_interaction_at != ""
+        assert profile.last_interaction_at != ""
 
-    def test_familiarity_grows_with_interactions(self, manager):
-        for _ in range(10):
-            manager.update_relationship("g1", "u1", valence=0.8, urgency_score=50, social_intent="chat")
+    def test_compute_familiarity_from_count(self, manager):
         profile = manager.get_user_profile("g1", "u1")
-        fam = profile.relationship_state.compute_familiarity()
-        assert fam > 0.5
+        assert profile.compute_familiarity() == 0.0
+        profile.interaction_count = 50
+        assert profile.compute_familiarity() == pytest.approx(1.0, abs=0.01)
 
-    def test_trust_from_high_urgency(self, manager):
-        manager.update_relationship("g1", "u1", valence=0.5, urgency_score=80, social_intent="help")
-        profile = manager.get_user_profile("g1", "u1")
-        assert profile.relationship_state.trust_score > 0.5
 
-    def test_dependency_from_help_intent(self, manager):
-        manager.update_relationship("g1", "u1", valence=0.5, urgency_score=50, social_intent="help_request")
+# ==================================================================
+# Response feedback tracking
+# ==================================================================
+
+class TestResponseFeedback:
+    def test_record_response_sent_creates_pending(self, manager):
+        manager.record_response_sent("g1", "u1", topic_hint="test", response_length=20)
         profile = manager.get_user_profile("g1", "u1")
-        assert profile.relationship_state.dependency_score > 0.5
+        assert len(profile.pending_responses) == 1
+        rec = profile.pending_responses[0]
+        assert rec.target_user_id == "u1"
+        assert rec.topic_hint == "test"
+        assert rec.response_length == 20
+
+    def test_resolve_engages_with_directed_score(self, manager):
+        manager.record_response_sent("g1", "u1", response_length=10)
+        profile = manager.get_user_profile("g1", "u1")
+        assert len(profile.pending_responses) == 1
+
+        # directed_score >= 0.3 才算真正的指向 AI 的回应
+        manager.resolve_pending_feedback("g1", "u1", directed_score=0.5)
+        profile = manager.get_user_profile("g1", "u1")
+        assert len(profile.pending_responses) == 0
+        assert profile.engagement_rate > 0
+
+    def test_resolve_ignores_non_directed(self, manager):
+        manager.record_response_sent("g1", "u1", response_length=10)
+        # directed_score < 0.3 → 不结算（群聊噪音）
+        manager.resolve_pending_feedback("g1", "u1", directed_score=0.1)
+        profile = manager.get_user_profile("g1", "u1")
+        # 记录仍留在 pending 中
+        assert len(profile.pending_responses) == 1
+        assert profile.engagement_rate == 0.0
+
+    def test_pending_limit(self, manager):
+        for _ in range(25):
+            manager.record_response_sent("g1", "u1", response_length=10)
+        profile = manager.get_user_profile("g1", "u1")
+        assert len(profile.pending_responses) == 20
+
+    def test_group_level_engagement(self, manager):
+        manager.record_response_sent("g1", "u1", response_length=10)
+        group = manager.get_group_profile("g1")
+        assert len(group.pending_ai_responses) == 1
+
+        manager.resolve_pending_feedback("g1", "u1", directed_score=0.5)
+        group = manager.get_group_profile("g1")
+        assert len(group.pending_ai_responses) == 0
+        assert group.response_engagement_rate > 0
+
+    def test_engagement_rate_persistence(self, manager):
+        manager.record_response_sent("g1", "u1", response_length=10)
+        manager.resolve_pending_feedback("g1", "u1", directed_score=0.5)
+        manager.save_user_profile("g1", "u1")
+
+        manager2 = SemanticMemoryManager(manager._store._base.parent.parent)
+        loaded = manager2.get_user_profile("g1", "u1")
+        assert loaded.engagement_rate > 0
 
 
 # ==================================================================
@@ -193,13 +231,11 @@ class TestProactiveTopicSelection:
         profile.interest_topics = ["gaming", "music"]
         manager.save_group_profile("g1")
 
-        # Simulate _pick_proactive_topic logic
         group_profile = manager.get_group_profile("g1")
         candidates = list(group_profile.interest_topics)
         assert "gaming" in candidates
 
     def test_pick_topic_from_dominant_topic(self, manager):
-        # dominant_topic is set by LLM during diary generation
         profile = manager.ensure_group_profile("g1")
         profile.dominant_topic = "artificial intelligence"
         manager.save_group_profile("g1")

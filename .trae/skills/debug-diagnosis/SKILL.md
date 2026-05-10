@@ -62,7 +62,7 @@ git diff HEAD~1 -- sirius_chat/core/emotional_engine.py
 | 异常特征 | 可能层级 | 优先检查文件 |
 |---------|---------|------------|
 | `KeyError`、`AttributeError`、`TypeError` 在数据访问时 | 数据模型/配置 | `sirius_chat/models/`、`sirius_chat/config/` |
-| 消息处理无响应或响应内容异常 | 引擎核心 | `sirius_chat/core/emotional_engine.py`、`core/response_assembler.py`、`core/cognition.py` |
+| 消息处理无响应或响应内容异常 | 引擎核心 | `sirius_chat/core/emotional_engine.py`、`core/prompt_factory.py`、`core/cognition.py` |
 | 记忆丢失、重复或检索异常 | 记忆系统 | `sirius_chat/memory/basic/`、`memory/diary/`、`memory/semantic/`、`memory/context_assembler.py` |
 | LLM 调用失败、超时或返回解析错误 | Provider/路由 | `sirius_chat/providers/`、`providers/routing.py` |
 | 群消息收发异常、连接断开 | 平台适配 | `sirius_chat/platforms/napcat_adapter.py`、`platforms/napcat_bridge.py` |

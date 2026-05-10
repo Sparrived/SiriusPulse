@@ -430,7 +430,7 @@ config = configure_orchestration_models(
 2. 需要注释时直接使用 JSONC，不必更换扩展名。
 3. `persona` 字段优先使用模板名；复杂人格通过 roleplay 资产 + `"generated"` 加载。
 4. 全局 provider 配置位于 `data/providers/provider_keys.json`，所有人格共用。
-5. 日记检索质量取决于 sentence-transformers（`pip install sentence-transformers` 可选安装）。未安装时自动回退到纯关键词匹配。
+5. 日记检索质量取决于 Embedding 微服务。Embedding 服务由 `PersonaManager` 在主进程启动（`sirius_chat/embedding/server.py`），各人格子进程通过 `EmbeddingClient` HTTP 调用。服务不可用时引擎启动会直接失败（强依赖）。可使用 `python -m sirius_chat.embedding` 单独测试 Embedding 服务。
 
 ### 故障排查
 

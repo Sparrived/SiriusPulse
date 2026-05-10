@@ -162,7 +162,7 @@ git diff --cached --stat
 git commit -m "feat(memory): 实现记忆质量评估与智能遗忘引擎
 
 新增sirius_chat/memory/diary/indexer.py模块，包含：
-- DiaryIndexer：关键词 + sentence-transformers 向量索引
+- DiaryIndexer：关键词 + EmbeddingClient 向量索引
 - DiaryRetriever：按 token 预算检索相关日记
 
 新增sirius_chat/memory/diary/retriever.py，提供检索工具：

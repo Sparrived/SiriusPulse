@@ -5,7 +5,6 @@
 - 创建/删除人格（含默认配置生成）
 - 启动/停止人格子进程
 - 监控子进程健康状态
-- 管理共享 Embedding 服务
 - 为 WebUI 提供查询接口
 """
 
@@ -18,7 +17,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,66 +46,9 @@ class PersonaManager:
         self.global_config = dict(global_config or {})
         self._processes: dict[str, subprocess.Popen] = {}
         self._port_registry_path = self.data_path / "adapter_port_registry.json"
-        self._embedding_thread: threading.Thread | None = None
-        self._embedding_port: int = int(
-            self.global_config.get("embedding_port", 18900)
-        )
 
         import atexit
         atexit.register(self._cleanup_stale_worker_statuses)
-
-    # ------------------------------------------------------------------
-    # 共享 Embedding 服务管理
-    # ------------------------------------------------------------------
-
-    def start_embedding_service(self) -> None:
-        """在后台线程启动共享 Embedding 微服务。
-
-        服务加载一次 bge-small-zh 模型，所有 PersonaWorker 通过
-        HTTP 客户端调用，避免每个子进程重复加载模型。
-        """
-        if self._embedding_thread is not None:
-            LOG.warning("Embedding 服务已在运行")
-            return
-
-        # 检查端口是否已被占用（可能外部已启动）
-        if not self._is_port_free(self._embedding_port):
-            LOG.info(
-                "Embedding 服务端口 %d 已被占用，跳过内部启动",
-                self._embedding_port,
-            )
-            return
-
-        def _run_server() -> None:
-            try:
-                from sirius_chat.embedding.server import create_app
-                from aiohttp import web
-
-                app = create_app()
-                web.run_app(
-                    app,
-                    port=self._embedding_port,
-                    print=None,
-                )
-            except Exception as exc:
-                LOG.error("Embedding 服务启动失败: %s", exc)
-
-        self._embedding_thread = threading.Thread(
-            target=_run_server, daemon=True, name="embedding-server"
-        )
-        self._embedding_thread.start()
-        LOG.info("Embedding 服务已在后台线程启动 (port=%d)", self._embedding_port)
-
-    def stop_embedding_service(self) -> None:
-        """停止 Embedding 服务（daemon 线程会随主进程退出自动终止）。"""
-        if self._embedding_thread is not None:
-            LOG.info("Embedding 服务线程将随主进程退出")
-            self._embedding_thread = None
-
-    @property
-    def embedding_url(self) -> str:
-        """返回 Embedding 服务的访问地址。"""
-        return f"http://127.0.0.1:{self._embedding_port}"
 
     # ------------------------------------------------------------------
     # 端口分配

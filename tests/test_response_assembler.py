@@ -73,7 +73,12 @@ class TestPromptFactoryAssemble:
         adapter = StyleAdapter()
         style = adapter.adapt(pace="steady")
 
-        group = GroupSemanticProfile(group_id="g1", typical_interaction_style="humorous")
+        group = GroupSemanticProfile(group_id="g1")
+        group.group_norms = {
+            "message_count": 20,
+            "avg_message_length": 15,
+            "length_distribution": {"short": 16, "medium": 4},
+        }
         group.atmosphere_history.append(AtmosphereSnapshot(
             timestamp="2026-04-17T10:00:00", group_valence=0.3, group_arousal=0.4
         ))
@@ -89,7 +94,7 @@ class TestPromptFactoryAssemble:
         )
 
         assert "群体风格" in bundle.system_prompt
-        assert "轻松幽默" in bundle.system_prompt
+        assert "短消息" in bundle.system_prompt
         assert "群里氛围" in bundle.system_prompt
 
     def test_assemble_with_user_profile(self):
@@ -126,14 +131,13 @@ class TestPromptFactoryAssemble:
         bundle = PromptFactory.assemble_chat(
             persona_prompt=persona.build_system_prompt(),
             message_content="刚才的话题很有趣",
-            group_profile=GroupSemanticProfile(group_id="g1", typical_interaction_style="humorous"),
+            group_profile=GroupSemanticProfile(group_id="g1"),
             style_params=style,
             other_ai_names=[],
             scene_description="群里的话题有了自然间隙，你决定插一句。",
         )
         assert "话题有了自然间隙" in bundle.system_prompt
         assert "刚才的话题很有趣" in bundle.user_content
-        assert "轻松幽默" in bundle.system_prompt
 
     def test_assemble_proactive(self):
         from sirius_chat.models.persona import PersonaProfile

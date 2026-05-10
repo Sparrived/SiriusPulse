@@ -271,12 +271,12 @@ emit PERCEPTION_COMPLETED
 #### 2.3.2 动态阈值（ThresholdEngine）
 
 ```
-threshold = base × activity_factor × relationship_factor × time_factor
+threshold = base × activity_factor × engagement_factor × time_factor
 ```
 
 - `base`：基准阈值（默认 ~0.45）
 - `activity_factor`：`heat_level` 越热阈值越高（群里刷消息时更谨慎）
-- `relationship_factor`：关系越近阈值越低（跟熟人更随意）
+- `engagement_factor`：基于用户历史互动率（AI 发言后用户是否定向回应），互动率越高阈值越低
 - `time_factor`：深夜阈值更高（不想打扰）
 
 #### 2.3.3 单旋钮活泼度（Expressiveness）
@@ -344,32 +344,32 @@ directed_score = min(score, score×0.5+0.1)
 #### 2.4.1 IMMEDIATE 流程
 
 ```
-ResponseAssembler.assemble()
+PromptFactory.assemble_chat()
     │
     ├── [角色剧本]     persona.build_system_prompt()
-    ├── [当下的感觉]   用户情绪 + 群体氛围 + 助手自身情绪
+    ├── [身份识别]     PromptFactory.build_identity_verification()
+    ├── [输出规范]     PromptFactory.build_output_spec()
+    ├── [当下的感觉]   PromptFactory.build_emotion_context()（用户情绪 + 群体氛围 + 助手自身情绪）
     ├── [共情策略]     confirm_action / cognitive / action / share_joy / presence
-    ├── [相关记忆]     基础记忆最近窗口 + 日记检索 top-k
+    ├── [相关记忆]     PromptFactory.build_memory_context()（基础记忆最近窗口 + 日记检索 top-k）
     ├── [术语表]       glossary_section (GlossaryManager)
-    ├── [群体风格]     群聊规范 + 长度/温度限制
+    ├── [群体风格]     PromptFactory.build_group_style()（群消息统计 + 互动率反馈 + 长度/温度限制）
     ├── [输出格式]     纯文本回复，可包含内联 [SKILL_CALL: ...]
     └── [消息] xxx
     │
     ▼
-StyleAdapter.adapt()
-    ├── max_tokens: cold 256 / warm 128 / hot 80 / overheated 50
-    ├── temperature: persona 偏好 + 用户风格
-    └── length_instruction / tone_instruction
+StyleAdapter.adapt()（输出 prompt 级指令，不再动态缩减 max_tokens）
+    ├── temperature: persona 偏好
+    └── length_instruction / tone_instruction（按对话节奏引导模型自主控制长度）
     │
     ▼
 ModelRouter.resolve()
     ├── 认知分析 → gpt-4o-mini（便宜、快）
     ├── 回复生成 → gpt-4o（质量好）
-    ├── urgency > 80 → 升级更强模型，降低 temperature
-    └── heat_level = overheated → max_tokens 减半
+    └── urgency > 80 → 升级更强模型，降低 temperature
     │
     ▼
-_generate() → provider.generate_async()
+_generate() → provider.generate_async()（全链路异步 httpx）
     ├── 估算 token 用量
     └── 记录 TokenUsageRecord
     │

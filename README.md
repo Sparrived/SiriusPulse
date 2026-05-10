@@ -239,7 +239,7 @@ sirius_chat/
 │   ├── glossary/                 # 名词解释（AI 自身知识库，支持人格级隔离）
 │   ├── user/                     # 用户管理（简化 UserProfile + UserManager）
 │   ├── context_assembler.py      # 上下文组装器（basic + diary → OpenAI messages）
-│   └── semantic/                 # 语义记忆（群规范学习、氛围记录、关系状态、持久化）
+│   └── semantic/                 # 语义记忆（群氛围记录、群规范学习、互动率追踪、持久化）
 ├── session/                      # 💾 SessionStore 与高层兼容 runner
 ├── providers/                    # 🔗 Provider 实现、路由与中间件
 │   ├── routing.py

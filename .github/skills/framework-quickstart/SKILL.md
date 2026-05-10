@@ -36,10 +36,10 @@ description: "你擅长使用自己的技能为其他人解决问题。当你需
 10. `sirius_chat/workspace/roleplay_manager.py`
 11. `sirius_chat/config/models.py`
 12. `sirius_chat/config/manager.py`
-13. `sirius_chat/roleplay_prompting.py`
+13. `sirius_chat/persona_generation/`
 14. `sirius_chat/core/emotional_engine.py`
 15. `sirius_chat/core/cognition.py`
-16. `sirius_chat/core/response_assembler.py`
+16. `sirius_chat/core/prompt_factory.py`
 17. `sirius_chat/core/response_strategy.py`
 18. `sirius_chat/core/model_router.py`
 19. `sirius_chat/memory/basic/manager.py`
@@ -66,9 +66,9 @@ description: "你擅长使用自己的技能为其他人解决问题。当你需
 - **v1.0 默认引擎** `EmotionalGroupChatEngine` 直接处理消息，不经过 `run_live_message` 的 legacy 队列系统。
 - `WorkspaceRuntime.initialize()` 会预先初始化共享 SKILL runtime，并在 `skills/` 目录变化时通过 watcher 触发全量 reload，不再在消息路径按次扫描目录。SKILL runtime 会先加载包内置技能（当前包含 `system_info`、`learn_term`、`url_content_reader`、`bing_search` 与 developer-only 的 `desktop_screenshot`），再加载 workspace `skills/`；同名 workspace 文件覆盖内置实现。
 - 内置 SKILL 与 workspace SKILL 共用依赖自动安装路径；`SKILL_META["dependencies"]` 会在模块真正导入前参与解析。
-- SKILL 执行结果现在支持结构化 `text_blocks` / `multimodal_blocks` / `internal_metadata`；`core/emotional_engine.py` 负责把结果注入 basic memory，`core/response_assembler.py` 负责把可用文本与图片转成隐藏模型上下文，并在最近少量 assistant turn 内继续保留这些内部结果，避免模型在短期追问里立刻忘掉刚拿到的观察，同时避免把元信息泄露到用户回复中。
+- SKILL 执行结果现在支持结构化 `text_blocks` / `multimodal_blocks` / `internal_metadata`；`core/emotional_engine.py` 负责把结果注入 basic memory，`core/prompt_factory.py` 负责把可用文本与图片转成隐藏模型上下文，并在最近少量 assistant turn 内继续保留这些内部结果，避免模型在短期追问里立刻忘掉刚拿到的观察，同时避免把元信息泄露到用户回复中。
 - `Participant.metadata` / `UserProfile.metadata` 中的 `is_developer` 是 SKILL 安全模型的显式权限来源；engine 会据此构建 `SkillInvocationContext`，让 developer-only 工具在非 developer 当前轮次中自动隐藏，并在执行时再次校验。
-- 会话事件流包含 PERCEPTION/COGNITION/DECISION/EXECUTION 四层管道事件，以及 DELAYED/PROACTIVE 触发事件。技能执行结果由 `response_assembler` 注入 assistant 回复，不通过独立事件暴露。
+- 会话事件流包含 PERCEPTION/COGNITION/DECISION/EXECUTION 四层管道事件，以及 DELAYED/PROACTIVE 触发事件。技能执行结果由 `prompt_factory` 注入 assistant 回复，不通过独立事件暴露。
 - `WorkspaceRuntime` 会把 `WorkspaceBootstrap` 的签名记入 `workspace.json`；同一份 bootstrap 只在首次命中时持久化一次，后续重启会保留用户在 config root 下的手工修改。
 - `WorkspaceLayout` 是路径语义的单一事实来源：config root 放配置与资产，data root 放运行态数据。
 - **v1.0.0 默认引擎** `EmotionalGroupChatEngine` 的真实实现位于 `sirius_chat/core/emotional_engine.py`；采用四层认知架构（感知→认知→决策→执行）与简化记忆模型（基础记忆 → 日记记忆 → 语义记忆）。
@@ -82,7 +82,7 @@ description: "你擅长使用自己的技能为其他人解决问题。当你需
 ## 修改路由指南
 
 - 新增 provider：修改 `sirius_chat/providers/`、`sirius_chat/providers/routing.py`、`sirius_chat/api/providers.py`，并补测试与文档。
-- 修改对话主流程（当前唯一 Emotional 引擎）：优先检查 `sirius_chat/core/emotional_engine.py`、`core/response_assembler.py`、`core/cognition.py`、`core/response_strategy.py`。
+- 修改对话主流程（当前唯一 Emotional 引擎）：优先检查 `sirius_chat/core/emotional_engine.py`、`core/prompt_factory.py`、`core/cognition.py`、`core/response_strategy.py`。
 - 修改记忆系统（基础记忆 / 日记记忆 / 用户管理 / 名词解释）：同步检查 `sirius_chat/memory/basic/manager.py`、`sirius_chat/memory/diary/manager.py`、`sirius_chat/memory/user/simple.py`、`sirius_chat/memory/glossary/manager.py`、`sirius_chat/memory/context_assembler.py`、`sirius_chat/core/identity_resolver.py`。
 - 修改 workspace / session 持久化：同步检查 `sirius_chat/workspace/`、`sirius_chat/config/manager.py`、`sirius_chat/session/store.py`。
 - 修改识人或记忆逻辑：同步检查 `sirius_chat/memory/user/simple.py`、`sirius_chat/core/identity_resolver.py`、`sirius_chat/models/models.py` 与 `docs/external-usage.md`。

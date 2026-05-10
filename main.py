@@ -69,9 +69,6 @@ async def _cmd_run(args: argparse.Namespace) -> None:
 
     persona_manager = PersonaManager(DATA_DIR, global_config=config)
 
-    # ── 启动共享 Embedding 服务 ───────────────────────────
-    persona_manager.start_embedding_service()
-
     # ── 启动所有已启用人格（worker 子进程会自动管理 NapCat 实例）──
     LOG.info("正在启动已启用人格...")
     results = persona_manager.start_all()

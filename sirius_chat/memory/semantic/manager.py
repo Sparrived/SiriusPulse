@@ -1,15 +1,14 @@
-"""Semantic memory manager: group norms, atmosphere history, user relationships."""
-
 from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_chat.memory.semantic.models import (
     AtmosphereSnapshot,
     GroupSemanticProfile,
-    RelationshipState,
+    ResponseRecord,
     UserSemanticProfile,
 )
 from sirius_chat.memory.semantic.store import SemanticProfileStore
@@ -17,6 +16,9 @@ from sirius_chat.memory.semantic.store import SemanticProfileStore
 logger = logging.getLogger(__name__)
 
 _MAX_ATMOSPHERE_HISTORY = 100
+_MAX_PENDING_RECORDS = 20
+_FEEDBACK_WINDOW = 20
+_FEEDBACK_TIMEOUT_S = 120
 
 _EMOJI_PATTERN = re.compile(
     "["
@@ -36,8 +38,8 @@ class SemanticMemoryManager:
 
     - Group norms: inferred from message stream (passive learning)
     - Atmosphere history: recorded after each cognition cycle
-    - User relationships: updated per interaction
-    - Interest topics: extracted from message content (heuristic keyword counting)
+    - User interaction count: incremented per message
+    - Response feedback: AI 发言后记录锚点，用户跟进时结算 engagement
     """
 
     def __init__(self, work_path: Any) -> None:
@@ -45,7 +47,6 @@ class SemanticMemoryManager:
         self._groups: dict[str, GroupSemanticProfile] = {}
         self._users: dict[str, UserSemanticProfile] = {}
         self._global_users: dict[str, UserSemanticProfile] = {}
-        # Pending message contents for LLM-based user profile analysis
         self._pending_user_contents: dict[str, list[str]] = {}
 
     # ------------------------------------------------------------------
@@ -77,19 +78,12 @@ class SemanticMemoryManager:
         return self._global_users[user_id]
 
     def _sync_to_global(self, user_id: str, local: UserSemanticProfile) -> None:
-        """Merge group-local user profile into global shared profile.
-        Relationship state stays group-local; communication style and
-        interest graph are shared cross-group."""
         global_profile = self._ensure_global_user(user_id)
-        if local.communication_style and not global_profile.communication_style:
-            global_profile.communication_style = local.communication_style
         for item in local.interest_graph:
             if item not in global_profile.interest_graph:
                 global_profile.interest_graph.append(item)
 
     def _seed_from_global(self, group_id: str, user_id: str) -> UserSemanticProfile | None:
-        """If a global profile exists, copy cross-group fields into a new
-        group-local profile."""
         global_profile = self._global_users.get(user_id)
         if global_profile is None:
             loaded = self._store.load_global_user_profile(user_id)
@@ -99,9 +93,7 @@ class SemanticMemoryManager:
             self._global_users[user_id] = global_profile
 
         local = UserSemanticProfile(user_id=user_id)
-        local.communication_style = global_profile.communication_style
         local.interest_graph = list(global_profile.interest_graph)
-        # relationship_state stays default (group-local)
         key = f"{group_id}:{user_id}"
         self._users[key] = local
         return local
@@ -113,7 +105,6 @@ class SemanticMemoryManager:
             if loaded is not None:
                 self._users[key] = loaded
             else:
-                # Try seed from global profile
                 seeded = self._seed_from_global(group_id, user_id)
                 if seeded is None:
                     self._users[key] = UserSemanticProfile(user_id=user_id)
@@ -128,13 +119,11 @@ class SemanticMemoryManager:
             self._store.save_global_user_profile(user_id, self._global_users[user_id])
 
     def enqueue_user_content(self, user_id: str, content: str) -> None:
-        """Accumulate user message content for periodic LLM-based profile analysis."""
         if not content or not user_id:
             return
         self._pending_user_contents.setdefault(user_id, []).append(content)
 
     def get_user_content_batch(self, user_id: str, max_n: int = 10) -> list[str]:
-        """Retrieve and clear pending contents for a user."""
         batch = self._pending_user_contents.get(user_id, [])[:max_n]
         if batch:
             remaining = self._pending_user_contents[user_id][max_n:]
@@ -147,25 +136,19 @@ class SemanticMemoryManager:
         user_id: str,
         *,
         name: str = "",
-        communication_style: str = "",
         interest_graph: list[Any] | None = None,
     ) -> None:
-        """Update name, communication_style and interest_graph for a user."""
         profile = self.get_user_profile(group_id, user_id)
         if name:
             profile.name = name
-        if communication_style:
-            profile.communication_style = communication_style
         if interest_graph is not None:
             profile.interest_graph = interest_graph
         self.save_user_profile(group_id, user_id)
 
     def get_global_user_profile(self, user_id: str) -> UserSemanticProfile | None:
-        """Get the cross-group shared semantic profile for a user."""
         return self._ensure_global_user(user_id)
 
     def set_global_user_name(self, user_id: str, name: str) -> None:
-        """Set the display name on the global user profile (QQ name)."""
         if not name:
             return
         profile = self._ensure_global_user(user_id)
@@ -186,38 +169,32 @@ class SemanticMemoryManager:
         content: str,
         social_intent: str = "",
     ) -> None:
-        """Update group norms from a single message (zero LLM cost)."""
         profile = self.ensure_group_profile(group_id)
         norms = profile.group_norms
         text = content or ""
         length = len(text)
 
-        # 1. Message count and average length
         old_count = norms.get("message_count", 0)
         new_count = old_count + 1
         old_avg = norms.get("avg_message_length", 0.0)
         norms["avg_message_length"] = (old_avg * old_count + length) / new_count
         norms["message_count"] = new_count
 
-        # 2. Length distribution
         bucket = "short" if length < 20 else "medium" if length < 100 else "long"
         dist = norms.get("length_distribution", {})
         dist[bucket] = dist.get(bucket, 0) + 1
         norms["length_distribution"] = dist
 
-        # 3. Emoji usage rate
         has_emoji = bool(_EMOJI_PATTERN.search(text))
         emoji_total = norms.get("emoji_total", 0) + (1 if has_emoji else 0)
         norms["emoji_total"] = emoji_total
         norms["emoji_usage_rate"] = round(emoji_total / new_count, 4)
 
-        # 4. Mention rate
         has_mention = "@" in text
         mention_total = norms.get("mention_total", 0) + (1 if has_mention else 0)
         norms["mention_total"] = mention_total
         norms["mention_rate"] = round(mention_total / new_count, 4)
 
-        # 5. Active hours histogram
         from sirius_chat.core.utils import now_iso
         from datetime import datetime, timezone
         hour = datetime.now(timezone.utc).hour
@@ -225,18 +202,6 @@ class SemanticMemoryManager:
         hours[str(hour)] = hours.get(str(hour), 0) + 1
         norms["active_hours"] = hours
 
-        # 6. Interaction style inference
-        short_ratio = dist.get("short", 0) / new_count
-        if short_ratio > 0.6:
-            profile.typical_interaction_style = "active"
-        elif norms.get("emoji_usage_rate", 0) > 0.3:
-            profile.typical_interaction_style = "humorous"
-        elif norms.get("mention_rate", 0) > 0.2:
-            profile.typical_interaction_style = "formal"
-        else:
-            profile.typical_interaction_style = "balanced"
-
-        # 7. Topic switch tracking (skip if no prior intent recorded)
         if social_intent:
             last = norms.get("last_intent", "")
             if last and social_intent != last:
@@ -244,10 +209,6 @@ class SemanticMemoryManager:
             norms["last_intent"] = social_intent
             switches = norms.get("topic_switches", 0)
             norms["topic_switch_frequency"] = round(switches / new_count, 4)
-
-        # 8. Interest topics are now extracted via LLM during diary generation
-        # (see DiaryGenerator for dominant_topic / interest_topics extraction).
-        # Passive learning only tracks message stats here.
 
         self.save_group_profile(group_id)
 
@@ -262,7 +223,6 @@ class SemanticMemoryManager:
         arousal: float,
         active_participants: int = 0,
     ) -> None:
-        """Append an atmosphere snapshot to group profile history."""
         from sirius_chat.core.utils import now_iso
         profile = self.ensure_group_profile(group_id)
         profile.atmosphere_history.append(
@@ -278,106 +238,169 @@ class SemanticMemoryManager:
         self.save_group_profile(group_id)
 
     # ------------------------------------------------------------------
-    # Relationship updates
+    # 反馈驱动：AI 发言后记录反馈锚点
     # ------------------------------------------------------------------
 
-    def update_relationship(
+    def record_response_sent(
         self,
         group_id: str,
         user_id: str,
-        valence: float = 0.0,
-        urgency_score: int = 0,
-        social_intent: str = "",
-        is_mentioned: bool = False,
-        burst_detected: bool = False,
+        topic_hint: str = "",
+        response_length: int = 0,
     ) -> None:
-        """Update relationship state based on interaction signals."""
+        """AI 发送消息后调用，记录待反馈的 ResponseRecord。"""
         from sirius_chat.core.utils import now_iso
-        from datetime import datetime, timezone, timedelta
 
-        profile = self.get_user_profile(group_id, user_id)
-        rs = profile.relationship_state
-
-        now = datetime.now(timezone.utc)
-        now_iso_str = now_iso()
-        rs.last_interaction_at = now_iso_str
-        if not rs.first_interaction_at:
-            rs.first_interaction_at = rs.last_interaction_at
-
-        # Interaction frequency (simplified: +0.05 per interaction, cap at 1.0)
-        rs.interaction_frequency_7d = round(min(1.0, rs.interaction_frequency_7d + 0.05), 4)
-
-        # Emotional intimacy: every interaction builds it, strong emotion accelerates
-        base_increase = 0.01
-        emotion_bonus = abs(valence) * 0.04
-        rs.emotional_intimacy = round(
-            min(1.0, rs.emotional_intimacy + base_increase + emotion_bonus), 4
+        record = ResponseRecord(
+            sent_at=now_iso(),
+            target_user_id=user_id,
+            topic_hint=topic_hint,
+            response_length=response_length,
         )
 
-        # Trust score: positive feedback
-        # 1. High-urgency help requests
-        if urgency_score > 70:
-            rs.trust_score = round(min(1.0, rs.trust_score + 0.02), 4)
-        # 2. Every normal interaction builds trust slowly
-        else:
-            rs.trust_score = round(min(1.0, rs.trust_score + 0.005), 4)
-        # 3. Being mentioned and continuing the conversation shows engagement
-        if is_mentioned:
-            rs.trust_score = round(min(1.0, rs.trust_score + 0.005), 4)
+        if user_id:
+            profile = self.get_user_profile(group_id, user_id)
+            profile.pending_responses.append(record)
+            if len(profile.pending_responses) > _MAX_PENDING_RECORDS:
+                profile.pending_responses = profile.pending_responses[-_MAX_PENDING_RECORDS:]
+            self.save_user_profile(group_id, user_id)
 
-        # Trust score: negative feedback
-        # 1. Burst / spam behavior
-        if burst_detected:
-            rs.trust_score = round(max(0.1, rs.trust_score - 0.02), 4)
+        group_profile = self.ensure_group_profile(group_id)
+        group_profile.pending_ai_responses.append(record)
+        if len(group_profile.pending_ai_responses) > _MAX_PENDING_RECORDS:
+            group_profile.pending_ai_responses = group_profile.pending_ai_responses[-_MAX_PENDING_RECORDS:]
+        self.save_group_profile(group_id)
 
-        # Trust score: long-term decay (inactive for >30 days)
-        try:
-            last_dt = datetime.fromisoformat(rs.last_interaction_at.replace("Z", "+00:00"))
-            if now - last_dt > timedelta(days=30):
-                rs.trust_score = round(max(0.1, rs.trust_score - 0.02), 4)
-        except Exception:
-            pass
+    # ------------------------------------------------------------------
+    # 反馈驱动：用户消息到达时结算反馈
+    # ------------------------------------------------------------------
 
-        # Dependency score from help-seeking intent
-        intent_lower = (social_intent or "").lower()
-        if "help" in intent_lower or "求助" in intent_lower:
-            rs.dependency_score = round(min(1.0, rs.dependency_score + 0.03), 4)
+    def resolve_pending_feedback(
+        self,
+        group_id: str,
+        user_id: str,
+        directed_score: float = 0.0,
+    ) -> None:
+        """用户发送消息时调用，结算该用户和群组中所有待反馈的 ResponseRecord。
 
-        self.save_user_profile(group_id, user_id)
+        结算规则：
+        - 120 秒内到达且 directed_score >= 0.3 → was_engaged = True（真正指向 AI 的回应）
+        - 120 秒内到达但 directed_score < 0.3 → 不结算（群聊噪音，用户可能在跟别人聊）
+        - 超过 120 秒的记录 → was_engaged = False（用户未跟进）
+        - 结算后更新 engagement_rate + style_feedback 长度分桶统计
+        """
+        from sirius_chat.core.utils import now_iso
 
-    def penalize_trust(self, group_id: str, user_id: str, delta: float = 0.03) -> None:
-        """Reduce trust score (e.g. after SKILL invocation rejected)."""
+        now_iso_str = now_iso()
+        now_dt = datetime.fromisoformat(now_iso_str.replace("Z", "+00:00"))
+        is_directed = directed_score >= 0.3
+
+        # 结算用户级 pending
+        if user_id:
+            profile = self.get_user_profile(group_id, user_id)
+            resolved = []
+            still_pending = []
+            for rec in profile.pending_responses:
+                try:
+                    sent_dt = datetime.fromisoformat(rec.sent_at.replace("Z", "+00:00"))
+                    latency = (now_dt - sent_dt).total_seconds()
+                except Exception:
+                    still_pending.append(rec)
+                    continue
+
+                if 0 < latency <= _FEEDBACK_TIMEOUT_S:
+                    if is_directed:
+                        rec.was_engaged = True
+                        rec.engagement_latency_s = round(latency, 2)
+                        resolved.append(rec)
+                    else:
+                        # 群聊噪音：用户可能在跟别人聊，暂不结算
+                        still_pending.append(rec)
+                elif latency > _FEEDBACK_TIMEOUT_S:
+                    rec.was_engaged = False
+                    resolved.append(rec)
+                else:
+                    still_pending.append(rec)
+
+            profile.pending_responses = still_pending
+            self._recompute_engagement(profile, resolved)
+            self.save_user_profile(group_id, user_id)
+
+        # 结算群组级 pending
+        group_profile = self.ensure_group_profile(group_id)
+        grp_resolved = []
+        grp_still_pending = []
+        for rec in group_profile.pending_ai_responses:
+            try:
+                sent_dt = datetime.fromisoformat(rec.sent_at.replace("Z", "+00:00"))
+                latency = (now_dt - sent_dt).total_seconds()
+            except Exception:
+                grp_still_pending.append(rec)
+                continue
+
+            if 0 < latency <= _FEEDBACK_TIMEOUT_S:
+                if is_directed:
+                    rec.was_engaged = True
+                    rec.engagement_latency_s = round(latency, 2)
+                    grp_resolved.append(rec)
+                else:
+                    grp_still_pending.append(rec)
+            elif latency > _FEEDBACK_TIMEOUT_S:
+                rec.was_engaged = False
+                grp_resolved.append(rec)
+            else:
+                grp_still_pending.append(rec)
+
+        group_profile.pending_ai_responses = grp_still_pending
+        self._recompute_group_engagement(group_profile, grp_resolved)
+        self.save_group_profile(group_id)
+
+    def _recompute_engagement(
+        self, profile: UserSemanticProfile, new_records: list[ResponseRecord]
+    ) -> None:
+        """将新结算的记录纳入用户 engagement_rate 的滚动窗口。"""
+        if not new_records:
+            return
+        engaged_count = sum(1 for r in new_records if r.was_engaged)
+        total = len(new_records)
+        old_rate = profile.engagement_rate
+        alpha = 0.3
+        batch_rate = engaged_count / total if total > 0 else 0.0
+        profile.engagement_rate = round(old_rate * (1 - alpha) + batch_rate * alpha, 4)
+        logger.debug(
+            "User %s engagement: batch=%d/%d → rate %.3f→%.3f",
+            profile.user_id, engaged_count, total, old_rate, profile.engagement_rate,
+        )
+
+    def _recompute_group_engagement(
+        self, profile: GroupSemanticProfile, new_records: list[ResponseRecord]
+    ) -> None:
+        """将新结算的记录纳入群组 engagement_rate 的滚动窗口。"""
+        if not new_records:
+            return
+        engaged_count = sum(1 for r in new_records if r.was_engaged)
+        total = len(new_records)
+        old_rate = profile.response_engagement_rate
+        alpha = 0.3
+        batch_rate = engaged_count / total if total > 0 else 0.0
+        profile.response_engagement_rate = round(old_rate * (1 - alpha) + batch_rate * alpha, 4)
+        logger.debug(
+            "Group %s engagement: batch=%d/%d → rate %.3f→%.3f",
+            profile.group_id, engaged_count, total, old_rate, profile.response_engagement_rate,
+        )
+
+    # ------------------------------------------------------------------
+    # 用户交互记录（简化版，不再维护 RelationshipState）
+    # ------------------------------------------------------------------
+
+    def record_user_interaction(
+        self,
+        group_id: str,
+        user_id: str,
+    ) -> None:
+        """用户发送消息时调用，记录交互次数和时间戳。"""
+        from sirius_chat.core.utils import now_iso
+
         profile = self.get_user_profile(group_id, user_id)
-        rs = profile.relationship_state
-        rs.trust_score = round(max(0.1, rs.trust_score - delta), 4)
+        profile.record_interaction(now_iso())
         self.save_user_profile(group_id, user_id)
-
-    # ------------------------------------------------------------------
-    # Keyword extraction (heuristic, zero LLM cost)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_keywords(profile: GroupSemanticProfile, text: str) -> None:
-        """Simple token frequency heuristic for topic extraction (zero dependencies)."""
-        import re
-
-        # Split on punctuation and whitespace, keep alphanumeric tokens >= 2 chars
-        punct = r"\s\n\r\t，。！？；：\"\"''（）【】、.,;:!?()\[\]"
-        tokens = re.split(f"[{punct}]+", text)
-        candidates = [t.strip() for t in tokens if len(t.strip()) >= 2 and t.strip().isalnum()]
-
-        # Update frequency counter in group_norms
-        freq = profile.group_norms.get("topic_freq", {})
-        for word in candidates:
-            freq[word] = freq.get(word, 0) + 1
-        profile.group_norms["topic_freq"] = freq
-
-        # Promote high-frequency words to interest_topics
-        threshold = max(3, profile.group_norms.get("message_count", 0) // 10)
-        for word, count in freq.items():
-            if count >= threshold and word not in profile.interest_topics:
-                profile.interest_topics.append(word)
-
-        # Update dominant topic
-        if freq:
-            profile.dominant_topic = max(freq, key=freq.get)

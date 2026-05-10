@@ -579,7 +579,7 @@ sequenceDiagram
 |------|----------|----------|
 | 表情包检索为空 | 库中无记录 | 等待群友发送表情包自动学习，或手动导入 |
 | 向量存储初始化失败 | chromadb 未安装 | `pip install chromadb` |
-| 模型加载失败 | sentence-transformers 未安装 | `pip install sentence-transformers` |
+| 模型加载失败 | Embedding 服务不可用 | 检查 Embedding 服务是否启动（`python -m sirius_chat.embedding`），或查看 EmbeddingClient 连接配置 |
 | 标签生成失败 | LLM provider 不可用 | 降级为关键词映射提取 |
 | 发送失败 | 图片文件不存在 | 检查 image_cache 目录 |
 

@@ -169,7 +169,7 @@ flowchart TD
 
     subgraph Decision["③ 决策层（纯规则，零 LLM 成本）"]
         C4 --> D1["RhythmAnalyzer<br/>heat_level / pace / topic_stability"]
-        D1 --> D2["ThresholdEngine<br/>threshold = base × activity × relationship × time"]
+        D1 --> D2["ThresholdEngine<br/>threshold = base × activity × engagement × time"]
         D2 --> D3["ResponseStrategyEngine<br/>IMMEDIATE / DELAYED / SILENT / PROACTIVE"]
         D3 --> D4["更新 AssistantEmotionState"]
         D4 --> D5["emit DECISION_COMPLETED"]
@@ -181,16 +181,16 @@ flowchart TD
         X1 --"DELAYED"--> X3["入 DelayedResponseQueue<br/>等待话题间隙"]
         X1 --"SILENT"--> X4["仅更新内部状态<br/>不生成回复"]
         X1 --"PROACTIVE"--> X5["由 ProactiveTrigger 外部触发<br/>生成自然开场白"]
-        X2 --> X6["ResponseAssembler 组装 prompt"]
-        X6 --> X7["StyleAdapter 调整参数"]
+        X2 --> X6["PromptFactory.assemble_chat()<br/>组装 prompt"]
+        X6 --> X7["StyleAdapter 输出长度/语气指令<br/>不再动态缩减 max_tokens"]
         X7 --> X8["ModelRouter 选择模型"]
-        X8 --> X9["Provider.generate_async()"]
+        X8 --> X9["Provider.generate_async()<br/>全链路异步 httpx"]
         X9 --> X10["解析 SKILL_CALL"]
         X10 --> X11["Token 追踪记录"]
         X11 --> X12["emit EXECUTION_COMPLETED"]
     end
 
-    X12 --> U["_background_update()<br/>更新群体氛围 + 群规范学习 + 情感孤岛检测"]
+    X12 --> U["_background_update()<br/>更新群体氛围 + 群规范学习 + 反馈结算 + 情感孤岛检测"]
 ```
 
 ### 4.2 认知层内部细节
@@ -247,10 +247,8 @@ sequenceDiagram
     Bridge->>Engine: tick_delayed_queue()
     Engine->>Engine: 话题间隙就绪度 = 0.8 > threshold
     Engine->>Engine: 触发延迟回复生成
-    Engine->>Engine: ResponseAssembler 组装 prompt
-    Engine->>Engine: StyleAdapter 调整参数
-    Engine->>Engine: ModelRouter 选择模型
-    Engine->>LLM: generate_async()
+    Engine->>Engine: PromptFactory.assemble_chat() 组装 prompt
+    Engine->>LLM: provider.generate_async()（全链路异步 httpx）
     LLM-->>Engine: "辛苦啦！周末好好休息~"
     Engine->>Engine: Token 追踪
     Engine-->>Bridge: 返回回复文本
@@ -500,22 +498,24 @@ flowchart TD
 | **平台桥接** | `platforms/napcat_bridge.py` | QQ 群聊/私聊事件处理、后台投递循环 |
 | **平台适配** | `platforms/napcat_adapter.py` | OneBot v11 WebSocket 客户端 |
 | **QQ 管理** | `platforms/napcat_manager.py` | NapCat 全局安装、多实例调度 |
-| **认知编排** | `core/emotional_engine.py` | Mixin 架构引擎（engine_core + pipeline + prompt_builders + bg_tasks + helpers） |
+| **认知编排** | `core/emotional_engine.py` | Mixin 架构引擎（engine_core + pipeline + prompt_factory + bg_tasks + helpers） |
 | **引擎核心** | `core/engine_core.py` | 引擎基类：__init__、公开 API、持久化、表情包系统初始化 |
 | **引擎管线** | `core/pipeline.py` | 5 阶段管线：感知→认知→决策→执行→后台更新 |
-| **Prompt 构建** | `core/prompt_builders.py` | prompt 组装、延迟回复/主动触发 prompt 构建、LLM 生成调用 |
+| **Prompt 工厂** | `core/prompt_factory.py` | 无状态 PromptFactory：统一 prompt 拼装、StyleAdapter 风格适配、PromptBundle |
 | **引擎后台任务** | `core/bg_tasks.py` | 6 个后台任务：延迟队列、主动触发、日记生成/合并、开发者私聊、表情包新鲜度 |
 | **引擎辅助** | `core/helpers.py` | 技能集成（含被动 SKILL 注册与触发分发）、上下文辅助、用户画像分析、token 记录、异常分类 |
 | **认知分析** | `core/cognition.py` | 统一情绪+意图分析、规则引擎+LLM fallback |
 | **响应策略** | `core/response_strategy.py` | 四种策略选择（IMMEDIATE/DELAYED/SILENT/PROACTIVE） |
-| **动态阈值** | `core/threshold_engine.py` | 阈值计算：base × activity × relationship × time |
+| **动态阈值** | `core/threshold_engine.py` | 阈值计算：base × activity × engagement × time |
 | **对话节奏** | `core/rhythm.py` | 热度、速度、话题稳定性、间隙就绪度 |
-| **Prompt 组装** | `core/response_assembler.py` | 角色剧本+情绪+记忆+术语表+群体风格 → system prompt |
+| **Prompt 组装** | `core/response_assembler.py` | *(已迁移至 PromptFactory)* |
 | **基础记忆** | `memory/basic/` | 滑动窗口（30条硬限制）、热度计算、归档 |
 | **日记记忆** | `memory/diary/` | LLM 生成摘要、关键词/嵌入索引、ChromaDB 向量存储、token 预算检索 |
+| **Embedding 服务** | `embedding/` | Embedding 微服务：aiohttp 服务端（批量合并推理）+ 同步客户端，DiaryIndexer / StickerIndexer 通过 EmbeddingClient 调用 |
+| **人格生成** | `persona_generation/` | 人格资产生成子包（templates 数据模型 + builders LLM 生成），原顶层 prompt_templates / roleplay_prompting 迁移至此 |
 | **用户管理** | `memory/user/` | 极简 UserProfile、群隔离、跨平台身份追踪 |
 | **名词解释** | `memory/glossary/` | AI 自身知识库，支持人格级隔离与迁移 |
-| **语义记忆** | `memory/semantic/` | 群氛围、规范、关系状态 |
+| **语义记忆** | `memory/semantic/` | 群氛围、群规范、反馈驱动的互动率追踪 |
 | **上下文组装** | `memory/context_assembler.py` | 基础记忆+日记 → OpenAI messages |
 | **Provider 层** | `providers/` | 统一请求协议、7 个平台实现、自动路由 |
 | **SKILL 层** | `skills/` | 注册、执行、数据存储、依赖解析、内置技能、遥测；被动 SKILL 支持（BackgroundTaskSpec/TriggerSpec/SkillEngineContext） |

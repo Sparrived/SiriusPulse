@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +59,10 @@ class WebUIServer:
         self.app = web.Application(middlewares=[_no_cache_middleware])
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
+        self._embedding_thread: threading.Thread | None = None
+        self._embedding_port: int = int(
+            persona_manager.global_config.get("embedding_port", 18900)
+        )
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -138,6 +144,7 @@ class WebUIServer:
     # ─── 生命周期 ─────────────────────────────────────────
 
     async def start(self) -> None:
+        self._start_embedding_service()
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.host, self.port)
@@ -149,7 +156,47 @@ class WebUIServer:
             await self.site.stop()
         if self.runner:
             await self.runner.cleanup()
+        self._stop_embedding_service()
         LOG.info("WebUI stopped")
+
+    # ─── Embedding 服务管理 ────────────────────────────────
+
+    @staticmethod
+    def _is_port_free(port: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("localhost", port))
+                return True
+        except OSError:
+            return False
+
+    def _start_embedding_service(self) -> None:
+        if self._embedding_thread is not None:
+            LOG.warning("Embedding 服务已在运行")
+            return
+
+        if not self._is_port_free(self._embedding_port):
+            LOG.info("Embedding 服务端口 %d 已被占用，跳过内部启动", self._embedding_port)
+            return
+
+        def _run_server() -> None:
+            try:
+                from sirius_chat.embedding.server import create_app
+                app = create_app()
+                web.run_app(app, port=self._embedding_port, print=None)
+            except Exception as exc:
+                LOG.error("Embedding 服务启动失败: %s", exc)
+
+        self._embedding_thread = threading.Thread(
+            target=_run_server, daemon=True, name="embedding-server"
+        )
+        self._embedding_thread.start()
+        LOG.info("Embedding 服务已在后台线程启动 (port=%d)", self._embedding_port)
+
+    def _stop_embedding_service(self) -> None:
+        if self._embedding_thread is not None:
+            LOG.info("Embedding 服务线程将随主进程退出")
+            self._embedding_thread = None
 
     # ─── 静态页面 ─────────────────────────────────────────
 

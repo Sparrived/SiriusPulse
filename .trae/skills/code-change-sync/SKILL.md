@@ -48,19 +48,15 @@ sirius_chat/
 ├── trait_taxonomy.py        # 用户特征分类体系（7类350+关键词）
 ├── exceptions.py            # 自定义异常
 ├── logging_config.py        # 日志配置（按日轮转、7天备份、归档）
-├── roleplay_prompting.py    # 人格资产生成、持久化与选择（旧版兼容）
-├── prompt_builders.py       # 提示词构建器
-├── prompt_templates.py      # 提示词模板
 ├── core/                    # 编排核心（Mixin 架构）
 │   ├── emotional_engine.py  # EmotionalGroupChatEngine 最终类（多重继承组合）
 │   ├── engine_core.py       # _EmotionalGroupChatEngineBase 基类（__init__、API、持久化）
 │   ├── pipeline.py          # PipelineMixin（5 阶段管线：感知→认知→决策→执行→后台）
-│   ├── prompt_builders.py   # PromptBuildersMixin（prompt 组装、LLM 生成调用）
-│   ├── bg_tasks.py          # BackgroundTasksMixin（6 个后台任务）
+│   ├── prompt_factory.py    # PromptFactory（无状态 prompt 构建工具类，含 StyleAdapter 风格适配）
+│   ├── bg_tasks.py          # BackgroundTasksMixin（6 个后台任务，含延迟回复/主动触发 prompt 构建）
 │   ├── helpers.py           # HelpersMixin（技能集成、被动 SKILL 注册与触发分发、token 记录）
 │   ├── skill_engine_context.py # SkillEngineContextImpl（被动 SKILL 与引擎交互适配器）
 │   ├── cognition.py         # 统一认知分析器（情绪+意图联合推断）
-│   ├── response_assembler.py # Prompt 组装 + 风格适配
 │   ├── response_strategy.py # 四层响应策略（IMMEDIATE/DELAYED/SILENT/PROACTIVE）
 │   ├── model_router.py      # 任务感知模型选择
 │   ├── threshold_engine.py  # 动态阈值引擎
@@ -75,6 +71,13 @@ sirius_chat/
 │   ├── engine_persistence.py # 引擎状态持久化
 │   ├── markers.py           # 消息标记
 │   └── utils.py             # 核心工具函数
+├── embedding/               # Embedding 微服务
+│   ├── server.py            # aiohttp 服务端（asyncio.Queue 批量合并推理）
+│   ├── client.py            # 同步客户端（urllib）
+│   └── __main__.py          # python -m sirius_chat.embedding 启动入口
+├── persona_generation/      # 人格资产生成子包
+│   ├── templates.py         # 数据模型与文件 I/O
+│   └── builders.py          # LLM 异步生成（原顶层 prompt_templates / roleplay_prompting 迁移至此）
 ├── async_engine/            # 兼容导出 + prompts/orchestration/utils 辅助层
 ├── memory/                  # 记忆子包
 │   ├── basic/               # 基础记忆（滑动窗口+热度+归档）

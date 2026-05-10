@@ -9,14 +9,15 @@ Provider 系统负责**把引擎的生成请求翻译成对具体 LLM 服务的 
 ## 核心抽象
 
 ```python
-# 同步接口
+# 异步接口（推荐，全链路 httpx）
 class LLMProvider(Protocol):
     def generate(self, request: GenerationRequest) -> str: ...
 
-# 异步接口
 class AsyncLLMProvider(Protocol):
     async def generate_async(self, request: GenerationRequest) -> str: ...
 ```
+
+> **v1.1 变更**：`OpenAICompatibleProvider.generate()` 已改为异步 httpx 实现，移除了原来的 `urllib.request` 同步阻塞调用。`MockProvider` 和 `AutoRoutingProvider` 同步适配异步接口。
 
 所有 provider 都接收同一个 `GenerationRequest`：
 

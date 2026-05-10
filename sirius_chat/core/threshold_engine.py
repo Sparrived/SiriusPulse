@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sirius_chat.memory.semantic.models import RelationshipState
+from sirius_chat.memory.semantic.models import UserSemanticProfile
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +31,14 @@ class ThresholdEngine:
         sensitivity: float = 0.5,
         heat_level: str = "warm",
         messages_per_minute: float = 0.0,
-        relationship_state: RelationshipState | None = None,
+        user_profile: UserSemanticProfile | None = None,
         hour_of_day: int | None = None,
         sender_type: str = "human",
     ) -> float:
-        """Compute dynamic threshold."""
         base = self.base_high - sensitivity * (self.base_high - self.base_low)
         activity = self._activity_factor(heat_level, messages_per_minute)
-        relationship = self._relationship_factor(relationship_state)
+        relationship = self._engagement_factor(user_profile)
         time_f = self._time_factor(hour_of_day)
-        # peer-AI 消息的阈值更高（更难触发回复）
         peer_factor = 1.3 if sender_type == "other_ai" else 1.0
         threshold = base * activity * relationship * time_f * peer_factor
         return round(max(0.1, min(0.9, threshold)), 4)
@@ -62,29 +60,19 @@ class ThresholdEngine:
         return base
 
     @staticmethod
-    def _relationship_factor(state: RelationshipState | None) -> float:
-        if state is None:
+    def _engagement_factor(profile: UserSemanticProfile | None) -> float:
+        if profile is None:
             return 1.0
-
-        # First interaction: lower threshold to be friendly
-        if not state.first_interaction_at:
+        if not profile.first_interaction_at:
             return 0.7
-
-        # Trust-based分层
-        if state.trust_score < 0.3:
-            return 1.2  # Low trust → harder to trigger
-        if state.trust_score > 0.7:
-            return 0.7  # High trust → easier to trigger
-
-        # Familiarity-based分层
-        familiarity = state.compute_familiarity()
-        if familiarity >= 0.9:
-            return 0.6
-        if familiarity >= 0.6:
-            return 0.8
-        if familiarity >= 0.3:
-            return 1.0
-        return 1.1  # Slightly harder but not as harsh as before
+        rate = profile.engagement_rate
+        if rate >= 0.6:
+            return 0.7
+        if rate >= 0.3:
+            return 0.85
+        if rate < 0.1:
+            return 1.15
+        return 1.0
 
     @staticmethod
     def _time_factor(hour: int | None) -> float:

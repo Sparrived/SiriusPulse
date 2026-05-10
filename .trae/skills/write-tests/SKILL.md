@@ -135,7 +135,7 @@ async def test_something(tmp_path):
 | `memory/semantic/manager.py` | `tests/test_semantic_memory.py` |
 | `memory/context_assembler.py` | `tests/test_context_assembler.py` |
 | `core/emotional_engine.py` | `tests/test_engine_event_stream.py` |
-| `core/response_assembler.py` | `tests/test_response_assembler.py` |
+| `core/prompt_factory.py` | `tests/test_response_assembler.py` |
 | `core/cognition.py` | `tests/test_cognition_analyzer.py` |
 | `core/response_strategy.py` | `tests/test_response_strategy.py` |
 | `skills/registry.py` | `tests/test_skill_system.py` |

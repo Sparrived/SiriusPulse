@@ -81,7 +81,7 @@ query (当前消息内容)
     ▼
 DiaryIndexer.search(query, top_k=5)
     ├─ 关键词匹配（始终可用）
-    └─ 嵌入余弦相似度（若 sentence-transformers 安装）
+    └─ 嵌入余弦相似度（通过 EmbeddingClient 调用远程 Embedding 服务）
     │
     ▼
 DiaryRetriever.retrieve(query, group_id, top_k=5, max_tokens_budget=800)
@@ -89,6 +89,8 @@ DiaryRetriever.retrieve(query, group_id, top_k=5, max_tokens_budget=800)
     ▼
 返回 DiaryEntry 列表 → 注入 system_prompt
 ```
+
+> **v1.1 变更**：DiaryIndexer 和 StickerIndexer 不再依赖本地 SentenceTransformer 模型，改为通过 `EmbeddingClient` 调用远程 Embedding 微服务。Embedding 服务作为共享基础设施由 `PersonaManager` 在主进程启动，各人格子进程通过 HTTP 调用。服务不可用时引擎启动会直接失败（强依赖，无 fallback）。`StickerLearner` 同步适配远程 Embedding。
 
 ### 1.4 用户管理（UserManager）
 
@@ -115,7 +117,7 @@ class UserProfile:
 **定位**：AI 自身知识库。
 
 - **写入**：`learn_term` SKILL 触发时调用 `GlossaryManager.add_term()`
-- **读取**：`ResponseAssembler` 检测到当前群存在 glossary 条目时注入 system_prompt
+- **读取**：`PromptFactory` 在组装 system_prompt 时注入 glossary 条目
 - **持久化**：`memory/glossary/terms.json`
 
 ### 1.6 上下文组装（ContextAssembler）

@@ -334,10 +334,7 @@ class BackgroundTasksMixin:
 
         # Generate proactive message
         bundle = self._build_proactive_prompt(trigger, group_id)
-        style = self.style_adapter.adapt(
-            pace="steady",
-            is_group_chat=True,
-        )
+        style = self.style_adapter.adapt(pace="steady")
         # Use ContextAssembler to build full messages with diary RAG + XML history
         msgs, ca_breakdown = self.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
@@ -383,6 +380,13 @@ class BackgroundTasksMixin:
                 role="assistant",
                 content=clean_reply,
                 speaker_name=self.persona.name if self.persona else "assistant",
+            )
+            # 反馈追踪：主动发言也记录锚点（无特定目标用户）
+            self.semantic_memory.record_response_sent(
+                group_id=group_id,
+                user_id="",
+                topic_hint=clean_reply[:100],
+                response_length=len(clean_reply),
             )
 
         # Record reply timestamp for cooldown tracking
@@ -489,7 +493,7 @@ class BackgroundTasksMixin:
 
         system_prompt = "\n\n".join(sections)
         messages = [{"role": "user", "content": "（你决定主动开口）"}]
-        style = self.style_adapter.adapt(pace="steady", is_group_chat=False)
+        style = self.style_adapter.adapt(pace="steady")
 
         from sirius_chat.token.utils import PromptTokenBreakdown, estimate_tokens
 
@@ -723,12 +727,12 @@ class BackgroundTasksMixin:
                 caller_profile = self.user_manager.get_user(resolved_uid, group_id)
         caller_is_developer = bool(caller_profile and caller_profile.is_developer)
 
-        # Trust score for SKILL permission control
-        caller_trust = 0.5  # default for new / unknown users
+        # Engagement rate for SKILL permission control
+        caller_engagement = 0.0
         if resolved_uid:
             semantic_profile = self.semantic_memory.get_user_profile(group_id, resolved_uid)
-            if semantic_profile and semantic_profile.relationship_state:
-                caller_trust = semantic_profile.relationship_state.trust_score
+            if semantic_profile:
+                caller_engagement = semantic_profile.engagement_rate
 
         # Merge all triggered items into one prompt and one generation call
         adapter_type = getattr(triggered[0], "adapter_type", None) if triggered else None
@@ -848,9 +852,9 @@ class BackgroundTasksMixin:
                     if not all_silent:
                         skill_results.append(PromptFactory.build_skill_status_message(err))
                     continue
-                # Trust-based permission: low-trust non-developers cannot invoke skills
-                if caller_trust < 0.3 and not caller_is_developer:
-                    err = f"SKILL '{skill_name}' 被拒绝：信任度不足 ({caller_trust:.2f})"
+                # Engagement-based permission: low-engagement non-developers cannot invoke skills
+                if caller_engagement < 0.1 and not caller_is_developer:
+                    err = f"SKILL '{skill_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
                     logger.warning(err)
                     if not all_silent:
                         skill_results.append(PromptFactory.build_skill_status_message("拒绝", skill_name, "你还不够熟，这个技能暂不可用"))
@@ -1041,6 +1045,14 @@ class BackgroundTasksMixin:
                 content=clean_reply,
                 speaker_name=self.persona.name if self.persona else "assistant",
             )
+            # 反馈追踪：AI 发言后记录锚点，等待用户跟进
+            target_uid = triggered[0].user_id or ""
+            self.semantic_memory.record_response_sent(
+                group_id=group_id,
+                user_id=target_uid,
+                topic_hint=clean_reply[:100],
+                response_length=len(clean_reply),
+            )
 
         # Determine return strategy: if any triggered item is IMMEDIATE, report as immediate
         from sirius_chat.models.response_strategy import ResponseStrategy
@@ -1139,7 +1151,6 @@ class BackgroundTasksMixin:
         style_params = self.style_adapter.adapt(
             pace="decelerating",
             persona=self.persona,
-            is_group_chat=True,
         )
         return PromptFactory.assemble_chat(
             persona_prompt=persona_prompt,
@@ -1178,9 +1189,8 @@ class BackgroundTasksMixin:
                 if node.participation >= 0.3 and node.topic:
                     candidates.append(node.topic)
 
-        dominant = group_profile.group_norms.get("dominant_topic", "")
-        if dominant:
-            candidates.append(dominant)
+        if group_profile.dominant_topic:
+            candidates.append(group_profile.dominant_topic)
 
         if not candidates:
             return ""
@@ -1214,7 +1224,6 @@ class BackgroundTasksMixin:
             group_profile=self.semantic_memory.get_group_profile(group_id),
             suggested_tone=trigger.get("suggested_tone", "casual"),
             other_ai_names=self._other_ai_names,
-            is_group_chat=True,
             glossary_section=glossary,
             topic_context=topic,
             adapter_type=adapter_type,

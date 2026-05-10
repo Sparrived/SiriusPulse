@@ -35,11 +35,12 @@
             ▼
     子进程（独立控制台窗口）
     ├── PersonaWorker ── EngineRuntime ── EmotionalGroupChatEngine（Mixin 架构）
-    │       │                                   └── engine_core + pipeline + prompt_builders + bg_tasks + helpers
+    │       │                                   └── engine_core + pipeline + prompt_factory + bg_tasks + helpers
     │       ├── NapCatBridge ── NapCatAdapter ── OneBot v11 WS
     │       ├── BasicMemoryManager + DiaryManager + SemanticMemory
     │       ├── ModelRouter
     │       └── SkillRegistry + SkillExecutor
+    ├── EmbeddingClient ── Embedding 微服务（共享，主进程启动）
     └── ...（多个人格并行）
 ```
 
@@ -54,9 +55,12 @@
 | `sirius_chat/core/engine_core.py`         | 引擎基类（__init__、API、持久化）           |
 | `sirius_chat/core/pipeline.py`            | 5 阶段管线 Mixin                        |
 | `sirius_chat/core/bg_tasks.py`            | 6 个后台任务 Mixin                       |
-| `sirius_chat/core/prompt_builders.py`     | Prompt 组装与 LLM 生成 Mixin             |
+| `sirius_chat/core/prompt_factory.py`     | PromptFactory：无状态 prompt 构建工具类（含 StyleAdapter 风格适配） |
 | `sirius_chat/core/helpers.py`             | 技能集成、被动 SKILL 注册与触发分发、token 记录 Mixin |
 | `sirius_chat/core/skill_engine_context.py` | SkillEngineContextImpl：被动 SKILL 与引擎交互适配器 |
+| `sirius_chat/embedding/server.py`         | Embedding 微服务端（aiohttp + asyncio.Queue 批量合并推理） |
+| `sirius_chat/embedding/client.py`         | Embedding 同步客户端（urllib） |
+| `sirius_chat/persona_generation/`         | 人格资产生成子包（templates + builders） |
 | `sirius_chat/persona_manager.py`          | 多人格生命周期管理                          |
 | `sirius_chat/persona_worker.py`           | 子进程入口                              |
 | `sirius_chat/persona_config.py`           | 人格级配置模型                            |

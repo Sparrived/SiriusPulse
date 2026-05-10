@@ -185,9 +185,6 @@ class PipelineMixin:
 
         # Compute dynamic threshold via ThresholdEngine
         user_profile = self.semantic_memory.get_user_profile(group_id, user_id)
-        relationship_state = (
-            getattr(user_profile, "relationship_state", None) if user_profile else None
-        )
 
         # Message rate (per minute) from recent messages
         msg_rate = self._message_rate_per_minute(recent_msgs)
@@ -196,7 +193,7 @@ class PipelineMixin:
             sensitivity=self.config.get("sensitivity", 0.5),
             heat_level=rhythm.heat_level,
             messages_per_minute=msg_rate,
-            relationship_state=relationship_state,
+            user_profile=user_profile,
             sender_type=sender_type,
         )
 
@@ -219,9 +216,9 @@ class PipelineMixin:
         intent.threshold = threshold
         intent.activity_factor = self.threshold_engine._activity_factor(rhythm.heat_level, msg_rate)
         intent.time_factor = self.threshold_engine._time_factor(None)
-        if relationship_state:
-            intent.relationship_factor = self.threshold_engine._relationship_factor(
-                relationship_state
+        if user_profile:
+            intent.relationship_factor = self.threshold_engine._engagement_factor(
+                user_profile
             )
 
         sensitivity = self.config.get("sensitivity", 0.5)
@@ -263,7 +260,6 @@ class PipelineMixin:
                 relevance=max(decision.relevance, 0.5),
                 reason=f"private_chat_floor:{decision.reason}",
             )
-            self._log_inner_thought("虽然是私聊，但完全不回好像有点尴尬，等会儿还是回一条吧...")
 
         # 内心活动：决策后的思考
         self._log_decision_thought(intent, decision)
@@ -298,7 +294,7 @@ class PipelineMixin:
         # Update assistant emotion
         self.assistant_emotion.update_from_interaction(emotion, user_id)
 
-        # Semantic: record atmosphere snapshot and update user relationship
+        # Semantic: record atmosphere snapshot, resolve feedback, record interaction
         recent_msgs = self._get_recent_messages(group_id, n=10)
         self.semantic_memory.record_atmosphere(
             group_id=group_id,
@@ -306,16 +302,13 @@ class PipelineMixin:
             arousal=emotion.arousal,
             active_participants=len({m.get("user_id") for m in recent_msgs}),
         )
-        social_intent = getattr(intent, "social_intent", None)
-        self.semantic_memory.update_relationship(
-            group_id=group_id,
-            user_id=user_id,
-            valence=emotion.valence,
-            urgency_score=getattr(intent, "urgency_score", 0),
-            social_intent=str(social_intent) if social_intent else "",
-            is_mentioned=is_mentioned,
-            burst_detected=rhythm.burst_detected,
-        )
+        if user_id:
+            self.semantic_memory.resolve_pending_feedback(
+                group_id=group_id,
+                user_id=user_id,
+                directed_score=getattr(intent, "directed_score", 0.0),
+            )
+            self.semantic_memory.record_user_interaction(group_id=group_id, user_id=user_id)
 
         return decision
 
@@ -339,8 +332,6 @@ class PipelineMixin:
         group_profile = self.semantic_memory.get_group_profile(group_id)
         user_profile = self.semantic_memory.get_user_profile(group_id, user_id) if user_id else None
 
-        is_group_chat = not group_id.startswith("private_")
-
         # Build cross-group awareness for the current user
         cross_group_context = ""
         if user_id:
@@ -352,15 +343,13 @@ class PipelineMixin:
                 for gid, group in self.user_manager.entries.items()
                 if user_id in group and gid != group_id
             )
-            if group_count > 0 or (global_semantic and global_semantic.communication_style):
+            if group_count > 0 or (global_semantic and global_semantic.interest_graph):
                 parts: list[str] = []
                 if group_count > 0:
                     parts.append(f"你在 {group_count} 个其他群中也认识 {message.speaker or 'TA'}")
                 if global_user and global_user.aliases:
                     parts.append(f"TA 的别名/昵称有：{', '.join(global_user.aliases[:3])}")
                 if global_semantic:
-                    if global_semantic.communication_style:
-                        parts.append(f"沟通风格：{global_semantic.communication_style}")
                     if global_semantic.interest_graph:
                         topics = [str(item) for item in global_semantic.interest_graph[:3]]
                         parts.append(f"兴趣话题：{', '.join(topics)}")
@@ -431,7 +420,7 @@ class PipelineMixin:
         is_first_interaction = False
         if user_id:
             sp = self.semantic_memory.get_user_profile(group_id, user_id)
-            if sp and sp.relationship_state and not sp.relationship_state.first_interaction_at:
+            if sp and not sp.first_interaction_at:
                 is_first_interaction = True
 
         emotion_state = emotion.to_dict()

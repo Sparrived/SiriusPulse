@@ -53,7 +53,7 @@
 | ---- | ------------------ | ------------------ |
 | 基础记忆 | `memory/basic/`    | 按群滑动窗口、热度跟踪、归档存储   |
 | 日记记忆 | `memory/diary/`    | LLM 生成摘要、语义检索、向量存储 |
-| 语义记忆 | `memory/semantic/` | 群规范学习、氛围记录、关系状态    |
+| 语义记忆 | `memory/semantic/` | 群氛围记录、群规范学习、反馈驱动的互动率追踪    |
 
 加上名词解释（`memory/glossary/`）和用户画像（`memory/user/`），形成了完整的记忆体系。日记记忆的"摘要 + 重叠窗口"生成策略（`DiaryGenerator`）设计巧妙，用 `overlap_tail_count` 保证相邻日记的连续性。
 
@@ -166,9 +166,9 @@ class EmotionalGroupChatEngine(
 - 没有通用的 `PlatformBridge` 基类抽象
 - 如果要接入 Discord、Telegram 等平台，需要从零开始
 
-#### 同步/异步混用
+#### ~~同步/异步混用~~（v1.1 已解决）
 
-`OpenAICompatibleProvider.generate()` 使用 `urllib.request`（同步阻塞），而 `PersonaWorker.run()` 是全异步的。同步 HTTP 调用在 async 上下文中运行会阻塞事件循环，影响多人格并发场景。
+> **v1.1 已优化**：`OpenAICompatibleProvider.generate()` 已改为全链路异步 httpx 实现，移除了原来的 `urllib.request` 同步阻塞调用。`PersonaWorker.run()` 全异步架构中不再存在同步阻塞问题。
 
 ### 2.2 资源与性能
 
@@ -176,10 +176,11 @@ class EmotionalGroupChatEngine(
 
 每个人格 = 1 个 Python 进程 + 1 个 NapCat 进程。每个 Python 进程加载：
 
-- sentence-transformers（embedding 模型，\~500MB）
 - Pillow
 - chromadb
 - 其他依赖
+
+> **v1.1 已优化**：~~sentence-transformers（embedding 模型，~500MB）~~ 已迁移至共享 Embedding 微服务（`sirius_chat/embedding/`），由主进程启动一次，各子进程通过 `EmbeddingClient` HTTP 调用，大幅减少内存占用。
 
 在 2C4G 云主机上，3-5 个人格就可能内存不足。没有进程池或共享内存机制。
 
@@ -470,7 +471,7 @@ Telegram Bot API 简单直接：
 
 #### PyPI 包优化
 
-当前 `pyproject.toml` 的 dependencies 较重（sentence-transformers、chromadb 等）。可以：
+当前 `pyproject.toml` 的 dependencies 较重（chromadb 等；Embedding 服务已独立部署）。可以：
 
 - 将重依赖改为 optional（`pip install sirius-chat[full]`）
 - 提供轻量版（`pip install sirius-chat[lite]`，不含 embedding 和向量检索）

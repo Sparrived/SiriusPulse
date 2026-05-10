@@ -16,19 +16,22 @@ description: "遍历项目结构变化并同步更新文档。监控模块变化
 ```
 sirius_chat/
 ├── api/                      - 对外 API facade（engine/models/providers/session 等）
-├── core/                     - 编排核心（emotional_engine.py、response_assembler.py、model_router.py、engine_persistence.py、identity_resolver.py）
+├── core/                     - 编排核心（emotional_engine.py、prompt_factory.py、model_router.py、engine_persistence.py、identity_resolver.py）
 ├── async_engine/             - 兼容导出 + prompts/orchestration/utils 辅助层
+├── embedding/                - Embedding 微服务（server.py aiohttp 服务端 + client.py 同步客户端）
+├── persona_generation/       - 人格资产生成子包（templates.py 数据模型 + builders.py LLM 生成）
 ├── workspace/                - WorkspaceLayout / Runtime / Watcher / RoleplayManager
 ├── config/                   - SessionConfig / WorkspaceConfig / JSONC / ConfigManager
 ├── models/                   - Message / Participant / Transcript 等数据契约
-├── memory/                   - basic/diary/glossary/user/semantic 子包；context_assembler.py 将短期记忆以 XML 嵌入 system prompt，返回 [system, user] 两条消息
+├── memory/                   - basic/diary/glossary/user/semantic 子包；context_assembler.py 将短期记忆以 XML 嵌入 system prompt，返回 [system, user] 两条消息；日记条目支持时间戳显示
 ├── session/                  - SessionStore / runner
-├── providers/                - Provider 实现、路由与 middleware
+├── providers/                - Provider 实现、路由（全链路异步 httpx）
 ├── token/                    - token 记录、SQLite 持久化与分析
-├── skills/                   - SKILL 注册、执行与 data store
-├── roleplay_prompting.py     - PersonaSpec、人格资产生成与持久化
-├── cache/                    - 缓存框架
-├── performance/              - 性能分析工具
+├── skills/                   - SKILL 注册、执行与 data store；被动 SKILL 支持；表情包子系统 sticker/
+├── platforms/                - NapCat 多实例管理、QQ 桥接器、EngineRuntime 封装
+├── webui/                    - WebUI REST API + 静态页面
+├── utils/                    - 工具函数、WorkspaceLayout 路径布局
+├── config/                   - SessionConfig / WorkspaceConfig / ConfigManager / JSONC
 └── cli.py                    - 库内薄 CLI
 ```
 

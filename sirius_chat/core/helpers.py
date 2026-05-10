@@ -313,8 +313,8 @@ class HelpersMixin:
         return sorted_items[:max_items]
 
     async def _analyze_user_profile_async(self, user_id: str, group_id: str) -> None:
-        """Use a lightweight LLM to infer communication_style and interest_graph
-        from the user's recent messages. Fire-and-forget from background_update.
+        """Use a lightweight LLM to infer interest_graph from the user's
+        recent messages. Fire-and-forget from background_update.
 
         Interests are merged with existing graph (decay + dedup) rather than overwritten.
         """
@@ -322,7 +322,6 @@ class HelpersMixin:
         if not batch:
             return
 
-        # Deduplicate near-identical messages to reduce noise
         seen: set[str] = set()
         unique: list[str] = []
         for text in batch:
@@ -333,7 +332,6 @@ class HelpersMixin:
         if not unique:
             return
 
-        # Load existing interests to feed into prompt and later merge
         profile = self.semantic_memory.get_user_profile(group_id, user_id)
         existing_interests = getattr(profile, "interest_graph", None) or []
         existing_str = ""
@@ -350,14 +348,12 @@ class HelpersMixin:
         user_messages = "\n".join(f"{i+1}. {t}" for i, t in enumerate(unique))
         system_prompt = (
             "你是一名用户行为分析师。根据用户的最近发言，"
-            "推断其沟通风格和兴趣话题。只输出JSON，不要解释。"
+            "推断其兴趣话题。只输出JSON，不要解释。"
         )
         prompt = (
             f"以下是一名用户的最近 {len(unique)} 条发言：\n\n{user_messages}\n\n"
             "请输出如下格式的JSON（不要markdown代码块）：\n"
-            '{"communication_style": "concise|detailed|formal|casual|humorous|emotional|questioning|neutral", '
-            '"style_reason": "简短说明", '
-            '"interests": [{"topic": "话题名", "confidence": 0.0~1.0}, ...最多5个]}'
+            '{"interests": [{"topic": "话题名", "confidence": 0.0~1.0}, ...最多5个]}'
             f"{existing_str}"
         )
 
@@ -369,7 +365,6 @@ class HelpersMixin:
                 task_name="cognition_analyze",
                 urgency=0,
             )
-            # Extract JSON from possible markdown code block
             text = raw.strip()
             if "```json" in text:
                 text = text.split("```json")[-1].split("```")[0].strip()
@@ -377,7 +372,6 @@ class HelpersMixin:
                 text = text.split("```")[-1].split("```")[0].strip()
 
             result = json.loads(text)
-            style = str(result.get("communication_style", "")).strip()
             interests_raw = result.get("interests", [])
             fresh_interests: list[dict[str, Any]] = []
             for item in interests_raw:
@@ -387,17 +381,15 @@ class HelpersMixin:
                     if topic:
                         fresh_interests.append({"topic": topic, "confidence": conf})
 
-            # Merge with decayed existing graph instead of overwriting
             interest_graph = self._merge_interest_graph(existing_interests, fresh_interests)
 
             self.semantic_memory.set_user_profile_fields(
                 group_id,
                 user_id,
-                communication_style=style,
                 interest_graph=interest_graph,
             )
             self._log_inner_thought(
-                f"用户 {user_id} 画像更新: 风格={style or '未变'}, 兴趣={len(interest_graph)}个"
+                f"用户 {user_id} 画像更新: 兴趣={len(interest_graph)}个"
             )
         except Exception:
             pass

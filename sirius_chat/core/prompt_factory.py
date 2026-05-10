@@ -73,6 +73,8 @@ TAG_RECENT_CONVERSATION_END = "【近期对话记录结束】"
 TAG_SKILL_RESULT = "【技能执行结果】"
 TAG_SKILL_TRUNCATED = "【注：技能结果过长，已截断至前 {limit} 字符，原始长度 {orig} 字符】"
 TAG_CURRENT_TIME = "【当前时间】"
+TAG_GROUP_TABOO = "【群规禁忌】"
+TAG_ATMOSPHERE_TREND = "【氛围趋势】"
 
 # 消息渲染标签
 TAG_FACE = "【表情：{name}】"
@@ -124,8 +126,8 @@ class StyleAdapter:
     _PACE_LENGTH_HINTS: dict[str, str] = {
         "accelerating": "对话节奏在加快，请保持简短，跟上节奏。",
         "steady": "",
-        "decelerating": "对话节奏在放缓，可以适当展开说说。",
-        "silent": "群里比较安静，可以多说一些。",
+        "decelerating": "对话节奏在放缓，可以适当展开，但控制在 30 字以内。",
+        "silent": "群里比较安静，可以稍微多说一点，但控制在 30 字以内。",
     }
 
     def adapt(
@@ -133,7 +135,6 @@ class StyleAdapter:
         *,
         pace: str,
         persona: Any | None = None,
-        is_group_chat: bool = False,
     ) -> StyleParams:
         """根据当前上下文计算风格参数。"""
         max_tokens = self._DEFAULT_MAX_TOKENS
@@ -146,10 +147,7 @@ class StyleAdapter:
         if pace_hint:
             length_instructions.append(pace_hint)
 
-        # 群聊短句偏好
-        group_short = is_group_chat
-
-        # 人格风格覆盖（最高优先级）
+        # 人格风格覆盖
         if persona:
             if persona.max_tokens_preference:
                 max_tokens = min(max_tokens, persona.max_tokens_preference)
@@ -157,9 +155,7 @@ class StyleAdapter:
                 temperature = persona.temperature_preference
             if persona.communication_style:
                 style = persona.communication_style.strip().lower()
-                if style == "concise":
-                    group_short = True
-                elif style == "detailed":
+                if style == "detailed":
                     length_instructions.append("可以给出较详细的解释。")
                 elif style == "formal":
                     tone_instruction = "保持礼貌正式的语气"
@@ -173,10 +169,6 @@ class StyleAdapter:
                     tone_instruction += "，多用表情包和emoji"
                 elif persona.emoji_preference == "none":
                     tone_instruction += "，不用表情包"
-
-        # 群聊或简洁风格统一收口，避免重复
-        if group_short:
-            length_instructions.append("群聊回复请控制在 30 字以内，不要换行，像真实群友一样自然接话。")
 
         return StyleParams(
             max_tokens=max_tokens,
@@ -340,6 +332,10 @@ class PromptFactory:
             "回应时用自己的说话方式和口头禅，不要刻意解释或总结。"
         )
 
+        sections.append(
+            f"{TAG_LENGTH_REQ}\n回复请控制在 30 字以内，不要换行，自然接话。"
+        )
+
         prompt = "\n\n".join(sections)
         if len(prompt) > 1200:
             prompt = prompt[:1197] + "…"
@@ -404,7 +400,7 @@ class PromptFactory:
         caller_is_developer: bool = False,
         speaker_name: str = "",
     ) -> str | None:
-        """构建单用户关系描述。不暴露原始分数。"""
+        """构建单用户交互指导（基于真实反馈数据）。"""
         who = speaker_name or "该用户"
         if caller_is_developer:
             return f"{TAG_RELATIONSHIP_STATUS}{who}是你的开发者，你们关系很亲密，可以畅所欲言。"
@@ -412,27 +408,21 @@ class PromptFactory:
         if user_profile is None:
             return None
 
-        rs = user_profile.relationship_state
-        if not rs:
-            return None
-
-        if not rs.first_interaction_at:
+        if not user_profile.first_interaction_at:
             return f"{TAG_RELATIONSHIP_STATUS}你和{who}是第一次交流，请保持友好和礼貌。"
 
-        familiarity = rs.compute_familiarity()
-        trust = rs.trust_score
+        rate = getattr(user_profile, "engagement_rate", 0.0)
+        count = getattr(user_profile, "interaction_count", 0)
 
-        if trust > 0.7 and familiarity >= 0.6:
-            return f"{TAG_RELATIONSHIP_STATUS}你和{who}已经很熟了，彼此很信任，可以自然随意。"
-        if trust > 0.7:
-            return f"{TAG_RELATIONSHIP_STATUS}你和{who}建立了不错的信任关系，可以比较放松。"
-        if familiarity >= 0.6:
-            return f"{TAG_RELATIONSHIP_STATUS}你和{who}比较熟悉。"
-        if trust < 0.3:
-            return f"{TAG_RELATIONSHIP_STATUS}你和{who}还不太熟，请保持礼貌和适度距离。"
-        if familiarity >= 0.3:
-            return f"{TAG_RELATIONSHIP_STATUS}你和{who}的关系一般。"
-        return f"{TAG_RELATIONSHIP_STATUS}你和{who}还不太熟。"
+        if rate >= 0.6:
+            return f"{TAG_RELATIONSHIP_STATUS}{who}经常回应你的消息，你们互动很好，可以自然放松。"
+        if rate >= 0.3:
+            return f"{TAG_RELATIONSHIP_STATUS}{who}有时会回应你，保持自然就好。"
+        if count >= 10 and rate < 0.15:
+            return f"{TAG_RELATIONSHIP_STATUS}{who}很少回应你的消息，尽量简洁，不要强行搭话。"
+        if rate < 0.1:
+            return f"{TAG_RELATIONSHIP_STATUS}你和{who}互动不多，保持友好但不要过于主动。"
+        return f"{TAG_RELATIONSHIP_STATUS}你和{who}正在熟悉中。"
 
     @staticmethod
     def build_relationship_contexts(
@@ -473,17 +463,26 @@ class PromptFactory:
 
     @staticmethod
     def build_group_style(group_profile: Any, style_params: Any) -> str:
-        """构建群体风格 section。"""
+        """构建群体风格 section（基于实际消息统计 + 反馈数据）。"""
         lines = [TAG_GROUP_STYLE]
         if group_profile.group_name:
             lines.append(f"群名：{group_profile.group_name}")
-        style = group_profile.typical_interaction_style or "balanced"
-        style_desc = {
-            "humorous": "轻松幽默",
-            "formal": "正式严谨",
-            "balanced": "自然平衡",
-        }.get(style, style)
-        lines.append(f"群体典型风格：{style_desc}")
+        norms = getattr(group_profile, "group_norms", {})
+        if norms:
+            avg_len = norms.get("avg_message_length", 0)
+            dist = norms.get("length_distribution", {})
+            total = norms.get("message_count", 0)
+            if total > 0 and avg_len > 0:
+                short_pct = round(dist.get("short", 0) / total * 100)
+                if avg_len < 20:
+                    lines.append(f"这个群里大家习惯短消息（平均{avg_len:.0f}字，{short_pct}%是短消息），你也尽量简短。")
+                elif avg_len < 50:
+                    lines.append(f"这个群里消息长度适中（平均{avg_len:.0f}字），你也保持类似长度。")
+        engagement = getattr(group_profile, "response_engagement_rate", 0.0)
+        if engagement >= 0.5:
+            lines.append("你的回复经常能引起大家的回应，保持这种互动风格。")
+        elif engagement < 0.2 and engagement > 0:
+            lines.append("你的回复较少引起回应，试着更有趣或更切题一些。")
         if style_params.length_instruction:
             lines.append(f"长度要求：{style_params.length_instruction}")
         if style_params.tone_instruction:
@@ -588,6 +587,42 @@ class PromptFactory:
         return f"{TAG_CURRENT_TIME}{now_str}（北京时间）"
 
     @staticmethod
+    def build_taboo_section(taboo_topics: list[str]) -> str:
+        """构建群规禁忌 section。"""
+        if not taboo_topics:
+            return ""
+        topics = "、".join(taboo_topics[:5])
+        return f"{TAG_GROUP_TABOO}\n本群不讨论以下话题，请避免主动引入：{topics}"
+
+    @staticmethod
+    def build_atmosphere_trend(atmosphere_history: list[Any]) -> str:
+        """基于最近快照计算氛围趋势并返回 prompt section。"""
+        if len(atmosphere_history) < 3:
+            return ""
+        recent = atmosphere_history[-5:]
+        valences = [s.group_valence for s in recent if hasattr(s, "group_valence")]
+        if len(valences) < 3:
+            return ""
+        half = max(1, len(valences) // 2)
+        early = sum(valences[:half]) / half
+        later = sum(valences[half:]) / (len(valences) - half)
+        delta = later - early
+        if delta > 0.15:
+            desc = "群聊氛围正在升温，大家越来越兴奋"
+        elif delta < -0.15:
+            desc = "群聊氛围正在降温，大家逐渐冷淡"
+        else:
+            desc = "群聊氛围平稳"
+        avg_v = sum(valences) / len(valences)
+        if avg_v > 0.3:
+            mood = "整体情绪偏积极"
+        elif avg_v < -0.3:
+            mood = "整体情绪偏消极"
+        else:
+            mood = "整体情绪中性"
+        return f"{TAG_ATMOSPHERE_TREND}\n{desc}，{mood}。"
+
+    @staticmethod
     def build_developer_chat_sections(
         identity: str,
         topic: str,
@@ -602,11 +637,11 @@ class PromptFactory:
             f"{TAG_TONE}亲密、自然、像老朋友一样。不要机械，不要过度热情。",
             f"{TAG_TOPIC}{topic}",
         ])
-        if user_profile and user_profile.relationship_state:
-            familiarity = user_profile.relationship_state.compute_familiarity()
-            if familiarity > 0.7:
+        if user_profile and user_profile.first_interaction_at:
+            count = getattr(user_profile, "interaction_count", 0)
+            if count > 30:
                 sections.append(f"{TAG_RELATIONSHIP}你们已经很熟了，可以用更随意的语气。")
-            elif familiarity > 0.4:
+            elif count > 10:
                 sections.append(f"{TAG_RELATIONSHIP}你们关系不错，保持友好自然的语气。")
         return sections
 
@@ -741,6 +776,12 @@ class PromptFactory:
 
         if group_profile:
             _add(PromptFactory.build_group_style(group_profile, style_params), "group_style")
+            taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
+            if taboo:
+                _add(taboo, "group_style")
+            atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
+            if atm:
+                _add(atm, "emotion")
         else:
             _add(PromptFactory.build_style_fallback(style_params), "group_style")
 
@@ -783,7 +824,6 @@ class PromptFactory:
         group_profile: Any | None,
         suggested_tone: str = "casual",
         other_ai_names: list[str] | None = None,
-        is_group_chat: bool = False,
         glossary_section: str = "",
         topic_context: str = "",
         adapter_type: str | None = None,
@@ -810,14 +850,17 @@ class PromptFactory:
             _add(other_ai, "identity")
         if topic_context:
             _add(f"{TAG_TOPIC_SUGGESTION}你可以基于这段群聊记忆自然地开启话题：{topic_context}", "memory")
-        if is_group_chat:
-            _add(
-                f"{TAG_LENGTH_REQ}群聊请控制在 30 字以内，不要换行，像真实群友一样自然接话。",
-                "output_constraint",
-            )
+
         if group_profile and group_profile.interest_topics:
             topics = ", ".join(group_profile.interest_topics[:3])
             _add(f"{TAG_GROUP_INTERESTS}{topics}", "interests")
+        if group_profile:
+            taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
+            if taboo:
+                _add(taboo, "group_style")
+            atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
+            if atm:
+                _add(atm, "emotion")
         if glossary_section:
             _add(glossary_section, "glossary")
 

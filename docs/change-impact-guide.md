@@ -29,6 +29,9 @@
 | `sirius_chat/models/models.py` Message/Participant/Transcript 变更 | [章节 3](#3-配置数据契约变更--联动范围) | 所有序列化/反序列化代码、session store、前端使用字段 |
 | `sirius_chat/providers/` 新增/修改 Provider | [章节 4](#4-provider-变更--联动范围) | `config.js` (PROVIDER_TYPE_OPTIONS), `docs/provider-system.md`, `routing.py` |
 | `sirius_chat/core/emotional_engine.py` 引擎行为变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/engine-deep-dive.md`, `docs/architecture.md`, 体验参数默认值 |
+| `sirius_chat/core/prompt_factory.py` Prompt 构建变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/engine-deep-dive.md`, `docs/architecture.md`, `bg_tasks.py`（延迟/主动 prompt） |
+| `sirius_chat/embedding/` Embedding 服务变更 | [章节 6](#6-记忆系统变更--联动范围) | `persona_manager.py`（服务启动）, `diary/indexer.py`, `skills/sticker/indexer.py`, `sticker/learner.py`, `docs/persistence-system.md` |
+| `sirius_chat/persona_generation/` 人格生成变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/persona-lifecycle.md`, `sirius_chat/__init__.py`（公开 API 导出） |
 | `sirius_chat/memory/` 记忆系统变更 | [章节 6](#6-记忆系统变更--联动范围) | `docs/persistence-system.md`, `memory_api.py`, 前端对应面板 |
 | `sirius_chat/skills/` Skill 增删改 | [章节 7](#7-skill-系统变更--联动范围) | `docs/skill-guide.md`, `server_skill_api.py`, `skills.html` |
 | `sirius_chat/webui/static/` 前端页面/JS 变更 | [章节 8](#8-webui-前端独立变更--后端联动) | 对应后端 API 是否仍返回所需字段 |

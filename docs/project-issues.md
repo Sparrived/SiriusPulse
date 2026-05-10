@@ -122,16 +122,17 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 
 **问题**：
 - 每个人格 = 1 个 Python 进程 + 1 个 NapCat 进程
-- 10 个人格 = 20 个进程，每个 Python 进程加载 sentence-transformers、Pillow 等重库
+- 10 个人格 = 20 个进程，每个 Python 进程仍需加载 Pillow 等库
 - 没有进程池或共享内存机制
 
 **代码位置**：`sirius_chat/persona_manager.py`
 
 **影响**：在资源受限的服务器上（如 2C4G 云主机），同时运行 3-5 个人格就可能内存不足。
 
+**已解决**：~~每个 Python 进程加载 sentence-transformers 重库~~ → Embedding 模型已迁移至共享 Embedding 微服务（`sirius_chat/embedding/`），由 `PersonaManager` 在主进程启动一次，各子进程通过 `EmbeddingClient` HTTP 调用，不再各自加载模型权重。
+
 **建议**：
 - [ ] 测量单人格内存占用 baseline
-- [ ] 考虑共享模型权重（如 sentence-transformers 的 embedding 模型只加载一次）
 - [ ] 提供资源限制配置（如 max_memory_per_persona、max_concurrent_personas）
 
 ### 2.4 NapCat 平台绑定过深

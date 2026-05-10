@@ -379,7 +379,6 @@ def create_triggers(ctx: SkillEngineContext) -> list[TriggerSpec]:
 | `get_config_value(key, default)` | 读取引擎配置 |
 | `get_persona()` | 获取当前人格信息 |
 | `add_memory_entry(...)` | 写入基础记忆 |
-| `get_user_communication_style(group_id, user_id)` | 获取用户沟通风格 |
 | `get_skill_descriptions(caller_is_developer)` | 获取 SKILL 描述列表 |
 | `get_current_adapter_type()` | 获取当前适配器类型 |
 
@@ -426,7 +425,7 @@ def create_background_tasks(ctx: SkillEngineContext) -> list[BackgroundTaskSpec]
 
 ## 第十二章：Token 优化
 
-当注册的技能数量 **超过 5 个** 时，`ResponseAssembler` 会自动切换到**紧凑描述模式**：
+当注册的技能数量 **超过 5 个** 时，`PromptFactory` 会自动切换到**紧凑描述模式**：
 
 ```
 # 完整模式（≤5 个技能）

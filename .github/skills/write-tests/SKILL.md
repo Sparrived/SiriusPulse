@@ -134,7 +134,7 @@ async def test_something(tmp_path):
 | `memory/diary/manager.py` | `tests/test_diary_memory.py` |
 | `memory/context_assembler.py` | `tests/test_context_assembler.py` |
 | `core/emotional_engine.py` | `tests/test_engine_event_stream.py` |
-| `core/response_assembler.py` | `tests/test_response_assembler.py` |
+| `core/prompt_factory.py` | `tests/test_response_assembler.py` |
 
 ---
 
