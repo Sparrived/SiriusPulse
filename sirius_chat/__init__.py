@@ -120,7 +120,6 @@ from sirius_chat.plugins import (
     PluginMatcher,
     MatchResult,
     EngineProxy,
-    AdapterProxy,
     MessageContext,
     PluginDataStore,
     ArgNode,
@@ -141,6 +140,25 @@ from sirius_chat.plugins import (
     match_plugin,
     command,
     PluginCommandMeta,
+)
+
+# ── Adapter 框架（v1.3+）──
+from sirius_chat.adapters import (
+    BaseAdapter,
+    MessageGroup,
+    MessageSegment,
+    TextSegment,
+    AtSegment,
+    ImageSegment,
+    VoiceSegment,
+    FileSegment,
+    ReplySegment,
+    text,
+    at,
+    image,
+    voice,
+    file,
+    reply,
 )
 
 # ── Token usage ──
@@ -306,7 +324,6 @@ __all__ = [
     "PluginMatcher",
     "MatchResult",
     "EngineProxy",
-    "AdapterProxy",
     "MessageContext",
     "PluginDataStore",
     "ArgNode",
@@ -327,6 +344,22 @@ __all__ = [
     "match_plugin",
     "command",
     "PluginCommandMeta",
+    # Adapter 框架（v1.3+）
+    "BaseAdapter",
+    "MessageGroup",
+    "MessageSegment",
+    "TextSegment",
+    "AtSegment",
+    "ImageSegment",
+    "VoiceSegment",
+    "FileSegment",
+    "ReplySegment",
+    "text",
+    "at",
+    "image",
+    "voice",
+    "file",
+    "reply",
     # Token
     "TokenUsageStore",
     "AnalyticsReport",

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from sirius_chat.plugins.base import PluginBase
 from sirius_chat.plugins.context import (
-    AdapterProxy,
     EngineProxy,
     MessageContext,
     PluginContext,
@@ -97,9 +96,8 @@ __all__ = [
     "MatchResult",
     "parse_command",
     "match_plugin",
-    # 上下文代理
+    # 上下文
     "EngineProxy",
-    "AdapterProxy",
     "MessageContext",
     "PluginDataStore",
     # 数据模型

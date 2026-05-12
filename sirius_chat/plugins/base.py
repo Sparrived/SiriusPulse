@@ -216,7 +216,7 @@ class PluginBase:
         raise RuntimeError("PluginDataStore 不可用")
 
     def get_adapter(self):
-        """获取平台适配器代理。"""
+        """获取平台适配器实例（BaseAdapter）。"""
         return self.ctx.adapter
 
     def render_template(self, template_name: str, data: dict[str, Any]) -> str:

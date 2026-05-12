@@ -180,7 +180,7 @@ class PluginExecutor:
             if engine is not None:
                 instance._ctx.engine._bind(engine, plugin_name)
             if adapter is not None:
-                instance._ctx.adapter._bind(adapter, plugin_name)
+                instance._ctx.adapter = adapter  # 直接赋值 BaseAdapter 实例
             if message_context is not None:
                 instance._ctx.message = message_context
 

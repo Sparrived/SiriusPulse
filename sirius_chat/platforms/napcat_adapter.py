@@ -2,6 +2,8 @@
 
 通过正向 WebSocket 接收事件，并在同一连接上发送 API 调用（OneBot v11 标准）。
 支持自动重连、心跳检测、并发请求隔离（echo 机制）。
+
+继承 BaseAdapter，实现平台无关的消息发送接口。
 """
 
 from __future__ import annotations
@@ -15,6 +17,12 @@ from typing import Any, Callable
 import websockets
 import websockets.exceptions
 
+from sirius_chat.adapters.base import BaseAdapter
+from sirius_chat.adapters.models import (
+    MessageGroup, TextSegment, AtSegment,
+    ImageSegment, VoiceSegment, FileSegment, ReplySegment,
+)
+
 LOG = logging.getLogger("sirius.platforms.napcat")
 
 EventHandler = Callable[[dict[str, Any]], Any]
@@ -25,7 +33,6 @@ def _is_ws_closed(ws: Any) -> bool:
     try:
         return bool(ws.closed)
     except AttributeError:
-        # websockets >= 14 移除了 .closed，改用 state 枚举
         try:
             from websockets.protocol import State
             return ws.state != State.OPEN
@@ -33,12 +40,14 @@ def _is_ws_closed(ws: Any) -> bool:
             return getattr(ws, "close_code", None) is not None
 
 
-class NapCatAdapter:
+class NapCatAdapter(BaseAdapter):
     """轻量级 NapCat OneBot v11 正向 WebSocket 客户端。"""
 
     _RECONNECT_BASE_DELAY = 1.0
     _RECONNECT_MAX_DELAY = 30.0
     _MAX_RECONNECT_ATTEMPTS = 5  # 0 = 无限重试
+
+    adapter_type = "napcat"
 
     def __init__(
         self,
@@ -219,21 +228,45 @@ class NapCatAdapter:
             raise RuntimeError(f"API error: {action} retcode={retcode} {wording}")
         return resp
 
-    # ─── 常用 API 封装 ────────────────────────────────────
+    # ─── BaseAdapter 接口实现 ──────────────────────────────
+
+    async def send_group_message(
+        self, group_id: str, message: MessageGroup | str
+    ) -> dict[str, Any]:
+        """发送群聊消息（平台无关接口）。"""
+        segments = self._message_group_to_onebot(message)
+        return await self.call_api(
+            "send_group_msg", {"group_id": int(group_id), "message": segments}
+        )
+
+    async def send_private_message(
+        self, user_id: str, message: MessageGroup | str
+    ) -> dict[str, Any]:
+        """发送私聊消息（平台无关接口）。"""
+        segments = self._message_group_to_onebot(message)
+        return await self.call_api(
+            "send_private_msg", {"user_id": int(user_id), "message": segments}
+        )
+
+    # ─── 旧方法（保留兼容） ────────────────────────────────
 
     async def send_group_msg(
         self, group_id: str | int, message: list[dict[str, Any]] | str
     ) -> dict[str, Any]:
-        """发送群消息。message 为字符串时自动包装为 text 段。"""
+        """发送群消息（OneBot 接口）。message 为字符串时自动包装。"""
         segments = self._to_segments(message)
-        return await self.call_api("send_group_msg", {"group_id": int(group_id), "message": segments})
+        return await self.call_api(
+            "send_group_msg", {"group_id": int(group_id), "message": segments}
+        )
 
     async def send_private_msg(
         self, user_id: str | int, message: list[dict[str, Any]] | str
     ) -> dict[str, Any]:
-        """发送私聊消息。"""
+        """发送私聊消息（OneBot 接口）。"""
         segments = self._to_segments(message)
-        return await self.call_api("send_private_msg", {"user_id": int(user_id), "message": segments})
+        return await self.call_api(
+            "send_private_msg", {"user_id": int(user_id), "message": segments}
+        )
 
     async def upload_group_file(
         self, group_id: str | int, file_path: str, name: str = ""
@@ -286,3 +319,30 @@ class NapCatAdapter:
         if isinstance(message, str):
             return [{"type": "text", "data": {"text": message}}]
         return message
+
+    @staticmethod
+    def _message_group_to_onebot(message: MessageGroup | str) -> list[dict[str, Any]]:
+        """将 MessageGroup 转换为 OneBot v11 消息段数组。"""
+        if isinstance(message, str):
+            return [{"type": "text", "data": {"text": message}}]
+
+        segments: list[dict[str, Any]] = []
+        for seg in message:
+            if isinstance(seg, TextSegment):
+                segments.append({"type": "text", "data": {"text": seg.text}})
+            elif isinstance(seg, AtSegment):
+                segments.append({"type": "at", "data": {"qq": seg.user_id}})
+            elif isinstance(seg, ImageSegment):
+                img_data: dict[str, str] = {"file": seg.file_path}
+                if seg.url:
+                    img_data["url"] = seg.url
+                if seg.sub_type:
+                    img_data["sub_type"] = seg.sub_type
+                segments.append({"type": "image", "data": img_data})
+            elif isinstance(seg, VoiceSegment):
+                segments.append({"type": "record", "data": {"file": seg.file_path}})
+            elif isinstance(seg, ReplySegment):
+                segments.append({"type": "reply", "data": {"id": seg.message_id}})
+            elif isinstance(seg, FileSegment):
+                segments.append({"type": "file", "data": {"file": seg.file_path, "name": seg.name or Path(seg.file_path).name}})
+        return segments
