@@ -3,13 +3,19 @@
 PluginBase 定义了 Plugin 的生命周期方法和必需接口：
     - on_load(): 加载时调用一次（可选覆写）
     - on_unload(): 卸载时调用一次（可选覆写）
-    - execute(cmd): 核心执行方法（必须覆写）
+    - execute(cmd): 核心执行方法（可覆写，或使用 @command 装饰器替代）
 
 子类通过 self.ctx 访问 PluginContext。
+
+v1.2+: 支持 @command 装饰器声明式指令注册
+    使用 @command 装饰的方法，框架自动按 CommandAST.command 路由，
+    并根据方法的类型注解自动进行参数校验与注入。
+    不需要覆写 execute()。
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -24,21 +30,39 @@ logger = logging.getLogger(__name__)
 class PluginBase:
     """Plugin 基类。
 
-    所有 Plugin 必须继承此类并实现 execute() 方法。
+    支持两种指令定义方式：
 
-    使用示例：
+    1. 【传统方式】覆写 execute() 方法，手动从 CommandAST 提取参数：
 
-        class WeatherPlugin(PluginBase):
+        class MyPlugin(PluginBase):
             def execute(self, cmd):
-                city = cmd.kwargs.get("city", ArgNode("北京", "北京", "str"))
-                # 业务逻辑...
-                return PluginResult.ok(text=f"{city}天气: 晴 25°C")
+                city = cmd.kwargs.get("city", ...)
+                return PluginResult.ok(text=f"city={city}")
+
+    2. 【装饰器方式】使用 @command 装饰器声明式注册指令（推荐）：
+
+        from sirius_chat.plugins.decorators import command
+
+        class MyPlugin(PluginBase):
+            @command("weather", patterns=["/天气"], render_mode="llm")
+            async def query_weather(self, city: str, unit: str = "celsius") -> PluginResult:
+                data = await fetch_weather(city, unit)
+                return PluginResult.ok(data=data)
+
+    装饰器方式的优势：
+    - 每个指令一个独立方法，职责清晰
+    - 类型注解自动用于参数校验（str/int/float/bool）
+    - 参数默认值自动成为可选参数的缺省值
+    - 框架自动按 cmd.command 路由到对应方法
     """
 
     def __init__(self) -> None:
         self._ctx: "PluginContext | None" = None
         self._name: str = ""
         self._source_path: Path | None = None
+
+        # @command 装饰器发现的 handler 字典（延迟初始化）
+        self._command_handlers: dict[str, Any] | None = None
 
     @property
     def name(self) -> str:
@@ -77,19 +101,101 @@ class PluginBase:
     # ── 核心方法 ──
 
     def execute(self, cmd: "CommandAST") -> "PluginResult":
-        """执行 Plugin 核心逻辑。
+        """执行 Plugin 核心逻辑（同步入口）。
+
+        默认行为：
+            1. 如果子类使用 @command 装饰器注册了指令，按 cmd.command 路由调度
+            2. 否则返回"未实现"错误
+
+        子类可以覆写此方法以自定义逻辑，但会覆盖自动调度功能。
 
         Args:
             cmd: 从用户输入解析的命令 AST
 
         Returns:
             PluginResult 实例
-
-        必须由子类覆写。默认实现返回失败结果。
         """
         from sirius_chat.plugins.models import PluginResult
 
+        # 检查是否有 @command 已发现
+        if self._command_handlers is None:
+            self._discover_commands()
+        if self._command_handlers:
+            # 有装饰器命令但 execute 未被覆写 → 返回未调度错误
+            # （装饰器命令应通过 execute_async 异步调度）
+            return PluginResult.fail(
+                f"Plugin '{self._name}' 使用了 @command 装饰器但未通过异步调度。"
+                f" 请使用 execute_async() 方法。"
+            )
+
         return PluginResult.fail(f"Plugin '{self._name}' 未实现 execute() 方法")
+
+    async def execute_async(self, cmd: "CommandAST") -> "PluginResult":
+        """执行 Plugin 核心逻辑（异步入口，v1.2+）。
+
+        框架优先调用此方法。默认行为：
+            1. 如果子类使用 @command 装饰器注册了指令，进行异步调度
+            2. 否则通过 asyncio.to_thread 执行同步 execute()
+
+        子类可覆写此方法以自定义异步逻辑。
+
+        Args:
+            cmd: 从用户输入解析的命令 AST
+
+        Returns:
+            PluginResult 实例
+        """
+        # 检查是否有 @command
+        if self._command_handlers is None:
+            self._discover_commands()
+        if self._command_handlers:
+            return await self._dispatch_decorated_command(cmd)
+
+        # 无装饰器命令 → 执行传统同步 execute()
+        return await asyncio.to_thread(self.execute, cmd)
+
+    def get_command_metas(self) -> dict[str, Any]:
+        """获取所有 @command 装饰器注册的指令元数据。
+
+        用于 PluginLoader / Registry 自动构建 PluginDefinition.commands。
+
+        Returns:
+            {command_name: PluginCommandMeta} 字典
+        """
+        if self._command_handlers is None:
+            self._discover_commands()
+        return dict(self._command_handlers or {})
+
+    # ── 内部方法 ──
+
+    def _discover_commands(self) -> None:
+        """延迟扫描所有 @command 装饰的方法，构建 handler 映射。
+
+        在首次 execute() / execute_async() 调用时自动触发。
+        """
+        from sirius_chat.plugins.decorators import discover_commands
+
+        self._command_handlers = discover_commands(self)
+        if self._command_handlers:
+            logger.debug(
+                "Plugin '%s' 发现 %d 个 @command: %s",
+                self._name,
+                len(self._command_handlers),
+                ", ".join(self._command_handlers.keys()),
+            )
+
+    async def _dispatch_decorated_command(self, cmd: "CommandAST") -> "PluginResult":
+        """将 CommandAST 路由到对应的 @command 方法并调用。
+
+        Args:
+            cmd: 用户命令 AST
+
+        Returns:
+            PluginResult
+        """
+        from sirius_chat.plugins.decorators import dispatch_command
+
+        return await dispatch_command(self, cmd, self._command_handlers or {})
 
     # ── 辅助方法 ──
 
@@ -128,15 +234,12 @@ class PluginBase:
 
         try:
             template_text = template_path.read_text(encoding="utf-8")
-            # 简单的 {key} 替换
             for key, value in data.items():
                 template_text = template_text.replace(f"{{{key}}}", str(value))
             return template_text
         except Exception as exc:
             logger.error("渲染模板失败: %s", exc)
             return f"[模板渲染失败: {template_name}]"
-
-    # ── 内部方法（框架调用） ──
 
     def _setup(self, name: str, ctx: "PluginContext") -> None:
         """由框架调用：设置 Plugin 名称和上下文。"""

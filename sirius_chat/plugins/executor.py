@@ -174,10 +174,18 @@ class PluginExecutor:
 
         # ── 执行（带超时保护） ──
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(instance.execute, cmd),
-                timeout=self._default_timeout,
-            )
+            # v1.2+: 使用 async 执行路径
+            # execute_async 内部会自动判断：有 @command → 调度；无 → to_thread(execute)
+            if hasattr(instance, 'execute_async'):
+                result = await asyncio.wait_for(
+                    instance.execute_async(cmd),
+                    timeout=self._default_timeout,
+                )
+            else:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(instance.execute, cmd),
+                    timeout=self._default_timeout,
+                )
             if result is None:
                 return PluginResult.ok(text="", data=None)
             return result

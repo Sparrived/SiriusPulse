@@ -24,6 +24,7 @@ from sirius_chat.plugins.context import (
     PluginContext,
     PluginDataStore,
 )
+from sirius_chat.plugins.decorators import command, PluginCommandMeta, discover_commands, dispatch_command
 from sirius_chat.plugins.dispatcher import OutputDispatcher
 from sirius_chat.plugins.events import PluginEvent, PluginEventType, TimerEvent, EngineEvent
 from sirius_chat.plugins.executor import PluginExecutor
@@ -67,6 +68,11 @@ __all__ = [
     "PluginDefinition",
     "PluginResult",
     "CommandAST",
+    # 装饰器系统
+    "command",
+    "PluginCommandMeta",
+    "discover_commands",
+    "dispatch_command",
     # 注册与加载
     "PluginRegistry",
     "PluginLoader",

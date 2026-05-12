@@ -139,6 +139,8 @@ from sirius_chat.plugins import (
     ImageAttachment,
     parse_command,
     match_plugin,
+    command,
+    PluginCommandMeta,
 )
 
 # ── Token usage ──
@@ -323,6 +325,8 @@ __all__ = [
     "ImageAttachment",
     "parse_command",
     "match_plugin",
+    "command",
+    "PluginCommandMeta",
     # Token
     "TokenUsageStore",
     "AnalyticsReport",

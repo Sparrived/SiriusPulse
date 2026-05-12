@@ -1,13 +1,7 @@
-"""骰子机器人 Plugin —— 示例插件，展示 direct 渲染模式。
+"""骰子机器人 Plugin —— 示例插件，使用 @command 装饰器模式。
 
-通过 #roll <表达式> 触发，直接返回掷骰结果，
-不经过 LLM 风格化（确定性结果，直接输出最快）。
-
-支持标准 D&D 骰子表达式：
-    - d20：掷一个 20 面骰子
-    - 2d6+3：掷两个 6 面骰子，结果加 3
-    - 3d8-1：掷三个 8 面骰子的和减 1
-    - 4d6k3：掷四个 6 面骰子，取最大的三个（D&D 属性生成）
+通过 #roll <表达式> 触发，直接返回掷骰结果（direct 模式）。
+支持标准 D&D 骰子表达式。
 """
 
 from __future__ import annotations
@@ -15,17 +9,15 @@ from __future__ import annotations
 import random
 import re
 
-from sirius_chat.plugins import PluginBase, PluginResult, CommandAST
+from sirius_chat.plugins import PluginBase, PluginResult, command
 
 
 class RollDicePlugin(PluginBase):
     """骰子机器人插件。
 
-    演示 direct 渲染模式：Plugin 直接返回最终文本，
-    零 LLM 成本，确定性输出。
+    使用 @command 装饰器声明式注册，type hint expression: str 自动注入。
     """
 
-    # 骰子表达式正则：可选数量 + d + 面数 + 可选修正
     _DICE_PATTERN = re.compile(
         r"(?P<count>\d+)?d(?P<sides>\d+)(?:k(?P<keep>\d+))?\s*(?P<mod>[+-]\s*\d+)?"
     )
@@ -33,16 +25,20 @@ class RollDicePlugin(PluginBase):
     def on_load(self) -> None:
         self.logger.info("骰子插件已加载")
 
-    def execute(self, cmd: CommandAST) -> PluginResult:
-        """掷骰子。
+    @command(
+        "roll_dice",
+        patterns=["#roll", "/roll", "掷骰", "roll"],
+        pattern_type="prefix",
+        render_mode="direct",
+        description="掷骰子",
+        examples=["#roll 2d6+3", "/roll d20"],
+    )
+    def do_roll(self, expression: str) -> PluginResult:
+        """掷骰子指令。
 
         Args:
-            cmd: 包含 expression 参数的 CommandAST
-
-        Returns:
-            PluginResult 包含掷骰结果文本
+            expression: 骰子表达式（自动从 CommandAST 注入）
         """
-        expression = cmd.get_str("expression", "")
         if not expression:
             return PluginResult.fail("请指定骰子表达式，例如：#roll 2d6+3")
 
@@ -50,18 +46,10 @@ class RollDicePlugin(PluginBase):
         if result is None:
             return PluginResult.fail(f"无效的骰子表达式: {expression}")
 
-        return PluginResult.ok(text=result, render_mode="direct")
+        return PluginResult.ok(text=result)
 
     def _roll(self, expression: str) -> str | None:
-        """解析并掷骰子。
-
-        Args:
-            expression: 骰子表达式，如 "2d6+3"
-
-        Returns:
-            格式化的掷骰结果字符串，如 "🎲 2d6+3 = [4, 3] + 3 = 10"
-        """
-        # 清理表达式
+        """解析并掷骰子。"""
         expr_clean = expression.strip().replace(" ", "")
         match = self._DICE_PATTERN.fullmatch(expr_clean)
         if match is None:
@@ -79,10 +67,7 @@ class RollDicePlugin(PluginBase):
         if sides > 1000:
             return "骰子面数不能超过 1000~"
 
-        # 掷骰
         rolls = [random.randint(1, sides) for _ in range(count)]
-
-        # 处理 k (keep highest)
         if keep is not None:
             if keep > count:
                 keep = count
@@ -93,8 +78,6 @@ class RollDicePlugin(PluginBase):
             dropped = []
 
         total = sum(kept)
-
-        # 处理修正值
         mod = 0
         if mod_str:
             mod_str = mod_str.replace(" ", "")
@@ -104,27 +87,19 @@ class RollDicePlugin(PluginBase):
                 return None
             total += mod
 
-        # 格式化输出
-        parts: list[str] = []
-        parts.append(f"🎲 {expression}")
-
+        parts: list[str] = [f"🎲 {expression}"]
         if len(rolls) == 1:
             parts.append(f"= {rolls[0]}")
         else:
-            rolls_str = ", ".join(str(r) for r in rolls)
-            parts.append(f"= [{rolls_str}]")
+            parts.append(f"= [{', '.join(str(r) for r in rolls)}]")
             if dropped:
-                dropped_str = ", ".join(str(r) for r in dropped)
-                parts.append(f"(取前{keep}个, 丢弃[{dropped_str}])")
-
+                parts.append(f"(取前{keep}个, 丢弃[{', '.join(str(r) for r in dropped)}])")
         if mod > 0:
             parts.append(f"+ {mod}")
         elif mod < 0:
             parts.append(f"- {abs(mod)}")
-
         parts.append(f"= {total}")
 
-        # 暴击/大失败提示（仅 d20 时）
         if count == 1 and sides == 20:
             if rolls[0] == 20:
                 parts.append(" ✨ 大成功！")
