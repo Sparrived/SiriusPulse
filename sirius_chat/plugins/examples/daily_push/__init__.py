@@ -55,7 +55,7 @@ class DailyPushPlugin(PluginBase):
             greeting = "晚上好"
             time_context = "傍晚"
 
-        # 随机选择一条语录或小知识
+        # 随机选择一条语录或小知识（只选一次，多处复用）
         tips = [
             "每天都是新的一天，保持好心情哦~",
             "记得按时吃早餐，身体最重要！",
@@ -63,6 +63,7 @@ class DailyPushPlugin(PluginBase):
             "生活不止眼前的代码，还有诗和远方~",
             "别忘了喝水，一天八杯水的目标！",
         ]
+        selected_tip = random.choice(tips)
 
         push_data = {
             "greeting": greeting,
@@ -70,17 +71,17 @@ class DailyPushPlugin(PluginBase):
             "date": date_str,
             "weekday": weekday,
             "topic": topic,
-            "tip": random.choice(tips),
+            "tip": selected_tip,
             "template_rendered": self.render_template("daily_default.txt", {
                 "greeting": greeting,
                 "date": date_str,
                 "weekday": weekday,
-                "tip": random.choice(tips),
+                "tip": selected_tip,
             }) if self.source_path else "",
         }
 
         return PluginResult.ok(
-            text=f"{greeting}！今天是{date_str}，{random.choice(tips)}",
+            text=f"{greeting}！今天是{date_str}，{selected_tip}",
             data=push_data,
             mood_hint="温暖、活泼、元气满满",
             render_mode="llm",

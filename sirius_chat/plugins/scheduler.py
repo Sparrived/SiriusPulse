@@ -24,10 +24,10 @@ class ScheduledTask:
 
     name: str
     plugin_name: str
-    cron: str = ""                   # cron 表达式（简化支持）
-    interval_seconds: float = 0.0    # 间隔秒数
-    last_run: float = 0.0
-    callback: Callable[[], Awaitable[None]] | None = None
+    cron: str = field(default="")                   # cron 表达式（简化支持）
+    interval_seconds: float = field(default=0.0)    # 间隔秒数
+    last_run: float = field(default=0.0)
+    callback: Callable[[], Awaitable[None]] | None = field(default=None)
 
 
 class PluginScheduler:
@@ -103,10 +103,8 @@ class PluginScheduler:
             "0 8 * * *"（每天 8:00）
             "*/5 * * * *"（每 5 分钟）
         """
-        import time as _time
-
-        now_struct = _time.localtime(now)
-        last_struct = _time.localtime(last_run) if last_run > 0 else None
+        now_struct = time.localtime(now)
+        last_struct = time.localtime(last_run) if last_run > 0 else None
 
         # 如果上次运行在同一分钟，跳过
         if last_struct and now_struct.tm_min == last_struct.tm_min and now_struct.tm_hour == last_struct.tm_hour and now_struct.tm_mday == last_struct.tm_mday:
