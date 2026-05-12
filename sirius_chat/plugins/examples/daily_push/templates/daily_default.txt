@@ -1,0 +1,5 @@
+{greeting}！今天是 {date}（{weekday}）。
+
+{tip}
+
+祝大家度过美好的一天！🌟

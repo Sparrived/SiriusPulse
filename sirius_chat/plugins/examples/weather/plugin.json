@@ -1,0 +1,50 @@
+{
+  "name": "weather",
+  "display_name": "天气查询",
+  "description": "查询指定城市的实时天气信息，支持人格化表达",
+  "version": "1.0.0",
+  "author": "sirius-chat",
+  "min_framework_version": "1.2.0",
+
+  "triggers": {
+    "commands": [
+      {
+        "name": "weather",
+        "patterns": ["/天气", "查天气", "天气怎么样"],
+        "pattern_type": "prefix",
+        "description": "查询城市天气",
+        "examples": ["/天气 北京", "查天气 上海"]
+      }
+    ]
+  },
+
+  "parameters": {
+    "city": {
+      "type": "str",
+      "description": "城市名称",
+      "required": true,
+      "position": 0
+    }
+  },
+
+  "permissions": {
+    "developer_only": false,
+    "adapter_types": ["napcat"],
+    "group_whitelist": [],
+    "group_blacklist": [],
+    "rate_limit": {
+      "calls_per_minute": 10,
+      "calls_per_hour": 100
+    }
+  },
+
+  "render": {
+    "mode": "llm",
+    "system_prompt_suffix": "请以关心的语气告诉用户天气情况，提醒注意穿衣和出行。",
+    "max_tokens": 300,
+    "temperature": 0.8
+  },
+
+  "dependencies": [],
+  "resources": []
+}

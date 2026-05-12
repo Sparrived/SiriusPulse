@@ -1,0 +1,55 @@
+{
+  "name": "daily_push",
+  "display_name": "每日推送",
+  "description": "每天定时发送早安/天气/励志语录等推送消息",
+  "version": "1.0.0",
+  "author": "sirius-chat",
+  "min_framework_version": "1.2.0",
+
+  "triggers": {
+    "commands": [
+      {
+        "name": "daily_push",
+        "patterns": ["/daily", "今日推送", "每日推送"],
+        "pattern_type": "prefix",
+        "description": "手动触发每日推送",
+        "examples": ["/daily", "今日推送"]
+      }
+    ],
+    "events": [
+      {
+        "type": "timer.daily",
+        "cron": "0 8 * * *",
+        "description": "每日早上8点自动推送"
+      }
+    ]
+  },
+
+  "parameters": {
+    "topic": {
+      "type": "str",
+      "description": "推送主题（可选）",
+      "required": false,
+      "default": "daily"
+    }
+  },
+
+  "permissions": {
+    "developer_only": false,
+    "adapter_types": ["napcat"],
+    "rate_limit": {
+      "calls_per_minute": 3,
+      "calls_per_hour": 10
+    }
+  },
+
+  "render": {
+    "mode": "llm",
+    "system_prompt_suffix": "这是一条早安/每日推送消息。请以温暖、活泼的语气发送，鼓励大家开启美好的一天。",
+    "max_tokens": 300,
+    "temperature": 0.85
+  },
+
+  "dependencies": [],
+  "resources": ["templates/"]
+}

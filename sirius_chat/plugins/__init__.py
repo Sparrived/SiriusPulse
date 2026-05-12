@@ -25,6 +25,7 @@ from sirius_chat.plugins.context import (
     PluginDataStore,
 )
 from sirius_chat.plugins.dispatcher import OutputDispatcher
+from sirius_chat.plugins.events import PluginEvent, PluginEventType, TimerEvent, EngineEvent
 from sirius_chat.plugins.executor import PluginExecutor
 from sirius_chat.plugins.lexer import (
     CommandParser,
@@ -57,6 +58,7 @@ from sirius_chat.plugins.models import (
     ImageAttachment,
 )
 from sirius_chat.plugins.registry import PluginRegistry
+from sirius_chat.plugins.scheduler import PluginScheduler, ScheduledTask
 
 __all__ = [
     # 核心类
@@ -72,6 +74,14 @@ __all__ = [
     "PluginExecutor",
     # 输出调度
     "OutputDispatcher",
+    # 事件系统
+    "PluginEvent",
+    "PluginEventType",
+    "TimerEvent",
+    "EngineEvent",
+    # 调度器
+    "PluginScheduler",
+    "ScheduledTask",
     # 词法分析
     "Tokenizer",
     "Lexer",

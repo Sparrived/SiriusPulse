@@ -1,0 +1,44 @@
+{
+  "name": "roll_dice",
+  "display_name": "骰子机器人",
+  "description": "模拟掷骰子，支持标准 D&D 表达式如 2d6+3、d20 等",
+  "version": "1.0.0",
+  "author": "sirius-chat",
+  "min_framework_version": "1.2.0",
+
+  "triggers": {
+    "commands": [
+      {
+        "name": "roll_dice",
+        "patterns": ["#roll", "/roll", "掷骰", "roll"],
+        "pattern_type": "prefix",
+        "description": "掷骰子",
+        "examples": ["#roll 2d6+3", "/roll d20", "roll 3d8"]
+      }
+    ]
+  },
+
+  "parameters": {
+    "expression": {
+      "type": "str",
+      "description": "骰子表达式，如 2d6+3、d20、3d8-1",
+      "required": true,
+      "position": 0
+    }
+  },
+
+  "permissions": {
+    "developer_only": false,
+    "adapter_types": ["napcat"],
+    "rate_limit": {
+      "calls_per_minute": 30,
+      "calls_per_hour": 500
+    }
+  },
+
+  "render": {
+    "mode": "direct",
+    "max_tokens": 100,
+    "temperature": 0.5
+  }
+}
