@@ -14,6 +14,7 @@ class ResponseStrategy(Enum):
     DELAYED = "delayed"
     SILENT = "silent"
     PROACTIVE = "proactive"
+    PLUGIN = "plugin"  # Plugin 命令快速路径（v1.2+）
 
 
 @dataclass(slots=True)
@@ -28,6 +29,11 @@ class StrategyDecision:
     reason: str = ""
     estimated_delay_seconds: float = 0.0
     context: dict[str, Any] = field(default_factory=dict)
+
+    # === Plugin 命令字段（v1.2+）===
+    plugin_intent: str | None = None       # Plugin 名称
+    plugin_slots: dict[str, Any] = field(default_factory=dict)  # 参数槽位
+    plugin_render_mode: str = "direct"     # 渲染模式
 
 
 @dataclass(slots=True)

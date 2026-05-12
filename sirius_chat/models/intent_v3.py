@@ -8,12 +8,13 @@ from typing import Any
 
 
 class SocialIntent(Enum):
-    """Purpose-driven intent taxonomy (paper §2.1)."""
+    """Purpose-driven intent taxonomy"""
 
     HELP_SEEKING = "help_seeking"
     EMOTIONAL = "emotional"
     SOCIAL = "social"
     SILENT = "silent"
+    PLUGIN_COMMAND = "plugin_command"  # Plugin 命令意图（v1.2+）
 
 
 class HelpSubtype(Enum):
@@ -107,6 +108,12 @@ class IntentAnalysisV3:
     # === image understanding ===
     image_caption: str = ""  # 图片描述文本，由多模态意图分析生成
 
+    # === Plugin 意图识别字段（v1.2+）===
+    plugin_intent: str | None = None       # 匹配到的插件意图ID，如 "weather"
+    plugin_confidence: float = 0.0         # 插件匹配置信度
+    plugin_slots: dict[str, Any] = field(default_factory=dict)  # 提取的参数槽位
+    plugin_render_mode: str = "direct"     # direct | llm | silent
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "intent_type": self.intent_type,
@@ -143,6 +150,11 @@ class IntentAnalysisV3:
             "sarcasm_score": self.sarcasm_score,
             "entitlement_score": self.entitlement_score,
             "image_caption": self.image_caption,
+            # plugin fields
+            "plugin_intent": self.plugin_intent,
+            "plugin_confidence": self.plugin_confidence,
+            "plugin_slots": self.plugin_slots,
+            "plugin_render_mode": self.plugin_render_mode,
         }
 
     @classmethod
@@ -187,4 +199,9 @@ class IntentAnalysisV3:
             sarcasm_score=data.get("sarcasm_score", 0.0),
             entitlement_score=data.get("entitlement_score", 0.5),
             image_caption=data.get("image_caption", ""),
+            # plugin fields
+            plugin_intent=data.get("plugin_intent"),
+            plugin_confidence=data.get("plugin_confidence", 0.0),
+            plugin_slots=data.get("plugin_slots", {}),
+            plugin_render_mode=data.get("plugin_render_mode", "direct"),
         )

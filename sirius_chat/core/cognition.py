@@ -216,15 +216,17 @@ _CONTEXT_DEPENDENT_PATTERNS: tuple[str, ...] = (
 _LLM_COGNITION_PROMPT = """分析以下消息的【情感状态】、【社交意图】和【指向性】。
 
 {ai_identity}{conversation_context}消息：{message}
-
+{plugin_descriptions}
 要求输出 JSON：
 {{
   "valence": -1.0 到 1.0（愉悦度，负值负面，正值正面）,
   "arousal": 0.0 到 1.0（唤醒度，0平静，1激动）,
   "intensity": 0.0 到 1.0（情感强度）,
   "basic_emotion": "joy|anger|sadness|anxiety|loneliness|neutral",
-  "social_intent": "help_seeking|emotional|social|silent",
+  "social_intent": "help_seeking|emotional|social|silent|plugin_command",
   "intent_subtype": "tech_help|info_query|venting|seeking_empathy|topic_discussion|filler",
+  "plugin_intent": "如果 social_intent 是 plugin_command，填写插件ID，否则留空",
+  "plugin_slots": {{ "参数名": "从消息中提取的参数值" }}（如果 social_intent 是 plugin_command，填写提取的参数，否则留空 {{}}）,
   "urgency_score": 0-100,
   "relevance_score": 0.0-1.0,
   "directed_score": 0.0-1.0,
@@ -240,6 +242,7 @@ _LLM_COGNITION_PROMPT = """分析以下消息的【情感状态】、【社交�
 - emotional: 表达情绪、寻求安慰
 - social: 闲聊、讨论、分享
 - silent: 无意义 filler（哈哈、确实、+1）
+- plugin_command: 用户消息是一个插件指令或自然语言形式的插件请求（如"帮我查一下北京的天气"、"roll 2d6"等）。当用户明确要求执行某个插件功能时使用此意图。
 
 【评分标准】
 urgency_score（紧急程度，参考）：
@@ -281,6 +284,7 @@ class CognitionAnalyzer:
         ai_name: str = "",
         ai_aliases: list[str] | None = None,
         persona: Any | None = None,
+        plugin_registry: Any | None = None,  # Plugin 注册表（v1.2+）
     ) -> None:
         self.lexicon = lexicon or dict(_DEFAULT_LEXICON)
         self.provider_async = provider_async
@@ -288,6 +292,7 @@ class CognitionAnalyzer:
         self.ai_name = ai_name
         self.ai_aliases = [a.lower() for a in (ai_aliases or []) if a]
         self.persona = persona
+        self.plugin_registry = plugin_registry  # Plugin 注册表引用（v1.2+）
 
         # Expose the last GenerationRequest for token recording
         self._last_request: Any | None = None
@@ -332,6 +337,17 @@ class CognitionAnalyzer:
         )
         search_query = message  # fallback when no LLM or LLM fails
 
+        # 提取 Plugin 命令信息（v1.2+）
+        plugin_intent: str | None = None
+        plugin_confidence: float = 0.0
+        plugin_slots: dict[str, Any] = {}
+        plugin_render_mode: str = "direct"
+        if social_intent == SocialIntent.PLUGIN_COMMAND and hasattr(subtype, 'plugin_name'):
+            plugin_intent = subtype.plugin_name
+            plugin_confidence = subtype.confidence
+            plugin_slots = subtype.slots
+            plugin_render_mode = subtype.render_mode
+
         # 3. Compute 12-dimensional directedness scores (rule-based, zero cost)
         directed_scores = self._compute_directed_scores(
             message, user_id, context_messages
@@ -359,6 +375,15 @@ class CognitionAnalyzer:
                     search_query = llm_result.get("search_query", message)
                     if text_emotion.confidence < 0.6:
                         text_emotion = llm_result["emotion"]
+                    # 从 LLM 结果中提取 Plugin 字段（v1.2+）
+                    if social_intent == SocialIntent.PLUGIN_COMMAND:
+                        llm_plugin = llm_result.get("plugin_intent")
+                        if llm_plugin:
+                            plugin_intent = llm_plugin
+                            plugin_confidence = max(plugin_confidence, intent_confidence)
+                        llm_slots = llm_result.get("plugin_slots", {})
+                        if isinstance(llm_slots, dict) and llm_slots:
+                            plugin_slots.update(llm_slots)
                 else:
                     # LLM parse failure → safe SILENT
                     social_intent = SocialIntent.SILENT
@@ -375,6 +400,14 @@ class CognitionAnalyzer:
         group_emotion = self.group_cache.get(group_id) if group_id else None
         emotion = self._fuse_emotion(text_emotion, context_emotion, group_emotion)
         self._update_trajectory(user_id, emotion)
+
+        # 规范化 subtype（PluginMatchInfo → 字符串，v1.2+）
+        if hasattr(subtype, 'plugin_name'):
+            subtype_str = "plugin_command"
+        elif hasattr(subtype, 'value'):
+            subtype_str = subtype.value
+        else:
+            subtype_str = str(subtype)
 
         # 6. Intent scoring
         urgency = self._calculate_urgency(
@@ -429,10 +462,18 @@ class CognitionAnalyzer:
                 urgency = max(urgency, 70.0)
                 relevance = max(relevance, 0.65)
 
+        # Plugin 命令始终视为高指向性、高紧急度（v1.2+）
+        if social_intent == SocialIntent.PLUGIN_COMMAND:
+            directed = True
+            directed_score = max(directed_score, 0.9)
+            urgency = max(urgency, 80.0)
+            relevance = max(relevance, 0.8)
+            priority = 10  # 最高优先级
+
         intent = IntentAnalysisV3(
             intent_type=self._intent_type_from_social(social_intent, message),
             social_intent=social_intent,
-            intent_subtype=subtype.value,
+            intent_subtype=subtype_str,
             urgency_score=urgency,
             relevance_score=relevance,
             confidence=intent_confidence,
@@ -458,6 +499,11 @@ class CognitionAnalyzer:
             sarcasm_score=sarcasm_score,
             entitlement_score=entitlement_score,
             image_caption=llm_result.get("image_caption", "") if llm_result else "",
+            # Plugin 字段（v1.2+）
+            plugin_intent=plugin_intent,
+            plugin_confidence=plugin_confidence,
+            plugin_slots=plugin_slots,
+            plugin_render_mode=plugin_render_mode,
         )
 
         # 8. Empathy strategy
@@ -665,6 +711,7 @@ class CognitionAnalyzer:
             conversation_context=conv_ctx,
             message=context_text + f"【当前消息】[{current_user_id}] {message}",
             ai_identity_note=ai_note,
+            plugin_descriptions=self._get_plugin_descriptions_for_prompt(),
         )
 
         # Check image caption cache before calling LLM.
@@ -746,6 +793,8 @@ class CognitionAnalyzer:
                 "sarcasm_score": 0.0,
                 "search_query": message or "",
                 "image_caption": cached_caption,
+                "plugin_intent": None,
+                "plugin_slots": {},
             }
 
         if self.provider_async is None:
@@ -814,6 +863,9 @@ class CognitionAnalyzer:
                 "sarcasm_score": float(data.get("sarcasm_score", 0.0)),
                 "search_query": data.get("search_query", ""),
                 "image_caption": caption,
+                # Plugin 字段（v1.2+）
+                "plugin_intent": data.get("plugin_intent"),
+                "plugin_slots": data.get("plugin_slots", {}) if isinstance(data.get("plugin_slots"), dict) else {},
             }
         except (ValueError, KeyError) as exc:
             logger.warning("Failed to extract cognition fields: %s | raw=%r", exc, raw)
@@ -891,6 +943,7 @@ class CognitionAnalyzer:
             "emotional": SocialIntent.EMOTIONAL,
             "social": SocialIntent.SOCIAL,
             "silent": SocialIntent.SILENT,
+            "plugin_command": SocialIntent.PLUGIN_COMMAND,  # v1.2+
         }
         return mapping.get(intent_str.lower(), SocialIntent.SOCIAL)
 
@@ -1392,8 +1445,19 @@ class CognitionAnalyzer:
         message: str,
         context_messages: list[dict[str, Any]] | None = None,
     ) -> tuple[SocialIntent, Any, float]:
+        """分类消息的社交意图。
+
+        返回值: (SocialIntent, subtype, confidence)
+
+        v1.2+: 新增 Plugin 命令匹配层，在传统规则之前优先检查。
+        """
         text = message.lower()
         has_context = bool(context_messages)
+
+        # === ✅ Plugin 命令匹配层（最高优先级，v1.2+）===
+        plugin_match = self._match_plugin_command(message)
+        if plugin_match is not None:
+            return SocialIntent.PLUGIN_COMMAND, plugin_match, 0.95
 
         # Help seeking
         help_score = 0
@@ -1506,11 +1570,81 @@ class CognitionAnalyzer:
             return "question" if "?" in message or "？" in message else "request"
         if social_intent in (SocialIntent.EMOTIONAL, SocialIntent.SOCIAL):
             return "chat"
+        if social_intent == SocialIntent.PLUGIN_COMMAND:
+            return "command"  # v1.2+
         return "chat"
 
+    # ------------------------------------------------------------------
+    # Plugin 命令匹配（v1.2+）
+    # ------------------------------------------------------------------
 
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
+    def _match_plugin_command(self, message: str) -> "PluginMatchInfo | None":
+        """尝试将用户消息匹配到已注册的 Plugin 命令。
+
+        匹配优先级（从高到低）：
+            1. 精确指令匹配（/天气, #roll）→ confidence=1.0
+            2. 模板/关键词匹配（"查查无锡的天气"）→ confidence=0.85
+
+        Args:
+            message: 用户输入的原始文本
+
+        Returns:
+            PluginMatchInfo 或 None
+        """
+        if self.plugin_registry is None:
+            return None
+
+        try:
+            match_result = self.plugin_registry.match_message(message)
+            if match_result is not None:
+                # 构建 PluginMatchInfo 供上游使用
+                plugin_name = match_result.plugin_name
+                definition = self.plugin_registry.get(plugin_name)
+                render_mode = definition.render.mode if definition else "direct"
+
+                # 尝试参数解析（如果有 LexedCommand）
+                slots: dict[str, Any] = {}
+                if match_result.lexed is not None and definition is not None:
+                    from sirius_chat.plugins.lexer import CommandParser
+                    parser = CommandParser()
+                    ast = parser.parse(match_result.lexed, definition)
+                    # 将 kwargs 中的值提取出来作为 slots
+                    for name, node in ast.kwargs.items():
+                        slots[name] = node.value
+                    # 也提取位置参数
+                    for i, node in enumerate(ast.args):
+                        slots[f"_{i}"] = node.value
+
+                from dataclasses import dataclass
+
+                @dataclass
+                class PluginMatchInfo:
+                    plugin_name: str
+                    confidence: float
+                    render_mode: str
+                    slots: dict[str, Any]
+
+                return PluginMatchInfo(
+                    plugin_name=plugin_name,
+                    confidence=match_result.confidence,
+                    render_mode=render_mode,
+                    slots=slots,
+                )
+        except Exception as exc:
+            logger.debug("Plugin 命令匹配异常: %s", exc)
+
+        return None
+
+    def _get_plugin_descriptions_for_prompt(self) -> str:
+        """生成 Plugin 指令描述文本（用于 LLM Cognition Prompt）。"""
+        if self.plugin_registry is None:
+            return ""
+        try:
+            descriptions = self.plugin_registry.get_plugin_descriptions()
+            if not descriptions:
+                return ""
+            return f"\n【可用插件指令】\n{descriptions}\n"
+        except Exception:
+            return ""
 
 
