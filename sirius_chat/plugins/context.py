@@ -32,26 +32,24 @@ class EngineProxy:
         self._engine = engine
         self._plugin_name = plugin_name
 
-    async def generate_text(self, prompt: str, **kwargs: Any) -> str:
-        """调用 LLM 生成人格化文本。
+    async def generate_text(self, prompt: str, *, group_id: str = "", **kwargs: Any) -> str:
+        """调用引擎的 _generate() 生成人格化文本。
 
-        用于 render_mode="llm" 时的风格化生成。
+        走完整的框架生成链路：模型路由、token 记录、人格注入、语气对齐。
+        不直接调用 provider，确保 Plugin 输出进入记忆链和 token 统计。
         """
         if self._engine is None:
             return f"[Engine 未绑定] {prompt[:100]}"
         try:
-            from sirius_chat.providers.base import GenerationRequest
-
-            request = GenerationRequest(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=kwargs.get("max_tokens", 500),
-                temperature=kwargs.get("temperature", 0.8),
+            return await self._engine._generate(
+                system_prompt=prompt,
+                messages=[],
+                group_id=group_id,
+                task_name="plugin_generate",
             )
-            result = await self._engine.provider_async.generate(request)
-            return result.content if result else prompt
         except Exception as exc:
-            logger.error("Plugin %s 调用 LLM 失败: %s", self._plugin_name, exc)
-            return f"[LLM 调用失败: {exc}]"
+            logger.error("Plugin %s 调用 _generate 失败: %s", self._plugin_name, exc)
+            return f"[生成失败: {exc}]"
 
     def get_persona_name(self) -> str:
         """获取当前人格名称。"""

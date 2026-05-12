@@ -72,20 +72,22 @@ class HelpersMixin(_Base):
         group_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        """Execute a Plugin command and dispatch the result.
+        """Execute a Plugin command and produce the reply.
 
         Called from _execution() when decision.strategy == PLUGIN.
+        Returns the same dict shape as the normal _execution() path so the
+        bridge can handle plugin replies identically to normal replies.
         """
         plugin_name = decision.plugin_intent
         if not plugin_name:
-            return {"content": "", "strategy": "plugin", "error": "no_plugin_name"}
+            return {"reply": None, "strategy": "plugin", "error": "no_plugin_name"}
 
         if not hasattr(self, '_plugin_registry') or self._plugin_registry is None:
-            return {"content": "", "strategy": "plugin", "error": "no_registry"}
+            return {"reply": None, "strategy": "plugin", "error": "no_registry"}
 
         definition = self._plugin_registry.get(plugin_name)
         if definition is None:
-            return {"content": f"[Plugin '{plugin_name}' 未找到]", "strategy": "plugin"}
+            return {"reply": f"[Plugin '{plugin_name}' 未找到]", "strategy": "plugin"}
 
         # 解析指令
         from sirius_chat.plugins.lexer import parse_command
@@ -93,11 +95,12 @@ class HelpersMixin(_Base):
 
         cmd = parse_command(message.content, definition)
         if cmd is None:
-            # 构建简单的 CommandAST
+            from sirius_chat.plugins.models import ArgNode
             cmd = CommandAST(
                 command=plugin_name,
                 raw_text=message.content,
-                kwargs={k: __import__('sirius_chat.plugins.models', fromlist=['ArgNode']).ArgNode(value=v, raw=str(v), type_hint="str") for k, v in decision.plugin_slots.items()},
+                kwargs={k: ArgNode(value=v, raw=str(v), type_hint="str")
+                        for k, v in decision.plugin_slots.items()},
             )
 
         # 确定调用者是否为开发者
@@ -112,7 +115,9 @@ class HelpersMixin(_Base):
                     )
                     if resolved_uid:
                         caller_profile = self.user_manager.get_user(resolved_uid, group_id)
-                        caller_is_developer = bool(caller_profile and getattr(caller_profile, 'is_developer', False))
+                        caller_is_developer = bool(
+                            caller_profile and getattr(caller_profile, 'is_developer', False)
+                        )
             except Exception:
                 pass
 
@@ -129,46 +134,61 @@ class HelpersMixin(_Base):
             speaker_name=getattr(message, 'speaker', ''),
         )
 
-        # 执行 Plugin（返回 list[PluginResponse]，支持流式多输出）
+        # 执行 Plugin → list[PluginResponse]
         results = await self._plugin_executor.execute(
-            plugin_name,
-            cmd,
-            group_id=group_id,
-            user_id=user_id,
+            plugin_name, cmd,
+            group_id=group_id, user_id=user_id,
             caller_is_developer=caller_is_developer,
             adapter=getattr(self, '_napcat_adapter', None),
             engine=self,
             message_context=msg_ctx,
         )
 
-        # 调度输出：遍历所有结果，依次调度（流式发送）
+        # 遍历结果，调度输出（每个 PluginResponse → 框架标准格式）
         partial_replies: list[str] = []
-        final_content = ""
+        final_reply: str | None = None
         for i, result in enumerate(results):
             is_last = (i == len(results) - 1)
-            if self._plugin_dispatcher is not None and result.success:
-                rendered_text = await self._plugin_dispatcher.dispatch(
-                    result,
-                    definition,
-                    engine=self,
-                    adapter=getattr(self, '_napcat_adapter', None),
-                    group_id=group_id,
-                    user_id=user_id,
-                )
-                if rendered_text:
-                    if is_last:
-                        final_content = rendered_text
-                    else:
-                        # 非最后一个结果：加入 partial_replies（bridge 会立即发送）
-                        partial_replies.append(rendered_text)
-            elif not result.success and is_last:
-                error_text = f"[{definition.display_name or plugin_name}] 执行失败: {result.error}"
-                final_content = error_text
+            if not result.success:
+                if is_last:
+                    final_reply = f"[{definition.display_name or plugin_name}] 执行失败: {result.error}"
+                continue
 
-        result_dict: dict[str, Any] = {"content": final_content or "", "strategy": "plugin"}
-        if partial_replies:
-            result_dict["partial_replies"] = partial_replies
-        return result_dict
+            if self._plugin_dispatcher is not None:
+                rendered = await self._plugin_dispatcher.dispatch(
+                    result, definition,
+                    engine=self,
+                    group_id=group_id, user_id=user_id,
+                )
+            else:
+                rendered = result.text or ""
+
+            if not rendered:
+                continue
+
+            if is_last:
+                final_reply = rendered
+            else:
+                partial_replies.append(rendered)
+
+        # 将最终回复录入记忆链（与正常 Pipeline 回复一致）
+        if final_reply:
+            try:
+                self.basic_memory.add_entry(
+                    group_id=group_id,
+                    user_id="assistant",
+                    speaker_name=self.persona.name,
+                    role="assistant",
+                    content=final_reply,
+                )
+            except Exception as exc:
+                logger.debug("Plugin 回复录入记忆失败: %s", exc)
+
+        return {
+            "reply": final_reply,
+            "partial_replies": partial_replies,
+            "strategy": "plugin",
+        }
 
     def _register_passive_skills(self) -> None:
         """Discover passive SKILLs and instantiate their background tasks / triggers."""

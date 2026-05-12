@@ -103,62 +103,59 @@ class OutputDispatcher:
         user_id: str = "",
         **kwargs: Any,
     ) -> str:
-        """LLM 模式：委托引擎做人格化风格生成。"""
+        """LLM 模式：委托引擎做人格化风格生成。
+
+        使用 engine._generate() 而非直接调用 provider，
+        确保经过模型路由、token 记录、语气对齐等完整框架链路。
+        """
         if engine is None:
-            # 无引擎可用，降级到 direct
             logger.warning("Plugin %s: LLM 模式但无引擎可用，降级到 direct", definition.name)
             return self._handle_direct(result, definition, adapter=adapter, group_id=group_id, user_id=user_id)
 
-        # 构建风格化 prompt
-        prompt = self._build_stylized_prompt(result, definition, engine=engine, **kwargs)
+        system_prompt = self._build_plugin_system_prompt(result, definition, engine)
+        if not system_prompt:
+            return self._handle_direct(result, definition, adapter=adapter, group_id=group_id, user_id=user_id)
 
-        # 调用引擎的 LLM 生成
         try:
-            from sirius_chat.core.prompt_factory import PromptFactory
-
-            generated = await PromptFactory.generate_plugin_response(
-                engine=engine,
-                plugin_data=result.data if result.data else {"text": result.text},
-                plugin_name=definition.display_name or definition.name,
-                system_prompt_suffix=definition.render.system_prompt_suffix,
-                mood_hint=result.mood_hint,
-                tone_override=result.tone_override,
-                max_tokens=definition.render.max_tokens,
-                temperature=definition.render.temperature,
+            generated = await engine._generate(
+                system_prompt=system_prompt,
+                messages=[],
+                group_id=group_id,
+                task_name="plugin_render",
             )
             return generated if generated else result.text
         except Exception as exc:
-            logger.error("Plugin %s: LLM 风格化生成失败: %s", definition.name, exc)
-            # 降级到 direct
+            logger.error("Plugin %s: 引擎生成失败: %s", definition.name, exc)
             return self._handle_direct(result, definition, adapter=adapter, group_id=group_id, user_id=user_id)
 
     @staticmethod
-    def _build_stylized_prompt(
+    def _build_plugin_system_prompt(
         result: "PluginResponse",
         definition: "PluginDefinition",
-        *,
-        engine: Any = None,
-        **kwargs: Any,
+        engine: Any,
     ) -> str:
-        """构建 LLM 风格化的 prompt。"""
+        """构建 Plugin 结果的人格化 system prompt。
+
+        该 prompt 会通过 engine._generate() 注入人格、时间、语气对齐等上下文，
+        无需手动拼接 PromptFactory 的完整人格块。
+        """
         import json
 
-        persona_name = ""
-        if engine:
-            persona = getattr(engine, "persona", None)
-            if persona:
-                persona_name = getattr(persona, "name", "") or ""
+        persona = getattr(engine, 'persona', None)
+        persona_name = getattr(persona, 'name', '') or ''
 
-        data_json = json.dumps(result.data if result.data else {"text": result.text}, ensure_ascii=False, indent=2)
+        data = result.data if result.data else {"text": result.text}
+        data_json = json.dumps(data, ensure_ascii=False, indent=2)
 
         parts: list[str] = []
-        parts.append(f"【角色：{persona_name}】")
+        if persona_name:
+            parts.append(f"【角色：{persona_name}】")
 
-        parts.append(f"\n【指令执行结果】")
+        parts.append("\n【指令执行结果】")
         parts.append(f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据：")
         parts.append(data_json)
 
-        parts.append(f"\n【表达要求】")
+        parts.append("\n【表达要求】")
         parts.append("- 请以自然的人格风格向用户传达以上信息")
         if result.mood_hint:
             parts.append(f"- 当前情绪提示：{result.mood_hint}")
@@ -169,6 +166,8 @@ class OutputDispatcher:
         parts.append("- 不要暴露这是'执行结果'，要像自己知道的一样自然表达")
 
         return "\n".join(parts)
+
+    # ── 已删除 _build_stylized_prompt，功能合并到 _build_plugin_system_prompt ──
 
     # ── 辅助 ──
 
