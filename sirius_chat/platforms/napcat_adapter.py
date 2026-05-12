@@ -55,6 +55,7 @@ class NapCatAdapter(BaseAdapter):
         token: str | None = None,
         reconnect_interval: float = 5.0,
         api_timeout: float = 30.0,
+        work_path: str | Path | None = None,
     ) -> None:
         self.ws_url = ws_url
         self.token = token
@@ -68,6 +69,11 @@ class NapCatAdapter(BaseAdapter):
         self._echo_counter = 0
         self._listen_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
+
+        # 图片缓存路径
+        _wp = Path(work_path) if work_path else Path(".")
+        self._image_cache_dir = _wp / "image_cache"
+        self._sticker_cache_dir = _wp / "sticker_cache"
 
     # ─── 生命周期 ─────────────────────────────────────────
 
@@ -346,3 +352,209 @@ class NapCatAdapter(BaseAdapter):
             elif isinstance(seg, FileSegment):
                 segments.append({"type": "file", "data": {"file": seg.file_path, "name": seg.name or Path(seg.file_path).name}})
         return segments
+
+    # ─── 事件解析（OneBot → 引擎格式） ──────────────────────
+
+    async def parse_event(self, event: dict[str, Any]) -> "ParsedEvent | None":
+        """将原始 OneBot 事件解析为引擎可消费的结构化格式。
+
+        包含：表情→文字转换、@→昵称替换、图片标签生成。
+        """
+        from .napcat_protocol import ParsedEvent
+
+        post_type = event.get("post_type")
+        if post_type != "message":
+            return None
+
+        msg_type = event.get("message_type", "")
+        gid = str(event.get("group_id", ""))
+        uid = str(event.get("user_id", ""))
+        self_id = str(event.get("self_id", ""))
+
+        if msg_type == "private":
+            gid = f"private_{uid}"
+
+        nickname, card = self._extract_sender_names(event)
+
+        if msg_type == "group":
+            prompt = await self._render_group_prompt(event, self_id, gid)
+        elif msg_type == "private":
+            prompt = await self._render_private_prompt(event)
+        else:
+            return None
+
+        if not prompt:
+            return None
+
+        multimodal_inputs: list[dict[str, str]] = []
+        for seg in event.get("message", []):
+            if seg.get("type") == "image":
+                data = seg.get("data", {})
+                url = data.get("url", "") or data.get("file", "")
+                sub_type = data.get("sub_type", "")
+                if url:
+                    is_sticker = str(sub_type) == "1"
+                    local_path = await self.cache_image(str(url), is_sticker=is_sticker)
+                    mm_item: dict[str, str] = {
+                        "type": "image",
+                        "value": local_path,
+                        "file_path": local_path,
+                    }
+                    if is_sticker:
+                        mm_item["sub_type"] = "1"
+                    multimodal_inputs.append(mm_item)
+
+        return ParsedEvent(
+            group_id=gid,
+            user_id=uid,
+            self_id=self_id,
+            message_type=msg_type,
+            prompt=prompt,
+            nickname=nickname,
+            card=card,
+            multimodal_inputs=multimodal_inputs,
+        )
+
+    async def _render_group_prompt(
+        self, event: dict[str, Any], self_id: str, group_id: str
+    ) -> str:
+        """将群聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
+        from .napcat_protocol import (
+            _face_to_text, build_image_label, extract_sender_names,
+        )
+
+        parts: list[str] = []
+        mention_cache: dict[str, str] = {}
+        image_index = 1
+        image_names: dict[str, int] = {}
+
+        for seg in event.get("message", []):
+            seg_type = seg.get("type")
+            data = seg.get("data", {})
+            if seg_type == "text":
+                parts.append(data.get("text", ""))
+            elif seg_type == "at":
+                target_uid = str(data.get("qq", ""))
+                if target_uid == "all":
+                    parts.append("@全体成员")
+                    continue
+                if target_uid not in mention_cache:
+                    if target_uid == self_id:
+                        display = self._persona_name
+                    else:
+                        display = f"qq_{target_uid}"
+                        try:
+                            info = await self.get_group_member_info(group_id, target_uid)
+                            card = str(info.get("card", "") or "").strip()
+                            nickname = str(info.get("nickname", "") or "").strip()
+                            if nickname and card and nickname != card:
+                                display = f"{nickname}(群昵称为{card})"
+                            else:
+                                display = nickname or card or display
+                        except Exception:
+                            pass
+                    mention_cache[target_uid] = display
+                parts.append(f"@{mention_cache[target_uid]}")
+            elif seg_type == "face":
+                parts.append(_face_to_text(data))
+            elif seg_type == "image":
+                label = "动画表情" if str(data.get("sub_type", "")) == "1" else "图片"
+                parts.append(build_image_label(seg, image_index, label, image_names))
+                image_index += 1
+
+        return "".join(parts).strip()
+
+    async def _render_private_prompt(self, event: dict[str, Any]) -> str:
+        """将私聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
+        from .napcat_protocol import _face_to_text, build_image_label
+
+        parts: list[str] = []
+        image_index = 1
+        image_names: dict[str, int] = {}
+
+        for seg in event.get("message", []):
+            seg_type = seg.get("type")
+            data = seg.get("data", {})
+            if seg_type == "text":
+                parts.append(data.get("text", ""))
+            elif seg_type == "face":
+                parts.append(_face_to_text(data))
+            elif seg_type == "image":
+                label = "动画表情" if str(data.get("sub_type", "")) == "1" else "图片"
+                parts.append(build_image_label(seg, image_index, label, image_names))
+                image_index += 1
+
+        return "".join(parts).strip()
+
+    # ─── 图片缓存 ───────────────────────────────────────────
+
+    async def cache_image(self, url: str, *, is_sticker: bool = False) -> str:
+        """下载并缓存 OneBot 图片到本地。"""
+        import hashlib
+        import aiohttp
+
+        if not url.startswith(("http://", "https://")):
+            return url
+
+        cache_dir = self._sticker_cache_dir if is_sticker else self._image_cache_dir
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        ext = Path(url.split("?")[0]).suffix or ".jpg"
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.0"
+                    ),
+                    "Referer": "https://multimedia.nt.qq.com.cn/",
+                }
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        if len(data) > 10 * 1024 * 1024:
+                            LOG.warning("图片过大(%d bytes)，跳过缓存: %s", len(data), url[:80])
+                            return url
+                        content_hash = hashlib.md5(data).hexdigest()
+                        cache_path = cache_dir / f"{content_hash}{ext}"
+                        if cache_path.exists():
+                            return str(cache_path)
+                        cache_path.write_bytes(data)
+                        (cache_dir / f"{content_hash}{ext}.url").write_text(url, encoding="utf-8")
+                        if not is_sticker:
+                            await self._cleanup_cache(cache_dir, max_files=200)
+                        return str(cache_path)
+        except Exception as exc:
+            LOG.warning("图片下载异常: %s | %s", exc, url[:80])
+        return url
+
+    async def _cleanup_cache(self, cache_dir: Path, max_files: int = 200) -> None:
+        """清理缓存目录，保留最近 max_files 个文件。"""
+        if not cache_dir.exists():
+            return
+        files = sorted(
+            [f for f in cache_dir.iterdir() if not f.name.endswith(".url")],
+            key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        if len(files) > max_files:
+            for old_file in files[max_files:]:
+                try:
+                    old_file.unlink()
+                except Exception:
+                    pass
+
+    # ─── 配置与权限 ───────────────────────────────────────────
+
+    @property
+    def _persona_name(self) -> str:
+        """人格名称（由外部设置）。"""
+        return getattr(self, "_persona_name_val", "") or ""
+
+    def set_persona_name(self, name: str) -> None:
+        """设置人格名称（在 bridge start 时注入）。"""
+        self._persona_name_val = name
+
+    @staticmethod
+    def extract_sender_names(event: dict[str, Any]) -> tuple[str, str]:
+        from .napcat_protocol import extract_sender_names
+        return extract_sender_names(event)

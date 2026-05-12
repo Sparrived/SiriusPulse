@@ -235,7 +235,12 @@ class PersonaWorker:
             adapter = NapCatAdapter(
                 ws_url=adapter_cfg.ws_url,
                 token=adapter_cfg.token or None,
+                work_path=self.persona_dir,
             )
+            if self._runtime is not None and self._runtime.engine is not None:
+                persona = getattr(self._runtime.engine, 'persona', None)
+                if persona:
+                    adapter.set_persona_name(getattr(persona, 'name', '') or '')
             bridge_config: dict[str, Any] = {
                 "root": adapter_cfg.root,
                 "allowed_group_ids": adapter_cfg.allowed_group_ids,

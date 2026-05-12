@@ -83,7 +83,8 @@ async def run(
             image_path = str(p.resolve())
 
     if image_path.startswith(("http://", "https://")):
-        cache_fn = getattr(bridge, "_cache_image", None)
+        adapter = getattr(bridge, "adapter", None)
+        cache_fn = getattr(adapter, "cache_image", None) if adapter else None
         if cache_fn is not None:
             try:
                 local_path = await cache_fn(image_path)
