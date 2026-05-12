@@ -125,8 +125,12 @@ class PluginExecutor:
         adapter: Any = None,
         engine: Any = None,
         message_context: Any = None,
-    ) -> "PluginResult":
+    ) -> list["PluginResult"]:
         """执行 Plugin 的核心逻辑。
+
+        支持两种模式：
+            - @command 模式：返回 list[PluginResult]（单个或流式多个）
+            - 传统 execute() 模式：返回单元素 list[PluginResult]
 
         Args:
             plugin_name: Plugin 名称
@@ -139,13 +143,13 @@ class PluginExecutor:
             message_context: 消息上下文（MessageContext）
 
         Returns:
-            PluginResult
+            list[PluginResult]（至少一个元素）
         """
         from sirius_chat.plugins.models import PluginResult
 
         definition = self._registry.get(plugin_name)
         if definition is None:
-            return PluginResult.fail(f"Plugin 未找到: {plugin_name}")
+            return [PluginResult.fail(f"Plugin 未找到: {plugin_name}")]
 
         # ── 权限校验 ──
         perm_error = self._check_permissions(
@@ -154,13 +158,13 @@ class PluginExecutor:
         )
         if perm_error:
             logger.warning("Plugin %s 权限校验失败: %s", plugin_name, perm_error)
-            return PluginResult.fail(perm_error)
+            return [PluginResult.fail(perm_error)]
 
         # ── 速率限制校验 ──
         rate_error = self._check_rate_limit(plugin_name, definition)
         if rate_error:
             logger.warning("Plugin %s 速率限制: %s", plugin_name, rate_error)
-            return PluginResult.fail(rate_error)
+            return [PluginResult.fail(rate_error)]
 
         # ── 获取或创建实例 ──
         instance = self._registry.get_instance(plugin_name)
@@ -169,7 +173,7 @@ class PluginExecutor:
             if instance is not None:
                 self._registry.set_instance(plugin_name, instance)
         if instance is None:
-            return PluginResult.fail(f"Plugin {plugin_name} 实例化失败")
+            return [PluginResult.fail(f"Plugin {plugin_name} 实例化失败")]
 
         # ── 注入运行时上下文 ──
         if hasattr(instance, '_ctx') and instance._ctx is not None:
@@ -182,27 +186,31 @@ class PluginExecutor:
 
         # ── 执行（带超时保护） ──
         try:
-            # v1.2+: 使用 async 执行路径
-            # execute_async 内部会自动判断：有 @command → 调度；无 → to_thread(execute)
+            # 使用 async 执行路径
+            # execute_async 内部自动判断：@command → 调度；无 → to_thread(execute)
             if hasattr(instance, 'execute_async'):
-                result = await asyncio.wait_for(
+                results = await asyncio.wait_for(
                     instance.execute_async(cmd),
                     timeout=self._default_timeout,
                 )
             else:
-                result = await asyncio.wait_for(
+                raw = await asyncio.wait_for(
                     asyncio.to_thread(instance.execute, cmd),
                     timeout=self._default_timeout,
                 )
-            if result is None:
-                return PluginResult.ok(text="", data=None)
-            return result
+                results = [raw] if raw is not None else [PluginResult.ok(text="", data=None)]
+
+            if not isinstance(results, list):
+                results = [results] if results is not None else [PluginResult.ok(text="", data=None)]
+            if not results:
+                results = [PluginResult.ok(text="", data=None)]
+            return results
         except asyncio.TimeoutError:
             logger.error("Plugin %s 执行超时 (%.1fs)", plugin_name, self._default_timeout)
-            return PluginResult.fail(f"Plugin 执行超时（{self._default_timeout}秒）")
+            return [PluginResult.fail(f"Plugin 执行超时（{self._default_timeout}秒）")]
         except Exception as exc:
             logger.error("Plugin %s 执行异常: %s", plugin_name, exc, exc_info=True)
-            return PluginResult.fail(f"Plugin 执行异常: {exc}")
+            return [PluginResult.fail(f"Plugin 执行异常: {exc}")]
 
     # ── 权限校验 ──
 

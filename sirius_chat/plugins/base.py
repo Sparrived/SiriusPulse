@@ -130,7 +130,7 @@ class PluginBase:
 
         return PluginResult.fail(f"Plugin '{self._name}' 未实现 execute() 方法")
 
-    async def execute_async(self, cmd: "CommandAST") -> "PluginResult":
+    async def execute_async(self, cmd: "CommandAST") -> list["PluginResult"]:
         """执行 Plugin 核心逻辑（异步入口，v1.2+）。
 
         框架优先调用此方法。默认行为：
@@ -143,8 +143,12 @@ class PluginBase:
             cmd: 从用户输入解析的命令 AST
 
         Returns:
-            PluginResult 实例
+            list[PluginResult]（至少一个元素）：
+            - @command 模式：调度结果（单个/流式多个）
+            - 传统模式：单元素列表
         """
+        from sirius_chat.plugins.models import PluginResult
+
         # 检查是否有 @command
         if self._command_handlers is None:
             self._discover_commands()
@@ -152,7 +156,8 @@ class PluginBase:
             return await self._dispatch_decorated_command(cmd)
 
         # 无装饰器命令 → 执行传统同步 execute()
-        return await asyncio.to_thread(self.execute, cmd)
+        result = await asyncio.to_thread(self.execute, cmd)
+        return [result]
 
     def get_command_metas(self) -> dict[str, Any]:
         """获取所有 @command 装饰器注册的指令元数据。
@@ -184,18 +189,18 @@ class PluginBase:
                 ", ".join(self._command_handlers.keys()),
             )
 
-    async def _dispatch_decorated_command(self, cmd: "CommandAST") -> "PluginResult":
+    async def _dispatch_decorated_command(self, cmd: "CommandAST") -> list["PluginResult"]:
         """将 CommandAST 路由到对应的 @command 方法并调用。
 
         Args:
             cmd: 用户命令 AST
 
         Returns:
-            PluginResult
+            list[PluginResult]（支持流式多输出）
         """
-        from sirius_chat.plugins.decorators import dispatch_command
+        from sirius_chat.plugins.decorators import dispatch_command_stream
 
-        return await dispatch_command(self, cmd, self._command_handlers or {})
+        return await dispatch_command_stream(self, cmd, self._command_handlers or {})
 
     # ── 辅助方法 ──
 

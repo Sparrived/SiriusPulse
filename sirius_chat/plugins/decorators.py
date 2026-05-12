@@ -239,7 +239,7 @@ def discover_commands(instance: object) -> dict[str, PluginCommandMeta]:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# _dispatch_command —— 类型感知的命令调度
+# dispatch_command_stream —— 类型感知的命令调度（支持流式输出）
 # ═══════════════════════════════════════════════════════════════════════
 
 # 类型注解 → 转换函数 映射
@@ -276,12 +276,23 @@ def _coerce_param(raw_value: Any, annotation: Any) -> Any:
     return raw_value
 
 
-async def dispatch_command(
+async def dispatch_command_stream(
     instance: object,
     cmd: "CommandAST",
     command_handlers: dict[str, "PluginCommandMeta"],
-) -> "PluginResult":
+) -> list["PluginResult"]:
     """根据 CommandAST.command 路由到对应的 @command 方法并调用。
+
+    支持两种 handler 模式：
+        1. 常规 async 函数 → 返回单元素 list[PluginResult]
+        2. 流式 async generator → 遍历 yield，收集所有 PluginResult
+
+    流式 handler 可以中途 `yield` 字符串/PluginResult 做即时输出：
+        @command("search", prefix="/", patterns=["search"])
+        async def search(self, query: str):
+            yield "正在搜索..."           # 立即发送（direct 模式）
+            data = await self._fetch(query)
+            yield PluginResult.ok(data=data, render_mode="llm")  # 人格化
 
     Args:
         instance: PluginBase 子类实例
@@ -289,17 +300,15 @@ async def dispatch_command(
         command_handlers: {command_name: PluginCommandMeta} 映射
 
     Returns:
-        PluginResult
-
-    如果找不到匹配的 handler，返回错误 PluginResult。
+        list[PluginResult]（至少一个元素）
     """
     from sirius_chat.plugins.models import PluginResult
 
     meta = command_handlers.get(cmd.command)
     if meta is None or meta.handler is None:
-        return PluginResult.fail(
+        return [PluginResult.fail(
             f"Plugin '{getattr(instance, '_name', '?')}' 未定义指令 '{cmd.command}' 的处理器"
-        )
+        )]
 
     handler = meta.handler
 
@@ -307,49 +316,75 @@ async def dispatch_command(
     try:
         sig = inspect.signature(handler)
     except (ValueError, TypeError) as exc:
-        return PluginResult.fail(f"无法解析处理器签名: {exc}")
+        return [PluginResult.fail(f"无法解析处理器签名: {exc}")]
 
     bound_args: dict[str, Any] = {}
     for param_name, param in sig.parameters.items():
-        # 跳过 self / cls
         if param_name in ("self", "cls"):
             continue
-
         annotation = param.annotation
         if annotation is inspect.Parameter.empty:
-            annotation = str  # 默认当作字符串
-
-        # 从 CommandAST 提取值
+            annotation = str
         if param_name in cmd.kwargs:
-            # 优先使用命名参数
             raw = cmd.kwargs[param_name].value
             bound_args[param_name] = _coerce_param(raw, annotation)
         elif param_name in cmd.flags:
-            # 布尔标志
             bound_args[param_name] = True
         elif param.default is not inspect.Parameter.empty:
-            # 使用默认值
             bound_args[param_name] = param.default
         else:
-            # 必填参数缺失 → 错误
-            return PluginResult.fail(
+            return [PluginResult.fail(
                 f"指令 '{cmd.command}' 缺少必填参数 '{param_name}'"
-            )
+            )]
 
-    # 也注入位置参数作为 _0, _1, _2...
     for i, arg in enumerate(cmd.args):
         slot_name = f"_{i}"
         if slot_name not in bound_args:
             bound_args[slot_name] = arg.value
 
-    # ── 调用 handler ──
+    # ── 调用 handler（支持流式）──
+    return await _invoke_handler(handler, bound_args, meta, instance)
+
+
+async def _invoke_handler(
+    handler: Callable[..., Any],
+    bound_args: dict[str, Any],
+    meta: "PluginCommandMeta",
+    instance: object,
+) -> list["PluginResult"]:
+    """调用 handler 并归一化为 list[PluginResult]。
+
+    自动检测 handler 类型：
+        - async generator → 遍历 yield，打包每个产出
+        - async function → 单次调用，打包返回
+        - sync function → asyncio.to_thread 执行，打包返回
+    """
+    from sirius_chat.plugins.models import PluginResult
+
+    results: list[PluginResult] = []
+
     try:
+        if inspect.isasyncgenfunction(handler):
+            # ══ 流式 async generator ══
+            gen = handler(**bound_args)
+            async for raw in gen:
+                pr = _normalize_stream_item(raw, meta)
+                results.append(pr)
+            if not results:
+                results.append(PluginResult.ok(text="", data=None))
+            return results
+
         if meta.is_async:
-            result = await handler(**bound_args)
+            raw = await handler(**bound_args)
         else:
-            result = handler(**bound_args)
+            raw = await asyncio.to_thread(handler, **bound_args)
+
+        pr = _normalize_stream_item(raw, meta)
+        results.append(pr)
+        return results
+
     except TypeError as exc:
-        return PluginResult.fail(f"指令 '{cmd.command}' 参数类型错误: {exc}")
+        return [PluginResult.fail(f"指令 '{meta.name}' 参数类型错误: {exc}")]
     except Exception as exc:
         logger.error(
             "Plugin 指令处理器异常 [%s.%s]: %s",
@@ -358,19 +393,31 @@ async def dispatch_command(
             exc,
             exc_info=True,
         )
-        return PluginResult.fail(f"指令执行异常: {exc}")
+        return [PluginResult.fail(f"指令执行异常: {exc}")]
 
-    # ── 结果处理 ──
-    if result is None:
+
+def _normalize_stream_item(raw: Any, meta: "PluginCommandMeta") -> "PluginResult":
+    """将 handler 产出归一化为 PluginResult。
+
+    - None → 空成功
+    - str → PluginResult.ok(text=str, render_mode="direct")
+    - PluginResult → 原样（补齐 render_mode/mood_hint）
+    - 其他 → PluginResult.ok(data=raw)
+    """
+    from sirius_chat.plugins.models import PluginResult
+
+    if raw is None:
         return PluginResult.ok(text="", data=None)
-    if isinstance(result, PluginResult):
-        # 如果 handler 未指定 render_mode，使用装饰器中的设置
-        if not result.render_mode:
-            result.render_mode = meta.render_mode
-        if not result.mood_hint and meta.mood_hint:
-            result.mood_hint = meta.mood_hint
-        return result
-    # 非 PluginResult 返回值 → 包装
-    if isinstance(result, str):
-        return PluginResult.ok(text=result, render_mode=meta.render_mode)
-    return PluginResult.ok(data=result, render_mode=meta.render_mode)
+    if isinstance(raw, str):
+        return PluginResult.ok(text=raw, render_mode="direct")
+    if isinstance(raw, PluginResult):
+        if not raw.render_mode:
+            raw.render_mode = meta.render_mode
+        if not raw.mood_hint and meta.mood_hint:
+            raw.mood_hint = meta.mood_hint
+        return raw
+    return PluginResult.ok(data=raw, render_mode=meta.render_mode)
+
+
+# 保持旧函数名兼容
+dispatch_command = dispatch_command_stream

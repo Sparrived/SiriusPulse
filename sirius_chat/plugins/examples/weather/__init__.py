@@ -37,19 +37,32 @@ class WeatherPlugin(PluginBase):
         max_tokens=300,
         temperature=0.8,
     )
-    def query_weather(self, city: str) -> PluginResult:
-        """查询指定城市的天气。
+    async def query_weather(self, city: str):
+        """查询指定城市的天气（流式输出演示）。
+
+        使用 async generator yield 实现渐进输出：
+            1. yield "正在查询..." → 立即发送
+            2. yield PluginResult.ok(data=...) → LLM 人格化生成
 
         Args:
             city: 城市名称（由框架从 CommandAST 自动注入）
         """
         if not city:
-            return PluginResult.fail("请指定城市名称，例如：/天气 北京")
+            yield PluginResult.fail("请指定城市名称，例如：/天气 北京")
+            return
 
+        # 第一步：立即告知用户正在查询
+        yield f"🔍 正在查询 {city} 的天气..."
+
+        # 模拟异步查询延迟
+        import asyncio
+        await asyncio.sleep(0.3)
+
+        # 第二步：返回结构化数据让引擎做人格化生成
         weather_data = self._get_mock_weather(city)
         self.logger.info("查询 %s 天气: %s", city, weather_data)
 
-        return PluginResult.ok(
+        yield PluginResult.ok(
             text=f"{city}天气：{weather_data['weather']}，{weather_data['temperature']}",
             data=weather_data,
             mood_hint="温暖、关心",

@@ -93,24 +93,34 @@ class PluginRegistry:
     def sync_command_metas(self, plugin_name: str, command_metas: dict[str, object]) -> None:
         """从 PluginBase 实例同步 @command 装饰器元数据到指令索引。
 
+        只更新 @command 装饰器定义的指令。plugin.json 的 triggers.commands
+        已在 register() 中添加，无需重复。
+
         Args:
             plugin_name: Plugin 名称
             command_metas: {command_name: PluginCommandMeta} 字典
         """
-        # 移除该插件的旧索引条目
-        self._commands_index = [
-            (p, pt, pn, cn) for p, pt, pn, cn in self._commands_index if pn != plugin_name
-        ]
-        # 重新添加（从 plugin.json 的 triggers.commands）
-        definition = self._definitions.get(plugin_name)
-        if definition is not None:
-            for cmd_name, pattern, pat_type in definition.all_patterns:
-                self._commands_index.append((pattern, pat_type, plugin_name, cmd_name))
-        # 添加 @command 装饰器的模式
+        # 先移除该插件之前同步过的 @command 索引条目（保留 plugin.json 原始条目）
+        # @command 条目通过 full_patterns 特征来区分（含 prefix 拼接）
+        kept: list[tuple[str, str, str, str]] = []
+        for p, pt, pn, cn in self._commands_index:
+            if pn != plugin_name:
+                kept.append((p, pt, pn, cn))
+                continue
+            # 保留来自 plugin.json 的条目：检查是否也存在于 command_metas
+            is_decorator = any(
+                hasattr(m, 'name') and getattr(m, 'name', '') == cn
+                for m in command_metas.values()
+            )
+            if not is_decorator:
+                kept.append((p, pt, pn, cn))
+        self._commands_index = kept
+
+        # 添加 @command 装饰器的模式（full_patterns 已包含 prefix）
         for meta in command_metas.values():
             if not hasattr(meta, 'full_patterns'):
                 continue
-            for pattern in meta.full_patterns:  # full_patterns 已包含 prefix
+            for pattern in getattr(meta, 'full_patterns', []):
                 self._commands_index.append((
                     pattern,
                     getattr(meta, 'pattern_type', 'prefix'),

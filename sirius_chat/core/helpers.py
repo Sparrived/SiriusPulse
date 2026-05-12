@@ -129,8 +129,8 @@ class HelpersMixin(_Base):
             speaker_name=getattr(message, 'speaker', ''),
         )
 
-        # 执行 Plugin
-        result = await self._plugin_executor.execute(
+        # 执行 Plugin（返回 list[PluginResult]，支持流式多输出）
+        results = await self._plugin_executor.execute(
             plugin_name,
             cmd,
             group_id=group_id,
@@ -141,25 +141,34 @@ class HelpersMixin(_Base):
             message_context=msg_ctx,
         )
 
-        # 调度输出
-        if self._plugin_dispatcher is not None and result.success:
-            rendered_text = await self._plugin_dispatcher.dispatch(
-                result,
-                definition,
-                engine=self,
-                adapter=getattr(self, '_napcat_adapter', None),
-                group_id=group_id,
-                user_id=user_id,
-            )
-            if rendered_text:
-                return {"content": rendered_text, "strategy": "plugin"}
-            # silent 模式
-            return {"content": "", "strategy": "plugin"}
-        elif not result.success:
-            error_text = f"[{definition.display_name or plugin_name}] 执行失败: {result.error}"
-            return {"content": error_text, "strategy": "plugin"}
+        # 调度输出：遍历所有结果，依次调度（流式发送）
+        partial_replies: list[str] = []
+        final_content = ""
+        for i, result in enumerate(results):
+            is_last = (i == len(results) - 1)
+            if self._plugin_dispatcher is not None and result.success:
+                rendered_text = await self._plugin_dispatcher.dispatch(
+                    result,
+                    definition,
+                    engine=self,
+                    adapter=getattr(self, '_napcat_adapter', None),
+                    group_id=group_id,
+                    user_id=user_id,
+                )
+                if rendered_text:
+                    if is_last:
+                        final_content = rendered_text
+                    else:
+                        # 非最后一个结果：加入 partial_replies（bridge 会立即发送）
+                        partial_replies.append(rendered_text)
+            elif not result.success and is_last:
+                error_text = f"[{definition.display_name or plugin_name}] 执行失败: {result.error}"
+                final_content = error_text
 
-        return {"content": "", "strategy": "plugin"}
+        result_dict: dict[str, Any] = {"content": final_content or "", "strategy": "plugin"}
+        if partial_replies:
+            result_dict["partial_replies"] = partial_replies
+        return result_dict
 
     def _register_passive_skills(self) -> None:
         """Discover passive SKILLs and instantiate their background tasks / triggers."""
