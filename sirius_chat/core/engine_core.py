@@ -181,6 +181,7 @@ class _EmotionalGroupChatEngineBase:
             ai_name=self.persona.name,
             ai_aliases=self.persona.aliases,
             persona=self.persona,
+            plugin_registry=None,  # 后续由 set_plugin_runtime 注入（v1.2+）
         )
         # Decision layer
         self.threshold_engine = ThresholdEngine()
@@ -262,6 +263,11 @@ class _EmotionalGroupChatEngineBase:
         self._skill_executor: Any | None = None
         self._passive_skill_tasks: dict[str, asyncio.Task] = {}
         self._passive_skill_triggers: dict[str, list[Any]] = {}
+
+        # Plugin system（v1.2+）
+        self._plugin_registry: Any | None = None
+        self._plugin_executor: Any | None = None
+        self._plugin_dispatcher: Any | None = None
 
         # Sticker RAG system
         self._sticker_system: Any | None = None

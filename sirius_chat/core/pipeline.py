@@ -19,7 +19,7 @@ else:
 
 from sirius_chat.core.identity_resolver import IdentityContext
 from sirius_chat.models.emotion import EmotionState
-from sirius_chat.models.intent_v3 import IntentAnalysisV3
+from sirius_chat.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_chat.models.models import Message, Participant
 from sirius_chat.models.response_strategy import ResponseStrategy, StrategyDecision
 
@@ -186,6 +186,22 @@ class PipelineMixin(_Base):
         sender_type: str = "human",
     ) -> StrategyDecision:
         """Decision layer: strategy selection with threshold and rhythm."""
+
+        # === ✅ Plugin 命令快速路径（v1.2+）===
+        # 指令语义已明确，跳过 threshold/strategy，直接返回 PLUGIN 策略
+        if intent.social_intent == SocialIntent.PLUGIN_COMMAND:
+            return StrategyDecision(
+                strategy=ResponseStrategy.PLUGIN,
+                score=1.0,
+                threshold=0.0,  # 无需门槛
+                urgency=intent.urgency_score,
+                relevance=intent.relevance_score,
+                reason=f"plugin_command:{intent.plugin_intent}",
+                plugin_intent=intent.plugin_intent,
+                plugin_slots=dict(intent.plugin_slots),
+                plugin_render_mode=intent.plugin_render_mode,
+            )
+
         # Rhythm context
         recent_msgs = self._get_recent_messages(group_id, n=10)
         rhythm = self.rhythm_analyzer.analyze(group_id, recent_msgs)
@@ -331,6 +347,16 @@ class PipelineMixin(_Base):
         user_id: str,
     ) -> dict[str, Any]:
         """Execution layer: generate or queue reply."""
+
+        # === ✅ Plugin 命令执行路径（v1.2+）===
+        if decision.strategy == ResponseStrategy.PLUGIN and decision.plugin_intent:
+            return await self._execute_plugin_command(
+                decision=decision,
+                message=message,
+                group_id=group_id,
+                user_id=user_id,
+            ) if hasattr(self, '_execute_plugin_command') else {"content": "", "strategy": "plugin"}
+
         # Rhythm context for style adaptation
         recent_msgs = self._get_recent_messages(group_id, n=10)
         rhythm = self.rhythm_analyzer.analyze(group_id, recent_msgs)

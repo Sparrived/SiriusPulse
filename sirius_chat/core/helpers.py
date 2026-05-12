@@ -43,6 +43,124 @@ class HelpersMixin(_Base):
         self._skill_executor = skill_executor
         self._register_passive_skills()
 
+    # ------------------------------------------------------------------
+    # Plugin integration（v1.2+）
+    # ------------------------------------------------------------------
+
+    def set_plugin_runtime(
+        self,
+        *,
+        plugin_registry: Any | None = None,
+        plugin_executor: Any | None = None,
+        plugin_dispatcher: Any | None = None,
+    ) -> None:
+        """Attach Plugin registry, executor, and dispatcher to the engine."""
+        self._plugin_registry = plugin_registry
+        self._plugin_executor = plugin_executor
+        self._plugin_dispatcher = plugin_dispatcher
+
+        # 同步更新 CognitionAnalyzer 的 plugin_registry
+        if plugin_registry is not None:
+            cog = getattr(self, 'cognition_analyzer', None)
+            if cog is not None:
+                cog.plugin_registry = plugin_registry
+
+    async def _execute_plugin_command(
+        self,
+        decision: Any,
+        message: Any,
+        group_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        """Execute a Plugin command and dispatch the result.
+
+        Called from _execution() when decision.strategy == PLUGIN.
+        """
+        plugin_name = decision.plugin_intent
+        if not plugin_name:
+            return {"content": "", "strategy": "plugin", "error": "no_plugin_name"}
+
+        if not hasattr(self, '_plugin_registry') or self._plugin_registry is None:
+            return {"content": "", "strategy": "plugin", "error": "no_registry"}
+
+        definition = self._plugin_registry.get(plugin_name)
+        if definition is None:
+            return {"content": f"[Plugin '{plugin_name}' 未找到]", "strategy": "plugin"}
+
+        # 解析指令
+        from sirius_chat.plugins.lexer import parse_command
+        from sirius_chat.plugins.models import CommandAST
+
+        cmd = parse_command(message.content, definition)
+        if cmd is None:
+            # 构建简单的 CommandAST
+            cmd = CommandAST(
+                command=plugin_name,
+                raw_text=message.content,
+                kwargs={k: __import__('sirius_chat.plugins.models', fromlist=['ArgNode']).ArgNode(value=v, raw=str(v), type_hint="str") for k, v in decision.plugin_slots.items()},
+            )
+
+        # 确定调用者是否为开发者
+        caller_is_developer = False
+        if hasattr(self, 'user_manager'):
+            try:
+                platform = getattr(message, 'channel', '')
+                ext_uid = getattr(message, 'channel_user_id', '')
+                if platform and ext_uid:
+                    resolved_uid = self.user_manager.resolve_user_id(
+                        platform=platform, external_uid=ext_uid
+                    )
+                    if resolved_uid:
+                        caller_profile = self.user_manager.get_user(resolved_uid, group_id)
+                        caller_is_developer = bool(caller_profile and getattr(caller_profile, 'is_developer', False))
+            except Exception:
+                pass
+
+        # 构建消息上下文
+        from sirius_chat.plugins.context import MessageContext
+
+        msg_ctx = MessageContext(
+            group_id=group_id,
+            user_id=user_id,
+            channel=getattr(message, 'channel', ''),
+            channel_user_id=getattr(message, 'channel_user_id', ''),
+            message_id=getattr(message, 'message_id', ''),
+            content=getattr(message, 'content', ''),
+            speaker_name=getattr(message, 'speaker', ''),
+        )
+
+        # 执行 Plugin
+        result = await self._plugin_executor.execute(
+            plugin_name,
+            cmd,
+            group_id=group_id,
+            user_id=user_id,
+            caller_is_developer=caller_is_developer,
+            adapter=getattr(self, '_napcat_adapter', None),
+            engine=self,
+            message_context=msg_ctx,
+        )
+
+        # 调度输出
+        if self._plugin_dispatcher is not None and result.success:
+            rendered_text = await self._plugin_dispatcher.dispatch(
+                result,
+                definition,
+                engine=self,
+                adapter=getattr(self, '_napcat_adapter', None),
+                group_id=group_id,
+                user_id=user_id,
+            )
+            if rendered_text:
+                return {"content": rendered_text, "strategy": "plugin"}
+            # silent 模式
+            return {"content": "", "strategy": "plugin"}
+        elif not result.success:
+            error_text = f"[{definition.display_name or plugin_name}] 执行失败: {result.error}"
+            return {"content": error_text, "strategy": "plugin"}
+
+        return {"content": "", "strategy": "plugin"}
+
     def _register_passive_skills(self) -> None:
         """Discover passive SKILLs and instantiate their background tasks / triggers."""
         if self._skill_registry is None:

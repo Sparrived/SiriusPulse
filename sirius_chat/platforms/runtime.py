@@ -221,6 +221,69 @@ class EngineRuntime:
             executor.set_bridge(adapter_type, bridge)
             LOG.info("平台 bridge 已注入 skill executor: %s → %s", adapter_type, type(bridge).__name__)
 
+    def _setup_plugin_runtime(self, engine: EmotionalGroupChatEngine) -> None:
+        """初始化 Plugin 系统：加载插件、注册、注入到引擎。
+
+        Plugin 目录位于：{work_path}/plugins/
+        """
+        plugins_dir = Path(self.work_path) / "plugins"
+        if not plugins_dir.exists():
+            LOG.info("插件目录不存在，跳过 Plugin 初始化: %s", plugins_dir)
+            return
+
+        from sirius_chat.plugins.loader import PluginLoader
+        from sirius_chat.plugins.registry import PluginRegistry
+        from sirius_chat.plugins.executor import PluginExecutor
+        from sirius_chat.plugins.dispatcher import OutputDispatcher
+
+        # 确保插件目录存在
+        PluginLoader.ensure_plugins_directory(plugins_dir)
+
+        # 创建注册表
+        registry = PluginRegistry()
+
+        # 加载插件
+        loader = PluginLoader(plugins_dir)
+        definitions = loader.load_all_definitions()
+
+        if not definitions:
+            LOG.info("未发现任何 Plugin")
+            return
+
+        # 导入 Python 类并注册
+        persona_data_path = Path(self.work_path) / "plugin_data"
+        persona_data_path.mkdir(parents=True, exist_ok=True)
+
+        for definition in definitions:
+            if definition.source_path is None:
+                continue
+            try:
+                plugin_class = loader.import_plugin_class(definition.source_path)
+                definition._plugin_class = plugin_class
+                registry.register(definition)
+            except Exception as exc:
+                LOG.error("导入 Plugin 类失败 [%s]: %s", definition.name, exc)
+
+        if registry.plugin_count == 0:
+            LOG.info("未加载任何 Plugin")
+            return
+
+        # 创建执行器和调度器
+        executor = PluginExecutor(registry, persona_data_path=persona_data_path)
+        dispatcher = OutputDispatcher()
+
+        # 实例化所有 Plugin
+        count = executor.instantiate_all()
+        LOG.info("Plugin 实例化完成: %d/%d", count, registry.plugin_count)
+
+        # 注入到引擎
+        engine.set_plugin_runtime(
+            plugin_registry=registry,
+            plugin_executor=executor,
+            plugin_dispatcher=dispatcher,
+        )
+        LOG.info("Plugin runtime 已挂载，共 %d 个插件: %s", registry.plugin_count, ", ".join(registry.plugin_names))
+
     def _load_experience_config(self) -> PersonaExperienceConfig:
         """从人格目录加载 experience.json，回退到默认值。"""
         paths = PersonaConfigPaths(self.work_path)
@@ -332,6 +395,12 @@ class EngineRuntime:
             self._setup_skill_runtime(engine)
         except Exception as exc:
             LOG.warning("SKILL runtime 初始化失败: %s", exc)
+
+        # 初始化并注入 Plugin runtime（v1.2+）
+        try:
+            self._setup_plugin_runtime(engine)
+        except Exception as exc:
+            LOG.warning("Plugin runtime 初始化失败: %s", exc)
 
         return engine
 
