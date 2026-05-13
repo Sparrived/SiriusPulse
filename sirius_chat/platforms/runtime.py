@@ -224,9 +224,9 @@ class EngineRuntime:
     def _setup_plugin_runtime(self, engine: EmotionalGroupChatEngine) -> None:
         """初始化 Plugin 系统：加载插件、注册、注入到引擎。
 
-        Plugin 目录位于：{work_path}/plugins/
+        Plugin 目录位于项目根：plugins/
         """
-        plugins_dir = Path(self.work_path) / "plugins"
+        plugins_dir = self.global_data_path.parent / "plugins"
         if not plugins_dir.exists():
             LOG.info("插件目录不存在，跳过 Plugin 初始化: %s", plugins_dir)
             return

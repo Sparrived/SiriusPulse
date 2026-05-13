@@ -208,20 +208,40 @@ class PluginRegistry:
     def get_plugin_descriptions(self) -> str:
         """生成 Plugin 指令描述文本（用于 LLM Cognition Prompt）。
 
+        注意：LLM 兜底只在规则匹配未命中时触发，因此不输出触发词（前缀/关键词/正则），
+        只输出语义理解所需信息：插件名、功能描述、参数和 NL 示例。
+
         Returns:
             格式化的 Plugin 描述文本，如：
-            - weather: 查询城市天气（触发词: /天气, 查天气）
+            - weather: 查询城市天气
+              参数: city (str, 必填) - 城市名称
+              NL示例: "帮我查一下{city}的天气"
         """
         lines: list[str] = []
         for definition in self._definitions.values():
             if not definition.commands:
                 continue
-            triggers: list[str] = []
-            for cmd in definition.commands:
-                triggers.extend(cmd.patterns)
-            trigger_text = "、".join(triggers[:5])
             desc = definition.description or definition.display_name
-            lines.append(f"- {definition.name}: {desc}（触发词: {trigger_text}）")
+            lines.append(f"- {definition.name}: {desc}")
+
+            # 参数信息（帮助 LLM 知道有哪些参数及类型）
+            if definition.parameters:
+                param_parts: list[str] = []
+                for p in definition.parameters:
+                    required = "必填" if p.required else "可选"
+                    param_info = f"{p.name} ({p.type}, {required})"
+                    if p.description:
+                        param_info += f" - {p.description}"
+                    param_parts.append(param_info)
+                lines.append(f"  参数: {'; '.join(param_parts)}")
+
+            # NL 示例（帮助 LLM 理解自然语言如何映射到参数）
+            if definition.natural_language and definition.natural_language.examples:
+                nl_text = "、".join(
+                    f'"{e}"' for e in definition.natural_language.examples[:3]
+                )
+                lines.append(f"  NL示例: {nl_text}")
+
         return "\n".join(lines)
 
     def get_nl_examples(self) -> dict[str, list[str]]:

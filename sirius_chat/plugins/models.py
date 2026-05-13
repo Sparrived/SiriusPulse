@@ -366,6 +366,19 @@ class PluginDefinition:
         if nl_examples or nl_slots:
             nl_def = PluginNaturalLangDef(examples=list(nl_examples), slots=dict(nl_slots))
 
+        # 参数：从 NL slots 构建（也可由 from_json 的 parameters 覆盖）
+        parameters: list[PluginParameterDef] = []
+        if nl_slots:
+            for i, (slot_name, slot_info) in enumerate(nl_slots.items()):
+                parameters.append(PluginParameterDef(
+                    name=slot_name,
+                    type=slot_info.get("type", "str"),
+                    description=slot_info.get("description", ""),
+                    required=slot_info.get("required", True),
+                    default=slot_info.get("default"),
+                    position=i,
+                ))
+
         # 权限
         perm_raw = getattr(cls, '_plugin_permissions', None) or {}
         permissions = PluginPermissionDef(
@@ -386,6 +399,7 @@ class PluginDefinition:
             author=getattr(cls, '_plugin_author', '') or '',
             commands=commands,
             events=events,
+            parameters=parameters,
             natural_language=nl_def,
             permissions=permissions,
             dependencies=getattr(cls, '_plugin_dependencies', []) or [],
