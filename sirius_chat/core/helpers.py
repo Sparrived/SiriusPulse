@@ -284,17 +284,8 @@ class HelpersMixin(_Base):
         ]
 
     def _get_platform_adapter(self) -> Any:
-        """从 skill_executor 桥接层获取平台适配器实例。
-
-        引擎不直接持有 adapter 引用，通过 skill_executor._bridges 桥接获取。
-        """
-        if self._skill_executor is not None:
-            bridges = getattr(self._skill_executor, "_bridges", {})
-            for bridge in bridges.values():
-                adapter = getattr(bridge, "adapter", None)
-                if adapter is not None:
-                    return adapter
-        return None
+        """获取平台适配器实例。引擎在 add_skill_bridge() 时直接持有。"""
+        return getattr(self, '_adapter', None)
 
     def _enhance_topic_relevance(
         self,

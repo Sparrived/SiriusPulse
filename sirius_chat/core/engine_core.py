@@ -86,6 +86,7 @@ class _EmotionalGroupChatEngineBase:
         self.work_path = work_path
         self._vector_store = vector_store
         self._embedding_client = embedding_client
+        self._adapter: Any = None  # 由 add_skill_bridge() 注入，plugin 直接取用
 
         # Expressiveness regulator (single-knob)
         from sirius_chat.config.models import ExpressivenessConfig
@@ -1108,19 +1109,12 @@ class _EmotionalGroupChatEngineBase:
         if not file_path.exists():
             return {"success": False, "error": f"sticker file not found: {record.file_path}"}
 
-        # Find a napcat bridge from skill_executor
-        bridge = None
-        if self._skill_executor is not None:
-            bridge = getattr(self._skill_executor, "_bridges", {}).get("napcat")
-
-        if bridge is None:
-            return {"success": False, "error": "no napcat bridge available"}
+        # 直接使用引擎持有的 adapter
+        adapter = getattr(self, '_adapter', None)
+        if adapter is None:
+            return {"success": False, "error": "no adapter available"}
 
         try:
-            adapter = getattr(bridge, "adapter", None)
-            if adapter is None:
-                return {"success": False, "error": "adapter not ready"}
-
             msg = [{"type": "image", "data": {"file": str(file_path), "sub_type": "1"}}]
             if group_id.startswith("private_"):
                 await adapter.send_private_msg(group_id.replace("private_", ""), msg)

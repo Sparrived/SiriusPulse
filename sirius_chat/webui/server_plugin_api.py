@@ -35,6 +35,11 @@ def _enabled_config_path(manager: Any) -> Path:
     return _plugins_dir(manager) / "_enabled.json"
 
 
+def _config_path(manager: Any) -> Path:
+    """获取 _config.json 路径（插件权限等运行时配置）。"""
+    return _plugins_dir(manager) / "_config.json"
+
+
 def _load_enabled_config(manager: Any) -> dict[str, bool]:
     """加载启用/禁用配置。"""
     path = _enabled_config_path(manager)
@@ -232,11 +237,50 @@ async def api_plugin_toggle(request: web.Request, manager: Any) -> web.Response:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# API: 保存源码
+# API: 插件配置（群白名单等权限设置）
 # ═══════════════════════════════════════════════════════════════════════
 
-async def api_plugin_source_save(request: web.Request, manager: Any) -> web.Response:
-    """PUT /api/plugins/{plugin_name}/source — 保存插件源码。"""
+def _load_plugin_config(manager: Any) -> dict[str, dict[str, Any]]:
+    """加载 plugins/_config.json。"""
+    path = _config_path(manager)
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_plugin_config(manager: Any, config: dict[str, dict[str, Any]]) -> None:
+    """保存 plugins/_config.json。"""
+    path = _config_path(manager)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+async def api_plugin_config_get(request: web.Request, manager: Any) -> web.Response:
+    """GET /api/plugins/{plugin_name}/config — 获取插件运行时配置。"""
+    plugin_name = str(request.match_info.get("plugin_name", "")).strip()
+    if not plugin_name:
+        return _json_response({"error": "缺少 plugin_name"}, 400)
+
+    all_config = _load_plugin_config(manager)
+    plugin_config = all_config.get(plugin_name, {})
+
+    return _json_response({
+        "plugin": plugin_name,
+        "group_whitelist": plugin_config.get("group_whitelist", []),
+        "group_blacklist": plugin_config.get("group_blacklist", []),
+        "user_whitelist": plugin_config.get("user_whitelist", []),
+        "developer_only": plugin_config.get("developer_only", False),
+        "rate_limit_calls_per_minute": plugin_config.get("rate_limit_calls_per_minute", 60),
+    })
+
+
+async def api_plugin_config_post(request: web.Request, manager: Any) -> web.Response:
+    """PUT /api/plugins/{plugin_name}/config — 保存插件运行时配置。"""
     plugin_name = str(request.match_info.get("plugin_name", "")).strip()
     if not plugin_name:
         return _json_response({"error": "缺少 plugin_name"}, 400)
@@ -246,27 +290,27 @@ async def api_plugin_source_save(request: web.Request, manager: Any) -> web.Resp
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    source_content = body.get("source_content", "")
-    if not source_content:
-        return _json_response({"error": "source_content 不能为空"}, 400)
+    all_config = _load_plugin_config(manager)
+    plugin_config = all_config.get(plugin_name, {})
 
-    plugins_dir = _plugins_dir(manager)
-    plugin_dir = plugins_dir / plugin_name
-    if not plugin_dir.exists():
-        return _json_response({"error": f"插件目录 {plugin_name} 不存在"}, 404)
+    for key in ("group_whitelist", "group_blacklist", "user_whitelist"):
+        if key in body and isinstance(body[key], list):
+            plugin_config[key] = [str(v).strip() for v in body[key] if str(v).strip()]
 
-    source_file = _find_source_file(plugin_dir)
-    if source_file is None:
-        return _json_response({"error": "未找到可编辑的源文件"}, 404)
+    if "developer_only" in body:
+        plugin_config["developer_only"] = bool(body["developer_only"])
 
-    source_path = plugin_dir / source_file
-    try:
-        source_path.write_text(source_content, encoding="utf-8")
-        LOG.info("插件源码已保存: %s/%s", plugin_name, source_file)
-        return _json_response({"success": True, "plugin": plugin_name, "source_file": source_file})
-    except Exception as exc:
-        LOG.error("保存源码失败 %s: %s", source_path, exc)
-        return _json_response({"error": str(exc)}, 500)
+    if "rate_limit_calls_per_minute" in body:
+        try:
+            plugin_config["rate_limit_calls_per_minute"] = int(body["rate_limit_calls_per_minute"])
+        except (ValueError, TypeError):
+            pass
+
+    all_config[plugin_name] = plugin_config
+    _save_plugin_config(manager, all_config)
+
+    LOG.info("插件配置已保存: %s", plugin_name)
+    return _json_response({"success": True, "plugin": plugin_name})
 
 
 # ═══════════════════════════════════════════════════════════════════════

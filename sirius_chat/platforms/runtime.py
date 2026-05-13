@@ -181,6 +181,31 @@ class EngineRuntime:
         # 4) fallback 到环境变量
         return _build_provider_from_env()
 
+    def _merge_plugin_config(self, definition: Any) -> None:
+        """将 plugins/_config.json 中的运行时配置合并到 definition.permissions。"""
+        import json
+
+        config_path = self.global_data_path.parent / "plugins" / "_config.json"
+        if not config_path.exists():
+            return
+        try:
+            all_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        plugin_config = all_config.get(definition.name)
+        if not plugin_config:
+            return
+
+        perms = definition.permissions
+        for key in ("group_whitelist", "group_blacklist", "user_whitelist"):
+            if key in plugin_config:
+                setattr(perms, key, list(plugin_config[key]))
+        if "developer_only" in plugin_config:
+            perms.developer_only = bool(plugin_config["developer_only"])
+        if "rate_limit_calls_per_minute" in plugin_config:
+            perms.rate_limit_calls_per_minute = int(plugin_config["rate_limit_calls_per_minute"])
+
     def _setup_skill_runtime(self, engine: EmotionalGroupChatEngine) -> None:
         """Discover and attach SKILL registry + executor to the engine."""
         auto_install = bool(self.plugin_config.get("auto_install_skill_deps", True))
@@ -209,10 +234,10 @@ class EngineRuntime:
         LOG.info("SKILL runtime 已挂载，共 %d 个技能", len(registry.skill_names))
 
     def add_skill_bridge(self, adapter_type: str, bridge: Any) -> None:
-        """Register a platform bridge so adapter-specific skills can call adapter APIs.
+        """Register a platform adapter so adapter-specific skills/plugins can call adapter APIs.
 
-        Multiple bridges can be registered (e.g. napcat + discord).
-        The SkillExecutor matches them to skills via adapter_types.
+        The bridge IS the adapter itself (e.g. NapCatAdapter).
+        Stored directly on the engine for plugin access.
         """
         if self._engine is None:
             return
@@ -220,6 +245,8 @@ class EngineRuntime:
         if executor is not None:
             executor.set_bridge(adapter_type, bridge)
             LOG.info("平台 bridge 已注入 skill executor: %s → %s", adapter_type, type(bridge).__name__)
+        # 同时直接存储在引擎上，方便 plugin 直接取用
+        self._engine._adapter = bridge
 
     def _setup_plugin_runtime(self, engine: EmotionalGroupChatEngine) -> None:
         """初始化 Plugin 系统：加载插件、注册、注入到引擎。
@@ -260,6 +287,10 @@ class EngineRuntime:
             try:
                 plugin_class = loader.import_plugin_class(definition.source_path)
                 definition._plugin_class = plugin_class
+
+                # 合并 plugins/_config.json 中的运行时配置到 definition.permissions
+                self._merge_plugin_config(definition)
+
                 registry.register(definition)
             except Exception as exc:
                 LOG.error("导入 Plugin 类失败 [%s]: %s", definition.name, exc)

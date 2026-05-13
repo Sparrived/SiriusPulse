@@ -1301,58 +1301,48 @@ async function openPluginDetail(name) {
       $('pluginDetailNL').innerHTML = '';
     }
 
-    $('pluginSourceEditor').value = res.source_content || '';
-    switchPluginTab('info');
-
     const modal = $('pluginDetailModal');
     if (modal.parentElement !== document.body) {
       document.body.appendChild(modal);
     }
     modal.style.display = 'flex';
+
+    // 加载权限配置
+    await loadPluginConfigForm(name);
   } catch (e) {
     toast('加载插件详情失败', 'error');
   }
 }
 
-function closePluginDetail() {
-  $('pluginDetailModal').style.display = 'none';
-  _currentPluginName = null;
-}
-
-function switchPluginTab(tab) {
-  if (tab === 'info') {
-    $('pluginPanelInfo').style.display = 'block';
-    $('pluginPanelSource').style.display = 'none';
-    $('pluginTabInfo').style.background = 'var(--accent)';
-    $('pluginTabInfo').style.color = '#fff';
-    $('pluginTabSource').style.background = 'transparent';
-    $('pluginTabSource').style.color = 'var(--text-2)';
-  } else {
-    $('pluginPanelInfo').style.display = 'none';
-    $('pluginPanelSource').style.display = 'flex';
-    $('pluginTabSource').style.background = 'var(--accent)';
-    $('pluginTabSource').style.color = '#fff';
-    $('pluginTabInfo').style.background = 'transparent';
-    $('pluginTabInfo').style.color = 'var(--text-2)';
-  }
-}
-
-async function savePluginSource() {
-  if (!_currentPluginName) return;
-  const sourceContent = $('pluginSourceEditor').value;
-  if (!sourceContent.trim()) {
-    toast('源码不能为空', 'error');
-    return;
-  }
+async function loadPluginConfigForm(name) {
   try {
-    const res = await fetch(API + `/plugins/${_currentPluginName}/source`, {
+    const cfg = await get(`/plugins/${name}/config`);
+    $('pluginCfgDevOnly').checked = cfg.developer_only || false;
+    $('pluginCfgGroupWhitelist').value = (cfg.group_whitelist || []).join('\n');
+    $('pluginCfgGroupBlacklist').value = (cfg.group_blacklist || []).join('\n');
+    $('pluginCfgRateLimit').value = cfg.rate_limit_calls_per_minute || 60;
+  } catch (e) {
+    console.warn('加载插件配置失败', e);
+  }
+}
+
+async function savePluginConfig() {
+  if (!_currentPluginName) return;
+  const body = {
+    developer_only: $('pluginCfgDevOnly').checked,
+    group_whitelist: $('pluginCfgGroupWhitelist').value.split('\n').map(s => s.trim()).filter(Boolean),
+    group_blacklist: $('pluginCfgGroupBlacklist').value.split('\n').map(s => s.trim()).filter(Boolean),
+    rate_limit_calls_per_minute: parseInt($('pluginCfgRateLimit').value, 10) || 60,
+  };
+  try {
+    const res = await fetch(API + `/plugins/${_currentPluginName}/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source_content: sourceContent }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (data.success) {
-      toast('✅ 源码已保存', 'success');
+      toast('✅ 配置已保存（需重启人格生效）', 'success');
       closePluginDetail();
     } else {
       toast(data.error || '保存失败', 'error');
@@ -1360,6 +1350,11 @@ async function savePluginSource() {
   } catch (e) {
     toast('保存失败: ' + e.message, 'error');
   }
+}
+
+function closePluginDetail() {
+  $('pluginDetailModal').style.display = 'none';
+  _currentPluginName = null;
 }
 
 // ── Stickers ──────────────────────────────────────────
