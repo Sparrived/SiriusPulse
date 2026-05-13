@@ -88,6 +88,7 @@ class NapCatAdapter(BaseAdapter):
 
         # 引擎集成（原 Bridge 字段）
         self.plugin_config = dict(config or {})
+        self._enabled = True
         self._engine: Any = None
         self._last_not_ready_log: float = 0.0
         self._reply_locks: dict[str, asyncio.Lock] = {}
@@ -591,7 +592,9 @@ class NapCatAdapter(BaseAdapter):
         self_id = str(event.get("self_id", ""))
         if uid == self_id:
             return
-        if self._engine is None:
+        if not self._enabled:
+            return
+        if self._engine is None or not self._engine_ready():
             self._log_not_ready()
             return
         await self._process_event(event)
@@ -601,7 +604,9 @@ class NapCatAdapter(BaseAdapter):
         self_id = str(event.get("self_id", ""))
         if uid == self_id:
             return
-        if self._engine is None:
+        if not self._enabled:
+            return
+        if self._engine is None or not self._engine_ready():
             self._log_not_ready()
             return
         await self._process_event(event)
@@ -671,7 +676,14 @@ class NapCatAdapter(BaseAdapter):
                         await self._send_private_text(parsed.user_id, partial)
 
             reply = result.get("reply")
-            if reply:
+            message_group = result.get("message_group")  # Plugin 多模态输出
+            if message_group is not None:
+                # 多模态消息：通过 MessageGroup 发送（图片/语音/文件等）
+                if parsed.message_type == "group":
+                    await self.send_group_message(group_id, message_group)
+                else:
+                    await self.send_private_message(parsed.user_id, message_group)
+            elif reply:
                 clean_reply = strip_skill_calls(reply).strip()
                 if clean_reply:
                     if parsed.message_type == "group":
@@ -783,6 +795,13 @@ class NapCatAdapter(BaseAdapter):
             lock = asyncio.Lock()
             self._reply_locks[key] = lock
         return lock
+
+    def _engine_ready(self) -> bool:
+        """检查引擎是否已就绪。"""
+        engine = self._engine
+        if engine is None:
+            return False
+        return getattr(engine, "is_ready", lambda: True)()
 
     def _log_not_ready(self) -> None:
         loop = asyncio.get_event_loop()

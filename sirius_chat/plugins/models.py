@@ -359,6 +359,7 @@ class PluginResponse:
     mood_hint: str = ""                   # 情绪提示（用于 llm 风格化）
     tone_override: str = ""               # 语气覆写
     image_urls: list[str] = field(default_factory=list)
+    message_group: Any = None             # MessageGroup | None（多模态输出：图片/语音/文件等）
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod

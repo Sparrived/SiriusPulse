@@ -147,6 +147,7 @@ class HelpersMixin(_Base):
         # 遍历结果，调度输出（每个 PluginResponse → 框架标准格式）
         partial_replies: list[str] = []
         final_reply: str | None = None
+        final_message_group: Any = None
         for i, result in enumerate(results):
             is_last = (i == len(results) - 1)
             if not result.success:
@@ -155,15 +156,18 @@ class HelpersMixin(_Base):
                 continue
 
             if self._plugin_dispatcher is not None:
-                rendered = await self._plugin_dispatcher.dispatch(
+                dispatch_output = await self._plugin_dispatcher.dispatch(
                     result, definition,
                     engine=self,
                     group_id=group_id, user_id=user_id,
                 )
+                rendered = dispatch_output.text
+                if is_last and dispatch_output.message_group is not None:
+                    final_message_group = dispatch_output.message_group
             else:
                 rendered = result.text or ""
 
-            if not rendered:
+            if not rendered and not (is_last and final_message_group):
                 continue
 
             if is_last:
@@ -188,6 +192,7 @@ class HelpersMixin(_Base):
             "reply": final_reply,
             "partial_replies": partial_replies,
             "strategy": "plugin",
+            "message_group": final_message_group,
         }
 
     def _register_passive_skills(self) -> None:

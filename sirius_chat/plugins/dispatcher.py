@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,11 +20,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class OutputDispatcher:
-    """Plugin 输出调度器。
+@dataclass(slots=True)
+class DispatchedOutput:
+    """调度后的输出结构。"""
 
-    根据 RenderMode 选择合适的输出策略。
-    """
+    text: str = ""
+    message_group: Any = None  # MessageGroup | None
+
+
+class OutputDispatcher:
 
     async def dispatch(
         self,
@@ -36,27 +41,13 @@ class OutputDispatcher:
         user_id: str = "",
         message_id: str = "",
         **kwargs: Any,
-    ) -> str:
-        """调度 PluginResponse 的输出。
-
-        Args:
-            result: Plugin 执行结果
-            definition: Plugin 定义（读取 render 配置）
-            engine: 引擎实例（llm 模式需要）
-            adapter: 适配器实例（发送消息需要）
-            group_id: 群号
-            user_id: 用户 ID
-            message_id: 消息 ID（私聊/回复用）
-
-        Returns:
-            最终发送的文本内容（silent 模式返回空字符串），失败时返回错误文本
-        """
-        # 确定实际渲染模式：PluginResponse 可覆盖 plugin.json 的配置
+    ) -> DispatchedOutput:
+        """调度 PluginResponse 的输出。返回 DispatchedOutput(text + 可选多模态)。"""
         render_mode = self._resolve_mode(result, definition)
 
         if render_mode.value == "silent":
             logger.debug("Plugin %s: silent 模式，无输出", definition.name)
-            return ""
+            return DispatchedOutput()
 
         if render_mode.value == "direct":
             return self._handle_direct(result, definition)
@@ -71,20 +62,17 @@ class OutputDispatcher:
 
         raise ValueError(f"Plugin {definition.name}: 未知 render_mode={render_mode.value}")
 
-    # ── 各模式处理 ──
-
     def _handle_direct(
         self,
         result: "PluginResponse",
         definition: "PluginDefinition",
-    ) -> str:
-        """Direct 模式：直接使用 result.text。"""
+    ) -> DispatchedOutput:
         text = result.text
         if not text and result.data:
             text = str(result.data)
         if not text and not result.success:
             text = f"[{definition.display_name or definition.name}] 执行出错: {result.error}"
-        return text
+        return DispatchedOutput(text=text, message_group=result.message_group)
 
     async def _handle_llm(
         self,
@@ -96,12 +84,7 @@ class OutputDispatcher:
         group_id: str = "",
         user_id: str = "",
         **kwargs: Any,
-    ) -> str:
-        """LLM 模式：委托引擎做人格化风格生成。
-
-        使用 engine._generate() 而非直接调用 provider，
-        确保经过模型路由、token 记录、语气对齐等完整框架链路。
-        """
+    ) -> DispatchedOutput:
         system_prompt = self._build_plugin_system_prompt(result, definition, engine)
 
         try:
@@ -111,10 +94,11 @@ class OutputDispatcher:
                 group_id=group_id,
                 task_name="plugin_render",
             )
-            return generated if generated else result.text
+            text = generated if generated else result.text
+            return DispatchedOutput(text=text, message_group=result.message_group)
         except Exception as exc:
             logger.error("Plugin %s: 引擎生成失败: %s", definition.name, exc)
-            return result.text
+            return DispatchedOutput(text=result.text, message_group=result.message_group)
 
     @staticmethod
     def _build_plugin_system_prompt(

@@ -24,7 +24,7 @@ from sirius_chat.plugins.context import (
     PluginDataStore,
 )
 from sirius_chat.plugins.decorators import command, PluginCommandMeta, discover_commands, dispatch_command
-from sirius_chat.plugins.dispatcher import OutputDispatcher
+from sirius_chat.plugins.dispatcher import DispatchedOutput, OutputDispatcher
 from sirius_chat.plugins.events import PluginEvent, PluginEventType, TimerEvent, EngineEvent
 from sirius_chat.plugins.executor import PluginExecutor
 from sirius_chat.plugins.lexer import (
