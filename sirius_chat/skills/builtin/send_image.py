@@ -50,7 +50,7 @@ async def run(
             "summary": "发送失败：平台桥接未初始化",
         }
 
-    adapter = getattr(bridge, "adapter", None)
+    adapter = getattr(bridge, "adapter", None) or bridge
     if adapter is None:
         return {
             "success": False,
@@ -83,7 +83,7 @@ async def run(
             image_path = str(p.resolve())
 
     if image_path.startswith(("http://", "https://")):
-        adapter = getattr(bridge, "adapter", None)
+        adapter = getattr(bridge, "adapter", None) or bridge
         cache_fn = getattr(adapter, "cache_image", None) if adapter else None
         if cache_fn is not None:
             try:

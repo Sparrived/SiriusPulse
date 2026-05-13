@@ -51,7 +51,7 @@ async def run(
             "summary": "上传失败：平台桥接未初始化",
         }
 
-    adapter = getattr(bridge, "adapter", None)
+    adapter = getattr(bridge, "adapter", None) or bridge
     if adapter is None:
         return {
             "success": False,

@@ -5,25 +5,27 @@
 
 使用示例::
 
-    from sirius_chat.platforms import NapCatAdapter, NapCatBridge
-
+    from sirius_chat.platforms import NapCatAdapter
     from sirius_chat.platforms.runtime import EngineRuntime
 
     runtime = EngineRuntime("./work_path", global_data_path="./data")
-    adapter = NapCatAdapter(ws_url="ws://localhost:3001", token="napcat_ws")
-    bridge = NapCatBridge(adapter, runtime=runtime, work_path="./work_path", config={"root": "123456"})
+    await runtime.start()
+
+    adapter = NapCatAdapter(
+        ws_url="ws://localhost:3001", token="napcat_ws",
+        work_path="./work_path", config={"root": "123456"},
+    )
     await adapter.connect()
-    await bridge.start()
+    await adapter.start_handling(runtime.engine)
 """
 
 from __future__ import annotations
 
-from .onebot_v11.napcat import NapCatAdapter, NapCatBridge, NapCatManager
+from .onebot_v11.napcat import NapCatAdapter, NapCatManager
 from .runtime import EngineRuntime
 
 __all__ = [
     "NapCatAdapter",
-    "NapCatBridge",
     "EngineRuntime",
     "NapCatManager",
 ]

@@ -1,7 +1,10 @@
-"""原生 NapCat OneBot v11 Adapter。
+"""原生 NapCat OneBot v11 Adapter — 完整的平台集成。
 
-通过正向 WebSocket 接收事件，并在同一连接上发送 API 调用（OneBot v11 标准）。
-支持自动重连、心跳检测、并发请求隔离（echo 机制）。
+职责：
+    - 正向 WebSocket 连接、OneBot v11 API 调用
+    - OneBot 事件 → ParsedEvent 解析（表情/图片/@ 转换）
+    - 引擎事件总线监听（proactive/delayed/reminder 投递）
+    - 消息回复发送（带锁）
 
 继承 BaseAdapter，实现平台无关的消息发送接口。
 """
@@ -22,6 +25,9 @@ from sirius_chat.adapters.models import (
     MessageGroup, TextSegment, AtSegment,
     ImageSegment, VoiceSegment, FileSegment, ReplySegment,
 )
+from sirius_chat.models.models import Message, Participant
+from sirius_chat.skills.executor import strip_skill_calls
+from sirius_chat.core.events import SessionEvent, SessionEventType
 
 LOG = logging.getLogger("sirius.platforms.napcat")
 
@@ -41,13 +47,17 @@ def _is_ws_closed(ws: Any) -> bool:
 
 
 class NapCatAdapter(BaseAdapter):
-    """轻量级 NapCat OneBot v11 正向 WebSocket 客户端。"""
+    """NapCat OneBot v11 正向 WebSocket 客户端 + 平台集成。
+
+    同时承担原 NapCatBridge 的职责：事件→引擎→发送。
+    """
 
     _RECONNECT_BASE_DELAY = 1.0
     _RECONNECT_MAX_DELAY = 30.0
-    _MAX_RECONNECT_ATTEMPTS = 5  # 0 = 无限重试
+    _MAX_RECONNECT_ATTEMPTS = 5
 
     adapter_type = "napcat"
+    _NOT_READY_LOG_INTERVAL = 30.0
 
     def __init__(
         self,
@@ -56,6 +66,7 @@ class NapCatAdapter(BaseAdapter):
         reconnect_interval: float = 5.0,
         api_timeout: float = 30.0,
         work_path: str | Path | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
         self.ws_url = ws_url
         self.token = token
@@ -75,7 +86,39 @@ class NapCatAdapter(BaseAdapter):
         self._image_cache_dir = _wp / "image_cache"
         self._sticker_cache_dir = _wp / "sticker_cache"
 
+        # 引擎集成（原 Bridge 字段）
+        self.plugin_config = dict(config or {})
+        self._engine: Any = None
+        self._last_not_ready_log: float = 0.0
+        self._reply_locks: dict[str, asyncio.Lock] = {}
+        self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._event_bus_task: asyncio.Task | None = None
+
     # ─── 生命周期 ─────────────────────────────────────────
+
+    async def start_handling(self, engine: Any) -> None:
+        """启动事件处理和引擎事件总线监听。
+
+        调用者必须在外层先完成 runtime.start() 初始化引擎。
+        此方法注册 _on_event 处理器并开始监听引擎事件总线。
+        """
+        self._engine = engine
+        self._event_bus_task = asyncio.create_task(self._event_bus_listener())
+        self.on_event(self._on_event)
+        LOG.info("NapCatAdapter 平台集成已启动")
+
+    async def stop_handling(self) -> None:
+        """停止事件处理和引擎事件总线监听。"""
+        self._running = False
+        if self._event_bus_task is not None:
+            self._event_bus_task.cancel()
+            try:
+                await self._event_bus_task
+            except asyncio.CancelledError:
+                pass
+            self._event_bus_task = None
+        self._engine = None
+        LOG.info("NapCatAdapter 平台集成已停止")
 
     async def connect(self) -> None:
         """建立 WebSocket 连接并启动监听循环。"""
@@ -83,9 +126,9 @@ class NapCatAdapter(BaseAdapter):
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
     async def close(self) -> None:
-        """关闭连接并清理资源（取消所有在途 API 调用）。"""
+        """关闭连接并清理资源。"""
+        await self.stop_handling()
         self._running = False
-        # 取消所有 pending futures，避免在途调用挂死
         for echo, future in list(self._pending.items()):
             if not future.done():
                 future.cancel()
@@ -501,14 +544,268 @@ class NapCatAdapter(BaseAdapter):
 
     @property
     def _persona_name(self) -> str:
-        """人格名称（由外部设置）。"""
         return getattr(self, "_persona_name_val", "") or ""
 
     def set_persona_name(self, name: str) -> None:
-        """设置人格名称（在 bridge start 时注入）。"""
         self._persona_name_val = name
+
+    def _is_admin(self, uid: str) -> bool:
+        return uid == str(self.plugin_config.get("root", "")).strip()
+
+    def _get_allowed_group_ids(self) -> list[str]:
+        gids = self.plugin_config.get("allowed_group_ids", [])
+        if isinstance(gids, str):
+            try:
+                parsed = json.loads(gids)
+                if isinstance(parsed, list):
+                    return [str(g).strip() for g in parsed if g]
+            except (json.JSONDecodeError, ValueError):
+                pass
+            if "," in gids:
+                return [g.strip().strip("'\"[]()") for g in gids.split(",") if g.strip()]
+            return [gids.strip()] if gids.strip() else []
+        return [str(g).strip() for g in gids if g]
 
     @staticmethod
     def extract_sender_names(event: dict[str, Any]) -> tuple[str, str]:
         from ..protocol import extract_sender_names
         return extract_sender_names(event)
+
+    # ─── 事件入口 ─────────────────────────────────────────
+
+    async def _on_event(self, event: dict[str, Any]) -> None:
+        post_type = event.get("post_type")
+        if post_type != "message":
+            return
+        self._event_queue.put_nowait(event)
+
+        msg_type = event.get("message_type")
+        if msg_type == "group":
+            await self._on_group_message(event)
+        elif msg_type == "private":
+            await self._on_private_message(event)
+
+    async def _on_group_message(self, event: dict[str, Any]) -> None:
+        gid = str(event.get("group_id", ""))
+        uid = str(event.get("user_id", ""))
+        self_id = str(event.get("self_id", ""))
+        if uid == self_id:
+            return
+        if self._engine is None:
+            self._log_not_ready()
+            return
+        await self._process_event(event)
+
+    async def _on_private_message(self, event: dict[str, Any]) -> None:
+        uid = str(event.get("user_id", ""))
+        self_id = str(event.get("self_id", ""))
+        if uid == self_id:
+            return
+        if self._engine is None:
+            self._log_not_ready()
+            return
+        await self._process_event(event)
+
+    async def _process_event(self, event: dict[str, Any]) -> None:
+        """统一消息处理：解析 → 引擎 → 发送。"""
+        parsed = await self.parse_event(event)
+        if parsed is None:
+            return
+
+        speaker_name = parsed.card or parsed.nickname or f"qq_{parsed.user_id}"
+        uid = f"qq_{parsed.user_id}"
+        group_id = parsed.group_id
+
+        peer_ai_ids = self.plugin_config.get("peer_ai_ids", [])
+        is_peer_ai = str(parsed.user_id) in [str(v) for v in peer_ai_ids]
+
+        participant = Participant(
+            name=parsed.nickname or f"qq_{parsed.user_id}",
+            user_id=uid,
+            identities={"qq_native_sirius_chat": parsed.user_id},
+            aliases=[parsed.card] if parsed.card else [],
+            metadata={
+                "platform": "qq",
+                "qq_uid": parsed.user_id,
+                "is_developer": self._is_admin(parsed.user_id),
+                "is_ai": is_peer_ai,
+                "group_id": group_id if parsed.message_type == "group" else "",
+                "scope": "private" if parsed.message_type == "private" else "group",
+            },
+        )
+
+        message = Message(
+            role="user",
+            content=parsed.prompt,
+            speaker=speaker_name,
+            nickname=parsed.nickname,
+            channel="qq_native_sirius_chat",
+            channel_user_id=parsed.user_id,
+            group_id=group_id,
+            multimodal_inputs=parsed.multimodal_inputs,
+            adapter_type="napcat",
+            sender_type="other_ai" if is_peer_ai else "human",
+        )
+
+        msg_preview = (parsed.prompt or "")[:200].replace("\n", " ")
+        LOG.info(
+            "[收到消息] %s | sender=%s(%s) uid=%s | content=%s",
+            f"group={group_id}" if parsed.message_type == "group" else f"private={parsed.user_id}",
+            parsed.nickname or "",
+            parsed.card or "",
+            parsed.user_id,
+            msg_preview,
+        )
+
+        try:
+            result = await self._engine.process_message(
+                message=message,
+                participants=[participant],
+                group_id=group_id,
+            )
+            for partial in result.get("partial_replies", []):
+                if partial:
+                    if parsed.message_type == "group":
+                        await self._send_group_text(group_id, partial)
+                    else:
+                        await self._send_private_text(parsed.user_id, partial)
+
+            reply = result.get("reply")
+            if reply:
+                clean_reply = strip_skill_calls(reply).strip()
+                if clean_reply:
+                    if parsed.message_type == "group":
+                        await self._send_group_text(group_id, clean_reply)
+                    else:
+                        await self._send_private_text(parsed.user_id, clean_reply)
+        except asyncio.CancelledError:
+            raise
+        except RuntimeError as exc:
+            LOG.error("引擎处理错误 (%s/%s): %s", group_id, parsed.user_id, exc)
+        except Exception as exc:
+            LOG.exception("消息处理异常 (%s/%s): %s", group_id, parsed.user_id, exc)
+
+    # ─── 事件总线监听 ────────────────────────────────────
+
+    async def _event_bus_listener(self) -> None:
+        not_ready_backoff = 1.0
+        engine = self._engine
+        while self._running and engine is not None:
+            try:
+                async for event in engine.event_bus.subscribe():
+                    if not self._running:
+                        break
+                    asyncio.create_task(self._handle_event(event))
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                LOG.warning("事件总线监听异常: %s", exc)
+                await asyncio.sleep(1)
+
+    async def _handle_event(self, event: SessionEvent) -> None:
+        engine = self._engine
+        if engine is None:
+            return
+        try:
+            if event.type == SessionEventType.PROACTIVE_RESPONSE_TRIGGERED:
+                gid = str(event.data.get("group_id", ""))
+                reply = event.data.get("reply", "")
+                if reply and gid in self._get_allowed_group_ids():
+                    if not engine.is_proactive_enabled(gid):
+                        return
+                    await self._send_group_text(gid, reply)
+            elif event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
+                gid = str(event.data.get("group_id", ""))
+
+                async def _send_partial(text: str) -> None:
+                    if gid.startswith("private_"):
+                        uid = gid.replace("private_", "").replace("qq_", "")
+                        await self._send_private_text(uid, text)
+                    elif gid in self._get_allowed_group_ids():
+                        await self._send_group_text(gid, text)
+
+                try:
+                    results = await engine.tick_delayed_queue(
+                        gid, on_partial_reply=_send_partial
+                    )
+                except Exception as exc:
+                    LOG.warning("Delayed queue tick 失败 (%s): %s", gid, exc)
+                    results = []
+                for result in results:
+                    reply = result.get("reply", "")
+                    if gid.startswith("private_"):
+                        uid = gid.replace("private_", "").replace("qq_", "")
+                        if reply:
+                            await self._send_private_text(uid, reply)
+                    elif gid in self._get_allowed_group_ids():
+                        if reply:
+                            await self._send_group_text(gid, reply)
+            elif event.type == SessionEventType.DEVELOPER_CHAT_TRIGGERED:
+                gid = str(event.data.get("group_id", ""))
+                reply = event.data.get("reply", "")
+                if reply and gid.startswith("private_"):
+                    uid = gid.replace("private_", "").replace("qq_", "")
+                    await self._send_private_text(uid, reply)
+            elif event.type == SessionEventType.REMINDER_TRIGGERED:
+                gid = str(event.data.get("group_id", ""))
+                reply = event.data.get("reply", "")
+                adapter_type = event.data.get("adapter_type", "")
+                if reply and adapter_type == self.adapter_type:
+                    if gid.startswith("private_"):
+                        uid = gid.replace("private_", "").replace("qq_", "")
+                        await self._send_private_text(uid, reply)
+                    elif gid in self._get_allowed_group_ids():
+                        await self._send_group_text(gid, reply)
+        except Exception as exc:
+            LOG.warning("事件处理异常: %s", exc)
+
+    # ─── 消息发送（引擎回调） ─────────────────────────────
+
+    async def _send_group_text(self, group_id: str, text: str) -> None:
+        async with self._get_reply_lock(group_id):
+            try:
+                await self.send_group_msg(group_id, text)
+                LOG.info("回复群 %s: %s", group_id, text[:120])
+            except Exception as exc:
+                LOG.warning("发送群消息失败: %s", exc)
+
+    async def _send_private_text(self, user_id: str, text: str) -> None:
+        async with self._get_reply_lock(user_id):
+            try:
+                await self.send_private_msg(user_id, text)
+                LOG.info("回复私聊 %s: %s", user_id, text[:120])
+            except Exception as exc:
+                LOG.warning("发送私聊消息失败: %s", exc)
+
+    def _get_reply_lock(self, key: str) -> asyncio.Lock:
+        lock = self._reply_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._reply_locks[key] = lock
+        return lock
+
+    def _log_not_ready(self) -> None:
+        loop = asyncio.get_event_loop()
+        now = loop.time()
+        if now - self._last_not_ready_log >= self._NOT_READY_LOG_INTERVAL:
+            self._last_not_ready_log = now
+            LOG.warning("引擎未就绪，跳过消息（每 %.0f 秒提示一次）", self._NOT_READY_LOG_INTERVAL)
+
+    # ─── 事件等待（供 setup wizard 使用）───────────────────
+
+    async def wait_event(
+        self,
+        predicate: Callable[[dict[str, Any]], bool],
+        timeout: float = 300.0,
+    ) -> dict[str, Any]:
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=remaining)
+                if predicate(event):
+                    return event
+            except asyncio.TimeoutError:
+                raise

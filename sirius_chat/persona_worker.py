@@ -31,7 +31,6 @@ from sirius_chat.persona_config import (
     PersonaExperienceConfig,
 )
 from sirius_chat.platforms.onebot_v11.napcat.adapter import NapCatAdapter
-from sirius_chat.platforms.onebot_v11.napcat.bridge import NapCatBridge
 from sirius_chat.platforms.runtime import EngineRuntime
 
 LOG = logging.getLogger("sirius.persona_worker")
@@ -44,7 +43,6 @@ class PersonaWorker:
         self.persona_dir = Path(persona_dir).resolve()
         self.paths = PersonaConfigPaths(self.persona_dir)
         self._adapters: list[NapCatAdapter] = []
-        self._bridges: list[NapCatBridge] = []
         self._napcat_managers: list[Any] = []
         self._runtime: EngineRuntime | None = None
         self._running = False
@@ -236,31 +234,24 @@ class PersonaWorker:
                 ws_url=adapter_cfg.ws_url,
                 token=adapter_cfg.token or None,
                 work_path=self.persona_dir,
+                config={
+                    "root": adapter_cfg.root,
+                    "allowed_group_ids": adapter_cfg.allowed_group_ids,
+                    "allowed_private_user_ids": adapter_cfg.allowed_private_user_ids,
+                    "enable_group_chat": adapter_cfg.enable_group_chat,
+                    "enable_private_chat": adapter_cfg.enable_private_chat,
+                    "auto_install_skill_deps": plugin_config.get("auto_install_skill_deps", True),
+                    "peer_ai_ids": adapter_cfg.peer_ai_ids,
+                },
             )
             if self._runtime is not None and self._runtime.engine is not None:
                 persona = getattr(self._runtime.engine, 'persona', None)
                 if persona:
                     adapter.set_persona_name(getattr(persona, 'name', '') or '')
-            bridge_config: dict[str, Any] = {
-                "root": adapter_cfg.root,
-                "allowed_group_ids": adapter_cfg.allowed_group_ids,
-                "allowed_private_user_ids": adapter_cfg.allowed_private_user_ids,
-                "enable_group_chat": adapter_cfg.enable_group_chat,
-                "enable_private_chat": adapter_cfg.enable_private_chat,
-                "auto_install_skill_deps": plugin_config.get("auto_install_skill_deps", True),
-                "peer_ai_ids": adapter_cfg.peer_ai_ids,
-            }
-            bridge = NapCatBridge(
-                adapter=adapter,
-                runtime=self._runtime,
-                work_path=self.persona_dir,
-                config=bridge_config,
-            )
             await adapter.connect()
-            await bridge.start()
+            await adapter.start_handling(self._runtime.engine)
             self._adapters.append(adapter)
-            self._bridges.append(bridge)
-            self._runtime.add_skill_bridge("napcat", bridge)
+            self._runtime.add_skill_bridge("napcat", adapter)
             LOG.info("NapCat adapter 已启动: %s", adapter_cfg.ws_url)
         else:
             LOG.warning("未知 adapter 类型，已跳过: %s", type(adapter_cfg).__name__)
@@ -336,10 +327,10 @@ class PersonaWorker:
         try:
             text = flag.read_text(encoding="utf-8").strip()
             enabled = text == "1"
-            for bridge in self._bridges:
-                if hasattr(bridge, "_enabled") and bridge._enabled != enabled:
-                    bridge._enabled = enabled
-                    LOG.info("Bridge %s 已%s", bridge, "启用" if enabled else "禁用")
+            for adapter in self._adapters:
+                if hasattr(adapter, "_enabled") and adapter._enabled != enabled:
+                    adapter._enabled = enabled
+                    LOG.info("Adapter %s 已%s", adapter, "启用" if enabled else "禁用")
         except Exception:
             pass
 
@@ -372,12 +363,6 @@ class PersonaWorker:
                 await self._heartbeat_task
             except asyncio.CancelledError:
                 pass
-
-        for bridge in self._bridges:
-            try:
-                await bridge.stop()
-            except Exception as exc:
-                LOG.warning("Bridge 停止失败: %s", exc)
 
         for adapter in self._adapters:
             try:
