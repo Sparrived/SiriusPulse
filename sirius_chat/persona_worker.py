@@ -30,8 +30,8 @@ from sirius_chat.persona_config import (
     PersonaConfigPaths,
     PersonaExperienceConfig,
 )
-from sirius_chat.platforms.napcat_adapter import NapCatAdapter
-from sirius_chat.platforms.napcat_bridge import NapCatBridge
+from sirius_chat.platforms.onebot_v11.napcat.adapter import NapCatAdapter
+from sirius_chat.platforms.onebot_v11.napcat.bridge import NapCatBridge
 from sirius_chat.platforms.runtime import EngineRuntime
 
 LOG = logging.getLogger("sirius.persona_worker")
@@ -185,7 +185,7 @@ class PersonaWorker:
         if not napcat_install_dir:
             napcat_install_dir = str(self.persona_dir.parent.parent.parent / "napcat")
 
-        from sirius_chat.platforms.napcat_manager import NapCatManager
+        from sirius_chat.platforms.onebot_v11.napcat.manager import NapCatManager
 
         mgr = NapCatManager.for_persona(
             global_install_dir=napcat_install_dir,

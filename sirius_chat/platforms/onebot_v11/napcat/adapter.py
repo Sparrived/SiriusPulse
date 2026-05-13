@@ -419,9 +419,7 @@ class NapCatAdapter(BaseAdapter):
         self, event: dict[str, Any], self_id: str, group_id: str
     ) -> str:
         """将群聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
-        from .napcat_protocol import (
-            _face_to_text, build_image_label, extract_sender_names,
-        )
+        from ..protocol import _face_to_text, build_image_label, extract_sender_names
 
         parts: list[str] = []
         mention_cache: dict[str, str] = {}
@@ -466,7 +464,7 @@ class NapCatAdapter(BaseAdapter):
 
     async def _render_private_prompt(self, event: dict[str, Any]) -> str:
         """将私聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
-        from .napcat_protocol import _face_to_text, build_image_label
+        from ..protocol import _face_to_text, build_image_label
 
         parts: list[str] = []
         image_index = 1
@@ -512,5 +510,5 @@ class NapCatAdapter(BaseAdapter):
 
     @staticmethod
     def extract_sender_names(event: dict[str, Any]) -> tuple[str, str]:
-        from .napcat_protocol import extract_sender_names
+        from ..protocol import extract_sender_names
         return extract_sender_names(event)

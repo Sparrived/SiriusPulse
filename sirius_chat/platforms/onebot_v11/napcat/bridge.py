@@ -19,8 +19,8 @@ from typing import Any, Callable
 from sirius_chat.models.models import Message, Participant
 from sirius_chat.skills.executor import strip_skill_calls
 
-from .napcat_adapter import NapCatAdapter
-from .runtime import EngineRuntime
+from .adapter import NapCatAdapter
+from ...runtime import EngineRuntime
 from sirius_chat.core.events import SessionEvent, SessionEventType
 
 LOG = logging.getLogger("sirius.platforms.napcat_bridge")

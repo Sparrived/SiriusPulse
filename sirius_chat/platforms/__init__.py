@@ -18,9 +18,7 @@
 
 from __future__ import annotations
 
-from .napcat_adapter import NapCatAdapter
-from .napcat_bridge import NapCatBridge
-from .napcat_manager import NapCatManager
+from .onebot_v11.napcat import NapCatAdapter, NapCatBridge, NapCatManager
 from .runtime import EngineRuntime
 
 __all__ = [
