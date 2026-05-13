@@ -21,13 +21,11 @@ from __future__ import annotations
 from .napcat_adapter import NapCatAdapter
 from .napcat_bridge import NapCatBridge
 from .napcat_manager import NapCatManager
-from .napcat_protocol import ParsedEvent
 from .runtime import EngineRuntime
 
 __all__ = [
     "NapCatAdapter",
     "NapCatBridge",
-    "ParsedEvent",
     "EngineRuntime",
     "NapCatManager",
 ]

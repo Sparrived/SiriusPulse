@@ -360,7 +360,7 @@ class NapCatAdapter(BaseAdapter):
 
         包含：表情→文字转换、@→昵称替换、图片标签生成。
         """
-        from .napcat_protocol import ParsedEvent
+        from sirius_chat.adapters.models import ParsedEvent
 
         post_type = event.get("post_type")
         if post_type != "message":
@@ -488,60 +488,16 @@ class NapCatAdapter(BaseAdapter):
 
     # ─── 图片缓存 ───────────────────────────────────────────
 
-    async def cache_image(self, url: str, *, is_sticker: bool = False) -> str:
-        """下载并缓存 OneBot 图片到本地。"""
-        import hashlib
-        import aiohttp
-
-        if not url.startswith(("http://", "https://")):
-            return url
-
-        cache_dir = self._sticker_cache_dir if is_sticker else self._image_cache_dir
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        ext = Path(url.split("?")[0]).suffix or ".jpg"
-        try:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                headers = {
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.0"
-                    ),
-                    "Referer": "https://multimedia.nt.qq.com.cn/",
-                }
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        if len(data) > 10 * 1024 * 1024:
-                            LOG.warning("图片过大(%d bytes)，跳过缓存: %s", len(data), url[:80])
-                            return url
-                        content_hash = hashlib.md5(data).hexdigest()
-                        cache_path = cache_dir / f"{content_hash}{ext}"
-                        if cache_path.exists():
-                            return str(cache_path)
-                        cache_path.write_bytes(data)
-                        (cache_dir / f"{content_hash}{ext}.url").write_text(url, encoding="utf-8")
-                        if not is_sticker:
-                            await self._cleanup_cache(cache_dir, max_files=200)
-                        return str(cache_path)
-        except Exception as exc:
-            LOG.warning("图片下载异常: %s | %s", exc, url[:80])
-        return url
-
-    async def _cleanup_cache(self, cache_dir: Path, max_files: int = 200) -> None:
-        """清理缓存目录，保留最近 max_files 个文件。"""
-        if not cache_dir.exists():
-            return
-        files = sorted(
-            [f for f in cache_dir.iterdir() if not f.name.endswith(".url")],
-            key=lambda p: p.stat().st_mtime, reverse=True
-        )
-        if len(files) > max_files:
-            for old_file in files[max_files:]:
-                try:
-                    old_file.unlink()
-                except Exception:
-                    pass
+    @staticmethod
+    def _cache_image_headers() -> dict[str, str]:
+        """NapCat 图片缓存需要 QQ 多媒体 Referer。"""
+        return {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.0"
+            ),
+            "Referer": "https://multimedia.nt.qq.com.cn/",
+        }
 
     # ─── 配置与权限 ───────────────────────────────────────────
 

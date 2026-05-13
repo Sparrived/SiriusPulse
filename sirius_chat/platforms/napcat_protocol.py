@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -79,20 +78,6 @@ def extract_image_urls(message: list[dict[str, Any]]) -> list[str]:
             if url:
                 urls.append(url)
     return urls
-
-
-@dataclass(slots=True)
-class ParsedEvent:
-    """OneBot 事件解析后的结构化数据。"""
-
-    group_id: str = ""
-    user_id: str = ""
-    self_id: str = ""
-    message_type: str = ""         # "group" | "private"
-    prompt: str = ""               # 渲染后的文本（表情→文字，图片→标签）
-    nickname: str = ""
-    card: str = ""
-    multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
 
 
 def extract_sender_names(event: dict[str, Any]) -> tuple[str, str]:

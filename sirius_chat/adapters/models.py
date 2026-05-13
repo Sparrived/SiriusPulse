@@ -132,3 +132,25 @@ def file(file_path: str, name: str = "") -> FileSegment:
 def reply(message_id: str) -> ReplySegment:
     """快捷构造回复引用片段。"""
     return ReplySegment(message_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ParsedEvent —— 平台事件解析后的标准化格式
+# ═══════════════════════════════════════════════════════════════════════
+
+@dataclass(slots=True)
+class ParsedEvent:
+    """平台事件解析后的结构化数据。
+
+    由 BaseAdapter.parse_event() 返回，包含引擎可消费的统一格式。
+    具体 Adapter 负责将平台特定的原始事件转换为此结构。
+    """
+
+    group_id: str = ""
+    user_id: str = ""
+    self_id: str = ""
+    message_type: str = ""         # "group" | "private"
+    prompt: str = ""               # 渲染后的文本（表情→文字，图片→标签）
+    nickname: str = ""
+    card: str = ""
+    multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
