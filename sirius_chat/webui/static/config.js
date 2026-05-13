@@ -1155,6 +1155,213 @@ async function saveSkillConfig() {
   }
 }
 
+// ── Plugins ───────────────────────────────────────────
+let _pluginsCache = null;
+let _currentPluginName = null;
+
+registerPageLoader('plugins', { init: loadPlugins, refresh: loadPlugins });
+
+async function loadPlugins() {
+  try {
+    const res = await get('/plugins');
+    const plugins = res.plugins || [];
+    _pluginsCache = plugins;
+    renderPluginsList(plugins);
+  } catch (e) {
+    console.error('loadPlugins', e);
+    $('pluginsList').innerHTML = '<div style="color:var(--text-2);padding:12px">加载 Plugin 列表失败</div>';
+  }
+}
+
+function renderPluginsList(plugins) {
+  const el = $('pluginsList');
+  if (!plugins.length) {
+    el.innerHTML = '<div style="color:var(--text-2);padding:12px">暂未发现 Plugin。请将插件放入 <code>plugins/</code> 目录。</div>';
+    return;
+  }
+  el.innerHTML = plugins.map((p) => {
+    const enabled = p.enabled !== false;
+    const statusClass = enabled ? 'on' : 'off';
+    const statusText = enabled ? '已启用' : '已禁用';
+    const cmdCount = (p.commands || []).length;
+    const paramCount = (p.parameters || []).length;
+    const nlCount = (p.nl_examples || []).length;
+    return `
+    <div class="skill-row" data-name="${p.name}">
+      <div class="skill-header">
+        <div class="skill-header-left">
+          <span class="skill-status ${statusClass}" onclick="togglePlugin('${p.name}', ${!enabled})">${statusText}</span>
+          <span class="skill-name">${p.display_name || p.name}</span>
+          ${p.version ? `<span class="skill-version">v${p.version}</span>` : ''}
+          ${p.author ? `<span class="skill-badge" style="background:var(--surface-2);color:var(--text-2)">${p.author}</span>` : ''}
+        </div>
+        <div class="skill-actions">
+          <button class="btn small" onclick="openPluginDetail('${p.name}')">📝 详情/编辑</button>
+        </div>
+      </div>
+      <div class="skill-desc">${p.description || '暂无描述'}</div>
+      <div class="skill-meta">
+        ${cmdCount ? `<span class="skill-meta-item">⚡ ${cmdCount} 个指令</span>` : ''}
+        ${paramCount ? `<span class="skill-meta-item">📋 ${paramCount} 个参数</span>` : ''}
+        ${nlCount ? `<span class="skill-meta-item">💬 ${nlCount} 个NL示例</span>` : ''}
+        ${p.has_source ? '<span class="skill-meta-item" style="color:var(--accent)">📝 可编辑</span>' : ''}
+        ${(p.commands || []).slice(0, 3).map(c =>
+          c.patterns.map(pt => `<span class="skill-tag">${pt}</span>`).join('')
+        ).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function togglePlugin(name, enabled) {
+  try {
+    const res = await post(`/plugins/${name}/toggle`, { enabled });
+    if (res.success) {
+      toast(`${name} ${enabled ? '已启用' : '已禁用'}`, 'success');
+      const p = (_pluginsCache || []).find(p => p.name === name);
+      if (p) p.enabled = enabled;
+      renderPluginsList(_pluginsCache || []);
+    } else {
+      toast(res.error || '操作失败', 'error');
+    }
+  } catch (e) {
+    toast('操作失败', 'error');
+  }
+}
+
+async function reloadPlugins() {
+  try {
+    const res = await post('/plugins/reload', {});
+    toast(`刷新完成: ${res.total} 个插件 (启用 ${res.enabled})`, 'success');
+    await loadPlugins();
+  } catch (e) {
+    toast('刷新失败', 'error');
+  }
+}
+
+async function openPluginDetail(name) {
+  _currentPluginName = name;
+  try {
+    const res = await get(`/plugins/${name}`);
+
+    $('pluginDetailTitle').textContent = `${res.display_name || res.name} - 详情`;
+    const meta = $('pluginDetailMeta');
+    meta.innerHTML = `
+      <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px">
+        <div style="background:var(--bg-2);padding:8px 12px;border-radius:6px"><span style="color:var(--text-2);font-size:11px">版本</span><br>${res.version || '-'}</div>
+        <div style="background:var(--bg-2);padding:8px 12px;border-radius:6px"><span style="color:var(--text-2);font-size:11px">作者</span><br>${res.author || '-'}</div>
+        <div style="background:var(--bg-2);padding:8px 12px;border-radius:6px"><span style="color:var(--text-2);font-size:11px">指令数</span><br>${(res.commands || []).length}</div>
+        <div style="background:var(--bg-2);padding:8px 12px;border-radius:6px"><span style="color:var(--text-2);font-size:11px">状态</span><br>
+          <span style="color:${res.enabled !== false ? 'var(--success)' : 'var(--danger)'}">${res.enabled !== false ? '已启用' : '已禁用'}</span>
+        </div>
+      </div>
+    `;
+
+    const cmds = res.commands || [];
+    let cmdHtml = cmds.length ? '<div style="margin-top:12px"><h4 style="margin:0 0 8px;font-size:14px">指令</h4>' : '';
+    cmds.forEach(c => {
+      cmdHtml += `
+        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:13px">
+          <span style="font-weight:600">${c.name}</span>
+          <span style="color:var(--text-3);margin-left:8px">${c.patterns.join(', ')}</span>
+          <span style="color:var(--text-3);margin-left:8px;font-size:11px">(${c.pattern_type})</span>
+          ${c.description ? `<div style="color:var(--text-2);font-size:12px;margin-top:4px">${c.description}</div>` : ''}
+        </div>
+      `;
+    });
+    if (cmds.length) cmdHtml += '</div>';
+    $('pluginDetailCommands').innerHTML = cmdHtml;
+
+    const params = res.parameters || [];
+    let paramHtml = params.length ? '<div style="margin-top:12px"><h4 style="margin:0 0 8px;font-size:14px">参数</h4>' : '';
+    params.forEach(p => {
+      const req = p.required ? '<span style="color:var(--danger);font-size:11px"> 必填</span>' : '<span style="color:var(--text-3);font-size:11px"> 可选</span>';
+      paramHtml += `
+        <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:13px">
+          <span style="font-weight:600">${p.name}</span>
+          <span style="color:var(--text-3);margin-left:8px;font-size:12px">(${p.type})</span>${req}
+          ${p.description ? `<div style="color:var(--text-2);font-size:12px;margin-top:4px">${p.description}</div>` : ''}
+        </div>
+      `;
+    });
+    if (params.length) paramHtml += '</div>';
+    $('pluginDetailParams').innerHTML = paramHtml;
+
+    const nls = res.nl_examples || [];
+    if (nls.length) {
+      $('pluginDetailNL').innerHTML = `
+        <div style="margin-top:12px">
+          <h4 style="margin:0 0 8px;font-size:14px">自然语言示例</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${nls.map(e => `<code style="background:var(--bg-2);padding:4px 8px;border-radius:4px;font-size:12px">${e}</code>`).join('')}
+          </div>
+        </div>
+      `;
+    } else {
+      $('pluginDetailNL').innerHTML = '';
+    }
+
+    $('pluginSourceEditor').value = res.source_content || '';
+    switchPluginTab('info');
+
+    const modal = $('pluginDetailModal');
+    if (modal.parentElement !== document.body) {
+      document.body.appendChild(modal);
+    }
+    modal.style.display = 'flex';
+  } catch (e) {
+    toast('加载插件详情失败', 'error');
+  }
+}
+
+function closePluginDetail() {
+  $('pluginDetailModal').style.display = 'none';
+  _currentPluginName = null;
+}
+
+function switchPluginTab(tab) {
+  if (tab === 'info') {
+    $('pluginPanelInfo').style.display = 'block';
+    $('pluginPanelSource').style.display = 'none';
+    $('pluginTabInfo').style.background = 'var(--accent)';
+    $('pluginTabInfo').style.color = '#fff';
+    $('pluginTabSource').style.background = 'transparent';
+    $('pluginTabSource').style.color = 'var(--text-2)';
+  } else {
+    $('pluginPanelInfo').style.display = 'none';
+    $('pluginPanelSource').style.display = 'flex';
+    $('pluginTabSource').style.background = 'var(--accent)';
+    $('pluginTabSource').style.color = '#fff';
+    $('pluginTabInfo').style.background = 'transparent';
+    $('pluginTabInfo').style.color = 'var(--text-2)';
+  }
+}
+
+async function savePluginSource() {
+  if (!_currentPluginName) return;
+  const sourceContent = $('pluginSourceEditor').value;
+  if (!sourceContent.trim()) {
+    toast('源码不能为空', 'error');
+    return;
+  }
+  try {
+    const res = await fetch(API + `/plugins/${_currentPluginName}/source`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_content: sourceContent }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      toast('✅ 源码已保存', 'success');
+      closePluginDetail();
+    } else {
+      toast(data.error || '保存失败', 'error');
+    }
+  } catch (e) {
+    toast('保存失败: ' + e.message, 'error');
+  }
+}
+
 // ── Stickers ──────────────────────────────────────────
 let _currentStickerId = null;
 

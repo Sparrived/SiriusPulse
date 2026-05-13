@@ -71,6 +71,13 @@ from sirius_chat.webui.server_skill_api import (
     api_persona_skill_config_post,
     api_persona_skill_history_get,
 )
+from sirius_chat.webui.server_plugin_api import (
+    api_plugins_get,
+    api_plugin_detail_get,
+    api_plugin_toggle,
+    api_plugin_source_save,
+    api_plugins_reload,
+)
 
 
 class WebUIServer(_WebUIServer):
@@ -210,6 +217,23 @@ class WebUIServer(_WebUIServer):
 
     async def api_napcat_stop(self, request):
         return await api_napcat_stop(request, self.napcat_manager)
+
+    # ─── Plugin 管理（全局） ──────────────────────────────
+
+    async def api_plugins_get(self, request):
+        return await api_plugins_get(request, self.persona_manager)
+
+    async def api_plugin_detail_get(self, request):
+        return await api_plugin_detail_get(request, self.persona_manager)
+
+    async def api_plugin_toggle(self, request):
+        return await api_plugin_toggle(request, self.persona_manager)
+
+    async def api_plugin_source_save(self, request):
+        return await api_plugin_source_save(request, self.persona_manager)
+
+    async def api_plugins_reload(self, request):
+        return await api_plugins_reload(request, self.persona_manager)
 
     # ─── Skill 管理 API 代理方法 ──────────────────────────
     # 这些方法将请求转发到 server_skill_api 模块，保持路由注册简洁

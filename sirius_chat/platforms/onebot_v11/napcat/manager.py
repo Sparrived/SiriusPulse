@@ -45,6 +45,7 @@ class NapCatManager:
         self.config_dir = self.instance_dir / "config"
         self.logs_dir = self.instance_dir / "logs"
         self._pid_file = self.instance_dir / "napcat.pid"
+        self._ws_port: int = 3001  # 由 configure() 更新
         self._process: subprocess.Popen | None = None
 
     @classmethod
@@ -237,6 +238,19 @@ class NapCatManager:
                 return result.returncode == 0
             except Exception:
                 return False
+
+    @staticmethod
+    def _is_port_listening(port: int, host: str = "localhost") -> bool:
+        """快速检测指定端口是否在监听（TCP connect，0.5s 超时）。"""
+        import socket as _socket
+        try:
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            sock.settimeout(0.5)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
 
     # ── pid 文件辅助 ─────────────────────────────────────
 
@@ -508,6 +522,7 @@ class NapCatManager:
         )
 
         LOG.info("NapCat 配置已生成: %s", self.config_dir)
+        self._ws_port = ws_port  # 记录端口供 start() 的复用检测使用
         return {"success": True, "message": f"配置已生成 (QQ: {qq_number}, WS: localhost:{ws_port})"}
 
     @staticmethod
@@ -565,21 +580,32 @@ class NapCatManager:
         """
         # 检查是否已运行（含跨进程 PID 文件检测）
         if self.is_running:
-            return {"success": True, "message": "NapCat 已在运行"}
+            # 进程在运行但 WS 端口未就绪 → 可能是僵尸进程，强制重启
+            if not self._is_port_listening(self._ws_port):
+                LOG.warning(
+                    "NapCat 进程运行中但 WS 端口 %d 未就绪，强制停止并重启...",
+                    self._ws_port,
+                )
+                await self.stop(force=True, timeout=5.0)
+            else:
+                LOG.info("NapCat 已在运行且 WS 端口 %d 已就绪", self._ws_port)
+                return {"success": True, "message": "NapCat 已在运行"}
 
         # 清理过期的 pid 文件（进程已死但文件残留）
         self._remove_pid_file()
 
         # 尝试复用已存在的 QQ/NapCat 进程（避免重复扫码的关键）
         if reuse_existing_process and self._is_qq_process_running():
-            LOG.info("检测到 QQ.exe 正在运行，尝试复用现有进程并建立连接...")
-            # 复用模式下不启动新进程，仅更新 PID 跟踪
-            # 实际连接由上层 wait_for_ws() 负责验证
-            self._write_pid_file(0)  # 占位，表示由外部进程管理
-            return {
-                "success": True,
-                "message": "检测到 QQ 已在运行，将复用现有会话（如已登录则无需扫码）",
-            }
+            # 只有当 NapCat WS 端口已经在监听时，才真正复用
+            # 否则说明只是普通 QQ 在运行，需要注入 NapCat
+            if self._is_port_listening(self._ws_port):
+                LOG.info("检测到 NapCat WS 端口 %d 已就绪，复用现有进程", self._ws_port)
+                self._write_pid_file(0)  # 占位，表示由外部进程管理
+                return {
+                    "success": True,
+                    "message": "检测到 NapCat WS 已就绪，复用现有会话（如已登录则无需扫码）",
+                }
+            LOG.info("检测到 QQ.exe 运行中但 WS 端口 %d 未监听，将注入 NapCat", self._ws_port)
 
         if not self.is_installed:
             return {"success": False, "message": "NapCat 未安装"}

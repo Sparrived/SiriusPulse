@@ -143,6 +143,21 @@ class BaseAdapter(ABC):
         """获取群信息。"""
         return {}
 
+    async def get_group_msg_history(
+        self, group_id: str, message_seq: int | None = None, count: int = 20
+    ) -> list[dict[str, Any]]:
+        """获取群聊历史消息。
+
+        Args:
+            group_id: 群号
+            message_seq: 起始消息序号，None 表示从最新开始
+            count: 获取数量
+
+        Returns:
+            消息列表，每个元素包含 message_id, user_id, time, raw_message 等字段
+        """
+        return []
+
     async def get_login_info(self) -> dict[str, Any]:
         """获取登录信息。"""
         return {}

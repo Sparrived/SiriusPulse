@@ -133,4 +133,4 @@ def build_image_label(seg: dict[str, Any], index: int, label_prefix: str, counte
     from sirius_chat.core.prompt_factory import PromptFactory
     image_name = extract_image_name(seg, index)
     display_name = dedupe_image_name(image_name, counter)
-    return PromptFactory.render_image(display_name, label_prefix)
+    return PromptFactory.render_image_label(label_prefix, display_name)

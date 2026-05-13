@@ -2,16 +2,19 @@
 
 负责：
     1. 扫描 plugins/ 目录下的文件夹级插件包
-    2. 动态导入 .py 文件中的 PluginBase 子类
-    3. 从类属性 + @command 构建 PluginDefinition
-    4. 处理加载错误并记录日志
+    2. 自动安装插件的 pip/uv 依赖
+    3. 动态导入 .py 文件中的 PluginBase 子类
+    4. 从类属性 + @command 构建 PluginDefinition
+    5. 处理加载错误并记录日志
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -72,11 +75,22 @@ class PluginLoader:
     def load_all_definitions(self) -> list[PluginDefinition]:
         """发现并加载所有插件的 PluginDefinition。
 
+        加载前自动安装每个插件的 _plugin_dependencies 依赖。
+
         Returns:
             PluginDefinition 列表
         """
         definitions: list[PluginDefinition] = []
         for plugin_path in self.discover():
+            # 1. 先安装插件依赖（AST 解析，无需导入）
+            deps = self._parse_dependencies_from_source(plugin_path)
+            if deps:
+                logger.info("插件 [%s] 需要依赖: %s", plugin_path.name, ", ".join(deps))
+                ok, fail = self.install_dependencies(deps)
+                if fail > 0:
+                    logger.warning("插件 [%s] 有 %d 个依赖安装失败", plugin_path.name, fail)
+
+            # 2. 加载定义并导入
             try:
                 definition = self.load_definition(plugin_path)
                 if definition is not None:
@@ -154,16 +168,29 @@ class PluginLoader:
         return None
 
     def _try_import_class(self, py_file: Path) -> type | None:
-        """从单个 .py 文件导入，查找 PluginBase 子类。"""
+        """从单个 .py 文件导入，查找 PluginBase 子类。
+
+        自动设置 __package__ 以支持插件内部的相对导入（from .xxx import ...）。
+        """
         from sirius_chat.plugins.base import PluginBase
 
         module_name = f"_plugin_{py_file.parent.name}_{py_file.stem}"
+        # 设置包名以支持相对导入
+        package_name = f"_plugin_pkg_{py_file.parent.name}"
+
         try:
             spec = importlib.util.spec_from_file_location(module_name, py_file)
             if spec is None or spec.loader is None:
                 return None
 
             module = importlib.util.module_from_spec(spec)
+            # 启用相对导入支持
+            module.__package__ = package_name
+            # 注册包命名空间
+            if package_name not in sys.modules:
+                pkg = type(sys)(package_name)
+                pkg.__path__ = [str(py_file.parent)]  # type: ignore[attr-defined]
+                sys.modules[package_name] = pkg
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
         except Exception as exc:
@@ -180,6 +207,85 @@ class PluginLoader:
                 return attr
 
         return None
+
+    # ── 依赖安装 ──
+
+    @staticmethod
+    def _parse_dependencies_from_source(plugin_path: Path) -> list[str]:
+        """从 .py 文件 AST 中提取 _plugin_dependencies，无需导入代码。
+
+        这样可以在依赖安装之前就发现插件需要哪些库。
+        """
+        for py_file in sorted(plugin_path.glob("*.py"), key=lambda p: p.name):
+            if py_file.name.startswith("_"):
+                continue
+            try:
+                tree = ast.parse(py_file.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            if (
+                                isinstance(target, ast.Name)
+                                and target.id == "_plugin_dependencies"
+                            ):
+                                if isinstance(node.value, ast.List):
+                                    return [
+                                        elt.value
+                                        for elt in node.value.elts
+                                        if isinstance(elt, ast.Constant)
+                                        and isinstance(elt.value, str)
+                                    ]
+            except Exception:
+                pass
+        return []
+
+    @staticmethod
+    def install_dependencies(dependencies: list[str]) -> tuple[int, int]:
+        """自动安装插件依赖，优先使用 uv pip install，回退到 pip install。
+
+        Returns:
+            (成功数, 失败数)
+        """
+        if not dependencies:
+            return 0, 0
+
+        success_count = 0
+        fail_count = 0
+
+        # 检测 uv 是否可用
+        uv_available = False
+        try:
+            result = subprocess.run(
+                ["uv", "--version"], capture_output=True, text=True, timeout=5.0
+            )
+            uv_available = result.returncode == 0
+        except Exception:
+            pass
+
+        for dep in dependencies:
+            dep = dep.strip()
+            if not dep:
+                continue
+
+            if uv_available:
+                cmd = ["uv", "pip", "install", dep]
+            else:
+                cmd = [sys.executable, "-m", "pip", "install", dep]
+
+            logger.info("安装插件依赖: %s", " ".join(cmd))
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120.0)
+                if result.returncode == 0:
+                    logger.info("依赖安装成功: %s", dep)
+                    success_count += 1
+                else:
+                    logger.warning("依赖安装失败 [%s]: %s", dep, result.stderr.strip()[-200:])
+                    fail_count += 1
+            except Exception as exc:
+                logger.warning("依赖安装异常 [%s]: %s", dep, exc)
+                fail_count += 1
+
+        return success_count, fail_count
 
     @staticmethod
     def ensure_plugins_directory(plugins_dir: Path) -> None:

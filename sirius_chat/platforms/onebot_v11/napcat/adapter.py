@@ -359,6 +359,16 @@ class NapCatAdapter(BaseAdapter):
         resp = await self.call_api("get_group_member_list", {"group_id": int(group_id)})
         return resp.get("data", []) or []
 
+    async def get_group_msg_history(
+        self, group_id: str, message_seq: int | None = None, count: int = 20
+    ) -> list[dict[str, Any]]:
+        """获取群聊历史消息（OneBot v11 API）。"""
+        params: dict[str, Any] = {"group_id": int(group_id), "count": count}
+        if message_seq is not None:
+            params["message_seq"] = message_seq
+        resp = await self.call_api("get_group_msg_history", params)
+        return resp.get("data", {}).get("messages", []) or []
+
     async def get_login_info(self) -> dict[str, Any]:
         """获取登录信息。"""
         resp = await self.call_api("get_login_info", {})
@@ -418,7 +428,7 @@ class NapCatAdapter(BaseAdapter):
         if msg_type == "private":
             gid = f"private_{uid}"
 
-        nickname, card = self._extract_sender_names(event)
+        nickname, card = self.extract_sender_names(event)
 
         if msg_type == "group":
             prompt = await self._render_group_prompt(event, self_id, gid)

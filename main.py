@@ -71,7 +71,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
 
     # ── 先启动 WebUI（含 Embedding 服务），确保子进程能连上 ──
     napcat_dir = config.get("napcat_install_dir")
-    from sirius_chat.platforms.napcat_manager import NapCatManager
+    from sirius_chat.platforms.onebot_v11.napcat.manager import NapCatManager
     napcat_mgr = NapCatManager(napcat_dir) if napcat_dir else None
     webui = WebUIServer(
         persona_manager=persona_manager,
@@ -137,7 +137,7 @@ async def _cmd_webui(args: argparse.Namespace) -> None:
 
     persona_manager = PersonaManager(DATA_DIR, global_config=config)
     napcat_dir = config.get("napcat_install_dir")
-    from sirius_chat.platforms.napcat_manager import NapCatManager
+    from sirius_chat.platforms.onebot_v11.napcat.manager import NapCatManager
     napcat_mgr = NapCatManager(napcat_dir) if napcat_dir else None
     webui = WebUIServer(
         persona_manager=persona_manager,
@@ -262,7 +262,7 @@ async def _cmd_persona_start(args: argparse.Namespace) -> None:
     adapters = PersonaAdaptersConfig.load(pdir / "adapters.json")
     for a in adapters.adapters:
         if isinstance(a, NapCatAdapterConfig) and a.enabled and a.qq_number:
-            from sirius_chat.platforms.napcat_manager import NapCatManager
+            from sirius_chat.platforms.onebot_v11.napcat.manager import NapCatManager
 
             napcat_install_dir = str(config.get("napcat_install_dir", str(REPO_ROOT / "napcat")))
             napcat_mgr = NapCatManager.for_persona(

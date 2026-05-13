@@ -96,8 +96,16 @@ class HelpersMixin(_Base):
         cmd = parse_command(message.content, definition)
         if cmd is None:
             from sirius_chat.plugins.models import ArgNode
+
+            # 回退：拿 definition 中的第一个 command name，而不是 plugin_name
+            # 因为 plugin_name 和 @command 注册名可能不同
+            # （如 plugin_name="chat_analyzer" 但 @command("ca_analyze")）
+            fallback_command = plugin_name
+            if definition.commands:
+                fallback_command = definition.commands[0].name
+
             cmd = CommandAST(
-                command=plugin_name,
+                command=fallback_command,
                 raw_text=message.content,
                 kwargs={k: ArgNode(value=v, raw=str(v), type_hint="str")
                         for k, v in decision.plugin_slots.items()},
@@ -139,7 +147,7 @@ class HelpersMixin(_Base):
             plugin_name, cmd,
             group_id=group_id, user_id=user_id,
             caller_is_developer=caller_is_developer,
-            adapter=getattr(self, '_napcat_adapter', None),
+            adapter=self._get_platform_adapter(),
             engine=self,
             message_context=msg_ctx,
         )
@@ -274,6 +282,19 @@ class HelpersMixin(_Base):
             }
             for e in entries
         ]
+
+    def _get_platform_adapter(self) -> Any:
+        """从 skill_executor 桥接层获取平台适配器实例。
+
+        引擎不直接持有 adapter 引用，通过 skill_executor._bridges 桥接获取。
+        """
+        if self._skill_executor is not None:
+            bridges = getattr(self._skill_executor, "_bridges", {})
+            for bridge in bridges.values():
+                adapter = getattr(bridge, "adapter", None)
+                if adapter is not None:
+                    return adapter
+        return None
 
     def _enhance_topic_relevance(
         self,

@@ -108,8 +108,8 @@ class OutputDispatcher:
     ) -> str:
         """构建 Plugin 结果的人格化 system prompt。
 
-        该 prompt 会通过 engine._generate() 注入人格、时间、语气对齐等上下文，
-        无需手动拼接 PromptFactory 的完整人格块。
+        注入完整的人格 profile + 输出规范，确保插件 LLM 生成与人格一致。
+        与正常对话流程使用相同的 PromptFactory.build_persona_prompt 构建人格底色。
         """
         import json
 
@@ -119,25 +119,38 @@ class OutputDispatcher:
         data = result.data if result.data else {"text": result.text}
         data_json = json.dumps(data, ensure_ascii=False, indent=2)
 
-        parts: list[str] = []
-        if persona_name:
-            parts.append(f"【角色：{persona_name}】")
+        sections: list[str] = []
 
-        parts.append("\n【指令执行结果】")
-        parts.append(f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据：")
-        parts.append(data_json)
+        # ── 1. 完整人格 profile（与正常对话一致）──
+        if persona and hasattr(persona, 'build_system_prompt'):
+            sections.append(persona.build_system_prompt())
+        elif persona_name:
+            sections.append(f"你的名字是「{persona_name}」")
 
-        parts.append("\n【表达要求】")
-        parts.append("- 请以自然的人格风格向用户传达以上信息")
+        # ── 2. 输出规范（防止人格漂移）──
+        from sirius_chat.core.prompt_factory import PromptFactory
+        sections.append(PromptFactory.build_output_spec())
+
+        # ── 3. 插件执行结果 ──
+        sections.append("\n【指令执行结果】")
+        sections.append(
+            f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据："
+        )
+        sections.append(data_json)
+
+        # ── 4. 表达要求 ──
+        expression_lines: list[str] = ["\n【表达要求】"]
+        expression_lines.append("- 请以自然的人格风格向用户传达以上信息")
         if result.mood_hint:
-            parts.append(f"- 当前情绪提示：{result.mood_hint}")
+            expression_lines.append(f"- 当前情绪提示：{result.mood_hint}")
         if result.tone_override:
-            parts.append(f"- 语气要求：{result.tone_override}")
+            expression_lines.append(f"- 语气要求：{result.tone_override}")
         if definition.render.system_prompt_suffix:
-            parts.append(f"- {definition.render.system_prompt_suffix}")
-        parts.append("- 不要暴露这是'执行结果'，要像自己知道的一样自然表达")
+            expression_lines.append(f"- {definition.render.system_prompt_suffix}")
+        expression_lines.append("- 不要暴露这是'执行结果'，要像自己知道的一样自然表达")
+        sections.append("\n".join(expression_lines))
 
-        return "\n".join(parts)
+        return "\n\n".join(sections)
 
     # ── 已删除 _build_stylized_prompt，功能合并到 _build_plugin_system_prompt ──
 
