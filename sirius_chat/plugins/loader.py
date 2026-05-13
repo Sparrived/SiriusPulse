@@ -1,9 +1,9 @@
-"""Plugin 加载器 —— 扫描插件目录、校验 plugin.json、导入 Python 模块。
+"""Plugin 加载器 —— 扫描插件目录、导入 Python 模块。
 
 负责：
     1. 扫描 plugins/ 目录下的文件夹级插件包
-    2. 校验 plugin.json  Schema
-    3. 动态导入 __init__.py 中的 PluginBase 子类
+    2. 动态导入 .py 文件中的 PluginBase 子类
+    3. 从类属性 + @command 构建 PluginDefinition
     4. 处理加载错误并记录日志
 """
 
@@ -20,14 +20,6 @@ from sirius_chat.plugins.models import PluginDefinition
 
 logger = logging.getLogger(__name__)
 
-# plugin.json 必需字段
-_REQUIRED_FIELDS = {"name"}
-# plugin.json 字符串字段
-_STRING_FIELDS = {
-    "name", "display_name", "description", "version", "author",
-    "min_framework_version",
-}
-
 
 class PluginLoadError(Exception):
     """Plugin 加载错误。"""
@@ -41,7 +33,7 @@ class PluginLoadError(Exception):
 class PluginLoader:
     """Plugin 加载器。
 
-    负责从 plugins/ 目录发现、校验、导入插件包。
+    扫描目录中任意 .py 文件，导入后寻找 PluginBase 子类。
     """
 
     def __init__(self, plugins_dir: Path) -> None:
@@ -67,99 +59,116 @@ class PluginLoader:
                 continue
             if entry.name.startswith("_") or entry.name.startswith("."):
                 continue
-            # 检查是否有 plugin.json
-            if (entry / "plugin.json").exists():
+            # 检查目录下是否有 .py 文件
+            has_py = any(entry.glob("*.py"))
+            if has_py:
                 discovered.append(entry)
             else:
-                logger.debug("跳过非插件目录: %s（缺少 plugin.json）", entry.name)
+                logger.debug("跳过非插件目录: %s（无 .py 文件）", entry.name)
 
         logger.info("发现 %d 个插件目录", len(discovered))
         return discovered
 
-    def load_metadata(self, plugin_path: Path) -> dict[str, Any]:
-        """从 plugin.json 加载元数据。
+    def load_all_definitions(self) -> list[PluginDefinition]:
+        """发现并加载所有插件的 PluginDefinition。
+
+        Returns:
+            PluginDefinition 列表
+        """
+        definitions: list[PluginDefinition] = []
+        for plugin_path in self.discover():
+            try:
+                definition = self.load_definition(plugin_path)
+                if definition is not None:
+                    definitions.append(definition)
+                    logger.info("加载插件: %s v%s", definition.name, definition.version)
+            except PluginLoadError as exc:
+                logger.error("%s", exc)
+            except Exception as exc:
+                logger.error("加载插件失败 [%s]: %s", plugin_path.name, exc)
+
+        return definitions
+
+    def load_definition(self, plugin_path: Path) -> PluginDefinition | None:
+        """加载插件的 PluginDefinition。
+
+        优先从 Python 类的类属性 + @command 构建。
+        兼容旧的 plugin.json。
 
         Args:
             plugin_path: 插件文件夹路径
 
         Returns:
-            解析后的 plugin.json 字典
-
-        Raises:
-            PluginLoadError: 元数据加载或校验失败
+            PluginDefinition 实例或 None
         """
-        config_file = plugin_path / "plugin.json"
-        if not config_file.exists():
-            raise PluginLoadError(plugin_path, "缺少 plugin.json")
+        # 尝试导入 PluginBase 子类
+        plugin_cls = self.import_plugin_class(plugin_path)
+        if plugin_cls is not None:
+            return PluginDefinition.from_class(plugin_cls, source_path=plugin_path)
 
+        # 回退到 plugin.json（兼容旧格式）
+        config_file = plugin_path / "plugin.json"
+        if config_file.exists():
+            return self._load_definition_from_json(plugin_path)
+        return None
+
+    def _load_definition_from_json(self, plugin_path: Path) -> PluginDefinition:
+        """从 plugin.json 加载定义（兼容旧格式）。"""
+        config_file = plugin_path / "plugin.json"
         try:
             raw_text = config_file.read_text(encoding="utf-8")
             data = json.loads(raw_text)
         except json.JSONDecodeError as exc:
             raise PluginLoadError(plugin_path, f"plugin.json 格式错误: {exc}") from exc
-        except OSError as exc:
-            raise PluginLoadError(plugin_path, f"无法读取 plugin.json: {exc}") from exc
 
         if not isinstance(data, dict):
-            raise PluginLoadError(plugin_path, "plugin.json 必须是 JSON 对象（dict）")
+            raise PluginLoadError(plugin_path, "plugin.json 必须是 JSON 对象")
 
-        # 校验必需字段
-        missing = _REQUIRED_FIELDS - set(data.keys())
-        if missing:
-            raise PluginLoadError(plugin_path, f"缺少必需字段: {', '.join(sorted(missing))}")
-
-        # 校验字段类型
-        for field in _STRING_FIELDS:
-            if field in data and not isinstance(data[field], str):
-                raise PluginLoadError(plugin_path, f"字段 '{field}' 必须是字符串")
-
-        return data
-
-    def load_definition(self, plugin_path: Path) -> PluginDefinition:
-        """加载完整的 PluginDefinition。
-
-        Args:
-            plugin_path: 插件文件夹路径
-
-        Returns:
-            PluginDefinition 实例
-
-        Raises:
-            PluginLoadError: 加载失败
-        """
-        metadata = self.load_metadata(plugin_path)
-        return PluginDefinition.from_dict(metadata, source_path=plugin_path)
+        return PluginDefinition.from_dict(data, source_path=plugin_path)
 
     def import_plugin_class(self, plugin_path: Path) -> type | None:
-        """从插件的 __init__.py 中导入 PluginBase 子类。
+        """从插件目录的 .py 文件中导入 PluginBase 子类。
+
+        扫描所有 .py 文件（除 __init__.py），尝试找到 PluginBase 子类。
+        优先从 __init__.py 开始。
 
         Args:
             plugin_path: 插件文件夹路径
 
         Returns:
-            PluginBase 子类，如果找不到则返回 None
-
-        Raises:
-            PluginLoadError: 导入失败
+            PluginBase 子类，找不到则返回 None
         """
-        init_file = plugin_path / "__init__.py"
-        if not init_file.exists():
-            raise PluginLoadError(plugin_path, "缺少 __init__.py")
+        from sirius_chat.plugins.base import PluginBase
 
-        module_name = f"_plugin_{plugin_path.name}"
+        # 优先试 __init__.py，再试其他
+        py_files = sorted(plugin_path.glob("*.py"), key=lambda p: (p.name != "__init__.py", p.name))
+
+        for py_file in py_files:
+            if py_file.name.startswith("_"):
+                continue
+            cls = self._try_import_class(py_file)
+            if cls is not None:
+                return cls
+
+        logger.warning("插件 %s 中未找到 PluginBase 子类", plugin_path.name)
+        return None
+
+    def _try_import_class(self, py_file: Path) -> type | None:
+        """从单个 .py 文件导入，查找 PluginBase 子类。"""
+        from sirius_chat.plugins.base import PluginBase
+
+        module_name = f"_plugin_{py_file.parent.name}_{py_file.stem}"
         try:
-            spec = importlib.util.spec_from_file_location(module_name, init_file)
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
             if spec is None or spec.loader is None:
-                raise PluginLoadError(plugin_path, "无法创建模块规格")
+                return None
 
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
         except Exception as exc:
-            raise PluginLoadError(plugin_path, f"导入 __init__.py 失败: {exc}") from exc
-
-        # 查找 PluginBase 子类
-        from sirius_chat.plugins.base import PluginBase
+            logger.debug("导入 %s 失败: %s", py_file.name, exc)
+            return None
 
         for attr_name in dir(module):
             attr = getattr(module, attr_name, None)
@@ -170,29 +179,7 @@ class PluginLoader:
             ):
                 return attr
 
-        logger.warning("插件 %s 中未找到 PluginBase 子类", plugin_path.name)
         return None
-
-    def load_all_definitions(self) -> list[PluginDefinition]:
-        """发现并加载所有插件的 PluginDefinition（不导入 Python 类）。
-
-        用于快速索引构建阶段（Registry 需要先知道有哪些插件）。
-
-        Returns:
-            PluginDefinition 列表
-        """
-        definitions: list[PluginDefinition] = []
-        for plugin_path in self.discover():
-            try:
-                definition = self.load_definition(plugin_path)
-                definitions.append(definition)
-                logger.info("加载插件元数据: %s v%s", definition.name, definition.version)
-            except PluginLoadError as exc:
-                logger.error("%s", exc)
-            except Exception as exc:
-                logger.error("加载插件元数据失败 [%s]: %s", plugin_path.name, exc)
-
-        return definitions
 
     @staticmethod
     def ensure_plugins_directory(plugins_dir: Path) -> None:
@@ -208,33 +195,22 @@ _PLUGINS_README = """# plugins 目录说明
 此目录用于存放 Sirius Chat 在当前人格下的 Plugin 插件包。
 
 - 每个 Plugin 使用独立的文件夹。
-- 文件夹内必须包含 `plugin.json`（元数据）和 `__init__.py`（入口）。
-- `__init__.py` 中需要定义一个继承自 `PluginBase` 的类。
-- 文件夹名建议使用英文、数字、下划线，避免以下划线或点号开头。
+- 文件夹内至少包含一个 `.py` 文件，其中定义继承自 `PluginBase` 的类。
+- 通过类属性和 `@command` 装饰器声明插件元数据和指令。
 
 最小示例：
 
 ```python
-# plugin.json
-{
-  "name": "hello",
-  "display_name": "问候插件",
-  "version": "1.0.0",
-  "triggers": {
-    "commands": [{
-      "name": "hello",
-      "patterns": ["/hello"],
-      "pattern_type": "prefix"
-    }]
-  },
-  "render": {"mode": "direct"}
-}
-
-# __init__.py
-from sirius_chat.plugins import PluginBase, PluginContext, PluginResponse
+# hello_plugin.py
+from sirius_chat.plugins import PluginBase, PluginResponse
+from sirius_chat.plugins.decorators import command
 
 class HelloPlugin(PluginBase):
-    def execute(self, cmd):
+    _plugin_name = "hello"
+    _plugin_display_name = "问候插件"
+
+    @command("hello", patterns=["/hello"], render_mode="direct")
+    def hello(self) -> PluginResponse:
         return PluginResponse.ok(text="你好呀！")
 ```
 """

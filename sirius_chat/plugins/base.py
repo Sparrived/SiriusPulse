@@ -30,31 +30,35 @@ logger = logging.getLogger(__name__)
 class PluginBase:
     """Plugin 基类。
 
-    支持两种指令定义方式：
+    所有 Plugin 必须继承此类。支持两种指令定义方式：
 
-    1. 【传统方式】覆写 execute() 方法，手动从 CommandAST 提取参数：
+    1. 【传统方式】覆写 execute() 方法
+    2. 【装饰器方式】使用 @command 装饰器（推荐）
 
-        class MyPlugin(PluginBase):
-            def execute(self, cmd):
-                city = cmd.kwargs.get("city", ...)
-                return PluginResponse.ok(text=f"city={city}")
-
-    2. 【装饰器方式】使用 @command 装饰器声明式注册指令（推荐）：
-
-        from sirius_chat.plugins.decorators import command
-
-        class MyPlugin(PluginBase):
-            @command("weather", patterns=["/天气"], render_mode="llm")
-            async def query_weather(self, city: str, unit: str = "celsius") -> PluginResponse:
-                data = await fetch_weather(city, unit)
-                return PluginResponse.ok(data=data)
-
-    装饰器方式的优势：
-    - 每个指令一个独立方法，职责清晰
-    - 类型注解自动用于参数校验（str/int/float/bool）
-    - 参数默认值自动成为可选参数的缺省值
-    - 框架自动按 cmd.command 路由到对应方法
+    类属性（在子类上覆写以声明元数据）：
+        _plugin_name: str           — 内部标识名（必需）
+        _plugin_display_name: str   — 显示名称
+        _plugin_description: str    — 描述
+        _plugin_version: str        — 版本号
+        _plugin_author: str         — 作者
+        _plugin_events: list[dict]  — 事件触发器定义
+        _plugin_permissions: dict   — 权限配置
+        _plugin_nl_examples: list[str] — 自然语言触发示例
+        _plugin_nl_slots: dict      — 自然语言槽位定义
+        _plugin_dependencies: list[str] — pip 依赖
     """
+
+    # ── 类级别配置（子类覆写） ──
+    _plugin_name: str = ""
+    _plugin_display_name: str = ""
+    _plugin_description: str = ""
+    _plugin_version: str = "1.0.0"
+    _plugin_author: str = ""
+    _plugin_events: list[dict[str, Any]] = []
+    _plugin_permissions: dict[str, Any] | None = None
+    _plugin_nl_examples: list[str] = []
+    _plugin_nl_slots: dict[str, dict[str, Any]] = {}
+    _plugin_dependencies: list[str] = []
 
     def __init__(self) -> None:
         self._ctx: "PluginContext | None" = None

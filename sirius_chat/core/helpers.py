@@ -148,6 +148,7 @@ class HelpersMixin(_Base):
         partial_replies: list[str] = []
         final_reply: str | None = None
         final_message_group: Any = None
+        is_last = False  # 防御性初始化，避免空 results 时变量未定义
         for i, result in enumerate(results):
             is_last = (i == len(results) - 1)
             if not result.success:
@@ -161,7 +162,8 @@ class HelpersMixin(_Base):
                     engine=self,
                     group_id=group_id, user_id=user_id,
                 )
-                rendered = dispatch_output.text
+                if dispatch_output.text is not None:
+                    rendered = dispatch_output.text
                 if is_last and dispatch_output.message_group is not None:
                     final_message_group = dispatch_output.message_group
             else:

@@ -243,7 +243,7 @@ class PluginDefinition:
 
     @staticmethod
     def from_dict(data: dict[str, Any], source_path: Path | None = None) -> PluginDefinition:
-        """从 plugin.json 字典构建 PluginDefinition。"""
+        """从 plugin.json 字典构建 PluginDefinition（兼容旧格式）。"""
         # 解析触发器
         commands: list[PluginCommandDef] = []
         for cmd_raw in data.get("triggers", {}).get("commands", []):
@@ -321,6 +321,74 @@ class PluginDefinition:
             render=render,
             dependencies=data.get("dependencies", []),
             resources=data.get("resources", []),
+            source_path=source_path,
+        )
+
+    @staticmethod
+    def from_class(cls: type, source_path: Path | None = None) -> PluginDefinition:
+        """从 PluginBase 子类的类属性构建 PluginDefinition。
+
+        读取子类的 _plugin_* 类属性 + @command 装饰器元数据，
+        无需 plugin.json。
+        """
+        # 指令：从 @command 装饰器读取
+        commands: list[PluginCommandDef] = []
+        # 通过实例化临时对象来发现 @command（discover_commands 需要实例）
+        try:
+            instance = cls()
+        except Exception:
+            instance = cls.__new__(cls)
+        from sirius_chat.plugins.decorators import discover_commands
+        cmd_metas = discover_commands(instance)
+        for cmd_name, meta in cmd_metas.items():
+            commands.append(PluginCommandDef(
+                name=cmd_name,
+                patterns=meta.full_patterns,
+                pattern_type=meta.pattern_type,
+                description=meta.description,
+                examples=meta.examples,
+            ))
+
+        # 事件：从 _plugin_events 类属性读取
+        events: list[PluginEventDef] = []
+        for evt_raw in getattr(cls, '_plugin_events', []) or []:
+            events.append(PluginEventDef(
+                type=evt_raw.get("type", ""),
+                cron=evt_raw.get("cron", ""),
+                interval_seconds=float(evt_raw.get("interval_seconds", 0)),
+                description=evt_raw.get("description", ""),
+            ))
+
+        # 自然语言触发
+        nl_examples = getattr(cls, '_plugin_nl_examples', []) or []
+        nl_slots = getattr(cls, '_plugin_nl_slots', {}) or {}
+        nl_def: PluginNaturalLangDef | None = None
+        if nl_examples or nl_slots:
+            nl_def = PluginNaturalLangDef(examples=list(nl_examples), slots=dict(nl_slots))
+
+        # 权限
+        perm_raw = getattr(cls, '_plugin_permissions', None) or {}
+        permissions = PluginPermissionDef(
+            developer_only=perm_raw.get("developer_only", False),
+            adapter_types=perm_raw.get("adapter_types", []),
+            group_whitelist=perm_raw.get("group_whitelist", []),
+            group_blacklist=perm_raw.get("group_blacklist", []),
+            user_whitelist=perm_raw.get("user_whitelist", []),
+            rate_limit_calls_per_minute=perm_raw.get("rate_limit", {}).get("calls_per_minute", 60),
+            rate_limit_calls_per_hour=perm_raw.get("rate_limit", {}).get("calls_per_hour", 1000),
+        )
+
+        return PluginDefinition(
+            name=getattr(cls, '_plugin_name', '') or cls.__name__,
+            display_name=getattr(cls, '_plugin_display_name', '') or '',
+            description=getattr(cls, '_plugin_description', '') or '',
+            version=getattr(cls, '_plugin_version', '') or '1.0.0',
+            author=getattr(cls, '_plugin_author', '') or '',
+            commands=commands,
+            events=events,
+            natural_language=nl_def,
+            permissions=permissions,
+            dependencies=getattr(cls, '_plugin_dependencies', []) or [],
             source_path=source_path,
         )
 
