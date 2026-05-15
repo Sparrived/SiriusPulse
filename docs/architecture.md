@@ -26,7 +26,7 @@ Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架
 | --- | --- | --- |
 | `PersonaManager` | **v1.0 推荐生产入口**：多人格生命周期管理 | 扫描人格目录、端口分配、启停调度、日志读取、监控子进程心跳 |
 | `main.py` | 统一 CLI 入口 | 无参数启动 WebUI；`run` 启动所有人格 + NapCat + WebUI；`persona` 子命令管理单个人格 |
-| `PersonaWorker` | 单个人格子进程入口 | 加载配置、创建 EngineRuntime、启动 NapCatBridge、心跳、日志归档 |
+| `PersonaWorker` | 单个人格子进程入口 | 加载配置、创建 EngineRuntime、启动 NapCatAdapter、心跳、日志归档 |
 | `EngineRuntime` | 单个人格运行时封装 | 懒加载 EmotionalGroupChatEngine、Provider 绑定、SkillBridge 注入 |
 | `EmotionalGroupChatEngine` | **v1.0 唯一引擎**：情感化群聊场景 | 四层认知架构编排、三层记忆底座、后台任务、事件流 |
 | `create_emotional_engine(...)` | Python API 直接创建引擎（兼容旧版） | 绑定 workspace provider、加载 persona、配置参数 |
@@ -45,8 +45,9 @@ Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架
 | `sirius_chat/persona_manager.py` | **v1.0 推荐生产入口**：多人格生命周期管理 | 不实现底层对话生成 |
 | `sirius_chat/persona_worker.py` | 单个人格子进程入口：加载配置、创建 EngineRuntime、心跳 | 不管理其他人格 |
 | `sirius_chat/persona_config.py` | 人格级配置模型：adapters、experience、paths | 不处理全局配置 |
-| `sirius_chat/platforms/` | NapCat 多实例管理、QQ 桥接器、EngineRuntime 封装、setup wizard | 不介入高层人格调度 |
-| `sirius_chat/webui/` | WebUI REST API + 静态页面 | 不直接操作 NapCat 进程 |
+| `sirius_chat/platforms/` | 平台适配层：`platforms/onebot_v11/napcat/`（NapCat 适配器、桥接器、协议解析、管理器）、`runtime.py`（EngineRuntime 封装）、`setup wizard` | 不介入高层人格调度 |
+| `sirius_chat/webui/` | WebUI REST API + 静态页面（含插件管理 API） | 不直接操作 NapCat 进程 |
+| `sirius_chat/plugins/` | 插件系统：`loader.py`（插件加载）、`registry.py`（插件注册表）、`executor.py`（插件执行）、`config.py`（配置管理）、`decorators.py`（@command 装饰器）、`context.py`（PluginContext）、`dispatcher.py`（响应调度）、`events.py`（事件定义） | 不负责 SKILL 执行 |
 | `sirius_chat/core/` | 编排核心：`EmotionalGroupChatEngine`（Mixin 架构：`engine_core` + `pipeline` + `prompt_factory` + `bg_tasks` + `helpers`）、意图分析、情感分析、响应策略、阈值引擎、节奏分析、事件总线、身份解析、表情包发送决策 | 不负责人格目录组织 |
 | `sirius_chat/memory/` | 基础记忆、日记记忆、用户管理、名词解释、语义记忆、上下文组装 | 不直接决定 provider 路由 |
 | `sirius_chat/providers/` | provider 协议、具体上游实现、注册表、自动路由、中间件 | 不介入高层人格生命周期 |
@@ -84,9 +85,10 @@ Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架
 
 当前人格目录支持配置与运行数据隔离：
 
-- 全局配置：`data/global_config.json`、`data/providers/provider_keys.json`、`data/adapter_port_registry.json`
+- 全局配置：`data/global_config.json`、`data/providers/provider_keys.json`、`data/adapter_port_registry.json`、`plugins/_config.json`（插件配置）
 - 人格级配置（`data/personas/{name}/`）：`persona.json`、`orchestration.json`、`adapters.json`、`experience.json`
 - 人格级运行数据（`data/personas/{name}/`）：`memory/`、`diary/`、`engine_state/`、`skill_data/`（含 `stickers/` 表情包 RAG 库）、`logs/`
+- 插件目录（`plugins/`）：插件源码、`plugin.json`（可选，元数据已迁移到类属性）、`_config.json`（插件配置持久化）
 
 ### 关键组件
 
@@ -137,3 +139,5 @@ Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架
 5. **后台层（异步）**：`_bg_diary_promoter` 检查群体变冷（heat < 0.25 且沉默 > 300s）的基础记忆归档，经 `DiaryGenerator` 生成日记并写入 `DiaryManager`；群氛围与规范学习随消息实时更新。`_bg_sticker_novelty_updater` 定期衰减表情包新鲜度，模拟人类"喜新厌旧"行为。
 
 6. **表情包学习（实时）**：当认知层检测到消息包含动画表情（`sub_type=1`）时，`_learn_sticker_from_message()` 提取表情包文件路径、构建使用情境（最近 3 条消息 + 触发消息）、生成标签，存入人格独立的 `skill_data/stickers/` RAG 库。表情包发送时机与选择由框架层在 `_execution` 阶段独立决策：基于 `EmotionState` + `IntentAnalysisV3` + `StrategyDecision` 判断是否需要发送，再通过 `StickerIndexer.search()` 检索最匹配的表情包，无需模型感知或调用 SKILL。
+
+7. **插件系统（扩展）**：在认知层和执行层之间，`PluginExecutor` 负责插件调度。插件通过 `@command` 装饰器定义指令触发器，支持前缀匹配、正则匹配、关键词匹配。插件配置存储在 `plugins/_config.json`，支持热重载和 WebUI 管理。插件权限校验失败时静默处理（不向用户发送错误消息）。插件通过 `PluginContext` 访问引擎、适配器、消息上下文等运行时资源。

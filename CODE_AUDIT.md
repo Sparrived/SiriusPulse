@@ -126,7 +126,7 @@
 | 项目 | 文件 | 状态 | 原本作用 |
 |------|------|------|----------|
 | `api_tokens_get()` / `api_persona_tokens_get()` | `webui/server.py:824-902` | **定义但从未注册到路由** | WebUI 的 Token 统计 API：展示全局和单个人格的 token 消耗趋势 |
-| `_monitor_task` | `platforms/napcat_manager.py:49` | 声明为 `asyncio.Task \| None`，**从未赋值或启动** | NapCat 实例的健康监控循环：定期检查 NapCat 进程是否存活，崩溃时自动重启 |
+| `_monitor_task` | `platforms/onebot_v11/napcat/manager.py:49` | 声明为 `asyncio.Task \| None`，**从未赋值或启动** | NapCat 实例的健康监控循环：定期检查 NapCat 进程是否存活，崩溃时自动重启 |
 | `reload_requested` flag | `persona_worker.py` | WebUI 写入，**worker 从不读取** | WebUI 热重载信号：用户点击"重载"后，PersonaWorker 检测到并重建 EngineRuntime（不停进程更新配置） |
 | `_ARCHETYPE_NAMES` | `platforms/setup_wizard.py:33` | 空列表，无实际引用 | Setup Wizard 的人格原型模板：快速创建"傲娇猫娘"、"温柔姐姐"等预设人格 |
 
@@ -251,7 +251,7 @@
 
 **原本作用**：开发测试时使用的 QQ 群号。为了方便开发调试，在没有配置 `allowed_group_ids` 时默认加入该群。
 
-**现状**：`NapCatBridge._DEFAULT_ALLOWED_GROUP_ID = "728196560"`，若 `adapters.json` 无 `allowed_group_ids` 则静默使用。
+**现状**：`NapCatAdapter._DEFAULT_ALLOWED_GROUP_ID = "728196560"`，若 `adapters.json` 无 `allowed_group_ids` 则静默使用。
 
 **评估**：硬编码开发者测试群号 `728196560` 是安全隐患。若用户未配置 `allowed_group_ids`，机器人会默认加入该群，可能导致消息泄露或意外交互。
 **建议**：**P1（近期修复）**。移除 `_DEFAULT_ALLOWED_GROUP_ID`。当 `adapters.json` 未配置 `allowed_group_ids` 时，拒绝群聊消息处理并记录 **ERROR** 级别日志（"未配置 allowed_group_ids，群聊功能已禁用"），而非静默使用默认值。

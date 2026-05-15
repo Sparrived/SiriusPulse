@@ -51,7 +51,7 @@
 - **`MultiModelConfig.to_dict()` 崩溃**：修复 copy-paste 导致的 `AttributeError`（原代码引用已删除的 `WorkspaceConfig` 字段）。
 - **删除 `UserMemoryManager`**：依赖的 `sirius_chat.memory.quality.models` 模块不存在，直接删除该管理器。
 - **`pop_reminders` 兼容性**：将 `adapter_type` 为空字符串的 reminder 视为通配符，兼容旧版 reminder。
-- **移除硬编码默认群号**：`napcat_bridge.py` 不再使用默认群 ID `728196560`。
+- **移除硬编码默认群号**：`napcat_adapter.py` 不再使用默认群 ID `728196560`。
 - **图片缓存使用内容哈希**：`MD5(url)` → `MD5(下载内容)`，避免同图不同 URL 的重复下载。
 - **Token 估算 CJK 感知**：`len(text)//4` 替换为 `estimate_tokens_heuristic`，更准确处理中英文混合文本。
 - **文档与示例修复**：`README.md` 代码示例、AGENTS.md 依赖说明、workspace-runtime.md 弃用横幅。

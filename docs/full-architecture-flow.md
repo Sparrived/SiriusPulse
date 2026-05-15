@@ -31,22 +31,20 @@ flowchart TD
         PWA["PersonaWorker<br/>--config data/personas/月白"]
         RTA["EngineRuntime"]
         EngineA["EmotionalGroupChatEngine"]
-        BridgeA["NapCatBridge<br/>adapter_type=napcat"]
-        AdapterA["NapCatAdapter<br/>OneBot v11 WS"]
+        AdapterA["NapCatAdapter<br/>platforms/onebot_v11/napcat/adapter.py"]
         PWA --> RTA --> EngineA
-        PWA --> BridgeA --> AdapterA
-        RTA --> BridgeA
+        PWA --> AdapterA
+        RTA --> AdapterA
     end
 
     subgraph PersonaB["子进程 B（人格：Sirius）"]
         PWB["PersonaWorker<br/>--config data/personas/Sirius"]
         RTB["EngineRuntime"]
         EngineB["EmotionalGroupChatEngine"]
-        BridgeB["NapCatBridge<br/>adapter_type=napcat"]
-        AdapterB["NapCatAdapter<br/>OneBot v11 WS"]
+        AdapterB["NapCatAdapter<br/>platforms/onebot_v11/napcat/adapter.py"]
         PWB --> RTB --> EngineB
-        PWB --> BridgeB --> AdapterB
-        RTB --> BridgeB
+        PWB --> AdapterB
+        RTB --> AdapterB
     end
 
     PM -->|"subprocess.Popen<br/>CREATE_NEW_CONSOLE"| PWA
@@ -122,12 +120,11 @@ flowchart TD
     A["PersonaWorker.run()"] --> B["加载配置<br/>adapters.json / experience.json /<br/>orchestration.json / persona.json"]
     B --> C["创建 EngineRuntime<br/>work_path=人格目录<br/>global_data_path=data/"]
     C --> D["启动 EngineRuntime<br/>懒加载 EmotionalGroupChatEngine<br/>启动后台任务"]
-    D --> E["为每个 enabled adapter<br/>创建 NapCatAdapter + NapCatBridge"]
-    E --> F["bridge.start()<br/>启动 _event_bus_listener"]
-    F --> G["runtime.add_skill_bridge('napcat', bridge)<br/>注入 bridge 到 SkillExecutor"]
-    G --> H["启动心跳循环<br/>每 10 秒写入 worker_status.json"]
-    H --> I["阻塞等待关闭信号"]
-    I --> J["清理：停止 bridge、关闭 adapter、停止 runtime"]
+    D --> E["为每个 enabled adapter<br/>创建 NapCatAdapter<br/>platforms/onebot_v11/napcat/adapter.py"]
+    E --> F["adapter.start()<br/>启动 WebSocket 连接"]
+    F --> G["启动心跳循环<br/>每 10 秒写入 worker_status.json"]
+    G --> H["阻塞等待关闭信号"]
+    H --> I["清理：停止 adapter、停止 runtime"]
 ```
 
 ### 3.2 子进程内的关键协作
@@ -147,7 +144,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["QQ 群消息<br/>'今天工作好累'"] --> B["NapCatAdapter<br/>OneBot v11 事件"]
-    B --> C["NapCatBridge.on_message()<br/>解析事件 → 提取内容/发送者/群号"]
+    B --> C["NapCatAdapter.on_message()<br/>解析事件 → 提取内容/发送者/群号"]
     C --> D["EngineRuntime.process_message()"]
     D --> E["EmotionalGroupChatEngine.process_message()"]
 
@@ -230,12 +227,12 @@ flowchart TD
 sequenceDiagram
     participant User as 用户
     participant QQ as QQ 群
-    participant Bridge as NapCatBridge
+    participant Adapter as NapCatAdapter
     participant Engine as EmotionalEngine
     participant LLM as Provider
 
     User->>QQ: "今天工作好累"
-    QQ->>Bridge: OneBot v11 消息事件
+    QQ->>Adapter: OneBot v11 消息事件
     Bridge->>Engine: process_message()
     Engine->>Engine: 感知层 + 认知层 + 决策层
     Engine-->>Engine: 策略 = DELAYED
@@ -309,7 +306,7 @@ sequenceDiagram
     participant Store as SkillDataStore
     participant Passive as reminder 被动任务
     participant Engine as EmotionalEngine
-    participant Bridge as NapCatBridge
+    participant Adapter as NapCatAdapter
     participant QQ as QQ 群
 
     User->>AI: "提醒我明天下午 3 点开会"
@@ -327,10 +324,10 @@ sequenceDiagram
     Passive->>Passive: LLM 生成人格化提醒
     Passive->>Passive: 放入 _pending_reminders[group_id]
 
-    Note over Bridge: 事件总线监听
-    Bridge->>Engine: pop_reminders(gid, adapter_type)
-    Engine-->>Bridge: 返回提醒消息
-    Bridge->>QQ: _send_group_text_raw()
+    Note over Adapter: 事件总线监听
+    Adapter->>Engine: pop_reminders(gid, adapter_type)
+    Engine-->>Adapter: 返回提醒消息
+    Adapter->>QQ: _send_group_text_raw()
     QQ->>User: "月白提醒：下午 3 点的会议别忘了哦~"
 ```
 
@@ -495,9 +492,9 @@ flowchart TD
 | **主进程管理** | `persona_manager.py` | 多人格生命周期：扫描、创建、删除、迁移、启停、监控 |
 | **子进程入口** | `persona_worker.py` | 单个人格运行入口：加载配置、创建 EngineRuntime、启动 Bridge、心跳 |
 | **子进程运行时** | `platforms/runtime.py` | EngineRuntime：懒加载引擎，管理 provider 和 skill bridge |
-| **平台桥接** | `platforms/napcat_bridge.py` | QQ 群聊/私聊事件处理、后台投递循环 |
-| **平台适配** | `platforms/napcat_adapter.py` | OneBot v11 WebSocket 客户端 |
-| **QQ 管理** | `platforms/napcat_manager.py` | NapCat 全局安装、多实例调度 |
+| **平台适配** | `platforms/onebot_v11/napcat/adapter.py` | NapCat 适配器（OneBot v11 WebSocket 客户端、事件处理、后台投递循环） |
+| **QQ 管理** | `platforms/onebot_v11/napcat/manager.py` | NapCat 全局安装、多实例调度 |
+| **协议解析** | `platforms/onebot_v11/protocol.py` | OneBot v11 协议解析 |
 | **认知编排** | `core/emotional_engine.py` | Mixin 架构引擎（engine_core + pipeline + prompt_factory + bg_tasks + helpers） |
 | **引擎核心** | `core/engine_core.py` | 引擎基类：__init__、公开 API、持久化、表情包系统初始化 |
 | **引擎管线** | `core/pipeline.py` | 5 阶段管线：感知→认知→决策→执行→后台更新 |
@@ -518,6 +515,7 @@ flowchart TD
 | **语义记忆** | `memory/semantic/` | 群氛围、群规范、反馈驱动的互动率追踪 |
 | **上下文组装** | `memory/context_assembler.py` | 基础记忆+日记 → OpenAI messages |
 | **Provider 层** | `providers/` | 统一请求协议、7 个平台实现、自动路由 |
+| **插件系统** | `plugins/` | 插件加载、注册表、执行器、配置管理、@command 装饰器、PluginContext、响应调度、事件定义 |
 | **SKILL 层** | `skills/` | 注册、执行、数据存储、依赖解析、内置技能、遥测；被动 SKILL 支持（BackgroundTaskSpec/TriggerSpec/SkillEngineContext） |
 | **SKILL 引擎上下文** | `core/skill_engine_context.py` | SkillEngineContextImpl：被动 SKILL 与引擎交互的适配器 |
 | **表情包系统** | `skills/sticker/` | RAG 表情包：向量索引、偏好管理、学习、反馈观察、新鲜度 |

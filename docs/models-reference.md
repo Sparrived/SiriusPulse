@@ -49,7 +49,7 @@ class Message:
     sender_type: str = "human"   # human / ai / system
 ```
 
-`Message` 是引擎处理的最小单位。平台适配器（如 `NapCatBridge`）负责把平台特定事件转换为 `Message`。
+`Message` 是引擎处理的最小单位。平台适配器（如 `NapCatAdapter`）负责把平台特定事件转换为 `Message`。
 
 ### Participant（参与者）
 

@@ -36,7 +36,7 @@
     子进程（独立控制台窗口）
     ├── PersonaWorker ── EngineRuntime ── EmotionalGroupChatEngine（Mixin 架构）
     │       │                                   └── engine_core + pipeline + prompt_factory + bg_tasks + helpers
-    │       ├── NapCatBridge ── NapCatAdapter ── OneBot v11 WS
+    │       ├── NapCatAdapter ── OneBot v11 WS
     │       ├── BasicMemoryManager + DiaryManager + SemanticMemory
     │       ├── ModelRouter
     │       └── SkillRegistry + SkillExecutor
@@ -64,7 +64,7 @@
 | `sirius_chat/persona_manager.py`          | 多人格生命周期管理                          |
 | `sirius_chat/persona_worker.py`           | 子进程入口                              |
 | `sirius_chat/persona_config.py`           | 人格级配置模型                            |
-| `sirius_chat/platforms/napcat_manager.py` | NapCat 多实例管理                       |
+| `sirius_chat/platforms/onebot_v11/napcat/manager.py` | NapCat 多实例管理                       |
 | `sirius_chat/platforms/runtime.py`        | 单人格运行时封装                           |
 | `sirius_chat/webui/server.py`             | WebUI REST API                     |
 | `sirius_chat/__init__.py`                 | 顶层公开 API 导出清单（严格 `__all__`）        |

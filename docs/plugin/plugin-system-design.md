@@ -904,7 +904,7 @@ Plugin 系统通过**两条互补路径**与现有 Pipeline 集成：
 
 | 路径 | 触发条件 | 处理位置 | 适用场景 |
 |------|---------|---------|---------|
-| **路径A：Bridge层快速拦截** | 精确指令（`/天气`、`#roll`） | `napcat_bridge._process_message()` | 零延迟，确定性指令 |
+| **路径A：Adapter层快速拦截** | 精确指令（`/天气`、`#roll`） | `napcat_adapter._process_message()` | 零延迟，确定性指令 |
 | **路径B：Cognition层融合识别** | 自然语言（"帮我查下天气"） | `_cognition()` 内部 | 口语化表达，需LLM理解 |
 
 ```mermaid
@@ -1474,7 +1474,7 @@ def _decision(self, intent: IntentAnalysisV3, emotion: EmotionState, ...):
 
 | 现有文件 | 修改内容 | 影响 |
 |---------|---------|------|
-| `napcat_bridge.py` | `_process_message()` 开头增加 Plugin 检查 | 消息处理入口 |
+| `napcat_adapter.py` | `_process_message()` 开头增加 Plugin 检查 | 消息处理入口 |
 | `engine_core.py` | 新增 `_plugin_registry`、`_plugin_executor` 字段 | 引擎状态 |
 | `prompt_factory.py` | 新增 `build_plugin_context()` 方法 | LLM 风格化 |
 | `runtime.py` | `_build_engine()` 中初始化 Plugin 运行时 | 引擎构建 |

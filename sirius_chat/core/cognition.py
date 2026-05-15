@@ -954,7 +954,7 @@ class CognitionAnalyzer:
     def _image_cache_key(path: str) -> str:
         """Extract content hash from local image cache path for stable cache keys.
 
-        NapCatBridge caches images as ``{md5_hash}{ext}`` under ``image_cache/``
+        NapCatAdapter caches images as ``{md5_hash}{ext}`` under ``image_cache/``
         or ``sticker_cache/``. The same image always gets the same hash, so we
         use the hash as the cache key regardless of the original (possibly
         transient) QQ URL.

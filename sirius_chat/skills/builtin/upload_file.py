@@ -39,7 +39,7 @@ async def run(
     """Upload a file to the current chat via NapCat.
 
     Args:
-        bridge: The NapCatBridge instance injected by SkillExecutor.
+        bridge: The NapCatAdapter instance injected by SkillExecutor.
         chat_context: Current chat context injected by SkillExecutor.
         file_path: Absolute path to a local file.
         file_name: Optional display name for the uploaded file.

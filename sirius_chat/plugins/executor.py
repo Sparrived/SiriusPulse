@@ -160,7 +160,7 @@ class PluginExecutor:
             logger.warning("Plugin %s 权限校验失败: %s", plugin_name, perm_error)
             # 权限校验失败时静默处理，不向用户发送错误消息
             # 无论是群聊还是私聊，都不产生任何输出，仅记录日志
-            return [PluginResponse(success=True, render_mode="silent")]
+            return [PluginResponse(success=False, render_mode="silent")]
 
         # ── 速率限制校验 ──
         rate_error = self._check_rate_limit(plugin_name, definition)

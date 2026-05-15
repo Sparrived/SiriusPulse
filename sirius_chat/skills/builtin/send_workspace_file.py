@@ -45,7 +45,7 @@ async def run(
     """Send a file from data/personaworkspace to the current chat via NapCat.
 
     Args:
-        bridge: The NapCatBridge instance injected by SkillExecutor.
+        bridge: The NapCatAdapter instance injected by SkillExecutor.
         chat_context: Current chat context injected by SkillExecutor.
         file_name: File path relative to data/personaworkspace.
         display_name: Optional display name for the uploaded file.

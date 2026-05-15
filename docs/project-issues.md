@@ -139,14 +139,14 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 
 **问题**：
 - 平台适配层几乎完全围绕 NapCat/QQ 设计
-- `NapCatBridge`、`NapCatAdapter`、`NapCatManager` 是核心组件
+- `NapCatAdapter`、`NapCatManager` 是核心组件（原 `NapCatBridge` 功能已整合到 `NapCatAdapter`）
 - `setup_wizard.py` 是 QQ 私聊交互式的，不具备通用性
 - 如果 NapCat 停止维护或 QQ 协议变更，整个项目受严重影响
 
 **代码位置**：`sirius_chat/platforms/`
 
 **建议**：
-- [ ] 抽象 `PlatformBridge` 基类（类似 `BaseBridge` / `BaseAdapter`），将 NapCat specifics 下沉到 `platforms/napcat/`
+- [ ] 抽象 `PlatformBridge` 基类（类似 `BaseBridge` / `BaseAdapter`），将 NapCat specifics 下沉到 `platforms/onebot_v11/napcat/`
 - [ ] 新增 `platforms/discord/`、`platforms/telegram/` 适配器作为 PoC
 - [ ] `setup_wizard` 重构为通用配置向导，支持多平台
 
@@ -168,7 +168,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 
 **建议**：
 - [ ] 为 `PersonaManager` 写集成测试（Mock `subprocess.Popen`）
-- [ ] 为 `NapCatBridge` 写 Mock WebSocket 测试
+- [ ] 为 `NapCatAdapter` 写 Mock WebSocket 测试
 - [ ] 增加"混沌测试"：模拟子进程异常退出，验证主进程是否能正确清理
 
 ### 3.2 性能基准缺失
@@ -256,7 +256,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 
 **现状**：整体覆盖率较高，但仍有盲区：
 - [ ] `persona_manager.py` 中部分函数缺少返回类型注解
-- [ ] `platforms/napcat_manager.py` 中部分内部函数未注解
+- [ ] `platforms/onebot_v11/napcat/manager.py` 中部分内部函数未注解
 
 ---
 

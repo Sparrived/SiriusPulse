@@ -37,7 +37,7 @@ async def run(
     """Send an image to the current chat via NapCat.
 
     Args:
-        bridge: The NapCatBridge instance injected by SkillExecutor.
+        bridge: The NapCatAdapter instance injected by SkillExecutor.
         chat_context: Current chat context injected by SkillExecutor.
         image_path: Absolute path to a local image or a remote URL.
         caption: Optional text caption to send before the image.

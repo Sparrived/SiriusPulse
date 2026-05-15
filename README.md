@@ -259,12 +259,24 @@ sirius_chat/
 │   ├── memory_api.py             # 记忆管理 API
 │   ├── napcat_api.py             # NapCat 管理 API
 │   ├── server_skill_api.py       # SKILL 管理 API
+│   ├── server_plugin_api.py      # 插件管理 API
 │   └── static/                   # 前端页面（16 个页面）
 ├── platforms/                    # 🔗 平台适配层
-│   ├── napcat_manager.py         # NapCat 多实例管理
-│   ├── napcat_adapter.py         # NapCat WebSocket 适配
-│   ├── napcat_bridge.py          # QQ 桥接器
-│   ├── runtime.py                # EngineRuntime 封装
+│   ├── onebot_v11/               # OneBot v11 协议支持
+│   │   ├── napcat/               # NapCat 适配器
+│   │   │   ├── manager.py        # NapCat 多实例管理
+│   │   │   └── adapter.py        # NapCat WebSocket 适配（含事件翻译）
+│   │   └── protocol.py           # OneBot v11 协议解析
+│   └── runtime.py                # EngineRuntime 封装
+├── plugins/                      # 🔌 插件系统
+│   ├── loader.py                 # 插件加载器
+│   ├── registry.py               # 插件注册表
+│   ├── executor.py               # 插件执行器
+│   ├── config.py                 # 插件配置管理（支持热重载）
+│   ├── decorators.py             # @command 装饰器
+│   ├── context.py                # PluginContext
+│   ├── dispatcher.py             # 响应调度
+│   └── events.py                 # 事件定义
 
 └── cli.py                        # 🖥️ 库内薄 CLI（已移除）
 
@@ -752,8 +764,10 @@ python -m pytest tests/test_engine.py::test_roleplay_engine_multi_human_single_a
 ### ✨ **v1.1.0 重要变更**
 - **引擎 Mixin 架构重构**：`EmotionalGroupChatEngine` 拆分为 1 基类 + 4 Mixin（`engine_core` / `pipeline` / `prompt_builders` / `bg_tasks` / `helpers`），通过多重继承组合为最终类
 - **表情包 RAG 系统**：新增 `skills/sticker/` 子系统，支持表情包向量索引、偏好管理、学习、反馈观察、新鲜度衰减；引擎层集成表情包发送决策
-- **WebUI 架构重构**：`server.py` 拆分为 `server_core.py` + 4 个 API 模块（`persona_api` / `memory_api` / `napcat_api` / `server_skill_api`）；新增 16 个管理页面
-- **NapCatBridge 事件总线模式**：从轮询模式改为事件总线监听（`_event_bus_listener`），通过 `SessionEventType` 订阅异步事件
+- **WebUI 架构重构**：`server.py` 拆分为 `server_core.py` + 5 个 API 模块（`persona_api` / `memory_api` / `napcat_api` / `server_skill_api` / `server_plugin_api`）；新增 16 个管理页面
+- **NapCatAdapter 事件总线模式**：从轮询模式改为事件总线监听，通过 `SessionEventType` 订阅异步事件
+- **平台适配层重构**：`platforms/napcat_bridge.py` 和 `platforms/napcat_adapter.py` 合并到 `platforms/onebot_v11/napcat/adapter.py`，新增 `platforms/onebot_v11/protocol.py` 处理 OneBot v11 协议解析
+- **插件系统**：新增 `plugins/` 目录，支持插件加载、注册、执行、配置管理、@command 装饰器、PluginContext、响应调度和事件定义。插件配置存储在 `plugins/_config.json`，支持热重载和 WebUI 管理
 - **ChromaDB 日记向量存储**：日记记忆系统引入 ChromaDB 作为向量存储后端，提升语义检索质量
 - **GlossaryManager 人格级隔离**：名词解释支持按人格隔离，提供迁移工具
 - **Reminder 多选星期**：提醒系统支持 weekly 模式多选星期几（`weekdays: [0,2,4]`）

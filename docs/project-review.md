@@ -265,7 +265,7 @@ class PlatformBridge(ABC):
     async def receive_message(self) -> AsyncIterator[IncomingMessage]: ...
 ```
 
-将 NapCat specifics 下沉到 `platforms/napcat/`，为多平台支持打下基础。
+将 NapCat specifics 下沉到 `platforms/onebot_v11/napcat/`，为多平台支持打下基础。
 
 ### 3.2 性能优化
 
@@ -289,7 +289,7 @@ class PlatformBridge(ABC):
 | 场景                     | 测试方式            | 优先级 |
 | ---------------------- | --------------- | --- |
 | PersonaManager 启动/停止   | Mock subprocess | P1  |
-| NapCatBridge WebSocket | Mock WebSocket  | P1  |
+| NapCatAdapter WebSocket | Mock WebSocket  | P1  |
 | 端口分配冲突                 | 模拟并发请求          | P1  |
 | 子进程崩溃恢复                | 模拟进程异常退出        | P2  |
 | 多人格并发消息处理              | 压力测试            | P2  |

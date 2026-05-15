@@ -2,7 +2,7 @@
 
 职责：
 - 加载人格级配置（persona.json / orchestration.json / adapters.json / experience.json）
-- 创建 EngineRuntime + NapCatBridge + NapCatAdapter
+- 创建 EngineRuntime + NapCatAdapter
 - 运行事件循环，定期写入心跳
 - 响应 SIGTERM 优雅退出
 

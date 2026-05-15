@@ -22,7 +22,7 @@ QQ 进程 ←──注入── NapCat (DLL/Hook)
     │
     └── OneBot v11 正向 WS ←─── NapCatAdapter (WS 客户端)
                                     │
-                                    ├── 事件回调 ──► NapCatBridge
+                                    ├── 事件回调 ──► 事件翻译层
                                     │                      │
                                     │                      ├── 渲染 prompt
                                     │                      ├── 图片缓存
@@ -94,7 +94,7 @@ napcat/                          # 全局安装目录（共享）
 
 ## NapCatAdapter（OneBot v11 WebSocket 客户端）
 
-**定位**：轻量级、自动重连的 OneBot v11 协议客户端。
+**定位**：轻量级、自动重连的 OneBot v11 协议客户端，位于 `platforms/onebot_v11/napcat/adapter.py`。
 
 ### 核心能力
 
@@ -129,9 +129,9 @@ connect()
 
 ---
 
-## NapCatBridge（QQ ↔ 引擎桥接器）
+## 事件翻译层（QQ ↔ 引擎桥接）
 
-**定位**：翻译层。把 OneBot 事件翻译成引擎能理解的 `Message`/`Participant`，把引擎回复翻译成 QQ 消息发出去。
+**定位**：翻译层。把 OneBot 事件翻译成引擎能理解的 `Message`/`Participant`，把引擎回复翻译成 QQ 消息发出去。此功能已集成到 `NapCatAdapter` 中，位于 `platforms/onebot_v11/napcat/adapter.py`。
 
 ### 核心能力
 
@@ -158,7 +158,7 @@ connect()
 
 ### 后台投递循环（事件总线模式）
 
-NapCatBridge 通过订阅引擎事件总线接收异步事件，而非轮询：
+NapCatAdapter 通过订阅引擎事件总线接收异步事件，而非轮询：
 
 ```python
 async for event in self.runtime.engine.event_bus.subscribe():
@@ -246,11 +246,11 @@ async for event in self.runtime.engine.event_bus.subscribe():
 ## 模块交互
 
 ```
-NapCatManager              NapCatAdapter              NapCatBridge
-     │                           │                          │
-     │ install/configure/start   │ connect/call_api         │ _on_event / _process_message
-     │                           │                          │
-     └───────────────────────────┴──────────────────────────┘
+NapCatManager              NapCatAdapter
+     │                           │
+     │ install/configure/start   │ connect/call_api / _on_event / _process_message
+     │                           │
+     └───────────────────────────┘
                                     │
                                     └── EngineRuntime (.engine)
                                             └── EmotionalGroupChatEngine
@@ -259,6 +259,5 @@ NapCatManager              NapCatAdapter              NapCatBridge
 | 模块 | 向上游提供 | 向下游消费 |
 |------|-----------|-----------|
 | **NapCatManager** | 进程生命周期、配置生成 | GitHub Release、QQ 进程 |
-| **NapCatAdapter** | WS 连接、API 调用、事件分发 | NapCat 的 OneBot v11 WS |
-| **NapCatBridge** | 事件翻译、prompt 渲染、图片缓存、后台投递 | NapCatAdapter、EngineRuntime |
+| **NapCatAdapter** | WS 连接、API 调用、事件分发、事件翻译、prompt 渲染、图片缓存、后台投递 | NapCat 的 OneBot v11 WS |
 | **EngineRuntime** | 懒加载引擎、provider 装配、skill 注入 | PersonaStore、ProviderRegistry、SkillRegistry |

@@ -403,7 +403,7 @@ record = indexer.search(
     similarity_threshold=0.5,
     scene_query=scene_query,
 )
-# 3. 通过 NapCatBridge 发送
+# 3. 通过 NapCatAdapter 发送
 msg = [{"type": "image", "data": {"file": str(file_path), "sub_type": "1"}}]
 await adapter.send_group_msg(group_id, msg)
 # 4. 记录使用并启动反馈观察
