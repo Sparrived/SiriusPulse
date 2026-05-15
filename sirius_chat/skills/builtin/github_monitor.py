@@ -495,7 +495,7 @@ async def _take_screenshot(url: str, store: Any) -> str | None:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 # 等待页面渲染完成
                 await asyncio.sleep(2)
-                await page.screenshot(path=str(output_path), full_page=False)
+                await page.screenshot(path=str(output_path), full_page=True)
                 await context.close()
                 logger.info("github_monitor: 截图已保存 → %s", output_path)
                 return str(output_path)
@@ -568,11 +568,14 @@ async def _generate_notification_text(
 
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_content}]
 
+        # 使用第一个活跃群作为 generate_text 的 group_id（仅用于 token 统计/路由）
+        active_groups = ctx.get_active_groups()
+        group_id = active_groups[0] if active_groups else "github_monitor"
+
         raw_reply = await ctx.generate_text(
             system_prompt,
             messages,
-            # 使用第一个活跃群作为 generate_text 的 group_id（仅用于 token 统计/路由）
-            ctx.get_active_groups()[0] if ctx.get_active_groups() else "github_monitor",
+            group_id,
             task_name="github_monitor_notify",
         )
 
