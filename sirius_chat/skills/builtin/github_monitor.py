@@ -40,6 +40,7 @@ from typing import Any
 
 from sirius_chat.github import GitHubWebhookServer, fetch_repo_events
 from sirius_chat.github.client import GitHubClient
+from sirius_chat.github.event_bridge import notify_issue_opened, notify_pr_event
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +313,27 @@ async def _poll_github_events(ctx: Any) -> None:
                     len(new_events),
                 )
                 continue
+
+            # 通过 event_bridge 通知插件（coding_agent 等）
+            for event in new_events:
+                etype = event.get("type", "")
+                if etype == "IssuesEvent":
+                    payload = event.get("payload", {}) or {}
+                    if payload.get("action") == "opened":
+                        await notify_issue_opened(
+                            {"action": "opened", "issue": payload.get("issue", {}),
+                             "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                            f"{owner}/{repo}",
+                        )
+                elif etype == "PullRequestEvent":
+                    payload = event.get("payload", {}) or {}
+                    if payload.get("action") in ("opened", "synchronize"):
+                        await notify_pr_event(
+                            {"action": payload.get("action"), "pull_request": payload.get("pull_request", {}),
+                             "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                            f"{owner}/{repo}",
+                            payload.get("action", ""),
+                        )
 
             # 提取事件信息并按规范 URL 分组合并
             # 同一 Issue/PR/Release 页面上的多个事件合并为一次通知，
@@ -868,6 +890,12 @@ async def _handle_webhook_event(event_type: str, body: dict[str, Any]) -> None:
         return
 
     repo_name = event_info["repo"]
+
+    # 通知 event_bridge（供 coding_agent 等插件消费）
+    if event_type == "issues" and body.get("action") == "opened":
+        asyncio.create_task(notify_issue_opened(body, repo_name))
+    elif event_type == "pull_request" and body.get("action") in ("opened", "synchronize"):
+        asyncio.create_task(notify_pr_event(body, repo_name, body.get("action", "")))
 
     # 查找该仓库的 target_groups
     repos: list[dict[str, Any]] = list(store.get("repos", []))
