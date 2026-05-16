@@ -254,6 +254,19 @@ class EngineRuntime:
         # 同时直接存储在引擎上，方便 plugin 直接取用
         self._engine._adapter = bridge
 
+        # 将 adapter 注入到所有已加载 Plugin 实例的 ctx 中
+        # 定时任务（如 chat_analyzer 的每日分析）需要 adapter 来调用平台 API
+        plugin_registry = getattr(self._engine, "_plugin_registry", None)
+        if plugin_registry is not None:
+            count = 0
+            for name in list(plugin_registry.plugin_names):
+                instance = plugin_registry.get_instance(name)
+                if instance is not None and hasattr(instance, '_ctx') and instance._ctx is not None:
+                    instance._ctx.adapter = bridge
+                    count += 1
+            if count > 0:
+                LOG.info("平台 adapter 已注入 %d 个 Plugin 实例", count)
+
     def _setup_plugin_runtime(self, engine: EmotionalGroupChatEngine) -> None:
         """初始化 Plugin 系统：加载插件、注册、注入到引擎。
 
