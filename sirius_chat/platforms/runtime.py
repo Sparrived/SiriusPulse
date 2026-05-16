@@ -323,7 +323,7 @@ class EngineRuntime:
             return
 
         # 创建执行器和调度器
-        executor = PluginExecutor(registry, persona_data_path=persona_data_path)
+        executor = PluginExecutor(registry, persona_data_path=persona_data_path, engine=engine)
         dispatcher = OutputDispatcher()
 
         # 实例化所有 Plugin

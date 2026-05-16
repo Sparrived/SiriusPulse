@@ -35,12 +35,20 @@ class PluginExecutor:
         *,
         persona_data_path: Path | None = None,
         default_execution_timeout: float = 30.0,
+        engine: Any = None,
+        adapter: Any = None,
     ) -> None:
         self._registry = registry
         self._persona_data_path = persona_data_path or Path(".")
         self._default_timeout = default_execution_timeout
+        self._engine = engine
+        self._adapter = adapter
         # 速率限制状态：{plugin_name: {minute_calls: [(timestamp, ...)], hour_calls: [(timestamp, ...)]}}
         self._rate_state: dict[str, dict[str, Any]] = {}
+
+    def set_adapter(self, adapter: Any) -> None:
+        """运行时注入平台 adapter（在 NapCat 连接后调用）。"""
+        self._adapter = adapter
 
     # ── Plugin 生命周期 ──
 
@@ -81,6 +89,8 @@ class PluginExecutor:
             plugin_name=definition.name,
             data_store=data_store,
             config=config,
+            engine=self._engine,
+            adapter=self._adapter,
         )
         instance._setup(definition.name, ctx)
         if definition.source_path:
