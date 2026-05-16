@@ -82,6 +82,7 @@ from sirius_chat.webui.server_plugin_api import (
     api_plugin_setting_post,
     api_plugin_setting_delete,
     api_plugins_reload,
+    api_plugin_monitor_repos_get,
 )
 
 
@@ -254,6 +255,9 @@ class WebUIServer(_WebUIServer):
 
     async def api_plugins_reload(self, request):
         return await api_plugins_reload(request, self.persona_manager)
+
+    async def api_plugin_monitor_repos_get(self, request):
+        return await api_plugin_monitor_repos_get(request, self.persona_manager)
 
     # ─── Skill 管理 API 代理方法 ──────────────────────────
     # 这些方法将请求转发到 server_skill_api 模块，保持路由注册简洁

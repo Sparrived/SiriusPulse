@@ -120,6 +120,7 @@ class WebUIServer:
         async def api_plugin_setting_post(self, request: web.Request) -> web.Response: ...
         async def api_plugin_setting_delete(self, request: web.Request) -> web.Response: ...
         async def api_plugins_reload(self, request: web.Request) -> web.Response: ...
+        async def api_plugin_monitor_repos_get(self, request: web.Request) -> web.Response: ...
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
@@ -213,6 +214,7 @@ class WebUIServer:
         self.app.router.add_post("/api/plugins/{plugin_name}/settings/{key}", self.api_plugin_setting_post)
         self.app.router.add_delete("/api/plugins/{plugin_name}/settings/{key}", self.api_plugin_setting_delete)
         self.app.router.add_post("/api/plugins/reload", self.api_plugins_reload)
+        self.app.router.add_get("/api/plugins/monitor_repos", self.api_plugin_monitor_repos_get)
 
     # ─── 生命周期 ─────────────────────────────────────────
 

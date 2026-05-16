@@ -1575,6 +1575,17 @@ async function loadPluginConfigForm(name, settings, parameters) {
   console.log('loadPluginConfigForm called with:', { name, settings, parameters });
   console.log('settings JSON:', JSON.stringify(settings));
   console.log('settings keys:', settings ? Object.keys(settings) : 'null');
+
+  // 预取 github_monitor 仓库列表（如 active_repos 参数存在）
+  let repoOptions = null;
+  if ((parameters || []).some(p => p.name === 'active_repos')) {
+    try {
+      const reposRes = await get('/plugins/monitor_repos');
+      repoOptions = reposRes.repos || [];
+    } catch (e) {
+      console.warn('获取 monitor 仓库列表失败', e);
+    }
+  }
   
   try {
     const cfg = await get(`/plugins/${name}/config`);
@@ -1606,11 +1617,9 @@ async function loadPluginConfigForm(name, settings, parameters) {
   console.log('settings check:', settings, 'keys:', settings ? Object.keys(settings) : 'null');
   
   if (Object.keys(settings).length > 0) {
-    // 有已保存的配置
     settingsContainer.style.display = 'block';
-    settingsForm.innerHTML = renderPluginSettingsForm(settings, parameters);
+    settingsForm.innerHTML = renderPluginSettingsForm(settings, parameters, repoOptions);
   } else if ((parameters || []).length > 0) {
-    // 从未保存过配置，但插件声明了参数 → 用默认值渲染表单
     const defaultSettings = {};
     parameters.forEach(p => {
       if (p.default !== undefined && p.default !== null) {
@@ -1618,14 +1627,14 @@ async function loadPluginConfigForm(name, settings, parameters) {
       }
     });
     settingsContainer.style.display = 'block';
-    settingsForm.innerHTML = renderPluginSettingsForm(defaultSettings, parameters);
+    settingsForm.innerHTML = renderPluginSettingsForm(defaultSettings, parameters, repoOptions);
   } else {
     settingsContainer.style.display = 'none';
     settingsForm.innerHTML = '';
   }
 }
 
-function renderPluginSettingsForm(settings, parameters) {
+function renderPluginSettingsForm(settings, parameters, repoOptions) {
   // 根据参数定义和当前设置渲染表单
   const knownParams = new Map();
   (parameters || []).forEach(p => knownParams.set(p.name, p));
@@ -1644,6 +1653,31 @@ function renderPluginSettingsForm(settings, parameters) {
     const type = param.type || 'str';
     const desc = param.description || '';
     const defaultVal = param.default;
+    
+    // active_repos 特殊处理：渲染为 github_monitor 仓库复选框
+    if (key === 'active_repos' && repoOptions && repoOptions.length > 0) {
+      const selectedRepos = Array.isArray(value) ? value : [];
+      const selectedSet = new Set(selectedRepos);
+      const checkboxes = repoOptions.map(repo => {
+        const checked = selectedSet.has(repo) ? ' checked' : '';
+        return `
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 0;font-size:13px">
+            <input type="checkbox" data-repo-check="${repo}"${checked} 
+              onchange="_onActiveRepoChange()">
+            <span>${repo}</span>
+          </label>
+        `;
+      }).join('');
+      fields.push(`
+        <div class="form-group" style="margin-bottom:12px">
+          <label style="font-weight:600;margin-bottom:6px;display:block">active_repos <span style="color:var(--text-3);font-size:11px">${desc}</span></label>
+          <div id="activeReposCheckboxes" style="max-height:200px;overflow-y:auto;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:8px 12px">
+            ${checkboxes || '<span style="color:var(--text-2);font-size:12px">无可用仓库</span>'}
+          </div>
+        </div>
+      `);
+      continue;
+    }
     
     if (type === 'boolean') {
       fields.push(`
@@ -1806,15 +1840,17 @@ function removePluginListItem(key, index) {
     }
   });
   if (found) found.remove();
-  // Re-index
   container.querySelectorAll('[data-list-key]').forEach((inp, i) => {
     inp.setAttribute('data-list-index', i);
   });
-  // Update remove buttons onclick
   const buttons = container.querySelectorAll('button');
   buttons.forEach((btn, i) => {
     btn.setAttribute('onclick', `removePluginListItem('${key}', ${i})`);
   });
+}
+
+function _onActiveRepoChange() {
+  // checked state is collected on save, no need for live tracking
 }
 
 async function savePluginConfig() {
@@ -1862,6 +1898,16 @@ async function savePluginConfig() {
     });
     settingsBody[key] = values;
   });
+
+  // 收集 active_repos 复选项
+  const repoChecks = document.querySelectorAll('[data-repo-check]');
+  if (repoChecks.length > 0) {
+    const checkedRepos = [];
+    repoChecks.forEach(cb => {
+      if (cb.checked) checkedRepos.push(cb.getAttribute('data-repo-check'));
+    });
+    settingsBody['active_repos'] = checkedRepos;
+  }
   
   try {
     // 保存权限配置

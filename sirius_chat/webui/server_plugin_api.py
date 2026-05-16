@@ -104,6 +104,39 @@ async def api_plugins_get(request: web.Request, manager: Any) -> web.Response:
         return _json_response({"error": str(exc)}, 500)
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# API: github_monitor 仓库列表（供插件表单 active_repos 复用）
+# ═══════════════════════════════════════════════════════════════════════
+
+async def api_plugin_monitor_repos_get(request: web.Request, manager: Any) -> web.Response:
+    """GET /api/plugins/monitor_repos — 获取 github_monitor 的仓库列表。"""
+    import json as _json
+    from pathlib import Path as _Path
+
+    data_path = _Path(manager.data_path)
+    repo_names: list[str] = []
+
+    for persona_dir in sorted(data_path.glob("personas/*")):
+        if not persona_dir.is_dir():
+            continue
+        monitor_path = persona_dir / "skill_data" / "github_monitor.json"
+        if not monitor_path.exists():
+            continue
+        try:
+            raw = _json.loads(monitor_path.read_text(encoding="utf-8"))
+            repos_data = raw.get("repos", [])
+            if isinstance(repos_data, list):
+                for r in repos_data:
+                    owner = str(r.get("owner", "")).strip()
+                    repo = str(r.get("repo", "")).strip()
+                    if owner and repo:
+                        repo_names.append(f"{owner}/{repo}")
+        except Exception:
+            continue
+
+    return _json_response({"repos": repo_names})
+
+
 def _find_source_file(plugin_path: Path | None) -> str | None:
     """查找插件目录下的主 .py 文件，返回文件名。"""
     if plugin_path is None or not plugin_path.exists():
