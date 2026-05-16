@@ -480,11 +480,12 @@ def _extract_event_info(event: dict[str, Any]) -> dict[str, Any]:
         html_url = payload.get("compare", "") or f"https://github.com/{repo_name}"
         canonical_url = _clean_canonical_url(html_url)
 
-    # 截图 URL：PR 类事件截 /files 页面（可直接看到变更 diff）
+    # 截图 URL：PR 事件截 /files diff 页，Push 截 compare 页，其余截各自页面
     if etype in ("PullRequestEvent", "PullRequestReviewCommentEvent"):
         screenshot_url = html_url + "/files" if html_url else ""
-    elif etype == "PushEvent" and payload.get("compare"):
-        screenshot_url = payload.get("compare", "")
+    elif etype == "PushEvent":
+        # html_url 已优先使用 compare URL，直接用即可
+        screenshot_url = html_url
     else:
         screenshot_url = html_url
 
