@@ -71,6 +71,7 @@ class EngineProxy:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        json_mode: bool = False,
     ) -> str:
         """直接调用 LLM provider，绕过引擎管线，但保留 token 用量追踪。
 
@@ -146,6 +147,7 @@ class EngineProxy:
             max_tokens=max_tokens,
             timeout_seconds=60.0,
             purpose=task_name,
+            response_format={"type": "json_object"} if json_mode else None,
         )
 
         # 5. 估算输入 token

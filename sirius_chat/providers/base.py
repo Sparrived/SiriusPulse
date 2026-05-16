@@ -36,6 +36,7 @@ class GenerationRequest:
     max_tokens: int = 512
     timeout_seconds: float | None = None
     purpose: str = "chat_main"
+    response_format: dict[str, object] | None = None
 
 
 def estimate_generation_request_input_tokens(request: GenerationRequest) -> int:
@@ -135,6 +136,8 @@ def build_chat_completion_payload(
             *request.messages,
         ],
     }
+    if request.response_format is not None:
+        payload["response_format"] = request.response_format
     payload.update(_build_thinking_disabled_defaults(provider_name))
     return payload
 
