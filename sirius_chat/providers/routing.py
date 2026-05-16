@@ -326,6 +326,31 @@ def merge_provider_sources(
     return merged
 
 
+def _create_provider_instance(config: ProviderConfig) -> LLMProvider:
+    provider_type = config.provider_type
+    if provider_type in _ALIYUN_BAILIAN_PROVIDER_TYPES:
+        return AliyunBailianProvider(
+            api_key=config.api_key,
+            base_url=config.base_url or "https://dashscope.aliyuncs.com/compatible-mode",
+        )
+    if provider_type in _BIGMODEL_PROVIDER_TYPES:
+        return BigModelProvider(
+            api_key=config.api_key,
+            base_url=config.base_url or "https://open.bigmodel.cn/api/paas/v4",
+        )
+    if provider_type in _SILICONFLOW_PROVIDER_TYPES:
+        return SiliconFlowProvider(api_key=config.api_key)
+    if provider_type in _DEEPSEEK_PROVIDER_TYPES:
+        return DeepSeekProvider(api_key=config.api_key)
+    if provider_type in _VOLCENGINE_ARK_PROVIDER_TYPES:
+        return VolcengineArkProvider(api_key=config.api_key)
+    if provider_type in _YTEA_PROVIDER_TYPES:
+        return YTeaProvider(api_key=config.api_key)
+    if provider_type in _OPENAI_PROVIDER_TYPES:
+        return OpenAICompatibleProvider(api_key=config.api_key, base_url=config.base_url or "https://api.openai.com")
+    raise RuntimeError(f"不支持的提供商类型：{provider_type}")
+
+
 class AutoRoutingProvider(AsyncLLMProvider):
     """Choose a configured provider automatically on each generation request."""
 
@@ -343,27 +368,7 @@ class AutoRoutingProvider(AsyncLLMProvider):
         return bool(expected) and model_stripped == expected
 
     def _create_provider(self, config: ProviderConfig) -> LLMProvider:
-        if config.provider_type in _ALIYUN_BAILIAN_PROVIDER_TYPES:
-            return AliyunBailianProvider(
-                api_key=config.api_key,
-                base_url=config.base_url or "https://dashscope.aliyuncs.com/compatible-mode",
-            )
-        if config.provider_type in _BIGMODEL_PROVIDER_TYPES:
-            return BigModelProvider(
-                api_key=config.api_key,
-                base_url=config.base_url or "https://open.bigmodel.cn/api/paas/v4",
-            )
-        if config.provider_type in _SILICONFLOW_PROVIDER_TYPES:
-            return SiliconFlowProvider(api_key=config.api_key)
-        if config.provider_type in _DEEPSEEK_PROVIDER_TYPES:
-            return DeepSeekProvider(api_key=config.api_key)
-        if config.provider_type in _VOLCENGINE_ARK_PROVIDER_TYPES:
-            return VolcengineArkProvider(api_key=config.api_key)
-        if config.provider_type in _YTEA_PROVIDER_TYPES:
-            return YTeaProvider(api_key=config.api_key)
-        if config.provider_type in _OPENAI_PROVIDER_TYPES:
-            return OpenAICompatibleProvider(api_key=config.api_key, base_url=config.base_url or "https://api.openai.com")
-        raise RuntimeError(f"不支持的提供商类型：{config.provider_type}")
+        return _create_provider_instance(config)
 
     def _pick_provider(self, model: str) -> tuple[ProviderConfig, str]:
         if not self._providers:
@@ -420,25 +425,15 @@ async def probe_provider_availability(
 
 def _create_provider_from_config(config: ProviderConfig) -> LLMProvider:
     provider_type = ensure_provider_platform_supported(config.provider_type)
-    if provider_type in _ALIYUN_BAILIAN_PROVIDER_TYPES:
-        return AliyunBailianProvider(
-            api_key=config.api_key,
-            base_url=config.base_url or "https://dashscope.aliyuncs.com/compatible-mode",
-        )
-    if provider_type in _BIGMODEL_PROVIDER_TYPES:
-        return BigModelProvider(
-            api_key=config.api_key,
-            base_url=config.base_url or "https://open.bigmodel.cn/api/paas/v4",
-        )
-    if provider_type in _SILICONFLOW_PROVIDER_TYPES:
-        return SiliconFlowProvider(api_key=config.api_key)
-    if provider_type in _DEEPSEEK_PROVIDER_TYPES:
-        return DeepSeekProvider(api_key=config.api_key)
-    if provider_type in _VOLCENGINE_ARK_PROVIDER_TYPES:
-        return VolcengineArkProvider(api_key=config.api_key)
-    if provider_type in _YTEA_PROVIDER_TYPES:
-        return YTeaProvider(api_key=config.api_key)
-    return OpenAICompatibleProvider(api_key=config.api_key, base_url=config.base_url or "https://api.openai.com")
+    config = ProviderConfig(
+        provider_type=provider_type,
+        api_key=config.api_key,
+        base_url=config.base_url,
+        healthcheck_model=config.healthcheck_model,
+        enabled=config.enabled,
+        models=config.models,
+    )
+    return _create_provider_instance(config)
 
 
 async def run_provider_detection_flow(
