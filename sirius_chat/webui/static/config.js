@@ -1782,11 +1782,39 @@ function renderPluginScheduleList(key) {
 }
 
 function addPluginListItem(key) {
-  console.log('addPluginListItem called for:', key);
+  const container = document.getElementById('pluginList_' + key);
+  if (!container) return;
+  const idx = container.querySelectorAll('[data-list-key]').length;
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:4px;margin-bottom:4px';
+  div.innerHTML = `
+    <input type="text" data-list-key="${key}" data-list-index="${idx}"
+      style="background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;flex:1">
+    <button class="btn small" onclick="removePluginListItem('${key}', ${idx})" style="padding:2px 8px">✕</button>
+  `;
+  container.appendChild(div);
 }
 
 function removePluginListItem(key, index) {
-  console.log('removePluginListItem called for:', key, index);
+  const container = document.getElementById('pluginList_' + key);
+  if (!container) return;
+  const inputs = container.querySelectorAll('[data-list-key]');
+  let found = null;
+  inputs.forEach(inp => {
+    if (parseInt(inp.getAttribute('data-list-index')) === index) {
+      found = inp.parentElement;
+    }
+  });
+  if (found) found.remove();
+  // Re-index
+  container.querySelectorAll('[data-list-key]').forEach((inp, i) => {
+    inp.setAttribute('data-list-index', i);
+  });
+  // Update remove buttons onclick
+  const buttons = container.querySelectorAll('button');
+  buttons.forEach((btn, i) => {
+    btn.setAttribute('onclick', `removePluginListItem('${key}', ${i})`);
+  });
 }
 
 async function savePluginConfig() {
@@ -1820,6 +1848,19 @@ async function savePluginConfig() {
     } else {
       settingsBody[key] = input.value;
     }
+  });
+
+  // 收集 list 类型配置（data-list-key 输入框）
+  const listKeys = new Set();
+  document.querySelectorAll('[data-list-key]').forEach(inp => {
+    listKeys.add(inp.getAttribute('data-list-key'));
+  });
+  listKeys.forEach(key => {
+    const values = [];
+    document.querySelectorAll(`[data-list-key="${key}"]`).forEach(inp => {
+      if (inp.value.trim()) values.push(inp.value.trim());
+    });
+    settingsBody[key] = values;
   });
   
   try {
