@@ -1605,11 +1605,20 @@ async function loadPluginConfigForm(name, settings, parameters) {
   console.log('_pluginScheduleData:', _pluginScheduleData);
   console.log('settings check:', settings, 'keys:', settings ? Object.keys(settings) : 'null');
   
-  if (settings && Object.keys(settings).length > 0) {
+  if (Object.keys(settings).length > 0) {
+    // 有已保存的配置
     settingsContainer.style.display = 'block';
-    const rendered = renderPluginSettingsForm(settings, parameters);
-    console.log('rendered form:', rendered);
-    settingsForm.innerHTML = rendered;
+    settingsForm.innerHTML = renderPluginSettingsForm(settings, parameters);
+  } else if ((parameters || []).length > 0) {
+    // 从未保存过配置，但插件声明了参数 → 用默认值渲染表单
+    const defaultSettings = {};
+    parameters.forEach(p => {
+      if (p.default !== undefined && p.default !== null) {
+        defaultSettings[p.name] = p.default;
+      }
+    });
+    settingsContainer.style.display = 'block';
+    settingsForm.innerHTML = renderPluginSettingsForm(defaultSettings, parameters);
   } else {
     settingsContainer.style.display = 'none';
     settingsForm.innerHTML = '';
