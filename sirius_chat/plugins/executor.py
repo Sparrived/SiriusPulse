@@ -69,13 +69,18 @@ class PluginExecutor:
 
         # 创建上下文
         data_store = PluginDataStore(self._persona_data_path, definition.name) if self._persona_data_path else None
+        config = {
+            "plugin_path": str(definition.source_path) if definition.source_path else "",
+            "render_mode": definition.render.mode,
+        }
+        # 注入用户在 WebUI 中配置的自定义 settings
+        user_settings = getattr(definition, "user_settings", None)
+        if isinstance(user_settings, dict):
+            config.update(user_settings)
         ctx = PluginContext.create(
             plugin_name=definition.name,
             data_store=data_store,
-            config={
-                "plugin_path": str(definition.source_path) if definition.source_path else "",
-                "render_mode": definition.render.mode,
-            },
+            config=config,
         )
         instance._setup(definition.name, ctx)
         if definition.source_path:

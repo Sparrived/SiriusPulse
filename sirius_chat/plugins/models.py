@@ -365,9 +365,20 @@ class PluginDefinition:
         if nl_examples or nl_slots:
             nl_def = PluginNaturalLangDef(examples=list(nl_examples), slots=dict(nl_slots))
 
-        # 参数：从 NL slots 构建（也可由 from_json 的 parameters 覆盖）
+        # 参数：从 _plugin_parameters 类属性读取（优先于 NL slots 构建）
         parameters: list[PluginParameterDef] = []
-        if nl_slots:
+        params_from_class = getattr(cls, '_plugin_parameters', None) or []
+        if params_from_class:
+            for i, p in enumerate(params_from_class):
+                parameters.append(PluginParameterDef(
+                    name=p.get("name", ""),
+                    type=p.get("type", "str"),
+                    description=p.get("description", ""),
+                    required=p.get("required", False),
+                    default=p.get("default"),
+                    position=p.get("position", i),
+                ))
+        elif nl_slots:
             for i, (slot_name, slot_info) in enumerate(nl_slots.items()):
                 parameters.append(PluginParameterDef(
                     name=slot_name,

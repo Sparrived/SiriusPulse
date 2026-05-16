@@ -207,6 +207,11 @@ class EngineRuntime:
         if "rate_limit_calls_per_minute" in plugin_config:
             perms.rate_limit_calls_per_minute = int(plugin_config["rate_limit_calls_per_minute"])
 
+        # 将用户自定义 settings 写入 definition，供 Executor 注入 ctx.config
+        settings = plugin_config.get("settings")
+        if isinstance(settings, dict) and settings:
+            definition.user_settings = settings
+
     def _setup_skill_runtime(self, engine: EmotionalGroupChatEngine) -> None:
         """Discover and attach SKILL registry + executor to the engine."""
         auto_install = bool(self.plugin_config.get("auto_install_skill_deps", True))
