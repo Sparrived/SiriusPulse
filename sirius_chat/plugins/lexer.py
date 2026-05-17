@@ -288,15 +288,16 @@ class CommandParser:
             param_def = None
             if pos_idx < len(sorted_params):
                 param_def = sorted_params[pos_idx]
-            if param_def is None:
-                # 没有对应定义，当作普通字符串
-                args.append(ArgNode(value=raw_val, raw=raw_val, type_hint="str"))
-                pos_idx += 1
-                continue
 
-            coerced_value = self._coerce_value(raw_val, param_def.type)
-            node = ArgNode(value=coerced_value, raw=raw_val, type_hint=param_def.type)
-            kwargs[param_def.name] = node
+            # 始终保留到 args（供 @command handler 按位置消费）
+            args.append(ArgNode(value=raw_val, raw=raw_val, type_hint="str"))
+
+            if param_def is not None:
+                # 同时按插件参数定义映射到 kwargs（向后兼容）
+                coerced_value = self._coerce_value(raw_val, param_def.type)
+                node = ArgNode(value=coerced_value, raw=raw_val, type_hint=param_def.type)
+                kwargs[param_def.name] = node
+
             pos_idx += 1
 
         # 映射命名参数
@@ -325,7 +326,7 @@ class CommandParser:
         flags: set[str] = set(lexed.flags)
 
         return CommandAST(
-            command=plugin_def.name,
+            command=lexed.command,
             raw_text=lexed.raw_text,
             prefix=lexed.prefix,
             args=args,

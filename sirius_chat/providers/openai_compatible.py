@@ -33,7 +33,7 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
     def _build_url(self, request: GenerationRequest) -> str:
         return f"{self._base_url}/v1/chat/completions"
 
-    async def generate_async(self, request: GenerationRequest) -> str:
+    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> str | tuple[str, str]:
         timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
         url = self._build_url(request)
         debug_context = build_generation_debug_context(
@@ -117,7 +117,7 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             raise RuntimeError("提供商响应中 message 字段无效。")
 
         content = extract_assistant_text(message)
-        if not content:
+        if not content and not return_reasoning:
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
                 f"| 响应为空 | message_keys={list(message.keys())}"
@@ -134,4 +134,49 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         logger.debug(
             f"[模型输出] {request.model} | Provider: {self._provider_name} | URL: {url} | 响应内容:\n{content}"
         )
+        if return_reasoning:
+            reasoning = message.get("reasoning_content", "") if isinstance(message, dict) else ""
+            return (reasoning, content)
         return content
+
+    async def generate_stream(self, request: GenerationRequest):
+        """流式生成，逐 token yield (chunk_type, text) 其中 chunk_type 为 'reasoning' 或 'content'。"""
+        timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
+        url = self._build_url(request)
+        payload = build_chat_completion_payload(request, provider_name=self._provider_name)
+        wire_messages, _ = prepare_openai_compatible_messages(cast(list[dict[str, object]], payload["messages"]))
+        wire_payload = dict(payload)
+        wire_payload["messages"] = wire_messages
+        wire_payload["stream"] = True
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            async with client.stream("POST", url, json=wire_payload, headers=headers) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise RuntimeError(f"提供商 HTTP 错误 {response.status_code}：{body[:200]}")
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        return
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = data.get("choices", [])
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    if not isinstance(delta, dict):
+                        continue
+                    if "reasoning_content" in delta and delta["reasoning_content"]:
+                        yield ("reasoning", delta["reasoning_content"])
+                    if "content" in delta and delta["content"]:
+                        yield ("content", delta["content"])

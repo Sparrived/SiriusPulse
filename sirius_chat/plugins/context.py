@@ -72,7 +72,8 @@ class EngineProxy:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         json_mode: bool = False,
-    ) -> str:
+        return_reasoning: bool = False,
+    ) -> str | tuple[str, str]:
         """直接调用 LLM provider，绕过引擎管线，但保留 token 用量追踪。
 
         不经过 tone_alignment、rhythm_analysis、conversation_depth 等 chat 场景下
@@ -155,11 +156,16 @@ class EngineProxy:
 
         # 6. 调用 provider
         reply = ""
+        reasoning = ""
         duration_ms = 0.0
         try:
             t0 = time.perf_counter()
-            reply = await provider.generate_async(request)
+            result = await provider.generate_async(request, return_reasoning=return_reasoning)
             duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+            if return_reasoning:
+                reasoning, reply = result
+            else:
+                reply = result
         except Exception as exc:
             logger.warning("[%s] generate_raw 失败: %s", task_name, exc)
             raise
@@ -219,6 +225,8 @@ class EngineProxy:
         except Exception as exc:
             logger.warning("generate_raw token 追踪异常（不阻断）: %s", exc)
 
+        if return_reasoning:
+            return (reasoning, reply)
         return reply
 
     def get_persona_name(self) -> str:

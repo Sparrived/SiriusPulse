@@ -379,17 +379,50 @@ async def dispatch_command_stream(
                 bound_args[param_name] = coerced
         elif param_name in cmd.flags:
             bound_args[param_name] = True
-        elif param.default is not inspect.Parameter.empty:
-            bound_args[param_name] = param.default
         else:
-            return [PluginResponse.fail(
-                f"指令 '{cmd.command}' 缺少必填参数 '{param_name}'"
-            )]
+            # 非名称匹配的参数延迟到位置回退阶段处理
+            pass
 
-    for i, arg in enumerate(cmd.args):
-        slot_name = f"_{i}"
-        if slot_name not in bound_args:
-            bound_args[slot_name] = arg.value
+    # ── 位置参数回退 ──
+    # 对于未通过名称匹配到 cmd.kwargs / cmd.flags 的 handler 参数，
+    # 按位置从 cmd.args 中消费。最后一个 string 参数合并所有剩余位置参数。
+    pos_idx = 0
+    for param_name, param in sig.parameters.items():
+        if param_name in ("self", "cls"):
+            continue
+        if param_name in bound_args:
+            continue
+
+        annotation = param.annotation
+        if annotation is inspect.Parameter.empty:
+            annotation = str
+        if isinstance(annotation, str) and param_name in resolved_hints:
+            annotation = resolved_hints[param_name]
+
+        if pos_idx >= len(cmd.args):
+            # 没有更多位置参数，回退到默认值或报错
+            if param.default is not inspect.Parameter.empty:
+                bound_args[param_name] = param.default
+            else:
+                return [PluginResponse.fail(
+                    f"指令 '{cmd.command}' 缺少必填参数 '{param_name}'"
+                )]
+            continue
+
+        # rest args 模式：只剩最后一个未绑定 string 参数时，合并剩余位置参数
+        remaining_unbound = [
+            pn for pn, p in sig.parameters.items()
+            if pn not in ("self", "cls") and pn not in bound_args
+            and pn != param_name
+        ]
+        if not remaining_unbound and annotation is str:
+            joined = " ".join(str(a.value) for a in cmd.args[pos_idx:])
+            bound_args[param_name] = joined
+            pos_idx = len(cmd.args)
+        else:
+            raw = cmd.args[pos_idx].value
+            bound_args[param_name] = _coerce_param(raw, annotation)
+            pos_idx += 1
 
     # ── 打印参数解析结果（调试用）──
     logger.info(
