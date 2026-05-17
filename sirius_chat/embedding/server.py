@@ -18,9 +18,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_NAME = "BAAI/bge-small-zh"
@@ -28,6 +25,17 @@ DEFAULT_PORT = 18900
 
 # 单次 encode 的最大文本数，超出则分片
 MAX_ENCODE_BATCH = 64
+
+
+def _model_available_locally(model_name: str) -> bool:
+    """Detect whether model files exist in local HF cache."""
+    from pathlib import Path as _Path
+    cache_dir = _Path(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    safe_name = "models--" + model_name.replace("/", "--")
+    snapshots = cache_dir / safe_name / "snapshots"
+    if not snapshots.exists():
+        return False
+    return any(snapshots.iterdir())
 
 
 @dataclass
@@ -56,13 +64,26 @@ class _BatchProcessor:
     )
 
     def _load_model(self) -> None:
-        """预加载 sentence-transformers 模型（启动时调用，非懒加载）。"""
+        """预加载 sentence-transformers 模型（启动时调用，非懒加载）。
+
+自动检测本地模型文件：已缓存 → 离线加载；未缓存 → 在线下载后离线加载。
+"""
         if self._model is not None:
             return
         from sentence_transformers import SentenceTransformer
+        local = _model_available_locally(self.model_name)
+        if local:
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            logger.info("Embedding 模型已缓存，使用离线模式加载: %s", self.model_name)
+        else:
+            logger.info("Embedding 模型未缓存，开始在线下载: %s ...", self.model_name)
         logger.info("Embedding 服务正在加载模型: %s ...", self.model_name)
         t0 = time.monotonic()
-        self._model = SentenceTransformer(self.model_name, local_files_only=True)
+        self._model = SentenceTransformer(
+            self.model_name,
+            local_files_only=local,
+        )
         duration_ms = round((time.monotonic() - t0) * 1000, 1)
         logger.info("Embedding 服务模型加载完成: %s (%.1fms)", self.model_name, duration_ms)
 
