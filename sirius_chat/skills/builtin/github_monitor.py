@@ -378,11 +378,11 @@ async def _poll_github_events(ctx: Any) -> None:
             for canonical_url, group in grouped.items():
                 merged_info = _merge_event_group(group)
 
-                # 若仓库在 coding_agent 覆盖范围内且事件为纯 "opened"：
-                # 跳过通知，等 coding 贴标签后的 "labeled" 事件再推送
-                if _should_skip_for_coding(merged_info, repo_key):
-                    logger.debug("github_monitor: %s Issue opened 跳过通知（等待 coding 贴标签）", repo_key)
-                    continue
+                # coding 接管仓库：跳过标签添加/删除事件，AI会自动管理标签
+                if merged_info.get("type") == "IssuesEvent" and merged_info.get("action") in ("labeled", "unlabeled"):
+                    if repo_key in get_issue_repos():
+                        logger.debug("github_monitor: %s 跳过标签事件 %s", repo_key, merged_info.get("action"))
+                        continue
 
                 # 截图：PR 事件截 /files diff 页，Push 截 compare 页，其余截主页面
                 screenshot_path: str | None = None
@@ -444,15 +444,6 @@ def _is_pr_merge_push_event(event: dict[str, Any]) -> bool:
     if not commits:
         return False
     return all(_PR_MERGE_COMMIT_PATTERN.match(c.get("message", "")) for c in commits)
-
-
-def _should_skip_for_coding(merged_info: dict[str, Any], repo_key: str) -> bool:
-    """判断是否应跳过通知 — coding_agent 会处理该仓库的 Issue，等待 labeled 后再推送。"""
-    if merged_info.get("type") != "IssuesEvent":
-        return False
-    if merged_info.get("action") != "opened":
-        return False
-    return repo_key in get_issue_repos()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -951,11 +942,11 @@ async def _handle_webhook_event(event_type: str, body: dict[str, Any]) -> None:
         logger.debug("github_monitor (webhook): 仓库 %s 已非 webhook 模式，忽略", repo_name)
         return
 
-    # coding_agent 覆盖的仓库：跳过 Issue "opened" 通知，
-    # 等待 coding 贴标签后的 "labeled" 事件（由 poll 路径捕获）再推送
-    if event_type == "issues" and body.get("action") == "opened" and repo_name in get_issue_repos():
-        logger.debug("github_monitor (webhook): %s Issue opened 跳过通知（等待 coding 贴标签）", repo_name)
-        return
+    # coding_agent 覆盖的仓库：跳过标签添加/删除事件，AI会自动管理标签
+    if event_type == "issues" and body.get("action", "") in ("labeled", "unlabeled"):
+        if repo_name in get_issue_repos():
+            logger.debug("github_monitor (webhook): %s 跳过标签事件 %s", repo_name, body.get("action"))
+            return
 
     # coding 接管仓库：仅当评论作者是 AI bot 时才推送评论通知
     bot_login = get_coding_bot_login()
