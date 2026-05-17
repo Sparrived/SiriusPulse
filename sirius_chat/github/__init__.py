@@ -9,6 +9,7 @@
 
 from sirius_chat.github.client import GitHubClient, github_headers
 from sirius_chat.github.event_bridge import (
+    get_coding_bot_login,
     get_issue_repos,
     notify_issue_comment,
     notify_issue_opened,
@@ -16,6 +17,7 @@ from sirius_chat.github.event_bridge import (
     register_comment_handler,
     register_issue_handler,
     register_pr_handler,
+    set_coding_bot_login,
     set_issue_repos,
 )
 from sirius_chat.github.events import fetch_repo_events
@@ -28,13 +30,16 @@ __all__ = [
     "WebhookHandler",
     "fetch_repo_events",
     "github_headers",
+    "get_coding_bot_login",
     "get_issue_repos",
+    "github_headers",
     "notify_issue_comment",
     "notify_issue_opened",
     "notify_pr_event",
     "register_comment_handler",
     "register_issue_handler",
     "register_pr_handler",
+    "set_coding_bot_login",
     "set_issue_repos",
     "verify_signature",
 ]

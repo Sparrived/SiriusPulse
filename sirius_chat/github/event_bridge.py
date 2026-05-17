@@ -21,6 +21,7 @@ _comment_handlers: list[CommentHandler] = []
 
 # 哪些仓库注册了 Issue 处理器（由插件在 on_load 时填入）
 _issue_repos: set[str] = set()
+_coding_bot_login: str = ""
 
 
 def set_issue_repos(repos: set[str]) -> None:
@@ -31,6 +32,21 @@ def set_issue_repos(repos: set[str]) -> None:
     """
     global _issue_repos
     _issue_repos = set(repos)
+
+
+def set_coding_bot_login(login: str) -> None:
+    """由 coding_agent 调用：设置 AI bot 的 GitHub 用户名。
+
+    github_monitor 据此判断哪些评论是 AI 发表的，
+    在 coding 覆盖仓库中仅转发 AI 评论到群聊。
+    """
+    global _coding_bot_login
+    _coding_bot_login = login
+
+
+def get_coding_bot_login() -> str:
+    """获取 AI bot 的 GitHub 用户名，空串表示未配置。"""
+    return _coding_bot_login
 
 
 def get_issue_repos() -> set[str]:

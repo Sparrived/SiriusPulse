@@ -41,6 +41,7 @@ from typing import Any
 from sirius_chat.github import GitHubWebhookServer, fetch_repo_events
 from sirius_chat.github.client import GitHubClient
 from sirius_chat.github.event_bridge import (
+    get_coding_bot_login,
     get_issue_repos,
     notify_issue_comment,
     notify_issue_opened,
@@ -353,8 +354,17 @@ async def _poll_github_events(ctx: Any) -> None:
             # 同一 Issue/PR/Release 页面上的多个事件合并为一次通知，
             # 避免对同一页面重复截图和 LLM 调用
             grouped: dict[str, list[dict[str, Any]]] = {}
+            bot_login = get_coding_bot_login()
+            coding_repos = get_issue_repos()
             for event in reversed(new_events):
                 event_info = _extract_event_info(event)
+                # coding 接管仓库：仅当评论作者是 AI bot 或非评论事件时才推送通知
+                if bot_login and event_info.get("repo", "") in coding_repos:
+                    if event.get("type", "") == "IssueCommentEvent":
+                        actor_login = (event.get("actor", {}) or {}).get("login", "")
+                        if actor_login and actor_login != bot_login:
+                            logger.debug("github_monitor: %s 跳过非AI评论 @%s", repo_key, actor_login)
+                            continue
                 canonical = event_info.get("canonical_url", event_info.get("url", ""))
                 grouped.setdefault(canonical, []).append(event_info)
 
@@ -946,6 +956,15 @@ async def _handle_webhook_event(event_type: str, body: dict[str, Any]) -> None:
     if event_type == "issues" and body.get("action") == "opened" and repo_name in get_issue_repos():
         logger.debug("github_monitor (webhook): %s Issue opened 跳过通知（等待 coding 贴标签）", repo_name)
         return
+
+    # coding 接管仓库：仅当评论作者是 AI bot 时才推送评论通知
+    bot_login = get_coding_bot_login()
+    if event_type in ("issue_comment", "pull_request_review_comment") and bot_login:
+        if repo_name in get_issue_repos():
+            comment_login = (body.get("sender", {}) or {}).get("login", "")
+            if bot_login and comment_login != bot_login:
+                logger.debug("github_monitor (webhook): %s 跳过非AI评论 @%s", repo_name, comment_login)
+                return
 
     # 截图
     screenshot_path: str | None = None
