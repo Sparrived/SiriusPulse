@@ -1281,6 +1281,10 @@ class BackgroundTasksMixin(_Base):
             pace="decelerating",
             persona=self.persona,
         )
+
+        # 读取 pipeline 缓存的传记上下文
+        pending_bio: dict[str, Any] = getattr(self, "_pending_biography", {}) or {}
+
         return PromptFactory.assemble_chat(
             persona_prompt=persona_prompt,
             message_content=message_content,
@@ -1292,6 +1296,9 @@ class BackgroundTasksMixin(_Base):
             style_params=style_params,
             other_ai_names=self._other_ai_names,
             user_profiles=delayed_user_profiles,
+            biography_speaker=pending_bio.get("speaker_card"),
+            biography_mentioned=pending_bio.get("mentioned_cards"),
+            biography_confidence=pending_bio.get("confidence"),
             skill_registry=self._skill_registry,
             plugin_registry=getattr(self, '_plugin_registry', None),
             caller_is_developer=caller_is_developer,

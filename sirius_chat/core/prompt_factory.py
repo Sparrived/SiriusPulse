@@ -811,6 +811,9 @@ class PromptFactory:
         style_params: Any,
         other_ai_names: list[str],
         user_profiles: list[Any] | None = None,
+        biography_speaker: Any | None = None,
+        biography_mentioned: list[Any] | None = None,
+        biography_confidence: dict[str, float] | None = None,
         skill_registry: Any | None = None,
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
@@ -854,6 +857,13 @@ class PromptFactory:
             setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
 
         _add(persona_prompt, "persona")
+        bio = PromptFactory.build_biography_section(
+            speaker_card=biography_speaker,
+            mentioned_cards=biography_mentioned,
+            confidence=biography_confidence,
+        )
+        if bio:
+            _add(bio, "identity")
         _add(PromptFactory.build_identity_verification(), "identity")
         other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
         if other_ai:
