@@ -206,26 +206,27 @@ async def _poll_github_events(ctx: Any) -> None:
     从 skill data_store 读取 poll_seconds（默认 120s）控制实际 API 调用频率，
     防止频繁请求触发 GitHub 速率限制。
     """
-    store = ctx.get_data_store("github_monitor")
-    # 每轮先从磁盘重载，以便 WebUI 修改 poll_seconds / repos 后无需重启即生效
-    store.reload()
-    repos: list[dict[str, Any]] = list(store.get("repos", []))
-    if not repos:
-        return
+    try:
+        store = ctx.get_data_store("github_monitor")
+        # 每轮先从磁盘重载，以便 WebUI 修改 poll_seconds / repos 后无需重启即生效
+        store.reload()
+        repos: list[dict[str, Any]] = list(store.get("repos", []))
+        if not repos:
+            return
 
-    poll_seconds: float = float(store.get("poll_seconds", _DEFAULT_POLL_SECONDS))
-    api_base_url: str = str(store.get("api_base_url", "")).strip() or _GITHUB_API_BASE
+        poll_seconds: float = float(store.get("poll_seconds", _DEFAULT_POLL_SECONDS))
+        api_base_url: str = str(store.get("api_base_url", "")).strip() or _GITHUB_API_BASE
 
-    last_ts: dict[str, str] = dict(store.get("last_event_timestamps", {}) or {})
-    last_poll: dict[str, float] = dict(store.get("_last_poll_at", {}) or {})
+        last_ts: dict[str, str] = dict(store.get("last_event_timestamps", {}) or {})
+        last_poll: dict[str, float] = dict(store.get("_last_poll_at", {}) or {})
 
-    now = time.monotonic()
+        now = time.monotonic()
 
-    async with GitHubClient(timeout=30.0) as client:
-        for repo_cfg in repos:
-            # 跳过 webhook 模式的仓库（由 Webhook 服务器实时推送处理）
-            if repo_cfg.get("mode") == "webhook":
-                continue
+        async with GitHubClient(timeout=30.0) as client:
+            for repo_cfg in repos:
+                # 跳过 webhook 模式的仓库（由 Webhook 服务器实时推送处理）
+                if repo_cfg.get("mode") == "webhook":
+                    continue
 
             owner = str(repo_cfg.get("owner", "")).strip()
             repo = str(repo_cfg.get("repo", "")).strip()
@@ -430,6 +431,12 @@ async def _poll_github_events(ctx: Any) -> None:
             last_poll[repo_key] = time.monotonic()
             store.set("_last_poll_at", last_poll)
             store.save()
+    except Exception as exc:
+        logger.error(
+            "github_monitor: 轮询异常 (%s)，将在下一周期重试: %s",
+            exc.__class__.__name__,
+            exc,
+        )
 
 
 def _is_pr_merge_push_event(event: dict[str, Any]) -> bool:
