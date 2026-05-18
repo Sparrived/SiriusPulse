@@ -226,12 +226,80 @@ class BackgroundTasksMixin(_Base):
                                 profile.interest_topics.append(topic)
                         self.semantic_memory.save_group_profile(group_id)
 
+                        # 攒消息到人物传记（零 LLM，条件更新）
+                        if getattr(self, "biography_manager", None) is not None:
+                            try:
+                                await self._feed_biography_from_candidates(
+                                    group_id, candidates, cfg.model_name
+                                )
+                            except Exception as exc:
+                                logger.warning("传记攒消息失败: %s", exc)
+
                 if promoted_total > 0:
                     self._log_inner_thought(
                         f"整理了 {promoted_total} 个群的对话日记，过去的回忆又清晰了一点～"
                     )
             except Exception as exc:
                 logger.warning("Diary promotion failed: %s", exc)
+
+    async def _feed_biography_from_candidates(
+        self,
+        group_id: str,
+        candidates: list[Any],
+        model_name: str,
+    ) -> None:
+        """从日记候选消息中按 user_id 分组，攒消息到各自传记。
+
+        此方法零 LLM 调用，纯文本追加。
+        满足条件后由 maybe_update_biography 触发一次 LLM 更新。
+        """
+        # 按 user_id 分组（过滤 assistant 和 system）
+        by_user: dict[str, list[str]] = {}
+        for entry in candidates:
+            if getattr(entry, "user_id", "") in ("assistant", "system", ""):
+                continue
+            uid = entry.user_id
+            if uid not in by_user:
+                by_user[uid] = []
+            speaker = getattr(entry, "speaker_name", "") or uid
+            by_user[uid].append(f"{speaker}: {getattr(entry, 'content', '')}")
+
+        mgr = getattr(self, "biography_manager", None)
+        if mgr is None:
+            return
+
+        # 攒消息（零 LLM 零 embedding）
+        for user_id, messages in by_user.items():
+            if len(messages) < 2:
+                continue
+            user_name = messages[0].split(":", 1)[0] if messages else user_id
+            try:
+                mgr.feed_messages(
+                    user_id=user_id,
+                    name=user_name,
+                    group_id=group_id,
+                    messages=messages,
+                )
+            except Exception as exc:
+                logger.warning("传记攒消息失败 user=%s: %s", user_id, exc)
+
+        # 逐个检查是否需要更新传记
+        for user_id in by_user:
+            try:
+                updated = await mgr.maybe_update_biography(
+                    user_id=user_id,
+                    persona_name=self.persona.name,
+                    provider_async=self.provider_async,
+                    model_name=model_name,
+                )
+                if updated:
+                    self._record_subtask_tokens(
+                        task_name="biography_update",
+                        model_name=model_name,
+                        group_id=group_id,
+                    )
+            except Exception as exc:
+                logger.warning("传记更新失败 user=%s: %s", user_id, exc)
 
     async def _bg_diary_consolidator(self) -> None:
         """Periodically consolidate diary entries via LLM merging."""

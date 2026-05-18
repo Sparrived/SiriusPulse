@@ -29,6 +29,7 @@ from sirius_chat.core.threshold_engine import ThresholdEngine
 
 # New v2 memory system (refactor)
 from sirius_chat.memory.basic import BasicMemoryFileStore, BasicMemoryManager
+from sirius_chat.memory.biography import BiographyManager
 from sirius_chat.memory.context_assembler import ContextAssembler
 from sirius_chat.memory.diary import DiaryManager
 from sirius_chat.memory.glossary import GlossaryManager, GlossaryTerm
@@ -210,6 +211,7 @@ class _EmotionalGroupChatEngineBase:
         )
         self.user_manager = UserManager()
         self.identity_resolver = IdentityResolver()
+        self.biography_manager = BiographyManager(work_path)
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,
