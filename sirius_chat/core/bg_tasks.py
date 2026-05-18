@@ -839,16 +839,11 @@ class BackgroundTasksMixin(_Base):
 
         # Merge all triggered items into one prompt and one generation call
         adapter_type = getattr(triggered[0], "adapter_type", None) if triggered else None
-        is_first_interaction = any(
-            bool(getattr(item, "emotion_state", {}).get("_is_first_interaction"))
-            for item in triggered
-        )
         bundle = self._build_delayed_prompt(
             triggered,
             group_id,
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
-            is_first_interaction=is_first_interaction,
         )
 
         # Use ContextAssembler to build full messages with diary RAG + XML history
@@ -1240,7 +1235,6 @@ class BackgroundTasksMixin(_Base):
         group_id: str,
         caller_is_developer: bool = False,
         adapter_type: str | None = None,
-        is_first_interaction: bool = False,
     ):
         """构建延迟响应的 PromptBundle。"""
         if not isinstance(items, list):
@@ -1305,7 +1299,6 @@ class BackgroundTasksMixin(_Base):
             glossary_section=glossary,
             adapter_type=adapter_type,
             scene_description="群里的话题有了自然间隙，你决定插一句。",
-            is_first_interaction=is_first_interaction,
         )
 
     def _pick_proactive_topic(self, group_id: str) -> str:

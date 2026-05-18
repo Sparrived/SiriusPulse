@@ -382,29 +382,6 @@ class PipelineMixin(_Base):
         # 收集人物传记信息（零 LLM，供后续 prompt 组装使用）
         self._collect_biography_section(group_id, user_id, message.content or "")
 
-        # Build cross-group awareness for the current user
-        cross_group_context = ""
-        if user_id:
-            global_user = self.user_manager.get_global_user(user_id)
-            global_semantic = self.semantic_memory.get_global_user_profile(user_id)
-            # Only generate if user has activity in multiple groups
-            group_count = sum(
-                1
-                for gid, group in self.user_manager.entries.items()
-                if user_id in group and gid != group_id
-            )
-            if group_count > 0 or (global_semantic and global_semantic.interest_graph):
-                parts: list[str] = []
-                if group_count > 0:
-                    parts.append(f"你在 {group_count} 个其他群中也认识 {message.speaker or 'TA'}")
-                if global_user and global_user.aliases:
-                    parts.append(f"TA 的别名/昵称有：{', '.join(global_user.aliases[:3])}")
-                if global_semantic:
-                    if global_semantic.interest_graph:
-                        topics = [str(item) for item in global_semantic.interest_graph[:3]]
-                        parts.append(f"兴趣话题：{', '.join(topics)}")
-                cross_group_context = "；".join(parts) + "。"
-
         # Determine if the current sender is a developer
         caller_profile = None
         if message.channel_user_id and message.channel:
@@ -465,17 +442,7 @@ class PipelineMixin(_Base):
                 "intent": intent.to_dict(),
             }
 
-        # Detect first interaction: if user has no prior interaction timestamp,
-        # this is their first message to the AI in this group.
-        is_first_interaction = False
-        if user_id:
-            sp = self.semantic_memory.get_user_profile(group_id, user_id)
-            if sp and not sp.first_interaction_at:
-                is_first_interaction = True
-
         emotion_state = emotion.to_dict()
-        if is_first_interaction:
-            emotion_state["_is_first_interaction"] = True
 
         if decision.strategy == ResponseStrategy.IMMEDIATE:
             self._log_inner_thought("让我先稍等片刻，看看有没有后续消息...")

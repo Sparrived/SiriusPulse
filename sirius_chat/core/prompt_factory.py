@@ -348,16 +348,6 @@ class PromptFactory:
     # ──────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def build_identity_verification() -> str:
-        """身份识别提示，防止用户冒充。"""
-        return (
-            f"{TAG_IDENTITY_VERIFY}\n"
-            "每条消息都标注了发送者的「群名片」和「QQ号」。\n"
-            "注意：群名片可以被用户随意修改，QQ号是固定不变的唯一标识。\n"
-            "如果有人改了群名片冒充别人，请以QQ号为准。"
-        )
-
-    @staticmethod
     def build_output_spec() -> str:
         """输出规范，防止模型添加多余前缀。"""
         return (
@@ -402,7 +392,7 @@ class PromptFactory:
         caller_is_developer: bool = False,
         speaker_name: str = "",
     ) -> str | None:
-        """构建单用户互动指导（基于真实反馈数据）。"""
+        """构建单用户互动指导（仅极端档位，中间档位由传记 short_bio 覆盖）。"""
         who = speaker_name or "该用户"
         if caller_is_developer:
             return f"{TAG_RELATIONSHIP_STATUS}{who}是你的开发者，你们关系很亲密，可以畅所欲言。"
@@ -410,21 +400,15 @@ class PromptFactory:
         if user_profile is None:
             return None
 
-        if not user_profile.first_interaction_at:
-            return f"{TAG_RELATIONSHIP_STATUS}你和{who}是第一次交流，请保持友好和礼貌。"
-
         rate = getattr(user_profile, "engagement_rate", 0.0)
         count = getattr(user_profile, "interaction_count", 0)
 
         if rate >= 0.6:
             return f"{TAG_RELATIONSHIP_STATUS}{who}经常回应你的消息，你们互动很好，可以自然放松。"
-        if rate >= 0.3:
-            return f"{TAG_RELATIONSHIP_STATUS}{who}有时会回应你，保持自然就好。"
         if count >= 10 and rate < 0.15:
             return f"{TAG_RELATIONSHIP_STATUS}{who}很少回应你的消息，尽量简洁，不要强行搭话。"
-        if rate < 0.1:
-            return f"{TAG_RELATIONSHIP_STATUS}你和{who}互动不多，保持友好但不要过于主动。"
-        return f"{TAG_RELATIONSHIP_STATUS}你和{who}正在熟悉中。"
+
+        return None
 
     @staticmethod
     def build_relationship_contexts(
@@ -561,11 +545,6 @@ class PromptFactory:
         return "\n".join(lines)
 
     @staticmethod
-    def build_cross_group_section(cross_group_context: str) -> str:
-        """构建跨群认知 section。"""
-        return f"{TAG_CROSS_GROUP}\n{cross_group_context}"
-
-    @staticmethod
     def build_other_ai_instruction(other_ai_names: list[str]) -> str:
         """构建群中其他 AI 成员区分指令。"""
         if not other_ai_names:
@@ -630,16 +609,6 @@ class PromptFactory:
             "重要：你的每次回复都必须包含自然语言内容，"
             "不能把 SKILL_CALL 标记作为回复的唯一内容。"
             "调用格式：[SKILL_CALL: 技能名 | {\"参数\": \"值\"}]"
-        )
-
-    @staticmethod
-    def build_first_interaction_hint(speaker_name: str) -> str:
-        """首次互动提示。"""
-        who = speaker_name or "当前说话者"
-        return (
-            f"{TAG_FIRST_INTERACTION}\n"
-            f"这是你第一次和{who}交流，请保持友好、礼貌，"
-            f"可以适当自我介绍，让{who}感受到你的热情和善意。"
         )
 
     @staticmethod
@@ -818,10 +787,8 @@ class PromptFactory:
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
         glossary_section: str = "",
-        cross_group_context: str = "",
         adapter_type: str | None = None,
         scene_description: str = "",
-        is_first_interaction: bool = False,
     ) -> PromptBundle:
         """统一组装聊天响应 prompt。返回 PromptBundle。
 
@@ -843,10 +810,8 @@ class PromptFactory:
             plugin_registry: 插件注册表（v1.3+）。
             caller_is_developer: 调用者是否为开发者。
             glossary_section: 术语表 prompt 段落。
-            cross_group_context: 跨群上下文。
             adapter_type: 适配器类型（用于技能过滤）。
             scene_description: 当前场景描述（延迟/主动响应时填充，即时响应留空）。
-            is_first_interaction: 是否为首次互动。
         """
 
         sections: list[str] = []
@@ -864,7 +829,6 @@ class PromptFactory:
         )
         if bio:
             _add(bio, "identity")
-        _add(PromptFactory.build_identity_verification(), "identity")
         other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
         if other_ai:
             _add(other_ai, "identity")
@@ -877,9 +841,6 @@ class PromptFactory:
                 PromptFactory.build_emotion_context(emotion, group_profile, speaker_name=speaker_name),
                 "emotion",
             )
-
-        if is_first_interaction:
-            _add(PromptFactory.build_first_interaction_hint(speaker_name), "emotion")
 
         rel_ctx = PromptFactory.build_relationship_contexts(
             user_profiles or [], caller_is_developer, speaker_name=speaker_name,
@@ -900,9 +861,6 @@ class PromptFactory:
                 _add(atm, "emotion")
         else:
             _add(PromptFactory.build_style_fallback(style_params), "group_style")
-
-        if cross_group_context:
-            _add(PromptFactory.build_cross_group_section(cross_group_context), "cross_group")
 
         if skill_registry is not None:
             skill_desc = PromptFactory.build_skill_descriptions(
