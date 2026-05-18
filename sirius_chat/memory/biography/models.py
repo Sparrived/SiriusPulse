@@ -1,0 +1,147 @@
+"""人物传记数据模型 — 全局跨群人物认知锚点。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass(slots=True)
+class RelationshipAnchor:
+    """人物关系锚点 — 记录此人与其他人的关系。"""
+
+    target_name: str = ""
+    target_user_id: str = ""
+    relation: str = ""
+    fact_hint: str = ""
+    mentioned_count: int = 1
+    last_mentioned_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_name": self.target_name,
+            "target_user_id": self.target_user_id,
+            "relation": self.relation,
+            "fact_hint": self.fact_hint,
+            "mentioned_count": self.mentioned_count,
+            "last_mentioned_at": self.last_mentioned_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RelationshipAnchor:
+        return cls(
+            target_name=data.get("target_name", ""),
+            target_user_id=data.get("target_user_id", ""),
+            relation=data.get("relation", ""),
+            fact_hint=data.get("fact_hint", ""),
+            mentioned_count=data.get("mentioned_count", 1),
+            last_mentioned_at=data.get("last_mentioned_at", ""),
+        )
+
+
+@dataclass(slots=True)
+class AliasEntry:
+    """别名条目 — 一对多结构，支持同名消歧。"""
+
+    user_id: str = ""
+    user_name: str = ""
+    weight: float = 1.0
+    groups: list[str] = field(default_factory=list)
+    mentioned_count: int = 1
+    first_seen_at: str = ""
+    last_seen_at: str = ""
+    source: str = "napcat"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "user_id": self.user_id,
+            "user_name": self.user_name,
+            "weight": self.weight,
+            "groups": list(self.groups),
+            "mentioned_count": self.mentioned_count,
+            "first_seen_at": self.first_seen_at,
+            "last_seen_at": self.last_seen_at,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AliasEntry:
+        return cls(
+            user_id=data.get("user_id", ""),
+            user_name=data.get("user_name", ""),
+            weight=float(data.get("weight", 1.0)),
+            groups=list(data.get("groups", [])),
+            mentioned_count=int(data.get("mentioned_count", 1)),
+            first_seen_at=data.get("first_seen_at", ""),
+            last_seen_at=data.get("last_seen_at", ""),
+            source=data.get("source", "napcat"),
+        )
+
+
+@dataclass
+class UserPersonaCard:
+    """用户传记卡 — 全局唯一，跨群收敛。不追加，只重写。
+
+    每人一张卡。不同群的观察都累积到同一张卡中，
+    由 LLM 在 token 预算内合并重写。
+    """
+
+    user_id: str = ""
+    name: str = ""
+
+    # ── 注入层 ──
+    aliases: list[str] = field(default_factory=list)
+    identity_anchors: list[str] = field(default_factory=list)
+    relationships: list[RelationshipAnchor] = field(default_factory=list)
+    short_bio: str = ""
+
+    # ── 内部追踪 ──
+    pending_messages: list[str] = field(default_factory=list)
+    pending_message_count: int = 0
+    last_updated_at: str = ""
+    bio_token_estimate: int = 0
+    bio_token_budget: int = 500
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "user_id": self.user_id,
+            "name": self.name,
+            "aliases": list(self.aliases),
+            "identity_anchors": list(self.identity_anchors),
+            "relationships": [r.to_dict() for r in self.relationships],
+            "short_bio": self.short_bio,
+            "pending_messages": list(self.pending_messages),
+            "pending_message_count": self.pending_message_count,
+            "last_updated_at": self.last_updated_at,
+            "bio_token_estimate": self.bio_token_estimate,
+            "bio_token_budget": self.bio_token_budget,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> UserPersonaCard:
+        rels = []
+        for r in data.get("relationships", []):
+            if isinstance(r, dict):
+                rels.append(RelationshipAnchor.from_dict(r))
+            elif isinstance(r, RelationshipAnchor):
+                rels.append(r)
+        return cls(
+            user_id=data.get("user_id", ""),
+            name=data.get("name", ""),
+            aliases=list(data.get("aliases", [])),
+            identity_anchors=list(data.get("identity_anchors", [])),
+            relationships=rels,
+            short_bio=data.get("short_bio", ""),
+            pending_messages=list(data.get("pending_messages", [])),
+            pending_message_count=int(data.get("pending_message_count", 0)),
+            last_updated_at=data.get("last_updated_at", ""),
+            bio_token_estimate=int(data.get("bio_token_estimate", 0)),
+            bio_token_budget=int(data.get("bio_token_budget", 500)),
+        )
+
+
+__all__ = [
+    "UserPersonaCard",
+    "RelationshipAnchor",
+    "AliasEntry",
+]
