@@ -98,7 +98,8 @@ class TestDiaryRetrievalQuality:
         """Chroma-backed search with mock client should work."""
         mock_client = _MockEmbeddingClient()
 
-        with tempfile.TemporaryDirectory() as td:
+        td = tempfile.mkdtemp()
+        try:
             store = DiaryVectorStore(td)
             if not store.available:
                 pytest.skip("chromadb 未安装，跳过向量存储测试")
@@ -121,6 +122,11 @@ class TestDiaryRetrievalQuality:
             results = idx.search("量子力学", top_k=3, group_id="g1")
             ids = [r[0].entry_id for r in results]
             assert len(ids) >= 1
+        finally:
+            # 清理 ChromaDB mmap 文件：Windows 上 ChromaDB 会锁定文件，
+            # 需要先释放再删除，这里用 shutil.rmtree 并忽略错误
+            import shutil
+            shutil.rmtree(td, ignore_errors=True)
 
     def test_fusion_boosts_keyword_match(self) -> None:
         """Hybrid fusion should include entries that match both semantic and keyword."""

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
+
+logger = logging.getLogger(__name__)
 
 from sirius_chat.config.models import ConfigParameter
 from sirius_chat.memory import UserProfile
@@ -235,14 +238,20 @@ class BackgroundTaskSpec:
 
     async def run_loop(self, running_check: Callable[[], bool]) -> None:
         """在循环中周期性执行 task_func，直到 running_check() 返回 False。"""
-        try:
-            while running_check():
-                await asyncio.sleep(self.interval_seconds)
-                if not running_check():
-                    break
+        while running_check():
+            await asyncio.sleep(self.interval_seconds)
+            if not running_check():
+                break
+            try:
                 await self.task_func()
-        except asyncio.CancelledError:
-            raise
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "BackgroundTaskSpec '%s' 运行异常: %s",
+                    self.name,
+                    exc,
+                )
 
 
 @dataclass(slots=True)
