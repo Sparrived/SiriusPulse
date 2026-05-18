@@ -50,6 +50,7 @@ TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_GROUP_STYLE = "【群体风格】"
 TAG_REPLY_STYLE = "【回复风格】"
 TAG_CROSS_GROUP = "【跨群认知】"
+TAG_BIOGRAPHY = "【人物速查】"
 TAG_MY_SKILLS = "【我的能力】"
 TAG_GROUP_MEMBERS = "【群成员区分】"
 TAG_CURRENT_SCENE = "【当前场景】"
@@ -451,6 +452,65 @@ class PromptFactory:
         if not contexts:
             return None
         return "\n".join(contexts)
+
+    @staticmethod
+    def build_biography_section(
+        *,
+        speaker_card: Any | None = None,
+        mentioned_cards: list[Any] | None = None,
+        confidence: dict[str, float] | None = None,
+    ) -> str | None:
+        """构建人物传记 section。
+
+        confidence 中值为 0.0 的表示消歧无法确定，需要加消歧提示。
+        """
+        lines: list[str] = [TAG_BIOGRAPHY]
+        written: set[str] = set()
+        low_confidence_names: list[str] = []
+
+        def _write_card(card: Any, conf: float = 1.0) -> None:
+            uid = getattr(card, "user_id", "")
+            name = getattr(card, "name", uid)
+            if uid and uid in written:
+                return
+            if uid:
+                written.add(uid)
+
+            if conf <= 0.0:
+                low_confidence_names.append(name)
+
+            aliases = getattr(card, "aliases", [])
+            alias_hint = ""
+            if aliases:
+                alias_hint = f"（别称：{'、'.join(aliases[:4])}）"
+            lines.append(f"关于{name}{alias_hint}：")
+
+            anchors = getattr(card, "identity_anchors", [])
+            for anchor in anchors[:5]:
+                lines.append(f"  {anchor}")
+
+            relationships = getattr(card, "relationships", [])
+            for rel in relationships[:3]:
+                fact = getattr(rel, "fact_hint", "")
+                if fact:
+                    lines.append(f"  {fact}")
+
+        conf_map = confidence or {}
+        if speaker_card is not None:
+            _write_card(speaker_card, conf_map.get(getattr(speaker_card, "user_id", ""), 1.0))
+
+        if mentioned_cards:
+            for card in mentioned_cards:
+                _write_card(card, conf_map.get(getattr(card, "user_id", ""), 1.0))
+
+        # 消歧提示
+        if low_confidence_names:
+            names = "、".join(low_confidence_names)
+            lines.append(f"【注意】消息中提到的别名可能指{names}中的一位，请根据上下文判断。")
+
+        if len(lines) <= 1:
+            return None
+        return "\n".join(lines)
 
     @staticmethod
     def build_memory_context(memories: list[dict[str, Any]]) -> str:

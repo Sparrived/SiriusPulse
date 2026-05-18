@@ -379,6 +379,9 @@ class PipelineMixin(_Base):
         group_profile = self.semantic_memory.get_group_profile(group_id)
         user_profile = self.semantic_memory.get_user_profile(group_id, user_id) if user_id else None
 
+        # 收集人物传记信息（零 LLM，供后续 prompt 组装使用）
+        self._collect_biography_section(group_id, user_id, message.content or "")
+
         # Build cross-group awareness for the current user
         cross_group_context = ""
         if user_id:
@@ -551,6 +554,51 @@ class PipelineMixin(_Base):
             "reply": None,
             "emotion": emotion.to_dict(),
             "intent": intent.to_dict(),
+        }
+
+    def _collect_biography_section(
+        self,
+        group_id: str,
+        user_id: str,
+        message_content: str,
+    ) -> None:
+        """收集人物传记信息，供 PromptFactory 使用。
+
+        结果缓存在 self._pending_biography 字典中，
+        供 _build_delayed_prompt 等后续 prompt 组装阶段取用。
+        """
+        mgr = getattr(self, "biography_manager", None)
+        if mgr is None:
+            self._pending_biography = {}
+            return
+
+        # 当前发言者传记
+        speaker_card = mgr.get_card(user_id) if user_id else None
+
+        # 被提及者：从文本别名中收集
+        mentioned: dict[str, float] = {}
+        if message_content:
+            for alias, entries in mgr._alias_index.items():
+                if len(alias) < 2 or alias not in message_content:
+                    continue
+                uid, conf, _ = mgr.resolve_alias(
+                    alias, group_id=group_id,
+                )
+                if uid and uid != user_id:
+                    mentioned[uid] = max(mentioned.get(uid, 0), conf)
+                elif conf == 0.0:
+                    for entry in entries:
+                        if group_id in entry.groups and entry.user_id != user_id:
+                            mentioned[entry.user_id] = 0.0
+
+        mentioned_cards = mgr.get_cards_for_users(list(mentioned.keys()))
+        all_aliases = mgr.get_aliases_for_group(group_id)
+
+        self._pending_biography = {
+            "speaker_card": speaker_card,
+            "mentioned_cards": mentioned_cards,
+            "confidence": mentioned,
+            "aliases": all_aliases,
         }
 
     def _background_update(
