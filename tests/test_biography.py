@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
-from sirius_chat.memory.biography.manager import BiographyManager, _build_update_prompt, _now_iso
+from sirius_chat.memory.biography.manager import BiographyManager, _build_update_prompt
 from sirius_chat.memory.biography.models import AliasEntry, RelationshipAnchor, UserPersonaCard
 from sirius_chat.memory.biography.store import BiographyStore
 

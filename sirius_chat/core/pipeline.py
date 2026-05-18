@@ -375,22 +375,8 @@ class PipelineMixin(_Base):
         recent_msgs = self._get_recent_messages(group_id, n=10)
         rhythm = self.rhythm_analyzer.analyze(group_id, recent_msgs)
 
-        # Profiles
-        group_profile = self.semantic_memory.get_group_profile(group_id)
-        user_profile = self.semantic_memory.get_user_profile(group_id, user_id) if user_id else None
-
         # 收集人物传记信息（零 LLM，供后续 prompt 组装使用）
         self._collect_biography_section(group_id, user_id, message.content or "")
-
-        # Determine if the current sender is a developer
-        caller_profile = None
-        if message.channel_user_id and message.channel:
-            resolved_uid = self.user_manager.resolve_user_id(
-                platform=message.channel, external_uid=message.channel_user_id
-            )
-            if resolved_uid:
-                caller_profile = self.user_manager.get_user(resolved_uid, group_id)
-        caller_is_developer = bool(caller_profile and caller_profile.is_developer)
 
         # Turn gap suppression: don't interrupt conversation in full flow
         if (
