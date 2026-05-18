@@ -60,6 +60,7 @@ class PluginBase:
     _plugin_nl_examples: list[str] = []
     _plugin_nl_slots: dict[str, dict[str, Any]] = {}
     _plugin_dependencies: list[str] = []
+    _plugin_prompt_inject: str = ""  # 注入到人格 prompt 的额外提示词（v1.3+）
 
     def __init__(self) -> None:
         self._ctx: "PluginContext | None" = None

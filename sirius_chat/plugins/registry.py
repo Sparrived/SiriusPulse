@@ -78,9 +78,10 @@ class PluginRegistry:
                 self._events_index[evt_type] = []
             self._events_index[evt_type].append(definition.name)
 
-        # 构建自然语言示例索引
-        if definition.natural_language and definition.natural_language.examples:
-            self._nl_examples[definition.name] = list(definition.natural_language.examples)
+        # 构建自然语言示例索引（跳过 hidden_from_intent 插件）
+        if not definition.permissions.hidden_from_intent:
+            if definition.natural_language and definition.natural_language.examples:
+                self._nl_examples[definition.name] = list(definition.natural_language.examples)
 
         logger.info(
             "注册 Plugin: %s v%s（%d 指令, %d 事件）",
@@ -120,6 +121,9 @@ class PluginRegistry:
         for meta in command_metas.values():
             if not hasattr(meta, 'full_patterns'):
                 continue
+            # 隐藏的指令不加入意图匹配索引
+            if getattr(meta, 'hidden_from_intent', False):
+                continue
             for pattern in getattr(meta, 'full_patterns', []):
                 self._commands_index.append((
                     pattern,
@@ -156,11 +160,27 @@ class PluginRegistry:
 
     # ── 文本匹配（使用 lexer.PluginMatcher） ──
 
-    def match_message(self, text: str):
+    def _is_pattern_hidden(self, plugin_name: str, cmd_name: str) -> bool:
+        """检查指定插件的指令是否被标记为 hidden_from_intent。"""
+        definition = self._definitions.get(plugin_name)
+        if definition is None:
+            return False
+        # 插件级隐藏
+        if definition.permissions.hidden_from_intent:
+            return True
+        # 指令级隐藏
+        for cmd in definition.commands:
+            if cmd.name == cmd_name and cmd.hidden_from_intent:
+                return True
+        return False
+
+    def match_message(self, text: str, *, include_hidden: bool = False):
         """尝试将用户文本匹配到已注册的 Plugin。
 
         Args:
             text: 用户输入文本
+            include_hidden: 是否包含 hidden_from_intent 的指令。默认 False，
+                            意图识别调用时传 False，显式执行时传 True。
 
         Returns:
             MatchResult 或 None
@@ -175,6 +195,8 @@ class PluginRegistry:
         if lexed is not None:
             # 按指令名查找 Plugin
             for pattern, pat_type, plugin_name, cmd_name in self._commands_index:
+                if not include_hidden and self._is_pattern_hidden(plugin_name, cmd_name):
+                    continue
                 if pat_type == "prefix" and text.strip().startswith(pattern):
                     definition = self._definitions.get(plugin_name)
                     if definition is not None:
@@ -192,6 +214,8 @@ class PluginRegistry:
         # 关键词/正则路径：遍历索引
         matcher = PluginMatcher()
         for pattern, pat_type, plugin_name, cmd_name in self._commands_index:
+            if not include_hidden and self._is_pattern_hidden(plugin_name, cmd_name):
+                continue
             definition = self._definitions.get(plugin_name)
             if definition is None:
                 continue
@@ -228,6 +252,13 @@ class PluginRegistry:
             # developer_only 插件仅对开发者可见
             if definition.permissions.developer_only and not caller_is_developer:
                 continue
+            # hidden_from_intent 插件对意图识别隐藏
+            if definition.permissions.hidden_from_intent:
+                continue
+            # 检查是否所有指令都被隐藏了
+            visible_commands = [c for c in definition.commands if not c.hidden_from_intent]
+            if not visible_commands:
+                continue
             desc = (definition.display_name or definition.name)
             if definition.description:
                 # 只取第一句话（到第一个句号），避免长描述诱导 LLM 误判
@@ -247,8 +278,37 @@ class PluginRegistry:
         return "\n".join(lines)
 
     def get_nl_examples(self) -> dict[str, list[str]]:
-        """获取所有插件的自然语言触发示例。"""
-        return dict(self._nl_examples)
+        """获取所有插件的自然语言触发示例（跳过 hidden_from_intent 插件）。"""
+        # 过滤掉 hidden_from_intent 的插件
+        result: dict[str, list[str]] = {}
+        for name, examples in self._nl_examples.items():
+            definition = self._definitions.get(name)
+            if definition is not None and definition.permissions.hidden_from_intent:
+                continue
+            result[name] = examples
+        return result
+
+    def get_plugin_prompt_injections(self, caller_is_developer: bool = False) -> list[str]:
+        """收集所有已注册插件的 prompt_inject 文本。
+
+        用于 PromptFactory 构建插件感知提示词段落，让 AI 知晓插件的能力。
+        插件本身的 prompt_inject 不受 hidden_from_intent 影响——即使对意图
+        识别隐藏，仍然可以向人格 prompt 注入提示词。
+
+        Args:
+            caller_is_developer: 调用者是否为开发者。
+
+        Returns:
+            所有满足条件的插件的 prompt_inject 文本列表。
+        """
+        injects: list[str] = []
+        for definition in self._definitions.values():
+            if not definition.prompt_inject:
+                continue
+            if definition.permissions.developer_only and not caller_is_developer:
+                continue
+            injects.append(definition.prompt_inject)
+        return injects
 
     def unregister(self, name: str) -> None:
         """注销一个插件。"""

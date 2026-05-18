@@ -137,6 +137,7 @@ class PluginCommandDef:
     pattern_type: str = "prefix"           # prefix | regex | keyword
     description: str = ""
     examples: list[str] = field(default_factory=list)
+    hidden_from_intent: bool = False       # 是否对意图识别隐藏（v1.3+）
 
 
 @dataclass(slots=True)
@@ -166,6 +167,7 @@ class PluginPermissionDef:
     """
 
     developer_only: bool = False
+    hidden_from_intent: bool = False       # 是否对意图识别隐藏（v1.3+）
     adapter_types: list[str] = field(default_factory=list)
     group_blacklist: list[str] = field(default_factory=list)    # 群黑名单
     rate_limit_calls_per_minute: int = 60
@@ -220,6 +222,9 @@ class PluginDefinition:
     # ── 依赖与资源 ──
     dependencies: list[str] = field(default_factory=list)
     resources: list[str] = field(default_factory=list)
+
+    # ── 提示注入（v1.3+）──
+    prompt_inject: str = ""                # 注入到人格 prompt 的额外提示词，让模型知晓插件能力
 
     # ── 内部字段 ──
     source_path: Path | None = None        # 插件文件夹路径
@@ -288,6 +293,7 @@ class PluginDefinition:
         perm_raw = data.get("permissions", {})
         permissions = PluginPermissionDef(
             developer_only=perm_raw.get("developer_only", False),
+            hidden_from_intent=perm_raw.get("hidden_from_intent", False),
             adapter_types=perm_raw.get("adapter_types", []),
             group_blacklist=perm_raw.get("group_blacklist", []),
             rate_limit_calls_per_minute=perm_raw.get("rate_limit", {}).get("calls_per_minute", 60),
@@ -318,6 +324,7 @@ class PluginDefinition:
             render=render,
             dependencies=data.get("dependencies", []),
             resources=data.get("resources", []),
+            prompt_inject=data.get("prompt_inject", ""),
             source_path=source_path,
         )
 
@@ -344,6 +351,7 @@ class PluginDefinition:
                 pattern_type=meta.pattern_type,
                 description=meta.description,
                 examples=meta.examples,
+                hidden_from_intent=getattr(meta, 'hidden_from_intent', False),
             ))
 
         # 事件：从 _plugin_events 类属性读取
@@ -391,6 +399,7 @@ class PluginDefinition:
         perm_raw = getattr(cls, '_plugin_permissions', None) or {}
         permissions = PluginPermissionDef(
             developer_only=perm_raw.get("developer_only", False),
+            hidden_from_intent=perm_raw.get("hidden_from_intent", False),
             adapter_types=perm_raw.get("adapter_types", []),
             group_blacklist=perm_raw.get("group_blacklist", []),
             rate_limit_calls_per_minute=perm_raw.get("rate_limit", {}).get("calls_per_minute", 60),
@@ -409,6 +418,7 @@ class PluginDefinition:
             natural_language=nl_def,
             permissions=permissions,
             dependencies=getattr(cls, '_plugin_dependencies', []) or [],
+            prompt_inject=getattr(cls, '_plugin_prompt_inject', '') or '',
             source_path=source_path,
         )
 

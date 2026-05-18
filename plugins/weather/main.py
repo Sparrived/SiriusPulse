@@ -78,6 +78,10 @@ class WeatherPlugin(PluginBase):
     _plugin_nl_slots = {
         "city": {"type": "str", "description": "城市名称"},
     }
+    _plugin_prompt_inject = (
+        "查天气：群友可以让我查询任意城市的实时天气、温度、风速、湿度，"
+        "以及未来几天的天气预报"
+    )
 
     def on_load(self) -> None:
         self.logger.info("天气插件已加载")

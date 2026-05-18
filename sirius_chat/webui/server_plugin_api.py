@@ -65,12 +65,17 @@ async def api_plugins_get(request: web.Request, manager: Any) -> web.Response:
                 "version": d.version,
                 "author": d.author,
                 "enabled": plugin_config["enabled"],
+                "prompt_inject": d.prompt_inject or "",
+                "permissions": {
+                    "hidden_from_intent": d.permissions.hidden_from_intent,
+                },
                 "commands": [
                     {
                         "name": c.name,
                         "patterns": c.patterns,
                         "pattern_type": c.pattern_type,
                         "description": c.description,
+                        "hidden_from_intent": c.hidden_from_intent,
                     }
                     for c in d.commands
                 ],
@@ -186,6 +191,8 @@ async def api_plugin_detail_get(request: web.Request, manager: Any) -> web.Respo
         "description": definition.description,
         "version": definition.version,
         "author": definition.author,
+        "prompt_inject": definition.prompt_inject or "",
+        "hidden_from_intent": definition.permissions.hidden_from_intent,
         "enabled": plugin_config["enabled"],
         "commands": [
             {
@@ -194,6 +201,7 @@ async def api_plugin_detail_get(request: web.Request, manager: Any) -> web.Respo
                 "pattern_type": c.pattern_type,
                 "description": c.description,
                 "examples": c.examples,
+                "hidden_from_intent": c.hidden_from_intent,
             }
             for c in definition.commands
         ],
@@ -268,6 +276,7 @@ async def api_plugin_config_get(request: web.Request, manager: Any) -> web.Respo
         "plugin": plugin_name,
         "group_blacklist": permissions.get("group_blacklist", []),
         "developer_only": permissions.get("developer_only", False),
+        "hidden_from_intent": permissions.get("hidden_from_intent", False),
         "rate_limit_calls_per_minute": permissions.get("rate_limit_calls_per_minute", 60),
     })
 
@@ -291,6 +300,9 @@ async def api_plugin_config_post(request: web.Request, manager: Any) -> web.Resp
 
     if "developer_only" in body:
         permissions["developer_only"] = bool(body["developer_only"])
+
+    if "hidden_from_intent" in body:
+        permissions["hidden_from_intent"] = bool(body["hidden_from_intent"])
 
     if "rate_limit_calls_per_minute" in body:
         try:

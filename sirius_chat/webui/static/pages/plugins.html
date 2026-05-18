@@ -35,6 +35,12 @@
           </label>
         </div>
         <div class="form-group" style="margin-bottom:12px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="pluginCfgHiddenIntent">
+            <span>对意图识别隐藏（指令和插件不出现在意图识别的 LLM 提示中，也不被规则匹配）</span>
+          </label>
+        </div>
+        <div class="form-group" style="margin-bottom:12px">
           <label>群黑名单（一行一个群号，在此名单中的群将禁用此插件）</label>
           <textarea id="pluginCfgGroupBlacklist" rows="3" style="background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px" placeholder="留空表示不限制"></textarea>
         </div>
@@ -42,6 +48,15 @@
           <label>限流调用频率（次/分钟）</label>
           <input type="number" id="pluginCfgRateLimit" value="60" min="1" max="1000" style="background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;width:100px">
         </div>
+      </div>
+
+      <!-- Prompt 注入 -->
+      <div id="pluginDetailInject" style="border-top:1px solid var(--border);margin-top:16px;padding-top:16px;display:none">
+        <h4 style="margin:0 0 8px;font-size:14px">🧠 Prompt 注入</h4>
+        <p style="color:var(--text-2);font-size:12px;margin-bottom:8px">
+          插件注入到人格 prompt 的提示词，让 AI 知晓插件能力但不需要主动调用。
+        </p>
+        <pre id="pluginDetailInjectText" style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;margin:0"></pre>
       </div>
 
       <!-- 自定义配置 -->

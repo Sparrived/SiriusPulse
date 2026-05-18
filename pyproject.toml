@@ -47,13 +47,9 @@ provider = [
 	"tenacity>=8.0.0",  # 重试库，用于提高可靠性
 ]
 dev = [
-	"pytest>=8.0.0",
-	"pytest-asyncio>=0.21.0",
-	"pytest-cov>=4.0.0",
-	"psutil>=5.9.0",  # 性能监控和系统信息
-	"httpx>=0.24.0",
-	"tenacity>=8.0.0",
-	"tiktoken>=0.5.0",  # 可选：精确token估算
+	"test",  # 继承测试依赖（pytest 系列 + psutil）
+	"provider",  # 继承 provider 依赖（httpx + tenacity）
+	"quality",  # 继承质量依赖（tiktoken）
 	"black>=23.0.0",  # 代码格式化
 	"isort>=5.13.0",  # Import排序
 	"flake8>=6.0.0",  # Linter

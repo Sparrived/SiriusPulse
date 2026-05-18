@@ -61,6 +61,7 @@ class PluginCommandMeta:
     render_mode: str = "direct"            # direct | llm | silent
     description: str = ""                  # 人类可读的描述
     examples: list[str] = field(default_factory=list)          # 使用示例
+    hidden_from_intent: bool = False       # 是否对意图识别隐藏（v1.3+）
     # LLM 渲染参数
     system_prompt_suffix: str = ""
     max_tokens: int = 500
@@ -102,6 +103,7 @@ def command(
     render_mode: str = "direct",
     description: str = "",
     examples: list[str] | None = None,
+    hidden_from_intent: bool = False,
     system_prompt_suffix: str = "",
     max_tokens: int = 500,
     temperature: float = 0.8,
@@ -123,6 +125,7 @@ def command(
                      单个 handler 执行过程中可通过 PluginResponse.render_mode 覆写。
         description: 指令描述文本
         examples: 使用示例列表
+        hidden_from_intent: 是否对意图识别隐藏（v1.3+）
         system_prompt_suffix: LLM 模式下追加到 system prompt 的文本
         max_tokens: LLM 模式最大 token 数
         temperature: LLM 模式生成温度
@@ -161,6 +164,7 @@ def command(
         render_mode=render_mode,
         description=description,
         examples=examples or [],
+        hidden_from_intent=hidden_from_intent,
         system_prompt_suffix=system_prompt_suffix,
         max_tokens=max_tokens,
         temperature=temperature,

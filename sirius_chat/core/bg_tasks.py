@@ -1225,6 +1225,7 @@ class BackgroundTasksMixin(_Base):
             other_ai_names=self._other_ai_names,
             user_profiles=delayed_user_profiles,
             skill_registry=self._skill_registry,
+            plugin_registry=getattr(self, '_plugin_registry', None),
             caller_is_developer=caller_is_developer,
             glossary_section=glossary,
             adapter_type=adapter_type,

@@ -75,6 +75,7 @@ TAG_SKILL_TRUNCATED = "【注：技能结果过长，已截断至前 {limit} 字
 TAG_CURRENT_TIME = "【当前时间】"
 TAG_GROUP_TABOO = "【群规禁忌】"
 TAG_ATMOSPHERE_TREND = "【氛围趋势】"
+TAG_PLUGIN_AWARENESS = "【插件能力】"
 
 # 消息渲染标签
 TAG_FACE = "【表情：{name}】"
@@ -582,6 +583,49 @@ class PromptFactory:
         )
 
     @staticmethod
+    def build_plugin_awareness_section(
+        plugin_registry: Any,
+        caller_is_developer: bool = False,
+    ) -> str:
+        """构建插件感知提示词段落。
+
+        收集所有已注册插件的 prompt_inject 文本，组合成一个提醒段落
+        注入到人格 prompt 中，让 AI 知道有哪些插件能力可供群友使用。
+        但 AI 自身不作为插件的调用方，不会主动调用——它只是知道这些能力存在。
+
+        Args:
+            plugin_registry: PluginRegistry 实例。
+            caller_is_developer: 调用者是否为开发者。
+
+        Returns:
+            格式化的插件感知提示段落，如：
+            【插件能力】
+            群友可能会用以下插件功能来获取信息或娱乐：
+            - 查天气：群友可以查询任意城市的天气
+            - 摇骰子：群友可以投掷骰子或进行骰子对决
+        """
+        if plugin_registry is None:
+            return ""
+        try:
+            injects = plugin_registry.get_plugin_prompt_injections(
+                caller_is_developer=caller_is_developer
+            )
+            if not injects:
+                return ""
+            lines = [
+                f"{TAG_PLUGIN_AWARENESS}",
+                "群友可能会使用以下插件功能。你不需要主动调用它们，"
+                "但如果群友问起，你可以介绍或引导：",
+            ]
+            for inject in injects:
+                for line in inject.strip().split("\n"):
+                    if line.strip():
+                        lines.append(f"- {line.strip()}")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
+    @staticmethod
     def build_current_time_section(now_str: str) -> str:
         """构建当前时间 section。"""
         return f"{TAG_CURRENT_TIME}{now_str}（北京时间）"
@@ -708,6 +752,7 @@ class PromptFactory:
         other_ai_names: list[str],
         user_profiles: list[Any] | None = None,
         skill_registry: Any | None = None,
+        plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
         glossary_section: str = "",
         cross_group_context: str = "",
@@ -732,6 +777,7 @@ class PromptFactory:
             other_ai_names: 群内其他 AI 名称。
             user_profiles: 相关用户语义画像列表。
             skill_registry: 技能注册表。
+            plugin_registry: 插件注册表（v1.3+）。
             caller_is_developer: 调用者是否为开发者。
             glossary_section: 术语表 prompt 段落。
             cross_group_context: 跨群上下文。
@@ -794,6 +840,13 @@ class PromptFactory:
             )
             if skill_desc:
                 _add(skill_desc, "skills")
+
+        if plugin_registry is not None:
+            plugin_awareness = PromptFactory.build_plugin_awareness_section(
+                plugin_registry, caller_is_developer=caller_is_developer,
+            )
+            if plugin_awareness:
+                _add(plugin_awareness, "skills")
 
         if glossary_section:
             _add(glossary_section, "glossary")

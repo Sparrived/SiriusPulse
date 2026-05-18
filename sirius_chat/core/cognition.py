@@ -1722,6 +1722,9 @@ class CognitionAnalyzer:
                     continue
                 if definition.permissions.developer_only and not caller_is_developer:
                     continue
+                # hidden_from_intent 插件对 LLM 认知隐藏
+                if definition.permissions.hidden_from_intent:
+                    continue
                 # 构建参数提示
                 param_hints: list[str] = []
                 if definition.natural_language and definition.natural_language.slots:
@@ -1772,6 +1775,10 @@ class CognitionAnalyzer:
         # 非开发者不能使用 developer_only 插件
         if definition.permissions.developer_only and not caller_is_developer:
             logger.debug("LLM 返回了仅开发者可用的 plugin_intent: %s，已降级", plugin_intent)
+            return None
+        # hidden_from_intent 插件不被 LLM 意图识别感知
+        if definition.permissions.hidden_from_intent:
+            logger.debug("LLM 返回了 hidden_from_intent plugin_intent: %s，已降级", plugin_intent)
             return None
         return plugin_intent
 

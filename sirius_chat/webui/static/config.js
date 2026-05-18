@@ -1439,6 +1439,13 @@ function renderPluginsList(plugins) {
     const cmdCount = (p.commands || []).length;
     const paramCount = (p.parameters || []).length;
     const nlCount = (p.nl_examples || []).length;
+    const hiddenBadges = [];
+    if (p.permissions?.hidden_from_intent) {
+      hiddenBadges.push('<span class="skill-badge" style="background:var(--danger);color:#fff;font-size:11px">隐藏</span>');
+    }
+    if (p.prompt_inject) {
+      hiddenBadges.push('<span class="skill-badge" style="background:var(--accent);color:#fff;font-size:11px">注入</span>');
+    }
     return `
     <div class="skill-row" data-name="${p.name}">
       <div class="skill-header">
@@ -1447,6 +1454,7 @@ function renderPluginsList(plugins) {
           <span class="skill-name">${p.display_name || p.name}</span>
           ${p.version ? `<span class="skill-version">v${p.version}</span>` : ''}
           ${p.author ? `<span class="skill-badge" style="background:var(--surface-2);color:var(--text-2)">${p.author}</span>` : ''}
+          ${hiddenBadges.join('')}
         </div>
         <div class="skill-actions">
           <button class="btn small" onclick="openPluginDetail('${p.name}')">📝 详情/编辑</button>
@@ -1513,11 +1521,12 @@ async function openPluginDetail(name) {
     const cmds = res.commands || [];
     let cmdHtml = cmds.length ? '<div style="margin-top:12px"><h4 style="margin:0 0 8px;font-size:14px">指令</h4>' : '';
     cmds.forEach(c => {
+      const hiddenTag = c.hidden_from_intent ? '<span style="color:var(--danger);font-size:11px;margin-left:6px">[隐藏]</span>' : '';
       cmdHtml += `
         <div style="background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:13px">
           <span style="font-weight:600">${c.name}</span>
           <span style="color:var(--text-3);margin-left:8px">${c.patterns.join(', ')}</span>
-          <span style="color:var(--text-3);margin-left:8px;font-size:11px">(${c.pattern_type})</span>
+          <span style="color:var(--text-3);margin-left:8px;font-size:11px">(${c.pattern_type})</span>${hiddenTag}
           ${c.description ? `<div style="color:var(--text-2);font-size:12px;margin-top:4px">${c.description}</div>` : ''}
         </div>
       `;
@@ -1565,6 +1574,15 @@ async function openPluginDetail(name) {
     console.log('res.settings:', res.settings);
     console.log('res.settings type:', typeof res.settings);
     console.log('res.settings keys:', res.settings ? Object.keys(res.settings) : 'null');
+
+    // 显示 prompt_inject
+    if (res.prompt_inject) {
+      $('pluginDetailInjectText').textContent = res.prompt_inject;
+      $('pluginDetailInject').style.display = 'block';
+    } else {
+      $('pluginDetailInject').style.display = 'none';
+    }
+
     await loadPluginConfigForm(name, res.settings, res.parameters);
   } catch (e) {
     toast('加载插件详情失败', 'error');
@@ -1590,6 +1608,7 @@ async function loadPluginConfigForm(name, settings, parameters) {
   try {
     const cfg = await get(`/plugins/${name}/config`);
     $('pluginCfgDevOnly').checked = cfg.developer_only || false;
+    $('pluginCfgHiddenIntent').checked = cfg.hidden_from_intent || false;
     $('pluginCfgGroupBlacklist').value = (cfg.group_blacklist || []).join('\n');
     $('pluginCfgRateLimit').value = cfg.rate_limit_calls_per_minute || 60;
   } catch (e) {
@@ -1859,6 +1878,7 @@ async function savePluginConfig() {
   // 收集权限配置
   const permBody = {
     developer_only: $('pluginCfgDevOnly').checked,
+    hidden_from_intent: $('pluginCfgHiddenIntent').checked,
     group_blacklist: $('pluginCfgGroupBlacklist').value.split('\n').map(s => s.trim()).filter(Boolean),
     rate_limit_calls_per_minute: parseInt($('pluginCfgRateLimit').value, 10) || 60,
   };
