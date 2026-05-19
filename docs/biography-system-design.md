@@ -46,15 +46,17 @@
   └── 周期路径（跟随日记周期）
         │
         _bg_diary_promoter()
-          ├── candidates（BasicMemoryEntry 原始数据，user_id 精确）
+          ├── candidates（BasicMemoryEntry 原始数据，完整上下文，不做过滤）
           │
           ├──▶ diary.generate_from_candidates()    [现有]
           │       → DiaryEntry（自然语言日记）
           │
-          └──▶ biography.extract_from_candidates()  [新增]
-                  ├── 按 user_id 分组发言
-                  ├── 每人跑一次轻量 LLM 提取
-                  └── 累积 → 触发重写 → UserPersonaCard（500字传记）
+          └──▶ biography._feed_biography_from_candidates()  [新增]
+                  ├── 构建全部消息（同日记输入，无预过滤）
+                  ├── 每个用户拿到同一份完整群聊上下文
+                  ├── feed_messages → 零 LLM 攒批
+                  ├── maybe_distill → 层1：LLM 蒸馏关于用户的要点 → distilled_points
+                  └── maybe_update_biography → 层2：足量要点 → LLM 重写传记卡
 ```
 
 ### 与日记系统的关系
@@ -68,6 +70,34 @@
 | 检索 | embedding RAG | 直接全文注入 |
 | 隔离 | **按群隔离** | **全局一张卡，跨群收敛** |
 | 内容 | "谁说了什么" | "谁是什么样的人" |
+```
+
+### 两层凝练架构
+
+传记系统采用**两层 LLM 凝练**架构，解决"原始消息多但稀 → 直接重写传记质量差"的问题：
+
+```
+群聊原始消息（全部 candidates，不做预过滤）
+  │
+  ├── feed_messages (零LLM) → pending_messages (截断 ~2000字)
+  │
+  ├── maybe_distill (触发: >=5条 或 >=8h)
+  │     └── LLM: 从群聊中蒸馏"关于 {user} 的关键信息"
+  │     └── 输出: {"points": [...], "discovered_aliases": [...]}
+  │     └── 存入: card.distilled_points (累积)
+  │
+  └── maybe_update_biography (触发: >=3条要点 或 >=24h)
+        └── LLM: 综合要点重写完整传记卡
+        └── 输出: {"short_bio": ..., "identity_anchors": ..., "relationships": [...]}
+        └── 清空: card.distilled_points = []
+```
+
+**触发参数**：
+
+| 层 | 触发条件 | 输入 | 输出 |
+|----|---------|------|------|
+| 层1 蒸馏 | `pending_messages >= 5` 或 `>= 8h` | 原始群聊记录 | 最多 5 条要点 |
+| 层2 传记更新 | `distilled_points >= 3` 或 `>= 24h` | 累积的蒸馏要点 | UserPersonaCard |
 
 ---
 
@@ -89,9 +119,15 @@ class UserPersonaCard:
     relationships: list[RelationshipAnchor]   # 与其他人物的关系
     short_bio: str                            # LLM 浓缩传记（500 字预算）
     
-    # ── 内部追踪 ──
+    # ── 层1：原始消息攒批（等待蒸馏）──
     pending_messages: list[str]              # 攒的原始消息文本（不超过 ~2000 字）
     pending_message_count: int               # 攒了多少条
+
+    # ── 层2：蒸馏后的要点（等待传记更新）──
+    distilled_points: list[str]              # LLM 蒸馏的关于此人的要点
+    last_distill_at: str                     # ISO 8601，上次蒸馏时间
+
+    # ── 内部追踪 ──
     last_updated_at: str                     # ISO 8601，上次传记更新
     bio_token_estimate: int                  # short_bio 的 token 估算
     bio_token_budget: int = 500              # 预算上限
@@ -178,7 +214,7 @@ _alias_index: dict[str, list[AliasEntry]]
 |------|------|
 | `sirius_chat/memory/biography/__init__.py` | 包入口 |
 | `sirius_chat/memory/biography/models.py` | 数据结构定义（UserPersonaCard、RelationshipAnchor、AliasEntry） |
-| `sirius_chat/memory/biography/manager.py` | `BiographyManager` 核心逻辑（攒消息 → 单步 LLM 更新传记） |
+| `sirius_chat/memory/biography/manager.py` | `BiographyManager` 核心逻辑（攒消息 → 蒸馏 → 传记更新，两层凝练） |
 | `sirius_chat/memory/biography/store.py` | `BiographyStore` 持久化 |
 
 ### BiographyManager
@@ -191,7 +227,7 @@ class BiographyManager:
     - 加载/保存全局 UserPersonaCard（一个 user_id 一张卡）
     - 维护全局别名速查表（index.json，一对多）
     - 别名消歧（群上下文 + 权重 + 活跃度）
-    - 攒原始消息 → 单步 LLM 更新传记
+    - 两层凝练：攒原始消息 → 蒸馏 → 传记更新
     """
 
     def __init__(self, work_path: Path) -> None:
@@ -216,22 +252,44 @@ class BiographyManager:
         """有人用此别名称呼了此人，提升权重，同别名其他候选衰减。"""
         ...
 
-    # ── 攒消息 → 单步更新 ──
+    # ── 两层凝练 ──
 
     def feed_messages(
         self,
         user_id: str,
         name: str,
         group_id: str,
-        messages: list[str],                         # 原始发言文本列表
+        messages: list[str],                         # 完整群聊上下文（含所有说话人）
         discovered_aliases: list[str] = [],           # LLM 在此批次中发现的别名
     ) -> None:
         """把一批原始消息追加到 pending_messages 队列。
 
         - 不调 LLM，不做 embedding，纯文本追加
-        - 同时注册发现的别名
+        - 与日记使用同一批 candidates，不做预过滤
         """
         ...
+
+    # ── 层1：蒸馏 ──
+
+    async def maybe_distill(
+        self,
+        user_id: str,
+        *,
+        persona_name: str,
+        provider_async: Any,
+        model_name: str,
+    ) -> bool:
+        """如果攒的原始消息足够（>= 5 条或距上次蒸馏 >= 8h），
+        调用 LLM 从群聊中蒸馏关于此用户的要点。
+
+        LLM 输出: {"points": [...], "discovered_aliases": [...]}
+        存入 card.distilled_points，清空 pending_messages。
+
+        Returns: True 表示蒸馏完成并产生了新要点。
+        """
+        ...
+
+    # ── 层2：传记更新 ──
 
     async def maybe_update_biography(
         self,
@@ -241,11 +299,11 @@ class BiographyManager:
         provider_async: Any,
         model_name: str,
     ) -> bool:
-        """如果攒的消息足够多（>= 8 条或距上次更新 >= 24h 且有新消息），
-        调用一次 LLM 重写传记。
+        """如果蒸馏要点攒够了（>= 3 条或距上次更新 >= 24h），
+        调用 LLM 综合要点重写传记卡。
 
-        一次 LLM 调用完成：
-          提取新事实 + 与旧传记合并 + fit 预算
+        LLM 输出: {"short_bio": ..., "identity_anchors": ..., "relationships": [...]}
+        存入传记卡，清空 distilled_points。
 
         Returns: True 表示传记被更新了。
         """
@@ -260,28 +318,63 @@ class BiographyManager:
         ...
 ```
 
-### 传记更新流程（一步到位）
+### 两层凝练流程
 
-**核心思路**：不搞"提取 → 去重 → 浓缩"三阶段，直接**攒原始消息 → 一次 LLM 重写传记**。LLM 天然处理重复信息，比 embedding 去重更靠谱。
+**核心思路**：不使用"一步到位"把原始消息直接重写传记——原始消息太多且信息密度低，一次 LLM 调用的质量不可靠。采用两层凝练：先蒸馏为要点，再积累要点后重写传记。
 
 ```
-candidates → 按 user_id 分组
+candidates（全部对话，不做预过滤）
     │
-    ├── feed_messages(user_id, messages)   # 纯文本追加，零 LLM 零 embedding
-    │       → pending_messages: ["我最近在学Rust", "yuki是我朋友小明开发的QQ机器人", ...]
+    ├── feed_messages(user_id, all_messages)   # 每个用户同一份完整上下文，零 LLM
+    │       → pending_messages: ["临雀: 我最近在学Rust", "Bob: 临雀代码真好", ...]
     │
-    └── maybe_update_biography(user_id)    # 攒够 8 条或 24h 后触发
+    ├── maybe_distill(user_id)                 # 攒够 5 条或 8h 后触发
+    │       │
+    │       ▼
+    │    LLM 蒸馏:
+    │      输入: 群聊对话记录（"说话人: 内容"格式）
+    │      输出: {"points": ["要点1", ...], "discovered_aliases": [...]}
+    │      存入: card.distilled_points (追加)
+    │      清空: card.pending_messages
+    │
+    └── maybe_update_biography(user_id)        # 攒够 3 条要点或 24h 后触发
             │
             ▼
-        一次 LLM 调用:
-          输入: 旧传记 + 旧锚点 + 新消息列表
-          输出: 新传记 + 新锚点 + 关系 + 发现的别名
+         LLM 重写传记:
+           输入: 旧传记 + 旧锚点 + 新蒸馏要点
+           输出: {"short_bio": ..., "identity_anchors": ..., "relationships": [...]}
+           清空: card.distilled_points
 ```
 
-### LLM 更新 prompt
+### LLM 蒸馏 prompt（层1）
 
 ```
-你是人物传记维护助手。请根据一个用户的最新发言，更新你对该用户的认知档案。
+你是一个信息提炼助手。以下是一段群聊对话记录，请从中提取关于 {user_name} 的关键信息。
+
+人格名称：{persona_name}
+
+=== 群聊对话记录 ===
+{messages}
+
+对话中每条消息都标注了说话人（"说话人: 内容"格式）。请提炼 {user_name} 相关的信息，
+每条要点简洁（不超过 40 字），按重要性排列，最多 5 条。
+
+提取角度：
+1. {user_name} 自己说的话中透露的自身信息
+2. 其他人谈论 {user_name} 时透露的信息（含代称/外号指代）
+3. {user_name} 与他人的互动中体现的关系信息
+
+注意：只提取与 {user_name} 相关的内容，忽略不相关的闲聊。
+
+严格输出 JSON：
+{"points": ["要点1", "要点2", ...], "discovered_aliases": ["别名1", ...]}
+```
+
+### LLM 传记更新 prompt（层2）
+
+```
+你是人物传记维护助手。以下是从多段群聊中浓缩的关于 {user_name} 的要点，
+请据此更新你对该用户的认知档案。
 
 人格名称：{persona_name}
 
@@ -295,37 +388,35 @@ candidates → 按 user_id 分组
 已知关系：
 {old_relationships}
 
-=== 近期发言记录 ===
-{messages}
+=== 近期的认知要点（从群聊蒸馏而来） ===
+{points}
 
-请综合旧档案和新发言，输出一份更新后的完整档案。注意：
-1. 如果旧信息与新发言冲突，以新发言为准
-2. 如果新发言没有涉及旧档案中的某条信息，保留旧信息（除非那明显是过时的）
-3. 删除道听途说的闲聊（别人说的但经本人证实为错的信息）
-4. 传记不超过 500 字
-5. 锚点每条不超过 20 字，最多 5 条
-6. 从发言中发现该用户的其他称呼（别名/外号/代称），放在 discovered_aliases 中
+请综合旧档案和新要点，输出 {user_name} 的更新后完整档案。注意：
+- 如果旧信息与新要点冲突，以新要点为准
+- 如果新要点没有涉及旧档案中的某条信息，保留旧信息（除非明显过时）
+- 传记不超过 500 字
+- 锚点每条不超过 20 字，最多 5 条
 
 严格输出 JSON：
 {
   "short_bio": "浓缩传记全文（不超过500字）",
   "identity_anchors": ["锚点1", "锚点2", ...],
-  "relationships": [{"target": "对方名", "fact_hint": "事实描述"}, ...],
-  "discovered_aliases": ["别名1", "别名2", ...]
+  "relationships": [{"target": "对方名", "fact_hint": "事实描述"}, ...]
 }
 ```
 
-### 为什么不需要 embedding 去重
+### 两层凝练 vs 一步到位
 
-| 问题 | embedding 去重方案 | 一步到位方案 |
-|------|-------------------|-------------|
-| 同一事实两种说法 | embedding cosine 判断相似度 + 阈值调参 | LLM 自然理解两句话在说同一件事 |
-| 置信度累积 | 独立证据公式，需 embedding 匹配 | LLM 看到多次出现，自然给更高权重 |
-| 冲突事实 | 需额外逻辑处理 | LLM 自然判断以新为准 |
-| 长尾淘汰 | embedding + 最低 confidence 淘汰 | LLM 在 500 字预算内自然取舍 |
-| Embedding 调用 | N 条新事实 × M 条旧事实 | 0 |
+| 维度 | 一步到位方案（旧） | 两层凝练方案（新） |
+|------|-------------------|-------------------|
+| LLM 调用 | 1 次（原始消息 → 传记） | 2 次（消息 → 要点 → 传记），但每次更轻量 |
+| 单次输入量 | N 条原始消息（噪音多） | 蒸馏层 5 条以内要点（高信息密度） |
+| 信息遗漏 | LLM 可能被大量闲聊淹没 | 蒸馏层强制提炼关键信息 |
+| 触发节奏 | >=8 条消息 或 >=24h | 蒸馏 >=5 条 / 8h，传记 >=3 点 / 24h |
+| 成本 | 同等 | 蒸馏 prompt 更短，传记 prompt 信息密度更高 |
+| 别名发现 | 传记更新 LLM 顺带 | 蒸馏 LLM 顺带（更早发现新别名） |
 
-**核心洞察**：LLM 自身就是最好的"去重 + 合并 + 淘汰"引擎。用 embedding 模拟 LLM 的能力，不如直接用 LLM。日记系统吃过的亏（embedding 膨胀 + 检索不可靠），传记系统不重蹈。
+**核心洞察**：原始对话中 80% 是无用闲聊，直接让 LLM 重写传记时那些闲聊会挤占注意力。先蒸馏一次筛掉噪音，传记更新的输入是精炼要点的集合，质量更高。
 
 ### feed_messages 实现
 
@@ -358,7 +449,64 @@ def feed_messages(
     self._store.save_card(card)
 ```
 
-### maybe_update_biography 实现
+### maybe_distill 实现（层1）
+
+```python
+async def maybe_distill(
+    self,
+    user_id: str,
+    *,
+    persona_name: str,
+    provider_async: Any,
+    model_name: str,
+) -> bool:
+    """蒸馏：从原始群聊消息提炼关于此用户的要点。"""
+    card = self._ensure_card(user_id)
+    if not card.pending_messages:
+        return False
+
+    # 触发条件
+    should_distill = (
+        len(card.pending_messages) >= 5
+        or (
+            card.last_distill_at
+            and self._hours_since(card.last_distill_at) >= 8
+        )
+    )
+    if not should_distill:
+        return False
+
+    prompt = _build_distill_prompt(
+        user_name=card.name,
+        persona_name=persona_name,
+        messages=card.pending_messages,
+    )
+    request = GenerationRequest(
+        model=model_name,
+        system_prompt="你是信息提炼助手。严格输出 JSON。",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=1024,
+        purpose="biography_distill",
+    )
+    raw = await provider_async.generate_async(request)
+    result = json.loads(raw)
+
+    # 蒸馏要点追加到 distilled_points
+    new_points = [str(p).strip() for p in result.get("points", []) if p]
+    card.distilled_points.extend(new_points)
+    card.pending_messages = []
+    card.last_distill_at = now_iso()
+
+    # 注册蒸馏发现的别名
+    for alias in result.get("discovered_aliases", []):
+        self._register_alias(alias, user_id, card.name, source="llm_discovery")
+
+    self._store.save_card(card)
+    return bool(new_points)
+```
+
+### maybe_update_biography 实现（层2）
 
 ```python
 async def maybe_update_biography(
@@ -369,14 +517,14 @@ async def maybe_update_biography(
     provider_async: Any,
     model_name: str,
 ) -> bool:
-    """单步 LLM 更新传记。"""
+    """综合蒸馏要点重写传记卡。"""
     card = self._ensure_card(user_id)
-    if not card.pending_messages:
+    if not card.distilled_points:
         return False
     
     # 触发条件
     should_update = (
-        len(card.pending_messages) >= 8
+        len(card.distilled_points) >= 3
         or (
             card.last_updated_at
             and self._hours_since(card.last_updated_at) >= 24
@@ -385,16 +533,13 @@ async def maybe_update_biography(
     if not should_update:
         return False
     
-    # 构建 prompt → 一次 LLM 调用
-    from sirius_chat.providers.base import GenerationRequest
-    
     prompt = _build_update_prompt(
         user_name=card.name,
         persona_name=persona_name,
         old_bio=card.short_bio,
         old_anchors=card.identity_anchors,
         old_relationships=card.relationships,
-        messages=card.pending_messages,
+        points=card.distilled_points,
     )
     request = GenerationRequest(
         model=model_name,
@@ -417,15 +562,14 @@ async def maybe_update_biography(
         )
         for r in result.get("relationships", [])[:5]
     ]
-    card.pending_messages = []
-    card.pending_message_count = 0
+    card.distilled_points = []
     card.last_updated_at = now_iso()
     
     self._store.save_card(card)
     return True
 ```
 
-**用一个 `memory_extract` 模型（gpt-4o-mini），temperature=0.4**。每条传记的更新成本约等于一条日记生成。日记周期触发的用户数通常 < 5 人，总成本极低。
+**使用 `memory_extract` 模型（gpt-4o-mini），温度：蒸馏 0.3 / 传记重写 0.4**。蒸馏每次只提炼 5 条以内要点，成本很低。传记重写的输入是高密度要点，质量远高于直接从原始消息重写。
 
 ---
 
@@ -691,7 +835,7 @@ if result:
     promoted_total += 1
     # ... 现有 semantic_memory 更新 ...
 
-    # ── 新增：传记攒消息 + 条件更新 ──
+    # ── 新增：传记攒消息 + 两层凝练 ──
     if self.biography_manager is not None:
         try:
             await self._feed_biography_from_candidates(
@@ -710,44 +854,62 @@ async def _feed_biography_from_candidates(
     candidates: list[BasicMemoryEntry],
     model_name: str,
 ) -> None:
-    """从日记候选消息中按 user_id 分组，攒消息到各自传记。
+    """从日记候选消息中攒消息到各自传记。
 
-    此方法零 LLM 调用，纯文本追加。
-    满足条件后由 maybe_update_biography 触发一次 LLM 更新。
+    与日记一致：使用全部 candidates，不做预过滤。每个用户都拿到
+    完整对话上下文，LLM 在蒸馏/更新传记时自行提取相关信息。
     """
-    
-    # 1. 按 user_id 分组（过滤 assistant 和 system）
-    by_user: dict[str, list[str]] = {}
-    by_user_aliases: dict[str, list[str]] = {}
-    for entry in candidates:
-        if entry.user_id in ("assistant", "system", ""):
-            continue
-        if entry.user_id not in by_user:
-            by_user[entry.user_id] = []
-        # 格式："speaker_name: content"
-        speaker = entry.speaker_name or entry.user_id
-        by_user[entry.user_id].append(f"{speaker}: {entry.content}")
 
-    if self.biography_manager is None:
+    # 1. 构建全部消息（与日记输入相同，不做预过滤）
+    all_messages: list[str] = []
+    user_ids: set[str] = set()
+    user_name_map: dict[str, str] = {}
+    for entry in candidates:
+        uid = entry.user_id
+        if uid in ("assistant", "system", ""):
+            continue
+        speaker = entry.speaker_name or uid
+        all_messages.append(f"{speaker}: {entry.content}")
+        user_ids.add(uid)
+        if uid not in user_name_map:
+            user_name_map[uid] = speaker
+
+    if not user_ids or self.biography_manager is None:
         return
 
-    # 2. 攒消息（零 LLM 零 embedding）
-    for user_id, messages in by_user.items():
-        user_name = str(messages[0]).split(":", 1)[0] if messages else user_id
-        if len(messages) < 2:  # 消息太少，跳过
-            continue
+    # 2. 每个用户拿到同一份完整上下文，零 LLM 攒批
+    for user_id in user_ids:
+        user_name = user_name_map.get(user_id, user_id)
         try:
             self.biography_manager.feed_messages(
                 user_id=user_id,
                 name=user_name,
                 group_id=group_id,
-                messages=messages,
+                messages=all_messages,
             )
         except Exception as exc:
             logger.warning("传记攒消息失败 user=%s: %s", user_id, exc)
 
-    # 3. 逐个检查是否需要更新传记
-    for user_id in by_user:
+    # 3. 层1：蒸馏 → 从原始消息提炼关于各用户的要点
+    for user_id in user_ids:
+        try:
+            distilled = await self.biography_manager.maybe_distill(
+                user_id=user_id,
+                persona_name=self.persona.name,
+                provider_async=self.provider_async,
+                model_name=model_name,
+            )
+            if distilled:
+                self._record_subtask_tokens(
+                    task_name="biography_distill",
+                    model_name=model_name,
+                    group_id=group_id,
+                )
+        except Exception as exc:
+            logger.warning("传记蒸馏失败 user=%s: %s", user_id, exc)
+
+    # 4. 层2：传记更新 → 从蒸馏要点构建传记卡
+    for user_id in user_ids:
         try:
             updated = await self.biography_manager.maybe_update_biography(
                 user_id=user_id,
@@ -922,18 +1084,18 @@ pending_observations >= 5
 
 | 阶段 | 文件 | 内容 |
 |------|------|------|
-| **Phase 1** | `memory/biography/models.py` | 数据结构定义（UserPersonaCard、RelationshipAnchor、AliasEntry） |
+| **Phase 1** | `memory/biography/models.py` | 数据结构定义（UserPersonaCard + distilled_points / last_distill_at、RelationshipAnchor、AliasEntry） |
 | **Phase 1** | `memory/biography/store.py` | 持久化层（BiographyStore，复用 _atomic_write） |
 | **Phase 1** | `memory/biography/__init__.py` | 包入口 |
-| **Phase 2** | `memory/biography/manager.py` | 核心管理器（BiographyManager：feed_messages + maybe_update_biography + 别名消歧） |
+| **Phase 2** | `memory/biography/manager.py` | 核心管理器（BiographyManager：feed_messages + maybe_distill + maybe_update_biography + 别名消歧） |
 | **Phase 3** | `core/engine_core.py` | 构造函数集成（初始化 biography_manager） |
-| **Phase 3** | `core/bg_tasks.py` | _bg_diary_promoter 集成（新增 _feed_biography_from_candidates） |
+| **Phase 3** | `core/bg_tasks.py` | _bg_diary_promoter 集成（新增 _feed_biography_from_candidates，使用全部 candidates） |
 | **Phase 4** | `core/pipeline.py` | 新增 _collect_biography_section，传入决策/执行参数 |
 | **Phase 4** | `core/prompt_factory.py` | 新增 build_biography_section + TAG_BIOGRAPHY |
 | **Phase 5** | `core/bg_tasks.py` | _build_delayed_prompt 中传入 biography 参数 |
 | **Phase 5** | 各 assemble_* 调用点 | 透传 biography 参数 |
-| **Phase 6** | 测试 | test_biography_manager、集成测试 |
-| **Phase 7** | WebUI | 用户传记查看/编辑界面（可选，后续迭代） |
+| **Phase 6** | 测试 | test_biography.py（models roundtrip、store save/load、manager 两层凝练 + 别名消歧、prompt builder） |
+| **Phase 7** | WebUI | API 端点 + 用户传记查看/编辑界面 |
 
 ---
 
@@ -958,12 +1120,13 @@ pending_observations >= 5
 2. **传记跟随日记周期** → 不新增触发频率，日记触发时才攒消息 + 条件更新
 3. **输入用 candidates 而非日记 output** → candidates 的 user_id↔发言 是系统级精确映射
 4. **传记通过 LLM 重写而非追加** → 500 字预算锁死，LLM 语义判断淘汰旧信息
-5. **一步到位：无独立提取、无 embedding 去重** → 攒原始消息 + 一次 LLM 调用完成所有工作，LLM 天然处理重复和冲突
-6. **别名一对多消歧** → `_alias_index: dict[str, list[AliasEntry]]`，三层消歧（群过滤 → 上下文 → 兜底）
-7. **别名权重动态变化** → 经常被用的别名 weight 增长，不用则衰减，支持同名自然分化
-8. **别名匹配零 LLM** → 内存 `_alias_index` 精确匹配，消息级 O(1)
-9. **与意图分析完全解耦** → 传记更新是后台任务，消息级只做字符串匹配
-10. **SemanticMemory 用户画像可大幅简化** → `interest_graph` 不再注入 prompt（由传记替代），`engagement_rate` 仅保留极端档位
+5. **两层凝练而非一步到位** → 原始消息先蒸馏为要点（层1），再积累要点重写传记（层2），信息密度更高
+6. **输入使用全部 candidates，不做预过滤** → 与日记输入一致，LLM 自行蒸馏目标用户相关信息（含第三方视角）
+7. **别名一对多消歧** → `_alias_index: dict[str, list[AliasEntry]]`，三层消歧（群过滤 → 上下文 → 兜底）
+8. **别名权重动态变化** → 经常被用的别名 weight 增长，不用则衰减，支持同名自然分化
+9. **别名匹配零 LLM** → 内存 `_alias_index` 精确匹配，消息级 O(1)
+10. **与意图分析完全解耦** → 传记更新是后台任务，消息级只做字符串匹配
+11. **SemanticMemory 用户画像可大幅简化** → `interest_graph` 不再注入 prompt（由传记替代），`engagement_rate` 仅保留极端档位
 
 ---
 
