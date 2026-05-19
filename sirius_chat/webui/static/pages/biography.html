@@ -44,8 +44,6 @@
 </div>
 
 <script>
-(function() {
-
 function mkSelect(placeholder, elId) {
   const div = document.getElementById(elId);
   const sel = document.createElement('select');
@@ -256,6 +254,4 @@ registerPageLoader('biography', {
   },
   refresh: async function() { if (currentPersona) bioFetch(); }
 });
-
-})();
 </script>
