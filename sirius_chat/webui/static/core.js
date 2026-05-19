@@ -126,6 +126,7 @@ const pageTitles = {
   'cognition': ['认知分析', 'Analytics / Cognition'],
   'diary': ['日记', 'Analytics / Diary'],
   'users': ['用户画像', 'Analytics / Users'],
+  'biography': ['人物传记', 'Analytics / Biography'],
   'glossary': ['名词解释', 'Analytics / Glossary'],
   'stickers': ['表情包库', 'Analytics / Stickers'],
   'memory-viz': ['记忆可视化', 'Analytics / Memory Viz'],

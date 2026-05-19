@@ -56,6 +56,13 @@ from sirius_chat.webui.memory_api import (
     api_persona_sticker_delete,
     api_persona_memory_viz,
 )
+from sirius_chat.webui.biography_api import (
+    api_persona_biography_list,
+    api_persona_biography_get,
+    api_persona_biography_update,
+    api_persona_biography_alias_index,
+    api_persona_biography_alias_index_update,
+)
 from sirius_chat.webui.napcat_api import (
     api_napcat_status,
     api_napcat_install,
@@ -276,6 +283,23 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_skill_history_get(self, request):
         return await api_persona_skill_history_get(request, self.persona_manager)
+
+    # ─── 人物传记管理 API 代理方法 ──────────────────────────
+
+    async def api_persona_biography_list(self, request):
+        return await api_persona_biography_list(request, self.persona_manager)
+
+    async def api_persona_biography_get(self, request):
+        return await api_persona_biography_get(request, self.persona_manager)
+
+    async def api_persona_biography_update(self, request):
+        return await api_persona_biography_update(request, self.persona_manager)
+
+    async def api_persona_biography_alias_index(self, request):
+        return await api_persona_biography_alias_index(request, self.persona_manager)
+
+    async def api_persona_biography_alias_index_update(self, request):
+        return await api_persona_biography_alias_index_update(request, self.persona_manager)
 
 
 __all__ = ["WebUIServer"]
