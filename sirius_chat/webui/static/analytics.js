@@ -1571,6 +1571,214 @@ function mvRenderBipartite(userNodes, topicNodes, links) {
   }, true);
 }
 
+// ═══════════════════════════════════════════════════════════
+// Biography 人物传记
+// ═══════════════════════════════════════════════════════════
+
+let bioData = { cards: [], alias_index: {} };
+
+async function bioFetch() {
+  if (!currentPersona) {
+    document.getElementById('bioCardList').innerHTML = '<div style="color:var(--text-2);padding:12px">请选择人格</div>';
+    return;
+  }
+  try {
+    bioData = await get(pApi('/biography'));
+    bioRender();
+  } catch (e) {
+    document.getElementById('bioCardList').innerHTML = `<div style="color:var(--danger);padding:12px">加载失败：${e.message}</div>`;
+  }
+}
+
+function bioRefresh() { bioFetch(); }
+
+function bioRender() {
+  const cards = bioData.cards || [];
+  const aliasIndex = bioData.alias_index || {};
+  const totalAliases = Object.keys(aliasIndex).length;
+  const lastUpdate = cards.length > 0
+    ? cards.reduce((latest, c) => c.last_updated_at > latest ? c.last_updated_at : latest, '').slice(0, 19).replace('T', ' ')
+    : '—';
+
+  document.getElementById('bioTotal').textContent = cards.length;
+  document.getElementById('bioAliasCount').textContent = totalAliases;
+  document.getElementById('bioLastUpdate').textContent = lastUpdate;
+
+  const list = document.getElementById('bioCardList');
+  if (cards.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-2);padding:12px;text-align:center">暂无传记卡</div>';
+  } else {
+    list.innerHTML = cards.map(c => {
+      const anchors = (c.identity_anchors || []).slice(0, 3).join(' · ');
+      const bioPreview = (c.short_bio || '暂无传记').slice(0, 80);
+      const rels = (c.relationships || []).slice(0, 2).map(r => r.fact_hint || r.target_name || '').filter(Boolean).join('；');
+      return `<div class="card" style="cursor:pointer" onclick="bioOpenCard('${c.user_id.replace(/'/g, "\\'")}')">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:12px">
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:15px;margin-bottom:4px">${c.name || c.user_id}</div>
+            ${anchors ? `<div style="font-size:12px;color:var(--primary);margin-bottom:4px">${anchors}</div>` : ''}
+            ${bioPreview ? `<div style="font-size:13px;color:var(--text-2);margin-bottom:4px">${bioPreview}...</div>` : ''}
+            ${rels ? `<div style="font-size:12px;color:var(--text-3)">关系：${rels}</div>` : ''}
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:11px;color:var(--text-3)">${c.user_id}</div>
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px">更新：${(c.last_updated_at||'').slice(0,10)||'—'}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  const aliasEl = document.getElementById('bioAliasSection');
+  const aliases = Object.entries(aliasIndex);
+  if (aliases.length === 0) {
+    aliasEl.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-2)">暂无别名条目</div>';
+  } else {
+    aliasEl.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:8px 6px">别名</th>
+          <th style="text-align:left;padding:8px 6px">指向</th>
+          <th style="text-align:left;padding:8px 6px">权重</th>
+          <th style="text-align:left;padding:8px 6px">来源</th>
+          <th style="text-align:right;padding:8px 6px">操作</th>
+        </tr></thead>
+        <tbody>
+          ${aliases.map(([alias, entries]) => entries.map((e, i) => `
+            <tr style="border-bottom:1px solid var(--border);${i===0 ? '' : 'opacity:0.7'}">
+              <td style="padding:6px">${i===0 ? `<strong>${alias}</strong>` : ''}</td>
+              <td style="padding:6px">${e.user_name || e.user_id}</td>
+              <td style="padding:6px">${e.weight.toFixed(2)}</td>
+              <td style="padding:6px;font-size:11px;color:var(--text-3)">${e.source}</td>
+              <td style="padding:6px;text-align:right">
+                <button class="btn btn-sm btn-outline" onclick="bioRemoveAlias('${alias.replace(/'/g, "\\'")}','${e.user_id.replace(/'/g, "\\'")}')" style="font-size:11px;padding:2px 8px">删除</button>
+              </td>
+            </tr>
+          `).join('')).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:end">
+        <div><label style="font-size:12px;color:var(--text-2)">别名</label><input id="bioNewAlias" placeholder="e.g. 狗福" style="width:100px"></div>
+        <div><label style="font-size:12px;color:var(--text-2)">user_id</label><input id="bioNewAliasUid" placeholder="e.g. qq_123" style="width:120px"></div>
+        <div><label style="font-size:12px;color:var(--text-2)">显示名</label><input id="bioNewAliasName" placeholder="e.g. 临雀" style="width:100px"></div>
+        <div><button class="btn btn-sm btn-primary" onclick="bioAddAlias()" style="margin-top:auto">添加</button></div>
+      </div>
+    `;
+  }
+}
+
+async function bioRemoveAlias(alias, userId) {
+  if (!confirm(`确定要删除 "${alias}" → ${userId} 的别名映射吗？`)) return;
+  try {
+    await post(pApi('/biography/aliases'), { action: 'delete', alias, user_id: userId });
+    toast('别名已删除');
+    bioFetch();
+  } catch (e) { toast('删除失败: ' + e.message, 'error'); }
+}
+
+async function bioAddAlias() {
+  const alias = document.getElementById('bioNewAlias').value.trim();
+  const uid = document.getElementById('bioNewAliasUid').value.trim();
+  const name = document.getElementById('bioNewAliasName').value.trim();
+  if (!alias || !uid) { toast('请填写别名和user_id', 'error'); return; }
+  try {
+    await post(pApi('/biography/aliases'), { action: 'add', alias, user_id: uid, user_name: name });
+    toast('别名已添加');
+    bioFetch();
+  } catch (e) { toast('添加失败: ' + e.message, 'error'); }
+}
+
+function bioOpenCard(userId) {
+  const card = (bioData.cards || []).find(c => c.user_id === userId);
+  if (!card) return;
+  document.getElementById('bioModalTitle').textContent = `编辑传记 — ${card.name || card.user_id}`;
+  document.getElementById('bioModalBody').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div>
+        <label style="font-size:12px;color:var(--text-2)">User ID</label>
+        <div style="font-size:13px;color:var(--text-3);font-family:monospace">${card.user_id}</div>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2)">显示名</label>
+        <input id="bioEditName" value="${(card.name||'').replace(/"/g, '&quot;')}" style="width:100%">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2)">别名（逗号分隔）</label>
+        <input id="bioEditAliases" value="${(card.aliases||[]).join(', ').replace(/"/g, '&quot;')}" style="width:100%">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2)">身份锚点（一行一个，最多5条）</label>
+        <textarea id="bioEditAnchors" rows="3" style="width:100%;font-size:13px">${(card.identity_anchors||[]).join('\n')}</textarea>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2)">关系（每行格式：对方名|事实描述）</label>
+        <textarea id="bioEditRels" rows="3" style="width:100%;font-size:13px">${(card.relationships||[]).map(r => (r.target_name||'') + '|' + (r.fact_hint||'')).join('\n')}</textarea>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2)">传记正文（≤500字）</label>
+        <textarea id="bioEditShortBio" rows="6" style="width:100%;font-size:13px">${(card.short_bio||'').replace(/"/g, '&quot;')}</textarea>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-2)">待处理消息（${(card.pending_messages||[]).length} 条）</label>
+        <textarea readonly rows="3" style="width:100%;font-size:12px;color:var(--text-3);background:var(--bg-2)">${(card.pending_messages||[]).join('\n')}</textarea>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-outline" onclick="bioCloseModal()">取消</button>
+        <button class="btn btn-primary" onclick="bioSaveCard('${card.user_id.replace(/'/g, "\\'")}')">保存</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('bioModal').style.display = 'flex';
+}
+
+function bioCloseModal() {
+  document.getElementById('bioModal').style.display = 'none';
+}
+
+async function bioSaveCard(userId) {
+  const body = {
+    name: document.getElementById('bioEditName').value.trim(),
+    aliases: document.getElementById('bioEditAliases').value.split(',').map(s => s.trim()).filter(Boolean),
+    identity_anchors: document.getElementById('bioEditAnchors').value.split('\n').map(s => s.trim()).filter(Boolean),
+    relationships: document.getElementById('bioEditRels').value.split('\n').map(s => {
+      const [target, fact] = s.split('|');
+      return target ? { target: target.trim(), target_user_id: '', fact_hint: (fact||target).trim() } : null;
+    }).filter(Boolean),
+    short_bio: document.getElementById('bioEditShortBio').value.trim(),
+  };
+  try {
+    await post(pApi('/biography/' + userId), body);
+    toast('传记已保存');
+    bioCloseModal();
+    bioFetch();
+  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
+}
+
+function bioPersonaSelectInit() {
+  const el = document.getElementById('bioPersonaSelect');
+  if (!el) return;
+
+  const sel = document.createElement('select');
+  sel.style.cssText = 'padding:4px 8px;border-radius:6px;background:var(--bg-2);color:var(--text);border:1px solid var(--border);font-size:13px;min-width:120px';
+  sel.innerHTML = '<option value="">选择人格</option>';
+  el.innerHTML = '';
+  el.appendChild(sel);
+
+  function populate() {
+    sel.innerHTML = '<option value="">选择人格</option>';
+    personas.forEach(p => {
+      sel.innerHTML += `<option value="${p.name}">${p.persona_name || p.name}</option>`;
+    });
+    if (currentPersona) sel.value = currentPersona;
+  }
+  populate();
+
+  sel.onchange = function () {
+    selectPersona(this.value);
+    bioFetch();
+  };
+}
+
 // ── Page Loader Registrations (analytics) ─────────────
 registerPageLoader('token-tracker', { init: loadTokenTracker, refresh: ttLoadData });
 registerPageLoader('cognition', { init: loadCognition });
@@ -1578,3 +1786,10 @@ registerPageLoader('diary', { init: diaryLoadData });
 registerPageLoader('users', { init: loadUsers });
 registerPageLoader('glossary', { init: loadGlossary });
 registerPageLoader('memory-viz', { init: loadMemoryViz });
+registerPageLoader('biography', {
+  init: async function () {
+    bioPersonaSelectInit();
+    if (currentPersona) bioFetch();
+  },
+  refresh: async function () { if (currentPersona) bioFetch(); }
+});

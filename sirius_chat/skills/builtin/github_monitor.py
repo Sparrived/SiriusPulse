@@ -228,209 +228,209 @@ async def _poll_github_events(ctx: Any) -> None:
                 if repo_cfg.get("mode") == "webhook":
                     continue
 
-            owner = str(repo_cfg.get("owner", "")).strip()
-            repo = str(repo_cfg.get("repo", "")).strip()
-            if not owner or not repo:
-                continue
-
-            events_config: list[str] = repo_cfg.get("events", [])
-            target_groups: list[str] = repo_cfg.get("groups", [])
-            github_token = str(repo_cfg.get("github_token", "")).strip()
-
-            if not events_config or not target_groups:
-                continue
-
-            # 构建允许事件类型集合
-            allowed_types: set[str] = set()
-            for ec in events_config:
-                allowed_types.update(_EVENT_TYPE_FILTER.get(ec, set()))
-            if not allowed_types:
-                continue
-
-            repo_key = f"{owner}/{repo}"
-
-            # 按 poll_seconds 节流：距离上次 API 调用未满 poll_seconds 则跳过
-            prev = last_poll.get(repo_key, 0.0)
-            if now - prev < poll_seconds:
-                continue
-
-            since = last_ts.get(repo_key)
-
-            # 拉取事件（带重试，per-repo token 通过 extra_headers 注入）
-            logger.debug("github_monitor: 正在获取 %s 事件... (%s)", repo_key, api_base_url)
-            extra_headers: dict[str, str] = {}
-            if github_token:
-                extra_headers["Authorization"] = f"Bearer {github_token}"
-            events = await fetch_repo_events(client, owner, repo, extra_headers=extra_headers)
-            if not events:
-                # API 调用成功但无事件，更新时间戳避免频繁空轮询
-                logger.debug("github_monitor: %s 无新事件", repo_key)
-                last_poll[repo_key] = now
-                store.set("_last_poll_at", last_poll)
-                store.save()
-                continue
-
-            # 筛选 since 之后的新事件，只保留启用的类型并按时间倒序
-            # 同时跳过 PR 合并导致的 PushEvent（与 PullRequestEvent 重复）
-            new_events: list[dict[str, Any]] = []
-            skipped_pr_merges = 0
-            for event in events:
-                created_at = event.get("created_at", "")
-                if since and created_at <= since:
+                owner = str(repo_cfg.get("owner", "")).strip()
+                repo = str(repo_cfg.get("repo", "")).strip()
+                if not owner or not repo:
                     continue
-                if event.get("type", "") not in allowed_types:
+
+                events_config: list[str] = repo_cfg.get("events", [])
+                target_groups: list[str] = repo_cfg.get("groups", [])
+                github_token = str(repo_cfg.get("github_token", "")).strip()
+
+                if not events_config or not target_groups:
                     continue
-                if _is_pr_merge_push_event(event):
-                    skipped_pr_merges += 1
+
+                # 构建允许事件类型集合
+                allowed_types: set[str] = set()
+                for ec in events_config:
+                    allowed_types.update(_EVENT_TYPE_FILTER.get(ec, set()))
+                if not allowed_types:
                     continue
-                new_events.append(event)
 
-            if skipped_pr_merges:
-                logger.debug(
-                    "github_monitor: %s 跳过了 %d 条 PR 合并 Push 事件（与 PullRequestEvent 重复）",
-                    repo_key,
-                    skipped_pr_merges,
-                )
+                repo_key = f"{owner}/{repo}"
 
-            if not new_events:
-                # API 调用成功，新事件筛选后为空，更新时间戳
-                last_poll[repo_key] = now
-                store.set("_last_poll_at", last_poll)
-                store.save()
-                continue
+                # 按 poll_seconds 节流：距离上次 API 调用未满 poll_seconds 则跳过
+                prev = last_poll.get(repo_key, 0.0)
+                if now - prev < poll_seconds:
+                    continue
 
-            # 获取最新事件时间戳用于更新
-            newest_ts = new_events[0].get("created_at")
-            is_first_poll = not since
+                since = last_ts.get(repo_key)
 
-            if newest_ts:
-                last_ts[repo_key] = newest_ts
-                store.set("last_event_timestamps", last_ts)
-                store.save()
+                # 拉取事件（带重试，per-repo token 通过 extra_headers 注入）
+                logger.debug("github_monitor: 正在获取 %s 事件... (%s)", repo_key, api_base_url)
+                extra_headers: dict[str, str] = {}
+                if github_token:
+                    extra_headers["Authorization"] = f"Bearer {github_token}"
+                events = await fetch_repo_events(client, owner, repo, extra_headers=extra_headers)
+                if not events:
+                    # API 调用成功但无事件，更新时间戳避免频繁空轮询
+                    logger.debug("github_monitor: %s 无新事件", repo_key)
+                    last_poll[repo_key] = now
+                    store.set("_last_poll_at", last_poll)
+                    store.save()
+                    continue
 
-            # 首次轮询（未有历史时间戳）：仅更新时间戳，跳过本次通知，
-            # 避免把历史事件全部播报导致刷屏。
-            if is_first_poll:
-                last_poll[repo_key] = now
-                store.set("_last_poll_at", last_poll)
-                store.save()
+                # 筛选 since 之后的新事件，只保留启用的类型并按时间倒序
+                # 同时跳过 PR 合并导致的 PushEvent（与 PullRequestEvent 重复）
+                new_events: list[dict[str, Any]] = []
+                skipped_pr_merges = 0
+                for event in events:
+                    created_at = event.get("created_at", "")
+                    if since and created_at <= since:
+                        continue
+                    if event.get("type", "") not in allowed_types:
+                        continue
+                    if _is_pr_merge_push_event(event):
+                        skipped_pr_merges += 1
+                        continue
+                    new_events.append(event)
+
+                if skipped_pr_merges:
+                    logger.debug(
+                        "github_monitor: %s 跳过了 %d 条 PR 合并 Push 事件（与 PullRequestEvent 重复）",
+                        repo_key,
+                        skipped_pr_merges,
+                    )
+
+                if not new_events:
+                    # API 调用成功，新事件筛选后为空，更新时间戳
+                    last_poll[repo_key] = now
+                    store.set("_last_poll_at", last_poll)
+                    store.save()
+                    continue
+
+                # 获取最新事件时间戳用于更新
+                newest_ts = new_events[0].get("created_at")
+                is_first_poll = not since
+
+                if newest_ts:
+                    last_ts[repo_key] = newest_ts
+                    store.set("last_event_timestamps", last_ts)
+                    store.save()
+
+                # 首次轮询（未有历史时间戳）：仅更新时间戳，跳过本次通知，
+                # 避免把历史事件全部播报导致刷屏。
+                if is_first_poll:
+                    last_poll[repo_key] = now
+                    store.set("_last_poll_at", last_poll)
+                    store.save()
+                    logger.info(
+                        "github_monitor: %s 首次同步完成，已跳过 %d 条历史事件",
+                        repo_key,
+                        len(new_events),
+                    )
+                    continue
+
+                # 通过 event_bridge 通知插件（coding_agent 等）
+                for event in new_events:
+                    etype = event.get("type", "")
+                    if etype == "IssuesEvent":
+                        payload = event.get("payload", {}) or {}
+                        if payload.get("action") == "opened":
+                            await notify_issue_opened(
+                                {"action": "opened", "issue": payload.get("issue", {}),
+                                 "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                                f"{owner}/{repo}",
+                            )
+                    elif etype == "PullRequestEvent":
+                        payload = event.get("payload", {}) or {}
+                        if payload.get("action") in ("opened", "synchronize"):
+                            await notify_pr_event(
+                                {"action": payload.get("action"), "pull_request": payload.get("pull_request", {}),
+                                 "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                                f"{owner}/{repo}",
+                                payload.get("action", ""),
+                            )
+                    elif etype == "IssueCommentEvent":
+                        payload = event.get("payload", {}) or {}
+                        if payload.get("action") == "created":
+                            await notify_issue_comment(
+                                {"action": "created", "comment": payload.get("comment", {}),
+                                 "issue": payload.get("issue", {}),
+                                 "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                                f"{owner}/{repo}",
+                            )
+
+                # 提取事件信息并按规范 URL 分组合并
+                # 同一 Issue/PR/Release 页面上的多个事件合并为一次通知，
+                # 避免对同一页面重复截图和 LLM 调用
+                grouped: dict[str, list[dict[str, Any]]] = {}
+                bot_login = get_coding_bot_login()
+                coding_repos = get_issue_repos()
+                for event in reversed(new_events):
+                    event_info = _extract_event_info(event)
+                    # coding 接管仓库：仅当评论作者是 AI bot 或非评论事件时才推送通知
+                    if bot_login and event_info.get("repo", "") in coding_repos:
+                        if event.get("type", "") == "IssueCommentEvent":
+                            actor_login = (event.get("actor", {}) or {}).get("login", "")
+                            if actor_login and actor_login != bot_login:
+                                logger.debug("github_monitor: %s 跳过非AI评论 @%s", repo_key, actor_login)
+                                continue
+                    canonical = event_info.get("canonical_url", event_info.get("url", ""))
+                    grouped.setdefault(canonical, []).append(event_info)
+
                 logger.info(
-                    "github_monitor: %s 首次同步完成，已跳过 %d 条历史事件",
+                    "github_monitor: %s 发现 %d 条新事件，合并为 %d 组",
                     repo_key,
                     len(new_events),
+                    len(grouped),
                 )
-                continue
 
-            # 通过 event_bridge 通知插件（coding_agent 等）
-            for event in new_events:
-                etype = event.get("type", "")
-                if etype == "IssuesEvent":
-                    payload = event.get("payload", {}) or {}
-                    if payload.get("action") == "opened":
-                        await notify_issue_opened(
-                            {"action": "opened", "issue": payload.get("issue", {}),
-                             "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
-                            f"{owner}/{repo}",
-                        )
-                elif etype == "PullRequestEvent":
-                    payload = event.get("payload", {}) or {}
-                    if payload.get("action") in ("opened", "synchronize"):
-                        await notify_pr_event(
-                            {"action": payload.get("action"), "pull_request": payload.get("pull_request", {}),
-                             "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
-                            f"{owner}/{repo}",
-                            payload.get("action", ""),
-                        )
-                elif etype == "IssueCommentEvent":
-                    payload = event.get("payload", {}) or {}
-                    if payload.get("action") == "created":
-                        await notify_issue_comment(
-                            {"action": "created", "comment": payload.get("comment", {}),
-                             "issue": payload.get("issue", {}),
-                             "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
-                            f"{owner}/{repo}",
-                        )
+                for canonical_url, group in grouped.items():
+                    merged_info = _merge_event_group(group)
 
-            # 提取事件信息并按规范 URL 分组合并
-            # 同一 Issue/PR/Release 页面上的多个事件合并为一次通知，
-            # 避免对同一页面重复截图和 LLM 调用
-            grouped: dict[str, list[dict[str, Any]]] = {}
-            bot_login = get_coding_bot_login()
-            coding_repos = get_issue_repos()
-            for event in reversed(new_events):
-                event_info = _extract_event_info(event)
-                # coding 接管仓库：仅当评论作者是 AI bot 或非评论事件时才推送通知
-                if bot_login and event_info.get("repo", "") in coding_repos:
-                    if event.get("type", "") == "IssueCommentEvent":
-                        actor_login = (event.get("actor", {}) or {}).get("login", "")
-                        if actor_login and actor_login != bot_login:
-                            logger.debug("github_monitor: %s 跳过非AI评论 @%s", repo_key, actor_login)
+                    # coding 接管仓库：跳过标签添加/删除事件，AI会自动管理标签
+                    if merged_info.get("type") == "IssuesEvent" and merged_info.get("action") in ("labeled", "unlabeled"):
+                        if repo_key in get_issue_repos():
+                            logger.debug("github_monitor: %s 跳过标签事件 %s", repo_key, merged_info.get("action"))
                             continue
-                canonical = event_info.get("canonical_url", event_info.get("url", ""))
-                grouped.setdefault(canonical, []).append(event_info)
 
-            logger.info(
-                "github_monitor: %s 发现 %d 条新事件，合并为 %d 组",
-                repo_key,
-                len(new_events),
-                len(grouped),
-            )
+                    # 截图：PR 事件截 /files diff 页，Push 截 compare 页，其余截主页面
+                    screenshot_path: str | None = None
+                    screenshot_url = (
+                        merged_info.get("screenshot_url", "")
+                        or merged_info.get("url", "")
+                        or canonical_url
+                    )
+                    if screenshot_url:
+                        try:
+                            screenshot_path = await _take_screenshot(screenshot_url, store)
+                        except Exception as exc:
+                            logger.warning("github_monitor: 截图失败 (%s): %s", screenshot_url, exc)
 
-            for canonical_url, group in grouped.items():
-                merged_info = _merge_event_group(group)
+                    # LLM 生成：每个合并组仅调用一次
+                    notification = await _generate_notification_text(ctx, merged_info, screenshot_path)
 
-                # coding 接管仓库：跳过标签添加/删除事件，AI会自动管理标签
-                if merged_info.get("type") == "IssuesEvent" and merged_info.get("action") in ("labeled", "unlabeled"):
-                    if repo_key in get_issue_repos():
-                        logger.debug("github_monitor: %s 跳过标签事件 %s", repo_key, merged_info.get("action"))
+                    if not notification:
                         continue
 
-                # 截图：PR 事件截 /files diff 页，Push 截 compare 页，其余截主页面
-                screenshot_path: str | None = None
-                screenshot_url = (
-                    merged_info.get("screenshot_url", "")
-                    or merged_info.get("url", "")
-                    or canonical_url
-                )
-                if screenshot_url:
-                    try:
-                        screenshot_path = await _take_screenshot(screenshot_url, store)
-                    except Exception as exc:
-                        logger.warning("github_monitor: 截图失败 (%s): %s", screenshot_url, exc)
+                    merged_count = merged_info.get("merged_count", 1)
+                    ctx.log_inner_thought(
+                        f"github_monitor: [{merged_info['repo']}] {merged_info['actor']} "
+                        f"{'、'.join(merged_info.get('merged_actions', [merged_info.get('action_cn', '') + merged_info.get('type_desc', '')]))} "
+                        f"({'合并' + str(merged_count) + '条事件' if merged_count > 1 else '1条事件'})"
+                        f" - 通知已生成，分发到 {len(target_groups)} 个群"
+                    )
 
-                # LLM 生成：每个合并组仅调用一次
-                notification = await _generate_notification_text(ctx, merged_info, screenshot_path)
+                    # 分发给所有订阅群
+                    for gid in target_groups:
+                        active_groups = ctx.get_active_groups()
+                        if gid not in active_groups and not gid.startswith("private_"):
+                            continue
+                        try:
+                            await _dispatch_notification(ctx, gid, notification, screenshot_path)
+                        except Exception as exc:
+                            logger.warning(
+                                "github_monitor: 分发 %s 失败 (gid=%s): %s",
+                                repo_key,
+                                gid,
+                                exc,
+                            )
 
-                if not notification:
-                    continue
-
-                merged_count = merged_info.get("merged_count", 1)
-                ctx.log_inner_thought(
-                    f"github_monitor: [{merged_info['repo']}] {merged_info['actor']} "
-                    f"{'、'.join(merged_info.get('merged_actions', [merged_info.get('action_cn', '') + merged_info.get('type_desc', '')]))} "
-                    f"({'合并' + str(merged_count) + '条事件' if merged_count > 1 else '1条事件'})"
-                    f" - 通知已生成，分发到 {len(target_groups)} 个群"
-                )
-
-                # 分发给所有订阅群
-                for gid in target_groups:
-                    active_groups = ctx.get_active_groups()
-                    if gid not in active_groups and not gid.startswith("private_"):
-                        continue
-                    try:
-                        await _dispatch_notification(ctx, gid, notification, screenshot_path)
-                    except Exception as exc:
-                        logger.warning(
-                            "github_monitor: 分发 %s 失败 (gid=%s): %s",
-                            repo_key,
-                            gid,
-                            exc,
-                        )
-
-            # 本轮 API 调用完成，保存调用时间戳
-            last_poll[repo_key] = time.monotonic()
-            store.set("_last_poll_at", last_poll)
-            store.save()
+                # 本轮 API 调用完成，保存调用时间戳
+                last_poll[repo_key] = time.monotonic()
+                store.set("_last_poll_at", last_poll)
+                store.save()
     except Exception as exc:
         logger.error(
             "github_monitor: 轮询异常 (%s)，将在下一周期重试: %s",
