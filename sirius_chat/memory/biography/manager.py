@@ -53,6 +53,12 @@ def _build_distill_prompt(
         f"2. 其他人谈论 {user_name} 时透露的信息（含代称/外号指代）\n"
         f"3. {user_name} 与他人的互动中体现的关系信息\n\n"
         f"注意：只提取与 {user_name} 相关的内容，忽略不相关的闲聊。\n\n"
+        f"关于别名发现（discovered_aliases）：\n"
+        f"- 仅当对话中明确用某个称呼来指代 {user_name} 本人时，才将其列入别名\n"
+        f"- 不要把对话中提及的其他人的名字当作别名。例如：如果对话中提到\"yuki\"是另一个人，"
+        f"不要把\"yuki\"列为 {user_name} 的别名\n"
+        f"- 不要把人格名称 {persona_name} 当作任何用户的别名\n"
+        f"- 如果没有发现新的别名，discovered_aliases 留空数组即可\n\n"
         f"严格输出 JSON：\n"
         f'{{"points": ["要点1", "要点2", ...], "discovered_aliases": ["别名1", ...]}}'
     )
@@ -340,11 +346,19 @@ class BiographyManager:
         card.pending_message_count = 0
         card.last_distill_at = _now_iso()
 
-        # 注册蒸馏发现的别名
+        # 注册蒸馏发现的别名（过滤掉与人格名/其他用户主名冲突的别名）
+        persona_lower = persona_name.strip().lower()
         for alias in result.get("discovered_aliases", []):
             if alias and str(alias).strip():
+                alias_clean = str(alias).strip()
+                if alias_clean.lower() == persona_lower:
+                    logger.debug(
+                        "拒绝LLM别名: %s 是人格自身名字，不是 %s 的别名",
+                        alias_clean, card.name,
+                    )
+                    continue
                 self._register_alias(
-                    str(alias).strip(), user_id, card.name, "", source="llm_discovery"
+                    alias_clean, user_id, card.name, "", source="llm_discovery"
                 )
 
         self._store.save_card(card)
@@ -455,10 +469,27 @@ class BiographyManager:
         group_id: str = "",
         source: str = "napcat",
     ) -> None:
-        """注册或更新一个别名条目。"""
+        """注册或更新一个别名条目。
+
+        LLM 来源的别名需要经过名字冲突校验：如果该别名恰好是另一个人的
+        主要显示名，说明 LLM 只是看到了"提及"而非"别名"，直接拒绝注册。
+        """
         alias_lower = alias.strip().lower()
         if not alias_lower or len(alias_lower) < 2:
             return
+
+        # LLM 来源：校验是否与已知用户的主要名字冲突
+        if source == "llm_discovery":
+            for uid, card in self._cards.items():
+                if uid == user_id:
+                    continue
+                if card.name and card.name.lower() == alias_lower:
+                    logger.debug(
+                        "拒绝LLM别名注册: %s 已是 %s 的主要名，不是 %s 的别名",
+                        alias, card.name, user_id,
+                    )
+                    return
+
         if alias_lower not in self._alias_index:
             self._alias_index[alias_lower] = []
 

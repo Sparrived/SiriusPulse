@@ -171,6 +171,34 @@ class TestBiographyManagerCore:
         assert len(manager._alias_index.get("狗福", [])) == 1
         assert len(manager._alias_index.get("雀雀", [])) == 1
 
+    def test_register_alias_rejects_llm_name_conflict(self, manager):
+        """LLM 发现别名不能与另一个用户的主要名冲突。"""
+        # 先注册用户 yuki，名字是 "yuki"
+        manager._register_alias("yuki", "qq_yuki", "yuki", "群A", source="napcat")
+        card_yuki = manager._ensure_card("qq_yuki", "yuki")
+        # 确认 yuki 的名字已存入 _cards
+        assert card_yuki.name == "yuki"
+
+        # LLM 试图把 "yuki" 注册为 qq_111 的别名 → 应被拒绝
+        manager._register_alias("yuki", "qq_111", "临雀", "群A", source="llm_discovery")
+        entries = manager._alias_index.get("yuki", [])
+        # 只有 qq_yuki 的条目，没有 qq_111 的
+        assert len(entries) == 1
+        assert entries[0].user_id == "qq_yuki"
+
+    def test_register_alias_allows_napcat_name_conflict(self, manager):
+        """NapCat 来源不受名字冲突拦截（QQ 数据可靠）。"""
+        manager._register_alias("yuki", "qq_yuki", "yuki", "群A", source="napcat")
+        manager._ensure_card("qq_yuki", "yuki")
+
+        # NapCat 来源即使名字冲突也允许
+        manager._register_alias("yuki", "qq_111", "临雀", "群A", source="napcat")
+        entries = manager._alias_index.get("yuki", [])
+        assert len(entries) == 2
+        uids = {e.user_id for e in entries}
+        assert "qq_yuki" in uids
+        assert "qq_111" in uids
+
 
 # ── Manager — alias disambiguation ──────────────────────────────
 
@@ -341,6 +369,29 @@ class TestBiographyDistill:
         card = manager.get_card("qq_111")
         assert card.pending_messages == []
 
+    @pytest.mark.asyncio
+    async def test_maybe_distill_filters_persona_name_alias(self, manager):
+        """LLM 返回的别名若与人格名一致，应被过滤。"""
+        msgs = [f"speaker: msg{i}" for i in range(6)]
+        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+        mock_provider = AsyncMock()
+        # LLM 错误地把人格名 "小星" 当作临雀的别名
+        mock_provider.generate_async.return_value = (
+            '{"points": ["临雀爱聊天"], "discovered_aliases": ["小星", "雀雀"]}'
+        )
+        distilled = await manager.maybe_distill(
+            "qq_111",
+            persona_name="小星",
+            provider_async=mock_provider,
+            model_name="gpt-4o-mini",
+        )
+        assert distilled is True
+        # "小星" 被过滤，"雀雀" 正常注册
+        entries = manager._alias_index.get("小星", [])
+        assert len(entries) == 0
+        entries = manager._alias_index.get("雀雀", [])
+        assert len(entries) == 1
+
 
 # ── Manager — 层2：传记更新 (async mock) ────────────────────────
 
@@ -445,6 +496,16 @@ class TestBuildDistillPrompt:
         assert "群聊对话记录" in prompt
         assert "我最近在学Rust" in prompt
         assert "临雀的代码写得真好" in prompt
+
+    def test_alias_guard_in_prompt(self):
+        """蒸馏 prompt 包含别名冲突警告。"""
+        prompt = _build_distill_prompt(
+            user_name="临雀",
+            persona_name="小星",
+            messages=["临雀: yuki今天天气不错"],
+        )
+        assert "不要把对话中提及的其他人的名字当作别名" in prompt
+        assert "不要把人格名称 小星 当作任何用户的别名" in prompt
 
 
 class TestBuildUpdatePrompt:
