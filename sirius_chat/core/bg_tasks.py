@@ -248,43 +248,65 @@ class BackgroundTasksMixin(_Base):
         candidates: list[Any],
         model_name: str,
     ) -> None:
-        """从日记候选消息中按 user_id 分组，攒消息到各自传记。
+        """从日记候选消息中攒消息到各自传记。
 
-        此方法零 LLM 调用，纯文本追加。
-        满足条件后由 maybe_update_biography 触发一次 LLM 更新。
+        与日记一致：使用全部 candidates，不做预过滤。每个用户都拿到
+        完整对话上下文，LLM 在更新传记时自行蒸馏出与目标用户相关的信息。
         """
-        # 按 user_id 分组（过滤 assistant 和 system）
-        by_user: dict[str, list[str]] = {}
-        for entry in candidates:
-            if getattr(entry, "user_id", "") in ("assistant", "system", ""):
-                continue
-            uid = entry.user_id
-            if uid not in by_user:
-                by_user[uid] = []
-            speaker = getattr(entry, "speaker_name", "") or uid
-            by_user[uid].append(f"{speaker}: {getattr(entry, 'content', '')}")
-
         mgr = getattr(self, "biography_manager", None)
         if mgr is None:
             return
 
-        # 攒消息（零 LLM 零 embedding）
-        for user_id, messages in by_user.items():
-            if len(messages) < 2:
+        # 构建全部消息的统一格式列表（过滤 assistant 和 system）
+        all_messages: list[str] = []
+        user_ids: set[str] = set()
+        user_name_map: dict[str, str] = {}
+        for entry in candidates:
+            uid = getattr(entry, "user_id", "")
+            if uid in ("assistant", "system", ""):
                 continue
-            user_name = messages[0].split(":", 1)[0] if messages else user_id
+            speaker = getattr(entry, "speaker_name", "") or uid
+            all_messages.append(f"{speaker}: {getattr(entry, 'content', '')}")
+            user_ids.add(uid)
+            if uid not in user_name_map:
+                user_name_map[uid] = speaker
+
+        if not user_ids:
+            return
+
+        # 每个用户都拿到全部对话上下文，先攒消息
+        for user_id in user_ids:
+            user_name = user_name_map.get(user_id, user_id)
             try:
                 mgr.feed_messages(
                     user_id=user_id,
                     name=user_name,
                     group_id=group_id,
-                    messages=messages,
+                    messages=all_messages,
                 )
             except Exception as exc:
                 logger.warning("传记攒消息失败 user=%s: %s", user_id, exc)
 
-        # 逐个检查是否需要更新传记
-        for user_id in by_user:
+        # 层1：蒸馏 → 从原始消息提炼关于各用户的要点
+        for user_id in user_ids:
+            try:
+                distilled = await mgr.maybe_distill(
+                    user_id=user_id,
+                    persona_name=self.persona.name,
+                    provider_async=self.provider_async,
+                    model_name=model_name,
+                )
+                if distilled:
+                    self._record_subtask_tokens(
+                        task_name="biography_distill",
+                        model_name=model_name,
+                        group_id=group_id,
+                    )
+            except Exception as exc:
+                logger.warning("传记蒸馏失败 user=%s: %s", user_id, exc)
+
+        # 层2：传记更新 → 从蒸馏要点构建传记卡
+        for user_id in user_ids:
             try:
                 updated = await mgr.maybe_update_biography(
                     user_id=user_id,

@@ -1,4 +1,4 @@
-"""Tests for biography system: models, store, manager, alias disambiguation."""
+"""Tests for biography system: models, store, manager, alias disambiguation, two-layer condensation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from sirius_chat.memory.biography.manager import BiographyManager, _build_update_prompt
+from sirius_chat.memory.biography.manager import (
+    BiographyManager,
+    _build_distill_prompt,
+    _build_update_prompt,
+)
 from sirius_chat.memory.biography.models import AliasEntry, RelationshipAnchor, UserPersonaCard
 from sirius_chat.memory.biography.store import BiographyStore
 
@@ -140,30 +144,14 @@ class TestBiographyManagerCore:
         assert card.name == "Alice"
         assert len(card.pending_messages) == 2
         assert card.pending_message_count == 2
+        assert card.distilled_points == []
 
     def test_feed_messages_truncates_long_history(self, manager):
-        # Generate 100 messages — should truncate to ~2000 chars
         msgs = [f"user: {'x' * 200}" for _ in range(100)]
         manager.feed_messages("qq_111", "Test", "群A", msgs)
         card = manager.get_card("qq_111")
         total = sum(len(m) for m in card.pending_messages)
         assert total <= 2000
-
-    @pytest.mark.asyncio
-    async def test_maybe_update_not_enough_messages(self, manager):
-        manager.feed_messages("qq_111", "A", "群A", ["msg1", "msg2"])
-        mock_provider = AsyncMock()
-        # 消息不够 8 条 → 不会触发更新，但消息保留在 pending 中
-        updated = await manager.maybe_update_biography(
-            "qq_111",
-            persona_name="小星",
-            provider_async=mock_provider,
-            model_name="gpt-4o-mini",
-        )
-        assert updated is False
-        mock_provider.generate_async.assert_not_awaited()
-        # pending_messages 未被清空
-        assert len(manager._ensure_card("qq_111").pending_messages) == 2
 
     def test_register_alias(self, manager):
         manager._register_alias("狗福", "qq_111", "临雀", "群A")
@@ -256,21 +244,120 @@ class TestAliasDisambiguation:
         assert aliases["雀雀"] == "临雀"
 
 
-# ── Manager — LLM update (async mock) ───────────────────────────
+# ── Manager — 层1：蒸馏 (async mock) ──────────────────────────
+
+
+class TestBiographyDistill:
+    @pytest.mark.asyncio
+    async def test_maybe_distill_triggers_on_enough(self, manager):
+        msgs = [f"speaker: 消息{i}" for i in range(6)]
+        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+        mock_provider = AsyncMock()
+        mock_provider.generate_async.return_value = (
+            '{"points": ["临雀是程序员", "临雀用Python"], "discovered_aliases": ["雀雀"]}'
+        )
+        distilled = await manager.maybe_distill(
+            "qq_111",
+            persona_name="小星",
+            provider_async=mock_provider,
+            model_name="gpt-4o-mini",
+        )
+        assert distilled is True
+        card = manager.get_card("qq_111")
+        assert card is not None
+        assert len(card.distilled_points) == 2
+        assert "临雀是程序员" in card.distilled_points
+        assert card.pending_messages == []
+        assert card.last_distill_at != ""
+
+    @pytest.mark.asyncio
+    async def test_maybe_distill_not_enough(self, manager):
+        manager.feed_messages("qq_111", "A", "群A", ["msg1", "msg2"])
+        mock_provider = AsyncMock()
+        distilled = await manager.maybe_distill(
+            "qq_111",
+            persona_name="小星",
+            provider_async=mock_provider,
+            model_name="gpt-4o-mini",
+        )
+        assert distilled is False
+        mock_provider.generate_async.assert_not_awaited()
+        # 消息保留在 pending 中
+        assert len(manager._ensure_card("qq_111").pending_messages) == 2
+
+    @pytest.mark.asyncio
+    async def test_maybe_distill_no_pending(self, manager):
+        mock_provider = AsyncMock()
+        distilled = await manager.maybe_distill(
+            "qq_111",
+            persona_name="小星",
+            provider_async=mock_provider,
+            model_name="gpt-4o-mini",
+        )
+        assert distilled is False
+
+    @pytest.mark.asyncio
+    async def test_maybe_distill_handles_llm_failure(self, manager):
+        msgs = [f"speaker: msg{i}" for i in range(6)]
+        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+        mock_provider = AsyncMock()
+        mock_provider.generate_async.side_effect = RuntimeError("timeout")
+        distilled = await manager.maybe_distill(
+            "qq_111",
+            persona_name="小星",
+            provider_async=mock_provider,
+            model_name="gpt-4o-mini",
+        )
+        assert distilled is False
+
+    @pytest.mark.asyncio
+    async def test_maybe_distill_handles_invalid_json(self, manager):
+        msgs = [f"speaker: msg{i}" for i in range(6)]
+        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+        mock_provider = AsyncMock()
+        mock_provider.generate_async.return_value = "这不是 JSON"
+        distilled = await manager.maybe_distill(
+            "qq_111",
+            persona_name="小星",
+            provider_async=mock_provider,
+            model_name="gpt-4o-mini",
+        )
+        assert distilled is False
+
+    @pytest.mark.asyncio
+    async def test_maybe_distill_empty_points_clears_pending(self, manager):
+        """蒸馏没产出要点时仍清空 pending 防止堆积。"""
+        msgs = [f"speaker: msg{i}" for i in range(6)]
+        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+        mock_provider = AsyncMock()
+        mock_provider.generate_async.return_value = '{"points": [], "discovered_aliases": []}'
+        distilled = await manager.maybe_distill(
+            "qq_111",
+            persona_name="小星",
+            provider_async=mock_provider,
+            model_name="gpt-4o-mini",
+        )
+        assert distilled is False
+        card = manager.get_card("qq_111")
+        assert card.pending_messages == []
+
+
+# ── Manager — 层2：传记更新 (async mock) ────────────────────────
 
 
 class TestBiographyUpdate:
     @pytest.mark.asyncio
-    async def test_maybe_update_triggers_on_enough_messages(self, manager):
-        msgs = [f"临雀: msg{i}" for i in range(10)]
-        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+    async def test_maybe_update_triggers_on_enough_points(self, manager):
+        """蒸馏要点 >= 3 → 触发传记更新。"""
+        # 直接设置 distilled_points
+        card = manager._ensure_card("qq_111", "临雀")
+        card.distilled_points = ["临雀是程序员", "临雀是群主", "临雀写Python"]
 
         mock_provider = AsyncMock()
         bio_response = (
             '{"short_bio": "临雀是群主，26岁程序员。", '
             '"identity_anchors": ["群主", "程序员"], '
-            '"relationships": [{"target": "yuki", "fact_hint": "yuki是临雀朋友开发的机器人"}], '
-            '"discovered_aliases": ["雀雀"]}'
+            '"relationships": [{"target": "yuki", "fact_hint": "yuki是临雀朋友开发的机器人"}]}'
         )
         mock_provider.generate_async.return_value = bio_response
 
@@ -286,11 +373,13 @@ class TestBiographyUpdate:
         assert "临雀是群主" in card.short_bio
         assert "群主" in card.identity_anchors
         assert len(card.relationships) == 1
-        assert card.pending_messages == []
+        assert card.distilled_points == []
 
     @pytest.mark.asyncio
-    async def test_maybe_update_skips_with_few_messages(self, manager):
-        manager.feed_messages("qq_111", "A", "群A", ["msg1", "msg2"])
+    async def test_maybe_update_skips_few_points(self, manager):
+        """蒸馏要点 < 3 → 不触发更新。"""
+        card = manager._ensure_card("qq_111", "A")
+        card.distilled_points = ["p1", "p2"]
         mock_provider = AsyncMock()
         updated = await manager.maybe_update_biography(
             "qq_111",
@@ -302,7 +391,8 @@ class TestBiographyUpdate:
         mock_provider.generate_async.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_maybe_update_no_pending_messages(self, manager):
+    async def test_maybe_update_no_points(self, manager):
+        """没有蒸馏要点 → 不触发更新。"""
         mock_provider = AsyncMock()
         updated = await manager.maybe_update_biography(
             "qq_111",
@@ -314,8 +404,8 @@ class TestBiographyUpdate:
 
     @pytest.mark.asyncio
     async def test_maybe_update_handles_llm_failure(self, manager):
-        msgs = [f"临雀: msg{i}" for i in range(10)]
-        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+        card = manager._ensure_card("qq_111", "临雀")
+        card.distilled_points = ["p1", "p2", "p3"]
         mock_provider = AsyncMock()
         mock_provider.generate_async.side_effect = RuntimeError("timeout")
         updated = await manager.maybe_update_biography(
@@ -328,8 +418,8 @@ class TestBiographyUpdate:
 
     @pytest.mark.asyncio
     async def test_maybe_update_handles_invalid_json(self, manager):
-        msgs = [f"临雀: msg{i}" for i in range(10)]
-        manager.feed_messages("qq_111", "临雀", "群A", msgs)
+        card = manager._ensure_card("qq_111", "临雀")
+        card.distilled_points = ["p1", "p2", "p3"]
         mock_provider = AsyncMock()
         mock_provider.generate_async.return_value = "这不是 JSON"
         updated = await manager.maybe_update_biography(
@@ -344,6 +434,19 @@ class TestBiographyUpdate:
 # ── Prompt builder ──────────────────────────────────────────────
 
 
+class TestBuildDistillPrompt:
+    def test_basic(self):
+        prompt = _build_distill_prompt(
+            user_name="临雀",
+            persona_name="小星",
+            messages=["临雀: 我最近在学Rust", "Bob: 临雀的代码写得真好"],
+        )
+        assert "临雀" in prompt
+        assert "群聊对话记录" in prompt
+        assert "我最近在学Rust" in prompt
+        assert "临雀的代码写得真好" in prompt
+
+
 class TestBuildUpdatePrompt:
     def test_empty_card(self):
         prompt = _build_update_prompt(
@@ -352,11 +455,11 @@ class TestBuildUpdatePrompt:
             old_bio="",
             old_anchors=[],
             old_relationships=[],
-            messages=["临雀: 我最近在学Rust"],
+            points=["临雀最近在学Rust"],
         )
         assert "临雀" in prompt
         assert "尚无传记" in prompt
-        assert "我最近在学Rust" in prompt
+        assert "临雀最近在学Rust" in prompt
 
     def test_with_existing_bio(self):
         prompt = _build_update_prompt(
@@ -365,9 +468,9 @@ class TestBuildUpdatePrompt:
             old_bio="临雀是群主，26岁程序员。",
             old_anchors=["群主", "程序员"],
             old_relationships=[RelationshipAnchor(target_name="yuki", fact_hint="yuki是临雀朋友开发的")],
-            messages=["临雀: yuki今天改进了天气预报功能"],
+            points=["临雀: yuki今天改进了天气预报功能"],
         )
         assert "临雀是群主" in prompt
         assert "群主" in prompt
         assert "yuki" in prompt
-        assert "天气预报" in prompt
+        assert "临雀: yuki今天改进了天气预报功能" in prompt

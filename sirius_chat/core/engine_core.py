@@ -442,15 +442,39 @@ class _EmotionalGroupChatEngineBase:
             if recent:
                 last_entry = recent[0]
                 original_content = last_entry.content or ""
-                if self._is_pure_image_message(original_content):
-                    last_entry.content = f"【图片】【图片描述：{intent.image_caption}】"
-                else:
-                    last_entry.content = f"{original_content} 【图片描述：{intent.image_caption}】"
-                # 将 caption 也存入 multimodal_inputs 供 XML 渲染使用
+
+                # 判断是否是动画表情（sub_type=1）
+                # 动画表情的【动画表情：xxx.jpg】文件哈希对模型无意义，
+                # 有缓存 caption 后应替换为描述文字
+                is_sticker = False
                 if last_entry.multimodal_inputs:
+                    for m in last_entry.multimodal_inputs:
+                        if m.get("type") == "image" and m.get("sub_type") == "1":
+                            is_sticker = True
+                            break
+
+                if is_sticker:
+                    # 去掉无意义的文件哈希，替换为有意义的描述
+                    stripped = re.sub(
+                        r"【动画表情：[^】]+】", "", original_content
+                    ).strip()
+                    sticker_tag = f"【动画表情：{intent.image_caption}】"
+                    last_entry.content = (
+                        f"{stripped} {sticker_tag}" if stripped else sticker_tag
+                    )
+                    # 也存入 multimodal_inputs 供 sticker learning 管道使用
                     for m in last_entry.multimodal_inputs:
                         if m.get("type") == "image":
                             m["caption"] = intent.image_caption
+                else:
+                    if self._is_pure_image_message(original_content):
+                        last_entry.content = f"【图片】【图片描述：{intent.image_caption}】"
+                    else:
+                        last_entry.content = f"{original_content} 【图片描述：{intent.image_caption}】"
+                    if last_entry.multimodal_inputs:
+                        for m in last_entry.multimodal_inputs:
+                            if m.get("type") == "image":
+                                m["caption"] = intent.image_caption
         # 内心活动：理解消息后的感受
         self._log_cognition_thought(speaker, intent, emotion)
         await self.event_bus.emit(
