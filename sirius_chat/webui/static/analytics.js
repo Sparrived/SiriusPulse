@@ -1601,6 +1601,7 @@ function bioRender() {
     : '—';
 
   document.getElementById('bioTotal').textContent = cards.length;
+  document.getElementById('bioDistilled').textContent = cards.reduce((s, c) => s + (c.distilled_points || []).length, 0);
   document.getElementById('bioAliasCount').textContent = totalAliases;
   document.getElementById('bioLastUpdate').textContent = lastUpdate;
 
@@ -1612,6 +1613,8 @@ function bioRender() {
       const anchors = (c.identity_anchors || []).slice(0, 3).join(' · ');
       const bioPreview = (c.short_bio || '暂无传记').slice(0, 80);
       const rels = (c.relationships || []).slice(0, 2).map(r => r.fact_hint || r.target_name || '').filter(Boolean).join('；');
+      const pendingN = (c.pending_messages || []).length;
+      const distilledN = (c.distilled_points || []).length;
       return `<div class="card" style="cursor:pointer" onclick="bioOpenCard('${c.user_id.replace(/'/g, "\\'")}')">
         <div style="display:flex;justify-content:space-between;align-items:start;gap:12px">
           <div style="flex:1">
@@ -1619,6 +1622,9 @@ function bioRender() {
             ${anchors ? `<div style="font-size:12px;color:var(--primary);margin-bottom:4px">${anchors}</div>` : ''}
             ${bioPreview ? `<div style="font-size:13px;color:var(--text-2);margin-bottom:4px">${bioPreview}...</div>` : ''}
             ${rels ? `<div style="font-size:12px;color:var(--text-3)">关系：${rels}</div>` : ''}
+            <div style="font-size:11px;color:var(--text-3);margin-top:2px">
+              待处理消息：${pendingN} 条 · 蒸馏要点：${distilledN} 条
+            </div>
           </div>
           <div style="text-align:right;flex-shrink:0">
             <div style="font-size:11px;color:var(--text-3)">${c.user_id}</div>
@@ -1691,40 +1697,51 @@ async function bioAddAlias() {
 function bioOpenCard(userId) {
   const card = (bioData.cards || []).find(c => c.user_id === userId);
   if (!card) return;
-  document.getElementById('bioModalTitle').textContent = `编辑传记 — ${card.name || card.user_id}`;
+  document.getElementById('bioModalTitle').textContent = `传记详情 — ${card.name || card.user_id}`;
+  const relsLines = (card.relationships || []).map(r =>
+    `<div style="font-size:13px;color:var(--text);margin-bottom:2px">· ${r.target_name || '?'}：${r.fact_hint || '—'}</div>`
+  ).join('');
+  const distilledLines = (card.distilled_points || []).length > 0
+    ? (card.distilled_points || []).map(p => `<div style="font-size:12px;color:var(--text-2);margin-bottom:2px;padding-left:8px;border-left:2px solid var(--success)">${p}</div>`).join('')
+    : '<div style="font-size:12px;color:var(--text-3)">暂无蒸馏要点</div>';
+  const pendingLines = (card.pending_messages || []).length > 0
+    ? (card.pending_messages || []).map(m => `<div style="font-size:11px;color:var(--text-3);margin-bottom:1px">${m}</div>`).join('')
+    : '<div style="font-size:12px;color:var(--text-3)">暂无待处理消息</div>';
+  const lastDistill = card.last_distill_at ? card.last_distill_at.slice(0, 19).replace('T', ' ') : '—';
   document.getElementById('bioModalBody').innerHTML = `
-    <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;gap:24px;flex-wrap:wrap">
+        <div><span style="font-size:12px;color:var(--text-3)">User ID</span><div style="font-size:13px;color:var(--text);font-family:monospace">${card.user_id}</div></div>
+        <div><span style="font-size:12px;color:var(--text-3)">别名</span><div style="font-size:13px;color:var(--text)">${(card.aliases||[]).join(', ') || '—'}</div></div>
+        <div><span style="font-size:12px;color:var(--text-3)">最近更新</span><div style="font-size:13px;color:var(--text)">${(card.last_updated_at||'').slice(0,19).replace('T',' ')||'—'}</div></div>
+        <div><span style="font-size:12px;color:var(--text-3)">最近蒸馏</span><div style="font-size:13px;color:var(--text)">${lastDistill}</div></div>
+      </div>
+      ${card.identity_anchors && card.identity_anchors.length > 0 ? `
+        <div>
+          <div style="font-weight:600;font-size:13px;color:var(--primary);margin-bottom:4px">身份锚点</div>
+          <div style="font-size:13px;color:var(--text)">${card.identity_anchors.map(a => `<span style="background:var(--bg-2);padding:2px 8px;border-radius:4px;margin-right:4px">${a}</span>`).join('')}</div>
+        </div>
+      ` : ''}
       <div>
-        <label style="font-size:12px;color:var(--text-2)">User ID</label>
-        <div style="font-size:13px;color:var(--text-3);font-family:monospace">${card.user_id}</div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">人物传记</div>
+        <div style="font-size:13px;color:var(--text);line-height:1.6;white-space:pre-wrap">${card.short_bio || '暂无传记'}</div>
+      </div>
+      ${relsLines ? `<div><div style="font-weight:600;font-size:13px;margin-bottom:4px">关系锚点</div>${relsLines}</div>` : ''}
+      <div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">
+          蒸馏要点（${(card.distilled_points||[]).length} 条）
+          <span style="font-size:11px;color:var(--text-3);font-weight:normal"> — 层1凝练输出，攒够后触发层2传记更新</span>
+        </div>
+        ${distilledLines}
       </div>
       <div>
-        <label style="font-size:12px;color:var(--text-2)">显示名</label>
-        <input id="bioEditName" value="${(card.name||'').replace(/"/g, '&quot;')}" style="width:100%">
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--text-2)">别名（逗号分隔）</label>
-        <input id="bioEditAliases" value="${(card.aliases||[]).join(', ').replace(/"/g, '&quot;')}" style="width:100%">
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--text-2)">身份锚点（一行一个，最多5条）</label>
-        <textarea id="bioEditAnchors" rows="3" style="width:100%;font-size:13px">${(card.identity_anchors||[]).join('\n')}</textarea>
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--text-2)">关系（每行格式：对方名|事实描述）</label>
-        <textarea id="bioEditRels" rows="3" style="width:100%;font-size:13px">${(card.relationships||[]).map(r => (r.target_name||'') + '|' + (r.fact_hint||'')).join('\n')}</textarea>
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--text-2)">传记正文（≤500字）</label>
-        <textarea id="bioEditShortBio" rows="6" style="width:100%;font-size:13px">${(card.short_bio||'').replace(/"/g, '&quot;')}</textarea>
-      </div>
-      <div>
-        <label style="font-size:12px;color:var(--text-2)">待处理消息（${(card.pending_messages||[]).length} 条）</label>
-        <textarea readonly rows="3" style="width:100%;font-size:12px;color:var(--text-3);background:var(--bg-2)">${(card.pending_messages||[]).join('\n')}</textarea>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="btn btn-outline" onclick="bioCloseModal()">取消</button>
-        <button class="btn btn-primary" onclick="bioSaveCard('${card.user_id.replace(/'/g, "\\'")}')">保存</button>
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">
+          待处理消息（${(card.pending_messages||[]).length} 条）
+          <span style="font-size:11px;color:var(--text-3);font-weight:normal"> — 原始群聊消息攒批，等待蒸馏</span>
+        </div>
+        <div style="max-height:150px;overflow-y:auto;background:var(--bg-2);border-radius:8px;padding:8px">
+          ${pendingLines}
+        </div>
       </div>
     </div>
   `;
@@ -1733,25 +1750,6 @@ function bioOpenCard(userId) {
 
 function bioCloseModal() {
   document.getElementById('bioModal').style.display = 'none';
-}
-
-async function bioSaveCard(userId) {
-  const body = {
-    name: document.getElementById('bioEditName').value.trim(),
-    aliases: document.getElementById('bioEditAliases').value.split(',').map(s => s.trim()).filter(Boolean),
-    identity_anchors: document.getElementById('bioEditAnchors').value.split('\n').map(s => s.trim()).filter(Boolean),
-    relationships: document.getElementById('bioEditRels').value.split('\n').map(s => {
-      const [target, fact] = s.split('|');
-      return target ? { target: target.trim(), target_user_id: '', fact_hint: (fact||target).trim() } : null;
-    }).filter(Boolean),
-    short_bio: document.getElementById('bioEditShortBio').value.trim(),
-  };
-  try {
-    await post(pApi('/biography/' + userId), body);
-    toast('传记已保存');
-    bioCloseModal();
-    bioFetch();
-  } catch (e) { toast('保存失败: ' + e.message, 'error'); }
 }
 
 function bioPersonaSelectInit() {

@@ -59,7 +59,6 @@ from sirius_chat.webui.memory_api import (
 from sirius_chat.webui.biography_api import (
     api_persona_biography_list,
     api_persona_biography_get,
-    api_persona_biography_update,
     api_persona_biography_alias_index,
     api_persona_biography_alias_index_update,
 )
@@ -291,9 +290,6 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_biography_get(self, request):
         return await api_persona_biography_get(request, self.persona_manager)
-
-    async def api_persona_biography_update(self, request):
-        return await api_persona_biography_update(request, self.persona_manager)
 
     async def api_persona_biography_alias_index(self, request):
         return await api_persona_biography_alias_index(request, self.persona_manager)
