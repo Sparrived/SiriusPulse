@@ -48,7 +48,6 @@ class BackgroundTasksMixin(_Base):
             asyncio.create_task(self._bg_diary_promoter(), name="diary_promote"),
             asyncio.create_task(self._bg_diary_consolidator(), name="diary_consolidator"),
             asyncio.create_task(self._bg_proactive_developer_chat_checker(), name="dev_chat"),
-            asyncio.create_task(self._bg_sticker_novelty_updater(), name="sticker_novelty"),
         ]
         for t in tasks:
             self._bg_tasks.add(t)
@@ -490,6 +489,15 @@ class BackgroundTasksMixin(_Base):
 
         # Record assistant reply into basic memory so future turns can see it
         clean_reply = strip_skill_calls(reply).strip()
+
+        # 解析表情包标签 [STICKERS: ...] 并异步发送
+        if clean_reply and hasattr(self, "_parse_sticker_tags"):
+            clean_reply, sticker_names = self._parse_sticker_tags(clean_reply)
+            if sticker_names:
+                asyncio.create_task(
+                    self._send_stickers_by_names(group_id, sticker_names)
+                )
+                logger.info("模型请求发送表情包: %s", sticker_names)
         if clean_reply:
             self.basic_memory.add_entry(
                 group_id=group_id,
@@ -748,19 +756,6 @@ class BackgroundTasksMixin(_Base):
                 store.save()
         except Exception as exc:
             logger.warning("Failed to inject group_id into reminder: %s", exc)
-
-    async def _bg_sticker_novelty_updater(self) -> None:
-        """Periodically update sticker novelty scores."""
-        interval = self.config.get("sticker_novelty_update_interval_seconds", 3600)
-        while self._bg_running:
-            await asyncio.sleep(interval)
-            try:
-                if self._sticker_system is not None:
-                    feedback_observer = self._sticker_system.get("feedback_observer")
-                    if feedback_observer is not None:
-                        await feedback_observer.update_novelty_scores()
-            except Exception as exc:
-                logger.warning("Sticker novelty update failed: %s", exc)
 
     async def tick_delayed_queue(
         self,
@@ -1293,6 +1288,11 @@ class BackgroundTasksMixin(_Base):
                     candidate_memories.append({"source": "working_memory", "content": cm})
 
         persona_prompt = self.persona.build_system_prompt()
+
+        # 注入表情包选项提示
+        if self._sticker_names:
+            persona_prompt += PromptFactory.build_sticker_options_prompt(self._sticker_names)
+
         style_params = self.style_adapter.adapt(
             pace="decelerating",
             persona=self.persona,

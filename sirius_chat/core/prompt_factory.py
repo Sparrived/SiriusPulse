@@ -1019,6 +1019,29 @@ class PromptFactory:
         return "【动画表情】"
 
     @staticmethod
+    def build_sticker_options_prompt(sticker_names: list[str]) -> str:
+        """构建表情包选项提示语。
+
+        将 stickers 文件夹中的文件名（不含扩展名）列表化，
+        指导模型在回复时使用 [STICKERS: ...] 格式选择表情包。
+
+        Args:
+            sticker_names: 可用表情包名称列表（不含扩展名）
+
+        Returns:
+            可用表情包提示 section 字符串，无表情包时返回空字符串
+        """
+        if not sticker_names:
+            return ""
+
+        names_str = "、".join(sticker_names)
+        return (
+            "\n\n【可用表情包】\n"
+            f"你可以使用 [STICKERS: \"名称1\", \"名称2\", \"名称3\"] 格式选择最多3个表情包发送。\n"
+            f"可选表情包：{names_str}\n"
+        )
+
+    @staticmethod
     def render_image_prefix(has_sticker: bool) -> str:
         """渲染多模态消息中的图片前缀。"""
         return "【动画表情】" if has_sticker else "【图片】"

@@ -9,8 +9,6 @@ const _TASK_LABELS = {
   diary_consolidate: '日记合并',
   proactive_generate: '主动/提醒生成',
   persona_generate: '人格生成',
-  sticker_preference_generate: '表情包偏好生成',
-  sticker_tag_extract: '表情包标签提取',
 };
 
 function _translateTaskLabel(name) {

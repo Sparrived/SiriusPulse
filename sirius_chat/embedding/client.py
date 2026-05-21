@@ -1,6 +1,6 @@
 """Embedding 服务的同步 HTTP 客户端。
 
-供 DiaryIndexer / StickerIndexer 在同步上下文中调用，
+供 DiaryIndexer 在同步上下文中调用，
 与远程 Embedding 微服务通信。网络开销约 0.1ms（localhost），
 远低于本地 SentenceTransformer.encode() 的 10-50ms。
 """

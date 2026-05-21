@@ -483,25 +483,6 @@ class PipelineMixin(_Base):
 
         self._persist_group_state(group_id)
 
-        # Framework-level sticker decision: fire-and-forget if conditions match
-        if self._should_send_sticker(decision, emotion, intent, group_id):
-            emotion_hint = self._emotion_to_sticker_hint(emotion)
-            recent = self._get_recent_messages(group_id, n=6)
-            context_parts: list[str] = []
-            for msg in recent:
-                speaker = msg.get("speaker", "")
-                content = msg.get("content", "")
-                if speaker and content:
-                    context_parts.append(f"{speaker}: {content}")
-            if message.content:
-                context_parts.append(f"{message.speaker or '用户'}: {message.content}")
-            current_context = "\n".join(context_parts)
-            scene_query = self._build_sticker_scene_query(emotion, intent, message.content or "")
-            asyncio.create_task(
-                self._send_sticker_via_bridge(group_id, emotion_hint, current_context, scene_query)
-            )
-            self._log_inner_thought("这个情境很适合发表情包，我来挑一个～")
-
         return {
             "strategy": decision.strategy.value,
             "reply": None,
@@ -598,76 +579,3 @@ class PipelineMixin(_Base):
                 except Exception:
                     pass
 
-        # Sticker learning: learn from animated stickers (sub_type=1) only.
-        # Normal images are not treated as stickers and should not be learned.
-        mm_inputs = getattr(message, "multimodal_inputs", None)
-        if intent.image_caption and mm_inputs:
-            logger.debug("尝试学习表情包: group=%s user=%s caption=%.20s...", group_id, user_id, intent.image_caption)
-            self._learn_sticker_from_message(message, intent, group_id, user_id)
-
-    def _learn_sticker_from_message(
-        self,
-        message: Any,
-        intent: Any,
-        group_id: str,
-        user_id: str,
-    ) -> None:
-        """Learn a sticker from an animated sticker (sub_type=1) message.
-
-        Only processes animated stickers (sub_type=1), not normal images.
-        Normal images are not suitable for sticker RAG as they lack
-        the expressive nature of animated stickers.
-        """
-        if self._sticker_system is None:
-            logger.debug("表情包学习跳过: 系统未初始化")
-            return
-        learner = self._sticker_system.get("learner")
-        if learner is None:
-            logger.debug("表情包学习跳过: learner 未初始化")
-            return
-        try:
-            # Extract animated sticker info from multimodal_inputs
-            multimodal = getattr(message, "multimodal_inputs", []) or []
-            logger.debug("表情包学习: 检测到 %d 个 multimodal 项", len(multimodal))
-            for item in multimodal:
-                if item.get("type") != "image":
-                    logger.debug("表情包学习跳过: type=%s (非 image)", item.get("type"))
-                    continue
-                # Only process animated stickers (sub_type=1), skip normal images
-                sub_type = item.get("sub_type")
-                if sub_type != "1":
-                    logger.debug("表情包学习跳过: sub_type=%s (非动画表情)", sub_type)
-                    continue
-                # Use file_path or url as sticker_id source
-                file_path = item.get("file_path", "") or item.get("url", "")
-                if not file_path:
-                    logger.warning("表情包学习跳过: file_path 为空, item=%s", item)
-                    continue
-                # Generate a stable sticker_id from file_path.
-                # file_path from _cache_image is already content-based:
-                #   {cache_dir}/{content_hash}{ext}
-                # Extract the content hash from the filename for stability.
-                import hashlib
-                from pathlib import Path
-                path_obj = Path(file_path)
-                # Filename is like "a1b2c3d4.jpg" -> extract "a1b2c3d4" as sticker_id
-                sticker_id = path_obj.stem if path_obj.stem else hashlib.md5(file_path.encode()).hexdigest()
-                caption = intent.image_caption or ""
-                trigger_message = getattr(message, "content", "") or ""
-                trigger_emotion = getattr(intent, "emotion", "") or ""
-                source_user = user_id or getattr(message, "speaker", "") or ""
-                source_group = group_id
-                logger.info("表情包学习启动: sticker_id=%s file=%s", sticker_id, file_path)
-                asyncio.create_task(
-                    learner.learn_from_message(
-                        sticker_id=sticker_id,
-                        file_path=file_path,
-                        caption=caption,
-                        trigger_message=trigger_message,
-                        trigger_emotion=trigger_emotion,
-                        source_user=source_user,
-                        source_group=source_group,
-                    )
-                )
-        except Exception as exc:
-            logger.warning("Sticker learning failed: %s", exc)

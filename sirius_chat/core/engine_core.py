@@ -181,9 +181,6 @@ class _EmotionalGroupChatEngineBase:
             "proactive_generate": chat_model,
             # 多模态覆盖
             "vision": vision_model,
-            # 表情包系统
-            "sticker_tag_extract": analysis_model,
-            "sticker_preference_generate": analysis_model,
             # Plugin 分析任务 → 小模型
             "plugin_analyze": analysis_model,
         }
@@ -311,8 +308,8 @@ class _EmotionalGroupChatEngineBase:
         self._plugin_executor: Any | None = None
         self._plugin_dispatcher: Any | None = None
 
-        # Sticker RAG system
-        self._sticker_system: Any | None = None
+        # 表情包名称列表（从 stickers 文件夹扫描，不含扩展名）
+        self._sticker_names: list[str] = []
 
         self.glossary_manager = GlossaryManager(work_path, persona_name=self.persona.name)
 
@@ -822,31 +819,24 @@ class _EmotionalGroupChatEngineBase:
             self._load_proactive_state()
 
     def _init_sticker_system(self) -> None:
-        """Initialize the sticker RAG system."""
-        try:
-            from sirius_chat.skills.sticker import init_sticker_system
+        """扫描 stickers 文件夹，获取可用表情包名称列表。"""
+        stickers_dir = Path(self.work_path) / "stickers"
+        if not stickers_dir.is_dir():
+            logger.info("表情包目录不存在，跳过初始化: %s", stickers_dir)
+            self._sticker_names = []
+            return
 
-            self._sticker_system = init_sticker_system(
-                work_path=self.work_path,
-                persona_name=self.persona.name if self.persona else "default",
-                provider_async=self.provider_async,
-                basic_memory=self.basic_memory,
-                model_name=self._task_models.get("sticker_tag_extract", self._default_model),
-                token_callback=self._record_sticker_subtask_tokens,
-                embedding_client=self._embedding_client,
-            )
-            logger.info(
-                "表情包系统初始化完成: %s", self.persona.name if self.persona else "default"
-            )
-
-            # Generate preference from persona if not exists
-            pref_manager = self._sticker_system.get("preference_manager")
-            if pref_manager and not pref_manager._file_path.exists():
-                asyncio.create_task(
-                    pref_manager.generate_from_persona(self.persona, self.provider_async)
-                )
-        except Exception as exc:
-            logger.warning("表情包系统初始化失败: %s", exc)
+        image_extensions = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+        names: list[str] = []
+        for f in stickers_dir.iterdir():
+            if f.is_file() and f.suffix.lower() in image_extensions:
+                names.append(f.stem)
+        self._sticker_names = sorted(set(names))
+        logger.info(
+            "表情包系统初始化完成: 共 %d 个表情包名称，来自 %d 个文件",
+            len(self._sticker_names),
+            sum(1 for _ in stickers_dir.iterdir() if _.is_file() and _.suffix.lower() in image_extensions),
+        )
 
     async def _generate(
         self,
@@ -1025,217 +1015,90 @@ class _EmotionalGroupChatEngineBase:
 
         return reply
 
-    def _record_sticker_subtask_tokens(
-        self,
-        task_name: str,
-        model_name: str,
-        group_id: str,
-        request: Any | None = None,
-        duration_ms: float = 0.0,
-    ) -> None:
-        """Token recording callback for sticker sub-tasks.
-
-        Delegates to _record_subtask_tokens so that sticker LLM calls
-        are tracked in the same way as other sub-tasks.
-        """
-        self._record_subtask_tokens(
-            task_name=task_name,
-            model_name=model_name,
-            group_id=group_id,
-            request=request,
-            duration_ms=duration_ms,
-        )
-
     # ------------------------------------------------------------------
-    # Sticker decision (framework-level, replaces send_sticker SKILL)
+    # 表情包系统：从模型回复中解析 [STICKERS: ...] 标签并发送
     # ------------------------------------------------------------------
 
-    def _should_send_sticker(
-        self,
-        decision: StrategyDecision,
-        emotion: EmotionState,
-        intent: Any,
-        group_id: str,
-    ) -> bool:
-        """Framework-level sticker timing decision.
+    @staticmethod
+    def _parse_sticker_tags(text: str) -> tuple[str, list[str]]:
+        """从回复文本中解析 [STICKERS: "name1", "name2"] 格式的标签。
 
-        Uses existing cognition results (emotion + intent) to decide whether
-        to send a sticker alongside or instead of a text reply.
+        Returns:
+            (清理后的文本, 选中的表情包名称列表)
         """
-        if self._sticker_system is None:
-            return False
+        import re
 
-        # Only send stickers in group chats (not private)
-        if group_id.startswith("private_"):
-            return False
+        pattern = r'\[STICKERS:\s*"([^"]*)"(?:\s*,\s*"([^"]*)"(?:\s*,\s*"([^"]*)")?)?\s*\]'
+        match = re.search(pattern, text)
+        if not match:
+            return text, []
 
-        # Never send sticker if strategy is SILENT
-        if decision.strategy == ResponseStrategy.SILENT:
-            return False
+        chosen = [g for g in match.groups() if g]
+        # 移除标签区域，清理多余空白
+        prefix = text[: match.start()].rstrip()
+        suffix = text[match.end():].lstrip()
+        cleaned_text = f"{prefix} {suffix}".strip() if prefix and suffix else (prefix + suffix)
+        return cleaned_text, chosen
 
-        # High arousal emotions are good sticker opportunities
-        arousal = getattr(emotion, "arousal", 0.0)
-        valence = getattr(emotion, "valence", 0.0)
+    def _pick_sticker_files(self, names: list[str]) -> list[Path]:
+        """根据名称从 stickers 文件夹中随机选择对应的图片文件。
 
-        # Joy / excitement / surprise → sticker friendly
-        basic_emotion = getattr(getattr(emotion, "basic_emotion", None), "name", "")
-        positive_emotions = {"joy", "excitement", "surprise", "amusement"}
-        is_positive = basic_emotion.lower() in positive_emotions or valence > 0.3
+        每个名称可能对应多个文件（不同扩展名），每个名称随机选一个。
+        返回选中的文件路径列表（最多3个）。
+        """
+        stickers_dir = Path(self.work_path) / "stickers"
+        if not stickers_dir.is_dir():
+            return []
 
-        # Sarcasm or high entitlement → avoid stickers (might be misread)
-        sarcasm = getattr(intent, "sarcasm_score", 0.0)
-        entitlement = getattr(intent, "entitlement_score", 0.0)
-        if sarcasm > 0.6 or entitlement < 0.3:
-            return False
-
-        # Sticker probability based on arousal and positivity
-        base_prob = 0.15
-        if is_positive:
-            base_prob += 0.25
-        if arousal > 0.6:
-            base_prob += 0.20
-        elif arousal > 0.4:
-            base_prob += 0.10
-
-        # Cap at 70% to avoid overuse
+        image_extensions = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
         import random
 
-        return random.random() < min(base_prob, 0.70)
+        results: list[Path] = []
+        for name in names[:3]:  # 最多选3个
+            candidates: list[Path] = []
+            for ext in image_extensions:
+                candidate = stickers_dir / f"{name}{ext}"
+                if candidate.is_file():
+                    candidates.append(candidate)
+            if candidates:
+                results.append(random.choice(candidates))
 
-    def _emotion_to_sticker_hint(self, emotion: EmotionState) -> str:
-        """Map EmotionState to a sticker emotion hint string."""
-        basic = getattr(getattr(emotion, "basic_emotion", None), "name", "")
-        if basic:
-            return basic.lower()
-        valence = getattr(emotion, "valence", 0.0)
-        arousal = getattr(emotion, "arousal", 0.0)
-        if valence > 0.3 and arousal > 0.5:
-            return "joy"
-        if valence < -0.3:
-            return "sadness"
-        if arousal > 0.6:
-            return "anger"
-        return "neutral"
+        return results
 
-    def _build_sticker_scene_query(
-        self,
-        emotion: EmotionState,
-        intent: Any,
-        message_content: str,
-    ) -> str:
-        """从 cognition 结果中提取场景特征，构建场景级查询。
-
-        不需要额外 LLM 调用，直接从已有的 emotion/intent 字段拼接。
-        """
-        parts: list[str] = []
-
-        emotion_hint = self._emotion_to_sticker_hint(emotion)
-        if emotion_hint != "neutral":
-            parts.append(f"情绪: {emotion_hint}")
-
-        social_intent = getattr(intent, "social_intent", None)
-        if social_intent is not None:
-            intent_name = getattr(social_intent, "value", "")
-            if intent_name:
-                parts.append(f"意图: {intent_name}")
-
-        intent_subtype = getattr(intent, "intent_subtype", "")
-        if intent_subtype:
-            parts.append(f"子类型: {intent_subtype}")
-
-        if message_content:
-            parts.append(f"对话内容: {message_content}")
-
-        return " | ".join(parts) if parts else message_content
-
-    async def _send_sticker_via_bridge(
+    async def _send_stickers_by_names(
         self,
         group_id: str,
-        emotion_hint: str,
-        current_context: str,
-        scene_query: str = "",
-    ) -> dict[str, Any]:
-        """Search and send a sticker through the registered bridge."""
-        if self._sticker_system is None:
-            return {"success": False, "error": "sticker system not initialized"}
+        names: list[str],
+    ) -> list[dict[str, Any]]:
+        """根据名称列表发送表情包（sub_type=1）。"""
+        files = self._pick_sticker_files(names)
+        if not files:
+            return [{"success": False, "error": "没有匹配的表情包文件"}]
 
-        indexer = self._sticker_system.get("indexer")
-        preference_manager = self._sticker_system.get("preference_manager")
-        feedback_observer = self._sticker_system.get("feedback_observer")
-
-        if indexer is None or preference_manager is None:
-            return {"success": False, "error": "sticker system components incomplete"}
-
-        preference = preference_manager.load()
-        record = indexer.search(
-            current_context=current_context,
-            preference=preference,
-            emotion_hint=emotion_hint,
-            top_k=20,
-            similarity_threshold=0.5,
-            scene_query=scene_query,
-        )
-
-        if record is None:
-            return {"success": False, "error": "no matching sticker found"}
-
-        from pathlib import Path
-
-        file_path = Path(record.file_path)
-        if not file_path.exists():
-            return {"success": False, "error": f"sticker file not found: {record.file_path}"}
-
-        # 直接使用引擎持有的 adapter
         adapter = getattr(self, "_adapter", None)
         if adapter is None:
-            return {"success": False, "error": "no adapter available"}
+            return [{"success": False, "error": "没有可用的 adapter"}]
 
-        try:
-            msg = [{"type": "image", "data": {"file": str(file_path), "sub_type": "1"}}]
-            if group_id.startswith("private_"):
-                await adapter.send_private_msg(group_id.replace("private_", ""), msg)
-            else:
-                await adapter.send_group_msg(group_id, msg)
+        results: list[dict[str, Any]] = []
+        for fp in files:
+            try:
+                msg = [{"type": "image", "data": {"file": str(fp), "sub_type": "1"}}]
+                if group_id.startswith("private_"):
+                    await adapter.send_private_msg(group_id.replace("private_", ""), msg)
+                else:
+                    await adapter.send_group_msg(group_id, msg)
 
-            # Record usage
-            preference_manager.record_usage(record.sticker_id, record.tags, emotion_hint)
+                logger.info("表情包已发送: %s -> %s", fp.name, group_id)
+                results.append({
+                    "success": True,
+                    "sticker_name": fp.stem,
+                    "file_path": str(fp),
+                })
+            except Exception as exc:
+                logger.warning("表情包发送失败: %s %s", fp.name, exc)
+                results.append({"success": False, "error": str(exc), "file_path": str(fp)})
 
-            # Start feedback observation
-            if feedback_observer is not None:
-                sent_at = datetime.now(timezone.utc).isoformat()
-                asyncio.create_task(
-                    feedback_observer.observe(
-                        record.sticker_id, group_id, sent_at, wait_seconds=15.0
-                    )
-                )
-
-            # Persist sticker send into basic memory so the model knows it sent one
-            if self.basic_memory is not None:
-                self.basic_memory.add_entry(
-                    group_id=group_id,
-                    user_id="assistant",
-                    role="assistant",
-                    content=PromptFactory.render_sticker_reference(),
-                    speaker_name=self.persona.name if self.persona else "assistant",
-                    multimodal_inputs=[
-                        {
-                            "type": "image",
-                            "sub_type": "1",
-                            "caption": record.caption or "动画表情",
-                        }
-                    ],
-                )
-
-            return {
-                "success": True,
-                "sticker_id": record.sticker_id,
-                "file_path": str(file_path),
-                "caption": record.caption,
-                "tags": record.tags,
-            }
-        except Exception as exc:
-            logger.warning("发送表情包失败: %s", exc)
-            return {"success": False, "error": str(exc)}
+        return results
 
     # ------------------------------------------------------------------
     # Proactive state persistence

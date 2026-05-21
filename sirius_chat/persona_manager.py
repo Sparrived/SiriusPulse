@@ -276,7 +276,7 @@ class PersonaManager:
             encoding="utf-8",
         )
 
-        # 5. 创建表情包偏好默认目录（引擎启动后会用 LLM 自动生成实际偏好）
+        # 5. 创建表情包目录（用户手动放入图片文件）
         sticker_dir = pdir / "stickers"
         sticker_dir.mkdir(parents=True, exist_ok=True)
 
