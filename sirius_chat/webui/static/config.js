@@ -767,6 +767,9 @@ async function loadExperience() {
     $('expDiaryTopK').value = e.diary_top_k ?? 5;
     $('expDiaryTokenBudget').value = e.diary_token_budget ?? 800;
     $('expMemoryDepth').value = e.memory_depth || 'deep';
+    const skipProb = e.sticker_skip_probability ?? 0.33;
+    $('expStickerSkipProb').value = skipProb;
+    $('expStickerSkipProbLabel').textContent = `${(skipProb * 100).toFixed(0)}% 跳过`;
     $('expOtherAINames').value = (e.other_ai_names || []).join(', ');
   } catch (e) {}
   loadVectorStoreStatus();
@@ -804,6 +807,13 @@ function updateExpressivenessLabel() {
     dot.style.left = (10 + s * 80) + '%';
     dot.style.top = (90 - e * 80) + '%';
   }
+}
+
+function updateStickerSkipLabel() {
+  const v = Math.max(0, Math.min(1, parseFloat($('expStickerSkipProb').value) || 0.33));
+  const pct = (v * 100).toFixed(0);
+  const el = $('expStickerSkipProbLabel');
+  if (el) el.textContent = pct + '% 跳过';
 }
 
 function onQuadrantClick(event) {
@@ -886,6 +896,7 @@ async function saveExperience() {
       basic_memory_context_window: parseInt($('expBasicMemoryContextWindow').value, 10),
       diary_top_k: parseInt($('expDiaryTopK').value, 10),
       diary_token_budget: parseInt($('expDiaryTokenBudget').value, 10),
+      sticker_skip_probability: parseFloat($('expStickerSkipProb').value),
       other_ai_names: $('expOtherAINames').value.split(',').map(s => s.trim()).filter(Boolean),
     }
   });

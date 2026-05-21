@@ -171,6 +171,9 @@ class PersonaExperienceConfig:
     diary_top_k: int = 5
     diary_token_budget: int = 800
 
+    # 表情包发送概率（0.0~1.0，低于此概率跳过发送，默认 33% 跳过率）
+    sticker_skip_probability: float = 0.33
+
     # 群里其他 AI/Bot 的名字（手动指定，防止抢话和身份混淆）
     other_ai_names: list[str] = field(default_factory=list)
 
@@ -200,6 +203,7 @@ class PersonaExperienceConfig:
             "basic_memory_context_window": self.basic_memory_context_window,
             "diary_top_k": self.diary_top_k,
             "diary_token_budget": self.diary_token_budget,
+            "sticker_skip_probability": self.sticker_skip_probability,
             "other_ai_names": list(self.other_ai_names),
         }
 
@@ -231,6 +235,7 @@ class PersonaExperienceConfig:
             basic_memory_context_window=int(data.get("basic_memory_context_window", 5)),
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
+            sticker_skip_probability=float(data.get("sticker_skip_probability", 0.33)),
         )
 
     @classmethod

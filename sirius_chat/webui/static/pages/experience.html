@@ -228,6 +228,13 @@
       </div>
       <div class="col" style="flex:2">
         <div class="form-group">
+          <label>表情包跳过概率 (0=总发送, 1=全跳过, 默认 33%)</label>
+          <input type="range" id="expStickerSkipProb" min="0" max="1" step="0.01" value="0.33" oninput="updateStickerSkipLabel()">
+          <span id="expStickerSkipProbLabel" style="font-size:12px;color:var(--text-2)">33% 跳过</span>
+        </div>
+      </div>
+      <div class="col" style="flex:2">
+        <div class="form-group">
           <label>群里其他 AI/Bot 名字</label>
           <input type="text" id="expOtherAINames" placeholder="yuki, 小冰, 逗逗（逗号分隔）">
         </div>

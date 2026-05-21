@@ -372,6 +372,7 @@ async def api_experience_get(request: web.Request, persona_manager: Any) -> web.
             "max_skill_rounds": exp.max_skill_rounds,
             "skill_execution_timeout": exp.skill_execution_timeout,
             "auto_install_skill_deps": exp.auto_install_skill_deps,
+            "sticker_skip_probability": exp.sticker_skip_probability,
             "other_ai_names": exp.other_ai_names,
         }
     })
@@ -400,7 +401,7 @@ async def api_experience_post(request: web.Request, persona_manager: Any) -> web
         "max_concurrent_llm_calls", "memory_depth", "basic_memory_hard_limit",
         "basic_memory_context_window", "diary_top_k", "diary_token_budget",
         "enable_skills", "max_skill_rounds", "skill_execution_timeout",
-        "auto_install_skill_deps", "other_ai_names",
+        "auto_install_skill_deps", "sticker_skip_probability", "other_ai_names",
     ):
         if key in experience_data:
             setattr(exp, key, experience_data[key])

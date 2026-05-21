@@ -1088,6 +1088,13 @@ class _EmotionalGroupChatEngineBase:
         names: list[str],
     ) -> dict[str, Any]:
         """从模型选中的名称中随机挑一个表情包发送（sub_type=1）。"""
+        # 概率跳过检查
+        import random
+        skip_rate = self.config.get("sticker_skip_probability", 0.33)
+        if random.random() < skip_rate:
+            logger.debug("表情包发送被概率跳过 (skip_rate=%.2f)", skip_rate)
+            return {"success": False, "error": "概率跳过"}
+
         fp = self._pick_sticker_file(names)
         if fp is None:
             return {"success": False, "error": "没有匹配的表情包文件"}
