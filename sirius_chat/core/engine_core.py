@@ -1028,12 +1028,27 @@ class _EmotionalGroupChatEngineBase:
         """
         import re
 
-        pattern = r'\[STICKERS:\s*"([^"]*)"(?:\s*,\s*"([^"]*)"(?:\s*,\s*"([^"]*)")?)?\s*\]'
+        # 匹配 [STICKERS: ...] 块，内部内容宽松抓取
+        pattern = r'\[STICKERS:\s*(.+?)\s*\]'
         match = re.search(pattern, text)
         if not match:
             return text, []
 
-        chosen = [g for g in match.groups() if g]
+        # 按逗号拆分，去除可选引号（支持 ASCII " ' 、中文 "" '' 「」）
+        raw = match.group(1)
+        names: list[str] = []
+        for part in re.split(r'\s*,\s*', raw):
+            part = part.strip()
+            # 剥除首尾引号字符
+            while part and part[0] in '\'"\u201c\u2018\u300c':
+                part = part[1:]
+            while part and part[-1] in '\'"\u201d\u2019\u300d':
+                part = part[:-1]
+            if part:
+                names.append(part)
+
+        chosen = names[:3]
+
         # 移除标签区域，清理多余空白
         prefix = text[: match.start()].rstrip()
         suffix = text[match.end():].lstrip()
