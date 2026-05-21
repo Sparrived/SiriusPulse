@@ -1040,65 +1040,63 @@ class _EmotionalGroupChatEngineBase:
         cleaned_text = f"{prefix} {suffix}".strip() if prefix and suffix else (prefix + suffix)
         return cleaned_text, chosen
 
-    def _pick_sticker_files(self, names: list[str]) -> list[Path]:
-        """根据名称从 stickers 文件夹中随机选择对应的图片文件。
+    def _pick_sticker_file(self, names: list[str]) -> Path | None:
+        """从模型选择的名称列表中随机选一个，再匹配对应的图片文件。
 
-        每个名称可能对应多个文件（不同扩展名），每个名称随机选一个。
-        返回选中的文件路径列表（最多3个）。
+        模型选 1-3 个名称，本地从中随机选 1 个发送。
+        该名称可能对应多个文件（不同扩展名），也随机选一个。
         """
+        if not names:
+            return None
+
         stickers_dir = Path(self.work_path) / "stickers"
         if not stickers_dir.is_dir():
-            return []
+            return None
 
         image_extensions = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
         import random
 
-        results: list[Path] = []
-        for name in names[:3]:  # 最多选3个
-            candidates: list[Path] = []
-            for ext in image_extensions:
-                candidate = stickers_dir / f"{name}{ext}"
-                if candidate.is_file():
-                    candidates.append(candidate)
-            if candidates:
-                results.append(random.choice(candidates))
+        # 从模型选的名称中随机挑一个
+        chosen_name = random.choice(names[:3])
 
-        return results
+        candidates: list[Path] = []
+        for ext in image_extensions:
+            candidate = stickers_dir / f"{chosen_name}{ext}"
+            if candidate.is_file():
+                candidates.append(candidate)
+
+        return random.choice(candidates) if candidates else None
 
     async def _send_stickers_by_names(
         self,
         group_id: str,
         names: list[str],
-    ) -> list[dict[str, Any]]:
-        """根据名称列表发送表情包（sub_type=1）。"""
-        files = self._pick_sticker_files(names)
-        if not files:
-            return [{"success": False, "error": "没有匹配的表情包文件"}]
+    ) -> dict[str, Any]:
+        """从模型选中的名称中随机挑一个表情包发送（sub_type=1）。"""
+        fp = self._pick_sticker_file(names)
+        if fp is None:
+            return {"success": False, "error": "没有匹配的表情包文件"}
 
         adapter = getattr(self, "_adapter", None)
         if adapter is None:
-            return [{"success": False, "error": "没有可用的 adapter"}]
+            return {"success": False, "error": "没有可用的 adapter"}
 
-        results: list[dict[str, Any]] = []
-        for fp in files:
-            try:
-                msg = [{"type": "image", "data": {"file": str(fp), "sub_type": "1"}}]
-                if group_id.startswith("private_"):
-                    await adapter.send_private_msg(group_id.replace("private_", ""), msg)
-                else:
-                    await adapter.send_group_msg(group_id, msg)
+        try:
+            msg = [{"type": "image", "data": {"file": str(fp), "sub_type": "1"}}]
+            if group_id.startswith("private_"):
+                await adapter.send_private_msg(group_id.replace("private_", ""), msg)
+            else:
+                await adapter.send_group_msg(group_id, msg)
 
-                logger.info("表情包已发送: %s -> %s", fp.name, group_id)
-                results.append({
-                    "success": True,
-                    "sticker_name": fp.stem,
-                    "file_path": str(fp),
-                })
-            except Exception as exc:
-                logger.warning("表情包发送失败: %s %s", fp.name, exc)
-                results.append({"success": False, "error": str(exc), "file_path": str(fp)})
-
-        return results
+            logger.info("表情包已发送: %s -> %s", fp.name, group_id)
+            return {
+                "success": True,
+                "sticker_name": fp.stem,
+                "file_path": str(fp),
+            }
+        except Exception as exc:
+            logger.warning("表情包发送失败: %s %s", fp.name, exc)
+            return {"success": False, "error": str(exc), "file_path": str(fp)}
 
     # ------------------------------------------------------------------
     # Proactive state persistence
