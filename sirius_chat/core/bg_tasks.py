@@ -521,7 +521,7 @@ class BackgroundTasksMixin(_Base):
         return {
             "strategy": "proactive",
             "trigger_type": trigger["trigger_type"],
-            "reply": reply,
+            "reply": clean_reply,
         }
 
     # ------------------------------------------------------------------
@@ -545,7 +545,15 @@ class BackgroundTasksMixin(_Base):
                         continue
                     reply = await self._generate_developer_chat(group_id)
                     if reply:
-                        self._pending_developer_chats.setdefault(group_id, []).append(reply)
+                        # 解析表情包标签
+                        clean_dev = strip_skill_calls(reply).strip()
+                        if clean_dev and hasattr(self, "_parse_sticker_tags"):
+                            clean_dev, _sticker_names = self._parse_sticker_tags(clean_dev)
+                            if _sticker_names:
+                                asyncio.create_task(
+                                    self._send_stickers_by_names(group_id, _sticker_names)
+                                )
+                        self._pending_developer_chats.setdefault(group_id, []).append(clean_dev)
                         self._last_developer_chat_at[group_id] = now
                         self._log_inner_thought(f"突然想跟开发者聊聊，发了条消息过去～")
                         await self.event_bus.emit(
@@ -553,7 +561,7 @@ class BackgroundTasksMixin(_Base):
                                 type=SessionEventType.DEVELOPER_CHAT_TRIGGERED,
                                 data={
                                     "group_id": group_id,
-                                    "reply": reply,
+                                    "reply": clean_dev,
                                 },
                             )
                         )
@@ -932,6 +940,14 @@ class BackgroundTasksMixin(_Base):
 
             # Extract non-skill text as a partial reply to send immediately.
             non_skill_text = strip_skill_calls(reply).strip()
+            # 解析 partial reply 中的表情包标签 [STICKERS: ...]，防止裸标签泄露到群聊
+            if non_skill_text and hasattr(self, "_parse_sticker_tags"):
+                non_skill_text, _sticker_names_partial = self._parse_sticker_tags(non_skill_text)
+                if _sticker_names_partial:
+                    asyncio.create_task(
+                        self._send_stickers_by_names(group_id, _sticker_names_partial)
+                    )
+                    logger.info("partial reply 中解析到表情包: %s", _sticker_names_partial)
             last_round_had_partial = False
             if non_skill_text and not all_silent:
                 self._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
@@ -1154,6 +1170,15 @@ class BackgroundTasksMixin(_Base):
 
         # Record assistant reply into basic memory so future turns can see it
         clean_reply = strip_skill_calls(reply).strip()
+
+        # 解析表情包标签 [STICKERS: ...] 并异步发送
+        if clean_reply and hasattr(self, "_parse_sticker_tags"):
+            clean_reply, sticker_names = self._parse_sticker_tags(clean_reply)
+            if sticker_names:
+                asyncio.create_task(
+                    self._send_stickers_by_names(group_id, sticker_names)
+                )
+                logger.info("模型请求发送表情包: %s", sticker_names)
 
         # Deduplication: suppress if nearly identical to a recent reply
         if clean_reply:
