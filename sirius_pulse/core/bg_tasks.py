@@ -569,15 +569,14 @@ class BackgroundTasksMixin(_Base):
     async def _generate_developer_chat(self, group_id: str) -> str | None:
         """Generate a memory-oriented proactive message for a developer."""
         user_id = group_id.replace("private_", "")
-        user_profile = self.semantic_memory.get_global_user_profile(user_id)
 
-        topic = self._pick_developer_chat_topic(group_id, user_id, user_profile)
+        topic = self._pick_developer_chat_topic(group_id, user_id, None)
         if not topic:
             return None
 
         from sirius_pulse.core.prompt_factory import PromptFactory
 
-        sections = PromptFactory.build_developer_chat_sections("", topic, user_profile)
+        sections = PromptFactory.build_developer_chat_sections("", topic, None)
 
         system_prompt = "\n\n".join(sections)
         messages = [{"role": "user", "content": "（你决定主动开口）"}]

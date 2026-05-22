@@ -402,24 +402,19 @@ async def api_persona_users_get(request: web.Request, persona_manager: Any) -> w
                     groups.add(g_dir.name)
 
         if group_id:
-            # Group-scoped query: only group-local users (no global fallback)
+            # Group-scoped query
             user_dir = store._users_dir / store._safe_name(group_id)
             for profile in store.list_group_user_profiles(group_id):
                 if profile.user_id and profile.user_id not in seen_user_ids:
                     seen_user_ids.add(profile.user_id)
                     users.append(profile.to_dict())
         else:
-            # Global query: group-local profiles first (they have real data),
-            # then global profiles as fallback for users not seen in any group
+            # Cross-group query: collect all group-local profiles
             for g in groups:
                 for profile in store.list_group_user_profiles(g):
                     if profile.user_id and profile.user_id not in seen_user_ids:
                         seen_user_ids.add(profile.user_id)
                         users.append(profile.to_dict())
-            for profile in store.list_global_user_profiles():
-                if profile.user_id and profile.user_id not in seen_user_ids:
-                    seen_user_ids.add(profile.user_id)
-                    users.append(profile.to_dict())
 
         return _json_response({"users": users, "groups": sorted(groups)})
     except Exception as exc:
@@ -449,9 +444,8 @@ async def api_persona_user_get(request: web.Request, persona_manager: Any) -> we
         group_id = request.query.get("group_id", "")
         store = SemanticProfileStore(paths.dir)
 
-        # Prefer global profile
-        profile = store.load_global_user_profile(user_id)
-        if profile is None and group_id:
+        profile = None
+        if group_id:
             profile = store.load_user_profile(group_id, user_id)
         if profile is None:
             # Fallback: scan all groups

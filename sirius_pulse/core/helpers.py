@@ -359,7 +359,7 @@ class HelpersMixin(_Base):
         group_id: str,
         user_id: str,
     ) -> float:
-        """Enhance topic relevance using semantic memory (group + user + global)."""
+        """Enhance topic relevance using semantic memory (group + user)."""
         text_lower = (message or "").lower()
         if not text_lower:
             return base_score
@@ -383,15 +383,6 @@ class HelpersMixin(_Base):
                     if topic and topic.lower() in text_lower:
                         participation = getattr(node, "participation", 0.5)
                         boost += 0.1 * participation
-
-            # Cross-group global profile interest signals
-            global_profile = self.semantic_memory.get_global_user_profile(user_id)
-            if global_profile and global_profile.interest_graph:
-                for node in global_profile.interest_graph:
-                    topic = getattr(node, "topic", "")
-                    if topic and topic.lower() in text_lower:
-                        participation = getattr(node, "participation", 0.5)
-                        boost += 0.08 * participation
 
         return min(1.0, base_score + boost)
 

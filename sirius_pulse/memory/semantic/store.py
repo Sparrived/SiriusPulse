@@ -35,10 +35,8 @@ class SemanticProfileStore:
         self._base = Path(base_path) / "memory" / "semantic"
         self._groups_dir = self._base / "groups"
         self._users_dir = self._base / "users"
-        self._global_dir = self._base / "global"
         self._groups_dir.mkdir(parents=True, exist_ok=True)
         self._users_dir.mkdir(parents=True, exist_ok=True)
-        self._global_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Group profiles
@@ -77,36 +75,6 @@ class SemanticProfileStore:
         user_dir.mkdir(parents=True, exist_ok=True)
         path = user_dir / f"{self._safe_name(user_id)}.json"
         _atomic_write(path, profile.to_dict())
-
-    # ------------------------------------------------------------------
-    # Global user profiles (cross-group shared)
-    # ------------------------------------------------------------------
-
-    def load_global_user_profile(self, user_id: str) -> UserSemanticProfile | None:
-        path = self._global_dir / f"{self._safe_name(user_id)}.json"
-        if not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return UserSemanticProfile.from_dict(data)
-        except (OSError, json.JSONDecodeError, TypeError):
-            return None
-
-    def save_global_user_profile(self, user_id: str, profile: UserSemanticProfile) -> None:
-        path = self._global_dir / f"{self._safe_name(user_id)}.json"
-        _atomic_write(path, profile.to_dict())
-
-    def list_global_user_profiles(self) -> list[UserSemanticProfile]:
-        if not self._global_dir.exists():
-            return []
-        profiles: list[UserSemanticProfile] = []
-        for path in self._global_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                profiles.append(UserSemanticProfile.from_dict(data))
-            except (OSError, json.JSONDecodeError, TypeError):
-                continue
-        return profiles
 
     def list_group_user_profiles(self, group_id: str) -> list[UserSemanticProfile]:
         user_dir = self._users_dir / self._safe_name(group_id)

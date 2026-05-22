@@ -552,7 +552,6 @@ class PipelineMixin(_Base):
         nickname = getattr(message, "nickname", "") or ""
         if user_id:
             if nickname:
-                self.semantic_memory.set_global_user_name(user_id, nickname)
                 display_name = nickname
                 if speaker_name and speaker_name != nickname:
                     display_name = f"{nickname}({speaker_name})"
@@ -560,7 +559,6 @@ class PipelineMixin(_Base):
                     group_id, user_id, name=display_name
                 )
             elif speaker_name:
-                self.semantic_memory.set_global_user_name(user_id, speaker_name)
                 self.semantic_memory.set_user_profile_fields(
                     group_id, user_id, name=speaker_name
                 )

@@ -225,7 +225,11 @@ class _EmotionalGroupChatEngineBase:
         )
         self.user_manager = UserManager()
         self.identity_resolver = IdentityResolver()
-        self.biography_manager = BiographyManager(work_path)
+        self.biography_manager = BiographyManager(
+            work_path,
+            persona_name=self.persona.name,
+            persona_aliases=self.persona.aliases,
+        )
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,

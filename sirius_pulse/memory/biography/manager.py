@@ -29,6 +29,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _days_since(iso_dt: str, default: float = 30.0) -> float:
+    """计算从 iso 时间到现在过去了多少天。"""
+    if not iso_dt:
+        return default
+    try:
+        dt = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
+        return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400)
+    except (ValueError, TypeError):
+        return default
+
+
 # ══════════════════════════════════════════════════════════════════
 # 层1 Prompt：从原始群聊消息蒸馏关于目标用户的要点
 # ══════════════════════════════════════════════════════════════════
@@ -37,13 +48,18 @@ def _build_distill_prompt(
     *,
     user_name: str,
     persona_name: str,
+    persona_aliases: set[str],
     messages: list[str],
 ) -> str:
     msgs_text = "\n".join(f"【{i+1}】{m}" for i, m in enumerate(messages))
 
+    # 构建人格身份名称列表，用于提示 LLM 避免混淆
+    all_persona_names = [persona_name] + sorted(persona_aliases)
+    persona_names_str = "、".join(f"「{n}」" for n in all_persona_names)
+
     return (
         f"你是一个信息提炼助手。以下是一段群聊对话记录，请从中提取关于 {user_name} 的关键信息。\n\n"
-        f"人格名称：{persona_name}\n\n"
+        f"观察者 AI 人格名称：{persona_name}\n\n"
         f"=== 群聊对话记录 ===\n"
         f"{msgs_text}\n\n"
         f"对话中每条消息都标注了说话人（\"说话人: 内容\"格式）。请提炼 {user_name} 相关的信息，"
@@ -53,12 +69,16 @@ def _build_distill_prompt(
         f"2. 其他人谈论 {user_name} 时透露的信息（含代称/外号指代）\n"
         f"3. {user_name} 与他人的互动中体现的关系信息\n\n"
         f"注意：只提取与 {user_name} 相关的内容，忽略不相关的闲聊。\n\n"
-        f"关于别名发现（discovered_aliases）：\n"
+        f"关于别名发现（discovered_aliases）—— 以下名称属于观察者 AI 自身，"
+        f"绝对不是 {user_name} 的别名：\n"
+        f"{persona_names_str}\n"
+        f"- 当有人在消息中说出以上名称时，那是在呼叫或提及观察者 AI，不是在自称\n"
+        f"- 如果你看到类似「用户A: {persona_name}，帮我画个图」这样的消息，"
+        f"这是用户A在呼叫观察者 AI，{persona_name} 不是用户A的别名\n"
         f"- 仅当对话中明确用某个称呼来指代 {user_name} 本人时，才将其列入别名\n"
-        f"- 不要把对话中提及的其他人的名字当作别名。例如：如果对话中提到\"yuki\"是另一个人，"
-        f"不要把\"yuki\"列为 {user_name} 的别名\n"
-        f"- 不要把人格名称 {persona_name} 当作任何用户的别名\n"
-        f"- 如果没有发现新的别名，discovered_aliases 留空数组即可\n\n"
+        f"- 不要把对话中提及的其他人的名字当作别名\n"
+        f"- 如果不确定，宁可不列，也不要错误注册\n\n"
+        f"如果没有发现新的别名，discovered_aliases 留空数组即可\n\n"
         f"严格输出 JSON：\n"
         f'{{"points": ["要点1", "要点2", ...], "discovered_aliases": ["别名1", ...]}}'
     )
@@ -72,24 +92,46 @@ def _build_update_prompt(
     *,
     user_name: str,
     persona_name: str,
+    persona_aliases: set[str],
     old_bio: str,
     old_anchors: list[str],
+    old_aliases: list[str],
     old_relationships: list[RelationshipAnchor],
     points: list[str],
 ) -> str:
     old_rels_lines: list[str] = []
     for r in old_relationships:
-        old_rels_lines.append(f"  - {r.target_name}：{r.fact_hint}")
+        parts = [f"  - {r.target_name}"]
+        if r.relation:
+            parts.append(f"（关系：{r.relation}）")
+        parts.append(f"：{r.fact_hint}")
+        if r.target_user_id:
+            parts.append(f" [用户ID={r.target_user_id}]")
+        if r.last_mentioned_at:
+            parts.append(f" [最近提及={r.last_mentioned_at[:10]}]")
+        old_rels_lines.append("".join(parts))
     old_rels_text = "\n".join(old_rels_lines) if old_rels_lines else "（无）"
 
     points_text = "\n".join(f"【{i+1}】{p}" for i, p in enumerate(points))
 
+    old_aliases_text = "、".join(old_aliases) if old_aliases else "（无）"
+
+    # 构建人格身份名称列表
+    all_persona_names = [persona_name] + sorted(persona_aliases)
+    persona_names_str = "、".join(f"「{n}」" for n in all_persona_names)
+
     return (
         f"你是人物传记维护助手。以下是从多段群聊中浓缩的关于 {user_name} 的要点，"
         f"请据此更新你对该用户的认知档案。\n\n"
-        f"人格名称：{persona_name}\n\n"
+        f"观察者 AI 名称：{persona_name}\n"
+        f"{user_name} 是群聊中的真实人类用户，不是 AI，也不拥有人格名称。\n\n"
+        f"重要：以下名称属于观察者 AI 自身，{user_name} 不是这些名称的主人：\n"
+        f"{persona_names_str}\n"
+        f"如果蒸馏要点中提到「{persona_name} 称 xxx」或「xxx 称 {user_name} 为 {persona_name}」，"
+        f"那是观察者 AI 与用户的互动，不代表 {user_name} 就是 {persona_name}。\n\n"
         f"=== 现有的《{user_name}》档案 ===\n"
         f"短期传记：\n{old_bio or '（尚无传记）'}\n\n"
+        f"已知别名：{old_aliases_text}\n\n"
         f"已知锚点：\n{chr(10).join(f'- {a}' for a in old_anchors) if old_anchors else '（无）'}\n\n"
         f"已知关系：\n{old_rels_text}\n\n"
         f"=== 近期的认知要点（从群聊蒸馏而来） ===\n"
@@ -98,11 +140,19 @@ def _build_update_prompt(
         f"- 如果旧信息与新要点冲突，以新要点为准\n"
         f"- 如果新要点没有涉及旧档案中的某条信息，保留旧信息（除非明显过时）\n"
         f"- 传记不超过 500 字\n"
-        f"- 锚点每条不超过 20 字，最多 5 条\n\n"
+        f"- 锚点每条不超过 20 字，最多 5 条\n"
+        f"- 传记中不应将 {user_name} 描述为 AI、bot、或拥有「人格名」的非人类身份\n\n"
         f"严格输出 JSON：\n"
         f'{{"short_bio": "浓缩传记全文（不超过500字）", '
+        f'"aliases": ["别名1", ...], '
         f'"identity_anchors": ["锚点1", ...], '
-        f'"relationships": [{{"target": "对方名", "fact_hint": "事实描述"}}, ...]}}'
+        f'"relationships": [{{'
+        f'"target": "对方名字", '
+        f'"target_user_id": "对方user_id（如已知）", '
+        f'"relation": "关系类型", '
+        f'"fact_hint": "事实描述（含判断依据）", '
+        f'"mentioned_count": 互动次数, '
+        f'"last_mentioned_at": "最后提及的ISO时间"}}]}}'
     )
 
 
@@ -126,13 +176,31 @@ def _parse_update_result(raw: str) -> dict[str, Any] | None:
 class BiographyManager:
     """管理所有用户的全局传记卡（跨群收敛）。"""
 
-    def __init__(self, work_path: Path | str) -> None:
+    def __init__(
+        self,
+        work_path: Path | str,
+        persona_name: str = "",
+        persona_aliases: list[str] | None = None,
+    ) -> None:
         self._store = BiographyStore(work_path)
+
+        # 记录人格自身身份，用于隔离 bot 名称不被注册为其他用户的别名
+        self._persona_name = persona_name.strip().lower()
+        self._persona_aliases = {a.strip().lower() for a in (persona_aliases or []) if a.strip()}
+
         self._cards: dict[str, UserPersonaCard] = {}
         self._alias_index: dict[str, list[AliasEntry]] = {}
 
         # 启动时加载别名索引
         self._alias_index = self._store.load_alias_index()
+        # 启动时自动清理已被人格身份名称污染的别名条目
+        cleaned = self.cleanup_polluted_aliases()
+        if cleaned:
+            logger.info("传记管理器启动时自动清理了 %d 个人格身份别名污染", cleaned)
+        # 启动时对所有别名执行时间衰减和低置信度清理
+        decayed_removed = self.decay_all_aliases()
+        if decayed_removed:
+            logger.info("传记管理器启动时衰减+清理了 %d 个别名条目", decayed_removed)
         # 延迟加载卡片（按需）
 
     # ── 别名消歧（三层） ─────────────────────────────────────
@@ -145,16 +213,24 @@ class BiographyManager:
         recent_speakers: list[str] | None = None,
         at_user_id: str | None = None,
     ) -> tuple[str | None, float, list[str]]:
-        """别名消歧解析——三层：群过滤 → 上下文 → 兜底。
+        """别名消歧解析——基于别名条目真实置信度的三层信号。
+
+        消歧策略：
+          L1：群过滤 → 单候选则返回其置信度
+          L2：多人冲突 → @锚定 / 最近活跃 / 置信度差距 三种信号
+          L3：无法确定 → confidence=0.0
 
         Returns:
             (resolved_user_id | None, confidence 0~1, [alternative_user_ids])
-            confidence=0 表示无法确定，alternatives 为所有候选。
+            confidence=0 表示无法确定。
         """
         alias_lower = alias.strip().lower()
         entries = self._alias_index.get(alias_lower, [])
         if not entries:
             return None, 0.0, []
+
+        # 先对该别名的所有条目执行时间衰减（轻量操作）
+        self._decay_alias_key(alias_lower)
 
         # L1: 按群过滤
         if group_id:
@@ -165,39 +241,48 @@ class BiographyManager:
             group_entries = entries
 
         if len(group_entries) == 1:
-            return group_entries[0].user_id, 0.95, []
+            entry = group_entries[0]
+            return entry.user_id, entry.confidence, []
 
-        # 多人冲突
+        # 多人冲突：按置信度排序
+        sorted_entries = sorted(group_entries, key=lambda e: e.confidence, reverse=True)
 
-        # 信号1: @ 锚定（最强）
+        # 信号1: @ 锚定（强证据）
         if at_user_id:
             for e in group_entries:
                 if e.user_id == at_user_id:
-                    return e.user_id, 0.98, [
+                    conf = min(0.98, e.confidence + 0.30)
+                    return e.user_id, conf, [
                         x.user_id for x in group_entries if x.user_id != e.user_id
                     ]
 
-        # 信号2: 最近活跃者
+        # 信号2: 最近活跃者（中等证据）
         if recent_speakers:
+            seen = set()
             for speaker in recent_speakers:
+                if speaker in seen:
+                    continue
+                seen.add(speaker)
                 for e in group_entries:
                     if e.user_id == speaker:
-                        return e.user_id, 0.75, [
+                        conf = min(0.85, e.confidence + 0.20)
+                        return e.user_id, conf, [
                             x.user_id for x in group_entries if x.user_id != e.user_id
                         ]
 
-        # 信号3: 权重差距
-        sorted_entries = sorted(group_entries, key=lambda e: e.weight, reverse=True)
-        if len(sorted_entries) >= 2 and sorted_entries[0].weight > sorted_entries[1].weight * 1.5:
-            return sorted_entries[0].user_id, 0.60, [
-                x.user_id for x in sorted_entries[1:]
-            ]
+        # 信号3: 置信度显著领先（>1.5x）
+        if len(sorted_entries) >= 2:
+            if sorted_entries[0].confidence > sorted_entries[1].confidence * 1.5:
+                conf = min(0.70, sorted_entries[0].confidence)
+                return sorted_entries[0].user_id, conf, [
+                    x.user_id for x in sorted_entries[1:]
+                ]
 
         # L3: 无法确定
         return None, 0.0, [e.user_id for e in group_entries]
 
     def bump_alias_weight(self, alias: str, user_id: str, group_id: str) -> None:
-        """有人用此别名称呼了此人，提升权重，同别名其他候选衰减。"""
+        """有人用此别名称呼了此人：增量 mentioned_count，重算置信度。"""
         alias_lower = alias.strip().lower()
         if alias_lower not in self._alias_index:
             return
@@ -205,14 +290,12 @@ class BiographyManager:
         for entry in self._alias_index[alias_lower]:
             if entry.user_id == user_id:
                 entry.mentioned_count += 1
-                entry.weight = min(10.0, entry.weight + 0.3)
+                entry.confidence = AliasEntry.compute_confidence(
+                    entry.mentioned_count, entry.source,
+                )
                 entry.last_seen_at = _now_iso()
                 if group_id not in entry.groups:
                     entry.groups.append(group_id)
-
-        for entry in self._alias_index[alias_lower]:
-            if entry.user_id != user_id:
-                entry.weight = max(0.5, entry.weight * 0.98)
 
         self._store.save_alias_index(self._alias_index)
 
@@ -310,6 +393,7 @@ class BiographyManager:
         prompt = _build_distill_prompt(
             user_name=card.name,
             persona_name=persona_name,
+            persona_aliases=self._persona_aliases,
             messages=card.pending_messages,
         )
         raw_request = RawRequest(
@@ -346,14 +430,13 @@ class BiographyManager:
         card.pending_message_count = 0
         card.last_distill_at = _now_iso()
 
-        # 注册蒸馏发现的别名（过滤掉与人格名/其他用户主名冲突的别名）
-        persona_lower = persona_name.strip().lower()
+        # 注册蒸馏发现的别名（人格自身名称 + 已知用户主名冲突过滤）
         for alias in result.get("discovered_aliases", []):
             if alias and str(alias).strip():
                 alias_clean = str(alias).strip()
-                if alias_clean.lower() == persona_lower:
+                if self._alias_is_persona_identity(alias_clean.lower()):
                     logger.debug(
-                        "拒绝LLM别名: %s 是人格自身名字，不是 %s 的别名",
+                        "拒绝LLM别名: %s 是人格自身名称，不是 %s 的别名",
                         alias_clean, card.name,
                     )
                     continue
@@ -408,8 +491,10 @@ class BiographyManager:
         prompt = _build_update_prompt(
             user_name=card.name,
             persona_name=persona_name,
+            persona_aliases=self._persona_aliases,
             old_bio=card.short_bio,
             old_anchors=card.identity_anchors,
+            old_aliases=card.aliases,
             old_relationships=card.relationships,
             points=card.distilled_points,
         )
@@ -436,13 +521,25 @@ class BiographyManager:
         card.short_bio = str(result.get("short_bio", card.short_bio))[
             : card.bio_token_budget * 4
         ]
+        # 更新别名（保留旧别名 + LLM 输出中新发现的别名，去重）
+        new_aliases = [str(a) for a in result.get("aliases", []) if a]
+        existing_aliases = set(card.aliases)
+        for alias in new_aliases:
+            if alias not in existing_aliases:
+                card.aliases.append(alias)
+                existing_aliases.add(alias)
+
         card.identity_anchors = [
             str(a) for a in result.get("identity_anchors", []) if a
         ][:5]
         card.relationships = [
             RelationshipAnchor(
                 target_name=r.get("target", ""),
+                target_user_id=r.get("target_user_id", ""),
+                relation=r.get("relation", ""),
                 fact_hint=r.get("fact_hint", ""),
+                mentioned_count=int(r.get("mentioned_count", 1)),
+                last_mentioned_at=r.get("last_mentioned_at", ""),
             )
             for r in result.get("relationships", [])[:5]
         ]
@@ -461,6 +558,12 @@ class BiographyManager:
 
     # ── 别名注册（内部）────────────────────────────────────────
 
+    def _alias_is_persona_identity(self, alias_lower: str) -> bool:
+        """判断一个别名是否属于人格自身的身份名称（人格名 + 别名列表）。"""
+        return bool(self._persona_name and alias_lower == self._persona_name) or (
+            alias_lower in self._persona_aliases
+        )
+
     def _register_alias(
         self,
         alias: str,
@@ -471,14 +574,24 @@ class BiographyManager:
     ) -> None:
         """注册或更新一个别名条目。
 
-        LLM 来源的别名需要经过名字冲突校验：如果该别名恰好是另一个人的
-        主要显示名，说明 LLM 只是看到了"提及"而非"别名"，直接拒绝注册。
+        拥有三层防御：
+        1. 人格身份隔离：如果别名是 bot 人格自身名称，拒绝注册到任何其他用户
+        2. LLM 来源冲突校验：拒绝注册为已知其他用户的主名
+        3. 标准别名注册/更新（新建时按来源设置初始置信度）
         """
         alias_lower = alias.strip().lower()
         if not alias_lower or len(alias_lower) < 2:
             return
 
-        # LLM 来源：校验是否与已知用户的主要名字冲突
+        # 防御1：人格身份隔离——人格自身的名字和别名不能被注册到任何其他用户
+        if self._alias_is_persona_identity(alias_lower):
+            logger.debug(
+                "拒绝别名注册: %s 是人格自身名称，不能注册为 %s(%s) 的别名",
+                alias, user_name, user_id,
+            )
+            return
+
+        # 防御2（LLM 来源）：校验是否与已知用户的主要名字冲突
         if source == "llm_discovery":
             for uid, card in self._cards.items():
                 if uid == user_id:
@@ -504,19 +617,86 @@ class BiographyManager:
                 self._store.save_alias_index(self._alias_index)
                 return
 
-        # 新建条目
+        # 新建条目：按来源设置初始置信度
         now = _now_iso()
+        initial_confidence = AliasEntry.compute_confidence(1, source)
         self._alias_index[alias_lower].append(
             AliasEntry(
                 user_id=user_id,
                 user_name=user_name,
                 groups=[group_id] if group_id else [],
+                mentioned_count=1,
+                confidence=initial_confidence,
                 first_seen_at=now,
                 last_seen_at=now,
                 source=source,
             )
         )
         self._store.save_alias_index(self._alias_index)
+
+    # ── 衰减与清理 ──
+
+    def _decay_alias_key(self, alias_lower: str) -> None:
+        """对单个别名的所有条目执行时间衰减。
+
+        每过去一天，置信度衰减 5%。衰减后低于阈值的条目被移除。
+        """
+        entries = self._alias_index.get(alias_lower)
+        if not entries:
+            return
+
+        survivor: list[AliasEntry] = []
+        for entry in entries:
+            days = _days_since(entry.last_seen_at)
+            entry.confidence = AliasEntry.apply_time_decay(entry.confidence, days)
+            if entry.confidence >= AliasEntry.DECAY_THRESHOLD:
+                survivor.append(entry)
+            else:
+                logger.debug(
+                    "别名衰减移除: %s → %s(%s) 置信度%.4f < 阈值%.2f",
+                    alias_lower, entry.user_name, entry.user_id,
+                    entry.confidence, AliasEntry.DECAY_THRESHOLD,
+                )
+
+        if len(survivor) != len(entries):
+            if survivor:
+                self._alias_index[alias_lower] = survivor
+            else:
+                del self._alias_index[alias_lower]
+            self._store.save_alias_index(self._alias_index)
+
+    def decay_all_aliases(self) -> int:
+        """对所有别名执行时间衰减和低置信度清理。
+
+        Returns:
+            被移除的条目总数。
+        """
+        total_removed = 0
+        for key in list(self._alias_index.keys()):
+            entries = self._alias_index[key]
+            survivor: list[AliasEntry] = []
+            for entry in entries:
+                days = _days_since(entry.last_seen_at)
+                entry.confidence = AliasEntry.apply_time_decay(entry.confidence, days)
+                if entry.confidence >= AliasEntry.DECAY_THRESHOLD:
+                    survivor.append(entry)
+                else:
+                    total_removed += 1
+                    logger.debug(
+                        "批量衰减移除: %s → %s(%s) 置信度%.4f < 阈值%.2f",
+                        key, entry.user_name, entry.user_id,
+                        entry.confidence, AliasEntry.DECAY_THRESHOLD,
+                    )
+
+            if survivor:
+                self._alias_index[key] = survivor
+            else:
+                del self._alias_index[key]
+
+        if total_removed > 0:
+            self._store.save_alias_index(self._alias_index)
+
+        return total_removed
 
     # ── 查询 ──────────────────────────────────────────────────
 
@@ -531,6 +711,31 @@ class BiographyManager:
     def get_cards_for_users(self, user_ids: list[str]) -> list[UserPersonaCard]:
         """批量获取用户传记卡。"""
         return [c for uid in user_ids if (c := self.get_card(uid)) is not None]
+
+    def cleanup_polluted_aliases(self) -> int:
+        """清理别名索引中被人格身份名称污染的条目。
+
+        移除所有 key 为人格自身名称（或别名）的别名条目，
+        因为这些名称只属于观察者 bot，不应注册到任何其他用户。
+
+        Returns:
+            被清理的别名 key 数量。
+        """
+        if not self._persona_name:
+            return 0
+
+        persona_keys = {self._persona_name} | self._persona_aliases
+        cleaned = 0
+        for key in list(self._alias_index.keys()):
+            if key in persona_keys:
+                del self._alias_index[key]
+                cleaned += 1
+
+        if cleaned > 0:
+            self._store.save_alias_index(self._alias_index)
+            logger.info("已清理 %d 个人格身份污染别名条目", cleaned)
+
+        return cleaned
 
     def register_alias_from_profile(
         self, user_id: str, name: str, aliases: list[str], group_id: str

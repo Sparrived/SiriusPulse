@@ -97,6 +97,7 @@ class DiaryGenerator:
             persona_name, persona_description, candidates
         )
 
+        parsed: dict[str, Any] | None = None
         for attempt in range(max_retries + 1):
             raw_request = RawRequest(
                 model=model_name,
@@ -140,6 +141,7 @@ class DiaryGenerator:
                 )
                 return None
 
+        assert parsed is not None
         now_iso = datetime.now(timezone.utc).isoformat()
         entry = DiaryEntry(
             entry_id=f"dgy_{uuid.uuid4().hex[:12]}",
