@@ -960,7 +960,11 @@ class _EmotionalGroupChatEngineBase:
             self._load_proactive_state()
 
     def _init_sticker_system(self) -> None:
-        """扫描 stickers 文件夹，获取可用表情包名称列表。"""
+        """扫描 stickers 文件夹，获取可用表情包名称列表。
+
+        支持 `__` 分隔符命名：`喜欢__可爱.jpg`、`喜欢__生气.jpg`
+        都属于"喜欢"表情包，AI 发送 [STICKERS: "喜欢"] 时从中随机选一张。
+        """
         stickers_dir = Path(self.work_path) / "stickers"
         if not stickers_dir.is_dir():
             logger.info("表情包目录不存在，跳过初始化: %s", stickers_dir)
@@ -969,11 +973,16 @@ class _EmotionalGroupChatEngineBase:
             return
 
         image_extensions = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-        names: list[str] = []
+        names: set[str] = set()
         for f in stickers_dir.iterdir():
             if f.is_file() and f.suffix.lower() in image_extensions:
-                names.append(f.stem)
-        self._sticker_names = sorted(set(names))
+                stem = f.stem
+                # 含 __ 的文件取前缀作为表情包名称（如 "喜欢__可爱.jpg" → "喜欢"）
+                if "__" in stem:
+                    names.add(stem.split("__", 1)[0])
+                else:
+                    names.add(stem)
+        self._sticker_names = sorted(names)
         self.brain.sticker_names = self._sticker_names
         logger.info(
             "表情包系统初始化完成: 共 %d 个表情包名称，来自 %d 个文件",
@@ -1031,7 +1040,10 @@ class _EmotionalGroupChatEngineBase:
         """从模型选择的名称列表中随机选一个，再匹配对应的图片文件。
 
         模型选 1-3 个名称，本地从中随机选 1 个发送。
-        该名称可能对应多个文件（不同扩展名），也随机选一个。
+        匹配规则：
+        - 精确匹配：`喜欢.jpg`
+        - 包匹配：`喜欢__可爱.jpg`、`喜欢__生气.jpg`（`__` 前缀属于同一包）
+        从所有匹配文件中随机选一个。
         """
         if not names:
             return None
@@ -1047,10 +1059,18 @@ class _EmotionalGroupChatEngineBase:
         chosen_name = random.choice(names[:3])
 
         candidates: list[Path] = []
+
+        # 1. 精确匹配：{name}.{ext}
         for ext in image_extensions:
             candidate = stickers_dir / f"{chosen_name}{ext}"
             if candidate.is_file():
                 candidates.append(candidate)
+
+        # 2. 包匹配：{name}__*.{ext}（支持同包多文件随机选一）
+        for f in stickers_dir.iterdir():
+            if f.is_file() and f.suffix.lower() in image_extensions:
+                if f.stem.startswith(f"{chosen_name}__"):
+                    candidates.append(f)
 
         return random.choice(candidates) if candidates else None
 
