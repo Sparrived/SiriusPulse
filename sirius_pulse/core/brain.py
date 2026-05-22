@@ -69,6 +69,10 @@ class ChatRequest:
     # ── 后处理控制 ──
     post_process: bool = False  # True = 启用 hook 调度（总闸），False = 完全跳过
 
+    # ── 重试控制（transport 级） ──
+    retry_max: int = 2       # 最多重试次数（总调用次数 = retry_max + 1）
+    retry_delay: float = 2.0  # 重试间隔（秒）
+
 
 @dataclass(slots=True)
 class ChatResult:

@@ -197,19 +197,16 @@ class BackgroundTasksMixin(_Base):
                         persona_description=(
                             self.persona.persona_summary or self.persona.backstory or ""
                         ),
-                        provider_async=self.provider_async,
+                        brain=self.brain,
                         model_name=cfg.model_name,
                     )
                     diary_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-                    generator = getattr(self.diary_manager, "_generator", None)
-                    if generator is not None:
-                        self._record_subtask_tokens(
-                            task_name="diary_generate",
-                            model_name=cfg.model_name,
-                            group_id=group_id,
-                            request=getattr(generator, "_last_request", None),
-                            duration_ms=diary_duration_ms,
-                        )
+                    self._record_subtask_tokens(
+                        task_name="diary_generate",
+                        model_name=cfg.model_name,
+                        group_id=group_id,
+                        duration_ms=diary_duration_ms,
+                    )
                     if result:
                         promoted_total += 1
                         # Update semantic memory with LLM-extracted topics
@@ -288,7 +285,7 @@ class BackgroundTasksMixin(_Base):
                 distilled = await mgr.maybe_distill(
                     user_id=user_id,
                     persona_name=self.persona.name,
-                    provider_async=self.provider_async,
+                    brain=self.brain,
                     model_name=model_name,
                 )
                 if distilled:
@@ -306,7 +303,7 @@ class BackgroundTasksMixin(_Base):
                 updated = await mgr.maybe_update_biography(
                     user_id=user_id,
                     persona_name=self.persona.name,
-                    provider_async=self.provider_async,
+                    brain=self.brain,
                     model_name=model_name,
                 )
                 if updated:
@@ -333,7 +330,7 @@ class BackgroundTasksMixin(_Base):
         import time
 
         from sirius_pulse.memory.diary.consolidator import DiaryConsolidator
-        from sirius_pulse.providers.base import GenerationRequest
+        from sirius_pulse.core.brain import RawRequest
 
         consolidator = DiaryConsolidator(self.diary_manager, self.config)
         cfg = self.model_router.resolve("memory_extract")
@@ -347,7 +344,7 @@ class BackgroundTasksMixin(_Base):
                 merged_entries: list[Any] = []
                 for cluster in clusters:
                     system_prompt, user_content = consolidator.build_merge_prompt(cluster)
-                    request = GenerationRequest(
+                    raw_request = RawRequest(
                         model=cfg.model_name,
                         system_prompt=system_prompt,
                         messages=[{"role": "user", "content": user_content}],
@@ -356,9 +353,7 @@ class BackgroundTasksMixin(_Base):
                         purpose="diary_consolidate",
                     )
                     t0 = time.perf_counter()
-                    if self.provider_async is None:
-                        continue
-                    raw = await self.provider_async.generate_async(request)
+                    raw = await self.brain.raw_call(raw_request)
                     consolidate_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
 
                     from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
@@ -373,7 +368,6 @@ class BackgroundTasksMixin(_Base):
                         task_name="diary_consolidate",
                         model_name=cfg.model_name,
                         group_id=group_id,
-                        request=request,
                         duration_ms=consolidate_duration_ms,
                         token_breakdown=sub_bd.to_dict(),
                     )

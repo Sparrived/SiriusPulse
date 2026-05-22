@@ -349,8 +349,9 @@ async function loadAvailableModels() {
 
 const ORCH_GENERAL_MAP = {
   analysis_model: ['cognition_analyze', 'memory_extract'],
-  chat_model: ['response_generate', 'proactive_generate'],
-  vision_model: ['vision'],
+  chat_model: ['response_generate', 'proactive_generate', 'passive_skill', 'github_monitor_notify'],
+  memory_model: ['diary_generate', 'diary_consolidate', 'biography_distill', 'biography_update'],
+  plugin_model: ['plugin_generate', 'plugin_analyze', 'plugin_render', 'plugin_raw'],
 };
 
 const ORCH_TASK_GROUPS = [
@@ -358,29 +359,28 @@ const ORCH_TASK_GROUPS = [
     title: '分析类',
     generalKey: 'analysis_model',
     tasks: [
-      { key: 'cognition_analyze', label: '认知分析' },
+      { key: 'cognition_analyze', label: '认知分析（情绪+意图）' },
       { key: 'memory_extract', label: '记忆提取' },
     ],
   },
   {
-    title: '生成类',
-    generalKey: 'chat_model',
+    title: '记忆维护',
+    generalKey: 'memory_model',
     tasks: [
-      { key: 'response_generate', label: '回复生成' },
-      { key: 'proactive_generate', label: '主动发言' },
+      { key: 'diary_generate', label: '日记生成' },
+      { key: 'diary_consolidate', label: '日记合并' },
+      { key: 'biography_distill', label: '传记蒸馏' },
+      { key: 'biography_update', label: '传记更新' },
     ],
   },
   {
-    title: '其他',
-    generalKey: 'vision_model',
+    title: '插件与技能',
+    generalKey: 'plugin_model',
     tasks: [
-      { key: 'vision', label: '多模态' },
-    ],
-  },
-  {
-    title: '表情包',
-    generalKey: 'analysis_model',
-    tasks: [
+      { key: 'plugin_generate', label: '插件生成' },
+      { key: 'plugin_analyze', label: '插件分析' },
+      { key: 'plugin_render', label: '插件渲染' },
+      { key: 'plugin_raw', label: '插件原生调用' },
     ],
   },
 ];
@@ -392,7 +392,8 @@ function _getGeneralModel(generalKey) {
   const sel = $({
     analysis_model: 'orchAnalysis',
     chat_model: 'orchChat',
-    vision_model: 'orchVision',
+    memory_model: 'orchMemory',
+    plugin_model: 'orchPlugin',
   }[generalKey]);
   return sel ? sel.value : '';
 }
@@ -400,9 +401,17 @@ function _getGeneralModel(generalKey) {
 function _buildTaskRow(task, choices, data) {
   const tm = data.task_models || {};
   const te = data.task_enabled || {};
+  const tt = data.task_temperatures || {};
+  const tmt = data.task_max_tokens || {};
   const model = tm[task.key] || '';
   const enabled = te[task.key] !== false;
-  const modelSelect = `<select id="orchTaskModel_${task.key}" class="task-model">` +
+  const temp = tt[task.key] !== undefined ? tt[task.key] : '';
+  const maxTok = tmt[task.key] !== undefined ? tmt[task.key] : '';
+  const hasAdvanced = temp !== '' || maxTok !== '';
+  const customMark = model ? '<span class="task-custom-mark">自定义</span>' : '';
+  const advancedMark = hasAdvanced ? '<span class="task-custom-mark adv">参数</span>' : '';
+
+  const modelSelect = `<select id="orchTaskModel_${task.key}" class="task-model" onchange="onOrchTaskModelChange('${task.key}')">` +
     `<option value="">继承通用</option>` +
     choices.map(c => {
       const val = typeof c === 'string' ? c : c.value;
@@ -410,11 +419,18 @@ function _buildTaskRow(task, choices, data) {
       return `<option value="${val}"${val === model ? ' selected' : ''}>${label}</option>`;
     }).join('') +
     `</select>`;
-  const customMark = model ? '<span class="task-custom-mark">自定义</span>' : '';
+
+  const advancedRow = `<div class="task-advanced" id="orchTaskAdv_${task.key}" style="display:${hasAdvanced ? '' : 'none'}">` +
+    `<label>温度: <input type="number" id="orchTaskTemp_${task.key}" value="${temp}" min="0" max="2" step="0.1" style="width:60px" onchange="onOrchTaskParamChange('${task.key}')"></label>` +
+    `<label>最大 Token: <input type="number" id="orchTaskMaxTok_${task.key}" value="${maxTok}" min="16" max="16384" step="16" style="width:70px" onchange="onOrchTaskParamChange('${task.key}')"></label>` +
+    `<button class="btn small" onclick="toggleTaskAdvanced('${task.key}')">收起</button>` +
+    `</div>`;
+
   return `<div class="task-row${enabled ? '' : ' disabled'}" id="orchTaskRow_${task.key}">` +
-    `<div class="task-name">${task.label}${customMark}</div>` +
+    `<div class="task-name">${task.label}${customMark}${advancedMark}<button class="btn small adv-btn" onclick="toggleTaskAdvanced('${task.key}')" title="高级设置">⚙</button></div>` +
     `<div class="task-model">${modelSelect}</div>` +
     `<div class="task-toggle"><input type="checkbox" id="orchTaskEnabled_${task.key}"${enabled ? ' checked' : ''} onchange="onOrchTaskToggle('${task.key}')"></div>` +
+    `${advancedRow}` +
     `</div>`;
 }
 
@@ -457,6 +473,51 @@ function onOrchTaskToggle(taskKey) {
   if (cb && row) row.classList.toggle('disabled', !cb.checked);
 }
 
+function toggleTaskAdvanced(taskKey) {
+  const adv = $(`orchTaskAdv_${taskKey}`);
+  if (!adv) return;
+  if (adv.style.display === 'none') {
+    adv.style.display = '';
+  } else {
+    adv.style.display = 'none';
+  }
+}
+
+function onOrchTaskModelChange(taskKey) {
+  const modelEl = $(`orchTaskModel_${taskKey}`);
+  const row = $(`orchTaskRow_${taskKey}`);
+  if (!row) return;
+  const marks = row.querySelector('.task-name');
+  if (!marks) return;
+  const oldMark = marks.querySelector('.task-custom-mark:not(.adv)');
+  if (oldMark) oldMark.remove();
+  if (modelEl && modelEl.value) {
+    const newMark = document.createElement('span');
+    newMark.className = 'task-custom-mark';
+    newMark.textContent = '自定义';
+    marks.insertBefore(newMark, marks.querySelector('.adv-btn') || marks.lastChild);
+  }
+}
+
+function onOrchTaskParamChange(taskKey) {
+  const adv = $(`orchTaskAdv_${taskKey}`);
+  const row = $(`orchTaskRow_${taskKey}`);
+  if (!row) return;
+  const marks = row.querySelector('.task-name');
+  if (!marks) return;
+  const tempEl = $(`orchTaskTemp_${taskKey}`);
+  const maxTokEl = $(`orchTaskMaxTok_${taskKey}`);
+  const hasAdv = (tempEl && tempEl.value !== '') || (maxTokEl && maxTokEl.value !== '');
+  const oldAdvMark = marks.querySelector('.task-custom-mark.adv');
+  if (oldAdvMark) oldAdvMark.remove();
+  if (hasAdv) {
+    const newMark = document.createElement('span');
+    newMark.className = 'task-custom-mark adv';
+    newMark.textContent = '参数';
+    marks.insertBefore(newMark, marks.querySelector('.adv-btn') || marks.lastChild);
+  }
+}
+
 async function loadOrchestration() {
   if (!currentPersona) return;
   try {
@@ -467,7 +528,8 @@ async function loadOrchestration() {
     _orchData = orch;
     _fillSelect('orchAnalysis', orch.analysis_model || 'gpt-4o-mini', choices);
     _fillSelect('orchChat', orch.chat_model || 'gpt-4o', choices);
-    _fillSelect('orchVision', orch.vision_model || 'gpt-4o', choices);
+    _fillSelect('orchMemory', orch.memory_model || 'gpt-4o-mini', choices);
+    _fillSelect('orchPlugin', orch.plugin_model || 'gpt-4o-mini', choices);
     renderOrchestration();
   } catch (e) {}
 }
@@ -477,20 +539,29 @@ async function saveOrchestration() {
   const payload = {
     analysis_model: $('orchAnalysis').value,
     chat_model: $('orchChat').value,
-    vision_model: $('orchVision').value,
+    memory_model: $('orchMemory').value,
+    plugin_model: $('orchPlugin').value,
   };
   const taskModels = {};
   const taskEnabled = {};
+  const taskTemps = {};
+  const taskMaxToks = {};
   ORCH_TASK_GROUPS.forEach(g => {
     g.tasks.forEach(t => {
       const modelEl = $(`orchTaskModel_${t.key}`);
       const enabledEl = $(`orchTaskEnabled_${t.key}`);
+      const tempEl = $(`orchTaskTemp_${t.key}`);
+      const maxTokEl = $(`orchTaskMaxTok_${t.key}`);
       if (modelEl && modelEl.value) taskModels[t.key] = modelEl.value;
       if (enabledEl) taskEnabled[t.key] = enabledEl.checked;
+      if (tempEl && tempEl.value !== '') taskTemps[t.key] = parseFloat(tempEl.value);
+      if (maxTokEl && maxTokEl.value !== '') taskMaxToks[t.key] = parseInt(maxTokEl.value);
     });
   });
   if (Object.keys(taskModels).length) payload.task_models = taskModels;
   if (Object.keys(taskEnabled).length) payload.task_enabled = taskEnabled;
+  if (Object.keys(taskTemps).length) payload.task_temperatures = taskTemps;
+  if (Object.keys(taskMaxToks).length) payload.task_max_tokens = taskMaxToks;
 
   const res = await post(pApi('/orchestration'), payload);
   toast(res.success ? '模型编排已保存' : res.error || '失败', res.success ? 'success' : 'error');

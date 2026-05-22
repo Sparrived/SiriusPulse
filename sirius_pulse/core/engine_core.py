@@ -172,24 +172,34 @@ class _EmotionalGroupChatEngineBase:
             orch = {
                 "analysis_model": "gpt-4o-mini",
                 "chat_model": "gpt-4o",
-                "vision_model": "gpt-4o",
+                "memory_model": "gpt-4o-mini",
+                "plugin_model": "gpt-4o-mini",
             }
             OrchestrationStore.save(work_path, orch)
         analysis_model = orch.get("analysis_model", "gpt-4o-mini")
         chat_model = orch.get("chat_model", "gpt-4o")
-        vision_model = orch.get("vision_model", chat_model)
+        memory_model = orch.get("memory_model", "gpt-4o-mini")
+        plugin_model = orch.get("plugin_model", "gpt-4o-mini")
         self._default_model = analysis_model
         self._task_models = {
             # 分析类
             "cognition_analyze": analysis_model,
             "memory_extract": analysis_model,
-            # 生成类
+            # 生成类（主动发言、被动技能、GitHub 通知均跟随对话模型）
             "response_generate": chat_model,
             "proactive_generate": chat_model,
-            # 多模态覆盖
-            "vision": vision_model,
-            # Plugin 分析任务 → 小模型
-            "plugin_analyze": analysis_model,
+            "passive_skill": chat_model,
+            "github_monitor_notify": chat_model,
+            # 记忆维护
+            "diary_generate": memory_model,
+            "diary_consolidate": memory_model,
+            "biography_distill": memory_model,
+            "biography_update": memory_model,
+            # 插件与技能
+            "plugin_generate": plugin_model,
+            "plugin_analyze": plugin_model,
+            "plugin_render": plugin_model,
+            "plugin_raw": plugin_model,
         }
         # 优先使用 orchestration.json 中的 task_models 细粒度覆盖
         orch_task_models = orch.get("task_models")

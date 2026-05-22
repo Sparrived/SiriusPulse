@@ -277,7 +277,7 @@ class BiographyManager:
         user_id: str,
         *,
         persona_name: str,
-        provider_async: Any,
+        brain: Any,
         model_name: str,
     ) -> bool:
         """如果攒的原始消息足够，调用 LLM 蒸馏为关于该用户的要点。
@@ -305,14 +305,14 @@ class BiographyManager:
             return False
 
         # 构建蒸馏 prompt → LLM 调用
-        from sirius_pulse.providers.base import GenerationRequest
+        from sirius_pulse.core.brain import RawRequest
 
         prompt = _build_distill_prompt(
             user_name=card.name,
             persona_name=persona_name,
             messages=card.pending_messages,
         )
-        request = GenerationRequest(
+        raw_request = RawRequest(
             model=model_name,
             system_prompt="你是信息提炼助手。严格输出 JSON。",
             messages=[{"role": "user", "content": prompt}],
@@ -322,7 +322,7 @@ class BiographyManager:
         )
 
         try:
-            raw = await provider_async.generate_async(request)
+            raw = await brain.raw_call(raw_request)
         except Exception as exc:
             logger.warning("传记蒸馏 LLM 调用失败 user=%s: %s", user_id, exc)
             return False
@@ -375,7 +375,7 @@ class BiographyManager:
         user_id: str,
         *,
         persona_name: str,
-        provider_async: Any,
+        brain: Any,
         model_name: str,
     ) -> bool:
         """如果蒸馏要点攒够了，调用 LLM 重写传记卡。
@@ -403,7 +403,7 @@ class BiographyManager:
             return False
 
         # 构建传记更新 prompt → LLM 调用
-        from sirius_pulse.providers.base import GenerationRequest
+        from sirius_pulse.core.brain import RawRequest
 
         prompt = _build_update_prompt(
             user_name=card.name,
@@ -413,7 +413,7 @@ class BiographyManager:
             old_relationships=card.relationships,
             points=card.distilled_points,
         )
-        request = GenerationRequest(
+        raw_request = RawRequest(
             model=model_name,
             system_prompt="你是人物传记维护助手。严格输出 JSON。",
             messages=[{"role": "user", "content": prompt}],
@@ -423,7 +423,7 @@ class BiographyManager:
         )
 
         try:
-            raw = await provider_async.generate_async(request)
+            raw = await brain.raw_call(raw_request)
         except Exception as exc:
             logger.warning("传记更新 LLM 调用失败 user=%s: %s", user_id, exc)
             return False

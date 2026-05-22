@@ -75,7 +75,7 @@ class DiaryGenerator:
         candidates: list[BasicMemoryEntry],
         persona_name: str,
         persona_description: str,
-        provider_async: Any,
+        brain: Any,
         model_name: str,
         temperature: float = 0.5,
         max_tokens: int = 512,
@@ -90,7 +90,7 @@ class DiaryGenerator:
         if not candidates:
             return None
 
-        from sirius_pulse.providers.base import GenerationRequest
+        from sirius_pulse.core.brain import RawRequest
 
         system_prompt = _DIARY_SYSTEM_PROMPT
         user_prompt = _build_diary_user_prompt(
@@ -98,7 +98,7 @@ class DiaryGenerator:
         )
 
         for attempt in range(max_retries + 1):
-            request = GenerationRequest(
+            raw_request = RawRequest(
                 model=model_name,
                 system_prompt=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
@@ -106,10 +106,9 @@ class DiaryGenerator:
                 max_tokens=max_tokens,
                 purpose="diary_generate",
             )
-            self._last_request = request
 
             try:
-                raw = await provider_async.generate_async(request)
+                raw = await brain.raw_call(raw_request)
             except Exception as exc:
                 logger.warning(
                     "日记生成 LLM 调用失败 (group=%s, attempt=%d/%d): %s",
@@ -117,6 +116,13 @@ class DiaryGenerator:
                     attempt + 1,
                     max_retries + 1,
                     exc,
+                )
+                if attempt < max_retries:
+                    continue
+                logger.error(
+                    "日记生成 LLM 调用已耗尽 %d 次重试 (group=%s)",
+                    max_retries + 1,
+                    group_id,
                 )
                 return None
 
@@ -150,13 +156,13 @@ class DiaryGenerator:
             group_id=group_id,
             created_at=now_iso,
             source_ids=[e.entry_id for e in candidates],
-            content=parsed.get("content", "")[:300],
-            keywords=[str(k).strip() for k in parsed.get("keywords", []) if str(k).strip()][:10],
-            summary=parsed.get("summary", "")[:50],
+            content=(parsed.get("content") or "")[:300],
+            keywords=[str(k).strip() for k in (parsed.get("keywords") or []) if str(k).strip()][:10],
+            summary=(parsed.get("summary") or "")[:50],
         )
-        dominant_topic = str(parsed.get("dominant_topic", "")).strip()[:20]
+        dominant_topic = str(parsed.get("dominant_topic") or "").strip()[:20]
         interest_topics = [
-            str(t).strip() for t in parsed.get("interest_topics", [])
+            str(t).strip() for t in (parsed.get("interest_topics") or [])
             if str(t).strip()
         ][:10]
         return DiaryGenerationResult(

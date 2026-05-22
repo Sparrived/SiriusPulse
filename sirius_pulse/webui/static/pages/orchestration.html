@@ -12,18 +12,30 @@
         <div class="form-group">
           <label>分析模型</label>
           <select id="orchAnalysis" onchange="onOrchGeneralChanged()"></select>
+          <small>认知分析、记忆提取</small>
         </div>
       </div>
       <div class="col">
         <div class="form-group">
-          <label>对话生成模型</label>
+          <label>对话模型</label>
           <select id="orchChat" onchange="onOrchGeneralChanged()"></select>
+          <small>回复生成、主动发言、被动技能、通知</small>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col">
+        <div class="form-group">
+          <label>记忆维护模型</label>
+          <select id="orchMemory" onchange="onOrchGeneralChanged()"></select>
+          <small>日记生成/合并、传记蒸馏/更新</small>
         </div>
       </div>
       <div class="col">
         <div class="form-group">
-          <label>多模态模型</label>
-          <select id="orchVision" onchange="onOrchGeneralChanged()"></select>
+          <label>插件模型</label>
+          <select id="orchPlugin" onchange="onOrchGeneralChanged()"></select>
+          <small>插件生成/分析/渲染</small>
         </div>
       </div>
     </div>
@@ -32,6 +44,7 @@
   <!-- 任务级编排 -->
   <div class="card">
     <h2>任务级编排</h2>
+    <p class="hint">可覆盖各任务的模型与超参。主动发言、被动技能、GitHub 通知跟随对话模型，不单独列出。</p>
     <div id="orchTaskList"></div>
   </div>
 

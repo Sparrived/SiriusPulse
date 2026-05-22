@@ -269,7 +269,8 @@ class PersonaManager:
         orch = {
             "analysis_model": "gpt-4o-mini",
             "chat_model": "gpt-4o",
-            "vision_model": "gpt-4o",
+            "memory_model": "gpt-4o-mini",
+            "plugin_model": "gpt-4o-mini",
         }
         paths.orchestration.write_text(
             json.dumps(orch, ensure_ascii=False, indent=2),
@@ -327,7 +328,7 @@ class PersonaManager:
         else:
             paths.orchestration.write_text(
                 json.dumps(
-                    {"analysis_model": "gpt-4o-mini", "chat_model": "gpt-4o", "vision_model": "gpt-4o"},
+                    {"analysis_model": "gpt-4o-mini", "chat_model": "gpt-4o", "memory_model": "gpt-4o-mini", "plugin_model": "gpt-4o-mini"},
                     ensure_ascii=False, indent=2,
                 ),
                 encoding="utf-8",

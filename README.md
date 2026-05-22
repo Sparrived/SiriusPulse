@@ -104,61 +104,33 @@ Perception → Cognition → Decision → Execution → Background
 
 ```bash
 pip install sirius-pulse
-
-# 或源码安装
-git clone https://github.com/Sparrived/SiriusPulse.git
-cd SiriusPulse
-pip install -e ".[dev,test,provider,quality]"
 ```
 
-### 2️⃣ 创建人格
+### 2️⃣ 启动 WebUI
 
 ```bash
-sirius-pulse persona create my-bot
-```
-
-编辑 `data/personas/my-bot/persona.json` 定义角色：
-
-```json
-{
-  "name": "小星",
-  "aliases": ["小星", "星酱"],
-  "backstory": "小星是一个活泼开朗的AI助手...",
-  "personality_traits": {
-    "core": "热情、幽默、善解人意",
-    "speech_style": "口语化、喜欢用感叹词"
-  },
-  "communication_style": "chatty"
-}
-```
-
-### 3️⃣ 配置 Provider
-
-`data/providers/provider_keys.json`：
-
-```json
-{
-  "deepseek": {
-    "api_key": "sk-your-key",
-    "base_url": "https://api.deepseek.com"
-  }
-}
-```
-
-### 4️⃣ 启动
-
-```bash
-# WebUI 管理模式
 sirius-pulse webui
-
-# 启动所有人格
-sirius-pulse run
-
-# 前台启动单个人格
-sirius-pulse persona start my-bot
 ```
 
-访问 `http://localhost:8080` 进入 WebUI。
+打开 `http://localhost:8080`，一切配置都通过可视化面板完成：
+
+| WebUI 页面 | 做什么 |
+|-----------|------|
+| **Dashboard** | 创建/启动/停止人格 |
+| **人格管理** | 填写角色名字、性格、说话风格 |
+| **模型编排** | 选择 LLM 模型、细调各任务参数 |
+| **Provider** | 填 API Key（支持 DeepSeek / SiliconFlow 等） |
+| **NapCat** | 配置 QQ 号、扫码登录 |
+| **适配器** | 将人格绑定到 QQ 号 |
+
+### 3️⃣ 前台启动（可选）
+
+熟悉后又想不依赖 WebUI 运行：
+
+```bash
+sirius-pulse run              # 启动所有已配置人格 + WebUI
+sirius-pulse persona start my-bot   # 前台启动单人格
+```
 
 ### CLI 命令
 
@@ -323,58 +295,6 @@ report = store.full_report("2026-01-01", "2026-06-01")
 
 ---
 
-## ⚙️ 配置指南
-
-> 💡 **月白说**：配置其实很简单喵～选一个你喜欢的模型，填上 API Key 就能用啦(｡•̀ᴗ-)✧
-
-`data/global_config.json`：
-
-```json
-{
-  "webui_port": 8080,
-  "napcat_base_port": 3001,
-  "embedding_model": "BAAI/bge-small-zh-v1.5",
-  "embedding_port": 5555,
-  "plugins_dir": "plugins",
-  "skills_dir": "skills"
-}
-```
-
-### 人格配置
-
-每个人格的数据完全隔离，存放在 `data/personas/{name}/` 下：
-
-| 文件 | 说明 |
-|------|------|
-| `persona.json` | 角色定义（名字、性格、说话风格） |
-| `orchestration.json` | 模型编排（chat/analysis/vision 模型） |
-| `adapters.json` | 平台适配器（NapCat 连接信息） |
-| `experience.json` | 体验参数（灵敏度、回复频率、记忆深度） |
-
-### Provider 配置
-
-`data/providers/provider_keys.json`：支持 DeepSeek、SiliconFlow、阿里云百炼、火山方舟、智谱 GLM、OpenAI 兼容等。
-
-```json
-{
-  "deepseek": {
-    "api_key": "sk-xxx",
-    "base_url": "https://api.deepseek.com"
-  },
-  "siliconflow": {
-    "api_key": "sk-xxx",
-    "base_url": "https://api.siliconflow.cn/v1"
-  }
-}
-```
-
-### NapCat（QQ 平台接入）
-
-通过 WebUI 的 NapCat 页面配置：安装 → 设置 QQ 号和 ws_token → 启动 → 扫码登录 → 在适配器页面为格绑定。
-
-详细配置见 [VitePress 文档](https://sirius-pulse-docs.vercel.app/)。
-
----
 
 ## 🔧 扩展开发
 

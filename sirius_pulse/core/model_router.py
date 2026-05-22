@@ -65,6 +65,72 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=30.0,
         fallback_model="deepseek-chat",
     ),
+    # Plugin 其他
+    "plugin_generate": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.7,
+        max_tokens=4096,
+        timeout=30.0,
+        fallback_model="deepseek-chat",
+    ),
+    "plugin_render": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.7,
+        max_tokens=2048,
+        timeout=30.0,
+        fallback_model="deepseek-chat",
+    ),
+    "plugin_raw": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.5,
+        max_tokens=2048,
+        timeout=30.0,
+        fallback_model="deepseek-chat",
+    ),
+    # 被动技能
+    "passive_skill": TaskConfig(
+        model_name="gpt-4o",
+        temperature=0.8,
+        max_tokens=1024,
+        timeout=20.0,
+        fallback_model="deepseek-chat",
+    ),
+    "github_monitor_notify": TaskConfig(
+        model_name="gpt-4o",
+        temperature=0.8,
+        max_tokens=1024,
+        timeout=20.0,
+        fallback_model="deepseek-chat",
+    ),
+    # 记忆维护
+    "diary_generate": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.5,
+        max_tokens=512,
+        timeout=20.0,
+        fallback_model="deepseek-chat",
+    ),
+    "diary_consolidate": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.4,
+        max_tokens=2048,
+        timeout=30.0,
+        fallback_model="deepseek-chat",
+    ),
+    "biography_distill": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.3,
+        max_tokens=1024,
+        timeout=20.0,
+        fallback_model="deepseek-chat",
+    ),
+    "biography_update": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.4,
+        max_tokens=1024,
+        timeout=20.0,
+        fallback_model="deepseek-chat",
+    ),
 }
 # Urgency thresholds for escalation
 _URGENCY_ESCALATE = 80  # urgency > 80 → use stronger model

@@ -327,7 +327,7 @@ async def api_orchestration_post(request: web.Request, persona_manager: Any) -> 
 
     cfg = OrchestrationStore.load(paths.dir)
 
-    for key in ("analysis_model", "chat_model", "vision_model", "summary_model"):
+    for key in ("analysis_model", "chat_model", "memory_model", "plugin_model", "summary_model"):
         if key in body:
             cfg[key] = body[key]
 

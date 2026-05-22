@@ -55,7 +55,7 @@ class DiaryManager:
         candidates: list[BasicMemoryEntry],
         persona_name: str,
         persona_description: str,
-        provider_async: Any,
+        brain: Any,
         model_name: str,
         min_candidate_count: int = 12,
         overlap_tail_count: int = 3,
@@ -109,7 +109,7 @@ class DiaryManager:
             candidates=candidates,
             persona_name=persona_name,
             persona_description=persona_description,
-            provider_async=provider_async,
+            brain=brain,
             model_name=model_name,
         )
         if result is None:
