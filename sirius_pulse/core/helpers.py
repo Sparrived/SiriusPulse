@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
+from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.memory.glossary import GlossaryTerm
 
 _Base = _EmotionalGroupChatEngineBase
@@ -359,7 +360,12 @@ class HelpersMixin(_Base):
         group_id: str,
         user_id: str,
     ) -> float:
-        """Enhance topic relevance using semantic memory (group + user)."""
+        """Enhance topic relevance using semantic memory (group + user) + topic window.
+
+        v1.3+: 新增短期话题窗口增强。即使当前消息关键词与 AI 兴趣不重叠，
+        但如果与近 N 轮群聊话题的关键词重叠 >= 2 个，也视为话题相关，
+        修复"用户B说'评分怎么样'"等跨轮次关联场景的话题跟踪盲区。
+        """
         text_lower = (message or "").lower()
         if not text_lower:
             return base_score
@@ -383,6 +389,21 @@ class HelpersMixin(_Base):
                     if topic and topic.lower() in text_lower:
                         participation = getattr(node, "participation", 0.5)
                         boost += 0.1 * participation
+
+        # v1.3+: 短期话题窗口增强 —— 跨轮次话题跟踪
+        try:
+            msg_kw = extract_keywords(message)
+            window = getattr(self, "_topic_window", {}).get(group_id, [])
+            for prev_kw in reversed(window):
+                overlap = len(msg_kw & prev_kw)
+                if overlap >= 2:
+                    boost += 0.12
+                    break
+                elif overlap == 1:
+                    boost += 0.05
+                    break
+        except Exception:
+            pass
 
         return min(1.0, base_score + boost)
 

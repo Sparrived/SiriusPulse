@@ -35,6 +35,44 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 关键词提取工具（含中文二元组 Bigram）
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def extract_keywords(text: str) -> set[str]:
+    """提取文本中的关键词，含中文单字、英文单词、中文二元组（bigram）与英文二元组。
+
+    中文二元组示例："人工智能" → {"人", "工", "智", "能", "人工", "工智", "智能"}
+    英文二元组示例："neural network" → {"neural", "network", "neural network"}
+
+    覆盖原字符级 split 的粒度缺陷，将"灵魂提取器"作为完整短语加入匹配集。
+    """
+    text = text.lower().strip()
+    if not text:
+        return set()
+    keywords: set[str] = set()
+    # 中文字符连续块
+    chinese_chunks = re.findall(r"[\u4e00-\u9fff]+", text)
+    # 英文单词
+    english_words = re.findall(r"[a-zA-Z]+", text)
+    # 单字/单词级
+    for chunk in chinese_chunks:
+        for char in chunk:
+            keywords.add(char)
+    keywords.update(english_words)
+    # 中文二元组 bigram：连续两个字符
+    for chunk in chinese_chunks:
+        if len(chunk) >= 2:
+            for i in range(len(chunk) - 1):
+                keywords.add(chunk[i:i + 2])
+    # 英文二元组：相邻单词
+    if len(english_words) >= 2:
+        for i in range(len(english_words) - 1):
+            keywords.add(f"{english_words[i]} {english_words[i + 1]}")
+    return keywords
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 辅助数据类
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -377,11 +415,14 @@ class CognitionAnalyzer:
 
         # 4. Intent analysis via LLM when provider is available.
         #    LLM failure → rule-based scores remain (safe degradation).
+        #    规则已精确匹配到 Plugin 命令时，跳过 LLM 认知分析（v1.2+）
+        #    精确前缀匹配本身置信度已达 1.0，无需 LLM 介入增加延迟和开销
+        skip_llm = social_intent == SocialIntent.PLUGIN_COMMAND
         llm_result: dict[str, Any] | None = None
         llm_urgency: float | None = None
         llm_relevance: float | None = None
         llm_directed_score: float | None = None
-        if self.provider_async is not None:
+        if self.provider_async is not None and not skip_llm:
             try:
                 llm_result = await self._llm_cognition(
                     message, context_messages, current_user_id=user_id, sender_type=sender_type,
@@ -1373,6 +1414,7 @@ class CognitionAnalyzer:
 
         # --- Layer 3: Semantic ---
         # topic_relevance_score: keyword overlap with AI persona interests
+        # v1.3+: 使用 bigram 增强的关键词提取，提升短语级匹配精度
         topic_rel = 0.0
         if self.persona:
             ai_keywords: set[str] = set()
@@ -1383,7 +1425,7 @@ class CognitionAnalyzer:
             if getattr(self.persona, "name", None):
                 ai_keywords.add(self.persona.name)
             if ai_keywords:
-                text_words = set(re.findall(r"[\u4e00-\u9fff]+", text)) | set(re.findall(r"[a-zA-Z]+", text_lower))
+                text_words = extract_keywords(text)
                 ai_words = {k.lower() for k in ai_keywords}
                 overlap = len(text_words & ai_words)
                 topic_rel = min(1.0, overlap / max(1, len(ai_words)) * 3)

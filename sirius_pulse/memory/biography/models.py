@@ -129,6 +129,10 @@ class UserPersonaCard:
     relationships: list[RelationshipAnchor] = field(default_factory=list)
     short_bio: str = ""
 
+    # 用户对此 bot 的亲和力分数（-1.0=敌对, 0.0=中立, 1.0=友好）
+    # 由 LLM 在传记更新时输出，关键词分析兜底
+    affinity_score: float = 0.0
+
     # ── 层1：原始消息攒批（等待蒸馏）──
     pending_messages: list[str] = field(default_factory=list)
     pending_message_count: int = 0
@@ -150,6 +154,7 @@ class UserPersonaCard:
             "identity_anchors": list(self.identity_anchors),
             "relationships": [r.to_dict() for r in self.relationships],
             "short_bio": self.short_bio,
+            "affinity_score": self.affinity_score,
             "pending_messages": list(self.pending_messages),
             "pending_message_count": self.pending_message_count,
             "distilled_points": list(self.distilled_points),
@@ -174,6 +179,7 @@ class UserPersonaCard:
             identity_anchors=list(data.get("identity_anchors", [])),
             relationships=rels,
             short_bio=data.get("short_bio", ""),
+            affinity_score=float(data.get("affinity_score", 0.0)),
             pending_messages=list(data.get("pending_messages", [])),
             pending_message_count=int(data.get("pending_message_count", 0)),
             distilled_points=list(data.get("distilled_points", [])),

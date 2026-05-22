@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sirius_pulse.models.emotion import EmotionState
+from sirius_pulse.core.cognition import extract_keywords
 
 
 @dataclass(slots=True)
@@ -26,6 +27,7 @@ class RhythmAnalysis:
     pace: str = "steady"               # accelerating | steady | decelerating | silent
     gap_since_last_message: float = 0.0  # seconds
     topic_stability: float = 0.5       # 0~1
+    topic_drift: float = 0.0           # v1.3+: 0~1, 窗口内话题漂移度，高值=发生了话题转换
     collective_mood: EmotionState | None = None
     attention_window_open: bool = False
     burst_detected: bool = False
@@ -68,6 +70,9 @@ class RhythmAnalyzer:
         # Topic stability
         stability = self._compute_topic_stability(recent)
 
+        # v1.3+: Topic drift detection
+        drift = self._compute_topic_drift(recent)
+
         # Attention window
         attention_open = self._attention_window(recent, stability)
 
@@ -78,7 +83,7 @@ class RhythmAnalyzer:
         flows = self._count_flows(recent)
 
         # Turn gap readiness: detect natural breakpoints in conversation
-        gap_readiness = self._compute_turn_gap_readiness(recent, stability, burst)
+        gap_readiness = self._compute_turn_gap_readiness(recent, stability, burst, drift)
 
         return RhythmAnalysis(
             heat_level=heat_level,
@@ -86,6 +91,7 @@ class RhythmAnalyzer:
             pace=pace,
             gap_since_last_message=gap,
             topic_stability=round(stability, 3),
+            topic_drift=round(drift, 3),
             attention_window_open=attention_open,
             burst_detected=burst,
             conversation_flows=flows,
@@ -158,18 +164,16 @@ class RhythmAnalyzer:
 
     @staticmethod
     def _compute_topic_stability(messages: list[dict[str, Any]]) -> float:
-        """Simple keyword overlap topic stability."""
+        """Simple keyword overlap topic stability.
+
+        v1.3+: 使用 extract_keywords() 替代字符级 split，支持 bigram 短语匹配。
+        """
         if len(messages) < 2:
             return 0.5
         contents = [str(m.get("content", "")) for m in messages[-5:]]
         if not contents:
             return 0.5
-        # Tokenize very simply (Chinese characters + words)
-        sets = []
-        for text in contents:
-            tokens = set(text.lower().split())
-            tokens.update(set(text.lower()))  # character-level
-            sets.append(tokens)
+        sets = [extract_keywords(text) for text in contents]
         overlaps = []
         for i in range(1, len(sets)):
             inter = sets[i - 1] & sets[i]
@@ -203,13 +207,43 @@ class RhythmAnalyzer:
         return False
 
     @staticmethod
+    def _compute_topic_drift(messages: list[dict[str, Any]]) -> float:
+        """计算滑动窗口内的全局话题漂移度 (0~1)。
+
+        将消息窗口从中间切分，计算前后两半的关键词集 Jaccard 距离。
+        高漂移 = 对话在前半段和后半段聊的不是同一件事，
+        常用于检测渐变式话题转换（非相邻跳转，而是 10 轮内缓慢漂移）。
+
+        v1.3+ 新增。
+        """
+        if len(messages) < 4:
+            return 0.0
+        contents = [str(m.get("content", "")) for m in messages]
+        n = len(contents)
+        half = n // 2
+        first_kw: set[str] = set()
+        second_kw: set[str] = set()
+        for i, text in enumerate(contents):
+            kws = extract_keywords(text)
+            if i < half:
+                first_kw.update(kws)
+            else:
+                second_kw.update(kws)
+        if not first_kw or not second_kw:
+            return 0.0
+        jaccard = len(first_kw & second_kw) / len(first_kw | second_kw)
+        return max(0.0, 1.0 - jaccard)
+
+    @staticmethod
     def _compute_turn_gap_readiness(
-        messages: list[dict[str, Any]], stability: float, burst: bool
+        messages: list[dict[str, Any]], stability: float, burst: bool, drift: float = 0.0
     ) -> float:
         """Detect how ready the conversation is for AI insertion.
 
         High readiness = natural breakpoint (question, topic shift, silence).
         Low readiness = conversation in full flow, don't interrupt.
+
+        v1.3+: 新增 drift 参数，话题漂移高时提高 readiness（自然插入点）。
         """
         if not messages:
             return 0.5
@@ -220,6 +254,12 @@ class RhythmAnalyzer:
         # Low topic stability = potential turning point
         if stability < 0.3:
             readiness += 0.25
+
+        # v1.3+: High topic drift = conversation has shifted topic significantly
+        if drift > 0.6:
+            readiness += 0.2
+        elif drift > 0.4:
+            readiness += 0.1
 
         # Question = seeking response
         if any(m in last for m in ["?", "？", "吗", "呢", "怎么", "为什么", "如何"]):

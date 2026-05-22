@@ -15,6 +15,7 @@ from sirius_pulse.core.identity_resolver import IdentityContext
 
 _Base = _EmotionalGroupChatEngineBase
 
+from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.models import Message, Participant
@@ -171,6 +172,18 @@ class PipelineMixin(_Base):
             intent.topic_relevance_score, content, group_id, user_id
         )
 
+        # v1.3+: 维护短期话题窗口（滑动窗口，保留最近 N 条消息的关键词快照）
+        try:
+            msg_kw = extract_keywords(content)
+            window = self._topic_window.setdefault(group_id or "", [])
+            window.append(msg_kw)
+            # 只保留最近的 max_size 条
+            max_size = getattr(self, "_topic_window_max_size", 10)
+            if len(window) > max_size:
+                window[:] = window[-max_size:]
+        except Exception:
+            pass
+
         # Memory retrieval now happens in execution via ContextAssembler
         memories = []
 
@@ -235,6 +248,26 @@ class PipelineMixin(_Base):
             threshold *= 1.5
             self._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
 
+        # 传记亲和力调节：对友好用户降低门槛，对不友好用户提高门槛
+        biography_card = None
+        affinity = 0.0
+        if getattr(self, "biography_manager", None) is not None:
+            biography_card = self.biography_manager.get_card(user_id)
+            if biography_card is not None:
+                affinity = self.biography_manager.derive_affinity_score(biography_card)
+                if affinity > 0.3:
+                    # 友好用户：最多降低 25% 门槛（0.75x）
+                    factor = 1.0 - min(0.25, affinity * 0.15)
+                    threshold *= factor
+                elif affinity < -0.3:
+                    # 不友好用户：最多提高 40% 门槛（1.40x）
+                    factor = 1.0 + min(0.40, abs(affinity) * 0.25)
+                    threshold *= factor
+                if abs(affinity) > 0.3:
+                    self._log_inner_thought(
+                        f"对ta的认知是affinity={affinity:.2f}，响应门槛调整了"
+                    )
+
         intent.threshold = threshold
         intent.activity_factor = self.threshold_engine._activity_factor(rhythm.heat_level, msg_rate)
         intent.time_factor = self.threshold_engine._time_factor(None)
@@ -290,7 +323,7 @@ class PipelineMixin(_Base):
         logger.info(
             "[决策参数] group=%s user=%s strategy=%s score=%.3f threshold=%.3f "
             "directed_score=%.3f directed_gate=%.3f directed=%s urgency=%.1f "
-            "entitlement=%.3f sarcasm=%.3f "
+            "entitlement=%.3f sarcasm=%.3f affinity=%.2f "
             "heat_level=%s msg_rate=%.2f cooldown=%.1fs since_reply=%.1fs "
             "expressiveness=%.2f sensitivity=%.2f reason=%s",
             group_id,
@@ -304,6 +337,7 @@ class PipelineMixin(_Base):
             intent.urgency_score,
             intent.entitlement_score,
             intent.sarcasm_score,
+            affinity,
             rhythm.heat_level,
             msg_rate,
             cooldown,
@@ -530,6 +564,9 @@ class PipelineMixin(_Base):
             "mentioned_cards": mentioned_cards,
             "confidence": mentioned,
             "aliases": all_aliases,
+            "affinity_score": (
+                mgr.derive_affinity_score(speaker_card) if speaker_card else 0.0
+            ),
         }
 
     def _background_update(

@@ -380,6 +380,11 @@ class _EmotionalGroupChatEngineBase:
         # Active private groups for delayed queue ticking
         self._active_private_groups: set[str] = set()
 
+        # v1.3+: 短期话题窗口 —— 每个群最近 N 条消息的关键词快照
+        # 用于跨轮次话题关联增强，key=group_id, value=[set(keywords), ...]
+        self._topic_window: dict[str, list[set[str]]] = {}
+        self._topic_window_max_size = 10
+
         # ── 注册引擎 post-hooks 到 Brain ──
         self._register_engine_hooks()
 
