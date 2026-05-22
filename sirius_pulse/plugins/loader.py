@@ -143,8 +143,8 @@ class PluginLoader:
     def import_plugin_class(self, plugin_path: Path) -> type | None:
         """从插件目录的 .py 文件中导入 PluginBase 子类。
 
-        扫描所有 .py 文件（除 __init__.py），尝试找到 PluginBase 子类。
-        优先从 __init__.py 开始。
+        扫描所有 .py 文件，优先从 __init__.py 寻找 PluginBase 子类。
+        以 _ 开头的非 __init__.py 文件视为私有辅助模块，跳过不导入。
 
         Args:
             plugin_path: 插件文件夹路径
@@ -154,11 +154,12 @@ class PluginLoader:
         """
         from sirius_pulse.plugins.base import PluginBase
 
-        # 优先试 __init__.py，再试其他
+        # __init__.py 排在首位，其余按字母序
         py_files = sorted(plugin_path.glob("*.py"), key=lambda p: (p.name != "__init__.py", p.name))
 
         for py_file in py_files:
-            if py_file.name.startswith("_"):
+            # 跳过 _private.py 等辅助文件，但保留 __init__.py 作为合法入口
+            if py_file.name.startswith("_") and py_file.name != "__init__.py":
                 continue
             cls = self._try_import_class(py_file)
             if cls is not None:
