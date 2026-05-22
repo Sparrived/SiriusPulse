@@ -608,13 +608,7 @@ class BackgroundTasksMixin(_Base):
 
         candidates: list[str] = []
 
-        # 1. User interest graph
-        if user_profile and user_profile.interest_graph:
-            for node in user_profile.interest_graph:
-                if getattr(node, "participation", 0) >= 0.3 and getattr(node, "topic", ""):
-                    candidates.append(f"你之前聊过「{node.topic}」，后来有什么新想法吗？")
-
-        # 2. Recent diary entries for this private group
+        # 1. Recent diary entries for this private group
         try:
             diary_entries = self.diary_manager.get_entries_for_group(group_id)
             if diary_entries:
@@ -1290,11 +1284,6 @@ class BackgroundTasksMixin(_Base):
 
         if group_profile.interest_topics:
             candidates.extend(group_profile.interest_topics)
-
-        for profile in self.semantic_memory.list_group_user_profiles(group_id):
-            for node in profile.interest_graph:
-                if node.participation >= 0.3 and node.topic:
-                    candidates.append(node.topic)
 
         if group_profile.dominant_topic:
             candidates.append(group_profile.dominant_topic)

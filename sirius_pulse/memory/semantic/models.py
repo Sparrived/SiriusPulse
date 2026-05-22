@@ -119,23 +119,9 @@ class GroupSemanticProfile:
 
 
 @dataclass
-class InterestNode:
-    topic: str = ""
-    participation: float = 0.0
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"topic": self.topic, "participation": self.participation}
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> InterestNode:
-        return cls(topic=data.get("topic", ""), participation=data.get("participation", 0.0))
-
-
-@dataclass
 class UserSemanticProfile:
     user_id: str = ""
     name: str = ""
-    interest_graph: list[Any] = field(default_factory=list)
 
     # 反馈驱动的核心指标
     engagement_rate: float = 0.0
@@ -158,10 +144,6 @@ class UserSemanticProfile:
         return {
             "user_id": self.user_id,
             "name": self.name,
-            "interest_graph": [
-                n.to_dict() if isinstance(n, InterestNode) else dict(n)
-                for n in self.interest_graph
-            ],
             "engagement_rate": self.engagement_rate,
             "interaction_count": self.interaction_count,
             "first_interaction_at": self.first_interaction_at,
@@ -174,13 +156,6 @@ class UserSemanticProfile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UserSemanticProfile:
-        raw_graph = data.get("interest_graph", [])
-        graph: list[InterestNode] = []
-        for item in raw_graph:
-            if isinstance(item, dict):
-                graph.append(InterestNode.from_dict(item))
-            elif isinstance(item, InterestNode):
-                graph.append(item)
         raw_pending = data.get("pending_responses", [])
         pending: list[ResponseRecord] = []
         for item in raw_pending:
@@ -191,7 +166,6 @@ class UserSemanticProfile:
         return cls(
             user_id=data.get("user_id", ""),
             name=data.get("name", ""),
-            interest_graph=graph,
             engagement_rate=data.get("engagement_rate", 0.0),
             interaction_count=data.get("interaction_count", 0),
             first_interaction_at=data.get("first_interaction_at", ""),
@@ -205,5 +179,4 @@ __all__ = [
     "GroupSemanticProfile",
     "UserSemanticProfile",
     "AtmosphereSnapshot",
-    "InterestNode",
 ]

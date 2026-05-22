@@ -46,7 +46,6 @@ class SemanticMemoryManager:
         self._store = SemanticProfileStore(work_path)
         self._groups: dict[str, GroupSemanticProfile] = {}
         self._users: dict[str, UserSemanticProfile] = {}
-        self._pending_user_contents: dict[str, list[str]] = {}
 
     # ------------------------------------------------------------------
     # Group profiles
@@ -86,31 +85,16 @@ class SemanticMemoryManager:
         if profile is not None:
             self._store.save_user_profile(group_id, user_id, profile)
 
-    def enqueue_user_content(self, user_id: str, content: str) -> None:
-        if not content or not user_id:
-            return
-        self._pending_user_contents.setdefault(user_id, []).append(content)
-
-    def get_user_content_batch(self, user_id: str, max_n: int = 10) -> list[str]:
-        batch = self._pending_user_contents.get(user_id, [])[:max_n]
-        if batch:
-            remaining = self._pending_user_contents[user_id][max_n:]
-            self._pending_user_contents[user_id] = remaining
-        return batch
-
     def set_user_profile_fields(
         self,
         group_id: str,
         user_id: str,
         *,
         name: str = "",
-        interest_graph: list[Any] | None = None,
     ) -> None:
         profile = self.get_user_profile(group_id, user_id)
         if name:
             profile.name = name
-        if interest_graph is not None:
-            profile.interest_graph = interest_graph
         self.save_user_profile(group_id, user_id)
 
     def list_group_user_profiles(self, group_id: str) -> list[UserSemanticProfile]:

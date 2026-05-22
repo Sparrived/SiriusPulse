@@ -532,15 +532,16 @@ class BiographyManager:
                 card.aliases.append(alias)
                 existing_aliases.add(alias)
 
-        # 读取 LLM 输出的亲和力分数，兜底用关键词分析
+        # 读取 LLM 输出的亲和力分数，用 EMA 平滑（alpha=0.3，不完全信任 LLM）
         raw_affinity = result.get("affinity_score")
         if raw_affinity is not None:
             try:
-                card.affinity_score = max(-1.0, min(1.0, float(raw_affinity)))
+                llm_val = max(-1.0, min(1.0, float(raw_affinity)))
+                # EMA 混合：保留 70% 旧值 + 30% LLM 新值，避免单次糟糕输出污染
+                card.affinity_score = round(card.affinity_score * 0.7 + llm_val * 0.3, 4)
             except (ValueError, TypeError):
-                card.affinity_score = self.derive_affinity_score(card)
-        else:
-            card.affinity_score = self.derive_affinity_score(card)
+                pass  # LLM 输出非法，保留旧值
+        # LLM 未输出时，保留原有值不调整
 
         card.identity_anchors = [
             str(a) for a in result.get("identity_anchors", []) if a
@@ -724,46 +725,6 @@ class BiographyManager:
     def get_cards_for_users(self, user_ids: list[str]) -> list[UserPersonaCard]:
         """批量获取用户传记卡。"""
         return [c for uid in user_ids if (c := self.get_card(uid)) is not None]
-
-    AFFINITY_POSITIVE_KEYWORDS: set[str] = {
-        "友好", "热情", "和善", "喜欢", "开心", "感谢", "亲近", "信任",
-        "好朋友", "支持", "可靠", "有趣", "温柔", "可爱", "善良",
-    }
-    AFFINITY_NEGATIVE_KEYWORDS: set[str] = {
-        "敌对", "厌恶", "讨厌", "反感", "暴躁", "攻击", "冲突",
-        "争执", "吵架", "不友好", "冷淡", "疏远", "敌意", "愤怒",
-    }
-
-    def derive_affinity_score(self, card: UserPersonaCard | None) -> float:
-        """从传记卡推导亲和力分数，作为 LLM 输出的兜底和初始值。
-
-        用关键词匹配 short_bio 和 identity_anchors，
-        输出范围 -1.0（敌对）~ 1.0（友好），0.0 表示中立/未知。
-        """
-        if card is None:
-            return 0.0
-
-        # 如果 LLM 已经给了明确的值，直接使用
-        if card.affinity_score != 0.0:
-            return card.affinity_score
-
-        # 关键词分析：遍历 short_bio 和 anchors
-        texts = [card.short_bio] + card.identity_anchors
-        texts = [t for t in texts if t]
-        if not texts:
-            return 0.0
-
-        combined = "".join(texts)
-        positive_count = sum(1 for kw in self.AFFINITY_POSITIVE_KEYWORDS if kw in combined)
-        negative_count = sum(1 for kw in self.AFFINITY_NEGATIVE_KEYWORDS if kw in combined)
-
-        if positive_count == 0 and negative_count == 0:
-            return 0.0
-
-        # 归一化到 [-1.0, 1.0]，根据关键词相对比例
-        total = positive_count + negative_count
-        raw = (positive_count - negative_count) / max(total, 1)
-        return round(max(-1.0, min(1.0, raw)), 4)
 
     def cleanup_polluted_aliases(self) -> int:
         """清理别名索引中被人格身份名称污染的条目。

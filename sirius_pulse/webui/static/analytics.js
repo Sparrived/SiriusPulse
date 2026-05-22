@@ -815,9 +815,6 @@ function usersRenderList(users) {
     const familiarity = Math.min(1.0, Math.log1p(count) / Math.log1p(50));
     const displayName = (u.name || u.user_id || '未知用户');
     const userId = u.user_id || '';
-    const interests = (u.interest_graph || []).map((n) => `
-      <span style="background:var(--bg-2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:10px;color:var(--text-2)">${n.topic || ''}</span>
-    `).join('');
     const lastAt = u.last_interaction_at ? new Date(u.last_interaction_at).toLocaleDateString('zh-CN') : '-';
 
     const bar = (label, score) => `
@@ -848,7 +845,6 @@ function usersRenderList(users) {
             <div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">
               ${bar('互动率', engagement)}
             </div>
-            ${interests ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px">${interests}</div>` : ''}
           </div>
         </div>
       </div>

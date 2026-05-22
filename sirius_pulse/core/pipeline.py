@@ -248,19 +248,18 @@ class PipelineMixin(_Base):
             threshold *= 1.5
             self._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
 
-        # 传记亲和力调节：对友好用户降低门槛，对不友好用户提高门槛
+        # 传记亲和力调节：仅当 LLM 曾输出过传记（last_updated_at 非空）时才生效
         biography_card = None
         affinity = 0.0
         if getattr(self, "biography_manager", None) is not None:
             biography_card = self.biography_manager.get_card(user_id)
-            if biography_card is not None:
-                affinity = self.biography_manager.derive_affinity_score(biography_card)
+            if biography_card is not None and biography_card.last_updated_at:
+                # 用 EMA 平滑后的 affinity_score，不完全信任单次 LLM 输出
+                affinity = biography_card.affinity_score
                 if affinity > 0.3:
-                    # 友好用户：最多降低 25% 门槛（0.75x）
                     factor = 1.0 - min(0.25, affinity * 0.15)
                     threshold *= factor
                 elif affinity < -0.3:
-                    # 不友好用户：最多提高 40% 门槛（1.40x）
                     factor = 1.0 + min(0.40, abs(affinity) * 0.25)
                     threshold *= factor
                 if abs(affinity) > 0.3:
@@ -564,9 +563,7 @@ class PipelineMixin(_Base):
             "mentioned_cards": mentioned_cards,
             "confidence": mentioned,
             "aliases": all_aliases,
-            "affinity_score": (
-                mgr.derive_affinity_score(speaker_card) if speaker_card else 0.0
-            ),
+            "affinity_score": speaker_card.affinity_score if speaker_card else 0.0,
         }
 
     def _background_update(
@@ -601,13 +598,5 @@ class PipelineMixin(_Base):
                 )
         content = getattr(message, "content", "")
         if isinstance(content, str) and content.strip() and user_id:
-            self.semantic_memory.enqueue_user_content(user_id, content.strip())
-            pending = self.semantic_memory._pending_user_contents.get(user_id, [])
-            if len(pending) >= 8:
-                try:
-                    asyncio.create_task(
-                        self._analyze_user_profile_async(user_id, group_id)
-                    )
-                except Exception:
-                    pass
+            pass
 

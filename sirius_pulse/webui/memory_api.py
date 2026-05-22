@@ -641,16 +641,12 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
                             seen.add(uid)
                             engagement = u_data.get("engagement_rate", 0)
                             count = u_data.get("interaction_count", 0)
-                            interests = [i.get("topic", "") for i in u_data.get("interest_graph", []) if i.get("topic")]
                             user_nodes.append({
                                 "user_id": uid,
                                 "name": u_data.get("name", uid),
                                 "engagement_rate": engagement,
                                 "interaction_count": count,
                             })
-                            for topic in interests:
-                                topic_set.add(topic)
-                                user_topic_links.append({"user_id": uid, "topic": topic})
                         except (OSError, json.JSONDecodeError, TypeError):
                             continue
                 for t in sorted(topic_set):
