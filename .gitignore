@@ -50,6 +50,10 @@ config.json
 
 /napcat/
 /plugins/
+/docs_old/
+/tests_old/
+
+
 
 # 临时分析脚本
 extract_intent_analysis.py

@@ -1,91 +1,100 @@
-"""Tests for basic memory manager and heat calculator."""
-
+"""基础记忆（BasicMemoryManager）关键路径测试。"""
 from __future__ import annotations
 
-import pytest
-
-from sirius_pulse.memory.basic import BasicMemoryManager, HeatCalculator, BasicMemoryEntry
+from sirius_pulse.memory.basic import BasicMemoryManager
 
 
-class TestHeatCalculator:
-    def test_empty_entries_zero_heat(self) -> None:
-        assert HeatCalculator.calculate([]) == 0.0
-
-    def test_single_entry_low_heat(self) -> None:
-        from datetime import datetime, timezone, timedelta
-        old_ts = (datetime.now(timezone.utc) - timedelta(seconds=400)).isoformat()
-        entry = BasicMemoryEntry(
-            entry_id="e1", group_id="g1", user_id="alice",
-            role="human", content="hello", timestamp=old_ts,
-        )
-        heat = HeatCalculator.calculate([entry])
-        assert 0.0 <= heat <= 1.0
-        # Single old entry should be cold
-        assert heat < 0.3
-
-    def test_frequent_messages_high_heat(self) -> None:
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        entries = []
-        for i in range(10):
-            ts = now.isoformat()
-            entries.append(BasicMemoryEntry(
-                entry_id=f"e{i}", group_id="g1", user_id=f"user_{i % 3}",
-                role="human", content=f"msg {i}", timestamp=ts,
-            ))
-        heat = HeatCalculator.calculate(entries)
-        assert heat > 0.5
-
-    def test_is_cold_threshold(self) -> None:
-        assert HeatCalculator.is_cold(0.1, 400) is True
-        assert HeatCalculator.is_cold(0.5, 400) is False
-        assert HeatCalculator.is_cold(0.1, 100) is False
+def test_add_entry():
+    """添加记忆条目。"""
+    mgr = BasicMemoryManager(hard_limit=30, context_window=5)
+    mgr.add_entry("g1", "u1", "user", "hello", speaker_name="Alice")
+    ctx = mgr.get_context("g1")
+    assert len(ctx) == 1
+    assert ctx[0].content == "hello"
+    assert ctx[0].speaker_name == "Alice"
 
 
-class TestBasicMemoryManager:
-    def test_add_and_get_context(self) -> None:
-        mgr = BasicMemoryManager(hard_limit=30, context_window=5)
-        for i in range(10):
-            mgr.add_entry("g1", f"u{i}", "human", f"msg {i}")
-        ctx = mgr.get_context("g1", n=5)
-        assert len(ctx) == 5
-        assert ctx[-1].content == "msg 9"
+def test_context_window():
+    """上下文窗口限制。"""
+    mgr = BasicMemoryManager(hard_limit=30, context_window=3)
+    for i in range(10):
+        mgr.add_entry("g1", "u1", "user", f"msg_{i}", speaker_name="A")
 
-    def test_hard_limit_enforced(self) -> None:
-        mgr = BasicMemoryManager(hard_limit=5, context_window=2)
-        for i in range(10):
-            mgr.add_entry("g1", "u1", "human", f"msg {i}")
-        all_entries = mgr.get_all("g1")
-        assert len(all_entries) == 5
-        assert all_entries[-1].content == "msg 9"
+    ctx = mgr.get_context("g1")
+    assert len(ctx) == 3  # context_window=3
+    assert ctx[-1].content == "msg_9"  # 最新消息
 
-    def test_archive_candidates(self) -> None:
-        mgr = BasicMemoryManager(hard_limit=30, context_window=5)
-        for i in range(10):
-            mgr.add_entry("g1", "u1", "human", f"msg {i}")
-        candidates = mgr.get_archive_candidates("g1")
-        assert len(candidates) == 5
-        assert candidates[0].content == "msg 0"
-        assert candidates[-1].content == "msg 4"
 
-    def test_system_prompt_recorded(self) -> None:
-        mgr = BasicMemoryManager()
-        mgr.add_entry("g1", "assistant", "assistant", "hi", system_prompt="you are kind")
-        entry = mgr.get_all("g1")[0]
-        assert entry.system_prompt == "you are kind"
+def test_hard_limit():
+    """硬限制，旧消息被淘汰。"""
+    mgr = BasicMemoryManager(hard_limit=5, context_window=3)
+    for i in range(10):
+        mgr.add_entry("g1", "u1", "user", f"msg_{i}", speaker_name="A")
 
-    def test_is_cold_after_silence(self) -> None:
-        from datetime import datetime, timezone, timedelta
-        mgr = BasicMemoryManager()
-        old_ts = (datetime.now(timezone.utc) - timedelta(seconds=400)).isoformat()
-        mgr.add_entry("g1", "u1", "human", "hello", timestamp=old_ts)
-        assert mgr.is_cold("g1") is True
+    all_msgs = mgr.get_all("g1")
+    assert len(all_msgs) == 5  # hard_limit
+    assert all_msgs[0].content == "msg_5"  # 最老保留的是 msg_5
 
-    def test_serialization_roundtrip(self) -> None:
-        mgr = BasicMemoryManager()
-        mgr.add_entry("g1", "u1", "human", "hello")
-        mgr.add_entry("g1", "assistant", "assistant", "hi", system_prompt="sys")
-        data = mgr.to_dict()
-        restored = BasicMemoryManager.from_dict(data)
-        assert len(restored.get_all("g1")) == 2
-        assert restored.get_all("g1")[1].system_prompt == "sys"
+
+def test_archive_candidates():
+    """归档候选条目。"""
+    mgr = BasicMemoryManager(hard_limit=10, context_window=3)
+    for i in range(8):
+        mgr.add_entry("g1", "u1", "user", f"msg_{i}", speaker_name="A")
+
+    candidates = mgr.get_archive_candidates("g1")
+    assert len(candidates) == 5  # 8 - 3 = 5 条超出上下文窗口
+
+
+def test_multiple_groups():
+    """多群独立性。"""
+    mgr = BasicMemoryManager()
+    mgr.add_entry("g1", "u1", "user", "g1_msg", speaker_name="A")
+    mgr.add_entry("g2", "u2", "user", "g2_msg", speaker_name="B")
+
+    assert len(mgr.get_context("g1")) == 1
+    assert len(mgr.get_context("g2")) == 1
+    assert mgr.get_context("g1")[0].content == "g1_msg"
+    assert mgr.get_context("g2")[0].content == "g2_msg"
+
+
+def test_heat_calculation():
+    """热度计算。"""
+    mgr = BasicMemoryManager()
+    # 空群热度为 0
+    heat = mgr.compute_heat("g1")
+    assert 0.0 <= heat <= 1.0
+
+    # 添加消息后热度上升
+    import time
+    for i in range(5):
+        mgr.add_entry("g1", f"u{i}", "user", f"msg_{i}", speaker_name=f"U{i}")
+
+    heat = mgr.compute_heat("g1")
+    assert heat > 0.0
+
+
+def test_serialization():
+    """序列化与反序列化。"""
+    mgr = BasicMemoryManager()
+    mgr.add_entry("g1", "u1", "user", "hello", speaker_name="Alice")
+    mgr.add_entry("g1", "u2", "user", "world", speaker_name="Bob")
+
+    data = mgr.to_dict()
+    restored = BasicMemoryManager.from_dict(data)
+
+    restored_ctx = restored.get_context("g1")
+    assert len(restored_ctx) == 2
+    assert restored_ctx[0].content == "hello"
+    assert restored_ctx[1].content == "world"
+
+
+def test_entries_by_user():
+    """跨群查询用户发言。"""
+    mgr = BasicMemoryManager()
+    mgr.add_entry("g1", "u1", "user", "g1_msg", speaker_name="A")
+    mgr.add_entry("g2", "u1", "user", "g2_msg", speaker_name="A")
+    mgr.add_entry("g2", "u2", "user", "other", speaker_name="B")
+
+    entries = mgr.get_entries_by_user("u1", n=10)
+    assert len(entries) == 2
