@@ -306,7 +306,7 @@ async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> w
         return _json_response({"entries": [], "stats": {}, "groups": []})
 
     try:
-        limit = int(request.query.get("limit", "50"))
+        limit = int(request.query.get("limit", "500"))
         group_id = request.query.get("group_id", "")
 
         entries: list[dict[str, Any]] = []
@@ -329,11 +329,13 @@ async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> w
             except (OSError, json.JSONDecodeError):
                 continue
 
+        total_count = len(entries)
         entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
-        entries = entries[:limit]
+        if limit > 0:
+            entries = entries[:limit]
 
         stats = {
-            "total": len(entries),
+            "total": total_count,
             "groups": len(groups),
             "top_keywords": sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:20],
         }

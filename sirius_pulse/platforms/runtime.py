@@ -372,6 +372,8 @@ class EngineRuntime:
             "reply_cooldown_seconds": int(self.plugin_config.get("reply_cooldown_seconds", 12)),
             "max_skill_rounds": int(self.plugin_config.get("max_skill_rounds", 3)),
             "cross_group_memory_enabled": bool(self.plugin_config.get("cross_group_memory_enabled", True)),
+            # 主动消息
+            "proactive_enabled": bool(self.plugin_config.get("proactive_enabled", exp.proactive_enabled)),
             # 后台任务
             "delayed_queue_tick_interval_seconds": int(self.plugin_config.get("delayed_queue_tick_interval_seconds", 3)),
             "proactive_check_interval_seconds": int(self.plugin_config.get("proactive_check_interval_seconds", 60)),

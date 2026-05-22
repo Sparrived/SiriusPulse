@@ -136,12 +136,18 @@ class BackgroundTasksMixin(_Base):
 
     async def _bg_proactive_checker(self) -> None:
         """Periodically check proactive triggers for all active groups."""
+        import random
         interval = self.config.get("proactive_check_interval_seconds", 60)
         while self._bg_running:
             await asyncio.sleep(interval)
-            if not self.config.get("proactive_enabled", True):
+            # 动态重新读取体验配置，使WebUI的proactive_enabled立即生效
+            if not self._load_proactive_global_enabled():
                 continue
-            for group_id in list(self._group_last_message_at.keys()):
+            group_ids = list(self._group_last_message_at.keys())
+            for i, group_id in enumerate(group_ids):
+                # 群间添加随机抖动（0~15秒），避免多群同时触发
+                if i > 0:
+                    await asyncio.sleep(random.uniform(0, 15))
                 try:
                     result = await self.proactive_check(group_id)
                     if result and result.get("reply"):
@@ -1273,8 +1279,13 @@ class BackgroundTasksMixin(_Base):
         )
 
     def _pick_proactive_topic(self, group_id: str) -> str:
-        """从语义记忆中选取主动发起话题，随机从前 3 名中选择以避免重复。"""
+        """从语义记忆中选取主动发起话题，排除近期已用话题以增加多样性。"""
         import random
+
+        # 初始化话题追踪
+        if not hasattr(self, '_recent_proactive_topics'):
+            self._recent_proactive_topics: dict[str, list[str]] = {}
+        recent = self._recent_proactive_topics.setdefault(group_id, [])
 
         group_profile = self.semantic_memory.get_group_profile(group_id)
         if group_profile is None:
@@ -1288,14 +1299,8 @@ class BackgroundTasksMixin(_Base):
         if group_profile.dominant_topic:
             candidates.append(group_profile.dominant_topic)
 
-        if not candidates:
-            return ""
-
         taboo = set(group_profile.taboo_topics or [])
         candidates = [t for t in candidates if t not in taboo]
-
-        if not candidates:
-            return ""
 
         seen: set[str] = set()
         unique: list[str] = []
@@ -1304,8 +1309,54 @@ class BackgroundTasksMixin(_Base):
                 seen.add(t)
                 unique.append(t)
 
-        pool = unique[:3] if len(unique) >= 3 else unique
-        return random.choice(pool)
+        # 排除近期已用话题
+        recent_set = set(recent)
+        remaining = [t for t in unique if t not in recent_set]
+        pool = remaining if remaining else unique
+
+        # 当池子太小（<=2）时，尝试从最近日记中提取补充话题
+        if len(pool) <= 2 and len(unique) <= 2:
+            diary_topics = self._extract_diary_topics(group_id)
+            for t in diary_topics:
+                if t not in seen and t not in taboo:
+                    seen.add(t)
+                    pool.append(t)
+
+        if not pool:
+            pool = unique
+        if not pool:
+            return ""
+
+        pool = pool[:3] if len(pool) >= 3 else pool
+        chosen = random.choice(pool) if pool else ""
+
+        # 记录已用话题，只保留最近 5 个
+        if chosen:
+            recent.append(chosen)
+            if len(recent) > 5:
+                self._recent_proactive_topics[group_id] = recent[-5:]
+
+        return chosen
+
+    def _extract_diary_topics(self, group_id: str) -> list[str]:
+        """从最近日记中提取话题作为补充话题源。"""
+        try:
+            entries = self.diary_manager.get_entries_for_group(group_id)
+            if not entries:
+                return []
+            # 取最近 3 条日记
+            recent = entries[-3:]
+            topics = []
+            seen = set()
+            for entry in recent:
+                raw = getattr(entry, 'summary', '') or getattr(entry, 'content', '') or ''
+                fragment = raw.strip()[:15]
+                if fragment and fragment not in seen:
+                    seen.add(fragment)
+                    topics.append(fragment)
+            return topics
+        except Exception:
+            return []
 
     def _build_proactive_prompt(
         self, trigger: dict[str, Any], group_id: str, adapter_type: str | None = None
@@ -1324,3 +1375,25 @@ class BackgroundTasksMixin(_Base):
             topic_context=topic,
             adapter_type=adapter_type,
         )
+
+    def _load_proactive_global_enabled(self) -> bool:
+        """检查主动消息全局开关是否启用。
+
+        优先从 engine config 读取（reload 后生效），
+        同时直接读取 experience.json 覆盖（WebUI 保存后立即生效）。
+        """
+        # 先检查 engine config
+        if not self.config.get("proactive_enabled", True):
+            return False
+        # 再尝试读取 experience.json 取得最新值
+        try:
+            from pathlib import Path
+            exp_path = Path(self.work_path) / "experience.json"
+            if exp_path.exists():
+                import json
+                exp = json.loads(exp_path.read_text(encoding="utf-8"))
+                if not exp.get("proactive_enabled", True):
+                    return False
+        except Exception:
+            pass
+        return True
