@@ -108,37 +108,28 @@ class OutputDispatcher:
     ) -> str:
         """构建 Plugin 结果的人格化 system prompt。
 
-        注入完整的人格 profile + 输出规范，确保插件 LLM 生成与人格一致。
-        与正常对话流程使用相同的 PromptFactory.build_persona_prompt 构建人格底色。
+        人格 profile 已由 Brain.chat() 默认 pre 步骤自动注入，
+        此处只负责 Plugin 特有的业务指令（输出规范 + 表达要求）。
         """
         import json
-
-        persona = getattr(engine, 'persona', None)
-        persona_name = getattr(persona, 'name', '') or ''
 
         data = result.data if result.data else {"text": result.text}
         data_json = json.dumps(data, ensure_ascii=False, indent=2)
 
         sections: list[str] = []
 
-        # ── 1. 完整人格 profile（与正常对话一致）──
-        if persona and hasattr(persona, 'build_system_prompt'):
-            sections.append(persona.build_system_prompt())
-        elif persona_name:
-            sections.append(f"你的名字是「{persona_name}」")
-
-        # ── 2. 输出规范（防止人格漂移）──
+        # ── 1. 输出规范（人格已由 Brain 注入）──
         from sirius_pulse.core.prompt_factory import PromptFactory
         sections.append(PromptFactory.build_output_spec())
 
-        # ── 3. 插件执行结果 ──
+        # ── 2. 插件执行结果 ──
         sections.append("\n【指令执行结果】")
         sections.append(
             f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据："
         )
         sections.append(data_json)
 
-        # ── 4. 表达要求 ──
+        # ── 3. 表达要求 ──
         expression_lines: list[str] = ["\n【表达要求】"]
         expression_lines.append("- 请以自然的人格风格向用户传达以上信息")
         if result.mood_hint:

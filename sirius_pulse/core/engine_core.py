@@ -365,22 +365,29 @@ class _EmotionalGroupChatEngineBase:
     def _register_engine_hooks(self) -> None:
         """向 Brain 注册引擎级别的后处理 hook。
 
-        Hook 只在 ChatRequest.post_process=True 时执行（由调用方控制）。
+        两级控制：
+        1. ChatRequest.post_process=True（主开关，外部/分析调用不触发）
+        2. task_filter 由 Brain 在调度时自动过滤（注册时声明）
+
+        task_filter 声明在注册参数中，不在 hook 闭包内检查。
+        外部代码注册 hook 时不传 task_filter（默认 None）即始终生效。
+
         优先级阶梯：
-          0  = 对话深度追踪（最先）
-         20  = 表情包解析+发送
-         30  = 回复去重
-         40  = 记忆记录（basic_memory + semantic）
-         50  = 回复时间戳（最后）
+          0  = 对话深度追踪（适用: response_generate / proactive_generate）
+         20  = 表情包发送（适用: response_generate / proactive_generate）
+         30  = 回复去重（仅适用: response_generate）
+         40  = 记忆记录（适用: response_generate / proactive_generate）
+         50  = 回复时间戳+持久化（适用: response_generate / proactive_generate）
         """
         _engine = self
+
+        _TASKS_CHAT = {"response_generate"}
+        _TASKS_CHAT_PROACTIVE = {"response_generate", "proactive_generate"}
 
         # ── priority 0: 对话深度追踪 ──
         def _hook_depth(
             _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
         ) -> None:
-            if not ctx.get("post_process"):
-                return
             gid = _req.group_id
             now_ts = time.time()
             last_ts = _engine._last_reply_at.get(gid, 0)
@@ -388,24 +395,20 @@ class _EmotionalGroupChatEngineBase:
                 _engine._last_reply_depth.get(gid, 0) + 1 if now_ts - last_ts < 60 else 1
             )
 
-        # ── priority 20: 表情包解析+发送 ──
+        # ── priority 20: 表情包发送 ──
         def _hook_stickers(
             _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
         ) -> None:
-            if not ctx.get("post_process"):
-                return
             if not _result.sticker_names:
                 return
             asyncio.create_task(
                 _engine._send_stickers_by_names(_req.group_id, _result.sticker_names)
             )
 
-        # ── priority 30: 回复去重 ──
+        # ── priority 30: 回复去重（仅常规对话）──
         def _hook_dedup(
             _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
         ) -> None:
-            if not ctx.get("post_process"):
-                return
             if not _result.clean_text:
                 return
             gid = _req.group_id
@@ -431,8 +434,6 @@ class _EmotionalGroupChatEngineBase:
         def _hook_memory(
             _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
         ) -> None:
-            if not ctx.get("post_process"):
-                return
             if not _result.clean_text:
                 return
             gid = _req.group_id
@@ -459,18 +460,17 @@ class _EmotionalGroupChatEngineBase:
         def _hook_timestamp(
             _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
         ) -> None:
-            if not ctx.get("post_process"):
-                return
             _engine._last_reply_at[_req.group_id] = (
                 datetime.now(timezone.utc).timestamp()
             )
             _engine._persist_group_state(_req.group_id)
 
-        self.brain.register_post_hook(_hook_depth, priority=0)
-        self.brain.register_post_hook(_hook_stickers, priority=20)
-        self.brain.register_post_hook(_hook_dedup, priority=30)
-        self.brain.register_post_hook(_hook_memory, priority=40)
-        self.brain.register_post_hook(_hook_timestamp, priority=50)
+        # task_filter 交给 Brain 调度时检查，hook 闭包不关心
+        self.brain.register_post_hook(_hook_depth, priority=0, task_filter=_TASKS_CHAT_PROACTIVE)
+        self.brain.register_post_hook(_hook_stickers, priority=20, task_filter=_TASKS_CHAT_PROACTIVE)
+        self.brain.register_post_hook(_hook_dedup, priority=30, task_filter=_TASKS_CHAT)
+        self.brain.register_post_hook(_hook_memory, priority=40, task_filter=_TASKS_CHAT_PROACTIVE)
+        self.brain.register_post_hook(_hook_timestamp, priority=50, task_filter=_TASKS_CHAT_PROACTIVE)
 
     # ==================================================================
     # Public API

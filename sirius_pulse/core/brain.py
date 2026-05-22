@@ -67,7 +67,7 @@ class ChatRequest:
     last_reply_depth: int = 0
 
     # ── 后处理控制 ──
-    post_process: bool = False  # True 时引擎 post-hooks 执行（记忆/去重/表情包等）
+    post_process: bool = False  # True = 启用 hook 调度（总闸），False = 完全跳过
 
 
 @dataclass(slots=True)
@@ -122,9 +122,14 @@ _POST_DEFAULT_PRIORITY = 100
 
 @dataclass(slots=True)
 class _HookEntry:
-    """带优先级的 hook 包装。priority 越大越晚执行。"""
+    """带优先级的 hook 包装。priority 越大越晚执行。
+
+    task_filter: None = 始终执行（用户自定义 hook 默认）
+                 非 None = 仅当 ctx["task_name"] 在集合中时执行（引擎内置 hook）
+    """
     hook: PreHook | PostHook
     priority: int = 0
+    task_filter: set[str] | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -142,7 +147,7 @@ class Brain:
 
     - chat(request: ChatRequest) → ChatResult
       上下文感知的对话生成。内置默认处理链：
-        pre:  语气对齐 → 当前时间注入 → 模型路由 → 风格覆盖 → 构建请求
+        pre:  人格注入 → 语气对齐 → 当前时间注入 → 模型路由 → 风格覆盖 → 构建请求
         call: provider.generate_async()
         post: XML 剥离 → SKIP 检测 → SKILL 解析 → 表情包解析 → token 记录
       可通过 register_pre_hook / register_post_hook 扩展。
@@ -205,25 +210,37 @@ class Brain:
     # Hook 注册 API
     # ═══════════════════════════════════════════════════════════════════
 
-    def register_pre_hook(self, hook: PreHook, priority: int = _PRE_DEFAULT_PRIORITY) -> None:
+    def register_pre_hook(
+        self,
+        hook: PreHook,
+        priority: int = _PRE_DEFAULT_PRIORITY,
+        task_filter: set[str] | None = None,
+    ) -> None:
         """注册前处理 hook。priority 越大越晚执行（默认 0，最先执行）。
 
+        task_filter: None = 对所有 task_name 生效；非 None = 仅对集合中的 task_name 生效。
         签名: hook(brain, request, ctx) -> None
         - request: ChatRequest（可修改 system_prompt、messages 等）
         - ctx: 跨 hook 共享的字典
         """
-        self._pre_hooks.append(_HookEntry(hook=hook, priority=priority))
+        self._pre_hooks.append(_HookEntry(hook=hook, priority=priority, task_filter=task_filter))
         self._pre_hooks.sort(key=lambda e: e.priority)
 
-    def register_post_hook(self, hook: PostHook, priority: int = _POST_DEFAULT_PRIORITY) -> None:
+    def register_post_hook(
+        self,
+        hook: PostHook,
+        priority: int = _POST_DEFAULT_PRIORITY,
+        task_filter: set[str] | None = None,
+    ) -> None:
         """注册后处理 hook。priority 越大越晚执行（默认 100，最后执行）。
 
+        task_filter: None = 对所有 task_name 生效；非 None = 仅对集合中的 task_name 生效。
         签名: hook(brain, request, result, ctx) -> None
         - request: 原始 ChatRequest
         - result: ChatResult（可修改 clean_text、sticker_names 等）
         - ctx: 跨 hook 共享的字典
         """
-        self._post_hooks.append(_HookEntry(hook=hook, priority=priority))
+        self._post_hooks.append(_HookEntry(hook=hook, priority=priority, task_filter=task_filter))
         self._post_hooks.sort(key=lambda e: e.priority)
 
     # ═══════════════════════════════════════════════════════════════════
@@ -278,14 +295,24 @@ class Brain:
         SKILL 反馈循环由调用方管理，chat() 只负责单轮生成。
         """
         ctx: dict[str, Any] = {}
-        ctx["post_process"] = request.post_process
+        ctx["task_name"] = request.task_name
         system_prompt = request.system_prompt
 
-        # ── 1. 用户 pre-hooks（按 priority 升序）──
-        for entry in self._pre_hooks:
-            entry.hook(self, request, ctx)
+        # ── 1. 用户 pre-hooks（post_process 总闸 + task_filter 过滤）──
+        task_name = ctx["task_name"]
+        if request.post_process:
+            for entry in self._pre_hooks:
+                if entry.task_filter is not None and task_name not in entry.task_filter:
+                    continue
+                entry.hook(self, request, ctx)
 
-        # ── 2. 默认 pre: 语气对齐 ──
+        # ── 2. 默认 pre: 人格注入（无条件，最高优先级）──
+        persona_base = self.persona.build_system_prompt()
+        if self.sticker_names:
+            persona_base += PromptFactory.build_sticker_options_prompt(self.sticker_names)
+        system_prompt = persona_base + "\n\n" + system_prompt
+
+        # ── 3. 默认 pre: 语气对齐 ──
         if self._get_tone_alignment_fn is not None:
             tone_hint = self._get_tone_alignment_fn(request.group_id)
             if tone_hint:
@@ -416,9 +443,12 @@ class Brain:
             skill_calls=skill_calls,
         )
 
-        # ── 5. 用户 post-hooks（按 priority 升序）──
-        for entry in self._post_hooks:
-            entry.hook(self, request, result, ctx)
+        # ── 5. 用户 post-hooks（post_process 总闸 + task_filter 过滤）──
+        if request.post_process:
+            for entry in self._post_hooks:
+                if entry.task_filter is not None and task_name not in entry.task_filter:
+                    continue
+                entry.hook(self, request, result, ctx)
 
         return result
 

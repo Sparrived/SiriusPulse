@@ -769,7 +769,6 @@ class PromptFactory:
     @staticmethod
     def assemble_chat(
         *,
-        persona_prompt: str,
         message_content: str,
         speaker_name: str = "",
         channel_user_id: str = "",
@@ -793,7 +792,6 @@ class PromptFactory:
         """统一组装聊天响应 prompt。返回 PromptBundle。
 
         Args:
-            persona_prompt: 人格系统提示词。
             message_content: 消息文本内容。
             speaker_name: 发言者显示名称。
             channel_user_id: 发言者平台 ID（用于身份锚定）。
@@ -812,6 +810,8 @@ class PromptFactory:
             glossary_section: 术语表 prompt 段落。
             adapter_type: 适配器类型（用于技能过滤）。
             scene_description: 当前场景描述（延迟/主动响应时填充，即时响应留空）。
+
+        人格注入已由 Brain.chat() 默认 pre 步骤处理，此处不再管理。
         """
 
         sections: list[str] = []
@@ -821,7 +821,6 @@ class PromptFactory:
             sections.append(section_text)
             setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
 
-        _add(persona_prompt, "persona")
         bio = PromptFactory.build_biography_section(
             speaker_card=biography_speaker,
             mentioned_cards=biography_mentioned,
@@ -900,7 +899,6 @@ class PromptFactory:
     @staticmethod
     def assemble_proactive(
         *,
-        persona_prompt: str,
         trigger_reason: str,
         group_profile: Any | None,
         suggested_tone: str = "casual",
@@ -909,7 +907,10 @@ class PromptFactory:
         topic_context: str = "",
         adapter_type: str | None = None,
     ) -> Any:
-        """组装主动发起 prompt。返回 PromptBundle。"""
+        """组装主动发起 prompt。返回 PromptBundle。
+
+        人格注入已由 Brain.chat() 默认 pre 步骤处理，此处不再管理。
+        """
 
         bd = PromptTokenBreakdown()
         sections: list[str] = []
@@ -918,7 +919,6 @@ class PromptFactory:
             sections.append(section_text)
             setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
 
-        _add(persona_prompt, "persona")
         _add(f"{TAG_CURRENT_SCENE}群里一段时间没人说话，你决定开口说点什么。", "emotion")
         _add(f"{TAG_TRIGGER_REASON}{trigger_reason}", "emotion")
         _add(f"{TAG_TONE}{suggested_tone}", "group_style")

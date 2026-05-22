@@ -41,15 +41,12 @@ class TestStyleAdapter:
 
 class TestPromptFactoryAssemble:
     def test_assemble_includes_all_sections(self):
-        from sirius_pulse.models.persona import PersonaProfile
-        persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="我今天心情不好", speaker="u1")
         emotion = EmotionState(valence=-0.6, arousal=0.5, intensity=0.7)
         adapter = StyleAdapter()
         style = adapter.adapt(pace="steady")
 
         bundle = PromptFactory.assemble_chat(
-            persona_prompt=persona.build_system_prompt(),
             message_content=msg.content,
             speaker_name=msg.speaker,
             emotion=emotion,
@@ -59,15 +56,12 @@ class TestPromptFactoryAssemble:
             other_ai_names=[],
         )
 
-        assert "你在一个多人聊天场景里" in bundle.system_prompt
         assert "发言者情绪" in bundle.system_prompt
         assert "相关记忆" in bundle.system_prompt
         assert "工作压力大" in bundle.system_prompt
         assert "我今天心情不好" in bundle.user_content
 
     def test_assemble_with_group_profile(self):
-        from sirius_pulse.models.persona import PersonaProfile
-        persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="hello", speaker="u1")
         emotion = EmotionState(valence=0.2, arousal=0.3, intensity=0.5)
         adapter = StyleAdapter()
@@ -84,7 +78,6 @@ class TestPromptFactoryAssemble:
         ))
 
         bundle = PromptFactory.assemble_chat(
-            persona_prompt=persona.build_system_prompt(),
             message_content=msg.content,
             speaker_name=msg.speaker,
             emotion=emotion,
@@ -98,8 +91,6 @@ class TestPromptFactoryAssemble:
         assert "群里氛围" in bundle.system_prompt
 
     def test_assemble_with_user_profile(self):
-        from sirius_pulse.models.persona import PersonaProfile
-        persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="test", speaker="u1")
         emotion = EmotionState(valence=0.0, arousal=0.0, intensity=0.0)
         adapter = StyleAdapter()
@@ -109,7 +100,6 @@ class TestPromptFactoryAssemble:
         group = GroupSemanticProfile(group_id="g1")
 
         bundle = PromptFactory.assemble_chat(
-            persona_prompt=persona.build_system_prompt(),
             message_content=msg.content,
             speaker_name=msg.speaker,
             emotion=emotion,
@@ -123,13 +113,10 @@ class TestPromptFactoryAssemble:
         assert "test" in bundle.user_content
 
     def test_assemble_delayed_uses_scene_description(self):
-        from sirius_pulse.models.persona import PersonaProfile
-        persona = PersonaProfile(name="TestBot")
         adapter = StyleAdapter()
         style = adapter.adapt(pace="decelerating")
 
         bundle = PromptFactory.assemble_chat(
-            persona_prompt=persona.build_system_prompt(),
             message_content="刚才的话题很有趣",
             group_profile=GroupSemanticProfile(group_id="g1"),
             style_params=style,
@@ -140,11 +127,7 @@ class TestPromptFactoryAssemble:
         assert "刚才的话题很有趣" in bundle.user_content
 
     def test_assemble_proactive(self):
-        from sirius_pulse.models.persona import PersonaProfile
-        persona = PersonaProfile(name="TestBot")
-
         bundle = PromptFactory.assemble_proactive(
-            persona_prompt=persona.build_system_prompt(),
             trigger_reason="silence_30min",
             group_profile=GroupSemanticProfile(group_id="g1", interest_topics=["photography", "travel"]),
             suggested_tone="casual",
@@ -157,15 +140,12 @@ class TestPromptFactoryAssemble:
 
 class TestPromptFactoryOutputSpec:
     def test_prompt_contains_output_spec(self):
-        from sirius_pulse.models.persona import PersonaProfile
-        persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="你好")
         emotion = EmotionState()
         adapter = StyleAdapter()
         style = adapter.adapt(pace="steady")
 
         bundle = PromptFactory.assemble_chat(
-            persona_prompt=persona.build_system_prompt(),
             message_content=msg.content,
             speaker_name=msg.speaker,
             emotion=emotion,

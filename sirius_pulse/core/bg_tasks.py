@@ -518,14 +518,7 @@ class BackgroundTasksMixin(_Base):
                         continue
                     reply = await self._generate_developer_chat(group_id)
                     if reply:
-                        # 解析表情包标签
                         clean_dev = strip_skill_calls(reply).strip()
-                        if clean_dev and hasattr(self, "_parse_sticker_tags"):
-                            clean_dev, _sticker_names = self._parse_sticker_tags(clean_dev)
-                            if _sticker_names:
-                                asyncio.create_task(
-                                    self._send_stickers_by_names(group_id, _sticker_names)
-                                )
                         self._pending_developer_chats.setdefault(group_id, []).append(clean_dev)
                         self._last_developer_chat_at[group_id] = now
                         self._log_inner_thought(f"突然想跟开发者聊聊，发了条消息过去～")
@@ -594,20 +587,11 @@ class BackgroundTasksMixin(_Base):
 
         from sirius_pulse.core.prompt_factory import PromptFactory
 
-        identity = self.persona.build_system_prompt() if self.persona else ""
-        sections = PromptFactory.build_developer_chat_sections(identity, topic, user_profile)
+        sections = PromptFactory.build_developer_chat_sections("", topic, user_profile)
 
         system_prompt = "\n\n".join(sections)
         messages = [{"role": "user", "content": "（你决定主动开口）"}]
         style = self.style_adapter.adapt(pace="steady")
-
-        from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
-
-        sub_bd = PromptTokenBreakdown()
-        if identity:
-            sub_bd.persona = estimate_tokens(identity)
-        sub_bd.memory = estimate_tokens(system_prompt) - sub_bd.persona
-        sub_bd.total = estimate_tokens(system_prompt)
 
         raw_reply = await self.brain.generate_text(
             system_prompt,
@@ -1276,12 +1260,6 @@ class BackgroundTasksMixin(_Base):
                 if cm:
                     candidate_memories.append({"source": "working_memory", "content": cm})
 
-        persona_prompt = self.persona.build_system_prompt()
-
-        # 注入表情包选项提示
-        if self._sticker_names:
-            persona_prompt += PromptFactory.build_sticker_options_prompt(self._sticker_names)
-
         style_params = self.style_adapter.adapt(
             pace="decelerating",
             persona=self.persona,
@@ -1291,7 +1269,6 @@ class BackgroundTasksMixin(_Base):
         pending_bio: dict[str, Any] = getattr(self, "_pending_biography", {}) or {}
 
         return PromptFactory.assemble_chat(
-            persona_prompt=persona_prompt,
             message_content=message_content,
             speaker_name=speaker_name,
             channel_user_id=channel_user_id,
@@ -1360,9 +1337,7 @@ class BackgroundTasksMixin(_Base):
             group_id, text=trigger.get("trigger_type", ""), max_terms=3
         )
         topic = self._pick_proactive_topic(group_id)
-        persona_prompt = self.persona.build_system_prompt()
         return PromptFactory.assemble_proactive(
-            persona_prompt=persona_prompt,
             trigger_reason=trigger.get("trigger_type", "silence"),
             group_profile=self.semantic_memory.get_group_profile(group_id),
             suggested_tone=trigger.get("suggested_tone", "casual"),
