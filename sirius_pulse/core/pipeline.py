@@ -596,7 +596,4 @@ class PipelineMixin(_Base):
                 self.semantic_memory.set_user_profile_fields(
                     group_id, user_id, name=speaker_name
                 )
-        content = getattr(message, "content", "")
-        if isinstance(content, str) and content.strip() and user_id:
-            pass
 
