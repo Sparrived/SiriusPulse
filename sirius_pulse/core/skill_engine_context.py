@@ -45,10 +45,9 @@ class SkillEngineContextImpl:
         task_name: str = "passive_skill",
         **kwargs: Any,
     ) -> str:
-        return await self._engine._generate(
+        return await self._engine.brain.generate_text(
             system_prompt, messages, group_id,
             task_name=task_name,
-            **kwargs,
         )
 
     def queue_pending_message(

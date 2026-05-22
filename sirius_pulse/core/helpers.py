@@ -597,12 +597,11 @@ class HelpersMixin(_Base):
         )
 
         try:
-            raw = await self._generate(
+            raw = await self.brain.generate_text(
                 system_prompt,
                 [{"role": "user", "content": prompt}],
                 group_id,
                 task_name="cognition_analyze",
-                urgency=0,
             )
             text = raw.strip()
             if "```json" in text:

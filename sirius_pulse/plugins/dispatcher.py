@@ -88,7 +88,7 @@ class OutputDispatcher:
         system_prompt = self._build_plugin_system_prompt(result, definition, engine)
 
         try:
-            generated = await engine._generate(
+            generated = await engine.brain.generate_text(
                 system_prompt=system_prompt,
                 messages=[],
                 group_id=group_id,

@@ -3,8 +3,13 @@
 两条通道：
     - raw_call(): 原生 API 调用，不组装上下文，不注入人格。
                   用于 Cognition（情感/意图分析）。
-    - chat():     全上下文组装 + 人格注入 + 前/后处理。
+    - chat():     全上下文组装 + 人格注入 + 前/后处理 hook。
                   用于回复生成、Plugin 风格化、SKILL 反馈循环等。
+
+Hook 机制：
+    chat() 内置默认的前处理和后处理步骤。外部可以通过
+    register_pre_hook / register_post_hook 注册自定义 hook，
+    在默认步骤之前/之后执行。
 
 设计原则：
     项目本质 = 组装消息 → 喂给 API → 拿到原生文本。
@@ -23,7 +28,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
-from sirius_pulse.skills.executor import strip_skill_calls
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,9 @@ class ChatRequest:
     last_reply_at: float = 0.0
     last_reply_depth: int = 0
 
+    # ── 后处理控制 ──
+    post_process: bool = False  # True 时引擎 post-hooks 执行（记忆/去重/表情包等）
+
 
 @dataclass(slots=True)
 class ChatResult:
@@ -94,11 +101,30 @@ class RawRequest:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Hook 类型
+# Hook 类型与优先级
 # ═══════════════════════════════════════════════════════════════════════
 
-PreHook = Callable[["Brain", ChatRequest, dict[str, Any]], Any]
-PostHook = Callable[["Brain", ChatResult, dict[str, Any]], Any]
+# 前处理 hook：在 LLM 调用前修改 ChatRequest 或注入上下文
+# ctx 是跨 hook 共享的字典，Brain 内置步骤也通过它传递中间状态
+PreHook = Callable[["Brain", ChatRequest, dict[str, Any]], None]
+
+# 后处理 hook：在 LLM 调用后处理 ChatResult
+# ctx 携带前处理阶段产生的中间状态（如 gen_request、estimated_tokens 等）
+PostHook = Callable[["Brain", ChatRequest, ChatResult, dict[str, Any]], None]
+
+# 默认 priority 阶梯：
+#   pre:  0 = 用户自定义（最早），50 = 引擎内置
+#   post: 0 = 深度追踪，10 = breakdown，20 = 表情包，30 = 去重，40 = 记忆记录，
+#         100 = 用户自定义（最后一道防线）
+_PRE_DEFAULT_PRIORITY = 0
+_POST_DEFAULT_PRIORITY = 100
+
+
+@dataclass(slots=True)
+class _HookEntry:
+    """带优先级的 hook 包装。priority 越大越晚执行。"""
+    hook: PreHook | PostHook
+    priority: int = 0
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -115,9 +141,11 @@ class Brain:
       用于 Cognition（情感/意图分析）等纯分析类任务。
 
     - chat(request: ChatRequest) → ChatResult
-      上下文感知的对话生成，注入人格、时间、语气对齐。
-      自动处理 token 追踪、表情包解析、SKILL 标记剥离。
-      单轮调用，不处理 SKILL 反馈循环（由调用方自行管理）。
+      上下文感知的对话生成。内置默认处理链：
+        pre:  语气对齐 → 当前时间注入 → 模型路由 → 风格覆盖 → 构建请求
+        call: provider.generate_async()
+        post: XML 剥离 → SKIP 检测 → SKILL 解析 → 表情包解析 → token 记录
+      可通过 register_pre_hook / register_post_hook 扩展。
     """
 
     def __init__(
@@ -145,10 +173,18 @@ class Brain:
         self.sticker_names = list(sticker_names or [])
         self.other_ai_names = list(other_ai_names or [])
 
-        # 可选的上下文依赖（延迟注入）
+        # 上下文函数（延迟注入，避免循环导入）
         self._recent_messages_fn: Callable[[str, int], list[dict[str, Any]]] | None = None
         self._get_tone_alignment_fn: Callable[[str], str] | None = None
         self._classify_exception_fn: Callable[[Exception], str] | None = None
+
+        # ── Hook 注册表 ──
+        self._pre_hooks: list[_HookEntry] = []
+        self._post_hooks: list[_HookEntry] = []
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 上下文函数注入
+    # ═══════════════════════════════════════════════════════════════════
 
     def set_context_fns(
         self,
@@ -164,6 +200,31 @@ class Brain:
             self._get_tone_alignment_fn = tone_alignment_fn
         if classify_exception_fn is not None:
             self._classify_exception_fn = classify_exception_fn
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Hook 注册 API
+    # ═══════════════════════════════════════════════════════════════════
+
+    def register_pre_hook(self, hook: PreHook, priority: int = _PRE_DEFAULT_PRIORITY) -> None:
+        """注册前处理 hook。priority 越大越晚执行（默认 0，最先执行）。
+
+        签名: hook(brain, request, ctx) -> None
+        - request: ChatRequest（可修改 system_prompt、messages 等）
+        - ctx: 跨 hook 共享的字典
+        """
+        self._pre_hooks.append(_HookEntry(hook=hook, priority=priority))
+        self._pre_hooks.sort(key=lambda e: e.priority)
+
+    def register_post_hook(self, hook: PostHook, priority: int = _POST_DEFAULT_PRIORITY) -> None:
+        """注册后处理 hook。priority 越大越晚执行（默认 100，最后执行）。
+
+        签名: hook(brain, request, result, ctx) -> None
+        - request: 原始 ChatRequest
+        - result: ChatResult（可修改 clean_text、sticker_names 等）
+        - ctx: 跨 hook 共享的字典
+        """
+        self._post_hooks.append(_HookEntry(hook=hook, priority=priority))
+        self._post_hooks.sort(key=lambda e: e.priority)
 
     # ═══════════════════════════════════════════════════════════════════
     # 通道 1：原生 API 调用（Cognition 等分析任务）
@@ -208,36 +269,34 @@ class Brain:
         """执行一次上下文感知的对话生成。
 
         处理链：
-        pre:
-          1. 语气对齐
-          2. 当前时间注入
-          3. 模型路由 + 风格参数覆盖
-        invoke:
-          4. 构建 GenerationRequest
-          5. provider.generate_async()
-        post:
-          6. 剥离 XML 块
-          7. SKIP 标签检测
-          8. 解析 SKILL_CALL 标记
-          9. 解析表情包标签
-         10. 记录 token 用量
+        1. 用户 pre-hooks（按注册顺序）
+        2. 默认 pre: 语气对齐 → 时间注入 → 模型路由 → 风格覆盖
+        3. provider.generate_async()
+        4. 默认 post: XML 剥离 → SKIP 检测 → SKILL 解析 → 表情包解析 → token 记录
+        5. 用户 post-hooks（按注册顺序）
 
         SKILL 反馈循环由调用方管理，chat() 只负责单轮生成。
         """
+        ctx: dict[str, Any] = {}
+        ctx["post_process"] = request.post_process
         system_prompt = request.system_prompt
 
-        # ── Pre: 语气对齐 ──
+        # ── 1. 用户 pre-hooks（按 priority 升序）──
+        for entry in self._pre_hooks:
+            entry.hook(self, request, ctx)
+
+        # ── 2. 默认 pre: 语气对齐 ──
         if self._get_tone_alignment_fn is not None:
             tone_hint = self._get_tone_alignment_fn(request.group_id)
             if tone_hint:
                 system_prompt = system_prompt + "\n\n" + tone_hint
 
-        # ── Pre: 当前时间注入 ──
+        # ── 默认 pre: 当前时间注入 ──
         china_tz = timezone(timedelta(hours=8))
         now_str = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S")
         system_prompt = PromptFactory.build_current_time_section(now_str) + "\n\n" + system_prompt
 
-        # ── Pre: 模型路由 ──
+        # ── 默认 pre: 模型路由 ──
         heat_level = "warm"
         if self.rhythm_analyzer is not None and self._recent_messages_fn is not None:
             recent = self._recent_messages_fn(request.group_id, 5)
@@ -250,7 +309,7 @@ class Brain:
             heat_level=heat_level,
         )
 
-        # ── Pre: 应用风格覆盖 ──
+        # ── 默认 pre: 风格覆盖 ──
         if request.style_params:
             effective_max_tokens = min(cfg.max_tokens, request.style_params.max_tokens)
             effective_temperature = request.style_params.temperature
@@ -261,7 +320,7 @@ class Brain:
             effective_max_tokens = cfg.max_tokens
             effective_temperature = cfg.temperature
 
-        # ── Invoke: 构建 GenerationRequest ──
+        # ── 构建 GenerationRequest ──
         from sirius_pulse.providers.base import GenerationRequest
 
         gen_request = GenerationRequest(
@@ -290,7 +349,7 @@ class Brain:
                 ),
             )
 
-        # ── Invoke: 调用 provider ──
+        # ── 3. 调用 provider ──
         reply = ""
         duration_ms = 0.0
         try:
@@ -299,9 +358,7 @@ class Brain:
             duration_ms = round((time.perf_counter() - t0) * 1000, 2)
         except Exception as exc:
             error_type = (
-                self._classify_exception_fn(exc)
-                if self._classify_exception_fn
-                else "unknown"
+                self._classify_exception_fn(exc) if self._classify_exception_fn else "unknown"
             )
             error_message = str(exc)[:200]
             logger.warning(
@@ -312,28 +369,30 @@ class Brain:
             )
             raise
 
-        # ── Post: 剥离模型回显的 XML 块 ──
+        # ── 4. 默认 post: 剥离模型回显的 XML 块 ──
         reply = self._strip_conversation_history_xml(reply)
 
-        # ── Post: SKIP 标签检测 ──
+        # ── 默认 post: SKIP 标签检测 ──
         if re.search(r"<\s*skip\s*/?\s*>", reply, flags=re.IGNORECASE):
             logger.info("[%s] LLM 主动选择跳过回复（输出 skip 标签）。", request.task_name)
             reply = ""
 
-        # ── Post: 解析 SKILL_CALL 标记 ──
+        # ── 默认 post: 解析 SKILL_CALL 标记 ──
         skill_calls: list[tuple[str, dict[str, Any]]] = []
         if request.enable_skills:
             from sirius_pulse.skills.executor import parse_skill_calls
 
             skill_calls = parse_skill_calls(reply)
 
-        # ── Post: 解析表情包标签 ──
+        # ── 默认 post: 解析表情包标签 ──
+        from sirius_pulse.skills.executor import strip_skill_calls
+
         sticker_names: list[str] = []
         clean_reply = strip_skill_calls(reply).strip()
         if clean_reply:
             clean_reply, sticker_names = self._parse_sticker_tags(clean_reply)
 
-        # ── Post: 记录 token 用量 ──
+        # ── 默认 post: 记录 token 用量 ──
         token_record = self._record_chat_tokens(
             gen_request=gen_request,
             system_prompt_used=system_prompt,
@@ -346,7 +405,7 @@ class Brain:
             last_reply_depth=request.last_reply_depth,
         )
 
-        return ChatResult(
+        result = ChatResult(
             raw_text=reply,
             clean_text=clean_reply,
             model_name=cfg.model_name,
@@ -356,6 +415,44 @@ class Brain:
             has_skill_call=bool(skill_calls),
             skill_calls=skill_calls,
         )
+
+        # ── 5. 用户 post-hooks（按 priority 升序）──
+        for entry in self._post_hooks:
+            entry.hook(self, request, result, ctx)
+
+        return result
+
+    async def generate_text(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        group_id: str,
+        *,
+        style_params: StyleParams | None = None,
+        task_name: str = "response_generate",
+        urgency: int = 0,
+        enable_skills: bool = False,
+        post_process: bool = False,
+    ) -> str:
+        """便捷方法：单轮 chat() → 返回 raw_text。
+
+        供外部模块（plugins、skill context、dispatcher）使用，
+        无需处理 ChatResult 对象。默认不启用引擎 post-hooks。
+        """
+        result = await self.chat(
+            ChatRequest(
+                group_id=group_id,
+                user_id="",
+                system_prompt=system_prompt,
+                messages=messages,
+                task_name=task_name,
+                urgency=urgency,
+                style_params=style_params,
+                enable_skills=enable_skills,
+                post_process=post_process,
+            )
+        )
+        return result.raw_text
 
     # ═══════════════════════════════════════════════════════════════════
     # 内部方法
@@ -448,9 +545,7 @@ class Brain:
             )
             + len(gen_request.system_prompt),
             output_chars=len(raw_output),
-            estimation_method=(
-                "tiktoken" if estimated_output_tokens > 0 else "char_div4"
-            ),
+            estimation_method="tiktoken" if estimated_output_tokens > 0 else "char_div4",
             retries_used=0,
             persona_name=persona_name,
             group_id="",
@@ -506,9 +601,7 @@ class Brain:
         )
 
         now_ts = time.time()
-        conversation_depth = (
-            last_reply_depth + 1 if now_ts - last_reply_at < 60 else 1
-        )
+        conversation_depth = last_reply_depth + 1 if now_ts - last_reply_at < 60 else 1
 
         record = TokenUsageRecord(
             actor_id="assistant",

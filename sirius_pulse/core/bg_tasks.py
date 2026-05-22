@@ -467,12 +467,12 @@ class BackgroundTasksMixin(_Base):
             else:
                 token_breakdown[key] = token_breakdown.get(key, 0) + val
 
-        raw_reply = await self._generate(
+        raw_reply = await self.brain.generate_text(
             system_prompt,
             messages,
             group_id,
-            style,
-            token_breakdown=token_breakdown,
+            style_params=style,
+            post_process=True,
         )
         reply = raw_reply.strip()
 
@@ -487,36 +487,9 @@ class BackgroundTasksMixin(_Base):
             )
         )
 
-        # Record assistant reply into basic memory so future turns can see it
+        # clean_reply 由 Brain post-hook 完成（strip_skill_calls + 去重），
+        # 若被去重抑制则为空字符串。
         clean_reply = strip_skill_calls(reply).strip()
-
-        # 解析表情包标签 [STICKERS: ...] 并异步发送
-        if clean_reply and hasattr(self, "_parse_sticker_tags"):
-            clean_reply, sticker_names = self._parse_sticker_tags(clean_reply)
-            if sticker_names:
-                asyncio.create_task(
-                    self._send_stickers_by_names(group_id, sticker_names)
-                )
-                logger.info("模型请求发送表情包: %s", sticker_names)
-        if clean_reply:
-            self.basic_memory.add_entry(
-                group_id=group_id,
-                user_id="assistant",
-                role="assistant",
-                content=clean_reply,
-                speaker_name=self.persona.name if self.persona else "assistant",
-            )
-            # 反馈追踪：主动发言也记录锚点（无特定目标用户）
-            self.semantic_memory.record_response_sent(
-                group_id=group_id,
-                user_id="",
-                topic_hint=clean_reply[:100],
-                response_length=len(clean_reply),
-            )
-
-        # Record reply timestamp for cooldown tracking
-        self._last_reply_at[group_id] = datetime.now(timezone.utc).timestamp()
-        self._persist_group_state(group_id)
 
         return {
             "strategy": "proactive",
@@ -636,26 +609,18 @@ class BackgroundTasksMixin(_Base):
         sub_bd.memory = estimate_tokens(system_prompt) - sub_bd.persona
         sub_bd.total = estimate_tokens(system_prompt)
 
-        raw_reply = await self._generate(
+        raw_reply = await self.brain.generate_text(
             system_prompt,
             messages,
             group_id,
-            style,
-            token_breakdown=sub_bd.to_dict(),
+            style_params=style,
+            post_process=True,
         )
         reply = raw_reply.strip()
 
+        # clean_reply 由 Brain post-hook 完成（strip_skill_calls + 去重），
+        # 若被去重抑制则为空字符串。
         clean_reply = strip_skill_calls(reply).strip()
-        if clean_reply:
-            self.basic_memory.add_entry(
-                group_id=group_id,
-                user_id="assistant",
-                role="assistant",
-                content=clean_reply,
-                speaker_name=self.persona.name if self.persona else "assistant",
-            )
-            self._last_reply_at[group_id] = datetime.now(timezone.utc).timestamp()
-            self._persist_group_state(group_id)
 
         return clean_reply or None
 
@@ -919,11 +884,10 @@ class BackgroundTasksMixin(_Base):
         reply = ""
 
         for _round in range(max_skill_rounds + 1):
-            raw_reply = await self._generate(
+            raw_reply = await self.brain.generate_text(
                 system_prompt,
                 messages,
                 group_id,
-                token_breakdown=token_breakdown,
             )
             reply = raw_reply.strip()
 

@@ -12,18 +12,18 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sirius_pulse.core.brain import Brain, ChatRequest
+from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.cognition import CognitionAnalyzer
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue, _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext, IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter, TaskConfig
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
-from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
+from sirius_pulse.core.prompt_factory import StyleAdapter, StyleParams
 from sirius_pulse.core.response_strategy import ResponseStrategyEngine
 from sirius_pulse.core.rhythm import RhythmAnalyzer
 from sirius_pulse.core.threshold_engine import ThresholdEngine
@@ -40,7 +40,6 @@ from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3
 from sirius_pulse.models.models import Message, Participant, Transcript
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
-from sirius_pulse.skills.executor import strip_skill_calls
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +358,119 @@ class _EmotionalGroupChatEngineBase:
 
         # Active private groups for delayed queue ticking
         self._active_private_groups: set[str] = set()
+
+        # ── 注册引擎 post-hooks 到 Brain ──
+        self._register_engine_hooks()
+
+    def _register_engine_hooks(self) -> None:
+        """向 Brain 注册引擎级别的后处理 hook。
+
+        Hook 只在 ChatRequest.post_process=True 时执行（由调用方控制）。
+        优先级阶梯：
+          0  = 对话深度追踪（最先）
+         20  = 表情包解析+发送
+         30  = 回复去重
+         40  = 记忆记录（basic_memory + semantic）
+         50  = 回复时间戳（最后）
+        """
+        _engine = self
+
+        # ── priority 0: 对话深度追踪 ──
+        def _hook_depth(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            if not ctx.get("post_process"):
+                return
+            gid = _req.group_id
+            now_ts = time.time()
+            last_ts = _engine._last_reply_at.get(gid, 0)
+            _engine._last_reply_depth[gid] = (
+                _engine._last_reply_depth.get(gid, 0) + 1 if now_ts - last_ts < 60 else 1
+            )
+
+        # ── priority 20: 表情包解析+发送 ──
+        def _hook_stickers(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            if not ctx.get("post_process"):
+                return
+            if not _result.sticker_names:
+                return
+            asyncio.create_task(
+                _engine._send_stickers_by_names(_req.group_id, _result.sticker_names)
+            )
+
+        # ── priority 30: 回复去重 ──
+        def _hook_dedup(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            if not ctx.get("post_process"):
+                return
+            if not _result.clean_text:
+                return
+            gid = _req.group_id
+            now_ts = datetime.now(timezone.utc).timestamp()
+            recent = _engine._recent_sent_replies.get(gid, [])
+            window = _engine._reply_dedup_window
+            threshold = _engine._reply_dedup_threshold
+            recent = [(t, r) for t, r in recent if now_ts - t < window]
+            if any(
+                _engine._text_similarity(_result.clean_text, r) > threshold
+                for _, r in recent
+            ):
+                logger.debug(
+                    "去重抑制: %s (window=%ds, threshold=%.2f): %s...",
+                    gid, window, threshold, _result.clean_text[:40],
+                )
+                _result.clean_text = ""
+            else:
+                recent.append((now_ts, _result.clean_text))
+            _engine._recent_sent_replies[gid] = recent
+
+        # ── priority 40: 记忆记录 ──
+        def _hook_memory(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            if not ctx.get("post_process"):
+                return
+            if not _result.clean_text:
+                return
+            gid = _req.group_id
+            uid = _req.user_id
+            persona_name = _engine.persona.name if _engine.persona else "assistant"
+            _engine.basic_memory.add_entry(
+                group_id=gid,
+                user_id="assistant",
+                role="assistant",
+                content=_result.clean_text,
+                speaker_name=persona_name,
+            )
+            try:
+                _engine.semantic_memory.record_response_sent(
+                    group_id=gid,
+                    user_id=uid or "",
+                    topic_hint=_result.clean_text[:100],
+                    response_length=len(_result.clean_text),
+                )
+            except Exception:
+                pass
+
+        # ── priority 50: 回复时间戳+持久化 ──
+        def _hook_timestamp(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            if not ctx.get("post_process"):
+                return
+            _engine._last_reply_at[_req.group_id] = (
+                datetime.now(timezone.utc).timestamp()
+            )
+            _engine._persist_group_state(_req.group_id)
+
+        self.brain.register_post_hook(_hook_depth, priority=0)
+        self.brain.register_post_hook(_hook_stickers, priority=20)
+        self.brain.register_post_hook(_hook_dedup, priority=30)
+        self.brain.register_post_hook(_hook_memory, priority=40)
+        self.brain.register_post_hook(_hook_timestamp, priority=50)
 
     # ==================================================================
     # Public API
@@ -862,63 +974,11 @@ class _EmotionalGroupChatEngineBase:
             sum(1 for _ in stickers_dir.iterdir() if _.is_file() and _.suffix.lower() in image_extensions),
         )
 
-    async def _generate(
-        self,
-        system_prompt: str,
-        messages: list[dict[str, Any]],
-        group_id: str,
-        style_params: StyleParams | None = None,
-        task_name: str = "response_generate",
-        urgency: int = 0,
-        token_breakdown: dict[str, int] | None = None,
-    ) -> str:
-        """调用 LLM provider 生成回复（委托 Brain.chat()）。
-
-        _generate 现在是 Brain.chat() 的薄封装，保留原有签名以维持向后兼容。
-        所有 LLM 交互（语气对齐、时间注入、模型路由、provider 调用、
-        token 追踪、SKILL 标签解析、表情包解析）统一由 Brain 处理。
-        """
-        if self.provider_async is None:
-            return "[未配置 provider]"
-
-        result = await self.brain.chat(
-            ChatRequest(
-                group_id=group_id,
-                user_id="",
-                system_prompt=system_prompt,
-                messages=messages,
-                task_name=task_name,
-                urgency=urgency,
-                style_params=style_params,
-                last_reply_at=self._last_reply_at.get(group_id, 0),
-                last_reply_depth=self._last_reply_depth.get(group_id, 0),
-            )
-        )
-
-        # 更新对话深度（副作用，由引擎维护）
-        now_ts = time.time()
-        last_reply_ts = self._last_reply_at.get(group_id, 0)
-        self._last_reply_depth[group_id] = (
-            self._last_reply_depth.get(group_id, 0) + 1 if now_ts - last_reply_ts < 60 else 1
-        )
-
-        # 如果调用方提供了 token_breakdown，回填到最后一个 token record 的 breakdown_json
-        if token_breakdown and result.token_record:
-            try:
-                from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
-
-                bd = PromptTokenBreakdown(**token_breakdown)
-                bd.system_prompt_total = estimate_tokens(system_prompt)
-                bd.user_message = sum(
-                    estimate_tokens(str(m.get("content", ""))) for m in messages
-                )
-                bd.output_total = result.token_record.completion_tokens
-                bd.total = bd.system_prompt_total + bd.user_message + bd.output_total
-                result.token_record.breakdown_json = bd.to_json()
-            except Exception:
-                pass
-
-        return result.raw_text
+    # ------------------------------------------------------------------
+    # Brain 委托：_generate 已删除，调用方请直接用 self.brain.chat() 或
+    # self.brain.generate_text()。外部模块（plugin/skill context）使用
+    # engine.brain.generate_text(system_prompt, messages, group_id)。
+    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # 表情包系统：从模型回复中解析 [STICKERS: ...] 标签并发送
