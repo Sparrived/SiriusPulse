@@ -95,6 +95,13 @@ class _EmotionalGroupChatEngineBase:
             token_breakdown: dict[str, int] | None = None,
         ) -> None: ...
         def _classify_exception(self, exc: Exception) -> str: ...
+        async def _execute_plugin_command(
+            self,
+            decision: Any,
+            message: Any,
+            group_id: str,
+            user_id: str,
+        ) -> dict[str, Any]: ...
         def _enhance_topic_relevance(
             self, base_score: float, message: str, group_id: str, user_id: str
         ) -> float: ...

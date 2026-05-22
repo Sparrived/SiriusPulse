@@ -13,9 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from sirius_pulse.core.engine_core import (
-    _EmotionalGroupChatEngineBase,
-)
 from sirius_pulse.core.pipeline import PipelineMixin
 from sirius_pulse.core.bg_tasks import BackgroundTasksMixin
 from sirius_pulse.skills.builtin.reminder import _is_reminder_due
@@ -23,12 +20,15 @@ from sirius_pulse.core.helpers import HelpersMixin
 
 
 class EmotionalGroupChatEngine(
-    _EmotionalGroupChatEngineBase,
     PipelineMixin,
     BackgroundTasksMixin,
     HelpersMixin,
 ):
-    """Combined EmotionalGroupChatEngine with all mixins."""
+    """Combined EmotionalGroupChatEngine with all mixins.
+
+    各 Mixin 通过 _Base 链继承 engine_core._EmotionalGroupChatEngineBase，
+    最终类无需直接继承基类，避免 MRO 冲突。
+    """
 
     pass
 

@@ -9,17 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
-
-    class _Base(_EmotionalGroupChatEngineBase): ...
-
-else:
-    _Base = object
+from typing import Any
 
 from sirius_pulse.core.delayed_response_queue import _parse_iso
+from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
+
+_Base = _EmotionalGroupChatEngineBase
+
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.skills.executor import strip_skill_calls

@@ -8,16 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
-
-    class _Base(_EmotionalGroupChatEngineBase): ...
-else:
-    _Base = object
-
+from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.identity_resolver import IdentityContext
+
+_Base = _EmotionalGroupChatEngineBase
+
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.models import Message, Participant

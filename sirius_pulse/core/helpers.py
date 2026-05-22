@@ -7,17 +7,13 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
-
-    class _Base(_EmotionalGroupChatEngineBase): ...
-
-else:
-    _Base = object
-
+from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.memory.glossary import GlossaryTerm
+
+_Base = _EmotionalGroupChatEngineBase
+
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +161,10 @@ class HelpersMixin(_Base):
             content=getattr(message, "content", ""),
             speaker_name=getattr(message, "speaker", ""),
         )
+
+        if self._plugin_executor is None:
+            logger.debug("Plugin 执行器未加载，跳过 _execute_plugin_command")
+            return {}
 
         # 执行 Plugin → list[PluginResponse]
         results = await self._plugin_executor.execute(

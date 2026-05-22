@@ -12,10 +12,12 @@ Philosophy alignment (v0.28+):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,6 +32,22 @@ from sirius_pulse.models.intent_v3 import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 辅助数据类
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class PluginMatchInfo:
+    """Plugin 命令匹配结果，供 Cognition 上游使用。"""
+
+    plugin_name: str
+    confidence: float
+    render_mode: str
+    slots: dict[str, Any]
+
 
 # ------------------------------------------------------------------
 # Emotion rule engine
@@ -863,7 +881,7 @@ class CognitionAnalyzer:
                     purpose="cognition_analyze",
                 )
             )
-        elif hasattr(self.provider_async, "generate_async"):
+        elif self.provider_async is not None and hasattr(self.provider_async, "generate_async"):
             raw = await self.provider_async.generate_async(request)
         elif isinstance(self.provider_async, LLMProvider):
             raw = await asyncio.to_thread(self.provider_async.generate, request)
@@ -1666,37 +1684,24 @@ class CognitionAnalyzer:
         try:
             match_result = self.plugin_registry.match_message(message)
             if match_result is not None:
-                # 构建 PluginMatchInfo 供上游使用
                 plugin_name = match_result.plugin_name
                 definition = self.plugin_registry.get(plugin_name)
                 if definition is None:
                     return None
-                # 非开发者不匹配 developer_only 插件
                 if definition.permissions.developer_only and not caller_is_developer:
                     return None
                 render_mode = definition.render.mode if definition else "direct"
 
-                # 尝试参数解析（如果有 LexedCommand）
                 slots: dict[str, Any] = {}
                 if match_result.lexed is not None and definition is not None:
                     from sirius_pulse.plugins.lexer import CommandParser
+
                     parser = CommandParser()
                     ast = parser.parse(match_result.lexed, definition)
-                    # 将 kwargs 中的值提取出来作为 slots
                     for name, node in ast.kwargs.items():
                         slots[name] = node.value
-                    # 也提取位置参数
                     for i, node in enumerate(ast.args):
                         slots[f"_{i}"] = node.value
-
-                from dataclasses import dataclass
-
-                @dataclass
-                class PluginMatchInfo:
-                    plugin_name: str
-                    confidence: float
-                    render_mode: str
-                    slots: dict[str, Any]
 
                 return PluginMatchInfo(
                     plugin_name=plugin_name,

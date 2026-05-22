@@ -121,14 +121,26 @@ _POST_DEFAULT_PRIORITY = 100
 
 
 @dataclass(slots=True)
-class _HookEntry:
-    """带优先级的 hook 包装。priority 越大越晚执行。
+class _PreHookEntry:
+    """前处理 hook 包装。priority 越大越晚执行。
 
     task_filter: None = 始终执行（用户自定义 hook 默认）
                  非 None = 仅当 ctx["task_name"] 在集合中时执行（引擎内置 hook）
     """
-    hook: PreHook | PostHook
+    hook: PreHook
     priority: int = 0
+    task_filter: set[str] | None = None
+
+
+@dataclass(slots=True)
+class _PostHookEntry:
+    """后处理 hook 包装。priority 越大越晚执行。
+
+    task_filter: None = 始终执行（用户自定义 hook 默认）
+                 非 None = 仅当 ctx["task_name"] 在集合中时执行（引擎内置 hook）
+    """
+    hook: PostHook
+    priority: int = 100
     task_filter: set[str] | None = None
 
 
@@ -184,8 +196,8 @@ class Brain:
         self._classify_exception_fn: Callable[[Exception], str] | None = None
 
         # ── Hook 注册表 ──
-        self._pre_hooks: list[_HookEntry] = []
-        self._post_hooks: list[_HookEntry] = []
+        self._pre_hooks: list[_PreHookEntry] = []
+        self._post_hooks: list[_PostHookEntry] = []
 
     # ═══════════════════════════════════════════════════════════════════
     # 上下文函数注入
@@ -223,7 +235,7 @@ class Brain:
         - request: ChatRequest（可修改 system_prompt、messages 等）
         - ctx: 跨 hook 共享的字典
         """
-        self._pre_hooks.append(_HookEntry(hook=hook, priority=priority, task_filter=task_filter))
+        self._pre_hooks.append(_PreHookEntry(hook=hook, priority=priority, task_filter=task_filter))
         self._pre_hooks.sort(key=lambda e: e.priority)
 
     def register_post_hook(
@@ -240,7 +252,7 @@ class Brain:
         - result: ChatResult（可修改 clean_text、sticker_names 等）
         - ctx: 跨 hook 共享的字典
         """
-        self._post_hooks.append(_HookEntry(hook=hook, priority=priority, task_filter=task_filter))
+        self._post_hooks.append(_PostHookEntry(hook=hook, priority=priority, task_filter=task_filter))
         self._post_hooks.sort(key=lambda e: e.priority)
 
     # ═══════════════════════════════════════════════════════════════════

@@ -1,9 +1,7 @@
 """Delayed response queue: hold responses and trigger at natural timing.
 
 Monitors conversation during the wait window:
-- If problem solved by others → cancel
 - If topic gap appears → trigger immediately
-- If topic drifts to AI-relevant → trigger early
 
 IMMEDIATE 策略使用 5s 防抖窗口，窗口期内每收到一条新消息增加 1s，上限 12s。
 在同 group 内合并连续消息，避免刷屏。
@@ -213,9 +211,6 @@ class DelayedResponseQueue:
             if action == "trigger":
                 item.status = "triggered"
                 triggered.append(item)
-            elif action == "cancel":
-                item.status = "cancelled"
-                logger.debug("Cancelled delayed item %s (reason: solved)", item.item_id)
             else:
                 remaining.append(item)
 
@@ -250,7 +245,7 @@ class DelayedResponseQueue:
         recent_messages: list[dict[str, Any]],
         rhythm: RhythmAnalysis | None = None,
     ) -> str:
-        """Evaluate whether to trigger, cancel, or keep waiting."""
+        """Evaluate whether to trigger or keep waiting."""
         now = datetime.now(timezone.utc)
 
         # Check if window expired
