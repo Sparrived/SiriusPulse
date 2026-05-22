@@ -1,0 +1,124 @@
+name: "🐛 Bug 报告"
+description: 提交 Bug 帮助我们改进 Sirius Pulse
+title: "[Bug] "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 发现 Bug 了喵？(｡ŏ﹏ŏ)
+        
+        谢谢你的反馈！请尽量详细地描述问题，让月白能更快地修复它～
+        
+        > ⚠️ 在提交之前，请先确认：
+        > - 已搜索 [已有 Issues](https://github.com/Sparrived/SiriusChat/issues) 看是否已有相同报告
+        > - 已查阅 [项目文档](https://docs.sparrived.xyz/) 看是否配置有误
+
+  - type: input
+    id: summary
+    attributes:
+      label: "📝 问题简述"
+      description: "用一句话概括你遇到的问题"
+      placeholder: "例如：启动后人格无法正常加载，报错 KeyError"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "🔍 详细描述"
+      description: "清楚描述 Bug 的表现，实际行为和预期行为分别是什么"
+      placeholder: |
+        我在做 X 的时候，预期应该出现 Y，但实际出现了 Z。
+        错误信息如：xxxxx
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "🔄 复现步骤"
+      description: "如何复现这个 Bug？步骤越清晰越好"
+      placeholder: |
+        1. 执行 `python main.py run --persona xxx`
+        2. 向 NapCat 发送消息 '...'
+        3. 查看控制台输出
+        4. 发现错误...
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "📋 相关日志 / 错误输出"
+      description: "贴上完整的错误回溯（Traceback）或相关日志。如果日志很长，请用文件形式附上"
+      render: shell
+      placeholder: "贴上错误日志..."
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: "📦 涉及模块"
+      description: "Bug 出现在哪个模块？（可多选）"
+      multiple: true
+      options:
+        - 核心引擎（emotional_engine / pipeline）
+        - Prompt 构建（prompt_factory）
+        - 记忆系统（memory / diary）
+        - 消息平台（NapCat / OneBot）
+        - 模型路由（ModelRouter / Provider）
+        - 技能系统（Skill / 表情包 / RAG）
+        - WebUI / REST API
+        - Embedding 服务
+        - 人格管理（PersonaManager / 配置）
+        - 安装 / 构建 / 依赖
+        - 文档
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "📌 Sirius Pulse 版本"
+      description: "你正在使用的版本（运行 `pip show sirius-pulse` 或查看 `pyproject.toml`）"
+      placeholder: "例如：1.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python_version
+    attributes:
+      label: "🐍 Python 版本"
+      description: "运行 `python --version` 查看"
+      placeholder: "例如：3.12.5"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: "💻 操作系统"
+      description: "你的操作系统和版本"
+      placeholder: "例如：Windows 11 / Ubuntu 22.04 / macOS 14"
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: "⚙️ 相关配置"
+      description: "如果问题与配置有关，请贴上相关配置文件内容（记得隐藏敏感信息！）"
+      render: json
+      placeholder: "persona.json / orchestration.json / experience.json 的相关片段"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "📎 补充信息"
+      description: "任何其他可能有帮助的信息（截图、录屏、相关 Issue 链接等）"

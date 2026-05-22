@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "📚 项目文档"
+    url: https://docs.sparrived.xyz/
+    about: 使用前可以先查阅文档，也许能找到答案喵～
+  - name: "💬 讨论区（GitHub Discussions）"
+    url: https://github.com/Sparrived/SiriusChat/discussions
+    about: 疑问、想法、交流请走讨论区，那边更适合聊天喵～
+  - name: "🤖 AI 助手（Copilot）"
+    url: https://github.com/Sparrived/SiriusChat/issues/new?template=feature_request.yml
+    about: 本仓库已配置 AI 辅助开发，Copilot 可以直接帮你写代码哦～

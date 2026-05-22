@@ -1,0 +1,95 @@
+name: "✨ 功能请求"
+description: 提出新功能或改进建议
+title: "[Feature] "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 有新点子啦？(ฅ´ω`ฅ)
+        
+        欢迎提出功能建议！每一个想法都让 Sirius Pulse 变得更好～
+        
+        > 💡 **月白说**：如果只是使用上的疑问，建议先去 [讨论区](https://github.com/Sparrived/SiriusChat/discussions) 逛逛喵！
+
+  - type: input
+    id: summary
+    attributes:
+      label: "📝 需求简述"
+      description: "用一句话说明你想要什么功能"
+      placeholder: "例如：希望人格能在特定时间自动触发日常对话"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "🎯 解决什么问题"
+      description: "这个功能解决了什么痛点？在什么场景下需要它？"
+      placeholder: |
+        目前我在使用 X 功能时，遇到了 Y 限制...
+        如果能增加 Z 功能，我就可以...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "💡 期望方案"
+      description: "描述你期望的实现方式或行为表现"
+      placeholder: |
+        我希望在配置文件中增加一个 xxx 字段，设为 true 后...
+        或者运行时支持 xxx 参数...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "🔄 替代方案"
+      description: "有没有你尝试过的替代方案或变通方法？"
+      placeholder: "目前我暂时用 xxx 绕过，但这样做不太方便，因为..."
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: "📦 影响范围"
+      description: "这个功能会影响哪些模块？（可多选）"
+      multiple: true
+      options:
+        - 核心引擎
+        - Prompt 构建
+        - 记忆系统
+        - 消息平台
+        - 模型路由
+        - 技能系统
+        - WebUI
+        - Embedding
+        - 人格管理 / 配置
+        - CLI / 命令行
+        - API / 外部集成
+        - 文档
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "⚡ 优先级感觉"
+      description: "你觉得这个功能有多重要？"
+      options:
+        - "🔴 急需 —— 没有它很难正常工作"
+        - "🟡 重要 —— 能大幅提升体验"
+        - "🟢 锦上添花 —— 有了会更好"
+        - "💭 未来想法 —— 长远规划"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: "📎 补充信息"
+      description: "任何其他想法、参考资料、示例链接等"
+      placeholder: "可以参考 XXX 项目的做法... 或者这里有相关的讨论链接..."

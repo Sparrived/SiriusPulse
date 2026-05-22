@@ -1,0 +1,58 @@
+name: "📖 文档改进"
+description: 报告文档问题或提出文档改进建议
+title: "[Docs] "
+labels: ["documentation"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 文档发现了问题？(⊙ˍ⊙)
+        
+        文档写得不够清楚，或者有错误？欢迎提出来让月白修正～
+        
+        > 📚 项目文档托管在：https://docs.sparrived.xyz/
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: "📋 文档问题类型"
+      description: "你遇到的是哪种问题？"
+      options:
+        - "❌ 内容错误 —— 描述有误、代码示例不工作"
+        - "🔍 信息缺失 —— 缺少重要说明或使用示例"
+        - "🤔 难以理解 —— 表述不清、逻辑混乱"
+        - "🔗 链接失效 —— 链接打不开或跳转错误"
+        - "🖋️ 排版/笔误 —— 错别字、格式问题"
+        - "📝 新增文档 —— 需要为某个功能写文档"
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: "📍 文档位置"
+      description: "问题所在的文档路径或 URL"
+      placeholder: "例如：README.md / docs/architecture.md / https://docs.sparrived.xyz/..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: "📝 问题描述"
+      description: "详细描述文档的问题"
+      placeholder: |
+        在「快速开始」章节中，关于配置文件的说明不够清晰...
+        实际上只需要配置 xxx 字段，但文档说需要配置 yyy...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: "💡 改进建议"
+      description: "你认为应该怎么改？（可选但非常欢迎！）"
+      placeholder: |
+        建议改为：...
+        或者补充以下内容：...
