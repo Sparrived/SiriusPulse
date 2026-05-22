@@ -47,9 +47,9 @@ provider = [
 	"tenacity>=8.0.0",  # 重试库，用于提高可靠性
 ]
 dev = [
-	"test",  # 继承测试依赖（pytest 系列 + psutil）
-	"provider",  # 继承 provider 依赖（httpx + tenacity）
-	"quality",  # 继承质量依赖（tiktoken）
+	"sirius-pulse[test]",  # 继承测试依赖（pytest 系列 + psutil）
+	"sirius-pulse[provider]",  # 继承 provider 依赖（httpx + tenacity）
+	"sirius-pulse[quality]",  # 继承质量依赖（tiktoken）
 	"black>=23.0.0",  # 代码格式化
 	"isort>=5.13.0",  # Import排序
 	"flake8>=6.0.0",  # Linter
