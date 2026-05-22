@@ -443,6 +443,7 @@ class EngineRuntime:
 
         # 注入 TokenUsageStore
         engine.token_store = self.token_store
+        engine.brain.token_store = self.token_store
 
         # 初始化并注入 SKILL runtime
         try:

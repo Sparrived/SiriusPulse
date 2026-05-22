@@ -286,6 +286,7 @@ class CognitionAnalyzer:
         ai_aliases: list[str] | None = None,
         persona: Any | None = None,
         plugin_registry: Any | None = None,  # Plugin 注册表（v1.2+）
+        brain: Any | None = None,  # Brain 实例（用于统一 LLM 调用）
     ) -> None:
         self.lexicon = lexicon or dict(_DEFAULT_LEXICON)
         self.provider_async = provider_async
@@ -294,6 +295,7 @@ class CognitionAnalyzer:
         self.ai_aliases = [a.lower() for a in (ai_aliases or []) if a]
         self.persona = persona
         self.plugin_registry = plugin_registry  # Plugin 注册表引用（v1.2+）
+        self.brain = brain  # Brain LLM 交互中枢（v1.2+）
 
         # Expose the last GenerationRequest for token recording
         self._last_request: Any | None = None
@@ -843,9 +845,25 @@ class CognitionAnalyzer:
                 "plugin_slots": {},
             }
 
-        if self.provider_async is None:
+        if self.provider_async is None and self.brain is None:
             return None
-        if hasattr(self.provider_async, "generate_async"):
+
+        # 优先通过 Brain 统一调用（v1.2+），回退到直接 provider 调用
+        if self.brain is not None:
+            from sirius_pulse.core.brain import RawRequest
+
+            raw = await self.brain.raw_call(
+                RawRequest(
+                    model=self.model_name,
+                    system_prompt=prompt,
+                    messages=request.messages,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    timeout_seconds=request.timeout_seconds or 30.0,
+                    purpose="cognition_analyze",
+                )
+            )
+        elif hasattr(self.provider_async, "generate_async"):
             raw = await self.provider_async.generate_async(request)
         elif isinstance(self.provider_async, LLMProvider):
             raw = await asyncio.to_thread(self.provider_async.generate, request)
