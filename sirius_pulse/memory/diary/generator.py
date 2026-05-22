@@ -110,19 +110,9 @@ class DiaryGenerator:
             try:
                 raw = await brain.raw_call(raw_request)
             except Exception as exc:
-                logger.warning(
-                    "日记生成 LLM 调用失败 (group=%s, attempt=%d/%d): %s",
-                    group_id,
-                    attempt + 1,
-                    max_retries + 1,
-                    exc,
-                )
-                if attempt < max_retries:
-                    continue
                 logger.error(
-                    "日记生成 LLM 调用已耗尽 %d 次重试 (group=%s)",
-                    max_retries + 1,
-                    group_id,
+                    "日记生成 LLM 调用已耗尽所有重试 (group=%s): %s",
+                    group_id, exc,
                 )
                 return None
 

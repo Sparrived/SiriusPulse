@@ -70,8 +70,8 @@ class ChatRequest:
     post_process: bool = False  # True = 启用 hook 调度（总闸），False = 完全跳过
 
     # ── 重试控制（transport 级） ──
-    retry_max: int = 2       # 最多重试次数（总调用次数 = retry_max + 1）
-    retry_delay: float = 2.0  # 重试间隔（秒）
+    retry_max: int = 1       # 最多重试次数（总调用次数 = retry_max + 1）
+    retry_delay: float = 1.0  # 重试间隔（秒）
 
 
 @dataclass(slots=True)
@@ -102,6 +102,10 @@ class RawRequest:
     max_tokens: int = 512
     timeout_seconds: float = 30.0
     purpose: str = "cognition_analyze"
+
+    # ── 重试控制（transport 级） ──
+    retry_max: int = 2       # 最多重试次数（总调用次数 = retry_max + 1）
+    retry_delay: float = 1.0  # 重试间隔（秒）
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -203,6 +207,9 @@ class Brain:
         self._pre_hooks: list[_PreHookEntry] = []
         self._post_hooks: list[_PostHookEntry] = []
 
+        # ── chat() 串行化锁 ──
+        self._chat_lock = asyncio.Lock()
+
     # ═══════════════════════════════════════════════════════════════════
     # 上下文函数注入
     # ═══════════════════════════════════════════════════════════════════
@@ -268,7 +275,7 @@ class Brain:
 
         处理链：
         1. 构建 GenerationRequest
-        2. provider.generate_async()
+        2. provider.generate_async()（带 transport 级重试）
         3. 基础 token 统计
         4. 返回原始文本
 
@@ -287,7 +294,12 @@ class Brain:
         )
 
         t0 = time.perf_counter()
-        raw = await self._provider_call(gen_request)
+        raw, _, _ = await self._call_with_retry(
+            gen_request,
+            retry_max=request.retry_max,
+            retry_delay=request.retry_delay,
+            purpose_desc=f"raw_call({request.purpose})",
+        )
         duration_ms = round((time.perf_counter() - t0) * 1000, 2)
 
         self._record_raw_tokens(gen_request, raw, duration_ms)
@@ -299,174 +311,212 @@ class Brain:
     # ═══════════════════════════════════════════════════════════════════
 
     async def chat(self, request: ChatRequest) -> ChatResult:
-        """执行一次上下文感知的对话生成。
+        """执行一次上下文感知的对话生成（串行执行）。
+
+        chat() 调用之间串行化，保证消息处理顺序与接收顺序一致。
+        raw_call() 不受此锁影响，可与 chat() 并行。
 
         处理链：
         1. 用户 pre-hooks（按注册顺序）
         2. 默认 pre: 语气对齐 → 时间注入 → 模型路由 → 风格覆盖
-        3. provider.generate_async()
+        3. provider.generate_async()（带 transport 级重试，重试时刷新上下文）
         4. 默认 post: XML 剥离 → SKIP 检测 → SKILL 解析 → 表情包解析 → token 记录
         5. 用户 post-hooks（按注册顺序）
 
         SKILL 反馈循环由调用方管理，chat() 只负责单轮生成。
         """
-        ctx: dict[str, Any] = {}
-        ctx["task_name"] = request.task_name
-        system_prompt = request.system_prompt
+        async with self._chat_lock:
+            ctx: dict[str, Any] = {}
+            ctx["task_name"] = request.task_name
+            system_prompt = request.system_prompt
 
-        # ── 1. 用户 pre-hooks（post_process 总闸 + task_filter 过滤）──
-        task_name = ctx["task_name"]
-        if request.post_process:
-            for entry in self._pre_hooks:
-                if entry.task_filter is not None and task_name not in entry.task_filter:
-                    continue
-                entry.hook(self, request, ctx)
+            # ── 1. 用户 pre-hooks（post_process 总闸 + task_filter 过滤）──
+            task_name = ctx["task_name"]
+            if request.post_process:
+                for entry in self._pre_hooks:
+                    if entry.task_filter is not None and task_name not in entry.task_filter:
+                        continue
+                    entry.hook(self, request, ctx)
 
-        # ── 2. 默认 pre: 人格注入（无条件，最高优先级）──
-        persona_base = self.persona.build_system_prompt()
-        if self.sticker_names:
-            persona_base += PromptFactory.build_sticker_options_prompt(self.sticker_names)
-        system_prompt = persona_base + "\n\n" + system_prompt
+            # ── 2. 默认 pre: 人格注入（无条件，最高优先级）──
+            persona_base = self.persona.build_system_prompt()
+            if self.sticker_names:
+                persona_base += PromptFactory.build_sticker_options_prompt(self.sticker_names)
+            system_prompt = persona_base + "\n\n" + system_prompt
 
-        # ── 3. 默认 pre: 语气对齐 ──
-        if self._get_tone_alignment_fn is not None:
-            tone_hint = self._get_tone_alignment_fn(request.group_id)
-            if tone_hint:
-                system_prompt = system_prompt + "\n\n" + tone_hint
+            # ── 3. 默认 pre: 语气对齐 ──
+            if self._get_tone_alignment_fn is not None:
+                tone_hint = self._get_tone_alignment_fn(request.group_id)
+                if tone_hint:
+                    system_prompt = system_prompt + "\n\n" + tone_hint
 
-        # ── 默认 pre: 当前时间注入 ──
-        china_tz = timezone(timedelta(hours=8))
-        now_str = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S")
-        system_prompt = PromptFactory.build_current_time_section(now_str) + "\n\n" + system_prompt
+            # 保存时间注入前的 prompt 基底，用于重试时以最新时间刷新
+            base_system_prompt = system_prompt
 
-        # ── 默认 pre: 模型路由 ──
-        heat_level = "warm"
-        if self.rhythm_analyzer is not None and self._recent_messages_fn is not None:
-            recent = self._recent_messages_fn(request.group_id, 5)
-            rhythm = self.rhythm_analyzer.analyze(request.group_id, recent)
-            heat_level = rhythm.heat_level
+            # ── 默认 pre: 当前时间注入 ──
+            china_tz = timezone(timedelta(hours=8))
+            now_str = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S")
+            system_prompt = PromptFactory.build_current_time_section(now_str) + "\n\n" + system_prompt
 
-        cfg = self.router.resolve(
-            request.task_name,
-            urgency=request.urgency,
-            heat_level=heat_level,
-        )
+            # ── 默认 pre: 模型路由 ──
+            heat_level = "warm"
+            if self.rhythm_analyzer is not None and self._recent_messages_fn is not None:
+                recent = self._recent_messages_fn(request.group_id, 5)
+                rhythm = self.rhythm_analyzer.analyze(request.group_id, recent)
+                heat_level = rhythm.heat_level
 
-        # ── 默认 pre: 风格覆盖 ──
-        if request.style_params:
-            effective_max_tokens = min(cfg.max_tokens, request.style_params.max_tokens)
-            effective_temperature = request.style_params.temperature
-        elif request.temperature is not None or request.max_tokens is not None:
-            effective_max_tokens = request.max_tokens if request.max_tokens else cfg.max_tokens
-            effective_temperature = request.temperature if request.temperature else cfg.temperature
-        else:
-            effective_max_tokens = cfg.max_tokens
-            effective_temperature = cfg.temperature
-
-        # ── 构建 GenerationRequest ──
-        from sirius_pulse.providers.base import GenerationRequest
-
-        gen_request = GenerationRequest(
-            model=cfg.model_name,
-            system_prompt=system_prompt.strip(),
-            messages=request.messages,
-            temperature=effective_temperature,
-            max_tokens=effective_max_tokens,
-            timeout_seconds=cfg.timeout,
-            purpose=request.task_name,
-        )
-
-        # 估算输入 token
-        from sirius_pulse.providers.base import estimate_generation_request_input_tokens
-
-        estimated_input_tokens = estimate_generation_request_input_tokens(gen_request)
-
-        # 调试日志
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "LLM prompt for group=%s:\nSYSTEM:\n%s\n\nMESSAGES:\n%s",
-                request.group_id,
-                system_prompt,
-                "\n".join(
-                    f"  [{m.get('role')}] {m.get('content', '')[:200]}" for m in request.messages
-                ),
-            )
-
-        # ── 3. 调用 provider ──
-        reply = ""
-        duration_ms = 0.0
-        try:
-            t0 = time.perf_counter()
-            reply = await self._provider_call(gen_request)
-            duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-        except Exception as exc:
-            error_type = (
-                self._classify_exception_fn(exc) if self._classify_exception_fn else "unknown"
-            )
-            error_message = str(exc)[:200]
-            logger.warning(
-                "[%s] 生成失败: %s | %s",
+            cfg = self.router.resolve(
                 request.task_name,
-                error_type,
-                error_message,
+                urgency=request.urgency,
+                heat_level=heat_level,
             )
-            raise
 
-        # ── 4. 默认 post: 剥离模型回显的 XML 块 ──
-        reply = self._strip_conversation_history_xml(reply)
+            # ── 默认 pre: 风格覆盖 ──
+            if request.style_params:
+                effective_max_tokens = min(cfg.max_tokens, request.style_params.max_tokens)
+                effective_temperature = request.style_params.temperature
+            elif request.temperature is not None or request.max_tokens is not None:
+                effective_max_tokens = request.max_tokens if request.max_tokens else cfg.max_tokens
+                effective_temperature = request.temperature if request.temperature else cfg.temperature
+            else:
+                effective_max_tokens = cfg.max_tokens
+                effective_temperature = cfg.temperature
 
-        # ── 默认 post: SKIP 标签检测 ──
-        if re.search(r"<\s*skip\s*/?\s*>", reply, flags=re.IGNORECASE):
-            logger.info("[%s] LLM 主动选择跳过回复（输出 skip 标签）。", request.task_name)
+            # ── 构建 GenerationRequest ──
+            from sirius_pulse.providers.base import GenerationRequest
+
+            gen_request = GenerationRequest(
+                model=cfg.model_name,
+                system_prompt=system_prompt.strip(),
+                messages=request.messages,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
+                timeout_seconds=cfg.timeout,
+                purpose=request.task_name,
+            )
+
+            # 估算输入 token
+            from sirius_pulse.providers.base import estimate_generation_request_input_tokens
+
+            estimated_input_tokens = estimate_generation_request_input_tokens(gen_request)
+
+            # 定义重试时的 gen_request 刷新函数：重新拉取上下文 + 刷新当前时间
+            async def _rebuild_gen_request() -> GenerationRequest:
+                if request.post_process:
+                    for entry in self._pre_hooks:
+                        if entry.task_filter is not None and task_name not in entry.task_filter:
+                            continue
+                        entry.hook(self, request, ctx)
+                china_tz = timezone(timedelta(hours=8))
+                now_str = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S")
+                fresh_time = PromptFactory.build_current_time_section(now_str)
+                fresh_system_prompt = fresh_time + "\n\n" + base_system_prompt
+                return GenerationRequest(
+                    model=cfg.model_name,
+                    system_prompt=fresh_system_prompt.strip(),
+                    messages=request.messages,
+                    temperature=effective_temperature,
+                    max_tokens=effective_max_tokens,
+                    timeout_seconds=cfg.timeout,
+                    purpose=request.task_name,
+                )
+
+            # 调试日志
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "LLM prompt for group=%s:\nSYSTEM:\n%s\n\nMESSAGES:\n%s",
+                    request.group_id,
+                    system_prompt,
+                    "\n".join(
+                        f"  [{m.get('role')}] {m.get('content', '')[:200]}" for m in request.messages
+                    ),
+                )
+
+            # ── 3. 调用 provider（带 transport 级重试，重试时刷新上下文）──
             reply = ""
+            duration_ms = 0.0
+            real_usage: dict | None = None
+            try:
+                t0 = time.perf_counter()
+                reply, gen_request, real_usage = await self._call_with_retry(
+                    gen_request,
+                    retry_max=request.retry_max,
+                    retry_delay=request.retry_delay,
+                    purpose_desc=f"chat({request.task_name})",
+                    rebuild_fn=_rebuild_gen_request,
+                )
+                duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+                # gen_request 可能在重试时被刷新，重新估算输入 token
+                estimated_input_tokens = estimate_generation_request_input_tokens(gen_request)
+            except Exception as exc:
+                error_type = (
+                    self._classify_exception_fn(exc) if self._classify_exception_fn else "unknown"
+                )
+                error_message = str(exc)[:200]
+                logger.warning(
+                    "[%s] 生成失败: %s | %s",
+                    request.task_name,
+                    error_type,
+                    error_message,
+                )
+                raise
 
-        # ── 默认 post: 解析 SKILL_CALL 标记 ──
-        skill_calls: list[tuple[str, dict[str, Any]]] = []
-        if request.enable_skills:
-            from sirius_pulse.skills.executor import parse_skill_calls
+            # ── 4. 默认 post: 剥离模型回显的 XML 块 ──
+            reply = self._strip_conversation_history_xml(reply)
 
-            skill_calls = parse_skill_calls(reply)
+            # ── 默认 post: SKIP 标签检测 ──
+            if re.search(r"<\s*skip\s*/?\s*>", reply, flags=re.IGNORECASE):
+                logger.info("[%s] LLM 主动选择跳过回复（输出 skip 标签）。", request.task_name)
+                reply = ""
 
-        # ── 默认 post: 解析表情包标签 ──
-        from sirius_pulse.skills.executor import strip_skill_calls
+            # ── 默认 post: 解析 SKILL_CALL 标记 ──
+            skill_calls: list[tuple[str, dict[str, Any]]] = []
+            if request.enable_skills:
+                from sirius_pulse.skills.executor import parse_skill_calls
 
-        sticker_names: list[str] = []
-        clean_reply = strip_skill_calls(reply).strip()
-        if clean_reply:
-            clean_reply, sticker_names = self._parse_sticker_tags(clean_reply)
+                skill_calls = parse_skill_calls(reply)
 
-        # ── 默认 post: 记录 token 用量 ──
-        token_record = self._record_chat_tokens(
-            gen_request=gen_request,
-            system_prompt_used=system_prompt,
-            reply=reply,
-            estimated_input_tokens=estimated_input_tokens,
-            duration_ms=duration_ms,
-            group_id=request.group_id,
-            task_name=request.task_name,
-            last_reply_at=request.last_reply_at,
-            last_reply_depth=request.last_reply_depth,
-        )
+            # ── 默认 post: 解析表情包标签 ──
+            from sirius_pulse.skills.executor import strip_skill_calls
 
-        result = ChatResult(
-            raw_text=reply,
-            clean_text=clean_reply,
-            model_name=cfg.model_name,
-            duration_ms=duration_ms,
-            token_record=token_record,
-            sticker_names=sticker_names,
-            has_skill_call=bool(skill_calls),
-            skill_calls=skill_calls,
-        )
+            sticker_names: list[str] = []
+            clean_reply = strip_skill_calls(reply).strip()
+            if clean_reply:
+                clean_reply, sticker_names = self._parse_sticker_tags(clean_reply)
 
-        # ── 5. 用户 post-hooks（post_process 总闸 + task_filter 过滤）──
-        if request.post_process:
-            for entry in self._post_hooks:
-                if entry.task_filter is not None and task_name not in entry.task_filter:
-                    continue
-                entry.hook(self, request, result, ctx)
+            # ── 默认 post: 记录 token 用量 ──
+            token_record = self._record_chat_tokens(
+                gen_request=gen_request,
+                system_prompt_used=system_prompt,
+                reply=reply,
+                estimated_input_tokens=estimated_input_tokens,
+                duration_ms=duration_ms,
+                group_id=request.group_id,
+                task_name=request.task_name,
+                last_reply_at=request.last_reply_at,
+                last_reply_depth=request.last_reply_depth,
+                real_usage=real_usage,
+            )
 
-        return result
+            result = ChatResult(
+                raw_text=reply,
+                clean_text=clean_reply,
+                model_name=cfg.model_name,
+                duration_ms=duration_ms,
+                token_record=token_record,
+                sticker_names=sticker_names,
+                has_skill_call=bool(skill_calls),
+                skill_calls=skill_calls,
+            )
+
+            # ── 5. 用户 post-hooks（post_process 总闸 + task_filter 过滤）──
+            if request.post_process:
+                for entry in self._post_hooks:
+                    if entry.task_filter is not None and task_name not in entry.task_filter:
+                        continue
+                    entry.hook(self, request, result, ctx)
+
+            return result
 
     async def generate_text(
         self,
@@ -503,6 +553,53 @@ class Brain:
     # ═══════════════════════════════════════════════════════════════════
     # 内部方法
     # ═══════════════════════════════════════════════════════════════════
+
+    async def _call_with_retry(
+        self,
+        gen_request: Any,
+        *,
+        retry_max: int,
+        retry_delay: float,
+        purpose_desc: str,
+        rebuild_fn: Callable[[], Any] | None = None,
+    ) -> tuple[str, Any, dict | None]:
+        """调用 provider，在 transport 级异常时自动重试。
+
+        重试阈值由调用方通过 retry_max / retry_delay 控制。
+        如果提供 rebuild_fn，在每次重试前调用它以获取新的 gen_request，
+        从而在重试时可以使用最新的上下文（如最新消息、当前时间等）。
+        全部重试耗尽后抛出最后一次异常。
+
+        Returns:
+            (原始响应文本, 最终使用的 gen_request, 真实 token 用量或 None)
+        """
+        from sirius_pulse.providers.base import get_last_generation_usage
+
+        current = gen_request
+        last_exc: Exception | None = None
+        for attempt in range(retry_max + 1):
+            try:
+                raw = await self._provider_call(current)
+                # 立即捕获 token 用量，避免后续 await 点被其他协程覆盖
+                real_usage = get_last_generation_usage()
+                return raw, current, real_usage
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retry_max:
+                    logger.warning(
+                        "%s LLM 调用失败 (attempt=%d/%d): %s",
+                        purpose_desc, attempt + 1, retry_max + 1, exc,
+                    )
+                    await asyncio.sleep(retry_delay)
+                    if rebuild_fn:
+                        current = await rebuild_fn() if asyncio.iscoroutinefunction(rebuild_fn) else rebuild_fn()
+                else:
+                    logger.error(
+                        "%s LLM 调用已耗尽 %d 次重试: %s",
+                        purpose_desc, retry_max + 1, exc,
+                    )
+        # 所有重试均失败，抛出最后一次异常
+        raise last_exc  # type: ignore[misc]
 
     async def _provider_call(self, request: Any) -> str:
         """调用 provider 生成回复。"""
@@ -619,15 +716,14 @@ class Brain:
         task_name: str,
         last_reply_at: float,
         last_reply_depth: int,
+        real_usage: dict | None = None,
     ) -> Any:
         """记录 chat() 通道的完整 token 用量。"""
         from sirius_pulse.config import TokenUsageRecord
-        from sirius_pulse.providers.base import get_last_generation_usage
         from sirius_pulse.token.utils import estimate_tokens
 
         output_chars = len(reply)
         estimated_output_tokens = estimate_tokens(reply) if reply else 0
-        real_usage = get_last_generation_usage()
         if real_usage and isinstance(real_usage, dict):
             prompt_tokens = int(real_usage.get("prompt_tokens", estimated_input_tokens))
             completion_tokens = int(real_usage.get("completion_tokens", estimated_output_tokens))
