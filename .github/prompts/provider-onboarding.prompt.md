@@ -1,11 +1,11 @@
 ---
 agent: ask
-description: "为 Sirius Chat 生成并接入新的 LLM provider 实现，同时完成测试与文档同步。"
+description: "为 Sirius Pulse 生成并接入新的 LLM provider 实现，同时完成测试与文档同步。"
 ---
 
 # Provider 接入
 
-为 Sirius Chat 创建一个新的 provider 集成。
+为 Sirius Pulse 创建一个新的 provider 集成。
 
 ## 输入参数
 
@@ -16,9 +16,9 @@ description: "为 Sirius Chat 生成并接入新的 LLM provider 实现，同时
 
 ## 必须产出
 
-1. 在 `sirius_chat/providers/` 下创建 provider 模块。
-2. 确保其实现 `sirius_chat/providers/base.py` 中的 `LLMProvider`。
-3. 在 `sirius_chat/providers/__init__.py` 中导出，并按需在 `sirius_chat/__init__.py` 中导出。
+1. 在 `sirius_pulse/providers/` 下创建 provider 模块。
+2. 确保其实现 `sirius_pulse/providers/base.py` 中的 `LLMProvider`。
+3. 在 `sirius_pulse/providers/__init__.py` 中导出，并按需在 `sirius_pulse/__init__.py` 中导出。
 4. 按需新增/扩展测试，优先使用 `MockProvider` 模式。
 5. 在同一任务中同步更新文档与技能：
    - `docs/architecture.md`
@@ -29,5 +29,5 @@ description: "为 Sirius Chat 生成并接入新的 LLM provider 实现，同时
 
 - Provider 能正确解析成功响应。
 - Provider 对 HTTP/网络失败路径给出清晰错误。
-- `sirius_chat/async_engine.py` 中不出现 provider 特定逻辑泄漏。
+- `sirius_pulse/async_engine.py` 中不出现 provider 特定逻辑泄漏。
 - `pytest -q` 通过。

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.core.delayed_response_queue import DelayedResponseQueue
-from sirius_chat.models.response_strategy import (
+from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
+from sirius_pulse.models.response_strategy import (
     DelayedResponseItem,
     ResponseStrategy,
     StrategyDecision,
@@ -136,17 +136,17 @@ class TestTextSimilarity:
     """Test the _text_similarity helper used for deduplication."""
 
     def test_exact_match(self):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
 
         assert EmotionalGroupChatEngine._text_similarity("abc", "abc") == 1.0
 
     def test_completely_different(self):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
 
         assert EmotionalGroupChatEngine._text_similarity("abc", "xyz") < 0.2
 
     def test_high_prefix_overlap(self):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
 
         a = "收到啦临雀大人！以后每天早上九点"
         b = "收到啦临雀大人！以后每天早上九点月白都会准时"
@@ -154,7 +154,7 @@ class TestTextSimilarity:
         assert sim > 0.6
 
     def test_similar_but_not_identical(self):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
 
         a = "无名大人太厉害啦，9小时曝光的草帽星系一定超美喵！"
         b = "哇，这次是曝光9.3小时的M104草帽星系喵！无名大人太厉害啦"
@@ -163,7 +163,7 @@ class TestTextSimilarity:
         assert sim > 0.3
 
     def test_empty_strings(self):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
 
         assert EmotionalGroupChatEngine._text_similarity("", "hello") == 0.0
         assert EmotionalGroupChatEngine._text_similarity("hello", "") == 0.0

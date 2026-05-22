@@ -4,7 +4,7 @@
 
 ## 一句话定位
 
-WebUI 是 Sirius Chat 的**控制平面**。通过一个浏览器页面，你可以创建人格、启动/停止子进程、查看日志、配置 Provider、管理 NapCat 实例，而无需手动编辑 JSON 文件。
+WebUI 是 Sirius Pulse 的**控制平面**。通过一个浏览器页面，你可以创建人格、启动/停止子进程、查看日志、配置 Provider、管理 NapCat 实例，而无需手动编辑 JSON 文件。
 
 ## 为什么需要它
 
@@ -147,7 +147,7 @@ await server.stop()    # 清理站点和 runner
 
 ## 静态页面
 
-前端页面位于 `sirius_chat/webui/static/`，由 aiohttp 直接 serve：
+前端页面位于 `sirius_pulse/webui/static/`，由 aiohttp 直接 serve：
 
 - **Dashboard** — 系统状态总览（WebUI 运行状态、人格 worker 状态）
 - **Personas** — 人格列表、创建、启停、删除、日志查看

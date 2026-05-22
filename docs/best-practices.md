@@ -1,4 +1,4 @@
-# Sirius Chat 最佳实践指南（v1.1+）
+# Sirius Pulse 最佳实践指南（v1.1+）
 
 ## 1. 并发会话管理
 
@@ -8,7 +8,7 @@
 
 ```python
 import asyncio
-from sirius_chat import create_emotional_engine, Message, Participant
+from sirius_pulse import create_emotional_engine, Message, Participant
 
 async def handle_group(engine, group_id: str, messages: list[tuple[str, str]]):
     """为单个群聊处理消息。"""
@@ -56,7 +56,7 @@ result_b = await engine.process_message(msg_b, participants_b, group_id="group_b
 
 ```python
 import asyncio
-from sirius_chat.exceptions import SiriusChatException, ProviderError
+from sirius_pulse.exceptions import SiriusChatException, ProviderError
 
 async def safe_process_message(engine, message, participants, group_id):
     try:
@@ -157,7 +157,7 @@ finally:
 ### 监控
 
 ```python
-from sirius_chat.core.events import SessionEventType
+from sirius_pulse.core.events import SessionEventType
 
 async def monitor(engine):
     async for event in engine.event_bus.subscribe():

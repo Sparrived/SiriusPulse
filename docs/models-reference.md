@@ -4,7 +4,7 @@
 
 ## 一句话定位
 
-`sirius_chat/models/` 目录定义了引擎、记忆、平台和 provider 层之间传递的**所有核心数据结构**，是跨模块协作的契约基础。
+`sirius_pulse/models/` 目录定义了引擎、记忆、平台和 provider 层之间传递的**所有核心数据结构**，是跨模块协作的契约基础。
 
 ## 为什么需要它
 
@@ -19,7 +19,7 @@
 ## 模型目录结构
 
 ```
-sirius_chat/models/
+sirius_pulse/models/
 ├── models.py           # 核心聊天原语：Message、Participant、Transcript
 ├── persona.py          # 人格定义：PersonaProfile
 ├── emotion.py          # 情绪状态：EmotionState、AssistantEmotionState、EmpathyStrategy

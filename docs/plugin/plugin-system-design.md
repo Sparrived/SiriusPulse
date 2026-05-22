@@ -1,4 +1,4 @@
-# Sirius Chat Plugin 系统架构设计文档
+# Sirius Pulse Plugin 系统架构设计文档
 
 > **版本**: v1.0-draft  
 > **状态**: 设计阶段  
@@ -29,7 +29,7 @@
 
 ### 1.1 解决什么问题
 
-现有 Sirius Chat 的扩展能力分为两层：
+现有 Sirius Pulse 的扩展能力分为两层：
 
 - **ActiveSkill**: AI 自主决定调用，走 `[SKILL_CALL:...]` 标记，结果直出，不经过人格风格化。
 - **PassiveSkill**: 旁路定时任务或事件监听，直接执行 Python 函数，自行处理输出。
@@ -414,8 +414,8 @@ data/personas/{persona_name}/
 ### 5.2 PluginBase 类属性格式（元数据）
 
 ```python
-from sirius_chat.plugins import PluginBase, PluginResponse
-from sirius_chat.plugins.decorators import command
+from sirius_pulse.plugins import PluginBase, PluginResponse
+from sirius_pulse.plugins.decorators import command
 
 
 class WeatherPlugin(PluginBase):
@@ -981,7 +981,7 @@ graph LR
 
 | 阶段 | 内容 | 预计工作量 | 产出 |
 |------|------|-----------|------|
-| **Phase 1** | 核心框架：数据模型、Lexer/Parser、Registry、Loader | 3-4 天 | `sirius_chat/plugins/` 基础包 |
+| **Phase 1** | 核心框架：数据模型、Lexer/Parser、Registry、Loader | 3-4 天 | `sirius_pulse/plugins/` 基础包 |
 | **Phase 2** | 执行引擎：Executor、Context、AdapterProxy | 2-3 天 | Plugin 可执行，支持 direct 模式 |
 | **Phase 3** | LLM 集成：PromptFactory 扩展、风格化生成 | 1-2 天 | 支持 llm 模式 |
 | **Phase 4** | 事件系统：Timer、Webhook、EventBus | 2-3 天 | 支持事件触发型 Plugin |
@@ -1028,8 +1028,8 @@ graph TD
 
 ```python
 # data/personas/test/plugins/hello/__init__.py
-from sirius_chat.plugins import PluginBase, PluginResponse
-from sirius_chat.plugins.decorators import command
+from sirius_pulse.plugins import PluginBase, PluginResponse
+from sirius_pulse.plugins.decorators import command
 
 
 class HelloPlugin(PluginBase):

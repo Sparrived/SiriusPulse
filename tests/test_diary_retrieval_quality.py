@@ -12,10 +12,10 @@ import tempfile
 
 import pytest
 
-from sirius_chat.embedding.client import EmbeddingClient
-from sirius_chat.memory.diary.indexer import DiaryIndexer
-from sirius_chat.memory.diary.models import DiaryEntry
-from sirius_chat.memory.diary.vector_store import DiaryVectorStore
+from sirius_pulse.embedding.client import EmbeddingClient
+from sirius_pulse.memory.diary.indexer import DiaryIndexer
+from sirius_pulse.memory.diary.models import DiaryEntry
+from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 
 
 def _embedding_from_text(text: str, dim: int = 64) -> list[float]:

@@ -1,13 +1,13 @@
 ---
 name: debug-diagnosis
-description: "在修改 Sirius Chat 核心模块（core/memory/providers/platforms 等）后，系统化排查异常、定位根因并验证修复。关键词：调试诊断、bug排查、异常定位、核心模块、修复验证。"
+description: "在修改 Sirius Pulse 核心模块（core/memory/providers/platforms 等）后，系统化排查异常、定位根因并验证修复。关键词：调试诊断、bug排查、异常定位、核心模块、修复验证。"
 ---
 
 # 调试诊断指南
 
 ## 目标
 
-在修改 `sirius_chat` 核心模块后出现异常或行为偏离预期时，通过结构化的排查流程快速定位根因，避免盲目猜测和过度修复。
+在修改 `sirius_pulse` 核心模块后出现异常或行为偏离预期时，通过结构化的排查流程快速定位根因，避免盲目猜测和过度修复。
 
 ## 语言规范（强制）
 
@@ -18,9 +18,9 @@ description: "在修改 Sirius Chat 核心模块（core/memory/providers/platfor
 ## 触发条件
 
 当以下场景出现时，必须执行本流程：
-- 修改 `sirius_chat/core/`、`sirius_chat/memory/`、`sirius_chat/providers/`、`sirius_chat/platforms/` 后测试失败或行为异常
-- 修改 `sirius_chat/models/` 数据模型后引发上下游兼容性问题
-- 修改 `sirius_chat/config/` 配置系统后导致引擎初始化失败
+- 修改 `sirius_pulse/core/`、`sirius_pulse/memory/`、`sirius_pulse/providers/`、`sirius_pulse/platforms/` 后测试失败或行为异常
+- 修改 `sirius_pulse/models/` 数据模型后引发上下游兼容性问题
+- 修改 `sirius_pulse/config/` 配置系统后导致引擎初始化失败
 - 运行时出现未捕获异常、无限循环、内存泄漏或响应延迟剧增
 - 用户明确要求"帮我排查这个问题"或"为什么出错了"
 
@@ -52,7 +52,7 @@ git diff HEAD~1 --name-only
 git diff HEAD~1 --stat
 
 # 查看特定文件的改动
-git diff HEAD~1 -- sirius_chat/core/emotional_engine.py
+git diff HEAD~1 -- sirius_pulse/core/emotional_engine.py
 ```
 
 ### 步骤 2：定位异常层级
@@ -61,15 +61,15 @@ git diff HEAD~1 -- sirius_chat/core/emotional_engine.py
 
 | 异常特征 | 可能层级 | 优先检查文件 |
 |---------|---------|------------|
-| `KeyError`、`AttributeError`、`TypeError` 在数据访问时 | 数据模型/配置 | `sirius_chat/models/`、`sirius_chat/config/` |
-| 消息处理无响应或响应内容异常 | 引擎核心 | `sirius_chat/core/emotional_engine.py`、`core/prompt_factory.py`、`core/cognition.py` |
-| 记忆丢失、重复或检索异常 | 记忆系统 | `sirius_chat/memory/basic/`、`memory/diary/`、`memory/semantic/`、`memory/context_assembler.py` |
-| LLM 调用失败、超时或返回解析错误 | Provider/路由 | `sirius_chat/providers/`、`providers/routing.py` |
-| 群消息收发异常、连接断开 | 平台适配 | `sirius_chat/platforms/napcat_adapter.py`、`platforms/napcat_bridge.py` |
-| 子进程崩溃、端口冲突 | 运行时/管理 | `sirius_chat/platforms/runtime.py`、`persona_manager.py`、`persona_worker.py` |
-| 配置加载失败、路径错误 | Workspace/配置 | `sirius_chat/utils/layout.py`、`config/manager.py` |
-| SKILL 调用失败 | 技能系统 | `sirius_chat/skills/registry.py`、`skills/executor.py`、`skills/security.py` |
-| WebUI 无法访问 | WebUI | `sirius_chat/webui/server.py` |
+| `KeyError`、`AttributeError`、`TypeError` 在数据访问时 | 数据模型/配置 | `sirius_pulse/models/`、`sirius_pulse/config/` |
+| 消息处理无响应或响应内容异常 | 引擎核心 | `sirius_pulse/core/emotional_engine.py`、`core/prompt_factory.py`、`core/cognition.py` |
+| 记忆丢失、重复或检索异常 | 记忆系统 | `sirius_pulse/memory/basic/`、`memory/diary/`、`memory/semantic/`、`memory/context_assembler.py` |
+| LLM 调用失败、超时或返回解析错误 | Provider/路由 | `sirius_pulse/providers/`、`providers/routing.py` |
+| 群消息收发异常、连接断开 | 平台适配 | `sirius_pulse/platforms/napcat_adapter.py`、`platforms/napcat_bridge.py` |
+| 子进程崩溃、端口冲突 | 运行时/管理 | `sirius_pulse/platforms/runtime.py`、`persona_manager.py`、`persona_worker.py` |
+| 配置加载失败、路径错误 | Workspace/配置 | `sirius_pulse/utils/layout.py`、`config/manager.py` |
+| SKILL 调用失败 | 技能系统 | `sirius_pulse/skills/registry.py`、`skills/executor.py`、`skills/security.py` |
+| WebUI 无法访问 | WebUI | `sirius_pulse/webui/server.py` |
 
 ### 步骤 3：缩小变更范围
 
@@ -91,10 +91,10 @@ git diff HEAD~1 -- sirius_chat/core/emotional_engine.py
 
 ```python
 import pytest
-from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
-from sirius_chat.models.persona import PersonaProfile
-from sirius_chat.providers.mock import MockProvider
-from sirius_chat.models.models import Message, Participant
+from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+from sirius_pulse.models.persona import PersonaProfile
+from sirius_pulse.providers.mock import MockProvider
+from sirius_pulse.models.models import Message, Participant
 
 @pytest.mark.asyncio
 async def test_reproduce_issue(tmp_path):
@@ -129,7 +129,7 @@ async def test_reproduce_issue(tmp_path):
 - [ ] 该模块的全部测试通过：`pytest tests/test_<module>.py -q`
 - [ ] 全量测试通过：`pytest tests/ -q`
 - [ ] `python main.py --help` 正常输出。
-- [ ] 若修改了外部接口，`sirius_chat/__init__.py` 已同步更新。
+- [ ] 若修改了外部接口，`sirius_pulse/__init__.py` 已同步更新。
 
 ### 步骤 6：日志与监控增强（可选）
 
@@ -144,7 +144,7 @@ async def test_reproduce_issue(tmp_path):
 
 | 现象 | 常见根因 | 快速验证 |
 |------|---------|---------|
-| `ModuleNotFoundError` | 新增文件未包含在包内或 `__init__.py` 未导出 | 检查 `sirius_chat/__init__.py` 的 `__all__` |
+| `ModuleNotFoundError` | 新增文件未包含在包内或 `__init__.py` 未导出 | 检查 `sirius_pulse/__init__.py` 的 `__all__` |
 | `PersonaProfile` 反序列化失败 | 新增必填字段无默认值 | 检查 `persona.json` 与 `PersonaProfile` 定义 |
 | 引擎无响应 | `sensitivity=0` 或阈值过高 | 检查 `config` 中的 `sensitivity` 和 `task_enabled` |
 | LLM 返回解析失败 | 模型返回被截断或非预期格式 | 检查 `MockProvider` 响应格式是否匹配预期 |

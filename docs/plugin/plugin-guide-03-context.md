@@ -85,7 +85,7 @@ async def announce(self, msg: str) -> PluginResponse:
 ### 3.2 发送多模态消息
 
 ```python
-from sirius_chat.adapters import MessageGroup, text, at, image
+from sirius_pulse.adapters import MessageGroup, text, at, image
 
 async def send_weather_card(self, city: str) -> PluginResponse:
     msg = MessageGroup([
@@ -192,7 +192,7 @@ async def call_raw_api(self) -> PluginResponse:
 class MessageContext:
     group_id: str         # 群号（私聊时为空）
     user_id: str          # 发送者 ID
-    channel: str          # 平台标识（如 "qq_native_sirius_chat"）
+    channel: str          # 平台标识（如 "qq_native_sirius_pulse"）
     channel_user_id: str  # 平台原生用户 ID（如 QQ 号）
     message_id: str       # 消息 ID
     content: str          # 消息纯文本内容

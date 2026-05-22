@@ -1,8 +1,8 @@
-# Sirius Chat 完整架构流程
+# Sirius Pulse 完整架构流程
 
 > **v1.0 多人格架构的真实执行路径与模块边界**
 >
-> 本文档用人类易读的方式，从"一条消息怎么被处理"到"整个系统怎么运转"，完整描述 Sirius Chat 的架构。流程图使用 Mermaid 语法，可在支持 Mermaid 的编辑器或浏览器中渲染。
+> 本文档用人类易读的方式，从"一条消息怎么被处理"到"整个系统怎么运转"，完整描述 Sirius Pulse 的架构。流程图使用 Mermaid 语法，可在支持 Mermaid 的编辑器或浏览器中渲染。
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1.1 你在看什么
 
-Sirius Chat 是一个**支持多人格启用的异步角色扮演程序**。想象一个 QQ 群里同时有几个不同的 AI 角色在聊天——有的活泼、有的高冷、有的毒舌——每个人格独立运行、独立记忆、独立配置。
+Sirius Pulse 是一个**支持多人格启用的异步角色扮演程序**。想象一个 QQ 群里同时有几个不同的 AI 角色在聊天——有的活泼、有的高冷、有的毒舌——每个人格独立运行、独立记忆、独立配置。
 
 ### 1.2 进程模型
 
@@ -84,7 +84,7 @@ flowchart TD
     C --> D["NapCatManager 全局安装检查<br/>自动安装缺失的 NapCat 二进制"]
     D --> E["为每个 enabled 人格<br/>分配 NapCat 端口与实例目录"]
     E --> F["为每个人格启动 NapCat 实例<br/>CREATE_NEW_CONSOLE"]
-    F --> G["为每个人格启动 PersonaWorker 子进程<br/>python -m sirius_chat.persona_worker --config {pdir}"]
+    F --> G["为每个人格启动 PersonaWorker 子进程<br/>python -m sirius_pulse.persona_worker --config {pdir}"]
     G --> H["启动 WebUIServer<br/>aiohttp REST API"]
     H --> I["主进程阻塞等待<br/>SIGTERM/SIGINT 优雅退出"]
     I --> J["停止所有子进程<br/>停止 NapCat 实例<br/>停止 WebUI"]
@@ -421,7 +421,7 @@ flowchart TD
 引擎在处理每条消息时发射事件，外部可以订阅：
 
 ```python
-from sirius_chat.core.events import SessionEventType
+from sirius_pulse.core.events import SessionEventType
 
 async for event in engine.event_bus.subscribe():
     if event.type == SessionEventType.PERCEPTION_COMPLETED:

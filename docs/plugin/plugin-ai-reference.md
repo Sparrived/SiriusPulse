@@ -1,4 +1,4 @@
-# Sirius Chat Plugin 编写规范（AI 参考）
+# Sirius Pulse Plugin 编写规范（AI 参考）
 
 > 面向 AI 编码助手的精简参考。包含所有必需的代码模式、API 签名和项目约定。
 
@@ -18,8 +18,8 @@ plugins/<plugin_dir>/
 ## 2. 最小模板
 
 ```python
-from sirius_chat.plugins import PluginBase, PluginResponse
-from sirius_chat.plugins.decorators import command
+from sirius_pulse.plugins import PluginBase, PluginResponse
+from sirius_pulse.plugins.decorators import command
 
 
 class XxxPlugin(PluginBase):
@@ -189,7 +189,7 @@ self.ctx.logger.warning(...)
 ## 7. MessageGroup 多模态
 
 ```python
-from sirius_chat.adapters import (
+from sirius_pulse.adapters import (
     MessageGroup, text, at, image, voice, file, reply
 )
 
@@ -257,9 +257,9 @@ rendered = self.render_template("report.txt", {"title": "日报", "date": "2025-
 ## 11. 完整示例
 
 ```python
-from sirius_chat.plugins import PluginBase, PluginResponse
-from sirius_chat.plugins.decorators import command
-from sirius_chat.adapters import MessageGroup, image
+from sirius_pulse.plugins import PluginBase, PluginResponse
+from sirius_pulse.plugins.decorators import command
+from sirius_pulse.adapters import MessageGroup, image
 
 
 class WeatherPlugin(PluginBase):

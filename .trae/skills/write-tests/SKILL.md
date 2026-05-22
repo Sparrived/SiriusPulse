@@ -9,7 +9,7 @@ description: "编写新测试文件或为现有模块补充测试时使用，覆
 
 ## 目标
 
-为 Sirius Chat 编写正确、快速、可维护的 pytest 测试。所有测试必须满足三个核心要求：
+为 Sirius Pulse 编写正确、快速、可维护的 pytest 测试。所有测试必须满足三个核心要求：
 
 1. **快（Fast）**：单个测试用例应在 **1 秒以内** 完成；整个测试套件目标 **30 秒以内**。
 2. **准（Precise）**：一个测试函数只验证一个概念，断言直接指向被测行为。
@@ -49,10 +49,10 @@ engine = EmotionalGroupChatEngine(
 ## 二、标准 Provider 与引擎初始化
 
 ```python
-from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
-from sirius_chat.models.persona import PersonaProfile
-from sirius_chat.models.models import Message, Participant
-from sirius_chat.providers.mock import MockProvider
+from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+from sirius_pulse.models.persona import PersonaProfile
+from sirius_pulse.models.models import Message, Participant
+from sirius_pulse.providers.mock import MockProvider
 
 provider = MockProvider(
     responses=[
@@ -160,7 +160,7 @@ async def test_something(tmp_path):
 ### MockProvider
 
 ```python
-from sirius_chat.providers.mock import MockProvider
+from sirius_pulse.providers.mock import MockProvider
 
 provider = MockProvider(responses=["reply1", "reply2"])
 # 第 3 次调用会循环回到 "reply1"
@@ -175,7 +175,7 @@ assert "system" in provider.requests[0]["messages"][0]["role"]
 ```python
 from unittest.mock import patch
 
-with patch("sirius_chat.memory.diary.generator.DiaryGenerator.generate") as mock_gen:
+with patch("sirius_pulse.memory.diary.generator.DiaryGenerator.generate") as mock_gen:
     mock_gen.return_value = DiaryEntry(...)
     # 执行被测代码...
 ```
@@ -191,7 +191,7 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.memory.basic.manager import BasicMemoryManager
+from sirius_pulse.memory.basic.manager import BasicMemoryManager
 
 
 class TestBasicMemoryHeat:

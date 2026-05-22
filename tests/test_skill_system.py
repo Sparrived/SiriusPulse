@@ -19,18 +19,18 @@ from typing import Any
 
 import pytest
 
-from sirius_chat.memory import UserProfile
-from sirius_chat.skills.models import SkillDefinition, SkillInvocationContext, SkillParameter, SkillResult
-from sirius_chat.skills.data_store import SkillDataStore
-from sirius_chat.skills.registry import SkillRegistry
-from sirius_chat.skills.telemetry import SkillExecutionRecord, SkillTelemetry
-from sirius_chat.skills.executor import (
+from sirius_pulse.memory import UserProfile
+from sirius_pulse.skills.models import SkillDefinition, SkillInvocationContext, SkillParameter, SkillResult
+from sirius_pulse.skills.data_store import SkillDataStore
+from sirius_pulse.skills.registry import SkillRegistry
+from sirius_pulse.skills.telemetry import SkillExecutionRecord, SkillTelemetry
+from sirius_pulse.skills.executor import (
     SkillExecutor,
     parse_skill_calls,
     strip_skill_calls,
     _coerce_type,
 )
-from sirius_chat.core.markers import SKILL_CALL_MARKER
+from sirius_pulse.core.markers import SKILL_CALL_MARKER
 
 
 # ─────────────────────── Model tests ───────────────────────
@@ -429,7 +429,7 @@ class TestSkillRegistry:
         assert "system_info" in registry.skill_names
 
     def test_include_builtin_skills_resolves_dependencies(self, tmp_path: Path, monkeypatch):
-        import sirius_chat.skills.registry as registry_module
+        import sirius_pulse.skills.registry as registry_module
 
         calls: list[str] = []
 
@@ -707,7 +707,7 @@ class TestSkillEngineIntegration:
     """Test that OrchestrationPolicy.enable_skills and related fields exist."""
 
     def test_orchestration_policy_skill_fields(self):
-        from sirius_chat.config.models import OrchestrationPolicy
+        from sirius_pulse.config.models import OrchestrationPolicy
 
         policy = OrchestrationPolicy(unified_model="test-model", enable_skills=True, pending_message_threshold=0.0)
         assert policy.enable_skills is True
@@ -715,14 +715,14 @@ class TestSkillEngineIntegration:
         assert SKILL_CALL_MARKER == "[SKILL_CALL:"
 
     def test_orchestration_policy_skills_default_on(self):
-        from sirius_chat.config.models import OrchestrationPolicy
+        from sirius_pulse.config.models import OrchestrationPolicy
 
         policy = OrchestrationPolicy(unified_model="test-model", pending_message_threshold=0.0)
         assert policy.enable_skills is True
 
     def test_public_api_exports(self, tmp_path):
         """Verify skill classes are importable from top-level and functional."""
-        from sirius_chat import (
+        from sirius_pulse import (
             SkillDataStore,
             SkillDefinition,
             SkillExecutor,
@@ -821,7 +821,7 @@ class TestExampleSkillSystemInfo:
 
 class TestBuiltinDesktopScreenshot:
     def test_run_returns_image_block_for_developer(self, tmp_path: Path, monkeypatch):
-        from sirius_chat.skills.builtin import desktop_screenshot
+        from sirius_pulse.skills.builtin import desktop_screenshot
 
         class _FakeImage:
             def save(self, path, format="PNG") -> None:  # noqa: A002
@@ -853,7 +853,7 @@ class TestBuiltinDesktopScreenshot:
         assert result["internal_metadata"]["analysis_focus"] == "判断主机当前在做什么"
 
     def test_run_rejects_missing_developer_context(self):
-        from sirius_chat.skills.builtin import desktop_screenshot
+        from sirius_pulse.skills.builtin import desktop_screenshot
 
         with pytest.raises(PermissionError, match="仅允许 developer 调用"):
             desktop_screenshot.run(invocation_context=None)
@@ -863,14 +863,14 @@ class TestSkillExecutionTimeout:
     """Test SKILL execution timeout mechanism."""
 
     def test_orchestration_policy_has_timeout_field(self):
-        from sirius_chat.config.models import OrchestrationPolicy
+        from sirius_pulse.config.models import OrchestrationPolicy
 
         policy = OrchestrationPolicy(unified_model="test-model", enable_skills=True, pending_message_threshold=0.0)
         assert hasattr(policy, "skill_execution_timeout")
         assert policy.skill_execution_timeout == 30.0
 
     def test_custom_timeout_value(self):
-        from sirius_chat.config.models import OrchestrationPolicy
+        from sirius_pulse.config.models import OrchestrationPolicy
 
         policy = OrchestrationPolicy(
             unified_model="test-model",
@@ -939,7 +939,7 @@ class TestDependencyResolver:
     """Test SKILL dependency resolution and auto-install logic."""
 
     def test_extract_declared_dependencies(self, tmp_path: Path):
-        from sirius_chat.skills.dependency_resolver import _extract_declared_dependencies
+        from sirius_pulse.skills.dependency_resolver import _extract_declared_dependencies
 
         skill_file = tmp_path / "my_skill.py"
         skill_file.write_text(
@@ -955,7 +955,7 @@ class TestDependencyResolver:
         assert deps == {"requests", "beautifulsoup4"}
 
     def test_extract_declared_dependencies_missing_key(self, tmp_path: Path):
-        from sirius_chat.skills.dependency_resolver import _extract_declared_dependencies
+        from sirius_pulse.skills.dependency_resolver import _extract_declared_dependencies
 
         skill_file = tmp_path / "my_skill.py"
         skill_file.write_text(
@@ -967,7 +967,7 @@ class TestDependencyResolver:
         assert deps == set()
 
     def test_extract_imported_packages(self, tmp_path: Path):
-        from sirius_chat.skills.dependency_resolver import _extract_imported_packages
+        from sirius_pulse.skills.dependency_resolver import _extract_imported_packages
 
         skill_file = tmp_path / "my_skill.py"
         skill_file.write_text(
@@ -984,7 +984,7 @@ class TestDependencyResolver:
         assert "pathlib" in pkgs
 
     def test_extract_imported_packages_normalizes_pillow(self, tmp_path: Path):
-        from sirius_chat.skills.dependency_resolver import _extract_imported_packages
+        from sirius_pulse.skills.dependency_resolver import _extract_imported_packages
 
         skill_file = tmp_path / "shot.py"
         skill_file.write_text(
@@ -999,7 +999,7 @@ class TestDependencyResolver:
     def test_find_missing_checks_package_probe_names(self, monkeypatch):
         import importlib.util
 
-        from sirius_chat.skills.dependency_resolver import _find_missing
+        from sirius_pulse.skills.dependency_resolver import _find_missing
 
         def _fake_find_spec(name: str):
             if name == "PIL":
@@ -1012,28 +1012,28 @@ class TestDependencyResolver:
         assert missing == set()
 
     def test_find_missing_filters_stdlib(self):
-        from sirius_chat.skills.dependency_resolver import _find_missing
+        from sirius_pulse.skills.dependency_resolver import _find_missing
 
         candidates = {"os", "json", "sys", "pathlib", "collections"}
         missing = _find_missing(candidates)
         assert len(missing) == 0
 
     def test_find_missing_detects_nonexistent(self):
-        from sirius_chat.skills.dependency_resolver import _find_missing
+        from sirius_pulse.skills.dependency_resolver import _find_missing
 
         candidates = {"os", "_nonexistent_pkg_abc123_"}
         missing = _find_missing(candidates)
         assert "_nonexistent_pkg_abc123_" in missing
 
     def test_pick_installer_returns_valid(self):
-        from sirius_chat.skills.dependency_resolver import _pick_installer
+        from sirius_pulse.skills.dependency_resolver import _pick_installer
 
         label, cmd = _pick_installer()
         assert label in ("uv", "pip")
         assert len(cmd) >= 3
 
     def test_resolve_no_deps_needed(self, tmp_path: Path):
-        from sirius_chat.skills.dependency_resolver import resolve_skill_dependencies
+        from sirius_pulse.skills.dependency_resolver import resolve_skill_dependencies
 
         skill_file = tmp_path / "simple.py"
         skill_file.write_text(
@@ -1046,7 +1046,7 @@ class TestDependencyResolver:
         assert installed == []
 
     def test_resolve_with_auto_install_off(self, tmp_path: Path):
-        from sirius_chat.skills.dependency_resolver import resolve_skill_dependencies
+        from sirius_pulse.skills.dependency_resolver import resolve_skill_dependencies
 
         skill_file = tmp_path / "needs_dep.py"
         skill_file.write_text(
@@ -1059,7 +1059,7 @@ class TestDependencyResolver:
         assert installed == []
 
     def test_orchestration_policy_auto_install_field(self):
-        from sirius_chat.config.models import OrchestrationPolicy
+        from sirius_pulse.config.models import OrchestrationPolicy
 
         policy = OrchestrationPolicy(unified_model="m", enable_skills=True, pending_message_threshold=0.0)
         assert policy.auto_install_skill_deps is True
@@ -1074,7 +1074,7 @@ class TestDependencyResolver:
 
     def test_registry_load_passes_auto_install(self, tmp_path: Path):
         """Verify load_from_directory accepts auto_install_deps kwarg."""
-        from sirius_chat.skills.registry import SkillRegistry
+        from sirius_pulse.skills.registry import SkillRegistry
 
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
@@ -1189,7 +1189,7 @@ class TestSkillTelemetry:
     """Skill execution telemetry recording and querying."""
 
     def test_telemetry_records_success_and_failure(self, tmp_path: Path):
-        from sirius_chat.skills.telemetry import SkillTelemetry
+        from sirius_pulse.skills.telemetry import SkillTelemetry
 
         executor = SkillExecutor(tmp_path)
         # Executor stores telemetry under {work_path}/skill_data/.telemetry.jsonl
@@ -1220,7 +1220,7 @@ class TestSkillTelemetry:
         assert "boom" in records[1].error
 
     def test_telemetry_summary_aggregation(self, tmp_path: Path):
-        from sirius_chat.skills.telemetry import SkillTelemetry
+        from sirius_pulse.skills.telemetry import SkillTelemetry
 
         telemetry = SkillTelemetry(tmp_path / ".telemetry.jsonl")
 

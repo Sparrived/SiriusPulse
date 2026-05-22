@@ -29,7 +29,7 @@ SKILL 不是人手动触发的，而是 AI 在生成回复时**自己决定**要
 from __future__ import annotations
 from typing import Any
 
-from sirius_chat import SkillInvocationContext
+from sirius_pulse import SkillInvocationContext
 
 SKILL_META = {
     "name": "hello",
@@ -225,7 +225,7 @@ def run(data_store: Any = None, **kwargs: Any) -> dict:
 | `file_write` | **仅开发者** | 创建或修改文本文件 | `file`, `io` |
 | `reminder` | 所有人 | 设置定时提醒（支持主动创建 + 被动后台检查） | `utility`, `time` |
 
-内置 SKILL 存放在 `sirius_chat/skills/builtin/`。
+内置 SKILL 存放在 `sirius_pulse/skills/builtin/`。
 
 ---
 
@@ -322,7 +322,7 @@ def run(**kwargs: Any) -> dict[str, Any]:
 SKILL 文件通过导出以下工厂函数注册被动行为：
 
 ```python
-from sirius_chat import BackgroundTaskSpec, TriggerSpec, SkillEngineContext
+from sirius_pulse import BackgroundTaskSpec, TriggerSpec, SkillEngineContext
 
 def create_background_tasks(ctx: SkillEngineContext) -> list[BackgroundTaskSpec]:
     """返回要注册的周期性后台任务列表。"""
@@ -396,7 +396,7 @@ def create_triggers(ctx: SkillEngineContext) -> list[TriggerSpec]:
 """周期性清理过期缓存的被动 SKILL。"""
 from __future__ import annotations
 import asyncio
-from sirius_chat import BackgroundTaskSpec, SkillEngineContext
+from sirius_pulse import BackgroundTaskSpec, SkillEngineContext
 
 SKILL_META = {
     "name": "cache_cleaner",
@@ -503,7 +503,7 @@ def run(**kwargs):
 在 `SessionConfig` 中配置：
 
 ```python
-from sirius_chat import SessionConfig, OrchestrationPolicy
+from sirius_pulse import SessionConfig, OrchestrationPolicy
 
 config = SessionConfig(
     orchestration=OrchestrationPolicy(

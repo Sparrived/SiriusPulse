@@ -19,8 +19,8 @@
 ## 2. 第一个 `@command`
 
 ```python
-from sirius_chat.plugins import PluginBase, PluginResponse
-from sirius_chat.plugins.decorators import command
+from sirius_pulse.plugins import PluginBase, PluginResponse
+from sirius_pulse.plugins.decorators import command
 
 
 class WeatherPlugin(PluginBase):

@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sirius_chat.logging_config import configure_logging
+from sirius_pulse.logging_config import configure_logging
 
 REPO_ROOT = Path(__file__).resolve().parent
 DATA_DIR = REPO_ROOT / "data"
@@ -64,14 +64,14 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     configure_logging(level=config.get("log_level", "INFO"), format_type="console")
     LOG = logging.getLogger("sirius.main")
 
-    from sirius_chat.persona_manager import PersonaManager
-    from sirius_chat.webui import WebUIServer
+    from sirius_pulse.persona_manager import PersonaManager
+    from sirius_pulse.webui import WebUIServer
 
     persona_manager = PersonaManager(DATA_DIR, global_config=config)
 
     # ── 先启动 WebUI（含 Embedding 服务），确保子进程能连上 ──
     napcat_dir = config.get("napcat_install_dir")
-    from sirius_chat.platforms.onebot_v11.napcat.manager import NapCatManager
+    from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
     napcat_mgr = NapCatManager(napcat_dir) if napcat_dir else None
     webui = WebUIServer(
         persona_manager=persona_manager,
@@ -84,7 +84,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
 
     # 等待 Embedding 服务就绪（模型加载完成 + /embed 可用）
     import time
-    from sirius_chat.embedding.client import EmbeddingClient
+    from sirius_pulse.embedding.client import EmbeddingClient
     emb_url = config.get("embedding_url", "http://127.0.0.1:18900")
     emb_client = EmbeddingClient(base_url=emb_url)
     LOG.info("等待 Embedding 服务就绪: %s ...", emb_url)
@@ -103,7 +103,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         await webui.stop()
         raise RuntimeError(
             f"Embedding 服务不可用 ({emb_url})。"
-            "请检查日志或手动启动: python -m sirius_chat.embedding.server"
+            "请检查日志或手动启动: python -m sirius_pulse.embedding.server"
         )
 
     # ── 启动所有已启用人格（worker 子进程会自动管理 NapCat 实例）──
@@ -132,12 +132,12 @@ async def _cmd_webui(args: argparse.Namespace) -> None:
     configure_logging(level=config.get("log_level", "INFO"), format_type="console")
     LOG = logging.getLogger("sirius.main")
 
-    from sirius_chat.persona_manager import PersonaManager
-    from sirius_chat.webui import WebUIServer
+    from sirius_pulse.persona_manager import PersonaManager
+    from sirius_pulse.webui import WebUIServer
 
     persona_manager = PersonaManager(DATA_DIR, global_config=config)
     napcat_dir = config.get("napcat_install_dir")
-    from sirius_chat.platforms.onebot_v11.napcat.manager import NapCatManager
+    from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
     napcat_mgr = NapCatManager(napcat_dir) if napcat_dir else None
     webui = WebUIServer(
         persona_manager=persona_manager,
@@ -160,7 +160,7 @@ async def _cmd_webui(args: argparse.Namespace) -> None:
 def _cmd_persona_list(args: argparse.Namespace) -> None:
     """列出所有人格（含进程存活检测）。"""
     configure_logging(level="WARNING", format_type="console")
-    from sirius_chat.persona_manager import PersonaManager
+    from sirius_pulse.persona_manager import PersonaManager
 
     config = _load_global_config()
     manager = PersonaManager(DATA_DIR, global_config=config)
@@ -182,7 +182,7 @@ def _cmd_persona_list(args: argparse.Namespace) -> None:
 def _cmd_persona_create(args: argparse.Namespace) -> None:
     """创建新人格。"""
     configure_logging(level="WARNING", format_type="console")
-    from sirius_chat.persona_manager import PersonaManager
+    from sirius_pulse.persona_manager import PersonaManager
 
     config = _load_global_config()
     manager = PersonaManager(DATA_DIR, global_config=config)
@@ -203,7 +203,7 @@ def _cmd_persona_create(args: argparse.Namespace) -> None:
 def _cmd_persona_remove(args: argparse.Namespace) -> None:
     """删除人格。"""
     configure_logging(level="WARNING", format_type="console")
-    from sirius_chat.persona_manager import PersonaManager
+    from sirius_pulse.persona_manager import PersonaManager
 
     config = _load_global_config()
     manager = PersonaManager(DATA_DIR, global_config=config)
@@ -218,7 +218,7 @@ def _cmd_persona_remove(args: argparse.Namespace) -> None:
 def _cmd_persona_migrate(args: argparse.Namespace) -> None:
     """从旧目录迁移人格。"""
     configure_logging(level="INFO", format_type="console")
-    from sirius_chat.persona_manager import PersonaManager
+    from sirius_pulse.persona_manager import PersonaManager
 
     config = _load_global_config()
     manager = PersonaManager(DATA_DIR, global_config=config)
@@ -245,8 +245,8 @@ def _cmd_persona_migrate(args: argparse.Namespace) -> None:
 
 async def _cmd_persona_start(args: argparse.Namespace) -> None:
     """前台启动单个人格（含 NapCat 自动管理）。"""
-    from sirius_chat.persona_worker import PersonaWorker
-    from sirius_chat.persona_config import PersonaAdaptersConfig, NapCatAdapterConfig
+    from sirius_pulse.persona_worker import PersonaWorker
+    from sirius_pulse.persona_config import PersonaAdaptersConfig, NapCatAdapterConfig
 
     pdir = DATA_DIR / "personas" / args.name
     if not pdir.exists():
@@ -262,7 +262,7 @@ async def _cmd_persona_start(args: argparse.Namespace) -> None:
     adapters = PersonaAdaptersConfig.load(pdir / "adapters.json")
     for a in adapters.adapters:
         if isinstance(a, NapCatAdapterConfig) and a.enabled and a.qq_number:
-            from sirius_chat.platforms.onebot_v11.napcat.manager import NapCatManager
+            from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
 
             napcat_install_dir = str(config.get("napcat_install_dir", str(REPO_ROOT / "napcat")))
             napcat_mgr = NapCatManager.for_persona(
@@ -319,7 +319,7 @@ async def _cmd_persona_start(args: argparse.Namespace) -> None:
 def _cmd_persona_stop(args: argparse.Namespace) -> None:
     """停止单个人格。"""
     configure_logging(level="WARNING", format_type="console")
-    from sirius_chat.persona_manager import PersonaManager
+    from sirius_pulse.persona_manager import PersonaManager
 
     config = _load_global_config()
     manager = PersonaManager(DATA_DIR, global_config=config)
@@ -333,7 +333,7 @@ def _cmd_persona_stop(args: argparse.Namespace) -> None:
 def _cmd_persona_status(args: argparse.Namespace) -> None:
     """查看人格状态。"""
     configure_logging(level="WARNING", format_type="console")
-    from sirius_chat.persona_manager import PersonaManager
+    from sirius_pulse.persona_manager import PersonaManager
 
     config = _load_global_config()
     manager = PersonaManager(DATA_DIR, global_config=config)
@@ -356,7 +356,7 @@ def _cmd_persona_status(args: argparse.Namespace) -> None:
 def _cmd_persona_logs(args: argparse.Namespace) -> None:
     """查看人格日志。"""
     configure_logging(level="WARNING", format_type="console")
-    from sirius_chat.persona_manager import PersonaManager
+    from sirius_pulse.persona_manager import PersonaManager
 
     config = _load_global_config()
     manager = PersonaManager(DATA_DIR, global_config=config)

@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch
 
-from sirius_chat.providers.base import GenerationRequest
-from sirius_chat.providers.routing import (
+from sirius_pulse.providers.base import GenerationRequest
+from sirius_pulse.providers.routing import (
     AutoRoutingProvider,
     ProviderConfig,
     ProviderRegistry,
@@ -61,7 +61,7 @@ async def test_auto_routing_provider_selects_provider_by_exact_model_name() -> N
         }
     )
 
-    with patch("sirius_chat.providers.routing.SiliconFlowProvider.generate_async", return_value="sf-ok") as sf_generate:
+    with patch("sirius_pulse.providers.routing.SiliconFlowProvider.generate_async", return_value="sf-ok") as sf_generate:
         output = await routing.generate_async(_request("Pro/zai-org/GLM-4.7"))
 
     assert output == "sf-ok"
@@ -84,8 +84,8 @@ async def test_auto_routing_provider_emits_debug_log_with_selected_provider(
         }
     )
 
-    with caplog.at_level(logging.DEBUG, logger="sirius_chat.providers.routing"), patch(
-        "sirius_chat.providers.routing.OpenAICompatibleProvider.generate_async",
+    with caplog.at_level(logging.DEBUG, logger="sirius_pulse.providers.routing"), patch(
+        "sirius_pulse.providers.routing.OpenAICompatibleProvider.generate_async",
         return_value="openai-ok",
     ):
         output = await routing.generate_async(_request("gpt-4.1-mini"))
@@ -175,7 +175,7 @@ async def test_auto_routing_provider_routes_to_ark_when_models_list_contains_mod
         }
     )
 
-    with patch("sirius_chat.providers.routing.VolcengineArkProvider.generate_async", return_value="ark-ok") as ark_generate:
+    with patch("sirius_pulse.providers.routing.VolcengineArkProvider.generate_async", return_value="ark-ok") as ark_generate:
         output = await routing.generate_async(_request("doubao-seed-2-0-lite-260215"))
 
     assert output == "ark-ok"
@@ -202,7 +202,7 @@ async def test_auto_routing_provider_routes_to_deepseek_when_models_list_contain
         }
     )
 
-    with patch("sirius_chat.providers.routing.DeepSeekProvider.generate_async", return_value="deepseek-ok") as ds_generate:
+    with patch("sirius_pulse.providers.routing.DeepSeekProvider.generate_async", return_value="deepseek-ok") as ds_generate:
         output = await routing.generate_async(_request("deepseek-chat"))
 
     assert output == "deepseek-ok"
@@ -229,7 +229,7 @@ async def test_auto_routing_provider_routes_to_aliyun_bailian_when_models_list_c
         }
     )
 
-    with patch("sirius_chat.providers.routing.AliyunBailianProvider.generate_async", return_value="bailian-ok") as bailian_generate:
+    with patch("sirius_pulse.providers.routing.AliyunBailianProvider.generate_async", return_value="bailian-ok") as bailian_generate:
         output = await routing.generate_async(_request("qwen-plus"))
 
     assert output == "bailian-ok"
@@ -301,7 +301,7 @@ async def test_run_provider_detection_flow_requires_healthcheck_model() -> None:
 
 @pytest.mark.asyncio
 async def test_register_provider_with_validation_persists_healthcheck_model(tmp_path: Path) -> None:
-    with patch("sirius_chat.providers.routing.OpenAICompatibleProvider.generate_async", return_value="ok"):
+    with patch("sirius_pulse.providers.routing.OpenAICompatibleProvider.generate_async", return_value="ok"):
         provider_type = await register_provider_with_validation(
             work_path=tmp_path,
             provider_type="openai-compatible",
@@ -341,7 +341,7 @@ async def test_auto_routing_provider_routes_to_bigmodel_when_models_list_contain
         }
     )
 
-    with patch("sirius_chat.providers.routing.BigModelProvider.generate_async", return_value="bigmodel-ok") as gen:
+    with patch("sirius_pulse.providers.routing.BigModelProvider.generate_async", return_value="bigmodel-ok") as gen:
         output = await routing.generate_async(_request("glm-4.6v"))
 
     assert output == "bigmodel-ok"
@@ -388,7 +388,7 @@ async def test_auto_routing_provider_matches_model_from_models_list() -> None:
 
     # "doubao-seed-2-0-lite-260215" is in SiliconFlow's models list,
     # so it should route to SiliconFlow, NOT volcengine-ark (which would be the heuristic).
-    with patch("sirius_chat.providers.routing.SiliconFlowProvider.generate_async", return_value="sf-ok") as sf_generate:
+    with patch("sirius_pulse.providers.routing.SiliconFlowProvider.generate_async", return_value="sf-ok") as sf_generate:
         output = await routing.generate_async(_request("doubao-seed-2-0-lite-260215"))
 
     assert output == "sf-ok"
@@ -418,7 +418,7 @@ async def test_auto_routing_models_list_takes_priority_over_heuristic() -> None:
 
     # "deepseek-chat" is in openai-compatible's models list,
     # so it should NOT fall through to the deepseek heuristic.
-    with patch("sirius_chat.providers.routing.OpenAICompatibleProvider.generate_async", return_value="openai-ok") as gen:
+    with patch("sirius_pulse.providers.routing.OpenAICompatibleProvider.generate_async", return_value="openai-ok") as gen:
         output = await routing.generate_async(_request("deepseek-chat"))
 
     assert output == "openai-ok"

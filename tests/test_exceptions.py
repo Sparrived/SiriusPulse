@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.exceptions import (
+from sirius_pulse.exceptions import (
     ContentValidationError,
     InvalidConfigError,
     JSONParseError,

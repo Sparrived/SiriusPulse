@@ -30,7 +30,7 @@ jobs:
       
       - name: Run tests with pytest
         run: |
-          pytest -q --tb=short --cov=sirius_chat --cov-report=xml
+          pytest -q --tb=short --cov=sirius_pulse --cov-report=xml
       
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -60,19 +60,19 @@ jobs:
       
       - name: Lint with pylint
         run: |
-          pylint sirius_chat --fail-under=8.0 --disable=C0111,W0212 || true
+          pylint sirius_pulse --fail-under=8.0 --disable=C0111,W0212 || true
       
       - name: Format check with black
         run: |
-          black --check sirius_chat tests || true
+          black --check sirius_pulse tests || true
       
       - name: Import sorting check with isort
         run: |
-          isort --check-only sirius_chat tests || true
+          isort --check-only sirius_pulse tests || true
       
       - name: Type check with mypy
         run: |
-          mypy sirius_chat --ignore-missing-imports || true
+          mypy sirius_pulse --ignore-missing-imports || true
 
   security:
     name: Security Scanning
@@ -95,7 +95,7 @@ jobs:
       
       - name: Security scan with bandit
         run: |
-          bandit -r sirius_chat -ll || true
+          bandit -r sirius_pulse -ll || true
 
   build:
     name: Build Distribution

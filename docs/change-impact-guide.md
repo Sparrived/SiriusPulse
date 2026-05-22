@@ -1,4 +1,4 @@
-# Sirius Chat 变更联动确认指南
+# Sirius Pulse 变更联动确认指南
 
 > **目标**：当修改后端代码、配置结构或数据契约时，快速定位需要同步检查的前端页面、API、文档和测试位置。  
 > **使用方式**：按变更类型找到对应章节，逐项勾选确认清单。
@@ -23,18 +23,18 @@
 
 | 你修改了什么 | 首先看这里 | 然后检查 |
 |-------------|-----------|---------|
-| `sirius_chat/webui/*.py` 新增/删除/修改 API 路由或返回字段 | [章节 2](#2-后端-api-变更--前端联动) | `core.js`, `config.js`, 对应 `.html` 页面 |
-| `sirius_chat/persona_config.py` 配置字段增删改 | [章节 3](#3-配置数据契约变更--联动范围) | `persona_api.py`, `config.js`, `docs/configuration-guide.md`, `docs/persona-lifecycle.md` |
-| `sirius_chat/config/models.py` 数据契约变更 | [章节 3](#3-配置数据契约变更--联动范围) | `sirius_chat/__init__.py`, `docs/architecture.md`, 所有引用该契约的 API |
-| `sirius_chat/models/models.py` Message/Participant/Transcript 变更 | [章节 3](#3-配置数据契约变更--联动范围) | 所有序列化/反序列化代码、session store、前端使用字段 |
-| `sirius_chat/providers/` 新增/修改 Provider | [章节 4](#4-provider-变更--联动范围) | `config.js` (PROVIDER_TYPE_OPTIONS), `docs/provider-system.md`, `routing.py` |
-| `sirius_chat/core/emotional_engine.py` 引擎行为变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/engine-deep-dive.md`, `docs/architecture.md`, 体验参数默认值 |
-| `sirius_chat/core/prompt_factory.py` Prompt 构建变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/engine-deep-dive.md`, `docs/architecture.md`, `bg_tasks.py`（延迟/主动 prompt） |
-| `sirius_chat/embedding/` Embedding 服务变更 | [章节 6](#6-记忆系统变更--联动范围) | `persona_manager.py`（服务启动）, `diary/indexer.py`, `skills/sticker/indexer.py`, `sticker/learner.py`, `docs/persistence-system.md` |
-| `sirius_chat/persona_generation/` 人格生成变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/persona-lifecycle.md`, `sirius_chat/__init__.py`（公开 API 导出） |
-| `sirius_chat/memory/` 记忆系统变更 | [章节 6](#6-记忆系统变更--联动范围) | `docs/persistence-system.md`, `memory_api.py`, 前端对应面板 |
-| `sirius_chat/skills/` Skill 增删改 | [章节 7](#7-skill-系统变更--联动范围) | `docs/skill-guide.md`, `server_skill_api.py`, `skills.html` |
-| `sirius_chat/webui/static/` 前端页面/JS 变更 | [章节 8](#8-webui-前端独立变更--后端联动) | 对应后端 API 是否仍返回所需字段 |
+| `sirius_pulse/webui/*.py` 新增/删除/修改 API 路由或返回字段 | [章节 2](#2-后端-api-变更--前端联动) | `core.js`, `config.js`, 对应 `.html` 页面 |
+| `sirius_pulse/persona_config.py` 配置字段增删改 | [章节 3](#3-配置数据契约变更--联动范围) | `persona_api.py`, `config.js`, `docs/configuration-guide.md`, `docs/persona-lifecycle.md` |
+| `sirius_pulse/config/models.py` 数据契约变更 | [章节 3](#3-配置数据契约变更--联动范围) | `sirius_pulse/__init__.py`, `docs/architecture.md`, 所有引用该契约的 API |
+| `sirius_pulse/models/models.py` Message/Participant/Transcript 变更 | [章节 3](#3-配置数据契约变更--联动范围) | 所有序列化/反序列化代码、session store、前端使用字段 |
+| `sirius_pulse/providers/` 新增/修改 Provider | [章节 4](#4-provider-变更--联动范围) | `config.js` (PROVIDER_TYPE_OPTIONS), `docs/provider-system.md`, `routing.py` |
+| `sirius_pulse/core/emotional_engine.py` 引擎行为变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/engine-deep-dive.md`, `docs/architecture.md`, 体验参数默认值 |
+| `sirius_pulse/core/prompt_factory.py` Prompt 构建变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/engine-deep-dive.md`, `docs/architecture.md`, `bg_tasks.py`（延迟/主动 prompt） |
+| `sirius_pulse/embedding/` Embedding 服务变更 | [章节 6](#6-记忆系统变更--联动范围) | `persona_manager.py`（服务启动）, `diary/indexer.py`, `skills/sticker/indexer.py`, `sticker/learner.py`, `docs/persistence-system.md` |
+| `sirius_pulse/persona_generation/` 人格生成变更 | [章节 5](#5-人格系统变更--联动范围) | `docs/persona-lifecycle.md`, `sirius_pulse/__init__.py`（公开 API 导出） |
+| `sirius_pulse/memory/` 记忆系统变更 | [章节 6](#6-记忆系统变更--联动范围) | `docs/persistence-system.md`, `memory_api.py`, 前端对应面板 |
+| `sirius_pulse/skills/` Skill 增删改 | [章节 7](#7-skill-系统变更--联动范围) | `docs/skill-guide.md`, `server_skill_api.py`, `skills.html` |
+| `sirius_pulse/webui/static/` 前端页面/JS 变更 | [章节 8](#8-webui-前端独立变更--后端联动) | 对应后端 API 是否仍返回所需字段 |
 | `pyproject.toml` 依赖/版本/入口变更 | [章节 9](#9-通用检查清单) | `README.md`, CI 配置, `docs/README.md` |
 
 ---
@@ -46,7 +46,7 @@
 **触发条件**：修改 `server_core.py` 中的 `_setup_routes()` 方法。
 
 **必须检查**：
-- [ ] `sirius_chat/webui/server.py` 中是否已绑定对应的代理方法（若 handler 拆分到独立模块）
+- [ ] `sirius_pulse/webui/server.py` 中是否已绑定对应的代理方法（若 handler 拆分到独立模块）
 - [ ] 前端 `core.js` 中的 `get()` / `post()` 调用路径是否同步
 - [ ] 前端对应 `.html` 页面中的 `onclick` 或事件绑定是否指向正确路径
 - [ ] `docs/webui.md` 中的「API 路由总览」表格是否更新
@@ -103,7 +103,7 @@ const res = await get('/new-feature');
 
 ### 3.1 `PersonaExperienceConfig` 字段变更
 
-**定义位置**：`sirius_chat/persona_config.py`
+**定义位置**：`sirius_pulse/persona_config.py`
 
 **联动链**：
 ```
@@ -126,7 +126,7 @@ persona_config.py (字段定义)
 
 ### 3.2 `NapCatAdapterConfig` 字段变更
 
-**定义位置**：`sirius_chat/persona_config.py`
+**定义位置**：`sirius_pulse/persona_config.py`
 
 **联动链**：
 ```
@@ -140,13 +140,13 @@ persona_config.py:NapCatAdapterConfig
 
 ### 3.3 `OrchestrationPolicy` / `SessionConfig` 字段变更
 
-**定义位置**：`sirius_chat/config/models.py`
+**定义位置**：`sirius_pulse/config/models.py`
 
 **联动链**：
 ```
 config/models.py
-    ├── sirius_chat/__init__.py               → 是否需导出新符号
-    ├── sirius_chat/core/orchestration_store.py → 持久化字段
+    ├── sirius_pulse/__init__.py               → 是否需导出新符号
+    ├── sirius_pulse/core/orchestration_store.py → 持久化字段
     ├── persona_api.py:api_orchestration_get/post() → API 字段
     ├── config.js:loadOrchestration()         → 前端读取
     ├── config.js:saveOrchestration()         → 前端发送
@@ -156,7 +156,7 @@ config/models.py
 
 ### 3.4 `Message` / `Participant` / `Transcript` 字段变更
 
-**定义位置**：`sirius_chat/models/models.py`
+**定义位置**：`sirius_pulse/models/models.py`
 
 **联动链**：
 ```
@@ -176,14 +176,14 @@ models/models.py
 
 ### 4.1 新增 Provider 类型
 
-**触发条件**：在 `sirius_chat/providers/` 新增 Provider 实现。
+**触发条件**：在 `sirius_pulse/providers/` 新增 Provider 实现。
 
 **联动链**：
 ```
 providers/new_provider.py
     ├── providers/__init__.py                 → 导出
     ├── providers/routing.py                  → 注册路由逻辑
-    ├── sirius_chat/__init__.py               → 公开 API 导出
+    ├── sirius_pulse/__init__.py               → 公开 API 导出
     ├── webui/server_core.py                  → 若需特殊处理
     ├── config.js                             → PROVIDER_TYPE_OPTIONS, PROVIDER_DEFAULT_URLS, BUILTIN_PROVIDER_TYPES
     ├── docs/provider-system.md               → 新增 Provider 说明
@@ -210,7 +210,7 @@ providers/new_provider.py
 
 ### 5.1 `PersonaProfile` 字段变更
 
-**定义位置**：`sirius_chat/models/persona.py`
+**定义位置**：`sirius_pulse/models/persona.py`
 
 **联动链**：
 ```
@@ -265,7 +265,7 @@ experience.json 字段 / OrchestrationPolicy.memory
 
 ### 7.1 新增/删除内置 Skill
 
-**触发条件**：修改 `sirius_chat/skills/builtin/` 目录。
+**触发条件**：修改 `sirius_pulse/skills/builtin/` 目录。
 
 **联动链**：
 ```
@@ -327,7 +327,7 @@ skills/builtin/new_skill.py
 - [ ] **代码侧**：若修改了 API，用浏览器或 curl 快速验证一次请求/响应
 - [ ] **前端侧**：刷新 WebUI，确认修改的页面无 JS 报错（F12 Console）
 - [ ] **文档侧**：若变更影响用户可见行为，`docs/` 中至少一处文档已同步
-- [ ] **导出侧**：若新增公开类/函数，已加入 `sirius_chat/__init__.py` 的 `__all__`
+- [ ] **导出侧**：若新增公开类/函数，已加入 `sirius_pulse/__init__.py` 的 `__all__`
 - [ ] **测试侧**：若新增逻辑，已有对应测试覆盖（或至少未破坏现有测试）
 - [ ] **配置侧**：若新增配置字段，已确认旧配置的兼容性（默认值/迁移逻辑）
 
@@ -337,13 +337,13 @@ skills/builtin/new_skill.py
 
 ```bash
 # 1. 查找某个字段在前后端的所有引用
-grep -r "field_name" sirius_chat/webui/ sirius_chat/persona_config.py sirius_chat/config/models.py sirius_chat/models/models.py
+grep -r "field_name" sirius_pulse/webui/ sirius_pulse/persona_config.py sirius_pulse/config/models.py sirius_pulse/models/models.py
 
 # 2. 查找某个 API 路径的所有引用
-grep -r "/api/path" sirius_chat/webui/static/
+grep -r "/api/path" sirius_pulse/webui/static/
 
 # 3. 查找前端某个函数的所有调用
-grep -r "functionName" sirius_chat/webui/static/*.js
+grep -r "functionName" sirius_pulse/webui/static/*.js
 
 # 4. 确认 docs 中是否提及某个模块
 grep -r "module_name" docs/

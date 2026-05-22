@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from sirius_chat.memory.diary.consolidator import DiaryConsolidator
-from sirius_chat.memory.diary.models import DiaryEntry
+from sirius_pulse.memory.diary.consolidator import DiaryConsolidator
+from sirius_pulse.memory.diary.models import DiaryEntry
 
 
 class MockDiaryManager:

@@ -13,15 +13,15 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
-from sirius_chat.providers.aliyun_bailian import AliyunBailianProvider
-from sirius_chat.providers.base import GenerationRequest
-from sirius_chat.providers.bigmodel import BigModelProvider
-from sirius_chat.providers.deepseek import DeepSeekProvider
-from sirius_chat.providers.mock import MockProvider
-from sirius_chat.providers.openai_compatible import OpenAICompatibleProvider
-from sirius_chat.providers.siliconflow import SiliconFlowProvider
-from sirius_chat.providers.volcengine_ark import VolcengineArkProvider
-from sirius_chat.providers.ytea import YTeaProvider
+from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
+from sirius_pulse.providers.base import GenerationRequest
+from sirius_pulse.providers.bigmodel import BigModelProvider
+from sirius_pulse.providers.deepseek import DeepSeekProvider
+from sirius_pulse.providers.mock import MockProvider
+from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
+from sirius_pulse.providers.siliconflow import SiliconFlowProvider
+from sirius_pulse.providers.volcengine_ark import VolcengineArkProvider
+from sirius_pulse.providers.ytea import YTeaProvider
 
 
 _PROVIDER_SPECS: list[dict] = [
@@ -90,7 +90,7 @@ _PROVIDER_SPECS: list[dict] = [
     },
 ]
 
-_PATCH_TARGET = "sirius_chat.providers.openai_compatible.httpx.AsyncClient"
+_PATCH_TARGET = "sirius_pulse.providers.openai_compatible.httpx.AsyncClient"
 
 
 def _make_request(model: str, *, timeout_seconds: float | None = None) -> GenerationRequest:
@@ -182,7 +182,7 @@ async def test_provider_debug_log_includes_actual_url_and_metadata(
         _create_mock_response({"choices": [{"message": {"content": "ok"}}]})
     )
     with (
-        caplog.at_level(logging.DEBUG, logger="sirius_chat.providers.openai_compatible"),
+        caplog.at_level(logging.DEBUG, logger="sirius_pulse.providers.openai_compatible"),
         patch(_PATCH_TARGET, return_value=mock_client),
     ):
         await provider.generate_async(_make_request(spec["model"], timeout_seconds=12.5))

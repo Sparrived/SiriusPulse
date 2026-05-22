@@ -1,10 +1,10 @@
-# Sirius Chat 架构说明
+# Sirius Pulse 架构说明
 
 本文档描述当前代码库的稳定架构边界。历史迁移文档只用于解释版本演进，不作为当前实现的事实来源；当前架构以本文档、[full-architecture-flow.md](full-architecture-flow.md) 与实际代码为准。
 
 ## 目标
 
-Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架，目标包括：
+Sirius Pulse 是一个面向"多人用户与单主 AI"交互场景的编排框架，目标包括：
 
 - 为 CLI、脚本、服务端集成和外部编排器提供统一的会话运行模型
 - 让调用方只关心输入消息与业务上下文，而不是底层文件布局与恢复细节
@@ -14,8 +14,8 @@ Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架
 ## 核心原则
 
 - Workspace 持久化由 runtime 统一管理，外部不直接拼接内部文件路径。
-- `sirius_chat/models/models.py` 与 `sirius_chat/config/models.py` 是核心数据契约的事实来源。
-- provider 细节只允许位于 `sirius_chat/providers/`，不混入编排核心。
+- `sirius_pulse/models/models.py` 与 `sirius_pulse/config/models.py` 是核心数据契约的事实来源。
+- provider 细节只允许位于 `sirius_pulse/providers/`，不混入编排核心。
 - 当前推荐生产入口是 `PersonaManager`（多人格生命周期管理）；单个人格可直接创建 `EngineRuntime` 或 `EmotionalGroupChatEngine`。
 - **v1.1.0**：`EmotionalGroupChatEngine` 是唯一默认引擎。
 - 配置资产与运行态数据支持双根分离：config root 负责配置与角色资产，data root 负责 session、memory、token 与 skill_data。
@@ -41,43 +41,43 @@ Sirius Chat 是一个面向"多人用户与单主 AI"交互场景的编排框架
 
 | 模块 | 主要职责 | 不应承担的职责 |
 | --- | --- | --- |
-| `sirius_chat/__init__.py` | 顶层公开 API 统一重导出（严格 `__all__`） | 不直接实现底层编排或路径布局 |
-| `sirius_chat/persona_manager.py` | **v1.0 推荐生产入口**：多人格生命周期管理 | 不实现底层对话生成 |
-| `sirius_chat/persona_worker.py` | 单个人格子进程入口：加载配置、创建 EngineRuntime、心跳 | 不管理其他人格 |
-| `sirius_chat/persona_config.py` | 人格级配置模型：adapters、experience、paths | 不处理全局配置 |
-| `sirius_chat/platforms/` | 平台适配层：`platforms/onebot_v11/napcat/`（NapCat 适配器、桥接器、协议解析、管理器）、`runtime.py`（EngineRuntime 封装）、`setup wizard` | 不介入高层人格调度 |
-| `sirius_chat/webui/` | WebUI REST API + 静态页面（含插件管理 API） | 不直接操作 NapCat 进程 |
-| `sirius_chat/plugins/` | 插件系统：`loader.py`（插件加载）、`registry.py`（插件注册表）、`executor.py`（插件执行）、`config.py`（配置管理）、`decorators.py`（@command 装饰器）、`context.py`（PluginContext）、`dispatcher.py`（响应调度）、`events.py`（事件定义） | 不负责 SKILL 执行 |
-| `sirius_chat/core/` | 编排核心：`EmotionalGroupChatEngine`（Mixin 架构：`engine_core` + `pipeline` + `prompt_factory` + `bg_tasks` + `helpers`）、意图分析、情感分析、响应策略、阈值引擎、节奏分析、事件总线、身份解析、表情包发送决策 | 不负责人格目录组织 |
-| `sirius_chat/memory/` | 基础记忆、日记记忆、用户管理、名词解释、语义记忆、上下文组装 | 不直接决定 provider 路由 |
-| `sirius_chat/providers/` | provider 协议、具体上游实现、注册表、自动路由、中间件 | 不介入高层人格生命周期 |
-| `sirius_chat/skills/` | SKILL 注册、依赖解析、执行、安全校验、遥测、数据存储；被动 SKILL 支持（BackgroundTaskSpec/TriggerSpec/SkillEngineContext）；内置 `send_sticker` 等技能；表情包子系统 `skills/sticker/`（向量检索、偏好管理、学习、反馈） | 不负责 provider 注册表 |
-| `sirius_chat/core/skill_engine_context.py` | SkillEngineContextImpl：被动 SKILL 与引擎交互的适配器 | 不直接实现 SKILL 逻辑 |
-| `sirius_chat/config/` | SessionConfig、WorkspaceConfig、ConfigManager、JSONC、helpers | 不改变核心对话契约 |
-| `sirius_chat/models/` | 数据契约：Message、Participant、EmotionState、IntentAnalysisV3 等 | 不处理持久化 |
-| `sirius_chat/session/` | SessionStore（Json/Sqlite）、持久化后端 | 不介入对话逻辑 |
-| `sirius_chat/token/` | Token 记录、SQLite 持久化、成本分析 | 不介入对话逻辑 |
-| `sirius_chat/utils/` | 工具函数、WorkspaceLayout 路径布局 | 不改变核心对话契约 |
+| `sirius_pulse/__init__.py` | 顶层公开 API 统一重导出（严格 `__all__`） | 不直接实现底层编排或路径布局 |
+| `sirius_pulse/persona_manager.py` | **v1.0 推荐生产入口**：多人格生命周期管理 | 不实现底层对话生成 |
+| `sirius_pulse/persona_worker.py` | 单个人格子进程入口：加载配置、创建 EngineRuntime、心跳 | 不管理其他人格 |
+| `sirius_pulse/persona_config.py` | 人格级配置模型：adapters、experience、paths | 不处理全局配置 |
+| `sirius_pulse/platforms/` | 平台适配层：`platforms/onebot_v11/napcat/`（NapCat 适配器、桥接器、协议解析、管理器）、`runtime.py`（EngineRuntime 封装）、`setup wizard` | 不介入高层人格调度 |
+| `sirius_pulse/webui/` | WebUI REST API + 静态页面（含插件管理 API） | 不直接操作 NapCat 进程 |
+| `sirius_pulse/plugins/` | 插件系统：`loader.py`（插件加载）、`registry.py`（插件注册表）、`executor.py`（插件执行）、`config.py`（配置管理）、`decorators.py`（@command 装饰器）、`context.py`（PluginContext）、`dispatcher.py`（响应调度）、`events.py`（事件定义） | 不负责 SKILL 执行 |
+| `sirius_pulse/core/` | 编排核心：`EmotionalGroupChatEngine`（Mixin 架构：`engine_core` + `pipeline` + `prompt_factory` + `bg_tasks` + `helpers`）、意图分析、情感分析、响应策略、阈值引擎、节奏分析、事件总线、身份解析、表情包发送决策 | 不负责人格目录组织 |
+| `sirius_pulse/memory/` | 基础记忆、日记记忆、用户管理、名词解释、语义记忆、上下文组装 | 不直接决定 provider 路由 |
+| `sirius_pulse/providers/` | provider 协议、具体上游实现、注册表、自动路由、中间件 | 不介入高层人格生命周期 |
+| `sirius_pulse/skills/` | SKILL 注册、依赖解析、执行、安全校验、遥测、数据存储；被动 SKILL 支持（BackgroundTaskSpec/TriggerSpec/SkillEngineContext）；内置 `send_sticker` 等技能；表情包子系统 `skills/sticker/`（向量检索、偏好管理、学习、反馈） | 不负责 provider 注册表 |
+| `sirius_pulse/core/skill_engine_context.py` | SkillEngineContextImpl：被动 SKILL 与引擎交互的适配器 | 不直接实现 SKILL 逻辑 |
+| `sirius_pulse/config/` | SessionConfig、WorkspaceConfig、ConfigManager、JSONC、helpers | 不改变核心对话契约 |
+| `sirius_pulse/models/` | 数据契约：Message、Participant、EmotionState、IntentAnalysisV3 等 | 不处理持久化 |
+| `sirius_pulse/session/` | SessionStore（Json/Sqlite）、持久化后端 | 不介入对话逻辑 |
+| `sirius_pulse/token/` | Token 记录、SQLite 持久化、成本分析 | 不介入对话逻辑 |
+| `sirius_pulse/utils/` | 工具函数、WorkspaceLayout 路径布局 | 不改变核心对话契约 |
 
 ### 真实的 engine 位置
 
 - **默认引擎**：`EmotionalGroupChatEngine` 采用 Mixin 架构，由以下模块组合而成：
-  - `sirius_chat/core/emotional_engine.py`：最终类定义（多重继承组合）
-  - `sirius_chat/core/engine_core.py`：`_EmotionalGroupChatEngineBase` 基类（`__init__`、公开 API、持久化、表情包系统初始化）
-  - `sirius_chat/core/pipeline.py`：`PipelineMixin`（5 阶段管线：感知→认知→决策→执行→后台更新）
-  - `sirius_chat/core/prompt_factory.py`：`PromptFactory`（无状态 prompt 构建工具类，统一接管所有 LLM prompt 字符串拼装，含 `StyleAdapter` 风格适配）
-  - `sirius_chat/core/bg_tasks.py`：`BackgroundTasksMixin`（6 个后台任务，含延迟回复/主动触发 prompt 构建）
-  - `sirius_chat/core/helpers.py`：`HelpersMixin`（技能集成、被动 SKILL 注册与触发分发、用户画像分析、token 记录、异常分类）
-- `sirius_chat/core/cognition.py`：统一情绪+意图分析器。
-- `sirius_chat/core/model_router.py`：任务感知模型选择（热度过滤已移除，改由 prompt 控制长度）。
-- `sirius_chat/embedding/`：Embedding 微服务模块（`server.py` aiohttp 服务 + `client.py` 同步客户端），支持批量合并推理，DiaryIndexer / StickerIndexer 通过 `EmbeddingClient` 调用远程服务。
-- `sirius_chat/persona_generation/`：人格资产生成子包（`templates.py` 数据模型与文件 I/O + `builders.py` LLM 异步生成），从原顶层 `prompt_templates.py` / `roleplay_prompting.py` 迁移而来。
-- `sirius_chat/memory/glossary/`：名词解释（AI 自身知识库，由 `learn_term` SKILL 写入，支持人格级隔离与迁移）。
-- `sirius_chat/memory/basic/`：基础记忆（按群滑动窗口、热度跟踪、归档存储）。
-- `sirius_chat/memory/diary/`：日记记忆（LLM 生成摘要、索引、ChromaDB 向量存储后端、token 预算检索）。
-- `sirius_chat/memory/context_assembler.py`：上下文组装器（basic + diary → XML 嵌入 system prompt，只返回 `[system, user]` 2 条消息；日记条目支持时间戳显示）。
-- `sirius_chat/memory/semantic/`：语义记忆（群氛围记录、群规范学习、反馈驱动的互动率追踪、持久化）。
-- `sirius_chat/core/identity_resolver.py`：跨平台身份解析器。
+  - `sirius_pulse/core/emotional_engine.py`：最终类定义（多重继承组合）
+  - `sirius_pulse/core/engine_core.py`：`_EmotionalGroupChatEngineBase` 基类（`__init__`、公开 API、持久化、表情包系统初始化）
+  - `sirius_pulse/core/pipeline.py`：`PipelineMixin`（5 阶段管线：感知→认知→决策→执行→后台更新）
+  - `sirius_pulse/core/prompt_factory.py`：`PromptFactory`（无状态 prompt 构建工具类，统一接管所有 LLM prompt 字符串拼装，含 `StyleAdapter` 风格适配）
+  - `sirius_pulse/core/bg_tasks.py`：`BackgroundTasksMixin`（6 个后台任务，含延迟回复/主动触发 prompt 构建）
+  - `sirius_pulse/core/helpers.py`：`HelpersMixin`（技能集成、被动 SKILL 注册与触发分发、用户画像分析、token 记录、异常分类）
+- `sirius_pulse/core/cognition.py`：统一情绪+意图分析器。
+- `sirius_pulse/core/model_router.py`：任务感知模型选择（热度过滤已移除，改由 prompt 控制长度）。
+- `sirius_pulse/embedding/`：Embedding 微服务模块（`server.py` aiohttp 服务 + `client.py` 同步客户端），支持批量合并推理，DiaryIndexer / StickerIndexer 通过 `EmbeddingClient` 调用远程服务。
+- `sirius_pulse/persona_generation/`：人格资产生成子包（`templates.py` 数据模型与文件 I/O + `builders.py` LLM 异步生成），从原顶层 `prompt_templates.py` / `roleplay_prompting.py` 迁移而来。
+- `sirius_pulse/memory/glossary/`：名词解释（AI 自身知识库，由 `learn_term` SKILL 写入，支持人格级隔离与迁移）。
+- `sirius_pulse/memory/basic/`：基础记忆（按群滑动窗口、热度跟踪、归档存储）。
+- `sirius_pulse/memory/diary/`：日记记忆（LLM 生成摘要、索引、ChromaDB 向量存储后端、token 预算检索）。
+- `sirius_pulse/memory/context_assembler.py`：上下文组装器（basic + diary → XML 嵌入 system prompt，只返回 `[system, user]` 2 条消息；日记条目支持时间戳显示）。
+- `sirius_pulse/memory/semantic/`：语义记忆（群氛围记录、群规范学习、反馈驱动的互动率追踪、持久化）。
+- `sirius_pulse/core/identity_resolver.py`：跨平台身份解析器。
 
 ## Workspace 与持久化所有权
 

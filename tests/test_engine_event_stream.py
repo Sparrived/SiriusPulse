@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sirius_chat.core.events import SessionEventType
-from sirius_chat.models.models import Message, Participant
-from sirius_chat.providers.mock import MockProvider
+from sirius_pulse.core.events import SessionEventType
+from sirius_pulse.models.models import Message, Participant
+from sirius_pulse.providers.mock import MockProvider
 
 
 class TestEventStream:
@@ -45,7 +45,7 @@ class TestEventStream:
     @pytest.mark.asyncio
     async def test_decision_event_contains_strategy(self, engine_factory):
         # Use a different persona name to get a fresh engine instance
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.models.persona import PersonaProfile
         engine = engine_factory(persona=PersonaProfile(name="DecisionTestBot"))
         events = []
 

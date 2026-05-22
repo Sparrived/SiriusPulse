@@ -14,7 +14,7 @@ from pathlib import Path
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent
-SIRIUS_CHAT = PROJECT_ROOT / "sirius_chat"
+SIRIUS_CHAT = PROJECT_ROOT / "sirius_pulse"
 TESTS = PROJECT_ROOT / "tests"
 
 
@@ -106,7 +106,7 @@ def main() -> int:
 
     # 7. 测试覆盖率（可选）
     all_passed &= run_command(
-        ["python", "-m", "pytest", "-q", "--cov=sirius_chat", "--cov-report=term-missing"],
+        ["python", "-m", "pytest", "-q", "--cov=sirius_pulse", "--cov-report=term-missing"],
         "pytest 覆盖率报告",
         optional=True
     )

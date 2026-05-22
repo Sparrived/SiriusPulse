@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.memory.basic import BasicMemoryManager, HeatCalculator, BasicMemoryEntry
+from sirius_pulse.memory.basic import BasicMemoryManager, HeatCalculator, BasicMemoryEntry
 
 
 class TestHeatCalculator:

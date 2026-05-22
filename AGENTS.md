@@ -1,4 +1,4 @@
-# Sirius Chat — Agent 开发指南
+# Sirius Pulse — Agent 开发指南
 
 > 面向 AI Coding Agent 的快速参考。
 
@@ -6,7 +6,7 @@
 
 ## 项目概述
 
-**Sirius Chat**（PyPI `sirius-chat`）是支持多人格的异步角色扮演程序，面向 QQ 群聊等场景。
+**Sirius Pulse**（PyPI `sirius-pulse`）是支持多人格的异步角色扮演程序，面向 QQ 群聊等场景。
 
 - **版本**：`1.1.0`
 - **Python**：`>=3.12`
@@ -51,23 +51,23 @@
 | 路径                                        | 说明                                 |
 | ----------------------------------------- | ---------------------------------- |
 | `main.py`                                 | 统一 CLI 入口（默认启动 WebUI；`run` 启动全部人格） |
-| `sirius_chat/core/emotional_engine.py`    | v1.0 核心情感群聊引擎（Mixin 最终类）       |
-| `sirius_chat/core/engine_core.py`         | 引擎基类（__init__、API、持久化）           |
-| `sirius_chat/core/pipeline.py`            | 5 阶段管线 Mixin                        |
-| `sirius_chat/core/bg_tasks.py`            | 6 个后台任务 Mixin                       |
-| `sirius_chat/core/prompt_factory.py`     | PromptFactory：无状态 prompt 构建工具类（含 StyleAdapter 风格适配） |
-| `sirius_chat/core/helpers.py`             | 技能集成、被动 SKILL 注册与触发分发、token 记录 Mixin |
-| `sirius_chat/core/skill_engine_context.py` | SkillEngineContextImpl：被动 SKILL 与引擎交互适配器 |
-| `sirius_chat/embedding/server.py`         | Embedding 微服务端（aiohttp + asyncio.Queue 批量合并推理） |
-| `sirius_chat/embedding/client.py`         | Embedding 同步客户端（urllib） |
-| `sirius_chat/persona_generation/`         | 人格资产生成子包（templates + builders） |
-| `sirius_chat/persona_manager.py`          | 多人格生命周期管理                          |
-| `sirius_chat/persona_worker.py`           | 子进程入口                              |
-| `sirius_chat/persona_config.py`           | 人格级配置模型                            |
-| `sirius_chat/platforms/onebot_v11/napcat/manager.py` | NapCat 多实例管理                       |
-| `sirius_chat/platforms/runtime.py`        | 单人格运行时封装                           |
-| `sirius_chat/webui/server.py`             | WebUI REST API                     |
-| `sirius_chat/__init__.py`                 | 顶层公开 API 导出清单（严格 `__all__`）        |
+| `sirius_pulse/core/emotional_engine.py`    | v1.0 核心情感群聊引擎（Mixin 最终类）       |
+| `sirius_pulse/core/engine_core.py`         | 引擎基类（__init__、API、持久化）           |
+| `sirius_pulse/core/pipeline.py`            | 5 阶段管线 Mixin                        |
+| `sirius_pulse/core/bg_tasks.py`            | 6 个后台任务 Mixin                       |
+| `sirius_pulse/core/prompt_factory.py`     | PromptFactory：无状态 prompt 构建工具类（含 StyleAdapter 风格适配） |
+| `sirius_pulse/core/helpers.py`             | 技能集成、被动 SKILL 注册与触发分发、token 记录 Mixin |
+| `sirius_pulse/core/skill_engine_context.py` | SkillEngineContextImpl：被动 SKILL 与引擎交互适配器 |
+| `sirius_pulse/embedding/server.py`         | Embedding 微服务端（aiohttp + asyncio.Queue 批量合并推理） |
+| `sirius_pulse/embedding/client.py`         | Embedding 同步客户端（urllib） |
+| `sirius_pulse/persona_generation/`         | 人格资产生成子包（templates + builders） |
+| `sirius_pulse/persona_manager.py`          | 多人格生命周期管理                          |
+| `sirius_pulse/persona_worker.py`           | 子进程入口                              |
+| `sirius_pulse/persona_config.py`           | 人格级配置模型                            |
+| `sirius_pulse/platforms/onebot_v11/napcat/manager.py` | NapCat 多实例管理                       |
+| `sirius_pulse/platforms/runtime.py`        | 单人格运行时封装                           |
+| `sirius_pulse/webui/server.py`             | WebUI REST API                     |
+| `sirius_pulse/__init__.py`                 | 顶层公开 API 导出清单（严格 `__all__`）        |
 | `tests/conftest.py`                       | 测试最小 fixture                       |
 | `scripts/ci_check.py`                     | 统一 CI 检查脚本                         |
 | `docs/architecture.md`                    | 架构边界与模块交互权威文档                      |

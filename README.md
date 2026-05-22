@@ -1,12 +1,12 @@
-<h1 align="center">🌟 Sirius Chat 🌟</h1>
+<h1 align="center">🌟 Sirius Pulse 🌟</h1>
 
 <div align="center">
 
 <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
-<a href="https://pypi.org/project/sirius-chat/"><img src="https://img.shields.io/badge/PyPI-sirius--chat-blueviolet?style=flat-square" alt="PyPI"></a>
+<a href="https://pypi.org/project/sirius-pulse/"><img src="https://img.shields.io/badge/PyPI-sirius--chat-blueviolet?style=flat-square" alt="PyPI"></a>
 <a href="#-测试"><img src="https://img.shields.io/badge/Tests-600%2B%20passing-brightgreen?style=flat-square" alt="Tests"></a>
-<a href="sirius_chat/async_engine/"><img src="https://img.shields.io/badge/Async-First-orange?style=flat-square" alt="Async First"></a>
+<a href="sirius_pulse/async_engine/"><img src="https://img.shields.io/badge/Async-First-orange?style=flat-square" alt="Async First"></a>
 
 <em>✨ 月白亲手写的 README，请多关照喵～(ฅ´ω`ฅ)</em>
 <br>
@@ -37,7 +37,7 @@
 
 > 月白来介绍喵～(๑˃̵ᴗ˂̵)و
 
-**Sirius Chat** 是一个**异步角色扮演聊天框架**，专门为 QQ 群聊等场景设计～
+**Sirius Pulse** 是一个**异步角色扮演聊天框架**，专门为 QQ 群聊等场景设计～
 它的特别之处在于支持**多人格同时运行**，每个人格都有自己的独立进程、独立配置、独立记忆，
 就像每个人格都住在自己的小房间里，互不打扰又能在群里一起玩耍喵！
 
@@ -148,7 +148,7 @@ python main.py persona migrate --source data/bot --name <name>
   "webui_host": "0.0.0.0",
   "webui_port": 8080,
   "auto_manage_napcat": true,
-  "napcat_install_dir": "D:\\Code\\sirius_chat\\napcat",
+  "napcat_install_dir": "D:\\Code\\sirius_pulse\\napcat",
   "log_level": "INFO"
 }
 ```
@@ -195,7 +195,7 @@ data/
 **多人格管理（推荐生产入口）**
 
 ```python
-from sirius_chat.persona_manager import PersonaManager
+from sirius_pulse.persona_manager import PersonaManager
 
 manager = PersonaManager("data", global_config={"auto_manage_napcat": True})
 
@@ -214,8 +214,8 @@ manager.stop_persona("yuebai")
 ```python
 import asyncio
 from pathlib import Path
-from sirius_chat import create_emotional_engine
-from sirius_chat.providers.mock import MockProvider
+from sirius_pulse import create_emotional_engine
+from sirius_pulse.providers.mock import MockProvider
 
 async def main():
     engine = create_emotional_engine(
@@ -237,7 +237,7 @@ asyncio.run(main())
 > 💡 **月白带你逛项目**：这个项目的目录结构有点复杂，但别怕喵～月白给你画了张地图(๑•̀ㅂ•́)و✧
 
 ```
-sirius_chat/
+sirius_pulse/
 ├── __init__.py
 ├── api/                          # 🔌 公开 API facade（engine/models/providers/session 等）
 ├── core/                         # 🧠 编排核心（Mixin 架构）
@@ -345,8 +345,8 @@ scripts/                          # 🔨 开发脚本
 import asyncio
 from pathlib import Path
 
-from sirius_chat import Message, UserProfile, open_workspace_runtime
-from sirius_chat.providers.mock import MockProvider
+from sirius_pulse import Message, UserProfile, open_workspace_runtime
+from sirius_pulse.providers.mock import MockProvider
 
 
 async def main() -> None:
@@ -373,7 +373,7 @@ asyncio.run(main())
 ### 示例 2：事件订阅与监控
 
 ```python
-from sirius_chat.core.events import SessionEventType
+from sirius_pulse.core.events import SessionEventType
 
 async def monitor(engine):
     async for event in engine.event_bus.subscribe():
@@ -386,7 +386,7 @@ async def monitor(engine):
 ### 示例 3：多模态输入
 
 ```python
-from sirius_chat import Message
+from sirius_pulse import Message
 
 msg = Message(
     role="user",
@@ -565,7 +565,7 @@ msg = Message(
 }
 ```
 
-说明：`main.py` 和 `sirius-chat` 读取的是轻量会话配置文件，要求提供 `generated_agent_key` 与 `providers`。完整的 `agent` / `global_system_prompt` 由 `roleplay/generated_agents.json` 中已保存的人格资产提供；如果你要手写完整 `SessionConfig`，请改用 Python API 的低层入口。
+说明：`main.py` 和 `sirius-pulse` 读取的是轻量会话配置文件，要求提供 `generated_agent_key` 与 `providers`。完整的 `agent` / `global_system_prompt` 由 `roleplay/generated_agents.json` 中已保存的人格资产提供；如果你要手写完整 `SessionConfig`，请改用 Python API 的低层入口。
 
 **说明：**
 
@@ -623,7 +623,7 @@ msg = Message(
 ### Token 消耗分析
 
 ```python
-from sirius_chat import summarize_token_usage, build_token_usage_baseline
+from sirius_pulse import summarize_token_usage, build_token_usage_baseline
 
 # 单会话统计
 summary = summarize_token_usage(transcript)
@@ -641,7 +641,7 @@ baseline = build_token_usage_baseline(transcript.token_usage_records)
 ### 角色扮演前置内容生成
 
 ```python
-from sirius_chat import (
+from sirius_pulse import (
   RolePlayAnswer,
   aregenerate_agent_prompt_from_dependencies,
   abuild_roleplay_prompt_from_answers_and_apply,
@@ -706,7 +706,7 @@ selected = select_generated_agent_profile(config.work_path, "assistant_v2")
 
 - 推荐先用高层人格 brief 来描述人物原型、核心矛盾、关系策略、情绪原则、边界和小缺点，再让生成器落成具体人物小传与语言习惯。
 - `generate_humanized_roleplay_questions(template=...)` 支持 `default`、`companion`、`romance`、`group_chat` 四类问卷模板，可配合 `list_roleplay_question_templates()` 做前端下拉或外部配置。
-- 若外部系统只想先拿模板问题，不想立刻接入 Python API，可直接用 `sirius-chat --list-roleplay-question-templates` 和 `sirius-chat --print-roleplay-questions-template <template>`。
+- 若外部系统只想先拿模板问题，不想立刻接入 Python API，可直接用 `sirius-pulse --list-roleplay-question-templates` 和 `sirius-pulse --print-roleplay-questions-template <template>`。
 - 生成器会自动识别“拟人”“情感”“陪伴”“共情”等关键词并加强 prompt，让角色更自然、更有人味。
 - 结构化人格生成默认使用 `max_tokens=5120` 和 `timeout_seconds=120.0`；如果上游模型更慢，仍可在这几个 API 上继续显式调高 `timeout_seconds`。
 - 如果模型返回的是被 ```json 包裹但实际被截断的 JSON-like 响应，框架会显式报错并保留失败 trace，不再把原始文本污染到 `agent.persona` 或 `global_system_prompt`。
@@ -774,7 +774,7 @@ python -m pytest tests/test_engine.py -v
 python -m pytest tests/ --durations=10
 
 # 覆盖率分析
-python -m pytest tests/ --cov=sirius_chat
+python -m pytest tests/ --cov=sirius_pulse
 
 # 快速验证单个测试
 python -m pytest tests/test_engine.py::test_roleplay_engine_multi_human_single_ai_transcript -xvs
@@ -844,7 +844,7 @@ python -m pytest tests/test_engine.py::test_roleplay_engine_multi_human_single_a
 python -m pip install -e .[dev]
 
 # 运行代码检查
-python -m pytest tests/ --cov=sirius_chat
+python -m pytest tests/ --cov=sirius_pulse
 ```
 
 ---
@@ -857,7 +857,7 @@ MIT License © 2025 Sparrived. 详见 [LICENSE](LICENSE)。
 
 ## 🔗 相关链接
 
-- 📦 [PyPI 项目页](https://pypi.org/project/sirius-chat/)
+- 📦 [PyPI 项目页](https://pypi.org/project/sirius-pulse/)
 - 📚 [完整文档](docs/)
 - 🐛 [报告问题](https://github.com/Sparrived/SiriusChat/issues/new)
 - 💬 [讨论区](https://github.com/Sparrived/SiriusChat/discussions)
@@ -866,7 +866,7 @@ MIT License © 2025 Sparrived. 详见 [LICENSE](LICENSE)。
 
 <div align="center">
 
-**Made with ❤️ by the Sirius Chat team**
+**Made with ❤️ by the Sirius Pulse team**
 
 ⭐ 如果觉得有帮助，欢迎给个 Star 喵～
 

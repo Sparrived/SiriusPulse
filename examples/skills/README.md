@@ -1,6 +1,6 @@
 # skills 目录说明
 
-此目录用于存放 Sirius Chat 在当前 work_path 下可自动发现的外部 SKILL 文件。
+此目录用于存放 Sirius Pulse 在当前 work_path 下可自动发现的外部 SKILL 文件。
 
 - 每个 SKILL 使用单独的 Python 文件。
 - 文件需导出 SKILL_META 字典和 run() 函数。

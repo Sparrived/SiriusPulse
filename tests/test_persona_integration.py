@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 from unittest.mock import Mock
 
-from sirius_chat.models.persona import PersonaProfile
-from sirius_chat.core.persona_generator import PersonaGenerator
-from sirius_chat.core.persona_store import PersonaStore
-from sirius_chat.core.prompt_factory import StyleAdapter
-from sirius_chat.models.emotion import EmotionState, EmpathyStrategy
-from sirius_chat.models.models import Message
+from sirius_pulse.models.persona import PersonaProfile
+from sirius_pulse.core.persona_generator import PersonaGenerator
+from sirius_pulse.core.persona_store import PersonaStore
+from sirius_pulse.core.prompt_factory import StyleAdapter
+from sirius_pulse.models.emotion import EmotionState, EmpathyStrategy
+from sirius_pulse.models.models import Message
 
 
 class TestPersonaProfileRoundtrip:
@@ -46,13 +46,13 @@ class TestTemplatePersonaCreation:
 
 class TestEngineLoadsPersona:
     def test_engine_requires_persona(self, tmp_path):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
         with pytest.raises(ValueError, match="No persona provided"):
             EmotionalGroupChatEngine(work_path=tmp_path)
 
     def test_engine_loads_existing_persona(self, tmp_path):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.models.persona import PersonaProfile
         custom = PersonaProfile(name="静观", personality_traits=["沉稳", "内敛"])
         PersonaStore.save(tmp_path, custom)
 
@@ -60,7 +60,7 @@ class TestEngineLoadsPersona:
         assert engine.persona.name == "静观"
 
     def test_engine_accepts_custom_persona(self, tmp_path):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
         custom = PersonaProfile(name="CustomBot", reply_frequency="low")
         engine = EmotionalGroupChatEngine(work_path=tmp_path, persona=custom)
         assert engine.persona.name == "CustomBot"
@@ -69,9 +69,9 @@ class TestEngineLoadsPersona:
 
 class TestPersonaBiasesThreshold:
     def test_high_frequency_lowers_threshold(self, tmp_path):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
-        from sirius_chat.models.intent_v3 import IntentAnalysisV3
-        from sirius_chat.models.emotion import EmotionState
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.models.intent_v3 import IntentAnalysisV3
+        from sirius_pulse.models.emotion import EmotionState
 
         high_p = PersonaProfile(name="Chatty", reply_frequency="high")
         engine = EmotionalGroupChatEngine(work_path=tmp_path, persona=high_p)
@@ -84,9 +84,9 @@ class TestPersonaBiasesThreshold:
         assert intent.threshold < 0.6  # default base is ~0.45, high *0.8 = ~0.36
 
     def test_low_frequency_raises_threshold(self, tmp_path):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
-        from sirius_chat.models.intent_v3 import IntentAnalysisV3
-        from sirius_chat.models.emotion import EmotionState
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.models.intent_v3 import IntentAnalysisV3
+        from sirius_pulse.models.emotion import EmotionState
 
         low_p = PersonaProfile(name="Quiet", reply_frequency="low")
         mod_p = PersonaProfile(name="Normal", reply_frequency="moderate")

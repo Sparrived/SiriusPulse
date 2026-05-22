@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from sirius_chat import (
+from sirius_pulse import (
     PersonaSpec,
     RolePlayAnswer,
     generate_humanized_roleplay_questions,

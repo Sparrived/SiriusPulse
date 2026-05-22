@@ -22,7 +22,7 @@ import logging
 import sys
 from pathlib import Path
 
-from sirius_chat.memory.glossary.models import GlossaryTerm
+from sirius_pulse.memory.glossary.models import GlossaryTerm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

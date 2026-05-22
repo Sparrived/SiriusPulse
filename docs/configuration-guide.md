@@ -1,6 +1,6 @@
 # 配置指南
 
-> **从全局配置到人格级配置，完整覆盖 Sirius Chat 的所有配置选项。**
+> **从全局配置到人格级配置，完整覆盖 Sirius Pulse 的所有配置选项。**
 >
 > 本文档合并了原 `config-system.md`（配置系统实现）、`configuration.md`（用户配置指南）和 `orchestration-policy.md`（模型编排），提供从原理到实践的一站式参考。
 
@@ -113,7 +113,7 @@ JSON/JSONC 文件（磁盘）
   "webui_host": "0.0.0.0",
   "webui_port": 8080,
   "auto_manage_napcat": true,
-  "napcat_install_dir": "D:\\Code\\sirius_chat\\napcat",
+  "napcat_install_dir": "D:\\Code\\sirius_pulse\\napcat",
   "napcat_base_port": 3001,
   "log_level": "INFO",
   "setup_completed": false,
@@ -301,7 +301,7 @@ JSON/JSONC 文件（磁盘）
 `orchestration.json` 位于 `{work_path}/engine_state/orchestration.json`，可通过 `OrchestrationStore` 读写：
 
 ```python
-from sirius_chat.core.orchestration_store import OrchestrationStore
+from sirius_pulse.core.orchestration_store import OrchestrationStore
 
 OrchestrationStore.save(work_path, {
     "analysis_model": "gpt-4o-mini",
@@ -375,7 +375,7 @@ ConfigManager 支持 `${VAR_NAME}` 形式的环境变量替换。
 ### 9.1 快速启动引擎
 
 ```python
-from sirius_chat import create_emotional_engine
+from sirius_pulse import create_emotional_engine
 
 engine = create_emotional_engine(
     work_path="/path/to/workspace",
@@ -392,8 +392,8 @@ engine.start_background_tasks()
 ### 9.2 使用 Helpers 构建配置
 
 ```python
-from sirius_chat.config.helpers import configure_orchestration_models
-from sirius_chat import SessionConfig
+from sirius_pulse.config.helpers import configure_orchestration_models
+from sirius_pulse import SessionConfig
 
 config = SessionConfig(work_path="/path/to/workspace")
 config = configure_orchestration_models(
@@ -430,7 +430,7 @@ config = configure_orchestration_models(
 2. 需要注释时直接使用 JSONC，不必更换扩展名。
 3. `persona` 字段优先使用模板名；复杂人格通过 roleplay 资产 + `"generated"` 加载。
 4. 全局 provider 配置位于 `data/providers/provider_keys.json`，所有人格共用。
-5. 日记检索质量取决于 Embedding 微服务。Embedding 服务由 `PersonaManager` 在主进程启动（`sirius_chat/embedding/server.py`），各人格子进程通过 `EmbeddingClient` HTTP 调用。服务不可用时引擎启动会直接失败（强依赖）。可使用 `python -m sirius_chat.embedding` 单独测试 Embedding 服务。
+5. 日记检索质量取决于 Embedding 微服务。Embedding 服务由 `PersonaManager` 在主进程启动（`sirius_pulse/embedding/server.py`），各人格子进程通过 `EmbeddingClient` HTTP 调用。服务不可用时引擎启动会直接失败（强依赖）。可使用 `python -m sirius_pulse.embedding` 单独测试 Embedding 服务。
 
 ### 故障排查
 

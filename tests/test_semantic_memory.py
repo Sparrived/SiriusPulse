@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from sirius_chat.memory.semantic.manager import SemanticMemoryManager
-from sirius_chat.memory.semantic.models import (
+from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
+from sirius_pulse.memory.semantic.models import (
     AtmosphereSnapshot,
     GroupSemanticProfile,
     ResponseRecord,

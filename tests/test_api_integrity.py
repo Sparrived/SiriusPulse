@@ -16,24 +16,24 @@ class TestAPILayerHiding:
     @pytest.fixture(autouse=True)
     def setup(self):
         """设置测试环境"""
-        # 清空已导入的 sirius_chat，确保新鲜导入
-        if 'sirius_chat' in sys.modules:
-            del sys.modules['sirius_chat']
+        # 清空已导入的 sirius_pulse，确保新鲜导入
+        if 'sirius_pulse' in sys.modules:
+            del sys.modules['sirius_pulse']
     
     def test_api_has_all_defined(self):
         """测试：公开API应该在 __all__ 中定义"""
-        import sirius_chat
+        import sirius_pulse
         
-        assert hasattr(sirius_chat, '__all__'), \
-            "sirius_chat 必须定义 __all__"
-        assert isinstance(sirius_chat.__all__, (list, tuple)), \
+        assert hasattr(sirius_pulse, '__all__'), \
+            "sirius_pulse 必须定义 __all__"
+        assert isinstance(sirius_pulse.__all__, (list, tuple)), \
             "__all__ 必须是列表或元组"
-        assert len(sirius_chat.__all__) >= 10, \
+        assert len(sirius_pulse.__all__) >= 10, \
             "__all__ 中应该至少有 10 个导出"
     
     def test_no_private_members_leaked(self):
         """测试：不应该导出以 _ 开头的私有成员"""
-        import sirius_chat
+        import sirius_pulse
         
         allowed_private = {
             '__package__', '__name__', '__doc__', '__file__',
@@ -42,17 +42,17 @@ class TestAPILayerHiding:
         }
         
         leaked = []
-        for name in dir(sirius_chat):
+        for name in dir(sirius_pulse):
             if name.startswith('_') and name not in allowed_private:
                 # 检查是否在 __all__ 中
-                if name in sirius_chat.__all__:
+                if name in sirius_pulse.__all__:
                     leaked.append(name)
         
         assert not leaked, f"私有实现泄露: {leaked}"
     
     def test_no_internal_packages_exposed(self):
         """测试：内部包（core, memory 等）不应该直接暴露"""
-        import sirius_chat
+        import sirius_pulse
         import inspect
         
         # 这些包应该是内部实现，不应该直接导出
@@ -62,8 +62,8 @@ class TestAPILayerHiding:
         }
         
         exposed = []
-        for name in sirius_chat.__all__:
-            obj = getattr(sirius_chat, name)
+        for name in sirius_pulse.__all__:
+            obj = getattr(sirius_pulse, name)
             if inspect.ismodule(obj):
                 pkg_name = obj.__name__.split('.')[-1]
                 if pkg_name in internal_packages:
@@ -73,19 +73,19 @@ class TestAPILayerHiding:
     
     def test_all_exported_are_accessible(self):
         """测试：__all__ 中的所有项都应该可访问"""
-        import sirius_chat
+        import sirius_pulse
         
-        for name in sirius_chat.__all__:
-            assert hasattr(sirius_chat, name), \
+        for name in sirius_pulse.__all__:
+            assert hasattr(sirius_pulse, name), \
                 f"__all__ 中的 {name} 无法访问"
             
-            obj = getattr(sirius_chat, name)
+            obj = getattr(sirius_pulse, name)
             assert obj is not None, \
                 f"__all__ 中的 {name} 为 None"
     
     def test_required_api_exported(self):
         """测试：必需的公开API都应该被导出"""
-        import sirius_chat
+        import sirius_pulse
         
         required = {
             'EmotionalGroupChatEngine',
@@ -98,19 +98,19 @@ class TestAPILayerHiding:
             'IdentityContext',
         }
         
-        all_set = set(sirius_chat.__all__)
+        all_set = set(sirius_pulse.__all__)
         missing = required - all_set
         
         assert not missing, f"缺少必需的API: {missing}"
     
     def test_all_documented(self):
         """测试：所有导出的类都应该有文档"""
-        import sirius_chat
+        import sirius_pulse
         import inspect
         
         undocumented = []
-        for name in sirius_chat.__all__:
-            obj = getattr(sirius_chat, name)
+        for name in sirius_pulse.__all__:
+            obj = getattr(sirius_pulse, name)
             
             # 检查类或函数是否有文档
             if inspect.isclass(obj) or inspect.isfunction(obj):
@@ -119,8 +119,8 @@ class TestAPILayerHiding:
         
         # 允许一些数据对象（如 TRAIT_TAXONOMY）没有 __doc__
         # 但大多数类应该有文档
-        class_count = sum(1 for n in sirius_chat.__all__
-                         if inspect.isclass(getattr(sirius_chat, n)))
+        class_count = sum(1 for n in sirius_pulse.__all__
+                         if inspect.isclass(getattr(sirius_pulse, n)))
         undoc_count = len(undocumented)
         
         # 至少 80% 的类应该有文档
@@ -135,7 +135,7 @@ class TestAPIFunctionality:
     
     def test_can_create_session_config(self):
         """测试：能否通过公开API创建会话配置"""
-        from sirius_chat import SessionConfig, AgentPreset, Agent
+        from sirius_pulse import SessionConfig, AgentPreset, Agent
         from pathlib import Path
         
         # SessionConfig 需要 work_path 和 preset
@@ -151,7 +151,7 @@ class TestAPIFunctionality:
     
     def test_can_create_user_profile(self):
         """测试：能否通过公开API创建用户档案"""
-        from sirius_chat import UserProfile
+        from sirius_pulse import UserProfile
         
         profile = UserProfile(
             user_id="test_user",
@@ -163,7 +163,7 @@ class TestAPIFunctionality:
     
     def test_can_create_identity_resolver(self):
         """测试：能否创建身份解析器"""
-        from sirius_chat import IdentityResolver, IdentityContext
+        from sirius_pulse import IdentityResolver, IdentityContext
         
         resolver = IdentityResolver()
         
@@ -177,7 +177,7 @@ class TestAPIFunctionality:
     
     def test_cannot_access_internal_functions(self):
         """测试：不应该能访问内部函数"""
-        import sirius_chat
+        import sirius_pulse
         
         # 这些是内部实现，不应该导出
         internal_functions = [
@@ -190,7 +190,7 @@ class TestAPIFunctionality:
         for func_name in internal_functions:
             # 尝试从顶级 API 导入（应该失败）
             try:
-                getattr(sirius_chat, func_name)
+                getattr(sirius_pulse, func_name)
                 # 如果找到了，说明泄露了
                 pytest.fail(f"内部函数 {func_name} 不应该被导出")
             except AttributeError:
@@ -199,7 +199,7 @@ class TestAPIFunctionality:
     
     def test_cannot_access_internal_classes(self):
         """测试：不应该能访问内部类"""
-        import sirius_chat
+        import sirius_pulse
         
         # 这些是内部实现，不应该导出
         internal_classes = [
@@ -210,7 +210,7 @@ class TestAPIFunctionality:
         
         for class_name in internal_classes:
             try:
-                getattr(sirius_chat, class_name)
+                getattr(sirius_pulse, class_name)
                 # 如果找到了，说明泄露了
                 pytest.fail(f"内部类 {class_name} 不应该被导出")
             except AttributeError:
@@ -223,7 +223,7 @@ class TestAPIDataIntegrity:
     
     def test_message_model_available(self):
         """测试：Message 数据模型应该可用"""
-        from sirius_chat import Message
+        from sirius_pulse import Message
         
         msg = Message(
             role="user",
@@ -235,7 +235,7 @@ class TestAPIDataIntegrity:
     
     def test_transcript_model_available(self):
         """测试：Transcript 数据模型应该可用"""
-        from sirius_chat import Transcript, Message
+        from sirius_pulse import Transcript, Message
         
         msg = Message(role="user", content="Hi")
         transcript = Transcript(messages=[msg])
@@ -245,7 +245,7 @@ class TestAPIDataIntegrity:
     
     def test_identity_context_available(self):
         """测试：身份上下文应该可用"""
-        from sirius_chat import IdentityContext
+        from sirius_pulse import IdentityContext
         
         ctx = IdentityContext(
             speaker_name="Alice",

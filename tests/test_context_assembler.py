@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from sirius_chat.memory.basic import BasicMemoryManager
-from sirius_chat.memory.diary import DiaryIndexer, DiaryRetriever, DiaryEntry
-from sirius_chat.memory.context_assembler import ContextAssembler
+from sirius_pulse.memory.basic import BasicMemoryManager
+from sirius_pulse.memory.diary import DiaryIndexer, DiaryRetriever, DiaryEntry
+from sirius_pulse.memory.context_assembler import ContextAssembler
 
 
 class TestContextAssembler:

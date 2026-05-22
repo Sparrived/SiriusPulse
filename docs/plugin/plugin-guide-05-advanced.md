@@ -273,4 +273,4 @@ plugins/my_plugin/
 ## 9. 下一步
 
 - 返回 **指南（一）** 复习 Plugin 生命周期
-- 查看 `sirius_chat/plugins/` 目录下的源码了解更多细节
+- 查看 `sirius_pulse/plugins/` 目录下的源码了解更多细节

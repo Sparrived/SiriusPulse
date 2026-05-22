@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sirius_chat.core.emotional_engine import _is_reminder_due
+from sirius_pulse.core.emotional_engine import _is_reminder_due
 
 
 def _utc_at_local(hour: int, minute: int, year: int = 2026, month: int = 4, day: int = 27) -> datetime:

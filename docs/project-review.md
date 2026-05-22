@@ -1,6 +1,6 @@
-# Sirius Chat v1.1.0 项目评审
+# Sirius Pulse v1.1.0 项目评审
 
-> 本文档是对 Sirius Chat 代码库的综合评审，涵盖优点、缺点、改进方向与扩展建议。
+> 本文档是对 Sirius Pulse 代码库的综合评审，涵盖优点、缺点、改进方向与扩展建议。
 >
 > 评审日期：2026-05-08
 > 评审范围：完整代码库（\~60+ 模块）+ 文档 + SKILL + 测试
@@ -180,7 +180,7 @@ class EmotionalGroupChatEngine(
 - chromadb
 - 其他依赖
 
-> **v1.1 已优化**：~~sentence-transformers（embedding 模型，~500MB）~~ 已迁移至共享 Embedding 微服务（`sirius_chat/embedding/`），由主进程启动一次，各子进程通过 `EmbeddingClient` HTTP 调用，大幅减少内存占用。
+> **v1.1 已优化**：~~sentence-transformers（embedding 模型，~500MB）~~ 已迁移至共享 Embedding 微服务（`sirius_pulse/embedding/`），由主进程启动一次，各子进程通过 `EmbeddingClient` HTTP 调用，大幅减少内存占用。
 
 在 2C4G 云主机上，3-5 个人格就可能内存不足。没有进程池或共享内存机制。
 
@@ -390,7 +390,7 @@ Telegram Bot API 简单直接：
 当前内置 SKILL 需要手动注册。可以：
 
 - 扫描 `skills/builtin/` 目录，根据 `SKILL_META` 自动注册
-- 支持外部 SKILL 包（`pip install sirius-chat-skill-xxx`）
+- 支持外部 SKILL 包（`pip install sirius-pulse-skill-xxx`）
 - SKILL 版本管理和依赖解析
 
 #### SKILL 执行历史
@@ -405,7 +405,7 @@ Telegram Bot API 简单直接：
 
 提供 SKILL 开发脚手架：
 
-- `python -m sirius_chat.scaffold create-skill my_skill`
+- `python -m sirius_pulse.scaffold create-skill my_skill`
 - 自动生成 SKILL 模板（含 `SKILL_META`、`run()` 函数、单元测试）
 - 本地调试模式（绕过权限校验、增加详细日志）
 
@@ -473,8 +473,8 @@ Telegram Bot API 简单直接：
 
 当前 `pyproject.toml` 的 dependencies 较重（chromadb 等；Embedding 服务已独立部署）。可以：
 
-- 将重依赖改为 optional（`pip install sirius-chat[full]`）
-- 提供轻量版（`pip install sirius-chat[lite]`，不含 embedding 和向量检索）
+- 将重依赖改为 optional（`pip install sirius-pulse[full]`）
+- 提供轻量版（`pip install sirius-pulse[lite]`，不含 embedding 和向量检索）
 - 加速首次安装体验
 
 #### 一键部署脚本

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams, PromptBundle
-from sirius_chat.models.emotion import EmotionState
-from sirius_chat.models.intent_v3 import IntentAnalysisV3, SocialIntent
-from sirius_chat.models.models import Message
-from sirius_chat.memory.semantic.models import (
+from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams, PromptBundle
+from sirius_pulse.models.emotion import EmotionState
+from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
+from sirius_pulse.models.models import Message
+from sirius_pulse.memory.semantic.models import (
     GroupSemanticProfile,
     UserSemanticProfile,
     AtmosphereSnapshot,
@@ -41,7 +41,7 @@ class TestStyleAdapter:
 
 class TestPromptFactoryAssemble:
     def test_assemble_includes_all_sections(self):
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.models.persona import PersonaProfile
         persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="我今天心情不好", speaker="u1")
         emotion = EmotionState(valence=-0.6, arousal=0.5, intensity=0.7)
@@ -66,7 +66,7 @@ class TestPromptFactoryAssemble:
         assert "我今天心情不好" in bundle.user_content
 
     def test_assemble_with_group_profile(self):
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.models.persona import PersonaProfile
         persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="hello", speaker="u1")
         emotion = EmotionState(valence=0.2, arousal=0.3, intensity=0.5)
@@ -98,7 +98,7 @@ class TestPromptFactoryAssemble:
         assert "群里氛围" in bundle.system_prompt
 
     def test_assemble_with_user_profile(self):
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.models.persona import PersonaProfile
         persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="test", speaker="u1")
         emotion = EmotionState(valence=0.0, arousal=0.0, intensity=0.0)
@@ -123,7 +123,7 @@ class TestPromptFactoryAssemble:
         assert "test" in bundle.user_content
 
     def test_assemble_delayed_uses_scene_description(self):
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.models.persona import PersonaProfile
         persona = PersonaProfile(name="TestBot")
         adapter = StyleAdapter()
         style = adapter.adapt(pace="decelerating")
@@ -140,7 +140,7 @@ class TestPromptFactoryAssemble:
         assert "刚才的话题很有趣" in bundle.user_content
 
     def test_assemble_proactive(self):
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.models.persona import PersonaProfile
         persona = PersonaProfile(name="TestBot")
 
         bundle = PromptFactory.assemble_proactive(
@@ -157,7 +157,7 @@ class TestPromptFactoryAssemble:
 
 class TestPromptFactoryOutputSpec:
     def test_prompt_contains_output_spec(self):
-        from sirius_chat.models.persona import PersonaProfile
+        from sirius_pulse.models.persona import PersonaProfile
         persona = PersonaProfile(name="TestBot")
         msg = Message(role="human", content="你好")
         emotion = EmotionState()

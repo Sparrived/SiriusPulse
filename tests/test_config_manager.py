@@ -11,9 +11,9 @@ from unittest import mock
 
 import pytest
 
-from sirius_chat.config import ConfigManager, SessionConfig
-from sirius_chat.config.jsonc import load_json_document, write_session_config_jsonc
-from sirius_chat.utils.layout import WorkspaceLayout
+from sirius_pulse.config import ConfigManager, SessionConfig
+from sirius_pulse.config.jsonc import load_json_document, write_session_config_jsonc
+from sirius_pulse.utils.layout import WorkspaceLayout
 
 
 class TestConfigManager:
@@ -364,7 +364,7 @@ class TestConfigIntegration:
         manager = ConfigManager()
         try:
             config = manager.load_from_json(
-                Path(__file__).parent.parent / "sirius_chat" / "configs" / "dev.json"
+                Path(__file__).parent.parent / "sirius_pulse" / "configs" / "dev.json"
             )
             assert config.agent.name == "SiriusAI-Dev"
             # 验证多模型协同已配置（unified_model 或 task_models）
@@ -377,7 +377,7 @@ class TestConfigIntegration:
         manager = ConfigManager()
         try:
             config = manager.load_from_json(
-                Path(__file__).parent.parent / "sirius_chat" / "configs" / "test.json"
+                Path(__file__).parent.parent / "sirius_pulse" / "configs" / "test.json"
             )
             assert config.agent.name == "SiriusAI-Test"
             assert config.agent.model == "mock-model"

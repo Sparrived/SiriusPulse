@@ -1,6 +1,6 @@
-# Sirius Chat 项目问题跟踪
+# Sirius Pulse 项目问题跟踪
 
-> **本文档记录对 Sirius Chat v1.1.0 代码库的深度分析中发现的问题、风险与改进建议。**
+> **本文档记录对 Sirius Pulse v1.1.0 代码库的深度分析中发现的问题、风险与改进建议。**
 > 
 > 更新日期：2026-05-02
 > 分析范围：完整代码库 + 所有文档 + 所有 SKILL
@@ -13,10 +13,10 @@
 
 | 问题 | 位置 | 实际情况 | 状态 |
 |------|------|---------|------|
-| `workspace/` 目录被多处引用 | `docs/architecture.md`、`SKILL/framework-quickstart` | 代码中不存在该目录，功能已迁移至 `sirius_chat/utils/layout.py` | **已修复** — `docs/architecture.md` 中无此引用；SKILL 中无此引用 |
+| `workspace/` 目录被多处引用 | `docs/architecture.md`、`SKILL/framework-quickstart` | 代码中不存在该目录，功能已迁移至 `sirius_pulse/utils/layout.py` | **已修复** — `docs/architecture.md` 中无此引用；SKILL 中无此引用 |
 | `cache/` 目录 | `docs/architecture.md` | 代码中不存在 | **已修复** — `docs/architecture.md` 中无此引用 |
 | `performance/` 目录 | `docs/architecture.md` | 代码中不存在，但 `tests/benchmarks/` 存在 | **已修复** — `docs/architecture.md` 中无此引用 |
-| `api/` 目录 | `docs/architecture.md` | 不存在，公开 API 在 `sirius_chat/__init__.py` 中统一导出 | **已修复** — `docs/architecture.md` 中无此引用 |
+| `api/` 目录 | `docs/architecture.md` | 不存在，公开 API 在 `sirius_pulse/__init__.py` 中统一导出 | **已修复** — `docs/architecture.md` 中无此引用 |
 
 **验证命令**：
 ```bash
@@ -32,12 +32,12 @@ grep -rn "workspace/\|cache/\|performance/" docs/ .trae/skills/ | grep -v "webui
 
 `.trae/skills/code-change-sync/SKILL.md` 中的项目结构地图已更新，补充了以下此前缺失的模块：
 
-- [x] `sirius_chat/background_tasks.py` — 后台任务管理器
-- [x] `sirius_chat/mixins.py` — JsonSerializable 混入
-- [x] `sirius_chat/developer_profiles.py` — 开发者身份校验
-- [x] `sirius_chat/trait_taxonomy.py` — 特征分类体系
-- [x] `sirius_chat/exceptions.py` — 自定义异常
-- [x] `sirius_chat/logging_config.py` — 日志配置
+- [x] `sirius_pulse/background_tasks.py` — 后台任务管理器
+- [x] `sirius_pulse/mixins.py` — JsonSerializable 混入
+- [x] `sirius_pulse/developer_profiles.py` — 开发者身份校验
+- [x] `sirius_pulse/trait_taxonomy.py` — 特征分类体系
+- [x] `sirius_pulse/exceptions.py` — 自定义异常
+- [x] `sirius_pulse/logging_config.py` — 日志配置
 
 **状态**：**已修复** — `code-change-sync` SKILL 的项目结构地图已包含上述所有模块。
 
@@ -67,7 +67,7 @@ grep -rn "docs/engine-emotional\|docs/memory-system\|docs/skill-system\|docs/con
 | `docs/architecture.md` | `AsyncRolePlayEngine` 与 `WorkspaceRuntime` 已完全移除 | 删除该句，仅保留当前引擎说明 |
 | `docs/architecture.md` | `v1.0.0 默认引擎` | `默认引擎` |
 | `docs/architecture.md` | `Emotional 路径（v0.28+ 默认）` | `Emotional 路径（默认）` |
-| `docs/engine-deep-dive.md` | 替代 legacy `AsyncRolePlayEngine`（已完全移除） | Sirius Chat 的核心对话编排引擎 |
+| `docs/engine-deep-dive.md` | 替代 legacy `AsyncRolePlayEngine`（已完全移除） | Sirius Pulse 的核心对话编排引擎 |
 | `docs/persona-system.md` | `v0.28+ 新增` | 删除版本前缀 |
 | `docs/persona-system.md` | 行为与 v0.27 一致 | 重写为"默认人格"段落 |
 | `docs/skill-guide.md` | `结构化结果通道（v0.27.9）` | `结构化结果通道` |
@@ -95,7 +95,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 - 没有不同场景（游戏群/学习群/工作群）的命中率分布
 - 规则集的覆盖度和准确率未量化
 
-**代码位置**：`sirius_chat/core/cognition.py`
+**代码位置**：`sirius_pulse/core/cognition.py`
 
 **影响**：如果实际命中率只有 60%，LLM fallback 频率会大幅上升，Token 成本优势消失。
 
@@ -111,7 +111,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 - 日记生成是 CPU+IO 密集型操作，虽然放在后台任务，但仍可能占用大量资源
 - 没有向量数据库，日记检索依赖关键词+嵌入索引，大量日记后的检索质量未知
 
-**代码位置**：`sirius_chat/memory/basic/`、`sirius_chat/memory/diary/`
+**代码位置**：`sirius_pulse/memory/basic/`、`sirius_pulse/memory/diary/`
 
 **建议**：
 - [ ] 基础记忆的 30 条限制改为可配置（`experience.json` 中增加参数）
@@ -125,11 +125,11 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 - 10 个人格 = 20 个进程，每个 Python 进程仍需加载 Pillow 等库
 - 没有进程池或共享内存机制
 
-**代码位置**：`sirius_chat/persona_manager.py`
+**代码位置**：`sirius_pulse/persona_manager.py`
 
 **影响**：在资源受限的服务器上（如 2C4G 云主机），同时运行 3-5 个人格就可能内存不足。
 
-**已解决**：~~每个 Python 进程加载 sentence-transformers 重库~~ → Embedding 模型已迁移至共享 Embedding 微服务（`sirius_chat/embedding/`），由 `PersonaManager` 在主进程启动一次，各子进程通过 `EmbeddingClient` HTTP 调用，不再各自加载模型权重。
+**已解决**：~~每个 Python 进程加载 sentence-transformers 重库~~ → Embedding 模型已迁移至共享 Embedding 微服务（`sirius_pulse/embedding/`），由 `PersonaManager` 在主进程启动一次，各子进程通过 `EmbeddingClient` HTTP 调用，不再各自加载模型权重。
 
 **建议**：
 - [ ] 测量单人格内存占用 baseline
@@ -143,7 +143,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 - `setup_wizard.py` 是 QQ 私聊交互式的，不具备通用性
 - 如果 NapCat 停止维护或 QQ 协议变更，整个项目受严重影响
 
-**代码位置**：`sirius_chat/platforms/`
+**代码位置**：`sirius_pulse/platforms/`
 
 **建议**：
 - [ ] 抽象 `PlatformBridge` 基类（类似 `BaseBridge` / `BaseAdapter`），将 NapCat specifics 下沉到 `platforms/onebot_v11/napcat/`
@@ -189,7 +189,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 **现状**：`tests/test_public_api.py` 只有 4 个测试函数。
 
 **问题**：
-- `sirius_chat/__init__.py` 中导出的 20+ 个公开符号未全部测试
+- `sirius_pulse/__init__.py` 中导出的 20+ 个公开符号未全部测试
 - 新增公开接口后容易遗漏测试
 
 **建议**：
@@ -235,7 +235,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 ### 5.1 异常处理一致性
 
 **问题**：
-- 部分模块使用自定义异常（`sirius_chat/exceptions.py`），部分模块直接使用 `ValueError`/`RuntimeError`
+- 部分模块使用自定义异常（`sirius_pulse/exceptions.py`），部分模块直接使用 `ValueError`/`RuntimeError`
 - 异步代码中的异常捕获不够统一
 
 **建议**：
@@ -322,7 +322,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 | P0 | 建立 CI 文档校验脚本 | 维护者 | PR 中若文档引用不存在的文件，CI 失败 |
 | P1 | 补充 `PersonaManager` 集成测试 | 开发者 | 覆盖 start/stop/run_all 主路径 |
 | P1 | 测量单人格内存占用 baseline | 开发者 | 输出 `docs/benchmarks/memory-baseline.md` |
-| P1 | 统一异常体系 | 开发者 | 所有模块使用 `sirius_chat/exceptions.py` 中的异常 |
+| P1 | 统一异常体系 | 开发者 | 所有模块使用 `sirius_pulse/exceptions.py` 中的异常 |
 
 ### 中期（3-6 个月）— 扩展能力
 
@@ -353,7 +353,7 @@ grep -rn "AsyncRolePlayEngine\|WorkspaceRuntime\|旧版兼容层\|兼容层\|v0\
 - [ ] 所有 SKILL 中的项目结构地图与代码一致
 - [ ] `pytest -q` 全部通过
 - [ ] `python main.py --help` 可正常执行
-- [ ] 新增公开 API 已在 `sirius_chat/__init__.py` 中导出
+- [ ] 新增公开 API 已在 `sirius_pulse/__init__.py` 中导出
 - [ ] 新增公开 API 已有对应测试
 - [ ] 配置文件变更已同步到 `docs/configuration-guide.md`
 - [ ] 架构变更已同步到 `docs/architecture.md` 和 `docs/full-architecture-flow.md`

@@ -212,10 +212,10 @@ _alias_index: dict[str, list[AliasEntry]]
 
 | 文件 | 说明 |
 |------|------|
-| `sirius_chat/memory/biography/__init__.py` | 包入口 |
-| `sirius_chat/memory/biography/models.py` | 数据结构定义（UserPersonaCard、RelationshipAnchor、AliasEntry） |
-| `sirius_chat/memory/biography/manager.py` | `BiographyManager` 核心逻辑（攒消息 → 蒸馏 → 传记更新，两层凝练） |
-| `sirius_chat/memory/biography/store.py` | `BiographyStore` 持久化 |
+| `sirius_pulse/memory/biography/__init__.py` | 包入口 |
+| `sirius_pulse/memory/biography/models.py` | 数据结构定义（UserPersonaCard、RelationshipAnchor、AliasEntry） |
+| `sirius_pulse/memory/biography/manager.py` | `BiographyManager` 核心逻辑（攒消息 → 蒸馏 → 传记更新，两层凝练） |
+| `sirius_pulse/memory/biography/store.py` | `BiographyStore` 持久化 |
 
 ### BiographyManager
 
@@ -722,7 +722,7 @@ def _collect_mentioned_users(self, message_content: str, group_id: str,
 
 ### 注入位置
 
-在 [PromptFactory.assemble_chat()](file:///d:/Code/sirius_chat/sirius_chat/core/prompt_factory.py#L788) 的 sections 序列中，在 `persona_prompt` 之后、`identity_verification` 之前插入：
+在 [PromptFactory.assemble_chat()](file:///d:/Code/sirius_pulse/sirius_pulse/core/prompt_factory.py#L788) 的 sections 序列中，在 `persona_prompt` 之后、`identity_verification` 之前插入：
 
 ```python
 # 新增：人物速查
@@ -826,7 +826,7 @@ class PromptFactory:
 
 ### _bg_diary_promoter 修改
 
-在现有 [bg_tasks.py:_bg_diary_promoter](file:///d:/Code/sirius_chat/sirius_chat/core/bg_tasks.py#L157-L234) 的日记生成成功后，新增传记提取：
+在现有 [bg_tasks.py:_bg_diary_promoter](file:///d:/Code/sirius_pulse/sirius_pulse/core/bg_tasks.py#L157-L234) 的日记生成成功后，新增传记提取：
 
 ```python
 # 在现有 _bg_diary_promoter 中，result 成功后插入：
@@ -934,18 +934,18 @@ async def _feed_biography_from_candidates(
 
 ### 构造函数新增成员
 
-在 [engine_core.py:__init__](file:///d:/Code/sirius_chat/sirius_chat/core/engine_core.py#L199-L205) 的 memory foundation 区域新增：
+在 [engine_core.py:__init__](file:///d:/Code/sirius_pulse/sirius_pulse/core/engine_core.py#L199-L205) 的 memory foundation 区域新增：
 
 ```python
 # 在 diary_manager = DiaryManager(...) 之后新增：
-from sirius_chat.memory.biography.manager import BiographyManager
+from sirius_pulse.memory.biography.manager import BiographyManager
 
 self.biography_manager = BiographyManager(work_path)
 ```
 
 ### pipeline.py 新增方法
 
-在 [pipeline.py](file:///d:/Code/sirius_chat/sirius_chat/core/pipeline.py) 中新增：
+在 [pipeline.py](file:///d:/Code/sirius_pulse/sirius_pulse/core/pipeline.py) 中新增：
 
 ```python
 def _collect_biography_section(
@@ -988,7 +988,7 @@ def _collect_biography_section(
 
 ### 决策阶段传入 biography 参数
 
-在 [pipeline.py:_decision_and_schedule](file:///d:/Code/sirius_chat/sirius_chat/core/pipeline.py#L350) 的区域，在现有 profiles 收集后新增：
+在 [pipeline.py:_decision_and_schedule](file:///d:/Code/sirius_pulse/sirius_pulse/core/pipeline.py#L350) 的区域，在现有 profiles 收集后新增：
 
 ```python
 # 现有代码
@@ -1235,7 +1235,7 @@ else:              →  不注入（传记的 short_bio 已覆盖常规认知）
 
 #### ⑩ `cross_group_context`（pipeline L382-403） — 完全删除
 
-**当前构建逻辑**（在 [pipeline.py](file:///d:/Code/sirius_chat/sirius_chat/core/pipeline.py#L382-L403)）：
+**当前构建逻辑**（在 [pipeline.py](file:///d:/Code/sirius_pulse/sirius_pulse/core/pipeline.py#L382-L403)）：
 ```python
 cross_group_context = ""   # 约 25 行代码
 if user_id:

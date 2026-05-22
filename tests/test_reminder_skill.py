@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from sirius_chat.skills.builtin.reminder import run, _is_valid_hhmm, _weekday_name
+from sirius_pulse.skills.builtin.reminder import run, _is_valid_hhmm, _weekday_name
 
 
 class MockDataStore:

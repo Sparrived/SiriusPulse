@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sirius_chat.core.identity_resolver import IdentityContext, IdentityResolver
-from sirius_chat.memory.user.simple import UserManager, UserProfile
+from sirius_pulse.core.identity_resolver import IdentityContext, IdentityResolver
+from sirius_pulse.memory.user.simple import UserManager, UserProfile
 
 
 class TestIdentityResolver:

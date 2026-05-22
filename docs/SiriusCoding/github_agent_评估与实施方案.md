@@ -1,6 +1,6 @@
 # github_agent 插件可行性评估与实施方案
 
-> 本文将原始设计方案（与 Gemini 对话产物）与 Sirius Chat v1.1.0 框架源码逐项对照，输出：
+> 本文将原始设计方案（与 Gemini 对话产物）与 Sirius Pulse v1.1.0 框架源码逐项对照，输出：
 > 1. 每个设计节点的可行性判定
 > 2. 框架层需要的改动（最小化侵入）
 > 3. 插件层每个文件的详细设计
@@ -36,7 +36,7 @@
 
 ### 2.1 问题描述
 
-原始设计期望插件在初始化时向 Sirius Chat WebUI 注册 `POST /api/webhook/github` 路由：
+原始设计期望插件在初始化时向 Sirius Pulse WebUI 注册 `POST /api/webhook/github` 路由：
 
 ```
 路由注入：在插件初始化时，向 SiriusChat WebUI 注册 POST /api/webhook/github 路由。
@@ -566,7 +566,7 @@ async def webhook_handler(request: web.Request) -> web.Response:
 
 ```python
 # commands.py
-from sirius_chat.plugins import command, PluginResponse
+from sirius_pulse.plugins import command, PluginResponse
 
 class GithubAgentPlugin(PluginBase):
     @command("gh", prefix="/", patterns=["/gh"], render_mode="direct")
@@ -1117,7 +1117,7 @@ def main() -> None:
     keep_open = "--keep-open" in sys.argv
 
     print(f"{C_BOLD}{C_CYAN}╔══════════════════════════════════════════════════════════╗{C_RESET}")
-    print(f"{C_BOLD}{C_CYAN}║        Sirius Chat — GitHub Agent 实时交互流            ║{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}║        Sirius Pulse — GitHub Agent 实时交互流            ║{C_RESET}")
     print(f"{C_BOLD}{C_CYAN}╚══════════════════════════════════════════════════════════╝{C_RESET}")
     print(f"{C_DIM}  等待 AI 开始工作...{C_RESET}\n")
 
@@ -1312,7 +1312,7 @@ async def run_agent_loop(task_data: dict, config: dict, ...) -> str:
 
 ```
 ╔══════════════════════════════════════════════════════════╗
-║        Sirius Chat — GitHub Agent 实时交互流            ║
+║        Sirius Pulse — GitHub Agent 实时交互流            ║
 ╚══════════════════════════════════════════════════════════╝
   等待 AI 开始工作...
 
@@ -1986,7 +1986,7 @@ plugins/github_agent/
 
 ## 五、框架层改动详情
 
-### 5.1 改动文件：`sirius_chat/webui/server_core.py`
+### 5.1 改动文件：`sirius_pulse/webui/server_core.py`
 
 **新增内容**：
 
@@ -2041,7 +2041,7 @@ def unregister_plugin_routes(self, plugin_name: str) -> None:
         LOG.info("卸载 Plugin [%s] 路由: %s", plugin_name, path)
 ```
 
-### 5.2 改动文件：`sirius_chat/plugins/context.py`
+### 5.2 改动文件：`sirius_pulse/plugins/context.py`
 
 在 `EngineProxy` 中新增方法，使插件可以访问 WebUI 服务器引用：
 

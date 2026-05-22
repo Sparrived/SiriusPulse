@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from sirius_chat.skills.data_store import SkillDataStore
+from sirius_pulse.skills.data_store import SkillDataStore
 
-from sirius_chat.skills.builtin import file_read, file_write, file_list
+from sirius_pulse.skills.builtin import file_read, file_write, file_list
 
 
 class TestFileReadSkill:

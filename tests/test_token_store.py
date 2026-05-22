@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from sirius_chat.config import TokenUsageRecord
-from sirius_chat.token.store import TokenUsageStore
-from sirius_chat.token.analytics import (
+from sirius_pulse.config import TokenUsageRecord
+from sirius_pulse.token.store import TokenUsageStore
+from sirius_pulse.token.analytics import (
     compute_baseline,
     full_report,
     group_by_actor,

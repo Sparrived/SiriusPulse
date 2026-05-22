@@ -1,6 +1,6 @@
 # 变更日志
 
-本文档记录 Sirius Chat 的所有版本变更。采用 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 规范。
+本文档记录 Sirius Pulse 的所有版本变更。采用 [Keep a Changelog](https://keepachangelog.com/zh-CN/) 规范。
 
 ## [Unreleased]
 
@@ -49,7 +49,7 @@
 
 - **`SkillDataStore.set()` 重复标记**：移除多余的 `self._dirty = True`。
 - **`MultiModelConfig.to_dict()` 崩溃**：修复 copy-paste 导致的 `AttributeError`（原代码引用已删除的 `WorkspaceConfig` 字段）。
-- **删除 `UserMemoryManager`**：依赖的 `sirius_chat.memory.quality.models` 模块不存在，直接删除该管理器。
+- **删除 `UserMemoryManager`**：依赖的 `sirius_pulse.memory.quality.models` 模块不存在，直接删除该管理器。
 - **`pop_reminders` 兼容性**：将 `adapter_type` 为空字符串的 reminder 视为通配符，兼容旧版 reminder。
 - **移除硬编码默认群号**：`napcat_adapter.py` 不再使用默认群 ID `728196560`。
 - **图片缓存使用内容哈希**：`MD5(url)` → `MD5(下载内容)`，避免同图不同 URL 的重复下载。
@@ -72,7 +72,7 @@
 
 ### Removed
 
-- **移除 `create_async_engine` 公开 API**：`AsyncRolePlayEngine` 仍作为内部运行时组件保留（`WorkspaceRuntime` 依赖），但不再通过 `sirius_chat.api` 公开导出。
+- **移除 `create_async_engine` 公开 API**：`AsyncRolePlayEngine` 仍作为内部运行时组件保留（`WorkspaceRuntime` 依赖），但不再通过 `sirius_pulse.api` 公开导出。
 - **删除 session store legacy migration**：`_migrate_legacy_storage_if_needed` 及对应测试已移除。
 - **删除 user memory auto-migration**：`UserMemoryFileStore.load_all()` 不再自动检测并迁移旧格式。
 
@@ -94,11 +94,11 @@
 
 ### Removed
 
-- **删除 `sirius_chat/cli.py`**：旧版单人格薄 CLI，由 `main.py` 统一入口替代。
-- **删除 `sirius_chat/cli_diagnostics.py`**：未使用。
+- **删除 `sirius_pulse/cli.py`**：旧版单人格薄 CLI，由 `main.py` 统一入口替代。
+- **删除 `sirius_pulse/cli_diagnostics.py`**：未使用。
 - **删除 WebUI legacy API**：`/api/status`、`/api/persona`、`/api/orchestration`、`/api/config`、`/api/engine/toggle` 等旧版单人格兼容路由。
 - **删除旧版 CLI 测试**：`test_cli_config.py`、`test_cli_diagnostics.py`、`test_cli_runtime.py`。
-- **移除 `pyproject.toml` entry point**：`sirius-chat` 命令已移除。
+- **移除 `pyproject.toml` entry point**：`sirius-pulse` 命令已移除。
 
 ### Changed
 
@@ -196,7 +196,7 @@
 - **群体规范学习**：被动学习 avg_message_length、emoji_usage_rate、mention_rate、active_hours、topic_switch_frequency、typical_interaction_style。
 - **Token 追踪**：`_generate()` 中估算 input/output tokens，随状态持久化。
 - **状态持久化 `EngineStateStore`**：持久化 working memory、assistant emotion、token usage 到 `engine_state/`。
-- **数据迁移脚本**：`sirius_chat/memory/migration/v0_28_group_isolation.py`，自动检测旧格式并迁移到群隔离布局。
+- **数据迁移脚本**：`sirius_pulse/memory/migration/v0_28_group_isolation.py`，自动检测旧格式并迁移到群隔离布局。
 - **CLI 引擎切换**：`main.py --engine {legacy,emotional}`。
 - **WorkspaceRuntime 集成**：`create_emotional_engine()` 工厂方法，自动注入 skill runtime。
 - **完整文档更新**：`full-architecture-flow.md`、`architecture.md`、`external-usage.md` 全量重写。
@@ -540,7 +540,7 @@
 
 ### Changed
 - **Provider 路由与平台清单**：新增 `bigmodel` 平台，支持 `zhipu` / `zhipuai` 别名归一化，并可通过 `AutoRoutingProvider`、`ProviderRegistry`、`register_provider_with_validation()` 等统一接入。
-- **公开 API 导出**：`sirius_chat`、`sirius_chat.api` 与 `sirius_chat.api.providers` 新增导出 `BigModelProvider`。
+- **公开 API 导出**：`sirius_pulse`、`sirius_pulse.api` 与 `sirius_pulse.api.providers` 新增导出 `BigModelProvider`。
 
 ### Documentation
 - 更新 README、架构文档、外部接入文档和 SKILL，补充 BigModel GLM-4.6V 的接入方式。
@@ -557,7 +557,7 @@
 - 新增迁移文档 `docs/migration-v0.25.md`。
 
 ### Removed
-- **WorkspaceMigrationManager 已移除**：`sirius_chat.workspace.migration` 模块及其导入均已删除。`WorkspaceRuntime.initialize()` 不再自动迁移根目录平铺布局。
+- **WorkspaceMigrationManager 已移除**：`sirius_pulse.workspace.migration` 模块及其导入均已删除。`WorkspaceRuntime.initialize()` 不再自动迁移根目录平铺布局。
 - **EventMemoryManager v1 格式迁移已移除**：`from_dict()` 遇到 version < 2 数据时返回空 manager。
 
 ### Changed
@@ -576,7 +576,7 @@
 - **配置模板可注释化**：`--init-config` 与 workspace 生成的 `config/session_config.json` 改为写出 JSONC 风格注释模板，便于外部直接编辑并与热刷新联动。
 
 ### Fixed
-- **外部接入路径歧义**：修复 `main.py`、`sirius-chat` CLI、`JsonPersistentSessionRunner` 和 roleplay 持久化在双路径模式下仍把部分配置错误写回 data root 的问题。
+- **外部接入路径歧义**：修复 `main.py`、`sirius-pulse` CLI、`JsonPersistentSessionRunner` 和 roleplay 持久化在双路径模式下仍把部分配置错误写回 data root 的问题。
 
 ## [0.23.0] - 2026-04-14
 
@@ -587,13 +587,13 @@
 
 ### Changed
 - **持久化布局统一收口**：provider、session、memory、token、roleplay、skills 全部改走 workspace 布局。默认路径现在是：`providers/provider_keys.json`、`sessions/<session_id>/session_state.db`、`sessions/<session_id>/participants.json`、`memory/events/events.json`、`memory/self_memory.json`、`token/token_usage.db`、`roleplay/generated_agents.json` 与 `roleplay/generated_agent_traces/`。
-- **兼容入口复用 runtime**：`JsonPersistentSessionRunner`、`sirius-chat` CLI 和 `main.py` 现在尽量复用 `WorkspaceRuntime`，不再要求调用方显式 `store.load()` / `store.save()`。
+- **兼容入口复用 runtime**：`JsonPersistentSessionRunner`、`sirius-pulse` CLI 和 `main.py` 现在尽量复用 `WorkspaceRuntime`，不再要求调用方显式 `store.load()` / `store.save()`。
 - **Roleplay 与 provider 管理收敛到 workspace**：active agent 会同步写回 `WorkspaceConfig`，provider registry 统一托管在 `WorkspaceProviderManager` 下。
 
 ### Fixed
 - **Windows SQLite 删除锁**：`SqliteSessionStore` 现在显式关闭连接，修复删除 session 目录时的 `WinError 32`。
 - **兼容入口路径回归**：修复 `main.py` 在新布局下使用 `/provider add` 时错误地把 workspace 根路径解析为 `providers/` 子目录的问题。
-- **包初始化循环依赖**：`sirius_chat.workspace` 与 `sirius_chat.session` 改为 lazy exports，避免 runtime 引入后的导入环路。
+- **包初始化循环依赖**：`sirius_pulse.workspace` 与 `sirius_pulse.session` 改为 lazy exports，避免 runtime 引入后的导入环路。
 
 ## [0.22.4] - 2026-04-14
 
@@ -637,7 +637,7 @@
 
 ### Added
 - **人格问卷模板 API**：新增 `list_roleplay_question_templates()`，并让 `generate_humanized_roleplay_questions(template=...)` 支持 `default`、`companion`、`romance`、`group_chat` 四类场景模板，方便外部系统按陪伴型、恋爱向、群聊型等场景直接切换问卷。
-- **CLI 模板辅助命令**：`sirius-chat` 新增 `--list-roleplay-question-templates` 与 `--print-roleplay-questions-template <template>`，无需先加载会话配置即可直接导出模板枚举和问题清单 JSON。
+- **CLI 模板辅助命令**：`sirius-pulse` 新增 `--list-roleplay-question-templates` 与 `--print-roleplay-questions-template <template>`，无需先加载会话配置即可直接导出模板枚举和问题清单 JSON。
 - **模板骨架示例脚本**：新增 `examples/roleplay_template_selection.py`，可按模板导出 `PersonaSpec` 问卷骨架，便于外部表单、配置后台或 Agent 平台直接接入。
 
 ### Changed
@@ -662,9 +662,9 @@
 
 ### Changed (Internal)
 - **`AsyncRolePlayEngine` 神类拆分（TD-09）**：将 2576 行的 `core/engine.py` 中内聚的方法组提取为独立模块，engine 方法保留为 thin wrapper：
-  - `sirius_chat/core/memory_runner.py`：5 个记忆/事件任务函数（`run_memory_extract_task`、`run_self_memory_extract_task`、`run_batch_event_extract`、`run_memory_manager_task`、`build_memory_extract_task_input`）
-  - `sirius_chat/core/engagement_pipeline.py`：3 个参与度/回复决策函数（`build_heat_analysis`、`run_engagement_intent_analysis`、`should_reply_for_turn`）
-  - `sirius_chat/core/chat_builder.py`：6 个聊天上下文构建函数（`has_multimodal_inputs`、`get_model_for_chat`、`is_internal_memory_metadata_line`、`sanitize_assistant_content`、`collect_internal_system_notes`、`build_chat_main_request_context`）+ 3 个正则常量
+  - `sirius_pulse/core/memory_runner.py`：5 个记忆/事件任务函数（`run_memory_extract_task`、`run_self_memory_extract_task`、`run_batch_event_extract`、`run_memory_manager_task`、`build_memory_extract_task_input`）
+  - `sirius_pulse/core/engagement_pipeline.py`：3 个参与度/回复决策函数（`build_heat_analysis`、`run_engagement_intent_analysis`、`should_reply_for_turn`）
+  - `sirius_pulse/core/chat_builder.py`：6 个聊天上下文构建函数（`has_multimodal_inputs`、`get_model_for_chat`、`is_internal_memory_metadata_line`、`sanitize_assistant_content`、`collect_internal_system_notes`、`build_chat_main_request_context`）+ 3 个正则常量
   - `engine.py` 行数：2576 → 1932（减少 644 行，-25%）
 
 - **`LiveSessionContext` 重构（TD-11）**：将 16 字段的平坦 dataclass 按抽象层次拆分为 3 个子对象：
@@ -677,7 +677,7 @@
 ## [0.19.0] - 2026-04-13
 
 ### Added
-- **`sirius_chat/mixins.py`**：新增公开 Mixin 模块，将 `JsonSerializable` 迁入正式公开命名空间（原 `_mixin.py` 成为向后兼容垫片）。
+- **`sirius_pulse/mixins.py`**：新增公开 Mixin 模块，将 `JsonSerializable` 迁入正式公开命名空间（原 `_mixin.py` 成为向后兼容垫片）。
 - **`SessionStore.clear()`**：两种 Store 均新增 `clear()` 方法——`JsonSessionStore.clear()` 删除文件，`SqliteSessionStore.clear()` 清空行保留文件（避免 Windows 文件锁）。
 - **序列化线路扩展**：`UserProfile` 和 `Participant` 继承 `JsonSerializable`，自动获得 `to_dict()` / `from_dict()`。
 - 新增迁移文档 `docs/migration-v0.19.md`。
@@ -686,7 +686,7 @@
 - **默认 Session Store 改为 SQLite**：`JsonPersistentSessionRunner` 默认使用 `SqliteSessionStore`（`session_state.db`）代替 `JsonSessionStore`。已有 `session_state.json` 用户可显式传入 `JsonSessionStore` 或使用迁移脚本，详见迁移文档。
 - **`JsonPersistentSessionRunner.reset_primary_user()`**：改用 `store.clear()`，兼容两种持久化后端，修复 Windows 文件锁导致的 `PermissionError`。
 - **`UserMemoryFileStore._entry_to_payload()`**：由手工字段枚举改为 `entry.profile.to_dict()`；实际效果：保存的 `users/*.json` 现在额外包含 `identities` 和 `metadata` 字段（原先被遗漏），已有文件完全向后兼容。
-- 所有模型文件内部导入从 `sirius_chat._mixin` 统一改为 `sirius_chat.mixins`。
+- 所有模型文件内部导入从 `sirius_pulse._mixin` 统一改为 `sirius_pulse.mixins`。
 
 
 
@@ -720,7 +720,7 @@
 
 ### Changed
 - `reply_mode=auto` / `smart` 下的 LLM 意图分析现在走统一任务执行路径，支持预算、重试、统计与专用模型配置；任务关闭、预算超限或调用失败时自动退回关键词回退路径。
-- `main.py`、库内 `sirius_chat` CLI 与 `ConfigManager` 现在会完整加载 orchestration JSON 中的任务开关、模型、预算和参与决策相关设置，不再忽略这部分配置。
+- `main.py`、库内 `sirius_pulse` CLI 与 `ConfigManager` 现在会完整加载 orchestration JSON 中的任务开关、模型、预算和参与决策相关设置，不再忽略这部分配置。
 
 ## [0.15.8] - 2026-04-11
 
@@ -849,7 +849,7 @@
 
 ### Added
 - **SKILL 链式调用（Chain Invocation）**：AI 现在可在同一回复中顺序调用多个 SKILL，后续 SKILL 的参数可直接引用前序结果。
-  - `SkillChainContext`（`sirius_chat/skills/models.py`）：单轮 SKILL 执行的共享上下文，存储每个 SKILL 的 `SkillResult`。
+  - `SkillChainContext`（`sirius_pulse/skills/models.py`）：单轮 SKILL 执行的共享上下文，存储每个 SKILL 的 `SkillResult`。
   - 参数模板语法：
     - `${skill_name}` — 引用前序 SKILL 的完整文本输出
     - `${skill_name.field}` — 引用前序 SKILL 返回 dict 的某字段（或 list 的 0 索引）
@@ -878,7 +878,7 @@
   - 删除 `OrchestrationPolicy` 中全部 11 个 `auto_reply_*` Legacy 参数（传入将引发 `TypeError`）。
   - 删除 `ReplyWillingnessDecision` dataclass。
   - 删除旧 `_run_intent_analysis()` 方法（由 `_run_engagement_intent_analysis()` 替代）。
-  - 删除 `sirius_chat/core/intent.py`（由 `core/intent_v2.py` 替代）。
+  - 删除 `sirius_pulse/core/intent.py`（由 `core/intent_v2.py` 替代）。
   - 简化 `_should_reply_for_turn()` 签名为 `(turn: Message) -> bool`。
 
 ### Added
@@ -905,7 +905,7 @@
 ## [0.13.0] - 2026-04-10
 
 ### Added
-- **AI 自身记忆系统**（`sirius_chat/memory/self/`）：独立于用户记忆的 AI 自主记忆子系统。
+- **AI 自身记忆系统**（`sirius_pulse/memory/self/`）：独立于用户记忆的 AI 自主记忆子系统。
   - **日记子系统 (Diary)**：AI 自主决定需要记忆的内容，每条日记携带重要性评分、关键词标签和分类（reflection/observation/decision/emotion/milestone）。基于时间的遗忘曲线自动衰退置信度（3天95%→180天5%），高重要性条目衰退减缓40%，被提及的条目获得保留加成。
   - **名词解释子系统 (Glossary)**：在对话中收集 AI 不理解的名词，逐步建立定义库。支持多来源（conversation/user_explained/inferred）和多领域（tech/daily/culture/game/custom），相同术语自动合并。
   - **提示词集成**：日记和名词解释分别以 `<self_diary>` 和 `<glossary>` XML 段注入系统提示词，紧凑格式减少 token 消耗。
@@ -991,14 +991,14 @@
 - **debounce `CancelledError` 吞没外部超时**：修复 `_run_live_message_core` 中 debounce sleep 的 `except CancelledError: return transcript` 错误地拦截了外部 `asyncio.wait_for` 的超时取消信号。移除该捕获，使外部超时与关停取消能正确传播。
 
 ### Changed
-- **外部插件样板代码精简**：`sirius_chat_group` 插件的 `_chat_once_locked` 和 `_chat_private_once_locked` 各减少约 45 行手动事件订阅/消费/清理代码，改为使用 `on_reply` + `timeout` 参数。
+- **外部插件样板代码精简**：`sirius_pulse_group` 插件的 `_chat_once_locked` 和 `_chat_private_once_locked` 各减少约 45 行手动事件订阅/消费/清理代码，改为使用 `on_reply` + `timeout` 参数。
 - **迁移指南**：`docs/migration-v0.12.md`。
 
 ## [0.11.0] - 2026-04-09
 
 ### Added
-- **Token 使用 SQLite 持久化** (`sirius_chat/token/store.py`)：新增 `TokenUsageStore` 类，每次模型调用自动将 `TokenUsageRecord` 写入 `{work_path}/token_usage.db`。基于 Python 标准库 `sqlite3`，无新依赖。支持 WAL 模式、批量写入、跨会话查询与多条件筛选。
-- **多维度 Token 分析模块** (`sirius_chat/token/analytics.py`)：基于 SQLite 的全量分析函数集：
+- **Token 使用 SQLite 持久化** (`sirius_pulse/token/store.py`)：新增 `TokenUsageStore` 类，每次模型调用自动将 `TokenUsageRecord` 写入 `{work_path}/token_usage.db`。基于 Python 标准库 `sqlite3`，无新依赖。支持 WAL 模式、批量写入、跨会话查询与多条件筛选。
+- **多维度 Token 分析模块** (`sirius_pulse/token/analytics.py`)：基于 SQLite 的全量分析函数集：
   - `compute_baseline()`：全局/筛选级基线统计（总调用数、token 合计、均值、重试率、completion/prompt 比值）
   - `group_by_session()`：按会话聚合
   - `group_by_actor()`：按用户聚合
@@ -1016,7 +1016,7 @@
 ## [0.10.0] - 2026-04-09
 
 ### Added
-- **意图分析系统** (`sirius_chat/core/intent.py`)：LLM-based 用户意图分析器，支持 question/request/chat/reaction/information_share/command 六种意图分类。LLM 路径默认启用（`enable_intent_analysis=True`）；可显式设为 `False` 退回关键词回退路径（零 LLM 开销）。
+- **意图分析系统** (`sirius_pulse/core/intent.py`)：LLM-based 用户意图分析器，支持 question/request/chat/reaction/information_share/command 六种意图分类。LLM 路径默认启用（`enable_intent_analysis=True`）；可显式设为 `False` 退回关键词回退路径（零 LLM 开销）。
 - **系统提示词段落跳过** (`skip_sections`)：意图分析可判定当前消息是否需要参与者记忆或会话摘要，跳过不需要的段落以减少 token 消耗。
 - **事件归纳** (`EventMemoryManager.consolidate_entries`)：按 category 分组使用 LLM 归纳合并冗余观察记录。
 - **摘要归纳** (`UserMemoryManager.consolidate_summary_notes`)：LLM 合并冗余摘要为精炼条目。
@@ -1103,7 +1103,7 @@
 
 ### Added
 - **SKILL 依赖自动安装**：加载 SKILL 文件前自动检测并安装缺失的第三方依赖
-  - 新增 `sirius_chat/skills/dependency_resolver.py`：AST 扫描 `SKILL_META["dependencies"]` 和 import 语句
+  - 新增 `sirius_pulse/skills/dependency_resolver.py`：AST 扫描 `SKILL_META["dependencies"]` 和 import 语句
   - 优先使用 `uv pip install`，回退到 `pip install`
   - `OrchestrationPolicy` 新增 `auto_install_skill_deps`（默认 True），可在受限环境关闭
   - `SKILL_META` 新增可选 `dependencies` 字段用于显式声明包名
@@ -1131,10 +1131,10 @@
 
 ### Added
 - **SKILL 系统**：AI 可在运行时调用外部 Python 代码的扩展机制
-  - `sirius_chat/skills/models.py`：SkillDefinition、SkillParameter、SkillResult 数据模型
-  - `sirius_chat/skills/registry.py`：从 `{work_path}/skills/` 自动发现并加载 SKILL 文件
-  - `sirius_chat/skills/executor.py`：参数校验、类型转换和安全执行
-  - `sirius_chat/skills/data_store.py`：每个 SKILL 独立的 JSON 持久化键值存储
+  - `sirius_pulse/skills/models.py`：SkillDefinition、SkillParameter、SkillResult 数据模型
+  - `sirius_pulse/skills/registry.py`：从 `{work_path}/skills/` 自动发现并加载 SKILL 文件
+  - `sirius_pulse/skills/executor.py`：参数校验、类型转换和安全执行
+  - `sirius_pulse/skills/data_store.py`：每个 SKILL 独立的 JSON 持久化键值存储
   - `OrchestrationPolicy` 新增 `enable_skills`、`skill_call_marker`、`max_skill_rounds` 配置
   - 引擎通过 `[SKILL_CALL: name | {params}]` 提示词驱动机制检测和执行 SKILL 调用
   - 持久化数据通过 `data_store` 参数自动注入 SKILL 的 `run()` 函数
@@ -1355,7 +1355,7 @@
   - 透明的自动路由：无多媒体内容使用廉价模型，有多媒体自动升级至指定的多模态模型
 
 ### Changed
-- **提示词生成器大幅优化** (sirius_chat/roleplay_prompting.py)
+- **提示词生成器大幅优化** (sirius_pulse/roleplay_prompting.py)
   - 精简拟人问题从 17 个核心到 8 个高质量问题，提高信号强度
   - 每个问题添加详细的 hints 字段，为回答者提供更清晰的引导
   - Agent 基础信息（name、alias、model、temperature、max_tokens）现在被精确传送至 LLM
@@ -1380,22 +1380,22 @@
 
 ### Changed
 - **API隔离迁移完成** (Stage 1-4)：将单体模块分解为逻辑清晰的独立子包
-  - `sirius_chat/config/`：配置管理（models.py, manager.py, helpers.py, __init__.py）
-  - `sirius_chat/core/`：核心编排引擎（engine.py, __init__.py）
-  - `sirius_chat/memory/`：统一记忆系统（user/, event/, quality/ 子模块）
+  - `sirius_pulse/config/`：配置管理（models.py, manager.py, helpers.py, __init__.py）
+  - `sirius_pulse/core/`：核心编排引擎（engine.py, __init__.py）
+  - `sirius_pulse/memory/`：统一记忆系统（user/, event/, quality/ 子模块）
     * `memory/user/`：用户档案与记忆管理（models.py, manager.py, store.py）
     * `memory/event/`：事件记忆系统（models.py, manager.py, store.py）
     * `memory/quality/`：记忆质量评估与智能遗忘（models.py, tools.py）
-  - `sirius_chat/models/`：数据模型与结构定义（models.py, __init__.py）
-  - `sirius_chat/session/`：会话管理与持久化（runner.py, store.py, __init__.py）
-  - `sirius_chat/token/`：Token管理与使用统计（usage.py, utils.py, __init__.py）
+  - `sirius_pulse/models/`：数据模型与结构定义（models.py, __init__.py）
+  - `sirius_pulse/session/`：会话管理与持久化（runner.py, store.py, __init__.py）
+  - `sirius_pulse/token/`：Token管理与使用统计（usage.py, utils.py, __init__.py）
 - **删除所有弃用的包装文件**：
-  - `config_manager.py`（使用 `from sirius_chat.config import ConfigManager`）
-  - `orchestration_config.py`（使用 `from sirius_chat.config import configure_*`）
-  - `user_memory.py`（使用 `from sirius_chat.memory import UserMemoryManager`）
-  - `event_memory.py`（使用 `from sirius_chat.memory import EventMemoryManager`）
-  - `async_engine/core.py`（使用 `from sirius_chat import AsyncRolePlayEngine`）
-  - `memory_quality.py` / `memory_quality_tools.py`（使用 `from sirius_chat.memory.quality import *`）
+  - `config_manager.py`（使用 `from sirius_pulse.config import ConfigManager`）
+  - `orchestration_config.py`（使用 `from sirius_pulse.config import configure_*`）
+  - `user_memory.py`（使用 `from sirius_pulse.memory import UserMemoryManager`）
+  - `event_memory.py`（使用 `from sirius_pulse.memory import EventMemoryManager`）
+  - `async_engine/core.py`（使用 `from sirius_pulse import AsyncRolePlayEngine`）
+  - `memory_quality.py` / `memory_quality_tools.py`（使用 `from sirius_pulse.memory.quality import *`）
 - **更新所有导入路径**：20+ 个源文件和文档已升级到新的导入路径
 - **清理过时设计文档**：
   - 删除 C2C3_ARCHITECTURE_DESIGN.md、C2C3_IMPLEMENTATION_COMPLETE.md
@@ -1406,7 +1406,7 @@
 - **删除过时和冗余的测试**：
   - test_event_user_memory_integration.py：移除3个调用不存在方法的测试
   - test_api_integrity.py：移除测试已删除弃用导入的测试
-  - sirius_chat/core/engine.py：移除调用不存在的 `interpret_event_with_user_context()` 的代码
+  - sirius_pulse/core/engine.py：移除调用不存在的 `interpret_event_with_user_context()` 的代码
 - **修复test_orchestration_config.py**：更新导入从 `async_engine.orchestration_config` 到新的模块位置
 
 ### Test Results
@@ -1437,22 +1437,22 @@
   - run_preflight_check()：启动前全面检查，给出详细建议
   - generate_default_config()：生成默认配置文件模板
 - **Provider 中间件系统** (P1-003)：可组合的Provider功能框架
-  - `sirius_chat/providers/middleware/base.py`：Middleware ABC、MiddlewareContext、MiddlewareChain
-  - `sirius_chat/providers/middleware/rate_limiter.py`：RateLimiterMiddleware（固定窗口）、TokenBucketRateLimiter（令牌桶算法）
-  - `sirius_chat/providers/middleware/retry.py`：RetryMiddleware（指数退避）、CircuitBreakerMiddleware（故障转移）
-  - `sirius_chat/providers/middleware/cost_metrics.py`：CostMetricsMiddleware（成本计量与追踪）
+  - `sirius_pulse/providers/middleware/base.py`：Middleware ABC、MiddlewareContext、MiddlewareChain
+  - `sirius_pulse/providers/middleware/rate_limiter.py`：RateLimiterMiddleware（固定窗口）、TokenBucketRateLimiter（令牌桶算法）
+  - `sirius_pulse/providers/middleware/retry.py`：RetryMiddleware（指数退避）、CircuitBreakerMiddleware（故障转移）
+  - `sirius_pulse/providers/middleware/cost_metrics.py`：CostMetricsMiddleware（成本计量与追踪）
   - 支持链式添加中间件，支持异步请求/响应处理
 - **async_engine 包重构** (P0-003 Phase 1-2)：将单个 async_engine.py 模块分解为多模块包
-  - `sirius_chat/async_engine/core.py`：核心 AsyncRolePlayEngine 类，保持公开 API 不变
-  - `sirius_chat/async_engine/utils.py` (120+ 行)：工具函数模块
+  - `sirius_pulse/async_engine/core.py`：核心 AsyncRolePlayEngine 类，保持公开 API 不变
+  - `sirius_pulse/async_engine/utils.py` (120+ 行)：工具函数模块
     * build_event_hit_system_note()：事件记忆命中提示生成
     * record_task_stat()：任务统计记录
     * estimate_tokens()：Token 计算 (cheap heuristic)
     * extract_json_payload()：JSON 有效载荷提取
     * normalize_multimodal_inputs()：多模态输入规范化和验证
-  - `sirius_chat/async_engine/prompts.py` (90+ 行)：系统提示构建
+  - `sirius_pulse/async_engine/prompts.py` (90+ 行)：系统提示构建
     * build_system_prompt()：生成完整系统提示，整合agent身份、用户记忆、时间上下文
-  - `sirius_chat/async_engine/orchestration.py` (90+ 行)：任务编排配置和管理
+  - `sirius_pulse/async_engine/orchestration.py` (90+ 行)：任务编排配置和管理
     * 任务常量定义 (TASK_MEMORY_EXTRACT, TASK_MULTIMODAL_PARSE 等)
     * TaskConfig dataclass：任务配置管理
     * get_task_config()：从 SessionConfig 提取任务配置
@@ -1559,7 +1559,7 @@
 - 遵循 `OrchestrationPolicy` 配置
 
 #### CLI与API接口
-- 脚本式CLI（`sirius-chat` 命令）
+- 脚本式CLI（`sirius-pulse` 命令）
 - Python 库式接口（`.api` 模块化facade）
 - 会话配置加载与持久化（JSON + `JsonSessionStore`）
 

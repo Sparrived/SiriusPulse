@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from sirius_chat.logging_config import (
+from sirius_pulse.logging_config import (
     ColoredFormatter,
     JSONFormatter,
     configure_logging,
@@ -155,8 +155,8 @@ def test_logger_hierarchy() -> None:
     """logger命名空间层级测试"""
     configure_logging(level="INFO", format_type="console")
 
-    parent_logger = get_logger("sirius_chat")
-    child_logger = get_logger("sirius_chat.core")
+    parent_logger = get_logger("sirius_pulse")
+    child_logger = get_logger("sirius_pulse.core")
 
     # 子logger应该继承父logger的配置
-    assert child_logger.parent is logging.getLogger("sirius_chat")
+    assert child_logger.parent is logging.getLogger("sirius_pulse")

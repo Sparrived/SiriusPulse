@@ -4,11 +4,11 @@
 
 ## 一句话定位
 
-平台层负责**让 Sirius Chat 与 QQ 对话**。它管理 NapCat 二进制、建立 WebSocket 连接、翻译 OneBot 事件与引擎消息。
+平台层负责**让 Sirius Pulse 与 QQ 对话**。它管理 NapCat 二进制、建立 WebSocket 连接、翻译 OneBot 事件与引擎消息。
 
 ## 为什么需要它
 
-Sirius Chat 本身只处理抽象的消息和参与者。要与真实的 QQ 群聊交互，需要：
+Sirius Pulse 本身只处理抽象的消息和参与者。要与真实的 QQ 群聊交互，需要：
 1. **NapCat**：在 QQ 进程中注入 OneBot v11 支持
 2. **WebSocket 客户端**：接收群消息、发送回复
 3. **事件翻译层**：把 OneBot JSON 事件转成引擎的 `Message`/`Participant`

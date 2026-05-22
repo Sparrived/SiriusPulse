@@ -127,7 +127,7 @@ class GenerationRequest:
 ## Provider 注册流程
 
 ```python
-from sirius_chat.providers import register_provider_with_validation, probe_provider_availability
+from sirius_pulse.providers import register_provider_with_validation, probe_provider_availability
 
 # 1. 注册
 register_provider_with_validation(

@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from sirius_chat.plugins import PluginBase, PluginResponse, command
+from sirius_pulse.plugins import PluginBase, PluginResponse, command
 
 # ── Open-Meteo API 端点 ──
 _GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"

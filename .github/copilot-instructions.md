@@ -4,19 +4,19 @@
 
 - 目标 Python 版本为 3.12，公共接口必须保留类型注解。
 - 优先使用 dataclass 与小而明确的模块，避免大型工具类文件。
-- provider 实现需隔离在 `sirius_chat/providers/` 下。
+- provider 实现需隔离在 `sirius_pulse/providers/` 下。
 
 ## 架构约束
 
-- 编排逻辑集中在 `sirius_chat/core/engine.py`，避免混入 provider 细节。
-- `sirius_chat/models/models.py` 是会话与 transcript 契约的唯一事实来源。
+- 编排逻辑集中在 `sirius_pulse/core/engine.py`，避免混入 provider 细节。
+- `sirius_pulse/models/models.py` 是会话与 transcript 契约的唯一事实来源。
 - 架构细节统一参考 `docs/architecture.md`。
 
 ## 构建与测试
 
 - 可编辑安装：`python -m pip install -e .`
 - 安装测试依赖：`python -m pip install -e .[test]`
-- 通过脚本运行 CLI：`sirius-chat --config examples/session.json`
+- 通过脚本运行 CLI：`sirius-pulse --config examples/session.json`
 - 通过模块入口运行：`python main.py --config examples/session.json`
 - 运行测试：`pytest -q`
 
@@ -28,7 +28,7 @@
   - `docs/architecture.md`
   - `docs/external-usage.md`（若外部调用方式变化）
   - `README.md`（若用法变化）
-- 若涉及会话持久化/重启恢复或记忆压缩策略，必须同步检查 `sirius_chat/session/store.py` 相关用法文档与示例。
+- 若涉及会话持久化/重启恢复或记忆压缩策略，必须同步检查 `sirius_pulse/session/store.py` 相关用法文档与示例。
 - **事件系统 LLM 验证**：事件记忆采用两级验证：快速路径（关键词匹配）和 LLM 验证路径。新事件默认为 pending (verified=False)，当积累足够消息数（默认 min_mentions=3）后，应定期调用 `finalize_pending_events()` 用 LLM 验证并充实事件信息。详见 `docs/architecture.md` 的"事件记忆系统"部分。
 - CLI 与 API 启用时必须显式提供 `work_path`，所有持久化文件都应从该路径派生。
 - 会话模型约束：一个 engine 会话只对应一个主 AI（`SessionConfig.agent`），`participants` 表示人类参与者。

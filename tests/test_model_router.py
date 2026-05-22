@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.core.model_router import ModelRouter, TaskConfig
+from sirius_pulse.core.model_router import ModelRouter, TaskConfig
 
 
 class TestModelRouterDefaults:

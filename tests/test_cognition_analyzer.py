@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.core.cognition import CognitionAnalyzer
-from sirius_chat.models.emotion import EmotionState
-from sirius_chat.models.intent_v3 import SocialIntent, IntentAnalysisV3
+from sirius_pulse.core.cognition import CognitionAnalyzer
+from sirius_pulse.models.emotion import EmotionState
+from sirius_pulse.models.intent_v3 import SocialIntent, IntentAnalysisV3
 
 
 class TestCognitionAnalyzerRules:

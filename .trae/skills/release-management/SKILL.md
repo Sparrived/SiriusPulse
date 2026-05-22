@@ -1,6 +1,6 @@
 ---
 name: release-management
-description: "在为 Sirius Chat 做版本发布时使用，涵盖发布前校验、PyPI自动化发布流程与Trusted Publishing配置。关键词：版本发布、PyPI发布、发布检查、自动化构建、Trusted Publishing。"
+description: "在为 Sirius Pulse 做版本发布时使用，涵盖发布前校验、PyPI自动化发布流程与Trusted Publishing配置。关键词：版本发布、PyPI发布、发布检查、自动化构建、Trusted Publishing。"
 ---
 
 # 版本发布管理指南
@@ -82,7 +82,7 @@ pytest -q
    - 访问：https://pypi.org/manage/account/publishing/
    - 点击 "Add a new pending publisher"
    - 填入以下信息：
-     - PyPI Project Name: `sirius-chat`
+     - PyPI Project Name: `sirius-pulse`
      - GitHub Owner: `Sparrived`
      - GitHub Repository: `SiriusChat`
      - Workflow Name: `publish.yml`
@@ -153,7 +153,7 @@ git push origin v1.1.0
 
 - 访问 GitHub Actions：https://github.com/Sparrived/SiriusChat/actions/workflows/publish.yml
 - 等待 workflow 完成（约 1-2 分钟）
-- 访问 PyPI：https://pypi.org/project/sirius-chat/
+- 访问 PyPI：https://pypi.org/project/sirius-pulse/
 - 确认新版本已出现
 
 ## 工作流说明

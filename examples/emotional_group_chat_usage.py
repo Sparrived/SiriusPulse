@@ -14,14 +14,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from sirius_chat import (
+from sirius_pulse import (
     EmotionalGroupChatEngine,
     Message,
     Participant,
     SessionEventType,
     create_emotional_engine,
 )
-from sirius_chat.providers import MockProvider
+from sirius_pulse.providers import MockProvider
 
 
 async def _event_subscriber(engine: EmotionalGroupChatEngine) -> None:

@@ -1,13 +1,13 @@
 ---
 name: code-change-sync
-description: "当修改 Sirius Chat 代码后，强制同步代码与文档、SKILL、示例的一致性。涵盖架构变更、接口变更、配置变更的全量检查清单与项目结构地图。关键词：代码同步、文档联动、变更追踪、检查清单、项目结构。"
+description: "当修改 Sirius Pulse 代码后，强制同步代码与文档、SKILL、示例的一致性。涵盖架构变更、接口变更、配置变更的全量检查清单与项目结构地图。关键词：代码同步、文档联动、变更追踪、检查清单、项目结构。"
 ---
 
 # 代码变更同步指南
 
 ## 目标
 
-在修改 `sirius_chat` 代码后，确保所有相关文档、SKILL、示例和架构信息保持一致。本 SKILL 合并了原 `skill-sync-enforcer` 的约束清单和原 `project-structure-sync` 的项目结构地图与变更追踪流程。
+在修改 `sirius_pulse` 代码后，确保所有相关文档、SKILL、示例和架构信息保持一致。本 SKILL 合并了原 `skill-sync-enforcer` 的约束清单和原 `project-structure-sync` 的项目结构地图与变更追踪流程。
 
 ## 语言规范（强制）
 
@@ -18,7 +18,7 @@ description: "当修改 Sirius Chat 代码后，强制同步代码与文档、SK
 ## 触发条件
 
 当以下文件发生代码变更时，必须执行本流程：
-- `sirius_chat/**/*.py`
+- `sirius_pulse/**/*.py`
 - `main.py`
 - `pyproject.toml`
 
@@ -26,7 +26,7 @@ description: "当修改 Sirius Chat 代码后，强制同步代码与文档、SK
 
 1. **内部实现可直接重构**；当前项目未发布，若影响对外接口可直接调整，但必须同步更新文档、示例与测试。
 2. **任何新增内部功能都必须在统一对外接口层暴露可调用入口**。
-3. **所有对外 Python 接口统一收敛在 `sirius_chat/__init__.py`**，禁止在多个内部模块分散暴露新入口。
+3. **所有对外 Python 接口统一收敛在 `sirius_pulse/__init__.py`**，禁止在多个内部模块分散暴露新入口。
 4. **新功能实现后，不应生成额外的 markdown 文档**（如使用指南、快速启动、参考手册等），除非用户明确提及。应将功能文档集中在现有的对应位置（如 `docs/architecture.md`、`docs/external-usage.md` 等），或在用户主动要求时才生成专门的指南。
 5. 若代码已变更但未在同一任务中审阅并同步 SKILL/文档，**不得声明任务完成**。
 
@@ -37,7 +37,7 @@ description: "当修改 Sirius Chat 代码后，强制同步代码与文档、SK
 ### 核心模块层级
 
 ```
-sirius_chat/
+sirius_pulse/
 ├── __init__.py              # 顶层公开 API 统一重导出（严格 __all__）
 ├── persona_manager.py       # 多人格生命周期管理（主进程）
 ├── persona_worker.py        # 单个人格子进程入口
@@ -74,7 +74,7 @@ sirius_chat/
 ├── embedding/               # Embedding 微服务
 │   ├── server.py            # aiohttp 服务端（asyncio.Queue 批量合并推理）
 │   ├── client.py            # 同步客户端（urllib）
-│   └── __main__.py          # python -m sirius_chat.embedding 启动入口
+│   └── __main__.py          # python -m sirius_pulse.embedding 启动入口
 ├── persona_generation/      # 人格资产生成子包
 │   ├── templates.py         # 数据模型与文件 I/O
 │   └── builders.py          # LLM 异步生成（原顶层 prompt_templates / roleplay_prompting 迁移至此）
@@ -209,7 +209,7 @@ git diff HEAD~1 --stat
 #### A. 模块级变更（高影响）
 
 **触发条件**：
-- 新增 `sirius_chat/<module_name>/` 目录及 `.py` 文件
+- 新增 `sirius_pulse/<module_name>/` 目录及 `.py` 文件
 - 删除现有模块
 - 模块文件重构（拆分/合并）
 - 新增 Provider 类型
@@ -224,11 +224,11 @@ git diff HEAD~1 --stat
 #### B. 接口/API 变更（中-高影响）
 
 **触发条件**：
-- 修改 `sirius_chat/__init__.py` 中的公开接口
+- 修改 `sirius_pulse/__init__.py` 中的公开接口
 - 修改 `EmotionalGroupChatEngine` 的公开方法签名
 - 新增/删除 CLI 命令（`main.py`）
 - 配置结构变化
-- 修改 `sirius_chat/webui/*.py` 中的 API 路由或返回字段
+- 修改 `sirius_pulse/webui/*.py` 中的 API 路由或返回字段
 
 **必须更新**：
 - [ ] `docs/architecture.md` - 使用示例
@@ -241,9 +241,9 @@ git diff HEAD~1 --stat
 #### C. 细节实现变更（中影响）
 
 **触发条件**：
-- `sirius_chat/models/models.py` 的消息 / transcript 契约变化
-- `sirius_chat/config/models.py` 的 session / workspace 契约变化
-- `sirius_chat/persona_config.py` 的人格级配置字段变化
+- `sirius_pulse/models/models.py` 的消息 / transcript 契约变化
+- `sirius_pulse/config/models.py` 的 session / workspace 契约变化
+- `sirius_pulse/persona_config.py` 的人格级配置字段变化
 - 系统提示词生成逻辑改动
 
 **必须更新**：
@@ -258,7 +258,7 @@ git diff HEAD~1 --stat
 **触发条件**：
 - `pyproject.toml` 的版本/依赖变化
 - `config/manager.py` 的配置选项变化
-- `sirius_chat/persona_config.py` 的体验参数或适配器配置字段变化
+- `sirius_pulse/persona_config.py` 的体验参数或适配器配置字段变化
 
 **必须更新**：
 - [ ] `docs/configuration-guide.md` - 新增配置选项说明
@@ -291,7 +291,7 @@ git diff HEAD~1 --stat
 
 - [ ] 代码行为已更新。
 - [ ] 若影响外部接口，已同步更新文档、示例与测试。
-- [ ] 新增功能已在 `sirius_chat/__init__.py` 暴露。
+- [ ] 新增功能已在 `sirius_pulse/__init__.py` 暴露。
 - [ ] 已执行 `python main.py --help`。
 - [ ] 已执行一次 `main.py` 会话启动 smoke 测试（可通过管道输入 `exit` 退出）。
 - [ ] 架构文档已同步。
@@ -327,12 +327,12 @@ git show HEAD --stat
 git log origin/master..HEAD --oneline
 
 # 3. 查看特定契约文件的历史变更
-git log -p --follow sirius_chat/config/models.py | head -100
-git log -p --follow sirius_chat/models/models.py | head -100
+git log -p --follow sirius_pulse/config/models.py | head -100
+git log -p --follow sirius_pulse/models/models.py | head -100
 
 # 4. 对比文档和代码的一致性
 # 查看 framework-quickstart SKILL 中提到的模块是否存在
-grep -o "sirius_chat/[a-z_/]*\.py" .trae/skills/framework-quickstart/SKILL.md | sort -u
+grep -o "sirius_pulse/[a-z_/]*\.py" .trae/skills/framework-quickstart/SKILL.md | sort -u
 
 # 5. 验证所有 SKILL 文件的 frontmatter 格式
 grep -r "^name:" .trae/skills/*/SKILL.md
@@ -344,13 +344,13 @@ grep -r "^description:" .trae/skills/*/SKILL.md
 ### 场景 1：新增 Provider 类型
 
 ```
-变更：实现 sirius_chat/providers/new_platform.py
+变更：实现 sirius_pulse/providers/new_platform.py
 
 检查清单：
 ✓ 新 Provider 继承 OpenAICompatibleProvider 或实现 LLMProvider 协议
-✓ 在 sirius_chat/providers/__init__.py 中导出
-✓ 在 sirius_chat/providers/routing.py 中注册路由
-✓ 在 sirius_chat/__init__.py 中暴露
+✓ 在 sirius_pulse/providers/__init__.py 中导出
+✓ 在 sirius_pulse/providers/routing.py 中注册路由
+✓ 在 sirius_pulse/__init__.py 中暴露
 ✓ 在 docs/provider-system.md 中补充接入说明
 ✓ 在 docs/change-impact-guide.md 中按 4.1 节更新 Provider 联动链
 ✓ 在 framework-quickstart SKILL 中更新 providers 部分说明
@@ -360,7 +360,7 @@ grep -r "^description:" .trae/skills/*/SKILL.md
 ### 场景 2：修改 SessionConfig / PersonaConfig 数据结构
 
 ```
-变更：在 sirius_chat/config/models.py 或 persona_config.py 中新增字段
+变更：在 sirius_pulse/config/models.py 或 persona_config.py 中新增字段
 
 检查清单：
 ✓ 字段包含完整类型注解和文档字符串
@@ -375,7 +375,7 @@ grep -r "^description:" .trae/skills/*/SKILL.md
 ### 场景 3：新增内置 SKILL
 
 ```
-变更：在 sirius_chat/skills/builtin/ 新增 skill
+变更：在 sirius_pulse/skills/builtin/ 新增 skill
 
 检查清单：
 ✓ 实现 SKILL_META + run() 函数
@@ -388,7 +388,7 @@ grep -r "^description:" .trae/skills/*/SKILL.md
 ### 场景 4：修改 WebUI API 路由或返回字段
 
 ```
-变更：修改 sirius_chat/webui/*.py 中的 API 行为
+变更：修改 sirius_pulse/webui/*.py 中的 API 行为
 
 检查清单：
 ✓ 前端 core.js / config.js / analytics.js / platform.js 中解析该响应的代码已同步

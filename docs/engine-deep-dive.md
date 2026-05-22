@@ -1,6 +1,6 @@
 # EmotionalGroupChatEngine 深度解析
 
-> **v1.0 唯一引擎** — Sirius Chat 的核心对话编排引擎。
+> **v1.0 唯一引擎** — Sirius Pulse 的核心对话编排引擎。
 >
 > 本文档合并了原 `engine-emotional.md`（引擎整体流程）和 `emotion-intent-analysis.md`（认知层细节），提供从宏观架构到微观实现的完整视角。
 
@@ -447,8 +447,8 @@ DELAYED_RESPONSE_TRIGGERED → PROACTIVE_RESPONSE_TRIGGERED → REMINDER_TRIGGER
 ### 4.1 快速启动
 
 ```python
-from sirius_chat import create_emotional_engine
-from sirius_chat.core.persona_generator import PersonaGenerator
+from sirius_pulse import create_emotional_engine
+from sirius_pulse.core.persona_generator import PersonaGenerator
 
 engine = create_emotional_engine(
     work_path="/path/to/workspace",
@@ -475,7 +475,7 @@ result = await engine.process_message(
 ### 4.2 直接使用认知分析器
 
 ```python
-from sirius_chat.core.cognition import CognitionAnalyzer
+from sirius_pulse.core.cognition import CognitionAnalyzer
 
 analyzer = CognitionAnalyzer()
 
@@ -493,7 +493,7 @@ print(empathy.strategy_type) # confirm_action
 ### 4.3 事件监听
 
 ```python
-from sirius_chat.core.events import SessionEventType
+from sirius_pulse.core.events import SessionEventType
 
 async for event in engine.event_bus.subscribe():
     if event.type == SessionEventType.EXECUTION_COMPLETED:

@@ -47,19 +47,19 @@ install-all:
 # Code quality targets
 lint:
 	@echo "Running pylint..."
-	-pylint sirius_chat --fail-under=7.5 --disable=C0111,W0212
+	-pylint sirius_pulse --fail-under=7.5 --disable=C0111,W0212
 	@echo "Running flake8..."
-	-flake8 sirius_chat tests --max-line-length=100 --extend-ignore=E203,W503
+	-flake8 sirius_pulse tests --max-line-length=100 --extend-ignore=E203,W503
 
 format:
 	@echo "Formatting with black..."
-	black sirius_chat tests
+	black sirius_pulse tests
 	@echo "Sorting imports with isort..."
-	isort sirius_chat tests
+	isort sirius_pulse tests
 
 typecheck:
 	@echo "Running mypy type checking..."
-	-mypy sirius_chat --ignore-missing-imports
+	-mypy sirius_pulse --ignore-missing-imports
 
 # Pre-commit hooks
 pre-commit-install:
@@ -74,7 +74,7 @@ test:
 	pytest -q
 
 test-cov:
-	pytest -q --cov=sirius_chat --cov-report=html --cov-report=term-missing
+	pytest -q --cov=sirius_pulse --cov-report=html --cov-report=term-missing
 	@echo "Coverage report generated in htmlcov/index.html"
 
 # Build targets

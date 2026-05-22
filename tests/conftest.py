@@ -110,9 +110,9 @@ def engine_factory(tmp_path, _session_engine_pool):
         persona=None,
         config=None,
     ):
-        from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
-        from sirius_chat.models.persona import PersonaProfile
-        from sirius_chat.providers.mock import MockProvider
+        from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+        from sirius_pulse.models.persona import PersonaProfile
+        from sirius_pulse.providers.mock import MockProvider
 
         if persona is None:
             persona = PersonaProfile(name="TestBot")

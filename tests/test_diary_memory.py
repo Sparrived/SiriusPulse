@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from sirius_chat.memory.diary import (
+from sirius_pulse.memory.diary import (
     DiaryEntry,
     DiaryGenerationResult,
     DiaryGenerator,
@@ -16,7 +16,7 @@ from sirius_chat.memory.diary import (
     DiaryRetriever,
     DiaryManager,
 )
-from sirius_chat.memory.basic import BasicMemoryEntry
+from sirius_pulse.memory.basic import BasicMemoryEntry
 
 
 class TestDiaryGenerator:

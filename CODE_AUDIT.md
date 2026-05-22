@@ -1,8 +1,8 @@
-# Sirius Chat 代码审计报告
+# Sirius Pulse 代码审计报告
 
 > 生成时间：2026-04-30
 > 基准版本：v1.1.0（HEAD）
-> 范围：`sirius_chat/` 全量源码 + `docs/` + `tests/`
+> 范围：`sirius_pulse/` 全量源码 + `docs/` + `tests/`
 
 ---
 
@@ -20,9 +20,9 @@
 
 **为何未使用**：v1.0 调用链直接从 `AutoRoutingProvider` → 具体 provider 类，跳过了中间件层。开发时先搭建了中间件框架，但引擎侧未接入调用。
 
-**影响**：约 400 行代码，导出在 `sirius_chat/__init__.py` 中，文档中被引用为活跃组件。
+**影响**：约 400 行代码，导出在 `sirius_pulse/__init__.py` 中，文档中被引用为活跃组件。
 **评估**：v1.0 调用链直接使用 `tenacity` 处理重试，中间件层完全未接入且与当前架构脱节。长期保留会导致 API 表面膨胀、误导用户，维护成本（类型检查、文档同步）持续产生但零收益。
-**建议**：**直接删除**。框架设计合理，但"为未来准备"的代码在没有明确接入计划时只会腐烂。若后续需要，从 git 历史恢复比重维护死代码更简单。同步清理 `sirius_chat/__init__.py` 中的公开导出。
+**建议**：**直接删除**。框架设计合理，但"为未来准备"的代码在没有明确接入计划时只会腐烂。若后续需要，从 git 历史恢复比重维护死代码更简单。同步清理 `sirius_pulse/__init__.py` 中的公开导出。
 > ✅ **已处理** — commit `50690a6` 删除 `providers/middleware/` 目录及所有导出。
 
 ---
@@ -78,7 +78,7 @@
 **评估**：
 - `EpisodicMemoryManager`、`EventMemoryManager`、`ActivationEngine` 为纯存根/骨架，无任何实现价值。
 - `WorkingMemoryManager` 是完整实现，但功能已被更简单可靠的 `BasicMemoryManager` 完全覆盖；保留它只会增加维护负担和概念复杂度。
-- `UserMemoryManager`（~1200 行）已被 `UserManager`（simple）替代，且存在引用不存在的 `sirius_chat.memory.quality.models` 的崩溃路径。
+- `UserMemoryManager`（~1200 行）已被 `UserManager`（simple）替代，且存在引用不存在的 `sirius_pulse.memory.quality.models` 的崩溃路径。
 **建议**：
 - **立即删除**：`memory/episodic/`、`memory/event/`、`memory/activation_engine.py`、`memory/user/manager.py`（`UserMemoryManager`）。
 - **删除**：`memory/working/`（`WorkingMemoryManager`）。虽然代码完整，但 v1.0 已明确收敛到 `BasicMemoryManager`，不存在"未来回退"需求。
@@ -323,9 +323,9 @@
 
 `workspace/runtime.py` 和 `platforms/runtime.py` 都实例化 `SkillRegistry` + `SkillExecutor`，说明旧 workspace 系统和新 v1.0 platform 系统存在重叠。
 
-**评估**：`workspace/runtime.py`（`WorkspaceRuntime`）和 `workspace/roleplay_manager.py`（`RoleplayWorkspaceManager`）仍在 `sirius_chat/__init__.py` 中公开导出，但 AGENTS.md 已明确 v1.0 推荐入口为 `PersonaManager` / `EngineRuntime`。`WorkspaceRuntime` 的代码路径与 `platforms/runtime.py`（`EngineRuntime`）功能重叠。
+**评估**：`workspace/runtime.py`（`WorkspaceRuntime`）和 `workspace/roleplay_manager.py`（`RoleplayWorkspaceManager`）仍在 `sirius_pulse/__init__.py` 中公开导出，但 AGENTS.md 已明确 v1.0 推荐入口为 `PersonaManager` / `EngineRuntime`。`WorkspaceRuntime` 的代码路径与 `platforms/runtime.py`（`EngineRuntime`）功能重叠。
 **建议**：
-- 将 `WorkspaceRuntime` 和 `RoleplayWorkspaceManager` **移出 `sirius_chat/__init__.py` 的公开导出**（从 `__all__` 中移除），但保留源代码以兼容仍使用旧 API 的用户。
+- 将 `WorkspaceRuntime` 和 `RoleplayWorkspaceManager` **移出 `sirius_pulse/__init__.py` 的公开导出**（从 `__all__` 中移除），但保留源代码以兼容仍使用旧 API 的用户。
 - 在 `workspace/__init__.py` 和 `workspace/runtime.py` 模块顶部添加 `warnings.warn("deprecated", DeprecationWarning)`。
 - 明确 deprecation timeline：**v1.1 彻底删除 `workspace/` 目录**。
 > ✅ **已处理** — commit `0f8e770` 移除公开导出，并在 `workspace/__init__.py` 添加 `DeprecationWarning`。
@@ -372,7 +372,7 @@
 ## 五、建议的优先级
 
 ### P0（立即处理）
-1. **修复 `memory/user/manager.py` 崩溃路径**：删除引用不存在的 `sirius_chat.memory.quality.models` 的代码（或直接删除整个 `UserMemoryManager`）。
+1. **修复 `memory/user/manager.py` 崩溃路径**：删除引用不存在的 `sirius_pulse.memory.quality.models` 的代码（或直接删除整个 `UserMemoryManager`）。
 2. **修复 `MultiModelConfig.to_dict()`**：重写为仅序列化 `MultiModelConfig` 实际拥有的字段，或确认无调用方后直接删除。
 3. **删除 `SkillDataStore.set()` 重复行**：删除多余的 `self._dirty = True`。
 
@@ -391,7 +391,7 @@
 15. **测试 fixture 统一禁用模型加载**：`DiaryIndexer` 惰性加载 + `conftest.py` mock embedding。
 
 ### P2（中期优化）
-16. **删除 provider 中间件层**：`providers/middleware/` 目录及 `sirius_chat/__init__.py` 导出。
+16. **删除 provider 中间件层**：`providers/middleware/` 目录及 `sirius_pulse/__init__.py` 导出。
 17. **删除 cache 系统**：`cache/` 目录及导出。
 18. **删除 performance 系统**：`performance/` 目录及导出。
 19. **删除 `WorkingMemoryManager`**：`memory/working/` 目录。

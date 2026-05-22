@@ -1,4 +1,4 @@
-# Sirius Chat 文档导航
+# Sirius Pulse 文档导航
 
 ## 快速开始
 

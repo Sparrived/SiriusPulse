@@ -14,7 +14,7 @@ description: "遍历项目结构变化并同步更新文档。监控模块变化
 ### 核心模块层级
 
 ```
-sirius_chat/
+sirius_pulse/
 ├── api/                      - 对外 API facade（engine/models/providers/session 等）
 ├── core/                     - 编排核心（emotional_engine.py、prompt_factory.py、model_router.py、engine_persistence.py、identity_resolver.py）
 ├── async_engine/             - 兼容导出 + prompts/orchestration/utils 辅助层
@@ -92,7 +92,7 @@ git diff HEAD~1 --stat
 #### A. 模块级变更（高影响）
 
 **触发条件**：
-- 新增 `sirius_chat/<module_name>/` 目录及 `.py` 文件
+- 新增 `sirius_pulse/<module_name>/` 目录及 `.py` 文件
 - 删除现有模块
 - 模块文件重构（拆分/合并）
 - 新增 Provider 类型
@@ -107,7 +107,7 @@ git diff HEAD~1 --stat
 
 **示例提示**：
 ```
-检测到新增模块: sirius_chat/cache/
+检测到新增模块: sirius_pulse/cache/
 请更新：
 1. docs/architecture.md - 在心智模型中添加 cache/ 说明
 2. .github/skills/framework-quickstart/SKILL.md - 在阅读顺序添加对应模块
@@ -117,9 +117,9 @@ git diff HEAD~1 --stat
 #### B. 接口/API 变更（中-高影响）
 
 **触发条件**：
-- 修改 `sirius_chat/api/` 中的公开接口
+- 修改 `sirius_pulse/api/` 中的公开接口
 - 修改 `EmotionalGroupChatEngine` 的公开方法签名
-- 新增/删除 CLI 命令（`sirius-chat`）
+- 新增/删除 CLI 命令（`sirius-pulse`）
 - 配置结构变化
 
 **必须更新**：
@@ -140,8 +140,8 @@ git diff HEAD~1 --stat
 #### C. 细节实现变更（中影响）
 
 **触发条件**：
-- `sirius_chat/models/models.py` 的消息 / transcript 契约变化
-- `sirius_chat/config/models.py` 的 session / workspace / orchestration 契约变化
+- `sirius_pulse/models/models.py` 的消息 / transcript 契约变化
+- `sirius_pulse/config/models.py` 的 session / workspace / orchestration 契约变化
 - 系统提示词生成逻辑改动
 - 缓存策略、性能监控逻辑修改
 
@@ -194,7 +194,7 @@ git diff HEAD~1 --stat
 
 ### 【新增/修改模块时】
 
-- [ ] 新模块已在 `sirius_chat/<module>/` 下创建
+- [ ] 新模块已在 `sirius_pulse/<module>/` 下创建
 - [ ] 新模块包含 `__init__.py` 导出公开接口
 - [ ] 新增 `tests/test_<module>.py` 单元测试
 - [ ] 所有新增类/函数都有完整的文档字符串和类型注解
@@ -209,7 +209,7 @@ git diff HEAD~1 --stat
 
 - [ ] 所有修改都有类型注解
 - [ ] 向后兼容性已确认（或有明确的弃用计划）
-- [ ] `sirius_chat/api/` 中的导出已同步更新
+- [ ] `sirius_pulse/api/` 中的导出已同步更新
 - [ ] `examples/` 中的示例已测试并更新
 - [ ] `docs/external-usage.md` 已补充新用法说明
 - [ ] `tests/` 的相关测试已更新
@@ -236,12 +236,12 @@ git show HEAD --stat
 git log origin/master..HEAD --oneline
 
 # 3. 查看特定契约文件的历史变更
-git log -p --follow sirius_chat/config/models.py | head -100
-git log -p --follow sirius_chat/models/models.py | head -100
+git log -p --follow sirius_pulse/config/models.py | head -100
+git log -p --follow sirius_pulse/models/models.py | head -100
 
 # 4. 对比文档和代码的一致性
 # 查看 framework-quickstart SKILL 中提到的模块是否存在
-grep -o "sirius_chat/[a-z_/]*\.py" .github/skills/framework-quickstart/SKILL.md | sort -u
+grep -o "sirius_pulse/[a-z_/]*\.py" .github/skills/framework-quickstart/SKILL.md | sort -u
 
 # 5. 验证所有 SKILL 文件的 frontmatter 格式
 grep -r "^name:" .github/skills/*/SKILL.md
@@ -253,7 +253,7 @@ grep -r "^description:" .github/skills/*/SKILL.md
 ### 场景 1：新增性能监控模块
 
 ```
-变更：创建 sirius_chat/performance/{metrics,profiler,benchmarks}.py
+变更：创建 sirius_pulse/performance/{metrics,profiler,benchmarks}.py
 
 检查清单：
 ✓ 在 docs/architecture.md 的"心智模型"中补充性能监控特性说明
@@ -268,7 +268,7 @@ grep -r "^description:" .github/skills/*/SKILL.md
 ### 场景 2：修改 SessionConfig / WorkspaceConfig 数据结构
 
 ```
-变更：在 sirius_chat/config/models.py 中新增 SessionConfig 或 WorkspaceConfig 字段
+变更：在 sirius_pulse/config/models.py 中新增 SessionConfig 或 WorkspaceConfig 字段
 
 检查清单：
 ✓ 字段包含完整类型注解和文档字符串
@@ -283,12 +283,12 @@ grep -r "^description:" .github/skills/*/SKILL.md
 ### 场景 3：新增 Provider 类型
 
 ```
-变更：实现 sirius_chat/providers/new_platform.py
+变更：实现 sirius_pulse/providers/new_platform.py
 
 检查清单：
 ✓ 新 Provider 继承 AsyncLLMProvider 或 LLMProvider
-✓ 在 sirius_chat/providers/__init__.py 中导出
-✓ 在 sirius_chat/providers/routing.py 中注册路由
+✓ 在 sirius_pulse/providers/__init__.py 中导出
+✓ 在 sirius_pulse/providers/routing.py 中注册路由
 ✓ 在 docs/external-usage.md 中补充接入说明
 ✓ 在 examples/ 中提供配置示例
 ✓ 在 framework-quickstart SKILL 中更新 providers 部分说明

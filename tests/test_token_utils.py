@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.token.utils import (
+from sirius_pulse.token.utils import (
     estimate_tokens,
     estimate_tokens_heuristic,
     get_token_estimation_stats,

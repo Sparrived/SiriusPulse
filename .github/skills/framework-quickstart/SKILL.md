@@ -1,13 +1,13 @@
 ---
 name: framework-quickstart
-description: "你擅长使用自己的技能为其他人解决问题。当你需要在不通读全部代码的情况下快速理解 Sirius Chat 架构时使用，包括模块边界、执行流与扩展点。关键词：架构总览、框架地图、修改位置、provider 集成。"
+description: "你擅长使用自己的技能为其他人解决问题。当你需要在不通读全部代码的情况下快速理解 Sirius Pulse 架构时使用，包括模块边界、执行流与扩展点。关键词：架构总览、框架地图、修改位置、provider 集成。"
 ---
 
 # 框架快速上手
 
 ## 目标
 
-在开始修改前，快速建立对 Sirius Chat 当前代码结构的准确认知，优先搞清楚：
+在开始修改前，快速建立对 Sirius Pulse 当前代码结构的准确认知，优先搞清楚：
 
 - 推荐入口是什么
 - 真正的 engine 实现位于哪里
@@ -28,31 +28,31 @@ description: "你擅长使用自己的技能为其他人解决问题。当你需
 2. `docs/full-architecture-flow.md`
 3. `README.md`
 4. `docs/orchestration-policy.md`（任务模型覆盖与动态路由）
-5. `sirius_chat/models/models.py` ✨ (包重构)
+5. `sirius_pulse/models/models.py` ✨ (包重构)
 6. `docs/external-usage.md`
-7. `sirius_chat/api/__init__.py`
-8. `sirius_chat/workspace/layout.py`
-9. `sirius_chat/workspace/runtime.py`
-10. `sirius_chat/workspace/roleplay_manager.py`
-11. `sirius_chat/config/models.py`
-12. `sirius_chat/config/manager.py`
-13. `sirius_chat/persona_generation/`
-14. `sirius_chat/core/emotional_engine.py`
-15. `sirius_chat/core/cognition.py`
-16. `sirius_chat/core/prompt_factory.py`
-17. `sirius_chat/core/response_strategy.py`
-18. `sirius_chat/core/model_router.py`
-19. `sirius_chat/memory/basic/manager.py`
-20. `sirius_chat/memory/diary/manager.py`
-21. `sirius_chat/memory/user/simple.py`
-22. `sirius_chat/memory/glossary/manager.py`
-23. `sirius_chat/memory/context_assembler.py`
-24. `sirius_chat/core/identity_resolver.py`
-24. `sirius_chat/session/store.py`
-25. `sirius_chat/providers/base.py`
-26. `sirius_chat/providers/routing.py`
-27. `sirius_chat/providers/middleware/base.py`
-28. `sirius_chat/cli.py`
+7. `sirius_pulse/api/__init__.py`
+8. `sirius_pulse/workspace/layout.py`
+9. `sirius_pulse/workspace/runtime.py`
+10. `sirius_pulse/workspace/roleplay_manager.py`
+11. `sirius_pulse/config/models.py`
+12. `sirius_pulse/config/manager.py`
+13. `sirius_pulse/persona_generation/`
+14. `sirius_pulse/core/emotional_engine.py`
+15. `sirius_pulse/core/cognition.py`
+16. `sirius_pulse/core/prompt_factory.py`
+17. `sirius_pulse/core/response_strategy.py`
+18. `sirius_pulse/core/model_router.py`
+19. `sirius_pulse/memory/basic/manager.py`
+20. `sirius_pulse/memory/diary/manager.py`
+21. `sirius_pulse/memory/user/simple.py`
+22. `sirius_pulse/memory/glossary/manager.py`
+23. `sirius_pulse/memory/context_assembler.py`
+24. `sirius_pulse/core/identity_resolver.py`
+24. `sirius_pulse/session/store.py`
+25. `sirius_pulse/providers/base.py`
+26. `sirius_pulse/providers/routing.py`
+27. `sirius_pulse/providers/middleware/base.py`
+28. `sirius_pulse/cli.py`
 29. `tests/test_workspace_runtime.py`
 30. `tests/test_emotional_engine_basic.py`
 
@@ -71,8 +71,8 @@ description: "你擅长使用自己的技能为其他人解决问题。当你需
 - 会话事件流包含 PERCEPTION/COGNITION/DECISION/EXECUTION 四层管道事件，以及 DELAYED/PROACTIVE 触发事件。技能执行结果由 `prompt_factory` 注入 assistant 回复，不通过独立事件暴露。
 - `WorkspaceRuntime` 会把 `WorkspaceBootstrap` 的签名记入 `workspace.json`；同一份 bootstrap 只在首次命中时持久化一次，后续重启会保留用户在 config root 下的手工修改。
 - `WorkspaceLayout` 是路径语义的单一事实来源：config root 放配置与资产，data root 放运行态数据。
-- **v1.0.0 默认引擎** `EmotionalGroupChatEngine` 的真实实现位于 `sirius_chat/core/emotional_engine.py`；采用四层认知架构（感知→认知→决策→执行）与简化记忆模型（基础记忆 → 日记记忆 → 语义记忆）。
-- `sirius_chat/async_engine/` 只承担兼容导出与 prompts/orchestration/utils 辅助层。
+- **v1.0.0 默认引擎** `EmotionalGroupChatEngine` 的真实实现位于 `sirius_pulse/core/emotional_engine.py`；采用四层认知架构（感知→认知→决策→执行）与简化记忆模型（基础记忆 → 日记记忆 → 语义记忆）。
+- `sirius_pulse/async_engine/` 只承担兼容导出与 prompts/orchestration/utils 辅助层。
 - 一个 `SessionConfig` 只对应一个主 AI，主 AI 由 `preset=AgentPreset(...)` 描述，不再推荐在外部配置里手写完整 agent prompt。
 - `User` 只是 `Participant` 的别名；运行时识人与记忆的事实来源是 `engine.user_manager`，而不是旧版 `participants` 配置字段。`profile.identities/name/aliases` 是可信身份锚点，`runtime.inferred_aliases` 只是弱线索，不参与稳定识人绑定。
 - provider 注册表由 `WorkspaceProviderManager` 管理，路由顺序是 `models` 列表优先、`healthcheck_model` 次之、最后回退到第一个启用 provider。
@@ -81,13 +81,13 @@ description: "你擅长使用自己的技能为其他人解决问题。当你需
 
 ## 修改路由指南
 
-- 新增 provider：修改 `sirius_chat/providers/`、`sirius_chat/providers/routing.py`、`sirius_chat/api/providers.py`，并补测试与文档。
-- 修改对话主流程（当前唯一 Emotional 引擎）：优先检查 `sirius_chat/core/emotional_engine.py`、`core/prompt_factory.py`、`core/cognition.py`、`core/response_strategy.py`。
-- 修改记忆系统（基础记忆 / 日记记忆 / 用户管理 / 名词解释）：同步检查 `sirius_chat/memory/basic/manager.py`、`sirius_chat/memory/diary/manager.py`、`sirius_chat/memory/user/simple.py`、`sirius_chat/memory/glossary/manager.py`、`sirius_chat/memory/context_assembler.py`、`sirius_chat/core/identity_resolver.py`。
-- 修改 workspace / session 持久化：同步检查 `sirius_chat/workspace/`、`sirius_chat/config/manager.py`、`sirius_chat/session/store.py`。
-- 修改识人或记忆逻辑：同步检查 `sirius_chat/memory/user/simple.py`、`sirius_chat/core/identity_resolver.py`、`sirius_chat/models/models.py` 与 `docs/external-usage.md`。
-- 修改外部 API：同步更新 `sirius_chat/api/`、README、`docs/external-usage.md` 与示例代码。
-- 修改 roleplay 资产流：同步更新 `sirius_chat/roleplay_prompting.py`、`workspace/roleplay_manager.py` 和架构文档。
+- 新增 provider：修改 `sirius_pulse/providers/`、`sirius_pulse/providers/routing.py`、`sirius_pulse/api/providers.py`，并补测试与文档。
+- 修改对话主流程（当前唯一 Emotional 引擎）：优先检查 `sirius_pulse/core/emotional_engine.py`、`core/prompt_factory.py`、`core/cognition.py`、`core/response_strategy.py`。
+- 修改记忆系统（基础记忆 / 日记记忆 / 用户管理 / 名词解释）：同步检查 `sirius_pulse/memory/basic/manager.py`、`sirius_pulse/memory/diary/manager.py`、`sirius_pulse/memory/user/simple.py`、`sirius_pulse/memory/glossary/manager.py`、`sirius_pulse/memory/context_assembler.py`、`sirius_pulse/core/identity_resolver.py`。
+- 修改 workspace / session 持久化：同步检查 `sirius_pulse/workspace/`、`sirius_pulse/config/manager.py`、`sirius_pulse/session/store.py`。
+- 修改识人或记忆逻辑：同步检查 `sirius_pulse/memory/user/simple.py`、`sirius_pulse/core/identity_resolver.py`、`sirius_pulse/models/models.py` 与 `docs/external-usage.md`。
+- 修改外部 API：同步更新 `sirius_pulse/api/`、README、`docs/external-usage.md` 与示例代码。
+- 修改 roleplay 资产流：同步更新 `sirius_pulse/roleplay_prompting.py`、`workspace/roleplay_manager.py` 和架构文档。
 - `providers/*` 实现具体的 LLM 后端。
 - `roleplay_prompting.py` 提供自动问题清单、回答提取式提示词生成、关键词/依赖文件驱动的人格生成、人格持久化、完整本地生成轨迹与依赖文件重生能力；问卷支持 `default` / `companion` / `romance` / `group_chat` 四类模板，可通过 `list_roleplay_question_templates()` 获取模板名，再用 `generate_humanized_roleplay_questions(template=...)` 生成对应的高层人格问卷。人格资产现统一存放于 `roleplay/generated_agents.json` 与 `roleplay/generated_agent_traces/`；对会写入 `work_path` 的人格生成链路，会先暂存 `PersonaSpec` 与待生成快照，再调用模型；结构化人格生成默认使用 `max_tokens=5120`、`timeout_seconds=120.0`，并通过 `GenerationRequest.timeout_seconds` 透传请求级超时。
 - 内置 provider 包含 `OpenAICompatibleProvider`、`AliyunBailianProvider`、`DeepSeekProvider`、`SiliconFlowProvider` 与 `VolcengineArkProvider`。
@@ -109,15 +109,15 @@ description: "你擅长使用自己的技能为其他人解决问题。当你需
 
 ## 修改路由指南（补充）
 
-- 新增 provider 支持：修改 `sirius_chat/providers/`，并保持 `sirius_chat/core/emotional_engine.py` 不含 provider 细节。
-- 修改主 AI 或多人轮次策略：更新 `sirius_chat/core/emotional_engine.py`，并检查 transcript 兼容性。
-- 修改动态参与者或识人记忆逻辑：同步更新 `models/models.py`、`sirius_chat/core/emotional_engine.py` 与 `docs/external-usage.md`。
+- 新增 provider 支持：修改 `sirius_pulse/providers/`，并保持 `sirius_pulse/core/emotional_engine.py` 不含 provider 细节。
+- 修改主 AI 或多人轮次策略：更新 `sirius_pulse/core/emotional_engine.py`，并检查 transcript 兼容性。
+- 修改动态参与者或识人记忆逻辑：同步更新 `models/models.py`、`sirius_pulse/core/emotional_engine.py` 与 `docs/external-usage.md`。
 - 修改会话恢复或压缩策略：同步更新 `workspace/`、`session/store.py`、`session/runner.py`、`docs/architecture.md`、相关迁移文档；若外部可见行为变化，再同步 `README.md`。
-- 修改配置结构或环境变量处理：同步更新 `sirius_chat/config/manager.py`、`sirius_chat/cli.py`、`README.md` 与 `examples/session.json`。
-- 修改缓存策略或后端：在 `sirius_chat/cache/` 实现新后端或修改现有接口，并更新 `docs/best-practices.md`。
-- 修改性能监控或基准：更新 `sirius_chat/performance/` 中的指标收集或分析逻辑，添加相应测试。
+- 修改配置结构或环境变量处理：同步更新 `sirius_pulse/config/manager.py`、`sirius_pulse/cli.py`、`README.md` 与 `examples/session.json`。
+- 修改缓存策略或后端：在 `sirius_pulse/cache/` 实现新后端或修改现有接口，并更新 `docs/best-practices.md`。
+- 修改性能监控或基准：更新 `sirius_pulse/performance/` 中的指标收集或分析逻辑，添加相应测试。
 - 修改 engine/provider 行为：在 `tests/` 下新增或更新测试。
-- 新增可对外使用功能：在 `sirius_chat/api/` 暴露接口并补充外部调用示例。
+- 新增可对外使用功能：在 `sirius_pulse/api/` 暴露接口并补充外部调用示例。
 
 ## 代码变更后的必做同步
 

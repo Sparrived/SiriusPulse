@@ -1,5 +1,5 @@
 [project]
-name = "sirius-chat"
+name = "sirius-pulse"
 version = "1.1.0"
 description = "A multi-user RPG dialogue LLM framework compatible with OpenAI providers"
 readme = "README.md"
@@ -77,4 +77,4 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["sirius_chat*"]
+include = ["sirius_pulse*"]

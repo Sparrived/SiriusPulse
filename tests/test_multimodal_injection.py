@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_chat.core.emotional_engine import EmotionalGroupChatEngine
+from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
 
 
 class TestInjectMultimodalIntoUserMessage:

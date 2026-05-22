@@ -112,24 +112,24 @@ def extract_runtime_class_info(name: str, obj: type[Any]) -> dict:
 
 
 def resolve_source_module(name: str, obj: Any) -> str | None:
-    """解析符号的来源模块（去除 sirius_chat. 前缀）."""
+    """解析符号的来源模块（去除 sirius_pulse. 前缀）."""
     mod = getattr(obj, "__module__", None)
-    if mod and mod.startswith("sirius_chat."):
-        return mod[len("sirius_chat."):]
+    if mod and mod.startswith("sirius_pulse."):
+        return mod[len("sirius_pulse."):]
     return mod
 
 
 def collect_public_api() -> dict[str, dict]:
-    """从 sirius_chat.__init__.py 收集公开 API，按来源模块分组."""
+    """从 sirius_pulse.__init__.py 收集公开 API，按来源模块分组."""
     try:
-        pkg = importlib.import_module("sirius_chat")
+        pkg = importlib.import_module("sirius_pulse")
     except Exception as exc:
-        print(f"[FAIL] 无法导入 sirius_chat: {exc}", file=sys.stderr)
+        print(f"[FAIL] 无法导入 sirius_pulse: {exc}", file=sys.stderr)
         sys.exit(1)
 
     exported_names = getattr(pkg, "__all__", [])
     if not isinstance(exported_names, list):
-        print("[WARN] sirius_chat.__all__ 不是列表，使用 dir() 替代", file=sys.stderr)
+        print("[WARN] sirius_pulse.__all__ 不是列表，使用 dir() 替代", file=sys.stderr)
         exported_names = [n for n in dir(pkg) if not n.startswith("_")]
 
     modules: dict[str, dict] = {}
@@ -157,7 +157,7 @@ def collect_public_api() -> dict[str, dict]:
 def generate_markdown_doc(modules: dict[str, dict]) -> str:
     """生成 markdown 格式的 API 文档."""
     md = "# Sirius Chat API 文档\n\n"
-    md += "自动生成的 Python API 参考文档（基于 `sirius_chat` 顶层公开导出）。\n\n"
+    md += "自动生成的 Python API 参考文档（基于 `sirius_pulse` 顶层公开导出）。\n\n"
 
     if not modules:
         md += "（未找到公开 API 符号）\n"

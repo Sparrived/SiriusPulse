@@ -7,7 +7,7 @@ description: "使用此技能在发布新版本到 PyPI 时执行完整的发布
 
 ## 概述
 
-该技能实现了 sirius-chat 包到 PyPI 的完全自动化发布。采用 GitHub 官方推荐的 Trusted Publishing（OIDC）认证方式，无需存储 API token，更加安全可靠。
+该技能实现了 sirius-pulse 包到 PyPI 的完全自动化发布。采用 GitHub 官方推荐的 Trusted Publishing（OIDC）认证方式，无需存储 API token，更加安全可靠。
 
 ## 前置条件
 
@@ -19,7 +19,7 @@ description: "使用此技能在发布新版本到 PyPI 时执行完整的发布
    - 访问：https://pypi.org/manage/account/publishing/
    - 点击 "Add a new pending publisher"
    - 填入以下信息：
-     - PyPI Project Name: `sirius-chat`
+     - PyPI Project Name: `sirius-pulse`
      - GitHub Owner: `Sparrived`
      - GitHub Repository: `SiriusChat`
      - Workflow Name: `publish.yml`
@@ -92,7 +92,7 @@ git push origin v0.5.0
 
 - 访问 GitHub Actions：https://github.com/Sparrived/SiriusChat/actions/workflows/publish.yml
 - 等待 workflow 完成（约 1-2 分钟）
-- 访问 PyPI：https://pypi.org/project/sirius-chat/
+- 访问 PyPI：https://pypi.org/project/sirius-pulse/
 - 确认新版本已出现
 
 ## 工作流说明

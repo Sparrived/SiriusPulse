@@ -12,9 +12,9 @@ This avoids the V1 problem of generating an event for nearly every message.
 
 import asyncio
 
-from sirius_chat.memory import EventMemoryManager
-from sirius_chat.memory.event import OBSERVATION_CATEGORIES
-from sirius_chat.providers.base import GenerationRequest
+from sirius_pulse.memory import EventMemoryManager
+from sirius_pulse.memory.event import OBSERVATION_CATEGORIES
+from sirius_pulse.providers.base import GenerationRequest
 
 
 async def demo_buffer_and_extract():
