@@ -50,6 +50,7 @@ class ContextAssembler:
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
         include_pending: bool = False,
+        biography_card: Any = None,
     ) -> list[dict[str, str]]:
         """Build OpenAI messages array with history embedded in system prompt.
 
@@ -60,10 +61,17 @@ class ContextAssembler:
         When cross_group_enabled is True and cross_group_user_id is provided,
         recent messages from that user in other groups are also embedded
         (marked as cross-group to avoid confusion).
+
+        When biography_card is provided, its contents (name, identity anchors,
+        short_bio) are used to enrich the diary retrieval query, improving
+        recall for entries related to the person being discussed.
         """
         # 1. Retrieve relevant diary entries (group-isolated)
+        enriched_query = self._enrich_search_query(
+            search_query or current_query, biography_card
+        )
         diary_entries = self._diary.retrieve(
-            query=search_query or current_query,
+            query=enriched_query,
             group_id=group_id,
             top_k=diary_top_k,
             max_tokens_budget=diary_token_budget,
@@ -115,14 +123,22 @@ class ContextAssembler:
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
         include_pending: bool = False,
+        biography_card: Any = None,
     ) -> tuple[list[dict[str, str]], dict[str, int]]:
         """Build OpenAI messages array and return per-module token breakdown.
 
         Returns a tuple of (messages, breakdown) where breakdown contains
         token counts for diary, history_xml, and cross_group_xml sections.
+
+        When biography_card is provided, its contents (name, identity anchors,
+        short_bio) are used to enrich the diary retrieval query, improving
+        recall for entries related to the person being discussed.
         """
+        enriched_query = self._enrich_search_query(
+            search_query or current_query, biography_card
+        )
         diary_entries = self._diary.retrieve(
-            query=search_query or current_query,
+            query=enriched_query,
             group_id=group_id,
             top_k=diary_top_k,
             max_tokens_budget=diary_token_budget,
@@ -285,3 +301,27 @@ class ContextAssembler:
             history_xml=history_xml,
             cross_group_xml=cross_group_xml,
         )
+
+    @staticmethod
+    def _enrich_search_query(base_query: str, biography_card: Any) -> str:
+        """用传记卡信息丰富日记检索 query，提高对"此人相关"日记的命中率。
+
+        将用户姓名、身份锚点和传记摘要追加到原始 query 后，
+        使语义检索和关键词检索都能兼顾"内容相关"和"人物相关"。
+        """
+        if biography_card is None:
+            return base_query
+
+        bio_parts = []
+        if biography_card.name:
+            bio_parts.append(biography_card.name)
+        if biography_card.identity_anchors:
+            bio_parts.extend(biography_card.identity_anchors[:3])
+        if biography_card.short_bio:
+            bio_parts.append(biography_card.short_bio[:100])
+
+        if not bio_parts:
+            return base_query
+
+        enriched = f"{base_query} {' '.join(bio_parts)}"
+        return enriched[:500]

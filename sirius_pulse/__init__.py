@@ -2,6 +2,7 @@
 
 公开 API（直接从顶层导入）:
     from sirius_pulse import EmotionalGroupChatEngine, Message, SessionConfig
+    from sirius_pulse import Brain, PreHook, PostHook  # LLM 交互中枢 + Hook 扩展
 
 本包不再提供 `sirius_pulse.api` 子模块；所有公开符号均已平铺到顶层。
 """
@@ -9,6 +10,7 @@
 from __future__ import annotations
 
 # ── Core engine ──
+from sirius_pulse.core.brain import Brain, ChatRequest, ChatResult, PreHook, PostHook
 from sirius_pulse.core.emotional_engine import (
     EmotionalGroupChatEngine,
     create_emotional_engine,
@@ -219,6 +221,11 @@ __all__ = [
     # Core engine
     "EmotionalGroupChatEngine",
     "create_emotional_engine",
+    "Brain",
+    "ChatRequest",
+    "ChatResult",
+    "PreHook",
+    "PostHook",
     "SessionEvent",
     "SessionEventBus",
     "SessionEventType",

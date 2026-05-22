@@ -809,6 +809,10 @@ class BackgroundTasksMixin(_Base):
             adapter_type=adapter_type,
         )
 
+        # 读取 speaker_card 用于丰富日记检索 query
+        pending_bio: dict = getattr(self, "_pending_biography", {}) or {}
+        speaker_card = pending_bio.get("speaker_card")
+
         # Use ContextAssembler to build full messages with diary RAG + XML history
         msgs, ca_breakdown = self.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
@@ -817,6 +821,7 @@ class BackgroundTasksMixin(_Base):
             search_query=bundle.user_content,
             recent_n=10,
             include_pending=True,
+            biography_card=speaker_card,
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]
