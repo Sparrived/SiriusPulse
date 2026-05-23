@@ -4,13 +4,14 @@
 主仓库 push 触发 → 积累 diff → LLM 判断 → 自动更新 docs 仓库 → 创建人格化 PR
 
 核心机制：
-- 用 git tag `docs-last-synced` 标记最后一次成功同步的 commit
+- 用 `.docs-sync-state` 文件（由 GitHub Actions Cache 持久化）记录上次同步的 commit
 - 小改动自动积累，等下一次大改动时一起处理
 - PR 描述以「月白/Sirius」的猫娘人格撰写
 
 必须的环境变量：
   DOCS_REPO_PAT    — 访问 docs 仓库的 GitHub PAT（repo 权限）
   LLM_API_KEY      — LLM API Key
+  GITHUB_EVENT_BEFORE — GitHub Push Event 的 before SHA（用于首次运行/缓存丢失时）
 可选环境变量：
   LLM_BASE_URL     — LLM API 地址（默认 https://api.openai.com/v1）
   LLM_MODEL        — 模型名（默认 gpt-4o-mini）
@@ -37,6 +38,10 @@ DOCS_REPO_PAT = os.environ.get("DOCS_REPO_PAT", "")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", os.environ.get("DOCS_BOT_API_KEY", ""))
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+GITHUB_EVENT_BEFORE = os.environ.get("GITHUB_EVENT_BEFORE", "")
+
+# 状态文件路径（在 GitHub Actions Cache 中持久化）
+STATE_FILE = ".docs-sync-state"
 
 # 小改动阈值（同时满足才判定为「小」）
 SMALL_FILE_THRESHOLD = 3       # 变更文件数 ≤ 3
@@ -45,9 +50,6 @@ SMALL_LINE_THRESHOLD = 30      # diff 行数（+/- 合计）≤ 30
 # 安全上限——即便全是小改动，积累到这些值之一也会强制触发
 MAX_ACCUMULATED_COMMITS = 20   # 积累 commit 数上限
 MAX_ACCUMULATED_DIFF_CHARS = 15000  # 积累 diff 长度上限
-
-# 同步标记 tag 名
-SYNC_TAG = "docs-last-synced"
 
 # 代码路径 → 受影响的文档
 PATH_TO_DOCS: dict[str, set[str]] = {
@@ -62,6 +64,7 @@ PATH_TO_DOCS: dict[str, set[str]] = {
     "sirius_pulse/persona_manager.py": {"docs/persona-lifecycle.md"},
     "sirius_pulse/persona_config.py":  {"docs/configuration-guide.md"},
     "sirius_pulse/webui/":       {"docs/architecture.md"},
+    "sirius_pulse/session/":     {"docs/persistence-system.md"},
     "main.py":                   {"docs/architecture.md"},
     "pyproject.toml":            {"docs/configuration-guide.md"},
 }
@@ -105,7 +108,6 @@ def parse_diff_stat(stat: str) -> tuple[int, int]:
     if not lines:
         return 0, 0
     file_count = len(lines) - 1  # 最后一行是汇总
-    # 从汇总行提取行数（如 "3 files changed, 15 insertions(+), 2 deletions(-)"）
     total_lines = 0
     last = lines[-1]
     for match in re.finditer(r"(\d+)\s+(insertion|deletion)", last):
@@ -129,26 +131,64 @@ def guess_affected_docs(changed_files: set[str]) -> set[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  同步标记管理
+#  同步状态管理（基于 GitHub Actions Cache 文件）
 # ═══════════════════════════════════════════════════════════════════
 
-def get_last_synced_commit() -> str | None:
-    """读取 docs-last-synced 标记指向的 commit"""
-    sha = run(["git", "rev-parse", SYNC_TAG], silent=True)
-    return sha if sha else None
+def read_state() -> str | None:
+    """
+    读取上次同步的 commit SHA。
+    状态文件在 GitHub Actions Cache 中持久化。
+    """
+    state_path = Path(STATE_FILE)
+    if not state_path.exists():
+        return None
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+        sha = data.get("last_synced_sha", "")
+        return sha if sha and run(["git", "cat-file", "-t", sha]) == "commit" else None
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
-def is_first_commit() -> bool:
-    """当前仓库是否只有 1 个 commit"""
-    count = run(["git", "rev-list", "--count", "HEAD"])
-    return count == "1"
+def write_state(sha: str) -> None:
+    """记录同步进度到状态文件"""
+    Path(STATE_FILE).write_text(
+        json.dumps({"last_synced_sha": sha, "updated_at": sha}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"  ✓ 状态已记录: {sha[:12]}")
 
 
-def update_sync_tag() -> None:
-    """将 docs-last-synced 标记移到 HEAD 并推送"""
-    run(["git", "tag", "-f", SYNC_TAG, "HEAD"])
-    run(["git", "push", "origin", SYNC_TAG, "--force"])
-    print(f"  ✓ 同步标记已更新为 {run(['git', 'rev-parse', '--short', 'HEAD'])}")
+def resolve_start_commit() -> tuple[str, str]:
+    """
+    确定本次检查的起始 commit。
+
+    优先级：
+    1. state 文件（上次成功同步的位置）——能跨多个 push 积累 diff
+    2. GITHUB_EVENT_BEFORE（当前 push 事件的 before SHA）——首次运行或 cache 丢失
+    3. HEAD~1 ——兜底
+
+    返回 (commit_sha, 来源说明)
+    """
+    # 优先级 1：state 文件
+    state_sha = read_state()
+    if state_sha:
+        return state_sha, "缓存状态"
+
+    # 优先级 2：GITHUB_EVENT_BEFORE
+    if GITHUB_EVENT_BEFORE and GITHUB_EVENT_BEFORE != "0" * 40:
+        return GITHUB_EVENT_BEFORE, "Push Event before SHA"
+
+    # 优先级 3：HEAD~1（首次运行或在本地测试）
+    head_parent = run(["git", "rev-parse", "HEAD~1"])
+    if head_parent:
+        return head_parent, "HEAD 的父 commit（首次运行）"
+
+    # 极端情况：只有 1 个 commit 的仓库
+    root = run(["git", "rev-list", "--max-parents=0", "HEAD"])
+    if root:
+        return root, "根 commit"
+    return "", ""
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -163,19 +203,15 @@ def get_individual_commit_stats(
     for sha in commits:
         stat = run(["git", "diff", f"{sha}^", sha, "--stat"])
         if not stat:
-            # 可能是第一个 commit 没有 parent
             stat = run(["git", "show", "--stat", sha])
         files, lines = parse_diff_stat(stat)
         stats.append({"sha": sha, "files": files, "lines": lines})
     return stats
 
 
-def get_accumulated_diff(commits: list[str]) -> str:
+def get_accumulated_diff(last_synced: str) -> str:
     """获取积累 diff（last_synced..HEAD），限制长度"""
-    if not commits:
-        return ""
-    diff = run(["git", "diff", f"{commits[0]}^..HEAD", "--", ".", ":!*.md", ":!.github"])
-    # 限制长度，避免超 token
+    diff = run(["git", "diff", f"{last_synced}..HEAD", "--", ".", ":!*.md", ":!.github"])
     max_len = MAX_ACCUMULATED_DIFF_CHARS
     if len(diff) > max_len:
         diff = diff[:max_len] + "\n\n...(diff 过长, 已截断)"
@@ -185,32 +221,26 @@ def get_accumulated_diff(commits: list[str]) -> str:
 def should_process(commits: list[str], stats: list[dict]) -> tuple[bool, str]:
     """
     决策是否需要触发 LLM 处理。
-
     触发条件（满足任一即可）：
     1. 存在单个「大改动」commit
     2. 积累 commit 数达到上限
-    3. 积累 diff 长度达到上限
-    4. 所有 commit 都是小改动，但累计总量超过了双倍阈值
+    3. 累计文件数/行数超过双倍阈值
     """
     if not commits:
         return False, "没有新增 commit"
 
-    # 条件 1：是否存在大改动 commit
     for s in stats:
         if s["files"] > SMALL_FILE_THRESHOLD or s["lines"] > SMALL_LINE_THRESHOLD:
             return True, f"commit {s['sha'][:8]} 改动较大（{s['files']} 文件, {s['lines']} 行）"
 
-    # 条件 2：积累数达到上限
     if len(commits) >= MAX_ACCUMULATED_COMMITS:
         return True, f"已积累 {len(commits)} 个 commit，达到处理上限"
 
-    # 条件 3：计算累计总量
     total_files = sum(s["files"] for s in stats)
     total_lines = sum(s["lines"] for s in stats)
 
     if total_files > SMALL_FILE_THRESHOLD * 2:
         return True, f"累计文件数 {total_files} 超过阈值"
-
     if total_lines > SMALL_LINE_THRESHOLD * 2:
         return True, f"累计变更行数 {total_lines} 超过阈值"
 
@@ -253,7 +283,6 @@ def _llm_request(
     try:
         resp = json.loads(urllib.request.urlopen(req, timeout=180).read())
         content = resp["choices"][0]["message"]["content"]
-        # 去掉 markdown 包裹
         content = re.sub(r"^```(?:json)?\s*", "", content.strip())
         content = re.sub(r"\s*```$", "", content)
         return content
@@ -455,24 +484,18 @@ def main() -> None:
     print("=" * 60)
     print("🌟 文档自动同步 Agent 启动")
     print("=" * 60)
+    print(f"   仓库: {DOCS_REPO}")
+    print(f"   LLM: {LLM_MODEL}")
 
-    # ── 1. 获取同步状态 ──────────────────────────────────────
-    last_synced = get_last_synced_commit()
+    # ── 1. 确定起始 commit ───────────────────────────────────
+    last_synced, source_desc = resolve_start_commit()
 
-    if last_synced is None:
-        print("\n📌 首次运行，初始化同步标记...")
-        if is_first_commit():
-            update_sync_tag()
-            print("   仓库只有根 commit，已建立标记，下次 push 再检查")
-            return
-        # 用 HEAD~1 作为起点，这样本次 push 的 diff 会被检查
-        last_synced = run(["git", "rev-parse", "HEAD~1"])
-        if not last_synced:
-            print("   无法确定起始 commit，跳过")
-            return
-        print(f"   起始点: {last_synced[:12]} (HEAD 的父 commit)")
-    else:
-        print(f"\n📌 上次同步点: {last_synced[:12]}")
+    if not last_synced:
+        print("\n❌ 无法确定起始 commit，跳过本次处理")
+        print("   可能的解决方案：确保仓库至少有一个 commit")
+        sys.exit(0)
+
+    print(f"\n📌 起始点: {last_synced[:12]} ({source_desc})")
 
     # ── 2. 获取积累的 commit ────────────────────────────────
     commits = run(["git", "rev-list", f"{last_synced}..HEAD", "--reverse"]).splitlines()
@@ -480,6 +503,8 @@ def main() -> None:
 
     if not commits:
         print("\nℹ️  没有新的 commit，跳过")
+        # 没有新 commit 也要记录状态，避免重复检查
+        write_state(run(["git", "rev-parse", "HEAD"]))
         return
 
     print(f"\n📁 积累的 commit ({len(commits)} 个):")
@@ -503,14 +528,14 @@ def main() -> None:
         return
 
     # ── 5. 获取积累的完整 diff ────────────────────────────────
-    diff_content = get_accumulated_diff(commits)
+    diff_content = get_accumulated_diff(last_synced)
     changed_files = get_changed_files_since(last_synced)
     diff_summary = run(["git", "diff", f"{last_synced}..HEAD", "--stat"])
 
     print(f"\n📝 积累 diff: {len(diff_content)} 字符")
     print(f"📁 涉及文件: {', '.join(sorted(changed_files))}")
 
-    # ── 6. LLM 研判是否需要更新文档 ────────────────────────
+    # ── 6. LLM 研判是否需要更新文档 ──────────────────────────
     print("\n🤔 AI 研判是否需要更新文档...")
     judge = judge_needs_update(changed_files, diff_summary)
 
@@ -521,22 +546,20 @@ def main() -> None:
 
     if not judge.get("needs_update"):
         print(f"\n✅ 无需更新文档。原因：{judge.get('reason', '未说明')}")
-        print("   已标记为已同步，后续不再积累这些 diff")
-        update_sync_tag()
+        print("   已记录同步状态")
+        write_state(run(["git", "rev-parse", "HEAD"]))
         return
 
     affected_docs = judge.get("affected_docs", [])
     print(f"\n📝 需要更新: {', '.join(affected_docs)}")
     print(f"   原因: {judge.get('reason', '')}")
 
-    # ── 7. 克隆 docs 仓库，逐个更新文档 ────────────────────
+    # ── 7. 克隆 docs 仓库，逐个更新文档 ──────────────────────
     print("\n🔄 克隆 docs 仓库...")
     with tempfile.TemporaryDirectory(prefix="docs-sync-") as tmpdir:
         docs_dir = Path(tmpdir) / "docs-repo"
 
-        auth_url = (
-            f"https://x-access-token:{DOCS_REPO_PAT}@github.com/{DOCS_REPO}.git"
-        )
+        auth_url = f"https://x-access-token:{DOCS_REPO_PAT}@github.com/{DOCS_REPO}.git"
         clone_ok = run(["git", "clone", auth_url, str(docs_dir)])
         if not clone_ok:
             print("  ❌ 克隆 docs 仓库失败")
@@ -544,7 +567,6 @@ def main() -> None:
             return
         print(f"  ✓ 已克隆到 {docs_dir}")
 
-        # 创建分支
         sha_short = run(["git", "rev-parse", "--short", "HEAD"])
         branch_name = f"auto-sync/{sha_short}"
         run(["git", "checkout", "-b", branch_name], cwd=str(docs_dir))
@@ -565,14 +587,12 @@ def main() -> None:
 
         if not updated_docs:
             print("\nℹ️  所有文件无需实际修改，跳过 PR 创建")
-            print("   已标记为已同步")
-            update_sync_tag()
+            print("   已记录同步状态")
+            write_state(run(["git", "rev-parse", "HEAD"]))
             return
 
         # ── 8. 生成人格化 PR 描述 ────────────────────────────
-        commit_msgs = [
-            run(["git", "log", "--oneline", "-1", c]) for c in commits
-        ]
+        commit_msgs = [run(["git", "log", "--oneline", "-1", c]) for c in commits]
 
         print("\n🎭 生成月白风格的 PR 描述...")
         pr_body = generate_pr_description(
@@ -593,7 +613,7 @@ def main() -> None:
         commit_ok = run(["git", "commit", "-m", commit_msg], cwd=str(docs_dir))
         if "nothing to commit" in commit_ok:
             print("\nℹ️  没有实际变更，跳过 PR 创建")
-            update_sync_tag()
+            write_state(run(["git", "rev-parse", "HEAD"]))
             return
 
         push_ok = run(["git", "push", "origin", branch_name], cwd=str(docs_dir))
@@ -614,7 +634,7 @@ def main() -> None:
             [
                 "gh", "pr", "create",
                 "--repo", DOCS_REPO,
-                "--title", commit_msg[:72],  # GitHub 限制 72 字符
+                "--title", commit_msg[:72],
                 "--body-file", body_path,
                 "--base", "main",
                 "--head", branch_name,
@@ -627,9 +647,9 @@ def main() -> None:
         else:
             print("\n⚠️  PR 创建可能失败，请检查 docs 仓库")
 
-        # ── 11. 更新同步标记 ────────────────────────────────
-        print("\n🏷️  更新同步标记...")
-        update_sync_tag()
+        # ── 11. 记录同步状态 ────────────────────────────────
+        print("\n📝 记录同步状态...")
+        write_state(run(["git", "rev-parse", "HEAD"]))
 
     print("\n" + "=" * 60)
     print("✅ 文档同步流程完成")

@@ -22,6 +22,10 @@ on:
       - 'scripts/setup_dev_env.py'
       - 'Makefile'
 
+concurrency:
+  group: docs-sync-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   auto-docs-sync:
     name: AI 自动判断并更新文档
@@ -30,8 +34,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # 需要完整历史，因为用 git tag 做 diff 积累状态标记
+          # 需要完整 git 历史用于计算 diff
           fetch-depth: 0
+
+      # 恢复上次同步的状态（跨运行持久化）
+      - name: 恢复同步状态缓存
+        uses: actions/cache@v4
+        id: sync-state-cache
+        with:
+          path: .docs-sync-state
+          key: docs-sync-state-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            docs-sync-state-${{ github.ref_name }}-
 
       - name: 运行 AI 文档同步 Agent
         env:
@@ -39,5 +53,7 @@ jobs:
           LLM_API_KEY: ${{ secrets.DOCS_BOT_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          # Push Event 提供的准确 commit 范围（首次运行/cache 丢失时兜底）
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: |
           python scripts/docs_sync_agent.py
