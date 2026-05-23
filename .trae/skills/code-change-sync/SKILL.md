@@ -139,6 +139,7 @@ sirius_pulse/
 └── webui/                   # WebUI管理面板
     ├── server.py            # aiohttp REST API 主入口
     ├── server_core.py       # 核心路由与基础设施
+    ├── server_utils.py      # 共享工具函数（_json_response、_get_name，避免循环导入）
     ├── persona_api.py       # 人格管理 API
     ├── memory_api.py        # 记忆管理 API
     ├── napcat_api.py        # NapCat 管理 API
