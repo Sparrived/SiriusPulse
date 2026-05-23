@@ -100,6 +100,9 @@ class NapCatAdapter(BaseAdapter):
         self._api_send_lock = asyncio.Lock()
         self._event_bus_task: asyncio.Task | None = None
 
+        # 消息处理锁：防止并发进入引擎 process_message 导致字典迭代时修改错误
+        self._process_lock = asyncio.Lock()
+
     # ─── 生命周期 ─────────────────────────────────────────
 
     async def start_handling(self, engine: Any) -> None:
@@ -658,6 +661,11 @@ class NapCatAdapter(BaseAdapter):
 
     async def _process_event(self, event: dict[str, Any]) -> None:
         """统一消息处理：解析 → 引擎 → 发送。"""
+        async with self._process_lock:
+            await self._process_event_impl(event)
+
+    async def _process_event_impl(self, event: dict[str, Any]) -> None:
+        """实际的消息处理逻辑，受 _process_lock 保护。"""
         parsed = await self.parse_event(event)
         if parsed is None:
             return
@@ -738,7 +746,7 @@ class NapCatAdapter(BaseAdapter):
         except asyncio.CancelledError:
             raise
         except RuntimeError as exc:
-            LOG.error("引擎处理错误 (%s/%s): %s", group_id, parsed.user_id, exc)
+            LOG.exception("引擎处理错误 (%s/%s): %s", group_id, parsed.user_id, exc)
         except Exception as exc:
             LOG.exception("消息处理异常 (%s/%s): %s", group_id, parsed.user_id, exc)
 
