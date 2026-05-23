@@ -131,7 +131,19 @@ class _EmotionalGroupChatEngineBase:
         self._embedding_client = embedding_client
         self._adapter: Any = None  # 由 add_skill_bridge() 注入，plugin 直接取用
 
-        # Expressiveness regulator (single-knob)
+        self._init_expressiveness()
+        self._init_persona(persona)
+        self._init_orchestration_and_task_models()
+        self._init_memory_system()
+        self._init_cognitive_layer()
+        self._init_decision_layer()
+        self._init_model_router()
+        self._init_brain()
+        self._init_event_bus_and_persistence(work_path)
+        self._init_skill_plugin_and_runtime()
+        self._register_engine_hooks()
+
+    def _init_expressiveness(self) -> None:
         from sirius_pulse.config.models import ExpressivenessConfig
 
         expr_cfg = self.config.get("expressiveness", {})
@@ -141,7 +153,7 @@ class _EmotionalGroupChatEngineBase:
             expr_cfg if isinstance(expr_cfg, dict) else {}
         )
 
-        # Persona loading
+    def _init_persona(self, persona: Any) -> None:
         from sirius_pulse.core.persona_generator import PersonaGenerator
         from sirius_pulse.core.persona_store import PersonaStore
         from sirius_pulse.models.persona import PersonaProfile
@@ -153,8 +165,7 @@ class _EmotionalGroupChatEngineBase:
                 else PersonaProfile.from_dict(dict(persona))
             )
         else:
-            # Try load from disk
-            loaded = PersonaStore.load(work_path)
+            loaded = PersonaStore.load(self.work_path)
             if loaded:
                 self.persona = loaded
             else:
@@ -163,10 +174,10 @@ class _EmotionalGroupChatEngineBase:
                     "Please create a persona first (via PersonaStore.save)."
                 )
 
-        # Load orchestration config (unified model configuration)
+    def _init_orchestration_and_task_models(self) -> None:
         from sirius_pulse.core.orchestration_store import OrchestrationStore
 
-        orch = OrchestrationStore.load(work_path)
+        orch = OrchestrationStore.load(self.work_path)
         if not orch:
             orch = {
                 "analysis_model": "gpt-4o-mini",
@@ -174,58 +185,54 @@ class _EmotionalGroupChatEngineBase:
                 "memory_model": "gpt-4o-mini",
                 "plugin_model": "gpt-4o-mini",
             }
-            OrchestrationStore.save(work_path, orch)
+            OrchestrationStore.save(self.work_path, orch)
         analysis_model = orch.get("analysis_model", "gpt-4o-mini")
         chat_model = orch.get("chat_model", "gpt-4o")
         memory_model = orch.get("memory_model", "gpt-4o-mini")
         plugin_model = orch.get("plugin_model", "gpt-4o-mini")
         self._default_model = analysis_model
         self._task_models = {
-            # 分析类
             "cognition_analyze": analysis_model,
             "memory_extract": analysis_model,
-            # 生成类（主动发言、被动技能、GitHub 通知均跟随对话模型）
             "response_generate": chat_model,
             "proactive_generate": chat_model,
             "passive_skill": chat_model,
             "github_monitor_notify": chat_model,
-            # 记忆维护
             "diary_generate": memory_model,
             "diary_consolidate": memory_model,
             "biography_distill": memory_model,
             "biography_update": memory_model,
-            # 插件与技能
             "plugin_generate": plugin_model,
             "plugin_analyze": plugin_model,
             "plugin_render": plugin_model,
             "plugin_raw": plugin_model,
         }
-        # 优先使用 orchestration.json 中的 task_models 细粒度覆盖
         orch_task_models = orch.get("task_models")
         if isinstance(orch_task_models, dict):
             for task, model in orch_task_models.items():
                 if isinstance(model, str) and model.strip():
                     self._task_models[task] = model.strip()
-        # 允许外部通过 config 直接覆盖具体任务模型（最高优先级）
         self._task_models.update(self.config.get("task_models", {}))
+        self._orch_task_temperatures = orch.get("task_temperatures")
+        self._orch_task_max_tokens = orch.get("task_max_tokens")
 
-        # Memory foundation
-        self.semantic_memory = SemanticMemoryManager(work_path)
+    def _init_memory_system(self) -> None:
+        self.semantic_memory = SemanticMemoryManager(self.work_path)
 
         self.basic_memory = BasicMemoryManager(
             hard_limit=self.config.get("basic_memory_hard_limit", 30),
             context_window=self.config.get("basic_memory_context_window", 5),
         )
-        self.basic_store = BasicMemoryFileStore(work_path)
+        self.basic_store = BasicMemoryFileStore(self.work_path)
         self.diary_manager = DiaryManager(
-            work_path,
+            self.work_path,
             vector_store=self._vector_store,
             embedding_client=self._embedding_client,
         )
         self.user_manager = UserManager()
         self.identity_resolver = IdentityResolver()
         self.biography_manager = BiographyManager(
-            work_path,
+            self.work_path,
             persona_name=self.persona.name,
             persona_aliases=self.persona.aliases,
         )
@@ -233,17 +240,19 @@ class _EmotionalGroupChatEngineBase:
             self.basic_memory,
             self.diary_manager._retriever,
         )
+        self.glossary_manager = GlossaryManager(self.work_path, persona_name=self.persona.name)
 
-        # Cognitive layer (unified emotion + intent)
+    def _init_cognitive_layer(self) -> None:
         self.cognition_analyzer = CognitionAnalyzer(
-            provider_async=provider_async,
+            provider_async=self.provider_async,
             model_name=self._task_models.get("cognition_analyze", self._default_model),
             ai_name=self.persona.name,
             ai_aliases=self.persona.aliases,
             persona=self.persona,
             plugin_registry=None,  # 后续由 set_plugin_runtime 注入（v1.2+）
         )
-        # Decision layer
+
+    def _init_decision_layer(self) -> None:
         self.threshold_engine = ThresholdEngine()
         self.strategy_engine = ResponseStrategyEngine()
         self.delayed_queue = DelayedResponseQueue()
@@ -254,20 +263,18 @@ class _EmotionalGroupChatEngineBase:
         )
         self.rhythm_analyzer = RhythmAnalyzer()
 
-        # Execution layer (persona-injected)
+    def _init_model_router(self) -> None:
         self._other_ai_names = list(self.config.get("other_ai_names", []))
         self.style_adapter = StyleAdapter()
         task_overrides: dict[str, dict[str, Any]] = {}
-        orch_task_temperatures = orch.get("task_temperatures")
-        orch_task_max_tokens = orch.get("task_max_tokens")
         for task, model in self._task_models.items():
             override: dict[str, Any] = {"model_name": model}
-            if isinstance(orch_task_temperatures, dict):
-                t = orch_task_temperatures.get(task)
+            if isinstance(self._orch_task_temperatures, dict):
+                t = self._orch_task_temperatures.get(task)
                 if isinstance(t, (int, float)):
                     override["temperature"] = float(t)
-            if isinstance(orch_task_max_tokens, dict):
-                m = orch_task_max_tokens.get(task)
+            if isinstance(self._orch_task_max_tokens, dict):
+                m = self._orch_task_max_tokens.get(task)
                 if isinstance(m, int):
                     override["max_tokens"] = m
             task_overrides[task] = override
@@ -281,10 +288,10 @@ class _EmotionalGroupChatEngineBase:
             overrides=task_overrides,
         )
 
-        # Brain：LLM 交互中枢（先创建，token_usage_records 后续同步引用）
+    def _init_brain(self) -> None:
         self._token_records: list[Any] = []
         self.brain = Brain(
-            provider_async=provider_async,
+            provider_async=self.provider_async,
             model_router=self.model_router,
             persona=self.persona,
             rhythm_analyzer=self.rhythm_analyzer,
@@ -293,99 +300,76 @@ class _EmotionalGroupChatEngineBase:
             token_usage_records=self._token_records,
             other_ai_names=self._other_ai_names,
         )
-        # 延迟注入引擎上下文函数
         self.brain.set_context_fns(
             recent_messages_fn=self._get_recent_messages,
             tone_alignment_fn=self._get_tone_alignment,
             classify_exception_fn=self._classify_exception,
         )
-        # 将 Brain 注入 CognitionAnalyzer，使其使用统一的 raw_call 通道
         self.cognition_analyzer.brain = self.brain
 
-        # Persistence
+    def _init_event_bus_and_persistence(self, work_path: Any) -> None:
         from sirius_pulse.core.engine_persistence import EngineStateStore
 
         self._state_store = EngineStateStore(work_path)
 
-        # Assistant state (persona emotional baseline)
         baseline = self.persona.emotional_baseline
         self.assistant_emotion = AssistantEmotionState(
             valence=baseline.get("valence", 0.2),
             arousal=baseline.get("arousal", 0.3),
         )
 
-        # Group runtime state
-        self._group_last_message_at: dict[str, str] = {}
-        self._transcripts: dict[str, Transcript] = {}
-        self._last_reply_at: dict[str, float] = {}  # group_id -> unix timestamp
-        self._last_reply_depth: dict[str, int] = {}  # group_id -> consecutive reply depth
-        self._proactive_enabled_groups: set[str] = set()  # empty = all enabled (backward compat)
-        self._proactive_disabled_groups: set[str] = set()  # blacklist: groups explicitly disabled
-        self._last_proactive_at: dict[str, str] = {}  # group_id -> ISO timestamp
-
-        # Event bus
         self.event_bus = SessionEventBus()
 
-        # Token usage tracking（与 Brain 共享同一个列表引用）
         from sirius_pulse.config import TokenUsageRecord
 
         self.token_usage_records: list[TokenUsageRecord] = self._token_records
         self.token_store: Any | None = None  # injected by EngineRuntime
 
-        # Cognition event tracking
         from sirius_pulse.memory.cognition_store import CognitionEventStore
 
         self.cognition_store = CognitionEventStore(Path(work_path) / "cognition_events.db")
 
-        # SKILL system
+    def _init_skill_plugin_and_runtime(self) -> None:
+        self._group_last_message_at: dict[str, str] = {}
+        self._transcripts: dict[str, Transcript] = {}
+        self._last_reply_at: dict[str, float] = {}
+        self._last_reply_depth: dict[str, int] = {}
+        self._proactive_enabled_groups: set[str] = set()
+        self._proactive_disabled_groups: set[str] = set()
+        self._last_proactive_at: dict[str, str] = {}
+
         self._skill_registry: Any | None = None
         self._skill_executor: Any | None = None
         self._passive_skill_tasks: dict[str, asyncio.Task] = {}
         self._passive_skill_triggers: dict[str, list[Any]] = {}
         self._passive_skill_unloaders: list[tuple[Any, Any]] = []
 
-        # Plugin system（v1.2+）
         self._plugin_registry: Any | None = None
         self._plugin_executor: Any | None = None
         self._plugin_dispatcher: Any | None = None
 
-        # 表情包名称列表（从 stickers 文件夹扫描，不含扩展名）
         self._sticker_names: list[str] = []
 
-        self.glossary_manager = GlossaryManager(work_path, persona_name=self.persona.name)
-
-        # Background tasks
         self._bg_tasks: set[asyncio.Task] = set()
         self._bg_running = False
 
-        # Track which delayed-queue items have already emitted trigger events
-        # per group_id to avoid duplicate events across smart-sleep ticks.
         self._delayed_event_emitted: dict[str, set[str]] = {}
 
-        # Developer proactive chat state
         self._developer_private_groups: set[str] = set()
         self._pending_developer_chats: dict[str, list[str]] = {}
         self._last_developer_chat_at: dict[str, float] = {}
 
-        # Reminder state
         self._pending_reminders: dict[str, list[dict[str, Any]]] = {}
         self._current_adapter_type: str = ""
 
-        # Reply deduplication
         self._recent_sent_replies: dict[str, list[tuple[float, str]]] = {}
         self._reply_dedup_window = self.config.get("reply_dedup_window_seconds", 300)
         self._reply_dedup_threshold = self.config.get("reply_dedup_threshold", 0.85)
 
-        # Active private groups for delayed queue ticking
         self._active_private_groups: set[str] = set()
 
-        # v1.3+: 短期话题窗口 —— 每个群最近 N 条消息的关键词快照
-        # 用于跨轮次话题关联增强，key=group_id, value=[set(keywords), ...]
         self._topic_window: dict[str, list[set[str]]] = {}
         self._topic_window_max_size = 10
-
-        # ── 注册引擎 post-hooks 到 Brain ──
-        self._register_engine_hooks()
 
     def _register_engine_hooks(self) -> None:
         """向 Brain 注册引擎级别的后处理 hook。

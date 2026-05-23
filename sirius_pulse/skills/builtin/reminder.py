@@ -294,9 +294,12 @@ async def _generate_reminder_message(
     target: str = "user",
     skill_results: list[dict[str, Any]] | None = None,
 ) -> str | None:
-    """Generate a persona-styled reminder message via LLM."""
+    """Generate a persona-styled reminder message via LLM.
+
+    Delegates memory recording, timestamp persistence, and sticker
+    sending to engine post-hooks (post_process=True).
+    """
     from sirius_pulse.core.prompt_factory import PromptFactory
-    from sirius_pulse.skills.executor import strip_skill_calls
 
     try:
         persona = ctx.get_persona()
@@ -312,16 +315,12 @@ async def _generate_reminder_message(
             skill_desc=skill_desc,
         )
 
-        raw_reply = await ctx.generate_text(
+        reply = await ctx.generate_text(
             system_prompt, messages, group_id,
             task_name="proactive_generate",
+            post_process=True,
         )
-        reply = strip_skill_calls(raw_reply).strip()
-        if reply:
-            persona_name = persona.name if persona else "assistant"
-            ctx.add_memory_entry(group_id, "assistant", "assistant", reply, persona_name)
-            ctx.record_reply_timestamp(group_id)
-            ctx.persist_group_state(group_id)
+        reply = reply.strip()
         return reply or None
     except Exception as exc:
         logger.warning("Failed to generate reminder message: %s", exc)

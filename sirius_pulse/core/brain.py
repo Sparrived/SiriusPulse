@@ -548,7 +548,7 @@ class Brain:
                 post_process=post_process,
             )
         )
-        return result.raw_text
+        return result.clean_text
 
     # ═══════════════════════════════════════════════════════════════════
     # 内部方法

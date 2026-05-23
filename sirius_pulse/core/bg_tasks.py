@@ -483,8 +483,8 @@ class BackgroundTasksMixin(_Base):
             )
         )
 
-        # clean_reply 由 Brain post-hook 完成（strip_skill_calls + 去重），
-        # 若被去重抑制则为空字符串。
+        # generate_text() 已返回 clean_text（不含 SKILL_CALL 和 sticker 标签），
+        # strip_skill_calls 作为安全兜底；去重由 post-hook _hook_dedup 完成。
         clean_reply = strip_skill_calls(reply).strip()
 
         return {
@@ -851,6 +851,7 @@ class BackgroundTasksMixin(_Base):
         messages = self._inject_multimodal_into_user_message(messages, all_multimodal)
 
         # Multi-round generation with SKILL support
+        from sirius_pulse.core.brain import ChatRequest
         from sirius_pulse.skills.executor import parse_skill_calls, strip_skill_calls
         from sirius_pulse.skills.models import SkillInvocationContext
 
@@ -863,12 +864,20 @@ class BackgroundTasksMixin(_Base):
         reply = ""
 
         for _round in range(max_skill_rounds + 1):
-            raw_reply = await self.brain.generate_text(
-                system_prompt,
-                messages,
-                group_id,
+            chat_result = await self.brain.chat(
+                ChatRequest(
+                    group_id=group_id,
+                    user_id="",
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    task_name="response_generate",
+                    enable_skills=False,
+                    post_process=False,
+                )
             )
-            reply = raw_reply.strip()
+            reply = chat_result.raw_text.strip()
+            round_clean = chat_result.clean_text
+            round_stickers = chat_result.sticker_names
 
             calls = parse_skill_calls(reply)
             if not calls or self._skill_registry is None or self._skill_executor is None:
@@ -881,16 +890,13 @@ class BackgroundTasksMixin(_Base):
                 for name, _ in calls
             )
 
-            # Extract non-skill text as a partial reply to send immediately.
-            non_skill_text = strip_skill_calls(reply).strip()
-            # 解析 partial reply 中的表情包标签 [STICKERS: ...]，防止裸标签泄露到群聊
-            if non_skill_text and hasattr(self, "_parse_sticker_tags"):
-                non_skill_text, _sticker_names_partial = self._parse_sticker_tags(non_skill_text)
-                if _sticker_names_partial:
-                    asyncio.create_task(
-                        self._send_stickers_by_names(group_id, _sticker_names_partial)
-                    )
-                    logger.info("partial reply 中解析到表情包: %s", _sticker_names_partial)
+            # 使用 chat_result 已解析好的 clean_text 和 sticker_names
+            non_skill_text = round_clean
+            if non_skill_text and round_stickers:
+                asyncio.create_task(
+                    self._send_stickers_by_names(group_id, round_stickers)
+                )
+                logger.info("partial reply 中解析到表情包: %s", round_stickers)
             last_round_had_partial = False
             if non_skill_text and not all_silent:
                 self._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
