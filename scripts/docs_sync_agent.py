@@ -504,8 +504,8 @@ def update_single_doc(
         if not old_text:
             continue
         if old_text not in new_content:
-            print(f"  ⚠️ 第 {i + 1} 处修改未找到匹配文本，跳过: {old_text[:60]}...")
-            continue
+            print(f"  ⚠️ 第 {i + 1} 处 patch 未命中，回退到完整文档模式")
+            return _update_full_doc(filepath, diff_content, changed_files)
         new_content = new_content.replace(old_text, new_text, 1)
         change_desc = changes[i] if i < len(changes) else f"片段 {i + 1}"
         print(f"  ✓ 已替换: {change_desc}")
@@ -516,6 +516,49 @@ def update_single_doc(
         return None
 
     return new_content
+
+
+def _update_full_doc(filepath: Path, diff_content: str, changed_files: set[str]) -> str | None:
+    """回退方案：让 LLM 输出完整文档内容（当 patch 模式未命中时使用）。"""
+    old_content = filepath.read_text(encoding="utf-8")
+
+    prompt = f"""## 任务
+根据代码变更，更新以下文档。
+**输出完整的更新后文档，不能省略任何内容。**
+
+## 当前文档内容（{filepath.name}）
+```markdown
+{old_content[:12000]}
+```
+
+## 本次代码 diff
+```diff
+{diff_content[:15000]}
+```
+
+## 变更文件
+{chr(10).join(sorted(changed_files))}
+
+## 输出格式（严格 JSON）
+{{"modified": true/false, "content": "完整的更新后文档内容（不能截断！仅 modified=true 时）", "changes": ["改动点1", "改动点2"]}}"""
+
+    result = call_llm_json(prompt, system_prompt=DOC_UPDATE_FULL_SYSTEM_PROMPT)
+
+    if result.get("modified") and result.get("content"):
+        changes = "; ".join(result.get("changes", []))
+        print(f"  ✓ 已更新（完整模式）: {filepath.name} — {changes}")
+        return result["content"]
+
+    print(f"  - 无需修改: {filepath.name}")
+    return None
+
+
+DOC_UPDATE_FULL_SYSTEM_PROMPT = (
+    "你是一个专业的文档维护助手。根据代码变更更新文档内容。"
+    "保持原文档结构、标题层级、风格不变。"
+    "**必须输出完整的文档内容，不能省略任何部分**，不允许使用省略号或截断标记。"
+    "必须输出严格 JSON。"
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -685,16 +728,19 @@ def main() -> None:
             return
         print(f"  ✓ 已克隆到 {docs_dir}")
 
-        # Fork 模式下，自动 sync fork 的 main 分支与原仓库保持一致
+        # Fork 模式下，自动 sync fork 的默认分支与原仓库保持一致
         if DOCS_FORK:
             print("  🔄 同步 fork...")
-            # 公开仓库 fetch 无需认证
             upstream_url = f"https://github.com/{DOCS_REPO}.git"
             run(["git", "remote", "add", "upstream", upstream_url], cwd=str(docs_dir))
-            run(["git", "fetch", "upstream", "main"], cwd=str(docs_dir), timeout=30)
-            run(["git", "reset", "--hard", "upstream/main"], cwd=str(docs_dir))
-            run(["git", "push", "-f", "origin", "main"], cwd=str(docs_dir), timeout=30)
-            print("  ✓ fork 已同步到原仓库最新状态")
+            # 用 HEAD 获取上游默认分支（可能为 main 或 master），不阻塞主流程
+            if run_ok(["git", "fetch", "upstream", "HEAD"], cwd=str(docs_dir), timeout=30):
+                run(["git", "reset", "--hard", "upstream/HEAD"], cwd=str(docs_dir))
+                run(["git", "push", "-f", "origin", "HEAD:main"], cwd=str(docs_dir), timeout=30)
+                run(["git", "push", "-f", "origin", "HEAD:master"], cwd=str(docs_dir), timeout=30)
+                print("  ✓ fork 已同步到原仓库最新状态")
+            else:
+                print("  ⚠️ fork 同步失败（非致命），继续处理")
 
         sha_short = run(["git", "rev-parse", "--short", "HEAD"])
         branch_name = f"auto-sync/{sha_short}"
@@ -739,9 +785,8 @@ def main() -> None:
         commit_msg = f"docs: 自动同步 — {judge.get('reason', '代码变更触发的文档更新')} [skip ci]"
         run(["git", "add", "-A"], cwd=str(docs_dir))
 
-        commit_ok = run(["git", "commit", "-m", commit_msg], cwd=str(docs_dir))
-        if "nothing to commit" in commit_ok:
-            print("\nℹ️  没有实际变更，跳过 PR 创建")
+        if not run_ok(["git", "commit", "-m", commit_msg], cwd=str(docs_dir)):
+            print("\nℹ️  没有实际文档变更（patch 未命中），跳过 PR 创建")
             write_state(run(["git", "rev-parse", "HEAD"]))
             return
 
