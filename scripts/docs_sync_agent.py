@@ -52,6 +52,10 @@ STATE_FILE = ".docs-sync-state"
 SMALL_FILE_THRESHOLD = 3       # 变更文件数 ≤ 3
 SMALL_LINE_THRESHOLD = 30      # diff 行数（+/- 合计）≤ 30
 
+# Fork 模式：如果 DOCS_FORK 设置（如 "YourName/SiriusPulse-Docs"），
+# 则 clone/push 到 fork，然后从 fork 向原仓库提跨仓库 PR。
+DOCS_FORK = os.environ.get("DOCS_FORK", "")
+
 # 积累 commit 数上限（防止积累无限增长）
 MAX_ACCUMULATED_COMMITS = 20
 
@@ -670,8 +674,10 @@ def main() -> None:
 
         # URL 编码 PAT 中的特殊字符（@、#、: 等），避免 git clone 解析错误
         pat_encoded = urllib.parse.quote(DOCS_REPO_PAT, safe="")
-        auth_url = f"https://oauth2:{pat_encoded}@github.com/{DOCS_REPO}.git"
-        print(f"   目标: https://oauth2:***@github.com/{DOCS_REPO}.git")
+        # 如果设置了 DOCS_FORK，从 fork 克隆（push 用 PAT 写入自己的 fork）
+        clone_repo = DOCS_FORK if DOCS_FORK else DOCS_REPO
+        auth_url = f"https://oauth2:{pat_encoded}@github.com/{clone_repo}.git"
+        print(f"   目标: https://oauth2:***@github.com/{clone_repo}.git")
 
         if not run_ok(["git", "clone", "--depth=1", auth_url, str(docs_dir)], timeout=60):
             print("  ❌ 克隆 docs 仓库失败")
@@ -748,7 +754,7 @@ def main() -> None:
                 "--title", commit_msg[:72],
                 "--body-file", body_path,
                 "--base", "main",
-                "--head", branch_name,
+                "--head", f"{DOCS_FORK.split('/')[0]}:{branch_name}" if DOCS_FORK else branch_name,
             ],
             cwd=str(docs_dir),
             env={"GH_TOKEN": DOCS_REPO_PAT},

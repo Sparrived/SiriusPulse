@@ -9,6 +9,8 @@
 #   LLM_MODEL        — 模型名（默认 gpt-4o-mini）
 #   GIT_USER_NAME    — 提交者名称（默认 "Sirius Docs Bot"）
 #   GIT_USER_EMAIL   — 提交者邮箱（默认 "bot@sirius.pulse"）
+#   DOCS_FORK        — Fork 仓库名（如 "YourName/SiriusPulse-Docs"），
+#                      设置后从 fork 克隆并提跨仓库 PR，需 PAT 对该 fork 有写入权限
 
 name: 文档自动同步
 
@@ -57,6 +59,7 @@ jobs:
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
           GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
+          DOCS_FORK: ${{ secrets.DOCS_FORK }}
           # Push Event 提供的准确 commit 范围（首次运行/cache 丢失时兜底）
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: |
