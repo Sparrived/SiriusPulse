@@ -7,6 +7,8 @@
 # 可选 Secrets:
 #   LLM_BASE_URL     — LLM API 地址（默认 https://api.openai.com/v1）
 #   LLM_MODEL        — 模型名（默认 gpt-4o-mini）
+#   GIT_USER_NAME    — 提交者名称（默认 "Sirius Docs Bot"）
+#   GIT_USER_EMAIL   — 提交者邮箱（默认 "bot@sirius.pulse"）
 
 name: 文档自动同步
 
@@ -53,6 +55,8 @@ jobs:
           LLM_API_KEY: ${{ secrets.DOCS_BOT_API_KEY }}
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          GIT_USER_NAME: ${{ secrets.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ secrets.GIT_USER_EMAIL }}
           # Push Event 提供的准确 commit 范围（首次运行/cache 丢失时兜底）
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: |

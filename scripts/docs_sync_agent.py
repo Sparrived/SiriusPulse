@@ -41,6 +41,10 @@ LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 GITHUB_EVENT_BEFORE = os.environ.get("GITHUB_EVENT_BEFORE", "")
 
+# Git 提交者（可通过环境变量自定义）
+GIT_USER_NAME = os.environ.get("GIT_USER_NAME", "Sirius Docs Bot")
+GIT_USER_EMAIL = os.environ.get("GIT_USER_EMAIL", "bot@sirius.pulse")
+
 # 状态文件路径（在 GitHub Actions Cache 中持久化）
 STATE_FILE = ".docs-sync-state"
 
@@ -143,6 +147,33 @@ def run(
     except Exception as e:
         print(f"  ⚠️ 命令异常: {' '.join(cmd)}\n     {e}")
         return ""
+
+
+def run_ok(cmd: list[str], cwd: str | None = None, timeout: int | None = None) -> bool:
+    """
+    运行 shell 命令，返回 True/False 表示是否成功。
+    失败时自动打印错误信息。
+    """
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, check=False,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip()[:500]
+            print(f"  ⚠️ 命令失败 (exit {result.returncode}): {' '.join(cmd)}")
+            if stderr:
+                print(f"     {stderr}")
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ 命令超时 ({timeout}s): {' '.join(cmd)}")
+        return False
+    except FileNotFoundError:
+        print(f"  ⚠️ 命令不存在: {cmd[0]}")
+        return False
+    except Exception as e:
+        print(f"  ⚠️ 命令异常: {' '.join(cmd)}\n     {e}")
+        return False
 
 
 def parse_diff_stat(stat: str) -> tuple[int, int]:
@@ -307,7 +338,7 @@ def _llm_request(
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": 8192,
+        "max_tokens": 16384,
     }
 
     data = json.dumps(body).encode()
@@ -403,7 +434,8 @@ def judge_needs_update(changed_files: set[str], diff_summary: str) -> dict:
 
 DOC_UPDATE_SYSTEM_PROMPT = (
     "你是一个专业的文档维护助手。根据代码变更更新文档内容。"
-    "保持原文档结构、标题层级、风格不变。只修改直接相关的部分。"
+    "保持原文档结构、标题层级、风格不变。"
+    "只输出需要修改的片段，提供精确的旧文本和新文本，脚本会自动替换。"
     "必须输出严格 JSON。"
 )
 
@@ -413,37 +445,63 @@ def update_single_doc(
     diff_content: str,
     changed_files: set[str],
 ) -> str | None:
-    """LLM 自动更新单个文档，返回新内容；None 表示无需修改"""
+    """LLM 识别需要修改的片段，返回全文；None 表示无需修改"""
     old_content = filepath.read_text(encoding="utf-8")
 
     prompt = f"""## 任务
-根据代码变更，更新以下文档。
+根据代码变更，找出文档中需要修改的片段，并给出替换内容。
+**不要输出整个文档，只输出需要修改的片段。**
 
 ## 当前文档内容（{filepath.name}）
 ```markdown
-{old_content[:8000]}
+{old_content[:12000]}
 ```
 
 ## 本次代码 diff
 ```diff
-{diff_content}
+{diff_content[:15000]}
 ```
 
 ## 变更文件
 {chr(10).join(sorted(changed_files))}
 
+## 工作方式
+1. 找出文档中因代码变更需要修改的文本片段
+2. 每个片段提供 old_text（原文中精确的连续文本）和 new_text（替换后的文本）
+3. 如果多处需要修改，提供多个片段
+4. 无需修改时 modified 设为 false
+
 ## 输出格式（严格 JSON）
-{{"modified": true/false, "content": "完整的更新后文档内容（仅 modified=true 时）", "changes": ["改动点1", "改动点2"]}}"""
+{{"modified": true/false, "patches": [{{"old_text": "原文中需要替换的精确文本", "new_text": "替换后的文本"}}, ...], "changes": ["改动点1", "改动点2"]}}"""
 
     result = call_llm_json(prompt, system_prompt=DOC_UPDATE_SYSTEM_PROMPT)
 
-    if result.get("modified") and result.get("content"):
-        changes = "; ".join(result.get("changes", []))
-        print(f"  ✓ 已更新: {filepath.name} — {changes}")
-        return result["content"]
+    if not result.get("modified") or not result.get("patches"):
+        print(f"  - 无需修改: {filepath.name}")
+        return None
 
-    print(f"  - 无需修改: {filepath.name}")
-    return None
+    new_content = old_content
+    changes = result.get("changes", [])
+    patches = result["patches"]
+
+    for i, patch in enumerate(patches):
+        old_text = patch.get("old_text", "")
+        new_text = patch.get("new_text", "")
+        if not old_text:
+            continue
+        if old_text not in new_content:
+            print(f"  ⚠️ 第 {i + 1} 处修改未找到匹配文本，跳过: {old_text[:60]}...")
+            continue
+        new_content = new_content.replace(old_text, new_text, 1)
+        change_desc = changes[i] if i < len(changes) else f"片段 {i + 1}"
+        print(f"  ✓ 已替换: {change_desc}")
+
+    # 检查是否至少有一处真的被替换了
+    if new_content == old_content:
+        print(f"  - 无实际修改，跳过")
+        return None
+
+    return new_content
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -605,8 +663,7 @@ def main() -> None:
         auth_url = f"https://oauth2:{pat_encoded}@github.com/{DOCS_REPO}.git"
         print(f"   目标: https://oauth2:***@github.com/{DOCS_REPO}.git")
 
-        run(["git", "clone", "--depth=1", auth_url, str(docs_dir)], timeout=60)
-        if not (docs_dir / ".git").exists():
+        if not run_ok(["git", "clone", "--depth=1", auth_url, str(docs_dir)], timeout=60):
             print("  ❌ 克隆 docs 仓库失败")
             print("  跳过本次处理，保留积累的 diff 下次重试")
             return
@@ -649,8 +706,8 @@ def main() -> None:
         print(f"--- PR 描述 ---\n{pr_body}\n--------------")
 
         # ── 9. 提交并推送 ────────────────────────────────────
-        run(["git", "config", "user.name", "Sirius Docs Bot"], cwd=str(docs_dir))
-        run(["git", "config", "user.email", "bot@sirius.pulse"], cwd=str(docs_dir))
+        run(["git", "config", "user.name", GIT_USER_NAME], cwd=str(docs_dir))
+        run(["git", "config", "user.email", GIT_USER_EMAIL], cwd=str(docs_dir))
 
         commit_msg = f"docs: 自动同步 — {judge.get('reason', '代码变更触发的文档更新')} [skip ci]"
         run(["git", "add", "-A"], cwd=str(docs_dir))
@@ -661,8 +718,7 @@ def main() -> None:
             write_state(run(["git", "rev-parse", "HEAD"]))
             return
 
-        push_ok = run(["git", "push", "origin", branch_name], cwd=str(docs_dir))
-        if not push_ok:
+        if not run_ok(["git", "push", "origin", branch_name], cwd=str(docs_dir), timeout=60):
             print("  ❌ 推送失败")
             print("  跳过，保留积累下次重试")
             return
