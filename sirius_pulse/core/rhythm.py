@@ -9,6 +9,7 @@ Extends heat.py with:
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +17,8 @@ from typing import Any
 
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.core.cognition import extract_keywords
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -113,7 +116,7 @@ class RhythmAnalyzer:
                     if (now - dt).total_seconds() <= 300:
                         recent_count += 1
                 except (ValueError, TypeError):
-                    LOG.warning("解析时间戳失败", exc_info=True)
+                    logger.warning("解析时间戳失败", exc_info=True)
                     pass
         density = min(1.0, recent_count / 6.0)
         unique_users = len({m.get("user_id") for m in messages})

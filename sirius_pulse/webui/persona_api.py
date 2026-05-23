@@ -94,9 +94,9 @@ async def api_persona_get_single(request: web.Request, persona_manager: Any) -> 
                 "started_at": st.get("started_at"),
                 "last_heartbeat": st.get("last_heartbeat"),
             }
-    except Exception:
-        LOG.warning("读取人格状态失败", exc_info=True)
-        pass
+        except Exception:
+            LOG.warning("读取人格状态失败", exc_info=True)
+            pass
     return _json_response({
         "name": name,
         "persona_name": profile.name,

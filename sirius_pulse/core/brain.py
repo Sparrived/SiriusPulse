@@ -770,7 +770,7 @@ class Brain:
             try:
                 self.token_store.add(record)
             except Exception:
-                LOG.warning("token_store.add() 失败", exc_info=True)
+                logger.warning("token_store.add() 失败", exc_info=True)
                 pass
 
         return record

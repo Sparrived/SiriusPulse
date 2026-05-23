@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sirius_pulse.models.emotion import BasicEmotion, EmotionState, EmpathyStrategy
+
+logger = logging.getLogger(__name__)
 from sirius_pulse.models.intent_v3 import (
     EmotionalSubtype,
     HelpSubtype,
@@ -1023,7 +1025,7 @@ class CognitionAnalyzer:
                 try:
                     fields[key] = float(m.group(1))
                 except ValueError:
-                    LOG.warning("解析情感数值字段失败", exc_info=True)
+                    logger.warning("解析情感数值字段失败", exc_info=True)
                     pass
 
         return fields if fields else None
@@ -1820,7 +1822,7 @@ class CognitionAnalyzer:
                 return "（无插件）"
             return f"可用插件ID与参数：{'；'.join(parts)}。请从消息中提取对应参数值，数值类型请传数字（非空字符串）。"
         except Exception:
-            LOG.warning("获取插件列表失败", exc_info=True)
+            logger.warning("获取插件列表失败", exc_info=True)
             return "（无插件）"
 
     def _validate_plugin_intent(

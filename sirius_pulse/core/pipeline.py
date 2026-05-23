@@ -128,7 +128,7 @@ class PipelineMixin(_Base):
             rhythm = self.rhythm_analyzer.analyze(group_id or "", recent)
             turn_gap_readiness = getattr(rhythm, "turn_gap_readiness", 0.5)
         except Exception:
-            LOG.warning("计算 turn_gap_readiness 失败，使用默认值 0.5", exc_info=True)
+            logger.warning("计算 turn_gap_readiness 失败，使用默认值 0.5", exc_info=True)
             turn_gap_readiness = 0.5
 
         # Build directed_signals JSON from 12-dimension scores
@@ -183,7 +183,7 @@ class PipelineMixin(_Base):
             if len(window) > max_size:
                 window[:] = window[-max_size:]
         except Exception:
-            LOG.warning("裁剪话题窗口失败", exc_info=True)
+            logger.warning("裁剪话题窗口失败", exc_info=True)
             pass
 
         # Memory retrieval now happens in execution via ContextAssembler

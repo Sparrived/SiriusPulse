@@ -954,7 +954,7 @@ class _EmotionalGroupChatEngineBase:
                 try:
                     self.token_usage_records.append(TokenUsageRecord.from_dict(rec_data))
                 except Exception:
-                    LOG.warning("反序列化 token_usage_records 失败", exc_info=True)
+                    logger.warning("反序列化 token_usage_records 失败", exc_info=True)
                     pass
 
             # Load persona
