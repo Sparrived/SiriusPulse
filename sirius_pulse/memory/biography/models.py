@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 
 @dataclass(slots=True)
@@ -78,7 +78,7 @@ class AliasEntry:
             return confidence
         return round(max(0.0, confidence * (0.95 ** days_since_last_seen)), 4)
 
-    DECAY_THRESHOLD: float = 0.10
+    DECAY_THRESHOLD: ClassVar[float] = 0.10
 
     def to_dict(self) -> dict[str, Any]:
         return {
