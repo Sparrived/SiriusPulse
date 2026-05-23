@@ -1,6 +1,6 @@
 """Response strategy engine: four-layer decision system (paper §2.3 / §6).
 
-    IMMEDIATE → DELAYED → SILENT → PROACTIVE
+IMMEDIATE → DELAYED → SILENT → PROACTIVE
 """
 
 from __future__ import annotations
@@ -53,6 +53,10 @@ class ResponseStrategyEngine:
         rel_mult = {"cold": 1.0, "warm": 1.0, "hot": 0.92, "overheated": 0.85}
         scaled_urgency *= heat_mult.get(heat_level, 1.0)
         relevance *= rel_mult.get(heat_level, 1.0)
+
+        # 预计算复合分数（用于 undirected 门槛降级判断）
+        # score = urgency * 0.6 + relevance * 0.4，反映消息的综合"值得回复"程度
+        score = (urgency / 100.0) * 0.6 + relevance * 0.4
 
         # Special rules
         if is_mentioned and intent.social_intent == SocialIntent.HELP_SEEKING:
@@ -109,6 +113,9 @@ class ResponseStrategyEngine:
         # Standard matrix (with higher thresholds for peer-AI messages)
         directed_score = getattr(intent, "directed_score", 0.0)
         undirected = not is_mentioned and directed_score < weak_directed_threshold
+        # 当复合分数达到 threshold 时，放弃 undirected 的高门槛惩罚
+        # 避免出现 score > threshold 但仍被判 silent 的矛盾情况
+        undirected_high_bar = 55 if (undirected and score < threshold) else 35
         if sender_type == "other_ai":
             if scaled_urgency >= 90 and relevance >= 0.75:
                 strategy = ResponseStrategy.IMMEDIATE
@@ -129,7 +136,7 @@ class ResponseStrategyEngine:
             elif scaled_urgency >= 60 and relevance >= 0.55:
                 strategy = ResponseStrategy.DELAYED
                 reason = "medium_urgency_delayed"
-            elif scaled_urgency >= (55 if undirected else 35) and relevance >= 0.5:
+            elif scaled_urgency >= undirected_high_bar and relevance >= 0.5:
                 strategy = ResponseStrategy.DELAYED
                 reason = "low_urgency_delayed"
             else:
@@ -138,11 +145,13 @@ class ResponseStrategyEngine:
 
         # 社交底线：没被弱指向（<weak_directed_threshold）就没有抢话权，最高只能 delayed
         # 弱指向保留 IMMEDIATE 资格，强指向（>=directed_threshold）已由 is_mentioned 处理
-        if not is_mentioned and directed_score < weak_directed_threshold and strategy == ResponseStrategy.IMMEDIATE:
+        if (
+            not is_mentioned
+            and directed_score < weak_directed_threshold
+            and strategy == ResponseStrategy.IMMEDIATE
+        ):
             strategy = ResponseStrategy.DELAYED
             reason = f"not_directed_{reason}"
-
-        score = (urgency / 100.0) * 0.6 + relevance * 0.4
 
         return StrategyDecision(
             strategy=strategy,
