@@ -47,9 +47,8 @@ STATE_FILE = ".docs-sync-state"
 SMALL_FILE_THRESHOLD = 3       # 变更文件数 ≤ 3
 SMALL_LINE_THRESHOLD = 30      # diff 行数（+/- 合计）≤ 30
 
-# 安全上限——即便全是小改动，积累到这些值之一也会强制触发
-MAX_ACCUMULATED_COMMITS = 20   # 积累 commit 数上限
-MAX_ACCUMULATED_DIFF_CHARS = 15000  # 积累 diff 长度上限
+# 积累 commit 数上限（防止积累无限增长）
+MAX_ACCUMULATED_COMMITS = 20
 
 # 代码路径 → 受影响的文档（路径相对于 docs 仓库根目录）
 PATH_TO_DOCS: dict[str, set[str]] = {
@@ -246,12 +245,8 @@ def get_individual_commit_stats(
 
 
 def get_accumulated_diff(last_synced: str) -> str:
-    """获取积累 diff（last_synced..HEAD），限制长度"""
-    diff = run(["git", "diff", f"{last_synced}..HEAD", "--", ".", ":!*.md", ":!.github"])
-    max_len = MAX_ACCUMULATED_DIFF_CHARS
-    if len(diff) > max_len:
-        diff = diff[:max_len] + "\n\n...(diff 过长, 已截断)"
-    return diff
+    """获取积累 diff（last_synced..HEAD）"""
+    return run(["git", "diff", f"{last_synced}..HEAD", "--", ".", ":!*.md", ":!.github"])
 
 
 def should_process(commits: list[str], stats: list[dict]) -> tuple[bool, str]:
@@ -595,7 +590,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="docs-sync-") as tmpdir:
         docs_dir = Path(tmpdir) / "docs-repo"
 
-        auth_url = f"https://x-access-token:{DOCS_REPO_PAT}@github.com/{DOCS_REPO}.git"
+        auth_url = f"https://oauth2:{DOCS_REPO_PAT}@github.com/{DOCS_REPO}.git"
         clone_ok = run(["git", "clone", auth_url, str(docs_dir)])
         if not clone_ok:
             print("  ❌ 克隆 docs 仓库失败")
