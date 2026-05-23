@@ -53,6 +53,9 @@ class OutputDispatcher:
             return self._handle_direct(result, definition)
 
         if render_mode.value == "llm":
+            if engine is None:
+                logger.warning("Plugin %s: llm 模式但 engine 未绑定，回退到 direct 模式", definition.name)
+                return self._handle_direct(result, definition)
             return await self._handle_llm(
                 result, definition,
                 engine=engine, adapter=adapter,

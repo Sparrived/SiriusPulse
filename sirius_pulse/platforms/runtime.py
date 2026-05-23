@@ -340,6 +340,36 @@ class EngineRuntime:
         )
         LOG.info("Plugin runtime 已挂载，共 %d 个插件: %s", registry.plugin_count, ", ".join(registry.plugin_names))
 
+        # 创建并启动 PluginScheduler（使 _plugin_events / _plugin_schedule 定时事件生效）
+        from sirius_pulse.plugins.scheduler import PluginScheduler, ScheduledTask
+        self._plugin_scheduler = PluginScheduler(check_interval=10.0)
+        # 通知 executor，供卸载时清理定时任务
+        executor.set_scheduler(self._plugin_scheduler)
+        registered_tasks = 0
+        for definition in registry.plugin_names:
+            inst = registry.get_instance(definition)
+            if inst is None:
+                continue
+            for evt in registry.get_plugin(definition).events if registry.get_plugin(definition) else []:
+                if not evt.cron and evt.interval_seconds <= 0:
+                    continue
+                task = ScheduledTask(
+                    name=f"{definition}:{evt.type}",
+                    plugin_name=definition,
+                    cron=evt.cron,
+                    interval_seconds=evt.interval_seconds,
+                    callback=lambda e=evt, i=inst: i.on_event(e.type, {
+                        "cron": e.cron,
+                        "interval_seconds": e.interval_seconds,
+                        "description": e.description,
+                    }),
+                )
+                self._plugin_scheduler.add_task(task)
+                registered_tasks += 1
+        if registered_tasks > 0:
+            await self._plugin_scheduler.start()
+            LOG.info("PluginScheduler 已启动，注册了 %d 个定时任务", registered_tasks)
+
     def _load_experience_config(self) -> PersonaExperienceConfig:
         """从人格目录加载 experience.json，回退到默认值。"""
         paths = PersonaConfigPaths(self.work_path)
@@ -509,6 +539,15 @@ class EngineRuntime:
 
     async def stop(self) -> None:
         self._running = False
+
+        # 停止 PluginScheduler（如果有）
+        plugin_scheduler = getattr(self, "_plugin_scheduler", None)
+        if plugin_scheduler is not None:
+            try:
+                await plugin_scheduler.stop()
+            except Exception as exc:
+                LOG.warning("PluginScheduler 停止失败: %s", exc)
+
         if self._engine is not None:
             try:
                 self._engine.stop_background_tasks()

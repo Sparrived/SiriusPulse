@@ -29,6 +29,7 @@ from __future__ import annotations
 from sirius_pulse.plugins.base import PluginBase
 from sirius_pulse.plugins.context import EngineProxy, PluginContext, PluginDataStore
 from sirius_pulse.plugins.decorators import command, PluginCommandMeta
+from sirius_pulse.plugins.dispatcher import DispatchedOutput
 from sirius_pulse.plugins.models import (
     ArgNode,
     CommandAST,
@@ -52,6 +53,7 @@ from sirius_pulse.plugins.models import (
 __all__ = [
     "ArgNode",
     "CommandAST",
+    "DispatchedOutput",
     "EngineProxy",
     "GroupMention",
     "ImageAttachment",

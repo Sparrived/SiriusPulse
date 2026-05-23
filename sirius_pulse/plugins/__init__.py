@@ -79,6 +79,7 @@ __all__ = [
     "PluginExecutor",
     # 输出调度
     "OutputDispatcher",
+    "DispatchedOutput",
     # 事件系统
     "PluginEvent",
     "PluginEventType",

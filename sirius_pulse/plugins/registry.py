@@ -59,7 +59,20 @@ class PluginRegistry:
         Args:
             definition: Plugin 定义
             instance: 可选的 PluginBase 实例
+
+        Raises:
+            ValueError: 当插件名已存在时
         """
+        # 检查插件名冲突
+        if definition.name in self._definitions:
+            old_path = self._definitions[definition.name].source_path
+            new_path = definition.source_path
+            logger.warning(
+                "插件名冲突: '%s' 已被 %s 注册，新路径 %s 将被跳过",
+                definition.name, old_path, new_path,
+            )
+            raise ValueError(f"插件名 '{definition.name}' 已存在，跳过注册")
+
         # 存储定义
         self._definitions[definition.name] = definition
 

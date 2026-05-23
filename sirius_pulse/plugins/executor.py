@@ -45,10 +45,16 @@ class PluginExecutor:
         self._adapter = adapter
         # 速率限制状态：{plugin_name: {minute_calls: [(timestamp, ...)], hour_calls: [(timestamp, ...)]}}
         self._rate_state: dict[str, dict[str, Any]] = {}
+        # PluginScheduler 引用（由 runtime 注入，用于卸载时清理定时任务）
+        self._scheduler: Any = None
 
     def set_adapter(self, adapter: Any) -> None:
         """运行时注入平台 adapter（在 NapCat 连接后调用）。"""
         self._adapter = adapter
+
+    def set_scheduler(self, scheduler: Any) -> None:
+        """注入 PluginScheduler 引用，用于卸载时停止定时任务。"""
+        self._scheduler = scheduler
 
     # ── Plugin 生命周期 ──
 
@@ -104,7 +110,8 @@ class PluginExecutor:
             else:
                 on_load()
         except Exception as exc:
-            logger.warning("Plugin %s on_load 失败: %s", definition.name, exc)
+            logger.error("Plugin %s on_load 失败: %s", definition.name, exc)
+            return None
 
         # 同步 @command 装饰器元数据到注册表索引
         try:
@@ -309,6 +316,15 @@ class PluginExecutor:
             except Exception as exc:
                 logger.warning("Plugin %s on_unload 失败: %s", plugin_name, exc)
         self._registry.unregister(plugin_name)
+        # 清理速率限制状态
+        self._rate_state.pop(plugin_name, None)
+        # 清理定时任务
+        if self._scheduler is not None:
+            try:
+                self._scheduler.remove_plugin_tasks(plugin_name)
+            except Exception as exc:
+                logger.warning("清理插件 %s 的定时任务失败: %s", plugin_name, exc)
+        logger.info("插件 %s 已卸载", plugin_name)
 
     async def unload_all(self) -> None:
         """卸载所有 Plugin。"""

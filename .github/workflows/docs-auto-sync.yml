@@ -10,7 +10,8 @@
 #   GIT_USER_NAME    — 提交者名称（默认 "Sirius Docs Bot"）
 #   GIT_USER_EMAIL   — 提交者邮箱（默认 "bot@sirius.pulse"）
 #   DOCS_FORK        — Fork 仓库名（如 "YourName/SiriusPulse-Docs"），
-#                      设置后从 fork 克隆并提跨仓库 PR，需 PAT 对该 fork 有写入权限
+#                      设置后从 fork 克隆并提跨仓库 PR。
+#                      需要用 Classic PAT（repo scope）作 DOCS_REPO_PAT
 
 name: 文档自动同步
 

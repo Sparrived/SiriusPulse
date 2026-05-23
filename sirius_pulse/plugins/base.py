@@ -46,6 +46,7 @@ class PluginBase:
         _plugin_permissions: dict   — 权限配置
         _plugin_nl_examples: list[str] — 自然语言触发示例
         _plugin_nl_slots: dict      — 自然语言槽位定义
+        _plugin_parameters: list[dict] — 参数定义列表（v1.3+）
         _plugin_dependencies: list[str] — pip 依赖
     """
 
@@ -60,6 +61,7 @@ class PluginBase:
     _plugin_permissions: dict[str, Any] | None = None
     _plugin_nl_examples: list[str] = []
     _plugin_nl_slots: dict[str, dict[str, Any]] = {}
+    _plugin_parameters: list[dict[str, Any]] = []  # 参数定义列表（v1.3+），由 from_class() 自动解析为 PluginParameterDef
     _plugin_dependencies: list[str] = []
     _plugin_prompt_inject: str = ""  # 注入到人格 prompt 的额外提示词（v1.3+）
 
@@ -102,10 +104,23 @@ class PluginBase:
     def on_unload(self) -> None:
         """Plugin 卸载时调用一次。
 
-        可在此释放资源、关闭连接等。默认无操作。
+        可在此清理资源、关闭连接等。默认无操作。
         """
 
-    # ── 核心方法 ──
+    async def on_event(self, event_type: str, event_data: dict) -> None:
+        """定时事件触发时调用。
+
+        当 Plugin 注册了 _plugin_events 或 _plugin_schedule 定时事件时，
+        由 PluginScheduler 在事件到期时调用此方法。
+
+        Args:
+            event_type: 事件类型（如 "timer.schedule"、"engine.started"）
+            event_data: 事件数据（包含 cron、interval_seconds 等原始配置）
+
+        默认无操作，子类按需覆写。
+        """
+
+    # ── 指令方法 ──
 
     def execute(self, cmd: "CommandAST") -> "PluginResponse":
         """执行 Plugin 核心逻辑（同步入口）。
