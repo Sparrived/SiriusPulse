@@ -51,22 +51,58 @@ SMALL_LINE_THRESHOLD = 30      # diff 行数（+/- 合计）≤ 30
 MAX_ACCUMULATED_COMMITS = 20   # 积累 commit 数上限
 MAX_ACCUMULATED_DIFF_CHARS = 15000  # 积累 diff 长度上限
 
-# 代码路径 → 受影响的文档
+# 代码路径 → 受影响的文档（路径相对于 docs 仓库根目录）
 PATH_TO_DOCS: dict[str, set[str]] = {
-    "sirius_pulse/core/":        {"docs/architecture.md"},
-    "sirius_pulse/providers/":   {"docs/provider-system.md"},
-    "sirius_pulse/config/":      {"docs/configuration-guide.md"},
-    "sirius_pulse/memory/":      {"docs/persistence-system.md"},
-    "sirius_pulse/skills/":      {"docs/skill-guide.md"},
-    "sirius_pulse/platforms/":   {"docs/platforms.md"},
-    "sirius_pulse/embedding/":   {"docs/architecture.md"},
-    "sirius_pulse/models/":      {"docs/architecture.md"},
-    "sirius_pulse/persona_manager.py": {"docs/persona-lifecycle.md"},
-    "sirius_pulse/persona_config.py":  {"docs/configuration-guide.md"},
-    "sirius_pulse/webui/":       {"docs/architecture.md"},
-    "sirius_pulse/session/":     {"docs/persistence-system.md"},
-    "main.py":                   {"docs/architecture.md"},
-    "pyproject.toml":            {"docs/configuration-guide.md"},
+    # 核心引擎 —— 前端 5 章在 architecture-overview，引擎细节在 engine-architecture
+    "sirius_pulse/core/emotional_engine.py": {"guide/engine-architecture.md"},
+    "sirius_pulse/core/engine_core.py":      {"guide/engine-architecture.md"},
+    "sirius_pulse/core/pipeline.py":         {"guide/engine-architecture.md"},
+    "sirius_pulse/core/bg_tasks.py":         {"guide/architecture-overview.md", "guide/engine-architecture.md"},
+    "sirius_pulse/core/prompt_factory.py":   {"guide/architecture-overview.md"},
+    "sirius_pulse/core/helpers.py":          {"guide/architecture-overview.md"},
+    "sirius_pulse/core/brain.py":            {"api/brain-api.md"},
+    "sirius_pulse/core/":                    {"guide/architecture-overview.md", "guide/engine-architecture.md"},
+
+    # Provider
+    "sirius_pulse/providers/":   {"reference/provider-config.md", "guide/architecture-overview.md"},
+
+    # 配置
+    "sirius_pulse/config/":      {"guide/configuration.md", "reference/global-config.md"},
+
+    # 记忆系统
+    "sirius_pulse/memory/":      {"guide/memory-system.md"},
+    "sirius_pulse/session/":     {"guide/memory-system.md"},
+
+    # 技能系统
+    "sirius_pulse/skills/":      {"extensions/skill-overview.md", "api/skills-api.md", "extensions/skill-authoring.md"},
+
+    # 平台适配
+    "sirius_pulse/platforms/":   {"guide/platform-napcat.md"},
+
+    # Embedding 微服务
+    "sirius_pulse/embedding/":   {"guide/architecture-overview.md"},
+
+    # 数据模型
+    "sirius_pulse/models/":      {"api/plugins-api.md", "api/skills-api.md"},
+
+    # 人格管理
+    "sirius_pulse/persona_manager.py": {"guide/persona-system.md"},
+    "sirius_pulse/persona_config.py":  {"reference/persona-config.md"},
+
+    # WebUI
+    "sirius_pulse/webui/":       {"reference/webui-api.md"},
+
+    # Plugin 系统
+    "sirius_pulse/plugins/":     {"extensions/plugin-overview.md", "api/plugins-api.md", "extensions/plugin-authoring.md"},
+
+    # 顶层 API
+    "sirius_pulse/__init__.py":  {"reference/python-api.md"},
+
+    # CLI 入口
+    "main.py":                   {"guide/architecture-overview.md"},
+
+    # 项目配置
+    "pyproject.toml":            {"guide/configuration.md", "reference/development.md"},
 }
 
 ALL_DOCS: set[str] = {v for vs in PATH_TO_DOCS.values() for v in vs}

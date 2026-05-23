@@ -329,6 +329,39 @@ class PluginDefinition:
         )
 
     @staticmethod
+    def _schedule_to_events(schedule: list[dict[str, Any]]) -> list[PluginEventDef]:
+        """将 _plugin_schedule 格式转换为 PluginEventDef 列表。
+
+        _plugin_schedule 格式:
+            [{"time": "08:00", "duration": 1440}, ...]
+
+        每个条目转换为一个定时事件（timer.schedule），
+        time 字段映射为 daily cron 表达式，duration 作为间隔秒数。
+        """
+        events: list[PluginEventDef] = []
+        for entry in schedule:
+            time_str = str(entry.get("time", "")).strip()
+            if not time_str or ":" not in time_str:
+                continue
+            try:
+                hour, minute = time_str.split(":", 1)
+                hour = hour.strip().zfill(2)
+                minute = minute.strip().zfill(2)
+                # "08:00" → cron "0 8 * * *"
+                cron = f"{minute} {hour} * * *"
+            except (ValueError, TypeError):
+                continue
+
+            duration_minutes = int(entry.get("duration", 1440))
+            events.append(PluginEventDef(
+                type="timer.schedule",
+                cron=cron,
+                interval_seconds=float(duration_minutes * 60),
+                description=f"每日 {time_str} 定时触发（持续 {duration_minutes} 分钟）",
+            ))
+        return events
+
+    @staticmethod
     def from_class(cls: type, source_path: Path | None = None) -> PluginDefinition:
         """从 PluginBase 子类的类属性构建 PluginDefinition。
 
@@ -354,7 +387,7 @@ class PluginDefinition:
                 hidden_from_intent=getattr(meta, 'hidden_from_intent', False),
             ))
 
-        # 事件：从 _plugin_events 类属性读取
+        # 事件：合并 _plugin_events 和 _plugin_schedule
         events: list[PluginEventDef] = []
         for evt_raw in getattr(cls, '_plugin_events', []) or []:
             events.append(PluginEventDef(
@@ -363,6 +396,10 @@ class PluginDefinition:
                 interval_seconds=float(evt_raw.get("interval_seconds", 0)),
                 description=evt_raw.get("description", ""),
             ))
+        # _plugin_schedule 是 _plugin_events 的声明式简写（v1.3+）
+        schedule_raw = getattr(cls, '_plugin_schedule', []) or []
+        if schedule_raw:
+            events.extend(PluginDefinition._schedule_to_events(schedule_raw))
 
         # 自然语言触发
         nl_examples = getattr(cls, '_plugin_nl_examples', []) or []

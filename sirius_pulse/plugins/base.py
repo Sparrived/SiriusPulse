@@ -42,6 +42,7 @@ class PluginBase:
         _plugin_version: str        — 版本号
         _plugin_author: str         — 作者
         _plugin_events: list[dict]  — 事件触发器定义
+        _plugin_schedule: list[dict] — 声明式定时（自动转为 _plugin_events），格式 [{"time": "HH:MM", "duration": 1440}, ...]
         _plugin_permissions: dict   — 权限配置
         _plugin_nl_examples: list[str] — 自然语言触发示例
         _plugin_nl_slots: dict      — 自然语言槽位定义
@@ -55,7 +56,7 @@ class PluginBase:
     _plugin_version: str = "1.0.0"
     _plugin_author: str = ""
     _plugin_events: list[dict[str, Any]] = []
-    _plugin_schedule: list[dict[str, Any]] = []  # [{"time": "HH:MM", "duration": 1440}, ...]
+    _plugin_schedule: list[dict[str, Any]] = []  # [{"time": "HH:MM", "duration": 1440}, ...] 声明式定时，由 from_class() 自动转为 PluginEventDef
     _plugin_permissions: dict[str, Any] | None = None
     _plugin_nl_examples: list[str] = []
     _plugin_nl_slots: dict[str, dict[str, Any]] = {}
