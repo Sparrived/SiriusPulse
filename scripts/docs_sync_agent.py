@@ -25,6 +25,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -115,18 +116,27 @@ def run(
     cmd: list[str],
     cwd: str | None = None,
     silent: bool = False,
+    timeout: int | None = None,
 ) -> str:
     """
     运行 shell 命令，返回 stdout。
-    不抛出异常——任何失败都返回空字符串，保证管道不断。
+    失败返回空字符串，不抛异常。
+    timeout: 超时秒数（默认不限）
     """
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, cwd=cwd, check=False,
+            timeout=timeout,
         )
         if result.returncode != 0 and not silent:
-            print(f"  ⚠️ 命令返回非零: {' '.join(cmd)}\n     {result.stderr.strip()}")
+            stderr = result.stderr.strip()[:500]
+            print(f"  ⚠️ 命令失败 (exit {result.returncode}): {' '.join(cmd)}")
+            if stderr:
+                print(f"     {stderr}")
         return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ 命令超时 ({timeout}s): {' '.join(cmd)}")
+        return ""
     except FileNotFoundError:
         print(f"  ⚠️ 命令不存在: {cmd[0]}")
         return ""
@@ -590,8 +600,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="docs-sync-") as tmpdir:
         docs_dir = Path(tmpdir) / "docs-repo"
 
-        auth_url = f"https://oauth2:{DOCS_REPO_PAT}@github.com/{DOCS_REPO}.git"
-        clone_ok = run(["git", "clone", auth_url, str(docs_dir)])
+        # URL 编码 PAT 中的特殊字符（@、#、: 等），避免 git clone 解析错误
+        pat_encoded = urllib.parse.quote(DOCS_REPO_PAT, safe="")
+        auth_url = f"https://oauth2:{pat_encoded}@github.com/{DOCS_REPO}.git"
+        print(f"   目标: https://oauth2:***@github.com/{DOCS_REPO}.git")
+
+        clone_ok = run(["git", "clone", "--depth=1", auth_url, str(docs_dir)], timeout=60)
         if not clone_ok:
             print("  ❌ 克隆 docs 仓库失败")
             print("  跳过本次处理，保留积累的 diff 下次重试")
