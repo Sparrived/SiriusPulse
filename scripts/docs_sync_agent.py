@@ -722,23 +722,46 @@ def main() -> None:
         auth_url = f"https://oauth2:{pat_encoded}@github.com/{clone_repo}.git"
         print(f"   目标: https://oauth2:***@github.com/{clone_repo}.git")
 
-        if not run_ok(["git", "clone", "--depth=1", auth_url, str(docs_dir)], timeout=60):
+        # Fork 模式下不浅克隆，以确保分支历史完整、gh pr create 能找到公共祖先
+        clone_args = (
+            ["git", "clone", auth_url, str(docs_dir)]
+            if DOCS_FORK
+            else ["git", "clone", "--depth=1", auth_url, str(docs_dir)]
+        )
+        if not run_ok(clone_args, timeout=120):
             print("  ❌ 克隆 docs 仓库失败")
             print("  跳过本次处理，保留积累的 diff 下次重试")
             return
         print(f"  ✓ 已克隆到 {docs_dir}")
 
+        # 上游仓库的默认分支名（由 fork sync 阶段探测，默认 main）
+        base_branch = "main"
+
         # Fork 模式下，自动 sync fork 的默认分支与原仓库保持一致
         if DOCS_FORK:
             print("  🔄 同步 fork...")
-            upstream_url = f"https://github.com/{DOCS_REPO}.git"
-            run(["git", "remote", "add", "upstream", upstream_url], cwd=str(docs_dir))
-            # 用 HEAD 获取上游默认分支（可能为 main 或 master），不阻塞主流程
-            if run_ok(["git", "fetch", "upstream", "HEAD"], cwd=str(docs_dir), timeout=30):
-                run(["git", "reset", "--hard", "upstream/HEAD"], cwd=str(docs_dir))
+            # 使用 PAT 认证的 upstream URL，避免匿名 fetch 被限流或私有仓库失败
+            upstream_auth_url = f"https://oauth2:{pat_encoded}@github.com/{DOCS_REPO}.git"
+            run(["git", "remote", "add", "upstream", upstream_auth_url], cwd=str(docs_dir))
+            # 同时 fetch main 和 master，确保 gh pr create 能解析到 base 分支
+            fetch_ok_main = run_ok(
+                ["git", "fetch", "upstream", "main"], cwd=str(docs_dir), timeout=30,
+            )
+            fetch_ok_master = run_ok(
+                ["git", "fetch", "upstream", "master"], cwd=str(docs_dir), timeout=30,
+            )
+            if fetch_ok_main or fetch_ok_master:
+                # 用实际成功的远程引用做 reset，并同步 base_branch
+                if fetch_ok_main:
+                    remote_ref = "upstream/main"
+                    base_branch = "main"
+                else:
+                    remote_ref = "upstream/master"
+                    base_branch = "master"
+                run(["git", "reset", "--hard", remote_ref], cwd=str(docs_dir))
                 run(["git", "push", "-f", "origin", "HEAD:main"], cwd=str(docs_dir), timeout=30)
                 run(["git", "push", "-f", "origin", "HEAD:master"], cwd=str(docs_dir), timeout=30)
-                print("  ✓ fork 已同步到原仓库最新状态")
+                print(f"  ✓ fork 已同步到原仓库最新状态 (ref={remote_ref})")
             else:
                 print("  ⚠️ fork 同步失败（非致命），继续处理")
 
@@ -809,7 +832,7 @@ def main() -> None:
                 "--repo", DOCS_REPO,
                 "--title", commit_msg[:72],
                 "--body-file", body_path,
-                "--base", "main",
+                "--base", base_branch,
                 "--head", f"{DOCS_FORK.split('/')[0]}:{branch_name}" if DOCS_FORK else branch_name,
             ],
             cwd=str(docs_dir),
