@@ -193,11 +193,21 @@ class SkillDefinition:
     tags: list[str] = field(default_factory=list)
     adapter_types: list[str] = field(default_factory=list)
     source_path: Path | None = None
+    passive_type: SkillPassiveType | None = None
     _run_func: Callable[..., Any] | None = field(default=None, repr=False)
     _background_task_factory: Callable[..., Any] | None = field(default=None, repr=False)
     _trigger_factory: Callable[..., Any] | None = field(default=None, repr=False)
     _on_load_factory: Callable[..., Any] | None = field(default=None, repr=False)
     _on_unload_factory: Callable[..., Any] | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.passive_type is None and self.is_passive:
+            if self._background_task_factory and self._trigger_factory:
+                self.passive_type = SkillPassiveType.BOTH
+            elif self._background_task_factory:
+                self.passive_type = SkillPassiveType.PERIODIC
+            elif self._trigger_factory:
+                self.passive_type = SkillPassiveType.TRIGGER
 
     def get_parameter_schema(self) -> list[dict[str, Any]]:
         """Return parameter definitions as dicts for prompt rendering."""

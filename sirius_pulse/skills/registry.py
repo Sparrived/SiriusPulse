@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.skills.dependency_resolver import resolve_skill_dependencies
-from sirius_pulse.skills.models import SkillDefinition, SkillInvocationContext, SkillParameter
+from sirius_pulse.skills.models import (
+    SkillDefinition,
+    SkillInvocationContext,
+    SkillParameter,
+    SkillPassiveType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,10 @@ class SkillRegistry:
     def passive_skills(self) -> list[SkillDefinition]:
         """Return all passive skills (those with background tasks or triggers)."""
         return [s for s in self._skills.values() if s.is_passive]
+
+    def passive_skills_by_type(self, passive_type: SkillPassiveType) -> list[SkillDefinition]:
+        """Return passive skills matching the given type."""
+        return [s for s in self._skills.values() if s.passive_type == passive_type]
 
     def register(self, skill: SkillDefinition) -> None:
         """Manually register a skill definition."""

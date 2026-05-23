@@ -121,16 +121,22 @@ def run(
     cwd: str | None = None,
     silent: bool = False,
     timeout: int | None = None,
+    env: dict[str, str] | None = None,
 ) -> str:
     """
     运行 shell 命令，返回 stdout。
     失败返回空字符串，不抛异常。
     timeout: 超时秒数（默认不限）
+    env: 额外环境变量（合并到当前环境）
     """
     try:
+        merged_env = None
+        if env:
+            merged_env = os.environ.copy()
+            merged_env.update(env)
         result = subprocess.run(
             cmd, capture_output=True, text=True, cwd=cwd, check=False,
-            timeout=timeout,
+            timeout=timeout, env=merged_env,
         )
         if result.returncode != 0 and not silent:
             stderr = result.stderr.strip()[:500]
@@ -149,15 +155,19 @@ def run(
         return ""
 
 
-def run_ok(cmd: list[str], cwd: str | None = None, timeout: int | None = None) -> bool:
+def run_ok(cmd: list[str], cwd: str | None = None, timeout: int | None = None, env: dict[str, str] | None = None) -> bool:
     """
     运行 shell 命令，返回 True/False 表示是否成功。
     失败时自动打印错误信息。
     """
     try:
+        merged_env = None
+        if env:
+            merged_env = os.environ.copy()
+            merged_env.update(env)
         result = subprocess.run(
             cmd, capture_output=True, text=True, cwd=cwd, check=False,
-            timeout=timeout,
+            timeout=timeout, env=merged_env,
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()[:500]
@@ -286,8 +296,8 @@ def get_individual_commit_stats(
 
 
 def get_accumulated_diff(last_synced: str) -> str:
-    """获取积累 diff（last_synced..HEAD）"""
-    return run(["git", "diff", f"{last_synced}..HEAD", "--", ".", ":!*.md", ":!.github"])
+    """获取积累 diff（last_synced..HEAD），只包含实际代码文件"""
+    return run(["git", "diff", f"{last_synced}..HEAD", "--", ".", ":!*.md", ":!.github", ":!*.json", ":!*.yaml", ":!*.toml", ":!*.lock", ":!*.txt", ":!*.cfg", ":!*.ini"])
 
 
 def should_process(commits: list[str], stats: list[dict]) -> tuple[bool, str]:
@@ -718,8 +728,8 @@ def main() -> None:
             write_state(run(["git", "rev-parse", "HEAD"]))
             return
 
-        if not run_ok(["git", "push", "origin", branch_name], cwd=str(docs_dir), timeout=60):
-            print("  ❌ 推送失败")
+        if not run_ok(["git", "push", "-f", "origin", branch_name], cwd=str(docs_dir), timeout=60):
+            print("  ❌ 推送失败，请检查 PAT 权限")
             print("  跳过，保留积累下次重试")
             return
         print(f"\n📤 已推送: {branch_name}")
@@ -741,6 +751,7 @@ def main() -> None:
                 "--head", branch_name,
             ],
             cwd=str(docs_dir),
+            env={"GH_TOKEN": DOCS_REPO_PAT},
         )
 
         if pr_url:
