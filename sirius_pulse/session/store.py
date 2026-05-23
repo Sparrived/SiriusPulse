@@ -1,3 +1,13 @@
+"""
+会话持久化存储实现 —— 支持 JSON 文件与 SQLite 两种后端。
+
+公开类:
+    - SessionStore: 存储协议（Protocol）
+    - JsonSessionStore: JSON 文件后端
+    - SqliteSessionStore: SQLite 关系数据库后端
+    - SessionStoreFactory: 存储工厂（按后端类型创建对应实例）
+"""
+
 from __future__ import annotations
 
 import json
@@ -9,6 +19,12 @@ from typing import Any, Protocol
 from sirius_pulse.models import Transcript
 from sirius_pulse.utils.layout import WorkspaceLayout
 
+__all__ = [
+    "SessionStore",
+    "JsonSessionStore",
+    "SqliteSessionStore",
+    "SessionStoreFactory",
+]
 
 _SESSION_STORE_SCHEMA_VERSION = 2
 
