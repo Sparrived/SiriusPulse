@@ -685,6 +685,17 @@ def main() -> None:
             return
         print(f"  ✓ 已克隆到 {docs_dir}")
 
+        # Fork 模式下，自动 sync fork 的 main 分支与原仓库保持一致
+        if DOCS_FORK:
+            print("  🔄 同步 fork...")
+            # 公开仓库 fetch 无需认证
+            upstream_url = f"https://github.com/{DOCS_REPO}.git"
+            run(["git", "remote", "add", "upstream", upstream_url], cwd=str(docs_dir))
+            run(["git", "fetch", "upstream", "main"], cwd=str(docs_dir), timeout=30)
+            run(["git", "reset", "--hard", "upstream/main"], cwd=str(docs_dir))
+            run(["git", "push", "-f", "origin", "main"], cwd=str(docs_dir), timeout=30)
+            print("  ✓ fork 已同步到原仓库最新状态")
+
         sha_short = run(["git", "rev-parse", "--short", "HEAD"])
         branch_name = f"auto-sync/{sha_short}"
         run(["git", "checkout", "-b", branch_name], cwd=str(docs_dir))
