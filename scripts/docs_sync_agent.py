@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 文档自动同步 Agent
 主仓库 push 触发 → 积累 diff → LLM 判断 → 自动更新 docs 仓库 → 创建人格化 PR
