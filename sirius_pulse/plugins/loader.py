@@ -237,6 +237,7 @@ class PluginLoader:
                                         and isinstance(elt.value, str)
                                     ]
             except Exception:
+                logger.warning("从 AST 提取依赖列表失败", exc_info=True)
                 pass
         return []
 
@@ -264,6 +265,7 @@ class PluginLoader:
             )
             uv_available = result.returncode == 0
         except Exception:
+            logger.warning("检查 uv 是否可用失败", exc_info=True)
             pass
 
         needs_chromium = "playwright" in dependencies

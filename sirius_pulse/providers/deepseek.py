@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
+from sirius_pulse.providers.base import DEFAULT_TIMEOUT_SECONDS
 
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
@@ -16,7 +17,7 @@ class DeepSeekProvider(OpenAICompatibleProvider):
 
     _provider_name = "deepseek"
 
-    def __init__(self, *, api_key: str, timeout_seconds: int = 30) -> None:
+    def __init__(self, *, api_key: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS) -> None:
         super().__init__(
             base_url=DEFAULT_DEEPSEEK_BASE_URL,
             api_key=api_key,

@@ -15,7 +15,7 @@ from sirius_pulse.webui.server_core import _get_name, _json_response, LOG
 
 async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Response:
     """Return aggregated token usage across all personas."""
-    from sirius_pulse.token.store import TokenUsageStore
+    from sirius_pulse.token.token_store import TokenUsageStore
     from sirius_pulse.token import analytics as token_analytics
 
     total_summary = {
@@ -131,7 +131,7 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    from sirius_pulse.token.store import TokenUsageStore
+    from sirius_pulse.token.token_store import TokenUsageStore
     from sirius_pulse.token import analytics as token_analytics
 
     db_path = paths.dir / "token" / "token_usage.db"
@@ -147,6 +147,7 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
         if request.query.get("end"):
             end_ts = float(request.query["end"])
     except ValueError:
+        LOG.warning("解析时间范围查询参数失败", exc_info=True)
         pass
 
     try:
@@ -194,6 +195,7 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
                 dt = datetime.fromisoformat(ts["time_bucket"])
                 hour_ts = int(dt.timestamp())
             except Exception:
+                LOG.warning("读取 token 文件失败", exc_info=True)
                 continue
             hourly.append({
                 "hour_ts": hour_ts,

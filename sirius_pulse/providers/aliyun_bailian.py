@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
+from sirius_pulse.providers.base import DEFAULT_TIMEOUT_SECONDS
 
 DEFAULT_ALIYUN_BAILIAN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode"
 
@@ -28,7 +29,7 @@ class AliyunBailianProvider(OpenAICompatibleProvider):
         *,
         api_key: str,
         base_url: str = DEFAULT_ALIYUN_BAILIAN_BASE_URL,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         super().__init__(
             base_url=_normalize_aliyun_bailian_base_url(base_url),

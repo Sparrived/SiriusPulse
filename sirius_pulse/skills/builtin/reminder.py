@@ -360,6 +360,7 @@ def _is_reminder_due(reminder: dict[str, Any], now: datetime) -> bool:
                 if (now - last_dt).total_seconds() < 60:
                     return False
             except ValueError:
+                logger.warning("解析上次提醒时间失败", exc_info=True)
                 pass
         return True
 

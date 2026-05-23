@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypedDict
 
-from sirius_pulse.token.store import TokenUsageStore
+from sirius_pulse.token.token_store import TokenUsageStore
 
 
 # ------------------------------------------------------------------

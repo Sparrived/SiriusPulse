@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
+from sirius_pulse.providers.base import DEFAULT_TIMEOUT_SECONDS
 
 DEFAULT_BIGMODEL_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 
@@ -34,7 +35,7 @@ class BigModelProvider(OpenAICompatibleProvider):
         *,
         api_key: str,
         base_url: str = DEFAULT_BIGMODEL_BASE_URL,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         super().__init__(
             base_url=_normalize_bigmodel_base_url(base_url),

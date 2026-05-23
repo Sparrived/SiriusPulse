@@ -13,7 +13,7 @@ from sirius_pulse.token.analytics import (
     group_by_task,
     time_series,
 )
-from sirius_pulse.token.store import TokenUsageStore
+from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.token.usage import (
     TokenUsageBaseline,
     TokenUsageBucket,

@@ -371,6 +371,7 @@ class TokenUsageStore:
                 try:
                     rec["breakdown"] = json.loads(raw)
                 except json.JSONDecodeError:
+                    LOG.warning("解码 breakdown JSON 失败", exc_info=True)
                     pass
         return records
 

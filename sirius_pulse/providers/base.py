@@ -11,6 +11,9 @@ from urllib.parse import unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
+# 默认超时秒数（各 provider 构造函数共用）
+DEFAULT_TIMEOUT_SECONDS: int = 30
+
 # Thread-local storage for passing real token usage from provider back to caller.
 _LAST_GENERATION_USAGE: threading.local = threading.local()
 

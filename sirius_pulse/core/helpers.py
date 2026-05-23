@@ -148,6 +148,7 @@ class HelpersMixin(_Base):
                             caller_profile and getattr(caller_profile, "is_developer", False)
                         )
             except Exception:
+                LOG.warning("SKILL 执行上下文组装失败", exc_info=True)
                 pass
 
         # 构建消息上下文
@@ -459,6 +460,7 @@ class HelpersMixin(_Base):
                 return 0.0
             return round((len(timestamps) - 1) / span_minutes, 2)
         except Exception:
+            LOG.warning("获取情感分数失败", exc_info=True)
             return 0.0
 
     @staticmethod

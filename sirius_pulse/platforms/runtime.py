@@ -25,7 +25,7 @@ from sirius_pulse.skills.registry import SkillRegistry
 from sirius_pulse.skills.executor import SkillExecutor
 from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
-from sirius_pulse.token.store import TokenUsageStore
+from sirius_pulse.token.token_store import TokenUsageStore
 
 LOG = logging.getLogger("sirius.platforms.runtime")
 
@@ -128,6 +128,7 @@ class EngineRuntime:
             if profile and profile.name:
                 return profile.name
         except Exception:
+            LOG.warning("读取人格 profile 获取 name 失败", exc_info=True)
             pass
         return "小星"
 
@@ -191,6 +192,7 @@ class EngineRuntime:
         try:
             all_config = json.loads(config_path.read_text(encoding="utf-8"))
         except Exception:
+            LOG.warning("启动引擎失败", exc_info=True)
             return
 
         plugin_config = all_config.get(definition.name)

@@ -246,6 +246,7 @@ class SemanticMemoryManager:
                     sent_dt = datetime.fromisoformat(rec.sent_at.replace("Z", "+00:00"))
                     latency = (now_dt - sent_dt).total_seconds()
                 except Exception:
+                    logger.warning("语义记忆投票处理失败", exc_info=True)
                     still_pending.append(rec)
                     continue
 
@@ -276,6 +277,7 @@ class SemanticMemoryManager:
                 sent_dt = datetime.fromisoformat(rec.sent_at.replace("Z", "+00:00"))
                 latency = (now_dt - sent_dt).total_seconds()
             except Exception:
+                logger.warning("语义记忆分组投票处理失败", exc_info=True)
                 grp_still_pending.append(rec)
                 continue
 

@@ -165,7 +165,7 @@ from sirius_pulse.adapters import (
 )
 
 # ── Token usage ──
-from sirius_pulse.token.store import TokenUsageStore
+from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.token.usage import (
     TokenUsageBaseline,
     build_token_usage_baseline,

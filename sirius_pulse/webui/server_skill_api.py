@@ -10,16 +10,9 @@ from typing import Any
 from aiohttp import web
 
 from sirius_pulse.skills.registry import SkillRegistry
+from sirius_pulse.webui.server_core import _get_name, _json_response
 
 LOG = logging.getLogger("sirius.webui")
-
-
-def _json_response(data: dict[str, Any], status: int = 200) -> web.Response:
-    return web.json_response(data, status=status, dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
-
-
-def _get_name(request: web.Request) -> str:
-    return str(request.match_info.get("name", "")).strip()
 
 
 def _skill_config_path(persona_dir: Path, skill_name: str) -> Path:
@@ -48,6 +41,7 @@ def _load_persona_skill_config(persona_dir: Path) -> dict[str, Any]:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except Exception:
+            LOG.warning("加载人格 skill 配置失败", exc_info=True)
             pass
     return {}
 
@@ -272,6 +266,7 @@ def _sync_config_to_data_store(persona_dir: Path, skill_name: str, config: dict[
         try:
             existing = json.loads(store_path.read_text(encoding="utf-8"))
         except Exception:
+            LOG.warning("读取 data_store 文件失败", exc_info=True)
             pass
 
     if not isinstance(existing, dict):

@@ -10,6 +10,7 @@ from sirius_pulse.providers.base import (
     AsyncLLMProvider,
     build_chat_completion_payload,
     build_generation_debug_context,
+    DEFAULT_TIMEOUT_SECONDS,
     GenerationRequest,
     prepare_openai_compatible_messages,
     resolve_generation_timeout_seconds,
@@ -25,7 +26,7 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
 
     _provider_name = "openai-compatible"
 
-    def __init__(self, *, base_url: str, api_key: str, timeout_seconds: int = 30) -> None:
+    def __init__(self, *, base_url: str, api_key: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds

@@ -37,6 +37,7 @@ def _days_since(iso_dt: str, default: float = 30.0) -> float:
         dt = datetime.fromisoformat(iso_dt.replace("Z", "+00:00"))
         return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400)
     except (ValueError, TypeError):
+        logger.warning("解析 ISO 时间失败", exc_info=True)
         return default
 
 

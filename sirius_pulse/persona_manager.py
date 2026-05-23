@@ -174,6 +174,7 @@ class PersonaManager:
                     tmp.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
                     tmp.replace(status_path)
                 except Exception:
+                    LOG.warning("写入状态文件失败", exc_info=True)
                     pass
 
         # 是否已启用（至少有一个 adapter enabled）
@@ -216,6 +217,7 @@ class PersonaManager:
                     if (datetime.now(timezone.utc) - hb).total_seconds() > 30:
                         data["status"] = "stale"
                 except Exception:
+                    LOG.warning("检查心跳时间失败", exc_info=True)
                     pass
             return data
         except Exception:
@@ -552,6 +554,7 @@ class PersonaManager:
                         status_path.unlink()
                         LOG.info("已清理过期 worker_status: %s", name)
                 except Exception:
+                    LOG.warning("清理 worker_status 失败", exc_info=True)
                     pass
 
     @staticmethod
@@ -608,6 +611,7 @@ class PersonaManager:
                     if elapsed > 60:  # 超过 60 秒没有心跳，认为已死
                         return False
                 except Exception:
+                    LOG.warning("检查 worker 是否存活失败", exc_info=True)
                     pass
             return True
         return False

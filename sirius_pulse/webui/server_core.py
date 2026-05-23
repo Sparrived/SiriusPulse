@@ -287,6 +287,7 @@ class WebUIServer:
                         )
                         return
             except Exception:
+                LOG.warning("Embedding 服务健康检查失败", exc_info=True)
                 pass
             LOG.warning(
                 "Embedding 服务端口 %d 已被占用但不健康，可能有残留进程",
@@ -348,6 +349,7 @@ class WebUIServer:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return _json_response(data)
             except Exception:
+                LOG.warning("读取全局配置失败", exc_info=True)
                 pass
         return _json_response({
             "webui_host": self.host,
@@ -368,6 +370,7 @@ class WebUIServer:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
+                LOG.warning("读取全局配置失败", exc_info=True)
                 pass
 
         for key in ("webui_host", "webui_port", "auto_manage_napcat", "log_level"):
@@ -408,6 +411,7 @@ class WebUIServer:
                         })
                 return _json_response({"providers": providers})
             except Exception:
+                LOG.warning("读取 provider_keys 失败", exc_info=True)
                 pass
         return _json_response({"providers": []})
 
@@ -423,6 +427,7 @@ class WebUIServer:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
+                LOG.warning("读取全局配置失败", exc_info=True)
                 pass
 
         providers_data = body.get("providers", {})
@@ -480,6 +485,7 @@ class WebUIServer:
             available_models = deduped_models
             model_choices = deduped_choices
         except Exception:
+            LOG.warning("获取模型列表失败", exc_info=True)
             pass
         return available_models, model_choices
 

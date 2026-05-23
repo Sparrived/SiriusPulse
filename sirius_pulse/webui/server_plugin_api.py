@@ -18,14 +18,9 @@ from aiohttp import web
 from sirius_pulse.plugins.loader import PluginLoader
 from sirius_pulse.plugins.models import PluginDefinition
 from sirius_pulse.plugins.config import get_config_manager
+from sirius_pulse.webui.server_core import _json_response
 
 LOG = logging.getLogger("sirius.webui")
-
-
-def _json_response(data: dict[str, Any], status: int = 200) -> web.Response:
-    return web.json_response(
-        data, status=status, dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2)
-    )
 
 
 def _plugins_dir(manager: Any) -> Path:
@@ -308,6 +303,7 @@ async def api_plugin_config_post(request: web.Request, manager: Any) -> web.Resp
         try:
             permissions["rate_limit_calls_per_minute"] = int(body["rate_limit_calls_per_minute"])
         except (ValueError, TypeError):
+            LOG.warning("解析 rate_limit 失败", exc_info=True)
             pass
 
     config_manager.update_permissions(plugin_name, permissions)

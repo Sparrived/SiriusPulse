@@ -32,7 +32,6 @@ __all__ = [
     "github_headers",
     "get_coding_bot_login",
     "get_issue_repos",
-    "github_headers",
     "notify_issue_comment",
     "notify_issue_opened",
     "notify_pr_event",

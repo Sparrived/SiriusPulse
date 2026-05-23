@@ -35,6 +35,7 @@ async def api_personas_get(request: web.Request, persona_manager: Any) -> web.Re
                         "started_at": st.get("started_at"),
                     }
                 except Exception:
+                    LOG.warning("读取人格状态失败", exc_info=True)
                     pass
         result.append({**p, "status": status})
     return _json_response({"personas": result})
@@ -93,8 +94,9 @@ async def api_persona_get_single(request: web.Request, persona_manager: Any) -> 
                 "started_at": st.get("started_at"),
                 "last_heartbeat": st.get("last_heartbeat"),
             }
-        except Exception:
-            pass
+    except Exception:
+        LOG.warning("读取人格状态失败", exc_info=True)
+        pass
     return _json_response({
         "name": name,
         "persona_name": profile.name,
@@ -120,6 +122,7 @@ async def api_persona_status_get(request: web.Request, persona_manager: Any) -> 
                 "last_heartbeat": st.get("last_heartbeat"),
             }
         except Exception:
+            LOG.warning("读取人格状态失败", exc_info=True)
             pass
     return _json_response({"name": name, "status": status})
 
@@ -502,5 +505,6 @@ def _build_model_choices(persona_manager: Any) -> tuple[list[str], list[dict[str
         available_models = deduped_models
         model_choices = deduped_choices
     except Exception:
+        LOG.warning("获取模型列表失败", exc_info=True)
         pass
     return available_models, model_choices

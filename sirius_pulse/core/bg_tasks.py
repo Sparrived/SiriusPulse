@@ -629,6 +629,7 @@ class BackgroundTasksMixin(_Base):
                         candidates.append(f"刚才整理日记时看到这段记录：{summary}，挺有意思的。")
                         break
         except Exception:
+            LOG.warning("读取日记摘要失败", exc_info=True)
             pass
 
         # 3. Preset memory-oriented templates

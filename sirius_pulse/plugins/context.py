@@ -221,6 +221,7 @@ class EngineProxy:
                 try:
                     token_store.add(record)
                 except Exception:
+                    logger.warning("token_store.add() 失败", exc_info=True)
                     pass
         except Exception as exc:
             logger.warning("generate_raw token 追踪异常（不阻断）: %s", exc)
@@ -277,6 +278,7 @@ class EngineProxy:
                     loop = asyncio.get_running_loop()
                     loop.create_task(event_bus.emit(event))
                 except RuntimeError:
+                    logger.warning("获取 event loop 失败", exc_info=True)
                     pass
         except Exception as exc:
             logger.warning("Plugin %s 发射事件失败: %s", self._plugin_name, exc)
