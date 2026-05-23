@@ -19,17 +19,9 @@ from sirius_pulse.webui.server_skill_api import (
     api_persona_skills_get,
     api_persona_skill_toggle,
 )
+from sirius_pulse.webui.server_utils import _get_name, _json_response
 
 LOG = logging.getLogger("sirius.webui")
-
-
-def _json_response(data: dict[str, Any], status: int = 200) -> web.Response:
-    return web.json_response(data, status=status, dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
-
-
-def _get_name(request: web.Request) -> str:
-    """从 URL 路径参数获取人格名称。"""
-    return str(request.match_info.get("name", "")).strip()
 
 
 @web.middleware
