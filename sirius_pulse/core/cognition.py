@@ -322,6 +322,7 @@ directed_score（消息指向 AI 的程度，最关键）：
 - 0.0-0.3：与AI无关、纯群友闲聊、提到AI名字但只是举例/引用
 注意：要综合考虑消息内容、对话上下文和当前发言者身份。如果群聊里只有AI和当前发言者活跃，"你"大概率指向AI。
 {ai_identity_note}
+{user_alias_note}
 只输出 JSON，不要其他内容。"""
 
 
@@ -384,6 +385,7 @@ class CognitionAnalyzer:
         sender_type: str = "human",
         multimodal_inputs: list[dict[str, str]] | None = None,
         caller_is_developer: bool = False,
+        group_aliases: dict[str, str] | None = None,
     ) -> tuple[EmotionState, IntentAnalysisV3, EmpathyStrategy]:
         """Joint analysis: emotion, intent, directedness, and empathy in one pass.
 
@@ -430,6 +432,7 @@ class CognitionAnalyzer:
                     message, context_messages, current_user_id=user_id, sender_type=sender_type,
                     multimodal_inputs=multimodal_inputs,
                     caller_is_developer=caller_is_developer,
+                    group_aliases=group_aliases,
                 )
                 if llm_result is not None:
                     social_intent = llm_result["social_intent"]
@@ -776,6 +779,7 @@ class CognitionAnalyzer:
         sender_type: str = "human",
         multimodal_inputs: list[dict[str, str]] | None = None,
         caller_is_developer: bool = False,
+        group_aliases: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         """Single LLM call for joint emotion + intent + directedness analysis."""
         from sirius_pulse.providers.base import GenerationRequest, LLMProvider
@@ -814,11 +818,28 @@ class CognitionAnalyzer:
         if sender_type == "other_ai":
             conv_ctx += "【注意：当前消息来自群里的另一个 AI，不是人类用户】\n"
 
+        # 从传记系统获取群内用户别名映射，帮助 LLM 区分 AI 和其他用户的别称
+        user_alias_note = ""
+        if group_aliases:
+            alias_lines = []
+            for alias, user_name in group_aliases.items():
+                if alias and user_name:
+                    alias_lines.append(f'"{alias}" → {user_name}')
+            if alias_lines:
+                user_alias_note = (
+                    "【本群用户别称】\n"
+                    + "\n".join(alias_lines[:15])
+                    + "\n注意：上述别称属于其他用户。"
+                      "如果消息中只提到这些别称（而没有 @AI 或直呼 AI 名字），"
+                      "说明消息不是指向当前 AI 的，directed_score 应该较低。\n"
+                )
+
         prompt = _LLM_COGNITION_PROMPT.format(
             ai_identity=ai_id,
             conversation_context=conv_ctx,
             message=context_text + f"【当前消息】[{current_user_id}] {message}",
             ai_identity_note=ai_note,
+            user_alias_note=user_alias_note,
             plugin_descriptions=self._get_plugin_descriptions_for_prompt(caller_is_developer),
             plugin_slots_hint=self._get_plugin_slots_hint(caller_is_developer),
         )

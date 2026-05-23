@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -589,10 +590,11 @@ class BiographyManager:
     ) -> None:
         """注册或更新一个别名条目。
 
-        拥有三层防御：
+        拥有四层防御：
         1. 人格身份隔离：如果别名是 bot 人格自身名称，拒绝注册到任何其他用户
         2. LLM 来源冲突校验：拒绝注册为已知其他用户的主名
-        3. 标准别名注册/更新（新建时按来源设置初始置信度）
+        3. 子串冲突校验：别名包含已知其他用户的有效名（去标点后>=2字）时跳过
+        4. 标准别名注册/更新（新建时按来源设置初始置信度）
         """
         alias_lower = alias.strip().lower()
         if not alias_lower or len(alias_lower) < 2:
@@ -617,6 +619,21 @@ class BiographyManager:
                         alias, card.name, user_id,
                     )
                     return
+
+        # 防御3：别名包含已知人名作为子串时跳过（如"前前前世哥哥"包含"前前前世"）
+        # 先去除非文字符号获取有效名，过短（<2字）的不参与检查
+        for uid, card in self._cards.items():
+            if uid == user_id:
+                continue
+            cleaned = re.sub(r'[^\w]', '', card.name or '', flags=re.UNICODE)
+            if len(cleaned) < 2:
+                continue
+            if cleaned.lower() in alias_lower:
+                logger.debug(
+                    "拒绝别名注册: %s 包含已知用户 %s(%s) 的名 '%s'",
+                    alias, card.name, uid, cleaned,
+                )
+                return
 
         if alias_lower not in self._alias_index:
             self._alias_index[alias_lower] = []
