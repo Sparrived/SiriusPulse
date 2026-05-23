@@ -605,8 +605,8 @@ def main() -> None:
         auth_url = f"https://oauth2:{pat_encoded}@github.com/{DOCS_REPO}.git"
         print(f"   目标: https://oauth2:***@github.com/{DOCS_REPO}.git")
 
-        clone_ok = run(["git", "clone", "--depth=1", auth_url, str(docs_dir)], timeout=60)
-        if not clone_ok:
+        run(["git", "clone", "--depth=1", auth_url, str(docs_dir)], timeout=60)
+        if not (docs_dir / ".git").exists():
             print("  ❌ 克隆 docs 仓库失败")
             print("  跳过本次处理，保留积累的 diff 下次重试")
             return
