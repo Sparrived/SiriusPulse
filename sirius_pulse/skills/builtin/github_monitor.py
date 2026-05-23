@@ -351,13 +351,19 @@ async def _poll_github_events(ctx: Any) -> None:
                                 f"{owner}/{repo}",
                             )
 
-                # 提取事件信息并按规范 URL 分组合并
-                # 同一 Issue/PR/Release 页面上的多个事件合并为一次通知，
-                # 避免对同一页面重复截图和 LLM 调用
+                # 将 PushEvent 与其他事件分离，用于后续合并所有推送为一条
+                push_raw: list[dict[str, Any]] = [
+                    e for e in new_events if e.get("type") == "PushEvent"
+                ]
+                other_events: list[dict[str, Any]] = [
+                    e for e in new_events if e.get("type") != "PushEvent"
+                ]
+
+                # 非 PushEvent：按规范 URL 分组合并
                 grouped: dict[str, list[dict[str, Any]]] = {}
                 bot_login = get_coding_bot_login()
                 coding_repos = get_issue_repos()
-                for event in reversed(new_events):
+                for event in reversed(other_events):
                     event_info = _extract_event_info(event)
                     # coding 接管仓库：仅当评论作者是 AI bot 或非评论事件时才推送通知
                     if bot_login and event_info.get("repo", "") in coding_repos:
@@ -368,6 +374,19 @@ async def _poll_github_events(ctx: Any) -> None:
                                 continue
                     canonical = event_info.get("canonical_url", event_info.get("url", ""))
                     grouped.setdefault(canonical, []).append(event_info)
+
+                # 将本轮所有 PushEvent 合并为一条通知
+                # 使用最早 before → 最新 head 构建 compare URL 作为截图，
+                # 确保截图 diff 覆盖本轮全部变更
+                if push_raw:
+                    merged_push = _merge_push_events(push_raw)
+                    if merged_push:
+                        grouped[f"__push_{repo_key}"] = [merged_push]
+                        logger.info(
+                            "github_monitor: %s 合并了 %d 笔推送为一条",
+                            repo_key,
+                            len(push_raw),
+                        )
 
                 logger.info(
                     "github_monitor: %s 发现 %d 条新事件，合并为 %d 组",
@@ -656,6 +675,95 @@ def _merge_event_group(events: list[dict[str, Any]]) -> dict[str, Any]:
         primary["screenshot_url"] = primary["url"]
 
     return primary
+
+
+def _merge_push_events(raw_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """将同一轮 API 轮询中的多个 PushEvent 合并为一条事件信息。
+
+    合并策略：
+    - 汇集所有 commit
+    - 使用最早推送的 before SHA 作为起始点、最新推送的 head SHA 作为终点，
+      构建跨全部推送的 compare URL，使得截图可展示从最早到最新的完整 diff
+    - 合并多笔推送的参与者和分支信息
+
+    Args:
+        raw_events: 原始 PushEvent JSON 列表（new_events 子集，最新在前）。
+
+    Returns:
+        合并后的事件信息 dict，格式与 _extract_event_info 输出兼容。
+    """
+    if not raw_events:
+        return None
+
+    first = raw_events[0]
+    repo_info = first.get("repo", {})
+    repo_name = repo_info.get("name", "未知仓库")
+
+    # new_events 按时间倒序排列（最新在前）：
+    #   raw_events[-1] = 最早推送 → 其 before 是最早 SHA
+    #   raw_events[0]  = 最新推送 → 其 head/after 是最新 SHA
+    oldest_payload = raw_events[-1].get("payload", {}) or {}
+    newest_payload = raw_events[0].get("payload", {}) or {}
+    min_before = oldest_payload.get("before", "")
+    max_head = newest_payload.get("head", "")
+
+    all_commits: list[dict[str, Any]] = []
+    actors: list[str] = []
+    seen_actors: set[str] = set()
+    branches: set[str] = set()
+
+    for event in raw_events:
+        payload = event.get("payload", {}) or {}
+        commits = payload.get("commits", [])
+        all_commits.extend(commits)
+
+        actor = event.get("actor", {})
+        actor_name = actor.get("display_login") or actor.get("login", "未知用户")
+        if actor_name and actor_name not in seen_actors:
+            actors.append(actor_name)
+            seen_actors.add(actor_name)
+
+        ref = payload.get("ref", "")
+        branch = ref.replace("refs/heads/", "") if ref.startswith("refs/heads/") else ref
+        if branch:
+            branches.add(branch)
+
+    branch_str = (
+        "、".join(sorted(branches))
+        if len(branches) > 1
+        else (branches.pop() if branches else "未知分支")
+    )
+    title = f"{len(all_commits)} 个提交 → {branch_str}"
+
+    commit_lines: list[str] = []
+    for c in all_commits[:_MAX_COMMITS_IN_BODY]:
+        msg_first_line = (c.get("message", "")).split("\n")[0][:100]
+        commit_lines.append(f"- {msg_first_line}")
+    body_lines = "\n".join(commit_lines)
+
+    # 构建横跨所有推送的 compare URL
+    null_sha = "0000000000000000000000000000000000000000"
+    compare_url = ""
+    if min_before and min_before != null_sha and max_head:
+        compare_url = f"https://github.com/{repo_name}/compare/{min_before}...{max_head}"
+
+    html_url = compare_url or f"https://github.com/{repo_name}"
+
+    return {
+        "repo": repo_name,
+        "type": "PushEvent",
+        "type_desc": "推送",
+        "actor": "、".join(actors) if len(actors) > 1 else (actors[0] if actors else "未知用户"),
+        "action": "",
+        "action_cn": "推送了",
+        "title": title,
+        "body": body_lines,
+        "url": html_url,
+        "screenshot_url": compare_url or html_url,
+        "canonical_url": _clean_canonical_url(html_url),
+        "merged_count": len(raw_events),
+        "merged_actions": [f"推送了 {branch_str}"],
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════
