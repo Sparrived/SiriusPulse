@@ -79,9 +79,9 @@ TAG_ATMOSPHERE_TREND = "【氛围趋势】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
 
 # 消息渲染标签
-TAG_FACE = "【表情：{name}】"
+TAG_FACE = "[表情：{name}]"
 TAG_IMAGE = "【图片：{name}】"
-TAG_STICKER = "【动画表情：{name}】"
+TAG_STICKER = "[STICKERS：\"{name}\"]"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -970,7 +970,7 @@ class PromptFactory:
     @staticmethod
     def render_image_label(label_prefix: str, display_name: str) -> str:
         """渲染图片/动画表情标签。"""
-        return f"【{label_prefix}：{display_name}】"
+        return f"[{label_prefix}：\"{display_name}\"]"
 
     @staticmethod
     def render_multimodal_item(mtype: str, value: str) -> str:
@@ -980,7 +980,7 @@ class PromptFactory:
     @staticmethod
     def render_speaker_line(speaker: str, content: str) -> str:
         """渲染发言人+内容行（用于 Transcript 和 as_chat_history）。"""
-        return f"【{speaker}】{content}"
+        return f"【\"{speaker}\" 说】{content}"
 
     @staticmethod
     def render_speaker_lines_summary(items: list[str]) -> str:
