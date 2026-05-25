@@ -1037,7 +1037,7 @@ class PromptFactory:
         names_str = "、".join(sticker_names)
         return (
             "\n\n【可用表情包】\n"
-            f"你可以使用 [STICKERS: \"名称1\", \"名称2\", \"名称3\"] 格式选择最多3个表情包发送。\n"
+            f"你可以使用 [STICKERS: \"名称1\", \"名称2\", \"名称3\"] 格式（**必须和该格式完全一致，否则会解析失效**）选择最多3个表情包发送。\n"
             f"可选表情包：{names_str}\n"
         )
 
