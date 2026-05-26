@@ -155,7 +155,6 @@ class PersonaManager:
         paths = PersonaConfigPaths(pdir)
         persona = PersonaStore.load(pdir)
         adapters = PersonaAdaptersConfig.load(paths.adapters)
-        experience = PersonaExperienceConfig.load(paths.experience)
         status = self._read_worker_status(name)
 
         # 进程存活检测

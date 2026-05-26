@@ -313,7 +313,7 @@ class PipelineMixin(_Base):
                 relevance=decision.relevance,
                 reason=f"cooldown_{int(seconds_since_reply)}s",
             )
-            self._log_inner_thought(f"群里正聊得火热呢，我刚回完不久，先闭嘴看看...")
+            self._log_inner_thought("群里正聊得火热呢，我刚回完不久，先闭嘴看看...")
 
         # Private-chat floor: never stay completely silent in 1-on-1
         if group_id.startswith("private_") and decision.strategy == ResponseStrategy.SILENT:

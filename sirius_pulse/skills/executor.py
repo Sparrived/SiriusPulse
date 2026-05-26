@@ -258,7 +258,6 @@ class SkillExecutor:
             logger.info("Skill execute calling: %s(final_params=%s)", skill.name, call_params)
 
             # Run with optional retry for transient failures
-            last_error: Exception | None = None
             for attempt in range(max_retries + 1):
                 try:
                     if inspect.iscoroutinefunction(skill._run_func):
@@ -282,7 +281,6 @@ class SkillExecutor:
                     )
                     break
                 except Exception as exc:
-                    last_error = exc
                     if attempt < max_retries and _should_retry(exc):
                         logger.warning(
                             "SKILL '%s' 第%d次执行失败（将重试）: %s",
@@ -433,7 +431,6 @@ class SkillExecutor:
 
             logger.info("Skill async execute calling: %s(final_params=%s)", skill.name, call_params)
 
-            last_error: Exception | None = None
             skill_result: SkillResult | None = None
             for attempt in range(max_retries + 1):
                 try:
@@ -452,7 +449,6 @@ class SkillExecutor:
                     )
                     break
                 except Exception as exc:
-                    last_error = exc
                     if attempt < max_retries and _should_retry(exc):
                         logger.warning(
                             "SKILL '%s' 第%d次执行失败（将重试）: %s",

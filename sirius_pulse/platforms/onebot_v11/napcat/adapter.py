@@ -459,7 +459,6 @@ class NapCatAdapter(BaseAdapter):
             return None
 
         msg_type = event.get("message_type", "")
-        gid = str(event.get("group_id", ""))
         uid = str(event.get("user_id", ""))
         self_id = str(event.get("self_id", ""))
 
@@ -635,7 +634,6 @@ class NapCatAdapter(BaseAdapter):
             await self._on_private_message(event)
 
     async def _on_group_message(self, event: dict[str, Any]) -> None:
-        gid = str(event.get("group_id", ""))
         uid = str(event.get("user_id", ""))
         self_id = str(event.get("self_id", ""))
         if uid == self_id:
@@ -753,7 +751,6 @@ class NapCatAdapter(BaseAdapter):
     # ─── 事件总线监听 ────────────────────────────────────
 
     async def _event_bus_listener(self) -> None:
-        not_ready_backoff = 1.0
         engine = self._engine
         while self._running and engine is not None:
             try:

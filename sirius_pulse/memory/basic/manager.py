@@ -186,17 +186,16 @@ class BasicMemoryManager:
         entries = self.get_all(group_id)
         if not entries:
             return False
-        heat = self._heat_calc.calculate(entries)
+        _heat = self._heat_calc.calculate(entries)
         last_ts = max(
             (datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp() for e in entries if e.timestamp),
             default=0.0,
         )
         seconds_since_last = datetime.now(timezone.utc).timestamp() - last_ts
-        return self._heat_calc.is_cold(heat, seconds_since_last)
+        return self._heat_calc.is_cold(_heat, seconds_since_last)
 
     def _update_heat(self, group_id: str) -> None:
         entries = self.get_all(group_id)
-        heat = self._heat_calc.calculate(entries)
         last_ts = max(
             (datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp() for e in entries if e.timestamp),
             default=0.0,

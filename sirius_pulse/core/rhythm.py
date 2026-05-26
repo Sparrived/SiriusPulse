@@ -252,7 +252,6 @@ class RhythmAnalyzer:
             return 0.5
         readiness = 0.3  # base
         last = str(messages[-1].get("content", ""))
-        last_lower = last.lower()
 
         # Low topic stability = potential turning point
         if stability < 0.3:

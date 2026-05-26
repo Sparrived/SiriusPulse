@@ -591,7 +591,6 @@ class HelpersMixin(_Base):
     def _classify_exception(self, exc: Exception) -> str:
         """Classify an LLM provider exception into a structured error type."""
         msg = str(exc).lower()
-        exc_type = type(exc).__name__.lower()
 
         if "timeout" in msg or "timed out" in msg or "socket" in msg:
             return "network_timeout"

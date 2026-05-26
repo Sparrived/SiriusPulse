@@ -154,22 +154,6 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
         by_model = token_analytics.group_by_model(store, start_ts=start_ts, end_ts=end_ts)
         time_series = token_analytics.time_series(store, bucket_seconds=3600, start_ts=start_ts, end_ts=end_ts)
 
-        daily = [
-            {
-                "date": ts["time_bucket"][:10],
-                "calls": ts["calls"],
-                "prompt_tokens": ts["prompt_tokens"],
-                "completion_tokens": ts["completion_tokens"],
-                "total_tokens": ts["total_tokens"],
-            }
-            for ts in time_series[-30:]
-        ]
-
-        models = [
-            {"model": m, **v}
-            for m, v in by_model.items()
-        ]
-
         # 转换为前端期望的格式
         summary = {
             "total_calls": baseline.get("total_calls", 0),
@@ -405,7 +389,6 @@ async def api_persona_users_get(request: web.Request, persona_manager: Any) -> w
 
         if group_id:
             # Group-scoped query
-            user_dir = store._users_dir / store._safe_name(group_id)
             for profile in store.list_group_user_profiles(group_id):
                 if profile.user_id and profile.user_id not in seen_user_ids:
                     seen_user_ids.add(profile.user_id)

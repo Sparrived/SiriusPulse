@@ -788,9 +788,9 @@ class CognitionAnalyzer:
                 ai_id += f"，别名：{', '.join(self.ai_aliases)}"
             ai_id += "\n"
             ai_note = (
-                f"注意：如果消息中提到了当前 AI 的名字或别名，"
-                f"social_intent 必须是 social（不是 silent），"
-                f"且如果消息是提问或询问看法，urgency_score 至少为 80，relevance_score 至少为 0.75。\n"
+                "注意：如果消息中提到了当前 AI 的名字或别名，"
+                "social_intent 必须是 social（不是 silent），"
+                "且如果消息是提问或询问看法，urgency_score 至少为 80，relevance_score 至少为 0.75。\n"
             )
         else:
             ai_id = persona_identity
@@ -1520,7 +1520,6 @@ class CognitionAnalyzer:
 
         name_match = rule_scores.get("name_match_score", 0.0)
         second_person = rule_scores.get("second_person_score", 0.0)
-        question = rule_scores.get("question_score", 0.0)
         imperative = rule_scores.get("imperative_score", 0.0)
         turn_taking = rule_scores.get("turn_taking_score", 0.0)
 
@@ -1532,7 +1531,6 @@ class CognitionAnalyzer:
         if turn_taking >= 0.5 and second_person >= 0.2:
             strong_linguistic = max(strong_linguistic, turn_taking * 0.7)
         # Weak linguistic signals: "你" or question alone (not sufficient without name)
-        weak_linguistic = max(second_person, question)
 
         structural = max(
             mention_score,

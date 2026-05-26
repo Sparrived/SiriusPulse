@@ -517,7 +517,7 @@ class BackgroundTasksMixin(_Base):
                         clean_dev = strip_skill_calls(reply).strip()
                         self._pending_developer_chats.setdefault(group_id, []).append(clean_dev)
                         self._last_developer_chat_at[group_id] = now
-                        self._log_inner_thought(f"突然想跟开发者聊聊，发了条消息过去～")
+                        self._log_inner_thought("突然想跟开发者聊聊，发了条消息过去～")
                         await self.event_bus.emit(
                             SessionEvent(
                                 type=SessionEventType.DEVELOPER_CHAT_TRIGGERED,

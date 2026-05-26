@@ -462,10 +462,6 @@ class SqliteSessionStore:
         profile_rows = conn.execute(
             "SELECT * FROM session_user_profiles ORDER BY user_id"
         ).fetchall()
-        runtime_rows = {
-            str(row["user_id"]): row
-            for row in conn.execute("SELECT * FROM session_user_runtime ORDER BY user_id").fetchall()
-        }
         fact_rows_by_user: dict[str, list[sqlite3.Row]] = {}
         for row in conn.execute(
             "SELECT * FROM session_user_memory_facts ORDER BY user_id, fact_index"
