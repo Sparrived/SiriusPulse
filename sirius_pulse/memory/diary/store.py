@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 from sirius_pulse.memory.diary.models import DiaryEntry
+from sirius_pulse.utils.json_io import atomic_write_json
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
@@ -26,16 +27,8 @@ class DiaryFileStore:
 
     def save(self, group_id: str, entries: list[DiaryEntry]) -> None:
         path = self._path(group_id)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(
-                {"group_id": group_id, "entries": [e.to_dict() for e in entries]},
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        tmp.replace(path)
+        data = {"group_id": group_id, "entries": [e.to_dict() for e in entries]}
+        atomic_write_json(path, data)
 
     def load(self, group_id: str) -> list[DiaryEntry]:
         path = self._path(group_id)

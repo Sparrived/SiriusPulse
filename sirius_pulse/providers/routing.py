@@ -13,6 +13,7 @@ from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.providers.siliconflow import SiliconFlowProvider
 from sirius_pulse.providers.volcengine_ark import VolcengineArkProvider
 from sirius_pulse.providers.ytea import YTeaProvider
+from sirius_pulse.utils.json_io import atomic_write_json
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 PROVIDER_KEYS_FILE = "provider_keys.json"
@@ -160,9 +161,7 @@ class ProviderRegistry:
             }
             providers_payload[provider_type] = entry
         payload: dict[str, object] = {"providers": providers_payload}
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        atomic_write_json(self.path, payload)
 
     def upsert(
         self,

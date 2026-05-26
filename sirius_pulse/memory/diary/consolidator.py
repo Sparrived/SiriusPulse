@@ -13,6 +13,7 @@ from typing import Any
 from sirius_pulse.memory.diary.indexer import DiaryIndexer
 from sirius_pulse.memory.diary.manager import DiaryManager
 from sirius_pulse.memory.diary.models import DiaryEntry
+from sirius_pulse.utils.json_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +78,8 @@ class DiaryConsolidator:
         if self._cache_path is None:
             return
         data = {f"{k[0]}|{k[1]}": v for k, v in self._sim_cache.items()}
-        tmp = self._cache_path.with_suffix(".tmp")
         try:
-            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(self._cache_path)
+            atomic_write_json(self._cache_path, data, indent=None)
         except OSError:
             pass
 

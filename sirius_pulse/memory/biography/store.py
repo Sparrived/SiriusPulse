@@ -15,15 +15,14 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.memory.biography.models import AliasEntry, UserPersonaCard
+from sirius_pulse.utils.json_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
 
 def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     """原子写 JSON 文件（临时文件 + replace）。"""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_json(path, data)
 
 
 class BiographyStore:

@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.utils.json_io import atomic_write_json
+
 logger = logging.getLogger(__name__)
 
 # Per-file locks to prevent concurrent writes on Windows (WinError 32)
@@ -263,15 +265,10 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     """
     lock = _get_file_lock(path)
     with lock:
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
         # On Windows replace() can fail if another handle has the file open.
         for attempt in range(5):
             try:
-                tmp.replace(path)
+                atomic_write_json(path, data)
                 return
             except PermissionError:
                 if attempt < 4:
