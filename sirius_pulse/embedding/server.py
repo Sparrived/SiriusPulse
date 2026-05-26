@@ -18,10 +18,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from sirius_pulse.core.constants import EMBEDDING_DEFAULT_PORT
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_NAME = "BAAI/bge-small-zh"
-DEFAULT_PORT = 18900
+DEFAULT_PORT = EMBEDDING_DEFAULT_PORT
 
 # 单次 encode 的最大文本数，超出则分片
 MAX_ENCODE_BATCH = 64

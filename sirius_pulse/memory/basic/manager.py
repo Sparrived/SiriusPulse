@@ -9,14 +9,20 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
+from sirius_pulse.core.constants import (
+    COLD_HEAT_THRESHOLD,
+    DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW,
+    DEFAULT_BASIC_MEMORY_HARD_LIMIT,
+    SILENCE_THRESHOLD_SECONDS,
+)
 from sirius_pulse.memory.basic.models import BasicMemoryEntry, HeatState
 
 logger = logging.getLogger(__name__)
 
-HARD_LIMIT = 30
-CONTEXT_WINDOW = 5
-COLD_THRESHOLD = 0.25
-SILENCE_THRESHOLD_SEC = 300.0
+HARD_LIMIT = DEFAULT_BASIC_MEMORY_HARD_LIMIT
+CONTEXT_WINDOW = DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW
+COLD_THRESHOLD = COLD_HEAT_THRESHOLD
+SILENCE_THRESHOLD_SEC = SILENCE_THRESHOLD_SECONDS
 
 
 class HeatCalculator:

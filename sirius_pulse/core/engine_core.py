@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.brain import Brain
+from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
 from sirius_pulse.core.cognition import CognitionAnalyzer
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
@@ -360,7 +361,7 @@ class _EmotionalGroupChatEngineBase:
         self._current_adapter_type: str = ""
 
         self._recent_sent_replies: dict[str, list[tuple[float, str]]] = {}
-        self._reply_dedup_window = self.config.get("reply_dedup_window_seconds", 300)
+        self._reply_dedup_window = self.config.get("reply_dedup_window_seconds", REPLY_DEDUP_WINDOW_SECONDS)
         self._reply_dedup_threshold = self.config.get("reply_dedup_threshold", 0.85)
 
         self._active_private_groups: set[str] = set()
@@ -398,7 +399,7 @@ class _EmotionalGroupChatEngineBase:
             now_ts = time.time()
             last_ts = _engine._last_reply_at.get(gid, 0)
             _engine._last_reply_depth[gid] = (
-                _engine._last_reply_depth.get(gid, 0) + 1 if now_ts - last_ts < 60 else 1
+                _engine._last_reply_depth.get(gid, 0) + 1 if now_ts - last_ts < 2 * HEARTBEAT_TIMEOUT_SECONDS else 1
             )
 
         # ── priority 20: 表情包发送 ──

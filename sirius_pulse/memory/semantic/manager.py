@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from sirius_pulse.core.constants import FEEDBACK_TIMEOUT_SECONDS
 from sirius_pulse.memory.semantic.models import (
     AtmosphereSnapshot,
     GroupSemanticProfile,
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 _MAX_ATMOSPHERE_HISTORY = 100
 _MAX_PENDING_RECORDS = 20
 _FEEDBACK_WINDOW = 20
-_FEEDBACK_TIMEOUT_S = 120
+_FEEDBACK_TIMEOUT_S = FEEDBACK_TIMEOUT_SECONDS
 
 _EMOJI_PATTERN = re.compile(
     "["

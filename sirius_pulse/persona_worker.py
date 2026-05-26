@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS
 from sirius_pulse.logging_config import configure_logging, setup_log_archival
 from sirius_pulse.persona_config import (
     NapCatAdapterConfig,

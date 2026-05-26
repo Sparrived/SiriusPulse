@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from sirius_pulse.core.constants import RESPONSE_MAX_TOKENS
 from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,7 @@ class StyleAdapter:
     对话节奏（pace）信号转为 prompt 级长度指令，引导模型自主控制输出长度。
     """
 
-    _DEFAULT_MAX_TOKENS: int = 4096
+    _DEFAULT_MAX_TOKENS: int = RESPONSE_MAX_TOKENS
 
     # 对话节奏 → prompt 长度引导
     _PACE_LENGTH_HINTS: dict[str, str] = {
