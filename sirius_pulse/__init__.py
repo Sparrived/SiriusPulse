@@ -185,9 +185,6 @@ from sirius_pulse.token.analytics import (
     time_series,
 )
 
-# ── Background tasks ──
-from sirius_pulse.background_tasks import BackgroundTaskConfig, BackgroundTaskManager
-
 # ── Exceptions ──
 from sirius_pulse.exceptions import (
     ConfigError,
@@ -385,9 +382,6 @@ __all__ = [
     "group_by_task",
     "summarize_token_usage",
     "time_series",
-    # Background tasks
-    "BackgroundTaskConfig",
-    "BackgroundTaskManager",
     # Logging
     "LogFormat",
     "LogLevel",
