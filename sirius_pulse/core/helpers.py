@@ -419,24 +419,6 @@ class HelpersMixin(_Base):
         return ""
 
     @staticmethod
-    def _strip_conversation_history_xml(text: str) -> str:
-        """Remove any <conversation_history> blocks that the model may echo back.
-
-        Because short-term memory is embedded in the system prompt as XML,
-        some models may imitate the format in their output. This sanitiser
-        strips those accidental blocks.
-        """
-        import re
-
-        # Remove <conversation_history>...</conversation_history> (non-greedy, multiline)
-        cleaned = re.sub(
-            r"<conversation_history>.*?</conversation_history>", "", text, flags=re.DOTALL
-        )
-        # Also clean up stray opening/closing tags just in case
-        cleaned = re.sub(r"</?conversation_history>", "", cleaned)
-        return cleaned.strip()
-
-    @staticmethod
     def _message_rate_per_minute(recent_msgs: list[dict[str, Any]]) -> float:
         """Estimate messages per minute from recent message timestamps."""
         if len(recent_msgs) < 2:

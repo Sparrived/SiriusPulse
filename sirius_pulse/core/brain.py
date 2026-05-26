@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
+from sirius_pulse.core.utils import parse_sticker_tags, strip_conversation_history_xml
 
 logger = logging.getLogger(__name__)
 
@@ -462,7 +463,7 @@ class Brain:
                 raise
 
             # ── 4. 默认 post: 剥离模型回显的 XML 块 ──
-            reply = self._strip_conversation_history_xml(reply)
+            reply = strip_conversation_history_xml(reply)
 
             # ── 默认 post: SKIP 标签检测 ──
             if re.search(r"<\s*skip\s*/?\s*>", reply, flags=re.IGNORECASE):
@@ -482,7 +483,7 @@ class Brain:
             sticker_names: list[str] = []
             clean_reply = strip_skill_calls(reply).strip()
             if clean_reply:
-                clean_reply, sticker_names = self._parse_sticker_tags(clean_reply)
+                clean_reply, sticker_names = parse_sticker_tags(clean_reply)
 
             # ── 默认 post: 记录 token 用量 ──
             token_record = self._record_chat_tokens(
@@ -611,48 +612,6 @@ class Brain:
             return await asyncio.to_thread(self.provider_async.generate, request)
         else:
             raise RuntimeError("配置的提供商未实现 generate/generate_async 方法。")
-
-    @staticmethod
-    def _strip_conversation_history_xml(text: str) -> str:
-        """移除 LLM 模型可能回显的 conversation_history XML 块。"""
-        if not text:
-            return text
-        cleaned = re.sub(
-            r"<\s*conversation_history\s*[^>]*>.*?</\s*conversation_history\s*>",
-            "",
-            text,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        return cleaned.strip()
-
-    @staticmethod
-    def _parse_sticker_tags(text: str) -> tuple[str, list[str]]:
-        """从回复文本中解析 [STICKERS: "name1", "name2"] 格式的标签。
-
-        Returns:
-            (清理后的文本, 选中的表情包名称列表)
-        """
-        pattern = r"\[STICKERS:\s*(.+?)\s*\]"
-        match = re.search(pattern, text)
-        if not match:
-            return text, []
-
-        raw = match.group(1)
-        names: list[str] = []
-        for part in re.split(r"\s*,\s*", raw):
-            part = part.strip()
-            while part and part[0] in "'\"\u201c\u2018\u300c":
-                part = part[1:]
-            while part and part[-1] in "'\"\u201d\u2019\u300d":
-                part = part[:-1]
-            if part:
-                names.append(part)
-
-        chosen = names[:3]
-        prefix = text[: match.start()].rstrip()
-        suffix = text[match.end():].lstrip()
-        cleaned_text = f"{prefix} {suffix}".strip() if prefix and suffix else (prefix + suffix)
-        return cleaned_text, chosen
 
     def _record_raw_tokens(
         self,

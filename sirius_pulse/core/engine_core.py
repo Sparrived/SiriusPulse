@@ -82,8 +82,6 @@ class _EmotionalGroupChatEngineBase:
         def _get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]: ...
         def _get_tone_alignment(self, group_id: str) -> str: ...
         @staticmethod
-        def _strip_conversation_history_xml(text: str) -> str: ...
-        @staticmethod
         def _is_pure_image_message(content: str) -> bool: ...
         def _record_subtask_tokens(
             self,
@@ -1001,42 +999,6 @@ class _EmotionalGroupChatEngineBase:
     # ------------------------------------------------------------------
     # 表情包系统：从模型回复中解析 [STICKERS: ...] 标签并发送
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_sticker_tags(text: str) -> tuple[str, list[str]]:
-        """从回复文本中解析 [STICKERS: "name1", "name2"] 格式的标签。
-
-        Returns:
-            (清理后的文本, 选中的表情包名称列表)
-        """
-        import re
-
-        # 匹配 [STICKERS: ...] 块，内部内容宽松抓取
-        pattern = r'\[STICKERS:\s*(.+?)\s*\]'
-        match = re.search(pattern, text)
-        if not match:
-            return text, []
-
-        # 按逗号拆分，去除可选引号（支持 ASCII " ' 、中文 "" '' 「」）
-        raw = match.group(1)
-        names: list[str] = []
-        for part in re.split(r'\s*,\s*', raw):
-            part = part.strip()
-            # 剥除首尾引号字符
-            while part and part[0] in '\'"\u201c\u2018\u300c':
-                part = part[1:]
-            while part and part[-1] in '\'"\u201d\u2019\u300d':
-                part = part[:-1]
-            if part:
-                names.append(part)
-
-        chosen = names[:3]
-
-        # 移除标签区域，清理多余空白
-        prefix = text[: match.start()].rstrip()
-        suffix = text[match.end():].lstrip()
-        cleaned_text = f"{prefix} {suffix}".strip() if prefix and suffix else (prefix + suffix)
-        return cleaned_text, chosen
 
     def _pick_sticker_file(self, names: list[str]) -> Path | None:
         """从模型选择的名称列表中随机选一个，再匹配对应的图片文件。
