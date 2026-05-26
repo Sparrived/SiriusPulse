@@ -944,6 +944,7 @@ class CognitionAnalyzer:
         elif self.provider_async is not None and hasattr(self.provider_async, "generate_async"):
             raw = await self.provider_async.generate_async(request)
         elif isinstance(self.provider_async, LLMProvider):
+            import asyncio
             raw = await asyncio.to_thread(self.provider_async.generate, request)
         else:
             return None
