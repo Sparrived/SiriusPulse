@@ -295,7 +295,6 @@ class PluginDataStore:
     """
 
     def __init__(self, data_dir: Path, plugin_name: str) -> None:
-        import json as _json
         from pathlib import Path as _Path
 
         self._data_dir = _Path(data_dir)

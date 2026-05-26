@@ -11,7 +11,6 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from typing import Any
 
 logger = logging.getLogger(__name__)
 

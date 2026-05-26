@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from sirius_pulse.memory.user.simple import UserProfile, UserManager
 

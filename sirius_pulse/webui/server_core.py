@@ -19,7 +19,7 @@ from sirius_pulse.webui.server_skill_api import (
     api_persona_skills_get,
     api_persona_skill_toggle,
 )
-from sirius_pulse.webui.server_utils import _get_name, _json_response
+from sirius_pulse.webui.server_utils import _json_response
 
 LOG = logging.getLogger("sirius.webui")
 

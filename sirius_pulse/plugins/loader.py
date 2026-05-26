@@ -17,7 +17,6 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 from sirius_pulse.plugins.models import PluginDefinition
 
@@ -152,8 +151,6 @@ class PluginLoader:
         Returns:
             PluginBase 子类，找不到则返回 None
         """
-        from sirius_pulse.plugins.base import PluginBase
-
         # __init__.py 排在首位，其余按字母序
         py_files = sorted(plugin_path.glob("*.py"), key=lambda p: (p.name != "__init__.py", p.name))
 

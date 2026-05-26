@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
 
 from sirius_pulse.memory.semantic.models import UserSemanticProfile
 

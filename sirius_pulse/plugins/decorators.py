@@ -31,7 +31,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeVar, overload, TYPE_CHECKING
+from typing import Any, Callable, TypeVar, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sirius_pulse.plugins.models import CommandAST, PluginResponse

@@ -10,7 +10,6 @@ Extends heat.py with:
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any

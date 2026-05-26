@@ -6,7 +6,6 @@ IMMEDIATE → DELAYED → SILENT → PROACTIVE
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision

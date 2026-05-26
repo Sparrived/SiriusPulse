@@ -65,7 +65,7 @@ from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDeci
 from sirius_pulse.memory.user.simple import UserProfile
 
 # ── Providers ──
-from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
+from sirius_pulse.providers.base import AsyncLLMProvider, LLMProvider
 from sirius_pulse.providers import (
     AliyunBailianProvider,
     AutoRoutingProvider,

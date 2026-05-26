@@ -1131,8 +1131,6 @@ class BackgroundTasksMixin(_Base):
 
         # Deduplication: suppress if nearly identical to a recent reply
         if clean_reply:
-            import time
-
             now_ts = datetime.now(timezone.utc).timestamp()
             recent = self._recent_sent_replies.get(group_id, [])
             recent = [(t, r) for t, r in recent if now_ts - t < self._reply_dedup_window]

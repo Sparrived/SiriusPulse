@@ -511,7 +511,7 @@ class NapCatAdapter(BaseAdapter):
         self, event: dict[str, Any], self_id: str, group_id: str
     ) -> str:
         """将群聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
-        from ..protocol import _face_to_text, build_image_label, extract_sender_names
+        from ..protocol import _face_to_text, build_image_label
 
         parts: list[str] = []
         mention_cache: dict[str, str] = {}

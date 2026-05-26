@@ -9,7 +9,6 @@ Supports both active (model-callable) and passive (background task) modes.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid

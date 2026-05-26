@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any
 
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.diary.models import DiaryEntry

@@ -12,13 +12,10 @@ Philosophy alignment (v0.28+):
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import math
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from sirius_pulse.models.emotion import BasicEmotion, EmotionState, EmpathyStrategy
@@ -783,7 +780,6 @@ class CognitionAnalyzer:
     ) -> dict[str, Any] | None:
         """Single LLM call for joint emotion + intent + directedness analysis."""
         from sirius_pulse.providers.base import GenerationRequest, LLMProvider
-        import asyncio
 
         persona_identity = self._build_persona_identity()
         if self.ai_name:

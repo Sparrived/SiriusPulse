@@ -137,8 +137,6 @@ class PluginBase:
         Returns:
             PluginResponse 实例
         """
-        from sirius_pulse.plugins.models import PluginResponse
-
         # 检查是否有 @command 已发现
         if self._command_handlers is None:
             self._discover_commands()
@@ -169,8 +167,6 @@ class PluginBase:
             - @command 模式：调度结果（单个/流式多个）
             - 传统模式：单元素列表
         """
-        from sirius_pulse.plugins.models import PluginResponse
-
         # 检查是否有 @command
         if self._command_handlers is None:
             self._discover_commands()

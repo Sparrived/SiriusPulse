@@ -8,7 +8,6 @@ v1.2+: 支持插件自定义配置（如 chat_analyzer 的时间配置）
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -16,7 +15,6 @@ from typing import Any
 from aiohttp import web
 
 from sirius_pulse.plugins.loader import PluginLoader
-from sirius_pulse.plugins.models import PluginDefinition
 from sirius_pulse.plugins.config import get_config_manager
 from sirius_pulse.webui.server_core import _json_response
 

@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import shutil
@@ -22,7 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.core.persona_generator import PersonaGenerator
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.models.persona import PersonaProfile
 from sirius_pulse.persona_config import (

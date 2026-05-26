@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
 from sirius_pulse.memory.semantic.models import (
@@ -136,7 +136,6 @@ class SemanticMemoryManager:
         norms["mention_total"] = mention_total
         norms["mention_rate"] = round(mention_total / new_count, 4)
 
-        from sirius_pulse.core.utils import now_iso
         from datetime import datetime, timezone
         hour = datetime.now(timezone.utc).hour
         hours = norms.get("active_hours", {})

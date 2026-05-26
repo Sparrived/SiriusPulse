@@ -7,7 +7,7 @@ from typing import Any
 from sirius_pulse.developer_profiles import metadata_declares_developer
 from sirius_pulse.mixins import JsonSerializable
 from sirius_pulse.memory.user.simple import UserProfile, UserManager
-from sirius_pulse.config import TokenUsageRecord, OrchestrationPolicy
+from sirius_pulse.config import TokenUsageRecord
 
 
 @dataclass(slots=True)

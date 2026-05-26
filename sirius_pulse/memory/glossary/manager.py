@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 from sirius_pulse.memory.glossary.models import GlossaryTerm
 from sirius_pulse.utils.layout import WorkspaceLayout

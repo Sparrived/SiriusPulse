@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 from sirius_pulse.memory.diary.models import DiaryEntry
 from sirius_pulse.utils.layout import WorkspaceLayout

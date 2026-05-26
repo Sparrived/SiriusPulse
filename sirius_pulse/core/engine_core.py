@@ -18,12 +18,12 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.cognition import CognitionAnalyzer
-from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue, _parse_iso
+from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
-from sirius_pulse.core.identity_resolver import IdentityContext, IdentityResolver
-from sirius_pulse.core.model_router import ModelRouter, TaskConfig
+from sirius_pulse.core.identity_resolver import IdentityResolver
+from sirius_pulse.core.model_router import ModelRouter
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
-from sirius_pulse.core.prompt_factory import StyleAdapter, StyleParams
+from sirius_pulse.core.prompt_factory import StyleAdapter
 from sirius_pulse.core.response_strategy import ResponseStrategyEngine
 from sirius_pulse.core.rhythm import RhythmAnalyzer
 from sirius_pulse.core.threshold_engine import ThresholdEngine
@@ -33,13 +33,13 @@ from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager
 from sirius_pulse.memory.biography import BiographyManager
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.diary import DiaryManager
-from sirius_pulse.memory.glossary import GlossaryManager, GlossaryTerm
+from sirius_pulse.memory.glossary import GlossaryManager
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.user.simple import UserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3
 from sirius_pulse.models.models import Message, Participant, Transcript
-from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
+from sirius_pulse.models.response_strategy import StrategyDecision
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,6 @@ class _EmotionalGroupChatEngineBase:
         )
 
     def _init_persona(self, persona: Any) -> None:
-        from sirius_pulse.core.persona_generator import PersonaGenerator
         from sirius_pulse.core.persona_store import PersonaStore
         from sirius_pulse.models.persona import PersonaProfile
 

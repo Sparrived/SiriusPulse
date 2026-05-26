@@ -18,7 +18,6 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from sirius_pulse.plugins.models import CommandAST, PluginDefinition, PluginResponse
     from sirius_pulse.plugins.registry import PluginRegistry
-    from sirius_pulse.plugins.context import PluginContext
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +66,7 @@ class PluginExecutor:
         Returns:
             PluginBase 实例或 None
         """
-        from sirius_pulse.plugins.context import MessageContext, PluginContext
+        from sirius_pulse.plugins.context import PluginContext
         from sirius_pulse.plugins import PluginDataStore  # noqa: F811
 
         plugin_class = definition._plugin_class

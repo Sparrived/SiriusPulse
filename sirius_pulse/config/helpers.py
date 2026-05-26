@@ -9,7 +9,6 @@ from dataclasses import replace
 from typing import Any
 
 from sirius_pulse.config.models import Agent, MemoryPolicy, MultiModelConfig, OrchestrationPolicy, SessionConfig
-from sirius_pulse.exceptions import OrchestrationConfigError
 
 
 _TASK_COGNITION_ANALYZE = "cognition_analyze"
