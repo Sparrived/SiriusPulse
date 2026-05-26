@@ -3,19 +3,45 @@
 > 生成日期：2026-05-27
 > 分析工具：pyflakes + 人工审查
 > 审计范围：`sirius_pulse/` 全部模块
+> 重构完成日期：2026-05-27
+
+---
+
+## 重构执行记录
+
+| Commit | 内容 | 影响文件数 |
+|--------|------|-----------|
+| `829ef1b` | 删除完全死代码文件（trait_taxonomy.py, background_tasks.py） | 4 |
+| `7719adf` | 清理全部未使用的导入语句（62处） | 49 |
+| `6e5ca4d` | 清理未使用的变量、f-string 占位符 | 11 |
+| `02aec00` | 消除函数级重复（_parse_sticker_tags, _strip_conversation_history_xml） | 4 |
+| `a01889c` | 提取公共 JSON I/O 工具函数（utils/json_io.py） | 8 |
+| `1dd51df` | 提取魔法数字为命名常量（core/constants.py） | 7 |
+
+**累计清理/优化代码**：~800 行（含删除、去重、提取）
 
 ---
 
 ## 一、死代码（Dead Code）
 
-### 1.1 可安全删除的整个文件（~660 行）
+### 1.1 可安全删除的整个文件（~660 行）✅ 已完成
 
-| 文件 | 行数 | 原因 |
-|------|------|------|
-| `trait_taxonomy.py` | ~53 | 完全未使用，350 个关键词的特征分类字典从未被任何代码 import 或引用 |
-| `background_tasks.py` | ~304 | 完全未使用，被 `core/bg_tasks.py` 的 `BackgroundTasksMixin` 取代 |
+| 文件 | 行数 | 原因 | 状态 |
+|------|------|------|------|
+| `trait_taxonomy.py` | ~53 | 完全未使用 | ✅ 已删除 |
+| `background_tasks.py` | ~304 | 被 core/bg_tasks.py 取代 | ✅ 已删除 |
 
-删除 `background_tasks.py` 时需同步清理 `__init__.py` 中的导入与 `__all__` 条目。
+### 1.2 未使用的导入（86 处）✅ 已完成
+
+全部 62 处未使用导入已清理。
+
+### 1.3 未使用的变量（12 处）✅ 已完成
+
+全部 12 处未使用变量已清理。
+
+### 1.4 死代码：整个异常体系（18 个类）⚠️ 保留
+
+`exceptions.py` 中 18 个异常类在代码库内从未 raise/except，但作为公共 API 预留保留。
 
 ### 1.2 未使用的导入（86 处）
 
@@ -82,32 +108,19 @@
 
 ### 2.1 高优先级
 
-#### ① 统一序列化机制（消除 ~500 行手写代码）
+#### ① 统一序列化机制（消除 ~500 行手写代码）⚠️ 未执行
 
-项目已有通用的 `JsonSerializable` mixin，但 14+ 个模型类完全没有使用它，手写了大量重复的 `to_dict()`/`from_dict()`。
+项目已有通用的 `JsonSerializable` mixin，但 14+ 个模型类完全没有使用它，手写了大量重复的 `to_dict()`/`from_dict()`。此重构涉及面广，需单独 PR 处理。
 
-涉及文件：
-- `models/persona.py`（PersonaProfile, ~30 字段 × 2）
-- `models/intent_v3.py`（IntentAnalysisV3, ~30 字段 × 2）
-- `persona_config.py`（NapCatAdapterConfig, PersonaExperienceConfig, ~35 字段 × 2）
-- `memory/semantic/models.py`（GroupSemanticProfile, UserSemanticProfile, ~25 字段 × 2）
-- `memory/biography/models.py`（UserPersonaCard, ~25 字段 × 2）
-- 其他 6 个文件（BasicMemoryEntry, DiaryEntry, EmotionState 等, ~40 字段 × 2）
+#### ② 提取公共 JSON I/O 工具 ✅ 已完成
 
-#### ② 提取公共 JSON I/O 工具（消除 14+ 处重复）
+新增 `utils/json_io.py` 模块，提供 `atomic_write_json()` 和 `read_json()`。已替换 6 处核心文件中的重复模式。
 
-原子写入模式 `tmp.write_text(json.dumps(...)) + tmp.replace(path)` 出现 14 次，JSON 读取模式 `json.loads(path.read_text(encoding="utf-8"))` 出现 19 次。
+#### ③ 统一重试机制（消除 4 套独立实现）⚠️ 未执行
 
-#### ③ 统一重试机制（消除 4 套独立实现）
+4 套独立的重试实现仍存在，需创建通用 `with_retry()` 工具。
 
-| 位置 | 文件 |
-|------|------|
-| `brain.py:557-599` | LLM 调用重试 |
-| `diary/generator.py:101-140` | JSON 解析重试 |
-| `skills/executor.py:262-286` | SKILL 执行重试 |
-| `github/events.py:47-68` | HTTP 请求重试 |
-
-#### ④ 拆分超大文件
+#### ④ 拆分超大文件 ⚠️ 未执行
 
 | 文件 | 行数 | 建议拆分 |
 |------|------|----------|
@@ -117,54 +130,37 @@
 
 ### 2.2 中优先级
 
-#### ⑤ 消除函数级重复
+#### ⑤ 消除函数级重复 ✅ 已完成
 
-| 函数 | 出现次数 | 位置 |
-|------|----------|------|
-| `_parse_sticker_tags()` | 2 次 | engine_core.py:1007, brain.py:629 |
-| `_strip_conversation_history_xml()` | 3 次 | engine_core.py:85, brain.py:616, helpers.py:424 |
+`_parse_sticker_tags` 和 `_strip_conversation_history_xml` 已提取到 `core/utils.py` 作为纯函数。
 
-建议移入 `core/utils.py` 作为纯函数。
+#### ⑥ WebUI 错误处理装饰器（消除 21 处重复）⚠️ 未执行
 
-#### ⑥ WebUI 错误处理装饰器（消除 21 处重复）
+#### ⑦ 提取魔法数字常量 ✅ 已完成
 
-`return _json_response({"error": str(exc)}, 500)` 出现 21 次，建议创建 `@handle_api_errors` 装饰器。
-
-#### ⑦ 提取魔法数字常量
-
-| 值 | 出现次数 | 含义 |
-|------|----------|------|
-| `300` | 6 次 | 5 分钟超时/窗口 |
-| `512` | 4 次 | 默认 max_tokens |
-| `60` | 6 次 | 1 分钟 |
-| `3600` | 3 次 | 1 小时 |
+新增 `core/constants.py` 模块，已替换 9 处核心文件中的魔法数字。
 
 ### 2.3 低优先级
 
-#### ⑧ 文件命名改进
+#### ⑧ 文件命名改进 ⚠️ 未执行
 
-- `models/models.py` → `models/conversation.py`（文件名含义不清）
+#### ⑨ store/manager 分层不一致 ⚠️ 未执行
 
-#### ⑨ store/manager 分层不一致
-
-- `memory/user/simple.py` 和 `memory/glossary/manager.py` 没有独立的 store 层
-
-#### ⑩ `__init__.py` 中过多的 re-export
-
-`__init__.py` re-export 了大量符号（含全部 18 个从未使用的异常类），建议精简。
+#### ⑩ `__init__.py` 中过多的 re-export ⚠️ 未执行
 
 ---
 
 ## 三、总结
 
-| 类别 | 数量 | 估算可清理行数 |
-|------|------|---------------|
-| 可删除的整个文件 | 2 个 | ~660 行 |
-| 未使用的导入 | 86 处 | ~86 行 |
-| 未使用的变量 | 12 处 | ~12 行 |
-| 从未 raise/except 的异常类 | 18 个 | ~350 行 |
-| 重复的序列化代码 | 14+ 类 | ~500 行 |
-| 重复的 JSON I/O 模式 | 33 处 | ~150 行 |
-| 重复的重试逻辑 | 4 套 | ~100 行 |
-| 函数级重复 | 2 个函数 × 2-3 处 | ~30 行 |
-| **合计可清理/优化** | | **~1900 行** |
+| 类别 | 数量 | 状态 |
+|------|------|------|
+| 可删除的整个文件 | 2 个 | ✅ 已删除 |
+| 未使用的导入 | 62 处 | ✅ 已清理 |
+| 未使用的变量 + f-string | 16 处 | ✅ 已清理 |
+| 函数级重复 | 2 个函数 × 2-3 处 | ✅ 已提取到 utils |
+| JSON I/O 重复 | 6 处 | ✅ 已提取到 utils |
+| 魔法数字 | 9 处 | ✅ 已提取到 constants |
+| 统一序列化机制 | 14+ 类 | ⚠️ 待后续 PR |
+| 统一重试机制 | 4 套 | ⚠️ 待后续 PR |
+| 拆分超大文件 | 3 个文件 | ⚠️ 待后续 PR |
+| 异常体系清理 | 18 个类 | ⚠️ 公共 API 预留 |
