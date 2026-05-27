@@ -427,22 +427,30 @@ class WebUIServer:
             # 前端传的是数组格式，转换为 name -> config 的字典
             new_providers: dict[str, Any] = {}
             for cfg in providers_data:
-                if isinstance(cfg, dict) and "name" in cfg:
-                    name = cfg["name"]
+                if isinstance(cfg, dict):
+                    if "name" in cfg:
+                        name = cfg["name"]
+                    else:
+                        name = cfg.get("type", "unnamed")
+                        if name in new_providers:
+                            name = f"{name}-{len(new_providers)}"
                     new_providers[name] = {k: v for k, v in cfg.items() if k != "name"}
             providers_data = new_providers
         if isinstance(providers_data, dict):
+            if "providers" not in data:
+                data["providers"] = {}
             for provider, cfg in providers_data.items():
                 if isinstance(cfg, dict):
-                    if "providers" not in data:
-                        data["providers"] = {}
                     if provider not in data["providers"]:
                         data["providers"][provider] = {}
                     for k, v in cfg.items():
-                        # 如果前端传的是脱敏值，不覆盖原值
                         if k == "api_key" and isinstance(v, str) and "****" in v:
                             continue
                         data["providers"][provider][k] = v
+            saved_names = set(providers_data.keys())
+            for old_name in list(data["providers"].keys()):
+                if old_name not in saved_names:
+                    del data["providers"][old_name]
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
