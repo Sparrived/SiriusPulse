@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.core.bg_tasks import BackgroundTasks
 from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
 from sirius_pulse.core.cognition import CognitionAnalyzer
@@ -110,6 +111,7 @@ class _EmotionalGroupChatEngineBase:
         self._init_event_bus_and_persistence(work_path)
         self._init_skill_plugin_and_runtime()
         self._init_helpers()
+        self._init_bg_tasks()
         self._register_engine_hooks()
 
     def _init_expressiveness(self) -> None:
@@ -343,6 +345,10 @@ class _EmotionalGroupChatEngineBase:
         """初始化 Helpers 组件（组合模式）。"""
         self._helpers = Helpers(self)
 
+    def _init_bg_tasks(self) -> None:
+        """初始化 BackgroundTasks 组件（组合模式）。"""
+        self._bg_tasks_mgr = BackgroundTasks(self)
+
     # ==================================================================
     # 向后兼容的委托方法（委托给 Helpers 组件）
     # ==================================================================
@@ -442,6 +448,43 @@ class _EmotionalGroupChatEngineBase:
     ) -> float:
         """Enhance topic relevance using semantic memory (group + user) + topic window."""
         return self._helpers.enhance_topic_relevance(base_score, message, group_id, user_id)
+
+    # ==================================================================
+    # 向后兼容的委托方法（委托给 BackgroundTasks 组件）
+    # ==================================================================
+
+    def start_background_tasks(self) -> None:
+        """Start periodic background tasks."""
+        self._bg_tasks_mgr.start()
+
+    def stop_background_tasks(self) -> None:
+        """Cancel all background tasks."""
+        self._bg_tasks_mgr.stop()
+
+    async def proactive_check(
+        self,
+        group_id: str,
+        *,
+        _now: Any | None = None,
+    ) -> dict[str, Any] | None:
+        """Check if proactive trigger should fire for a group."""
+        return await self._bg_tasks_mgr.proactive_check(group_id, _now=_now)
+
+    async def tick_delayed_queue(
+        self,
+        group_id: str,
+        on_partial_reply: Any | None = None,
+    ) -> list[dict[str, Any]]:
+        """Process delayed response queue for a group."""
+        return await self._bg_tasks_mgr.tick_delayed_queue(group_id, on_partial_reply)
+
+    def pop_developer_chats(self, group_id: str) -> list[str]:
+        """Pop pending proactive developer chats for a group."""
+        return self._bg_tasks_mgr.pop_developer_chats(group_id)
+
+    def pop_reminders(self, group_id: str, adapter_type: str | None = None) -> list[str]:
+        """Pop pending reminder messages for a group."""
+        return self._bg_tasks_mgr.pop_reminders(group_id, adapter_type)
 
     def _register_engine_hooks(self) -> None:
         """向 Brain 注册引擎级别的后处理 hook。
