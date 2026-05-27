@@ -7,7 +7,7 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.webui.server_core import _get_name, _json_response
+from sirius_pulse.webui.server_utils import _get_name, _json_response
 
 LOG = logging.getLogger("sirius.webui")
 

@@ -18,6 +18,7 @@ LOG = logging.getLogger("sirius.webui.middleware")
 # 认证白名单路径前缀（免认证）
 _WHITELIST_PREFIXES: tuple[str, ...] = (
     "/static/",
+    "/ws/",
     "/api/auth/login",
     "/api/auth/status",
 )

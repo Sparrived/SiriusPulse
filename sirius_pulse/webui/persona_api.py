@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import shutil
 from typing import Any
 
 from aiohttp import web
@@ -14,8 +16,9 @@ from sirius_pulse.models.persona import PersonaProfile
 from sirius_pulse.persona_config import AdapterConfig, PersonaAdaptersConfig, PersonaExperienceConfig
 from sirius_pulse.platforms.persona_utils import generate_persona_from_interview
 from sirius_pulse.providers.routing import WorkspaceProviderManager
-from sirius_pulse.webui.server_core import _get_name, _json_response, LOG
-from sirius_pulse.webui.server_utils import handle_api_errors
+from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
+
+LOG = logging.getLogger("sirius.webui")
 
 
 async def api_personas_get(request: web.Request, persona_manager: Any) -> web.Response:
@@ -490,3 +493,45 @@ def _build_model_choices(persona_manager: Any) -> tuple[list[str], list[dict[str
         LOG.warning("获取模型列表失败", exc_info=True)
         pass
     return available_models, model_choices
+
+
+@handle_api_errors
+async def api_persona_clone(request: web.Request, persona_manager: Any) -> web.Response:
+    """克隆人格：复制源人格目录到新人格，分配新端口。"""
+    source_name = _get_name(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    target_name = str(body.get("target_name", "")).strip()
+    if not target_name:
+        target_name = f"{source_name}_copy"
+
+    # 校验目标名称合法性
+    if not target_name.replace("_", "").replace("-", "").isalnum():
+        return _json_response({"error": "target_name 只能包含字母、数字、下划线和连字符"}, 400)
+
+    # 检查源人格存在
+    source_paths = persona_manager.get_persona_paths(source_name)
+    if source_paths is None:
+        return _json_response({"error": f"源人格 '{source_name}' 不存在"}, 404)
+
+    # 检查目标人格不存在
+    existing = persona_manager.get_persona_paths(target_name)
+    if existing is not None:
+        return _json_response({"error": f"目标人格 '{target_name}' 已存在"}, 409)
+
+    # 复制目录
+    target_dir = persona_manager.personas_dir / target_name
+    shutil.copytree(str(source_paths.dir), str(target_dir))
+
+    # 删除引擎运行状态（不应继承源人格的 PID 等）
+    engine_state_dir = target_dir / "engine_state"
+    if engine_state_dir.exists():
+        for f in engine_state_dir.iterdir():
+            if f.name.startswith("worker_status"):
+                f.unlink(missing_ok=True)
+
+    LOG.info("人格已克隆: %s → %s", source_name, target_name)
+    return _json_response({"success": True, "source": source_name, "name": target_name})

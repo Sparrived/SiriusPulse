@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from sirius_pulse.webui.server_core import WebUIServer as _WebUIServer
+from sirius_pulse.webui.server_utils import _json_response
 from sirius_pulse.webui.persona_api import (
     api_personas_get,
     api_personas_post,
@@ -87,6 +88,12 @@ from sirius_pulse.webui.server_plugin_api import (
     api_plugins_reload,
     api_plugin_monitor_repos_get,
 )
+from sirius_pulse.webui.monitoring_api import (
+    api_monitoring_overview,
+    api_monitoring_persona_metrics,
+    api_monitoring_health,
+)
+from sirius_pulse.webui.persona_api import api_persona_clone
 
 
 class WebUIServer(_WebUIServer):
@@ -282,6 +289,38 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_biography_alias_index_update(self, request):
         return await api_persona_biography_alias_index_update(request, self.persona_manager)
+
+    # ─── 认证 API ────────────────────────────────────────
+
+    async def api_auth_login(self, request):
+        from aiohttp import web
+        body = await request.json()
+        username = str(body.get("username", ""))
+        password = str(body.get("password", ""))
+        token = self.auth_manager.authenticate(username, password)
+        if token:
+            return _json_response({"success": True, "token": token, "role": "admin"})
+        return _json_response({"error": "用户名或密码错误"}, 401)
+
+    async def api_auth_status(self, request):
+        has_admin = bool(self.auth_manager._config.get("admin_password_hash"))
+        return _json_response({"auth_enabled": has_admin})
+
+    # ─── 监控 API ────────────────────────────────────────
+
+    async def api_monitoring_overview(self, request):
+        return await api_monitoring_overview(request, self.persona_manager)
+
+    async def api_monitoring_persona_metrics(self, request):
+        return await api_monitoring_persona_metrics(request, self.persona_manager)
+
+    async def api_monitoring_health(self, request):
+        return await api_monitoring_health(request, self.persona_manager)
+
+    # ─── 人格克隆 ────────────────────────────────────────
+
+    async def api_persona_clone(self, request):
+        return await api_persona_clone(request, self.persona_manager)
 
 
 __all__ = ["WebUIServer"]

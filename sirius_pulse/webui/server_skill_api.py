@@ -64,32 +64,32 @@ async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> 
     registry = _load_skill_registry(paths.dir)
     persona_config = _load_persona_skill_config(paths.dir)
 
-        skills: list[dict[str, Any]] = []
-        for skill in registry.all_skills():
-            skill_cfg = persona_config.get(skill.name, {})
-            skills.append({
-                "name": skill.name,
-                "description": skill.description,
-                "version": skill.version,
-                "enabled": skill_cfg.get("enabled", True),
-                "developer_only": skill.developer_only,
-                "silent": skill.silent,
-                "tags": skill.tags,
-                "adapter_types": skill.adapter_types,
-                "parameters": [
-                    {
-                        "name": p.name,
-                        "type": p.type,
-                        "description": p.description,
-                        "required": p.required,
-                        "default": p.default,
-                    }
-                    for p in skill.parameters
-                ],
-                "config": skill_cfg.get("config", {}),
-            })
+    skills: list[dict[str, Any]] = []
+    for skill in registry.all_skills():
+        skill_cfg = persona_config.get(skill.name, {})
+        skills.append({
+            "name": skill.name,
+            "description": skill.description,
+            "version": skill.version,
+            "enabled": skill_cfg.get("enabled", True),
+            "developer_only": skill.developer_only,
+            "silent": skill.silent,
+            "tags": skill.tags,
+            "adapter_types": skill.adapter_types,
+            "parameters": [
+                {
+                    "name": p.name,
+                    "type": p.type,
+                    "description": p.description,
+                    "required": p.required,
+                    "default": p.default,
+                }
+                for p in skill.parameters
+            ],
+            "config": skill_cfg.get("config", {}),
+        })
 
-        return _json_response({"skills": skills})
+    return _json_response({"skills": skills})
 
 
 @handle_api_errors
@@ -136,11 +136,11 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
     persona_config = _load_persona_skill_config(paths.dir)
     skill_cfg = persona_config.get(skill_name, {})
 
-        # 同时返回 skill 的元数据（参数定义等）
-        registry = _load_skill_registry(paths.dir)
-        skill = registry.get(skill_name)
-        meta: dict[str, Any] = {}
-        if skill is not None:
+    # 同时返回 skill 的元数据（参数定义等）
+    registry = _load_skill_registry(paths.dir)
+    skill = registry.get(skill_name)
+    meta: dict[str, Any] = {}
+    if skill is not None:
             meta = {
                 "name": skill.name,
                 "description": skill.description,
@@ -156,12 +156,12 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
                 ],
             }
 
-        return _json_response({
-            "skill": skill_name,
-            "config": skill_cfg.get("config", {}),
-            "enabled": skill_cfg.get("enabled", True),
-            "meta": meta,
-        })
+    return _json_response({
+        "skill": skill_name,
+        "config": skill_cfg.get("config", {}),
+        "enabled": skill_cfg.get("enabled", True),
+        "meta": meta,
+    })
 
 
 @handle_api_errors

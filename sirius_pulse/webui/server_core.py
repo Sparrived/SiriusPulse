@@ -14,11 +14,6 @@ from aiohttp import web
 from sirius_pulse.providers.routing import WorkspaceProviderManager
 from sirius_pulse.webui.auth import AuthManager
 from sirius_pulse.webui.middleware import auth_middleware
-from sirius_pulse.webui.monitoring_api import (
-    api_monitoring_health,
-    api_monitoring_overview,
-    api_monitoring_persona_metrics,
-)
 from sirius_pulse.webui.server_skill_api import (
     api_persona_skill_config_get,
     api_persona_skill_config_post,
@@ -213,6 +208,18 @@ class WebUIServer:
         self.app.router.add_get("/api/personas/{name}/biography/aliases", self.api_persona_biography_alias_index)
         self.app.router.add_post("/api/personas/{name}/biography/aliases", self.api_persona_biography_alias_index_update)
         self.app.router.add_get("/api/personas/{name}/biography/{user_id}", self.api_persona_biography_get)
+
+        # 认证 API
+        self.app.router.add_post("/api/auth/login", self.api_auth_login)
+        self.app.router.add_get("/api/auth/status", self.api_auth_status)
+
+        # 监控 API
+        self.app.router.add_get("/api/monitoring/overview", self.api_monitoring_overview)
+        self.app.router.add_get("/api/monitoring/{name}/metrics", self.api_monitoring_persona_metrics)
+        self.app.router.add_get("/api/monitoring/{name}/health", self.api_monitoring_health)
+
+        # 人格克隆
+        self.app.router.add_post("/api/personas/{name}/clone", self.api_persona_clone)
 
         # Plugin 管理（全局，项目根 plugins/）
         self.app.router.add_get("/api/plugins", self.api_plugins_get)
