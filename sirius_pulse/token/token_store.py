@@ -7,6 +7,7 @@ so that cross-session and multi-dimensional analytics become possible.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from pathlib import Path
@@ -20,6 +21,8 @@ from sirius_pulse.token.token_utils import (
     _SCHEMA_VERSION,
 )
 from sirius_pulse.utils.layout import WorkspaceLayout
+
+logger = logging.getLogger(__name__)
 
 
 class TokenUsageStore:
@@ -371,7 +374,7 @@ class TokenUsageStore:
                 try:
                     rec["breakdown"] = json.loads(raw)
                 except json.JSONDecodeError:
-                    LOG.warning("解码 breakdown JSON 失败", exc_info=True)
+                    logger.warning("解码 breakdown JSON 失败", exc_info=True)
                     pass
         return records
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from sirius_pulse.config import Agent, AgentPreset
+from sirius_pulse.config import Agent, AgentPreset, OrchestrationPolicy, SessionConfig
 from sirius_pulse.config.jsonc import load_json_document
 from sirius_pulse.utils.layout import WorkspaceLayout
 

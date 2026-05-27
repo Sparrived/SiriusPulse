@@ -25,6 +25,7 @@ from sirius_pulse.adapters.base import BaseAdapter
 from sirius_pulse.adapters.models import (
     MessageGroup, TextSegment, AtSegment,
     ImageSegment, VoiceSegment, FileSegment, ReplySegment,
+    ParsedEvent,
 )
 from sirius_pulse.models.models import Message, Participant
 from sirius_pulse.skills.executor import strip_skill_calls

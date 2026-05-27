@@ -21,6 +21,7 @@ from sirius_pulse.config.config_helpers import (
     _resolve_env_vars,
     _resolve_values,
     _validate_config,
+    build_orchestration_policy_from_dict,
 )
 from sirius_pulse.config.jsonc import (
     build_default_orchestration_payload,
