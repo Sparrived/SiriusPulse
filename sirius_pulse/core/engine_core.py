@@ -18,6 +18,8 @@ from typing import Any
 
 from sirius_pulse.core.bg_tasks import BackgroundTasks
 from sirius_pulse.core.brain import Brain
+from sirius_pulse.core.engine_persistence import EnginePersistence
+from sirius_pulse.core.engine_sticker import EngineSticker
 from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
 from sirius_pulse.core.cognition import CognitionAnalyzer
@@ -81,6 +83,8 @@ class _EmotionalGroupChatEngineBase:
         self._init_helpers()
         self._init_bg_tasks()
         self._init_pipeline()
+        self._init_persistence()
+        self._init_sticker()
         self._register_engine_hooks()
 
     def _init_expressiveness(self) -> None:
@@ -322,6 +326,14 @@ class _EmotionalGroupChatEngineBase:
         """初始化 Pipeline 组件（组合模式）。"""
         self._pipeline = Pipeline(self)
 
+    def _init_persistence(self) -> None:
+        """初始化 Persistence 组件（组合模式）。"""
+        self._persistence = EnginePersistence(self)
+
+    def _init_sticker(self) -> None:
+        """初始化 Sticker 组件（组合模式）。"""
+        self._sticker = EngineSticker(self)
+
     # ==================================================================
     # 向后兼容的委托方法（委托给 Helpers 组件）
     # ==================================================================
@@ -527,6 +539,62 @@ class _EmotionalGroupChatEngineBase:
     ) -> None:
         """Background updates after main pipeline."""
         self._pipeline.background_update(group_id, message, emotion, intent, user_id)
+
+    # ==================================================================
+    # 向后兼容的委托方法（委托给 Persistence 组件）
+    # ==================================================================
+
+    def _persist_group_state(self, group_id: str) -> None:
+        """Persist basic memory and timestamps for a single group in real-time."""
+        self._persistence.persist_group_state(group_id)
+
+    def _persist_full_state(self) -> None:
+        """Persist all runtime state to disk (used on graceful shutdown)."""
+        self._persistence.persist_full_state()
+
+    def save_state(self) -> None:
+        """Persist all runtime state to disk."""
+        self._persistence.save_state()
+
+    def load_state(self) -> None:
+        """Restore runtime state from disk."""
+        self._persistence.load_state()
+
+    def _save_proactive_state(self) -> None:
+        """Persist proactive enabled/disabled groups and last trigger timestamps."""
+        self._persistence.save_proactive_state()
+
+    def _load_proactive_state(self) -> None:
+        """Restore proactive state from disk."""
+        self._persistence.load_proactive_state()
+
+    def set_proactive_enabled(self, group_id: str, enabled: bool) -> None:
+        """Enable or disable proactive triggers for a specific group."""
+        self._persistence.set_proactive_enabled(group_id, enabled)
+
+    def is_proactive_enabled(self, group_id: str) -> bool:
+        """Check if proactive triggers are enabled for a group."""
+        return self._persistence.is_proactive_enabled(group_id)
+
+    # ==================================================================
+    # 向后兼容的委托方法（委托给 Sticker 组件）
+    # ==================================================================
+
+    def _init_sticker_system(self) -> None:
+        """扫描 stickers 文件夹，获取可用表情包名称列表。"""
+        self._sticker._init_sticker_system()
+
+    def _pick_sticker_file(self, names: list[str]) -> Any:
+        """从模型选择的名称列表中随机选一个，再匹配对应的图片文件。"""
+        return self._sticker._pick_sticker_file(names)
+
+    async def _send_stickers_by_names(
+        self,
+        group_id: str,
+        names: list[str],
+    ) -> dict[str, Any]:
+        """从模型选中的名称中随机挑一个表情包发送（sub_type=1）。"""
+        return await self._sticker._send_stickers_by_names(group_id, names)
 
     def _register_engine_hooks(self) -> None:
         """向 Brain 注册引擎级别的后处理 hook。
@@ -964,343 +1032,3 @@ class _EmotionalGroupChatEngineBase:
         if arousal > 0.6:
             return "紧张"
         return "平静"
-
-    # ==================================================================
-    # Persistence
-    # ==================================================================
-
-    def _persist_group_state(self, group_id: str) -> None:
-        """Persist basic memory and timestamps for a single group in real-time."""
-        entries = self.basic_memory.get_all(group_id)[-100:]
-        self._state_store.save_working_memory(
-            group_id,
-            [
-                {
-                    "user_id": e.user_id,
-                    "role": e.role,
-                    "content": e.content,
-                    "timestamp": e.timestamp,
-                }
-                for e in entries
-            ],
-        )
-        self._state_store.save_group_timestamps(dict(self._group_last_message_at))
-
-    def _persist_full_state(self) -> None:
-        """Persist all runtime state to disk (used on graceful shutdown)."""
-        working_memories: dict[str, list[dict[str, Any]]] = {}
-        for group_id in self.basic_memory.list_groups():
-            entries = self.basic_memory.get_all(group_id)[-100:]
-            working_memories[group_id] = [
-                {
-                    "user_id": e.user_id,
-                    "role": e.role,
-                    "content": e.content,
-                    "timestamp": e.timestamp,
-                }
-                for e in entries
-            ]
-
-        import dataclasses
-
-        self._state_store.save_all(
-            working_memories=working_memories,
-            assistant_emotion=dataclasses.asdict(self.assistant_emotion),
-            delayed_queue=[],
-            group_timestamps=dict(self._group_last_message_at),
-            token_usage_records=[r.to_dict() for r in self.token_usage_records],
-            basic_memory=self.basic_memory.to_dict(),
-            diary_state={
-                "diarized_sources": {
-                    gid: list(sids) for gid, sids in self.diary_manager._diarized_sources.items()
-                }
-            },
-        )
-
-        # Save proactive state
-        self._save_proactive_state()
-
-        # Save persona
-        from sirius_pulse.core.persona_store import PersonaStore
-
-        PersonaStore.save(self.work_path, self.persona)
-
-    def save_state(self) -> None:
-        """Persist all runtime state to disk."""
-        self._persist_full_state()
-
-    def load_state(self) -> None:
-        """Restore runtime state from disk."""
-        try:
-            state = self._state_store.load_all()
-
-            # Basic memory
-            basic_mem_data = state.get("basic_memory")
-            if basic_mem_data:
-                try:
-                    self.basic_memory = BasicMemoryManager.from_dict(basic_mem_data)
-                except Exception as exc:
-                    logger.warning("基础记忆恢复失败，使用空实例: %s", exc)
-                    self.basic_memory = BasicMemoryManager(
-                        hard_limit=self.config.get("basic_memory_hard_limit", 30),
-                        context_window=self.config.get("basic_memory_context_window", 5),
-                    )
-
-            # Assistant emotion
-            ae = state.get("assistant_emotion")
-            if ae:
-                for key, value in ae.items():
-                    if hasattr(self.assistant_emotion, key):
-                        setattr(self.assistant_emotion, key, value)
-
-            # Group timestamps
-            self._group_last_message_at = dict(state.get("group_timestamps", {}))
-
-            # Reset timestamps to now so the proactive silence timer starts fresh
-            # after engine restart; otherwise offline time would be mis-counted as
-            # group silence.
-            now_iso = datetime.now(timezone.utc).isoformat()
-            for gid in list(self._group_last_message_at.keys()):
-                self._group_last_message_at[gid] = now_iso
-
-            # Diary state
-            diary_state = state.get("diary_state")
-            if diary_state:
-                try:
-                    sources = diary_state.get("diarized_sources", {})
-                    self.diary_manager._diarized_sources = {
-                        gid: set(sids) for gid, sids in sources.items()
-                    }
-                except Exception as exc:
-                    logger.warning("日记状态恢复失败: %s", exc)
-
-            # User manager (with cross-group global profiles)
-            user_mgr_data = state.get("user_manager")
-            if user_mgr_data:
-                try:
-                    self.user_manager = UserManager.from_dict(user_mgr_data)
-                except Exception as exc:
-                    logger.warning("用户管理器恢复失败，使用空实例: %s", exc)
-
-            # Re-bind context assembler to restored basic_memory
-            self.context_assembler = ContextAssembler(
-                self.basic_memory,
-                self.diary_manager._retriever,
-            )
-
-            # Token usage records
-            from sirius_pulse.config import TokenUsageRecord
-
-            for rec_data in state.get("token_usage_records", []):
-                try:
-                    self.token_usage_records.append(TokenUsageRecord.from_dict(rec_data))
-                except Exception:
-                    logger.warning("反序列化 token_usage_records 失败", exc_info=True)
-                    pass
-
-            # Load persona
-            from sirius_pulse.core.persona_store import PersonaStore
-
-            loaded = PersonaStore.load(self.work_path)
-            if loaded:
-                self.persona = loaded
-                logger.info("我的人设已经加载好了，我是 %s～", loaded.name)
-
-            logger.info(
-                "之前的记忆都找回来啦，一共 %d 个群的上下文我都记得。",
-                len(self.basic_memory.list_groups()),
-            )
-
-            # Initialize sticker system
-            self._init_sticker_system()
-        except Exception as exc:
-            logger.warning("状态恢复部分出错，继续尝试加载 proactive 状态: %s", exc)
-        finally:
-            # Proactive state must always be attempted regardless of other failures
-            self._load_proactive_state()
-
-    def _init_sticker_system(self) -> None:
-        """扫描 stickers 文件夹，获取可用表情包名称列表。
-
-        支持 `__` 分隔符命名：`喜欢__可爱.jpg`、`喜欢__生气.jpg`
-        都属于"喜欢"表情包，AI 发送 [STICKERS: "喜欢"] 时从中随机选一张。
-        """
-        stickers_dir = Path(self.work_path) / "stickers"
-        if not stickers_dir.is_dir():
-            logger.info("表情包目录不存在，跳过初始化: %s", stickers_dir)
-            self._sticker_names = []
-            self.brain.sticker_names = []
-            return
-
-        image_extensions = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-        names: set[str] = set()
-        for f in stickers_dir.iterdir():
-            if f.is_file() and f.suffix.lower() in image_extensions:
-                stem = f.stem
-                # 含 __ 的文件取前缀作为表情包名称（如 "喜欢__可爱.jpg" → "喜欢"）
-                if "__" in stem:
-                    names.add(stem.split("__", 1)[0])
-                else:
-                    names.add(stem)
-        self._sticker_names = sorted(names)
-        self.brain.sticker_names = self._sticker_names
-        logger.info(
-            "表情包系统初始化完成: 共 %d 个表情包名称，来自 %d 个文件",
-            len(self._sticker_names),
-            sum(1 for _ in stickers_dir.iterdir() if _.is_file() and _.suffix.lower() in image_extensions),
-        )
-
-    # ------------------------------------------------------------------
-    # Brain 委托：_generate 已删除，调用方请直接用 self.brain.chat() 或
-    # self.brain.generate_text()。外部模块（plugin/skill context）使用
-    # engine.brain.generate_text(system_prompt, messages, group_id)。
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # 表情包系统：从模型回复中解析 [STICKERS: ...] 标签并发送
-    # ------------------------------------------------------------------
-
-    def _pick_sticker_file(self, names: list[str]) -> Path | None:
-        """从模型选择的名称列表中随机选一个，再匹配对应的图片文件。
-
-        模型选 1-3 个名称，本地从中随机选 1 个发送。
-        匹配规则：
-        - 精确匹配：`喜欢.jpg`
-        - 包匹配：`喜欢__可爱.jpg`、`喜欢__生气.jpg`（`__` 前缀属于同一包）
-        从所有匹配文件中随机选一个。
-        """
-        if not names:
-            return None
-
-        stickers_dir = Path(self.work_path) / "stickers"
-        if not stickers_dir.is_dir():
-            return None
-
-        image_extensions = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-        import random
-
-        # 从模型选的名称中随机挑一个
-        chosen_name = random.choice(names[:3])
-
-        candidates: list[Path] = []
-
-        # 1. 精确匹配：{name}.{ext}
-        for ext in image_extensions:
-            candidate = stickers_dir / f"{chosen_name}{ext}"
-            if candidate.is_file():
-                candidates.append(candidate)
-
-        # 2. 包匹配：{name}__*.{ext}（支持同包多文件随机选一）
-        for f in stickers_dir.iterdir():
-            if f.is_file() and f.suffix.lower() in image_extensions:
-                if f.stem.startswith(f"{chosen_name}__"):
-                    candidates.append(f)
-
-        return random.choice(candidates) if candidates else None
-
-    async def _send_stickers_by_names(
-        self,
-        group_id: str,
-        names: list[str],
-    ) -> dict[str, Any]:
-        """从模型选中的名称中随机挑一个表情包发送（sub_type=1）。"""
-        # 概率跳过检查
-        import random
-        skip_rate = self.config.get("sticker_skip_probability", 0.33)
-        if random.random() < skip_rate:
-            logger.debug("表情包发送被概率跳过 (skip_rate=%.2f)", skip_rate)
-            return {"success": False, "error": "概率跳过"}
-
-        fp = self._pick_sticker_file(names)
-        if fp is None:
-            return {"success": False, "error": "没有匹配的表情包文件"}
-
-        adapter = getattr(self, "_adapter", None)
-        if adapter is None:
-            return {"success": False, "error": "没有可用的 adapter"}
-
-        try:
-            msg = [{"type": "image", "data": {"file": str(fp), "sub_type": "1"}}]
-            if group_id.startswith("private_"):
-                await adapter.send_private_msg(group_id.replace("private_", ""), msg)
-            else:
-                await adapter.send_group_msg(group_id, msg)
-
-            logger.info("表情包已发送: %s -> %s", fp.name, group_id)
-            return {
-                "success": True,
-                "sticker_name": fp.stem,
-                "file_path": str(fp),
-            }
-        except Exception as exc:
-            logger.warning("表情包发送失败: %s %s", fp.name, exc)
-            return {"success": False, "error": str(exc), "file_path": str(fp)}
-
-    # ------------------------------------------------------------------
-    # Proactive state persistence
-    # ------------------------------------------------------------------
-
-    def _save_proactive_state(self) -> None:
-        """Persist proactive enabled/disabled groups and last trigger timestamps."""
-        path = Path(self.work_path) / "engine_state" / "proactive_state.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        data = {
-            "enabled_groups": sorted(self._proactive_enabled_groups),
-            "disabled_groups": sorted(self._proactive_disabled_groups),
-            "last_proactive_at": dict(self._last_proactive_at),
-        }
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
-
-    def _load_proactive_state(self) -> None:
-        """Restore proactive state from disk."""
-        path = Path(self.work_path) / "engine_state" / "proactive_state.json"
-        if not path.exists():
-            return
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                logger.warning("Proactive state file is not a dict, skipping")
-                return
-            # Force str keys to avoid int/str mismatch
-            self._proactive_enabled_groups = {str(g) for g in data.get("enabled_groups", [])}
-            self._proactive_disabled_groups = {str(g) for g in data.get("disabled_groups", [])}
-            self._last_proactive_at = {
-                str(k): str(v) for k, v in dict(data.get("last_proactive_at", {})).items()
-            }
-            # Sync into ProactiveTrigger
-            self.proactive_trigger._last_proactive = dict(self._last_proactive_at)
-            logger.info(
-                "Proactive state loaded: %d enabled, %d disabled groups",
-                len(self._proactive_enabled_groups),
-                len(self._proactive_disabled_groups),
-            )
-        except Exception as exc:
-            logger.warning("Proactive state 加载失败: %s", exc)
-
-    def set_proactive_enabled(self, group_id: str, enabled: bool) -> None:
-        """Enable or disable proactive triggers for a specific group."""
-        gid = str(group_id)
-        if enabled:
-            self._proactive_enabled_groups.add(gid)
-            self._proactive_disabled_groups.discard(gid)
-        else:
-            self._proactive_enabled_groups.discard(gid)
-            self._proactive_disabled_groups.add(gid)
-        self._save_proactive_state()
-
-    def is_proactive_enabled(self, group_id: str) -> bool:
-        """Check if proactive triggers are enabled for a group.
-
-        Priority:
-        1. If group is in disabled list -> False
-        2. If enabled_groups is not empty and group not in it -> False
-        3. Otherwise -> True
-        """
-        gid = str(group_id)
-        if gid in self._proactive_disabled_groups:
-            return False
-        if self._proactive_enabled_groups:
-            return gid in self._proactive_enabled_groups
-        return True
