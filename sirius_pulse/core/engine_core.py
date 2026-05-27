@@ -14,10 +14,11 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sirius_pulse.core.bg_tasks import BackgroundTasks
 from sirius_pulse.core.brain import Brain
+from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
 from sirius_pulse.core.cognition import CognitionAnalyzer
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
@@ -50,39 +51,6 @@ logger = logging.getLogger(__name__)
 class _EmotionalGroupChatEngineBase:
     """Next-generation engine for emotional group chat."""
 
-    # ─── Pipeline 方法桩声明（运行时由 PipelineMixin 提供）───
-
-    if TYPE_CHECKING:
-
-        def _perception(self, group_id: str, message: Any, participants: Any) -> str: ...
-        async def _cognition(
-            self,
-            content: str,
-            user_id: str,
-            group_id: str,
-            *,
-            sender_type: str = "human",
-            multimodal_inputs: list[dict[str, str]] | None = None,
-            caller_is_developer: bool = False,
-        ) -> tuple[Any, Any, list[Any], Any]: ...
-        def _decision(
-            self, intent: Any, emotion: Any, group_id: str, user_id: str, sender_type: str = "human"
-        ) -> Any: ...
-        async def _execution(
-            self,
-            decision: Any,
-            message: Any,
-            intent: Any,
-            emotion: Any,
-            memories: list[Any],
-            group_id: str,
-            empathy: Any,
-            user_id: str,
-        ) -> dict[str, Any]: ...
-        def _background_update(
-            self, group_id: str, message: Any, emotion: Any, intent: Any, user_id: str
-        ) -> None: ...
-
     def __init__(
         self,
         *,
@@ -112,6 +80,7 @@ class _EmotionalGroupChatEngineBase:
         self._init_skill_plugin_and_runtime()
         self._init_helpers()
         self._init_bg_tasks()
+        self._init_pipeline()
         self._register_engine_hooks()
 
     def _init_expressiveness(self) -> None:
@@ -349,6 +318,10 @@ class _EmotionalGroupChatEngineBase:
         """初始化 BackgroundTasks 组件（组合模式）。"""
         self._bg_tasks_mgr = BackgroundTasks(self)
 
+    def _init_pipeline(self) -> None:
+        """初始化 Pipeline 组件（组合模式）。"""
+        self._pipeline = Pipeline(self)
+
     # ==================================================================
     # 向后兼容的委托方法（委托给 Helpers 组件）
     # ==================================================================
@@ -485,6 +458,75 @@ class _EmotionalGroupChatEngineBase:
     def pop_reminders(self, group_id: str, adapter_type: str | None = None) -> list[str]:
         """Pop pending reminder messages for a group."""
         return self._bg_tasks_mgr.pop_reminders(group_id, adapter_type)
+
+    # ==================================================================
+    # 向后兼容的委托方法（委托给 Pipeline 组件）
+    # ==================================================================
+
+    def _perception(
+        self,
+        group_id: str,
+        message: Any,
+        participants: Any,
+    ) -> str:
+        """Perception layer: normalize, register participants, update transcript."""
+        return self._pipeline.perception(group_id, message, participants)
+
+    async def _cognition(
+        self,
+        content: str,
+        user_id: str,
+        group_id: str,
+        *,
+        sender_type: str = "human",
+        multimodal_inputs: list[dict[str, str]] | None = None,
+        caller_is_developer: bool = False,
+    ) -> tuple[Any, Any, list[Any], Any]:
+        """Cognitive layer: unified emotion + intent + empathy + memory retrieval."""
+        return await self._pipeline.cognition(
+            content, user_id, group_id,
+            sender_type=sender_type,
+            multimodal_inputs=multimodal_inputs,
+            caller_is_developer=caller_is_developer,
+        )
+
+    def _decision(
+        self,
+        intent: Any,
+        emotion: Any,
+        group_id: str,
+        user_id: str,
+        sender_type: str = "human",
+    ) -> Any:
+        """Decision layer: strategy selection with threshold and rhythm."""
+        return self._pipeline.decision(intent, emotion, group_id, user_id, sender_type)
+
+    async def _execution(
+        self,
+        decision: Any,
+        message: Any,
+        intent: Any,
+        emotion: Any,
+        memories: list[Any],
+        group_id: str,
+        empathy: Any,
+        user_id: str,
+    ) -> dict[str, Any]:
+        """Execution layer: generate or queue reply."""
+        return await self._pipeline.execution(
+            decision, message, intent, emotion, memories, group_id, empathy, user_id
+        )
+
+    def _background_update(
+        self,
+        group_id: str,
+        message: Any,
+        emotion: Any,
+        intent: Any,
+        user_id: str,
+    ) -> None:
+        """Background updates after main pipeline."""
+        self._pipeline.background_update(group_id, message, emotion, intent, user_id)
 
     def _register_engine_hooks(self) -> None:
         """向 Brain 注册引擎级别的后处理 hook。

@@ -2,7 +2,7 @@
 
 All implementation has been split into:
   - engine_core   : class definition, __init__, public API, persistence, _generate
-  - pipeline      : Perception → Cognition → Decision → Execution → BackgroundUpdate
+  - pipeline      : pipeline stages (组合模式)
   - bg_tasks      : background tasks (组合模式)
   - helpers       : utility methods (组合模式)
 
@@ -13,22 +13,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from sirius_pulse.core.pipeline import PipelineMixin
 from sirius_pulse.skills.builtin.reminder import _is_reminder_due
 
 
-class EmotionalGroupChatEngine(
-    PipelineMixin,
-):
-    """Combined EmotionalGroupChatEngine with all mixins.
+class EmotionalGroupChatEngine:
+    """Combined EmotionalGroupChatEngine with all components.
 
-    Helpers 和 BackgroundTasks 已通过组合模式集成到基类中：
+    所有组件已通过组合模式集成到基类中：
     - engine._helpers: Helpers 组件
     - engine._bg_tasks_mgr: BackgroundTasks 组件
+    - engine._pipeline: Pipeline 组件
     不再需要通过继承 Mixin 方式集成。
-
-    PipelineMixin 通过 _Base 链继承 engine_core._EmotionalGroupChatEngineBase，
-    最终类无需直接继承基类，避免 MRO 冲突。
     """
 
     pass

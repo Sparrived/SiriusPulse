@@ -1,42 +1,51 @@
 """Pipeline stages for EmotionalGroupChatEngine.
 
 Perception → Cognition → Decision → Execution → BackgroundUpdate
+
+重构为组合模式：Pipeline 类通过引擎实例访问属性，
+基类通过委托方法保持 API 兼容。
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.identity_resolver import IdentityContext
-
-_Base = _EmotionalGroupChatEngineBase
-
 from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.models import Message, Participant
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 
+if TYPE_CHECKING:
+    from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
+
 logger = logging.getLogger(__name__)
 
 
-class PipelineMixin(_Base):
-    """Mixin providing pipeline stage methods for EmotionalGroupChatEngine."""
+class Pipeline:
+    """提供 pipeline 阶段方法的组件类。
+
+    通过引擎实例访问属性，实现组合模式。
+    """
+
+    def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
+        self._engine = engine
 
     # ==================================================================
     # Pipeline stages
     # ==================================================================
 
-    def _perception(
+    def perception(
         self,
         group_id: str,
         message: Message,
         participants: list[Participant],
     ) -> str:
         """Perception layer: normalize, register participants, update transcript."""
+        engine = self._engine
         # New: Register participants via identity resolver and user manager
         for p in participants:
             ctx = IdentityContext(
@@ -46,7 +55,7 @@ class PipelineMixin(_Base):
                 platform=message.channel,
                 is_developer=p.is_developer,
             )
-            self.identity_resolver.resolve(ctx, self.user_manager, group_id)
+            engine.identity_resolver.resolve(ctx, engine.user_manager, group_id)
 
         # Resolve current sender to a stable user_id (may reuse UUID from
         # participants or fall back to speaker name / platform_uid lookup).
@@ -57,12 +66,12 @@ class PipelineMixin(_Base):
             platform=message.channel,
             is_developer=False,
         )
-        sender_profile = self.identity_resolver.resolve(sender_ctx, self.user_manager, group_id)
+        sender_profile = engine.identity_resolver.resolve(sender_ctx, engine.user_manager, group_id)
         resolved_user_id = sender_profile.user_id
         resolved_speaker_name = sender_profile.name
 
         # Add to basic memory and archive to disk
-        entry = self.basic_memory.add_entry(
+        entry = engine.basic_memory.add_entry(
             group_id=group_id,
             user_id=resolved_user_id,
             speaker_name=resolved_speaker_name,
@@ -75,16 +84,16 @@ class PipelineMixin(_Base):
                 else None
             ),
         )
-        self.basic_store.append(entry)
+        engine.basic_store.append(entry)
 
         # Update group last message time
         from sirius_pulse.core.utils import now_iso
 
-        self._group_last_message_at[group_id] = now_iso()
-        self._persist_group_state(group_id)
+        engine._group_last_message_at[group_id] = now_iso()
+        engine._persist_group_state(group_id)
         return resolved_user_id
 
-    async def _cognition(
+    async def cognition(
         self,
         content: str,
         user_id: str,
@@ -95,8 +104,9 @@ class PipelineMixin(_Base):
         caller_is_developer: bool = False,
     ) -> tuple[IntentAnalysisV3, EmotionState, list[dict[str, Any]], Any]:
         """Cognitive layer: unified emotion + intent + empathy + memory retrieval."""
+        engine = self._engine
         # Build context from recent working memory (exclude current message)
-        recent = self._get_recent_messages(group_id, n=6)
+        recent = engine._helpers.get_recent_messages(group_id, n=6)
         if recent and recent[-1].get("content") == content:
             context_messages = recent[:-1]
         else:
@@ -107,7 +117,7 @@ class PipelineMixin(_Base):
 
         # 获取传记系统别名信息，帮助 LLM 区分 AI 和其他用户的别称
         group_aliases: dict[str, str] | None = None
-        bio_mgr = getattr(self, "biography_manager", None)
+        bio_mgr = getattr(engine, "biography_manager", None)
         if bio_mgr is not None:
             try:
                 group_aliases = bio_mgr.get_aliases_for_group(group_id) or None
@@ -115,7 +125,7 @@ class PipelineMixin(_Base):
                 pass
 
         t0 = time.perf_counter()
-        emotion, intent, empathy = await self.cognition_analyzer.analyze(
+        emotion, intent, empathy = await engine.cognition_analyzer.analyze(
             content, user_id, group_id, context_messages,
             sender_type=sender_type,
             multimodal_inputs=multimodal_inputs,
@@ -123,18 +133,18 @@ class PipelineMixin(_Base):
             group_aliases=group_aliases,
         )
         cognition_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-        if self.cognition_analyzer._last_request is not None:
-            self._record_subtask_tokens(
+        if engine.cognition_analyzer._last_request is not None:
+            engine._helpers.record_subtask_tokens(
                 task_name="cognition_analyze",
-                model_name=self._task_models.get("cognition_analyze", self._default_model),
+                model_name=engine._task_models.get("cognition_analyze", engine._default_model),
                 group_id=group_id or "",
-                request=self.cognition_analyzer._last_request,
+                request=engine.cognition_analyzer._last_request,
                 duration_ms=cognition_duration_ms,
             )
 
         # Rhythm context for persistence
         try:
-            rhythm = self.rhythm_analyzer.analyze(group_id or "", recent)
+            rhythm = engine.rhythm_analyzer.analyze(group_id or "", recent)
             turn_gap_readiness = getattr(rhythm, "turn_gap_readiness", 0.5)
         except Exception:
             logger.warning("计算 turn_gap_readiness 失败，使用默认值 0.5", exc_info=True)
@@ -157,7 +167,7 @@ class PipelineMixin(_Base):
 
         # Persist cognition event for emotional timeline analysis
         try:
-            self.cognition_store.add(
+            engine.cognition_store.add(
                 group_id=group_id or "",
                 user_id=user_id or "",
                 valence=getattr(emotion, "valence", 0.0),
@@ -178,17 +188,17 @@ class PipelineMixin(_Base):
             pass
 
         # Enhance topic relevance with semantic memory
-        intent.topic_relevance_score = self._enhance_topic_relevance(
+        intent.topic_relevance_score = engine._helpers.enhance_topic_relevance(
             intent.topic_relevance_score, content, group_id, user_id
         )
 
         # v1.3+: 维护短期话题窗口（滑动窗口，保留最近 N 条消息的关键词快照）
         try:
             msg_kw = extract_keywords(content)
-            window = self._topic_window.setdefault(group_id or "", [])
+            window = engine._topic_window.setdefault(group_id or "", [])
             window.append(msg_kw)
             # 只保留最近的 max_size 条
-            max_size = getattr(self, "_topic_window_max_size", 10)
+            max_size = getattr(engine, "_topic_window_max_size", 10)
             if len(window) > max_size:
                 window[:] = window[-max_size:]
         except Exception:
@@ -200,7 +210,7 @@ class PipelineMixin(_Base):
 
         return intent, emotion, memories, empathy
 
-    def _decision(
+    def decision(
         self,
         intent: IntentAnalysisV3,
         emotion: EmotionState,
@@ -209,6 +219,7 @@ class PipelineMixin(_Base):
         sender_type: str = "human",
     ) -> StrategyDecision:
         """Decision layer: strategy selection with threshold and rhythm."""
+        engine = self._engine
 
         # === ✅ Plugin 命令快速路径（v1.2+）===
         # 指令语义已明确，跳过 threshold/strategy，直接返回 PLUGIN 策略
@@ -226,17 +237,17 @@ class PipelineMixin(_Base):
             )
 
         # Rhythm context
-        recent_msgs = self._get_recent_messages(group_id, n=10)
-        rhythm = self.rhythm_analyzer.analyze(group_id, recent_msgs)
+        recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
+        rhythm = engine.rhythm_analyzer.analyze(group_id, recent_msgs)
 
         # Compute dynamic threshold via ThresholdEngine
-        user_profile = self.semantic_memory.get_user_profile(group_id, user_id)
+        user_profile = engine.semantic_memory.get_user_profile(group_id, user_id)
 
         # Message rate (per minute) from recent messages
-        msg_rate = self._message_rate_per_minute(recent_msgs)
+        msg_rate = engine._helpers.message_rate_per_minute(recent_msgs)
 
-        threshold = self.threshold_engine.compute(
-            sensitivity=self.config.get("sensitivity", 0.5),
+        threshold = engine.threshold_engine.compute(
+            sensitivity=engine.config.get("sensitivity", 0.5),
             heat_level=rhythm.heat_level,
             messages_per_minute=msg_rate,
             user_profile=user_profile,
@@ -244,26 +255,26 @@ class PipelineMixin(_Base):
         )
 
         # Persona reply frequency bias
-        freq = self.persona.reply_frequency
+        freq = engine.persona.reply_frequency
         if freq == "high":
             threshold *= 0.8
         elif freq == "low":
             threshold *= 1.3
         elif freq == "selective":
             # Only reply when strongly directed (>=threshold) or high urgency
-            if intent.directed_score < self.expressiveness.directed_threshold and intent.urgency_score < 70:
+            if intent.directed_score < engine.expressiveness.directed_threshold and intent.urgency_score < 70:
                 threshold *= 2.0
 
         # Entitlement suppression: if AI is not qualified for this topic, raise threshold
-        if intent.entitlement_score < self.expressiveness.entitlement_threshold:
+        if intent.entitlement_score < engine.expressiveness.entitlement_threshold:
             threshold *= 1.5
-            self._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
+            engine._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
 
         # 传记亲和力调节：仅当 LLM 曾输出过传记（last_updated_at 非空）时才生效
         biography_card = None
         affinity = 0.0
-        if getattr(self, "biography_manager", None) is not None:
-            biography_card = self.biography_manager.get_card(user_id)
+        if getattr(engine, "biography_manager", None) is not None:
+            biography_card = engine.biography_manager.get_card(user_id)
             if biography_card is not None and biography_card.last_updated_at:
                 # 用 EMA 平滑后的 affinity_score，不完全信任单次 LLM 输出
                 affinity = biography_card.affinity_score
@@ -274,26 +285,26 @@ class PipelineMixin(_Base):
                     factor = 1.0 + min(0.40, abs(affinity) * 0.25)
                     threshold *= factor
                 if abs(affinity) > 0.3:
-                    self._log_inner_thought(
+                    engine._log_inner_thought(
                         f"对ta的认知是affinity={affinity:.2f}，响应门槛调整了"
                     )
 
         intent.threshold = threshold
-        intent.activity_factor = self.threshold_engine._activity_factor(rhythm.heat_level, msg_rate)
-        intent.time_factor = self.threshold_engine._time_factor(None)
+        intent.activity_factor = engine.threshold_engine._activity_factor(rhythm.heat_level, msg_rate)
+        intent.time_factor = engine.threshold_engine._time_factor(None)
         if user_profile:
-            intent.engagement_factor = self.threshold_engine._engagement_factor(
+            intent.engagement_factor = engine.threshold_engine._engagement_factor(
                 user_profile
             )
 
-        sensitivity = self.config.get("sensitivity", 0.5)
-        directed_gate = self.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
+        sensitivity = engine.config.get("sensitivity", 0.5)
+        directed_gate = engine.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
         is_mentioned = intent.directed_score >= directed_gate
 
-        decision = self.strategy_engine.decide(
+        decision_result = engine.strategy_engine.decide(
             intent,
             is_mentioned=is_mentioned,
-            weak_directed_threshold=self.expressiveness.weak_directed_threshold,
+            weak_directed_threshold=engine.expressiveness.weak_directed_threshold,
             heat_level=rhythm.heat_level,
             sender_type=sender_type,
         )
@@ -301,33 +312,33 @@ class PipelineMixin(_Base):
         # Reply cooldown suppression: delayed responses are throttled,
         # but immediate responses (e.g. direct mentions) bypass cooldown.
         now = datetime.now(timezone.utc).timestamp()
-        last_reply = self._last_reply_at.get(group_id, 0)
+        last_reply = engine._last_reply_at.get(group_id, 0)
         seconds_since_reply = now - last_reply
-        cooldown = self.config.get("reply_cooldown_seconds", self.expressiveness.cooldown_seconds)
-        if seconds_since_reply < cooldown and decision.strategy == ResponseStrategy.DELAYED:
-            decision = StrategyDecision(
+        cooldown = engine.config.get("reply_cooldown_seconds", engine.expressiveness.cooldown_seconds)
+        if seconds_since_reply < cooldown and decision_result.strategy == ResponseStrategy.DELAYED:
+            decision_result = StrategyDecision(
                 strategy=ResponseStrategy.SILENT,
                 score=0.0,
-                threshold=decision.threshold,
-                urgency=decision.urgency,
-                relevance=decision.relevance,
+                threshold=decision_result.threshold,
+                urgency=decision_result.urgency,
+                relevance=decision_result.relevance,
                 reason=f"cooldown_{int(seconds_since_reply)}s",
             )
-            self._log_inner_thought("群里正聊得火热呢，我刚回完不久，先闭嘴看看...")
+            engine._log_inner_thought("群里正聊得火热呢，我刚回完不久，先闭嘴看看...")
 
         # Private-chat floor: never stay completely silent in 1-on-1
-        if group_id.startswith("private_") and decision.strategy == ResponseStrategy.SILENT:
-            decision = StrategyDecision(
+        if group_id.startswith("private_") and decision_result.strategy == ResponseStrategy.SILENT:
+            decision_result = StrategyDecision(
                 strategy=ResponseStrategy.DELAYED,
-                score=decision.score,
-                threshold=decision.threshold,
-                urgency=max(decision.urgency, 25.0),
-                relevance=max(decision.relevance, 0.5),
-                reason=f"private_chat_floor:{decision.reason}",
+                score=decision_result.score,
+                threshold=decision_result.threshold,
+                urgency=max(decision_result.urgency, 25.0),
+                relevance=max(decision_result.relevance, 0.5),
+                reason=f"private_chat_floor:{decision_result.reason}",
             )
 
         # 内心活动：决策后的思考
-        self._log_decision_thought(intent, decision)
+        engine._log_decision_thought(intent, decision_result)
 
         # 结构化日志：记录关键决策参数到后台
         logger.info(
@@ -338,9 +349,9 @@ class PipelineMixin(_Base):
             "expressiveness=%.2f sensitivity=%.2f reason=%s",
             group_id,
             user_id,
-            decision.strategy.value if hasattr(decision.strategy, "value") else str(decision.strategy),
-            decision.score,
-            decision.threshold,
+            decision_result.strategy.value if hasattr(decision_result.strategy, "value") else str(decision_result.strategy),
+            decision_result.score,
+            decision_result.threshold,
             intent.directed_score,
             directed_gate,
             intent.directed_at_current_ai,
@@ -352,33 +363,33 @@ class PipelineMixin(_Base):
             msg_rate,
             cooldown,
             seconds_since_reply,
-            self.expressiveness.expressiveness if self.expressiveness else 0.5,
-            self.config.get("sensitivity", 0.5),
-            getattr(decision, "reason", ""),
+            engine.expressiveness.expressiveness if engine.expressiveness else 0.5,
+            engine.config.get("sensitivity", 0.5),
+            getattr(decision_result, "reason", ""),
         )
 
         # Update assistant emotion
-        self.assistant_emotion.update_from_interaction(emotion, user_id)
+        engine.assistant_emotion.update_from_interaction(emotion, user_id)
 
         # Semantic: record atmosphere snapshot, resolve feedback, record interaction
-        recent_msgs = self._get_recent_messages(group_id, n=10)
-        self.semantic_memory.record_atmosphere(
+        recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
+        engine.semantic_memory.record_atmosphere(
             group_id=group_id,
             valence=emotion.valence,
             arousal=emotion.arousal,
             active_participants=len({m.get("user_id") for m in recent_msgs}),
         )
         if user_id:
-            self.semantic_memory.resolve_pending_feedback(
+            engine.semantic_memory.resolve_pending_feedback(
                 group_id=group_id,
                 user_id=user_id,
                 directed_score=getattr(intent, "directed_score", 0.0),
             )
-            self.semantic_memory.record_user_interaction(group_id=group_id, user_id=user_id)
+            engine.semantic_memory.record_user_interaction(group_id=group_id, user_id=user_id)
 
-        return decision
+        return decision_result
 
-    async def _execution(
+    async def execution(
         self,
         decision: StrategyDecision,
         message: Message,
@@ -390,11 +401,12 @@ class PipelineMixin(_Base):
         user_id: str,
     ) -> dict[str, Any]:
         """Execution layer: generate or queue reply."""
+        engine = self._engine
 
         # === ✅ Plugin 命令执行路径（v1.2+）===
         if decision.strategy == ResponseStrategy.PLUGIN and decision.plugin_intent:
-            if hasattr(self, '_execute_plugin_command'):
-                plugin_result = await self._execute_plugin_command(
+            if hasattr(engine, '_execute_plugin_command'):
+                plugin_result = await engine._execute_plugin_command(
                     decision=decision,
                     message=message,
                     group_id=group_id,
@@ -413,16 +425,16 @@ class PipelineMixin(_Base):
             # 消息本身有高 directed_score，如果阈值条件满足会自然入队延迟队列
 
         # Rhythm context for style adaptation
-        recent_msgs = self._get_recent_messages(group_id, n=10)
-        rhythm = self.rhythm_analyzer.analyze(group_id, recent_msgs)
+        recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
+        rhythm = engine.rhythm_analyzer.analyze(group_id, recent_msgs)
 
         # 收集人物传记信息（零 LLM，供后续 prompt 组装使用）
         self._collect_biography_section(group_id, user_id, message.content or "")
 
         # Turn gap suppression: don't interrupt conversation in full flow
         if (
-            rhythm.turn_gap_readiness < self.expressiveness.gap_readiness_threshold
-            and intent.directed_score < self.expressiveness.directed_threshold + 0.2
+            rhythm.turn_gap_readiness < engine.expressiveness.gap_readiness_threshold
+            and intent.directed_score < engine.expressiveness.directed_threshold + 0.2
             and decision.strategy == ResponseStrategy.IMMEDIATE
         ):
             decision = StrategyDecision(
@@ -433,7 +445,7 @@ class PipelineMixin(_Base):
                 relevance=decision.relevance,
                 reason=f"gap_not_ready:{decision.reason}",
             )
-            self._log_inner_thought("大家正聊得起劲呢，我先不插话了，等个合适的时机...")
+            engine._log_inner_thought("大家正聊得起劲呢，我先不插话了，等个合适的时机...")
 
         # Short filler suppression: pure punctuation / ultra-short messages
         # should not trigger immediate replies even if LLM overestimates directedness
@@ -450,18 +462,18 @@ class PipelineMixin(_Base):
                 relevance=decision.relevance,
                 reason=f"short_filler:{decision.reason}",
             )
-            self._log_inner_thought("就发个标点符号...先等等看有没有下文吧")
+            engine._log_inner_thought("就发个标点符号...先等等看有没有下文吧")
 
         # overheated + burst + not directed → downgrade to SILENT
-        is_directed = intent.directed_score >= self.expressiveness.directed_threshold
+        is_directed = intent.directed_score >= engine.expressiveness.directed_threshold
         if (
             rhythm.heat_level == "overheated"
             and rhythm.burst_detected
             and not is_directed
             and decision.strategy in (ResponseStrategy.IMMEDIATE, ResponseStrategy.DELAYED)
         ):
-            self._log_inner_thought("群聊太热闹了，我先不插话了...")
-            self._persist_group_state(group_id)
+            engine._log_inner_thought("群聊太热闹了，我先不插话了...")
+            engine._persist_group_state(group_id)
             return {
                 "strategy": "silent",
                 "reply": None,
@@ -472,8 +484,8 @@ class PipelineMixin(_Base):
         emotion_state = emotion.to_dict()
 
         if decision.strategy == ResponseStrategy.IMMEDIATE:
-            self._log_inner_thought("让我先稍等片刻，看看有没有后续消息...")
-            self.delayed_queue.enqueue(
+            engine._log_inner_thought("让我先稍等片刻，看看有没有后续消息...")
+            engine.delayed_queue.enqueue(
                 group_id=group_id,
                 user_id=user_id,
                 message_content=message.content,
@@ -488,7 +500,7 @@ class PipelineMixin(_Base):
                 pace=rhythm.pace,
                 speaker_name=message.speaker or "",
             )
-            self._persist_group_state(group_id)
+            engine._persist_group_state(group_id)
             return {
                 "strategy": "immediate",
                 "reply": None,
@@ -499,7 +511,7 @@ class PipelineMixin(_Base):
             }
 
         if decision.strategy == ResponseStrategy.DELAYED:
-            self.delayed_queue.enqueue(
+            engine.delayed_queue.enqueue(
                 group_id=group_id,
                 user_id=user_id,
                 message_content=message.content,
@@ -514,7 +526,7 @@ class PipelineMixin(_Base):
                 pace=rhythm.pace,
                 speaker_name=message.speaker or "",
             )
-            self._persist_group_state(group_id)
+            engine._persist_group_state(group_id)
             return {
                 "strategy": "delayed",
                 "reply": None,
@@ -522,7 +534,7 @@ class PipelineMixin(_Base):
                 "intent": intent.to_dict(),
             }
 
-        self._persist_group_state(group_id)
+        engine._persist_group_state(group_id)
 
         return {
             "strategy": decision.strategy.value,
@@ -539,12 +551,13 @@ class PipelineMixin(_Base):
     ) -> None:
         """收集人物传记信息，供 PromptFactory 使用。
 
-        结果缓存在 self._pending_biography 字典中，
+        结果缓存在 engine._pending_biography 字典中，
         供 _build_delayed_prompt 等后续 prompt 组装阶段取用。
         """
-        mgr = getattr(self, "biography_manager", None)
+        engine = self._engine
+        mgr = getattr(engine, "biography_manager", None)
         if mgr is None:
-            self._pending_biography = {}
+            engine._pending_biography = {}
             return
 
         # 当前发言者传记
@@ -569,7 +582,7 @@ class PipelineMixin(_Base):
         mentioned_cards = mgr.get_cards_for_users(list(mentioned.keys()))
         all_aliases = mgr.get_aliases_for_group(group_id)
 
-        self._pending_biography = {
+        engine._pending_biography = {
             "speaker_card": speaker_card,
             "mentioned_cards": mentioned_cards,
             "confidence": mentioned,
@@ -577,7 +590,7 @@ class PipelineMixin(_Base):
             "affinity_score": speaker_card.affinity_score if speaker_card else 0.0,
         }
 
-    def _background_update(
+    def background_update(
         self,
         group_id: str,
         message: Message,
@@ -586,11 +599,12 @@ class PipelineMixin(_Base):
         user_id: str,
     ) -> None:
         """Background updates after main pipeline."""
+        engine = self._engine
         # Update group sentiment cache for emotion island detection
-        self.cognition_analyzer.update_group_sentiment(group_id, emotion)
+        engine.cognition_analyzer.update_group_sentiment(group_id, emotion)
 
         # Update assistant emotion based on interaction
-        self.assistant_emotion.update_from_interaction(emotion, user_id)
+        engine.assistant_emotion.update_from_interaction(emotion, user_id)
 
         # Save display name (QQ name + group nickname) and accumulate content
         speaker_name = getattr(message, "speaker", "") or ""
@@ -600,11 +614,14 @@ class PipelineMixin(_Base):
                 display_name = nickname
                 if speaker_name and speaker_name != nickname:
                     display_name = f"{nickname}({speaker_name})"
-                self.semantic_memory.set_user_profile_fields(
+                engine.semantic_memory.set_user_profile_fields(
                     group_id, user_id, name=display_name
                 )
             elif speaker_name:
-                self.semantic_memory.set_user_profile_fields(
+                engine.semantic_memory.set_user_profile_fields(
                     group_id, user_id, name=speaker_name
                 )
 
+
+# 保持向后兼容的别名
+PipelineMixin = Pipeline
