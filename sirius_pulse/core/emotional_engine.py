@@ -4,7 +4,7 @@ All implementation has been split into:
   - engine_core   : class definition, __init__, public API, persistence, _generate
   - pipeline      : Perception → Cognition → Decision → Execution → BackgroundUpdate
   - bg_tasks      : background tasks, proactive checks, reminders, delayed queue, prompt builders
-  - helpers       : utility methods, token recording, exception classification
+  - helpers       : utility methods, token recording, exception classification (组合模式)
 
 This module re-exports the combined class so existing imports continue to work.
 """
@@ -16,15 +16,16 @@ from typing import Any
 from sirius_pulse.core.pipeline import PipelineMixin
 from sirius_pulse.core.bg_tasks import BackgroundTasksMixin
 from sirius_pulse.skills.builtin.reminder import _is_reminder_due
-from sirius_pulse.core.helpers import HelpersMixin
 
 
 class EmotionalGroupChatEngine(
     PipelineMixin,
     BackgroundTasksMixin,
-    HelpersMixin,
 ):
     """Combined EmotionalGroupChatEngine with all mixins.
+
+    Helpers 已通过组合模式集成到基类中（engine._helpers），
+    不再需要通过继承 Mixin 方式集成。
 
     各 Mixin 通过 _Base 链继承 engine_core._EmotionalGroupChatEngineBase，
     最终类无需直接继承基类，避免 MRO 冲突。

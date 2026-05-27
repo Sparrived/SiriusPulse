@@ -21,6 +21,7 @@ from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_W
 from sirius_pulse.core.cognition import CognitionAnalyzer
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
+from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 class _EmotionalGroupChatEngineBase:
     """Next-generation engine for emotional group chat."""
 
-    # ─── Mixin 方法桩声明（运行时由 PipelineMixin / BackgroundTasksMixin / HelpersMixin 提供）───
+    # ─── Pipeline 方法桩声明（运行时由 PipelineMixin 提供）───
 
     if TYPE_CHECKING:
 
@@ -80,38 +81,6 @@ class _EmotionalGroupChatEngineBase:
         def _background_update(
             self, group_id: str, message: Any, emotion: Any, intent: Any, user_id: str
         ) -> None: ...
-        def _get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]: ...
-        def _get_tone_alignment(self, group_id: str) -> str: ...
-        @staticmethod
-        def _is_pure_image_message(content: str) -> bool: ...
-        def _record_subtask_tokens(
-            self,
-            task_name: str,
-            model_name: str,
-            group_id: str,
-            request: Any | None = None,
-            duration_ms: float = 0.0,
-            token_breakdown: dict[str, int] | None = None,
-        ) -> None: ...
-        def _classify_exception(self, exc: Exception) -> str: ...
-        async def _execute_plugin_command(
-            self,
-            decision: Any,
-            message: Any,
-            group_id: str,
-            user_id: str,
-        ) -> dict[str, Any]: ...
-        def _enhance_topic_relevance(
-            self, base_score: float, message: str, group_id: str, user_id: str
-        ) -> float: ...
-        @staticmethod
-        def _message_rate_per_minute(recent_msgs: list[dict[str, Any]]) -> float: ...
-        @staticmethod
-        def _inject_multimodal_into_user_message(
-            messages: list[dict[str, Any]], multimodal_inputs: list[dict[str, str]] | None
-        ) -> list[dict[str, Any]]: ...
-        def _register_passive_skills(self) -> None: ...
-        def _wrap_event_bus_for_triggers(self) -> None: ...
 
     def __init__(
         self,
@@ -140,6 +109,7 @@ class _EmotionalGroupChatEngineBase:
         self._init_brain()
         self._init_event_bus_and_persistence(work_path)
         self._init_skill_plugin_and_runtime()
+        self._init_helpers()
         self._register_engine_hooks()
 
     def _init_expressiveness(self) -> None:
@@ -368,6 +338,110 @@ class _EmotionalGroupChatEngineBase:
 
         self._topic_window: dict[str, list[set[str]]] = {}
         self._topic_window_max_size = 10
+
+    def _init_helpers(self) -> None:
+        """初始化 Helpers 组件（组合模式）。"""
+        self._helpers = Helpers(self)
+
+    # ==================================================================
+    # 向后兼容的委托方法（委托给 Helpers 组件）
+    # ==================================================================
+
+    def set_skill_runtime(
+        self,
+        *,
+        skill_registry: Any | None = None,
+        skill_executor: Any | None = None,
+    ) -> None:
+        """Attach SKILL registry and executor to the engine."""
+        self._helpers.set_skill_runtime(
+            skill_registry=skill_registry,
+            skill_executor=skill_executor,
+        )
+
+    def set_plugin_runtime(
+        self,
+        *,
+        plugin_registry: Any | None = None,
+        plugin_executor: Any | None = None,
+        plugin_dispatcher: Any | None = None,
+    ) -> None:
+        """Attach Plugin registry, executor, and dispatcher to the engine."""
+        self._helpers.set_plugin_runtime(
+            plugin_registry=plugin_registry,
+            plugin_executor=plugin_executor,
+            plugin_dispatcher=plugin_dispatcher,
+        )
+
+    async def _execute_plugin_command(
+        self,
+        decision: Any,
+        message: Any,
+        group_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        """Execute a Plugin command and produce the reply."""
+        return await self._helpers.execute_plugin_command(
+            decision, message, group_id, user_id
+        )
+
+    def _register_passive_skills(self) -> None:
+        """Discover passive SKILLs and instantiate their background tasks / triggers."""
+        self._helpers._register_passive_skills()
+
+    def _wrap_event_bus_for_triggers(self) -> None:
+        """Wrap event_bus.emit so passive SKILL triggers fire on matching events."""
+        self._helpers._wrap_event_bus_for_triggers()
+
+    def _get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
+        """获取最近n条消息。"""
+        return self._helpers.get_recent_messages(group_id, n)
+
+    def _get_tone_alignment(self, group_id: str) -> str:
+        """Detect current group tone from atmosphere history for style alignment."""
+        return self._helpers.get_tone_alignment(group_id)
+
+    @staticmethod
+    def _is_pure_image_message(content: str) -> bool:
+        """Check if content contains only image placeholders with no substantive text."""
+        return Helpers.is_pure_image_message(content)
+
+    @staticmethod
+    def _message_rate_per_minute(recent_msgs: list[dict[str, Any]]) -> float:
+        """Estimate messages per minute from recent message timestamps."""
+        return Helpers.message_rate_per_minute(recent_msgs)
+
+    @staticmethod
+    def _inject_multimodal_into_user_message(
+        messages: list[dict[str, Any]],
+        multimodal_inputs: list[dict[str, str]] | None,
+    ) -> list[dict[str, Any]]:
+        """Convert the last user message's string content into OpenAI multimodal list."""
+        return Helpers.inject_multimodal_into_user_message(messages, multimodal_inputs)
+
+    def _record_subtask_tokens(
+        self,
+        task_name: str,
+        model_name: str,
+        group_id: str,
+        request: Any | None = None,
+        duration_ms: float = 0.0,
+        token_breakdown: dict[str, int] | None = None,
+    ) -> None:
+        """Record token usage for a sub-task (cognition, diary, etc.)."""
+        self._helpers.record_subtask_tokens(
+            task_name, model_name, group_id, request, duration_ms, token_breakdown
+        )
+
+    def _classify_exception(self, exc: Exception) -> str:
+        """Classify an LLM provider exception into a structured error type."""
+        return self._helpers.classify_exception(exc)
+
+    def _enhance_topic_relevance(
+        self, base_score: float, message: str, group_id: str, user_id: str
+    ) -> float:
+        """Enhance topic relevance using semantic memory (group + user) + topic window."""
+        return self._helpers.enhance_topic_relevance(base_score, message, group_id, user_id)
 
     def _register_engine_hooks(self) -> None:
         """向 Brain 注册引擎级别的后处理 hook。

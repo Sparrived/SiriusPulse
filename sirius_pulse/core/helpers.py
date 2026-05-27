@@ -1,4 +1,8 @@
-"""Helper methods and standalone functions for EmotionalGroupChatEngine."""
+"""Helper methods for EmotionalGroupChatEngine.
+
+重构为组合模式：Helpers 类通过引擎实例访问属性，
+基类通过委托方法保持 API 兼容。
+"""
 
 from __future__ import annotations
 
@@ -6,27 +10,28 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.cognition import extract_keywords
 
-_Base = _EmotionalGroupChatEngineBase
-
+if TYPE_CHECKING:
+    from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 
 logger = logging.getLogger(__name__)
 
 
-class HelpersMixin(_Base):
-    """Mixin providing helper methods for EmotionalGroupChatEngine."""
+class Helpers:
+    """提供辅助方法的组件类。
+
+    通过引擎实例访问属性，实现组合模式。
+    """
+
+    def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
+        self._engine = engine
 
     # ==================================================================
-    # Helpers
-    # ==================================================================
-
-    # ------------------------------------------------------------------
     # SKILL integration
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def set_skill_runtime(
         self,
@@ -35,13 +40,13 @@ class HelpersMixin(_Base):
         skill_executor: Any | None = None,
     ) -> None:
         """Attach SKILL registry and executor to the engine."""
-        self._skill_registry = skill_registry
-        self._skill_executor = skill_executor
+        self._engine._skill_registry = skill_registry
+        self._engine._skill_executor = skill_executor
         self._register_passive_skills()
 
-    # ------------------------------------------------------------------
+    # ==================================================================
     # Plugin integration（v1.2+）
-    # ------------------------------------------------------------------
+    # ==================================================================
 
     def set_plugin_runtime(
         self,
@@ -51,17 +56,17 @@ class HelpersMixin(_Base):
         plugin_dispatcher: Any | None = None,
     ) -> None:
         """Attach Plugin registry, executor, and dispatcher to the engine."""
-        self._plugin_registry = plugin_registry
-        self._plugin_executor = plugin_executor
-        self._plugin_dispatcher = plugin_dispatcher
+        self._engine._plugin_registry = plugin_registry
+        self._engine._plugin_executor = plugin_executor
+        self._engine._plugin_dispatcher = plugin_dispatcher
 
         # 同步更新 CognitionAnalyzer 的 plugin_registry
         if plugin_registry is not None:
-            cog = getattr(self, "cognition_analyzer", None)
+            cog = getattr(self._engine, "cognition_analyzer", None)
             if cog is not None:
                 cog.plugin_registry = plugin_registry
 
-    async def _execute_plugin_command(
+    async def execute_plugin_command(
         self,
         decision: Any,
         message: Any,
@@ -74,14 +79,15 @@ class HelpersMixin(_Base):
         Returns the same dict shape as the normal _execution() path so the
         bridge can handle plugin replies identically to normal replies.
         """
+        engine = self._engine
         plugin_name = decision.plugin_intent
         if not plugin_name:
             return {"reply": None, "strategy": "plugin", "error": "no_plugin_name"}
 
-        if not hasattr(self, "_plugin_registry") or self._plugin_registry is None:
+        if not hasattr(engine, "_plugin_registry") or engine._plugin_registry is None:
             return {"reply": None, "strategy": "plugin", "error": "no_registry"}
 
-        definition = self._plugin_registry.get(plugin_name)
+        definition = engine._plugin_registry.get(plugin_name)
         if definition is None:
             return {"reply": f"[Plugin '{plugin_name}' 未找到]", "strategy": "plugin"}
 
@@ -132,16 +138,16 @@ class HelpersMixin(_Base):
 
         # 确定调用者是否为开发者
         caller_is_developer = False
-        if hasattr(self, "user_manager"):
+        if hasattr(engine, "user_manager"):
             try:
                 platform = getattr(message, "channel", "")
                 ext_uid = getattr(message, "channel_user_id", "")
                 if platform and ext_uid:
-                    resolved_uid = self.user_manager.resolve_user_id(
+                    resolved_uid = engine.user_manager.resolve_user_id(
                         platform=platform, external_uid=ext_uid
                     )
                     if resolved_uid:
-                        caller_profile = self.user_manager.get_user(resolved_uid, group_id)
+                        caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
                         caller_is_developer = bool(
                             caller_profile and getattr(caller_profile, "is_developer", False)
                         )
@@ -162,19 +168,19 @@ class HelpersMixin(_Base):
             speaker_name=getattr(message, "speaker", ""),
         )
 
-        if self._plugin_executor is None:
+        if engine._plugin_executor is None:
             logger.debug("Plugin 执行器未加载，跳过 _execute_plugin_command")
             return {}
 
         # 执行 Plugin → list[PluginResponse]
-        results = await self._plugin_executor.execute(
+        results = await engine._plugin_executor.execute(
             plugin_name,
             cmd,
             group_id=group_id,
             user_id=user_id,
             caller_is_developer=caller_is_developer,
             adapter=self._get_platform_adapter(),
-            engine=self,
+            engine=engine,
             message_context=msg_ctx,
         )
 
@@ -197,11 +203,11 @@ class HelpersMixin(_Base):
 
             any_success = True
 
-            if self._plugin_dispatcher is not None:
-                dispatch_output = await self._plugin_dispatcher.dispatch(
+            if engine._plugin_dispatcher is not None:
+                dispatch_output = await engine._plugin_dispatcher.dispatch(
                     result,
                     definition,
-                    engine=self,
+                    engine=engine,
                     group_id=group_id,
                     user_id=user_id,
                 )
@@ -225,10 +231,10 @@ class HelpersMixin(_Base):
         # 将最终回复录入记忆链（与正常 Pipeline 回复一致，仅成功时记录）
         if final_reply and any_success:
             try:
-                self.basic_memory.add_entry(
+                engine.basic_memory.add_entry(
                     group_id=group_id,
                     user_id="assistant",
-                    speaker_name=self.persona.name,
+                    speaker_name=engine.persona.name,
                     role="assistant",
                     content=final_reply,
                 )
@@ -249,12 +255,13 @@ class HelpersMixin(_Base):
 
     def _register_passive_skills(self) -> None:
         """Discover passive SKILLs and instantiate their background tasks / triggers."""
-        if self._skill_registry is None:
+        engine = self._engine
+        if engine._skill_registry is None:
             return
         from sirius_pulse.core.skill_engine_context import SkillEngineContextImpl
 
-        ctx = SkillEngineContextImpl(self)
-        for skill in self._skill_registry.passive_skills():
+        ctx = SkillEngineContextImpl(engine)
+        for skill in engine._skill_registry.passive_skills():
             try:
                 # 生命周期：on_load（通过 asyncio.create_task 调度，与后台任务生命周期一致）
                 if skill._on_load_factory is not None:
@@ -265,15 +272,15 @@ class HelpersMixin(_Base):
                                 on_load_coro,
                                 name=f"passive_skill_on_load_{skill.name}",
                             )
-                            self._bg_tasks.add(task)
-                            task.add_done_callback(self._bg_tasks.discard)
+                            engine._bg_tasks.add(task)
+                            task.add_done_callback(engine._bg_tasks.discard)
                             logger.info("被动SKILL on_load 已调度: %s", skill.name)
                     except Exception as exc:
                         logger.warning("被动SKILL on_load 失败 (%s): %s", skill.name, exc)
 
                 # 生命周期：注册 on_unload
                 if skill._on_unload_factory is not None:
-                    self._passive_skill_unloaders.append((ctx, skill._on_unload_factory))
+                    engine._passive_skill_unloaders.append((ctx, skill._on_unload_factory))
 
                 if skill._background_task_factory is not None:
                     specs = skill._background_task_factory(ctx)
@@ -283,12 +290,12 @@ class HelpersMixin(_Base):
                         specs = [specs]
                     for spec in specs:
                         task = asyncio.create_task(
-                            spec.run_loop(lambda: self._bg_running),
+                            spec.run_loop(lambda: engine._bg_running),
                             name=f"passive_skill_{spec.name}",
                         )
-                        self._passive_skill_tasks[spec.name] = task
-                        self._bg_tasks.add(task)
-                        task.add_done_callback(self._bg_tasks.discard)
+                        engine._passive_skill_tasks[spec.name] = task
+                        engine._bg_tasks.add(task)
+                        task.add_done_callback(engine._bg_tasks.discard)
                         logger.info(
                             "被动SKILL后台任务已注册: %s (间隔 %.1fs)",
                             spec.name,
@@ -302,19 +309,20 @@ class HelpersMixin(_Base):
                     if not isinstance(trigger_specs, list):
                         trigger_specs = [trigger_specs]
                     for spec in trigger_specs:
-                        self._passive_skill_triggers.setdefault(spec.event_type, []).append(spec)
+                        engine._passive_skill_triggers.setdefault(spec.event_type, []).append(spec)
                         logger.info(
                             "被动SKILL触发器已注册: %s (事件: %s)", spec.name, spec.event_type
                         )
             except Exception as exc:
                 logger.warning("注册被动SKILL失败 (%s): %s", skill.name, exc)
 
-        if self._passive_skill_triggers:
+        if engine._passive_skill_triggers:
             self._wrap_event_bus_for_triggers()
 
     def _wrap_event_bus_for_triggers(self) -> None:
         """Wrap event_bus.emit so passive SKILL triggers fire on matching events."""
-        original_emit = self.event_bus.emit
+        engine = self._engine
+        original_emit = engine.event_bus.emit
         dispatch = self._dispatch_passive_triggers
 
         async def _dispatching_emit(event: Any) -> None:
@@ -324,11 +332,12 @@ class HelpersMixin(_Base):
             except Exception as exc:
                 logger.warning("被动SKILL触发分发失败: %s", exc)
 
-        self.event_bus.emit = _dispatching_emit  # type: ignore[assignment]
+        engine.event_bus.emit = _dispatching_emit  # type: ignore[assignment]
 
     async def _dispatch_passive_triggers(self, event_type: str, data: dict[str, Any]) -> None:
         """Dispatch registered passive SKILL triggers for the given event type."""
-        triggers = self._passive_skill_triggers.get(event_type)
+        engine = self._engine
+        triggers = engine._passive_skill_triggers.get(event_type)
         if not triggers:
             return
         for spec in triggers:
@@ -337,8 +346,9 @@ class HelpersMixin(_Base):
             except Exception as exc:
                 logger.warning("被动SKILL触发器执行失败 (%s): %s", spec.name, exc)
 
-    def _get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
-        entries = self.basic_memory.get_all(group_id)[-n:]
+    def get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
+        """获取最近n条消息。"""
+        entries = self._engine.basic_memory.get_all(group_id)[-n:]
         return [
             {
                 "user_id": e.user_id,
@@ -350,9 +360,9 @@ class HelpersMixin(_Base):
 
     def _get_platform_adapter(self) -> Any:
         """获取平台适配器实例。引擎在 add_skill_bridge() 时直接持有。"""
-        return getattr(self, "_adapter", None)
+        return getattr(self._engine, "_adapter", None)
 
-    def _enhance_topic_relevance(
+    def enhance_topic_relevance(
         self,
         base_score: float,
         message: str,
@@ -365,13 +375,14 @@ class HelpersMixin(_Base):
         但如果与近 N 轮群聊话题的关键词重叠 >= 2 个，也视为话题相关，
         修复"用户B说'评分怎么样'"等跨轮次关联场景的话题跟踪盲区。
         """
+        engine = self._engine
         text_lower = (message or "").lower()
         if not text_lower:
             return base_score
         boost = 0.0
 
         # Group-level topic signals
-        group_profile = self.semantic_memory.get_group_profile(group_id)
+        group_profile = engine.semantic_memory.get_group_profile(group_id)
         if group_profile:
             if group_profile.dominant_topic and group_profile.dominant_topic.lower() in text_lower:
                 boost += 0.15
@@ -382,7 +393,7 @@ class HelpersMixin(_Base):
         # v1.3+: 短期话题窗口增强 —— 跨轮次话题跟踪
         try:
             msg_kw = extract_keywords(message)
-            window = getattr(self, "_topic_window", {}).get(group_id, [])
+            window = getattr(engine, "_topic_window", {}).get(group_id, [])
             for prev_kw in reversed(window):
                 overlap = len(msg_kw & prev_kw)
                 if overlap >= 2:
@@ -396,9 +407,9 @@ class HelpersMixin(_Base):
 
         return min(1.0, base_score + boost)
 
-    def _get_tone_alignment(self, group_id: str) -> str:
+    def get_tone_alignment(self, group_id: str) -> str:
         """Detect current group tone from atmosphere history for style alignment."""
-        group_profile = self.semantic_memory.get_group_profile(group_id)
+        group_profile = self._engine.semantic_memory.get_group_profile(group_id)
         if not group_profile or not group_profile.atmosphere_history:
             return ""
 
@@ -419,7 +430,7 @@ class HelpersMixin(_Base):
         return ""
 
     @staticmethod
-    def _message_rate_per_minute(recent_msgs: list[dict[str, Any]]) -> float:
+    def message_rate_per_minute(recent_msgs: list[dict[str, Any]]) -> float:
         """Estimate messages per minute from recent message timestamps."""
         if len(recent_msgs) < 2:
             return 0.0
@@ -444,7 +455,7 @@ class HelpersMixin(_Base):
             return 0.0
 
     @staticmethod
-    def _is_pure_image_message(content: str) -> bool:
+    def is_pure_image_message(content: str) -> bool:
         """Check if content contains only image placeholders with no substantive text.
 
         Image placeholder format: 【图片: filename.png】 or 【图片描述：...】
@@ -456,7 +467,7 @@ class HelpersMixin(_Base):
         return not cleaned
 
     @staticmethod
-    def _inject_multimodal_into_user_message(
+    def inject_multimodal_into_user_message(
         messages: list[dict[str, Any]],
         multimodal_inputs: list[dict[str, str]] | None,
     ) -> list[dict[str, Any]]:
@@ -486,15 +497,11 @@ class HelpersMixin(_Base):
                 break
         return messages
 
-    # ------------------------------------------------------------------
-    # User profile analysis helpers
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
+    # ==================================================================
     # Token recording & exception classification
-    # ------------------------------------------------------------------
+    # ==================================================================
 
-    def _record_subtask_tokens(
+    def record_subtask_tokens(
         self,
         task_name: str,
         model_name: str,
@@ -504,6 +511,7 @@ class HelpersMixin(_Base):
         token_breakdown: dict[str, int] | None = None,
     ) -> None:
         """Record token usage for a sub-task (cognition, diary, etc.)."""
+        engine = self._engine
         from sirius_pulse.config import TokenUsageRecord
         from sirius_pulse.providers.base import (
             estimate_generation_request_input_tokens,
@@ -557,20 +565,20 @@ class HelpersMixin(_Base):
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             estimation_method=estimation_method,
-            persona_name=self.persona.name if self.persona else "",
+            persona_name=engine.persona.name if engine.persona else "",
             group_id=group_id,
-            provider_name=getattr(self.provider_async, "_provider_name", "unknown"),
+            provider_name=getattr(engine.provider_async, "_provider_name", "unknown"),
             breakdown_json=breakdown_json,
             duration_ms=duration_ms,
         )
-        self.token_usage_records.append(record)
-        if self.token_store is not None:
+        engine.token_usage_records.append(record)
+        if engine.token_store is not None:
             try:
-                self.token_store.add(record)
+                engine.token_store.add(record)
             except Exception:
                 pass
 
-    def _classify_exception(self, exc: Exception) -> str:
+    def classify_exception(self, exc: Exception) -> str:
         """Classify an LLM provider exception into a structured error type."""
         msg = str(exc).lower()
 
@@ -597,3 +605,7 @@ class HelpersMixin(_Base):
         if "connection" in msg or "refused" in msg or "reset" in msg:
             return "network_timeout"
         return "unknown"
+
+
+# 保持向后兼容的别名
+HelpersMixin = Helpers
