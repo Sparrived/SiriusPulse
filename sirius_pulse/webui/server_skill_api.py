@@ -10,7 +10,7 @@ from typing import Any
 from aiohttp import web
 
 from sirius_pulse.skills.registry import SkillRegistry
-from sirius_pulse.webui.server_utils import _get_name, _json_response
+from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -53,6 +53,7 @@ def _save_persona_skill_config(persona_dir: Path, config: dict[str, Any]) -> Non
     atomic_json_save(_persona_skill_config_path(persona_dir), config)
 
 
+@handle_api_errors
 async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/skills — 列出所有人格级 skill。"""
     name = _get_name(request)
@@ -60,9 +61,8 @@ async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> 
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    try:
-        registry = _load_skill_registry(paths.dir)
-        persona_config = _load_persona_skill_config(paths.dir)
+    registry = _load_skill_registry(paths.dir)
+    persona_config = _load_persona_skill_config(paths.dir)
 
         skills: list[dict[str, Any]] = []
         for skill in registry.all_skills():
@@ -90,11 +90,9 @@ async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> 
             })
 
         return _json_response({"skills": skills})
-    except Exception as exc:
-        LOG.warning("读取 Skill 列表失败 %s: %s", name, exc)
-        return _json_response({"error": str(exc)}, 500)
 
 
+@handle_api_errors
 async def api_persona_skill_toggle(request: web.Request, persona_manager: Any) -> web.Response:
     """POST /api/personas/{name}/skills/{skill_name}/toggle — 启停 skill。"""
     name = _get_name(request)
@@ -113,20 +111,17 @@ async def api_persona_skill_toggle(request: web.Request, persona_manager: Any) -
 
     enabled = bool(body.get("enabled", True))
 
-    try:
-        persona_config = _load_persona_skill_config(paths.dir)
-        if skill_name not in persona_config:
-            persona_config[skill_name] = {}
-        persona_config[skill_name]["enabled"] = enabled
-        _save_persona_skill_config(paths.dir, persona_config)
+    persona_config = _load_persona_skill_config(paths.dir)
+    if skill_name not in persona_config:
+        persona_config[skill_name] = {}
+    persona_config[skill_name]["enabled"] = enabled
+    _save_persona_skill_config(paths.dir, persona_config)
 
-        LOG.info("Skill %s/%s enabled=%s", name, skill_name, enabled)
-        return _json_response({"success": True, "skill": skill_name, "enabled": enabled})
-    except Exception as exc:
-        LOG.warning("切换 Skill 状态失败 %s/%s: %s", name, skill_name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    LOG.info("Skill %s/%s enabled=%s", name, skill_name, enabled)
+    return _json_response({"success": True, "skill": skill_name, "enabled": enabled})
 
 
+@handle_api_errors
 async def api_persona_skill_config_get(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/skills/{skill_name}/config — 获取 skill 配置。"""
     name = _get_name(request)
@@ -138,9 +133,8 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    try:
-        persona_config = _load_persona_skill_config(paths.dir)
-        skill_cfg = persona_config.get(skill_name, {})
+    persona_config = _load_persona_skill_config(paths.dir)
+    skill_cfg = persona_config.get(skill_name, {})
 
         # 同时返回 skill 的元数据（参数定义等）
         registry = _load_skill_registry(paths.dir)
@@ -168,11 +162,9 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
             "enabled": skill_cfg.get("enabled", True),
             "meta": meta,
         })
-    except Exception as exc:
-        LOG.warning("读取 Skill 配置失败 %s/%s: %s", name, skill_name, exc)
-        return _json_response({"error": str(exc)}, 500)
 
 
+@handle_api_errors
 async def api_persona_skill_history_get(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/skill-history — 返回 SKILL 执行历史详情。"""
     from sirius_pulse.skills.telemetry import SkillTelemetry
@@ -189,32 +181,29 @@ async def api_persona_skill_history_get(request: web.Request, persona_manager: A
     if not telemetry_path.exists():
         return _json_response({"history": []})
 
-    try:
-        telemetry = SkillTelemetry(telemetry_path)
-        records = telemetry.query(skill_name=skill_name, limit=limit)
-        items: list[dict[str, Any]] = []
-        for rec in reversed(records):
-            item: dict[str, Any] = {
-                "skill_name": rec.skill_name,
-                "timestamp": rec.timestamp,
-                "success": rec.success,
-                "duration_ms": rec.duration_ms,
-                "caller_user_id": rec.caller_user_id,
-            }
-            if rec.params:
-                item["params"] = rec.params
-            if rec.result_summary:
-                item["result_summary"] = rec.result_summary
-            if rec.error:
-                item["error"] = rec.error
-            items.append(item)
+    telemetry = SkillTelemetry(telemetry_path)
+    records = telemetry.query(skill_name=skill_name, limit=limit)
+    items: list[dict[str, Any]] = []
+    for rec in reversed(records):
+        item: dict[str, Any] = {
+            "skill_name": rec.skill_name,
+            "timestamp": rec.timestamp,
+            "success": rec.success,
+            "duration_ms": rec.duration_ms,
+            "caller_user_id": rec.caller_user_id,
+        }
+        if rec.params:
+            item["params"] = rec.params
+        if rec.result_summary:
+            item["result_summary"] = rec.result_summary
+        if rec.error:
+            item["error"] = rec.error
+        items.append(item)
 
-        return _json_response({"history": items})
-    except Exception as exc:
-        LOG.warning("读取 Skill 执行历史失败 %s: %s", name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    return _json_response({"history": items})
 
 
+@handle_api_errors
 async def api_persona_skill_config_post(request: web.Request, persona_manager: Any) -> web.Response:
     """POST /api/personas/{name}/skills/{skill_name}/config — 保存 skill 配置。"""
     name = _get_name(request)
@@ -231,24 +220,20 @@ async def api_persona_skill_config_post(request: web.Request, persona_manager: A
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    try:
-        persona_config = _load_persona_skill_config(paths.dir)
-        if skill_name not in persona_config:
-            persona_config[skill_name] = {}
-        skill_cfg = body.get("config", {})
-        persona_config[skill_name]["config"] = skill_cfg
-        if "enabled" in body:
-            persona_config[skill_name]["enabled"] = bool(body["enabled"])
-        _save_persona_skill_config(paths.dir, persona_config)
+    persona_config = _load_persona_skill_config(paths.dir)
+    if skill_name not in persona_config:
+        persona_config[skill_name] = {}
+    skill_cfg = body.get("config", {})
+    persona_config[skill_name]["config"] = skill_cfg
+    if "enabled" in body:
+        persona_config[skill_name]["enabled"] = bool(body["enabled"])
+    _save_persona_skill_config(paths.dir, persona_config)
 
-        # 同时将 config 同步到 data_store 文件，使 SKILL 通过 store.reload() 感知变更
-        _sync_config_to_data_store(paths.dir, skill_name, skill_cfg)
+    # 同时将 config 同步到 data_store 文件，使 SKILL 通过 store.reload() 感知变更
+    _sync_config_to_data_store(paths.dir, skill_name, skill_cfg)
 
-        LOG.info("Skill 配置已保存 %s/%s", name, skill_name)
-        return _json_response({"success": True, "skill": skill_name})
-    except Exception as exc:
-        LOG.warning("保存 Skill 配置失败 %s/%s: %s", name, skill_name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    LOG.info("Skill 配置已保存 %s/%s", name, skill_name)
+    return _json_response({"success": True, "skill": skill_name})
 
 
 def _sync_config_to_data_store(persona_dir: Path, skill_name: str, config: dict[str, Any]) -> None:

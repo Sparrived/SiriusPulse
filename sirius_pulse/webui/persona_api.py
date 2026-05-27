@@ -15,6 +15,7 @@ from sirius_pulse.persona_config import AdapterConfig, PersonaAdaptersConfig, Pe
 from sirius_pulse.platforms.persona_utils import generate_persona_from_interview
 from sirius_pulse.providers.routing import WorkspaceProviderManager
 from sirius_pulse.webui.server_core import _get_name, _json_response, LOG
+from sirius_pulse.webui.server_utils import handle_api_errors
 
 
 async def api_personas_get(request: web.Request, persona_manager: Any) -> web.Response:
@@ -40,6 +41,7 @@ async def api_personas_get(request: web.Request, persona_manager: Any) -> web.Re
     return _json_response({"personas": result})
 
 
+@handle_api_errors
 async def api_personas_post(request: web.Request, persona_manager: Any) -> web.Response:
     try:
         body = await request.json()
@@ -54,22 +56,15 @@ async def api_personas_post(request: web.Request, persona_manager: Any) -> web.R
     if not name.replace("_", "").replace("-", "").isalnum():
         return _json_response({"error": "name 只能包含字母、数字、下划线和连字符"}, 400)
 
-    try:
-        persona_manager.create_persona(name)
-        return _json_response({"success": True, "name": name})
-    except Exception as exc:
-        LOG.warning("创建人格失败 %s: %s", name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    persona_manager.create_persona(name)
+    return _json_response({"success": True, "name": name})
 
 
+@handle_api_errors
 async def api_personas_delete(request: web.Request, persona_manager: Any) -> web.Response:
     name = _get_name(request)
-    try:
-        persona_manager.delete_persona(name)
-        return _json_response({"success": True})
-    except Exception as exc:
-        LOG.warning("删除人格失败 %s: %s", name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    persona_manager.delete_persona(name)
+    return _json_response({"success": True})
 
 
 async def api_persona_get_single(request: web.Request, persona_manager: Any) -> web.Response:
@@ -126,36 +121,27 @@ async def api_persona_status_get(request: web.Request, persona_manager: Any) -> 
     return _json_response({"name": name, "status": status})
 
 
+@handle_api_errors
 async def api_persona_start(request: web.Request, persona_manager: Any) -> web.Response:
     name = _get_name(request)
-    try:
-        persona_manager.start_persona(name)
-        return _json_response({"success": True, "message": f"{name} 已启动"})
-    except Exception as exc:
-        LOG.warning("启动人格失败 %s: %s", name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    persona_manager.start_persona(name)
+    return _json_response({"success": True, "message": f"{name} 已启动"})
 
 
+@handle_api_errors
 async def api_persona_stop(request: web.Request, persona_manager: Any) -> web.Response:
     name = _get_name(request)
-    try:
-        persona_manager.stop_persona(name)
-        return _json_response({"success": True, "message": f"{name} 已停止"})
-    except Exception as exc:
-        LOG.warning("停止人格失败 %s: %s", name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    persona_manager.stop_persona(name)
+    return _json_response({"success": True, "message": f"{name} 已停止"})
 
 
+@handle_api_errors
 async def api_persona_restart(request: web.Request, persona_manager: Any) -> web.Response:
     name = _get_name(request)
-    try:
-        persona_manager.stop_persona(name)
-        await asyncio.sleep(1)
-        persona_manager.start_persona(name)
-        return _json_response({"success": True, "message": f"{name} 已重启"})
-    except Exception as exc:
-        LOG.warning("重启人格失败 %s: %s", name, exc)
-        return _json_response({"error": str(exc)}, 500)
+    persona_manager.stop_persona(name)
+    await asyncio.sleep(1)
+    persona_manager.start_persona(name)
+    return _json_response({"success": True, "message": f"{name} 已重启"})
 
 
 async def api_persona_get(request: web.Request, persona_manager: Any) -> web.Response:
@@ -266,6 +252,7 @@ async def api_persona_interview_get(request: web.Request, persona_manager: Any) 
         return _json_response({"answers": {}, "name": "", "aliases": []})
 
 
+@handle_api_errors
 async def api_persona_interview(request: web.Request, persona_manager: Any) -> web.Response:
     """根据问卷答案生成人格。"""
     name = _get_name(request)
@@ -287,21 +274,17 @@ async def api_persona_interview(request: web.Request, persona_manager: Any) -> w
     provider = None
     if providers:
         provider = AutoRoutingProvider(providers)
-    try:
-        persona = await generate_persona_from_interview(
-            work_path=paths.dir,
-            provider=provider,
-            name=p_name,
-            answers=answers,
-            aliases=aliases,
-            model=model,
-        )
-        PersonaStore.save(paths.dir, persona)
-        persona_manager.reload_persona(name)
-        return _json_response({"success": True, "persona": persona.to_dict()})
-    except Exception as exc:
-        LOG.exception("问卷人格生成失败")
-        return _json_response({"error": str(exc)}, 500)
+    persona = await generate_persona_from_interview(
+        work_path=paths.dir,
+        provider=provider,
+        name=p_name,
+        answers=answers,
+        aliases=aliases,
+        model=model,
+    )
+    PersonaStore.save(paths.dir, persona)
+    persona_manager.reload_persona(name)
+    return _json_response({"success": True, "persona": persona.to_dict()})
 
 
 async def api_orchestration_get(request: web.Request, persona_manager: Any) -> web.Response:
