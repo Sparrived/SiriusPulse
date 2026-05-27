@@ -183,7 +183,9 @@ function _renderProviderDraft() {
 function addProvider() {
   if (providerEditIndex >= 0) providerCancelEdit();
   const idx = providerDraft.length;
-  providerDraft.push({ type: 'openai-compatible', base_url: 'https://api.openai.com', api_key: '', healthcheck_model: '', enabled: true, models: [] });
+  const defaultType = 'openai-compatible';
+  const name = `provider-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  providerDraft.push({ name, type: defaultType, base_url: 'https://api.openai.com', api_key: '', healthcheck_model: '', enabled: true, models: [] });
   providerStartEdit(idx);
 }
 
