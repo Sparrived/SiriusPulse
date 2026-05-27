@@ -377,7 +377,3 @@ class BackgroundTasks:
         if unmatched:
             engine._pending_reminders[group_id] = unmatched
         return matched
-
-
-# 保持向后兼容的别名
-BackgroundTasksMixin = BackgroundTasks

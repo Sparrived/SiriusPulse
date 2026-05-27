@@ -605,7 +605,3 @@ class Helpers:
         if "connection" in msg or "refused" in msg or "reset" in msg:
             return "network_timeout"
         return "unknown"
-
-
-# 保持向后兼容的别名
-HelpersMixin = Helpers

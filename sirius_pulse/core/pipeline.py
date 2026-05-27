@@ -621,7 +621,3 @@ class Pipeline:
                 engine.semantic_memory.set_user_profile_fields(
                     group_id, user_id, name=speaker_name
                 )
-
-
-# 保持向后兼容的别名
-PipelineMixin = Pipeline

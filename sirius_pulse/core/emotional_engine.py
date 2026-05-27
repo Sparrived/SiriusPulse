@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from sirius_pulse.skills.builtin.reminder import _is_reminder_due
-
 
 class EmotionalGroupChatEngine:
     """Combined EmotionalGroupChatEngine with all components.
@@ -62,5 +60,4 @@ def create_emotional_engine(
     )
 
 
-# Re-export internal helpers for backward compatibility
-__all__ = ["EmotionalGroupChatEngine", "create_emotional_engine", "_is_reminder_due"]
+__all__ = ["EmotionalGroupChatEngine", "create_emotional_engine"]
