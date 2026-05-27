@@ -89,11 +89,11 @@ from sirius_pulse.webui.server_plugin_api import (
     api_plugin_monitor_repos_get,
 )
 from sirius_pulse.webui.monitoring_api import (
-    api_monitoring_overview,
-    api_monitoring_persona_metrics,
-    api_monitoring_health,
+    api_monitoring_overview as _api_monitoring_overview,
+    api_monitoring_persona_metrics as _api_monitoring_persona_metrics,
+    api_monitoring_health as _api_monitoring_health,
 )
-from sirius_pulse.webui.persona_api import api_persona_clone
+from sirius_pulse.webui.persona_api import api_persona_clone as _api_persona_clone
 
 
 class WebUIServer(_WebUIServer):
@@ -293,7 +293,6 @@ class WebUIServer(_WebUIServer):
     # ─── 认证 API ────────────────────────────────────────
 
     async def api_auth_login(self, request):
-        from aiohttp import web
         body = await request.json()
         username = str(body.get("username", ""))
         password = str(body.get("password", ""))
@@ -309,18 +308,18 @@ class WebUIServer(_WebUIServer):
     # ─── 监控 API ────────────────────────────────────────
 
     async def api_monitoring_overview(self, request):
-        return await api_monitoring_overview(request, self.persona_manager)
+        return await _api_monitoring_overview(request, self.persona_manager)
 
     async def api_monitoring_persona_metrics(self, request):
-        return await api_monitoring_persona_metrics(request, self.persona_manager)
+        return await _api_monitoring_persona_metrics(request, self.persona_manager)
 
     async def api_monitoring_health(self, request):
-        return await api_monitoring_health(request, self.persona_manager)
+        return await _api_monitoring_health(request, self.persona_manager)
 
     # ─── 人格克隆 ────────────────────────────────────────
 
     async def api_persona_clone(self, request):
-        return await api_persona_clone(request, self.persona_manager)
+        return await _api_persona_clone(request, self.persona_manager)
 
 
 __all__ = ["WebUIServer"]
