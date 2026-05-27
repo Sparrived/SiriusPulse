@@ -75,6 +75,7 @@ class ProviderConfig:
     healthcheck_model: str = ""
     enabled: bool = True
     models: list[str] = field(default_factory=list)
+    models_url: str = ""
 
 
 def normalize_provider_type(provider_type: str) -> str:
@@ -131,6 +132,7 @@ class ProviderRegistry:
             base_url = str(payload.get("base_url", "")).strip()
             healthcheck_model = str(payload.get("healthcheck_model", "")).strip()
             enabled = bool(payload.get("enabled", True))
+            models_url = str(payload.get("models_url", "")).strip()
             models_raw = payload.get("models", [])
             models = [str(m).strip() for m in models_raw if str(m).strip()] if isinstance(models_raw, list) else []
             results[provider_type] = ProviderConfig(
@@ -140,6 +142,7 @@ class ProviderRegistry:
                 healthcheck_model=healthcheck_model,
                 enabled=enabled,
                 models=models,
+                models_url=models_url,
             )
         
         if needs_migration:
@@ -159,6 +162,8 @@ class ProviderRegistry:
                 "enabled": config.enabled,
                 "models": config.models,
             }
+            if config.models_url:
+                entry["models_url"] = config.models_url
             providers_payload[provider_type] = entry
         payload: dict[str, object] = {"providers": providers_payload}
         atomic_write_json(self.path, payload)

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.utils import parse_sticker_tags
 from sirius_pulse.skills.executor import strip_skill_calls
 
 if TYPE_CHECKING:
@@ -506,8 +507,8 @@ class DelayedQueueTasks:
         clean_reply = strip_skill_calls(reply).strip()
 
         # 解析表情包标签 [STICKERS: ...] 并异步发送
-        if clean_reply and hasattr(engine, "_parse_sticker_tags"):
-            clean_reply, sticker_names = engine._parse_sticker_tags(clean_reply)
+        if clean_reply:
+            clean_reply, sticker_names = parse_sticker_tags(clean_reply)
             if sticker_names:
                 asyncio.create_task(
                     engine._send_stickers_by_names(group_id, sticker_names)
@@ -520,7 +521,7 @@ class DelayedQueueTasks:
             recent_replies = engine._recent_sent_replies.get(group_id, [])
             recent_replies = [(t, r) for t, r in recent_replies if now_ts - t < engine._reply_dedup_window]
             if any(
-                engine._helpers._text_similarity(clean_reply, r) > engine._reply_dedup_threshold
+                engine._text_similarity(clean_reply, r) > engine._reply_dedup_threshold
                 for _, r in recent_replies
             ):
                 logger.debug(

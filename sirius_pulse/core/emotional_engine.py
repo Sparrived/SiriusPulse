@@ -13,8 +13,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 
-class EmotionalGroupChatEngine:
+
+class EmotionalGroupChatEngine(_EmotionalGroupChatEngineBase):
     """Combined EmotionalGroupChatEngine with all components.
 
     所有组件已通过组合模式集成到基类中：

@@ -29,13 +29,14 @@
 ```
 主进程（CLI / WebUI）
     ├── PersonaManager   # 人格目录扫描、端口分配、启停调度
-    ├── WebUIServer      # aiohttp REST API + 静态页面
+    ├── WebUIServer      # aiohttp REST API + WebSocket + 认证中间件
     └── NapCatManager    # NapCat 全局安装/多实例管理
             │
             ▼
     子进程（独立控制台窗口）
-    ├── PersonaWorker ── EngineRuntime ── EmotionalGroupChatEngine（Mixin 架构）
+    ├── PersonaWorker ── EngineRuntime ── EmotionalGroupChatEngine（组合模式）
     │       │                                   └── engine_core + pipeline + prompt_factory + bg_tasks + helpers
+    │       │                                       + engine_persistence + engine_sticker
     │       ├── NapCatAdapter ── OneBot v11 WS
     │       ├── BasicMemoryManager + DiaryManager + SemanticMemory
     │       ├── ModelRouter
@@ -51,13 +52,21 @@
 | 路径                                        | 说明                                 |
 | ----------------------------------------- | ---------------------------------- |
 | `main.py`                                 | 统一 CLI 入口（默认启动 WebUI；`run` 启动全部人格） |
-| `sirius_pulse/core/emotional_engine.py`    | v1.0 核心情感群聊引擎（Mixin 最终类）       |
-| `sirius_pulse/core/engine_core.py`         | 引擎基类（__init__、API、持久化）           |
-| `sirius_pulse/core/pipeline.py`            | 5 阶段管线 Mixin                        |
-| `sirius_pulse/core/bg_tasks.py`            | 6 个后台任务 Mixin                       |
+| `sirius_pulse/core/emotional_engine.py`    | 核心情感群聊引擎（组合模式最终类，委托 shim）       |
+| `sirius_pulse/core/engine_core.py`         | 引擎基类（__init__、公开 API、委托方法）           |
+| `sirius_pulse/core/pipeline.py`            | Pipeline 组件（5 阶段管线：感知→认知→决策→执行→后台） |
+| `sirius_pulse/core/bg_tasks.py`            | BackgroundTasks 组件（后台任务管理，委托给 proactive/delayed） |
+| `sirius_pulse/core/bg_tasks_delayed.py`    | DelayedQueueTasks 组件（延迟队列任务）  |
+| `sirius_pulse/core/bg_tasks_proactive.py`  | ProactiveTasks 组件（主动消息任务）     |
+| `sirius_pulse/core/engine_persistence.py`  | EnginePersistence 组件 + EngineStateStore（状态持久化） |
+| `sirius_pulse/core/engine_sticker.py`      | EngineSticker 组件（表情包系统：初始化/选择/发送） |
 | `sirius_pulse/core/prompt_factory.py`     | PromptFactory：无状态 prompt 构建工具类（含 StyleAdapter 风格适配） |
-| `sirius_pulse/core/helpers.py`             | 技能集成、被动 SKILL 注册与触发分发、token 记录 Mixin |
+| `sirius_pulse/core/helpers.py`             | Helpers 组件（技能集成、被动 SKILL 注册与触发分发、token 记录） |
+| `sirius_pulse/core/constants.py`           | 核心引擎常量定义（时间、Token、记忆等魔法数字） |
+| `sirius_pulse/core/utils.py`              | 核心引擎工具函数（时间戳、XML 清理、表情包标签解析） |
 | `sirius_pulse/core/skill_engine_context.py` | SkillEngineContextImpl：被动 SKILL 与引擎交互适配器 |
+| `sirius_pulse/utils/json_io.py`           | 公共 JSON I/O 工具（原子写入 + 安全读取） |
+| `sirius_pulse/utils/retry.py`             | 通用异步重试工具                        |
 | `sirius_pulse/embedding/server.py`         | Embedding 微服务端（aiohttp + asyncio.Queue 批量合并推理） |
 | `sirius_pulse/embedding/client.py`         | Embedding 同步客户端（urllib） |
 | `sirius_pulse/persona_generation/`         | 人格资产生成子包（templates + builders） |
@@ -66,11 +75,14 @@
 | `sirius_pulse/persona_config.py`           | 人格级配置模型                            |
 | `sirius_pulse/platforms/onebot_v11/napcat/manager.py` | NapCat 多实例管理                       |
 | `sirius_pulse/platforms/runtime.py`        | 单人格运行时封装                           |
-| `sirius_pulse/webui/server.py`             | WebUI REST API                     |
+| `sirius_pulse/webui/server.py`             | WebUI REST API 主入口                  |
+| `sirius_pulse/webui/auth.py`              | JWT 认证管理器（HMAC-SHA256 签名，admin/viewer 角色） |
+| `sirius_pulse/webui/middleware.py`         | 认证中间件（白名单放行 + RBAC 权限控制）      |
+| `sirius_pulse/webui/monitoring_api.py`     | 监控 API（全局概览、单人格指标、健康检查）     |
+| `sirius_pulse/webui/ws_server.py`         | WebSocket 事件推送服务（桥接 SessionEventBus 到前端） |
 | `sirius_pulse/__init__.py`                 | 顶层公开 API 导出清单（严格 `__all__`）        |
 | `tests/conftest.py`                       | 测试最小 fixture                       |
 | `scripts/ci_check.py`                     | 统一 CI 检查脚本                         |
-| `docs/architecture.md`                    | 架构边界与模块交互权威文档                      |
 
 ***
 
