@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from sirius_pulse.mixins import JsonSerializable
+
 
 @dataclass(slots=True)
-class DiaryEntry:
+class DiaryEntry(JsonSerializable):
     """A diary entry generated from basic memory archive candidates.
 
     Attributes:
@@ -32,37 +34,9 @@ class DiaryEntry:
     embedding: list[float] | None = None
     merge_count: int = 0
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "entry_id": self.entry_id,
-            "group_id": self.group_id,
-            "created_at": self.created_at,
-            "source_ids": list(self.source_ids),
-            "content": self.content,
-            "keywords": list(self.keywords),
-            "summary": self.summary,
-            "embedding": list(self.embedding) if self.embedding else None,
-            "merge_count": self.merge_count,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DiaryEntry":
-        emb = data.get("embedding")
-        return cls(
-            entry_id=data.get("entry_id", ""),
-            group_id=data.get("group_id", ""),
-            created_at=data.get("created_at", ""),
-            source_ids=list(data.get("source_ids", [])),
-            content=data.get("content", ""),
-            keywords=list(data.get("keywords", [])),
-            summary=data.get("summary", ""),
-            embedding=list(emb) if isinstance(emb, list) else None,
-            merge_count=int(data.get("merge_count", 0)),
-        )
-
 
 @dataclass(slots=True)
-class DiaryGenerationResult:
+class DiaryGenerationResult(JsonSerializable):
     """Result of diary generation, including extracted semantic topics."""
 
     entry: DiaryEntry

@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from sirius_pulse.providers.routing import WorkspaceProviderManager
+from sirius_pulse.webui.auth import AuthManager
+from sirius_pulse.webui.middleware import auth_middleware
+from sirius_pulse.webui.monitoring_api import (
+    api_monitoring_health,
+    api_monitoring_overview,
+    api_monitoring_persona_metrics,
+)
 from sirius_pulse.webui.server_skill_api import (
     api_persona_skill_config_get,
     api_persona_skill_config_post,
@@ -20,6 +27,7 @@ from sirius_pulse.webui.server_skill_api import (
     api_persona_skill_toggle,
 )
 from sirius_pulse.webui.server_utils import _json_response
+from sirius_pulse.webui.ws_server import WebSocketManager, setup_ws_routes
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -49,16 +57,22 @@ class WebUIServer:
         self.host = host
         self.port = port
         self.napcat_manager = napcat_manager
-        self.app = web.Application(middlewares=[_no_cache_middleware])
+        self.ws_manager = WebSocketManager()
+        self.auth_manager = AuthManager(Path(persona_manager.data_path))
+        self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
+        self.app["auth_manager"] = self.auth_manager
+        self.app["ws_manager"] = self.ws_manager
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
         self._embedding_thread: threading.Thread | None = None
-        self._embedding_ready: bool = False  # 线程启动后模型是否加载成功
-        self._embedding_error: str = ""  # 启动失败的具体原因
+        self._embedding_ready: bool = False
+        self._embedding_error: str = ""
         self._embedding_port: int = int(
             persona_manager.global_config.get("embedding_port", 18900)
         )
+        self.auth_manager.get_or_create_admin_password()
         self._setup_routes()
+        setup_ws_routes(self.app, self.ws_manager)
 
     # ─── 子类 API 桩方法（Pylance 类型提示用，运行时由 server.py 覆盖）───
 
@@ -114,6 +128,9 @@ class WebUIServer:
         async def api_plugin_setting_delete(self, request: web.Request) -> web.Response: ...
         async def api_plugins_reload(self, request: web.Request) -> web.Response: ...
         async def api_plugin_monitor_repos_get(self, request: web.Request) -> web.Response: ...
+        async def api_persona_clone(self, request: web.Request) -> web.Response: ...
+        async def api_auth_login(self, request: web.Request) -> web.Response: ...
+        async def api_auth_status(self, request: web.Request) -> web.Response: ...
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
