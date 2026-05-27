@@ -4,6 +4,7 @@ let currentPersona = null;
 let personaState = {};
 let providerDraft = [];
 let currentPage = 'dashboard';
+let authToken = localStorage.getItem('sirius_token') || '';
 
 const PAGE_LOADERS = {};
 
@@ -76,8 +77,23 @@ function toast(msg, type = 'success') {
   setTimeout(() => t.classList.remove('show'), 3000);
 }
 
+function _authHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+  return h;
+}
+function _handleAuthError(r) {
+  if (r.status === 401) {
+    authToken = '';
+    localStorage.removeItem('sirius_token');
+    showLoginOverlay();
+    throw new Error('认证已过期，请重新登录');
+  }
+}
 async function get(path, signal) {
-  const r = await fetch(API + path, signal ? { signal } : undefined);
+  const opts = signal ? { signal, headers: _authHeaders() } : { headers: _authHeaders() };
+  const r = await fetch(API + path, opts);
+  _handleAuthError(r);
   if (!r.ok) {
     const text = await r.text();
     throw new Error(`HTTP ${r.status} ${r.statusText}: ${text.slice(0, 200)}`);
@@ -87,9 +103,10 @@ async function get(path, signal) {
 async function post(path, body) {
   const r = await fetch(API + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: _authHeaders(),
     body: JSON.stringify(body),
   });
+  _handleAuthError(r);
   if (!r.ok) {
     const text = await r.text();
     throw new Error(`HTTP ${r.status} ${r.statusText}: ${text.slice(0, 200)}`);
@@ -97,7 +114,8 @@ async function post(path, body) {
   return r.json();
 }
 async function del(path) {
-  const r = await fetch(API + path, { method: 'DELETE' });
+  const r = await fetch(API + path, { method: 'DELETE', headers: _authHeaders() });
+  _handleAuthError(r);
   if (!r.ok) {
     const text = await r.text();
     throw new Error(`HTTP ${r.status} ${r.statusText}: ${text.slice(0, 200)}`);
@@ -129,6 +147,8 @@ const pageTitles = {
   'biography': ['人物传记', 'Analytics / Biography'],
   'glossary': ['名词解释', 'Analytics / Glossary'],
   'memory-viz': ['记忆可视化', 'Analytics / Memory Viz'],
+  'monitoring': ['系统监控', 'Monitoring / Overview'],
+  'monitoring-detail': ['人格详情', 'Monitoring / Persona Detail'],
 };
 
 async function navTo(page) {
@@ -995,4 +1015,177 @@ async function stopPersona(name) {
 registerPageLoader('dashboard', {
   init: async () => { renderPersonaCards(); loadProviders(); _lastTelemetryData = null; _lastTokenData = null; loadTokenStats(); },
   refresh: () => { renderPersonaCards(); },
+});
+
+// ── Auth: Login Overlay ───────────────────────────────
+function showLoginOverlay() {
+  if ($('loginOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'loginOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;width:360px;max-width:90vw">
+      <h2 style="margin:0 0 8px;font-size:20px;color:var(--text)">🔐 登录</h2>
+      <p style="margin:0 0 20px;font-size:13px;color:var(--text-2)">请输入管理员密码以访问 WebUI</p>
+      <div style="margin-bottom:16px">
+        <label style="display:block;font-size:12px;color:var(--text-2);margin-bottom:4px">密码</label>
+        <input id="loginPassword" type="password" placeholder="输入密码" style="width:100%;padding:10px 12px;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:14px;box-sizing:border-box" autofocus>
+      </div>
+      <div id="loginError" style="color:var(--danger);font-size:12px;margin-bottom:12px;display:none"></div>
+      <button onclick="doLogin()" style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">登录</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  $('loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+  $('loginPassword').focus();
+}
+
+function hideLoginOverlay() {
+  const overlay = $('loginOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function doLogin() {
+  const password = $('loginPassword')?.value || '';
+  const errEl = $('loginError');
+  if (!password) { if (errEl) { errEl.textContent = '请输入密码'; errEl.style.display = ''; } return; }
+  try {
+    const r = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password }),
+    });
+    const data = await r.json();
+    if (data.success && data.token) {
+      authToken = data.token;
+      localStorage.setItem('sirius_token', authToken);
+      hideLoginOverlay();
+      toast('登录成功');
+    } else {
+      if (errEl) { errEl.textContent = data.error || '登录失败'; errEl.style.display = ''; }
+    }
+  } catch (e) {
+    if (errEl) { errEl.textContent = '网络错误'; errEl.style.display = ''; }
+  }
+}
+
+// ── WebSocket Client ──────────────────────────────────
+let _ws = null;
+let _wsReconnectTimer = null;
+
+function wsConnect() {
+  if (_ws && _ws.readyState <= 1) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/ws/events`;
+  try {
+    _ws = new WebSocket(url);
+  } catch (e) { return; }
+
+  _ws.onopen = () => {
+    const dot = $('wsStatusDot');
+    if (dot) { dot.style.background = 'var(--success)'; dot.title = 'WebSocket 已连接'; }
+    clearTimeout(_wsReconnectTimer);
+  };
+
+  _ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'connected') return;
+      // 广播自定义事件，各页面可监听
+      window.dispatchEvent(new CustomEvent('sirius:event', { detail: msg }));
+    } catch (e) { /* ignore parse errors */ }
+  };
+
+  _ws.onclose = () => {
+    const dot = $('wsStatusDot');
+    if (dot) { dot.style.background = 'var(--warning)'; dot.title = 'WebSocket 已断开，正在重连...'; }
+    _wsReconnectTimer = setTimeout(wsConnect, 5000);
+  };
+
+  _ws.onerror = () => { _ws?.close(); };
+}
+
+// ── Monitoring Page Loader ────────────────────────────
+async function loadMonitoringOverview() {
+  const container = $('monitoringCards');
+  if (!container) return;
+  try {
+    const res = await get('/monitoring/overview');
+    const personas = res.personas || [];
+    container.innerHTML = personas.length ? personas.map((p) => `
+      <div class="stat-card" style="cursor:pointer" onclick="selectPersona('${p.name}');navTo('monitoring-detail')">
+        <div class="label">${p.name}</div>
+        <div class="value" style="color:${p.running ? 'var(--success)' : 'var(--text-2)'}">${p.running ? '● 运行中' : '○ 已停止'}</div>
+        <div style="font-size:11px;color:var(--text-2)">PID: ${p.pid || '—'} · ${p.running ? Math.round(p.uptime_seconds / 60) + ' 分钟' : '—'}</div>
+      </div>
+    `).join('') : '<div style="color:var(--text-2);padding:24px;text-align:center">暂无人格</div>';
+    if (personas.length) applyStagger(container, '.stat-card');
+
+    const overviewEl = $('monitoringSummary');
+    if (overviewEl) {
+      overviewEl.innerHTML = `
+        <div class="stat-card"><div class="label">总人格</div><div class="value">${res.total_personas}</div></div>
+        <div class="stat-card"><div class="label">运行中</div><div class="value" style="color:var(--success)">${res.running_personas}</div></div>
+        <div class="stat-card"><div class="label">已停止</div><div class="value" style="color:var(--text-2)">${res.total_personas - res.running_personas}</div></div>
+      `;
+      applyStagger(overviewEl, '.stat-card');
+    }
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--danger);padding:24px">加载失败: ${e.message}</div>`;
+  }
+}
+
+async function loadMonitoringMetrics(name) {
+  const container = $('monitoringMetrics');
+  if (!container || !name) return;
+  try {
+    const res = await get(`/monitoring/${name}/metrics`);
+    const tok = res.token_usage || {};
+    const mem = res.memory || {};
+    const cog = res.cognition || {};
+    container.innerHTML = `
+      <div class="stat-card"><div class="label">Token 输入</div><div class="value">${(tok.total_input || 0).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="label">Token 输出</div><div class="value">${(tok.total_output || 0).toLocaleString()}</div></div>
+      <div class="stat-card"><div class="label">模型调用</div><div class="value">${tok.call_count || 0}</div></div>
+      <div class="stat-card"><div class="label">日记条目</div><div class="value">${mem.diary_count || 0}</div></div>
+      <div class="stat-card"><div class="label">术语数量</div><div class="value">${mem.glossary_count || 0}</div></div>
+      <div class="stat-card"><div class="label">用户画像</div><div class="value">${mem.user_count || 0}</div></div>
+      <div class="stat-card"><div class="label">认知事件</div><div class="value">${cog.event_count || 0}</div></div>
+      <div class="stat-card"><div class="label">运行时长</div><div class="value">${Math.round((res.uptime_seconds || 0) / 60)} 分钟</div></div>
+    `;
+    applyStagger(container, '.stat-card');
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--danger);padding:24px">加载失败: ${e.message}</div>`;
+  }
+}
+
+async function loadMonitoringHealth(name) {
+  const container = $('monitoringHealth');
+  if (!container || !name) return;
+  try {
+    const res = await get(`/monitoring/${name}/health`);
+    const checks = res.checks || {};
+    const statusIcon = (s) => s === 'ok' ? '✅' : s === 'down' ? '❌' : '⚠️';
+    container.innerHTML = `
+      <div style="font-size:16px;margin-bottom:12px">${res.healthy ? '✅ 健康' : '⚠️ 存在异常'}</div>
+      <div class="stat-card"><div class="label">进程</div><div class="value">${statusIcon(checks.process?.status)} ${checks.process?.status || '—'}</div><div style="font-size:11px;color:var(--text-2)">PID: ${checks.process?.pid || '—'}</div></div>
+      <div class="stat-card"><div class="label">配置</div><div class="value">${statusIcon(checks.config?.status)} ${checks.config?.status || '—'}</div><div style="font-size:11px;color:var(--text-2)">${(checks.config?.files || []).length ? '缺失: ' + checks.config.files.join(', ') : '完整'}</div></div>
+      <div class="stat-card"><div class="label">记忆系统</div><div class="value">${statusIcon(checks.memory?.status)} ${checks.memory?.status || '—'}</div></div>
+    `;
+    applyStagger(container, '.stat-card');
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--danger);padding:24px">加载失败: ${e.message}</div>`;
+  }
+}
+
+registerPageLoader('monitoring', { init: loadMonitoringOverview });
+registerPageLoader('monitoring-detail', {
+  init: async () => {
+    if (!currentPersona && personas.length > 0) selectPersona(personas[0].name);
+    if (currentPersona) {
+      const titleEl = $('monitoringDetailTitle');
+      if (titleEl) titleEl.textContent = currentPersona;
+      await Promise.all([loadMonitoringMetrics(currentPersona), loadMonitoringHealth(currentPersona)]);
+    }
+  },
 });

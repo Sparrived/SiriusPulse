@@ -77,6 +77,12 @@
       </button>
     </div>
     <div class="nav-group">
+      <div class="nav-group-title">监控</div>
+      <button class="nav-item" data-page="monitoring" onclick="navTo('monitoring')">
+        <span class="icon">📊</span> 系统监控
+      </button>
+    </div>
+    <div class="nav-group">
       <div class="nav-group-title">平台</div>
       <button class="nav-item" data-page="napcat" onclick="navTo('napcat')">
         <span class="icon">🐧</span> NapCat
@@ -98,6 +104,10 @@
     <div class="status-row">
       <span><span class="status-dot" id="sbRunningDot"></span> 运行中</span>
       <span id="sbRunningCount">0</span>
+    </div>
+    <div class="status-row">
+      <span><span class="status-dot" id="wsStatusDot" style="background:var(--text-2)" title="WebSocket 未连接"></span> WS</span>
+      <span id="wsStatusText">—</span>
     </div>
   </div>
 </aside>

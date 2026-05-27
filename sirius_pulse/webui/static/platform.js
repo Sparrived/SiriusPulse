@@ -101,6 +101,7 @@ async function loadEmbeddingStatus() {
   await ncLoadStatus();
   await navTo('dashboard');
   loadEmbeddingStatus();
+  if (typeof wsConnect === 'function') wsConnect();
   setInterval(() => {
     loadPersonas();
     loadTokenStats();
