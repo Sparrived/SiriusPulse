@@ -108,38 +108,28 @@
   --success-dim: rgba(63, 185, 80, 0.12);
 }
 
-[data-theme="forest"] {
-  --bg-0: #081210;
-  --bg-1: #0f1f1a;
-  --bg-2: #162b24;
-  --bg-3: #1d372e;
-  --bg-glass: rgba(15, 31, 26, 0.85);
-  --text-1: #d4f0e0;
-  --text-2: #7bb894;
-  --text-3: #4a8060;
-  --accent: #3fb950;
-  --accent-dim: rgba(63, 185, 80, 0.12);
-  --accent-glow: rgba(63, 185, 80, 0.25);
-  --border: rgba(63, 185, 80, 0.1);
-  --border-accent: rgba(63, 185, 80, 0.3);
-}
-
-[data-theme="sakura"] {
-  --bg-0: #150a10;
-  --bg-1: #1f1218;
-  --bg-2: #2a1a22;
-  --bg-3: #35222c;
-  --bg-glass: rgba(31, 18, 24, 0.85);
-  --text-1: #f0d4e0;
-  --text-2: #b87b94;
-  --text-3: #804a60;
-  --accent: #f778ba;
-  --accent-dim: rgba(247, 120, 186, 0.12);
-  --accent-glow: rgba(247, 120, 186, 0.25);
-  --border: rgba(247, 120, 186, 0.1);
-  --border-accent: rgba(247, 120, 186, 0.3);
-  --danger: #f85149;
-  --danger-dim: rgba(248, 81, 73, 0.12);
+[data-theme="dopamine"] {
+  --bg-0: #0d0815;
+  --bg-1: #160e22;
+  --bg-2: #1f1530;
+  --bg-3: #2a1d3e;
+  --bg-glass: rgba(22, 14, 34, 0.85);
+  --text-1: #f0e6ff;
+  --text-2: #b89ddb;
+  --text-3: #7a5fa0;
+  --accent: #ff3d8f;
+  --accent-dim: rgba(255, 61, 143, 0.12);
+  --accent-glow: rgba(255, 61, 143, 0.25);
+  --border: rgba(255, 61, 143, 0.1);
+  --border-accent: rgba(255, 61, 143, 0.3);
+  --success: #39f5a8;
+  --success-dim: rgba(57, 245, 168, 0.12);
+  --warn: #ffd23e;
+  --warn-dim: rgba(255, 210, 62, 0.12);
+  --danger: #ff4d6a;
+  --danger-dim: rgba(255, 77, 106, 0.12);
+  --info: #7b6bff;
+  --info-dim: rgba(123, 107, 255, 0.12);
 }
 
 /* ==========================================================================
@@ -265,11 +255,6 @@ body {
   text-transform: uppercase;
 }
 
-.sidebar-persona-bar {
-  padding: 0 16px 12px;
-  border-bottom: 1px solid var(--border);
-}
-
 .sidebar-nav {
   flex: 1;
   overflow-y: auto;
@@ -308,7 +293,8 @@ body {
 
 .main {
   flex: 1;
-  overflow: visible;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px;
   position: relative;
 }
@@ -909,53 +895,6 @@ tr:hover td {
 }
 
 /* ==========================================================================
-   20. Persona Chip Bar — 人格切换条
-   ========================================================================== */
-
-.persona-bar {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.persona-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 20px;
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  transition: all 0.2s var(--ease);
-  font-size: 12px;
-  color: var(--text-2);
-}
-
-.persona-chip:hover {
-  border-color: var(--border-accent);
-  color: var(--text-1);
-}
-
-.persona-chip.selected {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.persona-chip .chip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-3);
-}
-
-.persona-chip.running .chip-dot {
-  background: var(--success);
-  box-shadow: 0 0 6px var(--success);
-}
-
-/* ==========================================================================
    21. Chart Container — 图表容器
    ========================================================================== */
 
@@ -1519,6 +1458,16 @@ tr:hover td {
   overflow: visible;
 }
 
+/* 亮色主题下为星球区域添加深色背景，避免白色穿透 */
+[data-theme="light"] .planet-hero::before {
+  content: '';
+  position: absolute;
+  inset: -40px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #0c1018 0%, #131923 40%, #1a2230 70%, transparent 100%);
+  z-index: -1;
+}
+
 /* 星球光晕背景 — 位于 canvas 之上，作为统一外部光晕层 */
 .planet-glow {
   position: absolute;
@@ -1669,7 +1618,7 @@ tr:hover td {
 /* 人格轨道卡片（球体周围） */
 .persona-orbit-card {
   position: absolute;
-  background: var(--bg-glass);
+  background: var(--glass-dark);
   backdrop-filter: blur(12px);
   border: 1px solid var(--accent-glow);
   border-radius: 4px;
@@ -1698,7 +1647,7 @@ tr:hover td {
 
 .persona-orbit-card.highlighted {
   border-color: rgba(255, 255, 255, 0.5);
-  background: var(--bg-1);
+  background: var(--glass-dark-strong);
   box-shadow: 0 0 15px var(--accent-glow);
 }
 
@@ -1821,7 +1770,7 @@ tr:hover td {
 
 /* 轨道卡片 */
 .orbit-card {
-  background: var(--bg-glass);
+  background: var(--glass-dark);
   backdrop-filter: blur(16px);
   border: 1px solid var(--accent-glow);
   border-radius: var(--radius-md);
@@ -1988,7 +1937,7 @@ tr:hover td {
   left: 50%;
   transform: translateX(-50%);
   width: 320px;
-  background: var(--bg-glass);
+  background: var(--glass-dark-strong);
   backdrop-filter: blur(20px);
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-lg);

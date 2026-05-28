@@ -4,8 +4,7 @@ const THEMES = [
   { id: 'dark', label: '暗色', icon: '🌙' },
   { id: 'light', label: '亮色', icon: '☀️' },
   { id: 'midnight', label: '午夜蓝', icon: '🌊' },
-  { id: 'forest', label: '森林绿', icon: '🌿' },
-  { id: 'sakura', label: '樱花粉', icon: '🌸' },
+  { id: 'dopamine', label: '多巴胺', icon: '🍬' },
 ];
 
 export function getThemes() { return THEMES; }

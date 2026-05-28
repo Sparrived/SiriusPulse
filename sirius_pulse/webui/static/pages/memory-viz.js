@@ -10,6 +10,7 @@ const ROLE_COLORS = {
 };
 
 let charts = [];
+let cachedData = null;
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -26,9 +27,18 @@ export async function init(container) {
     <div class="card" style="margin-bottom:20px">
       <div class="card-header">
         <div class="card-title">基础记忆时间线</div>
-        <button class="btn btn-sm" id="refreshViz">刷新</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="timelineGroup" class="btn btn-sm" style="display:none;padding:2px 8px"></select>
+          <select id="timelineRange" class="btn btn-sm" style="padding:2px 8px">
+            <option value="7">近 7 天</option>
+            <option value="30" selected>近 30 天</option>
+            <option value="90">近 90 天</option>
+            <option value="0">全部</option>
+          </select>
+          <button class="btn btn-sm" id="refreshViz">刷新</button>
+        </div>
       </div>
-      <div id="timelineChart" class="chart-container" style="min-height:400px;padding:16px"></div>
+      <div id="timelineChart" class="chart-container" style="min-height:360px;padding:16px"></div>
     </div>
     <div class="card" style="margin-bottom:20px">
       <div class="card-header">
@@ -45,6 +55,16 @@ export async function init(container) {
   `;
 
   $('refreshViz').addEventListener('click', () => loadViz());
+  $('timelineRange').addEventListener('change', () => {
+    if (cachedData) {
+      renderTimeline(cachedData.basic_timeline || {});
+    }
+  });
+  $('timelineGroup').addEventListener('change', () => {
+    if (cachedData) {
+      renderTimeline(cachedData.basic_timeline || {});
+    }
+  });
   charts = [];
   await loadViz();
 }
@@ -53,6 +73,22 @@ async function loadViz() {
   const name = store.currentPersona;
   try {
     const data = await get(`/personas/${name}/memory-viz`);
+    cachedData = data;
+
+    // 填充群聊选择器
+    const groups = data.groups || [];
+    const groupSelect = $('timelineGroup');
+    if (groups.length > 1) {
+      groupSelect.style.display = '';
+      const prev = groupSelect.value;
+      groupSelect.innerHTML = '<option value="">全部群聊</option>' +
+        groups.map(g => `<option value="${g}">${g}</option>`).join('');
+      if (prev && groups.includes(prev)) groupSelect.value = prev;
+    } else {
+      groupSelect.style.display = 'none';
+      groupSelect.innerHTML = '';
+    }
+
     renderTimeline(data.basic_timeline || {});
     renderCluster(data.diary_entries || []);
     renderGraph(data);
@@ -63,33 +99,65 @@ async function loadViz() {
 
 function renderTimeline(timeline) {
   const container = $('timelineChart');
+  const buckets = timeline.buckets || {};
+  const allDays = timeline.days || [];
   const recent = timeline.recent || [];
-  if (!recent.length) {
+
+  if (!allDays.length && !recent.length) {
     container.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:80px 0">暂无记忆时间线数据</div>';
     return;
   }
 
-  const groups = [...new Set(recent.map(r => r.group_id).filter(Boolean))];
-  const hasGroups = groups.length > 1;
+  // 读取筛选条件
+  const daysRange = parseInt($('timelineRange')?.value || '30', 10);
+  const groupSel = $('timelineGroup')?.value || '';
 
-  const roleKeys = [...new Set(recent.map(r => r.role))];
-  const seriesData = roleKeys.map(role => {
-    const items = recent.filter(r => r.role === role);
-    return {
-      name: role,
-      type: 'scatter',
-      symbolSize: 10,
-      itemStyle: { color: ROLE_COLORS[role] || '#8b949e' },
-      data: items.map(r => ({
-        value: [
-          r.timestamp || '',
-          hasGroups ? (groups.indexOf(r.group_id) >= 0 ? groups.indexOf(r.group_id) : 0) : roleKeys.indexOf(role),
-          r.speaker_name || '',
-        ],
-        raw: r,
-      })),
-    };
-  });
+  // 根据时间范围过滤天数
+  let filteredDays = allDays;
+  if (daysRange > 0) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - daysRange);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    filteredDays = allDays.filter(d => d >= cutoffStr);
+  }
+
+  // 按天聚合：{human: N, assistant: N, system: N}
+  const dailyData = {};
+  for (const day of filteredDays) {
+    const dayGroups = buckets[day] || {};
+    const agg = { human: 0, assistant: 0, system: 0 };
+    for (const [gid, counts] of Object.entries(dayGroups)) {
+      if (groupSel && gid !== groupSel) continue;
+      for (const role of ['human', 'assistant', 'system']) {
+        agg[role] += counts[role] || 0;
+      }
+    }
+    if (agg.human + agg.assistant + agg.system > 0) {
+      dailyData[day] = agg;
+    }
+  }
+
+  const days = Object.keys(dailyData).sort();
+  if (!days.length) {
+    container.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:80px 0">当前筛选条件下暂无数据</div>';
+    return;
+  }
+
+  const roles = [
+    { key: 'human', name: '用户消息', color: ROLE_COLORS.human },
+    { key: 'assistant', name: 'AI 回复', color: ROLE_COLORS.assistant },
+    { key: 'system', name: '系统消息', color: ROLE_COLORS.system },
+  ];
+
+  const series = roles.map(r => ({
+    name: r.name,
+    type: 'bar',
+    stack: 'total',
+    barMaxWidth: 28,
+    itemStyle: { color: r.color, borderRadius: r.key === 'system' ? [3, 3, 0, 0] : 0 },
+    emphasis: { focus: 'series' },
+    data: days.map(d => dailyData[d][r.key] || 0),
+  }));
 
   const chart = getChart(container);
   if (chart) charts.push(chart);
@@ -97,32 +165,57 @@ function renderTimeline(timeline) {
   setChartOption(container, {
     backgroundColor: 'transparent',
     tooltip: {
-      trigger: 'item',
-      formatter: (p) => {
-        const raw = p.data.raw;
-        if (!raw) return '';
-        const time = raw.timestamp ? new Date(raw.timestamp).toLocaleString('zh-CN') : '';
-        return `<b>${raw.speaker_name || raw.role}</b><br/>${time}<br/>${(raw.content || '').slice(0, 100)}`;
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const day = params[0]?.axisValue || '';
+        const lines = params
+          .filter(p => p.value > 0)
+          .map(p => `${p.marker} ${p.seriesName}: <b>${p.value}</b>`)
+          .join('<br/>');
+        if (!lines) return '';
+        // 查找当天的最近消息用于预览
+        const dayBuckets = buckets[day];
+        let preview = '';
+        if (dayBuckets) {
+          const dayMsgs = recent
+            .filter(r => r.timestamp?.startsWith(day) && (!groupSel || r.group_id === groupSel))
+            .slice(0, 3);
+          if (dayMsgs.length) {
+            preview = '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;font-size:11px;color:#8b949e">';
+            preview += dayMsgs
+              .map(m => `${m.speaker_name || m.role}: ${(m.content || '').slice(0, 40)}`)
+              .join('<br/>');
+            preview += '</div>';
+          }
+        }
+        return `<b style="font-size:13px">${day}</b><br/>${lines}${preview}`;
       },
     },
     legend: {
-      data: roleKeys,
+      data: roles.map(r => r.name),
       textStyle: { color: '#8b949e', fontSize: 11 },
       top: 0,
     },
     grid: { left: 10, right: 10, bottom: 10, top: 36, containLabel: true },
     xAxis: {
-      type: 'time',
-      axisLabel: { fontSize: 10, color: '#8b949e' },
+      type: 'category',
+      data: days,
+      axisLabel: {
+        fontSize: 10,
+        color: '#8b949e',
+        rotate: days.length > 20 ? 45 : 0,
+        formatter: (v) => v.slice(5),
+      },
       axisLine: { lineStyle: { color: '#30363d' } },
     },
     yAxis: {
-      type: 'category',
-      data: hasGroups ? groups : roleKeys,
+      type: 'value',
+      minInterval: 1,
       axisLabel: { fontSize: 10, color: '#8b949e' },
       splitLine: { lineStyle: { color: '#21262d' } },
     },
-    series: seriesData,
+    series,
   });
 }
 

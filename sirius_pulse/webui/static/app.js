@@ -138,8 +138,6 @@ export async function navTo(page, name) {
     const initFn = mod.default || mod.init;
     if (initFn) await initFn(main);
   }
-
-  renderPersonaBar();
 }
 
 function setupThemeDropdown() {
@@ -178,24 +176,6 @@ function renderSidebar() {
   });
 }
 
-function renderPersonaBar() {
-  const bar = document.getElementById('personaBar');
-  const personas = store.personas || [];
-  if (!personas.length) {
-    bar.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:4px 0">暂无人格</div>';
-    return;
-  }
-  bar.innerHTML = `<div class="persona-bar">${personas.map(p => `
-    <div class="persona-chip${p.name === store.currentPersona ? ' selected' : ''}${p.running ? ' running' : ''}" data-name="${p.name}">
-      <span class="chip-dot"></span>
-      <span>${p.persona_name || p.name}</span>
-    </div>
-  `).join('')}</div>`;
-  bar.querySelectorAll('.persona-chip').forEach(chip => {
-    chip.onclick = () => selectPersona(chip.dataset.name);
-  });
-}
-
 function renderSidebarFooter() {
   const footer = document.getElementById('sidebarFooter');
   const personas = store.personas || [];
@@ -209,7 +189,6 @@ function renderSidebarFooter() {
 
 export async function selectPersona(name) {
   store.currentPersona = name;
-  renderPersonaBar();
   try { store.personaState = await get(`/personas/${name}/status`); } catch {}
   if (PERSONA_PAGES.has(currentPage)) {
     navTo(currentPage, name);
@@ -220,7 +199,6 @@ async function loadPersonas() {
   try {
     const res = await get('/personas');
     store.personas = res.personas || [];
-    renderPersonaBar();
     renderSidebarFooter();
     if (!store.currentPersona && store.personas.length > 0) {
       selectPersona(store.personas[0].name);

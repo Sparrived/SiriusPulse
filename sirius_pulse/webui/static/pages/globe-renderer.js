@@ -222,16 +222,24 @@ export class GlobeRenderer {
     const r = this.radius;
 
     // ===== 星球主体 =====
-    // 基础渐变（蓝紫色调，模拟深空星球）
+    // 基础渐变（从主题 accent 色混合深色底色）
+    const { r: ar, g: ag, b: ab } = this.getThemeColors();
+
+    // 将 accent 色与深黑混合，ratio 越大 accent 越明显
+    const blend = (ratio) => {
+      const bg = 8;
+      return `rgb(${Math.floor(bg + (ar - bg) * ratio)}, ${Math.floor(bg + (ag - bg) * ratio)}, ${Math.floor(bg + (ab - bg) * ratio)})`;
+    };
+
     const baseGradient = ctx.createRadialGradient(
       cx - r * 0.25, cy - r * 0.25, r * 0.1,
       cx, cy, r
     );
-    baseGradient.addColorStop(0, '#2b4a7a');
-    baseGradient.addColorStop(0.25, '#1e3560');
-    baseGradient.addColorStop(0.5, '#162a50');
-    baseGradient.addColorStop(0.75, '#101f3a');
-    baseGradient.addColorStop(1, '#0a1525');
+    baseGradient.addColorStop(0, blend(0.38));
+    baseGradient.addColorStop(0.25, blend(0.28));
+    baseGradient.addColorStop(0.5, blend(0.2));
+    baseGradient.addColorStop(0.75, blend(0.13));
+    baseGradient.addColorStop(1, blend(0.06));
 
     ctx.save();
     ctx.beginPath();
@@ -292,9 +300,9 @@ export class GlobeRenderer {
 
   // 绘制星球表面纹理
   drawSurfaceTexture(ctx, cx, cy, r) {
-    const betaRad = (this.beta * Math.PI) / 180;
+    const { r: ar, g: ag, b: ab } = this.getThemeColors();
 
-    // 绘制一些大陆形状的阴影
+    // 绘制一些大陆形状的阴影（基于主题色）
     for (let i = 0; i < 8; i++) {
       const lng = (i * 45 + 20) % 360;
       const lat = 15 * Math.sin(i * 1.5);
@@ -305,7 +313,7 @@ export class GlobeRenderer {
         if (dist < r * 0.9) {
           const size = 20 + i * 5;
           const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size);
-          gradient.addColorStop(0, 'rgba(20, 50, 80, 0.3)');
+          gradient.addColorStop(0, `rgba(${Math.floor(ar * 0.2)}, ${Math.floor(ag * 0.2)}, ${Math.floor(ab * 0.2)}, 0.3)`);
           gradient.addColorStop(1, 'transparent');
           ctx.fillStyle = gradient;
           ctx.beginPath();
@@ -316,15 +324,17 @@ export class GlobeRenderer {
     }
   }
 
-  // 绘制星云色块（随球体旋转的彩色光斑）
+  // 绘制星云色块（随球体旋转的彩色光斑，基于主题色）
   drawNebula(ctx, cx, cy, r) {
+    const { r: ar, g: ag, b: ab } = this.getThemeColors();
+    // 从 accent 色派生 6 个星云色（色相微偏移 + 饱和度变化）
     const nebulae = [
-      { lngOff: 0, lat: 25, size: 55, color: '120, 60, 180' },
-      { lngOff: 120, lat: -15, size: 45, color: '40, 140, 180' },
-      { lngOff: 240, lat: 10, size: 50, color: '80, 100, 200' },
-      { lngOff: 60, lat: -35, size: 35, color: '160, 50, 120' },
-      { lngOff: 180, lat: 40, size: 40, color: '30, 120, 160' },
-      { lngOff: 300, lat: -5, size: 48, color: '100, 70, 170' },
+      { lngOff: 0,   lat: 25,  size: 55, color: `${ar}, ${ag}, ${ab}` },
+      { lngOff: 120, lat: -15, size: 45, color: `${Math.floor(ab * 0.8)}, ${Math.floor(ar * 0.5)}, ${Math.floor(ag * 0.9)}` },
+      { lngOff: 240, lat: 10,  size: 50, color: `${Math.floor(ag * 0.6)}, ${Math.floor(ab * 0.7)}, ${ar}` },
+      { lngOff: 60,  lat: -35, size: 35, color: `${ar}, ${Math.floor(ag * 0.4)}, ${Math.floor(ab * 0.7)}` },
+      { lngOff: 180, lat: 40,  size: 40, color: `${Math.floor(ar * 0.4)}, ${ag}, ${Math.floor(ab * 0.8)}` },
+      { lngOff: 300, lat: -5,  size: 48, color: `${Math.floor(ab * 0.7)}, ${Math.floor(ag * 0.5)}, ${ar}` },
     ];
 
     nebulae.forEach(n => {
@@ -347,6 +357,7 @@ export class GlobeRenderer {
 
   // 绘制表面星点（散落的微小亮点）
   drawSurfaceStars(ctx, cx, cy, r) {
+    const { r: ar, g: ag, b: ab } = this.getThemeColors();
     // 固定种子生成星点位置，避免每帧闪烁
     for (let i = 0; i < 40; i++) {
       const lng = this.seededRandom(i * 73.7) * 360;
@@ -365,7 +376,7 @@ export class GlobeRenderer {
 
       ctx.beginPath();
       ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(200, 220, 255, ${alpha})`;
+      ctx.fillStyle = `rgba(${Math.min(255, ar + 150)}, ${Math.min(255, ag + 150)}, ${Math.min(255, ab + 150)}, ${alpha})`;
       ctx.fill();
     }
   }
