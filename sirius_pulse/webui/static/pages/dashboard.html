@@ -1,93 +1,112 @@
-<div class="page active" id="page-dashboard">
-  <div class="card">
-    <h2 style="display:flex;justify-content:space-between;align-items:center">
-      人格列表
-      <button class="btn" onclick="navTo('create-persona')">➕ 创建人格</button>
-    </h2>
-    <div class="persona-grid" id="personaCards">加载中...</div>
-  </div>
-
-  <div class="card">
-    <h2>全局状态</h2>
-    <div class="stat-grid">
-      <div class="stat-card">
-        <div class="label">Provider 数量</div>
-        <div class="value" id="dashProviderCount">0</div>
+<div class="dashboard-future">
+  <!-- 左侧弧形面板 - 系统信息 -->
+  <div class="arc-panel arc-panel-left" id="systemPanel">
+    <div class="arc-panel-inner">
+      <div class="arc-panel-header">
+        <div class="arc-panel-title">系统状态</div>
+        <div class="arc-panel-line"></div>
       </div>
-      <div class="stat-card">
-        <div class="label">人格总数</div>
-        <div class="value" id="dashPersonaCount">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">运行中</div>
-        <div class="value" id="dashRunningCount">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">已停止</div>
-        <div class="value" id="dashStoppedCount">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Embedding 服务</div>
-        <div class="value" id="dashEmbeddingStatus" style="font-size:14px">检测中...</div>
-        <div style="font-size:11px;color:var(--text-2)" id="dashEmbeddingDetail"></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card" id="dashSelectedInfo" style="display:none">
-    <h2>当前选中人格</h2>
-    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-      <div style="flex:1;min-width:240px">
-        <div style="font-size:20px;font-weight:600;margin-bottom:4px" id="dsName">—</div>
-        <div style="color:var(--text-2);font-size:13px;margin-bottom:12px" id="dsSummary">—</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="dsTags"></div>
-        <div style="font-size:13px;color:var(--text-2)">
-          状态：<span id="dsStatus">—</span> &nbsp;|&nbsp;
-          最后心跳：<span id="dsHeartbeat">—</span> &nbsp;|&nbsp;
-          PID：<span id="dsPid">—</span>
+      <div class="arc-panel-content">
+        <div class="stat-item">
+          <div class="stat-icon">◎</div>
+          <div class="stat-info">
+            <div class="stat-value" id="dsPersonas">0</div>
+            <div class="stat-label">人格总数</div>
+          </div>
         </div>
-      </div>
-      <div style="min-width:140px">
-        <div class="stat-card" style="margin-bottom:8px">
-          <div class="label">Adapters</div>
-          <div class="value" id="dsAdapters">0</div>
+        <div class="stat-item">
+          <div class="stat-icon" style="color:var(--success)">◉</div>
+          <div class="stat-info">
+            <div class="stat-value" id="dsRunning" style="color:var(--success)">0</div>
+            <div class="stat-label">运行中</div>
+          </div>
         </div>
-        <div class="stat-card">
-          <div class="label">端口</div>
-          <div class="value" id="dsPort">—</div>
+        <div class="stat-item">
+          <div class="stat-icon" style="color:var(--accent)">△</div>
+          <div class="stat-info">
+            <div class="stat-value text-mono" id="dsCalls">0</div>
+            <div class="stat-label">总调用</div>
+          </div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-icon" style="color:var(--info)">◈</div>
+          <div class="stat-info">
+            <div class="stat-value text-mono" id="dsTokens">0</div>
+            <div class="stat-label">总 Tokens</div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="card">
-    <h2 style="display:flex;justify-content:space-between;align-items:center">
-      Token 消耗概览
-      <button class="btn small" onclick="navTo('token-tracker')">📈 详细分析 →</button>
-    </h2>
-    <div class="stat-grid">
-      <div class="stat-card">
-        <div class="label">总调用次数</div>
-        <div class="value" id="dashTokenCalls">0</div>
+  <!-- 中央星球区域 -->
+  <div class="planet-hero" id="planetHero">
+    <canvas id="planetGlobe" class="planet-globe"></canvas>
+    <div class="planet-glow"></div>
+    <div class="planet-ring"></div>
+    <div class="planet-ring ring-2"></div>
+    <div class="planet-ring ring-3"></div>
+
+    <!-- 人格卡片容器（动态生成） -->
+    <div id="personaCardsContainer" class="persona-cards-container"></div>
+  </div>
+
+  <!-- 右侧弧形面板 - 人格信息 -->
+  <div class="arc-panel arc-panel-right" id="personaPanel">
+    <div class="arc-panel-inner">
+      <div class="arc-panel-header">
+        <div class="arc-panel-title" id="panelPersonaName">人格信息</div>
+        <div class="arc-panel-line"></div>
       </div>
-      <div class="stat-card">
-        <div class="label">Prompt Tokens</div>
-        <div class="value" id="dashTokenPrompt">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Completion Tokens</div>
-        <div class="value" id="dashTokenCompletion">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">总 Tokens</div>
-        <div class="value" id="dashTokenTotal">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">平均单轮回复</div>
-        <div class="value" id="dashTokenAvgRound">0</div>
-        <div style="font-size:11px;color:var(--text-2)" id="dashTokenAvgRoundDetail">—</div>
+      <div class="arc-panel-content">
+        <div class="persona-detail" id="personaDetail">
+          <div class="persona-status" id="panelStatus">
+            <span class="status-dot"></span>
+            <span>未选择人格</span>
+          </div>
+          <div class="persona-meta" id="panelMeta">点击球体上的人格图斑查看详情</div>
+          <div class="persona-stats">
+            <div class="persona-stat-item">
+              <div class="persona-stat-value" id="panelTokens">-</div>
+              <div class="persona-stat-label">Tokens</div>
+            </div>
+            <div class="persona-stat-item">
+              <div class="persona-stat-value" id="panelCalls">-</div>
+              <div class="persona-stat-label">调用次数</div>
+            </div>
+          </div>
+          <div class="persona-actions">
+            <button class="btn btn-sm btn-primary" id="panelStartBtn" style="display:none">▶ 启动</button>
+            <button class="btn btn-sm btn-danger" id="panelStopBtn" style="display:none">⏹ 停止</button>
+            <button class="btn btn-sm" id="panelConfigBtn">⚙ 配置</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
+  <!-- 底部统计信息 -->
+  <div class="bottom-stats" id="bottomStats">
+    <div class="bottom-stat-item">
+      <div class="bottom-stat-value" id="dsAvgTokens">0</div>
+      <div class="bottom-stat-label">平均每轮</div>
+    </div>
+    <div class="bottom-stat-item">
+      <div class="bottom-stat-value" id="dsSkillCalls">0</div>
+      <div class="bottom-stat-label">Skill 调用</div>
+    </div>
+    <div class="bottom-stat-item">
+      <div class="bottom-stat-value" id="dsSkillRate">0%</div>
+      <div class="bottom-stat-label">成功率</div>
+    </div>
+    <div class="bottom-stat-item">
+      <div class="bottom-stat-value" id="dsHeartbeat">-</div>
+      <div class="bottom-stat-label">最新心跳</div>
+    </div>
+  </div>
+
+  <!-- 添加人格按钮 -->
+  <button class="add-persona-btn" id="addPersonaBtn" title="添加新人格">
+    <span>＋</span>
+  </button>
 </div>

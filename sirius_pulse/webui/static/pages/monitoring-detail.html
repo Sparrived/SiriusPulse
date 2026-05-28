@@ -1,27 +1,8 @@
-<div class="page-monitoring-detail">
-  <div class="card">
-    <h2>📈 人格指标 — <span id="monitoringDetailTitle">—</span></h2>
-    <p style="color:var(--text-2);font-size:13px;margin-bottom:12px">Token 使用、记忆系统、认知事件等运行时数据</p>
-    <div id="monitoringMetrics" class="stat-grid"></div>
-  </div>
-
-  <div class="card">
-    <h2>🏥 健康检查</h2>
-    <p style="color:var(--text-2);font-size:13px;margin-bottom:12px">进程存活、配置完整性、记忆系统可访问性</p>
-    <div id="monitoringHealth" class="stat-grid"></div>
-  </div>
-
-  <div class="card" style="text-align:center">
-    <button class="btn" onclick="loadMonitoringMetrics(currentPersona);loadMonitoringHealth(currentPersona)">🔄 刷新数据</button>
-    <button class="btn" onclick="navTo('monitoring')">← 返回概览</button>
-  </div>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header"><div><div class="card-title" id="monitoringDetailTitle">人格监控</div></div></div>
+  <div id="monitoringMetrics" class="stat-grid"></div>
 </div>
-
-<script>
-  if (currentPersona) {
-    const titleEl = $('monitoringDetailTitle');
-    if (titleEl) titleEl.textContent = currentPersona;
-    loadMonitoringMetrics(currentPersona);
-    loadMonitoringHealth(currentPersona);
-  }
-</script>
+<div class="card">
+  <div class="card-header"><div><div class="card-title">健康检查</div></div></div>
+  <div id="monitoringHealth"></div>
+</div>

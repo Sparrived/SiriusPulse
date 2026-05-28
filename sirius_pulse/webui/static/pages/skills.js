@@ -1,0 +1,285 @@
+import { store } from '../store.js';
+import { get, post } from '../app.js';
+import { toast, flashSuccess, $ } from '../components.js';
+
+let currentModal = null;
+let historyFilter = '';
+
+export async function init(container) {
+  const name = store.currentPersona;
+  if (!name) {
+    container.innerHTML = `
+      <div class="card">
+        <div style="padding:60px;text-align:center;color:var(--text-3)">请先选择人格</div>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <div>
+          <div class="card-title">技能列表</div>
+          <div class="card-subtitle">管理当前人格已安装的技能</div>
+        </div>
+        <button class="btn btn-sm" id="refreshSkills">刷新</button>
+      </div>
+      <div id="skillList" style="padding:16px">
+        <div style="color:var(--text-3)">加载中...</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">执行历史</div>
+        <select id="historyFilter" class="btn btn-sm">
+          <option value="">全部技能</option>
+        </select>
+      </div>
+      <div id="historyList" style="padding:16px">
+        <div style="color:var(--text-3)">加载中...</div>
+      </div>
+    </div>
+  `;
+
+  $('refreshSkills').addEventListener('click', () => loadSkills());
+  $('historyFilter').addEventListener('change', (e) => {
+    historyFilter = e.target.value;
+    loadHistory();
+  });
+
+  await Promise.all([loadSkills(), loadHistory()]);
+}
+
+async function loadSkills() {
+  const name = store.currentPersona;
+  const el = $('skillList');
+  try {
+    const data = await get(`/personas/${name}/skills`);
+    const skills = data.skills || [];
+    if (!skills.length) {
+      el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-3)">暂无技能</div>';
+      return;
+    }
+    updateHistoryFilter(skills);
+    el.innerHTML = `<div style="display:grid;gap:12px">${skills.map(s => renderSkillCard(s)).join('')}</div>`;
+    el.querySelectorAll('.skill-toggle').forEach(cb => {
+      cb.addEventListener('change', () => toggleSkill(cb.dataset.name, cb.checked));
+    });
+    el.querySelectorAll('.skill-config-btn').forEach(btn => {
+      btn.addEventListener('click', () => openConfigModal(btn.dataset.name));
+    });
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderSkillCard(s) {
+  const tags = (s.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
+  const paramCount = (s.parameters || []).length;
+  return `
+    <div class="card" style="margin:0">
+      <div class="card-header">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:15px;font-weight:600">${s.display_name || s.name}</span>
+          <span class="tag" style="font-size:11px">${s.version || '—'}</span>
+          ${s.developer_only ? '<span class="tag tag-accent" style="font-size:11px">开发者</span>' : ''}
+          ${s.silent ? '<span class="tag" style="font-size:11px;color:var(--text-3)">静默</span>' : ''}
+          ${tags}
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" class="skill-toggle" data-name="${s.name}" ${s.enabled !== false ? 'checked' : ''}>
+            <span style="color:${s.enabled !== false ? 'var(--success)' : 'var(--text-3)'}">
+              ${s.enabled !== false ? '已启用' : '已禁用'}
+            </span>
+          </label>
+          <button class="btn btn-sm skill-config-btn" data-name="${s.name}">配置</button>
+        </div>
+      </div>
+      ${s.description ? `<div style="padding:0 16px 8px;font-size:13px;color:var(--text-2);line-height:1.5">${s.description}</div>` : ''}
+      <div style="padding:0 16px 16px;display:flex;gap:16px;font-size:12px;color:var(--text-3)">
+        <span>参数: ${paramCount}</span>
+      </div>
+    </div>
+  `;
+}
+
+async function toggleSkill(skillName, enabled) {
+  const name = store.currentPersona;
+  try {
+    await post(`/personas/${name}/skills/${skillName}/toggle`, { enabled });
+    toast(`${skillName} 已${enabled ? '启用' : '禁用'}`, 'success');
+  } catch (e) {
+    toast('操作失败: ' + e.message, 'error');
+    await loadSkills();
+  }
+}
+
+async function openConfigModal(skillName) {
+  closeModal();
+  const name = store.currentPersona;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:600px;max-height:85vh;overflow-y:auto">
+      <div class="modal-header">
+        <span style="font-size:16px;font-weight:600">${skillName} 配置</span>
+        <button class="btn btn-sm" id="modalClose">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <div style="padding:20px;text-align:center;color:var(--text-3)">加载中...</div>
+      </div>
+      <div class="modal-footer" id="modalFooter">
+        <button class="btn" id="modalCancel">取消</button>
+        <button class="btn btn-primary" id="modalSave">保存</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  currentModal = overlay;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  $('modalClose').addEventListener('click', closeModal);
+  $('modalCancel').addEventListener('click', closeModal);
+
+  try {
+    const data = await get(`/personas/${name}/skills/${skillName}/config`);
+    renderConfigModal(data);
+  } catch (e) {
+    $('modalBody').innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderConfigModal(config) {
+  const meta = config.meta || {};
+  const params = meta.parameters || [];
+  const extraKeys = Object.keys(config).filter(k => k !== 'enabled' && k !== 'meta');
+
+  let paramsHtml = '';
+  if (params.length) {
+    paramsHtml = `
+      <div style="margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">参数配置</div>
+        <div style="display:grid;gap:12px">
+          ${params.map(p => {
+            const val = config[p.name] !== undefined ? config[p.name] : (p.default || '');
+            return `
+              <div class="form-group" style="margin:0">
+                <label>${p.name}${p.description ? ` <span style="color:var(--text-3);font-size:11px">${p.description}</span>` : ''}</label>
+                <input type="text" name="param_${p.name}" value="${typeof val === 'object' ? JSON.stringify(val) : val}">
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  let extraVal = '';
+  if (extraKeys.length) {
+    const extra = {};
+    extraKeys.forEach(k => { extra[k] = config[k]; });
+    extraVal = JSON.stringify(extra, null, 2);
+  }
+
+  $('modalBody').innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;margin-bottom:16px">
+      <input type="checkbox" id="cfgEnabled" ${config.enabled !== false ? 'checked' : ''}>
+      <span>启用技能</span>
+    </label>
+    ${paramsHtml}
+    <div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:8px">额外配置 (JSON)</div>
+      <textarea id="cfgExtra" rows="6" style="width:100%;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;font-family:monospace">${extraVal}</textarea>
+    </div>
+  `;
+
+  $('modalSave').addEventListener('click', () => saveConfig(params));
+}
+
+async function saveConfig(params) {
+  const name = store.currentPersona;
+  const btn = $('modalSave');
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+
+  try {
+    const payload = { enabled: $('cfgEnabled').checked };
+    params.forEach(p => {
+      const input = $(`param_${p.name}`);
+      if (input) {
+        const val = input.value.trim();
+        try { payload[p.name] = JSON.parse(val); }
+        catch { payload[p.name] = val; }
+      }
+    });
+
+    const extraText = $('cfgExtra').value.trim();
+    if (extraText) {
+      try {
+        const extra = JSON.parse(extraText);
+        Object.assign(payload, extra);
+      } catch {
+        toast('额外配置 JSON 格式错误', 'error');
+        btn.disabled = false;
+        btn.textContent = '保存';
+        return;
+      }
+    }
+
+    const skillName = currentModal.querySelector('.modal-header span').textContent.replace(' 配置', '');
+    await post(`/personas/${name}/skills/${skillName}/config`, payload);
+    flashSuccess(btn);
+    toast('配置已保存');
+    setTimeout(closeModal, 800);
+  } catch (e) {
+    toast('保存失败: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '保存';
+  }
+}
+
+function closeModal() {
+  if (currentModal) {
+    currentModal.remove();
+    currentModal = null;
+  }
+}
+
+async function loadHistory() {
+  const name = store.currentPersona;
+  const el = $('historyList');
+  try {
+    const data = await get(`/personas/${name}/skill-history`);
+    let records = data.records || data.history || [];
+    if (historyFilter) {
+      records = records.filter(r => r.skill_name === historyFilter);
+    }
+    if (!records.length) {
+      el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-3)">暂无执行记录</div>';
+      return;
+    }
+    el.innerHTML = `<div style="display:grid;gap:8px">${records.slice(0, 50).map(r => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--surface-2,rgba(255,255,255,0.03));border-radius:6px;font-size:13px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="tag" style="font-size:11px">${r.skill_name || '—'}</span>
+          <span style="color:${r.success ? 'var(--success)' : 'var(--danger)'}">${r.success ? '✓ 成功' : '✕ 失败'}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;color:var(--text-3);font-size:12px">
+          ${r.duration != null ? `<span>${typeof r.duration === 'number' ? r.duration.toFixed(1) + 's' : r.duration}</span>` : ''}
+          <span>${r.timestamp ? new Date(r.timestamp).toLocaleString('zh-CN') : '—'}</span>
+        </div>
+      </div>
+    `).join('')}</div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
+  }
+}
+
+function updateHistoryFilter(skills) {
+  const sel = $('historyFilter');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">全部技能</option>' +
+    skills.map(s => `<option value="${s.name}">${s.display_name || s.name}</option>`).join('');
+  sel.value = prev;
+}

@@ -1,44 +1,4 @@
-<div class="page active" id="page-persona">
-  <div class="persona-bar">
-    <label>当前人格</label>
-    <div class="persona-select-bar"></div>
-  </div>
-  <div class="card">
-    <h2>人格配置</h2>
-    <div id="personaForm">
-      <div class="row">
-        <div class="col"><div class="form-group"><label>名称</label><input type="text" id="pfName"></div></div>
-        <div class="col"><div class="form-group"><label>别名（空格分隔）</label><input type="text" id="pfAliases"></div></div>
-        <div class="col"><div class="form-group"><label>社交角色</label>
-          <select id="pfSocialRole">
-            <option value="observer">观察者</option>
-            <option value="mediator">调解者</option>
-            <option value="leader">领导者</option>
-            <option value="jester">搞笑者</option>
-            <option value="caregiver">照顾者</option>
-          </select>
-        </div></div>
-      </div>
-      <div class="form-group"><label>一句话描述</label><input type="text" id="pfSummary"></div>
-      <div class="form-group"><label>性格标签（逗号分隔）</label><input type="text" id="pfTraits"></div>
-      <div class="form-group"><label>说话风格</label><textarea id="pfStyle" rows="2"></textarea></div>
-      <div class="form-group"><label>口头禅（逗号分隔）</label><input type="text" id="pfCatchphrases"></div>
-      <div class="row">
-        <div class="col"><div class="form-group"><label>Emoji 偏好</label>
-          <select id="pfEmoji"><option value="heavy">重度</option><option value="moderate">中度</option><option value="light">轻度</option><option value="none">无</option></select>
-        </div></div>
-        <div class="col"><div class="form-group"><label>幽默风格</label>
-          <select id="pfHumor"><option value="sarcastic">讽刺</option><option value="wholesome">温馨</option><option value="dark">黑暗</option><option value="dry">冷幽默</option><option value="witty">机智</option><option value="none">无</option></select>
-        </div></div>
-        <div class="col"><div class="form-group"><label>共情方式</label>
-          <select id="pfEmpathy"><option value="warm">温暖</option><option value="practical">实用</option><option value="distant">疏离</option><option value="playful"> playful</option><option value="mentor">导师</option></select>
-        </div></div>
-      </div>
-      <div class="form-group"><label>边界（逗号分隔）</label><input type="text" id="pfBoundaries"></div>
-      <div class="form-group"><label>禁忌话题（逗号分隔）</label><input type="text" id="pfTaboos"></div>
-      <div class="form-group"><label>背景故事</label><textarea id="pfBackstory" rows="3"></textarea></div>
-      <button class="btn success" onclick="savePersonaForm()">💾 保存人格</button>
-    </div>
-    <div id="personaPreview" class="preview-box" style="display:none">加载中...</div>
-  </div>
+<div class="card">
+  <div class="card-header"><div><div class="card-title">人格配置</div><div class="card-subtitle">编辑人格的核心设定</div></div></div>
+  <div id="personaForm"></div>
 </div>

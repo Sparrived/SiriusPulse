@@ -1,29 +1,8 @@
-<div class="page active" id="page-napcat">
-  <div class="card">
-    <h2>NapCat 管理（全局）</h2>
-    <div class="stat-grid" style="margin-bottom:16px">
-      <div class="stat-card">
-        <div class="label">安装状态</div>
-        <div class="value small" id="ncInstalled">检测中...</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">运行中实例</div>
-        <div class="value small" id="ncRunning">检测中...</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">QQ 检测</div>
-        <div class="value small" id="ncQQ">检测中...</div>
-      </div>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button class="btn" id="ncInstallBtn" onclick="ncInstall()">⬇️ 安装 NapCat</button>
-      <button class="btn success" id="ncStartBtn" onclick="ncStart()">▶ 启动 NapCat</button>
-      <button class="btn danger" id="ncStopBtn" onclick="ncStop()">⏹ 停止 NapCat</button>
-    </div>
-    <div class="section-title">日志</div>
-    <div id="ncLogs" class="preview-box" style="max-height:300px;font-size:12px">暂无日志</div>
-    <div style="margin-top:8px">
-      <button class="btn small" onclick="ncLoadLogs()">🔄 刷新日志</button>
-    </div>
-  </div>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header"><div><div class="card-title">NapCat 状态</div></div></div>
+  <div id="napcatStatus"></div>
+</div>
+<div class="card">
+  <div class="card-header"><div><div class="card-title">日志</div></div></div>
+  <pre id="napcatLogs" style="font-family:var(--font-mono);font-size:12px;max-height:400px;overflow:auto;padding:12px;background:var(--bg-1);border-radius:var(--radius-sm);color:var(--text-2)"></pre>
 </div>

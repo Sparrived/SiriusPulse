@@ -1,45 +1,4 @@
-<div class="page active" id="page-global-settings">
-  <div class="card">
-    <h2>全局设置</h2>
-    <div class="row">
-      <div class="col">
-        <div class="form-group">
-          <label>WebUI 监听地址</label>
-          <input type="text" id="gsHost" value="0.0.0.0">
-        </div>
-      </div>
-      <div class="col">
-        <div class="form-group">
-          <label>WebUI 端口</label>
-          <input type="number" id="gsPort" value="8080">
-        </div>
-      </div>
-      <div class="col">
-        <div class="form-group">
-          <label>日志级别</label>
-          <select id="gsLogLevel">
-            <option value="DEBUG">DEBUG</option>
-            <option value="INFO">INFO</option>
-            <option value="WARNING">WARNING</option>
-            <option value="ERROR">ERROR</option>
-          </select>
-        </div>
-      </div>
-    </div>
-    <div class="row">
-      <div class="col">
-        <div class="form-group">
-          <label>NapCat 安装目录</label>
-          <input type="text" id="gsNapcatDir" placeholder="例如: D:\\Code\\sirius_chat\\napcat">
-        </div>
-      </div>
-      <div class="col">
-        <div class="form-group">
-          <label>NapCat 起始端口</label>
-          <input type="number" id="gsNapcatPort" value="3001">
-        </div>
-      </div>
-    </div>
-    <button class="btn success" onclick="saveGlobalSettings()">💾 保存全局设置</button>
-  </div>
+<div class="card">
+  <div class="card-header"><div><div class="card-title">全局设置</div><div class="card-subtitle">WebUI 服务器和 NapCat 基础配置</div></div></div>
+  <div id="globalSettingsForm"></div>
 </div>

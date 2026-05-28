@@ -1,34 +1,5 @@
-<div class="page active" id="page-users">
-  <div class="persona-bar">
-    <label>当前人格</label>
-    <div class="persona-select-bar" id="usersPersonaSelect">加载中...</div>
-  </div>
-
-  <!-- Stats -->
-  <div class="card">
-    <h2>用户画像统计</h2>
-    <div class="stat-grid" id="usersStats">
-      <div class="stat-card"><div class="label">用户总数</div><div class="value" id="usersTotal">—</div></div>
-      <div class="stat-card"><div class="label">覆盖群数</div><div class="value" id="usersGroups">—</div></div>
-    </div>
-  </div>
-
-  <!-- Filter -->
-  <div class="card">
-    <h2 style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:nowrap">
-      <span style="white-space:nowrap">用户列表</span>
-      <div class="diary-dropdown" id="usersGroupDropdown" style="position:relative;flex-shrink:0;width:160px">
-        <button class="diary-dropdown-btn" onclick="usersToggleDropdown()" style="width:100%;background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
-          <span id="usersDropdownLabel">全部群聊</span>
-          <span style="font-size:10px;transition:transform .2s" id="usersDropdownArrow">▼</span>
-        </button>
-        <div class="diary-dropdown-list" id="usersDropdownList" style="display:none;position:absolute;top:calc(100% + 4px);right:0;min-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);z-index:10;max-height:240px;overflow-y:auto">
-          <div onclick="usersSelectGroup('')" class="diary-dropdown-item" style="padding:8px 12px;font-size:13px;cursor:pointer;color:var(--text);border-radius:6px;margin:4px">全部群聊</div>
-        </div>
-      </div>
-    </h2>
-    <div id="usersList" style="display:flex;flex-direction:column;gap:12px">
-      <div style="color:var(--text-2);padding:12px">加载中...</div>
-    </div>
-  </div>
+<div class="stat-grid" id="usersStats"></div>
+<div class="card" style="margin-top:20px">
+  <div class="card-header"><div><div class="card-title">用户画像</div><div class="card-subtitle">群聊用户互动分析</div></div></div>
+  <div id="usersList"></div>
 </div>

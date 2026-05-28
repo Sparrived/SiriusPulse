@@ -1,0 +1,300 @@
+import { store } from '../store.js';
+import { get, post, put } from '../app.js';
+import { toast, flashSuccess, $ } from '../components.js';
+
+let currentModal = null;
+
+export async function init(container) {
+  container.innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">插件管理</div>
+          <div class="card-subtitle">管理系统插件的启用状态和配置</div>
+        </div>
+        <button class="btn btn-sm" id="reloadPlugins">刷新</button>
+      </div>
+      <div id="pluginList" style="padding:16px">
+        <div style="color:var(--text-3)">加载中...</div>
+      </div>
+    </div>
+  `;
+
+  await loadPlugins();
+  $('reloadPlugins').addEventListener('click', () => loadPlugins());
+}
+
+async function loadPlugins() {
+  const el = $('pluginList');
+  try {
+    const res = await get('/plugins');
+    const plugins = res.plugins || [];
+
+    if (!plugins.length) {
+      el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-3)">暂无插件</div>';
+      return;
+    }
+
+    el.innerHTML = `<div style="display:grid;gap:12px">${plugins.map(p => `
+      <div class="card" data-plugin="${p.name}" style="margin:0">
+        <div style="padding:16px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+            <div>
+              <div style="font-size:15px;font-weight:600">${p.display_name || p.name}</div>
+              ${p.description ? `<div style="font-size:13px;color:var(--text-2);margin-top:2px">${p.description}</div>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="tag" style="font-size:11px">${p.version || '—'}</span>
+              ${p.author ? `<span class="tag" style="font-size:11px">${p.author}</span>` : ''}
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+            <div style="display:flex;gap:12px;font-size:12px;color:var(--text-2)">
+              <span>命令: ${(p.commands || []).length}</span>
+              <span>参数: ${(p.parameters || []).length}</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="plugin-toggle" data-name="${p.name}" ${p.enabled ? 'checked' : ''}>
+                <span style="color:${p.enabled ? 'var(--success)' : 'var(--text-3)'}">${p.enabled ? '已启用' : '已禁用'}</span>
+              </label>
+              <button class="btn btn-sm btn-primary plugin-detail-btn" data-name="${p.name}">详情</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `).join('')}</div>`;
+
+    el.querySelectorAll('.plugin-toggle').forEach(cb => {
+      cb.addEventListener('change', () => togglePlugin(cb.dataset.name, cb.checked));
+    });
+
+    el.querySelectorAll('.plugin-detail-btn').forEach(btn => {
+      btn.addEventListener('click', () => openDetail(btn.dataset.name));
+    });
+  } catch {
+    el.innerHTML = '<div style="color:var(--danger);padding:12px">插件列表加载失败</div>';
+  }
+}
+
+async function togglePlugin(name, enabled) {
+  try {
+    const res = await post(`/plugins/${name}/toggle`, { enabled });
+    if (res.success) {
+      toast(`${name} 已${enabled ? '启用' : '禁用'}`, 'success');
+    } else {
+      toast(res.error || '操作失败', 'error');
+    }
+  } catch (e) {
+    toast('操作失败: ' + e.message, 'error');
+  }
+  await loadPlugins();
+}
+
+async function openDetail(name) {
+  closeModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:720px;max-height:85vh;overflow-y:auto">
+      <div class="modal-header">
+        <span id="modalTitle" style="font-size:16px;font-weight:600">加载中...</span>
+        <button class="btn btn-sm" id="modalClose">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <div style="padding:20px;text-align:center;color:var(--text-3)">加载中...</div>
+      </div>
+      <div class="modal-footer" id="modalFooter"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  currentModal = overlay;
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeModal();
+  });
+  overlay.querySelector('#modalClose').addEventListener('click', closeModal);
+
+  try {
+    const detail = await get(`/plugins/${name}`);
+    renderModalContent(detail);
+  } catch {
+    $('modalBody').innerHTML = '<div style="color:var(--danger);padding:12px">加载失败</div>';
+  }
+}
+
+function closeModal() {
+  if (currentModal) {
+    currentModal.remove();
+    currentModal = null;
+  }
+}
+
+function renderModalContent(d) {
+  $('modalTitle').textContent = d.display_name || d.name;
+
+  const commands = d.commands || [];
+  const parameters = d.parameters || [];
+  const nlExamples = d.nl_examples || [];
+  const permissions = d.permissions || {};
+  const settings = d.settings || {};
+
+  $('modalBody').innerHTML = `
+    <div class="stat-grid" style="margin-bottom:16px">
+      <div class="stat-card">
+        <div class="stat-label">版本</div>
+        <div class="stat-value" style="font-size:14px">${d.version || '—'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">作者</div>
+        <div class="stat-value" style="font-size:14px">${d.author || '—'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">命令数</div>
+        <div class="stat-value">${commands.length}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">状态</div>
+        <div class="stat-value" style="font-size:14px;color:${d.enabled ? 'var(--success)' : 'var(--text-3)'}">${d.enabled ? '已启用' : '已禁用'}</div>
+      </div>
+    </div>
+
+    ${commands.length ? `
+      <div style="margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">命令列表</div>
+        <div style="display:grid;gap:8px">
+          ${commands.map(c => `
+            <div style="padding:10px 12px;background:var(--surface-2,rgba(255,255,255,0.03));border-radius:6px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span style="font-weight:500;font-size:13px">${c.name}</span>
+                <span class="tag" style="font-size:11px">${c.pattern_type || 'text'}</span>
+              </div>
+              ${c.description ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:4px">${c.description}</div>` : ''}
+              ${(c.patterns || []).length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${c.patterns.map(pt => `<code style="font-size:11px;padding:2px 6px;background:var(--surface-3,rgba(255,255,255,0.06));border-radius:4px">${pt}</code>`).join('')}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    ${parameters.length ? `
+      <div style="margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">参数列表</div>
+        <div style="display:grid;gap:8px">
+          ${parameters.map(p => `
+            <div style="padding:10px 12px;background:var(--surface-2,rgba(255,255,255,0.03));border-radius:6px;display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <span style="font-weight:500;font-size:13px">${p.name}</span>
+                ${p.description ? `<span style="font-size:12px;color:var(--text-2);margin-left:8px">${p.description}</span>` : ''}
+              </div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <span class="tag" style="font-size:11px">${p.type || 'string'}</span>
+                ${p.required ? '<span class="tag tag-accent" style="font-size:11px">必填</span>' : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    ${nlExamples.length ? `
+      <div style="margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">自然语言示例</div>
+        <div style="display:grid;gap:6px">
+          ${nlExamples.map(ex => `
+            <div style="font-size:13px;padding:8px 12px;background:var(--surface-2,rgba(255,255,255,0.03));border-radius:6px;color:var(--text-2)">"${ex}"</div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:8px">权限配置</div>
+      <form id="permForm" style="display:grid;gap:12px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" name="developer_only" ${permissions.developer_only ? 'checked' : ''}>
+          仅开发者可用
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" name="hidden_from_intent" ${permissions.hidden_from_intent ? 'checked' : ''}>
+          意图识别中隐藏
+        </label>
+        <div class="form-group" style="margin:0">
+          <label>频率限制 (次/分钟)</label>
+          <input type="number" name="rate_limit" value="${permissions.rate_limit_calls_per_minute || 60}" min="1" max="1000">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>群组黑名单</label>
+          <input type="text" name="group_blacklist" placeholder="群号用逗号分隔" value="${(permissions.group_blacklist || []).join(',')}">
+        </div>
+      </form>
+    </div>
+
+    ${Object.keys(settings).length ? `
+      <div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:8px">自定义配置</div>
+        <form id="settingsForm" style="display:grid;gap:12px">
+          ${Object.entries(settings).map(([k, v]) => `
+            <div class="form-group" style="margin:0">
+              <label>${k}</label>
+              <input type="text" name="${k}" value="${typeof v === 'object' ? JSON.stringify(v) : v}">
+            </div>
+          `).join('')}
+        </form>
+      </div>
+    ` : ''}
+  `;
+
+  $('modalFooter').innerHTML = `
+    <button class="btn" id="modalCancel">取消</button>
+    <button class="btn btn-primary" id="modalSave">保存配置</button>
+  `;
+
+  $('modalCancel').addEventListener('click', closeModal);
+  $('modalSave').addEventListener('click', () => savePluginConfig(d.name, settings));
+}
+
+async function savePluginConfig(name, originalSettings) {
+  const saveBtn = $('modalSave');
+  saveBtn.disabled = true;
+  saveBtn.textContent = '保存中...';
+
+  try {
+    const permForm = $('permForm');
+    if (permForm) {
+      const bl = permForm.group_blacklist.value.trim();
+      const permissions = {
+        developer_only: permForm.developer_only.checked,
+        hidden_from_intent: permForm.hidden_from_intent.checked,
+        rate_limit_calls_per_minute: parseInt(permForm.rate_limit.value, 10) || 60,
+        group_blacklist: bl ? bl.split(',').map(s => s.trim()).filter(Boolean) : [],
+      };
+      await put(`/plugins/${name}/config`, permissions);
+    }
+
+    const settingsForm = $('settingsForm');
+    if (settingsForm && Object.keys(originalSettings).length) {
+      const newSettings = {};
+      for (const [k] of Object.entries(originalSettings)) {
+        const input = settingsForm.querySelector(`[name="${k}"]`);
+        if (input) {
+          const val = input.value.trim();
+          try {
+            newSettings[k] = JSON.parse(val);
+          } catch {
+            newSettings[k] = val;
+          }
+        }
+      }
+      await post(`/plugins/${name}/settings`, { settings: newSettings });
+    }
+
+    flashSuccess(saveBtn);
+    toast('配置已保存', 'success');
+    setTimeout(closeModal, 1200);
+  } catch (e) {
+    toast('保存失败: ' + e.message, 'error');
+    saveBtn.disabled = false;
+    saveBtn.textContent = '保存配置';
+  }
+}

@@ -1,53 +1,8 @@
-<div class="page active" id="page-skills">
-  <div class="persona-bar">
-    <label>当前人格</label>
-    <div class="persona-select-bar"></div>
-  </div>
-
-  <!-- Skill 列表 -->
-  <div class="card">
-    <h2>🛠️ Skill 管理</h2>
-    <p style="color:var(--text-2);font-size:13px;margin-bottom:12px">
-      管理当前人格的 Skill 启停状态与运行时配置。禁用 Skill 后，AI 将不再调用该技能。
-    </p>
-    <div id="skillsList"></div>
-  </div>
-
-  <!-- Skill 使用统计 -->
-  <div class="card">
-    <h2>Skill 使用统计</h2>
-    <div class="stat-grid" id="skillsTelemetryStats">加载中...</div>
-    <div style="margin-top:12px;font-size:12px;color:var(--text-2)">
-      总调用次数：<span id="skillsTelemetryTotalCalls">0</span>
-    </div>
-  </div>
-
-  <!-- Skill 执行历史 -->
-  <div class="card">
-    <h2 style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-      <span>Skill 执行历史</span>
-      <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-        <select id="skillHistoryFilter" onchange="loadSkillHistory()" style="background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px">
-          <option value="">全部 Skill</option>
-        </select>
-        <button class="btn small" onclick="loadSkillHistory()" style="padding:3px 10px;font-size:12px">刷新</button>
-      </div>
-    </h2>
-    <div id="skillHistoryList" style="color:var(--text-2);padding:12px">加载中...</div>
-  </div>
-
-  <!-- Skill 配置模态框 -->
-  <div id="skillConfigModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:90%;max-width:560px;max-height:80vh;overflow:auto">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <h3 id="skillConfigTitle">Skill 配置</h3>
-        <button class="btn small" onclick="closeSkillConfig()">✕</button>
-      </div>
-      <div id="skillConfigBody"></div>
-      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
-        <button class="btn" onclick="closeSkillConfig()">取消</button>
-        <button class="btn success" onclick="saveSkillConfig()">💾 保存配置</button>
-      </div>
-    </div>
-  </div>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header"><div><div class="card-title">Skills</div><div class="card-subtitle">技能管理和配置</div></div></div>
+  <div id="skillsList"></div>
+</div>
+<div class="card">
+  <div class="card-header"><div><div class="card-title">执行历史</div></div></div>
+  <div id="skillHistory"></div>
 </div>

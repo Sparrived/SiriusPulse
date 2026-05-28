@@ -1,39 +1,12 @@
-<div class="page active" id="page-memory-viz">
-  <div class="persona-bar">
-    <label>当前人格</label>
-    <div class="persona-select-bar" id="mvPersonaSelect">加载中...</div>
-  </div>
-
-  <div class="card">
-    <h2 style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:nowrap">
-      <span style="white-space:nowrap">记忆概览</span>
-      <div class="diary-dropdown" id="mvGroupDropdown" style="position:relative;flex-shrink:0;width:200px">
-        <button class="diary-dropdown-btn" onclick="mvToggleDropdown()" style="width:100%;background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
-          <span id="mvDropdownLabel">全部群聊</span>
-          <span style="font-size:10px;transition:transform .2s" id="mvDropdownArrow">▼</span>
-        </button>
-        <div class="diary-dropdown-list" id="mvDropdownList" style="display:none;position:absolute;top:calc(100% + 4px);right:0;min-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);z-index:10;max-height:240px;overflow-y:auto">
-        </div>
-      </div>
-    </h2>
-  </div>
-
-  <div class="card">
-    <h3>基础记忆时间线</h3>
-    <p style="font-size:12px;color:var(--text-2);margin-bottom:8px">按天统计各群的消息量，柱内按角色（用户/助手/系统）分色</p>
-    <div id="basicTimelineChart" style="height:420px;"></div>
-  </div>
-
-  <div class="card">
-    <h3>日记记忆语义聚类</h3>
-    <p style="font-size:12px;color:var(--text-2);margin-bottom:8px">embedding PCA 三维降维，悬停查看日记摘要</p>
-    <div id="diaryClusterChart" style="height:520px;"></div>
-    <div id="diaryKeywordsCloud" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center"></div>
-  </div>
-
-  <div class="card">
-    <h3>用户画像关系网络</h3>
-    <p style="font-size:12px;color:var(--text-2);margin-bottom:8px">用户节点与兴趣话题节点的二部图，节点大小=互动次数，边=该用户关注该话题</p>
-    <div id="userNetworkChart" style="height:520px;"></div>
-  </div>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header"><div><div class="card-title">基础记忆时间线</div></div></div>
+  <div id="basicTimelineChart" class="chart-container" style="min-height:400px"></div>
+</div>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header"><div><div class="card-title">日记语义聚类</div></div></div>
+  <div id="diaryClusterChart" class="chart-container" style="min-height:400px"></div>
+</div>
+<div class="card">
+  <div class="card-header"><div><div class="card-title">用户-话题关系</div></div></div>
+  <div id="userNetworkChart" class="chart-container" style="min-height:400px"></div>
 </div>

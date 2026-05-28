@@ -1,44 +1,8 @@
-<div class="page active" id="page-create-persona">
-  <div class="persona-bar">
-    <label>目标人格</label>
-    <div class="persona-select-bar"></div>
-  </div>
-
-  <div class="card">
-    <h2>快速创建</h2>
-    <div class="row">
-      <div class="col">
-        <div class="form-group">
-          <label>人格标识（目录名）</label>
-          <input type="text" id="cpName" placeholder="例如：akane">
-        </div>
-      </div>
-      <div class="col">
-        <div class="form-group">
-          <label>角色名称</label>
-          <input type="text" id="cpPersonaName" placeholder="例如：茜">
-        </div>
-      </div>
-    </div>
-    <button class="btn success" onclick="createBlankPersona()">➕ 创建空白人格</button>
-  </div>
-
-  <div class="card">
-    <h2>问卷深度定制</h2>
-    <div id="interviewQuestions"></div>
-    <div class="form-group">
-      <label>角色名称</label>
-      <input type="text" id="ivName" value="小星">
-    </div>
-    <div class="form-group">
-      <label>别名（空格分隔）</label>
-      <input type="text" id="ivAliases" placeholder="例如：星酱 星星">
-    </div>
-    <div class="form-group">
-      <label>生成模型</label>
-      <select id="ivModel"></select>
-    </div>
-    <button class="btn" id="ivBtn" onclick="generatePersonaInterview()">✨ 生成人格</button>
-    <div id="ivResult" style="margin-top:16px"></div>
-  </div>
+<div class="card" style="margin-bottom:20px">
+  <div class="card-header"><div><div class="card-title">创建空白人格</div><div class="card-subtitle">快速创建一个新的人格实例</div></div></div>
+  <div id="blankPersonaForm"></div>
+</div>
+<div class="card">
+  <div class="card-header"><div><div class="card-title">访谈式人格生成</div><div class="card-subtitle">回答问题后由 AI 生成人格定义</div></div></div>
+  <div id="interviewForm"></div>
 </div>

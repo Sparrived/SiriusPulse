@@ -1,16 +1,5 @@
-<div class="page-monitoring">
-  <div class="card">
-    <h2>📊 系统概览</h2>
-    <div id="monitoringSummary" class="stat-grid" style="margin-bottom:16px"></div>
-  </div>
-
-  <div class="card">
-    <h2>🎭 人格状态</h2>
-    <p style="color:var(--text-2);font-size:13px;margin-bottom:12px">点击人格卡片可查看详细指标和健康检查</p>
-    <div id="monitoringCards" class="stat-grid"></div>
-  </div>
+<div class="stat-grid" id="monitoringSummary"></div>
+<div class="card" style="margin-top:20px">
+  <div class="card-header"><div><div class="card-title">人格实例</div></div></div>
+  <div id="monitoringCards"></div>
 </div>
-
-<script>
-  loadMonitoringOverview();
-</script>
