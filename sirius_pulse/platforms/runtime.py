@@ -349,7 +349,7 @@ class EngineRuntime:
             inst = registry.get_instance(definition)
             if inst is None:
                 continue
-            for evt in registry.get_plugin(definition).events if registry.get_plugin(definition) else []:
+            for evt in registry.get(definition).events if registry.get(definition) else []:
                 if not evt.cron and evt.interval_seconds <= 0:
                     continue
                 task = ScheduledTask(
