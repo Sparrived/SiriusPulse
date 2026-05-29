@@ -465,6 +465,7 @@ class DelayedQueueTasks:
                 role="assistant",
                 content=strip_skill_calls(reply),
                 speaker_name=engine.persona.name if engine.persona else "assistant",
+                system_prompt=system_prompt,
             )
             engine.basic_store.append(_entry)
             if skill_results:
@@ -545,6 +546,7 @@ class DelayedQueueTasks:
                 role="assistant",
                 content=clean_reply,
                 speaker_name=engine.persona.name if engine.persona else "assistant",
+                system_prompt=system_prompt,
             )
             engine.basic_store.append(_reply_entry)
             # 反馈追踪：AI 发言后记录锚点，等待用户跟进

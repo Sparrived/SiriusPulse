@@ -84,6 +84,7 @@ class ChatResult:
     model_name: str
     duration_ms: float
     token_record: Any
+    system_prompt: str = ""  # 存储本次对话使用的完整 system prompt
     sticker_names: list[str] = field(default_factory=list)
     has_skill_call: bool = False
     skill_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
@@ -505,6 +506,7 @@ class Brain:
                 model_name=cfg.model_name,
                 duration_ms=duration_ms,
                 token_record=token_record,
+                system_prompt=system_prompt,
                 sticker_names=sticker_names,
                 has_skill_call=bool(skill_calls),
                 skill_calls=skill_calls,

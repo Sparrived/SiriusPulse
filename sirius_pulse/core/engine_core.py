@@ -681,6 +681,7 @@ class _EmotionalGroupChatEngineBase:
                 role="assistant",
                 content=_result.clean_text,
                 speaker_name=persona_name,
+                system_prompt=_result.system_prompt,
             )
             _engine.basic_store.append(_entry)
             try:
