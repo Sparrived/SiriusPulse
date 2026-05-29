@@ -235,6 +235,8 @@ async def api_plugin_detail_get(request: web.Request, manager: Any) -> web.Respo
                 "description": p.description,
                 "required": p.required,
                 "default": p.default,
+                "choices": p.choices,
+                "group": p.group,
             }
             for p in definition.parameters
         ],

@@ -114,10 +114,27 @@ async function loadProviders() {
       platform_type: p.platform_type || p.type || 'openai-compatible',
     }));
     editingIdx = null;
+    
+    // 预加载所有 Provider 类型的 models.dev 数据
+    const providerTypes = [...new Set(providers.map(p => p.platform_type))];
+    await Promise.all(providerTypes.map(type => loadModelsDevForType(type)));
+    
     renderList();
   } catch (e) {
     console.error('[providers] loadProviders 失败:', e);
     toast('加载 Provider 列表失败', 'error');
+  }
+}
+
+async function loadModelsDevForType(providerType) {
+  if (_modelsDevCache[providerType]) return;
+  try {
+    const data = await get(`/providers/models-dev/${encodeURIComponent(providerType)}`);
+    if (Array.isArray(data.models)) {
+      _modelsDevCache[providerType] = data.models;
+    }
+  } catch (e) {
+    console.warn('[providers] 加载 models.dev 模型失败:', providerType, e);
   }
 }
 
@@ -413,16 +430,8 @@ function startEdit(idx) {
 async function loadModelsDevForEdit(idx) {
   const p = providers[idx];
   const providerType = p.platform_type;
-  if (_modelsDevCache[providerType]) return;
-  try {
-    const data = await get(`/providers/models-dev/${encodeURIComponent(providerType)}`);
-    if (Array.isArray(data.models)) {
-      _modelsDevCache[providerType] = data.models;
-      if (editingIdx === idx) renderList();
-    }
-  } catch (e) {
-    console.warn('[providers] 加载 models.dev 模型失败:', e);
-  }
+  await loadModelsDevForType(providerType);
+  if (editingIdx === idx) renderList();
 }
 
 function cancelEdit(idx) {

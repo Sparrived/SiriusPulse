@@ -361,8 +361,8 @@ class PluginDefinition:
             ))
         return events
 
-    @staticmethod
-    def from_class(cls: type, source_path: Path | None = None) -> PluginDefinition:
+    @classmethod
+    def from_class(cls, plugin_cls: type, source_path: Path | None = None) -> PluginDefinition:
         """从 PluginBase 子类的类属性构建 PluginDefinition。
 
         读取子类的 _plugin_* 类属性 + @command 装饰器元数据，
@@ -372,9 +372,9 @@ class PluginDefinition:
         commands: list[PluginCommandDef] = []
         # 通过实例化临时对象来发现 @command（discover_commands 需要实例）
         try:
-            instance = cls()
+            instance = plugin_cls()
         except Exception:
-            instance = cls.__new__(cls)
+            instance = object.__new__(plugin_cls)
         from sirius_pulse.plugins.decorators import discover_commands
         cmd_metas = discover_commands(instance)
         for cmd_name, meta in cmd_metas.items():
@@ -389,7 +389,7 @@ class PluginDefinition:
 
         # 事件：合并 _plugin_events 和 _plugin_schedule
         events: list[PluginEventDef] = []
-        for evt_raw in getattr(cls, '_plugin_events', []) or []:
+        for evt_raw in getattr(plugin_cls, '_plugin_events', []) or []:
             events.append(PluginEventDef(
                 type=evt_raw.get("type", ""),
                 cron=evt_raw.get("cron", ""),
@@ -397,20 +397,20 @@ class PluginDefinition:
                 description=evt_raw.get("description", ""),
             ))
         # _plugin_schedule 是 _plugin_events 的声明式简写（v1.3+）
-        schedule_raw = getattr(cls, '_plugin_schedule', []) or []
+        schedule_raw = getattr(plugin_cls, '_plugin_schedule', []) or []
         if schedule_raw:
             events.extend(PluginDefinition._schedule_to_events(schedule_raw))
 
         # 自然语言触发
-        nl_examples = getattr(cls, '_plugin_nl_examples', []) or []
-        nl_slots = getattr(cls, '_plugin_nl_slots', {}) or {}
+        nl_examples = getattr(plugin_cls, '_plugin_nl_examples', []) or []
+        nl_slots = getattr(plugin_cls, '_plugin_nl_slots', {}) or {}
         nl_def: PluginNaturalLangDef | None = None
         if nl_examples or nl_slots:
             nl_def = PluginNaturalLangDef(examples=list(nl_examples), slots=dict(nl_slots))
 
         # 参数：从 _plugin_parameters 类属性读取（优先于 NL slots 构建）
         parameters: list[PluginParameterDef] = []
-        params_from_class = getattr(cls, '_plugin_parameters', None) or []
+        params_from_class = getattr(plugin_cls, '_plugin_parameters', None) or []
         if params_from_class:
             for i, p in enumerate(params_from_class):
                 parameters.append(PluginParameterDef(
@@ -420,6 +420,8 @@ class PluginDefinition:
                     required=p.get("required", False),
                     default=p.get("default"),
                     position=p.get("position", i),
+                    choices=p.get("choices"),
+                    group=p.get("group", ""),
                 ))
         elif nl_slots:
             for i, (slot_name, slot_info) in enumerate(nl_slots.items()):
@@ -433,7 +435,7 @@ class PluginDefinition:
                 ))
 
         # 权限
-        perm_raw = getattr(cls, '_plugin_permissions', None) or {}
+        perm_raw = getattr(plugin_cls, '_plugin_permissions', None) or {}
         permissions = PluginPermissionDef(
             developer_only=perm_raw.get("developer_only", False),
             hidden_from_intent=perm_raw.get("hidden_from_intent", False),
@@ -444,18 +446,18 @@ class PluginDefinition:
         )
 
         return PluginDefinition(
-            name=getattr(cls, '_plugin_name', '') or cls.__name__,
-            display_name=getattr(cls, '_plugin_display_name', '') or '',
-            description=getattr(cls, '_plugin_description', '') or '',
-            version=getattr(cls, '_plugin_version', '') or '1.0.0',
-            author=getattr(cls, '_plugin_author', '') or '',
+            name=getattr(plugin_cls, '_plugin_name', '') or plugin_cls.__name__,
+            display_name=getattr(plugin_cls, '_plugin_display_name', '') or '',
+            description=getattr(plugin_cls, '_plugin_description', '') or '',
+            version=getattr(plugin_cls, '_plugin_version', '') or '1.0.0',
+            author=getattr(plugin_cls, '_plugin_author', '') or '',
             commands=commands,
             events=events,
             parameters=parameters,
             natural_language=nl_def,
             permissions=permissions,
-            dependencies=getattr(cls, '_plugin_dependencies', []) or [],
-            prompt_inject=getattr(cls, '_plugin_prompt_inject', '') or '',
+            dependencies=getattr(plugin_cls, '_plugin_dependencies', []) or [],
+            prompt_inject=getattr(plugin_cls, '_plugin_prompt_inject', '') or '',
             source_path=source_path,
         )
 

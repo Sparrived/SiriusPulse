@@ -154,7 +154,7 @@ function buildFormHTML() {
           </div>
         </div>
 
-        <div class="form-group" style="margin-bottom:16px">
+        <div id="modelSelectGroup" class="form-group" style="margin-bottom:16px">
           <label>选择模型</label>
           <div id="modelSelectWrap"></div>
         </div>
@@ -310,23 +310,26 @@ function clearDraft() {
 
 function switchTab(tab) {
   currentTab = tab;
-  // 更新按钮状态
   $('tabInterview').classList.toggle('active', tab === 'interview');
   $('tabDirect').classList.toggle('active', tab === 'direct');
-  // 更新面板显示
   $('panelInterview').style.display = tab === 'interview' ? '' : 'none';
   $('panelDirect').style.display = tab === 'direct' ? '' : 'none';
+  $('modelSelectGroup').style.display = tab === 'interview' ? '' : 'none';
 }
 
 function bindEvents() {
-  $('createBtn').addEventListener('click', createPersona);
+  const createBtn = $('createBtn');
+  if (!createBtn) return;
+  createBtn.addEventListener('click', createPersona);
 
   // Tab 切换
-  $('tabInterview').addEventListener('click', () => {
+  const tabInterview = $('tabInterview');
+  const tabDirect = $('tabDirect');
+  if (tabInterview) tabInterview.addEventListener('click', () => {
     switchTab('interview');
     saveDraft();
   });
-  $('tabDirect').addEventListener('click', () => {
+  if (tabDirect) tabDirect.addEventListener('click', () => {
     switchTab('direct');
     saveDraft();
   });
@@ -334,11 +337,13 @@ function bindEvents() {
   // 输入变化时自动保存草稿
   const inputs = ['personaId', 'personaName', 'personaAliases'];
   inputs.forEach(id => {
-    $(id).addEventListener('input', saveDraft);
+    const el = $(id);
+    if (el) el.addEventListener('input', saveDraft);
   });
   // 模型选择的 change 回调已在 ModelSelect.onChange 中处理
   for (let i = 0; i < QUESTIONS.length; i++) {
-    $(`answer${i}`).addEventListener('input', saveDraft);
+    const el = $(`answer${i}`);
+    if (el) el.addEventListener('input', saveDraft);
   }
 
   // 直接填写模式的输入变化时保存草稿
