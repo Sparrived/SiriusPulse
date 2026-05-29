@@ -78,15 +78,17 @@ async function loadViz() {
     // 填充群聊选择器
     const groups = data.groups || [];
     const groupSelect = $('timelineGroup');
-    if (groups.length > 1) {
-      groupSelect.style.display = '';
-      const prev = groupSelect.value;
-      groupSelect.innerHTML = '<option value="">全部群聊</option>' +
-        groups.map(g => `<option value="${g}">${g}</option>`).join('');
-      if (prev && groups.includes(prev)) groupSelect.value = prev;
-    } else {
-      groupSelect.style.display = 'none';
-      groupSelect.innerHTML = '';
+    if (groupSelect) {
+      if (groups.length > 1) {
+        groupSelect.style.display = '';
+        const prev = groupSelect.value;
+        groupSelect.innerHTML = '<option value="">全部群聊</option>' +
+          groups.map(g => `<option value="${g}">${g}</option>`).join('');
+        if (prev && groups.includes(prev)) groupSelect.value = prev;
+      } else {
+        groupSelect.style.display = 'none';
+        groupSelect.innerHTML = '';
+      }
     }
 
     renderTimeline(data.basic_timeline || {});
@@ -99,6 +101,8 @@ async function loadViz() {
 
 function renderTimeline(timeline) {
   const container = $('timelineChart');
+  if (!container) return;
+  
   const buckets = timeline.buckets || {};
   const allDays = timeline.days || [];
   const recent = timeline.recent || [];
@@ -221,6 +225,8 @@ function renderTimeline(timeline) {
 
 function renderCluster(entries) {
   const container = $('clusterChart');
+  if (!container) return;
+  
   const withEmbedding = entries.filter(e => e.embedding && e.embedding.length >= 3);
 
   if (!withEmbedding.length) {
@@ -328,6 +334,8 @@ function renderCluster2D(container, entries) {
 
 function renderGraph(data) {
   const container = $('graphChart');
+  if (!container) return;
+  
   const userNodes = data.user_nodes || [];
   const topicNodes = data.topic_nodes || [];
   const links = data.user_topic_links || [];

@@ -36,6 +36,21 @@ export async function init(container) {
   $('globalSettingsForm').addEventListener('submit', handleSave);
   $('gsResetBtn').addEventListener('click', () => fillForm(currentConfig));
 
+  // 数字调节按钮事件
+  document.querySelectorAll('[data-spin-target]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.spinTarget);
+      if (!target) return;
+      const dir = parseInt(btn.dataset.spinDir, 10);
+      const step = parseFloat(target.step) || 1;
+      const min = target.min !== '' ? parseFloat(target.min) : -Infinity;
+      const max = target.max !== '' ? parseFloat(target.max) : Infinity;
+      const cur = parseFloat(target.value) || 0;
+      target.value = Math.min(max, Math.max(min, cur + step * dir));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+
   await loadConfig();
 }
 
@@ -47,6 +62,18 @@ function renderField(f) {
         <select id="gs_${f.key}" name="${f.key}">
           ${f.options.map(o => `<option value="${o}">${o}</option>`).join('')}
         </select>
+      </div>
+    `;
+  }
+  if (f.type === 'number') {
+    return `
+      <div class="form-group">
+        <label for="gs_${f.key}">${f.label}</label>
+        <div class="number-input-group">
+          <button type="button" class="number-spin-btn" data-spin-target="gs_${f.key}" data-spin-dir="-1">−</button>
+          <input id="gs_${f.key}" name="${f.key}" type="number" placeholder="${f.placeholder || ''}">
+          <button type="button" class="number-spin-btn" data-spin-target="gs_${f.key}" data-spin-dir="1">+</button>
+        </div>
       </div>
     `;
   }

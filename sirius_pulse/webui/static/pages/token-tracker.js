@@ -23,6 +23,23 @@ let currentPage = 1;
 const PAGE_SIZE = 10;
 
 export async function init(container) {
+  const name = store.currentPersona;
+  if (!name) {
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Token 使用分析</div>
+        </div>
+        <div style="padding:40px;text-align:center;color:var(--text-3)">
+          <div style="font-size:48px;margin-bottom:16px">✦</div>
+          <div style="font-size:16px;margin-bottom:8px">请先选择人格</div>
+          <div style="font-size:13px">在顶部导航栏中选择要查看的人格</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
   container.innerHTML = `
     <div class="card">
       <div class="card-header">

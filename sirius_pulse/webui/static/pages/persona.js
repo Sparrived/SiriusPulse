@@ -27,7 +27,7 @@ export async function init(container, params) {
           <div class="card-title">人格配置</div>
           <div class="card-subtitle">编辑 ${name} 的基础人格设定</div>
         </div>
-        <button class="btn btn-primary" id="personaSave">保存</button>
+        <button class="btn btn-primary" id="personaSave" disabled>保存</button>
       </div>
       <form id="personaForm" style="display:grid;gap:16px">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
@@ -146,8 +146,12 @@ async function loadPersonaData(name) {
     form.boundaries.value = (data.boundaries || []).join(', ');
     form.taboo_topics.value = (data.taboo_topics || []).join(', ');
     form.backstory.value = data.backstory || '';
+    // 加载成功后启用保存按钮
+    $('personaSave').disabled = false;
   } catch (e) {
     toast('加载人格数据失败: ' + e.message, 'error');
+    // 加载失败时保持保存按钮禁用
+    $('personaSave').disabled = true;
   }
 }
 

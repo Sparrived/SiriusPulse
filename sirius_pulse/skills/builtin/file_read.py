@@ -5,8 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _ALLOWED_READ_DIR = (_PROJECT_ROOT / "data" / "personaworkspace").resolve()
+
+_config = ConfigBuilder()
+_config.group("文件读取").add(
+    "path",
+    type="str",
+    description="文件名，可含子目录，例如 notes.md、docs/readme.txt",
+    required=True,
+)
 
 SKILL_META = {
     "name": "file_read",
@@ -20,13 +30,7 @@ SKILL_META = {
     "tags": ["file", "io"],
     "developer_only": False,
     "dependencies": [],
-    "parameters": {
-        "path": {
-            "type": "str",
-            "description": "文件名，可含子目录，例如 notes.md、docs/readme.txt",
-            "required": True,
-        },
-    },
+    "parameters": _config.build(),
 }
 
 _MAX_SIZE_BYTES = 1 * 1024 * 1024  # 1 MB

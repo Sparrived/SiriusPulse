@@ -40,6 +40,7 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", os.environ.get("DOCS_BOT_API_KEY", "
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 GITHUB_EVENT_BEFORE = os.environ.get("GITHUB_EVENT_BEFORE", "")
+DOCS_TREE = os.environ.get("DOCS_TREE", "")
 
 # Git 提交者（可通过环境变量自定义）
 GIT_USER_NAME = os.environ.get("GIT_USER_NAME", "Sirius Docs Bot")
@@ -352,7 +353,6 @@ def _llm_request(
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": 16384,
     }
 
     data = json.dumps(body).encode()
@@ -424,6 +424,11 @@ def judge_needs_update(changed_files: set[str], diff_summary: str) -> dict:
     """判断本次变更是否需要更新文档"""
     affected = guess_affected_docs(changed_files)
 
+    # 构建 docs 目录索引上下文
+    docs_context = ""
+    if DOCS_TREE:
+        docs_context = f"\n\n## docs 目录结构\n{DOCS_TREE}"
+
     prompt = f"""## 任务
 判断本次代码变更是否需要更新文档。
 
@@ -435,6 +440,7 @@ def judge_needs_update(changed_files: set[str], diff_summary: str) -> dict:
 
 ## 可能受影响的文档
 {chr(10).join(sorted(affected))}
+{docs_context}
 
 ## 输出格式（严格 JSON）
 {{"needs_update": true/false, "reason": "一句话原因", "affected_docs": ["路径1", "路径2"]}}"""
@@ -462,6 +468,11 @@ def update_single_doc(
     """LLM 识别需要修改的片段，返回全文；None 表示无需修改"""
     old_content = filepath.read_text(encoding="utf-8")
 
+    # 构建 docs 目录索引上下文
+    docs_context = ""
+    if DOCS_TREE:
+        docs_context = f"\n\n## docs 目录结构\n{DOCS_TREE}"
+
     prompt = f"""## 任务
 根据代码变更，找出文档中需要修改的片段，并给出替换内容。
 **不要输出整个文档，只输出需要修改的片段。**
@@ -478,6 +489,7 @@ def update_single_doc(
 
 ## 变更文件
 {chr(10).join(sorted(changed_files))}
+{docs_context}
 
 ## 工作方式
 1. 找出文档中因代码变更需要修改的文本片段
@@ -522,6 +534,11 @@ def _update_full_doc(filepath: Path, diff_content: str, changed_files: set[str])
     """回退方案：让 LLM 输出完整文档内容（当 patch 模式未命中时使用）。"""
     old_content = filepath.read_text(encoding="utf-8")
 
+    # 构建 docs 目录索引上下文
+    docs_context = ""
+    if DOCS_TREE:
+        docs_context = f"\n\n## docs 目录结构\n{DOCS_TREE}"
+
     prompt = f"""## 任务
 根据代码变更，更新以下文档。
 **输出完整的更新后文档，不能省略任何内容。**
@@ -538,6 +555,7 @@ def _update_full_doc(filepath: Path, diff_content: str, changed_files: set[str])
 
 ## 变更文件
 {chr(10).join(sorted(changed_files))}
+{docs_context}
 
 ## 输出格式（严格 JSON）
 {{"modified": true/false, "content": "完整的更新后文档内容（不能截断！仅 modified=true 时）", "changes": ["改动点1", "改动点2"]}}"""

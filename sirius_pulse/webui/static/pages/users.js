@@ -44,12 +44,23 @@ export async function init(container) {
     </div>
   `;
 
-  $('usersGroupFilter').addEventListener('change', (e) => {
-    activeGroup = e.target.value;
-    renderCards();
-  });
-  $('refreshAll').addEventListener('click', loadAll);
-  $('aliasToggle').addEventListener('click', toggleAliasSection);
+  const usersGroupFilter = $('usersGroupFilter');
+  if (usersGroupFilter) {
+    usersGroupFilter.addEventListener('change', (e) => {
+      activeGroup = e.target.value;
+      renderCards();
+    });
+  }
+  
+  const refreshAll = $('refreshAll');
+  if (refreshAll) {
+    refreshAll.addEventListener('click', loadAll);
+  }
+  
+  const aliasToggle = $('aliasToggle');
+  if (aliasToggle) {
+    aliasToggle.addEventListener('click', toggleAliasSection);
+  }
 
   await loadAll();
 }
@@ -57,6 +68,7 @@ export async function init(container) {
 function toggleAliasSection() {
   const section = $('aliasSection');
   const arrow = $('aliasArrow');
+  if (!section || !arrow) return;
   const isOpen = section.style.display !== 'none';
   section.style.display = isOpen ? 'none' : 'block';
   arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
@@ -99,6 +111,7 @@ async function loadAll() {
 function renderGroups() {
   const groups = usersData.groups || [];
   const sel = $('usersGroupFilter');
+  if (!sel) return;
   sel.innerHTML = `<option value="">全部群组</option>` +
     groups.map(g => `<option value="${g}"${g === activeGroup ? ' selected' : ''}>${g}</option>`).join('');
 }
@@ -116,7 +129,10 @@ function renderUnifiedStats() {
       }, '')
     : '';
 
-  $('unifiedStats').innerHTML = `
+  const unifiedStats = $('unifiedStats');
+  if (!unifiedStats) return;
+  
+  unifiedStats.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">用户总数</div>
       <div class="stat-value">${users.length}</div>
@@ -184,6 +200,7 @@ function renderCards() {
     ? users.filter(u => (u.groups || []).includes(activeGroup))
     : users;
   const grid = $('usersGrid');
+  if (!grid) return;
 
   if (!filteredUsers.length) {
     grid.innerHTML = `
@@ -276,9 +293,13 @@ function openDetailModal(userId) {
   document.body.appendChild(overlay);
   currentModal = overlay;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
-  $('modalClose').addEventListener('click', closeModal);
+  const modalClose = $('modalClose');
+  if (modalClose) {
+    modalClose.addEventListener('click', closeModal);
+  }
 
   const modalBody = $('modalBody');
+  if (!modalBody) return;
 
   // 交互统计区
   if (user) {
@@ -393,44 +414,89 @@ function openDetailModal(userId) {
 function renderAliases() {
   const aliases = bioData.aliases || [];
   const el = $('aliasSection');
+  if (!el) return;
 
-  let tableHtml = '';
+  // 构建用户 ID -> 名称的映射
+  const users = usersData.users || [];
+  const userNameMap = new Map();
+  users.forEach(u => {
+    if (u.user_id && u.name) {
+      userNameMap.set(u.user_id, u.name);
+    }
+  });
+
+  // 获取用户昵称
+  const getUserName = (userId) => userNameMap.get(userId) || '';
+
+  // 按别名归类
+  const groupedByAlias = new Map();
+  aliases.forEach(a => {
+    const aliasName = a.alias || a.name || '';
+    if (!groupedByAlias.has(aliasName)) {
+      groupedByAlias.set(aliasName, []);
+    }
+    groupedByAlias.get(aliasName).push(a);
+  });
+
+  let contentHtml = '';
   if (aliases.length) {
-    tableHtml = `
-      <div style="overflow-x:auto;margin-bottom:16px">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border)">
-              <th style="padding:8px 12px;text-align:left;color:var(--text-3)">别名</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--text-3)">用户 ID</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--text-3)">权重</th>
-              <th style="padding:8px 12px;text-align:left;color:var(--text-3)">来源</th>
-              <th style="padding:8px 12px;text-align:right;color:var(--text-3)">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${aliases.map(a => `
-              <tr style="border-bottom:1px solid var(--border)">
-                <td style="padding:8px 12px">${a.alias || a.name || ''}</td>
-                <td style="padding:8px 12px;color:var(--text-2)">${a.user_id || ''}</td>
-                <td style="padding:8px 12px;color:var(--text-2)">${a.weight != null ? a.weight : '—'}</td>
-                <td style="padding:8px 12px;color:var(--text-2)">${a.source || '—'}</td>
-                <td style="padding:8px 12px;text-align:right">
-                  <button class="btn btn-sm delete-alias-btn" data-alias="${a.alias || a.name}" data-user-id="${a.user_id || ''}">删除</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
+    // 按别名归类显示
+    const sortedAliases = Array.from(groupedByAlias.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    contentHtml = `
+      <div style="display:grid;gap:12px;margin-bottom:16px">
+        ${sortedAliases.map(([aliasName, entries]) => `
+          <div style="background:var(--surface-1,var(--bg-2));border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden">
+            <div style="padding:10px 14px;background:var(--surface-2,var(--bg-3));display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-weight:600;font-size:14px;color:var(--text-1)">${aliasName}</span>
+                <span class="tag" style="font-size:11px">${entries.length} 个用户</span>
+              </div>
+            </div>
+            <div style="padding:8px">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed">
+                <thead>
+                  <tr style="border-bottom:1px solid var(--border)">
+                    <th style="padding:6px 10px;text-align:left;color:var(--text-3);font-weight:500;width:30%">用户</th>
+                    <th style="padding:6px 10px;text-align:left;color:var(--text-3);font-weight:500;width:30%">ID</th>
+                    <th style="padding:6px 10px;text-align:left;color:var(--text-3);font-weight:500;width:12%">权重</th>
+                    <th style="padding:6px 10px;text-align:left;color:var(--text-3);font-weight:500;width:18%">来源</th>
+                    <th style="padding:6px 10px;text-align:right;color:var(--text-3);font-weight:500;width:10%">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${entries.map(a => {
+                    const userName = getUserName(a.user_id);
+                    return `
+                      <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                          <div style="display:flex;align-items:center;gap:8px">
+                            <div style="width:24px;height:24px;border-radius:50%;background:${hashColor(a.user_id || 'x')};display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;flex-shrink:0">${(userName || a.user_id || '?')[0]}</div>
+                            <span style="overflow:hidden;text-overflow:ellipsis;color:${userName ? 'var(--text-1)' : 'var(--text-3)'}">${userName || '未知'}</span>
+                          </div>
+                        </td>
+                        <td style="padding:6px 10px;color:var(--text-2);font-family:var(--font-mono);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.user_id || ''}</td>
+                        <td style="padding:6px 10px;color:var(--text-2)">${a.weight != null ? a.weight.toFixed(2) : '—'}</td>
+                        <td style="padding:6px 10px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.source || '—'}</td>
+                        <td style="padding:6px 10px;text-align:right">
+                          <button class="btn btn-sm btn-ghost delete-alias-btn" data-alias="${aliasName}" data-user-id="${a.user_id || ''}" style="color:var(--danger)">删除</button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `).join('')}
       </div>
     `;
   } else {
-    tableHtml = '<div style="padding:20px;text-align:center;color:var(--text-3);margin-bottom:16px">暂无别名</div>';
+    contentHtml = '<div style="padding:20px;text-align:center;color:var(--text-3);margin-bottom:16px">暂无别名</div>';
   }
 
   el.innerHTML = `
-    ${tableHtml}
-    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+    ${contentHtml}
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">
       <div class="form-group" style="margin:0;flex:1;min-width:150px">
         <label>别名</label>
         <input type="text" id="newAlias" placeholder="新别名">

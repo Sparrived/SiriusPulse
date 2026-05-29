@@ -28,6 +28,15 @@ from sirius_pulse.skills.executor import SkillExecutor
 from sirius_pulse.skills.data_store import SkillDataStore
 from sirius_pulse.skills.dependency_resolver import resolve_skill_dependencies
 
+# Re-export config builder utilities for skill developers
+from sirius_pulse.config.config_builder import (
+    ConfigBuilder,
+    ParamDefinition,
+    build_parameters_from_class,
+    config_param,
+    secret,
+)
+
 __all__ = [
     "BackgroundTaskSpec",
     "SkillDefinition",
@@ -42,4 +51,10 @@ __all__ = [
     "SkillExecutor",
     "SkillDataStore",
     "resolve_skill_dependencies",
+    # Config builder utilities
+    "ConfigBuilder",
+    "ParamDefinition",
+    "config_param",
+    "secret",
+    "build_parameters_from_class",
 ]

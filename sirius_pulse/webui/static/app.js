@@ -121,12 +121,23 @@ export async function navTo(page, name) {
         <div class="persona-header-list" id="personaHeaderList">
           ${personas.length === 0
             ? '<div class="persona-header-empty">暂无人格</div>'
-            : personas.map(p => `
+            : personas.map((p, i) => `
               <div class="persona-header-option${p.name === currentP ? ' active' : ''}" data-name="${p.name}">
-                <span class="persona-header-dot${p.running ? ' running' : ''}"></span>
-                <span class="persona-header-name">${p.persona_name || p.name}</span>
+                <div class="persona-header-option-main" data-name="${p.name}">
+                  <span class="persona-header-dot${p.running ? ' running' : ''}"></span>
+                  <span class="persona-header-name">${p.persona_name || p.name}</span>
+                </div>
+                <div class="persona-header-actions">
+                  <button class="persona-order-btn" data-action="up" data-name="${p.name}" ${i === 0 ? 'disabled' : ''} title="上移">▲</button>
+                  <button class="persona-order-btn" data-action="down" data-name="${p.name}" ${i === personas.length - 1 ? 'disabled' : ''} title="下移">▼</button>
+                </div>
               </div>
             `).join('')}
+          <div class="persona-header-divider"></div>
+          <div class="persona-header-add" id="personaHeaderAdd">
+            <span class="persona-header-add-icon">＋</span>
+            <span>新建人格</span>
+          </div>
         </div>
       </div>
       <h1 class="header-title">${meta.title || ''}</h1>
@@ -192,7 +203,8 @@ function setupPersonaHeaderDropdown() {
 
   btn.onclick = e => { e.stopPropagation(); list.classList.toggle('open'); };
 
-  list.querySelectorAll('.persona-header-option').forEach(opt => {
+  // 点击人格选项选中
+  list.querySelectorAll('.persona-header-option-main').forEach(opt => {
     opt.onclick = async () => {
       const name = opt.dataset.name;
       const persona = (store.personas || []).find(p => p.name === name);
@@ -208,7 +220,66 @@ function setupPersonaHeaderDropdown() {
     };
   });
 
+  // 排序按钮
+  list.querySelectorAll('.persona-order-btn').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const name = btn.dataset.name;
+      const action = btn.dataset.action;
+      await reorderPersona(name, action);
+    };
+  });
+
+  // 新建人格按钮
+  const addBtn = document.getElementById('personaHeaderAdd');
+  if (addBtn) {
+    addBtn.onclick = () => {
+      list.classList.remove('open');
+      navTo('create-persona');
+    };
+  }
+
   document.addEventListener('click', () => list.classList.remove('open'));
+}
+
+async function reorderPersona(name, action) {
+  const personas = [...(store.personas || [])];
+  const idx = personas.findIndex(p => p.name === name);
+  if (idx === -1) return;
+
+  const newIdx = action === 'up' ? idx - 1 : idx + 1;
+  if (newIdx < 0 || newIdx >= personas.length) return;
+
+  // 交换位置
+  [personas[idx], personas[newIdx]] = [personas[newIdx], personas[idx]];
+  store.personas = personas;
+
+  // 保存排序到 localStorage
+  const order = personas.map(p => p.name);
+  localStorage.setItem('persona-order', JSON.stringify(order));
+
+  // 实时更新 DOM
+  const list = document.getElementById('personaHeaderList');
+  if (!list) return;
+
+  const options = Array.from(list.querySelectorAll('.persona-header-option'));
+  const currentOption = options[idx];
+  const targetOption = options[newIdx];
+
+  if (action === 'up') {
+    list.insertBefore(currentOption, targetOption);
+  } else {
+    list.insertBefore(targetOption, currentOption);
+  }
+
+  // 更新按钮禁用状态
+  const updatedOptions = Array.from(list.querySelectorAll('.persona-header-option'));
+  updatedOptions.forEach((opt, i) => {
+    const upBtn = opt.querySelector('[data-action="up"]');
+    const downBtn = opt.querySelector('[data-action="down"]');
+    if (upBtn) upBtn.disabled = (i === 0);
+    if (downBtn) downBtn.disabled = (i === updatedOptions.length - 1);
+  });
 }
 
 function renderSidebar() {
@@ -273,7 +344,23 @@ export async function selectPersona(name) {
 async function loadPersonas() {
   try {
     const res = await get('/personas');
-    store.personas = res.personas || [];
+    let personas = res.personas || [];
+
+    // 应用保存的排序
+    const savedOrder = localStorage.getItem('persona-order');
+    if (savedOrder) {
+      try {
+        const order = JSON.parse(savedOrder);
+        const orderMap = new Map(order.map((name, i) => [name, i]));
+        personas.sort((a, b) => {
+          const ia = orderMap.get(a.name) ?? Infinity;
+          const ib = orderMap.get(b.name) ?? Infinity;
+          return ia - ib;
+        });
+      } catch {}
+    }
+
+    store.personas = personas;
     renderSidebarFooter();
     if (!store.currentPersona && store.personas.length > 0) {
       selectPersona(store.personas[0].name);

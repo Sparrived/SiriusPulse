@@ -210,7 +210,7 @@ class SkillDefinition:
                 self.passive_type = SkillPassiveType.TRIGGER
 
     def get_parameter_schema(self) -> list[dict[str, Any]]:
-        """Return parameter definitions as dicts for prompt rendering."""
+        """Return parameter definitions as dicts for prompt rendering and WebUI."""
         schema: list[dict[str, Any]] = []
         for param in self.parameters:
             entry: dict[str, Any] = {
@@ -221,6 +221,12 @@ class SkillDefinition:
             }
             if not param.required and param.default is not None:
                 entry["default"] = param.default
+            if param.choices:
+                entry["choices"] = param.choices
+            if param.fields:
+                entry["fields"] = param.fields
+            if param.group:
+                entry["group"] = param.group
             schema.append(entry)
         return schema
 

@@ -8,8 +8,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _ALLOWED_LIST_DIR = (_PROJECT_ROOT / "data" / "personaworkspace").resolve()
+
+_config = ConfigBuilder()
+_config.group("文件列表").add(
+    "path",
+    type="str",
+    description="相对路径，例如 .、docs/、images/。不传则列出根目录",
+    default=".",
+)
+_config.group("文件列表").add(
+    "recursive",
+    type="bool",
+    description="是否递归列出子目录内容",
+    default=False,
+)
+_config.group("文件列表").add(
+    "pattern",
+    type="str",
+    description="glob 过滤模式，例如 *.py、*.md。不传则不过滤",
+    default="",
+)
 
 SKILL_META = {
     "name": "file_list",
@@ -21,26 +43,7 @@ SKILL_META = {
     "tags": ["file", "io"],
     "developer_only": False,
     "dependencies": [],
-    "parameters": {
-        "path": {
-            "type": "str",
-            "description": "相对路径，例如 .、docs/、images/。不传则列出根目录",
-            "required": False,
-            "default": ".",
-        },
-        "recursive": {
-            "type": "bool",
-            "description": "是否递归列出子目录内容",
-            "required": False,
-            "default": False,
-        },
-        "pattern": {
-            "type": "str",
-            "description": "glob 过滤模式，例如 *.py、*.md。不传则不过滤",
-            "required": False,
-            "default": "",
-        },
-    },
+    "parameters": _config.build(),
 }
 
 _MAX_RESULTS = 200

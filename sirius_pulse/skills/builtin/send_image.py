@@ -6,7 +6,17 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
 LOG = logging.getLogger(__name__)
+
+_config = ConfigBuilder()
+_config.group("图片发送").add(
+    "image_path",
+    type="str",
+    description="本地图片绝对路径或网络图片 URL",
+    required=True,
+)
 
 SKILL_META = {
     "name": "send_image",
@@ -18,13 +28,7 @@ SKILL_META = {
     "silent": True,
     "adapter_types": ["napcat"],
     "dependencies": [],
-    "parameters": {
-        "image_path": {
-            "type": "str",
-            "description": "本地图片绝对路径或网络图片 URL",
-            "required": True,
-        },
-    },
+    "parameters": _config.build(),
 }
 
 

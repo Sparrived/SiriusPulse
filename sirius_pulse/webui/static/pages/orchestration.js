@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, $ } from '../components.js';
+import { toast, flashSuccess, $, ModelSelect } from '../components.js';
 
 const TASK_GROUPS = [
   {
@@ -35,6 +35,7 @@ const TASK_GROUPS = [
 
 let orchestrationData = null;
 let modelChoices = [];
+const modelSelects = {};
 
 export async function init(container, params) {
   const name = store.currentPersona;
@@ -61,7 +62,7 @@ export async function init(container, params) {
           <div class="card-title">模型编排</div>
           <div class="card-subtitle">配置 ${name} 的模型分配策略</div>
         </div>
-        <button class="btn btn-primary" id="orchSave">保存</button>
+        <button class="btn btn-primary" id="orchSave" disabled>保存</button>
       </div>
       <div id="orchContent">
         <div style="padding:20px;color:var(--text-3)">加载中...</div>
@@ -69,9 +70,11 @@ export async function init(container, params) {
     </div>
   `;
 
+  const saveBtn = $('orchSave');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => saveOrchestration(name));
+  }
   await loadOrchestration(name);
-
-  $('orchSave').addEventListener('click', () => saveOrchestration(name));
 }
 
 async function loadOrchestration(name) {
@@ -80,8 +83,13 @@ async function loadOrchestration(name) {
     orchestrationData = data;
     modelChoices = data.model_choices || [];
     renderOrchestration(data);
+    const saveBtn = $('orchSave');
+    if (saveBtn) saveBtn.disabled = false;
   } catch (e) {
-    $('orchContent').innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
+    const el = $('orchContent');
+    if (el) el.innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
+    const saveBtn = $('orchSave');
+    if (saveBtn) saveBtn.disabled = true;
   }
 }
 
@@ -89,6 +97,7 @@ function renderOrchestration(data) {
   const el = $('orchContent');
   const taskModels = data.task_models || {};
   const taskEnabled = data.task_enabled || {};
+  const opts = _mselOptions();
 
   let html = `
     <div style="margin-bottom:24px">
@@ -96,27 +105,19 @@ function renderOrchestration(data) {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
         <div class="form-group">
           <label>分析模型</label>
-          <div class="select-wrap">
-            <select id="gen_analysis_model">${modelOptions(data.analysis_model)}</select>
-          </div>
+          <div id="msel_analysis"></div>
         </div>
         <div class="form-group">
           <label>对话模型</label>
-          <div class="select-wrap">
-            <select id="gen_chat_model">${modelOptions(data.chat_model)}</select>
-          </div>
+          <div id="msel_chat"></div>
         </div>
         <div class="form-group">
           <label>记忆模型</label>
-          <div class="select-wrap">
-            <select id="gen_memory_model">${modelOptions(data.memory_model)}</select>
-          </div>
+          <div id="msel_memory"></div>
         </div>
         <div class="form-group">
           <label>插件模型</label>
-          <div class="select-wrap">
-            <select id="gen_plugin_model">${modelOptions(data.plugin_model)}</select>
-          </div>
+          <div id="msel_plugin"></div>
         </div>
       </div>
     </div>
@@ -157,15 +158,53 @@ function renderOrchestration(data) {
   }
 
   el.innerHTML = html;
+  _mountModelSelects(data);
   setupOverrideListeners();
+}
+
+function _mselOptions() {
+  return modelChoices.map(m => {
+    const val = typeof m === 'object' ? m.value : m;
+    const label = typeof m === 'object' ? m.label : m;
+    const tags = (typeof m === 'object' && Array.isArray(m.tags)) ? m.tags : [];
+    return { value: val, label, tags };
+  });
+}
+
+function _mountModelSelects(data) {
+  const fields = ['analysis', 'chat', 'memory', 'plugin'];
+  const baseOpts = _mselOptions();
+  for (const field of fields) {
+    const container = $(`msel_${field}`);
+    if (!container) continue;
+    const key = `${field}_model`;
+    const value = data[key] || '';
+    
+    // 如果当前值不在选项列表中，添加一个额外的选项
+    const valueInChoices = baseOpts.some(o => o.value === value);
+    const opts = [...baseOpts];
+    if (value && !valueInChoices) {
+      opts.unshift({ value: value, label: `${value} (当前配置)`, tags: [] });
+    }
+    
+    const sel = new ModelSelect({
+      options: opts,
+      value: value,
+    });
+    sel.mount(container);
+    modelSelects[key] = sel;
+  }
 }
 
 function modelOptions(selected, skipInherit) {
   return modelChoices.map(m => {
     const val = typeof m === 'object' ? m.value : m;
     const label = typeof m === 'object' ? m.label : m;
+    const tags = (typeof m === 'object' && Array.isArray(m.tags)) ? m.tags : [];
+    const tagsStr = tags.map(t => `[${t}]`).join('');
+    const display = tagsStr ? `${label} ${tagsStr}` : label;
     const isSelected = val === selected ? ' selected' : '';
-    return `<option value="${val}"${isSelected}>${label}</option>`;
+    return `<option value="${val}"${isSelected}>${display}</option>`;
   }).join('');
 }
 
@@ -197,10 +236,10 @@ async function saveOrchestration(name) {
 
   try {
     await post(`/personas/${name}/orchestration`, {
-      analysis_model: $('gen_analysis_model').value,
-      chat_model: $('gen_chat_model').value,
-      memory_model: $('gen_memory_model').value,
-      plugin_model: $('gen_plugin_model').value,
+      analysis_model: modelSelects.analysis_model?.value || '',
+      chat_model: modelSelects.chat_model?.value || '',
+      memory_model: modelSelects.memory_model?.value || '',
+      plugin_model: modelSelects.plugin_model?.value || '',
       task_models: taskModels,
       task_enabled: taskEnabled,
     });

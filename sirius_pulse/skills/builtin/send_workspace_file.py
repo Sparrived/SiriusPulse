@@ -5,8 +5,26 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _WORKSPACE_DIR = (_PROJECT_ROOT / "data" / "personaworkspace").resolve()
+
+_config = ConfigBuilder()
+_config.group("文件发送").add(
+    "file_name",
+    type="str",
+    description=(
+        "data/personaworkspace 目录下的文件路径（可含子目录），"
+        "例如 notes.md、images/photo.png"
+    ),
+    required=True,
+)
+_config.group("文件发送").add(
+    "display_name",
+    type="str",
+    description="在聊天中显示的文件名（不传则使用原文件名）",
+)
 
 SKILL_META = {
     "name": "send_workspace_file",
@@ -17,21 +35,7 @@ SKILL_META = {
     "tags": ["napcat", "file", "messaging"],
     "adapter_types": ["napcat"],
     "dependencies": [],
-    "parameters": {
-        "file_name": {
-            "type": "str",
-            "description": (
-                "data/personaworkspace 目录下的文件路径（可含子目录），"
-                "例如 notes.md、images/photo.png"
-            ),
-            "required": True,
-        },
-        "display_name": {
-            "type": "str",
-            "description": "在聊天中显示的文件名（不传则使用原文件名）",
-            "required": False,
-        },
-    },
+    "parameters": _config.build(),
 }
 
 

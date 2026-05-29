@@ -470,6 +470,10 @@ function bindEvents() {
     } else {
       // 点击空白区域取消选中
       globe.selectedSpot = -1;
+      // 隐藏配置按钮
+      if ($('panelConfigBtn')) $('panelConfigBtn').style.display = 'none';
+      if ($('panelStartBtn')) $('panelStartBtn').style.display = 'none';
+      if ($('panelStopBtn')) $('panelStopBtn').style.display = 'none';
     }
   });
 
@@ -531,7 +535,7 @@ function bindEvents() {
     });
   }
 
-  // 统计项点击涟漪效果
+  // 统计项点击涟漪效果 + 可导航项跳转
   document.querySelectorAll('.stat-item').forEach(item => {
     item.addEventListener('click', (e) => {
       const ripple = document.createElement('span');
@@ -543,6 +547,12 @@ function bindEvents() {
       ripple.style.top = `${e.clientY - rect.top - size / 2}px`;
       item.appendChild(ripple);
       setTimeout(() => ripple.remove(), 500);
+
+      // 带 data-nav-page 属性的统计项点击后跳转对应页面
+      const targetPage = item.dataset.navPage;
+      if (targetPage) {
+        navTo(targetPage);
+      }
     });
   });
 
@@ -694,6 +704,7 @@ function updatePersonaPanel(index) {
   // 更新按钮
   $('panelStartBtn').style.display = isRunning ? 'none' : 'inline-flex';
   $('panelStopBtn').style.display = isRunning ? 'inline-flex' : 'none';
+  $('panelConfigBtn').style.display = 'inline-flex';
 
   // 仅在人格切换时加载监控数据，避免鼠标移动时频繁请求
   if (!isSamePersona) {

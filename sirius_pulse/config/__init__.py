@@ -40,6 +40,15 @@ from sirius_pulse.config.helpers import (
 # File I/O utilities
 from sirius_pulse.config.file_io import atomic_json_save
 
+# Configuration builder utilities
+from sirius_pulse.config.config_builder import (
+    ConfigBuilder,
+    ParamDefinition,
+    build_parameters_from_class,
+    config_param,
+    secret,
+)
+
 __all__ = [
     # Models
     "Agent",
@@ -58,6 +67,12 @@ __all__ = [
     "ConfigManager",
     # File I/O
     "atomic_json_save",
+    # Config Builder
+    "ConfigBuilder",
+    "ParamDefinition",
+    "config_param",
+    "secret",
+    "build_parameters_from_class",
     # Helpers
     "configure_full_orchestration",
     "configure_orchestration_models",

@@ -3,6 +3,18 @@ from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
 from sirius_pulse.providers.bigmodel import BigModelProvider
 from sirius_pulse.providers.deepseek import DeepSeekProvider
 from sirius_pulse.providers.mock import MockProvider
+from sirius_pulse.providers.models_dev import (
+	ModelsDevCache,
+	ModelCost,
+	ModelFilter,
+	auto_fill_models_from_dev,
+	estimate_cost,
+	filter_models,
+	get_context_length,
+	get_models_dev_provider_ids,
+	list_provider_model_ids,
+	parse_model_cost,
+)
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.providers.routing import (
 	AutoRoutingProvider,
@@ -41,4 +53,14 @@ __all__ = [
 	"register_provider_with_validation",
 	"SiliconFlowProvider",
 	"VolcengineArkProvider",
+	"ModelsDevCache",
+	"ModelCost",
+	"ModelFilter",
+	"auto_fill_models_from_dev",
+	"estimate_cost",
+	"filter_models",
+	"get_context_length",
+	"get_models_dev_provider_ids",
+	"list_provider_model_ids",
+	"parse_model_cost",
 ]

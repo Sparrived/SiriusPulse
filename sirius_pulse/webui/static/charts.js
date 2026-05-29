@@ -6,7 +6,9 @@ export function getChart(container) {
   if (!chart) {
     chart = echarts.init(container, null, { renderer: 'canvas' });
     instances.set(container, chart);
-    const ro = new ResizeObserver(() => chart.resize());
+    const ro = new ResizeObserver(() => {
+      if (container.offsetWidth > 0 && container.offsetHeight > 0) chart.resize();
+    });
     ro.observe(container);
     container._resizeObserver = ro;
   }
@@ -238,7 +240,9 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
   disposeChart(container);
   const chart = echarts.init(container, 'dark');
   instances.set(container, chart);
-  const ro = new ResizeObserver(() => chart.resize());
+  const ro = new ResizeObserver(() => {
+    if (container.offsetWidth > 0 && container.offsetHeight > 0) chart.resize();
+  });
   ro.observe(container);
   container._resizeObserver = ro;
 

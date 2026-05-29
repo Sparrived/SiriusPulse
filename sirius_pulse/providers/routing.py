@@ -9,6 +9,7 @@ from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
 from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
 from sirius_pulse.providers.bigmodel import BigModelProvider
 from sirius_pulse.providers.deepseek import DeepSeekProvider
+from sirius_pulse.providers.models_dev import auto_fill_models_from_dev
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.providers.siliconflow import SiliconFlowProvider
 from sirius_pulse.providers.volcengine_ark import VolcengineArkProvider
@@ -146,6 +147,8 @@ class ProviderRegistry:
             )
         
         if needs_migration:
+            # 尝试从 models.dev 自动填充模型列表
+            auto_fill_models_from_dev(self._layout.config_root, results)
             self.save(results)
 
         return results
@@ -289,6 +292,43 @@ class WorkspaceProviderManager:
 
     async def probe(self) -> None:
         await run_provider_detection_flow(providers=self.load())
+
+    def refresh_models_from_dev(self, *, tool_call_only: bool = True, force: bool = False) -> bool:
+        """从 models.dev 刷新所有 provider 的模型列表。
+
+        Args:
+            tool_call_only: 是否只填充支持 tool_call 的模型
+            force: True 时忽略已有列表强制刷新，False 时仅填充空列表
+
+        Returns:
+            是否有任何变更
+        """
+        from sirius_pulse.providers.models_dev import ModelsDevCache
+
+        providers = self.load()
+        cache = ModelsDevCache(self._layout.config_root)
+        data = cache.get(force_refresh=force)
+        if not data:
+            logger.warning("无法获取 models.dev 数据，跳过刷新")
+            return False
+
+        from sirius_pulse.providers.models_dev import list_provider_model_ids
+
+        changed = False
+        for provider_type, config in providers.items():
+            if config.models and not force:
+                continue
+            model_ids = list_provider_model_ids(
+                data, provider_type, tool_call_only=tool_call_only,
+            )
+            if model_ids and model_ids != config.models:
+                config.models = model_ids
+                changed = True
+                logger.info("刷新 %s 模型列表: %d 个模型", provider_type, len(model_ids))
+
+        if changed:
+            self.save(providers)
+        return changed
 
 
 def merge_provider_sources(

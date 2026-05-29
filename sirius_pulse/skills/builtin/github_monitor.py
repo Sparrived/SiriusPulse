@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
 from sirius_pulse.github import GitHubWebhookServer, fetch_repo_events
 from sirius_pulse.github.client import GitHubClient
 from sirius_pulse.github.event_bridge import (
@@ -49,6 +50,38 @@ from sirius_pulse.github.event_bridge import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 使用 ConfigBuilder 定义配置参数
+_config = ConfigBuilder()
+_config.group("基本设置").add(
+    "poll_seconds",
+    type="int",
+    description="轮询间隔（秒），范围 30-3600，默认 120",
+    default=120,
+)
+_config.group("基本设置").add(
+    "api_base_url",
+    type="str",
+    description="GitHub API 地址，国内可改用镜像",
+    default="https://api.github.com",
+)
+_config.group("监控仓库").add(
+    "repos",
+    type="object_array",
+    description="配置要监控的 GitHub 仓库",
+    fields=[
+        {"name": "owner", "type": "str", "description": "仓库所有者"},
+        {"name": "repo", "type": "str", "description": "仓库名称"},
+        {
+            "name": "events",
+            "type": "checkbox_group",
+            "description": "监控事件类型",
+            "choices": ["issues", "pulls", "releases", "comments", "pushes"],
+        },
+        {"name": "groups", "type": "list", "description": "通知目标群号（每行一个）"},
+        {"name": "github_token", "type": "password", "description": "GitHub Token（可选）"},
+    ],
+)
 
 SKILL_META = {
     "name": "github_monitor",
@@ -62,6 +95,7 @@ SKILL_META = {
     "tags": ["github", "monitor", "notification"],
     "developer_only": False,
     "dependencies": ["playwright", "httpx"],
+    "parameters": _config.build(),
 }
 
 _GITHUB_API_BASE = "https://api.github.com"
@@ -503,6 +537,7 @@ def _extract_event_info(event: dict[str, Any]) -> dict[str, Any]:
     actor_name = actor.get("display_login") or actor.get("login", "未知用户")
     html_url = ""
     canonical_url = ""
+    screenshot_url = ""
     title = ""
     body = ""
     action = payload.get("action", "")
@@ -804,7 +839,7 @@ async def _take_screenshot(url: str, store: Any) -> str | None:
     返回截图文件的绝对路径，失败时返回 None 并记录警告日志。
     """
     try:
-        from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright  # type: ignore[import-untyped]
     except ImportError:
         logger.warning("github_monitor: playwright 未安装，跳过截图")
         return None
@@ -911,8 +946,9 @@ async def _generate_notification_text(
         )
 
         # 构建多模态 user message（如有截图则以 image_url 格式传入）
+        user_content: str | list[dict[str, Any]]
         if screenshot_path:
-            user_content: list[dict[str, Any]] = [
+            user_content = [
                 {
                     "type": "text",
                     "text": f"（{event_info['repo']} 仓库有新动态，下方是页面截图，请参考截图播报一下）",

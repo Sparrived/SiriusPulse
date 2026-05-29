@@ -7,20 +7,24 @@ import platform
 from datetime import datetime
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
+_config = ConfigBuilder()
+_config.add(
+    "categories",
+    type="list[str]",
+    description="要获取的信息类别，可选值: cpu, memory, disk, network, os。不传则返回全部",
+    default=["cpu", "memory", "disk", "os"],
+    group="查询设置",
+)
+
 SKILL_META = {
     "name": "system_info",
     "description": "获取主机的系统信息",
     "version": "1.0.0",
     "tags": ["system", "info"],
     "dependencies": ["psutil"],
-    "parameters": {
-        "categories": {
-            "type": "list[str]",
-            "description": "要获取的信息类别，可选值: cpu, memory, disk, network, os。不传则返回全部",
-            "required": False,
-            "default": ["cpu", "memory", "disk", "os"],
-        },
-    },
+    "parameters": _config.build(),
 }
 
 

@@ -2,12 +2,62 @@ import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, flashSuccess, $ } from '../components.js';
 
-function getStyleLabel(s, e) {
-  if (s >= 0.7 && e >= 0.7) return { label: '积极主导型', desc: '决策活跃度高，行为边界宽松。倾向于主动参与对话。' };
-  if (s >= 0.7 && e <= 0.3) return { label: '被动回应型', desc: '决策活跃度高，但行为边界严格。仅在被明确指向时回复。' };
-  if (s <= 0.3 && e >= 0.7) return { label: '选择性参与型', desc: '决策活跃度低，但行为边界宽松。一旦决定参与则表现积极。' };
-  if (s <= 0.3 && e <= 0.3) return { label: '深度观察型', desc: '决策活跃度低，行为边界严格。极少参与对话。' };
-  return { label: '均衡互动型', desc: '决策活跃度与行为边界均处于中等水平。' };
+function numberInput(name, min, max, step) {
+  const id = `exp_${name}`;
+  return `
+    <div class="number-input-group">
+      <button type="button" class="number-spin-btn" data-spin-target="${id}" data-spin-dir="-1">−</button>
+      <input id="${id}" type="number" name="${name}" min="${min}" max="${max || ''}" step="${step || 1}">
+      <button type="button" class="number-spin-btn" data-spin-target="${id}" data-spin-dir="1">+</button>
+    </div>
+  `;
+}
+
+function getStyleInfo(s, e) {
+  if (s >= 0.7 && e >= 0.7) return { label: '积极主导型', desc: '决策活跃度高，行为边界宽松。倾向于主动参与对话。', color: 'var(--success)' };
+  if (s >= 0.7 && e <= 0.3) return { label: '被动回应型', desc: '决策活跃度高，但行为边界严格。仅在被明确指向时回复。', color: 'var(--accent)' };
+  if (s <= 0.3 && e >= 0.7) return { label: '选择性参与型', desc: '决策活跃度低，但行为边界宽松。一旦决定参与则表现积极。', color: 'var(--warn)' };
+  if (s <= 0.3 && e <= 0.3) return { label: '深度观察型', desc: '决策活跃度低，行为边界严格。极少参与对话。', color: 'var(--text-3)' };
+  return { label: '均衡互动型', desc: '决策活跃度与行为边界均处于中等水平。', color: 'var(--info)' };
+}
+
+function quadrantSelector() {
+  return `
+    <div class="quadrant-container">
+      <div class="quadrant-labels">
+        <span class="quadrant-label-y">表达力</span>
+        <span class="quadrant-label-x">参与灵敏度</span>
+      </div>
+      <div class="quadrant-grid" id="quadrantGrid">
+        <div class="quadrant-cell quadrant-tl" data-s="low" data-e="high">
+          <span class="quadrant-cell-label">选择性参与型</span>
+        </div>
+        <div class="quadrant-cell quadrant-tr" data-s="high" data-e="high">
+          <span class="quadrant-cell-label">积极主导型</span>
+        </div>
+        <div class="quadrant-cell quadrant-bl" data-s="low" data-e="low">
+          <span class="quadrant-cell-label">深度观察型</span>
+        </div>
+        <div class="quadrant-cell quadrant-br" data-s="high" data-e="low">
+          <span class="quadrant-cell-label">被动回应型</span>
+        </div>
+        <div class="quadrant-center" data-s="mid" data-e="mid">
+          <span class="quadrant-cell-label">均衡互动型</span>
+        </div>
+        <div class="quadrant-dot" id="quadrantDot"></div>
+      </div>
+      <div class="quadrant-axes">
+        <span>低</span>
+        <span>高</span>
+      </div>
+      <div class="quadrant-axes-y">
+        <span>高</span>
+        <span>低</span>
+      </div>
+      <input type="hidden" name="engagement_sensitivity" id="exp_engagement_sensitivity">
+      <input type="hidden" name="expressiveness" id="exp_expressiveness">
+    </div>
+  `;
 }
 
 export async function init(container, params) {
@@ -39,33 +89,42 @@ export async function init(container, params) {
       </div>
       <form id="expForm" style="display:grid;gap:24px">
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">行为风格</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
-          <div class="form-group">
-            <label>回复模式</label>
-            <div class="select-wrap">
-              <select name="reply_mode">
-                <option value="auto">auto</option>
-                <option value="always">always</option>
-                <option value="never">never</option>
-              </select>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
+          <div style="display:grid;gap:16px">
+            <div class="form-group">
+              <label>回复模式</label>
+              <div class="select-wrap">
+                <select name="reply_mode">
+                  <option value="auto">auto</option>
+                  <option value="always">always</option>
+                  <option value="never">never</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>参与灵敏度 <span id="sensitivityLabel" style="float:right;color:var(--accent)">0.50</span></label>
+              <input type="range" id="sensitivitySlider" min="0" max="1" step="0.01" value="0.5">
+            </div>
+            <div class="form-group">
+              <label>表达力 <span id="expressivenessLabel" style="float:right;color:var(--accent)">0.50</span></label>
+              <input type="range" id="expressivenessSlider" min="0" max="1" step="0.01" value="0.5">
+            </div>
+            <div class="form-group">
+              <label>热度窗口（秒）</label>
+              ${numberInput('heat_window_seconds', 0)}
+            </div>
+            <div id="stylePreview" style="padding:12px 16px;background:var(--surface-1,var(--bg-2));border:1px solid var(--border);border-radius:var(--radius-md)">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span id="styleDot" style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>
+                <span id="styleLabel" style="font-size:14px;font-weight:600;color:var(--text-1)">均衡互动型</span>
+              </div>
+              <div id="styleDesc" style="font-size:12px;color:var(--text-2);margin-top:6px;margin-left:18px">决策活跃度与行为边界均处于中等水平。</div>
             </div>
           </div>
-          <div class="form-group">
-            <label>参与灵敏度 <span id="sensitivityLabel" style="float:right;color:var(--accent)">0.5</span></label>
-            <input type="range" name="engagement_sensitivity" min="0" max="1" step="0.05" value="0.5">
+          <div>
+            <label style="font-size:14px;font-weight:500;margin-bottom:12px;display:block">行为类型</label>
+            ${quadrantSelector()}
           </div>
-          <div class="form-group">
-            <label>表达力 <span id="expressivenessLabel" style="float:right;color:var(--accent)">0.5</span></label>
-            <input type="range" name="expressiveness" min="0" max="1" step="0.05" value="0.5">
-          </div>
-          <div class="form-group">
-            <label>热度窗口（秒）</label>
-            <input type="number" name="heat_window_seconds" min="0">
-          </div>
-        </div>
-        <div id="stylePreview" style="padding:12px;background:var(--bg-secondary);border-radius:8px">
-          <div id="styleLabel" style="font-size:14px;font-weight:600;color:var(--accent)"></div>
-          <div id="styleDesc" style="font-size:12px;color:var(--text-2);margin-top:4px"></div>
         </div>
 
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">主动消息</div>
@@ -81,15 +140,15 @@ export async function init(container, params) {
           </div>
           <div class="form-group">
             <label>主动消息间隔（秒）</label>
-            <input type="number" name="proactive_interval_seconds" min="0">
+            ${numberInput('proactive_interval_seconds', 0)}
           </div>
           <div class="form-group">
             <label>活跃开始时间（小时）</label>
-            <input type="number" name="proactive_active_start_hour" min="0" max="23">
+            ${numberInput('proactive_active_start_hour', 0, 23)}
           </div>
           <div class="form-group">
             <label>活跃结束时间（小时）</label>
-            <input type="number" name="proactive_active_end_hour" min="0" max="23">
+            ${numberInput('proactive_active_end_hour', 0, 23)}
           </div>
         </div>
 
@@ -106,19 +165,19 @@ export async function init(container, params) {
           </div>
           <div class="form-group">
             <label>待处理消息阈值</label>
-            <input type="number" name="pending_message_threshold" min="0">
+            ${numberInput('pending_message_threshold', 0)}
           </div>
           <div class="form-group">
             <label>最小回复间隔（秒）</label>
-            <input type="number" name="min_reply_interval_seconds" min="0">
+            ${numberInput('min_reply_interval_seconds', 0)}
           </div>
           <div class="form-group">
             <label>频率窗口（秒）</label>
-            <input type="number" name="reply_frequency_window_seconds" min="0">
+            ${numberInput('reply_frequency_window_seconds', 0)}
           </div>
           <div class="form-group">
             <label>窗口内最大回复数</label>
-            <input type="number" name="reply_frequency_max_replies" min="0">
+            ${numberInput('reply_frequency_max_replies', 0)}
           </div>
           <div class="form-group">
             <label>被@时豁免频率限制</label>
@@ -144,11 +203,11 @@ export async function init(container, params) {
           </div>
           <div class="form-group">
             <label>最大技能轮数</label>
-            <input type="number" name="max_skill_rounds" min="0">
+            ${numberInput('max_skill_rounds', 0)}
           </div>
           <div class="form-group">
             <label>技能执行超时（秒）</label>
-            <input type="number" name="skill_execution_timeout" min="0">
+            ${numberInput('skill_execution_timeout', 0)}
           </div>
         </div>
 
@@ -166,19 +225,19 @@ export async function init(container, params) {
           </div>
           <div class="form-group">
             <label>基础记忆硬限制</label>
-            <input type="number" name="basic_memory_hard_limit" min="0">
+            ${numberInput('basic_memory_hard_limit', 0)}
           </div>
           <div class="form-group">
             <label>基础上下文窗口</label>
-            <input type="number" name="basic_memory_context_window" min="0">
+            ${numberInput('basic_memory_context_window', 0)}
           </div>
           <div class="form-group">
             <label>日记 Top-K</label>
-            <input type="number" name="diary_top_k" min="0">
+            ${numberInput('diary_top_k', 0)}
           </div>
           <div class="form-group">
             <label>日记 Token 预算</label>
-            <input type="number" name="diary_token_budget" min="0">
+            ${numberInput('diary_token_budget', 0)}
           </div>
         </div>
       </form>
@@ -186,25 +245,78 @@ export async function init(container, params) {
   `;
 
   await loadExperience(name);
-  setupSliders();
 }
 
-function setupSliders() {
-  const sensitivity = document.querySelector('[name="engagement_sensitivity"]');
-  const expressiveness = document.querySelector('[name="expressiveness"]');
+function setupQuadrant() {
+  const grid = $('quadrantGrid');
+  const dot = $('quadrantDot');
+  if (!grid || !dot) return;
 
-  function updatePreview() {
-    const s = parseFloat(sensitivity.value);
-    const e = parseFloat(expressiveness.value);
-    $('sensitivityLabel').textContent = s.toFixed(2);
-    $('expressivenessLabel').textContent = e.toFixed(2);
-    const style = getStyleLabel(s, e);
-    $('styleLabel').textContent = style.label;
-    $('styleDesc').textContent = style.desc;
+  const sensitivityInput = $('exp_engagement_sensitivity');
+  const expressivenessInput = $('exp_expressiveness');
+  const sensitivitySlider = $('sensitivitySlider');
+  const expressivenessSlider = $('expressivenessSlider');
+
+  function updateDotPosition(s, e) {
+    dot.style.left = `${s * 100}%`;
+    dot.style.bottom = `${e * 100}%`;
   }
 
-  if (sensitivity) sensitivity.addEventListener('input', updatePreview);
-  if (expressiveness) expressiveness.addEventListener('input', updatePreview);
+  function updateLabels(s, e) {
+    $('sensitivityLabel').textContent = s.toFixed(2);
+    $('expressivenessLabel').textContent = e.toFixed(2);
+  }
+
+  function updatePreview(s, e) {
+    const style = getStyleInfo(s, e);
+    $('styleLabel').textContent = style.label;
+    $('styleDesc').textContent = style.desc;
+    $('styleDot').style.background = style.color;
+  }
+
+  function syncAll(s, e) {
+    s = Math.max(0, Math.min(1, s));
+    e = Math.max(0, Math.min(1, e));
+    sensitivityInput.value = s.toFixed(2);
+    expressivenessInput.value = e.toFixed(2);
+    if (sensitivitySlider) sensitivitySlider.value = s;
+    if (expressivenessSlider) expressivenessSlider.value = e;
+    updateDotPosition(s, e);
+    updateLabels(s, e);
+    updatePreview(s, e);
+  }
+
+  // 四象限点击
+  grid.addEventListener('click', (e) => {
+    const rect = grid.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const s = x / rect.width;
+    const eVal = 1 - y / rect.height;
+    syncAll(s, eVal);
+  });
+
+  // 滑块事件
+  if (sensitivitySlider) {
+    sensitivitySlider.addEventListener('input', () => {
+      const s = parseFloat(sensitivitySlider.value);
+      const e = parseFloat(expressivenessInput.value);
+      syncAll(s, e);
+    });
+  }
+
+  if (expressivenessSlider) {
+    expressivenessSlider.addEventListener('input', () => {
+      const s = parseFloat(sensitivityInput.value);
+      const e = parseFloat(expressivenessSlider.value);
+      syncAll(s, e);
+    });
+  }
+
+  // 初始化
+  const s = parseFloat(sensitivityInput.value) || 0.5;
+  const e = parseFloat(expressivenessInput.value) || 0.5;
+  syncAll(s, e);
 }
 
 async function loadExperience(name) {
@@ -214,9 +326,19 @@ async function loadExperience(name) {
     if (!form) return;
 
     form.reply_mode.value = data.reply_mode || 'auto';
-    form.engagement_sensitivity.value = data.engagement_sensitivity ?? 0.5;
-    form.expressiveness.value = data.expressiveness ?? 0.5;
     form.heat_window_seconds.value = data.heat_window_seconds ?? 300;
+
+    // 设置四象限隐藏输入和滑块
+    const sensitivityInput = $('exp_engagement_sensitivity');
+    const expressivenessInput = $('exp_expressiveness');
+    const sensitivitySlider = $('sensitivitySlider');
+    const expressivenessSlider = $('expressivenessSlider');
+    const s = data.engagement_sensitivity ?? 0.5;
+    const e = data.expressiveness ?? 0.5;
+    if (sensitivityInput) sensitivityInput.value = s.toFixed(2);
+    if (expressivenessInput) expressivenessInput.value = e.toFixed(2);
+    if (sensitivitySlider) sensitivitySlider.value = s;
+    if (expressivenessSlider) expressivenessSlider.value = e;
 
     form.proactive_enabled.value = String(data.proactive_enabled ?? true);
     form.proactive_interval_seconds.value = data.proactive_interval_seconds ?? 3600;
@@ -240,15 +362,24 @@ async function loadExperience(name) {
     form.diary_top_k.value = data.diary_top_k ?? 5;
     form.diary_token_budget.value = data.diary_token_budget ?? 2000;
 
-    const s = parseFloat(form.engagement_sensitivity.value);
-    const e = parseFloat(form.expressiveness.value);
-    $('sensitivityLabel').textContent = s.toFixed(2);
-    $('expressivenessLabel').textContent = e.toFixed(2);
-    const style = getStyleLabel(s, e);
-    $('styleLabel').textContent = style.label;
-    $('styleDesc').textContent = style.desc;
+    setupQuadrant();
 
     $('expSave').addEventListener('click', () => saveExperience(name));
+
+    // 数字调节按钮事件
+    document.querySelectorAll('[data-spin-target]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = document.getElementById(btn.dataset.spinTarget);
+        if (!target) return;
+        const dir = parseInt(btn.dataset.spinDir, 10);
+        const step = parseFloat(target.step) || 1;
+        const min = target.min !== '' ? parseFloat(target.min) : -Infinity;
+        const max = target.max !== '' ? parseFloat(target.max) : Infinity;
+        const cur = parseFloat(target.value) || 0;
+        target.value = Math.min(max, Math.max(min, cur + step * dir));
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
   } catch (e) {
     toast('加载体验参数失败: ' + e.message, 'error');
   }

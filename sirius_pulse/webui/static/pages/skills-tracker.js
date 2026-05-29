@@ -47,19 +47,31 @@ export async function init(container) {
     </div>
   `;
 
-  $('skillFilter').addEventListener('change', (e) => {
-    skillFilter = e.target.value;
-    renderHistory();
-  });
-  $('limitSelect').addEventListener('change', () => loadHistory());
-  $('refreshBtn').addEventListener('click', () => loadHistory());
+  const skillFilterEl = $('skillFilter');
+  if (skillFilterEl) {
+    skillFilterEl.addEventListener('change', (e) => {
+      skillFilter = e.target.value;
+      renderHistory();
+    });
+  }
+  
+  const limitSelectEl = $('limitSelect');
+  if (limitSelectEl) {
+    limitSelectEl.addEventListener('change', () => loadHistory());
+  }
+  
+  const refreshBtn = $('refreshBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => loadHistory());
+  }
 
   await loadHistory();
 }
 
 async function loadHistory() {
   const name = store.currentPersona;
-  const limit = parseInt($('limitSelect').value, 10);
+  const limitSelect = $('limitSelect');
+  const limit = limitSelect ? parseInt(limitSelect.value, 10) : 50;
   const params = new URLSearchParams({ limit: String(limit) });
   if (skillFilter) params.set('skill_name', skillFilter);
 
@@ -71,13 +83,17 @@ async function loadHistory() {
     renderHistory();
   } catch (e) {
     toast('加载历史失败: ' + e.message, 'error');
-    $('historyList').innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
+    const historyList = $('historyList');
+    if (historyList) {
+      historyList.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
+    }
   }
 }
 
 function updateSkillFilter() {
   const skills = [...new Set(historyData.map(h => h.skill_name))].sort();
   const sel = $('skillFilter');
+  if (!sel) return;
   const current = sel.value;
   sel.innerHTML = `<option value="">全部技能</option>` +
     skills.map(s => `<option value="${s}"${s === current ? ' selected' : ''}>${s}</option>`).join('');
@@ -92,7 +108,10 @@ function renderStats() {
     : 0;
   const successRate = total > 0 ? Math.round(success / total * 100) : 0;
 
-  $('statsGrid').innerHTML = `
+  const statsGrid = $('statsGrid');
+  if (!statsGrid) return;
+  
+  statsGrid.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">总调用次数</div>
       <div class="stat-value">${total}</div>
@@ -131,6 +150,7 @@ function renderHistory() {
     ? historyData.filter(h => h.skill_name === skillFilter)
     : historyData;
   const el = $('historyList');
+  if (!el) return;
 
   if (!filtered.length) {
     el.innerHTML = `

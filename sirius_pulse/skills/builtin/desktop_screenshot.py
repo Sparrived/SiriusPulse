@@ -7,8 +7,23 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
 from sirius_pulse.skills.models import SkillInvocationContext
 from sirius_pulse.skills.security import ensure_developer_access
+
+_config = ConfigBuilder()
+_config.group("截图设置").add(
+    "all_screens",
+    type="bool",
+    description="是否尽量捕获所有显示器；部分平台可能只支持主屏幕",
+    default=True,
+)
+_config.group("截图设置").add(
+    "focus",
+    type="str",
+    description="本次截图关注点，例如 判断主机当前在做什么、确认前台窗口、查看当前页面",
+    default="",
+)
 
 SKILL_META = {
     "name": "desktop_screenshot",
@@ -17,20 +32,7 @@ SKILL_META = {
     "tags": ["system", "image"],
     "developer_only": True,
     "dependencies": ["Pillow"],
-    "parameters": {
-        "all_screens": {
-            "type": "bool",
-            "description": "是否尽量捕获所有显示器；部分平台可能只支持主屏幕",
-            "required": False,
-            "default": True,
-        },
-        "focus": {
-            "type": "str",
-            "description": "本次截图关注点，例如 判断主机当前在做什么、确认前台窗口、查看当前页面",
-            "required": False,
-            "default": "",
-        },
-    },
+    "parameters": _config.build(),
 }
 
 

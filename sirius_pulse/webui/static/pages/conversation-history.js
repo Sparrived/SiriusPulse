@@ -46,15 +46,21 @@ export async function init(container) {
     <div id="pagination" style="display:flex;justify-content:center;gap:12px;margin-top:20px"></div>
   `;
 
-  $('groupFilter').addEventListener('change', (e) => {
-    activeGroup = e.target.value;
-    currentOffset = 0;
-    loadMessages();
-  });
-  $('refreshBtn').addEventListener('click', () => {
-    currentOffset = 0;
-    loadMessages();
-  });
+  const groupFilterEl = $('groupFilter');
+  if (groupFilterEl) {
+    groupFilterEl.addEventListener('change', (e) => {
+      activeGroup = e.target.value;
+      currentOffset = 0;
+      loadMessages();
+    });
+  }
+  const refreshBtnEl = $('refreshBtn');
+  if (refreshBtnEl) {
+    refreshBtnEl.addEventListener('click', () => {
+      currentOffset = 0;
+      loadMessages();
+    });
+  }
 
   await loadMessages();
 }
@@ -79,16 +85,20 @@ async function loadMessages() {
     renderPagination(total);
   } catch (e) {
     toast('加载对话历史失败: ' + e.message, 'error');
-    $('messageList').innerHTML = `
-      <div class="card">
-        <div style="padding:40px;text-align:center;color:var(--danger)">加载失败: ${e.message}</div>
-      </div>
-    `;
+    const msgList = $('messageList');
+    if (msgList) {
+      msgList.innerHTML = `
+        <div class="card">
+          <div style="padding:40px;text-align:center;color:var(--danger)">加载失败: ${e.message}</div>
+        </div>
+      `;
+    }
   }
 }
 
 function updateGroupFilter() {
   const sel = $('groupFilter');
+  if (!sel) return;
   const current = sel.value;
   sel.innerHTML = `<option value="">全部群组</option>` +
     groups.map(g => `<option value="${g}"${g === current ? ' selected' : ''}>${g}</option>`).join('');
@@ -100,7 +110,9 @@ function renderStats(total) {
   const systemCount = messages.filter(m => m.role === 'system').length;
   const uniqueUsers = new Set(messages.filter(m => m.user_id).map(m => m.user_id)).size;
 
-  $('statsGrid').innerHTML = `
+  const statsGrid = $('statsGrid');
+  if (!statsGrid) return;
+  statsGrid.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">总消息数</div>
       <div class="stat-value">${total.toLocaleString()}</div>
@@ -167,6 +179,7 @@ let msgIdCounter = 0;
 
 function renderMessages() {
   const el = $('messageList');
+  if (!el) return;
 
   if (!messages.length) {
     el.innerHTML = `
@@ -223,6 +236,7 @@ function renderMessages() {
 
 function renderPagination(total) {
   const el = $('pagination');
+  if (!el) return;
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const currentPage = Math.floor(currentOffset / PAGE_SIZE) + 1;
 
@@ -237,17 +251,23 @@ function renderPagination(total) {
     <button class="btn btn-sm" id="nextPage" ${currentOffset + PAGE_SIZE >= total ? 'disabled' : ''}>下一页</button>
   `;
 
-  $('prevPage').addEventListener('click', () => {
-    if (currentOffset > 0) {
-      currentOffset = Math.max(0, currentOffset - PAGE_SIZE);
-      loadMessages();
-    }
-  });
+  const prevBtn = $('prevPage');
+  if (prevBtn) {
+    prevBtn.addEventListener('click', () => {
+      if (currentOffset > 0) {
+        currentOffset = Math.max(0, currentOffset - PAGE_SIZE);
+        loadMessages();
+      }
+    });
+  }
 
-  $('nextPage').addEventListener('click', () => {
-    if (currentOffset + PAGE_SIZE < total) {
-      currentOffset += PAGE_SIZE;
-      loadMessages();
-    }
-  });
+  const nextBtn = $('nextPage');
+  if (nextBtn) {
+    nextBtn.addEventListener('click', () => {
+      if (currentOffset + PAGE_SIZE < total) {
+        currentOffset += PAGE_SIZE;
+        loadMessages();
+      }
+    });
+  }
 }

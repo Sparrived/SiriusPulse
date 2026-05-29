@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from sirius_pulse.plugins.base import PluginBase
+from sirius_pulse.config.config_builder import ConfigBuilder, config_param, secret, build_parameters_from_class
 from sirius_pulse.plugins.context import (
     EngineProxy,
     MessageContext,
@@ -64,6 +65,11 @@ __all__ = [
     # 核心类
     "PluginBase",
     "PluginContext",
+    # 配置构建
+    "ConfigBuilder",
+    "config_param",
+    "secret",
+    "build_parameters_from_class",
     "PluginDefinition",
     "PluginResponse",
     "CommandAST",

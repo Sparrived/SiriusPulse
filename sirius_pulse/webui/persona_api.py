@@ -488,7 +488,44 @@ def _build_model_choices(persona_manager: Any) -> tuple[list[str], list[dict[str
     except Exception:
         LOG.warning("获取模型列表失败", exc_info=True)
         pass
+    _enrich_model_tags(persona_manager.data_path, model_choices)
     return available_models, model_choices
+
+
+def _enrich_model_tags(data_path: Any, model_choices: list[dict[str, str]]) -> None:
+    """为 model_choices 注入 models.dev 能力标签。"""
+    from pathlib import Path
+    from sirius_pulse.providers.models_dev import ModelsDevCache
+    try:
+        cache = ModelsDevCache(Path(data_path))
+        data = cache.get()
+        if not data:
+            return
+        all_models: dict[str, dict[str, object]] = {}
+        for prov in data.values():
+            if isinstance(prov, dict):
+                for mid, mobj in prov.get("models", {}).items():
+                    if isinstance(mobj, dict) and mid not in all_models:
+                        all_models[mid] = mobj
+        for choice in model_choices:
+            m = all_models.get(choice["value"])
+            if not m:
+                continue
+            tags: list[str] = []
+            if m.get("tool_call"):
+                tags.append("函数调用")
+            if m.get("reasoning"):
+                tags.append("推理")
+            modalities = m.get("modalities", {})
+            input_mods = modalities.get("input", []) if isinstance(modalities, dict) else []
+            if "image" in input_mods:
+                tags.append("视觉")
+            if "audio" in input_mods:
+                tags.append("音频")
+            if tags:
+                choice["tags"] = tags
+    except Exception:
+        LOG.debug("注入模型能力标签失败", exc_info=True)
 
 
 @handle_api_errors

@@ -5,36 +5,41 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
+_config = ConfigBuilder()
+_config.group("文件写入").add(
+    "path",
+    type="str",
+    description="文件名，可含子目录，例如 notes.md、docs/report.txt",
+    required=True,
+)
+_config.group("文件写入").add(
+    "content",
+    type="str",
+    description="要写入的文本内容",
+    required=True,
+)
+_config.group("文件写入").add(
+    "mode",
+    type="str",
+    description="写入模式：'write' 覆盖写入（默认），'append' 追加到末尾",
+    default="write",
+)
+
 SKILL_META = {
     "name": "file_write",
     "description": (
         "在 data/personaworkspace 目录下创建或修改文本文件。"
-        "只需提供文件名（可含子目录，如 notes.md 或 docs/report.txt），"
-        "skill 会自动写入到 data/personaworkspace 下。"
+        "需提供文件名（可含子目录，如 notes.md 或 docs/report.txt），"
         "支持覆盖写入或追加到现有文件末尾。"
+        "需要创作时，请主动使用该技能而不是将大量文本输出到外部，写入内容时可以忽略长度要求"
     ),
     "version": "1.0.0",
     "tags": ["file", "io"],
     "developer_only": False,
     "dependencies": [],
-    "parameters": {
-        "path": {
-            "type": "str",
-            "description": "文件名，可含子目录，例如 notes.md、docs/report.txt",
-            "required": True,
-        },
-        "content": {
-            "type": "str",
-            "description": "要写入的文本内容",
-            "required": True,
-        },
-        "mode": {
-            "type": "str",
-            "description": "写入模式：'write' 覆盖写入（默认），'append' 追加到末尾",
-            "required": False,
-            "default": "write",
-        },
-    },
+    "parameters": _config.build(),
 }
 
 _MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB

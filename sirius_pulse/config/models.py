@@ -323,10 +323,13 @@ class ConfigParameter:
     """
 
     name: str
-    type: str = "str"  # str | int | float | bool | list[str]
+    type: str = "str"  # str | int | float | bool | list | model | password | object_array | checkbox_group
     description: str = ""
     required: bool = False
     default: Any = None
+    choices: list[str] | None = None  # 用于 checkbox_group 类型
+    fields: list[dict[str, Any]] | None = None  # 用于 object_array 类型，定义子字段结构
+    group: str = ""  # 参数分组
 
 
 @dataclass(slots=True)

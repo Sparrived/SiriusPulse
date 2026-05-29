@@ -19,31 +19,48 @@ function handleAuthError(r) {
   }
 }
 
+async function readError(r, method, path) {
+  let body = '';
+  try { body = await r.text(); } catch {}
+  const msg = `HTTP ${r.status}: ${body.slice(0, 200)}`;
+  console.error(`[API ${method}] ${path} → ${msg}`);
+  return msg;
+}
+
+function logAndThrow(method, path, err) {
+  console.error(`[API ${method}] ${path} → 网络错误:`, err);
+  throw err;
+}
+
 export async function get(path, signal) {
   const opts = signal ? { signal, headers: authHeaders() } : { headers: authHeaders() };
-  const r = await fetch(API + path, opts);
+  let r;
+  try { r = await fetch(API + path, opts); } catch (e) { logAndThrow('GET', path, e); }
   handleAuthError(r);
-  if (!r.ok) { const t = await r.text(); throw new Error(`HTTP ${r.status}: ${t.slice(0,200)}`); }
+  if (!r.ok) { throw new Error(await readError(r, 'GET', path)); }
   return r.json();
 }
 
 export async function post(path, body) {
-  const r = await fetch(API + path, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+  let r;
+  try { r = await fetch(API + path, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('POST', path, e); }
   handleAuthError(r);
-  if (!r.ok) { const t = await r.text(); throw new Error(`HTTP ${r.status}: ${t.slice(0,200)}`); }
+  if (!r.ok) { throw new Error(await readError(r, 'POST', path)); }
   return r.json();
 }
 
 export async function del(path) {
-  const r = await fetch(API + path, { method: 'DELETE', headers: authHeaders() });
+  let r;
+  try { r = await fetch(API + path, { method: 'DELETE', headers: authHeaders() }); } catch (e) { logAndThrow('DELETE', path, e); }
   handleAuthError(r);
-  if (!r.ok) { const t = await r.text(); throw new Error(`HTTP ${r.status}: ${t.slice(0,200)}`); }
+  if (!r.ok) { throw new Error(await readError(r, 'DELETE', path)); }
   return r.json();
 }
 
 export async function put(path, body) {
-  const r = await fetch(API + path, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) });
+  let r;
+  try { r = await fetch(API + path, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('PUT', path, e); }
   handleAuthError(r);
-  if (!r.ok) { const t = await r.text(); throw new Error(`HTTP ${r.status}: ${t.slice(0,200)}`); }
+  if (!r.ok) { throw new Error(await readError(r, 'PUT', path)); }
   return r.json();
 }

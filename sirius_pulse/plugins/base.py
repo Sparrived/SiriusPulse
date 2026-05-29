@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, Awaitable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sirius_pulse.plugins.models import CommandAST, PluginResponse
@@ -95,16 +95,18 @@ class PluginBase:
 
     # ── 生命周期方法 ──
 
-    def on_load(self) -> None:
+    def on_load(self) -> None | Awaitable[None]:
         """Plugin 加载时调用一次。
 
         可在此初始化资源、建立连接等。默认无操作。
+        支持同步和异步子类覆写。
         """
 
-    def on_unload(self) -> None:
+    def on_unload(self) -> None | Awaitable[None]:
         """Plugin 卸载时调用一次。
 
         可在此清理资源、关闭连接等。默认无操作。
+        支持同步和异步子类覆写。
         """
 
     async def on_event(self, event_type: str, event_data: dict) -> None:

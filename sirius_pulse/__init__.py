@@ -104,6 +104,15 @@ from sirius_pulse.skills import (
     TriggerSpec,
 )
 
+# ── Config Builder (shared between plugins and skills) ──
+from sirius_pulse.config.config_builder import (
+    ConfigBuilder,
+    ParamDefinition,
+    build_parameters_from_class,
+    config_param,
+    secret,
+)
+
 # ── Plugin system（v1.2+）──
 from sirius_pulse.plugins import (
     PluginBase,
@@ -312,6 +321,12 @@ __all__ = [
     "SkillRegistry",
     "SkillResult",
     "TriggerSpec",
+    # Config Builder (shared between plugins and skills)
+    "ConfigBuilder",
+    "ParamDefinition",
+    "config_param",
+    "secret",
+    "build_parameters_from_class",
     # Plugin system（v1.2+）
     "PluginBase",
     "PluginContext",

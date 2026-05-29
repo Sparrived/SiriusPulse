@@ -7,10 +7,12 @@ import logging
 import socket
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import web
 
+from sirius_pulse.providers.base import AsyncLLMProvider
 from sirius_pulse.providers.routing import WorkspaceProviderManager
 from sirius_pulse.providers.routing import (
     ProviderConfig,
@@ -34,7 +36,10 @@ LOG = logging.getLogger("sirius.webui")
 
 
 @web.middleware
-async def _no_cache_middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+async def _no_cache_middleware(
+    request: web.Request,
+    handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> web.StreamResponse:
     """为静态文件禁用浏览器缓存。"""
     response = await handler(request)
     if request.path.startswith("/static/"):
@@ -126,6 +131,9 @@ class WebUIServer:
         async def api_persona_clone(self, request: web.Request) -> web.Response: ...
         async def api_auth_login(self, request: web.Request) -> web.Response: ...
         async def api_auth_status(self, request: web.Request) -> web.Response: ...
+        async def api_monitoring_overview(self, request: web.Request) -> web.Response: ...
+        async def api_monitoring_persona_metrics(self, request: web.Request) -> web.Response: ...
+        async def api_monitoring_health(self, request: web.Request) -> web.Response: ...
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
@@ -137,6 +145,8 @@ class WebUIServer:
         self.app.router.add_get("/api/providers", self.api_providers_get)
         self.app.router.add_post("/api/providers", self.api_providers_post)
         self.app.router.add_post("/api/providers/probe", self.api_providers_probe)
+        self.app.router.add_post("/api/providers/refresh-models", self.api_providers_refresh_models)
+        self.app.router.add_get("/api/providers/models-dev/{provider_type}", self.api_providers_models_dev_get)
         self.app.router.add_get("/api/models", self.api_available_models_get)
         self.app.router.add_get("/api/tokens", self.api_tokens_get)
         self.app.router.add_get("/api/telemetry", self.api_telemetry_get)
@@ -427,26 +437,7 @@ class WebUIServer:
         return Path(self.persona_manager.data_path) / "providers" / "provider_keys.json"
 
     async def api_providers_get(self, request: web.Request) -> web.Response:
-        path = self._provider_keys_path()
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                providers: list[dict[str, Any]] = []
-                raw_providers = data.get("providers", {}) if isinstance(data, dict) else {}
-                for k, v in raw_providers.items():
-                    if isinstance(v, dict):
-                        key = str(v.get("api_key", "")).strip()
-                        masked = key[:4] + "****" if len(key) > 4 else ("****" if key else "")
-                        providers.append({
-                            **v,
-                            "name": k,
-                            "api_key": masked,
-                        })
-                return _json_response({"providers": providers})
-            except Exception:
-                LOG.warning("读取 provider_keys 失败", exc_info=True)
-                pass
-        return _json_response({"providers": []})
+        return _json_response({"providers": self._load_providers_raw()})
 
     async def api_providers_post(self, request: web.Request) -> web.Response:
         try:
@@ -552,7 +543,7 @@ class WebUIServer:
         )
 
         try:
-            provider = _create_provider_instance(config)
+            provider = cast(AsyncLLMProvider, _create_provider_instance(config))
         except Exception as exc:
             return _json_response({"error": f"创建 Provider 实例失败: {exc}"}, 500)
 
@@ -564,6 +555,66 @@ class WebUIServer:
         except Exception as exc:
             latency = round((time.monotonic() - t0) * 1000)
             return _json_response({"success": False, "error": str(exc), "latency_ms": latency})
+
+    async def api_providers_refresh_models(self, request: web.Request) -> web.Response:
+        """从 models.dev 刷新所有 provider 的模型列表。"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        force = bool(body.get("force", False))
+
+        try:
+            provider_mgr = WorkspaceProviderManager(self.persona_manager.data_path)
+            changed = provider_mgr.refresh_models_from_dev(force=force)
+            # 重新加载并返回更新后的 provider 列表
+            providers_data = self._load_providers_raw()
+            return _json_response({
+                "success": True,
+                "changed": changed,
+                "providers": providers_data,
+            })
+        except Exception as exc:
+            LOG.warning("刷新模型列表失败", exc_info=True)
+            return _json_response({"success": False, "error": str(exc)})
+
+    async def api_providers_models_dev_get(self, request: web.Request) -> web.Response:
+        """返回指定 provider 类型在 models.dev 上的可用模型列表（含能力属性）。"""
+        provider_type = request.match_info.get("provider_type", "").strip()
+        if not provider_type:
+            return _json_response({"error": "缺少 provider_type"}, 400)
+
+        from sirius_pulse.providers.models_dev import (
+            ModelsDevCache,
+            list_provider_model_details,
+        )
+
+        cache = ModelsDevCache(Path(self.persona_manager.data_path))
+        data = cache.get()
+        if not data:
+            return _json_response({"error": "无法获取 models.dev 数据"}, 502)
+
+        models = list_provider_model_details(data, provider_type)
+        return _json_response({"provider_type": provider_type, "models": models})
+
+    def _load_providers_raw(self) -> list[dict[str, Any]]:
+        """读取 provider 列表（API Key 脱敏），供多个端点复用。"""
+        path = self._provider_keys_path()
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            providers: list[dict[str, Any]] = []
+            raw_providers = data.get("providers", {}) if isinstance(data, dict) else {}
+            for k, v in raw_providers.items():
+                if isinstance(v, dict):
+                    key = str(v.get("api_key", "")).strip()
+                    masked = key[:4] + "****" if len(key) > 4 else ("****" if key else "")
+                    providers.append({**v, "name": k, "api_key": masked})
+            return providers
+        except Exception:
+            LOG.warning("读取 provider_keys 失败", exc_info=True)
+            return []
 
     # ─── 全局 API: 可用模型列表 ───────────────────────────
 
@@ -594,7 +645,43 @@ class WebUIServer:
         except Exception:
             LOG.warning("获取模型列表失败", exc_info=True)
             pass
+        # 从 models.dev 注入能力标签
+        self._enrich_model_choices(model_choices)
         return available_models, model_choices
+
+    def _enrich_model_choices(self, model_choices: list[dict[str, Any]]) -> None:
+        """为 model_choices 中的每一项注入 models.dev 能力标签。"""
+        from sirius_pulse.providers.models_dev import ModelsDevCache, get_provider_models
+        try:
+            cache = ModelsDevCache(Path(self.persona_manager.data_path))
+            data = cache.get()
+            if not data:
+                return
+            all_models: dict[str, dict[str, object]] = {}
+            for prov in data.values():
+                if isinstance(prov, dict):
+                    for mid, mobj in prov.get("models", {}).items():
+                        if isinstance(mobj, dict) and mid not in all_models:
+                            all_models[mid] = mobj
+            for choice in model_choices:
+                m = all_models.get(choice["value"])
+                if not m:
+                    continue
+                tags: list[str] = []
+                if m.get("tool_call"):
+                    tags.append("函数调用")
+                if m.get("reasoning"):
+                    tags.append("推理")
+                modalities = m.get("modalities", {})
+                input_mods = modalities.get("input", []) if isinstance(modalities, dict) else []
+                if "image" in input_mods:
+                    tags.append("视觉")
+                if "audio" in input_mods:
+                    tags.append("音频")
+                if tags:
+                    choice["tags"] = tags
+        except Exception:
+            LOG.debug("注入模型能力标签失败", exc_info=True)
 
     async def api_available_models_get(self, request: web.Request) -> web.Response:
         """返回全局可用模型列表（含 provider 前缀显示名）。"""

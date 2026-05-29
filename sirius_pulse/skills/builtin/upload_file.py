@@ -5,6 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
+_config = ConfigBuilder()
+_config.group("文件上传").add(
+    "file_path",
+    type="str",
+    description="本地文件绝对路径",
+    required=True,
+)
+_config.group("文件上传").add(
+    "file_name",
+    type="str",
+    description="在聊天中显示的文件名（不传则使用原文件名）",
+)
+
 SKILL_META = {
     "name": "upload_file",
     "description": (
@@ -14,18 +29,7 @@ SKILL_META = {
     "tags": ["napcat", "file", "messaging"],
     "adapter_types": ["napcat"],
     "dependencies": [],
-    "parameters": {
-        "file_path": {
-            "type": "str",
-            "description": "本地文件绝对路径",
-            "required": True,
-        },
-        "file_name": {
-            "type": "str",
-            "description": "在聊天中显示的文件名（不传则使用原文件名）",
-            "required": False,
-        },
-    },
+    "parameters": _config.build(),
 }
 
 

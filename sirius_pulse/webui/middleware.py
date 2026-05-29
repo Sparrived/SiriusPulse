@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Coroutine
+from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
@@ -59,7 +59,7 @@ def _extract_token(request: web.Request) -> str | None:
 @web.middleware
 async def auth_middleware(
     request: web.Request,
-    handler: Callable[[web.Request], Coroutine[Any, Any, web.StreamResponse]],
+    handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
 ) -> web.StreamResponse:
     """认证中间件。
 

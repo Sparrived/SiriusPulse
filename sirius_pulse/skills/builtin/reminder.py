@@ -15,7 +15,73 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
 logger = logging.getLogger(__name__)
+
+_config = ConfigBuilder()
+_config.group("基础操作").add(
+    "action",
+    type="str",
+    description="操作类型: create(创建) / list(查看所有提醒) / cancel(取消指定提醒)",
+    required=True,
+)
+_config.group("基础操作").add(
+    "content",
+    type="str",
+    description="提醒内容，格式为'我要提醒 <提醒人>（自己或用户名） <提醒内容>'",
+)
+_config.group("触发模式").add(
+    "mode",
+    type="str",
+    description="触发模式: once(一次性) / interval(每隔N分钟重复) / daily(每日重复) / weekly(每周重复)",
+    default="once",
+)
+_config.group("触发模式").add(
+    "minutes_after",
+    type="int",
+    description="几分钟后触发（once/interval 模式必填；once 为一次性，interval 为重复间隔）",
+)
+_config.group("触发模式").add(
+    "trigger_at",
+    type="str",
+    description="绝对触发时间 ISO 格式（仅 once 模式，与 minutes_after 二选一）",
+)
+_config.group("触发模式").add(
+    "time",
+    type="str",
+    description="触发时间 HH:MM，例如 08:00、21:30（daily/weekly 模式必填）",
+)
+_config.group("触发模式").add(
+    "weekdays",
+    type="list[int]",
+    description="星期列表 [0,1,2,3,4,5,6]，0=周一, 6=周日（仅 weekly 模式必填，支持多选如 [0,2,4] 表示周一三五）",
+)
+_config.group("管理").add(
+    "reminder_id",
+    type="str",
+    description="提醒任务ID（cancel 时使用，可通过 list 查看）",
+)
+_config.group("高级设置").add(
+    "target",
+    type="str",
+    description="提醒对象: user(提醒用户去做，默认) / self(提醒你自己去做这件事并告知用户)",
+    default="user",
+)
+_config.group("高级设置").add(
+    "skill_chain",
+    type="list",
+    description=(
+        "触发提醒时预先执行的 SKILL 调用链，每项为 {\"skill\":\"name\",\"params\":{...}}。"
+        "执行结果会作为上下文输入给模型，供生成提醒消息时参考。"
+    ),
+)
+_config.group("高级设置").add(
+    "adapter_type",
+    type="str",
+    description="指定提醒消息通过哪个 adapter 发送，例如 'napcat'。留空则自动使用创建时的 adapter。",
+    default="",
+)
 
 SKILL_META = {
     "name": "reminder",
@@ -28,69 +94,7 @@ SKILL_META = {
     "tags": ["utility", "time"],
     "developer_only": False,
     "dependencies": [],
-    "parameters": {
-        "action": {
-            "type": "str",
-            "description": "操作类型: create(创建) / list(查看所有提醒) / cancel(取消指定提醒)",
-            "required": True,
-        },
-        "content": {
-            "type": "str",
-            "description": "提醒内容，格式为'我要提醒 <提醒人>（自己或用户名） <提醒内容>'",
-            "required": False,
-        },
-        "mode": {
-            "type": "str",
-            "description": "触发模式: once(一次性) / interval(每隔N分钟重复) / daily(每日重复) / weekly(每周重复)",
-            "required": False,
-            "default": "once",
-        },
-        "minutes_after": {
-            "type": "int",
-            "description": "几分钟后触发（once/interval 模式必填；once 为一次性，interval 为重复间隔）",
-            "required": False,
-        },
-        "trigger_at": {
-            "type": "str",
-            "description": "绝对触发时间 ISO 格式（仅 once 模式，与 minutes_after 二选一）",
-            "required": False,
-        },
-        "time": {
-            "type": "str",
-            "description": "触发时间 HH:MM，例如 08:00、21:30（daily/weekly 模式必填）",
-            "required": False,
-        },
-        "weekdays": {
-            "type": "list[int]",
-            "description": "星期列表 [0,1,2,3,4,5,6]，0=周一, 6=周日（仅 weekly 模式必填，支持多选如 [0,2,4] 表示周一三五）",
-            "required": False,
-        },
-        "reminder_id": {
-            "type": "str",
-            "description": "提醒任务ID（cancel 时使用，可通过 list 查看）",
-            "required": False,
-        },
-        "target": {
-            "type": "str",
-            "description": "提醒对象: user(提醒用户去做，默认) / self(提醒你自己去做这件事并告知用户)",
-            "required": False,
-            "default": "user",
-        },
-        "skill_chain": {
-            "type": "list",
-            "description": (
-                "触发提醒时预先执行的 SKILL 调用链，每项为 {\"skill\":\"name\",\"params\":{...}}。"
-                "执行结果会作为上下文输入给模型，供生成提醒消息时参考。"
-            ),
-            "required": False,
-        },
-        "adapter_type": {
-            "type": "str",
-            "description": "指定提醒消息通过哪个 adapter 发送，例如 'napcat'。留空则自动使用创建时的 adapter。",
-            "required": False,
-            "default": "",
-        },
-    },
+    "parameters": _config.build(),
 }
 
 

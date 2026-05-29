@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, $ } from '../components.js';
+import { toast, flashSuccess, $, ModelSelect } from '../components.js';
 
 const CACHE_KEY = 'sirius-create-persona-draft';
 
@@ -16,6 +16,7 @@ const QUESTIONS = [
 ];
 
 let models = [];
+let modelSelect = null;
 let currentTab = 'interview'; // 'interview' | 'direct'
 
 export async function init(container) {
@@ -36,9 +37,6 @@ function buildFormHTML() {
           <div class="card-title">新建人格</div>
           <div class="card-subtitle">选择模式创建新人格</div>
         </div>
-        <select id="modelSelect" class="btn btn-sm">
-          <option value="">加载模型中...</option>
-        </select>
       </div>
       <div style="padding:16px">
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px">
@@ -156,6 +154,11 @@ function buildFormHTML() {
           </div>
         </div>
 
+        <div class="form-group" style="margin-bottom:16px">
+          <label>选择模型</label>
+          <div id="modelSelectWrap"></div>
+        </div>
+
         <div style="display:flex;gap:12px;align-items:center">
           <button class="btn btn-primary" id="createBtn">创建人格</button>
           <span id="createHint" style="font-size:12px;color:var(--text-3)"></span>
@@ -206,15 +209,32 @@ function renderQuestions() {
 }
 
 async function loadModels() {
+  const btn = $('createBtn');
+  const wrap = $('modelSelectWrap');
   try {
+    btn.disabled = true;
     const data = await get('/models');
     models = data.model_choices || [];
-    const sel = $('modelSelect');
-    sel.innerHTML = models.length
-      ? models.map(m => `<option value="${m}">${m}</option>`).join('')
-      : '<option value="">无可用模型</option>';
+    const opts = models.map(m => ({
+      value: typeof m === 'object' ? m.value : m,
+      label: typeof m === 'object' ? m.label : m,
+      tags: (typeof m === 'object' && Array.isArray(m.tags)) ? m.tags : [],
+    }));
+    if (modelSelect) modelSelect.destroy();
+    modelSelect = new ModelSelect({
+      options: opts,
+      value: '',
+      placeholder: '请选择模型…',
+      onChange: () => {
+        saveDraft();
+        $('createBtn').disabled = !modelSelect.value;
+      },
+    });
+    modelSelect.mount(wrap);
+    btn.disabled = !opts.length;
   } catch {
-    $('modelSelect').innerHTML = '<option value="">加载失败</option>';
+    wrap.innerHTML = '<span style="color:var(--danger);font-size:12px">加载失败</span>';
+    btn.disabled = true;
   }
 }
 
@@ -223,7 +243,7 @@ function saveDraft() {
     personaId: $('personaId').value,
     personaName: $('personaName').value,
     personaAliases: $('personaAliases').value,
-    model: $('modelSelect').value,
+    model: modelSelect?.value || '',
     tab: currentTab,
     answers: {},
     direct: {
@@ -255,8 +275,8 @@ function restoreDraft() {
     if (draft.personaId) $('personaId').value = draft.personaId;
     if (draft.personaName) $('personaName').value = draft.personaName;
     if (draft.personaAliases) $('personaAliases').value = draft.personaAliases;
-    if (draft.model && $('modelSelect').querySelector(`option[value="${draft.model}"]`)) {
-      $('modelSelect').value = draft.model;
+    if (draft.model && modelSelect) {
+      modelSelect.setValue(draft.model);
     }
     if (draft.tab) {
       switchTab(draft.tab);
@@ -316,7 +336,7 @@ function bindEvents() {
   inputs.forEach(id => {
     $(id).addEventListener('input', saveDraft);
   });
-  $('modelSelect').addEventListener('change', saveDraft);
+  // 模型选择的 change 回调已在 ModelSelect.onChange 中处理
   for (let i = 0; i < QUESTIONS.length; i++) {
     $(`answer${i}`).addEventListener('input', saveDraft);
   }
@@ -370,7 +390,7 @@ async function createPersona() {
   const personaId = $('personaId').value.trim();
   const personaName = $('personaName').value.trim();
   const personaAliases = $('personaAliases').value.trim();
-  const model = $('modelSelect').value;
+  const model = modelSelect?.value || '';
 
   if (!personaId) {
     toast('请填写标识名称', 'error');

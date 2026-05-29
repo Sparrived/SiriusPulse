@@ -8,31 +8,35 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
+_config = ConfigBuilder()
+_config.group("网页读取").add(
+    "url",
+    type="str",
+    description="要读取的网页链接，例如 https://example.com/article",
+    required=True,
+)
+_config.group("网页读取").add(
+    "max_chars",
+    type="int",
+    description="正文最多返回字符数，默认3000，范围300-12000",
+    default=3000,
+)
+_config.group("网页读取").add(
+    "timeout",
+    type="int",
+    description="HTTP请求超时秒数，默认12，范围3-60",
+    default=12,
+)
+
 SKILL_META = {
     "name": "url_content_reader",
     "description": "读取网页链接并提取标题、描述、正文摘要，帮助AI理解链接内容。",
     "version": "1.0.0",
     "tags": ["web", "content"],
     "dependencies": ["requests", "beautifulsoup4"],
-    "parameters": {
-        "url": {
-            "type": "str",
-            "description": "要读取的网页链接，例如 https://example.com/article",
-            "required": True,
-        },
-        "max_chars": {
-            "type": "int",
-            "description": "正文最多返回字符数，默认3000，范围300-12000",
-            "required": False,
-            "default": 3000,
-        },
-        "timeout": {
-            "type": "int",
-            "description": "HTTP请求超时秒数，默认12，范围3-60",
-            "required": False,
-            "default": 12,
-        },
-    },
+    "parameters": _config.build(),
 }
 
 

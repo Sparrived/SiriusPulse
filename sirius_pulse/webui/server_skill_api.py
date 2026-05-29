@@ -175,16 +175,7 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
             meta = {
                 "name": skill.name,
                 "description": skill.description,
-                "parameters": [
-                    {
-                        "name": p.name,
-                        "type": p.type,
-                        "description": p.description,
-                        "required": p.required,
-                        "default": p.default,
-                    }
-                    for p in skill.parameters
-                ],
+                "parameters": skill.get_parameter_schema(),
             }
 
     return _json_response({

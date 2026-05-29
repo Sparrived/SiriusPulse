@@ -286,6 +286,9 @@ class SkillRegistry:
                             description=str(param_def.get("description", "")),
                             required=bool(param_def.get("required", False)),
                             default=param_def.get("default"),
+                            choices=param_def.get("choices"),
+                            fields=param_def.get("fields"),
+                            group=str(param_def.get("group", "")),
                         )
                     )
         elif isinstance(raw_params, list):
@@ -298,6 +301,9 @@ class SkillRegistry:
                             description=str(item.get("description", "")),
                             required=bool(item.get("required", False)),
                             default=item.get("default"),
+                            choices=item.get("choices"),
+                            fields=item.get("fields"),
+                            group=str(item.get("group", "")),
                         )
                     )
 

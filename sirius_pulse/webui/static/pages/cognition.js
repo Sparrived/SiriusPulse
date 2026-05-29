@@ -48,6 +48,23 @@ const STRATEGY_COLORS = ['#52c41a','#faad14','#8c8c8c','#1890ff','#722ed1'];
 const HEAT_COLORS = ['#d9d9d9','#95de64','#ffc53d','#ff4d4f'];
 
 export async function init(container) {
+  const name = store.currentPersona;
+  if (!name) {
+    container.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">认知分析</div>
+        </div>
+        <div style="padding:40px;text-align:center;color:var(--text-3)">
+          <div style="font-size:48px;margin-bottom:16px">✦</div>
+          <div style="font-size:16px;margin-bottom:8px">请先选择人格</div>
+          <div style="font-size:13px">在顶部导航栏中选择要查看的人格</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
   container.innerHTML = `
     <div class="card">
       <div class="card-header"><div class="card-title">认知分析</div></div>
@@ -182,7 +199,9 @@ async function loadAnalysis() {
 }
 
 function renderStats(events, dist) {
-  $('cogStats').innerHTML = `
+  const el = $('cogStats');
+  if (!el) return;
+  el.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">事件总数</div>
       <div class="stat-value">${events.length}</div>
@@ -199,12 +218,14 @@ function renderStats(events, dist) {
 }
 
 function renderAnalysisStats(res) {
+  const el = $('analysisStats');
+  if (!el) return;
   const ds = res.decision_summary || {};
   const strategyDist = res.strategy_distribution || {};
   const totalDecisions = Object.values(strategyDist).reduce((a, b) => a + b, 0);
   const silentCount = strategyDist.silent || 0;
   const silentRate = totalDecisions > 0 ? ((silentCount / totalDecisions) * 100).toFixed(1) : '0.0';
-  $('analysisStats').innerHTML = `
+  el.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">决策事件总数</div>
       <div class="stat-value">${ds.total || 0}</div>
@@ -299,6 +320,7 @@ function renderRadarChart_(events) {
 
 function renderEventsTable(events) {
   const el = $('cogTable');
+  if (!el) return;
   if (!events.length) {
     el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无认知事件</div>';
     return;
@@ -354,6 +376,7 @@ function renderIntentDistribution(dist) {
 
 function renderStrategyDistribution(dist) {
   const el = document.querySelector('[data-chart="strategy-dist"]');
+  if (!el) return;
   const entries = Object.entries(dist);
   if (!entries.length) {
     el.innerHTML = '<div style="color:var(--text-3);padding:48px;text-align:center">暂无决策数据</div>';
@@ -386,6 +409,7 @@ function renderHourlyDistribution(dist) {
 
 function renderHeatDistribution(dist) {
   const el = document.querySelector('[data-chart="heat-dist"]');
+  if (!el) return;
   const entries = Object.entries(dist);
   if (!entries.length) {
     el.innerHTML = '<div style="color:var(--text-3);padding:48px;text-align:center">暂无决策数据</div>';
@@ -437,6 +461,7 @@ function renderDecisionTimeline(timeline) {
 
 function renderUserStatsTable(stats) {
   const el = $('userStatsTable');
+  if (!el) return;
   if (!stats.length) {
     el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无用户数据</div>';
     return;
@@ -477,6 +502,7 @@ function renderUserStatsTable(stats) {
 
 function renderReasonTable(dist) {
   const el = $('reasonTable');
+  if (!el) return;
   const entries = Object.entries(dist);
   if (!entries.length) {
     el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无决策数据</div>';
@@ -500,6 +526,7 @@ function renderReasonTable(dist) {
 
 function renderGroupSummaryTable(groups) {
   const el = $('groupSummaryTable');
+  if (!el) return;
   if (!groups.length) {
     el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无群组数据</div>';
     return;
@@ -534,6 +561,7 @@ function renderGroupSummaryTable(groups) {
 
 function renderDecisionTable(timeline) {
   const el = $('decisionTable');
+  if (!el) return;
   if (!timeline.length) {
     el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无决策事件</div>';
     return;

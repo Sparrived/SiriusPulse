@@ -10,14 +10,14 @@
         <div class="arc-panel-line"></div>
       </div>
       <div class="arc-panel-content">
-        <div class="stat-item">
+        <div class="stat-item stat-item-clickable" data-nav-page="persona">
           <div class="stat-icon">◎</div>
           <div class="stat-info">
             <div class="stat-value" id="dsPersonas">0</div>
             <div class="stat-label">人格总数</div>
           </div>
         </div>
-        <div class="stat-item">
+        <div class="stat-item stat-item-clickable" data-nav-page="persona">
           <div class="stat-icon" style="color:var(--success)">◉</div>
           <div class="stat-info">
             <div class="stat-value" id="dsRunning" style="color:var(--success)">0</div>
@@ -31,14 +31,14 @@
             <div class="stat-label">Embedding</div>
           </div>
         </div>
-        <div class="stat-item">
+        <div class="stat-item stat-item-clickable" data-nav-page="token-tracker">
           <div class="stat-icon" style="color:var(--accent)">△</div>
           <div class="stat-info">
             <div class="stat-value text-mono" id="dsCalls">0</div>
             <div class="stat-label">总调用</div>
           </div>
         </div>
-        <div class="stat-item">
+        <div class="stat-item stat-item-clickable" data-nav-page="token-tracker">
           <div class="stat-icon" style="color:var(--info)">◈</div>
           <div class="stat-info">
             <div class="stat-value text-mono" id="dsTokens">0</div>
@@ -135,7 +135,7 @@
           <div class="persona-actions">
             <button class="btn btn-sm btn-primary" id="panelStartBtn" style="display:none">▶ 启动</button>
             <button class="btn btn-sm btn-danger" id="panelStopBtn" style="display:none">⏹ 停止</button>
-            <button class="btn btn-sm" id="panelConfigBtn">⚙ 配置</button>
+            <button class="btn btn-sm" id="panelConfigBtn" style="display:none">⚙ 配置</button>
           </div>
         </div>
       </div>

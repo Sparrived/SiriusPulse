@@ -5,25 +5,19 @@ from __future__ import annotations
 from typing import Any
 import requests
 
+from sirius_pulse.config.config_builder import ConfigBuilder
+
+_config = ConfigBuilder()
+_config.add("query", type="str", description="搜索关键词", required=True, group="搜索设置")
+_config.add("count", type="int", description="返回结果条数（1-5）", default=3, group="搜索设置")
+
 SKILL_META = {
     "name": "bing_search",
     "description": "使用必应搜索引擎检索指定关键词的网页摘要，返回前3条结果。",
     "version": "1.0.0",
     "tags": ["web", "search"],
     "dependencies": ["requests", "beautifulsoup4"],
-    "parameters": {
-        "query": {
-            "type": "str",
-            "description": "搜索关键词",
-            "required": True,
-        },
-        "count": {
-            "type": "int",
-            "description": "返回结果条数（1-5）",
-            "required": False,
-            "default": 3,
-        },
-    },
+    "parameters": _config.build(),
 }
 
 SEARCH_URL = "https://www.bing.com/search"

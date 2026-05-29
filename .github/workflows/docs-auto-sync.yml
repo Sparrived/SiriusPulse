@@ -42,6 +42,23 @@ jobs:
           # 需要完整 git 历史用于计算 diff
           fetch-depth: 0
 
+      # 自动生成 docs 目录树索引
+      - name: 生成 docs 目录索引
+        id: docs-index
+        shell: bash
+        run: |
+          if [ -d "docs" ]; then
+            # 生成树状结构，只包含 .md 文件，排除 node_modules 等
+            TREE=$(find docs -name "*.md" -type f | sort | sed 's|^|  |')
+            echo "docs_tree<<EOF" >> $GITHUB_OUTPUT
+            echo "$TREE" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "✅ docs 目录索引已生成"
+          else
+            echo "⚠️ docs 目录不存在"
+            echo "docs_tree=" >> $GITHUB_OUTPUT
+          fi
+
       # 恢复上次同步的状态（跨运行持久化）
       - name: 恢复同步状态缓存
         uses: actions/cache@v4
@@ -63,5 +80,7 @@ jobs:
           DOCS_FORK: ${{ secrets.DOCS_FORK }}
           # Push Event 提供的准确 commit 范围（首次运行/cache 丢失时兜底）
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          # 自动生成的 docs 目录树（用于 LLM 上下文）
+          DOCS_TREE: ${{ steps.docs-index.outputs.docs_tree }}
         run: |
           python scripts/docs_sync_agent.py

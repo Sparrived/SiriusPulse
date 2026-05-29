@@ -29,7 +29,7 @@ export async function init(container, params) {
           <div class="card-title">适配器配置</div>
           <div class="card-subtitle">配置 ${name} 的平台适配器</div>
         </div>
-        <button class="btn btn-primary" id="adapterSave">保存</button>
+        <button class="btn btn-primary" id="adapterSave" disabled>保存</button>
       </div>
       <div id="adapterContent">
         <div style="padding:20px;color:var(--text-3)">加载中...</div>
@@ -47,8 +47,12 @@ async function loadAdapters(name) {
     const data = await get(`/personas/${name}/adapters`);
     adapterData = data;
     renderAdapter(data.adapters?.[0] || {});
+    // 加载成功后启用保存按钮
+    $('adapterSave').disabled = false;
   } catch (e) {
     $('adapterContent').innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
+    // 加载失败时保持保存按钮禁用
+    $('adapterSave').disabled = true;
   }
 }
 

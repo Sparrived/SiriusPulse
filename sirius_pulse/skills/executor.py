@@ -410,11 +410,7 @@ class SkillExecutor:
 
             # Resolve chain-context template placeholders before validation
             if chain_context is not None:
-                for key, value in list(params.items()):
-                    if isinstance(value, str):
-                        resolved = chain_context.resolve(value)
-                        if resolved != value:
-                            params[key] = resolved
+                params = chain_context.resolve_templates(params)
 
             call_params = dict(params)
             data_store = self._get_data_store(skill.name)

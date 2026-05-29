@@ -620,6 +620,8 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
     diary_dir = paths.dir / "diary"
     diary_entries: list[dict[str, Any]] = []
     keyword_freq: dict[str, int] = {}
+    # 群组 → 日记关键词集合（用于后续构建用户-话题二部图）
+    group_keyword_map: dict[str, set[str]] = {}
     if diary_dir.exists():
         for path in diary_dir.glob("*.json"):
             try:
@@ -642,6 +644,8 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
                     })
                     for kw in item.get("keywords", []):
                         keyword_freq[kw] = keyword_freq.get(kw, 0) + 1
+                        if kw not in group_keyword_map.setdefault(g_id, set()):
+                            group_keyword_map[g_id].add(kw)
             except (OSError, json.JSONDecodeError):
                 continue
     diary_entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
@@ -649,20 +653,24 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
     top_keywords = sorted(keyword_freq.items(), key=lambda x: x[1], reverse=True)[:20]
 
     # ── 3. 用户-话题二部图 ──
+    # 数据来源：用户语义画像 → 群组归属；日记 keywords → 话题节点
     semantic_base = paths.dir / "memory" / "semantic"
     user_nodes: list[dict[str, Any]] = []
-    topic_nodes: list[dict[str, str]] = []  # {id, name}
+    topic_nodes: list[dict[str, str]] = []
     user_topic_links: list[dict[str, Any]] = []
+    # 群组 → 用户 ID 集合（用于后续将用户关联到群组话题）
+    group_users: dict[str, set[str]] = {}
     if semantic_base.exists():
         users_dir = semantic_base / "users"
         if users_dir.exists():
             seen: set[str] = set()
-            topic_set: set[str] = set()
             for g_dir in users_dir.iterdir():
                 if not g_dir.is_dir():
                     continue
                 if group_filter and g_dir.name != group_filter:
                     continue
+                gid = g_dir.name
+                group_users[gid] = set()
                 for u_file in g_dir.glob("*.json"):
                     try:
                         u_data = json.loads(u_file.read_text(encoding="utf-8"))
@@ -670,6 +678,7 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
                         if not uid or uid in seen:
                             continue
                         seen.add(uid)
+                        group_users[gid].add(uid)
                         engagement = u_data.get("engagement_rate", 0)
                         count = u_data.get("interaction_count", 0)
                         user_nodes.append({
@@ -680,8 +689,32 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
                         })
                     except (OSError, json.JSONDecodeError, TypeError):
                         continue
-            for t in sorted(topic_set):
-                topic_nodes.append({"id": t, "name": t})
+
+    # 话题节点：取出现在 ≥2 个群组或频率 ≥3 的日记关键词
+    topic_freq: dict[str, int] = {}
+    topic_group_count: dict[str, int] = {}
+    for g_id, kws in group_keyword_map.items():
+        for kw in kws:
+            topic_freq[kw] = topic_freq.get(kw, 0) + 1
+            topic_group_count[kw] = topic_group_count.get(kw, 0) + 1
+    # 过滤低价值关键词，保留跨群出现或高频的话题
+    valid_topics = {
+        kw for kw in topic_group_count
+        if topic_group_count[kw] >= 2 or keyword_freq.get(kw, 0) >= 3
+    }
+    for t in sorted(valid_topics):
+        topic_nodes.append({"id": t, "name": t})
+
+    # 构建用户-话题边：用户 ∈ 群组 → 群组日记含关键词 → (user, topic) 边
+    link_set: set[tuple[str, str]] = set()
+    for gid, keywords in group_keyword_map.items():
+        users = group_users.get(gid, set())
+        for uid in users:
+            for kw in keywords:
+                if kw in valid_topics:
+                    link_set.add((uid, kw))
+    for uid, kw in sorted(link_set):
+        user_topic_links.append({"source": f"u_{uid}", "target": f"t_{kw}"})
 
     return _json_response({
         "groups": sorted(all_groups),

@@ -70,14 +70,10 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     persona_manager = PersonaManager(DATA_DIR, global_config=config)
 
     # ── 先启动 WebUI（含 Embedding 服务），确保子进程能连上 ──
-    napcat_dir = config.get("napcat_install_dir")
-    from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
-    napcat_mgr = NapCatManager(napcat_dir) if napcat_dir else None
     webui = WebUIServer(
         persona_manager=persona_manager,
         host=str(config.get("webui_host", "0.0.0.0")),
         port=int(config.get("webui_port", 8080)),
-        napcat_manager=napcat_mgr,
     )
     await webui.start()
     LOG.info("WebUI: http://localhost:%s", webui.port)
