@@ -17,13 +17,12 @@ const PAGE_META = {
   'skills': { title: 'Skills', breadcrumb: 'Extensions / Skills', icon: '⏣' },
   'token-tracker': { title: 'Token 追踪', breadcrumb: 'Analytics / Tokens', icon: '△' },
   'cognition': { title: '认知分析', breadcrumb: 'Analytics / Cognition', icon: '◎' },
-  'diary': { title: '日记', breadcrumb: 'Analytics / Diary', icon: '◫' },
-  'users': { title: '用户画像', breadcrumb: 'Analytics / Users', icon: '◐' },
-  'biography': { title: '人物传记', breadcrumb: 'Analytics / Biography', icon: '◰' },
-  'glossary': { title: '名词解释', breadcrumb: 'Analytics / Glossary', icon: '◱' },
-  'memory-viz': { title: '记忆可视化', breadcrumb: 'Analytics / Memory', icon: '◲' },
-  'monitoring': { title: '系统监控', breadcrumb: 'Monitoring / Overview', icon: '◉' },
-  'monitoring-detail': { title: '人格详情', breadcrumb: 'Monitoring / Detail', icon: '◉' },
+  'skills-tracker': { title: 'Skill 追踪', breadcrumb: 'Analytics / Skills', icon: '⟠' },
+  'conversation-history': { title: '对话分析', breadcrumb: 'Analytics / Conversations', icon: '◧' },
+  'diary': { title: '日记', breadcrumb: 'Memory / Diary', icon: '◫' },
+  'users': { title: '用户档案', breadcrumb: 'Memory / Users', icon: '◐' },
+  'glossary': { title: '名词解释', breadcrumb: 'Memory / Glossary', icon: '◱' },
+  'memory-viz': { title: '记忆可视化', breadcrumb: 'Memory / Visualization', icon: '◲' },
   'plugins': { title: '插件', breadcrumb: 'Extensions / Plugins', icon: '⬡' },
 };
 
@@ -43,13 +42,15 @@ const NAV_GROUPS = [
   { label: '分析', items: [
     { page: 'token-tracker', icon: '△', label: 'Token 追踪' },
     { page: 'cognition', icon: '◎', label: '认知分析' },
+    { page: 'skills-tracker', icon: '⟠', label: 'Skill 追踪' },
+    { page: 'conversation-history', icon: '◧', label: '对话分析' },
+  ]},
+  { label: '记忆', items: [
     { page: 'diary', icon: '◫', label: '日记' },
-    { page: 'users', icon: '◐', label: '用户画像' },
-    { page: 'biography', icon: '◰', label: '人物传记' },
+    { page: 'users', icon: '◐', label: '用户档案' },
     { page: 'glossary', icon: '◱', label: '名词解释' },
     { page: 'memory-viz', icon: '◲', label: '记忆可视化' },
   ]},
-  { label: '监控', items: [{ page: 'monitoring', icon: '◉', label: '系统监控' }] },
   { label: '扩展', items: [
     { page: 'skills', icon: '⏣', label: 'Skills' },
     { page: 'plugins', icon: '⬡', label: '插件' },
@@ -58,8 +59,8 @@ const NAV_GROUPS = [
 
 const PERSONA_PAGES = new Set([
   'persona', 'orchestration', 'experience', 'adapters', 'skills',
-  'token-tracker', 'cognition', 'diary', 'users', 'biography',
-  'glossary', 'memory-viz', 'monitoring-detail', 'create-persona',
+  'token-tracker', 'cognition', 'skills-tracker', 'conversation-history',
+  'diary', 'users', 'glossary', 'memory-viz', 'create-persona',
 ]);
 
 let currentPage = '';

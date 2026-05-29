@@ -60,7 +60,7 @@ function renderAdapter(adapter) {
   el.innerHTML = `
     <form id="adapterForm" style="display:grid;gap:16px">
       <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:4px">NapCat 适配器</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
         <div class="form-group">
           <label>启用</label>
           <div class="select-wrap">
@@ -87,7 +87,7 @@ function renderAdapter(adapter) {
           <input type="text" name="root" placeholder="留空使用默认">
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
         <div class="form-group">
           <label>启用群聊</label>
           <div class="select-wrap">

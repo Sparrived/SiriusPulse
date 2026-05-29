@@ -11,7 +11,8 @@ export class GlobeRenderer {
     this.height = canvas.height;
     this.centerX = this.width / 2;
     this.centerY = this.height / 2;
-    this.radius = 200;
+    // 球体半径为 canvas 尺寸的 42%，为大气层效果留出空间
+    this.radius = Math.min(this.width, this.height) * 0.42;
 
     // 旋转角度
     this.beta = 0;
@@ -38,6 +39,11 @@ export class GlobeRenderer {
 
     // 动画时间计数器（用于脉冲效果）
     this.tick = 0;
+
+    // 流动粒子系统
+    this.particles = [];
+    this.maxParticles = 80;
+    this.initParticles();
 
     // 图斑数据
     this.spots = [];
@@ -87,6 +93,36 @@ export class GlobeRenderer {
   // 基于主题 accent 色生成 hex 字符串
   themeHex() {
     return this.getThemeColors().accent;
+  }
+
+  // 初始化流动粒子
+  initParticles() {
+    this.particles = [];
+    for (let i = 0; i < this.maxParticles; i++) {
+      this.particles.push(this.createParticle());
+    }
+  }
+
+  // 创建单个粒子
+  createParticle() {
+    const lng = Math.random() * 360;
+    const lat = (Math.random() - 0.5) * 140;
+    const speed = 0.3 + Math.random() * 0.8;
+    const size = 0.5 + Math.random() * 1.5;
+    const life = Math.random();
+    const maxLife = 200 + Math.random() * 300;
+
+    return {
+      lng,
+      lat,
+      speed,
+      size,
+      life,
+      maxLife,
+      age: Math.random() * maxLife,
+      trail: [],
+      trailLength: 3 + Math.floor(Math.random() * 5),
+    };
   }
 
   // 初始化图斑，生成不规则多边形顶点
@@ -158,9 +194,12 @@ export class GlobeRenderer {
     const z = Math.cos(latRad) * Math.cos(lngRad - betaRad) * Math.cos(alphaRad) +
               Math.sin(latRad) * Math.sin(alphaRad);
 
+    // 使用当前半径（包含呼吸效果）
+    const currentR = this.currentRadius || this.radius;
+
     return {
-      x: this.centerX + x * this.radius,
-      y: this.centerY - y * this.radius,
+      x: this.centerX + x * currentR,
+      y: this.centerY - y * currentR,
       z: z,
       visible: z > -0.1
     };
@@ -226,6 +265,9 @@ export class GlobeRenderer {
     const cx = this.centerX;
     const cy = this.centerY;
     const r = this.radius;
+
+    // 更新当前半径用于投影计算
+    this.currentRadius = r;
 
     // ===== 星球主体 =====
     // 基础渐变（从主题 accent 色混合深色底色）
@@ -302,6 +344,12 @@ export class GlobeRenderer {
     ctx.strokeStyle = this.themeRGBA(0.25);
     ctx.lineWidth = 1.5;
     ctx.stroke();
+
+    // ===== 流动粒子 =====
+    this.drawParticles(ctx, cx, cy, r);
+
+    // ===== 动态大气层脉冲 =====
+    this.drawPulsingAtmosphere(ctx, cx, cy, r);
   }
 
   // 绘制星球表面纹理
@@ -804,6 +852,110 @@ export class GlobeRenderer {
   // 检查是否有悬停的图斑
   hasHoveredSpot() {
     return this.hoveredSpot >= 0;
+  }
+
+  // 绘制流动粒子
+  drawParticles(ctx, cx, cy, r) {
+    const { r: ar, g: ag, b: ab } = this.getThemeColors();
+
+    this.particles.forEach((particle, index) => {
+      // 更新粒子位置
+      particle.lng += particle.speed;
+      if (particle.lng >= 360) particle.lng -= 360;
+
+      // 更新年龄
+      particle.age++;
+      if (particle.age >= particle.maxLife) {
+        // 重生粒子
+        this.particles[index] = this.createParticle();
+        return;
+      }
+
+      // 投影到屏幕
+      const p = this.project(particle.lng, particle.lat);
+      if (!p.visible || !this.isInFront(particle.lng, particle.lat)) return;
+
+      const dist = Math.sqrt(Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2));
+      if (dist > r * 0.95) return;
+
+      // 计算透明度（生命周期渐入渐出）
+      const lifeRatio = particle.age / particle.maxLife;
+      let alpha;
+      if (lifeRatio < 0.1) {
+        alpha = lifeRatio * 10;
+      } else if (lifeRatio > 0.9) {
+        alpha = (1 - lifeRatio) * 10;
+      } else {
+        alpha = 1;
+      }
+
+      const depthFactor = 0.3 + p.z * 0.7;
+      alpha *= depthFactor * 0.6;
+
+      // 更新拖尾
+      particle.trail.unshift({ x: p.x, y: p.y });
+      if (particle.trail.length > particle.trailLength) {
+        particle.trail.pop();
+      }
+
+      // 绘制拖尾
+      if (particle.trail.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(particle.trail[0].x, particle.trail[0].y);
+        for (let i = 1; i < particle.trail.length; i++) {
+          ctx.lineTo(particle.trail[i].x, particle.trail[i].y);
+        }
+        ctx.strokeStyle = `rgba(${Math.min(255, ar + 100)}, ${Math.min(255, ag + 100)}, ${Math.min(255, ab + 100)}, ${alpha * 0.3})`;
+        ctx.lineWidth = particle.size * 0.5;
+        ctx.stroke();
+      }
+
+      // 绘制粒子头部
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, particle.size * depthFactor, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${Math.min(255, ar + 150)}, ${Math.min(255, ag + 150)}, ${Math.min(255, ab + 150)}, ${alpha})`;
+      ctx.fill();
+
+      // 微弱光晕
+      const glowGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, particle.size * 3 * depthFactor);
+      glowGrad.addColorStop(0, `rgba(${Math.min(255, ar + 100)}, ${Math.min(255, ag + 100)}, ${Math.min(255, ab + 100)}, ${alpha * 0.4})`);
+      glowGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = glowGrad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, particle.size * 3 * depthFactor, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // 绘制动态大气层脉冲
+  drawPulsingAtmosphere(ctx, cx, cy, r) {
+    const pulse = Math.sin(this.tick * 0.02) * 0.5 + 0.5;
+
+    // 外层大气脉冲
+    const atmoSize = r * (1.08 + pulse * 0.05);
+    const atmoGrad = ctx.createRadialGradient(cx, cy, r * 0.9, cx, cy, atmoSize);
+    atmoGrad.addColorStop(0, 'transparent');
+    atmoGrad.addColorStop(0.3, this.themeRGBA(0.02 * pulse));
+    atmoGrad.addColorStop(0.7, this.themeRGBA(0.04 * pulse));
+    atmoGrad.addColorStop(1, 'transparent');
+
+    ctx.fillStyle = atmoGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, atmoSize, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 边缘光晕脉冲
+    const edgePulse = Math.sin(this.tick * 0.03) * 0.5 + 0.5;
+    const glowSize = r * (1.12 + edgePulse * 0.03);
+    const glowGrad = ctx.createRadialGradient(cx, cy, r, cx, cy, glowSize);
+    glowGrad.addColorStop(0, this.themeRGBA(0.06 * edgePulse));
+    glowGrad.addColorStop(0.5, this.themeRGBA(0.02 * edgePulse));
+    glowGrad.addColorStop(1, 'transparent');
+
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, glowSize, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   // 停止动画

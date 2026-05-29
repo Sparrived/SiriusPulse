@@ -51,6 +51,7 @@ from sirius_pulse.webui.memory_api import (
     api_persona_user_get,
     api_persona_glossary_get,
     api_persona_memory_viz,
+    api_persona_conversation_history_get,
 )
 from sirius_pulse.webui.biography_api import (
     api_persona_biography_list,
@@ -187,6 +188,9 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_memory_viz(self, request):
         return await api_persona_memory_viz(request, self.persona_manager)
+
+    async def api_persona_conversation_history_get(self, request):
+        return await api_persona_conversation_history_get(request, self.persona_manager)
 
     # ─── 多人格 API: 桥接配置 ─────────────────────────────
 

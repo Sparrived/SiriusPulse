@@ -22,7 +22,7 @@ export async function init(container) {
         </div>
       </div>
       <form id="globalSettingsForm">
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           ${FIELDS.map(f => renderField(f)).join('')}
         </div>
         <div style="margin-top:24px;display:flex;justify-content:flex-end;gap:12px">

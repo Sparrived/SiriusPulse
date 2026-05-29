@@ -35,38 +35,35 @@ async function loadPlugins() {
       return;
     }
 
-    el.innerHTML = `<div style="display:grid;gap:12px">${plugins.map(p => `
-      <div class="card" data-plugin="${p.name}" style="margin:0">
+    el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">${plugins.map(p => `
+      <div class="card" data-plugin="${p.name}" style="margin:0;cursor:pointer">
         <div style="padding:16px">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-            <div>
-              <div style="font-size:15px;font-weight:600">${p.display_name || p.name}</div>
-              ${p.description ? `<div style="font-size:13px;color:var(--text-2);margin-top:2px">${p.description}</div>` : ''}
-            </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span class="tag" style="font-size:11px">${p.version || '—'}</span>
-              ${p.author ? `<span class="tag" style="font-size:11px">${p.author}</span>` : ''}
-            </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <span class="plugin-toggle tag" data-name="${p.name}" style="font-size:11px;background:${p.enabled ? 'var(--success)' : 'var(--text-3)'};color:#fff;padding:2px 8px;border-radius:4px;flex-shrink:0" onclick="event.stopPropagation()">${p.enabled ? '已启用' : '已禁用'}</span>
+            <span class="tag" style="font-size:11px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:4px;flex-shrink:0">${p.version || '—'}</span>
+            <span style="font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.display_name || p.name}</span>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+          ${p.description ? `<div style="font-size:13px;color:var(--text-2);margin-bottom:12px;line-height:1.4">${p.description}</div>` : ''}
+          <div style="display:flex;justify-content:space-between;align-items:center">
             <div style="display:flex;gap:12px;font-size:12px;color:var(--text-2)">
               <span>命令: ${(p.commands || []).length}</span>
               <span>参数: ${(p.parameters || []).length}</span>
             </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                <input type="checkbox" class="plugin-toggle" data-name="${p.name}" ${p.enabled ? 'checked' : ''}>
-                <span style="color:${p.enabled ? 'var(--success)' : 'var(--text-3)'}">${p.enabled ? '已启用' : '已禁用'}</span>
-              </label>
-              <button class="btn btn-sm btn-primary plugin-detail-btn" data-name="${p.name}">详情</button>
-            </div>
+            <button class="btn btn-sm btn-primary plugin-detail-btn" data-name="${p.name}" onclick="event.stopPropagation()">详情</button>
           </div>
         </div>
       </div>
     `).join('')}</div>`;
 
-    el.querySelectorAll('.plugin-toggle').forEach(cb => {
-      cb.addEventListener('change', () => togglePlugin(cb.dataset.name, cb.checked));
+    el.querySelectorAll('.plugin-toggle').forEach(tag => {
+      tag.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const name = tag.dataset.name;
+        const newState = tag.textContent === '已启用' ? false : true;
+        tag.textContent = newState ? '已启用' : '已禁用';
+        tag.style.background = newState ? 'var(--success)' : 'var(--text-3)';
+        togglePlugin(name, newState, tag);
+      });
     });
 
     el.querySelectorAll('.plugin-detail-btn').forEach(btn => {

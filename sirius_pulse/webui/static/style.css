@@ -381,7 +381,7 @@ body {
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
 }
 
@@ -1594,33 +1594,65 @@ tr:hover td {
   line-height: 1.6;
 }
 
-.persona-stats {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+.persona-monitor-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.persona-stat-item {
-  background: var(--accent-dim);
-  border: 1px solid var(--border-accent);
-  border-radius: 8px;
-  padding: 12px;
-  text-align: center;
+.persona-metric-row {
+  flex: 1 1 calc(50% - 4px);
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(255,255,255,0.03));
+  box-sizing: border-box;
 }
 
-.persona-stat-value {
-  font-size: 20px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--accent);
-  margin-bottom: 4px;
+.persona-metric-row.persona-metric-full {
+  flex-basis: 100%;
 }
 
-.persona-stat-label {
-  font-size: 10px;
+.persona-metric-label {
+  font-size: 11px;
   color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+.persona-metric-value {
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.persona-health-section {
+  display: flex;
+  gap: 4px;
+}
+
+.persona-health-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(255,255,255,0.03));
+}
+
+.persona-health-icon {
+  font-size: 12px;
+}
+
+.persona-health-label {
+  color: var(--text-2);
+  font-size: 11px;
 }
 
 .persona-actions {
@@ -1711,8 +1743,8 @@ tr:hover td {
 
 /* 星球本体 */
 .planet-globe {
-  width: 400px;
-  height: 400px;
+  width: 480px;
+  height: 480px;
   position: relative;
   z-index: 10;
   cursor: grab;
@@ -2216,8 +2248,8 @@ tr:hover td {
 /* 响应式设计 */
 @media (max-width: 1400px) {
   .planet-globe {
-    width: 400px;
-    height: 400px;
+    width: 440px;
+    height: 440px;
   }
 
   .planet-glow {
@@ -2270,8 +2302,8 @@ tr:hover td {
 
 @media (max-width: 1024px) {
   .planet-globe {
-    width: 320px;
-    height: 320px;
+    width: 380px;
+    height: 380px;
   }
 
   .planet-glow {
@@ -2306,8 +2338,8 @@ tr:hover td {
 
 @media (max-width: 768px) {
   .planet-globe {
-    width: 260px;
-    height: 260px;
+    width: 320px;
+    height: 320px;
   }
 
   .planet-glow {

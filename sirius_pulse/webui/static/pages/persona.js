@@ -30,7 +30,7 @@ export async function init(container, params) {
         <button class="btn btn-primary" id="personaSave">保存</button>
       </div>
       <form id="personaForm" style="display:grid;gap:16px">
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>名称</label>
             <input type="text" name="name" readonly>
@@ -57,7 +57,7 @@ export async function init(container, params) {
           <label>人格概述</label>
           <textarea name="persona_summary" rows="3"></textarea>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>性格特征</label>
             <input type="text" name="personality_traits" placeholder="多个特征用逗号分隔">
@@ -71,7 +71,7 @@ export async function init(container, params) {
           <label>沟通风格</label>
           <textarea name="communication_style" rows="2"></textarea>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>表情偏好</label>
             <div class="select-wrap">
@@ -109,14 +109,14 @@ export async function init(container, params) {
             </div>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>边界设定</label>
             <input type="text" name="boundaries" placeholder="多个边界用逗号分隔">
           </div>
           <div class="form-group">
             <label>禁忌话题</label>
-            <input type="text" name="taboo_topics" placeholder="多个话题用逗号分隔">
+            <input type="text" name="taboo_topics" placeholder="多个话题，请用英文逗号分隔">
           </div>
         </div>
         <div class="form-group">

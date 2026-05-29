@@ -251,6 +251,7 @@ let starfield = null;
 let currentPersona = null;
 let personasData = [];
 let onPersonaFocus = null;
+let panelPersonaIndex = -1;
 
 // 人格图斑颜色配置
 const PERSONA_COLORS = [
@@ -284,8 +285,9 @@ function initGlobe() {
   const canvas = document.getElementById('planetGlobe');
   if (!canvas) return;
 
-  canvas.width = 400;
-  canvas.height = 400;
+  // 增大 canvas 尺寸，为大气层效果留出空间
+  canvas.width = 480;
+  canvas.height = 480;
 
   globe = new GlobeRenderer(canvas);
 }
@@ -499,6 +501,7 @@ function bindEvents() {
         if (res.success) {
           toast(`${currentPersona.name} 已启动`, 'success');
           await loadPersonas();
+          panelPersonaIndex = -1;
           updatePersonaPanel(personasData.findIndex(p => p.name === currentPersona.name));
         } else {
           toast(res.error || '启动失败', 'error');
@@ -517,6 +520,7 @@ function bindEvents() {
         if (res.success) {
           toast(`${currentPersona.name} 已停止`, 'success');
           await loadPersonas();
+          panelPersonaIndex = -1;
           updatePersonaPanel(personasData.findIndex(p => p.name === currentPersona.name));
         } else {
           toast(res.error || '停止失败', 'error');
@@ -672,6 +676,10 @@ function updatePersonaPanel(index) {
 
   currentPersona = persona;
 
+  // 仅在人格切换时更新面板内容和请求监控数据
+  const isSamePersona = (panelPersonaIndex === index);
+  panelPersonaIndex = index;
+
   $('panelPersonaName').textContent = persona.persona_name || persona.name;
 
   const isRunning = persona.running;
@@ -686,6 +694,88 @@ function updatePersonaPanel(index) {
   // 更新按钮
   $('panelStartBtn').style.display = isRunning ? 'none' : 'inline-flex';
   $('panelStopBtn').style.display = isRunning ? 'inline-flex' : 'none';
+
+  // 仅在人格切换时加载监控数据，避免鼠标移动时频繁请求
+  if (!isSamePersona) {
+    loadPersonaMonitoring(persona.name);
+  }
+}
+
+// 格式化运行时长
+function formatUptime(seconds) {
+  if (!seconds || seconds <= 0) return '—';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 24) {
+    const d = Math.floor(h / 24);
+    return `${d}天${h % 24}时`;
+  }
+  if (h > 0) return `${h}时${m}分`;
+  return `${m}分`;
+}
+
+// 健康状态图标映射
+const HEALTH_ICONS = { ok: '✅', down: '❌', warning: '⚠️', missing: '⚠️', empty: '⚠️' };
+
+// 异步加载人格监控数据
+async function loadPersonaMonitoring(name) {
+  const metricsEl = $('panelMetrics');
+  const healthEl = $('panelHealth');
+  if (!metricsEl || !healthEl) return;
+
+  metricsEl.style.display = 'none';
+  healthEl.style.display = 'none';
+
+  try {
+    const [metricsRes, healthRes] = await Promise.all([
+      get(`/monitoring/${name}/metrics`).catch(() => null),
+      get(`/monitoring/${name}/health`).catch(() => null),
+    ]);
+
+    // 填充运行指标
+    if (metricsRes && !metricsRes.error) {
+      metricsEl.style.display = 'flex';
+      const token = metricsRes.token_usage || {};
+      const memory = metricsRes.memory || {};
+      const cognition = metricsRes.cognition || {};
+
+      if ($('panelPid')) $('panelPid').textContent = metricsRes.pid || '—';
+      if ($('panelUptime')) $('panelUptime').textContent = formatUptime(metricsRes.uptime_seconds);
+      if ($('panelTokenIn')) $('panelTokenIn').textContent = (token.total_input || 0).toLocaleString();
+      if ($('panelTokenOut')) $('panelTokenOut').textContent = (token.total_output || 0).toLocaleString();
+      if ($('panelCalls')) $('panelCalls').textContent = (token.call_count || 0).toLocaleString();
+      if ($('panelDiary')) $('panelDiary').textContent = (memory.diary_count || 0).toLocaleString();
+      if ($('panelGlossary')) $('panelGlossary').textContent = (memory.glossary_count || 0).toLocaleString();
+      if ($('panelUsers')) $('panelUsers').textContent = (memory.user_count || 0).toLocaleString();
+      if ($('panelCognition')) $('panelCognition').textContent = (cognition.event_count || 0).toLocaleString();
+    }
+
+    // 填充健康状态
+    if (healthRes && !healthRes.error) {
+      healthEl.style.display = 'flex';
+      const checks = healthRes.checks || {};
+
+      renderHealthItem('healthProcess', checks.process);
+      renderHealthItem('healthConfig', checks.config);
+      renderHealthItem('healthMemory', checks.memory);
+    }
+  } catch {
+    // 加载失败时隐藏面板
+    metricsEl.style.display = 'none';
+    healthEl.style.display = 'none';
+  }
+}
+
+// 渲染单个健康检查项
+function renderHealthItem(elementId, check) {
+  const el = $(elementId);
+  if (!el || !check) {
+    if (el) el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'flex';
+  const icon = HEALTH_ICONS[check.status] || '⚠️';
+  el.querySelector('.persona-health-icon').textContent = icon;
 }
 
 // ==================== 数据加载 ====================

@@ -636,3 +636,67 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
         "topic_nodes": topic_nodes,
         "user_topic_links": user_topic_links,
     })
+
+
+@handle_api_errors
+async def api_persona_conversation_history_get(request: web.Request, persona_manager: Any) -> web.Response:
+    """GET /api/personas/{name}/conversations — 返回完整对话历史。"""
+    name = _get_name(request)
+    group_id = request.query.get("group_id", "").strip()
+    limit = min(int(request.query.get("limit", "500")), 2000)
+    offset = max(int(request.query.get("offset", "0")), 0)
+
+    paths = persona_manager.get_persona_paths(name)
+    if paths is None:
+        return _json_response({"error": "人格不存在"}, 404)
+
+    archive_dir = paths.dir / "archive"
+    if not archive_dir.exists():
+        return _json_response({"messages": [], "groups": [], "total": 0})
+
+    # 获取所有群组
+    groups = []
+    for f in archive_dir.glob("*.jsonl"):
+        groups.append(f.stem)
+
+    # 读取对话记录
+    messages: list[dict[str, Any]] = []
+    target_files = []
+    if group_id:
+        target_file = archive_dir / f"{group_id}.jsonl"
+        if target_file.exists():
+            target_files.append(target_file)
+    else:
+        target_files = sorted(archive_dir.glob("*.jsonl"))
+
+    for fpath in target_files:
+        g_id = fpath.stem
+        try:
+            with fpath.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        entry["group_id"] = g_id
+                        messages.append(entry)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            continue
+
+    # 按时间排序
+    messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
+    total = len(messages)
+
+    # 分页
+    messages = messages[offset:offset + limit]
+
+    return _json_response({
+        "messages": messages,
+        "groups": sorted(groups),
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    })

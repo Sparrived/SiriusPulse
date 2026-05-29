@@ -62,9 +62,16 @@ async function loadSkills() {
       return;
     }
     updateHistoryFilter(skills);
-    el.innerHTML = `<div style="display:grid;gap:12px">${skills.map(s => renderSkillCard(s)).join('')}</div>`;
-    el.querySelectorAll('.skill-toggle').forEach(cb => {
-      cb.addEventListener('change', () => toggleSkill(cb.dataset.name, cb.checked));
+    el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">${skills.map(s => renderSkillCard(s)).join('')}</div>`;
+    el.querySelectorAll('.skill-toggle').forEach(tag => {
+      tag.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const name = tag.dataset.name;
+        const newState = tag.textContent === '已启用' ? false : true;
+        tag.textContent = newState ? '已启用' : '已禁用';
+        tag.style.background = newState ? 'var(--success)' : 'var(--text-3)';
+        toggleSkill(name, newState, tag);
+      });
     });
     el.querySelectorAll('.skill-config-btn').forEach(btn => {
       btn.addEventListener('click', () => openConfigModal(btn.dataset.name));
@@ -77,24 +84,19 @@ async function loadSkills() {
 function renderSkillCard(s) {
   const tags = (s.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
   const paramCount = (s.parameters || []).length;
+  const isEnabled = s.enabled !== false;
   return `
-    <div class="card" style="margin:0">
+    <div class="card skill-config-btn" data-name="${s.name}" style="margin:0;cursor:pointer">
       <div class="card-header">
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <span style="font-size:15px;font-weight:600">${s.display_name || s.name}</span>
-          <span class="tag" style="font-size:11px">${s.version || '—'}</span>
-          ${s.developer_only ? '<span class="tag tag-accent" style="font-size:11px">开发者</span>' : ''}
-          ${s.silent ? '<span class="tag" style="font-size:11px;color:var(--text-3)">静默</span>' : ''}
-          ${tags}
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-            <input type="checkbox" class="skill-toggle" data-name="${s.name}" ${s.enabled !== false ? 'checked' : ''}>
-            <span style="color:${s.enabled !== false ? 'var(--success)' : 'var(--text-3)'}">
-              ${s.enabled !== false ? '已启用' : '已禁用'}
-            </span>
-          </label>
-          <button class="btn btn-sm skill-config-btn" data-name="${s.name}">配置</button>
+        <div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span class="skill-toggle tag" data-name="${s.name}" style="font-size:11px;background:${isEnabled ? 'var(--success)' : 'var(--text-3)'};color:#fff;padding:2px 8px;border-radius:4px;flex-shrink:0" onclick="event.stopPropagation()">${isEnabled ? '已启用' : '已禁用'}</span>
+            <span class="tag" style="font-size:11px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:4px;flex-shrink:0">${s.version || '—'}</span>
+            <span style="font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.display_name || s.name}</span>
+            ${s.developer_only ? '<span class="tag tag-accent" style="font-size:11px;flex-shrink:0">开发者</span>' : ''}
+            ${s.silent ? '<span class="tag" style="font-size:11px;color:var(--text-3);flex-shrink:0">静默</span>' : ''}
+          </div>
+          ${tags ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${tags}</div>` : ''}
         </div>
       </div>
       ${s.description ? `<div style="padding:0 16px 8px;font-size:13px;color:var(--text-2);line-height:1.5">${s.description}</div>` : ''}
@@ -105,14 +107,17 @@ function renderSkillCard(s) {
   `;
 }
 
-async function toggleSkill(skillName, enabled) {
+async function toggleSkill(skillName, enabled, tagEl) {
   const name = store.currentPersona;
   try {
     await post(`/personas/${name}/skills/${skillName}/toggle`, { enabled });
     toast(`${skillName} 已${enabled ? '启用' : '禁用'}`, 'success');
   } catch (e) {
     toast('操作失败: ' + e.message, 'error');
-    await loadSkills();
+    if (tagEl) {
+      tagEl.textContent = enabled ? '已禁用' : '已启用';
+      tagEl.style.background = enabled ? 'var(--text-3)' : 'var(--success)';
+    }
   }
 }
 

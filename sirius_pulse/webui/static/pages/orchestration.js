@@ -93,7 +93,7 @@ function renderOrchestration(data) {
   let html = `
     <div style="margin-bottom:24px">
       <div style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--text-1)">通用模型设置</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
         <div class="form-group">
           <label>分析模型</label>
           <div class="select-wrap">

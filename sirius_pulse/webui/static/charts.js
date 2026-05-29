@@ -74,12 +74,12 @@ export function renderLineChart(container, { labels, series, areaStyle = true })
   });
 }
 
-export function renderPieChart(container, { data, center = ['40%', '50%'], radius = ['40%', '70%'] }) {
+export function renderPieChart(container, { data, center = ['35%', '50%'], radius = ['35%', '60%'] }) {
   if (!container) return;
   setChartOption(container, {
     backgroundColor: 'transparent',
     tooltip: { trigger: 'item', formatter: p => `<b>${p.name}</b><br/>${p.percent}%` },
-    legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { fontSize: 12, color: '#c9d1d9' }, itemWidth: 12, itemHeight: 12 },
+    legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { fontSize: 11, color: '#c9d1d9' }, itemWidth: 10, itemHeight: 10 },
     series: [{ type: 'pie', radius, center, avoidLabelOverlap: true, itemStyle: { borderRadius: 6, borderColor: '#0d1117', borderWidth: 2 }, label: { show: false }, emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } }, data }],
   });
 }

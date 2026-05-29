@@ -136,14 +136,10 @@ async def _cmd_webui(args: argparse.Namespace) -> None:
     from sirius_pulse.webui import WebUIServer
 
     persona_manager = PersonaManager(DATA_DIR, global_config=config)
-    napcat_dir = config.get("napcat_install_dir")
-    from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
-    napcat_mgr = NapCatManager(napcat_dir) if napcat_dir else None
     webui = WebUIServer(
         persona_manager=persona_manager,
         host=str(config.get("webui_host", "0.0.0.0")),
         port=int(config.get("webui_port", 8080)),
-        napcat_manager=napcat_mgr,
     )
     await webui.start()
     LOG.info("WebUI: http://localhost:%s（仅管理模式，无人格运行）", webui.port)

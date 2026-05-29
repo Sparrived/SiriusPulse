@@ -75,16 +75,63 @@
             <span>未选择人格</span>
           </div>
           <div class="persona-meta" id="panelMeta">点击球体上的人格图斑查看详情</div>
-          <div class="persona-stats">
-            <div class="persona-stat-item">
-              <div class="persona-stat-value" id="panelTokens">-</div>
-              <div class="persona-stat-label">Tokens</div>
+
+          <!-- 运行指标 -->
+          <div class="persona-monitor-metrics" id="panelMetrics" style="display:none">
+            <div class="persona-metric-row persona-metric-full">
+              <span class="persona-metric-label">Token 输入</span>
+              <span class="persona-metric-value text-mono" id="panelTokenIn">0</span>
             </div>
-            <div class="persona-stat-item">
-              <div class="persona-stat-value" id="panelCalls">-</div>
-              <div class="persona-stat-label">调用次数</div>
+            <div class="persona-metric-row persona-metric-full">
+              <span class="persona-metric-label">Token 输出</span>
+              <span class="persona-metric-value text-mono" id="panelTokenOut">0</span>
+            </div>
+            <div class="persona-metric-row">
+              <span class="persona-metric-label">PID</span>
+              <span class="persona-metric-value text-mono" id="panelPid">—</span>
+            </div>
+            <div class="persona-metric-row">
+              <span class="persona-metric-label">运行时长</span>
+              <span class="persona-metric-value text-mono" id="panelUptime">—</span>
+            </div>
+            <div class="persona-metric-row">
+              <span class="persona-metric-label">调用次数</span>
+              <span class="persona-metric-value text-mono" id="panelCalls">0</span>
+            </div>
+            <div class="persona-metric-row">
+              <span class="persona-metric-label">日记条目</span>
+              <span class="persona-metric-value text-mono" id="panelDiary">0</span>
+            </div>
+            <div class="persona-metric-row">
+              <span class="persona-metric-label">名词解释</span>
+              <span class="persona-metric-value text-mono" id="panelGlossary">0</span>
+            </div>
+            <div class="persona-metric-row">
+              <span class="persona-metric-label">用户画像</span>
+              <span class="persona-metric-value text-mono" id="panelUsers">0</span>
+            </div>
+            <div class="persona-metric-row">
+              <span class="persona-metric-label">认知事件</span>
+              <span class="persona-metric-value text-mono" id="panelCognition">0</span>
             </div>
           </div>
+
+          <!-- 健康状态 -->
+          <div class="persona-health-section" id="panelHealth" style="display:none">
+            <div class="persona-health-item" id="healthProcess">
+              <span class="persona-health-icon">—</span>
+              <span class="persona-health-label">进程</span>
+            </div>
+            <div class="persona-health-item" id="healthConfig">
+              <span class="persona-health-icon">—</span>
+              <span class="persona-health-label">配置</span>
+            </div>
+            <div class="persona-health-item" id="healthMemory">
+              <span class="persona-health-icon">—</span>
+              <span class="persona-health-label">记忆</span>
+            </div>
+          </div>
+
           <div class="persona-actions">
             <button class="btn btn-sm btn-primary" id="panelStartBtn" style="display:none">▶ 启动</button>
             <button class="btn btn-sm btn-danger" id="panelStopBtn" style="display:none">⏹ 停止</button>

@@ -39,7 +39,7 @@ export async function init(container, params) {
       </div>
       <form id="expForm" style="display:grid;gap:24px">
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">行为风格</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>回复模式</label>
             <div class="select-wrap">
@@ -69,7 +69,7 @@ export async function init(container, params) {
         </div>
 
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">主动消息</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>启用主动消息</label>
             <div class="select-wrap">
@@ -94,7 +94,7 @@ export async function init(container, params) {
         </div>
 
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">回复频率</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>启用延迟回复</label>
             <div class="select-wrap">
@@ -132,7 +132,7 @@ export async function init(container, params) {
         </div>
 
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">技能系统</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>启用技能</label>
             <div class="select-wrap">
@@ -153,7 +153,7 @@ export async function init(container, params) {
         </div>
 
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">记忆系统</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>记忆深度</label>
             <div class="select-wrap">
