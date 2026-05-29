@@ -140,12 +140,7 @@ function renderOrchestration(data) {
             <input type="checkbox" class="task-enabled" data-task="${task.key}"${isEnabled ? ' checked' : ''}>
             ${task.label}
           </label>
-          <div class="select-wrap" style="flex:1">
-            <select class="task-model" data-task="${task.key}"${!isOverridden ? ' disabled' : ''}>
-              <option value="__inherit__">继承通用</option>
-              ${modelOptions(taskModel, true)}
-            </select>
-          </div>
+          <div class="task-model-select" data-task="${task.key}" data-value="${taskModel || '__inherit__'}" style="flex:1;${!isOverridden ? 'opacity:0.5;pointer-events:none' : ''}"></div>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-2);cursor:pointer">
             <input type="checkbox" class="task-override" data-task="${task.key}"${isOverridden ? ' checked' : ''}>
             覆盖
@@ -174,6 +169,8 @@ function _mselOptions() {
 function _mountModelSelects(data) {
   const fields = ['analysis', 'chat', 'memory', 'plugin'];
   const baseOpts = _mselOptions();
+  
+  // 挂载通用模型选择器
   for (const field of fields) {
     const container = $(`msel_${field}`);
     if (!container) continue;
@@ -194,30 +191,52 @@ function _mountModelSelects(data) {
     sel.mount(container);
     modelSelects[key] = sel;
   }
-}
-
-function modelOptions(selected, skipInherit) {
-  return modelChoices.map(m => {
-    const val = typeof m === 'object' ? m.value : m;
-    const label = typeof m === 'object' ? m.label : m;
-    const tags = (typeof m === 'object' && Array.isArray(m.tags)) ? m.tags : [];
-    const tagsStr = tags.map(t => `[${t}]`).join('');
-    const display = tagsStr ? `${label} ${tagsStr}` : label;
-    const isSelected = val === selected ? ' selected' : '';
-    return `<option value="${val}"${isSelected}>${display}</option>`;
-  }).join('');
+  
+  // 挂载任务模型选择器
+  const taskOpts = [
+    { value: '__inherit__', label: '继承通用', tags: [] },
+    ...baseOpts,
+  ];
+  document.querySelectorAll('.task-model-select').forEach(container => {
+    const task = container.dataset.task;
+    const value = container.dataset.value || '__inherit__';
+    const key = `task_${task}`;
+    
+    // 如果当前值不在选项列表中，添加一个额外的选项
+    const valueInChoices = taskOpts.some(o => o.value === value);
+    const opts = [...taskOpts];
+    if (value && value !== '__inherit__' && !valueInChoices) {
+      opts.splice(1, 0, { value: value, label: `${value} (当前配置)`, tags: [] });
+    }
+    
+    const sel = new ModelSelect({
+      options: opts,
+      value: value,
+      placeholder: '继承通用',
+    });
+    sel.mount(container);
+    modelSelects[key] = sel;
+  });
 }
 
 function setupOverrideListeners() {
   document.querySelectorAll('.task-override').forEach(cb => {
     cb.addEventListener('change', () => {
       const task = cb.dataset.task;
-      const modelSelect = document.querySelector(`.task-model[data-task="${task}"]`);
+      const container = document.querySelector(`.task-model-select[data-task="${task}"]`);
+      if (!container) return;
+      
       if (cb.checked) {
-        modelSelect.disabled = false;
+        container.style.opacity = '1';
+        container.style.pointerEvents = 'auto';
       } else {
-        modelSelect.disabled = true;
-        modelSelect.value = '__inherit__';
+        container.style.opacity = '0.5';
+        container.style.pointerEvents = 'none';
+        // 重置为继承通用
+        const key = `task_${task}`;
+        if (modelSelects[key]) {
+          modelSelects[key].setValue('__inherit__');
+        }
       }
     });
   });
@@ -226,11 +245,13 @@ function setupOverrideListeners() {
 async function saveOrchestration(name) {
   const taskModels = {};
   const taskEnabled = {};
-  document.querySelectorAll('.task-model').forEach(select => {
-    const task = select.dataset.task;
+  document.querySelectorAll('.task-model-select').forEach(container => {
+    const task = container.dataset.task;
     const enabled = document.querySelector(`.task-enabled[data-task="${task}"]`).checked;
     const isOverridden = document.querySelector(`.task-override[data-task="${task}"]`).checked;
-    taskModels[task] = isOverridden ? select.value : '__inherit__';
+    const key = `task_${task}`;
+    const sel = modelSelects[key];
+    taskModels[task] = isOverridden && sel ? sel.value : '__inherit__';
     taskEnabled[task] = enabled;
   });
 

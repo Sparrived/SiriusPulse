@@ -318,13 +318,22 @@ class WorkspaceProviderManager:
         for provider_type, config in providers.items():
             if config.models and not force:
                 continue
-            model_ids = list_provider_model_ids(
+            # 获取 models.dev 的模型列表
+            dev_model_ids = list_provider_model_ids(
                 data, provider_type, tool_call_only=tool_call_only,
             )
-            if model_ids and model_ids != config.models:
-                config.models = model_ids
-                changed = True
-                logger.info("刷新 %s 模型列表: %d 个模型", provider_type, len(model_ids))
+            if dev_model_ids:
+                # 保留用户原有的模型，合并 models.dev 的模型
+                original_models = set(config.models or [])
+                dev_models = set(dev_model_ids)
+                # 合并：保留用户原有的所有模型 + models.dev 的新模型
+                merged_models = list(original_models | dev_models)
+                
+                if merged_models != config.models:
+                    config.models = merged_models
+                    changed = True
+                    logger.info("刷新 %s 模型列表: %d 个模型（保留 %d 个原有模型）", 
+                               provider_type, len(merged_models), len(original_models))
 
         if changed:
             self.save(providers)

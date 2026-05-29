@@ -754,13 +754,41 @@ async function refreshModels() {
   btn.textContent = '刷新中…';
 
   try {
+    // 保存用户原有的模型配置，用于后续合并
+    const originalModelsMap = new Map();
+    providers.forEach(p => {
+      if (p.name) {
+        originalModelsMap.set(p.name, new Set(p.models || []));
+      }
+    });
+
     const res = await post('/providers/refresh-models', { force: true });
     if (res.success) {
       const raw = Array.isArray(res.providers) ? res.providers : [];
-      providers = raw.map(p => ({
-        ...p,
-        platform_type: p.platform_type || p.type || 'openai-compatible',
-      }));
+      providers = raw.map(p => {
+        const platformType = p.platform_type || p.type || 'openai-compatible';
+        const providerName = p.name;
+        
+        // 如果有用户原有的模型配置，合并 models.dev 的模型和用户手动添加的模型
+        if (providerName && originalModelsMap.has(providerName)) {
+          const originalModels = originalModelsMap.get(providerName);
+          const newModels = new Set(p.models || []);
+          
+          // 合并：保留用户原有的所有模型 + models.dev 的新模型
+          const mergedModels = [...new Set([...originalModels, ...newModels])];
+          
+          return {
+            ...p,
+            platform_type: platformType,
+            models: mergedModels,
+          };
+        }
+        
+        return {
+          ...p,
+          platform_type: platformType,
+        };
+      });
       editingIdx = null;
       renderList();
       if (res.changed) {
