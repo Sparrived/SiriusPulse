@@ -5,6 +5,7 @@ import {
   renderLineChart,
   renderBarChart,
   renderPieChart,
+  renderSankeyChart,
   disposeChart,
 } from '../charts.js';
 
@@ -190,19 +191,35 @@ function renderOverviewTab(panels) {
 
 function renderModuleTab(panels) {
   panels.innerHTML = `
-    <div class="tab-panel active" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:20px 0">
+    <div class="tab-panel active" style="padding:20px 0">
       <div class="card">
-        <div class="card-header"><div class="card-title">模块 Token 分布</div></div>
-        <div data-chart="section" style="min-height:300px"></div>
+        <div class="card-header"><div class="card-title">模块 Token 分布（桑基图）</div></div>
+        <div data-chart="sankey" style="min-height:400px"></div>
       </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">任务调用占比</div></div>
-        <div data-chart="task-pie" style="min-height:300px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px">
+        <div class="card">
+          <div class="card-header"><div class="card-title">模块 Token 分布</div></div>
+          <div data-chart="section" style="min-height:300px"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">任务调用占比</div></div>
+          <div data-chart="task-pie" style="min-height:300px"></div>
+        </div>
       </div>
     </div>
   `;
 
   const sectionBreakdown = data.section_breakdown || {};
+  const sectionBreakdownByTask = data.section_breakdown_by_task || {};
+
+  // 渲染桑基图
+  renderSankeyChart(
+    panels.querySelector('[data-chart="sankey"]'),
+    sectionBreakdown,
+    sectionBreakdownByTask
+  );
+
+  // 渲染柱状图
   const sectionKeys = Object.keys(sectionBreakdown);
   if (sectionKeys.length) {
     renderBarChart(panels.querySelector('[data-chart="section"]'), {
@@ -212,6 +229,7 @@ function renderModuleTab(panels) {
     });
   }
 
+  // 渲染饼图
   const byTask = data.by_task || [];
   if (byTask.length) {
     renderPieChart(panels.querySelector('[data-chart="task-pie"]'), {

@@ -1,4 +1,7 @@
 <div class="dashboard-future">
+  <!-- 动态星空背景 canvas -->
+  <canvas id="starfieldCanvas" class="starfield-canvas"></canvas>
+
   <!-- 左侧弧形面板 - 系统信息 -->
   <div class="arc-panel arc-panel-left" id="systemPanel">
     <div class="arc-panel-inner">
@@ -19,6 +22,13 @@
           <div class="stat-info">
             <div class="stat-value" id="dsRunning" style="color:var(--success)">0</div>
             <div class="stat-label">运行中</div>
+          </div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-icon" id="dsEmbeddingIcon" style="color:var(--text-3)">◇</div>
+          <div class="stat-info">
+            <div class="stat-value" id="dsEmbedding" style="font-size:13px">检测中…</div>
+            <div class="stat-label">Embedding</div>
           </div>
         </div>
         <div class="stat-item">

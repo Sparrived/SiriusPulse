@@ -30,6 +30,12 @@ export class GlobeRenderer {
     // 选中图斑索引（-1 表示未选中）
     this.selectedSpot = -1;
 
+    // 旋转动画目标（null 表示无动画）
+    this.targetBeta = null;
+
+    // 到达目标后暂停自动旋转的剩余帧数
+    this.pauseTicks = 0;
+
     // 动画时间计数器（用于脉冲效果）
     this.tick = 0;
 
@@ -721,10 +727,36 @@ export class GlobeRenderer {
   // 更新旋转
   update() {
     this.tick++;
-    if (this.autoRotate && !this.isDragging) {
+    if (this.targetBeta !== null) {
+      // 平滑旋转到目标角度
+      let diff = this.targetBeta - this.beta;
+      // 取最短旋转路径
+      while (diff > 180) diff -= 360;
+      while (diff < -180) diff += 360;
+      if (Math.abs(diff) < 0.5) {
+        this.beta = this.targetBeta;
+        this.targetBeta = null;
+        this.pauseTicks = 300;
+      } else {
+        this.beta += diff * 0.08;
+      }
+    } else if (this.pauseTicks > 0) {
+      this.pauseTicks--;
+      if (this.pauseTicks <= 0) this.autoRotate = true;
+    } else if (this.autoRotate && !this.isDragging) {
       this.beta += this.autoRotateSpeed;
-      if (this.beta >= 360) this.beta -= 360;
     }
+    if (this.beta >= 360) this.beta -= 360;
+    if (this.beta < 0) this.beta += 360;
+  }
+
+  // 将指定图斑旋转到正面中央并选中
+  focusSpot(index) {
+    if (index < 0 || index >= this.spots.length) return;
+    const spot = this.spots[index];
+    this.selectedSpot = index;
+    this.autoRotate = false;
+    this.targetBeta = spot.lng;
   }
 
   // 渲染一帧

@@ -12,6 +12,12 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from sirius_pulse.providers.routing import WorkspaceProviderManager
+from sirius_pulse.providers.routing import (
+    ProviderConfig,
+    _create_provider_instance,
+    ensure_provider_platform_supported,
+    probe_provider_availability,
+)
 from sirius_pulse.webui.auth import AuthManager
 from sirius_pulse.webui.middleware import auth_middleware
 from sirius_pulse.webui.server_skill_api import (
@@ -136,6 +142,7 @@ class WebUIServer:
         self.app.router.add_post("/api/global-config", self.api_global_config_post)
         self.app.router.add_get("/api/providers", self.api_providers_get)
         self.app.router.add_post("/api/providers", self.api_providers_post)
+        self.app.router.add_post("/api/providers/probe", self.api_providers_probe)
         self.app.router.add_get("/api/models", self.api_available_models_get)
         self.app.router.add_get("/api/napcat/status", self.api_napcat_status)
         self.app.router.add_post("/api/napcat/install", self.api_napcat_install)
@@ -146,6 +153,7 @@ class WebUIServer:
         self.app.router.add_get("/api/tokens", self.api_tokens_get)
         self.app.router.add_get("/api/telemetry", self.api_telemetry_get)
         self.app.router.add_get("/api/embedding/status", self.api_embedding_status)
+        self.app.router.add_post("/api/embedding/restart", self.api_embedding_restart)
 
         # 多人格 API: 列表 / 创建 / 删除 / 状态
         self.app.router.add_get("/api/personas", self.api_personas_get)
@@ -404,6 +412,23 @@ class WebUIServer:
     async def api_embedding_status(self, request: web.Request) -> web.Response:
         return _json_response(self.get_embedding_status())
 
+    async def api_embedding_restart(self, request: web.Request) -> web.Response:
+        LOG.info("收到 Embedding 服务重启请求")
+        self._stop_embedding_service()
+        self._embedding_ready = False
+        self._embedding_error = ""
+        import time as _time
+        _time.sleep(1)
+        self._start_embedding_service()
+        import asyncio as _aio
+        for _ in range(30):
+            await _aio.sleep(1)
+            if self._embedding_ready:
+                return _json_response({"success": True, "ready": True})
+            if self._embedding_error:
+                return _json_response({"success": False, "error": self._embedding_error})
+        return _json_response({"success": False, "error": "启动超时"})
+
     # ─── 全局 API: Provider 配置 ──────────────────────────
 
     def _provider_keys_path(self) -> Path:
@@ -481,6 +506,72 @@ class WebUIServer:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
         return _json_response({"success": True})
+
+    # ─── 全局 API: Provider 健康检查 ───────────────────────
+
+    async def api_providers_probe(self, request: web.Request) -> web.Response:
+        """对单个 Provider 执行健康检查（发送 ping 请求验证连通性）。"""
+        import time
+
+        try:
+            body = await request.json()
+        except Exception:
+            return _json_response({"error": "Invalid JSON"}, 400)
+
+        provider_name = str(body.get("name", "")).strip()
+        if not provider_name:
+            return _json_response({"error": "缺少 name 参数"}, 400)
+
+        path = self._provider_keys_path()
+        if not path.exists():
+            return _json_response({"error": "Provider 配置文件不存在"}, 404)
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return _json_response({"error": "读取 Provider 配置失败"}, 500)
+
+        raw_providers = data.get("providers", {}) if isinstance(data, dict) else {}
+        provider_cfg = raw_providers.get(provider_name)
+        if not provider_cfg or not isinstance(provider_cfg, dict):
+            return _json_response({"error": f"未找到 Provider: {provider_name}"}, 404)
+
+        provider_type = str(provider_cfg.get("type", provider_name)).strip()
+        api_key = str(provider_cfg.get("api_key", "")).strip()
+        base_url = str(provider_cfg.get("base_url", "")).strip()
+        healthcheck_model = str(provider_cfg.get("healthcheck_model", "")).strip()
+
+        if not api_key:
+            return _json_response({"error": "该 Provider 未配置 API Key"}, 400)
+        if not healthcheck_model:
+            return _json_response({"error": "该 Provider 未配置 healthcheck_model"}, 400)
+
+        try:
+            normalized_type = ensure_provider_platform_supported(provider_type)
+        except Exception as exc:
+            return _json_response({"error": str(exc)}, 400)
+
+        config = ProviderConfig(
+            provider_type=normalized_type,
+            api_key=api_key,
+            base_url=base_url,
+            healthcheck_model=healthcheck_model,
+            enabled=True,
+        )
+
+        try:
+            provider = _create_provider_instance(config)
+        except Exception as exc:
+            return _json_response({"error": f"创建 Provider 实例失败: {exc}"}, 500)
+
+        t0 = time.monotonic()
+        try:
+            await probe_provider_availability(provider=provider, model_name=healthcheck_model)
+            latency = round((time.monotonic() - t0) * 1000)
+            return _json_response({"success": True, "latency_ms": latency})
+        except Exception as exc:
+            latency = round((time.monotonic() - t0) * 1000)
+            return _json_response({"success": False, "error": str(exc), "latency_ms": latency})
 
     # ─── 全局 API: 可用模型列表 ───────────────────────────
 

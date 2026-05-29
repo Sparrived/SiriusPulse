@@ -100,8 +100,27 @@ export async function navTo(page, name) {
   const ti = themes.find(t => t.id === ct);
 
   const header = document.getElementById('header');
+  const personas = store.personas || [];
+  const currentP = store.currentPersona;
+  const currentPData = personas.find(p => p.name === currentP);
+  const personaLabel = currentPData ? (currentPData.persona_name || currentPData.name) : '选择人格';
+  const personaIcon = currentPData ? '◎' : '○';
+
   header.innerHTML = `
     <div class="header-left">
+      <div class="persona-header-dropdown">
+        <button class="persona-header-btn" id="personaHeaderBtn">${personaIcon} ${personaLabel} <span class="persona-header-arrow">▾</span></button>
+        <div class="persona-header-list" id="personaHeaderList">
+          ${personas.length === 0
+            ? '<div class="persona-header-empty">暂无人格</div>'
+            : personas.map(p => `
+              <div class="persona-header-option${p.name === currentP ? ' active' : ''}" data-name="${p.name}">
+                <span class="persona-header-dot${p.running ? ' running' : ''}"></span>
+                <span class="persona-header-name">${p.persona_name || p.name}</span>
+              </div>
+            `).join('')}
+        </div>
+      </div>
       <h1 class="header-title">${meta.title || ''}</h1>
       <span class="header-breadcrumb">${meta.breadcrumb || ''}</span>
     </div>
@@ -115,6 +134,7 @@ export async function navTo(page, name) {
     </div>
   `;
   setupThemeDropdown();
+  setupPersonaHeaderDropdown();
 
   const main = document.getElementById('main');
   main.innerHTML = '<div class="page-loading">加载中…</div>';
@@ -157,6 +177,32 @@ function setupThemeDropdown() {
   document.addEventListener('click', () => list.classList.remove('open'));
 }
 
+function setupPersonaHeaderDropdown() {
+  const btn = document.getElementById('personaHeaderBtn');
+  const list = document.getElementById('personaHeaderList');
+  if (!btn || !list) return;
+
+  btn.onclick = e => { e.stopPropagation(); list.classList.toggle('open'); };
+
+  list.querySelectorAll('.persona-header-option').forEach(opt => {
+    opt.onclick = async () => {
+      const name = opt.dataset.name;
+      const persona = (store.personas || []).find(p => p.name === name);
+      list.classList.remove('open');
+
+      btn.textContent = `◎ ${persona?.persona_name || name} ▾`;
+      list.querySelectorAll('.persona-header-option').forEach(o => o.classList.toggle('active', o.dataset.name === name));
+
+      await selectPersona(name);
+      if (PERSONA_PAGES.has(currentPage)) {
+        navTo(currentPage, name);
+      }
+    };
+  });
+
+  document.addEventListener('click', () => list.classList.remove('open'));
+}
+
 function renderSidebar() {
   const nav = document.getElementById('sidebarNav');
   nav.innerHTML = NAV_GROUPS.map(group => `
@@ -190,6 +236,7 @@ function renderSidebarFooter() {
 export async function selectPersona(name) {
   store.currentPersona = name;
   try { store.personaState = await get(`/personas/${name}/status`); } catch {}
+  window.dispatchEvent(new CustomEvent('persona:focus', { detail: name }));
   if (PERSONA_PAGES.has(currentPage)) {
     navTo(currentPage, name);
   }

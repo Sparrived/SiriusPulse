@@ -675,13 +675,14 @@ class _EmotionalGroupChatEngineBase:
             gid = _req.group_id
             uid = _req.user_id
             persona_name = _engine.persona.name if _engine.persona else "assistant"
-            _engine.basic_memory.add_entry(
+            _entry = _engine.basic_memory.add_entry(
                 group_id=gid,
                 user_id="assistant",
                 role="assistant",
                 content=_result.clean_text,
                 speaker_name=persona_name,
             )
+            _engine.basic_store.append(_entry)
             try:
                 _engine.semantic_memory.record_response_sent(
                     group_id=gid,

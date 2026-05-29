@@ -231,13 +231,14 @@ class Helpers:
         # 将最终回复录入记忆链（与正常 Pipeline 回复一致，仅成功时记录）
         if final_reply and any_success:
             try:
-                engine.basic_memory.add_entry(
+                _entry = engine.basic_memory.add_entry(
                     group_id=group_id,
                     user_id="assistant",
                     speaker_name=engine.persona.name,
                     role="assistant",
                     content=final_reply,
                 )
+                engine.basic_store.append(_entry)
             except Exception as exc:
                 logger.debug("Plugin 回复录入记忆失败: %s", exc)
 

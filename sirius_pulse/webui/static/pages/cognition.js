@@ -103,7 +103,7 @@ function translateEmotion(em) {
 
 function renderEmotionDistribution(dist) {
   const el = document.querySelector('[data-chart="emotion-dist"]');
-  const entries = Object.entries(dist).sort((a, b) => b[1] - a[1]);
+  const entries = Object.entries(dist);
   if (!entries.length) return;
   renderBarChart(el, {
     labels: entries.map(([k]) => translateEmotion(k)),

@@ -3,11 +3,264 @@ import { get, post, navTo, selectPersona } from '../app.js';
 import { toast, animateNumber, formatHeartbeat, $ } from '../components.js';
 import { GlobeRenderer } from './globe-renderer.js';
 
+// ==================== 动态星空渲染器 ====================
+
+class StarfieldRenderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.stars = [];
+    this.shootingStars = [];
+    this.nebulae = [];
+    this.animId = null;
+    this.time = 0;
+
+    this.resize();
+    this.init();
+    this._onResize = () => {
+      this.resize();
+      this.init();
+    };
+    window.addEventListener('resize', this._onResize);
+  }
+
+  resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.canvas.width = window.innerWidth * dpr;
+    this.canvas.height = window.innerHeight * dpr;
+    this.canvas.style.width = `${window.innerWidth}px`;
+    this.canvas.style.height = `${window.innerHeight}px`;
+    this.ctx.scale(dpr, dpr);
+    this.w = window.innerWidth;
+    this.h = window.innerHeight;
+  }
+
+  init() {
+    this.stars = [];
+    this.nebulae = [];
+
+    // 按层级生成星星：远（小暗）→ 近（大亮）
+    const layers = [
+      { count: 180, radiusMin: 0.3, radiusMax: 0.8, opacityMin: 0.15, opacityMax: 0.4, speedMul: 0.05 },
+      { count: 100, radiusMin: 0.6, radiusMax: 1.4, opacityMin: 0.3, opacityMax: 0.7, speedMul: 0.12 },
+      { count: 50, radiusMin: 1.0, radiusMax: 2.0, opacityMin: 0.5, opacityMax: 0.9, speedMul: 0.25 },
+      { count: 15, radiusMin: 1.8, radiusMax: 2.8, opacityMin: 0.7, opacityMax: 1.0, speedMul: 0.4 },
+    ];
+
+    // 星星色温偏移：暖白 / 冷白 / 淡蓝 / 淡黄
+    const tints = [
+      [255, 255, 255],
+      [200, 220, 255],
+      [255, 245, 230],
+      [180, 210, 255],
+      [255, 240, 220],
+    ];
+
+    for (const layer of layers) {
+      for (let i = 0; i < layer.count; i++) {
+        const tint = tints[Math.floor(Math.random() * tints.length)];
+        const baseR = layer.radiusMin + Math.random() * (layer.radiusMax - layer.radiusMin);
+        this.stars.push({
+          x: Math.random() * this.w,
+          y: Math.random() * this.h,
+          radius: baseR,
+          baseOpacity: layer.opacityMin + Math.random() * (layer.opacityMax - layer.opacityMin),
+          twinkleSpeed: 0.5 + Math.random() * 2.5,
+          twinklePhase: Math.random() * Math.PI * 2,
+          twinkleAmount: 0.2 + Math.random() * 0.5,
+          driftSpeed: layer.speedMul * (0.5 + Math.random() * 0.5),
+          driftAngle: Math.random() * Math.PI * 2,
+          tint,
+          isBright: baseR > 1.6,
+        });
+      }
+    }
+
+    // 星云光晕
+    const nebulaColors = [
+      'rgba(76, 154, 255, 0.012)',
+      'rgba(163, 113, 247, 0.010)',
+      'rgba(63, 185, 80, 0.008)',
+      'rgba(255, 61, 143, 0.006)',
+    ];
+    for (let i = 0; i < 4; i++) {
+      this.nebulae.push({
+        x: Math.random() * this.w,
+        y: Math.random() * this.h,
+        radius: 200 + Math.random() * 300,
+        color: nebulaColors[i % nebulaColors.length],
+        driftX: (Math.random() - 0.5) * 0.08,
+        driftY: (Math.random() - 0.5) * 0.06,
+        phase: Math.random() * Math.PI * 2,
+        pulseSpeed: 0.3 + Math.random() * 0.4,
+      });
+    }
+  }
+
+  spawnShootingStar() {
+    // 随机概率生成流星
+    if (Math.random() > 0.003) return;
+    // 从右上方向左下方飞
+    const startX = this.w * 0.3 + Math.random() * this.w * 0.7;
+    const startY = Math.random() * this.h * 0.35;
+    const angle = Math.PI / 5 + Math.random() * Math.PI / 8;
+    const speed = 5 + Math.random() * 8;
+    const length = 60 + Math.random() * 100;
+
+    this.shootingStars.push({
+      x: startX,
+      y: startY,
+      angle,
+      speed,
+      length,
+      opacity: 1,
+      width: 1.2 + Math.random() * 1.2,
+      // 流星头部颜色（白→蓝白渐变）
+      hue: 200 + Math.random() * 40,
+    });
+  }
+
+  render() {
+    const ctx = this.ctx;
+    const w = this.w;
+    const h = this.h;
+    this.time += 0.016;
+
+    // 清空画布
+    ctx.clearRect(0, 0, w, h);
+
+    // 绘制深空背景渐变
+    const bg = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.75);
+    bg.addColorStop(0, '#0d1120');
+    bg.addColorStop(0.5, '#080c16');
+    bg.addColorStop(1, '#040610');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // 绘制星云光晕
+    for (const neb of this.nebulae) {
+      const pulse = 0.8 + 0.2 * Math.sin(this.time * neb.pulseSpeed + neb.phase);
+      const r = neb.radius * pulse;
+      neb.x += neb.driftX;
+      neb.y += neb.driftY;
+      // 边界回绕
+      if (neb.x < -r) neb.x = w + r;
+      if (neb.x > w + r) neb.x = -r;
+      if (neb.y < -r) neb.y = h + r;
+      if (neb.y > h + r) neb.y = -r;
+
+      const grad = ctx.createRadialGradient(neb.x, neb.y, 0, neb.x, neb.y, r);
+      grad.addColorStop(0, neb.color);
+      grad.addColorStop(1, 'transparent');
+      ctx.fillStyle = grad;
+      ctx.fillRect(neb.x - r, neb.y - r, r * 2, r * 2);
+    }
+
+    // 绘制星星
+    for (const star of this.stars) {
+      const twinkle = Math.sin(this.time * star.twinkleSpeed + star.twinklePhase);
+      const opacity = star.baseOpacity * (1 + twinkle * star.twinkleAmount);
+      const clampedOpacity = Math.max(0, Math.min(1, opacity));
+
+      // 微弱漂移
+      star.x += Math.cos(star.driftAngle) * star.driftSpeed;
+      star.y += Math.sin(star.driftAngle) * star.driftSpeed;
+      // 边界回绕
+      if (star.x < -5) star.x = w + 5;
+      if (star.x > w + 5) star.x = -5;
+      if (star.y < -5) star.y = h + 5;
+      if (star.y > h + 5) star.y = -5;
+
+      const [r, g, b] = star.tint;
+
+      // 亮星额外光晕
+      if (star.isBright) {
+        const glowRadius = star.radius * 4;
+        const glow = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, glowRadius);
+        glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${clampedOpacity * 0.25})`);
+        glow.addColorStop(1, 'transparent');
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, glowRadius, 0, Math.PI * 2);
+        ctx.fillStyle = glow;
+        ctx.fill();
+
+        // 十字光芒
+        const rayLen = star.radius * 3 * (0.7 + twinkle * 0.3);
+        const rayOpacity = clampedOpacity * 0.35;
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${rayOpacity})`;
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(star.x - rayLen, star.y);
+        ctx.lineTo(star.x + rayLen, star.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(star.x, star.y - rayLen);
+        ctx.lineTo(star.x, star.y + rayLen);
+        ctx.stroke();
+      }
+
+      // 星星本体
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${clampedOpacity})`;
+      ctx.fill();
+    }
+
+    // 流星
+    this.spawnShootingStar();
+    this.shootingStars = this.shootingStars.filter(s => s.opacity > 0.02);
+    for (const s of this.shootingStars) {
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.angle);
+
+      // 流星尾巴渐变
+      const tailGrad = ctx.createLinearGradient(0, 0, -s.length, 0);
+      tailGrad.addColorStop(0, `hsla(${s.hue}, 80%, 90%, ${s.opacity})`);
+      tailGrad.addColorStop(0.3, `hsla(${s.hue}, 60%, 70%, ${s.opacity * 0.5})`);
+      tailGrad.addColorStop(1, 'transparent');
+
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-s.length, 0);
+      ctx.strokeStyle = tailGrad;
+      ctx.lineWidth = s.width;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      // 流星头部亮点
+      const headGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, s.width * 3);
+      headGrad.addColorStop(0, `hsla(${s.hue}, 100%, 95%, ${s.opacity})`);
+      headGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = headGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, s.width * 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+
+      s.x += Math.cos(s.angle) * s.speed;
+      s.y += Math.sin(s.angle) * s.speed;
+      s.opacity -= 0.012;
+    }
+  }
+
+  destroy() {
+    if (this.animId) {
+      cancelAnimationFrame(this.animId);
+      this.animId = null;
+    }
+    window.removeEventListener('resize', this._onResize);
+  }
+}
+
 // ==================== 应用状态 ====================
 
 let globe = null;
+let starfield = null;
 let currentPersona = null;
 let personasData = [];
+let onPersonaFocus = null;
 
 // 人格图斑颜色配置
 const PERSONA_COLORS = [
@@ -22,10 +275,18 @@ const PERSONA_COLORS = [
 // ==================== 初始化 ====================
 
 export async function init(container) {
+  initStarfield();
   initGlobe();
   await Promise.all([loadStats(), loadPersonas()]);
   startAnimationLoop();
   bindEvents();
+}
+
+// 初始化星空背景
+function initStarfield() {
+  const canvas = document.getElementById('starfieldCanvas');
+  if (!canvas) return;
+  starfield = new StarfieldRenderer(canvas);
 }
 
 // 初始化球体
@@ -42,11 +303,15 @@ function initGlobe() {
 // ==================== 动画循环 ====================
 
 function startAnimationLoop() {
-  if (!globe) return;
-
   const animate = () => {
-    globe.render();
-    updatePersonaCards();
+    // 星空背景始终渲染（无论球体是否存在）
+    if (starfield) {
+      starfield.render();
+    }
+    if (globe) {
+      globe.render();
+      updatePersonaCards();
+    }
     requestAnimationFrame(animate);
   };
   animate();
@@ -155,6 +420,17 @@ function bindEvents() {
   const canvas = document.getElementById('planetGlobe');
   if (!canvas || !globe) return;
 
+  // 顶栏下拉框选择人格时，联动球体旋转
+  onPersonaFocus = (e) => {
+    const name = e.detail;
+    const idx = personasData.findIndex(p => p.name === name);
+    if (idx >= 0 && globe) {
+      globe.focusSpot(idx);
+      updatePersonaPanel(idx);
+    }
+  };
+  window.addEventListener('persona:focus', onPersonaFocus);
+
   // 鼠标事件
   canvas.addEventListener('mousedown', (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -260,6 +536,143 @@ function bindEvents() {
       }
     });
   }
+
+  // 统计项点击涟漪效果
+  document.querySelectorAll('.stat-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      const ripple = document.createElement('span');
+      ripple.className = 'stat-ripple';
+      const rect = item.getBoundingClientRect();
+      const size = Math.max(rect.width, rect.height) * 2;
+      ripple.style.width = ripple.style.height = `${size}px`;
+      ripple.style.left = `${e.clientX - rect.left - size / 2}px`;
+      ripple.style.top = `${e.clientY - rect.top - size / 2}px`;
+      item.appendChild(ripple);
+      setTimeout(() => ripple.remove(), 500);
+    });
+  });
+
+  // Embedding 状态点击 → 弹窗
+  const embeddingItem = $('dsEmbedding')?.closest('.stat-item');
+  if (embeddingItem) {
+    embeddingItem.addEventListener('click', () => showEmbeddingModal());
+  }
+}
+
+// ==================== Embedding 气泡弹窗 ====================
+
+function closeEmbedPopover() {
+  const pop = document.getElementById('embedPopover');
+  if (pop) {
+    pop.style.animation = 'popover-pop-in 0.15s ease reverse forwards';
+    setTimeout(() => pop.remove(), 150);
+  }
+  document.removeEventListener('click', onEmbedOutsideClick);
+}
+
+function onEmbedOutsideClick(e) {
+  const pop = document.getElementById('embedPopover');
+  if (pop && !pop.contains(e.target)) {
+    closeEmbedPopover();
+  }
+}
+
+async function showEmbeddingModal() {
+  const existing = document.getElementById('embedPopover');
+  if (existing) { closeEmbedPopover(); return; }
+
+  let status = { running: false, ready: false, error: '加载中...' };
+  try { status = await get('/embedding/status'); } catch {}
+
+  const embeddingItem = $('dsEmbedding')?.closest('.stat-item');
+  if (!embeddingItem) return;
+
+  const parent = embeddingItem.closest('.arc-panel-content') || embeddingItem.parentElement;
+  parent.style.position = 'relative';
+
+  const pop = document.createElement('div');
+  pop.id = 'embedPopover';
+  pop.className = 'embed-popover';
+
+  // 定位到 embedding 项右侧
+  const itemRect = embeddingItem.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+  pop.style.left = `${itemRect.right - parentRect.left + 8}px`;
+  pop.style.top = `${itemRect.top - parentRect.top}px`;
+
+  function renderPopover(s) {
+    const stateText = s.ready ? '就绪' : s.running ? '加载中' : '离线';
+    const stateColor = s.ready ? 'var(--success)' : s.running ? 'var(--warn)' : 'var(--text-3)';
+    const dotClass = s.ready ? 'running' : '';
+
+    pop.innerHTML = `
+      <div class="embed-popover-title">Embedding 服务</div>
+      <div class="embed-popover-status">
+        <span class="status-dot ${dotClass}" style="width:7px;height:7px"></span>
+        <span style="color:${stateColor};font-size:13px">${stateText}</span>
+      </div>
+      ${s.error ? `<div style="color:var(--text-3);font-size:11px;margin-bottom:10px;word-break:break-all">${s.error}</div>` : ''}
+      <div class="embed-popover-actions">
+        <button class="btn btn-primary btn-sm" id="embedRestartBtn">重启</button>
+        <button class="btn btn-sm" id="embedRefreshBtn">刷新</button>
+      </div>
+    `;
+
+    const refreshBtn = pop.querySelector('#embedRefreshBtn');
+    const restartBtn = pop.querySelector('#embedRestartBtn');
+
+    if (refreshBtn) refreshBtn.onclick = async (e) => {
+      e.stopPropagation();
+      try {
+        const fresh = await get('/embedding/status');
+        renderPopover(fresh);
+        updateEmbeddingPanel(fresh);
+      } catch { toast('刷新失败', 'error'); }
+    };
+
+    if (restartBtn) restartBtn.onclick = async (e) => {
+      e.stopPropagation();
+      restartBtn.disabled = true;
+      restartBtn.textContent = '重启中…';
+      try {
+        const res = await post('/embedding/restart', {});
+        if (res.success) {
+          toast('Embedding 服务已重启', 'success');
+          renderPopover({ running: true, ready: true, error: '' });
+          updateEmbeddingPanel({ running: true, ready: true, error: '' });
+        } else {
+          toast('重启失败: ' + (res.error || '未知错误'), 'error');
+          renderPopover({ running: false, ready: false, error: res.error || '重启失败' });
+        }
+      } catch {
+        toast('重启请求失败', 'error');
+        restartBtn.disabled = false;
+        restartBtn.textContent = '重启';
+      }
+    };
+  }
+
+  renderPopover(status);
+  parent.appendChild(pop);
+
+  setTimeout(() => document.addEventListener('click', onEmbedOutsideClick), 0);
+}
+
+function updateEmbeddingPanel(s) {
+  if (!$('dsEmbedding') || !$('dsEmbeddingIcon')) return;
+  if (s.ready) {
+    $('dsEmbedding').textContent = '就绪';
+    $('dsEmbedding').style.color = 'var(--success)';
+    $('dsEmbeddingIcon').style.color = 'var(--success)';
+  } else if (s.running) {
+    $('dsEmbedding').textContent = '加载中';
+    $('dsEmbedding').style.color = 'var(--warn)';
+    $('dsEmbeddingIcon').style.color = 'var(--warn)';
+  } else {
+    $('dsEmbedding').textContent = '离线';
+    $('dsEmbedding').style.color = 'var(--text-3)';
+    $('dsEmbeddingIcon').style.color = 'var(--text-3)';
+  }
 }
 
 // 更新右侧面板
@@ -289,9 +702,10 @@ function updatePersonaPanel(index) {
 
 async function loadStats() {
   try {
-    const [tokenRes, telemetryRes] = await Promise.all([
+    const [tokenRes, telemetryRes, embeddingRes] = await Promise.all([
       get('/tokens').catch(() => ({})),
       get('/telemetry').catch(() => ({})),
+      get('/embedding/status').catch(() => ({})),
     ]);
 
     const s = tokenRes.summary || {};
@@ -322,6 +736,23 @@ async function loadStats() {
     if ($('dsHeartbeat') && personas.length > 0) {
       const latest = personas.reduce((a, b) => (a.heartbeat_at || 0) > (b.heartbeat_at || 0) ? a : b);
       $('dsHeartbeat').textContent = formatHeartbeat(latest.heartbeat_at);
+    }
+
+    // Embedding 状态
+    if ($('dsEmbedding') && $('dsEmbeddingIcon')) {
+      if (embeddingRes.ready) {
+        $('dsEmbedding').textContent = '就绪';
+        $('dsEmbedding').style.color = 'var(--success)';
+        $('dsEmbeddingIcon').style.color = 'var(--success)';
+      } else if (embeddingRes.running) {
+        $('dsEmbedding').textContent = '加载中';
+        $('dsEmbedding').style.color = 'var(--warn)';
+        $('dsEmbeddingIcon').style.color = 'var(--warn)';
+      } else {
+        $('dsEmbedding').textContent = '离线';
+        $('dsEmbedding').style.color = 'var(--text-3)';
+        $('dsEmbeddingIcon').style.color = 'var(--text-3)';
+      }
     }
   } catch (e) {
     console.error('统计数据加载失败:', e);
@@ -367,6 +798,14 @@ function initPersonaSpots() {
 // ==================== 清理 ====================
 
 export function destroy() {
+  if (onPersonaFocus) {
+    window.removeEventListener('persona:focus', onPersonaFocus);
+    onPersonaFocus = null;
+  }
+  if (starfield) {
+    starfield.destroy();
+    starfield = null;
+  }
   if (globe) {
     globe.destroy();
     globe = null;

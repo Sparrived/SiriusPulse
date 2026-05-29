@@ -459,13 +459,14 @@ class DelayedQueueTasks:
             )
 
             # Persist intermediate skill turns into basic memory
-            engine.basic_memory.add_entry(
+            _entry = engine.basic_memory.add_entry(
                 group_id=group_id,
                 user_id="assistant",
                 role="assistant",
                 content=strip_skill_calls(reply),
                 speaker_name=engine.persona.name if engine.persona else "assistant",
             )
+            engine.basic_store.append(_entry)
             if skill_results:
                 _MEMORY_SKILL_RESULT_CHAR_LIMIT = 4000
                 _raw = "\n".join(skill_results)
@@ -478,7 +479,7 @@ class DelayedQueueTasks:
                         f"{_truncated}\n\n"
                         f"{PromptFactory.build_memory_skill_truncation(_MEMORY_SKILL_RESULT_CHAR_LIMIT, len(_raw))}"
                     )
-                engine.basic_memory.add_entry(
+                _sys_entry = engine.basic_memory.add_entry(
                     group_id=group_id,
                     user_id="skill_system",
                     role="system",
@@ -486,6 +487,7 @@ class DelayedQueueTasks:
                         _raw, _MEMORY_SKILL_RESULT_CHAR_LIMIT
                     ),
                 )
+                engine.basic_store.append(_sys_entry)
 
         # If the loop ended because max rounds were exhausted and the last round
         # already sent a partial reply, don't duplicate that text as the final reply.
@@ -537,13 +539,14 @@ class DelayedQueueTasks:
             engine._recent_sent_replies[group_id] = recent_replies
 
         if clean_reply:
-            engine.basic_memory.add_entry(
+            _reply_entry = engine.basic_memory.add_entry(
                 group_id=group_id,
                 user_id="assistant",
                 role="assistant",
                 content=clean_reply,
                 speaker_name=engine.persona.name if engine.persona else "assistant",
             )
+            engine.basic_store.append(_reply_entry)
             # 反馈追踪：AI 发言后记录锚点，等待用户跟进
             target_uid = triggered[0].user_id or ""
             engine.semantic_memory.record_response_sent(
