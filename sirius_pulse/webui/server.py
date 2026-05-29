@@ -3,14 +3,12 @@
 提供 REST API + 内嵌前端页面，用于：
 - 多个人格的列表、状态、启停管理
 - 每人格的 Provider / 人格 / 模型编排 / Adapter / Experience 配置
-- 全局 NapCat 管理
 - 每人格的 Skill 启停与配置管理
 
 实现已拆分到：
   - server_core   : WebUIServer 类定义、路由、生命周期、全局 API
   - persona_api   : 人格列表/创建/删除/状态/启停/配置/访谈/模型编排/体验/Adapter/引擎重载
   - memory_api    : Token 统计（全局+人格）、认知事件、日记、向量存储状态、用户画像
-  - napcat_api    : NapCat 状态/安装/配置/启动/停止/日志
   - server_skill_api: Skill 管理（已存在）
 
 本模块作为向后兼容的 shim，重新导出 WebUIServer。
@@ -59,14 +57,6 @@ from sirius_pulse.webui.biography_api import (
     api_persona_biography_get,
     api_persona_biography_alias_index,
     api_persona_biography_alias_index_update,
-)
-from sirius_pulse.webui.napcat_api import (
-    api_napcat_status,
-    api_napcat_install,
-    api_napcat_configure,
-    api_napcat_logs,
-    api_napcat_start,
-    api_napcat_stop,
 )
 from sirius_pulse.webui.server_skill_api import (
     api_persona_skills_get,
@@ -202,26 +192,6 @@ class WebUIServer(_WebUIServer):
 
     async def api_config_post(self, request):
         return await api_config_post(request, self.persona_manager)
-
-    # ─── NapCat 管理 ──────────────────────────────────────
-
-    async def api_napcat_status(self, request):
-        return await api_napcat_status(request, self.napcat_manager)
-
-    async def api_napcat_install(self, request):
-        return await api_napcat_install(request, self.napcat_manager)
-
-    async def api_napcat_configure(self, request):
-        return await api_napcat_configure(request, self.napcat_manager)
-
-    async def api_napcat_logs(self, request):
-        return await api_napcat_logs(request, self.napcat_manager)
-
-    async def api_napcat_start(self, request):
-        return await api_napcat_start(request, self.napcat_manager)
-
-    async def api_napcat_stop(self, request):
-        return await api_napcat_stop(request, self.napcat_manager)
 
     # ─── Plugin 管理（全局） ──────────────────────────────
 

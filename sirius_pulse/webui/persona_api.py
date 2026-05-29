@@ -59,7 +59,8 @@ async def api_personas_post(request: web.Request, persona_manager: Any) -> web.R
     if not name.replace("_", "").replace("-", "").isalnum():
         return _json_response({"error": "name 只能包含字母、数字、下划线和连字符"}, 400)
 
-    persona_manager.create_persona(name)
+    persona_name = str(body.get("persona_name", "")).strip() or None
+    persona_manager.create_persona(name, persona_name=persona_name)
     return _json_response({"success": True, "name": name})
 
 

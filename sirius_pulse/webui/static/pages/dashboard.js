@@ -41,10 +41,10 @@ class StarfieldRenderer {
 
     // 按层级生成星星：远（小暗）→ 近（大亮）
     const layers = [
-      { count: 180, radiusMin: 0.3, radiusMax: 0.8, opacityMin: 0.15, opacityMax: 0.4, speedMul: 0.05 },
-      { count: 100, radiusMin: 0.6, radiusMax: 1.4, opacityMin: 0.3, opacityMax: 0.7, speedMul: 0.12 },
-      { count: 50, radiusMin: 1.0, radiusMax: 2.0, opacityMin: 0.5, opacityMax: 0.9, speedMul: 0.25 },
-      { count: 15, radiusMin: 1.8, radiusMax: 2.8, opacityMin: 0.7, opacityMax: 1.0, speedMul: 0.4 },
+      { count: 180, radiusMin: 0.3, radiusMax: 0.8, opacityMin: 0.15, opacityMax: 0.4 },
+      { count: 100, radiusMin: 0.6, radiusMax: 1.4, opacityMin: 0.3, opacityMax: 0.7 },
+      { count: 50, radiusMin: 1.0, radiusMax: 2.0, opacityMin: 0.5, opacityMax: 0.9 },
+      { count: 15, radiusMin: 1.8, radiusMax: 2.8, opacityMin: 0.7, opacityMax: 1.0 },
     ];
 
     // 星星色温偏移：暖白 / 冷白 / 淡蓝 / 淡黄
@@ -65,11 +65,10 @@ class StarfieldRenderer {
           y: Math.random() * this.h,
           radius: baseR,
           baseOpacity: layer.opacityMin + Math.random() * (layer.opacityMax - layer.opacityMin),
-          twinkleSpeed: 0.5 + Math.random() * 2.5,
+          // 闪烁为核心：差异化的速度和幅度，每颗星有自己的呼吸节奏
+          twinkleSpeed: 0.3 + Math.random() * 3.0,
           twinklePhase: Math.random() * Math.PI * 2,
-          twinkleAmount: 0.2 + Math.random() * 0.5,
-          driftSpeed: layer.speedMul * (0.5 + Math.random() * 0.5),
-          driftAngle: Math.random() * Math.PI * 2,
+          twinkleAmount: 0.35 + Math.random() * 0.55,
           tint,
           isBright: baseR > 1.6,
         });
@@ -98,8 +97,8 @@ class StarfieldRenderer {
   }
 
   spawnShootingStar() {
-    // 随机概率生成流星
-    if (Math.random() > 0.003) return;
+    // 随机概率生成流星（低频率，偶尔划过更有意境）
+    if (Math.random() > 0.0015) return;
     // 从右上方向左下方飞
     const startX = this.w * 0.3 + Math.random() * this.w * 0.7;
     const startY = Math.random() * this.h * 0.35;
@@ -161,15 +160,6 @@ class StarfieldRenderer {
       const twinkle = Math.sin(this.time * star.twinkleSpeed + star.twinklePhase);
       const opacity = star.baseOpacity * (1 + twinkle * star.twinkleAmount);
       const clampedOpacity = Math.max(0, Math.min(1, opacity));
-
-      // 微弱漂移
-      star.x += Math.cos(star.driftAngle) * star.driftSpeed;
-      star.y += Math.sin(star.driftAngle) * star.driftSpeed;
-      // 边界回绕
-      if (star.x < -5) star.x = w + 5;
-      if (star.x > w + 5) star.x = -5;
-      if (star.y < -5) star.y = h + 5;
-      if (star.y > h + 5) star.y = -5;
 
       const [r, g, b] = star.tint;
 

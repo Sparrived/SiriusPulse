@@ -14,7 +14,7 @@ const PAGE_META = {
   'orchestration': { title: '模型编排', breadcrumb: 'Configuration / Orchestration', icon: '⧉' },
   'experience': { title: '体验参数', breadcrumb: 'Configuration / Experience', icon: '◇' },
   'adapters': { title: '适配器', breadcrumb: 'Configuration / Adapters', icon: '⟐' },
-  'skills': { title: 'Skills', breadcrumb: 'Configuration / Skills', icon: '⏣' },
+  'skills': { title: 'Skills', breadcrumb: 'Extensions / Skills', icon: '⏣' },
   'token-tracker': { title: 'Token 追踪', breadcrumb: 'Analytics / Tokens', icon: '△' },
   'cognition': { title: '认知分析', breadcrumb: 'Analytics / Cognition', icon: '◎' },
   'diary': { title: '日记', breadcrumb: 'Analytics / Diary', icon: '◫' },
@@ -24,8 +24,7 @@ const PAGE_META = {
   'memory-viz': { title: '记忆可视化', breadcrumb: 'Analytics / Memory', icon: '◲' },
   'monitoring': { title: '系统监控', breadcrumb: 'Monitoring / Overview', icon: '◉' },
   'monitoring-detail': { title: '人格详情', breadcrumb: 'Monitoring / Detail', icon: '◉' },
-  'napcat': { title: 'NapCat', breadcrumb: 'Platform / NapCat', icon: '◈' },
-  'plugins': { title: '插件', breadcrumb: 'Platform / Plugins', icon: '⬡' },
+  'plugins': { title: '插件', breadcrumb: 'Extensions / Plugins', icon: '⬡' },
 };
 
 const NAV_GROUPS = [
@@ -40,7 +39,6 @@ const NAV_GROUPS = [
     { page: 'orchestration', icon: '⧉', label: '模型编排' },
     { page: 'experience', icon: '◇', label: '体验参数' },
     { page: 'adapters', icon: '⟐', label: 'Adapter' },
-    { page: 'skills', icon: '⏣', label: 'Skills' },
   ]},
   { label: '分析', items: [
     { page: 'token-tracker', icon: '△', label: 'Token 追踪' },
@@ -52,8 +50,8 @@ const NAV_GROUPS = [
     { page: 'memory-viz', icon: '◲', label: '记忆可视化' },
   ]},
   { label: '监控', items: [{ page: 'monitoring', icon: '◉', label: '系统监控' }] },
-  { label: '平台', items: [
-    { page: 'napcat', icon: '◈', label: 'NapCat' },
+  { label: '扩展', items: [
+    { page: 'skills', icon: '⏣', label: 'Skills' },
     { page: 'plugins', icon: '⬡', label: '插件' },
   ]},
 ];

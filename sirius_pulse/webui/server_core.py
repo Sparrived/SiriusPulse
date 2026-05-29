@@ -52,12 +52,10 @@ class WebUIServer:
         persona_manager: Any,
         host: str = "0.0.0.0",
         port: int = 8080,
-        napcat_manager: Any | None = None,
     ) -> None:
         self.persona_manager = persona_manager
         self.host = host
         self.port = port
-        self.napcat_manager = napcat_manager
         self.ws_manager = WebSocketManager()
         self.auth_manager = AuthManager(Path(persona_manager.data_path))
         self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
@@ -78,12 +76,6 @@ class WebUIServer:
     # ─── 子类 API 桩方法（Pylance 类型提示用，运行时由 server.py 覆盖）───
 
     if TYPE_CHECKING:
-        async def api_napcat_status(self, request: web.Request) -> web.Response: ...
-        async def api_napcat_install(self, request: web.Request) -> web.Response: ...
-        async def api_napcat_configure(self, request: web.Request) -> web.Response: ...
-        async def api_napcat_start(self, request: web.Request) -> web.Response: ...
-        async def api_napcat_stop(self, request: web.Request) -> web.Response: ...
-        async def api_napcat_logs(self, request: web.Request) -> web.Response: ...
         async def api_tokens_get(self, request: web.Request) -> web.Response: ...
         async def api_telemetry_get(self, request: web.Request) -> web.Response: ...
         async def api_personas_get(self, request: web.Request) -> web.Response: ...
@@ -144,12 +136,6 @@ class WebUIServer:
         self.app.router.add_post("/api/providers", self.api_providers_post)
         self.app.router.add_post("/api/providers/probe", self.api_providers_probe)
         self.app.router.add_get("/api/models", self.api_available_models_get)
-        self.app.router.add_get("/api/napcat/status", self.api_napcat_status)
-        self.app.router.add_post("/api/napcat/install", self.api_napcat_install)
-        self.app.router.add_post("/api/napcat/configure", self.api_napcat_configure)
-        self.app.router.add_post("/api/napcat/start", self.api_napcat_start)
-        self.app.router.add_post("/api/napcat/stop", self.api_napcat_stop)
-        self.app.router.add_get("/api/napcat/logs", self.api_napcat_logs)
         self.app.router.add_get("/api/tokens", self.api_tokens_get)
         self.app.router.add_get("/api/telemetry", self.api_telemetry_get)
         self.app.router.add_get("/api/embedding/status", self.api_embedding_status)
@@ -439,16 +425,16 @@ class WebUIServer:
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                # 脱敏：隐藏真实 key，只保留前 4 位
                 providers: list[dict[str, Any]] = []
                 raw_providers = data.get("providers", {}) if isinstance(data, dict) else {}
                 for k, v in raw_providers.items():
                     if isinstance(v, dict):
-                        key = v.get("api_key", "")
+                        key = str(v.get("api_key", "")).strip()
+                        masked = key[:4] + "****" if len(key) > 4 else ("****" if key else "")
                         providers.append({
                             **v,
                             "name": k,
-                            "api_key": key[:4] + "****" if len(key) > 4 else "****",
+                            "api_key": masked,
                         })
                 return _json_response({"providers": providers})
             except Exception:
@@ -536,7 +522,7 @@ class WebUIServer:
         if not provider_cfg or not isinstance(provider_cfg, dict):
             return _json_response({"error": f"未找到 Provider: {provider_name}"}, 404)
 
-        provider_type = str(provider_cfg.get("type", provider_name)).strip()
+        provider_type = str(provider_cfg.get("type", "") or provider_cfg.get("platform_type", "") or provider_name).strip()
         api_key = str(provider_cfg.get("api_key", "")).strip()
         base_url = str(provider_cfg.get("base_url", "")).strip()
         healthcheck_model = str(provider_cfg.get("healthcheck_model", "")).strip()

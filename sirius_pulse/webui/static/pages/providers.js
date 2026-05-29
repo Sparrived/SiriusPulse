@@ -85,6 +85,7 @@ function renderList() {
 function renderReadonlyCard(p, i) {
   const typeLabel = TYPE_LABEL_MAP[p.platform_type] || p.platform_type;
   const masked = maskKey(p.api_key);
+  const hasKey = !!masked;
   const models = p.models || [];
   const name = p.name || '';
   const ps = probeStatus[name];
@@ -103,7 +104,7 @@ function renderReadonlyCard(p, i) {
           ${probeHtml}
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm" data-action="probe" data-idx="${i}" data-name="${name}">可用性检查</button>
+          <button class="btn btn-sm" data-action="probe" data-idx="${i}" data-name="${name}"${!hasKey ? ' disabled title="请先配置 API Key"' : ''}>可用性检查</button>
           <button class="btn btn-sm" data-action="edit" data-idx="${i}">编辑</button>
           <button class="btn btn-sm btn-danger" data-action="delete" data-idx="${i}">删除</button>
         </div>
@@ -112,7 +113,7 @@ function renderReadonlyCard(p, i) {
         ${models.length ? models.map(m => `<span class="tag">${m}</span>`).join('') : '<span style="color:var(--text-3);font-size:12px">无模型</span>'}
       </div>
       <div style="display:flex;gap:24px;font-size:12px;color:var(--text-2)">
-        <div><span style="color:var(--text-3)">API Key:</span> ${masked}</div>
+        <div><span style="color:var(--text-3)">API Key:</span> ${hasKey ? masked : '<span style="color:var(--warn)">未配置</span>'}</div>
         <div><span style="color:var(--text-3)">Base URL:</span> ${p.base_url || '—'}</div>
       </div>
     </div>
@@ -420,6 +421,7 @@ function addModelToProvider(idx) {
 
 async function saveAll() {
   const clean = providers.map(p => ({
+    name: p.name || undefined,
     type: p.platform_type,
     base_url: p.base_url,
     api_key: p.api_key,
@@ -438,7 +440,7 @@ async function saveAll() {
 }
 
 function maskKey(key) {
-  if (!key) return '—';
+  if (key === '' || key === null || key === undefined) return '';
   if (key.length <= 8) return '****';
   return key.slice(0, 4) + '****' + key.slice(-4);
 }

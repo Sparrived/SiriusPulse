@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,11 @@ from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_ap
 
 LOG = logging.getLogger("sirius.webui")
 
+# ── 模块级缓存，避免每次 API 请求都重新扫描磁盘和执行 importlib ──
+_skill_registry_cache: dict[str, tuple[float, SkillRegistry]] = {}
+_skill_config_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_CACHE_TTL = 60.0  # 秒
+
 
 def _skill_config_path(persona_dir: Path, skill_name: str) -> Path:
     return persona_dir / "skill_data" / f"{skill_name}.config.json"
@@ -23,34 +29,59 @@ def _persona_skill_config_path(persona_dir: Path) -> Path:
     return persona_dir / "skill_data" / ".persona_skills.json"
 
 
+def _invalidate_skill_cache(persona_dir: Path) -> None:
+    """清除指定人格的 skill 缓存。"""
+    key = str(persona_dir)
+    _skill_registry_cache.pop(key, None)
+    _skill_config_cache.pop(key, None)
+
+
 def _load_skill_registry(persona_dir: Path) -> SkillRegistry:
-    """从人格目录加载所有 skill（内置 + 人格级）。"""
+    """从人格目录加载所有 skill（内置 + 人格级），带模块级缓存。"""
+    key = str(persona_dir)
+    now = time.monotonic()
+    cached = _skill_registry_cache.get(key)
+    if cached is not None:
+        ts, registry = cached
+        if now - ts < _CACHE_TTL:
+            return registry
     registry = SkillRegistry()
     registry.load_from_directory(
         persona_dir / "skills",
         auto_install_deps=False,
         include_builtin=True,
     )
+    _skill_registry_cache[key] = (now, registry)
     return registry
 
 
 def _load_persona_skill_config(persona_dir: Path) -> dict[str, Any]:
-    """加载人格级 skill 配置（启停状态、默认参数等）。"""
+    """加载人格级 skill 配置（启停状态、默认参数等），带模块级缓存。"""
+    key = str(persona_dir)
+    now = time.monotonic()
+    cached = _skill_config_cache.get(key)
+    if cached is not None:
+        ts, config = cached
+        if now - ts < _CACHE_TTL:
+            return config
+    config: dict[str, Any] = {}
     path = _persona_skill_config_path(persona_dir)
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            config = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             LOG.warning("加载人格 skill 配置失败", exc_info=True)
-            pass
-    return {}
+    _skill_config_cache[key] = (now, config)
+    return config
 
 
 def _save_persona_skill_config(persona_dir: Path, config: dict[str, Any]) -> None:
-    """保存人格级 skill 配置。"""
+    """保存人格级 skill 配置，并清除配置缓存。"""
     from sirius_pulse.config.file_io import atomic_json_save
 
     atomic_json_save(_persona_skill_config_path(persona_dir), config)
+    # 写入后清除配置缓存，确保下次读取拿到最新值
+    _skill_config_cache.pop(str(persona_dir), None)
 
 
 @handle_api_errors

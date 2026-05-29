@@ -22,7 +22,9 @@ export async function init(container) {
         </div>
       </div>
       <form id="globalSettingsForm">
-        ${FIELDS.map(f => renderField(f)).join('')}
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px">
+          ${FIELDS.map(f => renderField(f)).join('')}
+        </div>
         <div style="margin-top:24px;display:flex;justify-content:flex-end;gap:12px">
           <button type="button" class="btn" id="gsResetBtn">重置</button>
           <button type="submit" class="btn btn-primary" id="gsSaveBtn">保存设置</button>

@@ -9,6 +9,7 @@ v1.2+: 支持插件自定义配置（如 chat_analyzer 的时间配置）
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +17,15 @@ from aiohttp import web
 
 from sirius_pulse.plugins.loader import PluginLoader
 from sirius_pulse.plugins.config import get_config_manager
+from sirius_pulse.plugins.models import PluginDefinition
 from sirius_pulse.webui.server_core import _json_response
 from sirius_pulse.webui.server_utils import handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
+
+# ── 模块级缓存，避免每次 API 请求都重新扫描磁盘和执行 importlib ──
+_plugin_definitions_cache: dict[str, tuple[float, list[PluginDefinition]]] = {}
+_CACHE_TTL = 60.0  # 秒
 
 
 def _plugins_dir(manager: Any) -> Path:
@@ -30,6 +36,26 @@ def _plugins_dir(manager: Any) -> Path:
 def _get_config_manager(manager: Any) -> Any:
     """获取配置管理器实例。"""
     return get_config_manager(_plugins_dir(manager))
+
+
+def _invalidate_plugin_cache(plugins_dir: Path) -> None:
+    """清除指定插件目录的定义缓存。"""
+    _plugin_definitions_cache.pop(str(plugins_dir), None)
+
+
+def _load_definitions_cached(plugins_dir: Path) -> list[PluginDefinition]:
+    """加载插件定义，带模块级缓存。"""
+    key = str(plugins_dir)
+    now = time.monotonic()
+    cached = _plugin_definitions_cache.get(key)
+    if cached is not None:
+        ts, definitions = cached
+        if now - ts < _CACHE_TTL:
+            return definitions
+    loader = PluginLoader(plugins_dir)
+    definitions = loader.load_all_definitions()
+    _plugin_definitions_cache[key] = (now, definitions)
+    return definitions
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -43,8 +69,7 @@ async def api_plugins_get(request: web.Request, manager: Any) -> web.Response:
     if not plugins_dir.exists():
         return _json_response({"plugins": []})
 
-    loader = PluginLoader(plugins_dir)
-    definitions = loader.load_all_definitions()
+    definitions = _load_definitions_cached(plugins_dir)
     config_manager = _get_config_manager(manager)
 
     plugins: list[dict[str, Any]] = []
@@ -155,11 +180,10 @@ async def api_plugin_detail_get(request: web.Request, manager: Any) -> web.Respo
         return _json_response({"error": "缺少 plugin_name"}, 400)
 
     plugins_dir = _plugins_dir(manager)
-    loader = PluginLoader(plugins_dir)
     config_manager = _get_config_manager(manager)
     config_manager.reload()  # 热重载，确保读取最新的磁盘配置
 
-    definitions = loader.load_all_definitions()
+    definitions = _load_definitions_cached(plugins_dir)
     definition = next((d for d in definitions if d.name == plugin_name), None)
     if definition is None:
         return _json_response({"error": f"插件 {plugin_name} 不存在"}, 404)
@@ -398,8 +422,14 @@ async def api_plugins_reload(request: web.Request, manager: Any) -> web.Response
     if not plugins_dir.exists():
         return _json_response({"plugins": []})
 
+    # 清除缓存，强制重新加载
+    _invalidate_plugin_cache(plugins_dir)
+
     loader = PluginLoader(plugins_dir)
     definitions = loader.load_all_definitions()
+
+    # 更新缓存
+    _plugin_definitions_cache[str(plugins_dir)] = (time.monotonic(), definitions)
 
     config_manager = _get_config_manager(manager)
     config_manager.reload()
