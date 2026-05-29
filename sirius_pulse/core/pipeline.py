@@ -368,6 +368,31 @@ class Pipeline:
             getattr(decision_result, "reason", ""),
         )
 
+        # 持久化决策事件到 cognition_events.db（供 WebUI 分析）
+        try:
+            strategy_val = decision_result.strategy.value if hasattr(decision_result.strategy, "value") else str(decision_result.strategy)
+            engine.cognition_store.add_decision(
+                group_id=group_id or "",
+                user_id=user_id or "",
+                strategy=strategy_val,
+                score=decision_result.score,
+                threshold=decision_result.threshold,
+                reason=getattr(decision_result, "reason", ""),
+                directed_score=getattr(intent, "directed_score", 0.0),
+                urgency=getattr(intent, "urgency_score", 0.0),
+                entitlement=getattr(intent, "entitlement_score", 0.0),
+                sarcasm=getattr(intent, "sarcasm_score", 0.0),
+                heat_level=rhythm.heat_level,
+                msg_rate=msg_rate,
+                cooldown=cooldown,
+                since_reply=seconds_since_reply,
+                expressiveness=engine.expressiveness.expressiveness if engine.expressiveness else 0.5,
+                sensitivity=engine.config.get("sensitivity", 0.5),
+                affinity=affinity,
+            )
+        except Exception:
+            pass
+
         # Update assistant emotion
         engine.assistant_emotion.update_from_interaction(emotion, user_id)
 

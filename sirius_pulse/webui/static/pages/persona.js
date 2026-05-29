@@ -43,12 +43,12 @@ export async function init(container, params) {
             <label>社交角色</label>
             <div class="select-wrap">
               <select name="social_role">
-                <option value="caregiver">caregiver</option>
-                <option value="companion">companion</option>
-                <option value="entertainer">entertainer</option>
-                <option value="mentor">mentor</option>
-                <option value="confidant">confidant</option>
-                <option value="observer">observer</option>
+                <option value="caregiver">照顾者</option>
+                <option value="companion">陪伴者</option>
+                <option value="entertainer">活跃气氛者</option>
+                <option value="mentor">导师</option>
+                <option value="confidant">知心朋友</option>
+                <option value="observer">旁观者</option>
               </select>
             </div>
           </div>
@@ -62,10 +62,6 @@ export async function init(container, params) {
             <label>性格特征</label>
             <input type="text" name="personality_traits" placeholder="多个特征用逗号分隔">
           </div>
-          <div class="form-group">
-            <label>口头禅</label>
-            <input type="text" name="catchphrases" placeholder="多条口头禅用逗号分隔">
-          </div>
         </div>
         <div class="form-group">
           <label>沟通风格</label>
@@ -76,10 +72,10 @@ export async function init(container, params) {
             <label>表情偏好</label>
             <div class="select-wrap">
               <select name="emoji_preference">
-                <option value="none">none</option>
-                <option value="subtle">subtle</option>
-                <option value="moderate">moderate</option>
-                <option value="excessive">excessive</option>
+                <option value="none">不使用</option>
+                <option value="subtle">偶尔使用</option>
+                <option value="moderate">适度使用</option>
+                <option value="excessive">频繁使用</option>
               </select>
             </div>
           </div>
@@ -87,12 +83,12 @@ export async function init(container, params) {
             <label>幽默风格</label>
             <div class="select-wrap">
               <select name="humor_style">
-                <option value="none">none</option>
-                <option value="wholesome">wholesome</option>
-                <option value="dry">dry</option>
-                <option value="sarcastic">sarcastic</option>
-                <option value="witty">witty</option>
-                <option value="absurdist">absurdist</option>
+                <option value="none">无</option>
+                <option value="wholesome">温暖幽默</option>
+                <option value="dry">冷面笑匠</option>
+                <option value="sarcastic">讽刺幽默</option>
+                <option value="witty">机智幽默</option>
+                <option value="absurdist">荒诞幽默</option>
               </select>
             </div>
           </div>
@@ -100,11 +96,11 @@ export async function init(container, params) {
             <label>共情风格</label>
             <div class="select-wrap">
               <select name="empathy_style">
-                <option value="none">none</option>
-                <option value="warm">warm</option>
-                <option value="pragmatic">pragmatic</option>
-                <option value="mirror">mirror</option>
-                <option value="analytical">analytical</option>
+                <option value="none">无</option>
+                <option value="warm">温暖型</option>
+                <option value="pragmatic">务实型</option>
+                <option value="mirror">镜像型</option>
+                <option value="analytical">分析型</option>
               </select>
             </div>
           </div>
@@ -144,7 +140,6 @@ async function loadPersonaData(name) {
     form.persona_summary.value = data.persona_summary || '';
     form.personality_traits.value = (data.personality_traits || []).join(', ');
     form.communication_style.value = data.communication_style || '';
-    form.catchphrases.value = (data.catchphrases || []).join(', ');
     form.emoji_preference.value = data.emoji_preference || 'none';
     form.humor_style.value = data.humor_style || 'none';
     form.empathy_style.value = data.empathy_style || 'none';
@@ -167,7 +162,6 @@ async function savePersona(name) {
     persona_summary: form.persona_summary.value,
     personality_traits: form.personality_traits.value.split(',').map(s => s.trim()).filter(Boolean),
     communication_style: form.communication_style.value,
-    catchphrases: form.catchphrases.value.split(',').map(s => s.trim()).filter(Boolean),
     emoji_preference: form.emoji_preference.value,
     humor_style: form.humor_style.value,
     empathy_style: form.empathy_style.value,

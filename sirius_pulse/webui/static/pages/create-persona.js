@@ -16,6 +16,7 @@ const QUESTIONS = [
 ];
 
 let models = [];
+let currentTab = 'interview'; // 'interview' | 'direct'
 
 export async function init(container) {
   const root = container.querySelector('#createPersonaRoot') || container;
@@ -33,7 +34,7 @@ function buildFormHTML() {
       <div class="card-header">
         <div>
           <div class="card-title">新建人格</div>
-          <div class="card-subtitle">填写基本信息并可选回答问卷，由 AI 生成完整人格定义</div>
+          <div class="card-subtitle">选择模式创建新人格</div>
         </div>
         <select id="modelSelect" class="btn btn-sm">
           <option value="">加载模型中...</option>
@@ -55,11 +56,105 @@ function buildFormHTML() {
           </div>
         </div>
 
-        <div style="margin-bottom:16px">
-          <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:4px">访谈问卷（可选）</div>
-          <div style="font-size:12px;color:var(--text-3)">回答问题后将由 AI 生成完整人格定义；留空则创建空白人格</div>
+        <!-- Tab 切换 -->
+        <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid var(--border)">
+          <button id="tabInterview" class="tab-btn active" data-tab="interview">问卷模式</button>
+          <button id="tabDirect" class="tab-btn" data-tab="direct">直接填写</button>
         </div>
-        <div id="questionsContainer" style="display:grid;gap:16px;margin-bottom:20px"></div>
+
+        <!-- 问卷模式 -->
+        <div id="panelInterview" class="tab-panel active">
+          <div style="margin-bottom:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:4px">访谈问卷（可选）</div>
+            <div style="font-size:12px;color:var(--text-3)">回答问题后将由 AI 生成完整人格定义；留空则创建空白人格</div>
+          </div>
+          <div id="questionsContainer" style="display:grid;gap:16px;margin-bottom:20px"></div>
+        </div>
+
+        <!-- 直接填写模式 -->
+        <div id="panelDirect" class="tab-panel" style="display:none">
+          <div style="margin-bottom:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:4px">直接填写人格内容</div>
+            <div style="font-size:12px;color:var(--text-3)">填写以下字段直接创建人格，无需 AI 生成</div>
+          </div>
+          <div style="display:grid;gap:16px;margin-bottom:20px">
+            <div class="form-group">
+              <label>人格概述</label>
+              <textarea id="directSummary" rows="3" placeholder="一句话描述这个角色"></textarea>
+            </div>
+            <div class="form-group">
+              <label>性格特征（逗号分隔）</label>
+              <input type="text" id="directTraits" placeholder="热情、幽默、善解人意">
+            </div>
+            <div class="form-group">
+              <label>背景故事</label>
+              <textarea id="directBackstory" rows="4" placeholder="角色的背景故事"></textarea>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">
+              <div class="form-group">
+                <label>社交角色</label>
+                <div class="select-wrap">
+                  <select id="directSocialRole">
+                    <option value="">请选择</option>
+                    <option value="caregiver">照顾者</option>
+                    <option value="companion">陪伴者</option>
+                    <option value="entertainer">活跃气氛者</option>
+                    <option value="mentor">导师</option>
+                    <option value="confidant">知心朋友</option>
+                    <option value="observer">旁观者</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>表情偏好</label>
+                <div class="select-wrap">
+                  <select id="directEmojiPref">
+                    <option value="">请选择</option>
+                    <option value="none">不使用</option>
+                    <option value="subtle">偶尔使用</option>
+                    <option value="moderate">适度使用</option>
+                    <option value="excessive">频繁使用</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>幽默风格</label>
+                <div class="select-wrap">
+                  <select id="directHumorStyle">
+                    <option value="">请选择</option>
+                    <option value="none">无</option>
+                    <option value="wholesome">温暖幽默</option>
+                    <option value="dry">冷面笑匠</option>
+                    <option value="sarcastic">讽刺幽默</option>
+                    <option value="witty">机智幽默</option>
+                    <option value="absurdist">荒诞幽默</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>共情风格</label>
+                <div class="select-wrap">
+                  <select id="directEmpathyStyle">
+                    <option value="">请选择</option>
+                    <option value="none">无</option>
+                    <option value="warm">温暖型</option>
+                    <option value="pragmatic">务实型</option>
+                    <option value="mirror">镜像型</option>
+                    <option value="analytical">分析型</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>边界设定（逗号分隔）</label>
+              <input type="text" id="directBoundaries" placeholder="不讨论政治、不人身攻击">
+            </div>
+            <div class="form-group">
+              <label>禁忌话题（逗号分隔）</label>
+              <input type="text" id="directTabooTopics" placeholder="政治敏感话题、暴力内容">
+            </div>
+          </div>
+        </div>
 
         <div style="display:flex;gap:12px;align-items:center">
           <button class="btn btn-primary" id="createBtn">创建人格</button>
@@ -74,6 +169,26 @@ function buildFormHTML() {
         </div>
       </div>
     </div>
+    <style>
+      .tab-btn {
+        padding:10px 20px;
+        background:none;
+        border:none;
+        border-bottom:2px solid transparent;
+        color:var(--text-2);
+        font-size:14px;
+        cursor:pointer;
+        margin-bottom:-2px;
+        transition:all 0.2s;
+      }
+      .tab-btn:hover {
+        color:var(--text-1);
+      }
+      .tab-btn.active {
+        color:var(--accent);
+        border-bottom-color:var(--accent);
+      }
+    </style>
   `;
 }
 
@@ -109,7 +224,19 @@ function saveDraft() {
     personaName: $('personaName').value,
     personaAliases: $('personaAliases').value,
     model: $('modelSelect').value,
+    tab: currentTab,
     answers: {},
+    direct: {
+      summary: $('directSummary')?.value || '',
+      traits: $('directTraits')?.value || '',
+      backstory: $('directBackstory')?.value || '',
+      socialRole: $('directSocialRole')?.value || '',
+      emojiPref: $('directEmojiPref')?.value || '',
+      humorStyle: $('directHumorStyle')?.value || '',
+      empathyStyle: $('directEmpathyStyle')?.value || '',
+      boundaries: $('directBoundaries')?.value || '',
+      tabooTopics: $('directTabooTopics')?.value || '',
+    },
   };
   for (let i = 0; i < QUESTIONS.length; i++) {
     const val = $(`answer${i}`)?.value || '';
@@ -131,11 +258,26 @@ function restoreDraft() {
     if (draft.model && $('modelSelect').querySelector(`option[value="${draft.model}"]`)) {
       $('modelSelect').value = draft.model;
     }
+    if (draft.tab) {
+      switchTab(draft.tab);
+    }
     if (draft.answers) {
       for (const [i, val] of Object.entries(draft.answers)) {
         const el = $(`answer${i}`);
         if (el) el.value = val;
       }
+    }
+    if (draft.direct) {
+      const d = draft.direct;
+      if (d.summary && $('directSummary')) $('directSummary').value = d.summary;
+      if (d.traits && $('directTraits')) $('directTraits').value = d.traits;
+      if (d.backstory && $('directBackstory')) $('directBackstory').value = d.backstory;
+      if (d.socialRole && $('directSocialRole')) $('directSocialRole').value = d.socialRole;
+      if (d.emojiPref && $('directEmojiPref')) $('directEmojiPref').value = d.emojiPref;
+      if (d.humorStyle && $('directHumorStyle')) $('directHumorStyle').value = d.humorStyle;
+      if (d.empathyStyle && $('directEmpathyStyle')) $('directEmpathyStyle').value = d.empathyStyle;
+      if (d.boundaries && $('directBoundaries')) $('directBoundaries').value = d.boundaries;
+      if (d.tabooTopics && $('directTabooTopics')) $('directTabooTopics').value = d.tabooTopics;
     }
   } catch {}
 }
@@ -146,8 +288,28 @@ function clearDraft() {
   } catch {}
 }
 
+function switchTab(tab) {
+  currentTab = tab;
+  // 更新按钮状态
+  $('tabInterview').classList.toggle('active', tab === 'interview');
+  $('tabDirect').classList.toggle('active', tab === 'direct');
+  // 更新面板显示
+  $('panelInterview').style.display = tab === 'interview' ? '' : 'none';
+  $('panelDirect').style.display = tab === 'direct' ? '' : 'none';
+}
+
 function bindEvents() {
   $('createBtn').addEventListener('click', createPersona);
+
+  // Tab 切换
+  $('tabInterview').addEventListener('click', () => {
+    switchTab('interview');
+    saveDraft();
+  });
+  $('tabDirect').addEventListener('click', () => {
+    switchTab('direct');
+    saveDraft();
+  });
 
   // 输入变化时自动保存草稿
   const inputs = ['personaId', 'personaName', 'personaAliases'];
@@ -158,6 +320,18 @@ function bindEvents() {
   for (let i = 0; i < QUESTIONS.length; i++) {
     $(`answer${i}`).addEventListener('input', saveDraft);
   }
+
+  // 直接填写模式的输入变化时保存草稿
+  const directInputs = ['directSummary', 'directTraits', 'directBackstory', 'directBoundaries', 'directTabooTopics'];
+  directInputs.forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener('input', saveDraft);
+  });
+  const directSelects = ['directSocialRole', 'directEmojiPref', 'directHumorStyle', 'directEmpathyStyle'];
+  directSelects.forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener('change', saveDraft);
+  });
 }
 
 function getAnsweredQuestions() {
@@ -167,6 +341,29 @@ function getAnsweredQuestions() {
     if (val) answers[String(i + 1)] = val;
   }
   return answers;
+}
+
+function getDirectPersonaData() {
+  const data = {};
+  const summary = $('directSummary').value.trim();
+  if (summary) data.persona_summary = summary;
+  const traits = $('directTraits').value.trim();
+  if (traits) data.personality_traits = traits.split(',').map(s => s.trim()).filter(Boolean);
+  const backstory = $('directBackstory').value.trim();
+  if (backstory) data.backstory = backstory;
+  const socialRole = $('directSocialRole').value;
+  if (socialRole) data.social_role = socialRole;
+  const emojiPref = $('directEmojiPref').value;
+  if (emojiPref) data.emoji_preference = emojiPref;
+  const humorStyle = $('directHumorStyle').value;
+  if (humorStyle) data.humor_style = humorStyle;
+  const empathyStyle = $('directEmpathyStyle').value;
+  if (empathyStyle) data.empathy_style = empathyStyle;
+  const boundaries = $('directBoundaries').value.trim();
+  if (boundaries) data.boundaries = boundaries.split(',').map(s => s.trim()).filter(Boolean);
+  const tabooTopics = $('directTabooTopics').value.trim();
+  if (tabooTopics) data.taboo_topics = tabooTopics.split(',').map(s => s.trim()).filter(Boolean);
+  return data;
 }
 
 async function createPersona() {
@@ -185,9 +382,6 @@ async function createPersona() {
     return;
   }
 
-  const answers = getAnsweredQuestions();
-  const hasAnswers = Object.keys(answers).length > 0;
-
   const btn = $('createBtn');
   const hint = $('createHint');
   btn.disabled = true;
@@ -195,30 +389,57 @@ async function createPersona() {
   hint.textContent = '';
 
   try {
+    // 创建人格目录
     await post('/personas', {
       name: personaId,
       persona_name: personaName || personaId,
     });
 
-    if (hasAnswers) {
-      hint.textContent = '人格目录已创建，正在生成人格定义...';
-      btn.textContent = '生成中...';
+    if (currentTab === 'interview') {
+      // 问卷模式
+      const answers = getAnsweredQuestions();
+      const hasAnswers = Object.keys(answers).length > 0;
 
-      const res = await post(`/personas/${personaId}/persona/interview`, {
-        name: personaName || personaId,
-        aliases: personaAliases ? personaAliases.split(/\s+/) : [],
-        answers,
-        model,
-      });
+      if (hasAnswers) {
+        hint.textContent = '人格目录已创建，正在生成人格定义...';
+        btn.textContent = '生成中...';
 
-      const persona = res.persona || res;
-      $('previewContent').textContent = JSON.stringify(persona, null, 2);
-      $('previewArea').style.display = '';
+        const res = await post(`/personas/${personaId}/persona/interview`, {
+          name: personaName || personaId,
+          aliases: personaAliases ? personaAliases.split(/\s+/) : [],
+          answers,
+          model,
+        });
+
+        const persona = res.persona || res;
+        $('previewContent').textContent = JSON.stringify(persona, null, 2);
+        $('previewArea').style.display = '';
+      }
+    } else {
+      // 直接填写模式
+      const directData = getDirectPersonaData();
+      const hasData = Object.keys(directData).length > 0;
+
+      if (hasData) {
+        hint.textContent = '人格目录已创建，正在保存人格配置...';
+        btn.textContent = '保存中...';
+
+        // 设置名称和别名
+        directData.name = personaName || personaId;
+        if (personaAliases) {
+          directData.aliases = personaAliases.split(/\s+/).filter(Boolean);
+        }
+
+        await post(`/personas/${personaId}/persona/save`, { persona: directData });
+
+        $('previewContent').textContent = JSON.stringify(directData, null, 2);
+        $('previewArea').style.display = '';
+      }
     }
 
     clearDraft();
     flashSuccess(btn);
-    toast(hasAnswers ? '人格创建并生成成功' : '空白人格创建成功');
+    toast('人格创建成功');
 
     // 刷新左侧人格列表
     try {

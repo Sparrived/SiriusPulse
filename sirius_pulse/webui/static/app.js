@@ -27,31 +27,31 @@ const PAGE_META = {
 };
 
 const NAV_GROUPS = [
-  { label: '仪表盘', items: [{ page: 'dashboard', icon: '◈', label: '概览' }] },
-  { label: '全局', items: [
+  { id: 'dashboard', label: '仪表盘', items: [{ page: 'dashboard', icon: '◈', label: '概览' }] },
+  { id: 'global', label: '全局', items: [
     { page: 'global-settings', icon: '⚙', label: '全局设置' },
     { page: 'providers', icon: '⬡', label: 'Provider' },
   ]},
-  { label: '人格配置', items: [
+  { id: 'persona-config', label: '人格配置', items: [
     { page: 'create-persona', icon: '＋', label: '新建人格' },
     { page: 'persona', icon: '◎', label: '人格' },
     { page: 'orchestration', icon: '⧉', label: '模型编排' },
     { page: 'experience', icon: '◇', label: '体验参数' },
     { page: 'adapters', icon: '⟐', label: 'Adapter' },
   ]},
-  { label: '分析', items: [
+  { id: 'analytics', label: '分析', items: [
     { page: 'token-tracker', icon: '△', label: 'Token 追踪' },
     { page: 'cognition', icon: '◎', label: '认知分析' },
     { page: 'skills-tracker', icon: '⟠', label: 'Skill 追踪' },
     { page: 'conversation-history', icon: '◧', label: '对话分析' },
   ]},
-  { label: '记忆', items: [
+  { id: 'memory', label: '记忆', items: [
     { page: 'diary', icon: '◫', label: '日记' },
     { page: 'users', icon: '◐', label: '用户档案' },
     { page: 'glossary', icon: '◱', label: '名词解释' },
     { page: 'memory-viz', icon: '◲', label: '记忆可视化' },
   ]},
-  { label: '扩展', items: [
+  { id: 'extensions', label: '扩展', items: [
     { page: 'skills', icon: '⏣', label: 'Skills' },
     { page: 'plugins', icon: '⬡', label: '插件' },
   ]},
@@ -65,6 +65,14 @@ const PERSONA_PAGES = new Set([
 
 let currentPage = '';
 let pageModules = {};
+let sidebarCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+
+// 从localStorage加载分组折叠状态
+let collapsedGroups = {};
+try {
+  const saved = localStorage.getItem('nav-groups-collapsed');
+  if (saved) collapsedGroups = JSON.parse(saved);
+} catch {}
 
 window.navTo = navTo;
 window.selectPersona = selectPersona;
@@ -89,6 +97,7 @@ export async function navTo(page, name) {
   if (name) store.currentPersona = name;
 
   currentPage = page;
+  window.location.hash = page;
 
   const nav = document.getElementById('sidebarNav');
   nav.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
@@ -204,18 +213,38 @@ function setupPersonaHeaderDropdown() {
 
 function renderSidebar() {
   const nav = document.getElementById('sidebarNav');
-  nav.innerHTML = NAV_GROUPS.map(group => `
-    <div class="nav-group">
-      <div class="nav-group-label">${group.label}</div>
-      ${group.items.map(item => `
-        <button class="nav-item${currentPage === item.page ? ' active' : ''}" data-page="${item.page}">
-          <span class="nav-icon">${item.icon}</span>
-          <span>${item.label}</span>
-        </button>
-      `).join('')}
+  nav.innerHTML = NAV_GROUPS.map(group => {
+    const isCollapsed = collapsedGroups[group.id] || false;
+    return `
+    <div class="nav-group${isCollapsed ? ' collapsed' : ''}" data-group="${group.id}">
+      <div class="nav-group-label" data-group-id="${group.id}">
+        <span class="nav-group-text">${group.label}</span>
+        <span class="nav-group-arrow">▾</span>
+      </div>
+      <div class="nav-group-items">
+        ${group.items.map(item => `
+          <button class="nav-item${currentPage === item.page ? ' active' : ''}" data-page="${item.page}" data-tooltip="${item.label}">
+            <span class="nav-icon">${item.icon}</span>
+            <span class="nav-label">${item.label}</span>
+          </button>
+        `).join('')}
+      </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
+  // 绑定分组折叠点击事件
+  nav.querySelectorAll('.nav-group-label').forEach(label => {
+    label.onclick = () => {
+      const groupId = label.dataset.groupId;
+      const group = label.closest('.nav-group');
+      collapsedGroups[groupId] = !collapsedGroups[groupId];
+      group.classList.toggle('collapsed', collapsedGroups[groupId]);
+      localStorage.setItem('nav-groups-collapsed', JSON.stringify(collapsedGroups));
+    };
+  });
+
+  // 绑定导航项点击事件
   nav.querySelectorAll('.nav-item').forEach(btn => {
     btn.onclick = () => navTo(btn.dataset.page);
   });
@@ -252,17 +281,37 @@ async function loadPersonas() {
   } catch {}
 }
 
+function setupSidebarToggle() {
+  const sidebar = document.getElementById('sidebar');
+  const toggle = document.getElementById('sidebarToggle');
+  if (!sidebar || !toggle) return;
+
+  // 应用保存的折叠状态
+  if (sidebarCollapsed) {
+    sidebar.classList.add('collapsed');
+  }
+
+  toggle.onclick = () => {
+    sidebarCollapsed = !sidebarCollapsed;
+    sidebar.classList.toggle('collapsed', sidebarCollapsed);
+    localStorage.setItem('sidebar-collapsed', String(sidebarCollapsed));
+  };
+}
+
 async function init() {
   initTheme();
   renderSidebar();
   renderSidebarFooter();
+  setupSidebarToggle();
 
   window.addEventListener('auth:expired', () => {
     window.location.href = '/static/login.html';
   });
   window.addEventListener('auth:login', async () => {
     await loadPersonas();
-    navTo('dashboard');
+    const hashPage = window.location.hash.slice(1);
+    const startPage = PAGE_META[hashPage] ? hashPage : 'dashboard';
+    navTo(startPage);
   });
 
   window.addEventListener('ws:connected', () => {
@@ -284,9 +333,18 @@ async function init() {
     return;
   } else {
     await loadPersonas();
-    navTo('dashboard');
+    const hashPage = window.location.hash.slice(1);
+    const startPage = PAGE_META[hashPage] ? hashPage : 'dashboard';
+    navTo(startPage);
     wsConnect();
   }
+
+  window.addEventListener('hashchange', () => {
+    const hashPage = window.location.hash.slice(1);
+    if (PAGE_META[hashPage] && hashPage !== currentPage) {
+      navTo(hashPage);
+    }
+  });
 
   setInterval(async () => { if (getToken()) await loadPersonas(); }, 8000);
 }

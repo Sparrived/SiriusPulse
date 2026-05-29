@@ -45,6 +45,7 @@ from sirius_pulse.webui.memory_api import (
     api_telemetry_get,
     api_persona_tokens_get,
     api_persona_cognition_get,
+    api_persona_cognition_analysis_get,
     api_persona_diary_get,
     api_persona_vector_store_status_get,
     api_persona_users_get,
@@ -170,6 +171,9 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_cognition_get(self, request):
         return await api_persona_cognition_get(request, self.persona_manager)
+
+    async def api_persona_cognition_analysis_get(self, request):
+        return await api_persona_cognition_analysis_get(request, self.persona_manager)
 
     async def api_persona_diary_get(self, request):
         return await api_persona_diary_get(request, self.persona_manager)

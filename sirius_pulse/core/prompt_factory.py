@@ -208,7 +208,6 @@ class PromptFactory:
         boundaries: list[str] | None = None,
         communication_style: str = "",
         speech_rhythm: str = "",
-        catchphrases: list[str] | None = None,
         humor_style: str = "",
         reply_frequency: str = "",
         taboo_topics: list[str] | None = None,
@@ -297,10 +296,6 @@ class PromptFactory:
             speech_bits.append(f"说话{communication_style}")
         if speech_rhythm:
             speech_bits.append(speech_rhythm)
-        if catchphrases:
-            speech_bits.append(
-                f"口头禅：{'、'.join(f'\"{c}\"' for c in catchphrases[:3])}"
-            )
         if humor_style:
             humor_map = {
                 "sarcastic": " sarcasm 是常态，不损人不会说话",
@@ -332,7 +327,7 @@ class PromptFactory:
             TAG_SCENE_BEHAVIOR + "\n"
             "你在一个多人聊天场景里，会收到其他人的消息。"
             "不需要每条都回，按自己的性格和当下的情绪决定是否开口。"
-            "回应时用自己的说话方式和口头禅，不要刻意解释或总结。"
+            "回应时用自己的说话方式，不要刻意解释或总结。"
         )
 
         sections.append(

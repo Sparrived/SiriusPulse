@@ -37,7 +37,6 @@ _INTERVIEW_QUESTIONS: list[str] = [
     "有没有什么是你绝对不会在群里聊的？",
     "当朋友难过时，你会怎么安慰TA？",
     "你觉得自己在群里更像什么角色？（开心果/和事佬/旁观者/带头大哥/贴心小棉袄）",
-    "说一个你最常说的口头禅。",
     "你平时用表情包多吗？",
 ]
 
@@ -124,7 +123,6 @@ class PersonaGenerator:
             core_values=data.get("core_values", []),
             flaws=data.get("flaws", []),
             communication_style=data.get("communication_style", ""),
-            catchphrases=data.get("catchphrases", []),
             emoji_preference=data.get("emoji_preference", ""),
             humor_style=data.get("humor_style", ""),
             emotional_baseline=data.get("emotional_baseline", {"valence": 0.2, "arousal": 0.3}),
@@ -172,7 +170,6 @@ class PersonaGenerator:
         _extract_section(prompt, "说话风格", profile, "communication_style")
         _extract_section(prompt, "情感", profile, "empathy_style")
         _extract_section(prompt, "幽默", profile, "humor_style")
-        _extract_section(prompt, "口头禅", profile, "catchphrases", list_mode=True)
         _extract_section(prompt, "边界", profile, "boundaries", list_mode=True)
         _extract_section(prompt, "禁忌", profile, "taboo_topics", list_mode=True)
 
@@ -192,7 +189,6 @@ _PERSONA_JSON_SCHEMA = {
     "personality_traits": ["特质1", "特质2"],
     "backstory": "背景故事（可选）",
     "communication_style": "说话风格描述",
-    "catchphrases": ["口头禅1"],
     "emoji_preference": "heavy/moderate/light/none",
     "humor_style": "sarcastic/wholesome/dark/dry/witty/none",
     "emotional_baseline": {"valence": 0.0, "arousal": 0.3},
@@ -285,4 +281,4 @@ def _extract_section(
             setattr(profile, attr, content[:200])
 
 
-_SECTION_HEADERS = "角色简介性格特质说话风格情感表达口头禅行为边界价值观"
+_SECTION_HEADERS = "角色简介性格特质说话风格情感表达行为边界价值观"

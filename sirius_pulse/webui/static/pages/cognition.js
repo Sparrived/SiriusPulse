@@ -4,6 +4,7 @@ import { toast, $ } from '../components.js';
 import {
   renderBarChart,
   renderLineChart,
+  renderPieChart,
   renderRadarChart,
   disposeChart,
 } from '../charts.js';
@@ -17,6 +18,21 @@ const EMOTION_CN = {
   CONFUSION:'困惑',unknown:'未知','':'未知',
 };
 
+const INTENT_CN = {
+  help_seeking:'求助',emotional:'情感表达',social:'社交',
+  silent:'沉默',plugin_command:'插件指令',unknown:'未知','':'未知',
+};
+
+const STRATEGY_CN = {
+  immediate:'立即回复',delayed:'延迟回复',silent:'静默',
+  proactive:'主动发言',plugin:'插件触发',unknown:'未知','':'未知',
+};
+
+const HEAT_CN = {
+  cold:'冷清',warm:'温和',hot:'活跃',overheated:'过热',
+  unknown:'未知','':'未知',
+};
+
 const RADAR_KEYS = [
   'mention_score','reference_score','name_match_score','second_person_score',
   'question_score','imperative_score','topic_relevance_score',
@@ -27,6 +43,9 @@ const RADAR_LABELS = [
   '提及','引用','名称匹配','第二人称','问句','祈使',
   '话题相关','情感表露','寻求关注','时效','轮次',
 ];
+
+const STRATEGY_COLORS = ['#52c41a','#faad14','#8c8c8c','#1890ff','#722ed1'];
+const HEAT_COLORS = ['#d9d9d9','#95de64','#ffc53d','#ff4d4f'];
 
 export async function init(container) {
   container.innerHTML = `
@@ -52,9 +71,72 @@ export async function init(container) {
       <div class="card-header"><div class="card-title">认知事件</div></div>
       <div id="cogTable"></div>
     </div>
+
+    <div style="margin-top:32px;border-top:1px solid var(--border-1);padding-top:24px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">深度分析</div></div>
+        <div class="stat-grid" id="analysisStats"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px">
+        <div class="card">
+          <div class="card-header"><div class="card-title">社交意图分布</div></div>
+          <div data-chart="intent-dist" style="min-height:300px"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">回复策略分布</div></div>
+          <div data-chart="strategy-dist" style="min-height:300px"></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px">
+        <div class="card">
+          <div class="card-header"><div class="card-title">活跃时段分布</div></div>
+          <div data-chart="hourly-dist" style="min-height:300px"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">群聊热度分布</div></div>
+          <div data-chart="heat-dist" style="min-height:300px"></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:20px">
+        <div class="card">
+          <div class="card-header"><div class="card-title">定向分数分布</div></div>
+          <div data-chart="score-directed" style="min-height:250px"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">讽刺分数分布</div></div>
+          <div data-chart="score-sarcasm" style="min-height:250px"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">资格感分数分布</div></div>
+          <div data-chart="score-entitlement" style="min-height:250px"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <div class="card-header"><div class="card-title">决策时间线（分数 vs 阈值）</div></div>
+        <div data-chart="decision-timeline" style="min-height:300px"></div>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <div class="card-header"><div class="card-title">用户认知画像</div></div>
+        <div id="userStatsTable"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px">
+        <div class="card">
+          <div class="card-header"><div class="card-title">决策原因 TOP 15</div></div>
+          <div id="reasonTable"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">群组对比</div></div>
+          <div id="groupSummaryTable"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <div class="card-header"><div class="card-title">决策事件</div></div>
+        <div id="decisionTable"></div>
+      </div>
+    </div>
   `;
 
-  await loadData();
+  await Promise.all([loadData(), loadAnalysis()]);
 }
 
 async function loadData() {
@@ -75,6 +157,30 @@ async function loadData() {
   }
 }
 
+async function loadAnalysis() {
+  const name = store.currentPersona;
+  if (!name) return;
+  try {
+    const res = await get(`/personas/${name}/cognition/analysis`);
+    if (!res.has_data) return;
+    renderAnalysisStats(res);
+    renderIntentDistribution(res.intent_distribution || {});
+    renderStrategyDistribution(res.strategy_distribution || {});
+    renderHourlyDistribution(res.hourly_distribution || {});
+    renderHeatDistribution(res.decision_summary?.heat_distribution || {});
+    renderScoreHistogram('score-directed', '定向', res.score_histograms?.directed);
+    renderScoreHistogram('score-sarcasm', '讽刺', res.score_histograms?.sarcasm);
+    renderScoreHistogram('score-entitlement', '资格感', res.score_histograms?.entitlement);
+    renderDecisionTimeline(res.decision_timeline || []);
+    renderUserStatsTable(res.user_stats || []);
+    renderReasonTable(res.decision_summary?.reason_distribution || {});
+    renderGroupSummaryTable(res.group_summary || []);
+    renderDecisionTable(res.decision_timeline || []);
+  } catch (e) {
+    console.warn('加载深度分析数据失败:', e);
+  }
+}
+
 function renderStats(events, dist) {
   $('cogStats').innerHTML = `
     <div class="stat-card">
@@ -88,6 +194,40 @@ function renderStats(events, dist) {
     <div class="stat-card">
       <div class="stat-label">最新事件</div>
       <div class="stat-value" style="font-size:16px">${events.length ? formatTs(events[0].timestamp) : '—'}</div>
+    </div>
+  `;
+}
+
+function renderAnalysisStats(res) {
+  const ds = res.decision_summary || {};
+  const strategyDist = res.strategy_distribution || {};
+  const totalDecisions = Object.values(strategyDist).reduce((a, b) => a + b, 0);
+  const silentCount = strategyDist.silent || 0;
+  const silentRate = totalDecisions > 0 ? ((silentCount / totalDecisions) * 100).toFixed(1) : '0.0';
+  $('analysisStats').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">决策事件总数</div>
+      <div class="stat-value">${ds.total || 0}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">平均复合分数</div>
+      <div class="stat-value">${(ds.avg_score || 0).toFixed(3)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">平均动态阈值</div>
+      <div class="stat-value">${(ds.avg_threshold || 0).toFixed(3)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">静默率</div>
+      <div class="stat-value">${silentRate}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">平均消息速率</div>
+      <div class="stat-value">${(ds.avg_msg_rate || 0).toFixed(2)}/min</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">活跃用户数</div>
+      <div class="stat-value">${(res.user_stats || []).length}</div>
     </div>
   `;
 }
@@ -189,6 +329,242 @@ function renderEventsTable(events) {
             <td>${e.social_intent || '—'}</td>
             <td>${(e.urgency_score || 0).toFixed(2)}</td>
             <td>${(e.relevance_score || 0).toFixed(2)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ── 深度分析：意图分布饼图 ──────────────────────────────────────
+
+function renderIntentDistribution(dist) {
+  const el = document.querySelector('[data-chart="intent-dist"]');
+  const entries = Object.entries(dist);
+  if (!entries.length) return;
+  renderPieChart(el, {
+    data: entries.map(([k, v]) => ({
+      name: INTENT_CN[k] || k || '未知',
+      value: v,
+    })),
+  });
+}
+
+// ── 深度分析：策略分布饼图 ──────────────────────────────────────
+
+function renderStrategyDistribution(dist) {
+  const el = document.querySelector('[data-chart="strategy-dist"]');
+  const entries = Object.entries(dist);
+  if (!entries.length) {
+    el.innerHTML = '<div style="color:var(--text-3);padding:48px;text-align:center">暂无决策数据</div>';
+    return;
+  }
+  renderPieChart(el, {
+    data: entries.map(([k, v]) => ({
+      name: STRATEGY_CN[k] || k || '未知',
+      value: v,
+    })),
+  });
+}
+
+// ── 深度分析：时段分布 ──────────────────────────────────────────
+
+function renderHourlyDistribution(dist) {
+  const el = document.querySelector('[data-chart="hourly-dist"]');
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const labels = hours.map(h => `${String(h).padStart(2, '0')}:00`);
+  const values = hours.map(h => dist[h] || 0);
+  if (values.every(v => v === 0)) return;
+  renderBarChart(el, {
+    labels,
+    data: [{ name: '认知事件数', values }],
+    colors: ['#1890ff'],
+  });
+}
+
+// ── 深度分析：热度分布 ──────────────────────────────────────────
+
+function renderHeatDistribution(dist) {
+  const el = document.querySelector('[data-chart="heat-dist"]');
+  const entries = Object.entries(dist);
+  if (!entries.length) {
+    el.innerHTML = '<div style="color:var(--text-3);padding:48px;text-align:center">暂无决策数据</div>';
+    return;
+  }
+  const order = ['cold', 'warm', 'hot', 'overheated'];
+  const sorted = entries.sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+  renderPieChart(el, {
+    data: sorted.map(([k, v]) => ({
+      name: HEAT_CN[k] || k,
+      value: v,
+    })),
+  });
+}
+
+// ── 深度分析：分数直方图 ────────────────────────────────────────
+
+function renderScoreHistogram(chartId, label, histogram) {
+  const el = document.querySelector(`[data-chart="${chartId}"]`);
+  if (!histogram || !histogram.labels || !histogram.labels.length) return;
+  renderBarChart(el, {
+    labels: histogram.labels,
+    data: [{ name: label + ' 分数', values: histogram.counts }],
+    colors: ['#722ed1'],
+  });
+}
+
+// ── 深度分析：决策时间线 ────────────────────────────────────────
+
+function renderDecisionTimeline(timeline) {
+  const el = document.querySelector('[data-chart="decision-timeline"]');
+  if (!timeline.length) return;
+  const sorted = [...timeline].sort((a, b) => a.timestamp - b.timestamp);
+  const labels = sorted.map(e => {
+    const d = new Date(e.timestamp * 1000);
+    return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+  renderLineChart(el, {
+    labels,
+    series: [
+      { name: '复合分数 (score)', data: sorted.map(e => e.score || 0) },
+      { name: '动态阈值 (threshold)', data: sorted.map(e => e.threshold || 0) },
+    ],
+    areaStyle: false,
+  });
+}
+
+// ── 深度分析：用户画像表格 ──────────────────────────────────────
+
+function renderUserStatsTable(stats) {
+  const el = $('userStatsTable');
+  if (!stats.length) {
+    el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无用户数据</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table class="table">
+      <thead>
+        <tr>
+          <th>用户 ID</th>
+          <th>事件数</th>
+          <th>平均效价</th>
+          <th>平均唤醒度</th>
+          <th>平均定向</th>
+          <th>平均讽刺</th>
+          <th>平均紧急度</th>
+          <th>最近活跃</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${stats.map(s => `
+          <tr>
+            <td>${s.user_id || '—'}</td>
+            <td>${s.event_count}</td>
+            <td style="color:${(s.avg_valence || 0) >= 0 ? '#52c41a' : '#ff4d4f'}">${(s.avg_valence || 0).toFixed(3)}</td>
+            <td>${(s.avg_arousal || 0).toFixed(3)}</td>
+            <td>${(s.avg_directed || 0).toFixed(3)}</td>
+            <td>${(s.avg_sarcasm || 0).toFixed(3)}</td>
+            <td>${(s.avg_urgency || 0).toFixed(2)}</td>
+            <td>${formatTs(s.last_active)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ── 深度分析：决策原因表格 ──────────────────────────────────────
+
+function renderReasonTable(dist) {
+  const el = $('reasonTable');
+  const entries = Object.entries(dist);
+  if (!entries.length) {
+    el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无决策数据</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table class="table">
+      <thead>
+        <tr><th>原因</th><th>次数</th></tr>
+      </thead>
+      <tbody>
+        ${entries.map(([reason, count]) => `
+          <tr><td style="font-size:13px">${reason}</td><td>${count}</td></tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ── 深度分析：群组对比表格 ──────────────────────────────────────
+
+function renderGroupSummaryTable(groups) {
+  const el = $('groupSummaryTable');
+  if (!groups.length) {
+    el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无群组数据</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table class="table">
+      <thead>
+        <tr>
+          <th>群组 ID</th>
+          <th>事件数</th>
+          <th>活跃用户</th>
+          <th>平均效价</th>
+          <th>平均唤醒度</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${groups.map(g => `
+          <tr>
+            <td>${g.group_id || '—'}</td>
+            <td>${g.event_count}</td>
+            <td>${g.unique_users}</td>
+            <td style="color:${(g.avg_valence || 0) >= 0 ? '#52c41a' : '#ff4d4f'}">${(g.avg_valence || 0).toFixed(3)}</td>
+            <td>${(g.avg_arousal || 0).toFixed(3)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ── 深度分析：决策事件表格 ──────────────────────────────────────
+
+function renderDecisionTable(timeline) {
+  const el = $('decisionTable');
+  if (!timeline.length) {
+    el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无决策事件</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table class="table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>策略</th>
+          <th>分数</th>
+          <th>阈值</th>
+          <th>热度</th>
+          <th>消息速率</th>
+          <th>表达力</th>
+          <th>灵敏度</th>
+          <th>原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${timeline.map(d => `
+          <tr>
+            <td>${formatTs(d.timestamp)}</td>
+            <td>${STRATEGY_CN[d.strategy] || d.strategy}</td>
+            <td>${(d.score || 0).toFixed(3)}</td>
+            <td>${(d.threshold || 0).toFixed(3)}</td>
+            <td>${HEAT_CN[d.heat_level] || d.heat_level}</td>
+            <td>${(d.msg_rate || 0).toFixed(2)}</td>
+            <td>${(d.expressiveness || 0).toFixed(2)}</td>
+            <td>${(d.sensitivity || 0).toFixed(2)}</td>
+            <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.reason || '—'}</td>
           </tr>
         `).join('')}
       </tbody>

@@ -1,17 +1,19 @@
 """SQLite-based persistent storage for cognition analysis events.
 
 Tracks emotional and intent state over time for group atmosphere monitoring.
+Also persists decision events (strategy, threshold, reason) for WebUI analysis.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _CREATE_TABLE = """\
 CREATE TABLE IF NOT EXISTS cognition_events (
@@ -39,6 +41,38 @@ _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ce_ts ON cognition_events(timestamp);",
     "CREATE INDEX IF NOT EXISTS idx_ce_group ON cognition_events(group_id);",
     "CREATE INDEX IF NOT EXISTS idx_ce_user ON cognition_events(user_id);",
+]
+
+# ── Schema v3: decision_events ────────────────────────────────────
+
+_CREATE_DECISION_TABLE = """\
+CREATE TABLE IF NOT EXISTS decision_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       REAL    NOT NULL,
+    group_id        TEXT    NOT NULL DEFAULT '',
+    user_id         TEXT    NOT NULL DEFAULT '',
+    strategy        TEXT    NOT NULL DEFAULT 'silent',
+    score           REAL    NOT NULL DEFAULT 0,
+    threshold       REAL    NOT NULL DEFAULT 0.5,
+    reason          TEXT    NOT NULL DEFAULT '',
+    directed_score  REAL    NOT NULL DEFAULT 0,
+    urgency         REAL    NOT NULL DEFAULT 0,
+    entitlement     REAL    NOT NULL DEFAULT 0,
+    sarcasm         REAL    NOT NULL DEFAULT 0,
+    heat_level      TEXT    NOT NULL DEFAULT 'warm',
+    msg_rate        REAL    NOT NULL DEFAULT 0,
+    cooldown        REAL    NOT NULL DEFAULT 0,
+    since_reply     REAL    NOT NULL DEFAULT 0,
+    expressiveness  REAL    NOT NULL DEFAULT 0.5,
+    sensitivity     REAL    NOT NULL DEFAULT 0.5,
+    affinity        REAL    NOT NULL DEFAULT 0
+);
+"""
+
+_CREATE_DECISION_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_de_ts ON decision_events(timestamp);",
+    "CREATE INDEX IF NOT EXISTS idx_de_group ON decision_events(group_id);",
+    "CREATE INDEX IF NOT EXISTS idx_de_strategy ON decision_events(strategy);",
 ]
 
 _CREATE_META = """\
@@ -92,6 +126,11 @@ class CognitionEventStore:
         for col, dtype in _V2_COLUMNS.items():
             if not _column_exists(conn, "cognition_events", col):
                 conn.execute(f"ALTER TABLE cognition_events ADD COLUMN {col} {dtype}")
+
+        # Migrate v2 -> v3: decision_events table
+        conn.execute(_CREATE_DECISION_TABLE)
+        for idx_sql in _CREATE_DECISION_INDEXES:
+            conn.execute(idx_sql)
 
         conn.execute(
             "INSERT OR REPLACE INTO _meta(key, value) VALUES(?, ?)",
@@ -181,6 +220,249 @@ class CognitionEventStore:
             params,
         ).fetchall()
         return {row[0] or "unknown": row[1] for row in rows}
+
+    # ── Decision events ────────────────────────────────────────────
+
+    def add_decision(
+        self,
+        *,
+        group_id: str = "",
+        user_id: str = "",
+        strategy: str = "silent",
+        score: float = 0.0,
+        threshold: float = 0.5,
+        reason: str = "",
+        directed_score: float = 0.0,
+        urgency: float = 0.0,
+        entitlement: float = 0.0,
+        sarcasm: float = 0.0,
+        heat_level: str = "warm",
+        msg_rate: float = 0.0,
+        cooldown: float = 0.0,
+        since_reply: float = 0.0,
+        expressiveness: float = 0.5,
+        sensitivity: float = 0.5,
+        affinity: float = 0.0,
+        timestamp: float | None = None,
+    ) -> None:
+        """Persist a single decision event."""
+        ts = timestamp if timestamp is not None else time.time()
+        conn = self._connect()
+        conn.execute(
+            """INSERT INTO decision_events
+               (timestamp, group_id, user_id, strategy, score, threshold, reason,
+                directed_score, urgency, entitlement, sarcasm,
+                heat_level, msg_rate, cooldown, since_reply,
+                expressiveness, sensitivity, affinity)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                ts, group_id, user_id, strategy, score, threshold, reason,
+                directed_score, urgency, entitlement, sarcasm,
+                heat_level, msg_rate, cooldown, since_reply,
+                expressiveness, sensitivity, affinity,
+            ),
+        )
+        conn.commit()
+
+    def get_decision_events(
+        self, group_id: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Return recent decision events, optionally filtered by group."""
+        conn = self._connect()
+        if group_id:
+            rows = conn.execute(
+                """SELECT * FROM decision_events
+                WHERE group_id = ?
+                ORDER BY timestamp DESC LIMIT ?""",
+                (group_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM decision_events
+                ORDER BY timestamp DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ── Aggregation queries for WebUI analysis ─────────────────────
+
+    def get_intent_distribution(self, group_id: str | None = None) -> dict[str, int]:
+        """Return count of each social_intent label."""
+        conn = self._connect()
+        where = "WHERE group_id = ?" if group_id else ""
+        params = (group_id,) if group_id else ()
+        rows = conn.execute(
+            f"""SELECT social_intent, COUNT(*) as cnt
+            FROM cognition_events
+            {where}
+            GROUP BY social_intent
+            ORDER BY cnt DESC""",
+            params,
+        ).fetchall()
+        return {row[0] or "unknown": row[1] for row in rows}
+
+    def get_user_stats(self, group_id: str | None = None) -> list[dict[str, Any]]:
+        """Return per-user aggregated cognition stats."""
+        conn = self._connect()
+        where = "WHERE group_id = ? AND user_id != ''" if group_id else "WHERE user_id != ''"
+        params = (group_id,) if group_id else ()
+        rows = conn.execute(
+            f"""SELECT
+                user_id,
+                COUNT(*) as event_count,
+                ROUND(AVG(valence), 4) as avg_valence,
+                ROUND(AVG(arousal), 4) as avg_arousal,
+                ROUND(AVG(intensity), 4) as avg_intensity,
+                ROUND(AVG(directed_score), 4) as avg_directed,
+                ROUND(AVG(sarcasm_score), 4) as avg_sarcasm,
+                ROUND(AVG(urgency_score), 4) as avg_urgency,
+                ROUND(AVG(relevance_score), 4) as avg_relevance,
+                MAX(timestamp) as last_active
+            FROM cognition_events
+            {where}
+            GROUP BY user_id
+            ORDER BY event_count DESC""",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_group_summary(self) -> list[dict[str, Any]]:
+        """Return per-group aggregated cognition summary."""
+        conn = self._connect()
+        rows = conn.execute(
+            """SELECT
+                group_id,
+                COUNT(*) as event_count,
+                COUNT(DISTINCT user_id) as unique_users,
+                ROUND(AVG(valence), 4) as avg_valence,
+                ROUND(AVG(arousal), 4) as avg_arousal,
+                MAX(timestamp) as last_event
+            FROM cognition_events
+            WHERE group_id != ''
+            GROUP BY group_id
+            ORDER BY event_count DESC""",
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_hourly_distribution(self, group_id: str | None = None) -> dict[int, int]:
+        """Return event count by hour of day (0-23, server timezone)."""
+        conn = self._connect()
+        where = "WHERE group_id = ?" if group_id else ""
+        params = (group_id,) if group_id else ()
+        rows = conn.execute(
+            f"""SELECT CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER) as hour,
+                COUNT(*) as cnt
+            FROM cognition_events
+            {where}
+            GROUP BY hour
+            ORDER BY hour""",
+            params,
+        ).fetchall()
+        # 保证 0-23 全覆盖
+        result: dict[int, int] = {h: 0 for h in range(24)}
+        for row in rows:
+            result[int(row[0])] = int(row[1])
+        return result
+
+    def get_score_distributions(self, group_id: str | None = None) -> dict[str, list[float]]:
+        """Return raw score arrays for directed/sarcasm/entitlement distributions."""
+        conn = self._connect()
+        where = "WHERE group_id = ?" if group_id else ""
+        params = (group_id,) if group_id else ()
+        rows = conn.execute(
+            f"""SELECT directed_score, sarcasm_score, entitlement_score
+            FROM cognition_events
+            {where}""",
+            params,
+        ).fetchall()
+        return {
+            "directed": [float(row[0]) for row in rows],
+            "sarcasm": [float(row[1]) for row in rows],
+            "entitlement": [float(row[2]) for row in rows],
+        }
+
+    def get_strategy_distribution(self, group_id: str | None = None) -> dict[str, int]:
+        """Return count of each decision strategy."""
+        conn = self._connect()
+        where = "WHERE group_id = ?" if group_id else ""
+        params = (group_id,) if group_id else ()
+        rows = conn.execute(
+            f"""SELECT strategy, COUNT(*) as cnt
+            FROM decision_events
+            {where}
+            GROUP BY strategy
+            ORDER BY cnt DESC""",
+            params,
+        ).fetchall()
+        return {row[0] or "unknown": row[1] for row in rows}
+
+    def get_decision_summary(self, group_id: str | None = None) -> dict[str, Any]:
+        """Return aggregated decision stats (avg score/threshold, reason distribution)."""
+        conn = self._connect()
+        where = "WHERE group_id = ?" if group_id else ""
+        params = (group_id,) if group_id else ()
+
+        # 基本聚合
+        row = conn.execute(
+            f"""SELECT
+                COUNT(*) as total,
+                ROUND(AVG(score), 4) as avg_score,
+                ROUND(AVG(threshold), 4) as avg_threshold,
+                ROUND(AVG(msg_rate), 4) as avg_msg_rate
+            FROM decision_events
+            {where}""",
+            params,
+        ).fetchone()
+        summary: dict[str, Any] = dict(row) if row else {}
+
+        # reason 分布
+        reason_rows = conn.execute(
+            f"""SELECT reason, COUNT(*) as cnt
+            FROM decision_events
+            {where}
+            GROUP BY reason
+            ORDER BY cnt DESC
+            LIMIT 15""",
+            params,
+        ).fetchall()
+        summary["reason_distribution"] = {r[0] or "unknown": r[1] for r in reason_rows}
+
+        # heat_level 分布
+        heat_rows = conn.execute(
+            f"""SELECT heat_level, COUNT(*) as cnt
+            FROM decision_events
+            {where}
+            GROUP BY heat_level
+            ORDER BY cnt DESC""",
+            params,
+        ).fetchall()
+        summary["heat_distribution"] = {r[0] or "unknown": r[1] for r in heat_rows}
+
+        return summary
+
+    def get_decision_timeline(
+        self, group_id: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Return recent decisions with strategy, score, threshold for timeline chart."""
+        conn = self._connect()
+        if group_id:
+            rows = conn.execute(
+                """SELECT timestamp, strategy, score, threshold, reason,
+                    heat_level, msg_rate, expressiveness, sensitivity
+                FROM decision_events
+                WHERE group_id = ?
+                ORDER BY timestamp DESC LIMIT ?""",
+                (group_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT timestamp, strategy, score, threshold, reason,
+                    heat_level, msg_rate, expressiveness, sensitivity
+                FROM decision_events
+                ORDER BY timestamp DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     @property
     def db_path(self) -> Path:

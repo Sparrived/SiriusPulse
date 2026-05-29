@@ -36,7 +36,6 @@ class PersonaProfile:
     # ------------------------------------------------------------------
     communication_style: str = ""          # concise/detailed/formal/casual/humorous/...
     speech_rhythm: str = ""                # description of speaking pace/patterns
-    catchphrases: list[str] = field(default_factory=list)
     emoji_preference: str = ""             # heavy/moderate/light/none
     humor_style: str = ""                  # sarcastic/wholesome/dark/dry/witty/none
     typical_greetings: list[str] = field(default_factory=list)
@@ -93,7 +92,6 @@ class PersonaProfile:
             "motivations": list(self.motivations),
             "communication_style": self.communication_style,
             "speech_rhythm": self.speech_rhythm,
-            "catchphrases": list(self.catchphrases),
             "emoji_preference": self.emoji_preference,
             "humor_style": self.humor_style,
             "typical_greetings": list(self.typical_greetings),
@@ -128,7 +126,6 @@ class PersonaProfile:
             motivations=list(data.get("motivations", [])),
             communication_style=data.get("communication_style", ""),
             speech_rhythm=data.get("speech_rhythm", ""),
-            catchphrases=list(data.get("catchphrases", [])),
             emoji_preference=data.get("emoji_preference", ""),
             humor_style=data.get("humor_style", ""),
             typical_greetings=list(data.get("typical_greetings", [])),
@@ -172,7 +169,6 @@ class PersonaProfile:
             boundaries=self.boundaries,
             communication_style=self.communication_style,
             speech_rhythm=self.speech_rhythm,
-            catchphrases=self.catchphrases,
             humor_style=self.humor_style,
             reply_frequency=self.reply_frequency,
             taboo_topics=self.taboo_topics,

@@ -171,6 +171,8 @@ function renderOverviewTab(panels) {
     const labels = hourly.map(h => formatHourLabel(h.hour_ts));
     renderLineChart(panels.querySelector('[data-chart="ts"]'), {
       labels,
+      dualAxis: true,
+      colors: ['#4c9aff', '#36d399'],
       series: [
         { name: 'Prompt Tokens', data: hourly.map(h => h.prompt_tokens) },
         { name: 'Completion Tokens', data: hourly.map(h => h.completion_tokens) },

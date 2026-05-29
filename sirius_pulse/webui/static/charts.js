@@ -61,16 +61,32 @@ export function renderBarChart(container, { labels, data, colors, horizontal = f
   });
 }
 
-export function renderLineChart(container, { labels, series, areaStyle = true }) {
+export function renderLineChart(container, { labels, series, areaStyle = true, dualAxis = false, colors }) {
   if (!container) return;
+  const yAxis = dualAxis
+    ? [
+        { type: 'value', position: 'left', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+        { type: 'value', position: 'right', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { show: false } },
+      ]
+    : { type: 'value', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } };
+  const gridRight = dualAxis ? 48 : 10;
   setChartOption(container, {
     backgroundColor: 'transparent',
     tooltip: { trigger: 'axis' },
     legend: { data: series.map(s => s.name), textStyle: { color: '#8b949e', fontSize: 11 }, top: 0 },
-    grid: { left: 10, right: 10, bottom: 10, top: 32, containLabel: true },
+    grid: { left: 10, right: gridRight, bottom: 10, top: 32, containLabel: true },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { fontSize: 10, color: '#8b949e', rotate: 30 }, axisLine: { lineStyle: { color: '#30363d' } } },
-    yAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
-    series: series.map(s => ({ ...s, type: 'line', smooth: true, showSymbol: false, lineStyle: { width: 2, ...s.lineStyle }, areaStyle: areaStyle ? { opacity: 0.12 } : undefined })),
+    yAxis,
+    series: series.map((s, i) => ({
+      ...s,
+      type: 'line',
+      smooth: true,
+      showSymbol: false,
+      yAxisIndex: dualAxis ? i : 0,
+      lineStyle: { width: 2, color: colors?.[i], ...s.lineStyle },
+      itemStyle: colors?.[i] ? { color: colors[i] } : undefined,
+      areaStyle: areaStyle ? { opacity: 0.12 } : undefined,
+    })),
   });
 }
 
@@ -78,8 +94,19 @@ export function renderPieChart(container, { data, center = ['35%', '50%'], radiu
   if (!container) return;
   setChartOption(container, {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'item', formatter: p => `<b>${p.name}</b><br/>${p.percent}%` },
-    legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { fontSize: 11, color: '#c9d1d9' }, itemWidth: 10, itemHeight: 10 },
+    tooltip: { trigger: 'item', formatter: p => `<b>${p.name}</b><br/>${p.value.toLocaleString()} (${p.percent}%)` },
+    legend: {
+      orient: 'vertical',
+      right: 10,
+      top: 'center',
+      textStyle: { fontSize: 11, color: '#c9d1d9' },
+      itemWidth: 10,
+      itemHeight: 10,
+      formatter: name => {
+        const item = data.find(d => d.name === name);
+        return item ? `${name}  ${item.value.toLocaleString()}` : name;
+      },
+    },
     series: [{ type: 'pie', radius, center, avoidLabelOverlap: true, itemStyle: { borderRadius: 6, borderColor: '#0d1117', borderWidth: 2 }, label: { show: false }, emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } }, data }],
   });
 }
@@ -223,7 +250,8 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
         if (params.dataType === 'edge') {
           return `${params.data.source} → ${params.data.target}<br/><b>${params.data.value.toLocaleString()} tokens</b>`;
         }
-        return `<b>${params.name}</b>`;
+        const nodeValue = params.value ?? 0;
+        return `<b>${params.name}</b><br/>总计: ${nodeValue.toLocaleString()} tokens`;
       },
     },
     series: [{

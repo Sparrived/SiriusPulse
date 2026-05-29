@@ -277,6 +277,67 @@ async def api_persona_cognition_get(request: web.Request, persona_manager: Any) 
 
 
 @handle_api_errors
+async def api_persona_cognition_analysis_get(request: web.Request, persona_manager: Any) -> web.Response:
+    """Return rich cognition analysis: intent/user/hourly/score distributions + decision stats."""
+    name = _get_name(request)
+    paths = persona_manager.get_persona_paths(name)
+    if paths is None:
+        return _json_response({"error": "人格不存在"}, 404)
+
+    db_path = paths.dir / "cognition_events.db"
+    if not db_path.exists():
+        return _json_response({"has_data": False})
+
+    from sirius_pulse.memory.cognition_store import CognitionEventStore
+
+    store = CognitionEventStore(str(db_path))
+    group_id = request.query.get("group_id", None) or None
+
+    result: dict[str, Any] = {"has_data": True}
+
+    # 认知事件聚合
+    result["intent_distribution"] = store.get_intent_distribution(group_id=group_id)
+    result["user_stats"] = store.get_user_stats(group_id=group_id)
+    result["group_summary"] = store.get_group_summary()
+    result["hourly_distribution"] = store.get_hourly_distribution(group_id=group_id)
+
+    # 分数分布（只取直方图统计，不传原始数组）
+    raw_scores = store.get_score_distributions(group_id=group_id)
+    result["score_histograms"] = {
+        key: _build_histogram(values, bins=10, range_min=0.0, range_max=1.0)
+        for key, values in raw_scores.items()
+    }
+
+    # 决策事件聚合
+    result["strategy_distribution"] = store.get_strategy_distribution(group_id=group_id)
+    result["decision_summary"] = store.get_decision_summary(group_id=group_id)
+    result["decision_timeline"] = store.get_decision_timeline(group_id=group_id, limit=50)
+
+    store.close()
+    return _json_response(result)
+
+
+def _build_histogram(
+    values: list[float], bins: int = 10, range_min: float = 0.0, range_max: float = 1.0
+) -> dict[str, Any]:
+    """Build a histogram from raw values for frontend rendering."""
+    if not values:
+        return {"labels": [], "counts": [], "total": 0}
+    step = (range_max - range_min) / bins
+    labels: list[str] = []
+    counts: list[int] = [0] * bins
+    for i in range(bins):
+        lo = range_min + i * step
+        hi = lo + step
+        labels.append(f"{lo:.1f}-{hi:.1f}")
+    for v in values:
+        idx = min(int((v - range_min) / step), bins - 1)
+        if 0 <= idx < bins:
+            counts[idx] += 1
+    return {"labels": labels, "counts": counts, "total": len(values)}
+
+
+@handle_api_errors
 async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> web.Response:
     name = _get_name(request)
     paths = persona_manager.get_persona_paths(name)
