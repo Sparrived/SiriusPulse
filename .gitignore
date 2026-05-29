@@ -64,3 +64,6 @@ intent_analysis_report.json
 # 但 .trae/ 下的其他文件（如本地配置）仍忽略
 .trae/*
 !.trae/skills/
+
+# Hy-Memory 分析文档（非代码）
+hy-memory-research/

@@ -3,6 +3,7 @@ import { get, post, put } from '../app.js';
 import { toast, flashSuccess, $ } from '../components.js';
 
 let currentModal = null;
+let _pluginScheduleData = {};
 
 export async function init(container) {
   container.innerHTML = `
@@ -125,6 +126,7 @@ function closeModal() {
     currentModal.remove();
     currentModal = null;
   }
+  _pluginScheduleData = {};
 }
 
 function renderModalContent(d) {
@@ -227,20 +229,14 @@ function renderModalContent(d) {
       </form>
     </div>
 
-    ${Object.keys(settings).length ? `
-      <div>
-        <div style="font-size:14px;font-weight:600;margin-bottom:8px">自定义配置</div>
-        <form id="settingsForm" style="display:grid;gap:12px">
-          ${Object.entries(settings).map(([k, v]) => `
-            <div class="form-group" style="margin:0">
-              <label>${k}</label>
-              <input type="text" name="${k}" value="${typeof v === 'object' ? JSON.stringify(v) : v}">
-            </div>
-          `).join('')}
-        </form>
-      </div>
-    ` : ''}
+    <div id="pluginSettingsSection" style="display:none">
+      <div style="font-size:14px;font-weight:600;margin-bottom:8px">自定义配置</div>
+      <form id="settingsForm" style="display:grid;gap:12px"></form>
+    </div>
   `;
+
+  // 渲染自定义配置表单（异步，因为可能需要获取 active_repos 列表）
+  _renderPluginSettings(settings, parameters);
 
   $('modalFooter').innerHTML = `
     <button class="btn" id="modalCancel">取消</button>
@@ -249,6 +245,283 @@ function renderModalContent(d) {
 
   $('modalCancel').addEventListener('click', closeModal);
   $('modalSave').addEventListener('click', () => savePluginConfig(d.name, settings));
+}
+
+async function _renderPluginSettings(settings, parameters) {
+  const section = document.getElementById('pluginSettingsSection');
+  const form = document.getElementById('settingsForm');
+  if (!section || !form) return;
+
+  // 检查是否有 active_repos 参数，若有则预取仓库列表
+  let repoOptions = null;
+  if ((parameters || []).some(p => p.name === 'active_repos')) {
+    try {
+      const reposRes = await get('/plugins/monitor_repos');
+      repoOptions = reposRes.repos || [];
+    } catch (e) {
+      console.warn('获取 monitor 仓库列表失败', e);
+    }
+  }
+
+  // 初始化 schedule 数据（自动识别所有 schedule 类型配置）
+  _pluginScheduleData = {};
+  if (settings) {
+    for (const [key, value] of Object.entries(settings)) {
+      if (Array.isArray(value) && value.length > 0 &&
+          typeof value[0] === 'object' && 'time' in value[0] && 'duration' in value[0]) {
+        _pluginScheduleData[key] = value.map(s => ({ ...s }));
+      }
+    }
+  }
+
+  // 若无 settings 但有 parameters 定义，用 default 值填充
+  let effectiveSettings = settings;
+  if (!Object.keys(settings || {}).length && (parameters || []).length > 0) {
+    effectiveSettings = {};
+    parameters.forEach(p => {
+      if (p.default !== undefined && p.default !== null) {
+        effectiveSettings[p.name] = p.default;
+      }
+    });
+  }
+
+  if (!Object.keys(effectiveSettings || {}).length) {
+    section.style.display = 'none';
+    form.innerHTML = '';
+    return;
+  }
+
+  section.style.display = 'block';
+  form.innerHTML = _buildPluginSettingsForm(effectiveSettings, parameters, repoOptions);
+
+  // 绑定 list 类型按钮事件
+  form.querySelectorAll('[data-list-add]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.listAdd;
+      const container = document.getElementById('pluginList_' + key);
+      if (!container) return;
+      const idx = container.querySelectorAll('[data-list-key]').length;
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;gap:4px;margin-bottom:4px';
+      div.innerHTML = `
+        <input type="text" data-list-key="${key}" data-list-index="${idx}"
+          style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;flex:1">
+        <button class="btn btn-sm" data-list-remove="${key}" style="padding:2px 8px">✕</button>
+      `;
+      container.appendChild(div);
+      div.querySelector('[data-list-remove]').addEventListener('click', () => div.remove());
+    });
+  });
+
+  // 绑定已有 list 项的删除按钮
+  form.querySelectorAll('[data-list-remove]').forEach(btn => {
+    btn.addEventListener('click', () => btn.parentElement.remove());
+  });
+
+  // 绑定 schedule 相关按钮
+  form.querySelectorAll('[data-schedule-add]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.scheduleAdd;
+      if (!_pluginScheduleData[key]) _pluginScheduleData[key] = [];
+      _pluginScheduleData[key].push({ time: '22:00', duration: 1440 });
+      _refreshScheduleList(key);
+    });
+  });
+
+  form.querySelectorAll('[data-schedule-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.scheduleRemoveKey;
+      const idx = parseInt(btn.dataset.scheduleRemove, 10);
+      if (_pluginScheduleData[key]) {
+        _pluginScheduleData[key].splice(idx, 1);
+        _refreshScheduleList(key);
+      }
+    });
+  });
+
+  _bindScheduleInputs();
+}
+
+function _refreshScheduleList(key) {
+  const container = document.getElementById('pluginSchedule_' + key);
+  if (!container || !_pluginScheduleData[key]) return;
+
+  container.innerHTML = _pluginScheduleData[key].map((s, i) => `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+      <input type="time" value="${s.time || '22:00'}" data-schedule-key="${key}" data-schedule-idx="${i}" data-schedule-field="time"
+        style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px">
+      <span style="color:var(--text-3);font-size:12px">分析时长</span>
+      <input type="number" value="${s.duration || 1440}" min="1" max="10080" data-schedule-key="${key}" data-schedule-idx="${i}" data-schedule-field="duration"
+        style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;width:80px">
+      <span style="color:var(--text-3);font-size:12px">分钟</span>
+      <button class="btn btn-sm" data-schedule-remove="${i}" data-schedule-remove-key="${key}" style="padding:2px 8px;font-size:11px">✕</button>
+    </div>
+  `).join('');
+
+  _bindScheduleInputs();
+
+  container.querySelectorAll('[data-schedule-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const rmIdx = parseInt(btn.dataset.scheduleRemove, 10);
+      if (_pluginScheduleData[key]) {
+        _pluginScheduleData[key].splice(rmIdx, 1);
+        _refreshScheduleList(key);
+      }
+    });
+  });
+}
+
+function _bindScheduleInputs() {
+  document.querySelectorAll('[data-schedule-key]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const key = inp.dataset.scheduleKey;
+      const idx = parseInt(inp.dataset.scheduleIdx, 10);
+      const field = inp.dataset.scheduleField;
+      if (!_pluginScheduleData[key] || !_pluginScheduleData[key][idx]) return;
+      if (field === 'duration') {
+        _pluginScheduleData[key][idx][field] = parseInt(inp.value, 10) || 1440;
+      } else {
+        _pluginScheduleData[key][idx][field] = inp.value;
+      }
+    });
+  });
+}
+
+function _formatConfigKey(key) {
+  return key.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+}
+
+function _buildPluginSettingsForm(settings, parameters, repoOptions) {
+  const knownParams = new Map();
+  (parameters || []).forEach(p => knownParams.set(p.name, p));
+  const fields = [];
+  const renderedKeys = new Set();
+
+  // 第一步：根据 parameters 定义渲染表单
+  for (const param of (parameters || [])) {
+    const key = param.name;
+    const value = settings?.[key];
+    if (renderedKeys.has(key)) continue;
+    renderedKeys.add(key);
+
+    const type = param.type || 'str';
+    const desc = param.description || '';
+    const defaultVal = param.default;
+
+    // active_repos 特殊处理：渲染为仓库复选框
+    if (key === 'active_repos' && repoOptions && repoOptions.length > 0) {
+      const selectedRepos = Array.isArray(value) ? value : [];
+      const selectedSet = new Set(selectedRepos);
+      const checkboxes = repoOptions.map(repo => {
+        const checked = selectedSet.has(repo) ? ' checked' : '';
+        return `
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:3px 0;font-size:13px">
+            <input type="checkbox" data-repo-check="${repo}"${checked}>
+            <span>${repo}</span>
+          </label>
+        `;
+      }).join('');
+      fields.push(`
+        <div class="form-group" style="margin:0">
+          <label style="font-weight:500;display:block;margin-bottom:6px">active_repos <span style="color:var(--text-3);font-size:11px">${desc}</span></label>
+          <div id="activeReposCheckboxes" style="max-height:200px;overflow-y:auto;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 12px">
+            ${checkboxes || '<span style="color:var(--text-3);font-size:12px">无可用仓库</span>'}
+          </div>
+        </div>
+      `);
+      continue;
+    }
+
+    if (type === 'boolean') {
+      fields.push(`
+        <div class="form-group" style="margin:0">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" data-setting-key="${key}" ${value ? 'checked' : ''}>
+            <span>${param.name}</span>
+          </label>
+          ${desc ? `<span style="color:var(--text-3);font-size:11px;margin-left:24px">${desc}</span>` : ''}
+        </div>
+      `);
+    } else if (type === 'int' || type === 'number') {
+      fields.push(`
+        <div class="form-group" style="margin:0">
+          <label>${param.name}</label>
+          <input type="number" data-setting-key="${key}" value="${value ?? defaultVal ?? 0}"
+            style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;width:150px">
+          ${desc ? `<span style="color:var(--text-3);font-size:11px;margin-left:8px">${desc}</span>` : ''}
+        </div>
+      `);
+    } else if (type === 'string' || type === 'str') {
+      fields.push(`
+        <div class="form-group" style="margin:0">
+          <label>${param.name}</label>
+          <input type="text" data-setting-key="${key}" value="${value ?? defaultVal ?? ''}"
+            style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;width:100%">
+          ${desc ? `<span style="color:var(--text-3);font-size:11px">${desc}</span>` : ''}
+        </div>
+      `);
+    } else if (type === 'list' || type === 'array') {
+      const listVal = Array.isArray(value) ? value : (defaultVal ? [defaultVal] : []);
+      fields.push(`
+        <div class="form-group" style="margin:0">
+          <label>${param.name}</label>
+          <div id="pluginList_${key}" style="margin-bottom:8px">
+            ${listVal.map((v, i) => `
+              <div style="display:flex;gap:4px;margin-bottom:4px">
+                <input type="text" value="${v}" data-list-key="${key}" data-list-index="${i}"
+                  style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;flex:1">
+                <button class="btn btn-sm" data-list-remove="${key}" style="padding:2px 8px">✕</button>
+              </div>
+            `).join('')}
+          </div>
+          <button class="btn btn-sm" data-list-add="${key}" style="padding:4px 12px;font-size:12px">+ 添加</button>
+          ${desc ? `<span style="color:var(--text-3);font-size:11px;margin-left:8px">${desc}</span>` : ''}
+        </div>
+      `);
+    }
+  }
+
+  // 第二步：处理 settings 中存在但 parameters 中没有定义的复杂类型
+  for (const [key, value] of Object.entries(settings || {})) {
+    if (renderedKeys.has(key)) continue;
+    renderedKeys.add(key);
+
+    // 检测 schedule 类型（数组，每个元素包含 time 和 duration）
+    if (Array.isArray(value) && value.length > 0 &&
+        typeof value[0] === 'object' && 'time' in value[0] && 'duration' in value[0]) {
+      const scheduleId = 'pluginSchedule_' + key;
+      fields.push(`
+        <div class="form-group" style="margin:0">
+          <label style="font-weight:500;display:block;margin-bottom:8px">${_formatConfigKey(key)}</label>
+          <div id="${scheduleId}" style="margin-bottom:8px">
+            ${value.map((s, i) => `
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+                <input type="time" value="${s.time || '22:00'}" data-schedule-key="${key}" data-schedule-idx="${i}" data-schedule-field="time"
+                  style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px">
+                <span style="color:var(--text-3);font-size:12px">分析时长</span>
+                <input type="number" value="${s.duration || 1440}" min="1" max="10080" data-schedule-key="${key}" data-schedule-idx="${i}" data-schedule-field="duration"
+                  style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;width:80px">
+                <span style="color:var(--text-3);font-size:12px">分钟</span>
+                <button class="btn btn-sm" data-schedule-remove="${i}" data-schedule-remove-key="${key}" style="padding:2px 8px;font-size:11px">✕</button>
+              </div>
+            `).join('')}
+          </div>
+          <button class="btn btn-sm" data-schedule-add="${key}" style="padding:4px 12px;font-size:12px">+ 添加定时</button>
+        </div>
+      `);
+      continue;
+    }
+
+    // 其他未知类型：回退为 JSON 字符串输入
+    fields.push(`
+      <div class="form-group" style="margin:0">
+        <label>${key}</label>
+        <input type="text" data-setting-key="${key}" value="${typeof value === 'object' ? JSON.stringify(value) : value}">
+      </div>
+    `);
+  }
+
+  return fields.join('') || '<div style="color:var(--text-3);font-size:13px">暂无可配置项</div>';
 }
 
 async function savePluginConfig(name, originalSettings) {
@@ -269,20 +542,53 @@ async function savePluginConfig(name, originalSettings) {
       await put(`/plugins/${name}/config`, permissions);
     }
 
-    const settingsForm = $('settingsForm');
-    if (settingsForm && Object.keys(originalSettings).length) {
-      const newSettings = {};
-      for (const [k] of Object.entries(originalSettings)) {
-        const input = settingsForm.querySelector(`[name="${k}"]`);
-        if (input) {
-          const val = input.value.trim();
-          try {
-            newSettings[k] = JSON.parse(val);
-          } catch {
-            newSettings[k] = val;
-          }
-        }
+    // 收集自定义配置
+    const newSettings = {};
+
+    // 处理 schedule 配置（支持多个 key）
+    for (const [key, schedule] of Object.entries(_pluginScheduleData)) {
+      if (Array.isArray(schedule) && schedule.length > 0) {
+        newSettings[key] = schedule;
       }
+    }
+
+    // 处理 data-setting-key 输入项
+    document.querySelectorAll('[data-setting-key]').forEach(input => {
+      const key = input.dataset.settingKey;
+      if (input.type === 'checkbox') {
+        newSettings[key] = input.checked;
+      } else if (input.type === 'number') {
+        newSettings[key] = parseFloat(input.value) || 0;
+      } else {
+        newSettings[key] = input.value;
+      }
+    });
+
+    // 收集 list 类型配置（data-list-key 输入框）
+    const listKeys = new Set();
+    document.querySelectorAll('[data-list-key]').forEach(inp => {
+      listKeys.add(inp.dataset.listKey);
+    });
+    listKeys.forEach(key => {
+      const values = [];
+      document.querySelectorAll(`[data-list-key="${key}"]`).forEach(inp => {
+        if (inp.value.trim()) values.push(inp.value.trim());
+      });
+      newSettings[key] = values;
+    });
+
+    // 收集 active_repos 复选项
+    const repoChecks = document.querySelectorAll('[data-repo-check]');
+    if (repoChecks.length > 0) {
+      const checkedRepos = [];
+      repoChecks.forEach(cb => {
+        if (cb.checked) checkedRepos.push(cb.dataset.repoCheck);
+      });
+      newSettings['active_repos'] = checkedRepos;
+    }
+
+    // 保存自定义配置（如果有）
+    if (Object.keys(newSettings).length > 0) {
       await post(`/plugins/${name}/settings`, { settings: newSettings });
     }
 

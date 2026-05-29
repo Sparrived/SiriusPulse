@@ -147,8 +147,8 @@ function renderHistory() {
       ${filtered.map(h => {
         const statusColor = h.success ? 'var(--success)' : 'var(--danger)';
         const statusIcon = h.success ? '✓' : '✗';
-        const params = h.params ? JSON.stringify(h.params) : '';
         const summary = h.result_summary || h.error || '';
+        const params = h.params || null;
 
         return `
           <div style="padding:16px;background:var(--bg-1);border-radius:8px;border-left:3px solid ${statusColor}">
@@ -163,13 +163,45 @@ function renderHistory() {
                 <span>${formatTime(h.timestamp)}</span>
               </div>
             </div>
-            ${params ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:4px"><strong>参数:</strong> ${truncate(params, 200)}</div>` : ''}
+            ${params ? `<div style="margin-bottom:6px">${renderParams(params)}</div>` : ''}
             ${summary ? `<div style="font-size:12px;color:var(--text-2)"><strong>结果:</strong> ${truncate(summary, 200)}</div>` : ''}
           </div>
         `;
       }).join('')}
     </div>
   `;
+}
+
+function renderParams(params) {
+  if (!params || typeof params !== 'object' || !Object.keys(params).length) return '';
+  const entries = Object.entries(params);
+  return `
+    <div style="font-size:12px;color:var(--text-2);margin-bottom:2px"><strong>调用参数</strong></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      ${entries.map(([k, v]) => {
+        const val = formatParamValue(v);
+        return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--bg-2);border-radius:4px;font-size:11px;border:1px solid var(--border-1)">
+          <span style="color:var(--accent);font-weight:500">${escapeHtml(k)}</span>
+          <span style="color:var(--text-1)">${escapeHtml(val)}</span>
+        </span>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function formatParamValue(v) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'object') {
+    const s = JSON.stringify(v);
+    return s.length > 80 ? s.slice(0, 80) + '...' : s;
+  }
+  const s = String(v);
+  return s.length > 100 ? s.slice(0, 100) + '...' : s;
+}
+
+function escapeHtml(str) {
+  const s = String(str);
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function truncate(str, max) {
