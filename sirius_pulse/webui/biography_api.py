@@ -26,6 +26,7 @@ async def api_persona_biography_list(
     mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
     users = mgr.list_global_users()
     alias_index = mgr._alias_index
+    mgr.close()
 
     return _json_response({
         "cards": [u.to_dict() for u in users],
@@ -53,6 +54,8 @@ async def api_persona_biography_get(
 
     mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
     user = mgr.get_global_user(user_id)
+    mgr.close()
+
     if user is None:
         return _json_response({"error": "用户传记不存在"}, 404)
 
@@ -72,6 +75,7 @@ async def api_persona_biography_alias_index(
 
     mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
     alias_index = mgr._alias_index
+    mgr.close()
 
     return _json_response({
         alias: [e.to_dict() for e in entries]
@@ -113,12 +117,15 @@ async def api_persona_biography_alias_index_update(
             if not mgr._alias_index[alias]:
                 del mgr._alias_index[alias]
         mgr.save_to_disk()
+        mgr.close()
         return _json_response({"success": True})
 
     # action == "add" (default)
     if not user_id:
+        mgr.close()
         return _json_response({"error": "缺少 user_id 参数"}, 400)
 
     mgr.register_alias(alias, user_id, user_name, source="manual")
     mgr.save_to_disk()
+    mgr.close()
     return _json_response({"success": True})

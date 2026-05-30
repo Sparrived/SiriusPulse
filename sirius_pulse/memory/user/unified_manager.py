@@ -5,14 +5,14 @@
 - 别名索引和消歧
 - 传记蒸馏和更新
 
-存储：SQLite（通过 MemoryStorage）
+存储：SQLite（懒加载 + 写穿缓存）
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,11 @@ class UnifiedUserManager:
     - 用户注册和解析
     - 别名索引和消歧
     - 传记蒸馏和更新
+
+    存储策略：懒加载 + 写穿缓存
+    - 启动时不加载数据
+    - 查询时按需从 SQLite 读取并缓存
+    - 写入时同时更新缓存和 SQLite
     """
 
     def __init__(
@@ -74,25 +79,26 @@ class UnifiedUserManager:
 
         self._storage = MemoryStorage(self._db_path)
 
-        # 内存缓存（用于向后兼容和高性能访问）
+        # 内存缓存（懒加载）
         self.entries: dict[str, dict[str, UnifiedUser]] = {}
         self._global_users: dict[str, UnifiedUser] = {}
         self._speaker_index: dict[str, str] = {}
         self._identity_index: dict[str, str] = {}
         self._alias_index: dict[str, list[AliasEntry]] = {}
 
-        # 从 SQLite 加载到内存
-        self._load_from_storage()
+        # 懒加载标记
+        self._users_loaded = False
+        self._aliases_loaded = False
 
-        # 启动时清理
-        self._cleanup_on_startup()
+    # ── 懒加载 ─────────────────────────────────────────
 
-    # ── 存储交互 ─────────────────────────────────────────
+    def _ensure_users_loaded(self) -> None:
+        """确保用户数据已加载。"""
+        if self._users_loaded:
+            return
 
-    def _load_from_storage(self) -> None:
-        """从 SQLite 加载数据到内存缓存。"""
-        # 加载用户
         users_data = self._storage.list_users()
+        logger.info("从 SQLite 加载用户: %d 个", len(users_data))
         for user_data in users_data:
             user = UnifiedUser.from_dict(user_data)
             self._global_users[user.user_id] = user
@@ -106,45 +112,70 @@ class UnifiedUserManager:
                     self.entries[group_id] = {}
                 self.entries[group_id][user_id] = self._global_users[user_id]
 
-        # 加载别名索引
+        self._users_loaded = True
+
+    def _ensure_aliases_loaded(self) -> None:
+        """确保别名索引已加载。"""
+        if self._aliases_loaded:
+            return
+
         aliases_data = self._storage.get_all_aliases()
+        logger.info("从 SQLite 加载别名: %d 个", len(aliases_data))
         for alias, entries_data in aliases_data.items():
             self._alias_index[alias] = [AliasEntry.from_dict(e) for e in entries_data]
 
-    def save_to_disk(self) -> None:
-        """保存所有数据到 SQLite。"""
-        # 保存用户
-        for user in self._global_users.values():
-            self._storage.save_user(user.to_dict())
-            # 保存平台身份
-            for platform, platform_uid in user.identities.items():
-                if platform and platform_uid:
-                    self._storage.save_identity(platform, platform_uid, user.user_id)
+        self._aliases_loaded = True
 
-        # 保存群组成员关系
-        for group_id, group in self.entries.items():
-            for user_id in group:
-                self._storage.add_group_member(group_id, user_id)
-
-        # 保存别名索引
-        for alias, entries in self._alias_index.items():
-            for entry in entries:
-                self._storage.save_alias_entry({
-                    "alias": alias,
-                    "user_id": entry.user_id,
-                    "user_name": entry.user_name,
-                    "weight": entry.weight,
-                    "groups": entry.groups,
-                    "mentioned_count": entry.mentioned_count,
-                    "confidence": entry.confidence,
-                    "first_seen_at": entry.first_seen_at,
-                    "last_seen_at": entry.last_seen_at,
-                    "source": entry.source,
-                })
+    def reload(self) -> None:
+        """强制从 SQLite 重新加载所有数据。"""
+        self._global_users.clear()
+        self.entries.clear()
+        self._alias_index.clear()
+        self._speaker_index.clear()
+        self._identity_index.clear()
+        self._users_loaded = False
+        self._aliases_loaded = False
 
     def close(self) -> None:
         """关闭存储连接。"""
         self._storage.close()
+
+    # ── 写穿缓存 ─────────────────────────────────────────
+
+    def _save_user_to_storage(self, user: UnifiedUser) -> None:
+        """保存用户到 SQLite。"""
+        self._storage.save_user(user.to_dict())
+        for platform, platform_uid in user.identities.items():
+            if platform and platform_uid:
+                self._storage.save_identity(platform, platform_uid, user.user_id)
+
+    def _save_alias_to_storage(self, alias: str, entry: AliasEntry) -> None:
+        """保存别名到 SQLite。"""
+        self._storage.save_alias_entry({
+            "alias": alias,
+            "user_id": entry.user_id,
+            "user_name": entry.user_name,
+            "weight": entry.weight,
+            "groups": entry.groups,
+            "mentioned_count": entry.mentioned_count,
+            "confidence": entry.confidence,
+            "first_seen_at": entry.first_seen_at,
+            "last_seen_at": entry.last_seen_at,
+            "source": entry.source,
+        })
+
+    def save_to_disk(self) -> None:
+        """保存所有缓存数据到 SQLite。"""
+        for user in self._global_users.values():
+            self._save_user_to_storage(user)
+
+        for group_id, group in self.entries.items():
+            for user_id in group:
+                self._storage.add_group_member(group_id, user_id)
+
+        for alias, entries in self._alias_index.items():
+            for entry in entries:
+                self._save_alias_to_storage(alias, entry)
 
     # ── 启动清理 ─────────────────────────────────────────
 
@@ -199,6 +230,7 @@ class UnifiedUserManager:
                     filtered.append(entry)
                 else:
                     removed += 1
+                    self._storage.delete_alias_entry(alias_key, entry.user_id)
 
             if filtered:
                 self._alias_index[alias_key] = filtered
@@ -241,7 +273,7 @@ class UnifiedUserManager:
         )
 
     def _sync_to_global(self, user: UnifiedUser) -> None:
-        """同步到全局用户。"""
+        """同步到全局用户缓存。"""
         uid = user.user_id
         if not uid:
             return
@@ -268,7 +300,9 @@ class UnifiedUserManager:
             global_user.name = user.name
 
     def _seed_from_global(self, user_id: str, group_id: str) -> UnifiedUser | None:
-        """从全局用户种子到群组。"""
+        """从全局用户缓存种子到群组。"""
+        self._ensure_users_loaded()
+
         global_user = self._global_users.get(user_id)
         if global_user is None:
             return None
@@ -288,6 +322,8 @@ class UnifiedUserManager:
 
     def register_user(self, user: UnifiedUser, group_id: str = "default") -> None:
         """注册或更新用户。"""
+        self._ensure_users_loaded()
+
         if not user.user_id:
             user.user_id = user.name or "unknown"
 
@@ -317,11 +353,8 @@ class UnifiedUserManager:
         self._update_indices(existing)
         self._sync_to_global(existing)
 
-        # 持久化到 SQLite
-        self._storage.save_user(existing.to_dict())
-        for platform, platform_uid in existing.identities.items():
-            if platform and platform_uid:
-                self._storage.save_identity(platform, platform_uid, existing.user_id)
+        # 写穿到 SQLite
+        self._save_user_to_storage(existing)
         self._storage.add_group_member(group_id, existing.user_id)
 
     def resolve_user_id(
@@ -332,8 +365,9 @@ class UnifiedUserManager:
         external_uid: str | None = None,
     ) -> str | None:
         """解析用户 ID。"""
+        self._ensure_users_loaded()
+
         if platform and external_uid:
-            # 先查内存索引
             resolved = self._identity_index.get(self._identity_key(platform, external_uid))
             if resolved:
                 return resolved
@@ -348,6 +382,8 @@ class UnifiedUserManager:
 
     def get_user(self, user_id: str, group_id: str = "default") -> UnifiedUser | None:
         """获取用户。"""
+        self._ensure_users_loaded()
+
         group = self._ensure_group(group_id)
         local = group.get(user_id)
         if local is not None:
@@ -356,14 +392,17 @@ class UnifiedUserManager:
 
     def list_users(self, group_id: str = "default") -> list[UnifiedUser]:
         """列出群组中的所有用户。"""
+        self._ensure_users_loaded()
         return list(self._ensure_group(group_id).values())
 
     def get_global_user(self, user_id: str) -> UnifiedUser | None:
         """获取全局用户。"""
+        self._ensure_users_loaded()
         return self._global_users.get(user_id)
 
     def list_global_users(self) -> list[UnifiedUser]:
         """列出所有全局用户。"""
+        self._ensure_users_loaded()
         return list(self._global_users.values())
 
     # ── 公共 API：别名管理 ──────────────────────────────────
@@ -377,6 +416,8 @@ class UnifiedUserManager:
         at_user_id: str | None = None,
     ) -> tuple[str | None, float, list[str]]:
         """别名消歧解析。"""
+        self._ensure_aliases_loaded()
+
         alias_lower = alias.strip().lower()
         entries = self._alias_index.get(alias_lower, [])
         if not entries:
@@ -441,6 +482,8 @@ class UnifiedUserManager:
         source: str = "napcat",
     ) -> None:
         """注册别名。"""
+        self._ensure_aliases_loaded()
+
         if self._is_persona_identity(alias.strip().lower()):
             return
 
@@ -459,19 +502,8 @@ class UnifiedUserManager:
                 entry.last_seen_at = _now_iso()
                 if group_id and group_id not in entry.groups:
                     entry.groups.append(group_id)
-                # 持久化
-                self._storage.save_alias_entry({
-                    "alias": alias_lower,
-                    "user_id": entry.user_id,
-                    "user_name": entry.user_name,
-                    "weight": entry.weight,
-                    "groups": entry.groups,
-                    "mentioned_count": entry.mentioned_count,
-                    "confidence": entry.confidence,
-                    "first_seen_at": entry.first_seen_at,
-                    "last_seen_at": entry.last_seen_at,
-                    "source": entry.source,
-                })
+                # 写穿到 SQLite
+                self._save_alias_to_storage(alias_lower, entry)
                 return
 
         # 新增
@@ -486,22 +518,13 @@ class UnifiedUserManager:
             source=source,
         )
         self._alias_index[alias_lower].append(entry)
-        # 持久化
-        self._storage.save_alias_entry({
-            "alias": alias_lower,
-            "user_id": entry.user_id,
-            "user_name": entry.user_name,
-            "weight": entry.weight,
-            "groups": entry.groups,
-            "mentioned_count": entry.mentioned_count,
-            "confidence": entry.confidence,
-            "first_seen_at": entry.first_seen_at,
-            "last_seen_at": entry.last_seen_at,
-            "source": entry.source,
-        })
+        # 写穿到 SQLite
+        self._save_alias_to_storage(alias_lower, entry)
 
     def bump_alias_weight(self, alias: str, user_id: str, group_id: str) -> None:
         """增加别名权重。"""
+        self._ensure_aliases_loaded()
+
         alias_lower = alias.strip().lower()
         if alias_lower not in self._alias_index:
             return
@@ -513,22 +536,13 @@ class UnifiedUserManager:
                 entry.last_seen_at = _now_iso()
                 if group_id not in entry.groups:
                     entry.groups.append(group_id)
-                # 持久化
-                self._storage.save_alias_entry({
-                    "alias": alias_lower,
-                    "user_id": entry.user_id,
-                    "user_name": entry.user_name,
-                    "weight": entry.weight,
-                    "groups": entry.groups,
-                    "mentioned_count": entry.mentioned_count,
-                    "confidence": entry.confidence,
-                    "first_seen_at": entry.first_seen_at,
-                    "last_seen_at": entry.last_seen_at,
-                    "source": entry.source,
-                })
+                # 写穿到 SQLite
+                self._save_alias_to_storage(alias_lower, entry)
 
     def get_aliases_for_group(self, group_id: str) -> dict[str, str]:
         """获取群组相关的别名速查表。"""
+        self._ensure_aliases_loaded()
+
         result: dict[str, str] = {}
         for alias, entries in self._alias_index.items():
             for e in entries:
@@ -547,7 +561,6 @@ class UnifiedUserManager:
             if entry.confidence >= AliasEntry.DECAY_THRESHOLD:
                 filtered.append(entry)
             else:
-                # 从 SQLite 删除
                 self._storage.delete_alias_entry(alias_lower, entry.user_id)
 
         if filtered:
@@ -559,12 +572,14 @@ class UnifiedUserManager:
 
     def get_or_create_user(self, user_id: str, name: str = "") -> UnifiedUser:
         """获取或创建用户。"""
+        self._ensure_users_loaded()
+
         user = self._global_users.get(user_id)
         if user is None:
             user = UnifiedUser(user_id=user_id, name=name or user_id)
             self._global_users[user_id] = user
-            # 持久化
-            self._storage.save_user(user.to_dict())
+            # 写穿到 SQLite
+            self._save_user_to_storage(user)
         if name and not user.name:
             user.name = name
         return user
@@ -592,17 +607,18 @@ class UnifiedUserManager:
             for alias in discovered_aliases:
                 self.register_alias(alias, user_id, name, group_id, source="llm_discovery")
 
-        # 持久化
-        self._storage.save_user(user.to_dict())
+        # 写穿到 SQLite
+        self._save_user_to_storage(user)
 
     def get_pending_users(self) -> list[UnifiedUser]:
         """获取有待蒸馏消息的用户。"""
+        self._ensure_users_loaded()
         return [u for u in self._global_users.values() if u.pending_messages]
 
     def save_user(self, user: UnifiedUser) -> None:
         """保存用户数据。"""
         self._global_users[user.user_id] = user
-        self._storage.save_user(user.to_dict())
+        self._save_user_to_storage(user)
 
 
 __all__ = ["UnifiedUserManager"]

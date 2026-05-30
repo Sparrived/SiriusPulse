@@ -10,11 +10,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, ClassVar
 
 from sirius_pulse.developer_profiles import metadata_declares_developer
-from sirius_pulse.mixins import JsonSerializable
 
 
 @dataclass(slots=True)
@@ -118,7 +116,7 @@ class AliasEntry:
 
 
 @dataclass
-class UnifiedUser(JsonSerializable):
+class UnifiedUser:
     """统一用户模型。
 
     包含基础身份、传记画像、别名索引等所有用户相关信息。
