@@ -108,7 +108,7 @@ def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
         _migrate_memory_db(conn, memory_db_path, persona_path, backup)
 
     # 迁移 token_usage.db（优先原始位置，其次备份目录）
-    token_db_path = _find_db(persona_path / "token" / "token_usage.db", backup_dir / "token")
+    token_db_path = _find_db(persona_path / "token" / "token_usage.db", backup_dir)
     if token_db_path:
         _migrate_token_db(conn, token_db_path, persona_path, backup)
 
