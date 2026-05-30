@@ -407,6 +407,10 @@ class WebUIServer:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
+
+        # 通知所有运行中的人格热重载 provider 配置
+        self._notify_provider_reload()
+
         return _json_response({"success": True})
 
     # ─── 全局 API: Embedding 状态 ──────────────────────────
@@ -435,6 +439,22 @@ class WebUIServer:
 
     def _provider_keys_path(self) -> Path:
         return Path(self.persona_manager.data_path) / "providers" / "provider_keys.json"
+
+    def _notify_provider_reload(self) -> None:
+        """向所有运行中的人格写入 provider 重载标志。"""
+        for info in self.persona_manager.list_personas():
+            if not info.get("running"):
+                continue
+            paths = self.persona_manager.get_persona_paths(info["name"])
+            if paths is None:
+                continue
+            try:
+                flag = paths.engine_state / "reload_requested"
+                flag.parent.mkdir(parents=True, exist_ok=True)
+                flag.write_text("provider", encoding="utf-8")
+                LOG.debug("已向人格 %s 写入 provider 重载标志", info["name"])
+            except Exception as exc:
+                LOG.debug("向人格 %s 写入 provider 重载标志失败: %s", info["name"], exc)
 
     async def api_providers_get(self, request: web.Request) -> web.Response:
         return _json_response({"providers": self._load_providers_raw()})
@@ -567,6 +587,8 @@ class WebUIServer:
         try:
             provider_mgr = WorkspaceProviderManager(self.persona_manager.data_path)
             changed = provider_mgr.refresh_models_from_dev(force=force)
+            if changed:
+                self._notify_provider_reload()
             # 重新加载并返回更新后的 provider 列表
             providers_data = self._load_providers_raw()
             return _json_response({

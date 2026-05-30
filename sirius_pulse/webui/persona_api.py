@@ -26,7 +26,7 @@ def _request_config_reload(persona_name: str, reload_type: str, persona_manager:
 
     Args:
         persona_name: 人格名称
-        reload_type: 重载类型 (persona / orchestration / experience / all)
+        reload_type: 重载类型 (persona / orchestration / experience / provider / all)
         persona_manager: PersonaManager 实例
     """
     paths = persona_manager.get_persona_paths(persona_name)

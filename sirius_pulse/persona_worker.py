@@ -340,7 +340,7 @@ class PersonaWorker:
         """检查配置文件变更，热重载到引擎。
 
         通过读取 engine_state/reload_requested 标志文件触发重载。
-        标志文件内容为重载类型：persona / orchestration / experience / all
+        标志文件内容为重载类型：persona / orchestration / experience / provider / all
         """
         reload_flag = self.paths.engine_state / "reload_requested"
         if not reload_flag.exists():
@@ -368,6 +368,9 @@ class PersonaWorker:
 
             if reload_type in ("experience", "all"):
                 self._reload_experience(engine)
+
+            if reload_type in ("provider", "all"):
+                self._reload_provider(engine)
 
             LOG.info("配置热重载完成: type=%s", reload_type)
         except Exception as exc:
@@ -417,6 +420,9 @@ class PersonaWorker:
         if hasattr(engine, "brain") and engine.brain:
             engine.brain.router = engine.model_router
 
+        # 编排配置变更时同步刷新 provider，确保新模型名能被路由到正确的提供商
+        self._reload_provider(engine)
+
         LOG.info("Orchestration 配置已热重载")
 
     def _reload_experience(self, engine: Any) -> None:
@@ -432,6 +438,31 @@ class PersonaWorker:
             engine.brain.config.update(exp_dict)
 
         LOG.info("Experience 配置已热重载")
+
+    def _reload_provider(self, engine: Any) -> None:
+        """热重载 Provider 配置（provider_keys.json）。
+
+        重新从磁盘加载 provider 配置，构建新的 AutoRoutingProvider 并同步到
+        engine、brain、cognition_analyzer 中，使 provider 变更（新增/删除提供商、
+        模型列表更新等）无需重启引擎即可生效。
+        """
+        if not self._runtime:
+            LOG.debug("Runtime 未就绪，跳过 provider 重载")
+            return
+
+        new_provider = self._runtime._build_provider()
+        if new_provider is None:
+            LOG.warning("Provider 重建失败（无可用配置），保留旧 provider")
+            return
+
+        # 同步到 engine 及其子系统
+        engine.provider_async = new_provider
+        if hasattr(engine, "brain") and engine.brain:
+            engine.brain.provider_async = new_provider
+        if hasattr(engine, "cognition_analyzer") and engine.cognition_analyzer:
+            engine.cognition_analyzer.provider_async = new_provider
+
+        LOG.info("Provider 配置已热重载")
 
     def _write_status(self, status: dict[str, Any]) -> None:
         try:
