@@ -61,12 +61,22 @@ _SESSION_TABLES = [
 
 
 def _find_db(original: Path, backup_dir: Path) -> Path | None:
-    """查找数据库文件，优先从原始位置，其次从备份目录。"""
+    """查找数据库文件，优先从原始位置，其次从备份目录。
+
+    在备份目录中查找时，同时检查：
+    - backup_dir/filename（扁平结构）
+    - backup_dir/原相对路径（目录结构保持）
+    """
     if original.exists():
         return original
-    backup = backup_dir / original.name
-    if backup.exists():
-        return backup
+    # 尝试扁平结构：backup_dir/filename
+    flat_backup = backup_dir / original.name
+    if flat_backup.exists():
+        return flat_backup
+    # 尝试保持目录结构：backup_dir/subdir/filename
+    structured_backup = backup_dir / original.parent.name / original.name
+    if structured_backup.exists():
+        return structured_backup
     return None
 
 
