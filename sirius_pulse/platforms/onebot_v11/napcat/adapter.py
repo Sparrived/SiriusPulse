@@ -27,7 +27,7 @@ from sirius_pulse.adapters.models import (
     ImageSegment, VoiceSegment, FileSegment, ReplySegment,
     ParsedEvent,
 )
-from sirius_pulse.models.models import Message, Participant
+from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.skills.executor import strip_skill_calls
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 
@@ -684,7 +684,7 @@ class NapCatAdapter(BaseAdapter):
         peer_ai_ids = self.plugin_config.get("peer_ai_ids", [])
         is_peer_ai = str(parsed.user_id) in [str(v) for v in peer_ai_ids]
 
-        participant = Participant(
+        participant = UnifiedUser(
             name=parsed.nickname or f"qq_{parsed.user_id}",
             user_id=uid,
             identities={"qq_native_sirius_pulse": parsed.user_id},
