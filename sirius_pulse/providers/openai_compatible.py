@@ -79,7 +79,8 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         except httpx.HTTPError as exc:
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
-                f"| httpx 异常: {exc}"
+                f"| {type(exc).__name__}: {exc or '(无详细信息)'}",
+                exc_info=True,
             )
             raise RuntimeError(f"提供商请求异常：{exc}") from exc
 
