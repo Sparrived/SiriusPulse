@@ -31,10 +31,11 @@ def strip_conversation_history_xml(text: str) -> str:
 def parse_sticker_tags(text: str) -> tuple[str, list[str]]:
     """从回复文本中解析 [STICKERS: "name1", "name2"] 格式的标签。
 
+    只解析第一个标签，移除所有标签文本。
     Returns:
         (清理后的文本, 选中的表情包名称列表，最多 3 个)
     """
-    pattern = r"\[STICKERS:\s*(.+?)\s*\]"
+    pattern = r"\[STICKERS[：:]\s*(.+?)\s*\]"
     match = re.search(pattern, text)
     if not match:
         return text, []
@@ -51,7 +52,5 @@ def parse_sticker_tags(text: str) -> tuple[str, list[str]]:
             names.append(part)
 
     chosen = names[:3]
-    prefix = text[: match.start()].rstrip()
-    suffix = text[match.end():].lstrip()
-    cleaned_text = f"{prefix} {suffix}".strip() if prefix and suffix else (prefix + suffix)
+    cleaned_text = re.sub(pattern, "", text).strip()
     return cleaned_text, chosen

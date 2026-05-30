@@ -9,6 +9,46 @@ let activeGroup = '';
 let currentOffset = 0;
 const PAGE_SIZE = 100;
 
+let pollTimer = null;
+let isLive = true;
+
+const TAG_COLORS = {
+  sticker:    { bg: '#f5a62322', color: '#f5a623', border: '#f5a62344' },
+  image:      { bg: '#4caf5022', color: '#4caf50', border: '#4caf5044' },
+  emoji:      { bg: '#e8a87c22', color: '#e8a87c', border: '#e8a87c44' },
+  voice:      { bg: '#85cdca22', color: '#85cdca', border: '#85cdca44' },
+  video:      { bg: '#d8b4e222', color: '#d8b4e2', border: '#d8b4e244' },
+  mention:    { bg: 'var(--accent)22', color: 'var(--accent)', border: 'var(--accent)44' },
+  reply:      { bg: 'var(--text-2)22', color: 'var(--text-2)', border: 'var(--text-2)44' },
+  skill:      { bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
+  pinned:     { bg: '#e91e6322', color: '#e91e63', border: '#e91e6344' },
+  file:       { bg: '#607d8b22', color: '#607d8b', border: '#607d8b44' },
+  link:       { bg: '#2196f322', color: '#2196f3', border: '#2196f344' },
+  recall:     { bg: '#9e9e9e22', color: '#9e9e9e', border: '#9e9e9e44' },
+  forward:    { bg: '#9c27b022', color: '#9c27b0', border: '#9c27b044' },
+  location:   { bg: '#79554822', color: '#795548', border: '#79554844' },
+  contact:    { bg: '#00bcd422', color: '#00bcd4', border: '#00bcd444' },
+  share:      { bg: '#ff572222', color: '#ff5722', border: '#ff572244' },
+  sign:       { bg: '#8bc34a22', color: '#8bc34a', border: '#8bc34a44' },
+  redpacket:  { bg: '#f4433622', color: '#f44336', border: '#f4433644' },
+  gift:       { bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
+  poke:       { bg: '#9e9e9e22', color: '#9e9e9e', border: '#9e9e9e44' },
+  shake:      { bg: '#9e9e9e22', color: '#9e9e9e', border: '#9e9e9e44' },
+  diary:      { bg: '#e8a87c22', color: '#e8a87c', border: '#e8a87c44' },
+  cross_group:{ bg: '#85cdca22', color: '#85cdca', border: '#85cdca44' },
+  conversation:{ bg: '#d8b4e222', color: '#d8b4e2', border: '#d8b4e244' },
+  skill_result:{ bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
+  glossary:   { bg: '#00bcd422', color: '#00bcd4', border: '#00bcd444' },
+  biography:  { bg: '#79554822', color: '#795548', border: '#79554844' },
+  memory:     { bg: '#607d8b22', color: '#607d8b', border: '#607d8b44' },
+  scene:      { bg: '#9c27b022', color: '#9c27b0', border: '#9c27b044' },
+  taboo:      { bg: '#f4433622', color: '#f44336', border: '#f4433644' },
+  atmosphere: { bg: '#4caf5022', color: '#4caf50', border: '#4caf5044' },
+  plugin:     { bg: '#2196f322', color: '#2196f3', border: '#2196f344' },
+  topic:      { bg: '#ff572222', color: '#ff5722', border: '#ff572244' },
+  reminder:   { bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
+};
+
 export async function init(container) {
   const name = store.currentPersona;
   if (!name) {
@@ -34,6 +74,10 @@ export async function init(container) {
           <select id="groupFilter" class="btn btn-sm">
             <option value="">全部群组</option>
           </select>
+          <button class="btn btn-sm" id="liveToggle" style="display:flex;align-items:center;gap:4px">
+            <span id="liveDot" style="width:6px;height:6px;border-radius:50%;background:var(--success)"></span>
+            <span id="liveLabel">实时</span>
+          </button>
           <button class="btn btn-sm" id="refreshBtn">刷新</button>
         </div>
       </div>
@@ -74,11 +118,25 @@ export async function init(container) {
     });
   }
 
+  const liveToggleEl = $('liveToggle');
+  if (liveToggleEl) {
+    liveToggleEl.addEventListener('click', () => {
+      isLive = !isLive;
+      updateLiveIndicator();
+      if (isLive) startPolling();
+      else stopPolling();
+    });
+  }
+
   await loadMessages();
+  updateLiveIndicator();
+  startPolling();
 }
 
-async function loadMessages() {
+async function loadMessages(silent = false) {
   const name = store.currentPersona;
+  if (!name) return;
+
   const params = new URLSearchParams({
     limit: String(PAGE_SIZE),
     offset: String(currentOffset),
@@ -98,14 +156,16 @@ async function loadMessages() {
     renderMessages();
     renderPagination(total);
   } catch (e) {
-    toast('加载对话历史失败: ' + e.message, 'error');
-    const msgList = $('messageList');
-    if (msgList) {
-      msgList.innerHTML = `
-        <div class="card">
-          <div style="padding:40px;text-align:center;color:var(--danger)">加载失败: ${e.message}</div>
-        </div>
-      `;
+    if (!silent) {
+      toast('加载对话历史失败: ' + e.message, 'error');
+      const msgList = $('messageList');
+      if (msgList) {
+        msgList.innerHTML = `
+          <div class="card">
+            <div style="padding:40px;text-align:center;color:var(--danger)">加载失败: ${e.message}</div>
+          </div>
+        `;
+      }
     }
   }
 }
@@ -277,6 +337,15 @@ function estimateTokens(text) {
 
 let msgIdCounter = 0;
 
+function renderMessageTags(tags) {
+  if (!tags || !tags.length) return '';
+  const badges = tags.map(t => {
+    const c = TAG_COLORS[t.type] || TAG_COLORS.reply;
+    return `<span class="tag" style="font-size:10px;padding:1px 6px;background:${c.bg};color:${c.color};border:1px solid ${c.border}">${escapeHtml(t.label)}</span>`;
+  }).join('');
+  return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${badges}</div>`;
+}
+
 function renderMessages() {
   const el = $('messageList');
   if (!el) return;
@@ -302,6 +371,7 @@ function renderMessages() {
     const systemPrompt = m.system_prompt || '';
     const hasPrompt = m.role === 'assistant' && systemPrompt;
     const msgId = `msg-${msgIdCounter++}`;
+    const tags = m.tags || [];
 
     return `
       <div style="padding:12px 16px;background:var(--bg-2);border-radius:8px;border-left:3px solid ${roleStyle.color}">
@@ -314,6 +384,7 @@ function renderMessages() {
           <span style="font-size:11px;color:var(--text-3)">${formatTime(m.timestamp)}</span>
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
+        ${renderMessageTags(tags)}
         ${hasPrompt ? renderPromptToggle(msgId, systemPrompt) : ''}
       </div>
     `;
@@ -434,4 +505,26 @@ function renderPagination(total) {
       }
     });
   }
+}
+
+function startPolling() {
+  stopPolling();
+  if (!isLive) return;
+  pollTimer = setInterval(() => {
+    if (currentOffset === 0) loadMessages(true);
+  }, 5000);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function updateLiveIndicator() {
+  const dot = $('liveDot');
+  const label = $('liveLabel');
+  if (dot) dot.style.background = isLive ? 'var(--success)' : 'var(--text-3)';
+  if (label) label.textContent = isLive ? '实时' : '已暂停';
 }

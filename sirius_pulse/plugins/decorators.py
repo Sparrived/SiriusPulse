@@ -664,6 +664,11 @@ async def dispatch_command_stream(
             # 方式1：直接查找完整路径（如 "report.daily"）
             full_sub_path = ".".join(sub_path)
             sub_meta = sub_commands.get(full_sub_path)
+            if sub_meta is None:
+                for _name, _meta in sub_commands.items():
+                    if _meta.patterns and full_sub_path in _meta.patterns:
+                        sub_meta = _meta
+                        break
             if sub_meta and sub_meta.handler:
                 return await _dispatch_group_command(instance, cmd, sub_meta)
 
@@ -685,6 +690,11 @@ async def dispatch_command_stream(
                         # 查找最终的子命令
                         final_sub_name = sub_path[i + 1]
                         sub_meta = nested_sub_commands.get(final_sub_name)
+                        if sub_meta is None:
+                            for _name, _meta in nested_sub_commands.items():
+                                if _meta.patterns and final_sub_name in _meta.patterns:
+                                    sub_meta = _meta
+                                    break
                         if sub_meta and sub_meta.handler:
                             return await _dispatch_group_command(instance, cmd, sub_meta)
                         # 继续下一层
@@ -696,6 +706,12 @@ async def dispatch_command_stream(
             # 方式3：查找最后一级子命令
             last_sub = sub_path[-1]
             sub_meta = sub_commands.get(last_sub)
+            # name 未命中时，按 pattern 回退匹配
+            if sub_meta is None:
+                for _name, _meta in sub_commands.items():
+                    if _meta.patterns and last_sub in _meta.patterns:
+                        sub_meta = _meta
+                        break
             if sub_meta and sub_meta.handler:
                 return await _dispatch_group_command(instance, cmd, sub_meta)
 
