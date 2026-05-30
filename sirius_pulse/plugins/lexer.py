@@ -466,14 +466,25 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
     """
     # 收集所有含空格的 prefix pattern（降序排列，优先匹配最长）
     multi_word: list[str] = []
+    logger.info(
+        "多词pattern检查: plugin=%s, commands=%d, lexed_cmd=%r, args=%r",
+        plugin_def.name, len(plugin_def.commands),
+        lexed.command, lexed.positional_args,
+    )
     for cmd_def in plugin_def.commands:
+        logger.info(
+            "  cmd_def name=%r, type=%r, patterns=%r",
+            cmd_def.name, cmd_def.pattern_type, cmd_def.patterns,
+        )
         if cmd_def.pattern_type == "prefix":
             for pattern in cmd_def.patterns:
                 if " " in pattern:
                     multi_word.append(pattern.lower())
     if not multi_word:
+        logger.info("  无多词pattern，跳过")
         return
     multi_word.sort(key=len, reverse=True)
+    logger.info("  多词patterns: %r", multi_word)
 
     for pattern in multi_word:
         parts = pattern.split()
@@ -483,8 +494,10 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
         candidate = lexed.command + " " + " ".join(
             a.lower() for a in lexed.positional_args[:extra]
         )
+        logger.info("  尝试匹配: candidate=%r vs pattern=%r", candidate, pattern)
         if candidate == pattern:
             lexed.positional_args = lexed.positional_args[extra:]
+            logger.info("  ✓ 匹配成功，消费 %d 个 args，剩余: %r", extra, lexed.positional_args)
             return
 
 
