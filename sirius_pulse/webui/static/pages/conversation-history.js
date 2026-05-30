@@ -175,6 +175,47 @@ function truncate(str, max = 500) {
   return str.length > max ? str.slice(0, max) + '...' : str;
 }
 
+const SECTION_MARKERS = [
+  { start: '<历史日记>', end: '</历史日记>', label: '日记记忆', color: '#e8a87c' },
+  { start: '<跨群记录>', end: '</跨群记录>', label: '跨群记录', color: '#85cdca' },
+  { start: '<近期对话>', end: '</近期对话>', label: '对话历史', color: '#d8b4e2' },
+  { start: '<conversation_history>', end: '</conversation_history>', label: '对话历史', color: '#d8b4e2' },
+];
+
+function parsePromptSections(prompt) {
+  if (!prompt) return [];
+  const sections = [];
+  let remaining = prompt;
+
+  for (const marker of SECTION_MARKERS) {
+    const startIdx = remaining.indexOf(marker.start);
+    if (startIdx === -1) continue;
+    const endIdx = remaining.indexOf(marker.end, startIdx + marker.start.length);
+    if (endIdx === -1) continue;
+
+    if (startIdx > 0) {
+      sections.push({ type: 'text', content: remaining.slice(0, startIdx).trim() });
+    }
+    sections.push({
+      type: 'section',
+      label: marker.label,
+      color: marker.color,
+      content: remaining.slice(startIdx + marker.start.length, endIdx).trim(),
+    });
+    remaining = remaining.slice(endIdx + marker.end.length);
+  }
+
+  if (remaining.trim()) {
+    sections.push({ type: 'text', content: remaining.trim() });
+  }
+  return sections;
+}
+
+function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.ceil(text.length / 2);
+}
+
 let msgIdCounter = 0;
 
 function renderMessages() {
@@ -214,22 +255,86 @@ function renderMessages() {
           <span style="font-size:11px;color:var(--text-3)">${formatTime(m.timestamp)}</span>
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
-        ${hasPrompt ? `
-          <div style="margin-top:10px">
-            <button class="btn btn-sm prompt-toggle" data-target="${msgId}" style="font-size:11px;padding:4px 8px">▸ 查看系统提示词</button>
-            <div id="${msgId}" style="display:none;margin-top:8px;padding:10px;background:var(--bg-1);border-radius:6px;font-size:12px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:300px;overflow-y:auto">${escapeHtml(systemPrompt)}</div>
-          </div>
-        ` : ''}
+        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt) : ''}
       </div>
     `;
   }).join('');
 
-  el.querySelectorAll('.prompt-toggle').forEach(btn => {
+  bindPromptToggles();
+}
+
+function renderPromptToggle(msgId, systemPrompt) {
+  const tokenCount = estimateTokens(systemPrompt);
+  const charCount = systemPrompt.length;
+  const sections = parsePromptSections(systemPrompt);
+  const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');
+
+  const sectionBadges = sections
+    .filter(s => s.type === 'section')
+    .map(s => `<span class="tag" style="font-size:10px;padding:2px 6px;background:${s.color}22;color:${s.color};border:1px solid ${s.color}44">${s.label}</span>`)
+    .join(' ');
+
+  return `
+    <div style="margin-top:10px">
+      <button class="btn btn-sm prompt-toggle" data-target="${msgId}" style="font-size:11px;padding:4px 10px;display:flex;align-items:center;gap:6px">
+        <span class="toggle-arrow" style="display:inline-block;transition:transform 0.2s">▸</span>
+        <span>查看 LLM 输入上下文</span>
+        <span style="color:var(--text-3);font-size:10px">${tokenCount} tokens · ${charCount} chars</span>
+      </button>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${sectionBadges}</div>
+      <div id="${msgId}" class="prompt-detail" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+        ${hasSections ? renderStructuredSections(sections) : renderRawPrompt(systemPrompt)}
+      </div>
+    </div>
+  `;
+}
+
+function renderStructuredSections(sections) {
+  return sections.map((section, idx) => {
+    if (section.type === 'section') {
+      const sectionId = `section-${msgIdCounter}-${idx}`;
+      return `
+        <div style="border-bottom:1px solid var(--border)">
+          <div class="section-header" data-target="${sectionId}"
+               style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;background:${section.color}08">
+            <span class="section-arrow" style="display:inline-block;transition:transform 0.2s;font-size:11px;color:var(--text-3)">▸</span>
+            <span style="font-size:12px;font-weight:600;color:${section.color}">${section.label}</span>
+            <span style="font-size:10px;color:var(--text-3);margin-left:auto">${section.content.length} chars</span>
+          </div>
+          <div id="${sectionId}" class="section-body" style="display:none;padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:250px;overflow-y:auto;font-family:monospace">${escapeHtml(section.content)}</div>
+        </div>
+      `;
+    }
+    return `
+      <div style="padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:200px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(section.content)}</div>
+    `;
+  }).join('');
+}
+
+function renderRawPrompt(systemPrompt) {
+  return `<div style="padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:400px;overflow-y:auto;font-family:monospace">${escapeHtml(systemPrompt)}</div>`;
+}
+
+function bindPromptToggles() {
+  document.querySelectorAll('.prompt-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = document.getElementById(btn.dataset.target);
+      if (!target) return;
       const isOpen = target.style.display !== 'none';
       target.style.display = isOpen ? 'none' : 'block';
-      btn.textContent = isOpen ? '▸ 查看系统提示词' : '▾ 隐藏系统提示词';
+      const arrow = btn.querySelector('.toggle-arrow');
+      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+    });
+  });
+
+  document.querySelectorAll('.section-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const target = document.getElementById(header.dataset.target);
+      if (!target) return;
+      const isOpen = target.style.display !== 'none';
+      target.style.display = isOpen ? 'none' : 'block';
+      const arrow = header.querySelector('.section-arrow');
+      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
     });
   });
 }

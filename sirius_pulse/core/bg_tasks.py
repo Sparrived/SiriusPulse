@@ -133,10 +133,7 @@ class BackgroundTasks:
                     if not should_promote:
                         continue
 
-                    import time
-
                     cfg = engine.model_router.resolve("memory_extract")
-                    t0 = time.perf_counter()
                     result = await engine.diary_manager.generate_from_candidates(
                         group_id=group_id,
                         candidates=candidates,
@@ -146,13 +143,6 @@ class BackgroundTasks:
                         ),
                         brain=engine.brain,
                         model_name=cfg.model_name,
-                    )
-                    diary_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-                    engine._helpers.record_subtask_tokens(
-                        task_name="diary_generate",
-                        model_name=cfg.model_name,
-                        group_id=group_id,
-                        duration_ms=diary_duration_ms,
                     )
                     if result:
                         promoted_total += 1
@@ -203,7 +193,7 @@ class BackgroundTasks:
         user_name_map: dict[str, str] = {}
         for entry in candidates:
             uid = getattr(entry, "user_id", "")
-            if uid in ("assistant", "system", ""):
+            if uid in ("assistant", "system", "skill_system", ""):
                 continue
             speaker = getattr(entry, "speaker_name", "") or uid
             all_messages.append(f"{speaker}: {getattr(entry, 'content', '')}")
@@ -236,12 +226,6 @@ class BackgroundTasks:
                     brain=engine.brain,
                     model_name=model_name,
                 )
-                if distilled:
-                    engine._helpers.record_subtask_tokens(
-                        task_name="biography_distill",
-                        model_name=model_name,
-                        group_id=group_id,
-                    )
             except Exception as exc:
                 logger.warning("传记蒸馏失败 user=%s: %s", user_id, exc)
 
@@ -254,12 +238,6 @@ class BackgroundTasks:
                     brain=engine.brain,
                     model_name=model_name,
                 )
-                if updated:
-                    engine._helpers.record_subtask_tokens(
-                        task_name="biography_update",
-                        model_name=model_name,
-                        group_id=group_id,
-                    )
             except Exception as exc:
                 logger.warning("传记更新失败 user=%s: %s", user_id, exc)
 

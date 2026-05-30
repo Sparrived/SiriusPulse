@@ -113,7 +113,6 @@ class Pipeline:
             context_messages = recent
 
         # Joint cognition (emotion + intent + empathy in one pass)
-        import time
 
         # 获取传记系统别名信息，帮助 LLM 区分 AI 和其他用户的别称
         group_aliases: dict[str, str] | None = None
@@ -124,7 +123,6 @@ class Pipeline:
             except Exception:
                 pass
 
-        t0 = time.perf_counter()
         emotion, intent, empathy = await engine.cognition_analyzer.analyze(
             content, user_id, group_id, context_messages,
             sender_type=sender_type,
@@ -132,15 +130,6 @@ class Pipeline:
             caller_is_developer=caller_is_developer,
             group_aliases=group_aliases,
         )
-        cognition_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-        if engine.cognition_analyzer._last_request is not None:
-            engine._helpers.record_subtask_tokens(
-                task_name="cognition_analyze",
-                model_name=engine._task_models.get("cognition_analyze", engine._default_model),
-                group_id=group_id or "",
-                request=engine.cognition_analyzer._last_request,
-                duration_ms=cognition_duration_ms,
-            )
 
         # Rhythm context for persistence
         try:
