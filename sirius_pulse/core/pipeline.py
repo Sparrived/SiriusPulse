@@ -71,9 +71,6 @@ class Pipeline:
         # 获取最近发言者列表（用于上下文推断）
         recent_speakers = self._get_recent_speakers(group_id)
 
-        # 获取传记管理器（用于别名消歧）
-        biography_manager = getattr(engine, "biography_manager", None)
-
         # Register participants via identity resolver and user manager
         for p in participants:
             ctx = IdentityContext(
@@ -83,11 +80,9 @@ class Pipeline:
                 platform=message.channel,
                 is_developer=p.is_developer,
             )
-            # 使用增强版解析（向后兼容：仍返回 UserProfile）
             engine.identity_resolver.resolve(ctx, engine.user_manager, group_id)
 
-        # Resolve current sender to a stable user_id (may reuse UUID from
-        # participants or fall back to speaker name / platform_uid lookup).
+        # Resolve current sender
         sender_ctx = IdentityContext(
             speaker_name=message.speaker or "unknown",
             user_id=None,
@@ -96,12 +91,11 @@ class Pipeline:
             is_developer=False,
         )
 
-        # 使用增强版解析，获取置信度和来源信息
+        # 使用增强版解析（UnifiedUserManager 内置别名索引）
         resolution = engine.identity_resolver.resolve_with_alias(
             sender_ctx,
             engine.user_manager,
             group_id,
-            biography_manager=biography_manager,
             recent_speakers=recent_speakers,
         )
 
@@ -113,9 +107,8 @@ class Pipeline:
             )
 
         resolved_user_id = resolution.user_id
-        # 从 UserProfile 获取显示名称
-        sender_profile = engine.user_manager.get_user(resolved_user_id, group_id)
-        resolved_speaker_name = sender_profile.name if sender_profile else message.speaker or "unknown"
+        sender_user = engine.user_manager.get_user(resolved_user_id, group_id)
+        resolved_speaker_name = sender_user.name if sender_user else message.speaker or "unknown"
 
         # Add to basic memory and archive to disk
         entry = engine.basic_memory.add_entry(
@@ -161,14 +154,12 @@ class Pipeline:
 
         # Joint cognition (emotion + intent + empathy in one pass)
 
-        # 获取传记系统别名信息，帮助 LLM 区分 AI 和其他用户的别称
+        # 获取别名信息，帮助 LLM 区分 AI 和其他用户的别称
         group_aliases: dict[str, str] | None = None
-        bio_mgr = getattr(engine, "biography_manager", None)
-        if bio_mgr is not None:
-            try:
-                group_aliases = bio_mgr.get_aliases_for_group(group_id) or None
-            except Exception:
-                pass
+        try:
+            group_aliases = engine.user_manager.get_aliases_for_group(group_id) or None
+        except Exception:
+            pass
 
         emotion, intent, empathy = await engine.cognition_analyzer.analyze(
             content, user_id, group_id, context_messages,
@@ -326,21 +317,21 @@ class Pipeline:
         # 传记亲和力调节：仅当 LLM 曾输出过传记（last_updated_at 非空）时才生效
         biography_card = None
         affinity = 0.0
-        if getattr(engine, "biography_manager", None) is not None:
-            biography_card = engine.biography_manager.get_card(user_id)
-            if biography_card is not None and biography_card.last_updated_at:
-                # 用 EMA 平滑后的 affinity_score，不完全信任单次 LLM 输出
-                affinity = biography_card.affinity_score
-                if affinity > 0.3:
-                    factor = 1.0 - min(0.25, affinity * 0.15)
-                    threshold *= factor
-                elif affinity < -0.3:
-                    factor = 1.0 + min(0.40, abs(affinity) * 0.25)
-                    threshold *= factor
-                if abs(affinity) > 0.3:
-                    engine._log_inner_thought(
-                        f"对ta的认知是affinity={affinity:.2f}，响应门槛调整了"
-                    )
+        # 使用 UnifiedUserManager 获取用户信息（包含亲和力分数）
+        user_info = engine.user_manager.get_user(user_id)
+        if user_info is not None and user_info.last_updated_at:
+            # 用 EMA 平滑后的 affinity_score，不完全信任单次 LLM 输出
+            affinity = user_info.affinity_score
+            if affinity > 0.3:
+                factor = 1.0 - min(0.25, affinity * 0.15)
+                threshold *= factor
+            elif affinity < -0.3:
+                factor = 1.0 + min(0.40, abs(affinity) * 0.25)
+                threshold *= factor
+            if abs(affinity) > 0.3:
+                engine._log_inner_thought(
+                    f"对ta的认知是affinity={affinity:.2f}，响应门槛调整了"
+                )
 
         intent.threshold = threshold
         intent.activity_factor = engine.threshold_engine._activity_factor(rhythm.heat_level, msg_rate)
@@ -633,13 +624,10 @@ class Pipeline:
         供 _build_delayed_prompt 等后续 prompt 组装阶段取用。
         """
         engine = self._engine
-        mgr = getattr(engine, "biography_manager", None)
-        if mgr is None:
-            engine._pending_biography = {}
-            return
+        mgr = engine.user_manager
 
         # 当前发言者传记
-        speaker_card = mgr.get_card(user_id) if user_id else None
+        speaker_user = mgr.get_user(user_id) if user_id else None
 
         # 被提及者：从文本别名中收集
         mentioned: dict[str, float] = {}
@@ -657,15 +645,15 @@ class Pipeline:
                         if group_id in entry.groups and entry.user_id != user_id:
                             mentioned[entry.user_id] = 0.0
 
-        mentioned_cards = mgr.get_cards_for_users(list(mentioned.keys()))
+        mentioned_users = {uid: mgr.get_user(uid) for uid in mentioned.keys()}
         all_aliases = mgr.get_aliases_for_group(group_id)
 
         engine._pending_biography = {
-            "speaker_card": speaker_card,
-            "mentioned_cards": mentioned_cards,
+            "speaker_user": speaker_user,
+            "mentioned_users": mentioned_users,
             "confidence": mentioned,
             "aliases": all_aliases,
-            "affinity_score": speaker_card.affinity_score if speaker_card else 0.0,
+            "affinity_score": speaker_user.affinity_score if speaker_user else 0.0,
         }
 
     def background_update(

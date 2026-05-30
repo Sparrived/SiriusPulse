@@ -37,12 +37,11 @@ from sirius_pulse.core.threshold_engine import ThresholdEngine
 
 # New v2 memory system (refactor)
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager
-from sirius_pulse.memory.biography import BiographyManager
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.diary import DiaryManager
 from sirius_pulse.memory.glossary import GlossaryManager
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
-from sirius_pulse.memory.user.simple import UserManager
+from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3
 from sirius_pulse.models.models import Message, Participant, Transcript
@@ -174,13 +173,12 @@ class _EmotionalGroupChatEngineBase:
             vector_store=self._vector_store,
             embedding_client=self._embedding_client,
         )
-        self.user_manager = UserManager()
-        self.identity_resolver = IdentityResolver()
-        self.biography_manager = BiographyManager(
+        self.user_manager = UnifiedUserManager(
             self.work_path,
             persona_name=self.persona.name,
             persona_aliases=self.persona.aliases,
         )
+        self.identity_resolver = IdentityResolver()
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,

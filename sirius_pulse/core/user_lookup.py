@@ -10,8 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sirius_pulse.core.identity_resolver import IdentityResolver
-    from sirius_pulse.memory.biography.manager import BiographyManager
-    from sirius_pulse.memory.user.simple import UserManager
+    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +25,11 @@ class UserLookupService:
     def __init__(
         self,
         identity_resolver: IdentityResolver,
-        user_manager: UserManager,
-        biography_manager: BiographyManager | None = None,
+        user_manager: UnifiedUserManager,
         engine: Any = None,
     ) -> None:
         self._identity_resolver = identity_resolver
         self._user_manager = user_manager
-        self._biography_manager = biography_manager
         self._engine = engine
 
     def find_by_platform_uid(
@@ -106,7 +103,6 @@ class UserLookupService:
                 ctx,
                 self._user_manager,
                 group_id or "default",
-                biography_manager=self._biography_manager if fuzzy else None,
             )
             if not resolution.user_id or resolution.source == "unresolved":
                 return None

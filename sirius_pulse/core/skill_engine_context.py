@@ -27,7 +27,6 @@ class SkillEngineContextImpl:
         self._user_lookup = UserLookupService(
             identity_resolver=engine.identity_resolver,
             user_manager=engine.user_manager,
-            biography_manager=getattr(engine, "biography_manager", None),
             engine=engine,
         )
 
