@@ -154,4 +154,17 @@ class UserLookupMixin:
         if self._engine is None:
             return []
         try:
-            users = self._engine.user_manager.list_users
+            users = self._engine.user_manager.list_users(group_id or "default")
+            return [
+                {
+                    "user_id": u.user_id,
+                    "name": u.name,
+                    "aliases": u.aliases,
+                    "identities": u.identities,
+                    "is_developer": u.is_developer,
+                }
+                for u in users
+            ]
+        except Exception:
+            logger.warning("list_users 失败", exc_info=True)
+            return []

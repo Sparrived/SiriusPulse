@@ -54,8 +54,8 @@ def _calc_uptime_seconds(status: dict[str, Any] | None) -> float:
 
 
 def _read_token_usage(persona_dir: Path) -> dict[str, int]:
-    """从 SQLite token_usage.db 读取聚合的 token 使用统计。"""
-    db_path = persona_dir / "token" / "token_usage.db"
+    """从 persona.db 读取聚合的 token 使用统计。"""
+    db_path = persona_dir / "persona.db"
     if not db_path.exists():
         return {"total_input": 0, "total_output": 0, "call_count": 0}
     try:
@@ -128,7 +128,7 @@ def _count_user_profiles(persona_dir: Path) -> int:
 
 def _count_cognition_events(persona_dir: Path) -> int:
     """统计认知事件总数。"""
-    db_path = persona_dir / "cognition_events.db"
+    db_path = persona_dir / "persona.db"
     if not db_path.exists():
         return 0
     try:

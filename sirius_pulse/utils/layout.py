@@ -100,6 +100,10 @@ class WorkspaceLayout:
     def token_usage_db_path(self) -> Path:
         return self.token_dir() / "token_usage.db"
 
+    def persona_db_path(self) -> Path:
+        """统一人格数据库路径。"""
+        return self.data_root / "persona.db"
+
     def roleplay_dir(self) -> Path:
         return self.config_root / "roleplay"
 

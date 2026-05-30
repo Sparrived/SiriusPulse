@@ -16,33 +16,44 @@ from typing import Any
 from sirius_pulse.config import TokenUsageRecord
 from sirius_pulse.token.token_utils import (
     _CREATE_INDEXES,
-    _CREATE_META,
     _CREATE_TABLE,
+    _META_KEY_PREFIX,
     _SCHEMA_VERSION,
 )
 from sirius_pulse.utils.layout import WorkspaceLayout
+from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["TokenUsageStore"]
 
-class TokenUsageStore:
+
+class TokenUsageStore(BaseSqliteStore):
     """Append-only SQLite store for :class:`TokenUsageRecord` instances.
+
+    继承自 BaseSqliteStore，复用连接管理和基础操作。
 
     Parameters
     ----------
     db_path:
         Path to the SQLite database file.  Created automatically if absent.
+        当传入 ``conn`` 时可省略。
     session_id:
         Logical session identifier written alongside every record so that
         per-session queries are possible.
+    conn:
+        可选的共享 SQLite 连接。传入时复用该连接，不再自行管理生命周期。
     """
 
-    def __init__(self, db_path: str | Path, *, session_id: str = "default") -> None:
-        self._db_path = Path(db_path)
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        session_id: str = "default",
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
         self._session_id = session_id
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection | None = None
-        self._ensure_schema()
+        super().__init__(db_path, conn=conn)
 
     @classmethod
     def for_workspace(
@@ -51,29 +62,17 @@ class TokenUsageStore:
         *,
         session_id: str = "default",
     ) -> "TokenUsageStore":
-        return cls(layout.token_usage_db_path(), session_id=session_id)
+        return cls(layout.token_usage_db_path(), session_id=session_id, conn=None)
 
-    # ------------------------------------------------------------------
-    # Connection helpers
-    # ------------------------------------------------------------------
-
-    def _connect(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self._db_path), timeout=10)
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-            self._conn.execute("PRAGMA synchronous=NORMAL;")
-            self._conn.row_factory = sqlite3.Row
-        return self._conn
-
-    def _ensure_schema(self) -> None:
-        conn = self._connect()
-        conn.execute(_CREATE_META)
-        conn.execute(_CREATE_TABLE)
+    def _create_tables(self) -> None:
+        """创建表结构并执行 schema 迁移。"""
+        # _meta 表由 PersonaDatabase 统一创建，此处不再重复建表
+        self.execute(_CREATE_TABLE)
         for idx_sql in _CREATE_INDEXES:
-            conn.execute(idx_sql)
+            self.execute(idx_sql)
         # Schema migration: add columns if upgrading from v1
         existing_cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(token_usage)")
+            row[1] for row in self.execute("PRAGMA table_info(token_usage)")
         }
         for col, ddl in (
             ("persona_name", "ALTER TABLE token_usage ADD COLUMN persona_name TEXT NOT NULL DEFAULT ''"),
@@ -86,17 +85,8 @@ class TokenUsageStore:
             ("conversation_depth", "ALTER TABLE token_usage ADD COLUMN conversation_depth INTEGER NOT NULL DEFAULT 0"),
         ):
             if col not in existing_cols:
-                conn.execute(ddl)
-        conn.execute(
-            "INSERT OR REPLACE INTO _meta(key, value) VALUES(?, ?)",
-            ("schema_version", str(_SCHEMA_VERSION)),
-        )
-        conn.commit()
-
-    def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+                self.execute(ddl)
+        self.set_schema_version(_SCHEMA_VERSION, f"{_META_KEY_PREFIX}schema_version")
 
     # ------------------------------------------------------------------
     # Write
@@ -105,8 +95,7 @@ class TokenUsageStore:
     def add(self, record: TokenUsageRecord, *, timestamp: float | None = None) -> None:
         """Persist a single :class:`TokenUsageRecord`."""
         ts = timestamp if timestamp is not None else time.time()
-        conn = self._connect()
-        conn.execute(
+        self.execute(
             """INSERT INTO token_usage
                (session_id, timestamp, actor_id, task_name, model,
                 prompt_tokens, completion_tokens, total_tokens,
@@ -137,15 +126,14 @@ class TokenUsageStore:
                 record.conversation_depth,
             ),
         )
-        conn.commit()
+        self.commit()
 
     def add_many(self, records: list[TokenUsageRecord], *, timestamp: float | None = None) -> None:
         """Persist multiple records in a single transaction."""
         if not records:
             return
         ts = timestamp if timestamp is not None else time.time()
-        conn = self._connect()
-        conn.executemany(
+        self.executemany(
             """INSERT INTO token_usage
                (session_id, timestamp, actor_id, task_name, model,
                 prompt_tokens, completion_tokens, total_tokens,
@@ -179,26 +167,24 @@ class TokenUsageStore:
                 for r in records
             ],
         )
-        conn.commit()
+        self.commit()
 
     # ------------------------------------------------------------------
     # Read helpers
     # ------------------------------------------------------------------
 
     def count(self, *, session_id: str | None = None) -> int:
-        conn = self._connect()
         if session_id is not None:
-            row = conn.execute(
+            row = self.execute(
                 "SELECT COUNT(*) FROM token_usage WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
         else:
-            row = conn.execute("SELECT COUNT(*) FROM token_usage").fetchone()
+            row = self.execute("SELECT COUNT(*) FROM token_usage").fetchone()
         return int(row[0])
 
     def list_sessions(self) -> list[str]:
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             "SELECT DISTINCT session_id FROM token_usage ORDER BY session_id"
         ).fetchall()
         return [row[0] for row in rows]
@@ -228,8 +214,7 @@ class TokenUsageStore:
             params.append(model)
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             f"SELECT * FROM token_usage{where} ORDER BY timestamp",
             params,
         ).fetchall()
@@ -262,8 +247,7 @@ class TokenUsageStore:
             params.append(end_ts)
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT * FROM token_usage{where}
             ORDER BY timestamp DESC
             LIMIT ? OFFSET ?""",
@@ -291,8 +275,7 @@ class TokenUsageStore:
             params.append(end_ts)
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             f"SELECT breakdown_json FROM token_usage{where}",
             params,
         ).fetchall()
@@ -333,8 +316,7 @@ class TokenUsageStore:
             params.append(end_ts)
 
         where = " WHERE " + " AND ".join(clauses)
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             f"SELECT task_name, breakdown_json FROM token_usage{where}",
             params,
         ).fetchall()
@@ -384,8 +366,7 @@ class TokenUsageStore:
 
     def get_summary(self) -> dict[str, Any]:
         """Return aggregated token usage summary."""
-        conn = self._connect()
-        row = conn.execute(
+        row = self.execute(
             """SELECT
                 COUNT(*) as total_calls,
                 COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
@@ -416,8 +397,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = " WHERE " + " AND ".join(clauses)
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT
                 {column} as name,
                 COUNT(*) as calls,
@@ -433,8 +413,7 @@ class TokenUsageStore:
 
     def get_recent_records(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the most recent token usage records."""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             """SELECT * FROM token_usage
             ORDER BY timestamp DESC
             LIMIT ?""",
@@ -463,8 +442,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT
                 CAST(timestamp / 3600 AS INTEGER) * 3600 as hour_ts,
                 COUNT(*) as calls,
@@ -494,8 +472,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        conn = self._connect()
-        row = conn.execute(
+        row = self.execute(
             f"""SELECT
                 COUNT(*) as total_calls,
                 COALESCE(SUM(retries_used), 0) as total_retries,
@@ -524,8 +501,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = " WHERE " + " AND ".join(clauses)
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT
                 task_name,
                 COUNT(*) as calls,
@@ -537,7 +513,7 @@ class TokenUsageStore:
             ORDER BY avg_ms DESC""",
             params,
         ).fetchall()
-        overall = conn.execute(
+        overall = self.execute(
             f"""SELECT
                 COUNT(*) as calls,
                 ROUND(AVG(duration_ms), 2) as avg_ms,
@@ -567,8 +543,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        conn = self._connect()
-        row = conn.execute(
+        row = self.execute(
             f"""SELECT
                 COUNT(*) as calls,
                 COALESCE(SUM(input_chars), 0) as total_input_chars,
@@ -607,8 +582,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = " WHERE " + " AND ".join(clauses)
-        conn = self._connect()
-        row = conn.execute(
+        row = self.execute(
             f"""SELECT
                 COUNT(*) as total_calls,
                 SUM(CASE WHEN completion_tokens = 0 THEN 1 ELSE 0 END) as empty_calls,
@@ -623,8 +597,7 @@ class TokenUsageStore:
 
     def get_hourly_distribution(self) -> list[dict[str, Any]]:
         """Return token usage distribution by hour-of-day (0-23)."""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             """SELECT
                 CAST(strftime('%H', datetime(timestamp, 'unixepoch')) AS INTEGER) as hour,
                 COUNT(*) as calls,
@@ -651,8 +624,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        conn = self._connect()
-        overall = conn.execute(
+        overall = self.execute(
             f"""SELECT
                 COUNT(*) as total_calls,
                 SUM(CASE WHEN error_type != '' THEN 1 ELSE 0 END) as failure_calls
@@ -665,7 +637,7 @@ class TokenUsageStore:
         if end_ts is not None:
             by_type_where.append("timestamp <= ?")
         by_type_sql = " WHERE " + " AND ".join(by_type_where)
-        by_type = conn.execute(
+        by_type = self.execute(
             f"""SELECT error_type as name, COUNT(*) as calls
             FROM token_usage{by_type_sql}
             GROUP BY error_type
@@ -695,8 +667,7 @@ class TokenUsageStore:
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = " WHERE " + " AND ".join(clauses)
-        conn = self._connect()
-        row = conn.execute(
+        row = self.execute(
             f"""SELECT
                 COUNT(*) as calls,
                 ROUND(AVG(conversation_depth), 2) as avg_depth,
@@ -718,7 +689,6 @@ class TokenUsageStore:
 
         Returns percentage change for key metrics.
         """
-        conn = self._connect()
         now = time.time()
         # When explicit range is provided, compare that range vs previous equal-length range
         if start_ts is not None and end_ts is not None:
@@ -734,7 +704,7 @@ class TokenUsageStore:
             previous_end = now - current_seconds
 
         def _agg(start: float, end: float) -> dict[str, Any]:
-            row = conn.execute(
+            row = self.execute(
                 """SELECT
                     COUNT(*) as calls,
                     COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
@@ -762,10 +732,6 @@ class TokenUsageStore:
             "change_prompt_tokens": _pct(current["prompt_tokens"], previous["prompt_tokens"]),
             "change_completion_tokens": _pct(current["completion_tokens"], previous["completion_tokens"]),
         }
-
-    @property
-    def db_path(self) -> Path:
-        return self._db_path
 
     @property
     def session_id(self) -> str:

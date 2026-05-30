@@ -37,68 +37,82 @@ CREATE TABLE IF NOT EXISTS _meta (
 
 _CREATE_SESSION_META_TABLE = """
 CREATE TABLE IF NOT EXISTS session_meta (
-    id INTEGER PRIMARY KEY CHECK(id = 1),
+    session_id TEXT NOT NULL DEFAULT '',
     session_summary TEXT NOT NULL DEFAULT '',
-    orchestration_stats TEXT NOT NULL DEFAULT '{}'
+    orchestration_stats TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (session_id)
 )
 """
 
 _CREATE_MESSAGES_TABLE = """
 CREATE TABLE IF NOT EXISTS session_messages (
-    message_index INTEGER PRIMARY KEY,
+    session_id TEXT NOT NULL DEFAULT '',
+    message_index INTEGER NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     speaker TEXT,
     channel TEXT,
     channel_user_id TEXT,
     multimodal_inputs TEXT NOT NULL DEFAULT '[]',
-    reply_mode TEXT NOT NULL DEFAULT 'always'
+    reply_mode TEXT NOT NULL DEFAULT 'always',
+    PRIMARY KEY (session_id, message_index)
 )
 """
 
 _CREATE_REPLY_RUNTIME_TABLE = """
 CREATE TABLE IF NOT EXISTS session_reply_runtime (
-    id INTEGER PRIMARY KEY CHECK(id = 1),
-    last_assistant_reply_at TEXT NOT NULL DEFAULT ''
+    session_id TEXT NOT NULL DEFAULT '',
+    id INTEGER NOT NULL DEFAULT 1,
+    last_assistant_reply_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (session_id, id)
 )
 """
 
 _CREATE_REPLY_RUNTIME_USER_TURNS_TABLE = """
 CREATE TABLE IF NOT EXISTS session_reply_runtime_user_turns (
-    user_id TEXT PRIMARY KEY,
-    last_turn_at TEXT NOT NULL
+    session_id TEXT NOT NULL DEFAULT '',
+    user_id TEXT NOT NULL,
+    last_turn_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, user_id)
 )
 """
 
 _CREATE_REPLY_RUNTIME_GROUP_TURNS_TABLE = """
 CREATE TABLE IF NOT EXISTS session_reply_runtime_group_turns (
-    seq INTEGER PRIMARY KEY,
-    timestamp TEXT NOT NULL
+    session_id TEXT NOT NULL DEFAULT '',
+    seq INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    PRIMARY KEY (session_id, seq)
 )
 """
 
 _CREATE_REPLY_RUNTIME_ASSISTANT_TURNS_TABLE = """
 CREATE TABLE IF NOT EXISTS session_reply_runtime_assistant_turns (
-    seq INTEGER PRIMARY KEY,
-    timestamp TEXT NOT NULL
+    session_id TEXT NOT NULL DEFAULT '',
+    seq INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    PRIMARY KEY (session_id, seq)
 )
 """
 
 _CREATE_USER_PROFILES_TABLE = """
 CREATE TABLE IF NOT EXISTS session_user_profiles (
-    user_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL DEFAULT '',
+    user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     persona TEXT NOT NULL DEFAULT '',
     identities TEXT NOT NULL DEFAULT '{}',
     aliases TEXT NOT NULL DEFAULT '[]',
     traits TEXT NOT NULL DEFAULT '[]',
-    metadata TEXT NOT NULL DEFAULT '{}'
+    metadata TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (session_id, user_id)
 )
 """
 
 _CREATE_USER_RUNTIME_TABLE = """
 CREATE TABLE IF NOT EXISTS session_user_runtime (
-    user_id TEXT PRIMARY KEY REFERENCES session_user_profiles(user_id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL DEFAULT '',
+    user_id TEXT NOT NULL,
     inferred_persona TEXT NOT NULL DEFAULT '',
     inferred_traits TEXT NOT NULL DEFAULT '[]',
     preference_tags TEXT NOT NULL DEFAULT '[]',
@@ -110,13 +124,15 @@ CREATE TABLE IF NOT EXISTS session_user_runtime (
     observed_roles TEXT NOT NULL DEFAULT '[]',
     observed_emotions TEXT NOT NULL DEFAULT '[]',
     observed_entities TEXT NOT NULL DEFAULT '[]',
-    last_event_processed_at TEXT
+    last_event_processed_at TEXT,
+    PRIMARY KEY (session_id, user_id)
 )
 """
 
 _CREATE_USER_FACTS_TABLE = """
 CREATE TABLE IF NOT EXISTS session_user_memory_facts (
-    user_id TEXT NOT NULL REFERENCES session_user_profiles(user_id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL DEFAULT '',
+    user_id TEXT NOT NULL,
     fact_index INTEGER NOT NULL,
     fact_type TEXT NOT NULL,
     value TEXT NOT NULL,
@@ -132,13 +148,14 @@ CREATE TABLE IF NOT EXISTS session_user_memory_facts (
     context_metadata TEXT NOT NULL DEFAULT '{}',
     mention_count INTEGER NOT NULL DEFAULT 0,
     source_event_id TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (user_id, fact_index)
+    PRIMARY KEY (session_id, user_id, fact_index)
 )
 """
 
 _CREATE_TOKEN_USAGE_TABLE = """
 CREATE TABLE IF NOT EXISTS session_token_usage_records (
-    record_index INTEGER PRIMARY KEY,
+    session_id TEXT NOT NULL DEFAULT '',
+    record_index INTEGER NOT NULL,
     actor_id TEXT NOT NULL,
     task_name TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -148,7 +165,8 @@ CREATE TABLE IF NOT EXISTS session_token_usage_records (
     input_chars INTEGER NOT NULL DEFAULT 0,
     output_chars INTEGER NOT NULL DEFAULT 0,
     estimation_method TEXT NOT NULL DEFAULT 'char_div4',
-    retries_used INTEGER NOT NULL DEFAULT 0
+    retries_used INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (session_id, record_index)
 )
 """
 
@@ -238,6 +256,12 @@ class JsonSessionStore:
 
 
 class SqliteSessionStore:
+    """SQLite 会话持久化存储。
+
+    注意：此类使用每次操作创建新连接的模式（而非共享连接），
+    因此不继承 BaseSqliteStore。这是为了保持其原有的轻量级设计。
+    """
+
     def __init__(
         self,
         work_path: str | Path | None = None,
@@ -252,6 +276,7 @@ class SqliteSessionStore:
             self._path = Path(work_path) / filename
         else:
             raise ValueError("SqliteSessionStore requires either work_path or path.")
+        self._conn: sqlite3.Connection | None = None
         self._ensure_schema()
 
     @classmethod
@@ -272,12 +297,16 @@ class SqliteSessionStore:
 
     @contextmanager
     def _managed_connection(self):
-        conn = self._connect()
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+        if self._conn is not None:
+            yield self._conn
+            self._conn.commit()
+        else:
+            conn = self._connect()
+            try:
+                yield conn
+                conn.commit()
+            finally:
+                conn.close()
 
 
     @staticmethod
@@ -340,8 +369,9 @@ class SqliteSessionStore:
         self._delete_session_rows(conn)
 
         conn.execute(
-            "INSERT INTO session_meta(id, session_summary, orchestration_stats) VALUES(1, ?, ?)",
+            "INSERT INTO session_meta(session_id, session_summary, orchestration_stats) VALUES(?, ?, ?)",
             (
+                self._session_id,
                 transcript.session_summary,
                 self._json_dumps(transcript.orchestration_stats),
             ),
@@ -350,12 +380,13 @@ class SqliteSessionStore:
         conn.executemany(
             """
             INSERT INTO session_messages(
-                message_index, role, content, speaker, channel, channel_user_id,
+                session_id, message_index, role, content, speaker, channel, channel_user_id,
                 multimodal_inputs, reply_mode
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
+                    self._session_id,
                     index,
                     message.role,
                     message.content,
@@ -370,25 +401,32 @@ class SqliteSessionStore:
         )
 
         conn.execute(
-            "INSERT INTO session_reply_runtime(id, last_assistant_reply_at) VALUES(1, ?)",
-            (transcript.reply_runtime.last_assistant_reply_at,),
+            "INSERT INTO session_reply_runtime(session_id, last_assistant_reply_at) VALUES(?, ?)",
+            (self._session_id, transcript.reply_runtime.last_assistant_reply_at),
         )
         conn.executemany(
-            "INSERT INTO session_reply_runtime_user_turns(user_id, last_turn_at) VALUES(?, ?)",
-            list(transcript.reply_runtime.user_last_turn_at.items()),
-        )
-        conn.executemany(
-            "INSERT INTO session_reply_runtime_group_turns(seq, timestamp) VALUES(?, ?)",
+            "INSERT INTO session_reply_runtime_user_turns(session_id, user_id, last_turn_at) VALUES(?, ?, ?)",
             [
-                (index, timestamp)
-                for index, timestamp in enumerate(transcript.reply_runtime.group_recent_turn_timestamps)
+                (self._session_id, uid, ts)
+                for uid, ts in transcript.reply_runtime.user_last_turn_at.items()
             ],
         )
         conn.executemany(
-            "INSERT INTO session_reply_runtime_assistant_turns(seq, timestamp) VALUES(?, ?)",
+            "INSERT INTO session_reply_runtime_group_turns(session_id, seq, timestamp) VALUES(?, ?, ?)",
             [
-                (index, timestamp)
-                for index, timestamp in enumerate(transcript.reply_runtime.assistant_reply_timestamps)
+                (self._session_id, index, timestamp)
+                for index, timestamp in enumerate(
+                    transcript.reply_runtime.group_recent_turn_timestamps
+                )
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO session_reply_runtime_assistant_turns(session_id, seq, timestamp) VALUES(?, ?, ?)",
+            [
+                (self._session_id, index, timestamp)
+                for index, timestamp in enumerate(
+                    transcript.reply_runtime.assistant_reply_timestamps
+                )
             ],
         )
 
@@ -397,10 +435,11 @@ class SqliteSessionStore:
                 conn.execute(
                     """
                     INSERT INTO session_user_profiles(
-                        user_id, name, persona, identities, aliases, traits, metadata
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                        session_id, user_id, name, persona, identities, aliases, traits, metadata
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
+                        self._session_id,
                         user_id,
                         profile.name,
                         profile.persona,
@@ -414,28 +453,33 @@ class SqliteSessionStore:
                 conn.execute(
                     """
                     INSERT INTO session_user_runtime(
-                        user_id, inferred_persona, inferred_traits, preference_tags,
+                        session_id, user_id, inferred_persona, inferred_traits, preference_tags,
                         recent_messages, summary_notes, last_seen_channel, last_seen_uid,
                         observed_keywords, observed_roles, observed_emotions,
                         observed_entities, last_event_processed_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (user_id, "", "[]", "[]", "[]", "[]", "", "", "[]", "[]", "[]", "[]", None),
+                    (
+                        self._session_id, user_id, "", "[]", "[]", "[]", "[]",
+                        "", "", "[]", "[]", "[]", "[]", None,
+                    ),
                 )
                 conn.execute(
-                    "DELETE FROM session_user_memory_facts WHERE user_id = ?", (user_id,)
+                    "DELETE FROM session_user_memory_facts WHERE session_id = ? AND user_id = ?",
+                    (self._session_id, user_id),
                 )
 
         conn.executemany(
             """
             INSERT INTO session_token_usage_records(
-                record_index, actor_id, task_name, model, prompt_tokens,
+                session_id, record_index, actor_id, task_name, model, prompt_tokens,
                 completion_tokens, total_tokens, input_chars, output_chars,
                 estimation_method, retries_used
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
+                    self._session_id,
                     index,
                     record.actor_id,
                     record.task_name,
@@ -454,17 +498,20 @@ class SqliteSessionStore:
 
     def _build_payload_from_connection(self, conn: sqlite3.Connection) -> dict[str, Any]:
         meta_row = conn.execute(
-            "SELECT session_summary, orchestration_stats FROM session_meta WHERE id = 1"
+            "SELECT session_summary, orchestration_stats FROM session_meta WHERE session_id = ?",
+            (self._session_id,),
         ).fetchone()
         if meta_row is None:
             raise FileNotFoundError(f"session state not found in sqlite store: {self._path}")
 
         profile_rows = conn.execute(
-            "SELECT * FROM session_user_profiles ORDER BY user_id"
+            "SELECT * FROM session_user_profiles WHERE session_id = ? ORDER BY user_id",
+            (self._session_id,),
         ).fetchall()
         fact_rows_by_user: dict[str, list[sqlite3.Row]] = {}
         for row in conn.execute(
-            "SELECT * FROM session_user_memory_facts ORDER BY user_id, fact_index"
+            "SELECT * FROM session_user_memory_facts WHERE session_id = ? ORDER BY user_id, fact_index",
+            (self._session_id,),
         ).fetchall():
             fact_rows_by_user.setdefault(str(row["user_id"]), []).append(row)
 
@@ -493,7 +540,8 @@ class SqliteSessionStore:
                     "reply_mode": str(row["reply_mode"]),
                 }
                 for row in conn.execute(
-                    "SELECT * FROM session_messages ORDER BY message_index"
+                    "SELECT * FROM session_messages WHERE session_id = ? ORDER BY message_index",
+                    (self._session_id,),
                 ).fetchall()
             ],
             "user_memory": {"default": entries},
@@ -501,24 +549,32 @@ class SqliteSessionStore:
                 "user_last_turn_at": {
                     str(row["user_id"]): str(row["last_turn_at"])
                     for row in conn.execute(
-                        "SELECT * FROM session_reply_runtime_user_turns ORDER BY user_id"
+                        "SELECT * FROM session_reply_runtime_user_turns"
+                        " WHERE session_id = ? ORDER BY user_id",
+                        (self._session_id,),
                     ).fetchall()
                 },
                 "group_recent_turn_timestamps": [
                     str(row["timestamp"])
                     for row in conn.execute(
-                        "SELECT * FROM session_reply_runtime_group_turns ORDER BY seq"
+                        "SELECT * FROM session_reply_runtime_group_turns"
+                        " WHERE session_id = ? ORDER BY seq",
+                        (self._session_id,),
                     ).fetchall()
                 ],
                 "last_assistant_reply_at": str(
                     conn.execute(
-                        "SELECT last_assistant_reply_at FROM session_reply_runtime WHERE id = 1"
+                        "SELECT last_assistant_reply_at FROM session_reply_runtime"
+                        " WHERE session_id = ?",
+                        (self._session_id,),
                     ).fetchone()[0]
                 ),
                 "assistant_reply_timestamps": [
                     str(row["timestamp"])
                     for row in conn.execute(
-                        "SELECT * FROM session_reply_runtime_assistant_turns ORDER BY seq"
+                        "SELECT * FROM session_reply_runtime_assistant_turns"
+                        " WHERE session_id = ? ORDER BY seq",
+                        (self._session_id,),
                     ).fetchall()
                 ],
             },
@@ -538,14 +594,15 @@ class SqliteSessionStore:
                     "retries_used": int(row["retries_used"]),
                 }
                 for row in conn.execute(
-                    "SELECT * FROM session_token_usage_records ORDER BY record_index"
+                    "SELECT * FROM session_token_usage_records"
+                    " WHERE session_id = ? ORDER BY record_index",
+                    (self._session_id,),
                 ).fetchall()
             ],
         }
 
     def _ensure_schema(self) -> None:
         with self._managed_connection() as conn:
-            conn.execute(_CREATE_META_TABLE)
             conn.execute(_CREATE_SESSION_META_TABLE)
             conn.execute(_CREATE_MESSAGES_TABLE)
             conn.execute(_CREATE_REPLY_RUNTIME_TABLE)

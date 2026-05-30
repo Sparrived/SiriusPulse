@@ -17,6 +17,7 @@ from typing import Any
 
 from sirius_pulse.core.emotional_engine import create_emotional_engine
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.providers.routing import AutoRoutingProvider, ProviderConfig
@@ -107,9 +108,12 @@ class EngineRuntime:
         self._embedding_build_failed: bool = False
         self._embedding_last_fail_at: float = 0.0
         self._embedding_fail_count: int = 0
+
+        # 统一人格数据库：所有存储层共享同一连接
+        self.persona_db = PersonaDatabase(self.work_path / "persona.db")
         self.token_store = TokenUsageStore(
-            self.work_path / "token" / "token_usage.db",
             session_id="default",
+            conn=self.persona_db.conn,
         )
 
     def has_provider_config(self) -> bool:
@@ -467,6 +471,7 @@ class EngineRuntime:
             config=config,
             vector_store=vector_store,
             embedding_client=embedding_client,
+            persona_db_conn=self.persona_db.conn,
         )
 
         # 尝试恢复状态
@@ -559,4 +564,12 @@ class EngineRuntime:
             except Exception as exc:
                 LOG.warning("引擎状态保存失败: %s", exc)
             self._engine = None
+
+        # 关闭统一人格数据库连接
+        if hasattr(self, 'persona_db') and self.persona_db is not None:
+            try:
+                self.persona_db.close()
+            except Exception as exc:
+                LOG.warning("PersonaDatabase 关闭失败: %s", exc)
+
         LOG.info("EmotionalGroupChatEngine 已停止")

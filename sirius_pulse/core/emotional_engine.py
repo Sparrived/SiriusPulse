@@ -37,6 +37,7 @@ def create_emotional_engine(
     config: dict[str, Any] | None = None,
     vector_store: Any | None = None,
     embedding_client: Any | None = None,
+    persona_db_conn: Any | None = None,
 ) -> "EmotionalGroupChatEngine":
     """Factory for EmotionalGroupChatEngine (v0.28+).
 
@@ -47,6 +48,7 @@ def create_emotional_engine(
         config: Optional engine configuration dict.
         vector_store: Optional DiaryVectorStore for persistent embeddings.
         embedding_client: Optional EmbeddingClient for shared embedding service.
+        persona_db_conn: Optional shared SQLite connection for unified persona.db.
 
     Returns:
         Configured EmotionalGroupChatEngine instance.
@@ -59,6 +61,7 @@ def create_emotional_engine(
         config=config,
         vector_store=vector_store,
         embedding_client=embedding_client,
+        persona_db_conn=persona_db_conn,
     )
 
 

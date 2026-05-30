@@ -6,12 +6,17 @@ Also persists decision events (strategy, threshold, reason) for WebUI analysis.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.utils.sqlite_base import BaseSqliteStore
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["CognitionEventStore"]
 
 _SCHEMA_VERSION = 3
 
@@ -75,13 +80,6 @@ _CREATE_DECISION_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_de_strategy ON decision_events(strategy);",
 ]
 
-_CREATE_META = """\
-CREATE TABLE IF NOT EXISTS _meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-"""
-
 # Columns added in schema v2
 _V2_COLUMNS = {
     "directed_score": "REAL NOT NULL DEFAULT 0",
@@ -98,50 +96,29 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(row[1] == column for row in rows)
 
 
-class CognitionEventStore:
-    """Append-only SQLite store for cognition analysis events."""
+class CognitionEventStore(BaseSqliteStore):
+    """Append-only SQLite store for cognition analysis events.
 
-    def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection | None = None
-        self._ensure_schema()
+    继承自 BaseSqliteStore，复用连接管理和基础操作。
+    """
 
-    def _connect(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self._db_path), timeout=10)
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-            self._conn.execute("PRAGMA synchronous=NORMAL;")
-            self._conn.row_factory = sqlite3.Row
-        return self._conn
-
-    def _ensure_schema(self) -> None:
-        conn = self._connect()
-        conn.execute(_CREATE_META)
-        conn.execute(_CREATE_TABLE)
+    def _create_tables(self) -> None:
+        """创建表结构并执行 schema 迁移。"""
+        self.execute(_CREATE_TABLE)
         for idx_sql in _CREATE_INDEXES:
-            conn.execute(idx_sql)
+            self.execute(idx_sql)
 
         # Migrate v1 -> v2
         for col, dtype in _V2_COLUMNS.items():
-            if not _column_exists(conn, "cognition_events", col):
-                conn.execute(f"ALTER TABLE cognition_events ADD COLUMN {col} {dtype}")
+            if not _column_exists(self._conn, "cognition_events", col):
+                self.execute(f"ALTER TABLE cognition_events ADD COLUMN {col} {dtype}")
 
         # Migrate v2 -> v3: decision_events table
-        conn.execute(_CREATE_DECISION_TABLE)
+        self.execute(_CREATE_DECISION_TABLE)
         for idx_sql in _CREATE_DECISION_INDEXES:
-            conn.execute(idx_sql)
+            self.execute(idx_sql)
 
-        conn.execute(
-            "INSERT OR REPLACE INTO _meta(key, value) VALUES(?, ?)",
-            ("schema_version", str(_SCHEMA_VERSION)),
-        )
-        conn.commit()
-
-    def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        self.set_schema_version(_SCHEMA_VERSION, "cognition_schema_version")
 
     def add(
         self,
@@ -166,8 +143,7 @@ class CognitionEventStore:
         """Persist a single cognition event."""
         ts = timestamp if timestamp is not None else time.time()
         signals_json = json.dumps(directed_signals or {}, ensure_ascii=False)
-        conn = self._connect()
-        conn.execute(
+        self.execute(
             """INSERT INTO cognition_events
                (timestamp, group_id, user_id, valence, arousal, basic_emotion,
                 intensity, social_intent, urgency_score, relevance_score, confidence,
@@ -181,12 +157,11 @@ class CognitionEventStore:
                 signals_json,
             ),
         )
-        conn.commit()
+        self.commit()
 
     def get_recent(self, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent cognition events ordered by timestamp desc."""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             """SELECT * FROM cognition_events
             ORDER BY timestamp DESC
             LIMIT ?""",
@@ -196,8 +171,7 @@ class CognitionEventStore:
 
     def get_group_timeline(self, group_id: str, limit: int = 100) -> list[dict[str, Any]]:
         """Return cognition events for a specific group."""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             """SELECT * FROM cognition_events
             WHERE group_id = ?
             ORDER BY timestamp DESC
@@ -208,10 +182,9 @@ class CognitionEventStore:
 
     def get_emotion_distribution(self, group_id: str | None = None) -> dict[str, int]:
         """Return count of each basic_emotion label."""
-        conn = self._connect()
         where = "WHERE group_id = ?" if group_id else ""
         params = (group_id,) if group_id else ()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT basic_emotion, COUNT(*) as cnt
             FROM cognition_events
             {where}
@@ -247,8 +220,7 @@ class CognitionEventStore:
     ) -> None:
         """Persist a single decision event."""
         ts = timestamp if timestamp is not None else time.time()
-        conn = self._connect()
-        conn.execute(
+        self.execute(
             """INSERT INTO decision_events
                (timestamp, group_id, user_id, strategy, score, threshold, reason,
                 directed_score, urgency, entitlement, sarcasm,
@@ -262,22 +234,21 @@ class CognitionEventStore:
                 expressiveness, sensitivity, affinity,
             ),
         )
-        conn.commit()
+        self.commit()
 
     def get_decision_events(
         self, group_id: str | None = None, limit: int = 100
     ) -> list[dict[str, Any]]:
         """Return recent decision events, optionally filtered by group."""
-        conn = self._connect()
         if group_id:
-            rows = conn.execute(
+            rows = self.execute(
                 """SELECT * FROM decision_events
                 WHERE group_id = ?
                 ORDER BY timestamp DESC LIMIT ?""",
                 (group_id, limit),
             ).fetchall()
         else:
-            rows = conn.execute(
+            rows = self.execute(
                 """SELECT * FROM decision_events
                 ORDER BY timestamp DESC LIMIT ?""",
                 (limit,),
@@ -288,10 +259,9 @@ class CognitionEventStore:
 
     def get_intent_distribution(self, group_id: str | None = None) -> dict[str, int]:
         """Return count of each social_intent label."""
-        conn = self._connect()
         where = "WHERE group_id = ?" if group_id else ""
         params = (group_id,) if group_id else ()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT social_intent, COUNT(*) as cnt
             FROM cognition_events
             {where}
@@ -303,10 +273,9 @@ class CognitionEventStore:
 
     def get_user_stats(self, group_id: str | None = None) -> list[dict[str, Any]]:
         """Return per-user aggregated cognition stats."""
-        conn = self._connect()
         where = "WHERE group_id = ? AND user_id != ''" if group_id else "WHERE user_id != ''"
         params = (group_id,) if group_id else ()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT
                 user_id,
                 COUNT(*) as event_count,
@@ -328,8 +297,7 @@ class CognitionEventStore:
 
     def get_group_summary(self) -> list[dict[str, Any]]:
         """Return per-group aggregated cognition summary."""
-        conn = self._connect()
-        rows = conn.execute(
+        rows = self.execute(
             """SELECT
                 group_id,
                 COUNT(*) as event_count,
@@ -346,10 +314,9 @@ class CognitionEventStore:
 
     def get_hourly_distribution(self, group_id: str | None = None) -> dict[int, int]:
         """Return event count by hour of day (0-23, server timezone)."""
-        conn = self._connect()
         where = "WHERE group_id = ?" if group_id else ""
         params = (group_id,) if group_id else ()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER) as hour,
                 COUNT(*) as cnt
             FROM cognition_events
@@ -366,10 +333,9 @@ class CognitionEventStore:
 
     def get_score_distributions(self, group_id: str | None = None) -> dict[str, list[float]]:
         """Return raw score arrays for directed/sarcasm/entitlement distributions."""
-        conn = self._connect()
         where = "WHERE group_id = ?" if group_id else ""
         params = (group_id,) if group_id else ()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT directed_score, sarcasm_score, entitlement_score
             FROM cognition_events
             {where}""",
@@ -383,10 +349,9 @@ class CognitionEventStore:
 
     def get_strategy_distribution(self, group_id: str | None = None) -> dict[str, int]:
         """Return count of each decision strategy."""
-        conn = self._connect()
         where = "WHERE group_id = ?" if group_id else ""
         params = (group_id,) if group_id else ()
-        rows = conn.execute(
+        rows = self.execute(
             f"""SELECT strategy, COUNT(*) as cnt
             FROM decision_events
             {where}
@@ -398,12 +363,11 @@ class CognitionEventStore:
 
     def get_decision_summary(self, group_id: str | None = None) -> dict[str, Any]:
         """Return aggregated decision stats (avg score/threshold, reason distribution)."""
-        conn = self._connect()
         where = "WHERE group_id = ?" if group_id else ""
         params = (group_id,) if group_id else ()
 
         # 基本聚合
-        row = conn.execute(
+        row = self.execute(
             f"""SELECT
                 COUNT(*) as total,
                 ROUND(AVG(score), 4) as avg_score,
@@ -416,7 +380,7 @@ class CognitionEventStore:
         summary: dict[str, Any] = dict(row) if row else {}
 
         # reason 分布
-        reason_rows = conn.execute(
+        reason_rows = self.execute(
             f"""SELECT reason, COUNT(*) as cnt
             FROM decision_events
             {where}
@@ -428,7 +392,7 @@ class CognitionEventStore:
         summary["reason_distribution"] = {r[0] or "unknown": r[1] for r in reason_rows}
 
         # heat_level 分布
-        heat_rows = conn.execute(
+        heat_rows = self.execute(
             f"""SELECT heat_level, COUNT(*) as cnt
             FROM decision_events
             {where}
@@ -444,9 +408,8 @@ class CognitionEventStore:
         self, group_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Return recent decisions with strategy, score, threshold for timeline chart."""
-        conn = self._connect()
         if group_id:
-            rows = conn.execute(
+            rows = self.execute(
                 """SELECT timestamp, strategy, score, threshold, reason,
                     heat_level, msg_rate, expressiveness, sensitivity
                 FROM decision_events
@@ -455,7 +418,7 @@ class CognitionEventStore:
                 (group_id, limit),
             ).fetchall()
         else:
-            rows = conn.execute(
+            rows = self.execute(
                 """SELECT timestamp, strategy, score, threshold, reason,
                     heat_level, msg_rate, expressiveness, sensitivity
                 FROM decision_events
@@ -463,10 +426,6 @@ class CognitionEventStore:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
-
-    @property
-    def db_path(self) -> Path:
-        return self._db_path
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

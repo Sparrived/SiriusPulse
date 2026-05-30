@@ -458,6 +458,8 @@ def _do_create(
     if adapter_type.strip():
         reminder["adapter_type"] = adapter_type.strip().lower()
 
+    parsed_weekdays: list[int] = []
+
     if mode in ("once", "interval"):
         if minutes_after and minutes_after > 0:
             fire_at = now + timedelta(minutes=minutes_after)

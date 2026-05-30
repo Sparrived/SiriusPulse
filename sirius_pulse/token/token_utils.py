@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 _SCHEMA_VERSION = 5
+_META_KEY_PREFIX = "token_"
 
 _CREATE_TABLE = """\
 CREATE TABLE IF NOT EXISTS token_usage (

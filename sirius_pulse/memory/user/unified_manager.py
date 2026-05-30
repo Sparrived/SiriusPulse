@@ -7,10 +7,10 @@
 
 存储：SQLite（懒加载 + 写穿缓存）
 """
-
 from __future__ import annotations
 
 import logging
+import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +62,8 @@ class UnifiedUserManager:
         persona_name: str = "",
         persona_aliases: list[str] | None = None,
         db_path: Path | str | None = None,
+        *,
+        conn: sqlite3.Connection | None = None,
     ) -> None:
         self._work_path = Path(work_path) if work_path else None
 
@@ -69,15 +71,15 @@ class UnifiedUserManager:
         self._persona_name = persona_name.strip().lower()
         self._persona_aliases = {a.strip().lower() for a in (persona_aliases or []) if a.strip()}
 
-        # SQLite 存储
-        if db_path:
-            self._db_path = Path(db_path)
+        # SQLite 存储：优先使用共享连接
+        if conn is not None:
+            self._storage = MemoryStorage(conn=conn)
+        elif db_path:
+            self._storage = MemoryStorage(db_path)
         elif self._work_path:
-            self._db_path = self._work_path / "memory.db"
+            self._storage = MemoryStorage(self._work_path / "memory.db")
         else:
-            self._db_path = Path(":memory:")
-
-        self._storage = MemoryStorage(self._db_path)
+            self._storage = MemoryStorage(Path(":memory:"))
 
         # 内存缓存（懒加载）
         self.entries: dict[str, dict[str, UnifiedUser]] = {}

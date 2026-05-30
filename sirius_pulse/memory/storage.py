@@ -2,7 +2,6 @@
 
 提供统一的用户数据持久化。
 """
-
 from __future__ import annotations
 
 import json
@@ -12,34 +11,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.utils.sqlite_base import BaseSqliteStore
+
 logger = logging.getLogger(__name__)
+
+__all__ = ["MemoryStorage"]
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class MemoryStorage:
+class MemoryStorage(BaseSqliteStore):
     """SQLite 存储层。
 
     统一管理用户数据、别名索引、语义画像。
+    继承自 BaseSqliteStore，复用连接管理和基础操作。
     """
-
-    def __init__(self, db_path: Path | str) -> None:
-        self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection = sqlite3.connect(
-            str(self._db_path),
-            check_same_thread=False,
-        )
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._create_tables()
 
     def _create_tables(self) -> None:
         """创建表结构。"""
-        self._conn.executescript("""
+        self.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT '',
@@ -111,30 +103,78 @@ class MemoryStorage:
             CREATE TABLE IF NOT EXISTS semantic_profiles (
                 group_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
-                profile_data TEXT DEFAULT '{}',
+                name TEXT DEFAULT '',
+                engagement_rate REAL DEFAULT 0.0,
+                interaction_count INTEGER DEFAULT 0,
+                first_interaction_at TEXT DEFAULT '',
+                last_interaction_at TEXT DEFAULT '',
                 updated_at TEXT DEFAULT '',
                 PRIMARY KEY (group_id, user_id)
             );
+
+            CREATE TABLE IF NOT EXISTS response_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                sent_at TEXT DEFAULT '',
+                target_user_id TEXT DEFAULT '',
+                topic_hint TEXT DEFAULT '',
+                response_length INTEGER DEFAULT 0,
+                was_engaged INTEGER DEFAULT 0,
+                engagement_latency_s REAL DEFAULT 0.0,
+                FOREIGN KEY (group_id, user_id) REFERENCES semantic_profiles(group_id, user_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_response_records_user
+                ON response_records(group_id, user_id);
 
             CREATE INDEX IF NOT EXISTS idx_semantic_profiles_user
                 ON semantic_profiles(user_id);
 
             CREATE TABLE IF NOT EXISTS group_semantic_profiles (
                 group_id TEXT PRIMARY KEY,
-                profile_data TEXT DEFAULT '{}',
+                group_name TEXT DEFAULT '',
+                interest_topics TEXT DEFAULT '[]',
+                group_norms TEXT DEFAULT '{}',
+                taboo_topics TEXT DEFAULT '[]',
+                dominant_topic TEXT DEFAULT '',
                 updated_at TEXT DEFAULT ''
             );
-        """)
 
-    def close(self) -> None:
-        """关闭数据库连接。"""
-        self._conn.close()
+            CREATE TABLE IF NOT EXISTS atmosphere_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                timestamp TEXT DEFAULT '',
+                group_valence REAL DEFAULT 0.0,
+                group_arousal REAL DEFAULT 0.0,
+                active_participants INTEGER DEFAULT 0,
+                FOREIGN KEY (group_id) REFERENCES group_semantic_profiles(group_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_atmosphere_history_group
+                ON atmosphere_history(group_id);
+
+            CREATE TABLE IF NOT EXISTS group_pending_ai_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                sent_at TEXT DEFAULT '',
+                target_user_id TEXT DEFAULT '',
+                topic_hint TEXT DEFAULT '',
+                response_length INTEGER DEFAULT 0,
+                was_engaged INTEGER DEFAULT 0,
+                engagement_latency_s REAL DEFAULT 0.0,
+                FOREIGN KEY (group_id) REFERENCES group_semantic_profiles(group_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_group_pending_ai_responses_group
+                ON group_pending_ai_responses(group_id);
+        """)
 
     # ── 用户 CRUD ─────────────────────────────────────────
 
     def get_user(self, user_id: str) -> dict[str, Any] | None:
         """获取用户。"""
-        row = self._conn.execute(
+        row = self.execute(
             "SELECT * FROM users WHERE user_id = ?", (user_id,)
         ).fetchone()
         if row is None:
@@ -144,7 +184,7 @@ class MemoryStorage:
     def save_user(self, user: dict[str, Any]) -> None:
         """保存用户（插入或更新）。"""
         now = _now_iso()
-        self._conn.execute(
+        self.execute(
             """
             INSERT INTO users (
                 user_id, name, persona, identities, aliases, traits,
@@ -196,16 +236,16 @@ class MemoryStorage:
                 now,
             ),
         )
-        self._conn.commit()
+        self.commit()
 
     def delete_user(self, user_id: str) -> None:
         """删除用户。"""
-        self._conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-        self._conn.commit()
+        self.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        self.commit()
 
     def list_users(self) -> list[dict[str, Any]]:
         """列出所有用户。"""
-        rows = self._conn.execute("SELECT * FROM users").fetchall()
+        rows = self.execute("SELECT * FROM users").fetchall()
         return [self._row_to_user(row) for row in rows]
 
     def _row_to_user(self, row: sqlite3.Row) -> dict[str, Any]:
@@ -237,7 +277,7 @@ class MemoryStorage:
 
     def get_user_by_identity(self, platform: str, platform_uid: str) -> str | None:
         """通过平台身份查找用户 ID。"""
-        row = self._conn.execute(
+        row = self.execute(
             "SELECT user_id FROM user_identities WHERE platform = ? AND platform_uid = ?",
             (platform, platform_uid),
         ).fetchone()
@@ -245,7 +285,7 @@ class MemoryStorage:
 
     def save_identity(self, platform: str, platform_uid: str, user_id: str) -> None:
         """保存平台身份。"""
-        self._conn.execute(
+        self.execute(
             """
             INSERT INTO user_identities (platform, platform_uid, user_id, created_at)
             VALUES (?, ?, ?, ?)
@@ -253,11 +293,11 @@ class MemoryStorage:
             """,
             (platform, platform_uid, user_id, _now_iso()),
         )
-        self._conn.commit()
+        self.commit()
 
     def get_identities_for_user(self, user_id: str) -> list[dict[str, str]]:
         """获取用户的所有平台身份。"""
-        rows = self._conn.execute(
+        rows = self.execute(
             "SELECT platform, platform_uid FROM user_identities WHERE user_id = ?",
             (user_id,),
         ).fetchall()
@@ -267,7 +307,7 @@ class MemoryStorage:
 
     def add_group_member(self, group_id: str, user_id: str) -> None:
         """添加群组成员。"""
-        self._conn.execute(
+        self.execute(
             """
             INSERT INTO group_members (group_id, user_id, joined_at)
             VALUES (?, ?, ?)
@@ -275,11 +315,11 @@ class MemoryStorage:
             """,
             (group_id, user_id, _now_iso()),
         )
-        self._conn.commit()
+        self.commit()
 
     def get_group_members(self, group_id: str) -> list[str]:
         """获取群组的所有成员 ID。"""
-        rows = self._conn.execute(
+        rows = self.execute(
             "SELECT user_id FROM group_members WHERE group_id = ?",
             (group_id,),
         ).fetchall()
@@ -287,7 +327,7 @@ class MemoryStorage:
 
     def get_user_groups(self, user_id: str) -> list[str]:
         """获取用户所属的所有群组 ID。"""
-        rows = self._conn.execute(
+        rows = self.execute(
             "SELECT group_id FROM group_members WHERE user_id = ?",
             (user_id,),
         ).fetchall()
@@ -295,24 +335,24 @@ class MemoryStorage:
 
     def remove_group_member(self, group_id: str, user_id: str) -> None:
         """移除群组成员。"""
-        self._conn.execute(
+        self.execute(
             "DELETE FROM group_members WHERE group_id = ? AND user_id = ?",
             (group_id, user_id),
         )
-        self._conn.commit()
+        self.commit()
 
     # ── 别名 CRUD ─────────────────────────────────────────
 
     def get_alias_entries(self, alias: str) -> list[dict[str, Any]]:
         """获取别名的所有条目。"""
-        rows = self._conn.execute(
+        rows = self.execute(
             "SELECT * FROM aliases WHERE alias = ?", (alias,)
         ).fetchall()
         return [self._row_to_alias(row) for row in rows]
 
     def save_alias_entry(self, entry: dict[str, Any]) -> None:
         """保存别名条目。"""
-        self._conn.execute(
+        self.execute(
             """
             INSERT INTO aliases (
                 alias, user_id, user_name, weight, groups, mentioned_count,
@@ -341,19 +381,19 @@ class MemoryStorage:
                 entry.get("created_at", _now_iso()),
             ),
         )
-        self._conn.commit()
+        self.commit()
 
     def delete_alias_entry(self, alias: str, user_id: str) -> None:
         """删除别名条目。"""
-        self._conn.execute(
+        self.execute(
             "DELETE FROM aliases WHERE alias = ? AND user_id = ?",
             (alias, user_id),
         )
-        self._conn.commit()
+        self.commit()
 
     def get_aliases_for_group(self, group_id: str) -> dict[str, str]:
         """获取群组相关的别名速查表。"""
-        rows = self._conn.execute(
+        rows = self.execute(
             """
             SELECT DISTINCT alias, user_name FROM aliases
             WHERE groups LIKE ?
@@ -364,7 +404,7 @@ class MemoryStorage:
 
     def get_all_aliases(self) -> dict[str, list[dict[str, Any]]]:
         """获取所有别名索引。"""
-        rows = self._conn.execute("SELECT * FROM aliases").fetchall()
+        rows = self.execute("SELECT * FROM aliases").fetchall()
         result: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             alias = row["alias"]
@@ -392,62 +432,232 @@ class MemoryStorage:
 
     def get_semantic_profile(self, group_id: str, user_id: str) -> dict[str, Any] | None:
         """获取语义画像。"""
-        row = self._conn.execute(
-            "SELECT profile_data FROM semantic_profiles WHERE group_id = ? AND user_id = ?",
+        row = self.execute(
+            "SELECT * FROM semantic_profiles WHERE group_id = ? AND user_id = ?",
             (group_id, user_id),
         ).fetchone()
         if row is None:
             return None
-        return json.loads(row["profile_data"])
+        return self._row_to_semantic_profile(row)
 
     def save_semantic_profile(self, group_id: str, user_id: str, profile: dict[str, Any]) -> None:
         """保存语义画像。"""
-        self._conn.execute(
+        self.execute(
             """
-            INSERT INTO semantic_profiles (group_id, user_id, profile_data, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO semantic_profiles (
+                group_id, user_id, name, engagement_rate, interaction_count,
+                first_interaction_at, last_interaction_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(group_id, user_id) DO UPDATE SET
-                profile_data=excluded.profile_data,
+                name=excluded.name,
+                engagement_rate=excluded.engagement_rate,
+                interaction_count=excluded.interaction_count,
+                first_interaction_at=excluded.first_interaction_at,
+                last_interaction_at=excluded.last_interaction_at,
                 updated_at=excluded.updated_at
             """,
-            (group_id, user_id, json.dumps(profile, ensure_ascii=False), _now_iso()),
+            (
+                group_id,
+                user_id,
+                profile.get("name", ""),
+                float(profile.get("engagement_rate", 0.0)),
+                int(profile.get("interaction_count", 0)),
+                profile.get("first_interaction_at", ""),
+                profile.get("last_interaction_at", ""),
+                _now_iso(),
+            ),
         )
-        self._conn.commit()
+        # 保存 response_records
+        self.execute(
+            "DELETE FROM response_records WHERE group_id = ? AND user_id = ?",
+            (group_id, user_id),
+        )
+        for record in profile.get("pending_responses", []):
+            self.execute(
+                """
+                INSERT INTO response_records (
+                    group_id, user_id, sent_at, target_user_id, topic_hint,
+                    response_length, was_engaged, engagement_latency_s
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    group_id,
+                    user_id,
+                    record.get("sent_at", ""),
+                    record.get("target_user_id", ""),
+                    record.get("topic_hint", ""),
+                    int(record.get("response_length", 0)),
+                    1 if record.get("was_engaged") else 0,
+                    float(record.get("engagement_latency_s", 0.0)),
+                ),
+            )
+        self.commit()
 
     def list_semantic_profiles(self, group_id: str) -> list[dict[str, Any]]:
         """列出群组的所有语义画像。"""
-        rows = self._conn.execute(
-            "SELECT user_id, profile_data FROM semantic_profiles WHERE group_id = ?",
+        rows = self.execute(
+            "SELECT * FROM semantic_profiles WHERE group_id = ?",
             (group_id,),
         ).fetchall()
-        return [
-            {"user_id": r["user_id"], **json.loads(r["profile_data"])}
-            for r in rows
+        return [self._row_to_semantic_profile(r) for r in rows]
+
+    def _row_to_semantic_profile(self, row: sqlite3.Row) -> dict[str, Any]:
+        """将数据库行转换为语义画名字典。"""
+        group_id = row["group_id"]
+        user_id = row["user_id"]
+
+        # 加载 response_records
+        records = self.execute(
+            "SELECT * FROM response_records WHERE group_id = ? AND user_id = ?",
+            (group_id, user_id),
+        ).fetchall()
+        pending_responses = [
+            {
+                "sent_at": r["sent_at"],
+                "target_user_id": r["target_user_id"],
+                "topic_hint": r["topic_hint"],
+                "response_length": r["response_length"],
+                "was_engaged": bool(r["was_engaged"]),
+                "engagement_latency_s": r["engagement_latency_s"],
+            }
+            for r in records
         ]
+
+        return {
+            "group_id": group_id,
+            "user_id": user_id,
+            "name": row["name"],
+            "engagement_rate": row["engagement_rate"],
+            "interaction_count": row["interaction_count"],
+            "first_interaction_at": row["first_interaction_at"],
+            "last_interaction_at": row["last_interaction_at"],
+            "pending_responses": pending_responses,
+        }
 
     def get_group_semantic_profile(self, group_id: str) -> dict[str, Any] | None:
         """获取群组语义画像。"""
-        row = self._conn.execute(
-            "SELECT profile_data FROM group_semantic_profiles WHERE group_id = ?",
+        row = self.execute(
+            "SELECT * FROM group_semantic_profiles WHERE group_id = ?",
             (group_id,),
         ).fetchone()
         if row is None:
             return None
-        return json.loads(row["profile_data"])
+        return self._row_to_group_semantic_profile(row)
 
     def save_group_semantic_profile(self, group_id: str, profile: dict[str, Any]) -> None:
         """保存群组语义画像。"""
-        self._conn.execute(
+        self.execute(
             """
-            INSERT INTO group_semantic_profiles (group_id, profile_data, updated_at)
-            VALUES (?, ?, ?)
+            INSERT INTO group_semantic_profiles (
+                group_id, group_name, interest_topics, group_norms,
+                taboo_topics, dominant_topic, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(group_id) DO UPDATE SET
-                profile_data=excluded.profile_data,
+                group_name=excluded.group_name,
+                interest_topics=excluded.interest_topics,
+                group_norms=excluded.group_norms,
+                taboo_topics=excluded.taboo_topics,
+                dominant_topic=excluded.dominant_topic,
                 updated_at=excluded.updated_at
             """,
-            (group_id, json.dumps(profile, ensure_ascii=False), _now_iso()),
+            (
+                group_id,
+                profile.get("group_name", ""),
+                json.dumps(profile.get("interest_topics", []), ensure_ascii=False),
+                json.dumps(profile.get("group_norms", {}), ensure_ascii=False),
+                json.dumps(profile.get("taboo_topics", []), ensure_ascii=False),
+                profile.get("dominant_topic", ""),
+                _now_iso(),
+            ),
         )
-        self._conn.commit()
+        # 保存 atmosphere_history
+        self.execute(
+            "DELETE FROM atmosphere_history WHERE group_id = ?",
+            (group_id,),
+        )
+        for snapshot in profile.get("atmosphere_history", []):
+            self.execute(
+                """
+                INSERT INTO atmosphere_history (
+                    group_id, timestamp, group_valence, group_arousal, active_participants
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    group_id,
+                    snapshot.get("timestamp", ""),
+                    float(snapshot.get("group_valence", 0.0)),
+                    float(snapshot.get("group_arousal", 0.0)),
+                    int(snapshot.get("active_participants", 0)),
+                ),
+            )
+        # 保存 pending_ai_responses
+        self.execute(
+            "DELETE FROM group_pending_ai_responses WHERE group_id = ?",
+            (group_id,),
+        )
+        for record in profile.get("pending_ai_responses", []):
+            self.execute(
+                """
+                INSERT INTO group_pending_ai_responses (
+                    group_id, sent_at, target_user_id, topic_hint,
+                    response_length, was_engaged, engagement_latency_s
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    group_id,
+                    record.get("sent_at", ""),
+                    record.get("target_user_id", ""),
+                    record.get("topic_hint", ""),
+                    int(record.get("response_length", 0)),
+                    1 if record.get("was_engaged") else 0,
+                    float(record.get("engagement_latency_s", 0.0)),
+                ),
+            )
+        self.commit()
 
+    def _row_to_group_semantic_profile(self, row: sqlite3.Row) -> dict[str, Any]:
+        """将数据库行转换为群组语义画名字典。"""
+        group_id = row["group_id"]
 
-__all__ = ["MemoryStorage"]
+        # 加载 atmosphere_history
+        history_rows = self.execute(
+            "SELECT * FROM atmosphere_history WHERE group_id = ?",
+            (group_id,),
+        ).fetchall()
+        atmosphere_history = [
+            {
+                "timestamp": r["timestamp"],
+                "group_valence": r["group_valence"],
+                "group_arousal": r["group_arousal"],
+                "active_participants": r["active_participants"],
+            }
+            for r in history_rows
+        ]
+
+        # 加载 pending_ai_responses
+        pending_rows = self.execute(
+            "SELECT * FROM group_pending_ai_responses WHERE group_id = ?",
+            (group_id,),
+        ).fetchall()
+        pending_ai_responses = [
+            {
+                "sent_at": r["sent_at"],
+                "target_user_id": r["target_user_id"],
+                "topic_hint": r["topic_hint"],
+                "response_length": r["response_length"],
+                "was_engaged": bool(r["was_engaged"]),
+                "engagement_latency_s": r["engagement_latency_s"],
+            }
+            for r in pending_rows
+        ]
+
+        return {
+            "group_id": group_id,
+            "group_name": row["group_name"],
+            "interest_topics": json.loads(row["interest_topics"]),
+            "atmosphere_history": atmosphere_history,
+            "group_norms": json.loads(row["group_norms"]),
+            "taboo_topics": json.loads(row["taboo_topics"]),
+            "dominant_topic": row["dominant_topic"],
+            "pending_ai_responses": pending_ai_responses,
+        }

@@ -34,7 +34,7 @@ async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Resp
         paths = persona_manager.get_persona_paths(name)
         if paths is None:
             continue
-        db_path = paths.dir / "token" / "token_usage.db"
+        db_path = paths.dir / "persona.db"
         if not db_path.exists():
             continue
         try:
@@ -136,7 +136,7 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
     from sirius_pulse.token.token_store import TokenUsageStore
     from sirius_pulse.token import analytics as token_analytics
 
-    db_path = paths.dir / "token" / "token_usage.db"
+    db_path = paths.dir / "persona.db"
     if not db_path.exists():
         return _json_response({"total": 0, "daily": [], "models": []})
 
@@ -262,7 +262,7 @@ async def api_persona_cognition_get(request: web.Request, persona_manager: Any) 
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    db_path = paths.dir / "cognition_events.db"
+    db_path = paths.dir / "persona.db"
     if not db_path.exists():
         return _json_response({"events": [], "emotion_distribution": {}})
 
@@ -284,7 +284,7 @@ async def api_persona_cognition_analysis_get(request: web.Request, persona_manag
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    db_path = paths.dir / "cognition_events.db"
+    db_path = paths.dir / "persona.db"
     if not db_path.exists():
         return _json_response({"has_data": False})
 

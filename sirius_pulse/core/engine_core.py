@@ -41,6 +41,7 @@ from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.diary import DiaryManager
 from sirius_pulse.memory.glossary import GlossaryManager
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
+from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3
@@ -62,6 +63,7 @@ class _EmotionalGroupChatEngineBase:
         persona: Any | None = None,
         vector_store: Any | None = None,
         embedding_client: Any | None = None,
+        persona_db_conn: Any | None = None,
     ) -> None:
         self.config = dict(config or {})
         self.provider_async = provider_async
@@ -69,6 +71,7 @@ class _EmotionalGroupChatEngineBase:
         self._vector_store = vector_store
         self._embedding_client = embedding_client
         self._adapter: Any = None  # 由 add_skill_bridge() 注入，plugin 直接取用
+        self._persona_db_conn = persona_db_conn
 
         self._init_expressiveness()
         self._init_persona(persona)
@@ -161,7 +164,10 @@ class _EmotionalGroupChatEngineBase:
         self._orch_task_max_tokens = orch.get("task_max_tokens")
 
     def _init_memory_system(self) -> None:
-        self.semantic_memory = SemanticMemoryManager(self.work_path)
+        # 共享同一个 SQLite 存储
+        self._memory_storage = MemoryStorage(self.work_path / "memory.db")
+
+        self.semantic_memory = SemanticMemoryManager(self.work_path, storage=self._memory_storage)
 
         self.basic_memory = BasicMemoryManager(
             hard_limit=self.config.get("basic_memory_hard_limit", 30),
@@ -177,6 +183,7 @@ class _EmotionalGroupChatEngineBase:
             self.work_path,
             persona_name=self.persona.name,
             persona_aliases=self.persona.aliases,
+            db_path=self.work_path / "memory.db",
         )
         self.identity_resolver = IdentityResolver()
         self.context_assembler = ContextAssembler(
@@ -270,7 +277,10 @@ class _EmotionalGroupChatEngineBase:
 
         from sirius_pulse.memory.cognition_store import CognitionEventStore
 
-        self.cognition_store = CognitionEventStore(Path(work_path) / "cognition_events.db")
+        self.cognition_store = CognitionEventStore(
+            Path(work_path) / "cognition_events.db",
+            conn=self._persona_db_conn,
+        )
 
     def _init_skill_plugin_and_runtime(self) -> None:
         self._group_last_message_at: dict[str, str] = {}
