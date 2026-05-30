@@ -233,8 +233,34 @@ def _create_tables(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS group_semantic_profiles (
             group_id TEXT PRIMARY KEY,
-            profile_data TEXT DEFAULT '{}',
+            group_name TEXT DEFAULT '',
+            interest_topics TEXT DEFAULT '[]',
+            group_norms TEXT DEFAULT '{}',
+            taboo_topics TEXT DEFAULT '[]',
+            dominant_topic TEXT DEFAULT '',
             updated_at TEXT DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS atmosphere_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id TEXT NOT NULL,
+            timestamp TEXT DEFAULT '',
+            group_valence REAL DEFAULT 0.0,
+            group_arousal REAL DEFAULT 0.0,
+            active_participants INTEGER DEFAULT 0,
+            FOREIGN KEY (group_id) REFERENCES group_semantic_profiles(group_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS group_pending_ai_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id TEXT NOT NULL,
+            sent_at TEXT DEFAULT '',
+            target_user_id TEXT DEFAULT '',
+            topic_hint TEXT DEFAULT '',
+            response_length INTEGER DEFAULT 0,
+            was_engaged INTEGER DEFAULT 0,
+            engagement_latency_s REAL DEFAULT 0.0,
+            FOREIGN KEY (group_id) REFERENCES group_semantic_profiles(group_id) ON DELETE CASCADE
         );
     """)
 
