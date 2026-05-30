@@ -489,12 +489,13 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
     - /ca report daily → command="ca", subcommand="report", subcommands=["report", "daily"]
     """
     # 收集所有含空格的 prefix pattern（降序排列，优先匹配最长）
-    # 去除前缀（如 /、#、!）后存储，因为 lexed.command 不包含前缀
-    multi_word: list[str] = []
+    # 存储格式：(pattern_command_part, pattern_prefix)
+    # pattern_prefix 为空表示无前缀要求
+    multi_word: list[tuple[str, str]] = []
     logger.info(
-        "多词pattern检查: plugin=%s, commands=%d, lexed_cmd=%r, args=%r",
+        "多词pattern检查: plugin=%s, commands=%d, lexed_cmd=%r, args=%r, prefix=%r",
         plugin_def.name, len(plugin_def.commands),
-        lexed.command, lexed.positional_args,
+        lexed.command, lexed.positional_args, lexed.prefix,
     )
     for cmd_def in plugin_def.commands:
         logger.info(
@@ -504,17 +505,28 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
         if cmd_def.pattern_type == "prefix":
             for pattern in cmd_def.patterns:
                 if " " in pattern:
-                    # 去除前缀（如 /、#、!），只保留命令部分
-                    clean_pattern = pattern.lstrip("/#!").strip().lower()
-                    if " " in clean_pattern:
-                        multi_word.append(clean_pattern)
+                    # 从 pattern 中提取前缀和命令部分
+                    # pattern 已经包含了前缀（由 PluginCommandMeta.full_patterns 生成）
+                    # 例如："/ca analyse" → prefix="/", command_part="ca analyse"
+                    pattern_prefix = ""
+                    command_part = pattern
+                    # 提取前缀：pattern 的第一个字符（如果不是字母数字）
+                    if pattern and not pattern[0].isalnum():
+                        pattern_prefix = pattern[0]
+                        command_part = pattern[1:]
+                    if " " in command_part:
+                        multi_word.append((command_part.lower(), pattern_prefix))
     if not multi_word:
         logger.info("  无多词pattern，跳过")
         return
-    multi_word.sort(key=len, reverse=True)
-    logger.info("  多词patterns: %r", multi_word)
+    # 按命令部分长度降序排列，优先匹配最长的 pattern
+    multi_word.sort(key=lambda x: len(x[0]), reverse=True)
+    logger.info("  多词patterns: %r", [p for p, _ in multi_word])
 
-    for pattern in multi_word:
+    for pattern, pattern_prefix in multi_word:
+        # 检查前缀是否匹配：用户输入的前缀必须与 pattern 定义的前缀一致
+        if pattern_prefix and lexed.prefix != pattern_prefix:
+            continue
         parts = pattern.split()
         extra = len(parts) - 1  # command 已占第一个词
         if len(lexed.positional_args) < extra:
