@@ -206,6 +206,7 @@ class Pipeline:
         group_id: str,
         user_id: str,
         sender_type: str = "human",
+        content: str = "",
     ) -> StrategyDecision:
         """Decision layer: strategy selection with threshold and rhythm."""
         engine = self._engine
@@ -224,6 +225,22 @@ class Pipeline:
                 plugin_slots=dict(intent.plugin_slots),
                 plugin_render_mode=intent.plugin_render_mode,
             )
+
+        # === 消息前缀过滤 ===
+        # 以配置前缀开头的消息不进入回复流程（但 Plugin 命令已在上方放行）
+        prefixes = engine.config.get("message_prefixes", [])
+        if prefixes and content:
+            text_stripped = content.lstrip()
+            if any(text_stripped.startswith(p) for p in prefixes if p):
+                logger.debug("消息以配置前缀开头，跳过回复流程: %s", text_stripped[:50])
+                return StrategyDecision(
+                    strategy=ResponseStrategy.SILENT,
+                    score=0.0,
+                    threshold=1.0,
+                    urgency=0.0,
+                    relevance=0.0,
+                    reason="message_prefix_filtered",
+                )
 
         # Rhythm context
         recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
