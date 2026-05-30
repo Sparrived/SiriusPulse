@@ -489,6 +489,7 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
     - /ca report daily → command="ca", subcommand="report", subcommands=["report", "daily"]
     """
     # 收集所有含空格的 prefix pattern（降序排列，优先匹配最长）
+    # 去除前缀（如 /、#、!）后存储，因为 lexed.command 不包含前缀
     multi_word: list[str] = []
     logger.info(
         "多词pattern检查: plugin=%s, commands=%d, lexed_cmd=%r, args=%r",
@@ -503,7 +504,10 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
         if cmd_def.pattern_type == "prefix":
             for pattern in cmd_def.patterns:
                 if " " in pattern:
-                    multi_word.append(pattern.lower())
+                    # 去除前缀（如 /、#、!），只保留命令部分
+                    clean_pattern = pattern.lstrip("/#!").strip().lower()
+                    if " " in clean_pattern:
+                        multi_word.append(clean_pattern)
     if not multi_word:
         logger.info("  无多词pattern，跳过")
         return
