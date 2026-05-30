@@ -217,7 +217,7 @@ class DelayedQueueTasks:
             recent_n=recent_n,
             diary_top_k=diary_top_k,
             diary_token_budget=diary_token_budget,
-            include_pending=True,
+            include_pending=False,
             biography_card=speaker_card,
         )
         system_prompt = msgs[0]["content"]
@@ -672,6 +672,7 @@ class DelayedQueueTasks:
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
             scene_description="群里的话题有了自然间隙，你决定插一句。",
+            pinned_messages=engine.get_pinned_messages_for_prompt(group_id),
         )
         if glossary:
             bundle.system_prompt = f"{TAG_GLOSSARY}\n{glossary}\n\n{bundle.system_prompt}"

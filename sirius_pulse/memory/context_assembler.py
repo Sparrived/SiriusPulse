@@ -202,10 +202,11 @@ class ContextAssembler:
         because those are the pending (unanswered) user messages that will be
         passed separately as the ``user`` role content by the caller.
 
-        When ``include_pending=True`` (used by delayed/proactive responses),
-        all recent entries are included — the caller's user content does not
-        contain the pending messages, so excluding them from history would
-        lose critical conversational context.
+        When ``include_pending=True`` (used by proactive responses where
+        caller's user content is just topic context or "..."), all recent
+        entries are included — the caller's user content does not contain
+        the pending messages, so excluding them from history would lose
+        critical conversational context.
         """
         recent = self._basic.get_context(group_id, n=n)
         if not recent:

@@ -20,6 +20,7 @@ from sirius_pulse.core.bg_tasks import BackgroundTasks
 from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.engine_persistence import EnginePersistence
 from sirius_pulse.core.engine_sticker import EngineSticker
+from sirius_pulse.core.pinned_message import PinnedMessageManager
 from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
 from sirius_pulse.core.cognition import CognitionAnalyzer
@@ -85,6 +86,7 @@ class _EmotionalGroupChatEngineBase:
         self._init_pipeline()
         self._init_persistence()
         self._init_sticker()
+        self._init_pinned_messages()
         self._register_engine_hooks()
 
     def _init_expressiveness(self) -> None:
@@ -336,6 +338,23 @@ class _EmotionalGroupChatEngineBase:
         """初始化 Sticker 组件（组合模式）。"""
         self._sticker = EngineSticker(self)
 
+    def _init_pinned_messages(self) -> None:
+        """初始化消息钉住管理器。"""
+        from sirius_pulse.persona_config import PersonaExperienceConfig
+
+        # 从 experience 配置中获取最大携带次数
+        experience_path = Path(self.work_path) / "experience.json"
+        experience = PersonaExperienceConfig.load(experience_path)
+        max_carry_count = experience.pinned_message_max_carry_count
+
+        self._pinned_manager = PinnedMessageManager(max_carry_count=max_carry_count)
+
+        # 注入钉住消息回调到 Brain
+        if hasattr(self, 'brain'):
+            self.brain.set_context_fns(
+                pinned_messages_fn=self.get_pinned_messages_for_prompt,
+            )
+
     # ==================================================================
     # 向后兼容的委托方法（委托给 Helpers 组件）
     # ==================================================================
@@ -580,6 +599,105 @@ class _EmotionalGroupChatEngineBase:
         return self._persistence.is_proactive_enabled(group_id)
 
     # ==================================================================
+    # 消息钉住 API（委托给 PinnedMessageManager）
+    # ==================================================================
+
+    def pin_message(
+        self,
+        content: str,
+        speaker: str = "",
+        group_id: str = "default",
+        reason: str = "",
+        ttl_hours: float | None = None,
+        max_carry_count: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """钉住一条消息。
+
+        Args:
+            content: 消息内容
+            speaker: 发言者名称
+            group_id: 所属群组 ID
+            reason: 钉住原因
+            ttl_hours: 消息存活时间（小时）
+            max_carry_count: 最大携带次数（超过后自动取消）
+            metadata: 额外元数据
+
+        Returns:
+            钉住的消息信息
+        """
+        pinned = self._pinned_manager.pin_message(
+            content=content,
+            speaker=speaker,
+            group_id=group_id,
+            reason=reason,
+            ttl_hours=ttl_hours,
+            max_carry_count=max_carry_count,
+            metadata=metadata,
+        )
+
+        return pinned.to_dict()
+
+    def unpin_message(self, message_id: str) -> bool:
+        """取消钉住一条消息。
+
+        Args:
+            message_id: 消息 ID
+
+        Returns:
+            是否成功取消
+        """
+        return self._pinned_manager.unpin_message(message_id)
+
+    def unpin_by_reason(self, reason: str) -> int:
+        """根据原因取消钉住消息。
+
+        Args:
+            reason: 钉住原因
+
+        Returns:
+            取消的数量
+        """
+        return self._pinned_manager.unpin_by_reason(reason)
+
+    def get_pinned_messages(
+        self,
+        group_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """获取钉住的消息列表。
+
+        Args:
+            group_id: 过滤指定群组的消息，None 表示所有群组
+
+        Returns:
+            钉住的消息列表
+        """
+        messages = self._pinned_manager.get_pinned_messages(group_id=group_id)
+        return [msg.to_dict() for msg in messages]
+
+    def get_pinned_messages_for_prompt(self, group_id: str) -> list[Any]:
+        """获取钉住的消息列表（用于 prompt 注入），并增加携带计数。
+
+        每次调用此方法，所有返回的消息的携带计数都会增加。
+        当携带计数超过最大携带次数时，消息会被自动取消钉住。
+
+        Args:
+            group_id: 群组 ID
+
+        Returns:
+            钉住的消息对象列表
+        """
+        return self._pinned_manager.get_pinned_messages_for_prompt(group_id=group_id)
+
+    def get_pinned_statistics(self) -> dict[str, Any]:
+        """获取钉住消息的统计信息。
+
+        Returns:
+            统计信息字典
+        """
+        return self._pinned_manager.get_statistics()
+
+    # ==================================================================
     # 向后兼容的委托方法（委托给 Sticker 组件）
     # ==================================================================
 
@@ -631,6 +749,91 @@ class _EmotionalGroupChatEngineBase:
             _engine._last_reply_depth[gid] = (
                 _engine._last_reply_depth.get(gid, 0) + 1 if now_ts - last_ts < 2 * HEARTBEAT_TIMEOUT_SECONDS else 1
             )
+
+        # ── priority 15: 钉住/取消钉住指令解析 ──
+        def _hook_pin_messages(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            from sirius_pulse.core.pinned_message import (
+                parse_pin_messages, parse_unpin_messages, strip_pin_messages
+            )
+
+            raw_text = _result.raw_text
+            pin_calls = parse_pin_messages(raw_text)
+            unpin_calls = parse_unpin_messages(raw_text)
+
+            # 处理取消钉住指令
+            if unpin_calls:
+                gid = _req.group_id
+                for call in unpin_calls:
+                    try:
+                        if call.get("all"):
+                            # 取消所有钉住
+                            count = _engine._pinned_manager.unpin_all(group_id=gid)
+                            logger.info("模型取消所有钉住: %d 条", count)
+                        elif call.get("reason"):
+                            # 根据原因取消钉住
+                            count = _engine._pinned_manager.unpin_by_reason(call["reason"])
+                            logger.info("模型根据原因取消钉住: %s, %d 条", call["reason"], count)
+                        elif call.get("content"):
+                            # 根据内容关键词取消钉住
+                            count = _engine._pinned_manager.unpin_by_content(call["content"])
+                            logger.info("模型根据内容取消钉住: %s, %d 条", call["content"], count)
+                    except Exception as exc:
+                        logger.warning("取消钉住失败: %s", exc)
+
+            # 处理钉住指令
+            if pin_calls:
+                gid = _req.group_id
+
+                # 获取最近的消息历史（用于引用）
+                recent_messages = _engine._get_recent_messages(gid, n=10)
+
+                for call in pin_calls:
+                    try:
+                        content = call.get("content", "")
+                        index = call.get("index", 0)
+
+                        # 如果没有指定内容，根据 index 获取原始消息
+                        if not content:
+                            if index == 0:
+                                # 默认钉住当前用户消息
+                                content = _req.messages[-1].get("content", "") if _req.messages else ""
+                            elif recent_messages:
+                                # 使用 index 引用历史消息（负数表示从后往前）
+                                msg_index = index if index < 0 else index
+                                if abs(msg_index) <= len(recent_messages):
+                                    content = recent_messages[msg_index].get("content", "")
+
+                        if not content:
+                            logger.warning("无法获取要钉住的消息内容")
+                            continue
+
+                        # 获取消息的发言者信息
+                        speaker = ""
+                        user_id = ""
+                        if index == 0 and _req.messages:
+                            # 当前用户消息
+                            last_msg = _req.messages[-1]
+                            speaker = last_msg.get("speaker", "")
+                            user_id = last_msg.get("user_id", "")
+                        elif recent_messages and abs(index) <= len(recent_messages):
+                            msg = recent_messages[index]
+                            user_id = msg.get("user_id", "")
+
+                        _engine.pin_message(
+                            content=content,
+                            speaker=speaker or "用户",
+                            group_id=gid,
+                            reason=call.get("reason", ""),
+                            metadata={"user_id": user_id} if user_id else None,
+                        )
+                        logger.info("模型主动钉住消息: %s", content[:50])
+                    except Exception as exc:
+                        logger.warning("钉住消息失败: %s", exc)
+
+            # 从 clean_text 中移除钉住/取消钉住指令标记
+            _result.clean_text = strip_pin_messages(_result.clean_text)
 
         # ── priority 20: 表情包发送 ──
         def _hook_stickers(
@@ -712,6 +915,7 @@ class _EmotionalGroupChatEngineBase:
 
         # task_filter 交给 Brain 调度时检查，hook 闭包不关心
         self.brain.register_post_hook(_hook_depth, priority=0, task_filter=_TASKS_CHAT_PROACTIVE)
+        self.brain.register_post_hook(_hook_pin_messages, priority=15, task_filter=_TASKS_CHAT_PROACTIVE)
         self.brain.register_post_hook(_hook_stickers, priority=20, task_filter=_TASKS_CHAT_PROACTIVE)
         self.brain.register_post_hook(_hook_dedup, priority=30, task_filter=_TASKS_CHAT)
         self.brain.register_post_hook(_hook_memory, priority=40, task_filter=_TASKS_CHAT_PROACTIVE)

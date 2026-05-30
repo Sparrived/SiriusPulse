@@ -417,6 +417,11 @@ LLM_JUDGE_SYSTEM_PROMPT = """你是一个专业的项目文档维护助手。你
 - 仅注释/测试/README 变更 → 不需要
 - 仅内部重构（私有方法、无公开 API 变化）→ 不需要
 
+新建文档规则：
+- 新增重要模块/功能，且现有文档无法覆盖 → 建议新建文档
+- 新文档路径应遵循 docs 目录结构规范（guide/、api/、reference/、extensions/）
+- 仅在确实需要时才建议新建文档，避免文档碎片化
+
 必须输出严格 JSON，不要包含额外文本。"""
 
 
@@ -443,7 +448,7 @@ def judge_needs_update(changed_files: set[str], diff_summary: str) -> dict:
 {docs_context}
 
 ## 输出格式（严格 JSON）
-{{"needs_update": true/false, "reason": "一句话原因", "affected_docs": ["路径1", "路径2"]}}"""
+{{"needs_update": true/false, "reason": "一句话原因", "affected_docs": ["路径1", "路径2"], "new_docs": [{{"path": "新文档路径（相对于 docs 根目录）", "reason": "创建原因"}}]}}"""
 
     return call_llm_json(prompt, system_prompt=LLM_JUDGE_SYSTEM_PROMPT, temperature=0)
 
@@ -577,6 +582,64 @@ DOC_UPDATE_FULL_SYSTEM_PROMPT = (
     "**必须输出完整的文档内容，不能省略任何部分**，不允许使用省略号或截断标记。"
     "必须输出严格 JSON。"
 )
+
+
+DOC_CREATE_SYSTEM_PROMPT = (
+    "你是一个专业的文档编写助手。根据代码变更创建新的文档。"
+    "文档应遵循项目现有的风格和结构规范。"
+    "标题层级从一级标题开始，包含清晰的章节划分。"
+    "必须输出严格 JSON。"
+)
+
+
+def create_new_doc(
+    filepath: Path,
+    diff_content: str,
+    changed_files: set[str],
+    create_reason: str,
+) -> str | None:
+    """LLM 创建新文档，返回文档内容；None 表示创建失败"""
+    # 构建 docs 目录索引上下文
+    docs_context = ""
+    if DOCS_TREE:
+        docs_context = f"\n\n## docs 目录结构\n{DOCS_TREE}"
+
+    prompt = f"""## 任务
+根据代码变更创建新的文档文件。
+
+## 新文档路径
+{filepath.name}
+
+## 创建原因
+{create_reason}
+
+## 本次代码 diff
+```diff
+{diff_content[:15000]}
+```
+
+## 变更文件
+{chr(10).join(sorted(changed_files))}
+{docs_context}
+
+## 工作方式
+1. 根据代码变更内容，创建完整的文档
+2. 文档应包含清晰的标题、章节结构和详细说明
+3. 遵循项目现有文档的风格和格式规范
+4. 内容应准确、完整、易于理解
+
+## 输出格式（严格 JSON）
+{{"content": "完整的文档内容", "summary": "文档内容摘要"}}"""
+
+    result = call_llm_json(prompt, system_prompt=DOC_CREATE_SYSTEM_PROMPT)
+
+    if result.get("content"):
+        summary = result.get("summary", "")
+        print(f"  ✓ 已创建新文档: {filepath.name} — {summary}")
+        return result["content"]
+
+    print(f"  ❌ 创建新文档失败: {filepath.name}")
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -725,7 +788,10 @@ def main() -> None:
         return
 
     affected_docs = judge.get("affected_docs", [])
+    new_docs = judge.get("new_docs", [])
     print(f"\n📝 需要更新: {', '.join(affected_docs)}")
+    if new_docs:
+        print(f"📝 需要新建: {', '.join(d['path'] for d in new_docs)}")
     print(f"   原因: {judge.get('reason', '')}")
 
     # ── 7. 克隆 docs 仓库，逐个更新文档 ──────────────────────
@@ -801,11 +867,33 @@ def main() -> None:
                 updated_docs.append(doc_relpath)
                 print(f"  ✏️  已写入: {doc_relpath}")
 
-        if not updated_docs:
+        # 处理新建文档
+        created_docs: list[str] = []
+        for doc_info in new_docs:
+            doc_relpath = doc_info.get("path", "")
+            create_reason = doc_info.get("reason", "")
+            if not doc_relpath:
+                continue
+            doc_path = docs_dir / doc_relpath
+            if doc_path.exists():
+                print(f"  ⚠️ 文件已存在: {doc_relpath}，跳过新建")
+                continue
+            # 确保目录存在
+            doc_path.parent.mkdir(parents=True, exist_ok=True)
+            new_content = create_new_doc(doc_path, diff_content, changed_files, create_reason)
+            if new_content:
+                doc_path.write_text(new_content, encoding="utf-8")
+                created_docs.append(doc_relpath)
+                print(f"  🆕 已创建: {doc_relpath}")
+
+        if not updated_docs and not created_docs:
             print("\nℹ️  所有文件无需实际修改，跳过 PR 创建")
             print("   已记录同步状态")
             write_state(run(["git", "rev-parse", "HEAD"]))
             return
+
+        # 合并更新和新建的文档列表
+        all_changed_docs = updated_docs + created_docs
 
         # ── 8. 生成人格化 PR 描述 ────────────────────────────
         commit_msgs = [run(["git", "log", "--oneline", "-1", c]) for c in commits]
@@ -813,7 +901,7 @@ def main() -> None:
         print("\n🎭 生成月白风格的 PR 描述...")
         pr_body = generate_pr_description(
             commit_msgs=commit_msgs,
-            updated_docs=updated_docs,
+            updated_docs=all_changed_docs,
             diff_summary=diff_summary,
             judge_reason=judge.get("reason", ""),
         )

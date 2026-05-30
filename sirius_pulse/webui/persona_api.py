@@ -382,6 +382,7 @@ async def api_experience_get(request: web.Request, persona_manager: Any) -> web.
         "sticker_skip_probability": exp.sticker_skip_probability,
         "other_ai_names": exp.other_ai_names,
         "message_prefixes": exp.message_prefixes,
+        "pinned_message_max_carry_count": exp.pinned_message_max_carry_count,
     })
 
 
@@ -409,7 +410,7 @@ async def api_experience_post(request: web.Request, persona_manager: Any) -> web
         "basic_memory_context_window", "diary_top_k", "diary_token_budget",
         "enable_skills", "max_skill_rounds", "skill_execution_timeout",
         "auto_install_skill_deps", "sticker_skip_probability", "other_ai_names",
-        "message_prefixes",
+        "message_prefixes", "pinned_message_max_carry_count",
     ):
         if key in experience_data:
             setattr(exp, key, experience_data[key])

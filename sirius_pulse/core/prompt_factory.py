@@ -81,6 +81,13 @@ TAG_ATMOSPHERE_TREND = "【氛围趋势】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
 TAG_GLOSSARY = "【名词解释】"
 
+# 钉住消息标签
+TAG_PINNED_MESSAGES = "【钉住的重要消息】"
+TAG_PINNED_MESSAGES_END = "【钉住消息结束】"
+
+# 最近消息标签
+TAG_RECENT_MESSAGES = "【最近消息】"
+
 # 消息渲染标签
 TAG_FACE = "[表情：{name}]"
 TAG_IMAGE = "【图片：{name}】"
@@ -351,7 +358,18 @@ class PromptFactory:
         return (
             f"{TAG_OUTPUT_SPEC}\n"
             "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
-            "2. 直接输出你要说的话，禁止换行。"
+            "2. 直接输出你要说的话，禁止换行。\n"
+            "3. 如果你需要记住某条重要消息以便后续使用，可以在回复中插入钉住指令（指令需完全遵循以下格式，严禁自创格式）：\n"
+            '   - 钉住当前用户消息：[PIN_MESSAGE: {"reason": "原因"}]\n'
+            '   - 钉住上一条消息：[PIN_MESSAGE: {"index": -1, "reason": "原因"}]\n'
+            '   - 钉住指定内容：[PIN_MESSAGE: {"content": "内容", "reason": "原因"}]\n'
+            "4. 如果你认为某条钉住的消息已经不再需要，可以取消钉住（指令需完全遵循以下格式，严禁自创格式）：\n"
+            '   - 根据原因取消：[UNPIN_MESSAGE: {"reason": "原因"}]\n'
+            '   - 根据内容取消：[UNPIN_MESSAGE: {"content": "关键词"}]\n'
+            '   - 取消所有钉住：[UNPIN_MESSAGE: {"all": true}]\n'
+            "   钉住的消息会在后续对话中自动携带，直到达到最大携带次数。\n"
+            "5. 钉住和取消钉住可以在一次回复中同时出现。\n"
+            "6. 主动使用并维护钉住/取消钉住消息的功能，这能让你更好地记住重要消息或维持规则。\n"
         )
 
     @staticmethod
@@ -506,6 +524,38 @@ class PromptFactory:
             source = m.get("source", "memory")
             content = m.get("content", "")
             lines.append(f"- 【{source}】{content}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def build_pinned_messages_context(
+        pinned_messages: list[Any],
+    ) -> str:
+        """构建钉住消息 section。
+
+        Args:
+            pinned_messages: 钉住的消息列表（PinnedMessage 对象列表）
+
+        Returns:
+            格式化的钉住消息上下文
+        """
+        if not pinned_messages:
+            return ""
+
+        lines = [TAG_PINNED_MESSAGES]
+        for msg in pinned_messages:
+            safe_speaker = _html.escape(msg.speaker or "系统", quote=True)
+            safe_uid = _html.escape(msg.metadata.get("user_id", ""), quote=True)
+            pinned_time = msg.pinned_at[:16].replace("T", " ") if msg.pinned_at else ""
+            reason_attr = f' reason="{_html.escape(msg.reason, quote=True)}"' if msg.reason else ''
+
+            lines.append(
+                f'<pinned_message speaker="{safe_speaker}" user_id="{safe_uid}" '
+                f'time="{pinned_time}"{reason_attr}>'
+            )
+            lines.append(msg.content)
+            lines.append('</pinned_message>')
+        lines.append(TAG_PINNED_MESSAGES_END)
+
         return "\n".join(lines)
 
     @staticmethod
@@ -787,6 +837,7 @@ class PromptFactory:
         caller_is_developer: bool = False,
         adapter_type: str | None = None,
         scene_description: str = "",
+        pinned_messages: list[Any] | None = None,
     ) -> PromptBundle:
         """统一组装聊天响应 prompt。返回 PromptBundle。
 
@@ -808,6 +859,7 @@ class PromptFactory:
             caller_is_developer: 调用者是否为开发者。
             adapter_type: 适配器类型（用于技能过滤）。
             scene_description: 当前场景描述（延迟/主动响应时填充，即时响应留空）。
+            pinned_messages: 钉住的消息列表。
 
         人格注入已由 Brain.chat() 默认 pre 步骤处理，此处不再管理。
         """
@@ -884,6 +936,16 @@ class PromptFactory:
             now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
             sender_line = f'<message speaker="{safe_speaker}" user_id="{safe_uid}" time="{now_str}">'
             user_content = f"{sender_line}\n{message_content}\n</message>"
+
+        # 添加【最近消息】标签
+        user_content = f"{TAG_RECENT_MESSAGES}\n{user_content}"
+
+        # 钉住消息随 user 消息段带出
+        if pinned_messages:
+            pinned_ctx = PromptFactory.build_pinned_messages_context(pinned_messages)
+            if pinned_ctx:
+                user_content = f"{pinned_ctx}\n\n{user_content}"
+
         bd.user_message = estimate_tokens(user_content)
 
         return PromptBundle(

@@ -746,7 +746,7 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
 
     archive_dir = paths.dir / "archive"
     if not archive_dir.exists():
-        return _json_response({"messages": [], "groups": [], "total": 0})
+        return _json_response({"messages": [], "groups": [], "total": 0, "pinned_messages": []})
 
     # 获取所有群组
     groups = []
@@ -787,10 +787,35 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
     # 分页
     messages = messages[offset:offset + limit]
 
+    # 读取钉住消息
+    pinned_messages: list[dict[str, Any]] = []
+    pinned_file = paths.engine_state / "pinned_messages.json"
+    if pinned_file.exists():
+        try:
+            pinned_data = json.loads(pinned_file.read_text(encoding="utf-8"))
+            pinned_msgs = pinned_data.get("messages", {})
+            for msg_id, msg_data in pinned_msgs.items():
+                # 如果指定了 group_id，只返回该群组的钉住消息
+                if group_id and msg_data.get("group_id") != group_id:
+                    continue
+                pinned_messages.append({
+                    "message_id": msg_id,
+                    "content": msg_data.get("content", ""),
+                    "speaker": msg_data.get("speaker", ""),
+                    "group_id": msg_data.get("group_id", "default"),
+                    "reason": msg_data.get("reason", ""),
+                    "pinned_at": msg_data.get("pinned_at", ""),
+                    "current_carry_count": msg_data.get("current_carry_count", 0),
+                    "max_carry_count": msg_data.get("max_carry_count", 100),
+                })
+        except (OSError, json.JSONDecodeError):
+            pass
+
     return _json_response({
         "messages": messages,
         "groups": sorted(groups),
         "total": total,
         "offset": offset,
         "limit": limit,
+        "pinned_messages": pinned_messages,
     })

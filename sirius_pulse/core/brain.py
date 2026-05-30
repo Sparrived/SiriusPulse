@@ -206,6 +206,7 @@ class Brain:
         self._recent_messages_fn: Callable[[str, int], list[dict[str, Any]]] | None = None
         self._get_tone_alignment_fn: Callable[[str], str] | None = None
         self._classify_exception_fn: Callable[[Exception], str] | None = None
+        self._get_pinned_messages_fn: Callable[[str], list[Any]] | None = None
 
         # ── Hook 注册表 ──
         self._pre_hooks: list[_PreHookEntry] = []
@@ -224,6 +225,7 @@ class Brain:
         recent_messages_fn: Callable[[str, int], list[dict[str, Any]]] | None = None,
         tone_alignment_fn: Callable[[str], str] | None = None,
         classify_exception_fn: Callable[[Exception], str] | None = None,
+        pinned_messages_fn: Callable[[str], list[Any]] | None = None,
     ) -> None:
         """注入引擎上下文函数（延迟绑定，避免循环导入）。"""
         if recent_messages_fn is not None:
@@ -232,6 +234,8 @@ class Brain:
             self._get_tone_alignment_fn = tone_alignment_fn
         if classify_exception_fn is not None:
             self._classify_exception_fn = classify_exception_fn
+        if pinned_messages_fn is not None:
+            self._get_pinned_messages_fn = pinned_messages_fn
 
     # ═══════════════════════════════════════════════════════════════════
     # Hook 注册 API

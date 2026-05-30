@@ -3,6 +3,7 @@ import { get } from '../app.js';
 import { toast, $ } from '../components.js';
 
 let messages = [];
+let pinnedMessages = [];
 let groups = [];
 let activeGroup = '';
 let currentOffset = 0;
@@ -37,6 +38,17 @@ export async function init(container) {
         </div>
       </div>
       <div class="stat-grid" id="statsGrid"></div>
+    </div>
+    <div id="pinnedSection" style="display:none;margin-bottom:20px">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" style="display:flex;align-items:center;gap:8px">
+            <span style="color:var(--accent)">📌</span> 钉住的消息
+          </div>
+          <div class="card-subtitle" id="pinnedCount"></div>
+        </div>
+        <div id="pinnedList" style="display:grid;gap:8px;padding:0 16px 16px"></div>
+      </div>
     </div>
     <div id="messageList" style="display:grid;gap:8px">
       <div class="card">
@@ -76,11 +88,13 @@ async function loadMessages() {
   try {
     const data = await get(`/personas/${name}/conversations?${params}`);
     messages = data.messages || [];
+    pinnedMessages = data.pinned_messages || [];
     groups = data.groups || [];
     const total = data.total || 0;
 
     updateGroupFilter();
     renderStats(total);
+    renderPinnedMessages();
     renderMessages();
     renderPagination(total);
   } catch (e) {
@@ -138,6 +152,51 @@ function renderStats(total) {
       <div class="stat-value">${groups.length}</div>
     </div>
   `;
+}
+
+function renderPinnedMessages() {
+  const section = $('pinnedSection');
+  const list = $('pinnedList');
+  const countEl = $('pinnedCount');
+
+  if (!section || !list) return;
+
+  if (!pinnedMessages.length) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = 'block';
+  if (countEl) {
+    countEl.textContent = `共 ${pinnedMessages.length} 条钉住消息`;
+  }
+
+  list.innerHTML = pinnedMessages.map(msg => {
+    const carryProgress = msg.max_carry_count > 0
+      ? Math.round((msg.current_carry_count / msg.max_carry_count) * 100)
+      : 0;
+
+    return `
+      <div style="padding:12px 16px;background:var(--bg-2);border-radius:8px;border-left:3px solid var(--accent)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="color:var(--accent);font-weight:600;font-size:13px">${escapeHtml(msg.speaker || '未知')}</span>
+            ${msg.group_id ? `<span class="tag" style="font-size:10px;padding:2px 6px">${escapeHtml(msg.group_id)}</span>` : ''}
+            ${msg.reason ? `<span class="tag" style="font-size:10px;padding:2px 6px;background:var(--warning)22;color:var(--warning)">${escapeHtml(msg.reason)}</span>` : ''}
+          </div>
+          <span style="font-size:11px;color:var(--text-3)">${formatTime(msg.pinned_at)}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap;margin-bottom:8px">${escapeHtml(truncate(msg.content))}</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-3)">
+          <span>携带次数: ${msg.current_carry_count} / ${msg.max_carry_count}</span>
+          <div style="flex:1;height:4px;background:var(--bg-3);border-radius:2px;overflow:hidden">
+            <div style="width:${carryProgress}%;height:100%;background:var(--accent);border-radius:2px;transition:width 0.3s"></div>
+          </div>
+          <span>${carryProgress}%</span>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function formatTime(ts) {

@@ -18,6 +18,7 @@ from sirius_pulse.core.emotional_engine import (
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext, IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter, TaskConfig
+from sirius_pulse.core.pinned_message import PinnedMessage, PinnedMessageManager
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
 from sirius_pulse.core.prompt_factory import PromptFactory, PromptBundle, StyleAdapter, StyleParams
 from sirius_pulse.core.response_strategy import ResponseStrategyEngine
@@ -251,6 +252,9 @@ __all__ = [
     "RhythmAnalysis",
     "RhythmAnalyzer",
     "ThresholdEngine",
+    # 消息钉住
+    "PinnedMessage",
+    "PinnedMessageManager",
     # Config
     "Agent",
     "AgentPreset",
