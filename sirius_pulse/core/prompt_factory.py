@@ -79,6 +79,7 @@ TAG_CURRENT_TIME = "【当前时间】"
 TAG_GROUP_TABOO = "【群规禁忌】"
 TAG_ATMOSPHERE_TREND = "【氛围趋势】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
+TAG_GLOSSARY = "【名词解释】"
 
 # 消息渲染标签
 TAG_FACE = "[表情：{name}]"
@@ -779,7 +780,6 @@ class PromptFactory:
         skill_registry: Any | None = None,
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
-        glossary_section: str = "",
         adapter_type: str | None = None,
         scene_description: str = "",
     ) -> PromptBundle:
@@ -801,7 +801,6 @@ class PromptFactory:
             skill_registry: 技能注册表。
             plugin_registry: 插件注册表（v1.3+）。
             caller_is_developer: 调用者是否为开发者。
-            glossary_section: 术语表 prompt 段落。
             adapter_type: 适配器类型（用于技能过滤）。
             scene_description: 当前场景描述（延迟/主动响应时填充，即时响应留空）。
 
@@ -869,9 +868,6 @@ class PromptFactory:
             if plugin_awareness:
                 _add(plugin_awareness, "skills")
 
-        if glossary_section:
-            _add(glossary_section, "glossary")
-
         system_prompt = "\n\n".join(sections)
         bd.system_prompt_total = estimate_tokens(system_prompt)
 
@@ -898,7 +894,6 @@ class PromptFactory:
         group_profile: Any | None,
         suggested_tone: str = "casual",
         other_ai_names: list[str] | None = None,
-        glossary_section: str = "",
         topic_context: str = "",
         adapter_type: str | None = None,
     ) -> Any:
@@ -937,8 +932,6 @@ class PromptFactory:
             atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
             if atm:
                 _add(atm, "emotion")
-        if glossary_section:
-            _add(glossary_section, "glossary")
 
         system_prompt = "\n\n".join(sections)
         bd.system_prompt_total = estimate_tokens(system_prompt)

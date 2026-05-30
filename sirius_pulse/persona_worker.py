@@ -284,6 +284,7 @@ class PersonaWorker:
             "enable_skills": experience.enable_skills,
             "skill_execution_timeout": experience.skill_execution_timeout,
             "memory_depth": experience.memory_depth,
+            "message_prefixes": experience.message_prefixes,
         }
         # 同项目其他 AI 的名字/别名，用于抑制"人类叫别的 AI 时当前 AI 抢话"
         other_ai_names: list[str] = []
@@ -317,6 +318,7 @@ class PersonaWorker:
                 "heartbeat_at": _now_iso(),
             })
             self._check_enabled_flag()
+            self._check_config_reload()
             await asyncio.sleep(10)
 
     def _check_enabled_flag(self) -> None:
@@ -333,6 +335,103 @@ class PersonaWorker:
                     LOG.info("Adapter %s 已%s", adapter, "启用" if enabled else "禁用")
         except Exception:
             pass
+
+    def _check_config_reload(self) -> None:
+        """检查配置文件变更，热重载到引擎。
+
+        通过读取 engine_state/reload_requested 标志文件触发重载。
+        标志文件内容为重载类型：persona / orchestration / experience / all
+        """
+        reload_flag = self.paths.engine_state / "reload_requested"
+        if not reload_flag.exists():
+            return
+
+        try:
+            reload_type = reload_flag.read_text(encoding="utf-8").strip()
+            # 原子删除标志文件（消费请求）
+            reload_flag.unlink(missing_ok=True)
+        except Exception:
+            return
+
+        if not self._runtime or not self._runtime.engine:
+            LOG.debug("引擎未就绪，跳过配置重载")
+            return
+
+        engine = self._runtime.engine
+
+        try:
+            if reload_type in ("persona", "all"):
+                self._reload_persona(engine)
+
+            if reload_type in ("orchestration", "all"):
+                self._reload_orchestration(engine)
+
+            if reload_type in ("experience", "all"):
+                self._reload_experience(engine)
+
+            LOG.info("配置热重载完成: type=%s", reload_type)
+        except Exception as exc:
+            LOG.warning("配置热重载失败: %s", exc)
+
+    def _reload_persona(self, engine: Any) -> None:
+        """热重载 Persona 配置（persona.json）。"""
+        from sirius_pulse.core.persona_store import PersonaStore
+
+        persona = PersonaStore.load(self.persona_dir)
+        if not persona:
+            LOG.warning("Persona 配置加载失败，跳过重载")
+            return
+
+        # 更新 engine 和 brain 的 persona 引用
+        engine.persona = persona
+        if hasattr(engine, "brain") and engine.brain:
+            engine.brain.persona = persona
+
+        # 更新依赖 persona 的组件
+        if hasattr(engine, "biography_manager"):
+            engine.biography_manager._persona_name = persona.name
+            engine.biography_manager._persona_aliases = persona.aliases
+        if hasattr(engine, "glossary_manager"):
+            engine.glossary_manager._persona_name = persona.name
+        if hasattr(engine, "cognition_analyzer"):
+            engine.cognition_analyzer.ai_name = persona.name
+            engine.cognition_analyzer.ai_aliases = persona.aliases
+            engine.cognition_analyzer.persona = persona
+
+        LOG.info("Persona 配置已热重载: %s", persona.name)
+
+    def _reload_orchestration(self, engine: Any) -> None:
+        """热重载 Orchestration 配置（orchestration.json）。"""
+        from sirius_pulse.core.orchestration_store import OrchestrationStore
+
+        orch = OrchestrationStore.load(self.persona_dir)
+        if not orch:
+            LOG.warning("Orchestration 配置加载失败，跳过重载")
+            return
+
+        # 重新初始化任务模型映射和模型路由器
+        engine._init_orchestration_and_task_models()
+        engine._init_model_router()
+
+        # 同步更新 brain 的 model_router
+        if hasattr(engine, "brain") and engine.brain:
+            engine.brain.router = engine.model_router
+
+        LOG.info("Orchestration 配置已热重载")
+
+    def _reload_experience(self, engine: Any) -> None:
+        """热重载 Experience 配置（experience.json）。"""
+        exp = PersonaExperienceConfig.load(self.paths.experience)
+
+        # 更新 engine.config 中的 experience 相关字段
+        exp_dict = exp.to_dict()
+        engine.config.update(exp_dict)
+
+        # 同步更新 brain 的 config
+        if hasattr(engine, "brain") and engine.brain:
+            engine.brain.config.update(exp_dict)
+
+        LOG.info("Experience 配置已热重载")
 
     def _write_status(self, status: dict[str, Any]) -> None:
         try:

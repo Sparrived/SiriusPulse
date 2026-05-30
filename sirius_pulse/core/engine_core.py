@@ -737,6 +737,19 @@ class _EmotionalGroupChatEngineBase:
         content = message.content
         self._current_adapter_type = message.adapter_type or ""
 
+        # 消息前缀过滤：以配置前缀开头的消息不进入引擎
+        prefixes = self.config.get("message_prefixes", [])
+        if prefixes and content:
+            text_stripped = content.lstrip()
+            if any(text_stripped.startswith(p) for p in prefixes if p):
+                self._log_inner_thought(f"消息以配置前缀开头，跳过处理: {text_stripped[:50]}")
+                return {
+                    "strategy": "silent",
+                    "reply": None,
+                    "emotion": {},
+                    "intent": {},
+                }
+
         # 获取当前发送者的 developer 状态（用于插件权限过滤）
         caller_is_developer = participants[0].is_developer if participants else False
 

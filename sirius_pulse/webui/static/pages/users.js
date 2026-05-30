@@ -26,9 +26,10 @@ export async function init(container) {
       <div class="card-header">
         <div class="card-title">用户档案</div>
         <div style="display:flex;gap:12px;align-items:center">
-          <select id="usersGroupFilter" class="btn btn-sm">
-            <option value="">全部群组</option>
-          </select>
+          <div style="position:relative" id="groupSearchWrap">
+            <input type="text" id="groupSearchInput" class="btn btn-sm" placeholder="搜索群组或用户..." style="width:220px;text-align:left" autocomplete="off">
+            <div id="groupDropdown" style="display:none;position:absolute;top:calc(100% + 4px);left:0;width:320px;max-height:320px;overflow-y:auto;background:var(--surface-1,var(--bg-1));border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:0 4px 16px rgba(0,0,0,0.15);z-index:100"></div>
+          </div>
           <button class="btn btn-sm" id="refreshAll">刷新</button>
         </div>
       </div>
@@ -44,13 +45,7 @@ export async function init(container) {
     </div>
   `;
 
-  const usersGroupFilter = $('usersGroupFilter');
-  if (usersGroupFilter) {
-    usersGroupFilter.addEventListener('change', (e) => {
-      activeGroup = e.target.value;
-      renderCards();
-    });
-  }
+  setupGroupSearch();
   
   const refreshAll = $('refreshAll');
   if (refreshAll) {
@@ -108,12 +103,108 @@ async function loadAll() {
   }
 }
 
+function getGroupUserMap() {
+  const users = usersData.users || [];
+  const map = {};
+  users.forEach(u => {
+    (u.groups || []).forEach(g => {
+      if (!map[g]) map[g] = [];
+      map[g].push(u.name || u.user_id || '');
+    });
+  });
+  return map;
+}
+
 function renderGroups() {
-  const groups = usersData.groups || [];
-  const sel = $('usersGroupFilter');
-  if (!sel) return;
-  sel.innerHTML = `<option value="">全部群组</option>` +
-    groups.map(g => `<option value="${g}"${g === activeGroup ? ' selected' : ''}>${g}</option>`).join('');
+  const input = $('groupSearchInput');
+  if (input) {
+    input.value = activeGroup || '';
+    input.placeholder = activeGroup ? `群组: ${activeGroup}` : '搜索群组或用户...';
+  }
+}
+
+function setupGroupSearch() {
+  const input = $('groupSearchInput');
+  const dropdown = $('groupDropdown');
+  const wrap = $('groupSearchWrap');
+  if (!input || !dropdown || !wrap) return;
+
+  function showDropdown(items) {
+    if (!items.length) {
+      dropdown.innerHTML = '<div style="padding:12px 14px;color:var(--text-3);font-size:13px;text-align:center">无匹配结果</div>';
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = items.map(item => {
+      const isActive = item.group === activeGroup;
+      return `
+        <div class="group-option" data-group="${item.group}" style="padding:10px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);${isActive ? 'background:var(--accent-bg,rgba(99,102,241,0.08))' : ''}">
+          <div style="min-width:0;flex:1">
+            <div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.group}</div>
+            ${item.matchedUsers.length ? `<div style="font-size:11px;color:var(--text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">用户: ${item.matchedUsers.join(', ')}</div>` : ''}
+          </div>
+          <span style="font-size:11px;color:var(--text-3);flex-shrink:0;margin-left:8px">${item.userCount} 人</span>
+        </div>
+      `;
+    }).join('');
+
+    dropdown.querySelectorAll('.group-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        const group = opt.dataset.group;
+        activeGroup = activeGroup === group ? '' : group;
+        input.value = activeGroup || '';
+        input.placeholder = activeGroup ? `群组: ${activeGroup}` : '搜索群组或用户...';
+        dropdown.style.display = 'none';
+        renderCards();
+      });
+    });
+  }
+
+  function filterGroups(query) {
+    const groups = usersData.groups || [];
+    const groupUserMap = getGroupUserMap();
+    const q = query.toLowerCase().trim();
+
+    if (!q) {
+      return groups.map(g => ({
+        group: g,
+        userCount: (groupUserMap[g] || []).length,
+        matchedUsers: [],
+      }));
+    }
+
+    return groups
+      .map(g => {
+        const users = groupUserMap[g] || [];
+        const groupMatch = g.toLowerCase().includes(q);
+        const matchedUsers = users.filter(u => u.toLowerCase().includes(q));
+        if (groupMatch || matchedUsers.length) {
+          return {
+            group: g,
+            userCount: users.length,
+            matchedUsers: groupMatch ? [] : matchedUsers.slice(0, 3),
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  input.addEventListener('focus', () => {
+    const items = filterGroups(input.value);
+    showDropdown(items);
+  });
+
+  input.addEventListener('input', () => {
+    const items = filterGroups(input.value);
+    showDropdown(items);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) {
+      dropdown.style.display = 'none';
+    }
+  });
 }
 
 function renderUnifiedStats() {
@@ -194,6 +285,11 @@ function getBioForUser(userId) {
   return cards.find(c => c.user_id === userId) || null;
 }
 
+function getAliasesForUser(userId) {
+  const aliases = bioData.aliases || [];
+  return aliases.filter(a => a.user_id === userId);
+}
+
 function renderCards() {
   const users = usersData.users || [];
   const filteredUsers = activeGroup
@@ -224,6 +320,7 @@ function renderCards() {
     const shortBio = bio ? (bio.short_bio || '').slice(0, 60) : '';
     const relsCount = bio ? (bio.relationships || []).length : 0;
     const distilledCount = bio ? (bio.distilled_points || []).length : 0;
+    const userAliases = getAliasesForUser(u.user_id);
 
     return `
       <div class="card" style="cursor:pointer" data-user-id="${u.user_id}">
@@ -237,6 +334,7 @@ function renderCards() {
             <div style="font-size:12px;color:var(--text-3);font-family:var(--font-mono)">${u.user_id || '—'}</div>
           </div>
         </div>
+        ${userAliases.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${userAliases.map(a => `<span class="tag tag-accent" style="font-size:10px;padding:2px 6px;display:flex;align-items:center;gap:4px">${a.alias}<span class="delete-alias-tag" data-alias="${a.alias}" data-user-id="${u.user_id}" style="cursor:pointer;opacity:0.7;hover:opacity:1">×</span></span>`).join('')}</div>` : ''}
         ${anchors.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px">${anchors.map(a => `<span class="tag" style="font-size:10px;padding:2px 6px">${a}</span>`).join('')}</div>` : ''}
         ${shortBio ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:12px;line-height:1.4">${shortBio}${(bio.short_bio || '').length > 60 ? '...' : ''}</div>` : ''}
         <div style="display:flex;gap:16px;font-size:12px;color:var(--text-2);margin-bottom:14px">
@@ -267,7 +365,19 @@ function renderCards() {
   }).join('');
 
   grid.querySelectorAll('[data-user-id]').forEach(card => {
-    card.addEventListener('click', () => openDetailModal(card.dataset.userId));
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('delete-alias-tag')) return;
+      openDetailModal(card.dataset.userId);
+    });
+  });
+
+  grid.querySelectorAll('.delete-alias-tag').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const alias = btn.dataset.alias;
+      const userId = btn.dataset.userId;
+      await deleteAlias(alias, userId);
+    });
   });
 }
 

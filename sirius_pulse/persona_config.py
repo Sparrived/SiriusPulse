@@ -177,6 +177,9 @@ class PersonaExperienceConfig:
     # 群里其他 AI/Bot 的名字（手动指定，防止抢话和身份混淆）
     other_ai_names: list[str] = field(default_factory=list)
 
+    # 消息前缀过滤——以这些前缀开头的消息不进入引擎
+    message_prefixes: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "reply_mode": self.reply_mode,
@@ -205,6 +208,7 @@ class PersonaExperienceConfig:
             "diary_token_budget": self.diary_token_budget,
             "sticker_skip_probability": self.sticker_skip_probability,
             "other_ai_names": list(self.other_ai_names),
+            "message_prefixes": list(self.message_prefixes),
         }
 
     @classmethod
@@ -236,6 +240,7 @@ class PersonaExperienceConfig:
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
             sticker_skip_probability=float(data.get("sticker_skip_probability", 0.33)),
+            message_prefixes=[str(v) for v in data.get("message_prefixes", [])],
         )
 
     @classmethod

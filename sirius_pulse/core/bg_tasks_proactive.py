@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
-from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.skills.executor import strip_skill_calls
 
 if TYPE_CHECKING:
@@ -318,15 +318,17 @@ class ProactiveTasks:
             group_id, text=trigger.get("trigger_type", ""), max_terms=3
         )
         topic = self._pick_proactive_topic(group_id)
-        return PromptFactory.assemble_proactive(
+        bundle = PromptFactory.assemble_proactive(
             trigger_reason=trigger.get("trigger_type", "silence"),
             group_profile=engine.semantic_memory.get_group_profile(group_id),
             suggested_tone=trigger.get("suggested_tone", "casual"),
             other_ai_names=engine._other_ai_names,
-            glossary_section=glossary,
             topic_context=topic,
             adapter_type=adapter_type,
         )
+        if glossary:
+            bundle.system_prompt = f"{TAG_GLOSSARY}\n{glossary}\n\n{bundle.system_prompt}"
+        return bundle
 
     def _pick_proactive_topic(self, group_id: str) -> str:
         """从语义记忆中选取主动发起话题，排除近期已用话题以增加多样性。"""

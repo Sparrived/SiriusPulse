@@ -415,6 +415,8 @@ class EngineRuntime:
             # Developer proactive private-chat memory conversations
             "proactive_developer_chat_interval_seconds": int(self.plugin_config.get("proactive_developer_chat_interval_seconds", 1800)),
             "proactive_developer_min_silence_seconds": int(self.plugin_config.get("proactive_developer_min_silence_seconds", 120)),
+            # 消息前缀过滤
+            "message_prefixes": list(self.plugin_config.get("message_prefixes", [])),
         }
 
         # 创建向量存储（ChromaDB）

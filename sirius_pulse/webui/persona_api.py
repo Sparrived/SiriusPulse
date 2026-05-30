@@ -21,6 +21,26 @@ from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_ap
 LOG = logging.getLogger("sirius.webui")
 
 
+def _request_config_reload(persona_name: str, reload_type: str, persona_manager: Any) -> None:
+    """写入配置重载标志文件，触发 PersonaWorker 热重载。
+
+    Args:
+        persona_name: 人格名称
+        reload_type: 重载类型 (persona / orchestration / experience / all)
+        persona_manager: PersonaManager 实例
+    """
+    paths = persona_manager.get_persona_paths(persona_name)
+    if paths is None:
+        return
+    try:
+        reload_flag = paths.engine_state / "reload_requested"
+        reload_flag.parent.mkdir(parents=True, exist_ok=True)
+        reload_flag.write_text(reload_type, encoding="utf-8")
+        LOG.debug("已写入配置重载标志: %s -> %s", persona_name, reload_type)
+    except Exception as exc:
+        LOG.warning("写入配置重载标志失败: %s", exc)
+
+
 async def api_personas_get(request: web.Request, persona_manager: Any) -> web.Response:
     personas = persona_manager.list_personas()
     result = []
@@ -221,6 +241,7 @@ async def api_persona_post(request: web.Request, persona_manager: Any) -> web.Re
             setattr(profile, key, persona_data[key])
 
     PersonaStore.save(paths.dir, profile)
+    _request_config_reload(name, "persona", persona_manager)
     return _json_response({"success": True})
 
 
@@ -322,6 +343,7 @@ async def api_orchestration_post(request: web.Request, persona_manager: Any) -> 
             cfg[key] = body[key]
 
     OrchestrationStore.save(paths.dir, cfg)
+    _request_config_reload(name, "orchestration", persona_manager)
     return _json_response({"success": True})
 
 
@@ -359,6 +381,7 @@ async def api_experience_get(request: web.Request, persona_manager: Any) -> web.
         "auto_install_skill_deps": exp.auto_install_skill_deps,
         "sticker_skip_probability": exp.sticker_skip_probability,
         "other_ai_names": exp.other_ai_names,
+        "message_prefixes": exp.message_prefixes,
     })
 
 
@@ -386,11 +409,13 @@ async def api_experience_post(request: web.Request, persona_manager: Any) -> web
         "basic_memory_context_window", "diary_top_k", "diary_token_budget",
         "enable_skills", "max_skill_rounds", "skill_execution_timeout",
         "auto_install_skill_deps", "sticker_skip_probability", "other_ai_names",
+        "message_prefixes",
     ):
         if key in experience_data:
             setattr(exp, key, experience_data[key])
 
     exp.save(paths.experience)
+    _request_config_reload(name, "experience", persona_manager)
     return _json_response({"success": True})
 
 

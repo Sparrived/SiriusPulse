@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
-from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.core.utils import parse_sticker_tags
 from sirius_pulse.skills.executor import strip_skill_calls
 
@@ -470,7 +470,7 @@ class DelayedQueueTasks:
                 role="assistant",
                 content=strip_skill_calls(reply),
                 speaker_name=engine.persona.name if engine.persona else "assistant",
-                system_prompt=system_prompt,
+                system_prompt=chat_result.system_prompt,
             )
             engine.basic_store.append(_entry)
             if skill_results:
@@ -556,7 +556,7 @@ class DelayedQueueTasks:
                 role="assistant",
                 content=clean_reply,
                 speaker_name=engine.persona.name if engine.persona else "assistant",
-                system_prompt=system_prompt,
+                system_prompt=chat_result.system_prompt,
             )
             engine.basic_store.append(_reply_entry)
             # 反馈追踪：AI 发言后记录锚点，等待用户跟进
@@ -654,7 +654,7 @@ class DelayedQueueTasks:
         # 读取 pipeline 缓存的传记上下文
         pending_bio: dict[str, Any] = getattr(engine, "_pending_biography", {}) or {}
 
-        return PromptFactory.assemble_chat(
+        bundle = PromptFactory.assemble_chat(
             message_content=message_content,
             speaker_name=speaker_name,
             channel_user_id=channel_user_id,
@@ -670,10 +670,12 @@ class DelayedQueueTasks:
             skill_registry=engine._skill_registry,
             plugin_registry=getattr(engine, '_plugin_registry', None),
             caller_is_developer=caller_is_developer,
-            glossary_section=glossary,
             adapter_type=adapter_type,
             scene_description="群里的话题有了自然间隙，你决定插一句。",
         )
+        if glossary:
+            bundle.system_prompt = f"{TAG_GLOSSARY}\n{glossary}\n\n{bundle.system_prompt}"
+        return bundle
 
     def _inject_group_id_into_latest_reminder(self, group_id: str) -> None:
         """Attach group_id and adapter_type to reminders that lack them."""
