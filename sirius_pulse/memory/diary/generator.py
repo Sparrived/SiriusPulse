@@ -106,6 +106,7 @@ class DiaryGenerator:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 purpose="diary_generate",
+                response_format={"type": "json_object"},
             )
 
             try:

@@ -347,6 +347,7 @@ def list_provider_model_details(
                 "name": m.get("name", mid),
                 "tool_call": bool(m.get("tool_call", False)),
                 "reasoning": bool(m.get("reasoning", False)),
+                "structured_output": bool(m.get("structured_output", False)),
                 "vision": "image" in input_mods,
                 "audio": "audio" in input_mods,
                 "context": ctx if isinstance(ctx, int) else 0,

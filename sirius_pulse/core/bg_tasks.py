@@ -301,6 +301,7 @@ class BackgroundTasks:
                         temperature=0.4,
                         max_tokens=2048,
                         purpose="diary_consolidate",
+                        response_format={"type": "json_object"},
                     )
                     t0 = time.perf_counter()
                     raw = await engine.brain.raw_call(raw_request)

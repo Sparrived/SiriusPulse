@@ -408,6 +408,7 @@ class BiographyManager:
             temperature=0.3,
             max_tokens=1024,
             purpose="biography_distill",
+            response_format={"type": "json_object"},
         )
 
         try:
@@ -510,6 +511,7 @@ class BiographyManager:
             temperature=0.4,
             max_tokens=1024,
             purpose="biography_update",
+            response_format={"type": "json_object"},
         )
 
         try:

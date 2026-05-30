@@ -877,6 +877,8 @@ class CognitionAnalyzer:
                     continue
                 filtered_mm.append(item)
 
+        _COGNITION_RESPONSE_FORMAT: dict[str, object] = {"type": "json_object"}
+
         # 多模态消息：如果存在图片，使用 vision model 并通过 messages 传递图片
         if filtered_mm:
             mm_messages = self._build_multimodal_messages(message, filtered_mm)
@@ -887,6 +889,7 @@ class CognitionAnalyzer:
                 temperature=0.2,
                 max_tokens=1024,
                 purpose="cognition_analyze",
+                response_format=_COGNITION_RESPONSE_FORMAT,
             )
         else:
             request = GenerationRequest(
@@ -896,6 +899,7 @@ class CognitionAnalyzer:
                 temperature=0.2,
                 max_tokens=512,
                 purpose="cognition_analyze",
+                response_format=_COGNITION_RESPONSE_FORMAT,
             )
         self._last_request = request
 
@@ -939,6 +943,7 @@ class CognitionAnalyzer:
                     max_tokens=request.max_tokens,
                     timeout_seconds=request.timeout_seconds or 30.0,
                     purpose="cognition_analyze",
+                    response_format=_COGNITION_RESPONSE_FORMAT,
                 )
             )
         elif self.provider_async is not None and hasattr(self.provider_async, "generate_async"):

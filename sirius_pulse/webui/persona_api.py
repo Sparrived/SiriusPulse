@@ -516,6 +516,8 @@ def _enrich_model_tags(data_path: Any, model_choices: list[dict[str, str]]) -> N
                 tags.append("函数调用")
             if m.get("reasoning"):
                 tags.append("推理")
+            if m.get("structured_output"):
+                tags.append("结构化")
             modalities = m.get("modalities", {})
             input_mods = modalities.get("input", []) if isinstance(modalities, dict) else []
             if "image" in input_mods:

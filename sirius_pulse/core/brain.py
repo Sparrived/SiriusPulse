@@ -104,6 +104,7 @@ class RawRequest:
     max_tokens: int = 512
     timeout_seconds: float = 30.0
     purpose: str = "cognition_analyze"
+    response_format: dict[str, object] | None = None
 
     # ── 重试控制（transport 级） ──
     retry_max: int = 2       # 最多重试次数（总调用次数 = retry_max + 1）
@@ -293,6 +294,7 @@ class Brain:
             max_tokens=request.max_tokens,
             timeout_seconds=request.timeout_seconds,
             purpose=request.purpose,
+            response_format=request.response_format,
         )
 
         t0 = time.perf_counter()
