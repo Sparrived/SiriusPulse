@@ -107,6 +107,7 @@ class IntentAnalysisV3:
 
     # === image understanding ===
     image_caption: str = ""  # 图片描述文本，由多模态意图分析生成
+    sticker_caption: str = ""  # 动画表情描述文本（缓存命中时使用）
 
     # === Plugin 意图识别字段（v1.2+）===
     plugin_intent: str | None = None       # 匹配到的插件意图ID，如 "weather"
@@ -150,6 +151,7 @@ class IntentAnalysisV3:
             "sarcasm_score": self.sarcasm_score,
             "entitlement_score": self.entitlement_score,
             "image_caption": self.image_caption,
+            "sticker_caption": self.sticker_caption,
             # plugin fields
             "plugin_intent": self.plugin_intent,
             "plugin_confidence": self.plugin_confidence,
@@ -199,6 +201,7 @@ class IntentAnalysisV3:
             sarcasm_score=data.get("sarcasm_score", 0.0),
             entitlement_score=data.get("entitlement_score", 0.5),
             image_caption=data.get("image_caption", ""),
+            sticker_caption=data.get("sticker_caption", ""),
             # plugin fields
             plugin_intent=data.get("plugin_intent"),
             plugin_confidence=data.get("plugin_confidence", 0.0),

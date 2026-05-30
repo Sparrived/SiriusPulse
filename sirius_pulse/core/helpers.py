@@ -13,6 +13,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.cognition import extract_keywords
+from sirius_pulse.core.identity_resolver import IdentityContext
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -138,16 +139,24 @@ class Helpers:
 
         # 确定调用者是否为开发者
         caller_is_developer = False
-        if hasattr(engine, "user_manager"):
+        if hasattr(engine, "identity_resolver") and hasattr(engine, "user_manager"):
             try:
                 platform = getattr(message, "channel", "")
                 ext_uid = getattr(message, "channel_user_id", "")
                 if platform and ext_uid:
-                    resolved_uid = engine.user_manager.resolve_user_id(
-                        platform=platform, external_uid=ext_uid
+                    # 使用 IdentityResolver 统一解析
+                    ctx = IdentityContext(
+                        speaker_name=getattr(message, "speaker", "") or "",
+                        platform_uid=ext_uid,
+                        platform=platform,
                     )
-                    if resolved_uid:
-                        caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
+                    resolution = engine.identity_resolver.resolve_with_alias(
+                        ctx, engine.user_manager, group_id
+                    )
+                    if resolution.user_id:
+                        caller_profile = engine.user_manager.get_user(
+                            resolution.user_id, group_id
+                        )
                         caller_is_developer = bool(
                             caller_profile and getattr(caller_profile, "is_developer", False)
                         )

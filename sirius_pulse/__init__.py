@@ -16,7 +16,7 @@ from sirius_pulse.core.emotional_engine import (
     create_emotional_engine,
 )
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
-from sirius_pulse.core.identity_resolver import IdentityContext, IdentityResolver
+from sirius_pulse.core.identity_resolver import IdentityContext, IdentityResolution, IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter, TaskConfig
 from sirius_pulse.core.pinned_message import PinnedMessage, PinnedMessageManager
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
@@ -240,6 +240,7 @@ __all__ = [
     "SessionEventType",
     "IdentityResolver",
     "IdentityContext",
+    "IdentityResolution",
     "ModelRouter",
     "TaskConfig",
     "ProactiveTrigger",

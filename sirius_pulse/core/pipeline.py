@@ -34,6 +34,27 @@ class Pipeline:
     def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
         self._engine = engine
 
+    def _get_recent_speakers(self, group_id: str, n: int = 6) -> list[str]:
+        """获取最近发言的用户 ID 列表（用于身份解析的上下文推断）。
+
+        Args:
+            group_id: 群组 ID
+            n: 获取最近 n 条消息的发言者
+
+        Returns:
+            用户 ID 列表（按时间倒序）
+        """
+        engine = self._engine
+        recent_messages = engine._helpers.get_recent_messages(group_id, n=n)
+        speakers = []
+        seen = set()
+        for msg in recent_messages:
+            user_id = msg.get("user_id")
+            if user_id and user_id not in seen:
+                speakers.append(user_id)
+                seen.add(user_id)
+        return speakers
+
     # ==================================================================
     # Pipeline stages
     # ==================================================================
@@ -46,7 +67,14 @@ class Pipeline:
     ) -> str:
         """Perception layer: normalize, register participants, update transcript."""
         engine = self._engine
-        # New: Register participants via identity resolver and user manager
+
+        # 获取最近发言者列表（用于上下文推断）
+        recent_speakers = self._get_recent_speakers(group_id)
+
+        # 获取传记管理器（用于别名消歧）
+        biography_manager = getattr(engine, "biography_manager", None)
+
+        # Register participants via identity resolver and user manager
         for p in participants:
             ctx = IdentityContext(
                 speaker_name=p.name,
@@ -55,6 +83,7 @@ class Pipeline:
                 platform=message.channel,
                 is_developer=p.is_developer,
             )
+            # 使用增强版解析（向后兼容：仍返回 UserProfile）
             engine.identity_resolver.resolve(ctx, engine.user_manager, group_id)
 
         # Resolve current sender to a stable user_id (may reuse UUID from
@@ -66,9 +95,27 @@ class Pipeline:
             platform=message.channel,
             is_developer=False,
         )
-        sender_profile = engine.identity_resolver.resolve(sender_ctx, engine.user_manager, group_id)
-        resolved_user_id = sender_profile.user_id
-        resolved_speaker_name = sender_profile.name
+
+        # 使用增强版解析，获取置信度和来源信息
+        resolution = engine.identity_resolver.resolve_with_alias(
+            sender_ctx,
+            engine.user_manager,
+            group_id,
+            biography_manager=biography_manager,
+            recent_speakers=recent_speakers,
+        )
+
+        # 记录解析结果（低置信度时发出警告）
+        if resolution.confidence < 0.5 and resolution.source != "unresolved":
+            logger.debug(
+                "身份解析低置信度: speaker=%s user_id=%s confidence=%.2f source=%s",
+                message.speaker, resolution.user_id, resolution.confidence, resolution.source,
+            )
+
+        resolved_user_id = resolution.user_id
+        # 从 UserProfile 获取显示名称
+        sender_profile = engine.user_manager.get_user(resolved_user_id, group_id)
+        resolved_speaker_name = sender_profile.name if sender_profile else message.speaker or "unknown"
 
         # Add to basic memory and archive to disk
         entry = engine.basic_memory.add_entry(

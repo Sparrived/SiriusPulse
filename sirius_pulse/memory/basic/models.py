@@ -25,6 +25,7 @@ class BasicMemoryEntry(JsonSerializable):
     system_prompt: str = ""  # system prompt used for this assistant turn
     channel_user_id: str = ""  # platform raw id (e.g. QQ number) for name constraints
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
+    tags: list[dict[str, str]] = field(default_factory=list)  # 内容标签（表情包、钉住等）
 
 
 @dataclass(slots=True)

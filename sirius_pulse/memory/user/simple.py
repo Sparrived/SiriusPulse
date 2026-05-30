@@ -164,21 +164,6 @@ class UserManager:
         """List all users in a group."""
         return list(self._ensure_group(group_id).values())
 
-    def ensure_user(self, *, speaker: str, group_id: str = "default") -> UserProfile:
-        """Ensure a user exists, creating if necessary."""
-        resolved = self.resolve_user_id(speaker=speaker)
-        group = self._ensure_group(group_id)
-        if resolved and resolved in group:
-            return group[resolved]
-        # If resolved exists globally but not in this group, seed from global
-        if resolved and resolved not in group:
-            seeded = self._seed_from_global(resolved, group_id)
-            if seeded is not None:
-                return seeded
-        profile = UserProfile(user_id=speaker, name=speaker)
-        self.register_user(profile, group_id=group_id)
-        return profile
-
     def get_global_user(self, user_id: str) -> UserProfile | None:
         """Get the cross-group shared profile for a user."""
         return self._global_users.get(user_id)

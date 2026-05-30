@@ -598,6 +598,7 @@ class CognitionAnalyzer:
             sarcasm_score=sarcasm_score,
             entitlement_score=entitlement_score,
             image_caption=llm_result.get("image_caption", "") if llm_result else "",
+            sticker_caption=llm_result.get("sticker_caption", "") if llm_result else "",
             # Plugin 字段（v1.2+）
             plugin_intent=plugin_intent,
             plugin_confidence=plugin_confidence,
@@ -923,6 +924,7 @@ class CognitionAnalyzer:
                 "sarcasm_score": 0.0,
                 "search_query": message or "",
                 "image_caption": cached_caption,
+                "sticker_caption": sticker_caption,
                 "plugin_intent": None,
                 "plugin_slots": {},
             }

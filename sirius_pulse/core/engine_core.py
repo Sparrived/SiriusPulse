@@ -306,6 +306,8 @@ class _EmotionalGroupChatEngineBase:
 
         self._pending_reminders: dict[str, list[dict[str, Any]]] = {}
         self._current_adapter_type: str = ""
+        # Bot 在各平台的 UID（如 {"qq_native_sirius_pulse": "123456"}）
+        self._bot_platform_uids: dict[str, str] = {}
 
         self._recent_sent_replies: dict[str, list[tuple[float, str]]] = {}
         self._reply_dedup_window = self.config.get("reply_dedup_window_seconds", REPLY_DEDUP_WINDOW_SECONDS)
@@ -882,6 +884,40 @@ class _EmotionalGroupChatEngineBase:
                     record_content = f"[STICKERS: {', '.join(_result.sticker_names)}]"
                 else:
                     return
+
+            # 收集被处理的标签
+            entry_tags: list[dict[str, str]] = []
+
+            # 表情包标签
+            if _result.sticker_names:
+                names_str = ", ".join(_result.sticker_names[:3])
+                entry_tags.append({
+                    "type": "sticker",
+                    "label": f"表情包: {names_str}" if _result.sticker_names else "表情包"
+                })
+
+            # 钉住/取消钉住指令
+            from sirius_pulse.core.pinned_message import (
+                parse_pin_messages, parse_unpin_messages
+            )
+            raw_text = _result.raw_text
+            pin_calls = parse_pin_messages(raw_text)
+            unpin_calls = parse_unpin_messages(raw_text)
+            if pin_calls:
+                entry_tags.append({"type": "pin", "label": f"钉住消息 ×{len(pin_calls)}"})
+            if unpin_calls:
+                entry_tags.append({"type": "unpin", "label": f"取消钉住 ×{len(unpin_calls)}"})
+
+            # 多模态输入（图片、表情等）
+            multimodal_inputs: list[dict[str, str]] = []
+            if _req.messages:
+                last_user_msg = _req.messages[-1]
+                multimodal_inputs = last_user_msg.get("multimodal_inputs", [])
+            if multimodal_inputs:
+                image_count = sum(1 for m in multimodal_inputs if m.get("type") == "image")
+                if image_count > 0:
+                    entry_tags.append({"type": "image", "label": f"图片 ×{image_count}"})
+
             gid = _req.group_id
             uid = _req.user_id
             persona_name = _engine.persona.name if _engine.persona else "assistant"
@@ -892,6 +928,8 @@ class _EmotionalGroupChatEngineBase:
                 content=record_content,
                 speaker_name=persona_name,
                 system_prompt=_result.system_prompt,
+                tags=entry_tags,
+                multimodal_inputs=multimodal_inputs,
             )
             _engine.basic_store.append(_entry)
             try:
@@ -1017,7 +1055,9 @@ class _EmotionalGroupChatEngineBase:
         )
 
         # 如果 cognition 生成了图片描述，回写到 basic_memory 最后一条 entry
-        if intent.image_caption:
+        # 优先使用 sticker_caption（动画表情缓存），否则使用 image_caption
+        caption = intent.image_caption or getattr(intent, 'sticker_caption', '')
+        if caption:
             recent = self.basic_memory.get_context(group_id, n=1)
             if recent:
                 last_entry = recent[0]
@@ -1039,23 +1079,23 @@ class _EmotionalGroupChatEngineBase:
                     stripped = re.sub(
                         r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)", "", original_content
                     ).strip()
-                    sticker_tag = f"【动画表情：{intent.image_caption}】"
+                    sticker_tag = f"【动画表情：{caption}】"
                     last_entry.content = (
                         f"{stripped} {sticker_tag}" if stripped else sticker_tag
                     )
                     # 也存入 multimodal_inputs 供 sticker learning 管道使用
                     for m in last_entry.multimodal_inputs:
                         if m.get("type") == "image":
-                            m["caption"] = intent.image_caption
+                            m["caption"] = caption
                 else:
                     if self._is_pure_image_message(original_content):
-                        last_entry.content = f"【图片】【图片描述：{intent.image_caption}】"
+                        last_entry.content = f"【图片】【图片描述：{caption}】"
                     else:
-                        last_entry.content = f"{original_content} 【图片描述：{intent.image_caption}】"
+                        last_entry.content = f"{original_content} 【图片描述：{caption}】"
                     if last_entry.multimodal_inputs:
                         for m in last_entry.multimodal_inputs:
                             if m.get("type") == "image":
-                                m["caption"] = intent.image_caption
+                                m["caption"] = caption
         # 内心活动：理解消息后的感受
         self._log_cognition_thought(speaker, intent, emotion)
         await self.event_bus.emit(

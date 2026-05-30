@@ -673,6 +673,10 @@ class NapCatAdapter(BaseAdapter):
         if parsed is None:
             return
 
+        # 记录 Bot 自身的 platform_uid
+        if self._engine is not None and parsed.self_id:
+            self._engine._bot_platform_uids["qq_native_sirius_pulse"] = parsed.self_id
+
         speaker_name = parsed.card or parsed.nickname or f"qq_{parsed.user_id}"
         uid = f"qq_{parsed.user_id}"
         group_id = parsed.group_id

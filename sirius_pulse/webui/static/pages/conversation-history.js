@@ -21,6 +21,8 @@ const TAG_COLORS = {
   mention:    { bg: 'var(--accent)22', color: 'var(--accent)', border: 'var(--accent)44' },
   reply:      { bg: 'var(--text-2)22', color: 'var(--text-2)', border: 'var(--text-2)44' },
   skill:      { bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
+  pin:        { bg: '#e91e6322', color: '#e91e63', border: '#e91e6344' },
+  unpin:      { bg: '#9e9e9e22', color: '#9e9e9e', border: '#9e9e9e44' },
   pinned:     { bg: '#e91e6322', color: '#e91e63', border: '#e91e6344' },
   file:       { bg: '#607d8b22', color: '#607d8b', border: '#607d8b44' },
   link:       { bg: '#2196f322', color: '#2196f3', border: '#2196f344' },
@@ -294,39 +296,101 @@ function truncate(str, max = 500) {
   return str.length > max ? str.slice(0, max) + '...' : str;
 }
 
-const SECTION_MARKERS = [
-  { start: '<历史日记>', end: '</历史日记>', label: '日记记忆', color: '#e8a87c' },
-  { start: '<跨群记录>', end: '</跨群记录>', label: '跨群记录', color: '#85cdca' },
-  { start: '<近期对话>', end: '</近期对话>', label: '对话历史', color: '#d8b4e2' },
-  { start: '<conversation_history>', end: '</conversation_history>', label: '对话历史', color: '#d8b4e2' },
-];
+const SECTION_COLORS = {
+  '角色': '#e91e63', '身份锚定': '#9c27b0', '背景故事': '#673ab7',
+  '人格底色': '#3f51b5', '情绪反应': '#2196f3', '关系模式': '#00bcd4',
+  '说话方式': '#009688', '回应习惯': '#4caf50', '场景行为': '#8bc34a',
+  '场景定位': '#cddc39', '身份识别': '#ffc107', '输出规范': '#ff9800',
+  '发言者情绪': '#ff5722', '互动指导': '#795548', '相关记忆': '#607d8b',
+  '群体风格': '#e8a87c', '回复风格': '#85cdca', '跨群认知': '#d8b4e2',
+  '人物速查': '#795548', '我的能力': '#00bcd4', '群成员区分': '#9e9e9e',
+  '当前场景': '#9c27b0', '首次互动': '#ff5722', '触发原因': '#f44336',
+  '语气': '#e91e63', '提醒': '#ff9800', '话题建议': '#4caf50',
+  '话题': '#2196f3', '长度要求': '#607d8b', '群体兴趣': '#8bc34a',
+  '关系': '#00bcd4', '历史日记': '#e8a87c', '其他群近期记录': '#85cdca',
+  '近期对话记录': '#d8b4e2', '技能执行结果': '#ff9800', '当前时间': '#9e9e9e',
+  '群规禁忌': '#f44336', '氛围趋势': '#4caf50', '插件能力': '#2196f3',
+  '名词解释': '#00bcd4', '钉住的重要消息': '#e91e63', '最近消息': '#607d8b',
+};
+
+const SECTION_ENDINGS = ['结束', '完毕', '完', '末', '尾', '终止', '关闭'];
 
 function parsePromptSections(prompt) {
   if (!prompt) return [];
   const sections = [];
-  let remaining = prompt;
+  const regex = /【([^】]+)】/g;
+  let match;
+  let lastIndex = 0;
+  let currentSection = null;
 
-  for (const marker of SECTION_MARKERS) {
-    const startIdx = remaining.indexOf(marker.start);
-    if (startIdx === -1) continue;
-    const endIdx = remaining.indexOf(marker.end, startIdx + marker.start.length);
-    if (endIdx === -1) continue;
+  while ((match = regex.exec(prompt)) !== null) {
+    const tagContent = match[1];
+    const tagStart = match.index;
+    const tagEnd = regex.lastIndex;
 
-    if (startIdx > 0) {
-      sections.push({ type: 'text', content: remaining.slice(0, startIdx).trim() });
+    // 检查是否是结束标签
+    const isEnd = SECTION_ENDINGS.some(e => tagContent.endsWith(e));
+
+    if (isEnd && currentSection) {
+      // 结束当前 section
+      const contentBefore = prompt.slice(currentSection.contentStart, tagStart).trim();
+      sections.push({
+        type: 'section',
+        label: currentSection.label,
+        color: currentSection.color,
+        content: contentBefore,
+      });
+      currentSection = null;
+      lastIndex = tagEnd;
+    } else if (!isEnd) {
+      // 保存之前的文本
+      if (tagStart > lastIndex) {
+        const text = prompt.slice(lastIndex, tagStart).trim();
+        if (text) sections.push({ type: 'text', content: text });
+      }
+
+      // 查找匹配的颜色
+      let color = '#9e9e9e';
+      for (const [key, c] of Object.entries(SECTION_COLORS)) {
+        if (tagContent.includes(key)) { color = c; break; }
+      }
+
+      // 检查是否有对应结束标签
+      const endPattern = new RegExp(`【${tagContent}(结束|完毕|完|末|尾|终止|关闭)】`);
+      const hasEnd = endPattern.test(prompt.slice(tagEnd));
+
+      if (hasEnd) {
+        currentSection = { label: tagContent, color, contentStart: tagEnd };
+      } else {
+        // 单个标签，作为独立 section
+        sections.push({
+          type: 'section',
+          label: tagContent,
+          color,
+          content: '',
+        });
+      }
+      lastIndex = tagEnd;
     }
-    sections.push({
-      type: 'section',
-      label: marker.label,
-      color: marker.color,
-      content: remaining.slice(startIdx + marker.start.length, endIdx).trim(),
-    });
-    remaining = remaining.slice(endIdx + marker.end.length);
   }
 
-  if (remaining.trim()) {
-    sections.push({ type: 'text', content: remaining.trim() });
+  // 处理剩余文本
+  if (lastIndex < prompt.length) {
+    const remaining = prompt.slice(lastIndex).trim();
+    if (remaining) {
+      if (currentSection) {
+        sections.push({
+          type: 'section',
+          label: currentSection.label,
+          color: currentSection.color,
+          content: remaining,
+        });
+      } else {
+        sections.push({ type: 'text', content: remaining });
+      }
+    }
   }
+
   return sections;
 }
 

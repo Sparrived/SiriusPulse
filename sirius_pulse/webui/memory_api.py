@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime
 from typing import Any
 
@@ -733,153 +732,6 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
     })
 
 
-_STICKER_RE = re.compile(r'\[STICKERS[：:]\s*(.+?)\s*\]')
-_CQ_CODE_RE = re.compile(r'\[CQ:(\w+),([^\]]*)\]')
-_SKILL_CALL_RE = re.compile(r'\[SKILL_CALL[：:]')
-_ALL_BRACKET_TAGS_RE = re.compile(r'【([^】]+)】')
-
-_BRACKET_TAG_TYPE_MAP: dict[str, tuple[str, str]] = {
-    "图片": ("image", "图片"),
-    "表情": ("emoji", "表情"),
-    "语音": ("voice", "语音"),
-    "视频": ("video", "视频"),
-    "文件": ("file", "文件"),
-    "链接": ("link", "链接"),
-    "引用": ("reply", "引用"),
-    "回复": ("reply", "回复"),
-    "撤回": ("recall", "撤回"),
-    "合并转发": ("forward", "合并转发"),
-    "位置": ("location", "位置"),
-    "名片": ("contact", "名片"),
-    "分享": ("share", "分享"),
-    "签到": ("sign", "签到"),
-    "红包": ("redpacket", "红包"),
-    "礼物": ("gift", "礼物"),
-    "戳一戳": ("poke", "戳一戳"),
-    "窗口抖动": ("shake", "窗口抖动"),
-}
-
-_BRACKET_PAIRED_TAGS: dict[str, tuple[str, str]] = {
-    "钉住的重要消息": ("pinned", "钉住消息"),
-    "历史日记": ("diary", "历史日记"),
-    "其他群近期记录": ("cross_group", "跨群记录"),
-    "近期对话记录": ("conversation", "对话记录"),
-    "技能执行结果": ("skill_result", "技能结果"),
-    "名词解释": ("glossary", "名词解释"),
-    "人物速查": ("biography", "人物传记"),
-    "相关记忆": ("memory", "相关记忆"),
-    "当前场景": ("scene", "当前场景"),
-    "群规禁忌": ("taboo", "群规禁忌"),
-    "氛围趋势": ("atmosphere", "氛围趋势"),
-    "插件能力": ("plugin", "插件能力"),
-    "话题建议": ("topic", "话题建议"),
-    "提醒": ("reminder", "提醒"),
-}
-
-_BRACKET_PAIRED_ENDINGS: set[str] = {
-    "结束", "完毕", "完", "末", "尾", "终止", "终止", "关闭"
-}
-
-
-def _is_paired_tag_end(tag_name: str) -> bool:
-    """判断是否是成对标签的结束标签。"""
-    return any(tag_name.endswith(end) for end in _BRACKET_PAIRED_ENDINGS)
-
-
-def _extract_message_tags(entry: dict[str, Any]) -> list[dict[str, str]]:
-    """从消息条目中提取内容标签（表情包、图片、@提及等）。
-
-    支持识别：
-    1. [STICKERS: ...] 格式的表情包标签
-    2. [CQ:type,...] 格式的 QQ 消息段
-    3. 【xxx】格式的中文标签（包括单个标签和成对标签）
-    4. [SKILL_CALL: ...] 格式的技能调用
-    5. 多模态输入
-    """
-    content: str = entry.get("content", "") or ""
-    role: str = entry.get("role", "")
-    tags: list[dict[str, str]] = []
-    seen_types: set[str] = set()
-
-    def add_tag(tag_type: str, label: str) -> None:
-        if tag_type not in seen_types:
-            tags.append({"type": tag_type, "label": label})
-            seen_types.add(tag_type)
-
-    # 表情包标签 [STICKERS: "name1", "name2"]
-    sticker_match = _STICKER_RE.search(content)
-    if sticker_match:
-        raw = sticker_match.group(1)
-        strip_chars = '"\u201c\u2018\u300c'
-        names = [
-            n.strip().strip(strip_chars)
-            for n in re.split(r'\s*,\s*', raw) if n.strip()
-        ]
-        label = "表情包: " + ", ".join(names[:3]) if names else "表情包"
-        add_tag("sticker", label)
-
-    # QQ CQ 码
-    for cq_match in _CQ_CODE_RE.finditer(content):
-        cq_type = cq_match.group(1)
-        if cq_type == "image":
-            add_tag("image", "图片")
-        elif cq_type == "face":
-            add_tag("emoji", "QQ 表情")
-        elif cq_type == "record":
-            add_tag("voice", "语音")
-        elif cq_type == "video":
-            add_tag("video", "视频")
-        elif cq_type == "at":
-            add_tag("mention", "@ 提及")
-        elif cq_type == "reply":
-            add_tag("reply", "引用回复")
-
-    # 技能调用
-    if _SKILL_CALL_RE.search(content):
-        add_tag("skill", "技能调用")
-
-    # 多模态输入（图片等）
-    multimodal: list[dict[str, str]] = entry.get("multimodal_inputs") or []
-    if multimodal and "image" not in seen_types:
-        add_tag("image", f"图片 ×{len(multimodal)}")
-
-    # 【xxx】格式标签
-    bracket_matches = _ALL_BRACKET_TAGS_RE.findall(content)
-
-    for tag_name in bracket_matches:
-        # 检查是否是成对标签的结束标签
-        if _is_paired_tag_end(tag_name):
-            continue
-
-        # 检查是否是带参数的标签（如【图片：xxx】）
-        if '：' in tag_name or ':' in tag_name:
-            tag_key = tag_name.split('：')[0].split(':')[0].strip()
-            if tag_key in _BRACKET_TAG_TYPE_MAP:
-                tag_type, label = _BRACKET_TAG_TYPE_MAP[tag_key]
-                add_tag(tag_type, label)
-                continue
-
-        # 检查是否是成对标签的开始标签
-        if tag_name in _BRACKET_PAIRED_TAGS:
-            tag_type, label = _BRACKET_PAIRED_TAGS[tag_name]
-            add_tag(tag_type, label)
-            continue
-
-        # 检查是否是其他已知标签
-        for key, (tag_type, label) in _BRACKET_TAG_TYPE_MAP.items():
-            if key in tag_name:
-                add_tag(tag_type, label)
-                break
-
-    # 携带钉住消息上下文（仅 assistant 消息）
-    if role == "assistant":
-        sp: str = entry.get("system_prompt", "") or ""
-        if "【钉住的重要消息】" in sp or "【钉住消息" in sp:
-            add_tag("pinned", "携带钉住消息")
-
-    return tags
-
-
 @handle_api_errors
 async def api_persona_conversation_history_get(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/conversations — 返回完整对话历史。"""
@@ -922,7 +774,8 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
                     try:
                         entry = json.loads(line)
                         entry["group_id"] = g_id
-                        entry["tags"] = _extract_message_tags(entry)
+                        if not entry.get("tags"):
+                            entry["tags"] = []
                         messages.append(entry)
                     except json.JSONDecodeError:
                         continue

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
+from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.core.utils import parse_sticker_tags
 from sirius_pulse.skills.executor import strip_skill_calls
@@ -172,16 +173,26 @@ class DelayedQueueTasks:
 
         resolved_uid: str | None = None
         if item.channel and item.channel_user_id:
-            resolved_uid = engine.user_manager.resolve_user_id(
+            # 使用 IdentityResolver 统一解析
+            ctx = IdentityContext(
+                speaker_name=item.user_id or "",
+                platform_uid=item.channel_user_id,
                 platform=item.channel,
-                external_uid=item.channel_user_id,
             )
-            if resolved_uid:
+            resolution = engine.identity_resolver.resolve_with_alias(
+                ctx, engine.user_manager, group_id
+            )
+            if resolution.user_id:
+                resolved_uid = resolution.user_id
                 caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
         if caller_profile is None:
             # Fallback: search by user_id (nickname) across all groups
-            resolved_uid = engine.user_manager.resolve_user_id(speaker=item.user_id)
-            if resolved_uid:
+            ctx = IdentityContext(speaker_name=item.user_id or "")
+            resolution = engine.identity_resolver.resolve_with_alias(
+                ctx, engine.user_manager, group_id
+            )
+            if resolution.user_id:
+                resolved_uid = resolution.user_id
                 caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
         caller_is_developer = bool(caller_profile and caller_profile.is_developer)
 
