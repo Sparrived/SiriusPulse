@@ -56,8 +56,11 @@ def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
         _migrate_user_manager(conn, user_mgr_path)
         _move_to_backup(user_mgr_path, backup_dir, backup)
 
-    # 迁移 alias_index.json
-    alias_path = _find_file(persona_path, "alias_index.json", backup_dir)
+    # 迁移 alias_index.json 或 memory/biography/index.json
+    alias_path = (
+        _find_file(persona_path, "alias_index.json", backup_dir)
+        or _find_file(persona_path / "memory" / "biography", "index.json", backup_dir)
+    )
     if alias_path:
         _migrate_alias_index(conn, alias_path)
         _move_to_backup(alias_path, backup_dir, backup)
