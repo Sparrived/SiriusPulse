@@ -295,7 +295,6 @@ class SemanticMemoryManager:
                 grp_still_pending.append(rec)
 
         group_profile.pending_ai_responses = grp_still_pending
-        self._recompute_group_engagement(group_profile, grp_resolved)
         self.save_group_profile(group_id)
 
     def _recompute_engagement(
@@ -315,22 +314,7 @@ class SemanticMemoryManager:
             profile.user_id, engaged_count, total, old_rate, profile.engagement_rate,
         )
 
-    def _recompute_group_engagement(
-        self, profile: GroupSemanticProfile, new_records: list[ResponseRecord]
-    ) -> None:
-        """将新结算的记录纳入群组 engagement_rate 的滚动窗口。"""
-        if not new_records:
-            return
-        engaged_count = sum(1 for r in new_records if r.was_engaged)
-        total = len(new_records)
-        old_rate = profile.response_engagement_rate
-        alpha = 0.3
-        batch_rate = engaged_count / total if total > 0 else 0.0
-        profile.response_engagement_rate = round(old_rate * (1 - alpha) + batch_rate * alpha, 4)
-        logger.debug(
-            "Group %s engagement: batch=%d/%d → rate %.3f→%.3f",
-            profile.group_id, engaged_count, total, old_rate, profile.response_engagement_rate,
-        )
+
 
     # ------------------------------------------------------------------
     # 用户交互记录（简化版，不再维护 RelationshipState）

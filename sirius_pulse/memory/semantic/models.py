@@ -62,7 +62,6 @@ class GroupSemanticProfile:
     taboo_topics: list[str] = field(default_factory=list)
     dominant_topic: str = ""
     pending_ai_responses: list[ResponseRecord] = field(default_factory=list)
-    response_engagement_rate: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,7 +85,6 @@ class GroupSemanticProfile:
                 r.to_dict() for r in self.pending_ai_responses
                 if isinstance(r, ResponseRecord)
             ],
-            "response_engagement_rate": self.response_engagement_rate,
         }
 
     @classmethod
@@ -114,7 +112,6 @@ class GroupSemanticProfile:
             taboo_topics=list(data.get("taboo_topics", [])),
             dominant_topic=data.get("dominant_topic", ""),
             pending_ai_responses=pending,
-            response_engagement_rate=data.get("response_engagement_rate", 0.0),
         )
 
 

@@ -104,12 +104,17 @@ class ProactiveTasks:
         bundle = self._build_proactive_prompt(trigger, group_id)
         style = engine.style_adapter.adapt(pace="steady")
         # Use ContextAssembler to build full messages with diary RAG + XML history
+        recent_n = engine.config.get("basic_memory_context_window", 5)
+        diary_top_k = engine.config.get("diary_top_k", 5)
+        diary_token_budget = engine.config.get("diary_token_budget", 800)
         msgs, ca_breakdown = engine.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
             current_query=bundle.user_content or "...",
             system_prompt=bundle.system_prompt,
             search_query=bundle.user_content or "",
-            recent_n=10,
+            recent_n=recent_n,
+            diary_top_k=diary_top_k,
+            diary_token_budget=diary_token_budget,
             include_pending=True,
         )
         system_prompt = msgs[0]["content"]

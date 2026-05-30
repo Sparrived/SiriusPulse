@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
@@ -238,27 +239,26 @@ class ContextAssembler:
         include_group: bool = False,
     ) -> str:
         """Convert basic memory entries into an XML block."""
+        _tz_cn = timezone(timedelta(hours=8))
         lines: list[str] = [f'<{tag}>']
         for entry in entries:
-            role = entry.role
-            if role == "human":
-                msg_role = "user"
-            elif role == "assistant":
-                msg_role = "assistant"
-            else:
-                msg_role = "system"
-
             speaker = entry.speaker_name or entry.user_id or "unknown"
             safe_content = html.escape(entry.content or "", quote=False)
             safe_speaker = html.escape(speaker, quote=True)
             safe_user_id = html.escape(entry.user_id or "", quote=True)
-            safe_role = html.escape(msg_role, quote=True)
 
-            attrs = (
-                f' speaker="{safe_speaker}"'
-                f' user_id="{safe_user_id}"'
-                f' role="{safe_role}"'
-            )
+            # 从 ISO 时间戳提取时分秒
+            ts_str = ""
+            raw_ts = getattr(entry, "timestamp", "")
+            if raw_ts:
+                try:
+                    ts_str = datetime.fromisoformat(raw_ts).astimezone(_tz_cn).strftime("%H:%M:%S")
+                except (ValueError, TypeError):
+                    ts_str = ""
+
+            attrs = f' speaker="{safe_speaker}" user_id="{safe_user_id}"'
+            if ts_str:
+                attrs += f' time="{ts_str}"'
             if include_group and getattr(entry, "group_id", None):
                 safe_group = html.escape(entry.group_id, quote=True)
                 attrs += f' group="{safe_group}"'

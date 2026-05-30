@@ -82,12 +82,14 @@ class DelayedResponseQueue:
         """
         from sirius_pulse.core.utils import now_iso
         import html as _html
+        from datetime import datetime, timedelta, timezone
 
         def _tag_content(content: str, sp: str, uid: str) -> str:
             safe_sp = _html.escape(sp or "有人", quote=True)
             safe_uid = _html.escape(uid or "", quote=True)
+            now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
             return (
-                f'<message speaker="{safe_sp}" user_id="{safe_uid}" role="user">'
+                f'<message speaker="{safe_sp}" user_id="{safe_uid}" time="{now_str}">'
                 f"\n{content}\n</message>"
             )
 

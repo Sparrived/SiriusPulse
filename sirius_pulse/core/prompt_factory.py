@@ -19,6 +19,7 @@ import html as _html
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_pulse.core.constants import RESPONSE_MAX_TOKENS
@@ -349,8 +350,7 @@ class PromptFactory:
         return (
             f"{TAG_OUTPUT_SPEC}\n"
             "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
-            "2. 直接输出你要说的话，禁止换行。\n"
-            "3. 如果不需要回复（话题与你无关或有人@其他AI），直接输出 <skip/>。"
+            "2. 直接输出你要说的话，禁止换行。"
         )
 
     @staticmethod
@@ -509,6 +509,7 @@ class PromptFactory:
         if group_profile.group_name:
             lines.append(f"群名：{group_profile.group_name}")
         norms = getattr(group_profile, "group_norms", {})
+        has_learned_length = False
         if norms:
             avg_len = norms.get("avg_message_length", 0)
             dist = norms.get("length_distribution", {})
@@ -517,14 +518,11 @@ class PromptFactory:
                 short_pct = round(dist.get("short", 0) / total * 100)
                 if avg_len < 20:
                     lines.append(f"这个群里大家习惯短消息（平均{avg_len:.0f}字，{short_pct}%是短消息），你也尽量简短。")
+                    has_learned_length = True
                 elif avg_len < 50:
                     lines.append(f"这个群里消息长度适中（平均{avg_len:.0f}字），你也保持类似长度。")
-        engagement = getattr(group_profile, "response_engagement_rate", 0.0)
-        if engagement >= 0.5:
-            lines.append("你的回复经常能引起大家的回应，保持这种互动风格。")
-        elif engagement < 0.2 and engagement > 0:
-            lines.append("你的回复较少引起回应，试着更有趣或更切题一些。")
-        if style_params.length_instruction:
+                    has_learned_length = True
+        if not has_learned_length and style_params.length_instruction:
             lines.append(f"长度要求：{style_params.length_instruction}")
         if style_params.tone_instruction:
             lines.append(f"语气要求：{style_params.tone_instruction}")
@@ -882,7 +880,8 @@ class PromptFactory:
         else:
             safe_speaker = _html.escape(speaker_name or "有人", quote=True)
             safe_uid = _html.escape(channel_user_id or "", quote=True)
-            sender_line = f'<message speaker="{safe_speaker}" user_id="{safe_uid}" role="user">'
+            now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
+            sender_line = f'<message speaker="{safe_speaker}" user_id="{safe_uid}" time="{now_str}">'
             user_content = f"{sender_line}\n{message_content}\n</message>"
         bd.user_message = estimate_tokens(user_content)
 

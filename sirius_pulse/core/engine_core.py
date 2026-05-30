@@ -824,8 +824,9 @@ class _EmotionalGroupChatEngineBase:
 
                 if is_sticker:
                     # 去掉无意义的文件哈希，替换为有意义的描述
+                    # 兼容适配器的半角方括号 [动画表情："xxx"] 和认知模块的全角方括号 【动画表情：xxx】
                     stripped = re.sub(
-                        r"【动画表情：[^】]+】", "", original_content
+                        r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)", "", original_content
                     ).strip()
                     sticker_tag = f"【动画表情：{intent.image_caption}】"
                     last_entry.content = (
