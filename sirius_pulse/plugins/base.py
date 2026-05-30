@@ -21,8 +21,11 @@ from pathlib import Path
 from typing import Any, Awaitable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sirius_pulse.plugins.models import CommandAST, PluginResponse
+    from sirius_pulse.plugins.models import CommandAST
     from sirius_pulse.plugins.context import PluginContext
+
+# 运行时需要的导入（execute() 方法中使用 PluginResponse）
+from sirius_pulse.plugins.models import PluginResponse
 
 logger = logging.getLogger(__name__)
 
