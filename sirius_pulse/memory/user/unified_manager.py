@@ -1,21 +1,22 @@
-"""统一用户管理器 — 合并 UserManager 和 BiographyManager。
+"""统一用户管理器。
 
 职责：
 - 用户注册、解析、群隔离
 - 别名索引和消歧
 - 传记蒸馏和更新
+
+存储：SQLite（通过 MemoryStorage）
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import math
-import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.user.unified_models import (
     AliasEntry,
     RelationshipAnchor,
@@ -44,10 +45,10 @@ def _days_since(iso_dt: str, default: float = 30.0) -> float:
 class UnifiedUserManager:
     """统一用户管理器。
 
-    合并了 UserManager 和 BiographyManager 的功能：
-    - 用户注册和解析（原 UserManager）
-    - 别名索引和消歧（原 BiographyManager）
-    - 传记蒸馏和更新（原 BiographyManager）
+    功能：
+    - 用户注册和解析
+    - 别名索引和消歧
+    - 传记蒸馏和更新
     """
 
     def __init__(
@@ -55,185 +56,104 @@ class UnifiedUserManager:
         work_path: Path | str | None = None,
         persona_name: str = "",
         persona_aliases: list[str] | None = None,
+        db_path: Path | str | None = None,
     ) -> None:
-        # 工作路径（用于持久化）
         self._work_path = Path(work_path) if work_path else None
 
         # 人格身份（用于过滤 bot 名称不被注册为用户别名）
         self._persona_name = persona_name.strip().lower()
         self._persona_aliases = {a.strip().lower() for a in (persona_aliases or []) if a.strip()}
 
-        # 用户存储：{user_id: UnifiedUser}
-        self._users: dict[str, UnifiedUser] = {}
+        # SQLite 存储
+        if db_path:
+            self._db_path = Path(db_path)
+        elif self._work_path:
+            self._db_path = self._work_path / "memory.db"
+        else:
+            self._db_path = Path(":memory:")
 
-        # 群隔离存储：{group_id: {user_id: UnifiedUser}}
+        self._storage = MemoryStorage(self._db_path)
+
+        # 内存缓存（用于向后兼容和高性能访问）
         self.entries: dict[str, dict[str, UnifiedUser]] = {}
-
-        # 全局用户（跨群共享）
         self._global_users: dict[str, UnifiedUser] = {}
+        self._speaker_index: dict[str, str] = {}
+        self._identity_index: dict[str, str] = {}
+        self._alias_index: dict[str, list[AliasEntry]] = {}
 
-        # 索引
-        self._speaker_index: dict[str, str] = {}  # normalized_name → user_id
-        self._identity_index: dict[str, str] = {}  # "platform:uid" → user_id
-        self._alias_index: dict[str, list[AliasEntry]] = {}  # alias → [AliasEntry]
-
-        # 加载持久化数据
-        if self._work_path:
-            self._load_from_disk()
+        # 从 SQLite 加载到内存
+        self._load_from_storage()
 
         # 启动时清理
         self._cleanup_on_startup()
 
-    # ── 持久化 ─────────────────────────────────────────────
+    # ── 存储交互 ─────────────────────────────────────────
 
-    def _load_from_disk(self) -> None:
-        """从磁盘加载数据。"""
-        if not self._work_path:
-            return
+    def _load_from_storage(self) -> None:
+        """从 SQLite 加载数据到内存缓存。"""
+        # 加载用户
+        users_data = self._storage.list_users()
+        for user_data in users_data:
+            user = UnifiedUser.from_dict(user_data)
+            self._global_users[user.user_id] = user
+            self._update_indices(user)
 
-        # 加载 user_manager.json（旧格式兼容）
-        user_manager_path = self._work_path / "user_manager.json"
-        if user_manager_path.exists():
-            try:
-                data = json.loads(user_manager_path.read_text(encoding="utf-8"))
-                self._load_user_manager_data(data)
-            except Exception as exc:
-                logger.warning("加载 user_manager.json 失败: %s", exc)
+        # 加载群组成员关系
+        for user_id in self._global_users:
+            groups = self._storage.get_user_groups(user_id)
+            for group_id in groups:
+                if group_id not in self.entries:
+                    self.entries[group_id] = {}
+                self.entries[group_id][user_id] = self._global_users[user_id]
 
-        # 加载 alias_index.json
-        alias_index_path = self._work_path / "alias_index.json"
-        if alias_index_path.exists():
-            try:
-                data = json.loads(alias_index_path.read_text(encoding="utf-8"))
-                self._load_alias_index(data)
-            except Exception as exc:
-                logger.warning("加载 alias_index.json 失败: %s", exc)
-
-        # 加载传记卡（biography/*.json）
-        biography_dir = self._work_path / "biography"
-        if biography_dir.is_dir():
-            for card_file in biography_dir.glob("*.json"):
-                try:
-                    data = json.loads(card_file.read_text(encoding="utf-8"))
-                    user_id = data.get("user_id", "")
-                    if user_id and user_id in self._users:
-                        self._merge_biography_data(user_id, data)
-                except Exception as exc:
-                    logger.warning("加载传记卡 %s 失败: %s", card_file.name, exc)
-
-    def _load_user_manager_data(self, data: dict[str, Any]) -> None:
-        """加载 UserManager 格式的数据。"""
-        # 加载全局用户
-        global_data = data.get("global", {})
-        for uid, payload in global_data.items():
-            if isinstance(payload, dict):
-                user = self._create_user_from_legacy(payload)
-                self._global_users[uid] = user
-                self._update_indices(user)
-
-        # 加载群组用户
-        entries_data = data.get("entries", {})
-        for gid, group in entries_data.items():
-            if gid not in self.entries:
-                self.entries[gid] = {}
-            for uid, payload in group.items():
-                if not isinstance(payload, dict):
-                    continue
-                user = self._create_user_from_legacy(payload)
-                self.entries[gid][uid] = user
-                self._update_indices(user)
-
-    def _create_user_from_legacy(self, data: dict[str, Any]) -> UnifiedUser:
-        """从旧格式创建 UnifiedUser。"""
-        return UnifiedUser(
-            user_id=data.get("user_id", ""),
-            name=data.get("name", ""),
-            persona=data.get("persona", ""),
-            identities=dict(data.get("identities", {})),
-            aliases=list(data.get("aliases", [])),
-            traits=list(data.get("traits", [])),
-            metadata=dict(data.get("metadata", {})),
-        )
-
-    def _load_alias_index(self, data: dict[str, Any]) -> None:
-        """加载别名索引。"""
-        for alias_key, entries_data in data.items():
-            if not isinstance(entries_data, list):
-                continue
-            self._alias_index[alias_key] = []
-            for entry_data in entries_data:
-                if isinstance(entry_data, dict):
-                    self._alias_index[alias_key].append(AliasEntry.from_dict(entry_data))
-
-    def _merge_biography_data(self, user_id: str, data: dict[str, Any]) -> None:
-        """合并传记数据到用户。"""
-        user = self._users.get(user_id) or self._global_users.get(user_id)
-        if not user:
-            return
-
-        user.identity_anchors = list(data.get("identity_anchors", []))
-        user.relationships = [
-            RelationshipAnchor.from_dict(r) if isinstance(r, dict) else r
-            for r in data.get("relationships", [])
-        ]
-        user.short_bio = data.get("short_bio", "")
-        user.affinity_score = float(data.get("affinity_score", 0.0))
-        user.pending_messages = list(data.get("pending_messages", []))
-        user.pending_message_count = int(data.get("pending_message_count", 0))
-        user.distilled_points = list(data.get("distilled_points", []))
-        user.last_distill_at = data.get("last_distill_at", "")
-        user.last_updated_at = data.get("last_updated_at", "")
-        user.bio_token_estimate = int(data.get("bio_token_estimate", 0))
-        user.bio_token_budget = int(data.get("bio_token_budget", 500))
+        # 加载别名索引
+        aliases_data = self._storage.get_all_aliases()
+        for alias, entries_data in aliases_data.items():
+            self._alias_index[alias] = [AliasEntry.from_dict(e) for e in entries_data]
 
     def save_to_disk(self) -> None:
-        """保存数据到磁盘。"""
-        if not self._work_path:
-            return
+        """保存所有数据到 SQLite。"""
+        # 保存用户
+        for user in self._global_users.values():
+            self._storage.save_user(user.to_dict())
+            # 保存平台身份
+            for platform, platform_uid in user.identities.items():
+                if platform and platform_uid:
+                    self._storage.save_identity(platform, platform_uid, user.user_id)
 
-        self._work_path.mkdir(parents=True, exist_ok=True)
+        # 保存群组成员关系
+        for group_id, group in self.entries.items():
+            for user_id in group:
+                self._storage.add_group_member(group_id, user_id)
 
-        # 保存 user_manager.json
-        user_manager_path = self._work_path / "user_manager.json"
-        user_manager_path.write_text(
-            json.dumps(self._serialize_user_manager(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        # 保存别名索引
+        for alias, entries in self._alias_index.items():
+            for entry in entries:
+                self._storage.save_alias_entry({
+                    "alias": alias,
+                    "user_id": entry.user_id,
+                    "user_name": entry.user_name,
+                    "weight": entry.weight,
+                    "groups": entry.groups,
+                    "mentioned_count": entry.mentioned_count,
+                    "confidence": entry.confidence,
+                    "first_seen_at": entry.first_seen_at,
+                    "last_seen_at": entry.last_seen_at,
+                    "source": entry.source,
+                })
 
-        # 保存 alias_index.json
-        alias_index_path = self._work_path / "alias_index.json"
-        alias_index_path.write_text(
-            json.dumps(self._serialize_alias_index(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+    def close(self) -> None:
+        """关闭存储连接。"""
+        self._storage.close()
 
-    def _serialize_user_manager(self) -> dict[str, Any]:
-        """序列化 UserManager 格式的数据。"""
-        return {
-            "entries": {
-                gid: {uid: u.to_dict() for uid, u in group.items()}
-                for gid, group in self.entries.items()
-            },
-            "global": {
-                uid: u.to_dict() for uid, u in self._global_users.items()
-            },
-        }
-
-    def _serialize_alias_index(self) -> dict[str, Any]:
-        """序列化别名索引。"""
-        return {
-            alias: [e.to_dict() for e in entries]
-            for alias, entries in self._alias_index.items()
-        }
+    # ── 启动清理 ─────────────────────────────────────────
 
     def _cleanup_on_startup(self) -> None:
         """启动时清理。"""
-        # 清理人格身份别名污染
         cleaned = self._cleanup_polluted_aliases()
         if cleaned:
             logger.info("启动时清理了 %d 个人格身份别名污染", cleaned)
 
-        # 时间衰减和低置信度清理
         decayed = self._decay_all_aliases()
         if decayed:
             logger.info("启动时衰减+清理了 %d 个别名条目", decayed)
@@ -290,7 +210,7 @@ class UnifiedUserManager:
 
         return removed
 
-    # ── 内部工具 ─────────────────────────────────────────────
+    # ── 内部工具 ─────────────────────────────────────────
 
     @staticmethod
     def _normalize(label: str) -> str:
@@ -328,7 +248,6 @@ class UnifiedUserManager:
 
         global_user = self._global_users.get(uid)
         if global_user is None:
-            from dataclasses import replace
             self._global_users[uid] = replace(
                 user,
                 aliases=list(user.aliases),
@@ -354,7 +273,6 @@ class UnifiedUserManager:
         if global_user is None:
             return None
 
-        from dataclasses import replace
         local = replace(
             global_user,
             aliases=list(global_user.aliases),
@@ -366,7 +284,7 @@ class UnifiedUserManager:
         self._update_indices(local)
         return local
 
-    # ── 公共 API：用户管理（原 UserManager）──────────────────
+    # ── 公共 API：用户管理 ──────────────────────────────────
 
     def register_user(self, user: UnifiedUser, group_id: str = "default") -> None:
         """注册或更新用户。"""
@@ -399,6 +317,13 @@ class UnifiedUserManager:
         self._update_indices(existing)
         self._sync_to_global(existing)
 
+        # 持久化到 SQLite
+        self._storage.save_user(existing.to_dict())
+        for platform, platform_uid in existing.identities.items():
+            if platform and platform_uid:
+                self._storage.save_identity(platform, platform_uid, existing.user_id)
+        self._storage.add_group_member(group_id, existing.user_id)
+
     def resolve_user_id(
         self,
         *,
@@ -408,8 +333,14 @@ class UnifiedUserManager:
     ) -> str | None:
         """解析用户 ID。"""
         if platform and external_uid:
+            # 先查内存索引
             resolved = self._identity_index.get(self._identity_key(platform, external_uid))
             if resolved:
+                return resolved
+            # 回退到 SQLite
+            resolved = self._storage.get_user_by_identity(platform, external_uid)
+            if resolved:
+                self._identity_index[self._identity_key(platform, external_uid)] = resolved
                 return resolved
         if speaker:
             return self._speaker_index.get(self._normalize(speaker))
@@ -435,7 +366,7 @@ class UnifiedUserManager:
         """列出所有全局用户。"""
         return list(self._global_users.values())
 
-    # ── 公共 API：别名管理（原 BiographyManager）──────────────
+    # ── 公共 API：别名管理 ──────────────────────────────────
 
     def resolve_alias(
         self,
@@ -528,6 +459,19 @@ class UnifiedUserManager:
                 entry.last_seen_at = _now_iso()
                 if group_id and group_id not in entry.groups:
                     entry.groups.append(group_id)
+                # 持久化
+                self._storage.save_alias_entry({
+                    "alias": alias_lower,
+                    "user_id": entry.user_id,
+                    "user_name": entry.user_name,
+                    "weight": entry.weight,
+                    "groups": entry.groups,
+                    "mentioned_count": entry.mentioned_count,
+                    "confidence": entry.confidence,
+                    "first_seen_at": entry.first_seen_at,
+                    "last_seen_at": entry.last_seen_at,
+                    "source": entry.source,
+                })
                 return
 
         # 新增
@@ -542,6 +486,19 @@ class UnifiedUserManager:
             source=source,
         )
         self._alias_index[alias_lower].append(entry)
+        # 持久化
+        self._storage.save_alias_entry({
+            "alias": alias_lower,
+            "user_id": entry.user_id,
+            "user_name": entry.user_name,
+            "weight": entry.weight,
+            "groups": entry.groups,
+            "mentioned_count": entry.mentioned_count,
+            "confidence": entry.confidence,
+            "first_seen_at": entry.first_seen_at,
+            "last_seen_at": entry.last_seen_at,
+            "source": entry.source,
+        })
 
     def bump_alias_weight(self, alias: str, user_id: str, group_id: str) -> None:
         """增加别名权重。"""
@@ -556,6 +513,19 @@ class UnifiedUserManager:
                 entry.last_seen_at = _now_iso()
                 if group_id not in entry.groups:
                     entry.groups.append(group_id)
+                # 持久化
+                self._storage.save_alias_entry({
+                    "alias": alias_lower,
+                    "user_id": entry.user_id,
+                    "user_name": entry.user_name,
+                    "weight": entry.weight,
+                    "groups": entry.groups,
+                    "mentioned_count": entry.mentioned_count,
+                    "confidence": entry.confidence,
+                    "first_seen_at": entry.first_seen_at,
+                    "last_seen_at": entry.last_seen_at,
+                    "source": entry.source,
+                })
 
     def get_aliases_for_group(self, group_id: str) -> dict[str, str]:
         """获取群组相关的别名速查表。"""
@@ -576,6 +546,9 @@ class UnifiedUserManager:
             entry.confidence = AliasEntry.apply_time_decay(entry.confidence, days)
             if entry.confidence >= AliasEntry.DECAY_THRESHOLD:
                 filtered.append(entry)
+            else:
+                # 从 SQLite 删除
+                self._storage.delete_alias_entry(alias_lower, entry.user_id)
 
         if filtered:
             self._alias_index[alias_lower] = filtered
@@ -590,6 +563,8 @@ class UnifiedUserManager:
         if user is None:
             user = UnifiedUser(user_id=user_id, name=name or user_id)
             self._global_users[user_id] = user
+            # 持久化
+            self._storage.save_user(user.to_dict())
         if name and not user.name:
             user.name = name
         return user
@@ -617,6 +592,9 @@ class UnifiedUserManager:
             for alias in discovered_aliases:
                 self.register_alias(alias, user_id, name, group_id, source="llm_discovery")
 
+        # 持久化
+        self._storage.save_user(user.to_dict())
+
     def get_pending_users(self) -> list[UnifiedUser]:
         """获取有待蒸馏消息的用户。"""
         return [u for u in self._global_users.values() if u.pending_messages]
@@ -624,7 +602,7 @@ class UnifiedUserManager:
     def save_user(self, user: UnifiedUser) -> None:
         """保存用户数据。"""
         self._global_users[user.user_id] = user
-        # 持久化由调用方决定
+        self._storage.save_user(user.to_dict())
 
 
 __all__ = ["UnifiedUserManager"]

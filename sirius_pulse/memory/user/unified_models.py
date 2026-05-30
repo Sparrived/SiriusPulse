@@ -1,8 +1,8 @@
-"""统一用户数据模型 — 合并 UserProfile 和 UserPersonaCard。
+"""统一用户数据模型。
 
-合并后的 UnifiedUser 包含：
-- 基础身份信息（来自 UserProfile）
-- 传记画像信息（来自 UserPersonaCard）
+包含：
+- 基础身份信息
+- 传记画像信息
 - 别名索引支持
 """
 
@@ -119,12 +119,12 @@ class AliasEntry:
 
 @dataclass
 class UnifiedUser(JsonSerializable):
-    """统一用户模型 — 合并 UserProfile 和 UserPersonaCard。
+    """统一用户模型。
 
     包含基础身份、传记画像、别名索引等所有用户相关信息。
     """
 
-    # ── 基础身份（来自 UserProfile）──
+    # ── 基础身份 ──
     user_id: str = ""
     name: str = ""
     persona: str = ""
@@ -134,7 +134,7 @@ class UnifiedUser(JsonSerializable):
     group_memberships: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    # ── 传记画像（来自 UserPersonaCard）──
+    # ── 传记画像 ──
     identity_anchors: list[str] = field(default_factory=list)
     relationships: list[RelationshipAnchor] = field(default_factory=list)
     short_bio: str = ""
