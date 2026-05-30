@@ -131,11 +131,10 @@ class PluginRegistry:
         self._commands_index = kept
 
         # 添加 @command 装饰器的模式（full_patterns 已包含 prefix）
+        # 注意：hidden_from_intent 的指令也需要加入索引，
+        # 因为显式命令（以 /、#、! 开头）应忽略 hidden_from_intent 标记
         for meta in command_metas.values():
             if not hasattr(meta, 'full_patterns'):
-                continue
-            # 隐藏的指令不加入意图匹配索引
-            if getattr(meta, 'hidden_from_intent', False):
                 continue
             for pattern in getattr(meta, 'full_patterns', []):
                 self._commands_index.append((
@@ -205,10 +204,16 @@ class PluginRegistry:
         tokens = lexer.tokenize(text)
         lexed = lexer.lex(tokens, raw_text=text)
 
+        # 如果 lexed 不为 None，说明 Tokenizer 成功解析出了 CMD_HEAD，
+        # 这是一个显式命令（如 /ca analyse），应忽略 hidden_from_intent 标记
+        # hidden_from_intent 仅用于阻止自然语言触发，不应阻止显式命令
+        is_explicit_command = lexed is not None
+        effective_include_hidden = include_hidden or is_explicit_command
+
         if lexed is not None:
             # 按指令名查找 Plugin
             for pattern, pat_type, plugin_name, cmd_name in self._commands_index:
-                if not include_hidden and self._is_pattern_hidden(plugin_name, cmd_name):
+                if not effective_include_hidden and self._is_pattern_hidden(plugin_name, cmd_name):
                     continue
                 if pat_type == "prefix" and text.strip().startswith(pattern):
                     definition = self._definitions.get(plugin_name)
@@ -227,7 +232,7 @@ class PluginRegistry:
         # 关键词/正则路径：遍历索引
         matcher = PluginMatcher()
         for pattern, pat_type, plugin_name, cmd_name in self._commands_index:
-            if not include_hidden and self._is_pattern_hidden(plugin_name, cmd_name):
+            if not effective_include_hidden and self._is_pattern_hidden(plugin_name, cmd_name):
                 continue
             definition = self._definitions.get(plugin_name)
             if definition is None:
