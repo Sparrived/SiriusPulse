@@ -128,7 +128,7 @@ def compute_baseline(
 ) -> BaselineDict:
     """Compute aggregate baseline statistics with optional filters."""
     where, params = _build_where(session_id, actor_id, task_name, model, start_ts, end_ts)
-    conn = store._connect()
+    conn = store.conn
     row = conn.execute(
         f"SELECT {_AGG_COLS} FROM token_usage{where}",
         params,
@@ -160,7 +160,7 @@ def group_by_session(
 ) -> dict[str, BucketDict]:
     """Aggregate token usage grouped by session."""
     where, params = _build_where(None, actor_id, task_name, model)
-    conn = store._connect()
+    conn = store.conn
     rows = conn.execute(
         f"SELECT session_id, {_AGG_COLS} FROM token_usage{where} GROUP BY session_id ORDER BY session_id",
         params,
@@ -177,7 +177,7 @@ def group_by_actor(
 ) -> dict[str, BucketDict]:
     """Aggregate token usage grouped by actor."""
     where, params = _build_where(session_id, None, task_name, model)
-    conn = store._connect()
+    conn = store.conn
     rows = conn.execute(
         f"SELECT actor_id, {_AGG_COLS} FROM token_usage{where} GROUP BY actor_id ORDER BY actor_id",
         params,
@@ -194,7 +194,7 @@ def group_by_task(
 ) -> dict[str, BucketDict]:
     """Aggregate token usage grouped by task."""
     where, params = _build_where(session_id, actor_id, None, model)
-    conn = store._connect()
+    conn = store.conn
     rows = conn.execute(
         f"SELECT task_name, {_AGG_COLS} FROM token_usage{where} GROUP BY task_name ORDER BY task_name",
         params,
@@ -213,7 +213,7 @@ def group_by_model(
 ) -> dict[str, BucketDict]:
     """Aggregate token usage grouped by model."""
     where, params = _build_where(session_id, actor_id, task_name, None, start_ts, end_ts)
-    conn = store._connect()
+    conn = store.conn
     rows = conn.execute(
         f"SELECT model, {_AGG_COLS} FROM token_usage{where} GROUP BY model ORDER BY model",
         params,
@@ -240,7 +240,7 @@ def time_series(
         Width in seconds of each time bucket (default 3600 = 1 hour).
     """
     where, params = _build_where(session_id, actor_id, task_name, model, start_ts, end_ts)
-    conn = store._connect()
+    conn = store.conn
     rows = conn.execute(
         f"""SELECT
                 CAST(timestamp / ? AS INTEGER) * ? AS ts_bucket,
