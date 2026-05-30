@@ -463,8 +463,12 @@ class NapCatAdapter(BaseAdapter):
         uid = str(event.get("user_id", ""))
         self_id = str(event.get("self_id", ""))
 
-        if msg_type == "private":
+        if msg_type == "group":
+            gid = str(event.get("group_id", ""))
+        elif msg_type == "private":
             gid = f"private_{uid}"
+        else:
+            gid = ""
 
         nickname, card = self.extract_sender_names(event)
 
