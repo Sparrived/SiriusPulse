@@ -62,14 +62,55 @@ class CommandAST:
     """Plugin 指令的抽象语法树。
 
     由 Lexer/Parser 从用户输入中解析生成。
+    支持指令组（command group）和嵌套子命令（subcommand）。
+
+    示例路径结构：
+        /ca analyse                → command="ca", subcommand="analyse"
+        /ca report daily           → command="ca", subcommand="report", subcommands=["report", "daily"]
+        /tools image resize        → command="tools", subcommand="image", subcommands=["image", "resize"]
     """
 
-    command: str                          # 指令名，如 "weather"
+    command: str                          # 指令名，如 "weather" 或指令组名 "ca"
     raw_text: str                         # 原始完整文本
     prefix: str = ""                      # 触发前缀，如 "/"、"#"
+    subcommand: str = ""                  # 第一级子命令名，如 "analyse"（向后兼容）
+    subcommands: list[str] = field(default_factory=list)  # 完整子命令路径，如 ["report", "daily"]
     args: list[ArgNode] = field(default_factory=list)           # 位置参数列表
     kwargs: dict[str, ArgNode] = field(default_factory=dict)    # 命名参数
     flags: set[str] = field(default_factory=set)                # 布尔开关
+
+    @property
+    def command_path(self) -> list[str]:
+        """获取完整指令路径列表。
+
+        返回 [command, subcommand1, subcommand2, ...] 格式的路径。
+        """
+        path = [self.command]
+        if self.subcommands:
+            path.extend(self.subcommands)
+        elif self.subcommand:
+            path.append(self.subcommand)
+        return path
+
+    @property
+    def full_command(self) -> str:
+        """获取完整指令路径字符串。
+
+        返回 "command subcommand1 subcommand2 ..." 格式的路径。
+        """
+        return " ".join(self.command_path)
+
+    @property
+    def leaf_command(self) -> str:
+        """获取叶子命令名（最终要执行的命令）。
+
+        如果有子命令，返回最后一个子命令，否则返回 command。
+        """
+        if self.subcommands:
+            return self.subcommands[-1]
+        if self.subcommand:
+            return self.subcommand
+        return self.command
 
     def get_positional(self, index: int) -> str | None:
         """按位置获取参数的原始字符串值。"""
@@ -114,7 +155,7 @@ class CommandAST:
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为可读字典。"""
-        return {
+        result = {
             "command": self.command,
             "raw_text": self.raw_text,
             "prefix": self.prefix,
@@ -122,6 +163,11 @@ class CommandAST:
             "kwargs": {k: {"value": v.value, "raw": v.raw, "type_hint": v.type_hint} for k, v in self.kwargs.items()},
             "flags": sorted(self.flags),
         }
+        if self.subcommands:
+            result["subcommands"] = self.subcommands
+        elif self.subcommand:
+            result["subcommand"] = self.subcommand
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -138,6 +184,22 @@ class PluginCommandDef:
     description: str = ""
     examples: list[str] = field(default_factory=list)
     hidden_from_intent: bool = False       # 是否对意图识别隐藏（v1.3+）
+
+
+@dataclass(slots=True)
+class PluginCommandGroupDef:
+    """Plugin 指令组定义。
+
+    指令组用于将相关的子命令组织在一起，形成层级结构。
+    例如：/ca analyse、/ca summary、/ca export
+    """
+
+    name: str                              # 指令组名（如 "ca"）
+    patterns: list[str] = field(default_factory=list)          # 触发词列表（不含前缀）
+    pattern_type: str = "prefix"           # prefix | regex | keyword
+    description: str = ""                  # 指令组描述
+    examples: list[str] = field(default_factory=list)          # 使用示例
+    hidden_from_intent: bool = False       # 是否对意图识别隐藏
 
 
 @dataclass(slots=True)
@@ -209,6 +271,7 @@ class PluginDefinition:
 
     # ── 触发器 ──
     commands: list[PluginCommandDef] = field(default_factory=list)
+    command_groups: list[PluginCommandGroupDef] = field(default_factory=list)  # 指令组（v1.4+）
     events: list[PluginEventDef] = field(default_factory=list)
 
     # ── 参数 ──
@@ -258,6 +321,18 @@ class PluginDefinition:
                 description=cmd_raw.get("description", ""),
                 examples=cmd_raw.get("examples", []),
             ))
+
+        # 解析指令组（v1.4+）
+        command_groups: list[PluginCommandGroupDef] = []
+        for group_raw in data.get("triggers", {}).get("command_groups", []):
+            command_groups.append(PluginCommandGroupDef(
+                name=group_raw.get("name", ""),
+                patterns=group_raw.get("patterns", []),
+                pattern_type=group_raw.get("pattern_type", "prefix"),
+                description=group_raw.get("description", ""),
+                examples=group_raw.get("examples", []),
+            ))
+
         events: list[PluginEventDef] = []
         for evt_raw in data.get("triggers", {}).get("events", []):
             events.append(PluginEventDef(
@@ -317,6 +392,7 @@ class PluginDefinition:
             author=data.get("author", ""),
             min_framework_version=data.get("min_framework_version", "1.2.0"),
             commands=commands,
+            command_groups=command_groups,
             events=events,
             parameters=parameters,
             natural_language=nl_def,
@@ -370,12 +446,14 @@ class PluginDefinition:
         """
         # 指令：从 @command 装饰器读取
         commands: list[PluginCommandDef] = []
+        # 指令组：从 @command_group 装饰器读取
+        command_groups: list[PluginCommandGroupDef] = []
         # 通过实例化临时对象来发现 @command（discover_commands 需要实例）
         try:
             instance = plugin_cls()
         except Exception:
             instance = object.__new__(plugin_cls)
-        from sirius_pulse.plugins.decorators import discover_commands
+        from sirius_pulse.plugins.decorators import discover_commands, discover_command_groups
         cmd_metas = discover_commands(instance)
         for cmd_name, meta in cmd_metas.items():
             commands.append(PluginCommandDef(
@@ -385,6 +463,34 @@ class PluginDefinition:
                 description=meta.description,
                 examples=meta.examples,
                 hidden_from_intent=getattr(meta, 'hidden_from_intent', False),
+            ))
+
+        # 发现指令组
+        group_metas = discover_command_groups(instance)
+        for group_name, (group_meta, sub_metas) in group_metas.items():
+            # 将子命令添加到 commands 列表，使用 "group subcommand" 格式
+            for sub_name, sub_meta in sub_metas.items():
+                # 构建完整的 patterns，如 ["ca analyse", "ca analyze"]
+                full_patterns = []
+                for group_pattern in group_meta.full_patterns:
+                    for sub_pattern in sub_meta.patterns:
+                        full_patterns.append(f"{group_pattern} {sub_pattern}")
+
+                commands.append(PluginCommandDef(
+                    name=group_name,  # 指令组名
+                    patterns=full_patterns,
+                    pattern_type=group_meta.pattern_type,
+                    description=sub_meta.description or group_meta.description,
+                    examples=sub_meta.examples or group_meta.examples,
+                    hidden_from_intent=getattr(sub_meta, 'hidden_from_intent', False) or getattr(group_meta, 'hidden_from_intent', False),
+                ))
+
+            command_groups.append(PluginCommandGroupDef(
+                name=group_name,
+                patterns=group_meta.full_patterns,
+                pattern_type=group_meta.pattern_type,
+                description=group_meta.description,
+                examples=group_meta.examples,
             ))
 
         # 事件：合并 _plugin_events 和 _plugin_schedule
@@ -452,6 +558,7 @@ class PluginDefinition:
             version=getattr(plugin_cls, '_plugin_version', '') or '1.0.0',
             author=getattr(plugin_cls, '_plugin_author', '') or '',
             commands=commands,
+            command_groups=command_groups,
             events=events,
             parameters=parameters,
             natural_language=nl_def,

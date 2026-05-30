@@ -72,6 +72,8 @@ class PluginBase:
 
         # @command 装饰器发现的 handler 字典（延迟初始化）
         self._command_handlers: dict[str, Any] | None = None
+        # @command_group 装饰器发现的指令组字典（延迟初始化）
+        self._command_groups: dict[str, tuple[Any, dict[str, Any]]] | None = None
 
     @property
     def name(self) -> str:
@@ -197,8 +199,9 @@ class PluginBase:
         """延迟扫描所有 @command 装饰的方法，构建 handler 映射。
 
         在首次 execute() / execute_async() 调用时自动触发。
+        同时扫描 @command_group 和 @group_command 装饰的方法。
         """
-        from sirius_pulse.plugins.decorators import discover_commands
+        from sirius_pulse.plugins.decorators import discover_commands, discover_command_groups
 
         self._command_handlers = discover_commands(self)
         if self._command_handlers:
@@ -209,8 +212,20 @@ class PluginBase:
                 ", ".join(self._command_handlers.keys()),
             )
 
+        # 发现指令组
+        self._command_groups = discover_command_groups(self)
+        if self._command_groups:
+            logger.debug(
+                "Plugin '%s' 发现 %d 个指令组: %s",
+                self._name,
+                len(self._command_groups),
+                ", ".join(self._command_groups.keys()),
+            )
+
     async def _dispatch_decorated_command(self, cmd: "CommandAST") -> list["PluginResponse"]:
         """将 CommandAST 路由到对应的 @command 方法并调用。
+
+        支持普通指令和指令组两种模式。
 
         Args:
             cmd: 用户命令 AST
@@ -220,7 +235,9 @@ class PluginBase:
         """
         from sirius_pulse.plugins.decorators import dispatch_command_stream
 
-        return await dispatch_command_stream(self, cmd, self._command_handlers or {})
+        return await dispatch_command_stream(
+            self, cmd, self._command_handlers or {}, self._command_groups
+        )
 
     # ── 辅助方法 ──
 

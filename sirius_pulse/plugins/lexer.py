@@ -144,15 +144,33 @@ class Tokenizer:
 
 @dataclass
 class LexedCommand:
-    """Lexer 输出的结构化指令信息。"""
+    """Lexer 输出的结构化指令信息。
+
+    支持多层嵌套指令组，如 /ca report daily 中：
+    - command="ca"
+    - subcommand="report"（第一级子命令，向后兼容）
+    - subcommands=["report", "daily"]（完整子命令路径）
+    """
 
     command: str                               # 标准化指令名（小写）
     raw_command: str                           # 原始指令文本
     prefix: str                                # 触发前缀 "/" / "#" / ""
+    subcommand: str = ""                       # 第一级子命令名（向后兼容）
+    subcommands: list[str] = field(default_factory=list)  # 完整子命令路径
     positional_args: list[str] = field(default_factory=list)  # 位置参数
     named_args: dict[str, str] = field(default_factory=dict)  # --key=value 或 -k value
     flags: set[str] = field(default_factory=set)               # 布尔标志（--verbose, -v）
     raw_text: str = ""
+
+    @property
+    def command_path(self) -> list[str]:
+        """获取完整指令路径列表。"""
+        path = [self.command]
+        if self.subcommands:
+            path.extend(self.subcommands)
+        elif self.subcommand:
+            path.append(self.subcommand)
+        return path
 
 
 class Lexer:
@@ -329,6 +347,8 @@ class CommandParser:
             command=lexed.command,
             raw_text=lexed.raw_text,
             prefix=lexed.prefix,
+            subcommand=lexed.subcommand,
+            subcommands=lexed.subcommands,
             args=args,
             kwargs=kwargs,
             flags=flags,
@@ -463,6 +483,10 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
     command=ca + args=[analyse]。此函数在 lex 之后、parse 之前检查插件
     定义中的多词 pattern（如 "ca analyse"），若 command + 前 N 个 positional
     args 恰好匹配某个 pattern，则消费掉这些 args。
+
+    支持多层嵌套指令组：
+    - /ca analyse → command="ca", subcommand="analyse", subcommands=["analyse"]
+    - /ca report daily → command="ca", subcommand="report", subcommands=["report", "daily"]
     """
     # 收集所有含空格的 prefix pattern（降序排列，优先匹配最长）
     multi_word: list[str] = []
@@ -496,8 +520,16 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
         )
         logger.info("  尝试匹配: candidate=%r vs pattern=%r", candidate, pattern)
         if candidate == pattern:
+            # 设置子命令路径
+            if extra >= 1:
+                consumed_args = [a.lower() for a in lexed.positional_args[:extra]]
+                lexed.subcommand = consumed_args[0]  # 第一级子命令（向后兼容）
+                lexed.subcommands = consumed_args     # 完整子命令路径
             lexed.positional_args = lexed.positional_args[extra:]
-            logger.info("  ✓ 匹配成功，消费 %d 个 args，剩余: %r", extra, lexed.positional_args)
+            logger.info(
+                "  ✓ 匹配成功，消费 %d 个 args，subcommand=%r，subcommands=%r，剩余: %r",
+                extra, lexed.subcommand, lexed.subcommands, lexed.positional_args,
+            )
             return
 
 
