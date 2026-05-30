@@ -456,6 +456,38 @@ _default_parser = CommandParser()
 _default_matcher = PluginMatcher()
 
 
+def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition) -> None:
+    """将多词 pattern 匹配到的 positional args 归入 command，不再作为参数。
+
+    tokenizer 只认前缀后第一个词为 CMD_HEAD，导致 /ca analyse 被拆成
+    command=ca + args=[analyse]。此函数在 lex 之后、parse 之前检查插件
+    定义中的多词 pattern（如 "ca analyse"），若 command + 前 N 个 positional
+    args 恰好匹配某个 pattern，则消费掉这些 args。
+    """
+    # 收集所有含空格的 prefix pattern（降序排列，优先匹配最长）
+    multi_word: list[str] = []
+    for cmd_def in plugin_def.commands:
+        if cmd_def.pattern_type == "prefix":
+            for pattern in cmd_def.patterns:
+                if " " in pattern:
+                    multi_word.append(pattern.lower())
+    if not multi_word:
+        return
+    multi_word.sort(key=len, reverse=True)
+
+    for pattern in multi_word:
+        parts = pattern.split()
+        extra = len(parts) - 1  # command 已占第一个词
+        if len(lexed.positional_args) < extra:
+            continue
+        candidate = lexed.command + " " + " ".join(
+            a.lower() for a in lexed.positional_args[:extra]
+        )
+        if candidate == pattern:
+            lexed.positional_args = lexed.positional_args[extra:]
+            return
+
+
 def parse_command(text: str, plugin_def: PluginDefinition) -> CommandAST | None:
     """便捷函数：将用户文本按 Plugin 定义解析为 CommandAST。
 
@@ -470,6 +502,7 @@ def parse_command(text: str, plugin_def: PluginDefinition) -> CommandAST | None:
     lexed = _default_lexer.lex(tokens, raw_text=text)
     if lexed is None:
         return None
+    _apply_multiword_patterns(lexed, plugin_def)
     return _default_parser.parse(lexed, plugin_def)
 
 
