@@ -2,6 +2,7 @@ from sirius_pulse.providers.base import GenerationRequest, LLMProvider
 from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
 from sirius_pulse.providers.bigmodel import BigModelProvider
 from sirius_pulse.providers.deepseek import DeepSeekProvider
+from sirius_pulse.providers.mimo import MimoProvider, MimoTokenPlanProvider
 from sirius_pulse.providers.mock import MockProvider
 from sirius_pulse.providers.models_dev import (
 	ModelsDevCache,
@@ -39,6 +40,8 @@ __all__ = [
 	"BigModelProvider",
 	"MockProvider",
 	"DeepSeekProvider",
+	"MimoProvider",
+	"MimoTokenPlanProvider",
 	"OpenAICompatibleProvider",
 	"ProviderConfig",
 	"ProviderRegistry",

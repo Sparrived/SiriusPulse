@@ -9,6 +9,7 @@ from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
 from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
 from sirius_pulse.providers.bigmodel import BigModelProvider
 from sirius_pulse.providers.deepseek import DeepSeekProvider
+from sirius_pulse.providers.mimo import MimoProvider, MimoTokenPlanProvider
 from sirius_pulse.providers.models_dev import auto_fill_models_from_dev
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.providers.siliconflow import SiliconFlowProvider
@@ -26,6 +27,8 @@ _DEEPSEEK_PROVIDER_TYPES = {"deepseek"}
 _SILICONFLOW_PROVIDER_TYPES = {"siliconflow"}
 _VOLCENGINE_ARK_PROVIDER_TYPES = {"volcengine-ark", "ark"}
 _YTEA_PROVIDER_TYPES = {"ytea"}
+_MIMO_PROVIDER_TYPES = {"mimo", "xiaomi-mimo"}
+_MIMO_TOKENPLAN_PROVIDER_TYPES = {"mimo-tokenplan", "xiaomi-mimo-tokenplan"}
 
 _SUPPORTED_PROVIDER_PLATFORMS: dict[str, dict[str, str]] = {
     "openai-compatible": {
@@ -43,6 +46,14 @@ _SUPPORTED_PROVIDER_PLATFORMS: dict[str, dict[str, str]] = {
     "deepseek": {
         "default_base_url": "https://api.deepseek.com",
         "notes": "DeepSeek chat completions endpoint (OpenAI-compatible format)",
+    },
+    "mimo": {
+        "default_base_url": "https://api.xiaomimimo.com/v1",
+        "notes": "小米MIMO平台按量付费API（OpenAI兼容协议），API Key格式：sk-xxxxx",
+    },
+    "mimo-tokenplan": {
+        "default_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+        "notes": "小米MIMO Token Plan订阅制API（OpenAI兼容协议），API Key格式：tp-xxxxx",
     },
     "siliconflow": {
         "default_base_url": "https://api.siliconflow.cn",
@@ -89,6 +100,10 @@ def normalize_provider_type(provider_type: str) -> str:
         return "aliyun-bailian"
     if normalized in {"zhipu", "zhipuai"}:
         return "bigmodel"
+    if normalized == "xiaomi-mimo":
+        return "mimo"
+    if normalized == "xiaomi-mimo-tokenplan":
+        return "mimo-tokenplan"
     return normalized
 
 
@@ -103,7 +118,9 @@ class ProviderRegistry:
     """Store provider credentials and routing hints under work_path."""
 
     def __init__(self, work_path: Path | WorkspaceLayout) -> None:
-        self._layout = work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
+        self._layout = (
+            work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
+        )
         self.path = self._layout.provider_registry_path()
 
     @property
@@ -125,7 +142,7 @@ class ProviderRegistry:
             api_key = str(payload.get("api_key", "")).strip()
             if not api_key:
                 continue
-            
+
             # 开启自动迁移标记：如果任一 entry 缺失 models 字段
             if "models" not in payload:
                 needs_migration = True
@@ -135,7 +152,11 @@ class ProviderRegistry:
             enabled = bool(payload.get("enabled", True))
             models_url = str(payload.get("models_url", "")).strip()
             models_raw = payload.get("models", [])
-            models = [str(m).strip() for m in models_raw if str(m).strip()] if isinstance(models_raw, list) else []
+            models = (
+                [str(m).strip() for m in models_raw if str(m).strip()]
+                if isinstance(models_raw, list)
+                else []
+            )
             results[provider_type] = ProviderConfig(
                 provider_type=provider_type,
                 api_key=api_key,
@@ -145,7 +166,7 @@ class ProviderRegistry:
                 models=models,
                 models_url=models_url,
             )
-        
+
         if needs_migration:
             # 尝试从 models.dev 自动填充模型列表
             auto_fill_models_from_dev(self._layout.config_root, results)
@@ -206,7 +227,9 @@ class WorkspaceProviderManager:
     """Workspace-scoped provider registry facade."""
 
     def __init__(self, work_path: Path | WorkspaceLayout) -> None:
-        self._layout = work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
+        self._layout = (
+            work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
+        )
         self._registry = ProviderRegistry(self._layout)
 
     @property
@@ -247,11 +270,11 @@ class WorkspaceProviderManager:
 
             if "models" in item:
                 models_raw = item.get("models", [])
-                models = [
-                    str(model).strip()
-                    for model in models_raw
-                    if str(model).strip()
-                ] if isinstance(models_raw, list) else []
+                models = (
+                    [str(model).strip() for model in models_raw if str(model).strip()]
+                    if isinstance(models_raw, list)
+                    else []
+                )
             else:
                 models = list(existing.models) if existing is not None else []
 
@@ -265,7 +288,9 @@ class WorkspaceProviderManager:
             )
         return providers
 
-    def save_from_entries(self, providers_config: list[dict[str, object]]) -> dict[str, ProviderConfig]:
+    def save_from_entries(
+        self, providers_config: list[dict[str, object]]
+    ) -> dict[str, ProviderConfig]:
         providers = self.merge_entries(providers_config)
         self.save(providers)
         return providers
@@ -320,7 +345,9 @@ class WorkspaceProviderManager:
                 continue
             # 获取 models.dev 的模型列表
             dev_model_ids = list_provider_model_ids(
-                data, provider_type, tool_call_only=tool_call_only,
+                data,
+                provider_type,
+                tool_call_only=tool_call_only,
             )
             if dev_model_ids:
                 # 保留用户原有的模型，合并 models.dev 的模型
@@ -328,12 +355,16 @@ class WorkspaceProviderManager:
                 dev_models = set(dev_model_ids)
                 # 合并：保留用户原有的所有模型 + models.dev 的新模型
                 merged_models = list(original_models | dev_models)
-                
+
                 if merged_models != config.models:
                     config.models = merged_models
                     changed = True
-                    logger.info("刷新 %s 模型列表: %d 个模型（保留 %d 个原有模型）", 
-                               provider_type, len(merged_models), len(original_models))
+                    logger.info(
+                        "刷新 %s 模型列表: %d 个模型（保留 %d 个原有模型）",
+                        provider_type,
+                        len(merged_models),
+                        len(original_models),
+                    )
 
         if changed:
             self.save(providers)
@@ -346,7 +377,7 @@ def merge_provider_sources(
     providers_config: list[dict[str, object]],
 ) -> dict[str, ProviderConfig]:
     """Merge providers from multiple sources with priority order.
-    
+
     Priority (high to low):
     1. Session JSON: providers field
     2. Persistent: <work_path>/provider_keys.json
@@ -366,7 +397,9 @@ def merge_provider_sources(
             models = [str(m).strip() for m in models_raw if str(m).strip()]
         else:
             # session JSON 未显式指定 models，保留持久化配置中的模型列表
-            models = merged.get(provider_type, ProviderConfig(provider_type=provider_type, api_key="", base_url="")).models
+            models = merged.get(
+                provider_type, ProviderConfig(provider_type=provider_type, api_key="", base_url="")
+            ).models
         merged[provider_type] = ProviderConfig(
             provider_type=provider_type,
             api_key=api_key,
@@ -399,8 +432,19 @@ def _create_provider_instance(config: ProviderConfig) -> LLMProvider:
         return VolcengineArkProvider(api_key=config.api_key)
     if provider_type in _YTEA_PROVIDER_TYPES:
         return YTeaProvider(api_key=config.api_key)
+    if provider_type in _MIMO_PROVIDER_TYPES:
+        return MimoProvider(
+            api_key=config.api_key, base_url=config.base_url or "https://api.xiaomimimo.com/v1"
+        )
+    if provider_type in _MIMO_TOKENPLAN_PROVIDER_TYPES:
+        return MimoTokenPlanProvider(
+            api_key=config.api_key,
+            base_url=config.base_url or "https://token-plan-cn.xiaomimimo.com/v1",
+        )
     if provider_type in _OPENAI_PROVIDER_TYPES:
-        return OpenAICompatibleProvider(api_key=config.api_key, base_url=config.base_url or "https://api.openai.com")
+        return OpenAICompatibleProvider(
+            api_key=config.api_key, base_url=config.base_url or "https://api.openai.com"
+        )
     raise RuntimeError(f"不支持的提供商类型：{provider_type}")
 
 
@@ -439,7 +483,9 @@ class AutoRoutingProvider(AsyncLLMProvider):
             f"无法为模型 '{model}' 找到合适的提供商。请确保在 provider_keys.json 或配置中的 'models' 列表中包含了该模型。"
         )
 
-    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> str | tuple[str, str]:
+    async def generate_async(
+        self, request: GenerationRequest, return_reasoning: bool = False
+    ) -> str | tuple[str, str]:
         selected, matched_by = self._pick_provider(request.model)
         logger.debug(
             "[Provider路由] model=%s | purpose=%s | provider_type=%s | matched_by=%s | base_url=%s | healthcheck_model=%s | models=%s",
@@ -474,7 +520,8 @@ async def probe_provider_availability(
         )
     )
     if not content.strip():
-            raise RuntimeError("提供商健康检查返回空内容")
+        raise RuntimeError("提供商健康检查返回空内容")
+
 
 def _create_provider_from_config(config: ProviderConfig) -> LLMProvider:
     provider_type = ensure_provider_platform_supported(config.provider_type)

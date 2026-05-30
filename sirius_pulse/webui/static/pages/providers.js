@@ -2,13 +2,18 @@ import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, animateNumber, flashSuccess, $, ModelSelect } from '../components.js';
 
-const BUILTIN_TYPES = ['deepseek', 'aliyun-bailian', 'bigmodel', 'siliconflow', 'volcengine-ark', 'ytea'];
+const BUILTIN_TYPES = [
+  'deepseek', 'aliyun-bailian', 'bigmodel', 'mimo', 'mimo-tokenplan', 'siliconflow',
+  'volcengine-ark', 'ytea',
+];
 
 const TYPE_OPTIONS = [
   { value: 'openai-compatible', label: 'OpenAI Compatible' },
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'aliyun-bailian', label: '阿里云百炼' },
   { value: 'bigmodel', label: '智谱 BigModel' },
+  { value: 'mimo', label: '小米 MiMo' },
+  { value: 'mimo-tokenplan', label: '小米 MiMo Token Plan' },
   { value: 'siliconflow', label: 'SiliconFlow' },
   { value: 'volcengine-ark', label: '火山方舟' },
   { value: 'ytea', label: 'YTea' },
@@ -19,6 +24,8 @@ const DEFAULT_URLS = {
   'deepseek': 'https://api.deepseek.com',
   'aliyun-bailian': 'https://dashscope.aliyuncs.com/compatible-mode',
   'bigmodel': 'https://open.bigmodel.cn/api/paas/v4',
+  'mimo': 'https://api.xiaomimimo.com/v1',
+  'mimo-tokenplan': 'https://token-plan-cn.xiaomimimo.com/v1',
   'siliconflow': 'https://api.siliconflow.cn',
   'volcengine-ark': 'https://ark.cn-beijing.volces.com/api/v3',
   'ytea': 'https://api.ytea.top',
