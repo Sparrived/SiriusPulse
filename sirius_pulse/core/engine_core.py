@@ -153,7 +153,7 @@ class _EmotionalGroupChatEngineBase:
         orch_task_models = orch.get("task_models")
         if isinstance(orch_task_models, dict):
             for task, model in orch_task_models.items():
-                if isinstance(model, str) and model.strip():
+                if isinstance(model, str) and model.strip() and model.strip() != "__inherit__":
                     self._task_models[task] = model.strip()
         self._task_models.update(self.config.get("task_models", {}))
         self._orch_task_temperatures = orch.get("task_temperatures")
