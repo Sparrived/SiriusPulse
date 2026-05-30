@@ -100,7 +100,34 @@ class CognitionEventStore(BaseSqliteStore):
     """Append-only SQLite store for cognition analysis events.
 
     继承自 BaseSqliteStore，复用连接管理和基础操作。
+
+    批量写入策略：每次 add/add_decision 将参数暂存到内存缓冲区，
+    缓冲区满（默认 10 条）或显式调用 flush() 时才提交事务，
+    减少 SQLite commit 频率，提升高频写入场景的吞吐量。
+
+    Parameters
+    ----------
+    db_path:
+        SQLite 数据库文件路径。传入 conn 时可省略。
+    conn:
+        可选的共享 SQLite 连接。传入时复用该连接，不再自行管理生命周期。
+    batch_size:
+        缓冲区满时自动 flush 的阈值，默认 10。
     """
+
+    _DEFAULT_BATCH_SIZE = 10
+
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        *,
+        conn: sqlite3.Connection | None = None,
+        batch_size: int = _DEFAULT_BATCH_SIZE,
+    ) -> None:
+        self._batch_size = batch_size
+        self._buf_events: list[tuple] = []
+        self._buf_decisions: list[tuple] = []
+        super().__init__(db_path, conn=conn)
 
     def _create_tables(self) -> None:
         """创建表结构并执行 schema 迁移。"""
@@ -140,24 +167,17 @@ class CognitionEventStore(BaseSqliteStore):
         directed_signals: dict[str, Any] | None = None,
         timestamp: float | None = None,
     ) -> None:
-        """Persist a single cognition event."""
+        """暂存认知事件到缓冲区，满时自动 flush。"""
         ts = timestamp if timestamp is not None else time.time()
         signals_json = json.dumps(directed_signals or {}, ensure_ascii=False)
-        self.execute(
-            """INSERT INTO cognition_events
-               (timestamp, group_id, user_id, valence, arousal, basic_emotion,
-                intensity, social_intent, urgency_score, relevance_score, confidence,
-                directed_score, sarcasm_score, entitlement_score, turn_gap_readiness,
-                directed_signals)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                ts, group_id, user_id, valence, arousal, basic_emotion,
-                intensity, social_intent, urgency_score, relevance_score, confidence,
-                directed_score, sarcasm_score, entitlement_score, turn_gap_readiness,
-                signals_json,
-            ),
-        )
-        self.commit()
+        self._buf_events.append((
+            ts, group_id, user_id, valence, arousal, basic_emotion,
+            intensity, social_intent, urgency_score, relevance_score, confidence,
+            directed_score, sarcasm_score, entitlement_score, turn_gap_readiness,
+            signals_json,
+        ))
+        if len(self._buf_events) >= self._batch_size:
+            self.flush()
 
     def get_recent(self, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent cognition events ordered by timestamp desc."""
@@ -218,23 +238,68 @@ class CognitionEventStore(BaseSqliteStore):
         affinity: float = 0.0,
         timestamp: float | None = None,
     ) -> None:
-        """Persist a single decision event."""
+        """暂存决策事件到缓冲区，满时自动 flush。"""
         ts = timestamp if timestamp is not None else time.time()
-        self.execute(
-            """INSERT INTO decision_events
-               (timestamp, group_id, user_id, strategy, score, threshold, reason,
-                directed_score, urgency, entitlement, sarcasm,
-                heat_level, msg_rate, cooldown, since_reply,
-                expressiveness, sensitivity, affinity)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                ts, group_id, user_id, strategy, score, threshold, reason,
-                directed_score, urgency, entitlement, sarcasm,
-                heat_level, msg_rate, cooldown, since_reply,
-                expressiveness, sensitivity, affinity,
-            ),
-        )
+        self._buf_decisions.append((
+            ts, group_id, user_id, strategy, score, threshold, reason,
+            directed_score, urgency, entitlement, sarcasm,
+            heat_level, msg_rate, cooldown, since_reply,
+            expressiveness, sensitivity, affinity,
+        ))
+        if len(self._buf_decisions) >= self._batch_size:
+            self.flush()
+
+    def flush(self) -> None:
+        """将缓冲区中的所有事件批量写入数据库并提交事务。"""
+        has_data = False
+        if self._buf_events:
+            self.executemany(
+                """INSERT INTO cognition_events
+                   (timestamp, group_id, user_id, valence, arousal, basic_emotion,
+                    intensity, social_intent, urgency_score, relevance_score, confidence,
+                    directed_score, sarcasm_score, entitlement_score, turn_gap_readiness,
+                    directed_signals)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._buf_events,
+            )
+            self._buf_events.clear()
+            has_data = True
+        if self._buf_decisions:
+            self.executemany(
+                """INSERT INTO decision_events
+                   (timestamp, group_id, user_id, strategy, score, threshold, reason,
+                    directed_score, urgency, entitlement, sarcasm,
+                    heat_level, msg_rate, cooldown, since_reply,
+                    expressiveness, sensitivity, affinity)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._buf_decisions,
+            )
+            self._buf_decisions.clear()
+            has_data = True
+        if has_data:
+            self.commit()
+
+    def cleanup_old_events(self, days: int = 30) -> int:
+        """清理超过指定天数的旧事件，返回删除的总行数。
+
+        Parameters
+        ----------
+        days:
+            保留最近多少天的数据，默认 30 天。
+        """
+        self.flush()
+        cutoff = time.time() - days * 86400
+        c1 = self.execute(
+            "DELETE FROM cognition_events WHERE timestamp < ?", (cutoff,)
+        ).rowcount
+        c2 = self.execute(
+            "DELETE FROM decision_events WHERE timestamp < ?", (cutoff,)
+        ).rowcount
         self.commit()
+        removed = (c1 or 0) + (c2 or 0)
+        if removed:
+            logger.info("清理了 %d 条超过 %d 天的旧事件", removed, days)
+        return removed
 
     def get_decision_events(
         self, group_id: str | None = None, limit: int = 100

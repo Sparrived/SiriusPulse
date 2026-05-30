@@ -566,6 +566,18 @@ class EngineRuntime:
             self._engine = None
 
         # 关闭统一人格数据库连接
+        # 先 flush 所有使用共享连接的缓冲写入，避免数据丢失
+        if hasattr(self, 'token_store') and self.token_store is not None:
+            try:
+                self.token_store.flush()
+            except Exception as exc:
+                LOG.warning("TokenUsageStore flush 失败: %s", exc)
+        if self._engine is not None and hasattr(self._engine, 'cognition_store'):
+            try:
+                self._engine.cognition_store.flush()
+            except Exception as exc:
+                LOG.warning("CognitionEventStore flush 失败: %s", exc)
+
         if hasattr(self, 'persona_db') and self.persona_db is not None:
             try:
                 self.persona_db.close()

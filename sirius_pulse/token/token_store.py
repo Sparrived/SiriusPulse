@@ -33,6 +33,10 @@ class TokenUsageStore(BaseSqliteStore):
 
     继承自 BaseSqliteStore，复用连接管理和基础操作。
 
+    批量写入策略：每次 add 将参数暂存到内存缓冲区，
+    缓冲区满或显式调用 flush() 时才提交事务，
+    减少 SQLite commit 频率，提升高频写入场景的吞吐量。
+
     Parameters
     ----------
     db_path:
@@ -43,7 +47,11 @@ class TokenUsageStore(BaseSqliteStore):
         per-session queries are possible.
     conn:
         可选的共享 SQLite 连接。传入时复用该连接，不再自行管理生命周期。
+    batch_size:
+        缓冲区满时自动 flush 的阈值，默认 10。
     """
+
+    _DEFAULT_BATCH_SIZE = 10
 
     def __init__(
         self,
@@ -51,8 +59,11 @@ class TokenUsageStore(BaseSqliteStore):
         *,
         session_id: str = "default",
         conn: sqlite3.Connection | None = None,
+        batch_size: int = _DEFAULT_BATCH_SIZE,
     ) -> None:
         self._session_id = session_id
+        self._batch_size = batch_size
+        self._buffer: list[tuple] = []
         super().__init__(db_path, conn=conn)
 
     @classmethod
@@ -93,46 +104,68 @@ class TokenUsageStore(BaseSqliteStore):
     # ------------------------------------------------------------------
 
     def add(self, record: TokenUsageRecord, *, timestamp: float | None = None) -> None:
-        """Persist a single :class:`TokenUsageRecord`."""
+        """暂存单条记录到缓冲区，满时自动 flush。"""
         ts = timestamp if timestamp is not None else time.time()
-        self.execute(
-            """INSERT INTO token_usage
-               (session_id, timestamp, actor_id, task_name, model,
-                prompt_tokens, completion_tokens, total_tokens,
-                input_chars, output_chars, estimation_method, retries_used,
-                persona_name, group_id, provider_name, breakdown_json, duration_ms,
-                error_type, error_message, conversation_depth)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                self._session_id,
-                ts,
-                record.actor_id,
-                record.task_name,
-                record.model,
-                record.prompt_tokens,
-                record.completion_tokens,
-                record.total_tokens,
-                record.input_chars,
-                record.output_chars,
-                record.estimation_method,
-                record.retries_used,
-                record.persona_name,
-                record.group_id,
-                record.provider_name,
-                record.breakdown_json,
-                record.duration_ms,
-                record.error_type,
-                record.error_message,
-                record.conversation_depth,
-            ),
-        )
-        self.commit()
+        self._buffer.append((
+            self._session_id,
+            ts,
+            record.actor_id,
+            record.task_name,
+            record.model,
+            record.prompt_tokens,
+            record.completion_tokens,
+            record.total_tokens,
+            record.input_chars,
+            record.output_chars,
+            record.estimation_method,
+            record.retries_used,
+            record.persona_name,
+            record.group_id,
+            record.provider_name,
+            record.breakdown_json,
+            record.duration_ms,
+            record.error_type,
+            record.error_message,
+            record.conversation_depth,
+        ))
+        if len(self._buffer) >= self._batch_size:
+            self.flush()
 
     def add_many(self, records: list[TokenUsageRecord], *, timestamp: float | None = None) -> None:
-        """Persist multiple records in a single transaction."""
+        """暂存多条记录到缓冲区，满时自动 flush。"""
         if not records:
             return
         ts = timestamp if timestamp is not None else time.time()
+        for r in records:
+            self._buffer.append((
+                self._session_id,
+                ts,
+                r.actor_id,
+                r.task_name,
+                r.model,
+                r.prompt_tokens,
+                r.completion_tokens,
+                r.total_tokens,
+                r.input_chars,
+                r.output_chars,
+                r.estimation_method,
+                r.retries_used,
+                r.persona_name,
+                r.group_id,
+                r.provider_name,
+                r.breakdown_json,
+                r.duration_ms,
+                r.error_type,
+                r.error_message,
+                r.conversation_depth,
+            ))
+        if len(self._buffer) >= self._batch_size:
+            self.flush()
+
+    def flush(self) -> None:
+        """将缓冲区中的所有记录批量写入数据库并提交事务。"""
+        if not self._buffer:
+            return
         self.executemany(
             """INSERT INTO token_usage
                (session_id, timestamp, actor_id, task_name, model,
@@ -141,33 +174,29 @@ class TokenUsageStore(BaseSqliteStore):
                 persona_name, group_id, provider_name, breakdown_json, duration_ms,
                 error_type, error_message, conversation_depth)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [
-                (
-                    self._session_id,
-                    ts,
-                    r.actor_id,
-                    r.task_name,
-                    r.model,
-                    r.prompt_tokens,
-                    r.completion_tokens,
-                    r.total_tokens,
-                    r.input_chars,
-                    r.output_chars,
-                    r.estimation_method,
-                    r.retries_used,
-                    r.persona_name,
-                    r.group_id,
-                    r.provider_name,
-                    r.breakdown_json,
-                    r.duration_ms,
-                    r.error_type,
-                    r.error_message,
-                    r.conversation_depth,
-                )
-                for r in records
-            ],
+            self._buffer,
+        )
+        self._buffer.clear()
+        self.commit()
+
+    def cleanup_old_records(self, days: int = 30) -> int:
+        """清理超过指定天数的旧记录，返回删除的行数。
+
+        Parameters
+        ----------
+        days:
+            保留最近多少天的数据，默认 30 天。
+        """
+        self.flush()
+        cutoff = time.time() - days * 86400
+        cursor = self.execute(
+            "DELETE FROM token_usage WHERE timestamp < ?", (cutoff,)
         )
         self.commit()
+        removed = cursor.rowcount or 0
+        if removed:
+            logger.info("清理了 %d 条超过 %d 天的旧 token 使用记录", removed, days)
+        return removed
 
     # ------------------------------------------------------------------
     # Read helpers
