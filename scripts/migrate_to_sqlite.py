@@ -47,8 +47,11 @@ def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
     if backup:
         backup_dir.mkdir(exist_ok=True)
 
-    # 迁移 user_manager.json
-    user_mgr_path = _find_file(persona_path, "user_manager.json", backup_dir)
+    # 迁移 user_manager.json（可能在根目录或 engine_state/ 目录）
+    user_mgr_path = (
+        _find_file(persona_path, "user_manager.json", backup_dir)
+        or _find_file(persona_path / "engine_state", "user_manager.json", backup_dir)
+    )
     if user_mgr_path:
         _migrate_user_manager(conn, user_mgr_path)
         _move_to_backup(user_mgr_path, backup_dir, backup)
