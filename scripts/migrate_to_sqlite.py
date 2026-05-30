@@ -27,6 +27,8 @@ def _now_iso() -> str:
 def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
     """迁移一个人格目录的数据到 SQLite。
 
+    优先从原始位置读取，如果不存在则从 migrated_backup/ 读取。
+
     Args:
         persona_path: 人格目录路径
         backup: 是否备份旧文件
@@ -46,46 +48,79 @@ def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
         backup_dir.mkdir(exist_ok=True)
 
     # 迁移 user_manager.json
-    user_mgr_path = persona_path / "user_manager.json"
-    if user_mgr_path.exists():
+    user_mgr_path = _find_file(persona_path, "user_manager.json", backup_dir)
+    if user_mgr_path:
         _migrate_user_manager(conn, user_mgr_path)
-        if backup:
-            shutil.move(str(user_mgr_path), str(backup_dir / user_mgr_path.name))
+        _move_to_backup(user_mgr_path, backup_dir, backup)
 
     # 迁移 alias_index.json
-    alias_path = persona_path / "alias_index.json"
-    if alias_path.exists():
+    alias_path = _find_file(persona_path, "alias_index.json", backup_dir)
+    if alias_path:
         _migrate_alias_index(conn, alias_path)
-        if backup:
-            shutil.move(str(alias_path), str(backup_dir / alias_path.name))
+        _move_to_backup(alias_path, backup_dir, backup)
 
     # 迁移 biography/*.json
-    bio_dir = persona_path / "memory" / "biography"
-    if bio_dir.is_dir():
+    bio_dir = _find_dir(persona_path / "memory", "biography", backup_dir)
+    if bio_dir:
         _migrate_biography(conn, bio_dir)
-        if backup:
-            bio_backup = backup_dir / "biography"
-            bio_backup.mkdir(exist_ok=True)
-            for f in bio_dir.glob("*.json"):
-                shutil.move(str(f), str(bio_backup / f.name))
+        _move_dir_to_backup(bio_dir, backup_dir / "biography", backup)
 
     # 迁移 semantic profiles
-    semantic_dir = persona_path / "memory" / "semantic"
-    if semantic_dir.is_dir():
+    semantic_dir = _find_dir(persona_path / "memory", "semantic", backup_dir)
+    if semantic_dir:
         _migrate_semantic_profiles(conn, semantic_dir)
-        if backup:
-            semantic_backup = backup_dir / "semantic"
-            semantic_backup.mkdir(exist_ok=True)
-            for f in semantic_dir.rglob("*.json"):
-                relative = f.relative_to(semantic_dir)
-                dest = semantic_backup / relative
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(f), str(dest))
+        _move_dir_to_backup(semantic_dir, backup_dir / "semantic", backup)
 
     conn.close()
     logger.info("迁移完成: %s -> %s", persona_path, db_path)
     if backup:
         logger.info("备份文件已移动到: %s", backup_dir)
+
+
+def _find_file(base_dir: Path, filename: str, backup_dir: Path) -> Path | None:
+    """查找文件，优先从原始位置，其次从备份目录。"""
+    original = base_dir / filename
+    if original.exists():
+        return original
+    backup = backup_dir / filename
+    if backup.exists():
+        return backup
+    return None
+
+
+def _find_dir(parent_dir: Path, dirname: str, backup_dir: Path) -> Path | None:
+    """查找目录，优先从原始位置，其次从备份目录。"""
+    original = parent_dir / dirname
+    if original.is_dir():
+        return original
+    backup = backup_dir / dirname
+    if backup.is_dir():
+        return backup
+    return None
+
+
+def _move_to_backup(src: Path, backup_dir: Path, do_backup: bool) -> None:
+    """移动文件到备份目录（如果不在备份目录中）。"""
+    if not do_backup:
+        return
+    if src.parent == backup_dir:
+        return
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(backup_dir / src.name))
+
+
+def _move_dir_to_backup(src_dir: Path, dest_dir: Path, do_backup: bool) -> None:
+    """移动目录内容到备份目录。"""
+    if not do_backup:
+        return
+    if src_dir == dest_dir:
+        return
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for f in src_dir.rglob("*.json"):
+        relative = f.relative_to(src_dir)
+        dest = dest_dir / relative
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(f), str(dest))
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:
@@ -312,8 +347,16 @@ def _migrate_biography(conn: sqlite3.Connection, bio_dir: Path) -> None:
             data = json.loads(card_file.read_text(encoding="utf-8"))
             user_id = data.get("user_id", "")
             if not user_id:
-                # 从文件名推断 user_id
                 user_id = card_file.stem
+
+            # 确保用户存在
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO users (user_id, name, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, data.get("name", ""), now, now),
+            )
 
             # 更新用户的传记字段
             conn.execute(
