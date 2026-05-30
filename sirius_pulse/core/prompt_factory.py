@@ -466,6 +466,11 @@ class PromptFactory:
                 alias_hint = f"（别称：{'、'.join(aliases[:4])}）"
             lines.append(f"关于{name}{alias_hint}：")
 
+            # 写入浓缩传记全文（short_bio 是人物介绍的核心内容）
+            short_bio = getattr(card, "short_bio", "")
+            if short_bio:
+                lines.append(f"  {short_bio}")
+
             anchors = getattr(card, "identity_anchors", [])
             for anchor in anchors[:5]:
                 lines.append(f"  {anchor}")
