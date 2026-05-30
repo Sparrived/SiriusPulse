@@ -21,6 +21,11 @@ from typing import Any, Callable
 import websockets
 import websockets.exceptions
 
+try:
+    from websockets.asyncio.client import ClientConnection as WebSocketClientProtocol
+except ImportError:
+    from websockets import WebSocketClientProtocol  # type: ignore[assignment]
+
 from sirius_pulse.adapters.base import BaseAdapter
 from sirius_pulse.adapters.models import (
     MessageGroup, TextSegment, AtSegment,
@@ -75,7 +80,7 @@ class NapCatAdapter(BaseAdapter):
         self.reconnect_interval = reconnect_interval
         self.api_timeout = api_timeout
 
-        self.ws: websockets.WebSocketClientProtocol | None = None
+        self.ws: WebSocketClientProtocol | None = None
         self._running = False
         self._event_handlers: list[EventHandler] = []
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -448,34 +453,34 @@ class NapCatAdapter(BaseAdapter):
 
     # ─── 事件解析（OneBot → 引擎格式） ──────────────────────
 
-    async def parse_event(self, event: dict[str, Any]) -> "ParsedEvent | None":
+    async def parse_event(self, raw_event: dict[str, Any]) -> "ParsedEvent | None":
         """将原始 OneBot 事件解析为引擎可消费的结构化格式。
 
         包含：表情→文字转换、@→昵称替换、图片标签生成。
         """
         from sirius_pulse.adapters.models import ParsedEvent
 
-        post_type = event.get("post_type")
+        post_type = raw_event.get("post_type")
         if post_type != "message":
             return None
 
-        msg_type = event.get("message_type", "")
-        uid = str(event.get("user_id", ""))
-        self_id = str(event.get("self_id", ""))
+        msg_type = raw_event.get("message_type", "")
+        uid = str(raw_event.get("user_id", ""))
+        self_id = str(raw_event.get("self_id", ""))
 
         if msg_type == "group":
-            gid = str(event.get("group_id", ""))
+            gid = str(raw_event.get("group_id", ""))
         elif msg_type == "private":
             gid = f"private_{uid}"
         else:
             gid = ""
 
-        nickname, card = self.extract_sender_names(event)
+        nickname, card = self.extract_sender_names(raw_event)
 
         if msg_type == "group":
-            prompt = await self._render_group_prompt(event, self_id, gid)
+            prompt = await self._render_group_prompt(raw_event, self_id, gid)
         elif msg_type == "private":
-            prompt = await self._render_private_prompt(event)
+            prompt = await self._render_private_prompt(raw_event)
         else:
             return None
 
@@ -483,7 +488,7 @@ class NapCatAdapter(BaseAdapter):
             return None
 
         multimodal_inputs: list[dict[str, str]] = []
-        for seg in event.get("message", []):
+        for seg in raw_event.get("message", []):
             if seg.get("type") == "image":
                 data = seg.get("data", {})
                 url = data.get("url", "") or data.get("file", "")

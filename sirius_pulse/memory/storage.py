@@ -27,21 +27,15 @@ class MemoryStorage:
 
     def __init__(self, db_path: Path | str) -> None:
         self._db_path = Path(db_path)
-        self._conn: sqlite3.Connection | None = None
-        self._ensure_connection()
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn: sqlite3.Connection = sqlite3.connect(
+            str(self._db_path),
+            check_same_thread=False,
+        )
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
-
-    def _ensure_connection(self) -> None:
-        """确保数据库连接。"""
-        if self._conn is None:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(
-                str(self._db_path),
-                check_same_thread=False,
-            )
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
 
     def _create_tables(self) -> None:
         """创建表结构。"""
@@ -134,9 +128,7 @@ class MemoryStorage:
 
     def close(self) -> None:
         """关闭数据库连接。"""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        self._conn.close()
 
     # ── 用户 CRUD ─────────────────────────────────────────
 

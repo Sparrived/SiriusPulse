@@ -30,6 +30,7 @@ class SessionEventType(enum.Enum):
     PROACTIVE_RESPONSE_TRIGGERED = "proactive_response_triggered"
     DEVELOPER_CHAT_TRIGGERED = "developer_chat_triggered"
     REMINDER_TRIGGERED = "reminder_triggered"
+    CUSTOM = "custom"
 
 
 @dataclass(slots=True)

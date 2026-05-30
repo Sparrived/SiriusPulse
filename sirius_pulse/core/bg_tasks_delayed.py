@@ -265,6 +265,7 @@ class DelayedQueueTasks:
         _round = 0
         calls: list[tuple[str, dict[str, Any]]] = []
         reply = ""
+        chat_result: Any = None
 
         for _round in range(max_skill_rounds + 1):
             chat_result = await engine.brain.chat(
