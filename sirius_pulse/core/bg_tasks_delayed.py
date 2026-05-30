@@ -513,6 +513,7 @@ class DelayedQueueTasks:
 
         # Record assistant reply into basic memory so future turns can see it
         clean_reply = strip_skill_calls(reply).strip()
+        sticker_names: list[str] = []
 
         # 解析表情包标签 [STICKERS: ...] 并异步发送
         if clean_reply:
@@ -522,6 +523,10 @@ class DelayedQueueTasks:
                     engine._send_stickers_by_names(group_id, sticker_names)
                 )
                 logger.info("模型请求发送表情包: %s", sticker_names)
+
+        # 纯表情包回复：构造标签内容确保被记录到记忆中
+        if not clean_reply and sticker_names:
+            clean_reply = f"[STICKERS: {', '.join(sticker_names)}]"
 
         # Deduplication: suppress if nearly identical to a recent reply
         if clean_reply:

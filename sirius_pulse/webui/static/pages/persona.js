@@ -21,7 +21,27 @@ export async function init(container, params) {
   }
 
   container.innerHTML = `
-    <div class="card">
+    <div class="card" id="personaStatusCard">
+      <div class="card-header">
+        <div>
+          <div class="card-title">人格状态</div>
+          <div class="card-subtitle" id="personaStatusSubtitle">${name}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div id="personaStatus" style="display:flex;align-items:center;gap:8px;font-size:13px">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">加载中...</span>
+          </div>
+          <button class="btn btn-success btn-sm" id="personaStartBtn" style="display:none">
+            <span style="font-size:12px">▶</span> 启动
+          </button>
+          <button class="btn btn-danger btn-sm" id="personaStopBtn" style="display:none">
+            <span style="font-size:12px">■</span> 停止
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
       <div class="card-header">
         <div>
           <div class="card-title">人格配置</div>
@@ -123,9 +143,88 @@ export async function init(container, params) {
     </div>
   `;
 
-  await loadPersonaData(name);
+  await Promise.all([
+    loadPersonaData(name),
+    loadPersonaStatus(name)
+  ]);
 
   $('personaSave').addEventListener('click', () => savePersona(name));
+  setupStatusButtons(name);
+}
+
+async function loadPersonaStatus(name) {
+  try {
+    const personas = store.personas || [];
+    const persona = personas.find(p => p.name === name);
+    const isRunning = persona?.running || false;
+    
+    const statusDot = $('statusDot');
+    const statusText = $('statusText');
+    const startBtn = $('personaStartBtn');
+    const stopBtn = $('personaStopBtn');
+    
+    statusDot.className = `status-dot ${isRunning ? 'running' : ''}`;
+    statusText.textContent = isRunning ? '运行中' : '已停止';
+    statusText.style.color = isRunning ? 'var(--success)' : 'var(--text-3)';
+    
+    startBtn.style.display = isRunning ? 'none' : 'inline-flex';
+    stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
+  } catch (e) {
+    $('statusText').textContent = '状态未知';
+  }
+}
+
+function setupStatusButtons(name) {
+  const startBtn = $('personaStartBtn');
+  const stopBtn = $('personaStopBtn');
+  
+  startBtn.addEventListener('click', async () => {
+    try {
+      startBtn.disabled = true;
+      startBtn.textContent = '启动中...';
+      const res = await post(`/personas/${name}/start`, {});
+      if (res.success) {
+        toast(`${name} 已启动`, 'success');
+        await loadPersonaStatus(name);
+        // 刷新store中的personas状态
+        try {
+          const list = await get('/personas');
+          store.personas = list.personas || [];
+        } catch {}
+      } else {
+        toast(res.error || '启动失败', 'error');
+      }
+    } catch (e) {
+      toast('启动失败', 'error');
+    } finally {
+      startBtn.disabled = false;
+      startBtn.innerHTML = '<span style="font-size:12px">▶</span> 启动';
+    }
+  });
+  
+  stopBtn.addEventListener('click', async () => {
+    try {
+      stopBtn.disabled = true;
+      stopBtn.textContent = '停止中...';
+      const res = await post(`/personas/${name}/stop`, {});
+      if (res.success) {
+        toast(`${name} 已停止`, 'success');
+        await loadPersonaStatus(name);
+        // 刷新store中的personas状态
+        try {
+          const list = await get('/personas');
+          store.personas = list.personas || [];
+        } catch {}
+      } else {
+        toast(res.error || '停止失败', 'error');
+      }
+    } catch (e) {
+      toast('停止失败', 'error');
+    } finally {
+      stopBtn.disabled = false;
+      stopBtn.innerHTML = '<span style="font-size:12px">■</span> 停止';
+    }
+  });
 }
 
 async function loadPersonaData(name) {

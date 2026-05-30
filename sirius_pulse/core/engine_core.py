@@ -670,8 +670,14 @@ class _EmotionalGroupChatEngineBase:
         def _hook_memory(
             _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
         ) -> None:
-            if not _result.clean_text:
-                return
+            # 确定要记录的内容：优先使用 clean_text，
+            # 若为空但有表情包则记录表情包标签（确保纯表情包回复也被记录）
+            record_content = _result.clean_text
+            if not record_content:
+                if _result.sticker_names:
+                    record_content = f"[STICKERS: {', '.join(_result.sticker_names)}]"
+                else:
+                    return
             gid = _req.group_id
             uid = _req.user_id
             persona_name = _engine.persona.name if _engine.persona else "assistant"
@@ -679,7 +685,7 @@ class _EmotionalGroupChatEngineBase:
                 group_id=gid,
                 user_id="assistant",
                 role="assistant",
-                content=_result.clean_text,
+                content=record_content,
                 speaker_name=persona_name,
                 system_prompt=_result.system_prompt,
             )
@@ -688,8 +694,8 @@ class _EmotionalGroupChatEngineBase:
                 _engine.semantic_memory.record_response_sent(
                     group_id=gid,
                     user_id=uid or "",
-                    topic_hint=_result.clean_text[:100],
-                    response_length=len(_result.clean_text),
+                    topic_hint=record_content[:100],
+                    response_length=len(record_content),
                 )
             except Exception:
                 pass

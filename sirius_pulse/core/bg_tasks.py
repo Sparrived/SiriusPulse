@@ -276,8 +276,6 @@ class BackgroundTasks:
 
     async def _run_diary_consolidation(self) -> None:
         """Find similar diary entries and merge them via LLM."""
-        import time
-
         from sirius_pulse.memory.diary.consolidator import DiaryConsolidator
         from sirius_pulse.core.brain import RawRequest
 
@@ -303,25 +301,7 @@ class BackgroundTasks:
                         purpose="diary_consolidate",
                         response_format={"type": "json_object"},
                     )
-                    t0 = time.perf_counter()
                     raw = await engine.brain.raw_call(raw_request)
-                    consolidate_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-
-                    from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
-
-                    sub_bd = PromptTokenBreakdown()
-                    sub_bd.output_format = estimate_tokens(system_prompt)
-                    sub_bd.user_message = estimate_tokens(user_content)
-                    sub_bd.output_total = estimate_tokens(raw)
-                    sub_bd.total = sub_bd.output_format + sub_bd.user_message + sub_bd.output_total
-
-                    engine._helpers.record_subtask_tokens(
-                        task_name="diary_consolidate",
-                        model_name=cfg.model_name,
-                        group_id=group_id,
-                        duration_ms=consolidate_duration_ms,
-                        token_breakdown=sub_bd.to_dict(),
-                    )
                     entry = consolidator.parse_merge_result(raw, cluster)
                     if entry:
                         merged_entries.append(entry)

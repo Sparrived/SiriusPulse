@@ -626,10 +626,9 @@ class Brain:
         """记录 raw_call() 通道的基础 token 用量。"""
         from sirius_pulse.config import TokenUsageRecord
         from sirius_pulse.providers.base import estimate_generation_request_input_tokens
-
-        estimated_input_tokens = estimate_generation_request_input_tokens(gen_request)
         from sirius_pulse.token.utils import estimate_tokens
 
+        estimated_input_tokens = estimate_generation_request_input_tokens(gen_request)
         estimated_output_tokens = estimate_tokens(raw_output) if raw_output else 0
 
         persona_name = self.persona.name if self.persona else ""
@@ -637,6 +636,23 @@ class Brain:
             self.provider_async,
             "_last_provider_name",
             getattr(self.provider_async, "_provider_name", "unknown"),
+        )
+
+        # 构建 breakdown：拆分 system_prompt / user_message / output 三段 token 分布
+        sp_total = estimate_tokens(gen_request.system_prompt or "")
+        um_total = sum(
+            estimate_tokens(str(m.get("content", ""))) for m in (gen_request.messages or [])
+        )
+        out_total = estimated_output_tokens
+        breakdown_json = json.dumps(
+            {
+                "system_prompt_total": sp_total,
+                "user_message": um_total,
+                "output_total": out_total,
+                "total": sp_total + um_total + out_total,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
 
         record = TokenUsageRecord(
@@ -656,7 +672,7 @@ class Brain:
             persona_name=persona_name,
             group_id="",
             provider_name=provider_name,
-            breakdown_json="",
+            breakdown_json=breakdown_json,
             duration_ms=duration_ms,
             conversation_depth=0,
         )
