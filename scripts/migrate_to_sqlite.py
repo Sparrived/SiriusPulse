@@ -203,10 +203,30 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS semantic_profiles (
             group_id TEXT NOT NULL,
             user_id TEXT NOT NULL,
-            profile_data TEXT DEFAULT '{}',
+            name TEXT DEFAULT '',
+            engagement_rate REAL DEFAULT 0.0,
+            interaction_count INTEGER DEFAULT 0,
+            first_interaction_at TEXT DEFAULT '',
+            last_interaction_at TEXT DEFAULT '',
             updated_at TEXT DEFAULT '',
             PRIMARY KEY (group_id, user_id)
         );
+
+        CREATE TABLE IF NOT EXISTS response_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            sent_at TEXT DEFAULT '',
+            target_user_id TEXT DEFAULT '',
+            topic_hint TEXT DEFAULT '',
+            response_length INTEGER DEFAULT 0,
+            was_engaged INTEGER DEFAULT 0,
+            engagement_latency_s REAL DEFAULT 0.0,
+            FOREIGN KEY (group_id, user_id) REFERENCES semantic_profiles(group_id, user_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_response_records_user
+            ON response_records(group_id, user_id);
 
         CREATE INDEX IF NOT EXISTS idx_semantic_profiles_user
             ON semantic_profiles(user_id);
@@ -419,14 +439,44 @@ def _migrate_semantic_profiles(conn: sqlite3.Connection, semantic_dir: Path) -> 
                 data = json.loads(profile_file.read_text(encoding="utf-8"))
                 user_id = data.get("user_id", profile_file.stem)
 
-                # 作为全局语义画像存储（group_id = "__global__"）
                 conn.execute(
                     """
-                    INSERT OR REPLACE INTO semantic_profiles (group_id, user_id, profile_data, updated_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT OR REPLACE INTO semantic_profiles (
+                        group_id, user_id, name, engagement_rate, interaction_count,
+                        first_interaction_at, last_interaction_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    ("__global__", user_id, json.dumps(data, ensure_ascii=False), now),
+                    (
+                        "__global__",
+                        user_id,
+                        data.get("name", ""),
+                        float(data.get("engagement_rate", 0.0)),
+                        int(data.get("interaction_count", 0)),
+                        data.get("first_interaction_at", ""),
+                        data.get("last_interaction_at", ""),
+                        now,
+                    ),
                 )
+                # 写入 response_records
+                for record in data.get("pending_responses", []):
+                    conn.execute(
+                        """
+                        INSERT INTO response_records (
+                            group_id, user_id, sent_at, target_user_id, topic_hint,
+                            response_length, was_engaged, engagement_latency_s
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "__global__",
+                            user_id,
+                            record.get("sent_at", ""),
+                            record.get("target_user_id", ""),
+                            record.get("topic_hint", ""),
+                            int(record.get("response_length", 0)),
+                            1 if record.get("was_engaged") else 0,
+                            float(record.get("engagement_latency_s", 0.0)),
+                        ),
+                    )
                 count += 1
             except Exception as exc:
                 logger.warning("迁移全局语义画像失败 %s: %s", profile_file.name, exc)
@@ -441,11 +491,56 @@ def _migrate_semantic_profiles(conn: sqlite3.Connection, semantic_dir: Path) -> 
 
                 conn.execute(
                     """
-                    INSERT OR REPLACE INTO group_semantic_profiles (group_id, profile_data, updated_at)
-                    VALUES (?, ?, ?)
+                    INSERT OR REPLACE INTO group_semantic_profiles (
+                        group_id, group_name, interest_topics, group_norms,
+                        taboo_topics, dominant_topic, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (group_id, json.dumps(data, ensure_ascii=False), now),
+                    (
+                        group_id,
+                        data.get("group_name", ""),
+                        json.dumps(data.get("interest_topics", []), ensure_ascii=False),
+                        json.dumps(data.get("group_norms", {}), ensure_ascii=False),
+                        json.dumps(data.get("taboo_topics", []), ensure_ascii=False),
+                        data.get("dominant_topic", ""),
+                        now,
+                    ),
                 )
+                # 写入 atmosphere_history
+                for snapshot in data.get("atmosphere_history", []):
+                    conn.execute(
+                        """
+                        INSERT INTO atmosphere_history (
+                            group_id, timestamp, group_valence, group_arousal, active_participants
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            group_id,
+                            snapshot.get("timestamp", ""),
+                            float(snapshot.get("group_valence", 0.0)),
+                            float(snapshot.get("group_arousal", 0.0)),
+                            int(snapshot.get("active_participants", 0)),
+                        ),
+                    )
+                # 写入 pending_ai_responses
+                for record in data.get("pending_ai_responses", []):
+                    conn.execute(
+                        """
+                        INSERT INTO group_pending_ai_responses (
+                            group_id, sent_at, target_user_id, topic_hint,
+                            response_length, was_engaged, engagement_latency_s
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            group_id,
+                            record.get("sent_at", ""),
+                            record.get("target_user_id", ""),
+                            record.get("topic_hint", ""),
+                            int(record.get("response_length", 0)),
+                            1 if record.get("was_engaged") else 0,
+                            float(record.get("engagement_latency_s", 0.0)),
+                        ),
+                    )
             except Exception as exc:
                 logger.warning("迁移群组语义画像失败 %s: %s", profile_file.name, exc)
 
@@ -464,11 +559,42 @@ def _migrate_semantic_profiles(conn: sqlite3.Connection, semantic_dir: Path) -> 
 
                     conn.execute(
                         """
-                        INSERT OR REPLACE INTO semantic_profiles (group_id, user_id, profile_data, updated_at)
-                        VALUES (?, ?, ?, ?)
+                        INSERT OR REPLACE INTO semantic_profiles (
+                            group_id, user_id, name, engagement_rate, interaction_count,
+                            first_interaction_at, last_interaction_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (group_id, user_id, json.dumps(data, ensure_ascii=False), now),
+                        (
+                            group_id,
+                            user_id,
+                            data.get("name", ""),
+                            float(data.get("engagement_rate", 0.0)),
+                            int(data.get("interaction_count", 0)),
+                            data.get("first_interaction_at", ""),
+                            data.get("last_interaction_at", ""),
+                            now,
+                        ),
                     )
+                    # 写入 response_records
+                    for record in data.get("pending_responses", []):
+                        conn.execute(
+                            """
+                            INSERT INTO response_records (
+                                group_id, user_id, sent_at, target_user_id, topic_hint,
+                                response_length, was_engaged, engagement_latency_s
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                group_id,
+                                user_id,
+                                record.get("sent_at", ""),
+                                record.get("target_user_id", ""),
+                                record.get("topic_hint", ""),
+                                int(record.get("response_length", 0)),
+                                1 if record.get("was_engaged") else 0,
+                                float(record.get("engagement_latency_s", 0.0)),
+                            ),
+                        )
                     count += 1
                 except Exception as exc:
                     logger.warning("迁移用户语义画像失败 %s: %s", profile_file.name, exc)
