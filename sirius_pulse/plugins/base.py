@@ -167,17 +167,17 @@ class PluginBase:
         子类可覆写此方法以自定义异步逻辑。
 
         Args:
-            cmd: 从用户输入解析的命令 AST
+            cmd: 从用户解析的命令 AST
 
         Returns:
             list[PluginResponse]（至少一个元素）：
             - @command 模式：调度结果（单个/流式多个）
             - 传统模式：单元素列表
         """
-        # 检查是否有 @command
+        # 检查是否有 @command 或 @command_group
         if self._command_handlers is None:
             self._discover_commands()
-        if self._command_handlers:
+        if self._command_handlers or self._command_groups:
             return await self._dispatch_decorated_command(cmd)
 
         # 无装饰器命令 → 执行传统同步 execute()
