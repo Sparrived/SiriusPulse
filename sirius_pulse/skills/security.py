@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from sirius_pulse.memory import UserProfile
-from sirius_pulse.models import Participant, Transcript
+from sirius_pulse.memory.user.unified_models import UnifiedUser
+from sirius_pulse.models import Transcript
 from sirius_pulse.skills.models import SkillDefinition, SkillInvocationContext
 
 
 def build_skill_invocation_context(
     *,
     transcript: Transcript,
-    caller: Participant | UserProfile | None,
+    caller: UnifiedUser | None,
 ) -> SkillInvocationContext:
     """Build per-turn invocation context used for tool visibility and auth."""
     caller_profile = _to_user_profile(caller)
@@ -27,10 +27,10 @@ def build_skill_invocation_context(
 def collect_declared_developer_profiles(
     *,
     transcript: Transcript,
-    caller: UserProfile | None = None,
-) -> list[UserProfile]:
+    caller: UnifiedUser | None = None,
+) -> list[UnifiedUser]:
     """Collect explicitly declared developer profiles from transcript state."""
-    developers: list[UserProfile] = []
+    developers: list[UnifiedUser] = []
     seen: set[str] = set()
 
     for group_entries in transcript.user_memory.entries.values():
@@ -66,7 +66,7 @@ def validate_skill_access(
     if not invocation_context.has_declared_developer:
         return (
             f"SKILL '{skill.name}' 仅允许 developer 调用。"
-            "当前会话尚未显式声明 developer 用户，请在 UserProfile.metadata 中设置 is_developer=true。"
+            "当前会话尚未显式声明 developer 用户，请在 UnifiedUser.metadata 中设置 is_developer=true。"
         )
 
     if invocation_context.caller_is_developer:
@@ -90,9 +90,5 @@ def ensure_developer_access(
         raise PermissionError(error)
 
 
-def _to_user_profile(caller: Participant | UserProfile | None) -> UserProfile | None:
-    if caller is None:
-        return None
-    if isinstance(caller, UserProfile):
-        return caller
-    return caller.as_user_profile()
+def _to_user_profile(caller: UnifiedUser | None) -> UnifiedUser | None:
+    return caller

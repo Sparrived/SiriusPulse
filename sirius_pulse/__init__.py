@@ -53,7 +53,7 @@ from sirius_pulse.config.helpers import (
 from sirius_pulse.config.manager import ConfigManager
 
 # ── Models ──
-from sirius_pulse.models import Message, Participant, Transcript, User
+from sirius_pulse.models import Message, Transcript
 from sirius_pulse.models.emotion import (
     AssistantEmotionState,
     EmotionState,
@@ -63,7 +63,7 @@ from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 
 # ── Memory ──
-from sirius_pulse.memory.user.simple import UserProfile
+from sirius_pulse.memory.user.unified_models import UnifiedUser
 
 # ── Providers ──
 from sirius_pulse.providers.base import AsyncLLMProvider, LLMProvider
@@ -279,9 +279,7 @@ __all__ = [
     "setup_multimodel_config",
     # Models
     "Message",
-    "Participant",
     "Transcript",
-    "User",
     "EmotionState",
     "AssistantEmotionState",
     "EmpathyStrategy",
@@ -290,7 +288,7 @@ __all__ = [
     "ResponseStrategy",
     "StrategyDecision",
     # Memory
-    "UserProfile",
+    "UnifiedUser",
     # Providers
     "AliyunBailianProvider",
     "AsyncLLMProvider",

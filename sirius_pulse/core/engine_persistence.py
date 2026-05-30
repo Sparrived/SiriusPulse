@@ -437,8 +437,10 @@ class EnginePersistence:
             user_mgr_data = state.get("user_manager")
             if user_mgr_data:
                 try:
-                    from sirius_pulse.memory.user.simple import UserManager
-                    engine.user_manager = UserManager.from_dict(user_mgr_data)
+                    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
+                    # 使用新的 UnifiedUserManager 加载旧格式数据
+                    engine.user_manager = UnifiedUserManager(work_path=engine.work_path)
+                    engine.user_manager._load_user_manager_data(user_mgr_data)
                 except Exception as exc:
                     logger.warning("用户管理器恢复失败，使用空实例: %s", exc)
 

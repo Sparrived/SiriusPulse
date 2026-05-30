@@ -315,15 +315,15 @@ class DelayedQueueTasks:
             # Execute skills and collect results
             skill_results: list[str] = []
             skill_multimodal: list[dict[str, Any]] = []
-            from sirius_pulse.memory.user.models import UserProfile
+            from sirius_pulse.memory.user.unified_models import UnifiedUser
 
             caller_user_id = item.user_id
-            skill_caller = UserProfile(
+            skill_caller = UnifiedUser(
                 user_id=caller_user_id,
                 name=caller_profile.name if caller_profile else caller_user_id,
                 metadata={"is_developer": caller_is_developer},
             )
-            developer_profiles: list[UserProfile] = []
+            developer_profiles: list[UnifiedUser] = []
             group_entries = engine.user_manager.entries.get(group_id, {})
             for profile in group_entries.values():
                 if profile.is_developer:

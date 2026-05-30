@@ -1,6 +1,6 @@
 """Core data models for Sirius Chat."""
 
-from sirius_pulse.models.models import Message, Participant, Transcript, User
+from sirius_pulse.models.models import Message, Transcript
 from sirius_pulse.models.emotion import (
     BasicEmotion,
     EmotionState,
@@ -24,8 +24,6 @@ from sirius_pulse.models.response_strategy import (
 __all__ = [
     # Core models
     "Message",
-    "Participant",
-    "User",
     "Transcript",
     # Emotion models
     "BasicEmotion",

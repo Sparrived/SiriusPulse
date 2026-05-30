@@ -6,7 +6,8 @@ from typing import Any
 
 from sirius_pulse.developer_profiles import metadata_declares_developer
 from sirius_pulse.mixins import JsonSerializable
-from sirius_pulse.memory.user.simple import UserProfile, UserManager
+from sirius_pulse.memory.user.unified_models import UnifiedUser
+from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.config import TokenUsageRecord
 
 
@@ -52,62 +53,13 @@ class ReplyRuntimeState(JsonSerializable):
     assistant_reply_timestamps: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class Participant(JsonSerializable):
-    """Multi-user participant representation with auto-generated unique user_id.
-    
-    Attributes:
-        name: Human-readable display name (not unique).
-        user_id: Unique identifier, auto-generated as UUID if not provided.
-                 Used for memory binding and accurate identification.
-        persona: Initial persona/background for the user.
-        identities: Mapping from external systems (channel:external_uid) to track
-                   cross-platform user identity.
-        aliases: Alternative names the user may go by.
-        traits: Initial traits/characteristics.
-        metadata: Additional custom metadata.
-    """
-    
-    name: str
-    user_id: str = ""
-    persona: str = ""
-    identities: dict[str, str] = field(default_factory=dict)
-    aliases: list[str] = field(default_factory=list)
-    traits: list[str] = field(default_factory=list)
-    group_memberships: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        """Auto-generate unique user_id if not provided."""
-        if not self.user_id:
-            # Generate UUID-based user_id for guaranteed uniqueness
-            # Format: "user_<uuid>" for readability
-            self.user_id = f"user_{uuid.uuid4().hex[:12]}"
-
-    @property
-    def is_developer(self) -> bool:
-        return metadata_declares_developer(self.metadata)
-
-    def as_user_profile(self) -> UserProfile:
-        return UserProfile(
-            user_id=self.user_id,
-            name=self.name,
-            persona=self.persona,
-            identities=self.identities,
-            aliases=self.aliases,
-            traits=self.traits,
-            metadata=self.metadata,
-        )
-
-
-# External-facing alias: callers can construct User(...) explicitly.
-User = Participant
 
 
 @dataclass(slots=True)
 class Transcript:
     messages: list[Message] = field(default_factory=list)
-    user_memory: UserManager = field(default_factory=UserManager)
+    user_memory: UnifiedUserManager = field(default_factory=UnifiedUserManager)
     reply_runtime: ReplyRuntimeState = field(default_factory=ReplyRuntimeState)
     session_summary: str = ""
     orchestration_stats: dict[str, dict[str, int]] = field(default_factory=dict)
@@ -123,16 +75,16 @@ class Transcript:
     def remember_participant(
         self,
         *,
-        participant: Participant,
+        participant: UnifiedUser,
         content: str = "",
         max_recent_messages: int = 5,
         channel: str | None = None,
         channel_user_id: str | None = None,
         group_id: str = "default",
     ) -> None:
-        self.user_memory.register_user(participant.as_user_profile(), group_id=group_id)
+        self.user_memory.register_user(participant, group_id=group_id)
 
-    def find_user_by_channel_uid(self, *, channel: str, uid: str, group_id: str = "default") -> UserProfile | None:
+    def find_user_by_channel_uid(self, *, channel: str, uid: str, group_id: str = "default") -> UnifiedUser | None:
         user_id = self.user_memory.resolve_user_id(platform=channel, external_uid=uid)
         if user_id is None:
             return None
@@ -242,12 +194,12 @@ class Transcript:
         )
 
         if "user_memory" in payload:
-            transcript.user_memory = UserManager.from_dict(payload.get("user_memory", {}))
+            transcript.user_memory = UnifiedUserManager.from_dict(payload.get("user_memory", {}))
         else:
             # Backward compatibility for old state files.
             raw_memories = payload.get("participant_memories", {})
             for name, item in raw_memories.items():
-                participant = Participant(
+                participant = UnifiedUser(
                     name=item.get("name", name),
                     user_id=name,
                     persona=item.get("persona", ""),

@@ -16,7 +16,7 @@ from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
-from sirius_pulse.models.models import Message, Participant
+from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ class Pipeline:
         self,
         group_id: str,
         message: Message,
-        participants: list[Participant],
+        participants: list[UnifiedUser],
     ) -> str:
         """Perception layer: normalize, register participants, update transcript."""
         engine = self._engine

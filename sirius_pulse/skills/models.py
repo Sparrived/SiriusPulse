@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable, Protocol
 logger = logging.getLogger(__name__)
 
 from sirius_pulse.config.models import ConfigParameter
-from sirius_pulse.memory import UserProfile
+from sirius_pulse.memory.user.unified_models import UnifiedUser
 
 # Pre-compiled regex for skill-chain template placeholders (${skill_name} / ${skill_name.field})
 _TEMPLATE_RE = re.compile(r"\$\{([^}]+)\}")
@@ -369,8 +369,8 @@ class SkillEngineContext(Protocol):
 class SkillInvocationContext:
     """Per-call context injected into skills for authorization and auditing."""
 
-    caller: UserProfile | None = None
-    developer_profiles: list[UserProfile] = field(default_factory=list)
+    caller: UnifiedUser | None = None
+    developer_profiles: list[UnifiedUser] = field(default_factory=list)
 
     @property
     def caller_is_developer(self) -> bool:

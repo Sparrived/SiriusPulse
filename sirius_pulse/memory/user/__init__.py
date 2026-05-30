@@ -1,3 +1,4 @@
-from sirius_pulse.memory.user.simple import UserProfile, UserManager
+from sirius_pulse.memory.user.unified_models import UnifiedUser
+from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
-__all__ = ["UserProfile", "UserManager"]
+__all__ = ["UnifiedUser", "UnifiedUserManager"]

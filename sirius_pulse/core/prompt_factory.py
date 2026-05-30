@@ -618,8 +618,8 @@ class PromptFactory:
             return ""
         try:
             from sirius_pulse.skills.models import SkillInvocationContext
-            from sirius_pulse.memory.user.models import UserProfile
-            caller = UserProfile(
+            from sirius_pulse.memory.user.unified_models import UnifiedUser
+            caller = UnifiedUser(
                 user_id="caller", name="caller",
                 metadata={"is_developer": caller_is_developer},
             )

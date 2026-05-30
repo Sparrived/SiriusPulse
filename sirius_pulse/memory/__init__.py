@@ -4,7 +4,8 @@ from __future__ import annotations
 from sirius_pulse.memory.basic import BasicMemoryManager, BasicMemoryFileStore, HeatCalculator
 from sirius_pulse.memory.diary import DiaryManager, DiaryGenerator, DiaryIndexer, DiaryRetriever, DiaryEntry
 from sirius_pulse.memory.context_assembler import ContextAssembler
-from sirius_pulse.memory.user.simple import UserProfile, UserManager
+from sirius_pulse.memory.user.unified_models import UnifiedUser
+from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.glossary import GlossaryManager, GlossaryTerm
 
 __all__ = [
@@ -17,8 +18,8 @@ __all__ = [
     "DiaryRetriever",
     "DiaryEntry",
     "ContextAssembler",
-    "UserProfile",
-    "UserManager",
+    "UnifiedUser",
+    "UnifiedUserManager",
     "GlossaryManager",
     "GlossaryTerm",
 ]

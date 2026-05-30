@@ -247,9 +247,9 @@ async def _execute_skill_chain(
         return []
 
     from sirius_pulse.skills.models import SkillInvocationContext
-    from sirius_pulse.memory.user.models import UserProfile
+    from sirius_pulse.memory.user.unified_models import UnifiedUser
 
-    caller = UserProfile(user_id=user_id, name=user_name)
+    caller = UnifiedUser(user_id=user_id, name=user_name)
     inv_ctx = SkillInvocationContext(caller=caller)
 
     logger.info("Reminder %s skill_chain start: %d items", reminder_id, len(skill_chain))

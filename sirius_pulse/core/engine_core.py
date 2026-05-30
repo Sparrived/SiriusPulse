@@ -44,7 +44,7 @@ from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3
-from sirius_pulse.models.models import Message, Participant, Transcript
+from sirius_pulse.models.models import Message, Transcript, UnifiedUser
 from sirius_pulse.models.response_strategy import StrategyDecision
 
 logger = logging.getLogger(__name__)
@@ -964,7 +964,7 @@ class _EmotionalGroupChatEngineBase:
     async def process_message(
         self,
         message: Message,
-        participants: list[Participant],
+        participants: list[UnifiedUser],
         group_id: str,
     ) -> dict[str, Any]:
         """Process a single incoming message through the full pipeline.

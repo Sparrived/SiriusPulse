@@ -131,6 +131,7 @@ class UnifiedUser(JsonSerializable):
     identities: dict[str, str] = field(default_factory=dict)  # platform → uid
     aliases: list[str] = field(default_factory=list)
     traits: list[str] = field(default_factory=list)
+    group_memberships: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     # ── 传记画像（来自 UserPersonaCard）──
@@ -162,6 +163,7 @@ class UnifiedUser(JsonSerializable):
             "identities": dict(self.identities),
             "aliases": list(self.aliases),
             "traits": list(self.traits),
+            "group_memberships": dict(self.group_memberships),
             "metadata": dict(self.metadata),
             "identity_anchors": list(self.identity_anchors),
             "relationships": [r.to_dict() for r in self.relationships],
@@ -191,6 +193,7 @@ class UnifiedUser(JsonSerializable):
             identities=dict(data.get("identities", {})),
             aliases=list(data.get("aliases", [])),
             traits=list(data.get("traits", [])),
+            group_memberships=dict(data.get("group_memberships", {})),
             metadata=dict(data.get("metadata", {})),
             identity_anchors=list(data.get("identity_anchors", [])),
             relationships=rels,

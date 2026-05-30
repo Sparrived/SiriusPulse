@@ -21,14 +21,14 @@ async def api_persona_biography_list(
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    from sirius_pulse.memory.biography.store import BiographyStore
+    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
-    store = BiographyStore(paths.dir)
-    cards = store.load_all_cards()
-    alias_index = store.load_alias_index()
+    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
+    users = mgr.list_global_users()
+    alias_index = mgr._alias_index
 
     return _json_response({
-        "cards": [c.to_dict() for c in cards],
+        "cards": [u.to_dict() for u in users],
         "alias_index": {
             alias: [e.to_dict() for e in entries]
             for alias, entries in alias_index.items()
@@ -49,14 +49,14 @@ async def api_persona_biography_get(
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    from sirius_pulse.memory.biography.store import BiographyStore
+    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
-    store = BiographyStore(paths.dir)
-    card = store.load_card(user_id)
-    if card is None:
+    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
+    user = mgr.get_global_user(user_id)
+    if user is None:
         return _json_response({"error": "用户传记不存在"}, 404)
 
-    return _json_response(card.to_dict())
+    return _json_response(user.to_dict())
 
 
 async def api_persona_biography_alias_index(
@@ -68,10 +68,10 @@ async def api_persona_biography_alias_index(
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    from sirius_pulse.memory.biography.store import BiographyStore
+    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
-    store = BiographyStore(paths.dir)
-    alias_index = store.load_alias_index()
+    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
+    alias_index = mgr._alias_index
 
     return _json_response({
         alias: [e.to_dict() for e in entries]
@@ -101,41 +101,24 @@ async def api_persona_biography_alias_index_update(
     if not alias:
         return _json_response({"error": "缺少 alias 参数"}, 400)
 
-    from sirius_pulse.memory.biography.models import AliasEntry
-    from sirius_pulse.memory.biography.store import BiographyStore
+    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
-    store = BiographyStore(paths.dir)
-    alias_index = store.load_alias_index()
+    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
 
     if action == "delete":
-        if alias in alias_index:
-            alias_index[alias] = [
-                e for e in alias_index[alias] if e.user_id != user_id
+        if alias in mgr._alias_index:
+            mgr._alias_index[alias] = [
+                e for e in mgr._alias_index[alias] if e.user_id != user_id
             ]
-            if not alias_index[alias]:
-                del alias_index[alias]
-        store.save_alias_index(alias_index)
+            if not mgr._alias_index[alias]:
+                del mgr._alias_index[alias]
+        mgr.save_to_disk()
         return _json_response({"success": True})
 
     # action == "add" (default)
     if not user_id:
         return _json_response({"error": "缺少 user_id 参数"}, 400)
 
-    if alias not in alias_index:
-        alias_index[alias] = []
-
-    existing = [e for e in alias_index[alias] if e.user_id == user_id]
-    if existing:
-        existing[0].user_name = user_name or existing[0].user_name
-        existing[0].source = "manual"
-    else:
-        alias_index[alias].append(
-            AliasEntry(
-                user_id=user_id,
-                user_name=user_name,
-                source="manual",
-            )
-        )
-
-    store.save_alias_index(alias_index)
+    mgr.register_alias(alias, user_id, user_name, source="manual")
+    mgr.save_to_disk()
     return _json_response({"success": True})
