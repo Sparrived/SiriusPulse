@@ -60,8 +60,20 @@ _SESSION_TABLES = [
 ]
 
 
+def _find_db(original: Path, backup_dir: Path) -> Path | None:
+    """查找数据库文件，优先从原始位置，其次从备份目录。"""
+    if original.exists():
+        return original
+    backup = backup_dir / original.name
+    if backup.exists():
+        return backup
+    return None
+
+
 def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
     """迁移一个人格目录的所有数据库到统一的 persona.db。
+
+    优先从原始位置读取数据库，如果不存在则从 migrated_backup/ 目录读取。
 
     Args:
         persona_path: 人格目录路径
@@ -75,29 +87,31 @@ def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
 
-    # 确保 _meta 表存在
-    conn.execute("CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    conn.commit()
+    # 创建所有表结构
+    _create_all_tables(conn)
 
-    # 迁移 memory.db
-    memory_db_path = persona_path / "memory.db"
-    if memory_db_path.exists():
+    backup_dir = persona_path / "migrated_backup"
+
+    # 迁移 memory.db（优先原始位置，其次备份目录）
+    memory_db_path = _find_db(persona_path / "memory.db", backup_dir)
+    if memory_db_path:
         _migrate_memory_db(conn, memory_db_path, persona_path, backup)
 
-    # 迁移 token_usage.db
-    token_db_path = persona_path / "token" / "token_usage.db"
-    if token_db_path.exists():
+    # 迁移 token_usage.db（优先原始位置，其次备份目录）
+    token_db_path = _find_db(persona_path / "token" / "token_usage.db", backup_dir / "token")
+    if token_db_path:
         _migrate_token_db(conn, token_db_path, persona_path, backup)
 
-    # 迁移 cognition_events.db
-    cognition_db_path = persona_path / "cognition_events.db"
-    if cognition_db_path.exists():
+    # 迁移 cognition_events.db（优先原始位置，其次备份目录）
+    cognition_db_path = _find_db(persona_path / "cognition_events.db", backup_dir)
+    if cognition_db_path:
         _migrate_cognition_db(conn, cognition_db_path, persona_path, backup)
 
-    # 迁移 session_state.db（遍历所有会话目录）
-    sessions_dir = persona_path / "sessions"
-    if sessions_dir.is_dir():
-        for session_dir in sessions_dir.iterdir():
+    # 迁移 session_state.db（遍历所有会话目录，包括备份）
+    for sessions_root in [persona_path / "sessions", backup_dir / "sessions"]:
+        if not sessions_root.is_dir():
+            continue
+        for session_dir in sessions_root.iterdir():
             if not session_dir.is_dir():
                 continue
             session_db_path = session_dir / "session_state.db"
@@ -107,6 +121,360 @@ def migrate_persona(persona_path: Path, *, backup: bool = True) -> None:
 
     conn.close()
     logger.info("迁移完成: %s -> %s", persona_path, persona_db_path)
+
+
+def _create_all_tables(conn: sqlite3.Connection) -> None:
+    """创建 persona.db 中的所有表结构。"""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS _meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            persona TEXT DEFAULT '',
+            identities TEXT DEFAULT '{}',
+            aliases TEXT DEFAULT '[]',
+            traits TEXT DEFAULT '[]',
+            group_memberships TEXT DEFAULT '{}',
+            metadata TEXT DEFAULT '{}',
+            identity_anchors TEXT DEFAULT '[]',
+            relationships TEXT DEFAULT '[]',
+            short_bio TEXT DEFAULT '',
+            affinity_score REAL DEFAULT 0.0,
+            pending_messages TEXT DEFAULT '[]',
+            pending_message_count INTEGER DEFAULT 0,
+            distilled_points TEXT DEFAULT '[]',
+            last_distill_at TEXT DEFAULT '',
+            bio_token_estimate INTEGER DEFAULT 0,
+            bio_token_budget INTEGER DEFAULT 500,
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS user_identities (
+            platform TEXT NOT NULL,
+            platform_uid TEXT NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            created_at TEXT DEFAULT '',
+            PRIMARY KEY (platform, platform_uid)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_identities_user
+            ON user_identities(user_id);
+
+        CREATE TABLE IF NOT EXISTS group_members (
+            group_id TEXT NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            joined_at TEXT DEFAULT '',
+            PRIMARY KEY (group_id, user_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_group_members_group
+            ON group_members(group_id);
+
+        CREATE INDEX IF NOT EXISTS idx_group_members_user
+            ON group_members(user_id);
+
+        CREATE TABLE IF NOT EXISTS aliases (
+            alias TEXT NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            user_name TEXT NOT NULL DEFAULT '',
+            weight REAL DEFAULT 1.0,
+            groups TEXT DEFAULT '[]',
+            mentioned_count INTEGER DEFAULT 1,
+            confidence REAL DEFAULT 0.5,
+            first_seen_at TEXT DEFAULT '',
+            last_seen_at TEXT DEFAULT '',
+            source TEXT DEFAULT 'napcat',
+            created_at TEXT DEFAULT '',
+            PRIMARY KEY (alias, user_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aliases_user
+            ON aliases(user_id);
+
+        CREATE INDEX IF NOT EXISTS idx_aliases_alias
+            ON aliases(alias);
+
+        CREATE TABLE IF NOT EXISTS semantic_profiles (
+            group_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            name TEXT DEFAULT '',
+            engagement_rate REAL DEFAULT 0.0,
+            interaction_count INTEGER DEFAULT 0,
+            first_interaction_at TEXT DEFAULT '',
+            last_interaction_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT '',
+            PRIMARY KEY (group_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS response_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            sent_at TEXT DEFAULT '',
+            target_user_id TEXT DEFAULT '',
+            topic_hint TEXT DEFAULT '',
+            response_length INTEGER DEFAULT 0,
+            was_engaged INTEGER DEFAULT 0,
+            engagement_latency_s REAL DEFAULT 0.0,
+            FOREIGN KEY (group_id, user_id) REFERENCES semantic_profiles(group_id, user_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_response_records_user
+            ON response_records(group_id, user_id);
+
+        CREATE INDEX IF NOT EXISTS idx_semantic_profiles_user
+            ON semantic_profiles(user_id);
+
+        CREATE TABLE IF NOT EXISTS group_semantic_profiles (
+            group_id TEXT PRIMARY KEY,
+            group_name TEXT DEFAULT '',
+            interest_topics TEXT DEFAULT '[]',
+            group_norms TEXT DEFAULT '{}',
+            taboo_topics TEXT DEFAULT '[]',
+            dominant_topic TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS atmosphere_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id TEXT NOT NULL,
+            timestamp TEXT DEFAULT '',
+            group_valence REAL DEFAULT 0.0,
+            group_arousal REAL DEFAULT 0.0,
+            active_participants INTEGER DEFAULT 0,
+            FOREIGN KEY (group_id) REFERENCES group_semantic_profiles(group_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_atmosphere_history_group
+            ON atmosphere_history(group_id);
+
+        CREATE TABLE IF NOT EXISTS group_pending_ai_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id TEXT NOT NULL,
+            sent_at TEXT DEFAULT '',
+            target_user_id TEXT DEFAULT '',
+            topic_hint TEXT DEFAULT '',
+            response_length INTEGER DEFAULT 0,
+            was_engaged INTEGER DEFAULT 0,
+            engagement_latency_s REAL DEFAULT 0.0,
+            FOREIGN KEY (group_id) REFERENCES group_semantic_profiles(group_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_group_pending_ai_responses_group
+            ON group_pending_ai_responses(group_id);
+
+        CREATE TABLE IF NOT EXISTS token_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            timestamp REAL NOT NULL,
+            actor_id TEXT NOT NULL,
+            task_name TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+            completion_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            input_chars INTEGER NOT NULL DEFAULT 0,
+            output_chars INTEGER NOT NULL DEFAULT 0,
+            estimation_method TEXT NOT NULL DEFAULT 'char_div4',
+            retries_used INTEGER NOT NULL DEFAULT 0,
+            persona_name TEXT NOT NULL DEFAULT '',
+            group_id TEXT NOT NULL DEFAULT '',
+            provider_name TEXT NOT NULL DEFAULT '',
+            breakdown_json TEXT NOT NULL DEFAULT '',
+            duration_ms REAL NOT NULL DEFAULT 0,
+            error_type TEXT NOT NULL DEFAULT '',
+            error_message TEXT NOT NULL DEFAULT '',
+            conversation_depth INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tu_session ON token_usage(session_id);
+        CREATE INDEX IF NOT EXISTS idx_tu_actor ON token_usage(actor_id);
+        CREATE INDEX IF NOT EXISTS idx_tu_task ON token_usage(task_name);
+        CREATE INDEX IF NOT EXISTS idx_tu_model ON token_usage(model);
+        CREATE INDEX IF NOT EXISTS idx_tu_ts ON token_usage(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_tu_persona ON token_usage(persona_name);
+        CREATE INDEX IF NOT EXISTS idx_tu_group ON token_usage(group_id);
+        CREATE INDEX IF NOT EXISTS idx_tu_provider ON token_usage(provider_name);
+
+        CREATE TABLE IF NOT EXISTS cognition_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp REAL NOT NULL,
+            group_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL DEFAULT '',
+            valence REAL NOT NULL DEFAULT 0,
+            arousal REAL NOT NULL DEFAULT 0.3,
+            basic_emotion TEXT NOT NULL DEFAULT '',
+            intensity REAL NOT NULL DEFAULT 0.5,
+            social_intent TEXT NOT NULL DEFAULT '',
+            urgency_score REAL NOT NULL DEFAULT 0,
+            relevance_score REAL NOT NULL DEFAULT 0.5,
+            confidence REAL NOT NULL DEFAULT 0.8,
+            directed_score REAL NOT NULL DEFAULT 0,
+            sarcasm_score REAL NOT NULL DEFAULT 0,
+            entitlement_score REAL NOT NULL DEFAULT 0,
+            turn_gap_readiness REAL NOT NULL DEFAULT 0.5,
+            directed_signals TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ce_ts ON cognition_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_ce_group ON cognition_events(group_id);
+        CREATE INDEX IF NOT EXISTS idx_ce_user ON cognition_events(user_id);
+
+        CREATE TABLE IF NOT EXISTS decision_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp REAL NOT NULL,
+            group_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL DEFAULT '',
+            strategy TEXT NOT NULL DEFAULT 'silent',
+            score REAL NOT NULL DEFAULT 0,
+            threshold REAL NOT NULL DEFAULT 0.5,
+            reason TEXT NOT NULL DEFAULT '',
+            directed_score REAL NOT NULL DEFAULT 0,
+            urgency REAL NOT NULL DEFAULT 0,
+            entitlement REAL NOT NULL DEFAULT 0,
+            sarcasm REAL NOT NULL DEFAULT 0,
+            heat_level TEXT NOT NULL DEFAULT 'warm',
+            msg_rate REAL NOT NULL DEFAULT 0,
+            cooldown REAL NOT NULL DEFAULT 0,
+            since_reply REAL NOT NULL DEFAULT 0,
+            expressiveness REAL NOT NULL DEFAULT 0.5,
+            sensitivity REAL NOT NULL DEFAULT 0.5,
+            affinity REAL NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_de_ts ON decision_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_de_group ON decision_events(group_id);
+        CREATE INDEX IF NOT EXISTS idx_de_strategy ON decision_events(strategy);
+
+        CREATE TABLE IF NOT EXISTS session_meta (
+            session_id TEXT NOT NULL DEFAULT '',
+            session_summary TEXT NOT NULL DEFAULT '',
+            orchestration_stats TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (session_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS session_messages (
+            session_id TEXT NOT NULL DEFAULT '',
+            message_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            speaker TEXT,
+            channel TEXT,
+            channel_user_id TEXT,
+            multimodal_inputs TEXT NOT NULL DEFAULT '[]',
+            reply_mode TEXT NOT NULL DEFAULT 'always',
+            PRIMARY KEY (session_id, message_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_session_messages_role ON session_messages(session_id, role);
+
+        CREATE TABLE IF NOT EXISTS session_reply_runtime (
+            session_id TEXT NOT NULL DEFAULT '',
+            last_assistant_reply_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (session_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS session_reply_runtime_user_turns (
+            session_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL,
+            last_turn_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS session_reply_runtime_group_turns (
+            session_id TEXT NOT NULL DEFAULT '',
+            seq INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            PRIMARY KEY (session_id, seq)
+        );
+
+        CREATE TABLE IF NOT EXISTS session_reply_runtime_assistant_turns (
+            session_id TEXT NOT NULL DEFAULT '',
+            seq INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            PRIMARY KEY (session_id, seq)
+        );
+
+        CREATE TABLE IF NOT EXISTS session_user_profiles (
+            session_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            persona TEXT NOT NULL DEFAULT '',
+            identities TEXT NOT NULL DEFAULT '{}',
+            aliases TEXT NOT NULL DEFAULT '[]',
+            traits TEXT NOT NULL DEFAULT '[]',
+            metadata TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (session_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS session_user_runtime (
+            session_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL,
+            inferred_persona TEXT NOT NULL DEFAULT '',
+            inferred_traits TEXT NOT NULL DEFAULT '[]',
+            preference_tags TEXT NOT NULL DEFAULT '[]',
+            recent_messages TEXT NOT NULL DEFAULT '[]',
+            summary_notes TEXT NOT NULL DEFAULT '[]',
+            last_seen_channel TEXT NOT NULL DEFAULT '',
+            last_seen_uid TEXT NOT NULL DEFAULT '',
+            observed_keywords TEXT NOT NULL DEFAULT '[]',
+            observed_roles TEXT NOT NULL DEFAULT '[]',
+            observed_emotions TEXT NOT NULL DEFAULT '[]',
+            observed_entities TEXT NOT NULL DEFAULT '[]',
+            last_event_processed_at TEXT,
+            PRIMARY KEY (session_id, user_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_session_user_runtime_channel ON session_user_runtime(session_id, last_seen_channel);
+
+        CREATE TABLE IF NOT EXISTS session_user_memory_facts (
+            session_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL,
+            fact_index INTEGER NOT NULL,
+            fact_type TEXT NOT NULL,
+            value TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'unknown',
+            confidence REAL NOT NULL DEFAULT 0.5,
+            observed_at TEXT NOT NULL DEFAULT '',
+            observed_time_desc TEXT NOT NULL DEFAULT '',
+            memory_category TEXT NOT NULL DEFAULT 'custom',
+            validated INTEGER NOT NULL DEFAULT 0,
+            conflict_with TEXT NOT NULL DEFAULT '[]',
+            context_channel TEXT NOT NULL DEFAULT '',
+            context_topic TEXT NOT NULL DEFAULT '',
+            context_metadata TEXT NOT NULL DEFAULT '{}',
+            mention_count INTEGER NOT NULL DEFAULT 0,
+            source_event_id TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (session_id, user_id, fact_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_session_user_memory_facts_user ON session_user_memory_facts(session_id, user_id);
+
+        CREATE TABLE IF NOT EXISTS session_token_usage_records (
+            session_id TEXT NOT NULL DEFAULT '',
+            record_index INTEGER NOT NULL,
+            actor_id TEXT NOT NULL,
+            task_name TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_tokens INTEGER NOT NULL DEFAULT 0,
+            completion_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL DEFAULT 0,
+            input_chars INTEGER NOT NULL DEFAULT 0,
+            output_chars INTEGER NOT NULL DEFAULT 0,
+            estimation_method TEXT NOT NULL DEFAULT 'char_div4',
+            retries_used INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (session_id, record_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_session_token_usage_task ON session_token_usage_records(session_id, task_name);
+    """)
+    conn.commit()
+    logger.info("已创建所有表结构")
 
 
 def _migrate_table_data(
