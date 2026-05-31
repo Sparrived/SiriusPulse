@@ -414,6 +414,22 @@ function renderMessages() {
   const el = $('messageList');
   if (!el) return;
 
+  // 保存当前展开的prompt-detail状态（使用data-entry-id作为标识）
+  const openPromptEntryIds = new Set();
+  const openSectionEntryIds = new Set();
+  el.querySelectorAll('.prompt-detail').forEach(detail => {
+    if (detail.style.display !== 'none') {
+      const entryId = detail.getAttribute('data-entry-id');
+      if (entryId) openPromptEntryIds.add(entryId);
+    }
+  });
+  el.querySelectorAll('.section-body').forEach(body => {
+    if (body.style.display !== 'none') {
+      const entryId = body.getAttribute('data-entry-id');
+      if (entryId) openSectionEntryIds.add(entryId);
+    }
+  });
+
   if (!messages.length) {
     el.innerHTML = `
       <div class="card">
@@ -435,6 +451,7 @@ function renderMessages() {
     const systemPrompt = m.system_prompt || '';
     const hasPrompt = m.role === 'assistant' && systemPrompt;
     const msgId = `msg-${msgIdCounter++}`;
+    const entryId = m.entry_id || msgId;
     const tags = m.tags || [];
 
     return `
@@ -449,15 +466,39 @@ function renderMessages() {
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
-        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt) : ''}
+        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt, entryId) : ''}
       </div>
     `;
   }).join('');
 
+  // 恢复之前展开的prompt-detail状态
+  openPromptEntryIds.forEach(entryId => {
+    const detail = el.querySelector(`.prompt-detail[data-entry-id="${entryId}"]`);
+    if (detail) {
+      detail.style.display = 'block';
+      const btn = detail.parentElement?.querySelector('.prompt-toggle');
+      if (btn) {
+        const arrow = btn.querySelector('.toggle-arrow');
+        if (arrow) arrow.style.transform = 'rotate(90deg)';
+      }
+    }
+  });
+  openSectionEntryIds.forEach(entryId => {
+    const body = el.querySelector(`.section-body[data-entry-id="${entryId}"]`);
+    if (body) {
+      body.style.display = 'block';
+      const header = body.previousElementSibling;
+      if (header) {
+        const arrow = header.querySelector('.section-arrow');
+        if (arrow) arrow.style.transform = 'rotate(90deg)';
+      }
+    }
+  });
+
   bindPromptToggles();
 }
 
-function renderPromptToggle(msgId, systemPrompt) {
+function renderPromptToggle(msgId, systemPrompt, entryId = '') {
   const tokenCount = estimateTokens(systemPrompt);
   const charCount = systemPrompt.length;
   const sections = parsePromptSections(systemPrompt);
@@ -470,14 +511,14 @@ function renderPromptToggle(msgId, systemPrompt) {
         <span>查看 LLM 输入上下文</span>
         <span style="color:var(--text-3);font-size:10px">${tokenCount} tokens · ${charCount} chars</span>
       </button>
-      <div id="${msgId}" class="prompt-detail" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:500px;overflow-y:auto">
-        ${hasSections ? renderStructuredSections(sections) : renderRawPrompt(systemPrompt)}
+      <div id="${msgId}" class="prompt-detail" data-entry-id="${entryId}" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:500px;overflow-y:auto">
+        ${hasSections ? renderStructuredSections(sections, entryId) : renderRawPrompt(systemPrompt)}
       </div>
     </div>
   `;
 }
 
-function renderStructuredSections(sections) {
+function renderStructuredSections(sections, entryId = '') {
   return sections.map((section, idx) => {
     if (section.type === 'section') {
       const sectionId = `section-${msgIdCounter}-${idx}`;
@@ -489,7 +530,7 @@ function renderStructuredSections(sections) {
             <span style="font-size:12px;font-weight:600;color:${section.color}">${section.label}</span>
             <span style="font-size:10px;color:var(--text-3);margin-left:auto">${section.content.length} chars</span>
           </div>
-          <div id="${sectionId}" class="section-body" style="display:none;padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:250px;overflow-y:auto;font-family:monospace">${escapeHtml(section.content)}</div>
+          <div id="${sectionId}" class="section-body" data-entry-id="${entryId}" style="display:none;padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:250px;overflow-y:auto;font-family:monospace">${escapeHtml(section.content)}</div>
         </div>
       `;
     }
