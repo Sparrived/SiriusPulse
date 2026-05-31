@@ -221,6 +221,11 @@ class DelayedQueueTasks:
         recent_n = engine.config.get("basic_memory_context_window", 5)
         diary_top_k = engine.config.get("diary_top_k", 5)
         diary_token_budget = engine.config.get("diary_token_budget", 800)
+
+        # 获取当前发言者信息
+        speaker_uid = resolved_uid or ""
+        speaker_display = triggered[0].user_id if triggered else ""
+
         msgs, ca_breakdown = engine.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
             current_query=bundle.user_content,
@@ -230,7 +235,8 @@ class DelayedQueueTasks:
             diary_top_k=diary_top_k,
             diary_token_budget=diary_token_budget,
             include_pending=False,
-            biography_card=speaker_card,
+            speaker_user_id=speaker_uid,
+            speaker_name=speaker_display,
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]

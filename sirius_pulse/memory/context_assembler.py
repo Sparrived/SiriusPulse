@@ -65,6 +65,7 @@ class ContextAssembler:
         cross_group_enabled: bool = False,
         include_pending: bool = False,
         speaker_user_id: str = "",
+        speaker_name: str = "",
         mentioned_user_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """构建消息链（方案 C：以 assistant 消息切分）。
@@ -112,13 +113,19 @@ class ContextAssembler:
 
         # 获取历史条目并按 assistant 切分
         recent = self._basic.get_context(group_id, n=recent_n)
+        pending_entries: list[Any] = []
+
         if recent and not include_pending:
+            # 找到最后一条 assistant 消息的位置
             last_assistant_idx = -1
             for i in range(len(recent) - 1, -1, -1):
                 if recent[i].role == "assistant":
                     last_assistant_idx = i
                     break
+
             if last_assistant_idx >= 0:
+                # last_assistant 之后的消息是 pending（未回复的）
+                pending_entries = recent[last_assistant_idx + 1:]
                 recent = recent[: last_assistant_idx + 1]
 
         if recent:
@@ -137,8 +144,37 @@ class ContextAssembler:
                 xml_content = self._entries_to_xml(current_user_entries)
                 messages.append({"role": "user", "content": xml_content})
 
-        # 6. 添加当前用户消息
-        messages.append({"role": "user", "content": current_query})
+        # 6. 添加当前用户消息（带身份标识）
+        # 如果有 pending 消息，把它们和当前消息一起打包
+        all_current = pending_entries
+        if speaker_name or speaker_user_id:
+            # 用 XML 格式包装，让模型知道是谁说的
+            safe_content = html.escape(current_query, quote=False)
+            safe_speaker = html.escape(speaker_name or speaker_user_id, quote=True)
+            safe_uid = html.escape(speaker_user_id, quote=True)
+            current_xml = (
+                f'<message speaker="{safe_speaker}" user_id="{safe_uid}">'
+                f'{safe_content}</message>'
+            )
+            # 把 pending 消息和当前消息合并
+            if all_current:
+                pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
+                # 去掉外层标签，只保留 message 标签
+                pending_lines = [
+                    line for line in pending_xml.split("\n")
+                    if line.strip() and not line.startswith("<pending_messages>")
+                    and not line.startswith("</pending_messages>")
+                ]
+                combined = "\n".join(pending_lines) + "\n" + current_xml
+                messages.append({"role": "user", "content": combined})
+            else:
+                messages.append({"role": "user", "content": current_xml})
+        else:
+            if all_current:
+                pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
+                messages.append({"role": "user", "content": pending_xml + "\n" + current_query})
+            else:
+                messages.append({"role": "user", "content": current_query})
 
         return messages
 
@@ -156,6 +192,7 @@ class ContextAssembler:
         cross_group_enabled: bool = False,
         include_pending: bool = False,
         speaker_user_id: str = "",
+        speaker_name: str = "",
         mentioned_user_ids: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
@@ -171,6 +208,7 @@ class ContextAssembler:
             cross_group_enabled=cross_group_enabled,
             include_pending=include_pending,
             speaker_user_id=speaker_user_id,
+            speaker_name=speaker_name,
             mentioned_user_ids=mentioned_user_ids,
         )
 
