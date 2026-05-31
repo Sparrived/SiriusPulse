@@ -254,9 +254,9 @@ async function loadModels() {
 
 function saveDraft() {
   const draft = {
-    personaId: $('personaId').value,
-    personaName: $('personaName').value,
-    personaAliases: $('personaAliases').value,
+    personaId: $('personaId')?.value || '',
+    personaName: $('personaName')?.value || '',
+    personaAliases: $('personaAliases')?.value || '',
     model: _stripProviderPrefix(modelSelect?.value || ''),
     tab: currentTab,
     answers: {},
@@ -286,9 +286,12 @@ function restoreDraft() {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return;
     const draft = JSON.parse(raw);
-    if (draft.personaId) $('personaId').value = draft.personaId;
-    if (draft.personaName) $('personaName').value = draft.personaName;
-    if (draft.personaAliases) $('personaAliases').value = draft.personaAliases;
+    const idEl = $('personaId');
+    const nameEl = $('personaName');
+    const aliasesEl = $('personaAliases');
+    if (draft.personaId && idEl) idEl.value = draft.personaId;
+    if (draft.personaName && nameEl) nameEl.value = draft.personaName;
+    if (draft.personaAliases && aliasesEl) aliasesEl.value = draft.personaAliases;
     if (draft.model && modelSelect) {
       const resolved = _resolveCompositeValue(draft.model, modelSelect.options);
       modelSelect.setValue(resolved);
@@ -325,11 +328,16 @@ function clearDraft() {
 
 function switchTab(tab) {
   currentTab = tab;
-  $('tabInterview').classList.toggle('active', tab === 'interview');
-  $('tabDirect').classList.toggle('active', tab === 'direct');
-  $('panelInterview').style.display = tab === 'interview' ? '' : 'none';
-  $('panelDirect').style.display = tab === 'direct' ? '' : 'none';
-  $('modelSelectGroup').style.display = tab === 'interview' ? '' : 'none';
+  const tabInterview = $('tabInterview');
+  const tabDirect = $('tabDirect');
+  const panelInterview = $('panelInterview');
+  const panelDirect = $('panelDirect');
+  const modelGroup = $('modelSelectGroup');
+  if (tabInterview) tabInterview.classList.toggle('active', tab === 'interview');
+  if (tabDirect) tabDirect.classList.toggle('active', tab === 'direct');
+  if (panelInterview) panelInterview.style.display = tab === 'interview' ? '' : 'none';
+  if (panelDirect) panelDirect.style.display = tab === 'direct' ? '' : 'none';
+  if (modelGroup) modelGroup.style.display = tab === 'interview' ? '' : 'none';
 }
 
 function bindEvents() {
@@ -377,7 +385,7 @@ function bindEvents() {
 function getAnsweredQuestions() {
   const answers = {};
   for (let i = 0; i < QUESTIONS.length; i++) {
-    const val = $(`answer${i}`).value.trim();
+    const val = $(`answer${i}`)?.value?.trim() || '';
     if (val) answers[String(i + 1)] = val;
   }
   return answers;
@@ -385,31 +393,31 @@ function getAnsweredQuestions() {
 
 function getDirectPersonaData() {
   const data = {};
-  const summary = $('directSummary').value.trim();
+  const summary = $('directSummary')?.value?.trim() || '';
   if (summary) data.persona_summary = summary;
-  const traits = $('directTraits').value.trim();
+  const traits = $('directTraits')?.value?.trim() || '';
   if (traits) data.personality_traits = traits.split(',').map(s => s.trim()).filter(Boolean);
-  const backstory = $('directBackstory').value.trim();
+  const backstory = $('directBackstory')?.value?.trim() || '';
   if (backstory) data.backstory = backstory;
-  const socialRole = $('directSocialRole').value;
+  const socialRole = $('directSocialRole')?.value || '';
   if (socialRole) data.social_role = socialRole;
-  const emojiPref = $('directEmojiPref').value;
+  const emojiPref = $('directEmojiPref')?.value || '';
   if (emojiPref) data.emoji_preference = emojiPref;
-  const humorStyle = $('directHumorStyle').value;
+  const humorStyle = $('directHumorStyle')?.value || '';
   if (humorStyle) data.humor_style = humorStyle;
-  const empathyStyle = $('directEmpathyStyle').value;
+  const empathyStyle = $('directEmpathyStyle')?.value || '';
   if (empathyStyle) data.empathy_style = empathyStyle;
-  const boundaries = $('directBoundaries').value.trim();
+  const boundaries = $('directBoundaries')?.value?.trim() || '';
   if (boundaries) data.boundaries = boundaries.split(',').map(s => s.trim()).filter(Boolean);
-  const tabooTopics = $('directTabooTopics').value.trim();
+  const tabooTopics = $('directTabooTopics')?.value?.trim() || '';
   if (tabooTopics) data.taboo_topics = tabooTopics.split(',').map(s => s.trim()).filter(Boolean);
   return data;
 }
 
 async function createPersona() {
-  const personaId = $('personaId').value.trim();
-  const personaName = $('personaName').value.trim();
-  const personaAliases = $('personaAliases').value.trim();
+  const personaId = $('personaId')?.value?.trim() || '';
+  const personaName = $('personaName')?.value?.trim() || '';
+  const personaAliases = $('personaAliases')?.value?.trim() || '';
   const model = _stripProviderPrefix(modelSelect?.value || '');
 
   if (!personaId) {
@@ -424,9 +432,11 @@ async function createPersona() {
 
   const btn = $('createBtn');
   const hint = $('createHint');
-  btn.disabled = true;
-  btn.textContent = '创建中...';
-  hint.textContent = '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '创建中...';
+  }
+  if (hint) hint.textContent = '';
 
   try {
     // 创建人格目录
@@ -441,8 +451,8 @@ async function createPersona() {
       const hasAnswers = Object.keys(answers).length > 0;
 
       if (hasAnswers) {
-        hint.textContent = '人格目录已创建，正在生成人格定义...';
-        btn.textContent = '生成中...';
+        if (hint) hint.textContent = '人格目录已创建，正在生成人格定义...';
+        if (btn) btn.textContent = '生成中...';
 
         const res = await post(`/personas/${personaId}/persona/interview`, {
           name: personaName || personaId,
@@ -452,8 +462,10 @@ async function createPersona() {
         });
 
         const persona = res.persona || res;
-        $('previewContent').textContent = JSON.stringify(persona, null, 2);
-        $('previewArea').style.display = '';
+        const previewContent = $('previewContent');
+        const previewArea = $('previewArea');
+        if (previewContent) previewContent.textContent = JSON.stringify(persona, null, 2);
+        if (previewArea) previewArea.style.display = '';
       }
     } else {
       // 直接填写模式
@@ -461,8 +473,8 @@ async function createPersona() {
       const hasData = Object.keys(directData).length > 0;
 
       if (hasData) {
-        hint.textContent = '人格目录已创建，正在保存人格配置...';
-        btn.textContent = '保存中...';
+        if (hint) hint.textContent = '人格目录已创建，正在保存人格配置...';
+        if (btn) btn.textContent = '保存中...';
 
         // 设置名称和别名
         directData.name = personaName || personaId;
@@ -472,13 +484,15 @@ async function createPersona() {
 
         await post(`/personas/${personaId}/persona/save`, { persona: directData });
 
-        $('previewContent').textContent = JSON.stringify(directData, null, 2);
-        $('previewArea').style.display = '';
+        const previewContent = $('previewContent');
+        const previewArea = $('previewArea');
+        if (previewContent) previewContent.textContent = JSON.stringify(directData, null, 2);
+        if (previewArea) previewArea.style.display = '';
       }
     }
 
     clearDraft();
-    flashSuccess(btn);
+    if (btn) flashSuccess(btn);
     toast('人格创建成功');
 
     // 刷新左侧人格列表
@@ -489,8 +503,10 @@ async function createPersona() {
   } catch (e) {
     toast('创建失败: ' + e.message, 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = '创建人格';
-    hint.textContent = '';
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '创建人格';
+    }
+    if (hint) hint.textContent = '';
   }
 }

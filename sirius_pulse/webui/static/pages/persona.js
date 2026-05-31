@@ -175,7 +175,8 @@ async function loadPersonaStatus(name) {
     startBtn.style.display = isRunning ? 'none' : 'inline-flex';
     stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
   } catch (e) {
-    $('statusText').textContent = '状态未知';
+    const statusText = $('statusText');
+    if (statusText) statusText.textContent = '状态未知';
   }
 }
 

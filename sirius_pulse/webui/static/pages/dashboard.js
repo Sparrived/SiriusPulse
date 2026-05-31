@@ -690,21 +690,28 @@ function updatePersonaPanel(index) {
   const isSamePersona = (panelPersonaIndex === index);
   panelPersonaIndex = index;
 
-  $('panelPersonaName').textContent = persona.persona_name || persona.name;
+  const nameEl = $('panelPersonaName');
+  if (nameEl) nameEl.textContent = persona.persona_name || persona.name;
 
   const isRunning = persona.running;
   const statusEl = $('panelStatus');
-  statusEl.innerHTML = `
-    <span class="status-dot ${isRunning ? 'running' : ''}"></span>
-    <span style="color:${isRunning ? 'var(--success)' : 'var(--text-3)'}">${isRunning ? '运行中' : '已停止'}</span>
-  `;
+  if (statusEl) {
+    statusEl.innerHTML = `
+      <span class="status-dot ${isRunning ? 'running' : ''}"></span>
+      <span style="color:${isRunning ? 'var(--success)' : 'var(--text-3)'}">${isRunning ? '运行中' : '已停止'}</span>
+    `;
+  }
 
-  $('panelMeta').textContent = persona.persona_summary || '暂无描述';
+  const metaEl = $('panelMeta');
+  if (metaEl) metaEl.textContent = persona.persona_summary || '暂无描述';
 
   // 更新按钮
-  $('panelStartBtn').style.display = isRunning ? 'none' : 'inline-flex';
-  $('panelStopBtn').style.display = isRunning ? 'inline-flex' : 'none';
-  $('panelConfigBtn').style.display = 'inline-flex';
+  const startBtn = $('panelStartBtn');
+  const stopBtn = $('panelStopBtn');
+  const configBtn = $('panelConfigBtn');
+  if (startBtn) startBtn.style.display = isRunning ? 'none' : 'inline-flex';
+  if (stopBtn) stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
+  if (configBtn) configBtn.style.display = 'inline-flex';
 
   // 仅在人格切换时加载监控数据，避免鼠标移动时频繁请求
   if (!isSamePersona) {

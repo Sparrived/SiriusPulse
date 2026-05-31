@@ -239,15 +239,24 @@ class BiographyView:
             if user and user.name:
                 return user.name
         
-        # 从 identity_facts 中查找名字（谓语为"是"、"叫"、"名字"的记录）
+        # 尝试从 subject_user_id 字段获取真正的用户 ID，再查询名称
+        if self._user_manager and identity_facts:
+            for r in identity_facts:
+                if r.subject_user_id:
+                    user = self._user_manager.get_user(r.subject_user_id)
+                    if user and user.name:
+                        return user.name
+        
+        # 从 identity_facts 中查找名字（谓语为"叫"、"名字"的记录）
         for r in identity_facts:
-            if r.predicate in ("是", "叫", "名字"):
+            if r.predicate in ("叫", "名字"):
                 return r.obj
         
-        # 使用 subject 字段（LLM 提取的原始名称）
+        # 使用 subject 字段（LLM 提取的原始名称），但需要验证是否是合理的名称
         if identity_facts:
             subject = getattr(identity_facts[0], "subject", "")
-            if subject:
+            # 长度超过 10 个字符的 subject 通常是 LLM 提取的描述，不是真正的名称
+            if subject and len(subject) <= 10:
                 return subject
         
         return user_id

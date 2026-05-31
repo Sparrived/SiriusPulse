@@ -48,11 +48,14 @@ async function loadAdapters(name) {
     adapterData = data;
     renderAdapter(data.adapters?.[0] || {});
     // 加载成功后启用保存按钮
-    $('adapterSave').disabled = false;
+    const saveBtn = $('adapterSave');
+    if (saveBtn) saveBtn.disabled = false;
   } catch (e) {
-    $('adapterContent').innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
+    const contentEl = $('adapterContent');
+    if (contentEl) contentEl.innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
     // 加载失败时保持保存按钮禁用
-    $('adapterSave').disabled = true;
+    const saveBtn = $('adapterSave');
+    if (saveBtn) saveBtn.disabled = true;
   }
 }
 
