@@ -1,7 +1,7 @@
 """数据迁移脚本：将旧记忆系统数据迁移到演化链。
 
 使用方法：
-    python -m sirius_pulse.memory.migration --work-path /path/to/data
+    python scripts/migrate_to_evolution.py --work-path /path/to/data/persona_name
 
 迁移内容：
 1. UnifiedUser.distilled_points → LLM 提取三元组 → EvolutionRecord
@@ -23,6 +23,10 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
+
+# 确保 sirius_pulse 在 sys.path 中
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.evolution.models import (
@@ -310,13 +314,7 @@ def _parse_response(raw: str) -> dict | None:
 
 
 async def run_migration(work_path: Path, brain: any, model_name: str) -> None:
-    """执行完整迁移。
-
-    Args:
-        work_path: 数据目录路径
-        brain: Brain 实例（必需）
-        model_name: 模型名称（必需）
-    """
+    """执行完整迁移。"""
     logger.info("开始迁移: %s", work_path)
     logger.info("使用模型: %s", model_name)
 
