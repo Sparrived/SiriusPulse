@@ -84,7 +84,7 @@ class ContextAssembler:
                 无需再用 html.escape 包装，直接作为 user 消息内容。
         """
         # 1. 获取当日 Situation 摘要（已通过演化链验证）
-        today_summaries = self._get_today_summaries(group_id)
+        today_summaries = self._get_recent_summaries(group_id)
 
         # 1.5 获取最新 Situation 涉及的原始消息的一半
         latest_source_entries = self._get_latest_situation_source_half(group_id)
@@ -303,11 +303,12 @@ class ContextAssembler:
     # Situation 摘要
     # ------------------------------------------------------------------
 
-    def _get_today_summaries(self, group_id: str) -> list[str]:
-        """获取当日 Situation 摘要列表。"""
+    def _get_recent_summaries(self, group_id: str) -> list[str]:
+        """获取未处理的 Situation 摘要列表（只要没被转译为日记就一直携带）。"""
         if not self._situations:
             return []
-        situations = self._situations.get_today(group_id)
+        # 只注入未处理的 situations，已处理的不再携带
+        situations = self._situations.get_recent(group_id, unprocessed_only=True)
         return [s.summary for s in situations if s.summary]
 
     def _get_latest_situation_source_half(self, group_id: str) -> list[Any]:
@@ -318,7 +319,8 @@ class ContextAssembler:
         """
         if not self._situations:
             return []
-        situations = self._situations.get_today(group_id)
+        # 获取未处理的 situations（只要没被转译为日记就一直携带）
+        situations = self._situations.get_recent(group_id, unprocessed_only=True)
         if not situations:
             return []
         latest = situations[-1]

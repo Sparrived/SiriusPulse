@@ -150,7 +150,10 @@ class EngineRuntime:
             if (now - self._embedding_last_fail_at) < cooldown:
                 return False
         try:
-            _ = self.engine
+            # 检查引擎是否已初始化
+            if self._engine is None:
+                LOG.warning("引擎未就绪: 引擎未初始化")
+                return False
             return True
         except Exception as exc:
             LOG.warning("引擎未就绪: 引擎初始化失败: %s", exc)
@@ -503,9 +506,8 @@ class EngineRuntime:
         return engine
 
     @property
-    def engine(self) -> "EmotionalGroupChatEngine":
-        if self._engine is None:
-            raise RuntimeError("Engine not initialized - call await start() first")
+    def engine(self) -> "EmotionalGroupChatEngine | None":
+        """获取引擎实例，未初始化时返回 None。"""
         return self._engine
 
     async def _ensure_engine(self) -> "EmotionalGroupChatEngine":

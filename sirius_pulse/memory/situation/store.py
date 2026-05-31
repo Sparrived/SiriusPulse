@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from sirius_pulse.utils.sqlite_base import BaseSqliteStore
@@ -48,12 +46,15 @@ class SituationStore(BaseSqliteStore):
                 ON situations(group_id);
             CREATE INDEX IF NOT EXISTS idx_sit_created
                 ON situations(created_at);
+        """)
+
+        # 先确保 processed 列存在，再创建依赖该列的索引
+        self._ensure_processed_column()
+
+        self.executescript("""
             CREATE INDEX IF NOT EXISTS idx_sit_processed
                 ON situations(group_id, processed);
         """)
-
-        # 兼容旧表：检查并添加 processed 列
-        self._ensure_processed_column()
 
     def _ensure_processed_column(self) -> None:
         """确保 processed 列存在（兼容旧表）。"""
@@ -106,27 +107,26 @@ class SituationStore(BaseSqliteStore):
         )
         return self._row_to_situation(row) if row else None
 
-    def get_today(self, group_id: str, unprocessed_only: bool = True) -> list[Situation]:
-        """获取某群组今天的情景（按时间排序）。
+    def get_recent(self, group_id: str, unprocessed_only: bool = True) -> list[Situation]:
+        """获取某群组最近的情景（按时间排序）。
 
         Args:
             group_id: 群组 ID
             unprocessed_only: 是否只返回未处理的（默认 True）
         """
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if unprocessed_only:
             rows = self.fetchall(
                 """SELECT * FROM situations
-                   WHERE group_id = ? AND created_at >= ? AND processed = 0
+                   WHERE group_id = ? AND processed = 0
                    ORDER BY created_at""",
-                (group_id, f"{today}T00:00:00"),
+                (group_id,),
             )
         else:
             rows = self.fetchall(
                 """SELECT * FROM situations
-                   WHERE group_id = ? AND created_at >= ?
+                   WHERE group_id = ?
                    ORDER BY created_at""",
-                (group_id, f"{today}T00:00:00"),
+                (group_id,),
             )
         return [self._row_to_situation(r) for r in rows]
 

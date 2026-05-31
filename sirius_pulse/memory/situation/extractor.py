@@ -178,7 +178,7 @@ class SituationExtractor:
             return None
 
         # Step 6: 生成自然语言摘要（如果 LLM 未提供，用三元组拼接）
-        if not raw_summary or len(raw_summary) < 10:
+        if not raw_summary:
             raw_summary = self._build_summary_from_records(accepted_records)
 
         # 提取参与者和话题
