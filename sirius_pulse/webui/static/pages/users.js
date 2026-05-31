@@ -664,9 +664,12 @@ function renderAliases() {
 
 async function addAlias() {
   const name = store.currentPersona;
-  const alias = $('newAlias').value.trim();
-  const userId = $('newAliasUserId').value.trim();
-  const userName = $('newAliasUserName').value.trim();
+  const aliasEl = $('newAlias');
+  const userIdEl = $('newAliasUserId');
+  const userNameEl = $('newAliasUserName');
+  const alias = aliasEl?.value?.trim() || '';
+  const userId = userIdEl?.value?.trim() || '';
+  const userName = userNameEl?.value?.trim() || '';
   if (!alias || !userId) {
     toast('请填写别名和用户 ID', 'error');
     return;

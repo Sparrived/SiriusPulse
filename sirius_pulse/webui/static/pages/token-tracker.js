@@ -126,7 +126,9 @@ async function loadData() {
 
 function renderStats() {
   const s = data.summary || {};
-  $('tokenStats').innerHTML = `
+  const el = $('tokenStats');
+  if (!el) return;
+  el.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">总调用次数</div>
       <div class="stat-value">${(s.total_calls || 0).toLocaleString()}</div>
@@ -325,9 +327,11 @@ function renderDetailTable() {
   const page = records.slice(start, start + PAGE_SIZE);
 
   const tableEl = $('detailTable');
+  if (!tableEl) return;
   if (!records.length) {
     tableEl.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无记录</div>';
-    $('detailPager').innerHTML = '';
+    const pager = $('detailPager');
+    if (pager) pager.innerHTML = '';
     return;
   }
 
@@ -369,6 +373,7 @@ function renderDetailTable() {
   `;
 
   const pager = $('detailPager');
+  if (!pager) return;
   pager.innerHTML = Array.from({ length: totalPages }, (_, i) => {
     const p = i + 1;
     return `<button class="btn btn-sm${p === currentPage ? ' btn-primary' : ''}" data-page="${p}">${p}</button>`;

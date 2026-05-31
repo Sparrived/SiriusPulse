@@ -124,7 +124,8 @@ async function openDetail(name) {
     const detail = await get(`/plugins/${name}`);
     renderModalContent(detail);
   } catch {
-    $('modalBody').innerHTML = '<div style="color:var(--danger);padding:12px">加载失败</div>';
+    const body = $('modalBody');
+    if (body) body.innerHTML = '<div style="color:var(--danger);padding:12px">加载失败</div>';
   }
 }
 
@@ -137,7 +138,8 @@ function closeModal() {
 }
 
 function renderModalContent(d) {
-  $('modalTitle').textContent = d.display_name || d.name;
+  const title = $('modalTitle');
+  if (title) title.textContent = d.display_name || d.name;
 
   const commands = d.commands || [];
   const parameters = d.parameters || [];
@@ -145,7 +147,9 @@ function renderModalContent(d) {
   const permissions = d.permissions || {};
   const settings = d.settings || {};
 
-  $('modalBody').innerHTML = `
+  const body = $('modalBody');
+  if (!body) return;
+  body.innerHTML = `
     <div class="stat-grid" style="margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-label">版本</div>
@@ -247,13 +251,16 @@ function renderModalContent(d) {
     section.style.display = 'none';
   }
 
-  $('modalFooter').innerHTML = `
-    <button class="btn" id="modalCancel">取消</button>
-    <button class="btn btn-primary" id="modalSave">保存配置</button>
-  `;
+  const footer = $('modalFooter');
+  if (footer) {
+    footer.innerHTML = `
+      <button class="btn" id="modalCancel">取消</button>
+      <button class="btn btn-primary" id="modalSave">保存配置</button>
+    `;
+  }
 
-  $('modalCancel').addEventListener('click', closeModal);
-  $('modalSave').addEventListener('click', () => savePluginConfig(d.name));
+  $('modalCancel')?.addEventListener('click', closeModal);
+  $('modalSave')?.addEventListener('click', () => savePluginConfig(d.name));
 
   // 数字调节按钮事件
   document.querySelectorAll('[data-spin-target]').forEach(btn => {
@@ -273,8 +280,10 @@ function renderModalContent(d) {
 
 async function savePluginConfig(name) {
   const saveBtn = $('modalSave');
-  saveBtn.disabled = true;
-  saveBtn.textContent = '保存中...';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '保存中...';
+  }
 
   try {
     const permForm = $('permForm');
@@ -301,7 +310,9 @@ async function savePluginConfig(name) {
     setTimeout(closeModal, 1200);
   } catch (e) {
     toast('保存失败: ' + e.message, 'error');
-    saveBtn.disabled = false;
-    saveBtn.textContent = '保存配置';
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '保存配置';
+    }
   }
 }

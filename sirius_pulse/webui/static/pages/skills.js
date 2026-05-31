@@ -135,7 +135,8 @@ async function openConfigModal(skillName) {
     const data = await get(`/personas/${name}/skills/${skillName}/config`);
     renderConfigModal(data, skillName);
   } catch (e) {
-    $('modalBody').innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
+    const body = $('modalBody');
+    if (body) body.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
   }
 }
 
@@ -164,11 +165,12 @@ async function renderConfigModal(config, skillName) {
     await form.init();
     html += `<div id="skillConfigForm"></div>`;
     
-    $('modalBody').innerHTML = html;
+    const body = $('modalBody');
+    if (body) body.innerHTML = html;
     form.render();
     
     // 保存时使用表单收集的值
-    $('modalSave').addEventListener('click', async () => {
+    $('modalSave')?.addEventListener('click', async () => {
       const values = form.collectValues();
       await saveConfig(values, skillName);
     });
@@ -186,10 +188,12 @@ async function renderConfigModal(config, skillName) {
       `;
     }
     
-    $('modalBody').innerHTML = html;
+    const body = $('modalBody');
+    if (body) body.innerHTML = html;
     
-    $('modalSave').addEventListener('click', async () => {
-      const payload = { enabled: $('cfgEnabled').checked };
+    $('modalSave')?.addEventListener('click', async () => {
+      const enabledEl = $('cfgEnabled');
+      const payload = { enabled: enabledEl ? enabledEl.checked : true };
       const extraText = $('cfgExtra')?.value?.trim();
       if (extraText) {
         try {
@@ -208,8 +212,10 @@ async function renderConfigModal(config, skillName) {
 async function saveConfig(payload, skillName) {
   const name = store.currentPersona;
   const btn = $('modalSave');
-  btn.disabled = true;
-  btn.textContent = '保存中...';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+  }
 
   try {
     await post(`/personas/${name}/skills/${skillName}/config`, payload);
@@ -218,8 +224,10 @@ async function saveConfig(payload, skillName) {
     setTimeout(closeModal, 800);
   } catch (e) {
     toast('保存失败: ' + e.message, 'error');
-    btn.disabled = false;
-    btn.textContent = '保存';
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '保存';
+    }
   }
 }
 

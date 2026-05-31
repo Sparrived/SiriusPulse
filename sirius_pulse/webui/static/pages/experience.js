@@ -255,15 +255,20 @@ function setupQuadrant() {
   }
 
   function updateLabels(s, e) {
-    $('sensitivityLabel').textContent = s.toFixed(2);
-    $('expressivenessLabel').textContent = e.toFixed(2);
+    const sensitivityEl = $('sensitivityLabel');
+    const expressivenessEl = $('expressivenessLabel');
+    if (sensitivityEl) sensitivityEl.textContent = s.toFixed(2);
+    if (expressivenessEl) expressivenessEl.textContent = e.toFixed(2);
   }
 
   function updatePreview(s, e) {
     const style = getStyleInfo(s, e);
-    $('styleLabel').textContent = style.label;
-    $('styleDesc').textContent = style.desc;
-    $('styleDot').style.background = style.color;
+    const labelEl = $('styleLabel');
+    const descEl = $('styleDesc');
+    const dotEl = $('styleDot');
+    if (labelEl) labelEl.textContent = style.label;
+    if (descEl) descEl.textContent = style.desc;
+    if (dotEl) dotEl.style.background = style.color;
   }
 
   function syncAll(s, e) {

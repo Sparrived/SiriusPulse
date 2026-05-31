@@ -96,7 +96,9 @@ async function loadData() {
 
 function renderStats() {
   const stats = diaryData.stats || {};
-  $('diaryStats').innerHTML = `
+  const el = $('diaryStats');
+  if (!el) return;
+  el.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">日记总数</div>
       <div class="stat-value">${stats.total || 0}</div>

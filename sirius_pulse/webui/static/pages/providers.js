@@ -577,11 +577,11 @@ function closeModal() {
 }
 
 async function saveFromModal() {
-  const platformType = $('modal_type').value;
-  const baseUrl = $('modal_url').value.trim();
-  const apiKey = $('modal_key').value.trim();
-  const healthcheckModel = $('modal_health').value.trim();
-  const enabled = $('modal_enabled').checked;
+  const platformType = $('modal_type')?.value || '';
+  const baseUrl = $('modal_url')?.value?.trim() || '';
+  const apiKey = $('modal_key')?.value?.trim() || '';
+  const healthcheckModel = $('modal_health')?.value?.trim() || '';
+  const enabled = $('modal_enabled')?.checked || false;
 
   if (!apiKey) {
     toast('请填写 API Key', 'warning');

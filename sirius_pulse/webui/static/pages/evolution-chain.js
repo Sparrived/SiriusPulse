@@ -19,11 +19,13 @@ export async function init(container) {
 
   const params = consumeNavParams();
   if (params?.subject) {
-    $('evoSearch').value = params.subject;
-    showParamHint(`主语: ${params.subject}`, () => { $('evoSearch').value = ''; filterAndRender(); });
+    const searchEl = $('evoSearch');
+    if (searchEl) searchEl.value = params.subject;
+    showParamHint(`主语: ${params.subject}`, () => { const el = $('evoSearch'); if (el) el.value = ''; filterAndRender(); });
   }
   if (params?.status) {
-    $('evoStatusFilter').value = params.status;
+    const filterEl = $('evoStatusFilter');
+    if (filterEl) filterEl.value = params.status;
   }
 
   await loadRecords();
@@ -104,7 +106,7 @@ function renderRecords(records) {
         navigateWithParams('biography-view', { userId: uid, userName: record.dataset.subject });
       } else {
         const subject = record?.dataset.subject;
-        if (subject) $('evoSearch').value = subject;
+        if (subject) { const el = $('evoSearch'); if (el) el.value = subject; }
         filterAndRender();
       }
     });

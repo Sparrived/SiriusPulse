@@ -89,7 +89,9 @@ async function loadGlossary() {
 function renderStats(data) {
   const stats = data.stats || {};
   const totalCount = stats.total || totalRecords || allTerms.length;
-  $('glossaryStats').innerHTML = `
+  const el = $('glossaryStats');
+  if (!el) return;
+  el.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">术语总数</div>
       <div class="stat-value">${totalCount}</div>
@@ -100,6 +102,7 @@ function renderStats(data) {
 function renderGroupFilter(data) {
   const groups = data.groups || [...new Set(allTerms.map(t => t.group).filter(Boolean))];
   const sel = $('glossaryGroupFilter');
+  if (!sel) return;
   sel.innerHTML = '<option value="">全部分组</option>' +
     groups.map(g => `<option value="${g}">${g}</option>`).join('');
   if (activeGroup) sel.value = activeGroup;
