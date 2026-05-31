@@ -207,9 +207,15 @@ class _EmotionalGroupChatEngineBase:
         # DiarySlice 存储和三路召回
         from sirius_pulse.memory.diary.slice_retriever import DiarySliceRetriever
         from sirius_pulse.memory.diary.slice_store import DiarySliceStore
+        from sirius_pulse.memory.diary.slice_vector_store import DiarySliceVectorStore
         self.slice_store = DiarySliceStore(self.work_path)
+        self.slice_vector_store = DiarySliceVectorStore(
+            persist_dir=self.work_path / "chroma_slices",
+            model_name=getattr(self._embedding_client, "model_name", ""),
+        )
         self.slice_retriever = DiarySliceRetriever(
             embedding_client=self._embedding_client,
+            vector_store=self.slice_vector_store,
         )
 
         # 启动时加载历史切片到检索器

@@ -1,7 +1,7 @@
 """日记切片三路召回检索器。
 
-不使用简单关键词识别，采用三路融合：
-1. 语义检索（embedding cosine similarity）— 适合模糊意图
+三路融合：
+1. 语义检索（ChromaDB embedding）— 适合模糊意图
 2. 三元组精确匹配（entity vs triple_subjects）— 适合精确查询
 3. 关键词匹配（降级 fallback）— 适合话题召回
 """
@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any
 
 from sirius_pulse.memory.diary.slice_models import DiarySlice
@@ -22,7 +21,6 @@ __all__ = ["DiarySliceRetriever"]
 class DiarySliceRetriever:
     """三路融合检索器。"""
 
-    # 权重配置
     WEIGHT_SEMANTIC = 0.4
     WEIGHT_TRIPLE = 0.4
     WEIGHT_KEYWORD = 0.2
@@ -31,17 +29,21 @@ class DiarySliceRetriever:
         self,
         slices: list[DiarySlice] | None = None,
         embedding_client: Any | None = None,
+        vector_store: Any | None = None,
     ) -> None:
         self._slices: list[DiarySlice] = []
         self._embedding_client = embedding_client
+        self._vector_store = vector_store
 
         if slices:
             for s in slices:
                 self.add(s)
 
     def add(self, slice: DiarySlice) -> None:
-        """添加切片到索引。"""
+        """添加切片到索引（内存 + ChromaDB）。"""
         self._slices.append(slice)
+        if self._vector_store and self._vector_store.available and slice.embedding:
+            self._vector_store.add(slice)
 
     def clear(self) -> None:
         """清空索引。"""
@@ -55,25 +57,13 @@ class DiarySliceRetriever:
         token_budget: int = 800,
         top_k: int = 10,
     ) -> list[DiarySlice]:
-        """三路检索融合。
-
-        Args:
-            query: 用户查询文本
-            query_entities: 查询中提取的实体名（用于三元组精确匹配）
-            group_id: 群组 ID
-            token_budget: token 预算
-            top_k: 最多返回数量
-
-        Returns:
-            按相关性排序的 DiarySlice 列表
-        """
-        # 过滤群组
+        """三路检索融合。"""
         group_slices = [s for s in self._slices if s.group_id == group_id]
         if not group_slices:
             return []
 
         # 三路检索
-        semantic_scores = self._semantic_search(query, group_slices)
+        semantic_scores = self._semantic_search(query, group_id, group_slices)
         triple_scores = self._triple_search(query_entities, group_slices)
         keyword_scores = self._keyword_search(query, group_slices)
 
@@ -104,12 +94,12 @@ class DiarySliceRetriever:
 
         return result
 
-    # ── 路径 1: 语义检索 ──
+    # ── 路径 1: 语义检索（ChromaDB）──
 
     def _semantic_search(
-        self, query: str, slices: list[DiarySlice]
+        self, query: str, group_id: str, slices: list[DiarySlice]
     ) -> dict[str, float]:
-        """语义检索：embedding cosine similarity。"""
+        """语义检索：优先使用 ChromaDB，fallback 到内存 cosine similarity。"""
         if not self._embedding_client or not slices:
             return {}
 
@@ -119,13 +109,22 @@ class DiarySliceRetriever:
         except Exception:
             return {}
 
+        # 优先使用 ChromaDB
+        if self._vector_store and self._vector_store.available:
+            results = self._vector_store.search(
+                query_embedding=query_embedding,
+                group_id=group_id,
+                top_k=len(slices),
+            )
+            return {sid: score for sid, score in results}
+
+        # fallback: 内存 cosine similarity
         scores: dict[str, float] = {}
         for s in slices:
             if s.embedding:
                 similarity = self._cosine_similarity(query_embedding, s.embedding)
                 if similarity > 0.3:
                     scores[s.slice_id] = similarity
-
         return scores
 
     # ── 路径 2: 三元组精确匹配 ──
@@ -133,7 +132,7 @@ class DiarySliceRetriever:
     def _triple_search(
         self, entities: list[str], slices: list[DiarySlice]
     ) -> dict[str, float]:
-        """三元组精确匹配：entity 在 DiarySlice.triple_subjects 中。"""
+        """三元组精确匹配。"""
         if not entities or not slices:
             return {}
 
@@ -156,11 +155,10 @@ class DiarySliceRetriever:
     def _keyword_search(
         self, query: str, slices: list[DiarySlice]
     ) -> dict[str, float]:
-        """关键词匹配：BM25 风格。"""
+        """关键词匹配。"""
         if not query or not slices:
             return {}
 
-        # 分词（简单按字符）
         query_chars = set(query)
         if not query_chars:
             return {}
@@ -170,7 +168,6 @@ class DiarySliceRetriever:
             text = f"{s.content} {s.summary} {' '.join(s.keywords)}"
             text_chars = set(text)
 
-            # 字符重叠率
             overlap = len(query_chars & text_chars)
             if overlap > 0:
                 score = overlap / len(query_chars)
@@ -182,7 +179,7 @@ class DiarySliceRetriever:
 
     @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:
-        """计算两个向量的余弦相似度。"""
+        """计算余弦相似度。"""
         if not a or not b or len(a) != len(b):
             return 0.0
 
