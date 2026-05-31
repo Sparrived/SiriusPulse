@@ -68,14 +68,12 @@ def _build_brain_from_provider(work_path: Path):
     from sirius_pulse.core.model_router import ModelRouter
     from sirius_pulse.models.persona import PersonaProfile
 
-    # 尝试从全局配置加载
     data_dir = work_path.parent
     if (data_dir / "providers" / "provider_keys.json").exists():
         registry = ProviderRegistry(data_dir)
     elif (work_path / "provider_keys.json").exists():
         registry = ProviderRegistry(work_path)
     else:
-        # 尝试环境变量
         import os
         api_key = os.getenv("SIRIUS_API_KEY", "")
         base_url = os.getenv("SIRIUS_BASE_URL", "")
@@ -107,7 +105,6 @@ def _build_brain_from_provider(work_path: Path):
 
     provider = AutoRoutingProvider(loaded)
 
-    # 选择模型：优先使用 healthcheck_model 或第一个可用模型
     model_name = ""
     for cfg in loaded.values():
         if cfg.healthcheck_model:
@@ -136,7 +133,7 @@ async def migrate_distilled_points(
     brain: any,
     model_name: str,
 ) -> int:
-    """迁移 UnifiedUser.distilled_points 到演化链。"""
+    """迁移 UnifiedUser.distilled_points 到演化链（必须使用 LLM）。"""
     cursor = conn.execute(
         "SELECT user_id, name, distilled_points FROM users WHERE distilled_points != '[]'"
     )
@@ -157,42 +154,26 @@ async def migrate_distilled_points(
 
         triples = await _extract_triples_from_text(points_text, brain, model_name)
 
-        if triples:
-            for t in triples:
-                record = EvolutionRecord(
-                    subject=t.get("subject", "") or name or user_id,
-                    subject_user_id=user_id,
-                    predicate=t.get("predicate", "是"),
-                    obj=t.get("obj", ""),
-                    status=RecordStatus.ACTIVE,
-                    confidence=MIGRATION_CONFIDENCE,
-                    initial_confidence=MIGRATION_CONFIDENCE,
-                    source_type=MetaTag.MIGRATION,
-                    source_group_id="",
-                    source_message_ids=[],
-                    extracted_by_model=f"migration:{model_name}",
-                )
-                chain._persist_record(record)
-                migrated += 1
-        else:
-            for point_text in points:
-                if not point_text or not point_text.strip():
-                    continue
-                record = EvolutionRecord(
-                    subject=name or user_id,
-                    subject_user_id=user_id,
-                    predicate="蒸馏要点",
-                    obj=point_text.strip()[:100],
-                    status=RecordStatus.ACTIVE,
-                    confidence=MIGRATION_CONFIDENCE,
-                    initial_confidence=MIGRATION_CONFIDENCE,
-                    source_type=MetaTag.MIGRATION,
-                    source_group_id="",
-                    source_message_ids=[],
-                    extracted_by_model="migration:fallback",
-                )
-                chain._persist_record(record)
-                migrated += 1
+        if not triples:
+            logger.warning("用户 %s (%s) 的 distilled_points LLM 提取无结果，跳过", name, user_id)
+            continue
+
+        for t in triples:
+            record = EvolutionRecord(
+                subject=t.get("subject", "") or name or user_id,
+                subject_user_id=user_id,
+                predicate=t.get("predicate", "是"),
+                obj=t.get("obj", ""),
+                status=RecordStatus.ACTIVE,
+                confidence=MIGRATION_CONFIDENCE,
+                initial_confidence=MIGRATION_CONFIDENCE,
+                source_type=MetaTag.MIGRATION,
+                source_group_id="",
+                source_message_ids=[],
+                extracted_by_model=f"migration:{model_name}",
+            )
+            chain._persist_record(record)
+            migrated += 1
 
     logger.info("迁移 distilled_points: %d 条", migrated)
     return migrated
@@ -220,7 +201,7 @@ async def _extract_triples_from_text(
     try:
         raw = await brain.raw_call(raw_request)
     except Exception as exc:
-        logger.warning("迁移 LLM 提取失败: %s", exc)
+        logger.error("迁移 LLM 提取失败: %s", exc)
         return None
 
     parsed = _parse_response(raw)
@@ -328,9 +309,16 @@ def _parse_response(raw: str) -> dict | None:
     return result if isinstance(result, dict) else None
 
 
-async def run_migration(work_path: Path, brain: any = None, model_name: str = "") -> None:
-    """执行完整迁移。"""
+async def run_migration(work_path: Path, brain: any, model_name: str) -> None:
+    """执行完整迁移。
+
+    Args:
+        work_path: 数据目录路径
+        brain: Brain 实例（必需）
+        model_name: 模型名称（必需）
+    """
     logger.info("开始迁移: %s", work_path)
+    logger.info("使用模型: %s", model_name)
 
     db_path = work_path / "persona.db"
     if not db_path.exists():
@@ -344,63 +332,13 @@ async def run_migration(work_path: Path, brain: any = None, model_name: str = ""
 
     try:
         total = 0
-
-        # 迁移 distilled_points
-        if brain and model_name:
-            logger.info("使用模型 %s 进行 LLM 提取...", model_name)
-            total += await migrate_distilled_points(conn, chain, brain, model_name)
-        else:
-            logger.warning("未提供 Brain 实例，distilled_points 将以原始文本迁移")
-            # 降级：直接以原始文本迁移
-            total += await migrate_distilled_points_fallback(conn, chain)
-
-        # 迁移 identity_anchors 和 relationships
+        total += await migrate_distilled_points(conn, chain, brain, model_name)
         total += migrate_identity_anchors(conn, chain)
         total += migrate_relationships(conn, chain)
-
         logger.info("迁移完成: 共 %d 条记录", total)
     finally:
         conn.close()
         chain.close()
-
-
-async def migrate_distilled_points_fallback(
-    conn: sqlite3.Connection,
-    chain: EvolutionChain,
-) -> int:
-    """降级迁移：不调用 LLM，直接以原始文本存储。"""
-    cursor = conn.execute(
-        "SELECT user_id, name, distilled_points FROM users WHERE distilled_points != '[]'"
-    )
-    rows = cursor.fetchall()
-
-    migrated = 0
-    for row in rows:
-        user_id = row[0]
-        name = row[1]
-        points = json.loads(row[2])
-
-        for point_text in points:
-            if not point_text or not point_text.strip():
-                continue
-            record = EvolutionRecord(
-                subject=name or user_id,
-                subject_user_id=user_id,
-                predicate="蒸馏要点",
-                obj=point_text.strip()[:100],
-                status=RecordStatus.ACTIVE,
-                confidence=MIGRATION_CONFIDENCE,
-                initial_confidence=MIGRATION_CONFIDENCE,
-                source_type=MetaTag.MIGRATION,
-                source_group_id="",
-                source_message_ids=[],
-                extracted_by_model="migration:fallback",
-            )
-            chain._persist_record(record)
-            migrated += 1
-
-    logger.info("降级迁移 distilled_points: %d 条", migrated)
-    return migrated
 
 
 def main() -> None:
@@ -410,22 +348,14 @@ def main() -> None:
     )
     parser = argparse.ArgumentParser(description="迁移旧记忆数据到演化链")
     parser.add_argument("--work-path", type=Path, required=True, help="数据目录路径")
-    parser.add_argument("--no-llm", action="store_true", help="跳过 LLM 提取（降级模式）")
     args = parser.parse_args()
 
-    brain = None
-    model_name = ""
+    brain, model_name = _build_brain_from_provider(args.work_path)
+    if not brain:
+        logger.error("未找到 provider 配置，请确保 data/providers/provider_keys.json 存在且包含有效的 api_key")
+        return
 
-    if not args.no_llm:
-        # 从 provider 配置自动读取 API Key 和模型
-        brain, model_name = _build_brain_from_provider(args.work_path)
-        if brain:
-            logger.info("已从 provider 配置加载模型: %s", model_name)
-        else:
-            logger.warning("未找到 provider 配置，将使用降级模式（不调用 LLM）")
-    else:
-        logger.info("使用 --no-llm 模式，跳过 LLM 提取")
-
+    logger.info("已从 provider 配置加载模型: %s", model_name)
     asyncio.run(run_migration(args.work_path, brain=brain, model_name=model_name))
 
 
