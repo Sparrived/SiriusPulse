@@ -143,11 +143,11 @@ class ContextAssembler:
             {"role": "system", "content": enriched_system}
         ]
 
-        # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息）
+        # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息，上限 50 条）
         if recent_n > 0:
             recent = self._basic.get_context(group_id, n=recent_n)
         else:
-            recent = self._basic.get_all(group_id)
+            recent = self._basic.get_all(group_id)[-50:]
         pending_entries: list[Any] = []
 
         if recent and not include_pending:

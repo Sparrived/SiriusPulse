@@ -809,9 +809,9 @@ class CognitionAnalyzer:
             )
         self._last_request = request
 
-        # If all normal images are cached and no stickers need first-analysis,
-        # skip the LLM call entirely.
-        if cached_caption and not filtered_mm:
+        # If all images (including cached stickers) are resolved and no
+        # items need first-analysis, skip the LLM call entirely.
+        if (cached_caption or sticker_caption) and not filtered_mm:
             # Use rule-based emotion since we skip LLM
             text_emotion = self._text_analysis(message)
             context_emotion = self._context_inference(current_user_id)
@@ -916,6 +916,7 @@ class CognitionAnalyzer:
                 "sarcasm_score": float(data.get("sarcasm_score", 0.0)),
                 "search_query": data.get("search_query", ""),
                 "image_caption": caption,
+                "sticker_caption": sticker_caption,
             }
         except (ValueError, KeyError) as exc:
             logger.warning("Failed to extract cognition fields: %s | raw=%r", exc, raw)

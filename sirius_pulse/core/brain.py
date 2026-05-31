@@ -356,8 +356,6 @@ class Brain:
 
             # ── 2. 默认 pre: 人格注入（无条件，最高优先级）──
             persona_base = self.persona.build_system_prompt()
-            if self.sticker_names:
-                persona_base += PromptFactory.build_sticker_options_prompt(self.sticker_names)
             system_prompt = persona_base + "\n\n" + system_prompt
 
             # ── 3. 默认 pre: 语气对齐 ──
@@ -371,8 +369,17 @@ class Brain:
 
             # ── 默认 pre: 当前时间注入 ──
             china_tz = timezone(timedelta(hours=8))
-            now_str = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S")
-            system_prompt = PromptFactory.build_current_time_section(now_str) + "\n\n" + system_prompt
+            now_dt = datetime.now(china_tz)
+            weekdays = [
+                "星期一", "星期二", "星期三", "星期四",
+                "星期五", "星期六", "星期日",
+            ]
+            wd = weekdays[now_dt.weekday()]
+            now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} {now_dt.strftime('%H:%M:%S')}"
+            system_prompt = (
+                PromptFactory.build_current_time_section(now_str)
+                + "\n\n" + system_prompt
+            )
 
             # ── 默认 pre: 模型路由 ──
             heat_level = "warm"
@@ -445,7 +452,16 @@ class Brain:
                             continue
                         entry.hook(self, request, ctx)
                 china_tz = timezone(timedelta(hours=8))
-                now_str = datetime.now(china_tz).strftime("%Y-%m-%d %H:%M:%S")
+                now_dt = datetime.now(china_tz)
+                weekdays = [
+                    "星期一", "星期二", "星期三", "星期四",
+                    "星期五", "星期六", "星期日",
+                ]
+                wd = weekdays[now_dt.weekday()]
+                now_str = (
+                    f"{now_dt.strftime('%Y-%m-%d')} {wd} "
+                    f"{now_dt.strftime('%H:%M:%S')}"
+                )
                 fresh_time = PromptFactory.build_current_time_section(now_str)
                 fresh_system_prompt = fresh_time + "\n\n" + base_system_prompt
                 return GenerationRequest(

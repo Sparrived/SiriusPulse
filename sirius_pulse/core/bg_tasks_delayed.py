@@ -670,8 +670,8 @@ class DelayedQueueTasks:
             plugin_registry=getattr(engine, '_plugin_registry', None),
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
-            scene_description="群里的话题有了自然间隙，你决定插一句。",
             pinned_messages=engine.get_pinned_messages_for_prompt(group_id),
+            sticker_names=getattr(engine, 'sticker_names', None),
         )
         if glossary:
             bundle.system_prompt = f"{TAG_GLOSSARY}\n{glossary}\n\n{bundle.system_prompt}"

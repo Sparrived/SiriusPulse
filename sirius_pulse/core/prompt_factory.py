@@ -53,14 +53,12 @@ TAG_CROSS_GROUP = "【跨群认知】"
 TAG_BIOGRAPHY = "【人物速查】"
 TAG_MY_SKILLS = "【我的能力】"
 TAG_GROUP_MEMBERS = "【群成员区分】"
-TAG_CURRENT_SCENE = "【当前场景】"
 TAG_FIRST_INTERACTION = "【首次互动】"
 TAG_TRIGGER_REASON = "【触发原因】"
 TAG_TONE = "【语气】"
 TAG_REMINDER = "【提醒】"
 TAG_TOPIC_SUGGESTION = "【话题建议】"
 TAG_TOPIC = "【话题】"
-TAG_LENGTH_REQ = "【长度要求】"
 TAG_GROUP_INTERESTS = "【群体兴趣】"
 TAG_RELATIONSHIP = "【关系】"
 
@@ -326,10 +324,6 @@ class PromptFactory:
             "回应时用自己的说话方式，不要刻意解释或总结。"
         )
 
-        sections.append(
-            f"{TAG_LENGTH_REQ}\n回复请控制在 30 字以内，不要换行，自然接话。"
-        )
-
         prompt = "\n\n".join(sections)
         if len(prompt) > 1200:
             prompt = prompt[:1197] + "…"
@@ -340,9 +334,9 @@ class PromptFactory:
     # ──────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def build_output_spec() -> str:
+    def build_output_spec(sticker_names: list[str] | None = None) -> str:
         """输出规范，防止模型添加多余前缀。"""
-        return (
+        spec = (
             f"{TAG_OUTPUT_SPEC}\n"
             "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
             "2. 直接输出你要说的话，禁止任何形式的换行符出现。\n"
@@ -358,6 +352,14 @@ class PromptFactory:
             "5. 钉住和取消钉住可以在一次回复中同时出现。\n"
             "6. 主动使用并维护钉住/取消钉住消息的功能，这能让你更好地记住重要消息或维持规则。\n"
         )
+        if sticker_names:
+            names_str = "、".join(sticker_names)
+            spec += (
+                "7. 你可以使用 [STICKERS: \"名称1\", \"名称2\", \"名称3\"] 格式"
+                "选择表情包，系统会在你提供的名称中随机选择一个发送。"
+                f"可选表情包：{names_str}\n"
+            )
+        return spec
 
     @staticmethod
     def build_emotion_context(
@@ -714,7 +716,6 @@ class PromptFactory:
         if identity:
             sections.append(identity)
         sections.extend([
-            f"{TAG_CURRENT_SCENE}你突然想起了开发者，想主动找他聊聊，分享一个话题或回忆。",
             f"{TAG_TONE}亲密、自然、像老朋友一样。不要机械，不要过度热情。",
             f"{TAG_TOPIC}{topic}",
         ])
@@ -794,8 +795,8 @@ class PromptFactory:
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
         adapter_type: str | None = None,
-        scene_description: str = "",
         pinned_messages: list[Any] | None = None,
+        sticker_names: list[str] | None = None,
     ) -> PromptBundle:
         """统一组装聊天响应 prompt。返回 PromptBundle。
 
@@ -816,7 +817,6 @@ class PromptFactory:
             plugin_registry: 插件注册表（v1.3+）。
             caller_is_developer: 调用者是否为开发者。
             adapter_type: 适配器类型（用于技能过滤）。
-            scene_description: 当前场景描述（延迟/主动响应时填充，即时响应留空）。
             pinned_messages: 钉住的消息列表。
 
         人格注入已由 Brain.chat() 默认 pre 步骤处理，此处不再管理。
@@ -845,11 +845,12 @@ class PromptFactory:
         other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
         if other_ai:
             _add(other_ai, "identity")
-        _add(PromptFactory.build_output_spec(), "output_constraint", is_constraint=True)
+        _add(
+            PromptFactory.build_output_spec(sticker_names=sticker_names),
+            "output_constraint", is_constraint=True,
+        )
 
-        if scene_description:
-            _add(f"{TAG_CURRENT_SCENE}{scene_description}", "emotion")
-        elif emotion is not None:
+        if emotion is not None:
             _add(
                 PromptFactory.build_emotion_context(emotion, group_profile, speaker_name=speaker_name),
                 "emotion",
@@ -863,22 +864,6 @@ class PromptFactory:
 
         if memories:
             _add(PromptFactory.build_memory_context(memories), "memory")
-
-        # 【长度要求】注入到 USER 链的 constraint_sections
-        # 在有群聊风格并且群聊风格已经总结出字数的情况下不注入，否则注入
-        should_inject_length = True
-        if group_profile:
-            norms = getattr(group_profile, "group_norms", {})
-            if norms:
-                avg_len = norms.get("avg_message_length", 0)
-                total = norms.get("message_count", 0)
-                if total > 0 and avg_len > 0:
-                    should_inject_length = False
-        if should_inject_length and style_params.length_instruction:
-            _add(
-                f"{TAG_LENGTH_REQ}\n{style_params.length_instruction}",
-                "output_constraint", is_constraint=True,
-            )
 
         if group_profile:
             _add(
@@ -968,7 +953,6 @@ class PromptFactory:
             sections.append(section_text)
             setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
 
-        _add(f"{TAG_CURRENT_SCENE}群里一段时间没人说话，你决定开口说点什么。", "emotion")
         _add(f"{TAG_TRIGGER_REASON}{trigger_reason}", "emotion")
         _add(f"{TAG_TONE}{suggested_tone}", "group_style")
         _add(
@@ -1066,29 +1050,6 @@ class PromptFactory:
         return "【动画表情】"
 
     @staticmethod
-    def build_sticker_options_prompt(sticker_names: list[str]) -> str:
-        """构建表情包选项提示语。
-
-        将 stickers 文件夹中的文件名（不含扩展名）列表化，
-        指导模型在回复时使用 [STICKERS: ...] 格式选择表情包。
-
-        Args:
-            sticker_names: 可用表情包名称列表（不含扩展名）
-
-        Returns:
-            可用表情包提示 section 字符串，无表情包时返回空字符串
-        """
-        if not sticker_names:
-            return ""
-
-        names_str = "、".join(sticker_names)
-        return (
-            "\n\n【可用表情包】\n"
-            f"你可以使用 [STICKERS: \"名称1\", \"名称2\", \"名称3\"] 格式（**必须和该格式完全一致，不得只输出[名称]，否则会解析失效**）选择最多3个表情包发送。\n"
-            f"可选表情包：{names_str}\n"
-        )
-
-    @staticmethod
     def render_image_prefix(has_sticker: bool) -> str:
         """渲染多模态消息中的图片前缀。"""
         return "【动画表情】" if has_sticker else "【图片】"
@@ -1098,8 +1059,6 @@ class PromptFactory:
         """渲染文件列表条目。"""
         t = "【D】" if is_directory else "【F】"
         return f"{t} {path:<50} {size:>12} {mtime:>16}"
-
-
 
     @staticmethod
     def build_memory_skill_truncation(char_limit: int, orig_len: int) -> str:

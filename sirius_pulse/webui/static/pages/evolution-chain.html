@@ -39,9 +39,12 @@
     box-shadow: 0 0 12px rgba(0,255,200,0.2);
   }
   .evo-list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
     gap: 10px;
+  }
+  @media (max-width: 900px) {
+    .evo-list { grid-template-columns: 1fr; }
   }
   .evo-record {
     background: var(--bg-2);

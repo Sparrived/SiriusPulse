@@ -21,11 +21,8 @@
     box-shadow: 0 0 12px rgba(0,255,200,0.2);
   }
   .sit-timeline {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-    padding-left: 30px;
     position: relative;
+    padding-left: 30px;
   }
   .sit-timeline::before {
     content: '';
@@ -36,9 +33,6 @@
     width: 2px;
     background: linear-gradient(to bottom, rgba(0,255,200,0.3), rgba(0,229,255,0.1), transparent);
     border-radius: 1px;
-  }
-  @media (max-width: 900px) {
-    .sit-timeline { grid-template-columns: 1fr; }
   }
   .sit-node {
     position: relative;

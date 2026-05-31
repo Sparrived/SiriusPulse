@@ -1108,16 +1108,29 @@ class _EmotionalGroupChatEngineBase:
                 multimodal_inputs=message.multimodal_inputs,
                 caller_is_developer=caller_is_developer,
             )
-            # 回写图片描述到 basic_memory
-            if intent.image_caption:
+            # 回写图片/表情描述到 basic_memory
+            # 优先使用 sticker_caption（动画表情缓存），否则使用 image_caption
+            caption = intent.image_caption or getattr(intent, 'sticker_caption', '')
+            if caption:
                 recent = self.basic_memory.get_context(group_id, n=1)
                 if recent:
                     last_entry = recent[0]
-                    last_entry.content = f"【图片】【图片描述：{intent.image_caption}】"
+                    if has_sticker:
+                        # 动画表情：去掉无意义的文件哈希，替换为描述
+                        stripped = re.sub(
+                            r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)",
+                            "", last_entry.content or "",
+                        ).strip()
+                        sticker_tag = f"【动画表情：{caption}】"
+                        last_entry.content = (
+                            f"{stripped} {sticker_tag}" if stripped else sticker_tag
+                        )
+                    else:
+                        last_entry.content = f"【图片】【图片描述：{caption}】"
                     if last_entry.multimodal_inputs:
                         for m in last_entry.multimodal_inputs:
                             if m.get("type") == "image":
-                                m["caption"] = intent.image_caption
+                                m["caption"] = caption
             return {
                 "strategy": "silent",
                 "reply": None,

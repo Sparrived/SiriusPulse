@@ -30,7 +30,7 @@ MIN_CANDIDATES = 5
 
 
 _TRIPLE_EXTRACTION_PROMPT = (
-    "你是事实提取助手。从群聊片段中提取结构化事实和别称。\n"
+    "你是一个性能优异的事实提取助手，能准确从群聊片段中提取结构化的事实和别称。\n"
     "\n"
     "人物列表（格式：显示名(ID)）：\n"
     "{entities}\n"
@@ -155,9 +155,6 @@ class SituationExtractor:
             if subject not in known_entities:
                 logger.debug("三元组主语不在实体列表中: %s", subject)
                 continue
-            if self._is_low_quality_triple_array(subject, predicate, obj):
-                logger.debug("三元组质量过滤: %s", t)
-                continue
             validated_raw.append((subject, predicate, obj))
 
         # Step 3: 别称处理（别称格式：["ID", "别称"]）
@@ -278,7 +275,7 @@ class SituationExtractor:
             model=model_name,
             system_prompt="你是精确的事实提取助手。只输出 JSON，不要其他文字。",
             messages=[{"role": "user", "content": user_prompt}],
-            temperature=0.1,
+            temperature=0.4,
             max_tokens=1024,
             purpose="situation_extract",
             response_format={"type": "json_object"},
@@ -293,35 +290,6 @@ class SituationExtractor:
         return self._parse_response(raw)
 
     # ── 结构化校验 ──
-
-    @staticmethod
-    def _is_low_quality_triple_array(subject: str, predicate: str, obj: str) -> bool:
-        """过滤低质量/无意义三元组。"""
-        if subject == obj:
-            return True
-
-        _VAGUE_PREDICATES = {
-            "是", "说", "在", "有", "做", "想", "看", "知道",
-            "说了", "做了", "是的", "不是", "可以", "会",
-        }
-        if predicate in _VAGUE_PREDICATES:
-            return True
-
-        _VAGUE_OBJECTS = {
-            "东西", "事情", "什么", "这个", "那个", "一些",
-            "很多", "好", "不好", "对", "错", "嗯", "哦",
-        }
-        if obj in _VAGUE_OBJECTS:
-            return True
-
-        if len(predicate) + len(obj) < 3:
-            return True
-
-        _NON_PERSON_SUBJECTS = {"群", "群聊", "系统", "机器人", "bot", "everyone", "大家"}
-        if subject.lower() in _NON_PERSON_SUBJECTS:
-            return True
-
-        return False
 
     @staticmethod
     def _build_conversation_text(entries: list[BasicMemoryEntry]) -> str:
