@@ -10,6 +10,7 @@ from typing import Any
 
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.memory.diary.models import DiaryEntry, DiaryGenerationResult
+from sirius_pulse.memory.situation.models import Situation
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,132 @@ class DiaryGenerator:
             dominant_topic=dominant_topic,
             interest_topics=interest_topics,
         )
+
+    # ── 从 Situation 生成日记（新架构）──
+
+    _SITUATION_DIARY_PROMPT = """你是 {persona_name}，{persona_description}。
+你正在回顾今天在群里的经历，写一篇日记。
+
+今天的经历摘要（按时间顺序）：
+{situations_text}
+
+写作要求：
+- 以"{persona_name}"的第一人称口吻书写，像你本人在回忆今天的经历
+- 表达你自己的感受、看法、立场，不要旁观者视角
+- 明确提到每个人做了什么、说了什么，用自然的口吻转述
+- 保留重要信息、观点、约定、情绪变化
+- 去除重复内容
+- 如果今天有人提到了值得记住的事情（约定、计划、重要决定），重点记录
+- 不限制长度，充分叙述
+
+输出 JSON：
+{{"content": "日记正文（以{persona_name}的口吻）", "keywords": ["关键词1", "关键词2"], "summary": "一句话摘要（不超过50字）"}}
+"""
+
+    async def generate_from_situations(
+        self,
+        *,
+        group_id: str,
+        situations: list[Situation],
+        persona_name: str,
+        persona_description: str,
+        brain: Any,
+        model_name: str,
+        temperature: float = 0.5,
+        max_tokens: int = 2048,
+        max_retries: int = 2,
+    ) -> dict[str, Any] | None:
+        """从 Situation 列表生成日记。
+
+        与 generate() 的区别：
+        - 输入是 Situation（已验证的结构化压缩），而非原始消息
+        - 不限制字数，让 LLM 充分叙述
+        - 后续由 DiarySlicer 负责切片
+
+        Returns:
+            {"content": "...", "keywords": [...], "summary": "..."} 或 None
+        """
+        if not situations:
+            return None
+
+        from sirius_pulse.core.brain import RawRequest
+
+        # 构建情景摘要文本
+        situations_text = self._build_situations_text(situations)
+        system_prompt = self._SITUATION_DIARY_PROMPT.format(
+            persona_name=persona_name,
+            persona_description=persona_description,
+            situations_text=situations_text,
+        )
+
+        parsed: dict[str, Any] | None = None
+        for attempt in range(max_retries + 1):
+            raw_request = RawRequest(
+                model=model_name,
+                system_prompt=system_prompt,
+                messages=[{"role": "user", "content": "请根据以上经历写日记。"}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                purpose="diary_from_situation",
+                response_format={"type": "json_object"},
+            )
+
+            try:
+                raw = await brain.raw_call(raw_request)
+            except Exception as exc:
+                logger.error(
+                    "Situation 日记生成 LLM 调用失败 (group=%s): %s",
+                    group_id, exc,
+                )
+                return None
+
+            parsed = self._parse_response(raw)
+            if parsed and parsed.get("content"):
+                break
+
+            if attempt < max_retries:
+                logger.warning(
+                    "Situation 日记生成 JSON 解析失败 (group=%s, attempt=%d)",
+                    group_id, attempt + 1,
+                )
+                system_prompt += (
+                    "\n\n【重要提醒】请确保输出是严格合法的 JSON 对象。"
+                )
+            else:
+                logger.warning(
+                    "Situation 日记生成 JSON 解析失败 (group=%s)，已耗尽重试",
+                    group_id,
+                )
+                return None
+
+        return parsed
+
+    @staticmethod
+    def _build_situations_text(situations: list[Situation]) -> str:
+        """将 Situation 列表转为 LLM 可读的摘要文本。"""
+        lines = []
+        for idx, sit in enumerate(situations, 1):
+            time_str = ""
+            if sit.time_range_start:
+                try:
+                    dt = datetime.fromisoformat(
+                        sit.time_range_start.replace("Z", "+00:00")
+                    )
+                    time_str = f" ({dt.strftime('%H:%M')})"
+                except (ValueError, TypeError):
+                    pass
+
+            participants_str = ""
+            if sit.participants:
+                participants_str = f" [参与者: {', '.join(sit.participants[:5])}]"
+
+            lines.append(
+                f"【片段{idx}{time_str}{participants_str}】{sit.summary}"
+            )
+
+        return "\n".join(lines)
+
+    # ── 内部工具 ──
 
     @staticmethod
     def _parse_response(raw: str) -> dict[str, Any] | None:
