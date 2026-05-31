@@ -9,6 +9,7 @@ from sirius_pulse.memory.diary.indexer import DiaryIndexer, DiaryRetriever
 from sirius_pulse.memory.diary.consolidator import DiaryConsolidator
 from sirius_pulse.memory.diary.slice_models import DiarySlice
 from sirius_pulse.memory.diary.slicer import DiarySlicer
+from sirius_pulse.memory.diary.slice_retriever import DiarySliceRetriever
 
 __all__ = [
     "DiaryEntry",
@@ -20,4 +21,5 @@ __all__ = [
     "DiaryConsolidator",
     "DiarySlice",
     "DiarySlicer",
+    "DiarySliceRetriever",
 ]
