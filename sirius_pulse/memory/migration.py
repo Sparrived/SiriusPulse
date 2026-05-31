@@ -10,6 +10,7 @@
 
 迁移策略：
 - 使用 LLM 从 distilled_points 中提取结构化三元组
+- LLM 模型和 API Key 从 provider 配置自动读取
 - 迁移数据标记为 MetaTag.MIGRATION
 - 置信度设为 0.5（中等偏低），便于演化链后续自动核实或替换
 """
@@ -32,7 +33,6 @@ from sirius_pulse.memory.evolution.models import (
 
 logger = logging.getLogger(__name__)
 
-# 迁移数据的置信度：中等偏低，便于演化链后续核实
 MIGRATION_CONFIDENCE = 0.5
 
 
@@ -55,16 +55,88 @@ _MIGRATION_TRIPLE_PROMPT = """从以下用户描述中提取结构化事实。
 """
 
 
+def _build_brain_from_provider(work_path: Path):
+    """从 provider 配置构建 Brain 实例。
+
+    优先级：
+    1. data/providers/provider_keys.json（全局配置）
+    2. work_path/provider_keys.json（人格配置）
+    3. 环境变量
+    """
+    from sirius_pulse.providers.routing import AutoRoutingProvider, ProviderRegistry
+    from sirius_pulse.core.brain import Brain
+    from sirius_pulse.core.model_router import ModelRouter
+    from sirius_pulse.models.persona import PersonaProfile
+
+    # 尝试从全局配置加载
+    data_dir = work_path.parent
+    if (data_dir / "providers" / "provider_keys.json").exists():
+        registry = ProviderRegistry(data_dir)
+    elif (work_path / "provider_keys.json").exists():
+        registry = ProviderRegistry(work_path)
+    else:
+        # 尝试环境变量
+        import os
+        api_key = os.getenv("SIRIUS_API_KEY", "")
+        base_url = os.getenv("SIRIUS_BASE_URL", "")
+        model = os.getenv("SIRIUS_MODEL", "gpt-4o-mini")
+        if not api_key:
+            return None, ""
+        from sirius_pulse.providers.routing import ProviderConfig
+        cfg = ProviderConfig(
+            provider_type="openai-compatible",
+            api_key=api_key,
+            base_url=base_url,
+            healthcheck_model=model,
+            enabled=True,
+            models=[model],
+        )
+        provider = AutoRoutingProvider({"openai-compatible": cfg})
+        model_router = ModelRouter({"memory_extract": model}, default_model=model)
+        persona = PersonaProfile(name="迁移助手")
+        brain = Brain(
+            provider_async=provider,
+            model_router=model_router,
+            persona=persona,
+        )
+        return brain, model
+
+    loaded = registry.load()
+    if not loaded:
+        return None, ""
+
+    provider = AutoRoutingProvider(loaded)
+
+    # 选择模型：优先使用 healthcheck_model 或第一个可用模型
+    model_name = ""
+    for cfg in loaded.values():
+        if cfg.healthcheck_model:
+            model_name = cfg.healthcheck_model
+            break
+        if cfg.models:
+            model_name = cfg.models[0]
+            break
+
+    if not model_name:
+        return None, ""
+
+    model_router = ModelRouter({"memory_extract": model_name}, default_model=model_name)
+    persona = PersonaProfile(name="迁移助手")
+    brain = Brain(
+        provider_async=provider,
+        model_router=model_router,
+        persona=persona,
+    )
+    return brain, model_name
+
+
 async def migrate_distilled_points(
     conn: sqlite3.Connection,
     chain: EvolutionChain,
     brain: any,
     model_name: str,
 ) -> int:
-    """迁移 UnifiedUser.distilled_points 到演化链。
-
-    使用 LLM 从蒸馏要点中提取结构化三元组。
-    """
+    """迁移 UnifiedUser.distilled_points 到演化链。"""
     cursor = conn.execute(
         "SELECT user_id, name, distilled_points FROM users WHERE distilled_points != '[]'"
     )
@@ -79,15 +151,11 @@ async def migrate_distilled_points(
         if not points:
             continue
 
-        # 合并要点为一段文本
         points_text = "\n".join(f"- {p}" for p in points if p and p.strip())
         if not points_text:
             continue
 
-        # 调用 LLM 提取三元组
-        triples = await _extract_triples_from_text(
-            points_text, brain, model_name
-        )
+        triples = await _extract_triples_from_text(points_text, brain, model_name)
 
         if triples:
             for t in triples:
@@ -107,7 +175,6 @@ async def migrate_distilled_points(
                 chain._persist_record(record)
                 migrated += 1
         else:
-            # LLM 提取失败，降级为原始文本存储
             for point_text in points:
                 if not point_text or not point_text.strip():
                     continue
@@ -156,13 +223,11 @@ async def _extract_triples_from_text(
         logger.warning("迁移 LLM 提取失败: %s", exc)
         return None
 
-    # 解析 JSON
     parsed = _parse_response(raw)
     if not parsed:
         return None
 
     triples = parsed.get("triples", [])
-    # 过滤无效三元组
     valid = [
         t for t in triples
         if t.get("subject") and t.get("predicate") and t.get("obj")
@@ -170,10 +235,7 @@ async def _extract_triples_from_text(
     return valid if valid else None
 
 
-def migrate_identity_anchors(
-    conn: sqlite3.Connection,
-    chain: EvolutionChain,
-) -> int:
+def migrate_identity_anchors(conn: sqlite3.Connection, chain: EvolutionChain) -> int:
     """迁移 UnifiedUser.identity_anchors 到演化链。"""
     cursor = conn.execute(
         "SELECT user_id, name, identity_anchors FROM users WHERE identity_anchors != '[]'"
@@ -189,7 +251,6 @@ def migrate_identity_anchors(
         for anchor in anchors:
             if not anchor or not anchor.strip():
                 continue
-
             record = EvolutionRecord(
                 subject=name or user_id,
                 subject_user_id=user_id,
@@ -210,10 +271,7 @@ def migrate_identity_anchors(
     return migrated
 
 
-def migrate_relationships(
-    conn: sqlite3.Connection,
-    chain: EvolutionChain,
-) -> int:
+def migrate_relationships(conn: sqlite3.Connection, chain: EvolutionChain) -> int:
     """迁移 UnifiedUser.relationships 到演化链。"""
     cursor = conn.execute(
         "SELECT user_id, name, relationships FROM users WHERE relationships != '[]'"
@@ -229,12 +287,10 @@ def migrate_relationships(
         for rel in relationships:
             if not isinstance(rel, dict):
                 continue
-
             target = rel.get("target_name", "")
             relation = rel.get("relation", "")
             if not target or not relation:
                 continue
-
             record = EvolutionRecord(
                 subject=name or user_id,
                 subject_user_id=user_id,
@@ -273,39 +329,32 @@ def _parse_response(raw: str) -> dict | None:
 
 
 async def run_migration(work_path: Path, brain: any = None, model_name: str = "") -> None:
-    """执行完整迁移。
-
-    Args:
-        work_path: 数据目录路径
-        brain: Brain 实例（用于 LLM 提取），为 None 时跳过 LLM 提取
-        model_name: 模型名称
-    """
+    """执行完整迁移。"""
     logger.info("开始迁移: %s", work_path)
 
-    # 连接统一数据库 persona.db
     db_path = work_path / "persona.db"
     if not db_path.exists():
-        # 兼容旧的 memory.db
         db_path = work_path / "memory.db"
         if not db_path.exists():
-            logger.warning("数据库不存在: %s", db_path)
+            logger.error("数据库不存在: %s", db_path)
             return
 
     conn = sqlite3.connect(str(db_path))
-
-    # 初始化演化链（共享同一连接）
     chain = EvolutionChain(conn=conn)
 
     try:
         total = 0
 
-        # 迁移 distilled_points（需要 LLM）
+        # 迁移 distilled_points
         if brain and model_name:
+            logger.info("使用模型 %s 进行 LLM 提取...", model_name)
             total += await migrate_distilled_points(conn, chain, brain, model_name)
         else:
-            logger.info("未提供 Brain 实例，跳过 distilled_points 的 LLM 提取")
+            logger.warning("未提供 Brain 实例，distilled_points 将以原始文本迁移")
+            # 降级：直接以原始文本迁移
+            total += await migrate_distilled_points_fallback(conn, chain)
 
-        # 迁移 identity_anchors 和 relationships（不需要 LLM）
+        # 迁移 identity_anchors 和 relationships
         total += migrate_identity_anchors(conn, chain)
         total += migrate_relationships(conn, chain)
 
@@ -315,8 +364,50 @@ async def run_migration(work_path: Path, brain: any = None, model_name: str = ""
         chain.close()
 
 
+async def migrate_distilled_points_fallback(
+    conn: sqlite3.Connection,
+    chain: EvolutionChain,
+) -> int:
+    """降级迁移：不调用 LLM，直接以原始文本存储。"""
+    cursor = conn.execute(
+        "SELECT user_id, name, distilled_points FROM users WHERE distilled_points != '[]'"
+    )
+    rows = cursor.fetchall()
+
+    migrated = 0
+    for row in rows:
+        user_id = row[0]
+        name = row[1]
+        points = json.loads(row[2])
+
+        for point_text in points:
+            if not point_text or not point_text.strip():
+                continue
+            record = EvolutionRecord(
+                subject=name or user_id,
+                subject_user_id=user_id,
+                predicate="蒸馏要点",
+                obj=point_text.strip()[:100],
+                status=RecordStatus.ACTIVE,
+                confidence=MIGRATION_CONFIDENCE,
+                initial_confidence=MIGRATION_CONFIDENCE,
+                source_type=MetaTag.MIGRATION,
+                source_group_id="",
+                source_message_ids=[],
+                extracted_by_model="migration:fallback",
+            )
+            chain._persist_record(record)
+            migrated += 1
+
+    logger.info("降级迁移 distilled_points: %d 条", migrated)
+    return migrated
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
     parser = argparse.ArgumentParser(description="迁移旧记忆数据到演化链")
     parser.add_argument("--work-path", type=Path, required=True, help="数据目录路径")
     parser.add_argument("--no-llm", action="store_true", help="跳过 LLM 提取（降级模式）")
@@ -326,12 +417,16 @@ def main() -> None:
     model_name = ""
 
     if not args.no_llm:
-        logger.info("提示：使用 --no-llm 可跳过 LLM 提取（降级模式）")
-        logger.info("当前使用降级模式，distilled_points 将以原始文本迁移")
-        # 降级模式：不调用 LLM
-        asyncio.run(run_migration(args.work_path))
+        # 从 provider 配置自动读取 API Key 和模型
+        brain, model_name = _build_brain_from_provider(args.work_path)
+        if brain:
+            logger.info("已从 provider 配置加载模型: %s", model_name)
+        else:
+            logger.warning("未找到 provider 配置，将使用降级模式（不调用 LLM）")
     else:
-        asyncio.run(run_migration(args.work_path))
+        logger.info("使用 --no-llm 模式，跳过 LLM 提取")
+
+    asyncio.run(run_migration(args.work_path, brain=brain, model_name=model_name))
 
 
 if __name__ == "__main__":

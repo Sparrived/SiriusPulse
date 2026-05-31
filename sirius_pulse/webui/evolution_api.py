@@ -164,4 +164,9 @@ async def api_evolution_records(request: web.Request, persona_manager: Any) -> w
 
     chain = EvolutionChain(db_path)
     subject = request.query.get("subject", "").strip()
-    status_filter = request.query.get("status", "").
+    status_filter = request.query.get("status", "").strip()
+    limit = min(int(request.query.get("limit", "200")), 500)
+    offset = max(int(request.query.get("offset", "0")), 0)
+
+    if subject:
+        records = chain.get_all_by_subject(subject)
