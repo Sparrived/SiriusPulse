@@ -479,7 +479,7 @@ function renderMessages() {
   }
 
   msgIdCounter = 0;
-  el.innerHTML = messages.map(m => {
+  el.innerHTML = messages.map((m, idx) => {
     const roleStyle = getRoleStyle(m.role);
     const speakerName = m.speaker_name || m.user_id || roleStyle.label;
     const content = m.content || '';
@@ -487,7 +487,7 @@ function renderMessages() {
     const systemPrompt = m.system_prompt || '';
     const hasPrompt = m.role === 'assistant' && systemPrompt;
     const msgId = `msg-${msgIdCounter++}`;
-    const entryId = m.entry_id || msgId;
+    const entryId = m.entry_id || m.timestamp || `idx-${idx}`;
     const tags = m.tags || [];
 
     return `
@@ -502,76 +502,58 @@ function renderMessages() {
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
-        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt, entryId) : ''}
+        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt, entryId, openPromptEntryIds.has(entryId), openSectionEntryIds) : ''}
       </div>
     `;
   }).join('');
 
-  // 恢复之前展开的prompt-detail状态
-  openPromptEntryIds.forEach(entryId => {
-    const detail = el.querySelector(`.prompt-detail[data-entry-id="${entryId}"]`);
-    if (detail) {
-      detail.style.display = 'block';
-      const btn = detail.parentElement?.querySelector('.prompt-toggle');
-      if (btn) {
-        const arrow = btn.querySelector('.toggle-arrow');
-        if (arrow) arrow.style.transform = 'rotate(90deg)';
-      }
-    }
-  });
-  openSectionEntryIds.forEach(entryId => {
-    const body = el.querySelector(`.section-body[data-entry-id="${entryId}"]`);
-    if (body) {
-      body.style.display = 'block';
-      const header = body.previousElementSibling;
-      if (header) {
-        const arrow = header.querySelector('.section-arrow');
-        if (arrow) arrow.style.transform = 'rotate(90deg)';
-      }
-    }
-  });
-
   bindPromptToggles();
 
-  // 恢复滚动位置（使用requestAnimationFrame确保DOM更新后再设置）
+  // 恢复滚动位置
   requestAnimationFrame(() => {
     el.scrollTop = scrollTop;
   });
 }
 
-function renderPromptToggle(msgId, systemPrompt, entryId = '') {
+function renderPromptToggle(msgId, systemPrompt, entryId = '', isOpen = false, openSectionEntryIds = null) {
   const tokenCount = estimateTokens(systemPrompt);
   const charCount = systemPrompt.length;
   const sections = parsePromptSections(systemPrompt);
   const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');
 
+  const displayStyle = isOpen ? 'display:block' : 'display:none';
+  const arrowTransform = isOpen ? 'transform:rotate(90deg)' : '';
+
   return `
     <div style="margin-top:10px">
       <button class="btn btn-sm prompt-toggle" data-target="${msgId}" style="font-size:11px;padding:4px 10px;display:flex;align-items:center;gap:6px">
-        <span class="toggle-arrow" style="display:inline-block;transition:transform 0.2s">▸</span>
+        <span class="toggle-arrow" style="display:inline-block;transition:transform 0.2s;${arrowTransform}">▸</span>
         <span>查看 LLM 输入上下文</span>
         <span style="color:var(--text-3);font-size:10px">${tokenCount} tokens · ${charCount} chars</span>
       </button>
-      <div id="${msgId}" class="prompt-detail" data-entry-id="${entryId}" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:500px;overflow-y:auto">
-        ${hasSections ? renderStructuredSections(sections, entryId) : renderRawPrompt(systemPrompt)}
+      <div id="${msgId}" class="prompt-detail" data-entry-id="${entryId}" style="${displayStyle};margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:500px;overflow-y:auto">
+        ${hasSections ? renderStructuredSections(sections, entryId, openSectionEntryIds) : renderRawPrompt(systemPrompt)}
       </div>
     </div>
   `;
 }
 
-function renderStructuredSections(sections, entryId = '') {
+function renderStructuredSections(sections, entryId = '', openSectionEntryIds = null) {
   return sections.map((section, idx) => {
     if (section.type === 'section') {
       const sectionId = `section-${msgIdCounter}-${idx}`;
+      const isSectionOpen = openSectionEntryIds && openSectionEntryIds.has(entryId);
+      const sectionDisplay = isSectionOpen ? 'display:block' : 'display:none';
+      const sectionArrowTransform = isSectionOpen ? 'transform:rotate(90deg)' : '';
       return `
         <div style="border-bottom:1px solid var(--border)">
           <div class="section-header" data-target="${sectionId}"
                style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;background:${section.color}08">
-            <span class="section-arrow" style="display:inline-block;transition:transform 0.2s;font-size:11px;color:var(--text-3)">▸</span>
+            <span class="section-arrow" style="display:inline-block;transition:transform 0.2s;font-size:11px;color:var(--text-3);${sectionArrowTransform}">▸</span>
             <span style="font-size:12px;font-weight:600;color:${section.color}">${section.label}</span>
             <span style="font-size:10px;color:var(--text-3);margin-left:auto">${section.content.length} chars</span>
           </div>
-          <div id="${sectionId}" class="section-body" data-entry-id="${entryId}" style="display:none;padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:250px;overflow-y:auto;font-family:monospace">${escapeHtml(section.content)}</div>
+          <div id="${sectionId}" class="section-body" data-entry-id="${entryId}" style="${sectionDisplay};padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:250px;overflow-y:auto;font-family:monospace">${escapeHtml(section.content)}</div>
         </div>
       `;
     }
