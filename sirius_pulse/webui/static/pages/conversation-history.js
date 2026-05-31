@@ -353,6 +353,12 @@ function parsePromptSections(prompt) {
           content: contentBefore,
         });
         currentSection = null;
+      } else {
+        // 保存之前的文本（如果没有当前section）
+        if (tagStart > lastIndex) {
+          const text = prompt.slice(lastIndex, tagStart).trim();
+          if (text) sections.push({ type: 'text', content: text });
+        }
       }
 
       // 查找匹配的颜色
@@ -527,8 +533,10 @@ function renderMessages() {
 
   bindPromptToggles();
 
-  // 恢复滚动位置
-  el.scrollTop = scrollTop;
+  // 恢复滚动位置（使用requestAnimationFrame确保DOM更新后再设置）
+  requestAnimationFrame(() => {
+    el.scrollTop = scrollTop;
+  });
 }
 
 function renderPromptToggle(msgId, systemPrompt, entryId = '') {
