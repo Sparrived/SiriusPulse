@@ -1,8 +1,9 @@
-"""人物传记系统 — 已合并到 UnifiedUserManager。
+"""人物传记系统。
 
-此模块保留向后兼容的导入，实际功能已迁移到：
-- sirius_pulse.memory.user.unified_models (UnifiedUser, RelationshipAnchor, AliasEntry)
-- sirius_pulse.memory.user.unified_manager (UnifiedUserManager)
+包含：
+- BiographyView：从演化链自动派生传记（新架构）
+- UserBiography：传记数据模型
+- 向后兼容导入：UnifiedUser, RelationshipAnchor, AliasEntry
 """
 
 from __future__ import annotations
@@ -12,9 +13,13 @@ from sirius_pulse.memory.user.unified_models import (
     RelationshipAnchor,
     UnifiedUser,
 )
+from sirius_pulse.memory.biography.models import UserBiography
+from sirius_pulse.memory.biography.view import BiographyView
 
 __all__ = [
     "UnifiedUser",
     "RelationshipAnchor",
     "AliasEntry",
+    "UserBiography",
+    "BiographyView",
 ]
