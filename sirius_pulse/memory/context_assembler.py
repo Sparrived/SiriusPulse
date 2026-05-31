@@ -143,13 +143,6 @@ class ContextAssembler:
             {"role": "system", "content": enriched_system}
         ]
 
-        # 当 content_is_tagged=True 时，current_query 已由 PromptFactory.assemble_chat()
-        # 包含完整的【最近消息】XML 标签和前缀段落，直接跳过 basic_memory 历史检索
-        # 和 pending 逻辑，避免同一消息在上下文中出现两次
-        if content_is_tagged:
-            messages.append({"role": "user", "content": current_query})
-            return messages
-
         # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息）
         if recent_n > 0:
             recent = self._basic.get_context(group_id, n=recent_n)
@@ -187,43 +180,48 @@ class ContextAssembler:
                 messages.append({"role": "user", "content": xml_content})
 
         # 6. 添加当前用户消息（带身份标识）
-        # 如果有 pending 消息，把它们和当前消息一起打包
-        # 排除与当前发言者匹配的最后一条 pending 条目，避免 current_query 重复注入
-        filtered_pending = pending_entries
-        if pending_entries and speaker_user_id:
-            for i in range(len(pending_entries) - 1, -1, -1):
-                if pending_entries[i].user_id == speaker_user_id:
-                    filtered_pending = pending_entries[:i] + pending_entries[i + 1 :]
-                    break
-        all_current = filtered_pending
-        if speaker_name or speaker_user_id:
-            # 用 XML 格式包装，让模型知道是谁说的
-            safe_content = html.escape(current_query, quote=False)
-            safe_speaker = html.escape(speaker_name or speaker_user_id, quote=True)
-            safe_uid = html.escape(speaker_user_id, quote=True)
-            current_xml = (
-                f'<message speaker="{safe_speaker}" user_id="{safe_uid}">'
-                f'{safe_content}</message>'
-            )
-            # 把 pending 消息和当前消息合并
-            if all_current:
-                pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
-                # 去掉外层标签，只保留 message 标签
-                pending_lines = [
-                    line for line in pending_xml.split("\n")
-                    if line.strip() and not line.startswith("<pending_messages>")
-                    and not line.startswith("</pending_messages>")
-                ]
-                combined = "\n".join(pending_lines) + "\n" + current_xml
-                messages.append({"role": "user", "content": combined})
-            else:
-                messages.append({"role": "user", "content": current_xml})
+        # 当 content_is_tagged=True 时，current_query 已由 PromptFactory.assemble_chat()
+        # 包含完整的 XML 标签和前缀段落（传记、情绪、关系、技能等），直接使用
+        if content_is_tagged:
+            messages.append({"role": "user", "content": current_query})
         else:
-            if all_current:
-                pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
-                messages.append({"role": "user", "content": pending_xml + "\n" + current_query})
+            # 如果有 pending 消息，把它们和当前消息一起打包
+            # 排除与当前发言者匹配的最后一条 pending 条目，避免 current_query 重复注入
+            filtered_pending = pending_entries
+            if pending_entries and speaker_user_id:
+                for i in range(len(pending_entries) - 1, -1, -1):
+                    if pending_entries[i].user_id == speaker_user_id:
+                        filtered_pending = pending_entries[:i] + pending_entries[i + 1 :]
+                        break
+            all_current = filtered_pending
+            if speaker_name or speaker_user_id:
+                # 用 XML 格式包装，让模型知道是谁说的
+                safe_content = html.escape(current_query, quote=False)
+                safe_speaker = html.escape(speaker_name or speaker_user_id, quote=True)
+                safe_uid = html.escape(speaker_user_id, quote=True)
+                current_xml = (
+                    f'<message speaker="{safe_speaker}" user_id="{safe_uid}">'
+                    f'{safe_content}</message>'
+                )
+                # 把 pending 消息和当前消息合并
+                if all_current:
+                    pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
+                    # 去掉外层标签，只保留 message 标签
+                    pending_lines = [
+                        line for line in pending_xml.split("\n")
+                        if line.strip() and not line.startswith("<pending_messages>")
+                        and not line.startswith("</pending_messages>")
+                    ]
+                    combined = "\n".join(pending_lines) + "\n" + current_xml
+                    messages.append({"role": "user", "content": combined})
+                else:
+                    messages.append({"role": "user", "content": current_xml})
             else:
-                messages.append({"role": "user", "content": current_query})
+                if all_current:
+                    pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
+                    messages.append({"role": "user", "content": pending_xml + "\n" + current_query})
+                else:
+                    messages.append({"role": "user", "content": current_query})
 
         return messages
 

@@ -418,26 +418,61 @@ class PromptFactory:
         caller_is_developer: bool = False,
         speaker_name: str = "",
     ) -> str | None:
-        """构建多用户关系描述（合并消息场景）。"""
+        """构建多用户关系描述（合并消息场景）。
+
+        多个用户时将互动指导合并为单个描述，避免标签重复插入。
+        """
         if not user_profiles:
             return None
 
-        contexts: list[str] = []
-        seen: set[str] = set()
-        for profile in user_profiles:
-            if profile.user_id in seen:
-                continue
-            seen.add(profile.user_id)
-            display = speaker_name if len(user_profiles) == 1 else profile.user_id
-            ctx = PromptFactory.build_relationship_context(
-                profile, caller_is_developer, speaker_name=display,
+        # 单用户场景：直接返回单用户描述
+        if len(user_profiles) == 1:
+            return PromptFactory.build_relationship_context(
+                user_profiles[0], caller_is_developer, speaker_name=speaker_name,
             )
-            if ctx:
-                contexts.append(ctx)
 
-        if not contexts:
+        # 多用户场景：收集各用户描述并合并
+        positive_users: list[str] = []
+        negative_users: list[str] = []
+        seen: set[str] = set()
+
+        for profile in user_profiles:
+            uid = getattr(profile, "user_id", "")
+            if uid in seen:
+                continue
+            seen.add(uid)
+
+            if caller_is_developer:
+                positive_users.append(uid)
+                continue
+
+            rate = getattr(profile, "engagement_rate", 0.0)
+            count = getattr(profile, "interaction_count", 0)
+
+            if rate >= 0.6:
+                positive_users.append(uid)
+            elif count >= 10 and rate < 0.15:
+                negative_users.append(uid)
+
+        # 构建合并描述
+        parts: list[str] = []
+        if caller_is_developer:
+            parts.append("他们是你的开发者，关系亲密，可以畅所欲言。")
+        else:
+            if positive_users:
+                names = "、".join(positive_users[:3])
+                if len(positive_users) > 3:
+                    names += f"等{len(positive_users)}人"
+                parts.append(f"{names}经常回应你的消息，互动良好，可以自然放松。")
+            if negative_users:
+                names = "、".join(negative_users[:3])
+                if len(negative_users) > 3:
+                    names += f"等{len(negative_users)}人"
+                parts.append(f"{names}很少回应你的消息，尽量简洁，不要强行搭话。")
+
+        if not parts:
             return None
-        return "\n".join(contexts)
+        return f"{TAG_RELATIONSHIP_STATUS}\n" + "\n".join(parts)
 
     @staticmethod
     def build_biography_section(
