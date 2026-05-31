@@ -516,7 +516,7 @@ class Brain:
             sticker_names: list[str] = []
             clean_reply = reply.strip()
             if clean_reply:
-                clean_reply, sticker_names = parse_sticker_tags(clean_reply)
+                clean_reply, sticker_names = parse_sticker_tags(clean_reply, self.sticker_names)
 
             # ── 默认 post: 记录 token 用量 ──
             token_record = self._record_chat_tokens(

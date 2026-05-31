@@ -507,7 +507,7 @@ class DelayedQueueTasks:
 
         # 解析表情包标签 [STICKERS: ...] 并异步发送
         if clean_reply:
-            clean_reply, sticker_names = parse_sticker_tags(clean_reply)
+            clean_reply, sticker_names = parse_sticker_tags(clean_reply, engine._sticker_names)
             if sticker_names:
                 asyncio.create_task(
                     engine._send_stickers_by_names(group_id, sticker_names)

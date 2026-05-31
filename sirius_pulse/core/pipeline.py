@@ -624,19 +624,25 @@ class Pipeline:
     ) -> None:
         """收集人物传记信息，供 PromptFactory 使用。
 
-        使用 BiographyView 从演化链派生传记。
+        使用 BiographyView 从演化链派生传记，并从 UnifiedUserManager
+        同步别名到传记对象中，使 PromptFactory 能注入别名提示。
         结果缓存在 engine._pending_biography 字典中。
         """
         engine = self._engine
         bio_view = engine.biography_view
+        mgr = engine.user_manager
 
         # 当前发言者传记（从演化链派生）
         speaker_bio = bio_view.get_biography(user_id) if user_id else None
+        # 同步别名
+        if speaker_bio and user_id:
+            user_obj = mgr.get_user(user_id)
+            if user_obj:
+                speaker_bio.aliases = list(user_obj.aliases)
 
         # 被提及者：从文本别名中收集
         mentioned: dict[str, float] = {}
         if message_content:
-            mgr = engine.user_manager
             for alias, entries in mgr._alias_index.items():
                 if len(alias) < 2 or alias not in message_content:
                     continue
@@ -646,15 +652,18 @@ class Pipeline:
                 if uid and uid != user_id:
                     mentioned[uid] = max(mentioned.get(uid, 0), conf)
 
-        # 获取被提及者的传记
-        mentioned_bios = {
-            uid: bio_view.get_biography(uid)
-            for uid in mentioned.keys()
-        }
+        # 获取被提及者的传记并同步别名
+        mentioned_bios: dict[str, Any] = {}
+        for uid in mentioned.keys():
+            bio = bio_view.get_biography(uid)
+            user_obj = mgr.get_user(uid)
+            if user_obj:
+                bio.aliases = list(user_obj.aliases)
+            mentioned_bios[uid] = bio
 
         engine._pending_biography = {
-            "speaker_user": speaker_bio,
-            "mentioned_users": mentioned_bios,
+            "speaker_card": speaker_bio,
+            "mentioned_cards": list(mentioned_bios.values()),
             "confidence": mentioned,
             "affinity_score": 0.0,
         }

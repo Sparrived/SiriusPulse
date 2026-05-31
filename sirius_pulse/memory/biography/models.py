@@ -65,6 +65,7 @@ class UserBiography:
             identity_anchors=list(data.get("identity_anchors", [])),
             relationships=list(data.get("relationships", [])),
             short_bio=data.get("short_bio", ""),
+            aliases=list(data.get("aliases", [])),
             source_record_ids=list(data.get("source_record_ids", [])),
             active_fact_count=int(data.get("active_fact_count", 0)),
             superseded_fact_count=int(data.get("superseded_fact_count", 0)),
