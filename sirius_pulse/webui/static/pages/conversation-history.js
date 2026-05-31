@@ -481,28 +481,9 @@ function renderMessages() {
   const oldScrollTop = el.scrollTop;
   const oldScrollHeight = el.scrollHeight;
 
-  // 保存当前展开的prompt-detail状态（使用data-entry-id作为标识）
-  const openPromptEntryIds = new Set();
-  const openSectionIds = new Set();
-  const promptScrollPositions = new Map();
   // 保存当前展开的chain-detail状态
   const openChainEntryIds = new Set();
   const chainScrollPositions = new Map();
-  el.querySelectorAll('.prompt-detail').forEach(detail => {
-    const entryId = detail.getAttribute('data-entry-id');
-    if (detail.style.display !== 'none') {
-      if (entryId) openPromptEntryIds.add(entryId);
-    }
-    if (entryId && detail.scrollTop > 0) {
-      promptScrollPositions.set(entryId, detail.scrollTop);
-    }
-  });
-  el.querySelectorAll('.section-body').forEach(body => {
-    if (body.style.display !== 'none') {
-      const sectionId = body.id;
-      if (sectionId) openSectionIds.add(sectionId);
-    }
-  });
   el.querySelectorAll('.chain-detail').forEach(detail => {
     const entryId = detail.getAttribute('data-entry-id');
     if (detail.style.display !== 'none') {
@@ -531,11 +512,8 @@ function renderMessages() {
     const speakerName = m.speaker_name || m.user_id || roleStyle.label;
     const content = m.content || '';
     const groupId = m.group_id || '';
-    const systemPrompt = m.system_prompt || '';
     const conversationChain = m.conversation_chain || [];
-    const hasPrompt = m.role === 'assistant' && systemPrompt;
     const hasChain = m.role === 'assistant' && conversationChain.length > 0;
-    const msgId = `msg-${msgIdCounter++}`;
     const chainMsgId = `chain-${msgIdCounter++}`;
     const entryId = m.entry_id || m.timestamp || `idx-${idx}`;
     const tags = m.tags || [];
@@ -553,23 +531,11 @@ function renderMessages() {
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
         ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, openChainEntryIds.has(entryId)) : ''}
-        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt, entryId, openPromptEntryIds.has(entryId), openSectionIds) : ''}
       </div>
     `;
   }).join('');
 
-  bindPromptToggles();
   bindChainToggles();
-
-  // 恢复prompt-detail内部滚动位置
-  if (promptScrollPositions.size > 0) {
-    el.querySelectorAll('.prompt-detail').forEach(detail => {
-      const entryId = detail.getAttribute('data-entry-id');
-      if (entryId && promptScrollPositions.has(entryId)) {
-        detail.scrollTop = promptScrollPositions.get(entryId);
-      }
-    });
-  }
 
   // 恢复chain-detail内部滚动位置
   if (chainScrollPositions.size > 0) {
@@ -585,58 +551,6 @@ function renderMessages() {
   const newScrollHeight = el.scrollHeight;
   const heightDiff = newScrollHeight - oldScrollHeight;
   el.scrollTop = oldScrollTop + heightDiff;
-}
-
-function renderPromptToggle(msgId, systemPrompt, entryId = '', isOpen = false, openSectionEntryIds = null) {
-  const tokenCount = estimateTokens(systemPrompt);
-  const charCount = systemPrompt.length;
-  const sections = parsePromptSections(systemPrompt);
-  const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');
-
-  const displayStyle = isOpen ? 'display:block' : 'display:none';
-  const arrowTransform = isOpen ? 'transform:rotate(90deg)' : '';
-
-  return `
-    <div style="margin-top:10px">
-      <button class="btn btn-sm prompt-toggle" data-target="${msgId}" style="font-size:11px;padding:4px 10px;display:flex;align-items:center;gap:6px">
-        <span class="toggle-arrow" style="display:inline-block;transition:transform 0.2s;${arrowTransform}">▸</span>
-        <span>查看 LLM 输入上下文</span>
-        <span style="color:var(--text-3);font-size:10px">${tokenCount} tokens · ${charCount} chars</span>
-      </button>
-      <div id="${msgId}" class="prompt-detail" data-entry-id="${entryId}" style="${displayStyle};margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:500px;overflow-y:auto">
-        ${hasSections ? renderStructuredSections(sections, entryId, openSectionEntryIds) : renderRawPrompt(systemPrompt)}
-      </div>
-    </div>
-  `;
-}
-
-function renderStructuredSections(sections, entryId = '', openSectionIds = null) {
-  return sections.map((section, idx) => {
-    if (section.type === 'section') {
-      const sectionId = `section-${msgIdCounter}-${idx}`;
-      const isSectionOpen = openSectionIds && openSectionIds.has(sectionId);
-      const sectionDisplay = isSectionOpen ? 'display:block' : 'display:none';
-      const sectionArrowTransform = isSectionOpen ? 'transform:rotate(90deg)' : '';
-      return `
-        <div style="border-bottom:1px solid var(--border)">
-          <div class="section-header" data-target="${sectionId}"
-               style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;background:${section.color}08">
-            <span class="section-arrow" style="display:inline-block;transition:transform 0.2s;font-size:11px;color:var(--text-3);${sectionArrowTransform}">▸</span>
-            <span style="font-size:12px;font-weight:600;color:${section.color}">${section.label}</span>
-            <span style="font-size:10px;color:var(--text-3);margin-left:auto">${section.content.length} chars</span>
-          </div>
-          <div id="${sectionId}" class="section-body" data-entry-id="${entryId}" style="${sectionDisplay};padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:250px;overflow-y:auto;font-family:monospace">${escapeHtml(section.content)}</div>
-        </div>
-      `;
-    }
-    return `
-      <div style="padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:200px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(section.content)}</div>
-    `;
-  }).join('');
-}
-
-function renderRawPrompt(systemPrompt) {
-  return `<div style="padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:400px;overflow-y:auto;font-family:monospace">${escapeHtml(systemPrompt)}</div>`;
 }
 
 const CHAIN_ROLE_STYLES = {
@@ -683,23 +597,130 @@ function renderChainMessages(chain) {
     const style = CHAIN_ROLE_STYLES[role] || CHAIN_ROLE_STYLES.system;
     const content = msg.content || '';
     const isSystem = role === 'system';
-    const truncated = isSystem ? truncate(content, 300) : content;
+    const isUser = role === 'user';
 
-    // 对 system 消息做结构化解析
+    // system 消息做结构化解析
     if (isSystem && content.length > 100) {
       return renderChainSystemMessage(content, style, idx);
     }
 
+    // user 消息：解析 XML 格式的多条消息
+    if (isUser) {
+      return renderChainUserMessage(content, style, idx);
+    }
+
+    // assistant 消息：直接展示
     return `
       <div style="border-bottom:1px solid var(--border);background:${style.bg}">
         <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
           <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
           <span style="font-size:10px;color:var(--text-3);margin-left:auto">${estimateTokens(content)} tokens</span>
         </div>
-        <div style="padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:monospace">${escapeHtml(truncated)}</div>
+        <div style="padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:monospace">${escapeHtml(content)}</div>
       </div>
     `;
   }).join('');
+}
+
+const SPEAKER_COLORS = [
+  '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3',
+  '#00bcd4', '#009688', '#4caf50', '#ff9800', '#ff5722',
+  '#795548', '#607d8b',
+];
+
+function getSpeakerColor(speaker) {
+  let hash = 0;
+  for (let i = 0; i < speaker.length; i++) {
+    hash = ((hash << 5) - hash) + speaker.charCodeAt(i);
+    hash |= 0;
+  }
+  return SPEAKER_COLORS[Math.abs(hash) % SPEAKER_COLORS.length];
+}
+
+function parseXmlMessages(content) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(content, 'text/xml');
+  if (doc.querySelector('parsererror')) {
+    return null;
+  }
+  const items = [];
+  doc.querySelectorAll('message').forEach(el => {
+    items.push({
+      type: 'message',
+      speaker: el.getAttribute('speaker') || '',
+      userId: el.getAttribute('user_id') || '',
+      time: el.getAttribute('time') || '',
+      content: el.textContent || '',
+    });
+  });
+  doc.querySelectorAll('image').forEach(el => {
+    items.push({
+      type: 'image',
+      speaker: el.getAttribute('speaker') || '',
+      userId: el.getAttribute('user_id') || '',
+      caption: el.getAttribute('caption') || '',
+      sticker: el.getAttribute('type') === 'sticker',
+      src: el.getAttribute('src') || '',
+    });
+  });
+  return items;
+}
+
+function renderChainUserMessage(content, style, idx) {
+  const parsed = parseXmlMessages(content);
+
+  // 非 XML 格式：直接按纯文本展示
+  if (!parsed || parsed.length === 0) {
+    return `
+      <div style="border-bottom:1px solid var(--border);background:${style.bg}">
+        <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
+          <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
+          <span style="font-size:10px;color:var(--text-3);margin-left:auto">${estimateTokens(content)} tokens</span>
+        </div>
+        <div style="padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:monospace">${escapeHtml(content)}</div>
+      </div>
+    `;
+  }
+
+  const innerHtml = parsed.map(item => {
+    if (item.type === 'image') {
+      if (item.sticker) {
+        return `
+          <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)">
+            <span style="font-size:10px;font-weight:600;color:${getSpeakerColor(item.speaker)}">${escapeHtml(item.speaker)}</span>
+            <span style="font-size:10px;color:var(--text-3)">🎞 表情包</span>
+          </div>
+        `;
+      }
+      return `
+        <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)">
+          <span style="font-size:10px;font-weight:600;color:${getSpeakerColor(item.speaker)}">${escapeHtml(item.speaker)}</span>
+          <span style="font-size:10px;color:var(--text-3)">🖼 ${escapeHtml(item.caption || '图片')}</span>
+        </div>
+      `;
+    }
+    const speakerColor = getSpeakerColor(item.speaker);
+    return `
+      <div style="padding:6px 12px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span style="font-size:10px;font-weight:600;color:${speakerColor}">${escapeHtml(item.speaker)}</span>
+          ${item.userId ? `<span style="font-size:9px;color:var(--text-3)">${escapeHtml(item.userId)}</span>` : ''}
+          ${item.time ? `<span style="font-size:9px;color:var(--text-3);margin-left:auto">${escapeHtml(item.time)}</span>` : ''}
+        </div>
+        <div style="font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap">${escapeHtml(item.content)}</div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div style="border-bottom:1px solid var(--border);background:${style.bg}">
+      <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
+        <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
+        <span style="font-size:10px;color:var(--text-3);margin-left:auto">${parsed.length} 条消息 · ${estimateTokens(content)} tokens</span>
+      </div>
+      ${innerHtml}
+    </div>
+  `;
 }
 
 function renderChainSystemMessage(content, style, idx) {
@@ -766,41 +787,6 @@ function bindChainToggles() {
       const isOpen = target.style.display !== 'none';
       target.style.display = isOpen ? 'none' : 'block';
       const arrow = header.querySelector('.chain-section-arrow');
-      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
-    });
-  });
-}
-
-function bindPromptToggles() {
-  document.querySelectorAll('.prompt-toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = document.getElementById(btn.dataset.target);
-      if (!target) return;
-      const isOpen = target.style.display !== 'none';
-      target.style.display = isOpen ? 'none' : 'block';
-      const arrow = btn.querySelector('.toggle-arrow');
-      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
-    });
-  });
-
-  document.querySelectorAll('.prompt-detail').forEach(detail => {
-    detail.addEventListener('wheel', (e) => {
-      const { scrollTop, scrollHeight, clientHeight } = detail;
-      const atTop = e.deltaY < 0 && scrollTop === 0;
-      const atBottom = e.deltaY > 0 && scrollTop + clientHeight >= scrollHeight;
-      if (!atTop && !atBottom) {
-        e.stopPropagation();
-      }
-    }, { passive: true });
-  });
-
-  document.querySelectorAll('.section-header').forEach(header => {
-    header.addEventListener('click', () => {
-      const target = document.getElementById(header.dataset.target);
-      if (!target) return;
-      const isOpen = target.style.display !== 'none';
-      target.style.display = isOpen ? 'none' : 'block';
-      const arrow = header.querySelector('.section-arrow');
       if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
     });
   });
