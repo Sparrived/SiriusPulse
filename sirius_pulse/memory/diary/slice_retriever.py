@@ -99,33 +99,23 @@ class DiarySliceRetriever:
     def _semantic_search(
         self, query: str, group_id: str, slices: list[DiarySlice]
     ) -> dict[str, float]:
-        """语义检索：优先使用 ChromaDB，fallback 到内存 cosine similarity。"""
+        """语义检索：使用 ChromaDB。"""
         if not self._embedding_client or not slices:
             return {}
+        if not self._vector_store or not self._vector_store.available:
+            return {}
 
-        # 计算 query embedding
         try:
             query_embedding = self._embedding_client.encode([query])[0]
         except Exception:
             return {}
 
-        # 优先使用 ChromaDB
-        if self._vector_store and self._vector_store.available:
-            results = self._vector_store.search(
-                query_embedding=query_embedding,
-                group_id=group_id,
-                top_k=len(slices),
-            )
-            return {sid: score for sid, score in results}
-
-        # fallback: 内存 cosine similarity
-        scores: dict[str, float] = {}
-        for s in slices:
-            if s.embedding:
-                similarity = self._cosine_similarity(query_embedding, s.embedding)
-                if similarity > 0.3:
-                    scores[s.slice_id] = similarity
-        return scores
+        results = self._vector_store.search(
+            query_embedding=query_embedding,
+            group_id=group_id,
+            top_k=len(slices),
+        )
+        return {sid: score for sid, score in results}
 
     # ── 路径 2: 三元组精确匹配 ──
 
@@ -174,20 +164,3 @@ class DiarySliceRetriever:
                 scores[s.slice_id] = min(1.0, score)
 
         return scores
-
-    # ── 工具方法 ──
-
-    @staticmethod
-    def _cosine_similarity(a: list[float], b: list[float]) -> float:
-        """计算余弦相似度。"""
-        if not a or not b or len(a) != len(b):
-            return 0.0
-
-        dot_product = sum(x * y for x, y in zip(a, b))
-        norm_a = sum(x * x for x in a) ** 0.5
-        norm_b = sum(x * x for x in b) ** 0.5
-
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-
-        return dot_product / (norm_a * norm_b)
