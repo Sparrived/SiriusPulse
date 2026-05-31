@@ -7,6 +7,15 @@ from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.glossary import GlossaryManager, GlossaryTerm
+from sirius_pulse.memory.evolution import (
+    EvolutionChain,
+    EvolutionRecord,
+    EvolutionAction,
+    Triple,
+    ValidationResult,
+)
+from sirius_pulse.memory.situation import Situation, SituationStore
+from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
 
 __all__ = [
     "BasicMemoryManager",
@@ -22,4 +31,13 @@ __all__ = [
     "UnifiedUserManager",
     "GlossaryManager",
     "GlossaryTerm",
+    "EvolutionChain",
+    "EvolutionRecord",
+    "EvolutionAction",
+    "Triple",
+    "ValidationResult",
+    "Situation",
+    "SituationStore",
+    "ColdDetector",
+    "ColdState",
 ]
