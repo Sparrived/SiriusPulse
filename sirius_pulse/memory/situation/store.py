@@ -52,13 +52,22 @@ class SituationStore(BaseSqliteStore):
                 ON situations(group_id, processed);
         """)
 
-        # 兼容旧表：添加 processed 列（如果不存在）
+        # 兼容旧表：检查并添加 processed 列
+        self._ensure_processed_column()
+
+    def _ensure_processed_column(self) -> None:
+        """确保 processed 列存在（兼容旧表）。"""
         try:
-            self.execute(
-                "ALTER TABLE situations ADD COLUMN processed INTEGER DEFAULT 0"
-            )
-        except Exception:
-            pass  # 列已存在
+            # 检查列是否存在
+            rows = self.fetchall("PRAGMA table_info(situations)")
+            columns = {row["name"] for row in rows}
+            if "processed" not in columns:
+                self.execute(
+                    "ALTER TABLE situations ADD COLUMN processed INTEGER DEFAULT 0"
+                )
+                logger.info("已为 situations 表添加 processed 列")
+        except Exception as exc:
+            logger.warning("检查/添加 processed 列失败: %s", exc)
 
     # ── 写入 ──
 
