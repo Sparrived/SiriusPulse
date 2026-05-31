@@ -1,0 +1,332 @@
+<style>
+  .bio-hub { position: relative; }
+  :root {
+    --bio-primary: #00ffc8;
+    --bio-secondary: #00e5ff;
+    --bio-tertiary: #7b61ff;
+    --bio-warm: #ff6b35;
+    --bio-glow: rgba(0, 255, 200, 0.15);
+    --bio-glow-strong: rgba(0, 255, 200, 0.35);
+  }
+  .bio-hero {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 180px;
+    margin-bottom: 24px;
+    overflow: hidden;
+    border-radius: 16px;
+    background: radial-gradient(ellipse at 50% 50%, rgba(0,255,200,0.06), transparent 70%);
+  }
+  .bio-hero-core {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--bio-primary), var(--bio-secondary));
+    box-shadow: 0 0 40px var(--bio-glow-strong), 0 0 80px var(--bio-glow);
+    animation: bio-pulse 3s ease-in-out infinite;
+  }
+  .bio-hero-ring {
+    position: absolute;
+    border: 1px solid var(--bio-primary);
+    border-radius: 50%;
+    opacity: 0.3;
+    animation: bio-ring-expand 4s ease-out infinite;
+  }
+  .bio-hero-ring:nth-child(2) { width: 140px; height: 140px; animation-delay: 0s; }
+  .bio-hero-ring:nth-child(3) { width: 200px; height: 200px; animation-delay: 1s; }
+  .bio-hero-ring:nth-child(4) { width: 260px; height: 260px; animation-delay: 2s; }
+  .bio-hero-title {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--font-display);
+    font-size: 20px;
+    color: var(--bio-primary);
+    text-shadow: 0 0 20px var(--bio-glow-strong);
+    white-space: nowrap;
+  }
+  @keyframes bio-pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 40px var(--bio-glow-strong); }
+    50% { transform: scale(1.08); box-shadow: 0 0 60px var(--bio-glow-strong), 0 0 100px var(--bio-glow); }
+  }
+  @keyframes bio-ring-expand {
+    0% { transform: scale(0.6); opacity: 0.5; }
+    100% { transform: scale(1.8); opacity: 0; }
+  }
+  .bio-stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .bio-stat-card {
+    background: var(--bg-2);
+    border: 1px solid rgba(0,255,200,0.1);
+    border-radius: 14px;
+    padding: 18px 16px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .bio-stat-card:hover {
+    border-color: rgba(0,255,200,0.3);
+    box-shadow: 0 0 20px rgba(0,255,200,0.08);
+  }
+  .bio-stat-card::before {
+    content: '';
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bio-primary);
+    box-shadow: 0 0 8px var(--bio-primary);
+    animation: bio-dot-pulse 2s ease-in-out infinite;
+  }
+  @keyframes bio-dot-pulse {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.3); }
+  }
+  .bio-stat-label {
+    font-size: 12px;
+    color: var(--text-2);
+    margin-bottom: 8px;
+  }
+  .bio-stat-value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--bio-primary);
+    text-shadow: 0 0 12px var(--bio-glow);
+    line-height: 1.1;
+  }
+  .bio-stat-sub {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: 4px;
+  }
+  .bio-charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .bio-card {
+    background: var(--bg-2);
+    border: 1px solid rgba(0,255,200,0.08);
+    border-radius: 14px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .bio-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--bio-primary), transparent);
+    opacity: 0.4;
+  }
+  .bio-card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .bio-card-title::before {
+    content: '';
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--bio-primary);
+    box-shadow: 0 0 6px var(--bio-primary);
+  }
+  .bio-topics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .bio-topic-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    color: var(--bio-primary);
+    background: rgba(0,255,200,0.06);
+    border: 1px solid rgba(0,255,200,0.15);
+    transition: all 0.3s;
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .bio-topic-pill.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .bio-topic-pill:hover {
+    background: rgba(0,255,200,0.12);
+    box-shadow: 0 0 12px rgba(0,255,200,0.15);
+  }
+  .bio-topic-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    opacity: 0.6;
+  }
+  .bio-layers {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+  .bio-layer {
+    background: var(--bg-2);
+    border: 1px solid rgba(0,255,200,0.06);
+    border-radius: 10px;
+    padding: 14px 12px;
+    text-align: center;
+    position: relative;
+  }
+  .bio-layer-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin: 0 auto 8px;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .bio-layer-dot.ok { background: var(--bio-primary); color: var(--bio-primary); }
+  .bio-layer-dot.warn { background: var(--bio-warm); color: var(--bio-warm); }
+  .bio-layer-dot.idle { background: var(--text-3); color: var(--text-3); }
+  .bio-layer-name {
+    font-size: 11px;
+    color: var(--text-2);
+    margin-bottom: 2px;
+  }
+  .bio-layer-label {
+    font-size: 10px;
+    color: var(--text-3);
+  }
+  .bio-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-3);
+    font-size: 14px;
+  }
+  .bio-refresh-btn {
+    background: rgba(0,255,200,0.08);
+    border: 1px solid rgba(0,255,200,0.2);
+    color: var(--bio-primary);
+    padding: 6px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.3s;
+  }
+  .bio-refresh-btn:hover {
+    background: rgba(0,255,200,0.15);
+    box-shadow: 0 0 12px rgba(0,255,200,0.2);
+  }
+  @media (max-width: 1100px) {
+    .bio-stats { grid-template-columns: repeat(3, 1fr); }
+    .bio-charts { grid-template-columns: 1fr; }
+    .bio-layers { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+
+<div class="bio-hub">
+  <div class="bio-hero">
+    <div class="bio-hero-core"></div>
+    <div class="bio-hero-ring"></div>
+    <div class="bio-hero-ring"></div>
+    <div class="bio-hero-ring"></div>
+    <div class="bio-hero-title">Neural Memory Hub</div>
+  </div>
+
+  <div class="bio-stats" id="bioStats">
+    <div class="bio-stat-card">
+      <div class="bio-stat-label">演化记录</div>
+      <div class="bio-stat-value" id="statEvolution">—</div>
+      <div class="bio-stat-sub" id="statEvolutionSub">活跃 / 总计</div>
+    </div>
+    <div class="bio-stat-card">
+      <div class="bio-stat-label">情景</div>
+      <div class="bio-stat-value" id="statSituation">—</div>
+      <div class="bio-stat-sub" id="statSituationSub">今日 / 总计</div>
+    </div>
+    <div class="bio-stat-card">
+      <div class="bio-stat-label">日记</div>
+      <div class="bio-stat-value" id="statDiary">—</div>
+      <div class="bio-stat-sub" id="statDiarySub">条目数</div>
+    </div>
+    <div class="bio-stat-card">
+      <div class="bio-stat-label">记忆切片</div>
+      <div class="bio-stat-value" id="statSlices">—</div>
+      <div class="bio-stat-sub" id="statSlicesSub">切片总数</div>
+    </div>
+    <div class="bio-stat-card">
+      <div class="bio-stat-label">已知用户</div>
+      <div class="bio-stat-value" id="statUsers">—</div>
+      <div class="bio-stat-sub" id="statUsersSub">用户画像</div>
+    </div>
+  </div>
+
+  <div class="bio-charts">
+    <div class="bio-card">
+      <div class="bio-card-title">置信度分布</div>
+      <div id="bioConfChart" style="height:260px"></div>
+    </div>
+    <div class="bio-card">
+      <div class="bio-card-title">谓语频率</div>
+      <div id="bioPredChart" style="height:260px"></div>
+    </div>
+  </div>
+
+  <div class="bio-card" style="margin-bottom:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div class="bio-card-title" style="margin-bottom:0">热门话题</div>
+      <button class="bio-refresh-btn" id="bioRefreshBtn">刷新数据</button>
+    </div>
+    <div class="bio-topics" id="bioTopics"></div>
+  </div>
+
+  <div class="bio-card">
+    <div class="bio-card-title">记忆系统层级状态</div>
+    <div class="bio-layers" id="bioLayers">
+      <div class="bio-layer">
+        <div class="bio-layer-dot idle"></div>
+        <div class="bio-layer-name">Layer 0</div>
+        <div class="bio-layer-label">感知层</div>
+      </div>
+      <div class="bio-layer">
+        <div class="bio-layer-dot idle"></div>
+        <div class="bio-layer-name">Layer 1</div>
+        <div class="bio-layer-label">回复层</div>
+      </div>
+      <div class="bio-layer">
+        <div class="bio-layer-dot idle"></div>
+        <div class="bio-layer-name">Layer 2</div>
+        <div class="bio-layer-label">暂冷压缩</div>
+      </div>
+      <div class="bio-layer">
+        <div class="bio-layer-dot idle"></div>
+        <div class="bio-layer-name">Layer 3</div>
+        <div class="bio-layer-label">冷寂总结</div>
+      </div>
+      <div class="bio-layer">
+        <div class="bio-layer-dot idle"></div>
+        <div class="bio-layer-name">Layer 4</div>
+        <div class="bio-layer-label">后台精炼</div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -54,6 +54,17 @@ from sirius_pulse.webui.memory_api import (
     api_persona_memory_viz,
     api_persona_conversation_history_get,
 )
+from sirius_pulse.webui.evolution_api import (
+    api_memory_dashboard,
+    api_evolution_records,
+    api_evolution_history,
+    api_evolution_uncertain,
+    api_situations_list,
+    api_diary_slices as api_diary_slices_new,
+    api_biography_view,
+    api_biography_list_all,
+    api_knowledge_gaps,
+)
 from sirius_pulse.webui.biography_api import (
     api_persona_biography_list,
     api_persona_biography_get,
@@ -195,6 +206,35 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_conversation_history_get(self, request):
         return await api_persona_conversation_history_get(request, self.persona_manager)
+
+    # ─── 新记忆系统 API 代理方法 ───────────────────────────
+
+    async def api_memory_dashboard(self, request):
+        return await api_memory_dashboard(request, self.persona_manager)
+
+    async def api_evolution_records(self, request):
+        return await api_evolution_records(request, self.persona_manager)
+
+    async def api_evolution_history(self, request):
+        return await api_evolution_history(request, self.persona_manager)
+
+    async def api_evolution_uncertain(self, request):
+        return await api_evolution_uncertain(request, self.persona_manager)
+
+    async def api_situations_list(self, request):
+        return await api_situations_list(request, self.persona_manager)
+
+    async def api_diary_slices(self, request):
+        return await api_diary_slices_new(request, self.persona_manager)
+
+    async def api_biography_list_all(self, request):
+        return await api_biography_list_all(request, self.persona_manager)
+
+    async def api_biography_view(self, request):
+        return await api_biography_view(request, self.persona_manager)
+
+    async def api_knowledge_gaps(self, request):
+        return await api_knowledge_gaps(request, self.persona_manager)
 
     # ─── 多人格 API: 桥接配置 ─────────────────────────────
 

@@ -1,0 +1,173 @@
+<style>
+  .bio-view-page { position: relative; }
+  .bio-view-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  .bio-view-refresh {
+    background: rgba(0,255,200,0.08);
+    border: 1px solid rgba(0,255,200,0.2);
+    color: #00ffc8;
+    padding: 7px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+  }
+  .bio-view-refresh:hover {
+    background: rgba(0,255,200,0.15);
+    box-shadow: 0 0 12px rgba(0,255,200,0.2);
+  }
+  .bio-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+  }
+  .bio-user-card {
+    background: var(--bg-2);
+    border: 1px solid rgba(0,255,200,0.06);
+    border-radius: 14px;
+    padding: 20px;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .bio-user-card:hover {
+    border-color: rgba(0,255,200,0.2);
+    box-shadow: 0 0 20px rgba(0,255,200,0.06);
+  }
+  .bio-user-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #00ffc8, #00e5ff, transparent);
+    opacity: 0.4;
+  }
+  .bio-user-name {
+    font-family: var(--font-display);
+    font-size: 20px;
+    color: var(--text-1);
+    margin-bottom: 6px;
+    text-shadow: 0 0 12px rgba(0,255,200,0.15);
+  }
+  .bio-user-bio {
+    font-size: 13px;
+    color: var(--text-2);
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+  .bio-anchors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .bio-anchor {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 12px;
+    border-radius: 16px;
+    font-size: 11px;
+    color: #00ffc8;
+    background: rgba(0,255,200,0.06);
+    border: 1px solid rgba(0,255,200,0.12);
+    position: relative;
+  }
+  .bio-anchor::before {
+    content: '◆';
+    font-size: 6px;
+    opacity: 0.5;
+  }
+  .bio-relationships {
+    margin-bottom: 12px;
+  }
+  .bio-rel-title {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-bottom: 4px;
+  }
+  .bio-rel-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .bio-rel-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #7b61ff;
+    box-shadow: 0 0 4px #7b61ff;
+    flex-shrink: 0;
+  }
+  .bio-fact-stats {
+    display: flex;
+    gap: 14px;
+  }
+  .bio-fact-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+  }
+  .bio-fact-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .bio-fact-dot.active { background: #00ffc8; box-shadow: 0 0 4px #00ffc8; }
+  .bio-fact-dot.superseded { background: #ff6b35; }
+  .bio-fact-dot.uncertain { background: #ffd23e; }
+  .bio-fact-count {
+    font-family: var(--font-mono);
+    font-weight: 600;
+  }
+  .bio-gaps {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(0,255,200,0.06);
+    display: none;
+  }
+  .bio-gaps.open { display: block; }
+  .bio-gap-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .bio-gap-badge {
+    padding: 1px 8px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .bio-gap-badge.high { background: rgba(248,81,73,0.1); color: #f85149; }
+  .bio-gap-badge.medium { background: rgba(255,210,62,0.1); color: #ffd23e; }
+  .bio-gap-badge.low { background: rgba(139,148,158,0.1); color: var(--text-3); }
+  .bio-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-3);
+    font-size: 14px;
+  }
+</style>
+
+<div class="bio-view-page">
+  <div class="bio-view-header">
+    <div style="font-size:14px;color:var(--text-2)">从演化链自动派生的用户传记</div>
+    <button class="bio-view-refresh" id="bioViewRefreshBtn">刷新</button>
+  </div>
+  <div class="bio-grid" id="bioGrid">
+    <div class="bio-empty">加载中…</div>
+  </div>
+</div>

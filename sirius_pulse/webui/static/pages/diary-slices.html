@@ -1,0 +1,144 @@
+<style>
+  .ds-page { position: relative; }
+  .ds-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .ds-search {
+    flex: 1;
+    min-width: 200px;
+    background: var(--bg-3);
+    border: 1px solid rgba(0,255,200,0.12);
+    color: var(--text-1);
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.3s;
+  }
+  .ds-search:focus {
+    border-color: rgba(0,255,200,0.4);
+  }
+  .ds-refresh {
+    background: rgba(0,255,200,0.08);
+    border: 1px solid rgba(0,255,200,0.2);
+    color: #00ffc8;
+    padding: 7px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+  }
+  .ds-refresh:hover {
+    background: rgba(0,255,200,0.15);
+    box-shadow: 0 0 12px rgba(0,255,200,0.2);
+  }
+  .ds-masonry {
+    columns: 2;
+    column-gap: 16px;
+  }
+  .ds-slice {
+    break-inside: avoid;
+    margin-bottom: 16px;
+    background: var(--bg-2);
+    border: 1px solid rgba(0,255,200,0.06);
+    border-radius: 12px;
+    padding: 16px 18px;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .ds-slice:hover {
+    border-color: rgba(0,255,200,0.2);
+    box-shadow: 0 0 16px rgba(0,255,200,0.06);
+  }
+  .ds-slice::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(0,255,200,0.3), transparent);
+  }
+  .ds-slice-summary {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-1);
+    line-height: 1.6;
+    margin-bottom: 8px;
+  }
+  .ds-slice-content {
+    font-size: 12px;
+    color: var(--text-2);
+    line-height: 1.6;
+    margin-bottom: 10px;
+    max-height: 60px;
+    overflow: hidden;
+    transition: max-height 0.3s;
+    cursor: pointer;
+  }
+  .ds-slice-content.expanded {
+    max-height: 600px;
+  }
+  .ds-slice-topics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 8px;
+  }
+  .ds-slice-topic {
+    display: inline-flex;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 10px;
+    color: #7b61ff;
+    background: rgba(123,97,255,0.06);
+    border: 1px solid rgba(123,97,255,0.12);
+  }
+  .ds-slice-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .ds-slice-subjects {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .ds-slice-subject {
+    display: inline-flex;
+    padding: 1px 8px;
+    border-radius: 8px;
+    font-size: 10px;
+    color: #00ffc8;
+    background: rgba(0,255,200,0.04);
+    border: 1px solid rgba(0,255,200,0.08);
+  }
+  .ds-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-3);
+    font-size: 14px;
+  }
+  @media (max-width: 900px) {
+    .ds-masonry { columns: 1; }
+  }
+</style>
+
+<div class="ds-page">
+  <div class="ds-header">
+    <input type="text" id="dsSearch" class="ds-search" placeholder="搜索记忆切片内容…">
+    <button class="ds-refresh" id="dsRefreshBtn">刷新</button>
+  </div>
+  <div class="ds-masonry" id="dsMasonry">
+    <div class="ds-empty">加载中…</div>
+  </div>
+</div>

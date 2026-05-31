@@ -1,0 +1,184 @@
+<style>
+  .evo-page { position: relative; }
+  .evo-filters {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .evo-filters select, .evo-filters input {
+    background: var(--bg-3);
+    border: 1px solid rgba(0,255,200,0.12);
+    color: var(--text-1);
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.3s;
+  }
+  .evo-filters select:focus, .evo-filters input:focus {
+    border-color: rgba(0,255,200,0.4);
+  }
+  .evo-search {
+    flex: 1;
+    min-width: 200px;
+  }
+  .evo-refresh {
+    background: rgba(0,255,200,0.08);
+    border: 1px solid rgba(0,255,200,0.2);
+    color: #00ffc8;
+    padding: 7px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+  }
+  .evo-refresh:hover {
+    background: rgba(0,255,200,0.15);
+    box-shadow: 0 0 12px rgba(0,255,200,0.2);
+  }
+  .evo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .evo-record {
+    background: var(--bg-2);
+    border: 1px solid rgba(0,255,200,0.06);
+    border-radius: 12px;
+    padding: 16px 20px;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .evo-record:hover {
+    border-color: rgba(0,255,200,0.2);
+    box-shadow: 0 0 16px rgba(0,255,200,0.06);
+  }
+  .evo-record::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 2px;
+  }
+  .evo-record[data-status="active"]::before { background: #00ffc8; box-shadow: 0 0 8px #00ffc8; }
+  .evo-record[data-status="superseded"]::before { background: #ff6b35; box-shadow: 0 0 8px #ff6b35; }
+  .evo-record[data-status="uncertain"]::before { background: #ffd23e; box-shadow: 0 0 8px #ffd23e; }
+  .evo-record[data-status="rejected"]::before { background: #f85149; box-shadow: 0 0 8px #f85149; }
+  .evo-triple {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .evo-triple-node {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: rgba(0,255,200,0.06);
+    color: #00ffc8;
+  }
+  .evo-triple-arrow {
+    color: var(--text-3);
+    font-size: 12px;
+  }
+  .evo-triple-predicate {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: #7b61ff;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: rgba(123,97,255,0.08);
+  }
+  .evo-triple-obj {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: #00e5ff;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: rgba(0,229,255,0.06);
+  }
+  .evo-meta {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .evo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .evo-badge.active { background: rgba(0,255,200,0.1); color: #00ffc8; }
+  .evo-badge.superseded { background: rgba(255,107,53,0.1); color: #ff6b35; }
+  .evo-badge.uncertain { background: rgba(255,210,62,0.1); color: #ffd23e; }
+  .evo-badge.rejected { background: rgba(248,81,73,0.1); color: #f85149; }
+  .evo-confidence-bar {
+    width: 80px;
+    height: 6px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+  }
+  .evo-confidence-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #00ffc8, #00e5ff);
+    transition: width 0.5s;
+  }
+  .evo-history {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(0,255,200,0.08);
+    display: none;
+  }
+  .evo-history.open { display: block; }
+  .evo-history-item {
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    background: rgba(0,255,200,0.03);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .evo-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-3);
+    font-size: 14px;
+  }
+</style>
+
+<div class="evo-page">
+  <div class="evo-filters">
+    <select id="evoStatusFilter">
+      <option value="">全部状态</option>
+      <option value="active">活跃 (Active)</option>
+      <option value="superseded">已取代 (Superseded)</option>
+      <option value="uncertain">待确认 (Uncertain)</option>
+      <option value="rejected">已拒绝 (Rejected)</option>
+    </select>
+    <input type="text" id="evoSearch" class="evo-search" placeholder="搜索主语 / 谓语 / 宾语…">
+    <button class="evo-refresh" id="evoRefreshBtn">刷新</button>
+  </div>
+  <div class="evo-list" id="evoList">
+    <div class="evo-empty">加载中…</div>
+  </div>
+</div>
