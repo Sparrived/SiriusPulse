@@ -72,8 +72,13 @@ def _build_brain_from_provider(work_path: Path):
     from sirius_pulse.core.model_router import ModelRouter
     from sirius_pulse.models.persona import PersonaProfile
 
-    data_dir = work_path.parent
-    if (data_dir / "providers" / "provider_keys.json").exists():
+    provider_keys_rel = Path("providers") / "provider_keys.json"
+    data_dir = None
+    for ancestor in [work_path, *work_path.parents]:
+        if (ancestor / provider_keys_rel).exists():
+            data_dir = ancestor
+            break
+    if data_dir is not None:
         registry = ProviderRegistry(data_dir)
     elif (work_path / "provider_keys.json").exists():
         registry = ProviderRegistry(work_path)
