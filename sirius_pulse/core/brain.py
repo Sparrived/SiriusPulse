@@ -30,6 +30,7 @@ from typing import Any, Callable
 
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
 from sirius_pulse.core.utils import parse_sticker_tags, strip_conversation_history_xml
+from sirius_pulse.providers.base import GenerationResult, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ class ChatResult:
     token_record: Any
     system_prompt: str = ""  # 存储本次对话使用的完整 system prompt
     sticker_names: list[str] = field(default_factory=list)
+    has_tool_call: bool = False
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    # 兼容旧接口
     has_skill_call: bool = False
     skill_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
@@ -391,6 +395,26 @@ class Brain:
                 effective_max_tokens = cfg.max_tokens
                 effective_temperature = cfg.temperature
 
+            # ── 构建 tools 参数 ──
+            tools = None
+            if request.enable_skills and self.skill_registry is not None:
+                from sirius_pulse.skills.models import SkillInvocationContext
+                from sirius_pulse.memory.user.unified_models import UnifiedUser
+
+                caller = UnifiedUser(
+                    user_id=request.user_id or "caller",
+                    name="caller",
+                    metadata={"is_developer": request.caller_is_developer},
+                )
+                inv_ctx = SkillInvocationContext(caller=caller)
+                adapter_type = getattr(self, "_current_adapter_type", None)
+                tools = self.skill_registry.build_tools_list(
+                    invocation_context=inv_ctx,
+                    adapter_type=adapter_type,
+                )
+                if not tools:
+                    tools = None
+
             # ── 构建 GenerationRequest ──
             from sirius_pulse.providers.base import GenerationRequest
 
@@ -398,6 +422,7 @@ class Brain:
                 model=cfg.model_name,
                 system_prompt=system_prompt.strip(),
                 messages=request.messages,
+                tools=tools,
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
                 timeout_seconds=cfg.timeout,
@@ -424,6 +449,7 @@ class Brain:
                     model=cfg.model_name,
                     system_prompt=fresh_system_prompt.strip(),
                     messages=request.messages,
+                    tools=tools,
                     temperature=effective_temperature,
                     max_tokens=effective_max_tokens,
                     timeout_seconds=cfg.timeout,
@@ -442,12 +468,12 @@ class Brain:
                 )
 
             # ── 3. 调用 provider（带 transport 级重试，重试时刷新上下文）──
-            reply = ""
+            gen_result: GenerationResult | None = None
             duration_ms = 0.0
             real_usage: dict | None = None
             try:
                 t0 = time.perf_counter()
-                reply, gen_request, real_usage = await self._call_with_retry(
+                gen_result, gen_request, real_usage = await self._call_with_retry(
                     gen_request,
                     retry_max=request.retry_max,
                     retry_delay=request.retry_delay,
@@ -470,6 +496,8 @@ class Brain:
                 )
                 raise
 
+            reply = gen_result.content or ""
+
             # ── 4. 默认 post: 剥离模型回显的 XML 块 ──
             reply = strip_conversation_history_xml(reply)
 
@@ -478,18 +506,12 @@ class Brain:
                 logger.info("[%s] LLM 主动选择跳过回复（输出 skip 标签）。", request.task_name)
                 reply = ""
 
-            # ── 默认 post: 解析 SKILL_CALL 标记 ──
-            skill_calls: list[tuple[str, dict[str, Any]]] = []
-            if request.enable_skills:
-                from sirius_pulse.skills.executor import parse_skill_calls
-
-                skill_calls = parse_skill_calls(reply)
+            # ── 默认 post: 处理 tool_calls ──
+            tool_calls: list[ToolCall] = gen_result.tool_calls or []
 
             # ── 默认 post: 解析表情包标签 ──
-            from sirius_pulse.skills.executor import strip_skill_calls
-
             sticker_names: list[str] = []
-            clean_reply = strip_skill_calls(reply).strip()
+            clean_reply = reply.strip()
             if clean_reply:
                 clean_reply, sticker_names = parse_sticker_tags(clean_reply)
 
@@ -515,8 +537,8 @@ class Brain:
                 token_record=token_record,
                 system_prompt=system_prompt,
                 sticker_names=sticker_names,
-                has_skill_call=bool(skill_calls),
-                skill_calls=skill_calls,
+                has_tool_call=bool(tool_calls),
+                tool_calls=tool_calls,
             )
 
             # ── 5. 用户 post-hooks（post_process 总闸 + task_filter 过滤）──
@@ -572,7 +594,7 @@ class Brain:
         retry_delay: float,
         purpose_desc: str,
         rebuild_fn: Callable[[], Any] | None = None,
-    ) -> tuple[str, Any, dict | None]:
+    ) -> tuple[GenerationResult, Any, dict | None]:
         """调用 provider，在 transport 级异常时自动重试。
 
         重试阈值由调用方通过 retry_max / retry_delay 控制。
@@ -581,7 +603,7 @@ class Brain:
         全部重试耗尽后抛出最后一次异常。
 
         Returns:
-            (原始响应文本, 最终使用的 gen_request, 真实 token 用量或 None)
+            (GenerationResult, 最终使用的 gen_request, 真实 token 用量或 None)
         """
         from sirius_pulse.providers.base import get_last_generation_usage
 
@@ -589,10 +611,10 @@ class Brain:
         last_exc: Exception | None = None
         for attempt in range(retry_max + 1):
             try:
-                raw = await self._provider_call(current)
+                result = await self._provider_call(current)
                 # 立即捕获 token 用量，避免后续 await 点被其他协程覆盖
                 real_usage = get_last_generation_usage()
-                return raw, current, real_usage
+                return result, current, real_usage
             except Exception as exc:
                 last_exc = exc
                 if attempt < retry_max:
@@ -611,7 +633,7 @@ class Brain:
         # 所有重试均失败，抛出最后一次异常
         raise last_exc  # type: ignore[misc]
 
-    async def _provider_call(self, request: Any) -> str:
+    async def _provider_call(self, request: Any) -> GenerationResult:
         """调用 provider 生成回复。"""
         from sirius_pulse.providers.base import LLMProvider
 

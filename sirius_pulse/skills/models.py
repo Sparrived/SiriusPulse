@@ -230,6 +230,87 @@ class SkillDefinition:
             schema.append(entry)
         return schema
 
+    @staticmethod
+    def _map_type_to_json_schema(type_str: str) -> str:
+        """将 SkillParameter 类型映射为 JSON Schema 类型。"""
+        mapping = {
+            "str": "string",
+            "string": "string",
+            "int": "integer",
+            "integer": "integer",
+            "float": "number",
+            "number": "number",
+            "bool": "boolean",
+            "boolean": "boolean",
+            "list": "array",
+            "array": "array",
+        }
+        return mapping.get(type_str.lower(), "string")
+
+    @staticmethod
+    def _build_array_items_schema(fields: list[dict[str, Any]]) -> dict[str, Any]:
+        """根据 fields 定义构建数组项的 JSON Schema。"""
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for field in fields:
+            name = field.get("name", "")
+            if not name:
+                continue
+            field_type = SkillDefinition._map_type_to_json_schema(field.get("type", "str"))
+            prop: dict[str, Any] = {
+                "type": field_type,
+                "description": field.get("description", ""),
+            }
+            if field.get("choices"):
+                prop["enum"] = field["choices"]
+            properties[name] = prop
+            if field.get("required"):
+                required.append(name)
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": properties,
+        }
+        if required:
+            schema["required"] = required
+        return schema
+
+    def to_tool_schema(self) -> dict[str, Any]:
+        """转换为 OpenAI function_call 格式的 JSON Schema。"""
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+
+        for param in self.parameters:
+            prop: dict[str, Any] = {
+                "type": self._map_type_to_json_schema(param.type),
+                "description": param.description,
+            }
+            # 处理数组类型的子字段定义
+            if param.type in ("list", "array") and param.fields:
+                prop["items"] = self._build_array_items_schema(param.fields)
+            if param.choices:
+                prop["enum"] = param.choices
+            if not param.required and param.default is not None:
+                prop["default"] = param.default
+            properties[param.name] = prop
+            if param.required:
+                required.append(param.name)
+
+        parameters_schema: dict[str, Any] = {
+            "type": "object",
+            "properties": properties,
+        }
+        if required:
+            parameters_schema["required"] = required
+
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": parameters_schema,
+            },
+        }
+
     @property
     def is_passive(self) -> bool:
         """是否为被动 SKILL（拥有后台任务或触发器，不由模型直接调用）。"""

@@ -608,59 +608,6 @@ class PromptFactory:
         )
 
     @staticmethod
-    def build_skill_descriptions(
-        skill_registry: Any,
-        caller_is_developer: bool = False,
-        adapter_type: str | None = None,
-    ) -> str:
-        """构建可用技能描述 section。"""
-        if skill_registry is None:
-            return ""
-        try:
-            from sirius_pulse.skills.models import SkillInvocationContext
-            from sirius_pulse.memory.user.unified_models import UnifiedUser
-            caller = UnifiedUser(
-                user_id="caller", name="caller",
-                metadata={"is_developer": caller_is_developer},
-            )
-            ctx = SkillInvocationContext(caller=caller)
-
-            visible_count = 0
-            for skill in skill_registry.all_skills():
-                if getattr(skill, "developer_only", False) and not caller_is_developer:
-                    continue
-                if skill.adapter_types and adapter_type is not None:
-                    if adapter_type not in skill.adapter_types:
-                        continue
-                visible_count += 1
-            use_compact = visible_count > 5
-
-            desc = skill_registry.build_tool_descriptions(
-                invocation_context=ctx, compact=use_compact, adapter_type=adapter_type
-            )
-        except Exception:
-            return ""
-        if not desc:
-            return ""
-        return (
-            f"{TAG_MY_SKILLS}\n"
-            "你擅长使用自己的技能为其他人解决问题。\n"
-            "我可以调用以下能力来帮助大家：\n"
-            f"{desc}\n\n"
-            "当用户要求你执行某项操作（如检查状态、获取信息等）时，"
-            "你必须立即在回复中插入对应的能力调用标记，"
-            "不要只作出口头承诺而不调用。\n"
-            "错误示例（只说不动）：\"我这就去搜索一下\" ❌\n"
-            "正确示例（边说边做）：\"我这就去搜索一下 [SKILL_CALL: bing_search | {\\\"query\\\": \\\"xxx\\\"}]\" ✅\n"
-            "如果你说了\"去搜搜看/找找看/查一下/读一下\"等类似的话，"
-            "同一句回复里必须紧跟对应的 [SKILL_CALL: ...] 标记，绝对不能只说不动。\n"
-            "如果一次技能调用的结果不够完整，你可以继续调用其他技能来补充信息，"
-            "形成链式调用。每次调用后我会把结果反馈给你，你可以据此决定下一步。\n"
-            "重要：你的每次回复都必须包含自然语言内容，"
-            "不能把 SKILL_CALL 标记作为回复的唯一内容。"
-            "调用格式：[SKILL_CALL: 技能名 | {\"参数\": \"值\"}]"
-        )
-
     @staticmethod
     def build_plugin_awareness_section(
         plugin_registry: Any,
@@ -911,12 +858,13 @@ class PromptFactory:
         else:
             _add(PromptFactory.build_style_fallback(style_params), "group_style")
 
+        # 技能描述已通过 tools 参数传递给 LLM，不再需要注入 prompt
+        # 保留简短的通用指导
         if skill_registry is not None:
-            skill_desc = PromptFactory.build_skill_descriptions(
-                skill_registry, caller_is_developer=caller_is_developer, adapter_type=adapter_type,
+            _add(
+                "你有一些工具（tools）可以帮助自己或他人解决问题，你是工具的主导者，主动尝试使用工具解决问题。",
+                "skills",
             )
-            if skill_desc:
-                _add(skill_desc, "skills")
 
         if plugin_registry is not None:
             plugin_awareness = PromptFactory.build_plugin_awareness_section(
@@ -1107,64 +1055,7 @@ class PromptFactory:
         t = "【D】" if is_directory else "【F】"
         return f"{t} {path:<50} {size:>12} {mtime:>16}"
 
-    # ──────────────────────────────────────────────────────────────────
-    # 技能结果
-    # ──────────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def build_skill_result_content(
-        skill_results: list[str],
-        multimodal_blocks: list[dict[str, Any]],
-        suffix: str = "",
-    ) -> str | list[dict[str, Any]]:
-        """组装技能执行结果为消息内容。"""
-        _SKILL_RESULT_CHAR_LIMIT = 12000
-        results_text = "\n".join(skill_results)
-        if len(results_text) > _SKILL_RESULT_CHAR_LIMIT:
-            truncated = results_text[:_SKILL_RESULT_CHAR_LIMIT]
-            last_nl = truncated.rfind("\n")
-            if last_nl > _SKILL_RESULT_CHAR_LIMIT * 0.8:
-                truncated = truncated[:last_nl]
-            results_text = (
-                f"{truncated}\n\n"
-                f"{TAG_SKILL_TRUNCATED.format(limit=_SKILL_RESULT_CHAR_LIMIT, orig=len(results_text))}"
-            )
-        text = f"{TAG_SKILL_RESULT}\n{results_text}{suffix}"
-        if not multimodal_blocks:
-            return text
-        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
-        content.extend(multimodal_blocks)
-        return content
-
-    @staticmethod
-    def build_skill_followup_suffix(
-        any_partial_sent: bool = False,
-    ) -> str:
-        """构建技能执行后继续回复的指令 suffix。"""
-        parts = [
-            "\n\n[继续] 请基于以上技能执行结果，继续完成你的回复。",
-            "如果结果中包含错误或失败信息，请直接忽略，",
-            "不要向用户提及任何关于能力调用或失败的内容，继续自然地对话。",
-            "如果当前结果还不够完整，你可以继续调用其他技能来获取补充信息，",
-            "形成链式调用。",
-            "重要：如果你说要去搜索、查找、读取或执行任何操作，",
-            "必须在同一句回复中紧跟对应的 [SKILL_CALL: ...] 标记，绝对不能只说不动。",
-            "错误示例（只说不动）：\"我再去搜索一下\" ❌",
-            "正确示例（边说边做）：\"我再去搜索一下 [SKILL_CALL: bing_search | {\\\"query\\\": \\\"xxx\\\"}]\" ✅",
-            "重要：你的每次回复都必须包含自然语言内容，",
-            "不能把 SKILL_CALL 标记作为回复的唯一内容。",
-        ]
-        if any_partial_sent:
-            parts.append(
-                '注意：上文标记为"已发送给用户"的内容已经由你发送给用户，'
-                '现在只需基于技能结果给出简短补充，不要重复之前的确认内容。'
-            )
-        return "\n\n".join(parts)
-
-    @staticmethod
-    def build_memory_skill_result(raw: str, char_limit: int) -> str:
-        """构建用于记忆持久化的技能结果内容。"""
-        return f"{TAG_SKILL_RESULT}\n{raw}"
 
     @staticmethod
     def build_memory_skill_truncation(char_limit: int, orig_len: int) -> str:

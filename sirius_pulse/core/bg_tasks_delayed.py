@@ -15,7 +15,7 @@ from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.core.utils import parse_sticker_tags
-from sirius_pulse.skills.executor import strip_skill_calls
+from sirius_pulse.providers.base import ToolCall
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -253,9 +253,8 @@ class DelayedQueueTasks:
 
         messages = engine._helpers.inject_multimodal_into_user_message(messages, all_multimodal)
 
-        # Multi-round generation with SKILL support
+        # Multi-round generation with function_call support
         from sirius_pulse.core.brain import ChatRequest
-        from sirius_pulse.skills.executor import parse_skill_calls, strip_skill_calls
         from sirius_pulse.skills.models import SkillInvocationContext
 
         max_skill_rounds = engine.config.get("max_skill_rounds", 8)
@@ -263,7 +262,7 @@ class DelayedQueueTasks:
         _any_partial_sent = False
         last_round_had_partial = False
         _round = 0
-        calls: list[tuple[str, dict[str, Any]]] = []
+        tool_calls: list[ToolCall] = []
         reply = ""
         chat_result: Any = None
 
@@ -271,11 +270,12 @@ class DelayedQueueTasks:
             chat_result = await engine.brain.chat(
                 ChatRequest(
                     group_id=group_id,
-                    user_id="",
+                    user_id=item.user_id or "",
                     system_prompt=system_prompt,
                     messages=messages,
                     task_name="response_generate",
-                    enable_skills=False,
+                    enable_skills=True,
+                    caller_is_developer=caller_is_developer,
                     post_process=False,
                 )
             )
@@ -283,14 +283,16 @@ class DelayedQueueTasks:
             round_clean = chat_result.clean_text
             round_stickers = chat_result.sticker_names
 
-            calls = parse_skill_calls(reply)
-            if not calls or engine._skill_registry is None or engine._skill_executor is None:
+            # 检查是否有 tool_calls
+            tool_calls = chat_result.tool_calls or []
+            if not tool_calls or engine._skill_registry is None or engine._skill_executor is None:
                 break
 
             # Determine if every invoked skill is marked silent.
             all_silent = all(
-                engine._skill_registry.get(name) is not None and engine._skill_registry.get(name).silent
-                for name, _ in calls
+                engine._skill_registry.get(tc.function_name) is not None
+                and engine._skill_registry.get(tc.function_name).silent
+                for tc in tool_calls
             )
 
             # 使用 chat_result 已解析好的 clean_text 和 sticker_names
@@ -313,9 +315,7 @@ class DelayedQueueTasks:
                 else:
                     partial_replies.append(non_skill_text)
 
-            # Execute skills and collect results
-            skill_results: list[str] = []
-            skill_multimodal: list[dict[str, Any]] = []
+            # Execute tool_calls and collect results
             from sirius_pulse.memory.user.unified_models import UnifiedUser
 
             caller_user_id = item.user_id
@@ -335,48 +335,81 @@ class DelayedQueueTasks:
                     group_id=group_id, user_id=caller_user_id or ""
                 )
 
-            for idx, (skill_name, params) in enumerate(calls):
+            # 构造 assistant 消息（含 tool_calls）
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": reply or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function_name,
+                            "arguments": tc.function_arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+            messages.append(assistant_msg)
+
+            # 处理 partial reply
+            non_skill_text = round_clean
+            if non_skill_text and round_stickers:
+                asyncio.create_task(
+                    engine._send_stickers_by_names(group_id, round_stickers)
+                )
+                logger.info("partial reply 中解析到表情包: %s", round_stickers)
+            last_round_had_partial = False
+            if non_skill_text and not all_silent:
+                engine._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
+                last_round_had_partial = True
+                _any_partial_sent = True
+                if on_partial_reply is not None:
+                    try:
+                        await on_partial_reply(non_skill_text)
+                    except Exception as exc:
+                        logger.warning("on_partial_reply failed: %s", exc)
+                else:
+                    partial_replies.append(non_skill_text)
+
+            # 逐个执行 tool_call 并收集结果
+            skill_multimodal: list[dict[str, Any]] = []
+            for idx, tc in enumerate(tool_calls):
+                skill_name = tc.function_name
+                try:
+                    params = json.loads(tc.function_arguments) if tc.function_arguments else {}
+                except json.JSONDecodeError:
+                    params = {}
+                    logger.warning("tool_call 参数解析失败: %s, arguments=%s", skill_name, tc.function_arguments)
+
                 skill = engine._skill_registry.get(skill_name)
                 if skill is None:
-                    err = f"SKILL '{skill_name}' 未找到"
-                    logger.warning(err)
-                    if not all_silent:
-                        skill_results.append(
-                            PromptFactory.build_skill_status_message("未找到", skill_name)
-                        )
+                    err_msg = f"Skill '{skill_name}' not found"
+                    logger.warning(err_msg)
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                     continue
+
                 # Engagement-based permission
                 if caller_engagement < 0.1 and not caller_is_developer:
-                    err = f"SKILL '{skill_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
-                    logger.warning(err)
-                    if not all_silent:
-                        skill_results.append(
-                            PromptFactory.build_skill_status_message(
-                                "拒绝", skill_name, "你还不够熟，这个技能暂不可用"
-                            )
-                        )
+                    err_msg = f"Skill '{skill_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
+                    logger.warning(err_msg)
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                     continue
 
                 if skill.developer_only and not caller_is_developer:
-                    err = f"SKILL '{skill_name}' 被拒绝：caller 不是 developer"
-                    logger.warning(err)
-                    if not all_silent:
-                        skill_results.append(
-                            PromptFactory.build_skill_status_message(
-                                "拒绝", skill_name, "该技能仅 developer 可用"
-                            )
-                        )
+                    err_msg = f"Skill '{skill_name}' 被拒绝：caller 不是 developer"
+                    logger.warning(err_msg)
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                     continue
+
                 ctx = SkillInvocationContext(
                     caller=skill_caller,
                     developer_profiles=developer_profiles,
                 )
                 logger.info(
                     "Skill execute: %s(params=%s, caller=%s, group=%s)",
-                    skill_name,
-                    params,
-                    caller_user_id,
-                    group_id,
+                    skill_name, params, caller_user_id, group_id,
                 )
                 try:
                     result = await engine._skill_executor.execute_async(
@@ -384,30 +417,21 @@ class DelayedQueueTasks:
                     )
                     logger.info(
                         "Skill execute success: %s -> %s",
-                        skill_name,
-                        "success" if result.success else "failed",
+                        skill_name, "success" if result.success else "failed",
                     )
                     if result.success:
-                        if not skill.silent:
-                            skill_results.append(
-                                PromptFactory.build_skill_status_message(
-                                    "结果", skill_name, result.to_display_text()
-                                )
+                        tool_content = result.to_display_text()
+                        # 收集多模态内容
+                        for block in result.multimodal_blocks:
+                            skill_multimodal.append(
+                                {"type": "image_url", "image_url": {"url": block.value}}
                             )
-                            for block in result.multimodal_blocks:
-                                skill_multimodal.append(
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": block.value},
-                                    }
-                                )
                         # Auto-persist glossary terms from learn_term
                         if skill_name == "learn_term":
                             term = params.get("term", "")
                             definition = params.get("definition", "")
                             if term and definition:
                                 from sirius_pulse.memory.glossary import GlossaryTerm
-
                                 engine.glossary_manager.add_or_update(
                                     group_id,
                                     GlossaryTerm(term=term, definition=definition, source="skill"),
@@ -419,99 +443,43 @@ class DelayedQueueTasks:
                         ):
                             self._inject_group_id_into_latest_reminder(group_id)
                     else:
-                        err = result.error or "未知错误"
-                        logger.warning("SKILL '%s' 执行失败: %s", skill_name, err)
-                        if not skill.silent:
-                            skill_results.append(
-                                PromptFactory.build_skill_status_message("失败", skill_name, err)
-                            )
+                        tool_content = result.error or "Unknown error"
+                        logger.warning("SKILL '%s' 执行失败: %s", skill_name, tool_content)
                 except Exception as exc:
+                    tool_content = str(exc)
                     logger.error("SKILL '%s' 执行异常: %s", skill_name, exc)
-                    if not skill.silent:
-                        skill_results.append(
-                            PromptFactory.build_skill_status_message("异常", skill_name, str(exc))
-                        )
+
+                # 添加 tool 结果消息
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_content})
 
                 # 链式调用中间增加延迟，避免回复过快
-                if idx < len(calls) - 1:
+                if idx < len(tool_calls) - 1:
                     await asyncio.sleep(2)
 
             # If all skills were silent, skip the follow-up generation round.
             if all_silent:
                 break
 
-            # Inject skill results into the conversation for the next round
-            assistant_content = strip_skill_calls(reply)
-            if _any_partial_sent:
-                assistant_content += "\n\n（以上内容已发送给用户）"
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            suffix_parts = [
-                "\n\n[继续] 请基于以上技能执行结果，继续完成你的回复。",
-                "如果结果中包含错误或失败信息，请直接忽略，",
-                "不要向用户提及任何关于能力调用或失败的内容，继续自然地对话。",
-                "如果当前结果还不够完整，你可以继续调用其他技能来获取补充信息，",
-                "形成链式调用。",
-                "重要：如果你说要去搜索、查找、读取或执行任何操作，",
-                "必须在同一句回复中紧跟对应的 [SKILL_CALL: ...] 标记，绝对不能只说不动。",
-                '错误示例（只说不动）："我再去搜索一下" ❌',
-                '正确示例（边说边做）："我再去搜索一下 [SKILL_CALL: bing_search | {\\"query\\": \\"xxx\\"}]" ✅',
-                "重要：你的每次回复都必须包含自然语言内容，",
-                "不能把 SKILL_CALL 标记作为回复的唯一内容。",
-            ]
-            if _any_partial_sent:
-                suffix_parts.append(
-                    "注意：上文标记为\"已发送给用户\"的内容已经由你发送给用户，"
-                    "现在只需基于技能结果给出简短补充，不要重复之前的确认内容。"
-                )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": PromptFactory.build_skill_result_content(
-                        skill_results,
-                        skill_multimodal,
-                        suffix="\n\n".join(suffix_parts),
-                    ),
-                }
-            )
+            # 如果有多模态内容，作为 user 消息注入
+            if skill_multimodal:
+                messages.append({"role": "user", "content": skill_multimodal})
 
             # Persist intermediate skill turns into basic memory
             _entry = engine.basic_memory.add_entry(
                 group_id=group_id,
                 user_id="assistant",
                 role="assistant",
-                content=strip_skill_calls(reply),
+                content=reply,
                 speaker_name=engine.persona.name if engine.persona else "assistant",
                 system_prompt=chat_result.system_prompt,
             )
             engine.basic_store.append(_entry)
-            if skill_results:
-                _MEMORY_SKILL_RESULT_CHAR_LIMIT = 4000
-                _raw = "\n".join(skill_results)
-                if len(_raw) > _MEMORY_SKILL_RESULT_CHAR_LIMIT:
-                    _truncated = _raw[:_MEMORY_SKILL_RESULT_CHAR_LIMIT]
-                    _last_nl = _truncated.rfind("\n")
-                    if _last_nl > _MEMORY_SKILL_RESULT_CHAR_LIMIT * 0.8:
-                        _truncated = _truncated[:_last_nl]
-                    _raw = (
-                        f"{_truncated}\n\n"
-                        f"{PromptFactory.build_memory_skill_truncation(_MEMORY_SKILL_RESULT_CHAR_LIMIT, len(_raw))}"
-                    )
-                _sys_entry = engine.basic_memory.add_entry(
-                    group_id=group_id,
-                    user_id="skill_system",
-                    role="system",
-                    content=PromptFactory.build_memory_skill_result(
-                        _raw, _MEMORY_SKILL_RESULT_CHAR_LIMIT
-                    ),
-                )
-                engine.basic_store.append(_sys_entry)
 
         # If the loop ended because max rounds were exhausted and the last round
         # already sent a partial reply, don't duplicate that text as the final reply.
         ended_because_max_rounds = (
             _round == max_skill_rounds
-            and calls
+            and tool_calls
             and engine._skill_registry is not None
             and engine._skill_executor is not None
         )
@@ -524,7 +492,7 @@ class DelayedQueueTasks:
             reply = ""
 
         # Record assistant reply into basic memory so future turns can see it
-        clean_reply = strip_skill_calls(reply).strip()
+        clean_reply = reply.strip()
         sticker_names: list[str] = []
 
         # 解析表情包标签 [STICKERS: ...] 并异步发送

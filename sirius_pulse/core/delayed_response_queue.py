@@ -233,6 +233,54 @@ class DelayedResponseQueue:
         """Get all pending items for a group."""
         return [i for i in self._queues.get(group_id, []) if i.status == "pending"]
 
+    def has_pending(self, group_id: str) -> bool:
+        """检查指定 group 是否有等待中的队列项。"""
+        return any(i.status == "pending" for i in self._queues.get(group_id, []))
+
+    def merge_incoming(
+        self,
+        group_id: str,
+        user_id: str,
+        message_content: str,
+        speaker_name: str = "",
+        channel: str | None = None,
+        channel_user_id: str | None = None,
+        multimodal_inputs: list[dict[str, str]] | None = None,
+    ) -> bool:
+        """轻量合并：将新消息合并进已有 pending 项，跳过完整管线。
+
+        当 group 已有待触发的队列项时，直接追加消息内容，
+        避免重复调用认知/决策 LLM。
+
+        Returns:
+            True 表示成功合并，False 表示无 pending 项（需走完整管线）。
+        """
+        queue = self._queues.get(group_id, [])
+        for item in queue:
+            if item.status != "pending":
+                continue
+            import html as _html
+            from datetime import datetime, timedelta, timezone
+
+            safe_sp = _html.escape(speaker_name or "有人", quote=True)
+            safe_uid = _html.escape(channel_user_id or "", quote=True)
+            now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
+            tagged = (
+                f'<message speaker="{safe_sp}" user_id="{safe_uid}" time="{now_str}">'
+                f"\n{message_content}\n</message>"
+            )
+            item.message_content += f"\n{tagged}"
+            if multimodal_inputs:
+                item.multimodal_inputs.extend(multimodal_inputs)
+            if user_id and user_id not in item.related_user_ids:
+                item.related_user_ids.append(user_id)
+            logger.debug(
+                "管线短路合并: group=%s item=%s content=%d chars",
+                group_id, item.item_id, len(item.message_content),
+            )
+            return True
+        return False
+
     def clear_group(self, group_id: str) -> None:
         """Clear all items for a group."""
         self._queues.pop(group_id, None)

@@ -107,12 +107,31 @@ class SkillEngineContextImpl:
         self._engine._persist_group_state(group_id)
 
     def get_skill_descriptions(self, caller_is_developer: bool = False) -> str:
-        from sirius_pulse.core.prompt_factory import PromptFactory
-        return PromptFactory.build_skill_descriptions(
-            skill_registry=self._engine._skill_registry,
-            caller_is_developer=caller_is_developer,
+        """获取技能描述文本（用于被动技能的 prompt 注入）。"""
+        if self._engine._skill_registry is None:
+            return ""
+        from sirius_pulse.skills.models import SkillInvocationContext
+        from sirius_pulse.memory.user.unified_models import UnifiedUser
+
+        caller = UnifiedUser(
+            user_id="caller", name="caller",
+            metadata={"is_developer": caller_is_developer},
+        )
+        ctx = SkillInvocationContext(caller=caller)
+        tools = self._engine._skill_registry.build_tools_list(
+            invocation_context=ctx,
             adapter_type=self._engine._current_adapter_type or None,
         )
+        if not tools:
+            return ""
+        # 将 tools 格式转换为文本描述
+        lines = []
+        for tool in tools:
+            func = tool.get("function", {})
+            name = func.get("name", "")
+            desc = func.get("description", "")
+            lines.append(f"- {name}: {desc}")
+        return "\n".join(lines)
 
     def get_current_adapter_type(self) -> str:
         return self._engine._current_adapter_type

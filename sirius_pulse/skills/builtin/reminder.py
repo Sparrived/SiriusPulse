@@ -72,9 +72,14 @@ _config.group("高级设置").add(
     "skill_chain",
     type="list",
     description=(
-        "触发提醒时预先执行的 SKILL 调用链，每项为 {\"skill\":\"name\",\"params\":{...}}。"
+        "触发提醒时预先执行的技能调用链。"
+        '每项格式：{"skill": "技能名", "params": {"参数": "值"}}。'
         "执行结果会作为上下文输入给模型，供生成提醒消息时参考。"
     ),
+    fields=[
+        {"name": "skill", "type": "str", "description": "技能名称", "required": True},
+        {"name": "params", "type": "object", "description": "技能参数"},
+    ],
 )
 _config.group("高级设置").add(
     "adapter_type",

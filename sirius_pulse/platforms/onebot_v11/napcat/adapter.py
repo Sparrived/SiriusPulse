@@ -33,7 +33,7 @@ from sirius_pulse.adapters.models import (
     ParsedEvent,
 )
 from sirius_pulse.models.models import Message, UnifiedUser
-from sirius_pulse.skills.executor import strip_skill_calls
+
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 
 LOG = logging.getLogger("sirius.platforms.napcat")
@@ -749,7 +749,7 @@ class NapCatAdapter(BaseAdapter):
                 else:
                     await self.send_private_message(parsed.user_id, message_group)
             elif reply:
-                clean_reply = strip_skill_calls(reply).strip()
+                clean_reply = reply.strip()
                 if clean_reply:
                     if parsed.message_type == "group":
                         await self._send_group_text(group_id, clean_reply)

@@ -8,6 +8,8 @@ import httpx
 
 from sirius_pulse.providers.base import (
     AsyncLLMProvider,
+    GenerationResult,
+    ToolCall,
     build_chat_completion_payload,
     build_generation_debug_context,
     DEFAULT_TIMEOUT_SECONDS,
@@ -34,7 +36,7 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
     def _build_url(self, request: GenerationRequest) -> str:
         return f"{self._base_url}/v1/chat/completions"
 
-    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> str | tuple[str, str]:
+    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> GenerationResult | tuple[str, GenerationResult]:
         timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
         url = self._build_url(request)
         debug_context = build_generation_debug_context(
@@ -111,15 +113,35 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             )
             raise RuntimeError("提供商响应中没有 choices。")
 
-        message = choices[0].get("message", {})
+        choice = choices[0]
+        message = choice.get("message", {})
         if not isinstance(message, dict):
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} | message 字段无效"
             )
             raise RuntimeError("提供商响应中 message 字段无效。")
 
+        # 解析 tool_calls
+        tool_calls: list[ToolCall] | None = None
+        raw_tool_calls = message.get("tool_calls")
+        if isinstance(raw_tool_calls, list) and raw_tool_calls:
+            tool_calls = []
+            for tc in raw_tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                func = tc.get("function", {})
+                tool_calls.append(ToolCall(
+                    id=str(tc.get("id", "")),
+                    type=str(tc.get("type", "function")),
+                    function_name=str(func.get("name", "")),
+                    function_arguments=str(func.get("arguments", "")),
+                ))
+
         content = extract_assistant_text(message)
-        if not content and not return_reasoning:
+        finish_reason = str(choice.get("finish_reason", "stop"))
+
+        # 如果没有 tool_calls 且内容为空，检查是否为错误
+        if not content and not tool_calls and not return_reasoning:
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
                 f"| 响应为空 | message_keys={list(message.keys())}"
@@ -132,14 +154,20 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         else:
             set_last_generation_usage(None)
 
-        logger.info(f"{self._provider_name} 的 {request.model} 回复我了，写了 {len(content)} 个字～")
+        result = GenerationResult(
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+        )
+
+        logger.info(f"{self._provider_name} 的 {request.model} 回复我了，写了 {len(content or '')} 个字～")
         logger.debug(
             f"[模型输出] {request.model} | Provider: {self._provider_name} | URL: {url} | 响应内容:\n{content}"
         )
         if return_reasoning:
             reasoning = message.get("reasoning_content", "") if isinstance(message, dict) else ""
-            return (reasoning, content)
-        return content
+            return (reasoning, result)
+        return result
 
     async def generate_stream(self, request: GenerationRequest):
         """流式生成，逐 token yield (chunk_type, text) 其中 chunk_type 为 'reasoning' 或 'content'。"""

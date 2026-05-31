@@ -31,10 +31,36 @@ def get_last_generation_usage() -> dict[str, Any] | None:
 
 
 @dataclass(slots=True)
+class ToolCall:
+    """表示一个 function_call 工具调用。"""
+
+    id: str
+    type: str = "function"
+    function_name: str = ""
+    function_arguments: str = ""
+
+
+@dataclass(slots=True)
+class GenerationResult:
+    """LLM 生成结果，支持普通文本和 tool_calls。"""
+
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    finish_reason: str = "stop"
+
+    @property
+    def has_tool_calls(self) -> bool:
+        """是否有工具调用。"""
+        return bool(self.tool_calls)
+
+
+@dataclass(slots=True)
 class GenerationRequest:
     model: str
     system_prompt: str
     messages: list[dict[str, object]]
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | None = None
     temperature: float = 0.7
     max_tokens: int = 512
     timeout_seconds: float | None = None
@@ -141,6 +167,10 @@ def build_chat_completion_payload(
     }
     if request.response_format is not None:
         payload["response_format"] = request.response_format
+    if request.tools is not None:
+        payload["tools"] = request.tools
+    if request.tool_choice is not None:
+        payload["tool_choice"] = request.tool_choice
     payload.update(_build_thinking_disabled_defaults(provider_name))
     return payload
 
@@ -256,9 +286,9 @@ class LLMProvider(Protocol):
 
 @runtime_checkable
 class AsyncLLMProvider(Protocol):
-    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> str | tuple[str, str]:
+    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> GenerationResult | tuple[str, GenerationResult]:
         """Generate one assistant message asynchronously from the upstream provider.
 
-        When return_reasoning=True, returns (reasoning_content, content) tuple.
+        When return_reasoning=True, returns (reasoning_content, GenerationResult) tuple.
         """
         ...

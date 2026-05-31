@@ -324,6 +324,39 @@ class SkillRegistry:
             _on_unload_factory=on_unload_factory if callable(on_unload_factory) else None,
         )
 
+    def build_tools_list(
+        self,
+        *,
+        invocation_context: SkillInvocationContext | None = None,
+        adapter_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """构建 OpenAI tools 列表，用于原生 function_call。
+
+        Args:
+            invocation_context: 可选的调用上下文，用于 developer_only 过滤。
+            adapter_type: 如果提供，只包含 adapter_types 为空或包含此类型的技能。
+
+        Returns:
+            OpenAI tools 格式的列表。
+        """
+        tools: list[dict[str, Any]] = []
+        for skill in self._skills.values():
+            # 被动技能（仅有后台任务或触发器，无 run 函数）不参与 function_call
+            if skill._run_func is None and skill.is_passive:
+                continue
+            if (
+                skill.developer_only
+                and invocation_context is not None
+                and not invocation_context.caller_is_developer
+            ):
+                continue
+            # 适配器过滤
+            if skill.adapter_types and adapter_type is not None:
+                if adapter_type not in skill.adapter_types:
+                    continue
+            tools.append(skill.to_tool_schema())
+        return tools
+
     def build_tool_descriptions(
         self,
         *,

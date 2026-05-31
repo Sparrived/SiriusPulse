@@ -680,17 +680,21 @@ class Pipeline:
         self,
         group_id: str,
         message: Message,
-        emotion: EmotionState,
-        intent: IntentAnalysisV3,
+        emotion: EmotionState | None,
+        intent: IntentAnalysisV3 | None,
         user_id: str,
     ) -> None:
-        """Background updates after main pipeline."""
+        """Background updates after main pipeline.
+
+        emotion / intent 可为 None（管线短路合并场景），
+        此时跳过情感相关更新，仅处理用户信息持久化。
+        """
         engine = self._engine
         # Update group sentiment cache for emotion island detection
-        engine.cognition_analyzer.update_group_sentiment(group_id, emotion)
-
-        # Update assistant emotion based on interaction
-        engine.assistant_emotion.update_from_interaction(emotion, user_id)
+        if emotion is not None:
+            engine.cognition_analyzer.update_group_sentiment(group_id, emotion)
+            # Update assistant emotion based on interaction
+            engine.assistant_emotion.update_from_interaction(emotion, user_id)
 
         # Save display name (QQ name + group nickname) and accumulate content
         speaker_name = getattr(message, "speaker", "") or ""

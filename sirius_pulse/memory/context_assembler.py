@@ -1,8 +1,9 @@
 """Context assembler: builds LLM messages from basic memory + diary RAG.
 
-Short-term memory (recent basic memory entries) is embedded into the system
-prompt as an XML block rather than traditional OpenAI message history.
-This avoids role-confusion in multi-human group chat scenarios.
+方案 C：历史消息以 assistant 消息切分，构造 user-assistant 消息链。
+每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
+assistant 回复单独作为一条消息。这样既保留了 XML 的结构化语义（speaker、user_id），
+又让 LLM 能更好地理解对话流。
 """
 
 from __future__ import annotations
@@ -52,20 +53,16 @@ class ContextAssembler:
         cross_group_enabled: bool = False,
         include_pending: bool = False,
         biography_card: Any = None,
-    ) -> list[dict[str, str]]:
-        """Build OpenAI messages array with history embedded in system prompt.
+    ) -> list[dict[str, Any]]:
+        """构建消息链（方案 C：以 assistant 消息切分）。
 
-        Returns exactly two messages:
-        1. system  -- enriched with diary summaries + XML conversation history
-        2. user    -- the current turn (current_query)
+        返回多条消息：
+        1. system  -- 富化后的系统提示词（含日记）
+        2. user/assistant 交替 -- 历史对话（按 assistant 切分）
+        3. user   -- 当前用户消息
 
-        When cross_group_enabled is True and cross_group_user_id is provided,
-        recent messages from that user in other groups are also embedded
-        (marked as cross-group to avoid confusion).
-
-        When biography_card is provided, its contents (name, identity anchors,
-        short_bio) are used to enrich the diary retrieval query, improving
-        recall for entries related to the person being discussed.
+        每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
+        assistant 回复单独作为一条消息。
         """
         # 1. Retrieve relevant diary entries (group-isolated)
         enriched_query = self._enrich_search_query(
@@ -91,25 +88,53 @@ class ContextAssembler:
                     "  [日记嵌入 %d/%d] %s", i, len(displayed), label
                 )
 
-        # 2. Build XML conversation history from recent basic memory
-        history_xml = self._build_history_xml(group_id, n=recent_n, include_pending=include_pending)
-
-        # 2b. Cross-group history for the current user
-        cross_group_xml = ""
-        if cross_group_enabled and cross_group_user_id:
-            cross_group_xml = self._build_cross_group_history_xml(
-                cross_group_user_id, exclude_group_id=group_id, n=recent_n
-            )
-
-        # 3. Compose enriched system prompt
+        # 2. 构建富化后的系统提示词（只含日记，不含历史）
         enriched_system = self._enrich_system_prompt(
-            system_prompt, diary_entries, history_xml, cross_group_xml
+            system_prompt, diary_entries, history_xml="", cross_group_xml=""
         )
 
-        return [
-            {"role": "system", "content": enriched_system},
-            {"role": "user", "content": current_query},
+        # 3. 构建消息链（方案 C）
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": enriched_system}
         ]
+
+        # 获取历史条目并按 assistant 切分
+        recent = self._basic.get_context(group_id, n=recent_n)
+        if recent and not include_pending:
+            # 排除 assistant 最后回复之后的未回复用户消息
+            last_assistant_idx = -1
+            for i in range(len(recent) - 1, -1, -1):
+                if recent[i].role == "assistant":
+                    last_assistant_idx = i
+                    break
+            if last_assistant_idx >= 0:
+                recent = recent[: last_assistant_idx + 1]
+
+        if recent:
+            # 按 assistant 消息切分，构造 user-assistant 消息链
+            current_user_entries: list[Any] = []
+            for entry in recent:
+                if entry.role == "assistant":
+                    # 将之前累积的 user/system 消息打包为一个 user 消息
+                    if current_user_entries:
+                        xml_content = self._entries_to_xml(current_user_entries)
+                        messages.append({"role": "user", "content": xml_content})
+                        current_user_entries = []
+                    # 添加 assistant 消息
+                    messages.append({"role": "assistant", "content": entry.content or ""})
+                else:
+                    # user/system 消息累积到当前批次
+                    current_user_entries.append(entry)
+
+            # 处理剩余的 user/system 消息（未被 assistant 回复的）
+            if current_user_entries:
+                xml_content = self._entries_to_xml(current_user_entries)
+                messages.append({"role": "user", "content": xml_content})
+
+        # 4. 添加当前用户消息
+        messages.append({"role": "user", "content": current_query})
+
+        return messages
 
     def build_messages_with_breakdown(
         self,
@@ -125,61 +150,60 @@ class ContextAssembler:
         cross_group_enabled: bool = False,
         include_pending: bool = False,
         biography_card: Any = None,
-    ) -> tuple[list[dict[str, str]], dict[str, int]]:
-        """Build OpenAI messages array and return per-module token breakdown.
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        """构建消息链并返回 token 分布统计。
 
         Returns a tuple of (messages, breakdown) where breakdown contains
-        token counts for diary, history_xml, and cross_group_xml sections.
-
-        When biography_card is provided, its contents (name, identity anchors,
-        short_bio) are used to enrich the diary retrieval query, improving
-        recall for entries related to the person being discussed.
+        token counts for diary and history sections.
         """
-        enriched_query = self._enrich_search_query(
-            search_query or current_query, biography_card
-        )
-        diary_entries = self._diary.retrieve(
-            query=enriched_query,
+        messages = self.build_messages(
             group_id=group_id,
-            top_k=diary_top_k,
-            max_tokens_budget=diary_token_budget,
-        )
-
-        history_xml = self._build_history_xml(group_id, n=recent_n, include_pending=include_pending)
-
-        cross_group_xml = ""
-        if cross_group_enabled and cross_group_user_id:
-            cross_group_xml = self._build_cross_group_history_xml(
-                cross_group_user_id, exclude_group_id=group_id, n=recent_n
-            )
-
-        enriched_system = self._enrich_system_prompt(
-            system_prompt, diary_entries, history_xml, cross_group_xml
+            current_query=current_query,
+            system_prompt=system_prompt,
+            search_query=search_query,
+            recent_n=recent_n,
+            diary_top_k=diary_top_k,
+            diary_token_budget=diary_token_budget,
+            cross_group_user_id=cross_group_user_id,
+            cross_group_enabled=cross_group_enabled,
+            include_pending=include_pending,
+            biography_card=biography_card,
         )
 
         # Compute per-module token counts
         from sirius_pulse.token.utils import estimate_tokens
 
         breakdown: dict[str, int] = {}
-        if diary_entries:
-            full_count = min(5, len(diary_entries))
-            diary_text = "\n".join(
-                f"{i}. [{(e.created_at or '')[:16].replace('T', ' ')}] "
-                f"{e.content if (i <= full_count and e.content) else e.summary}"
-                if e.created_at
-                else f"{i}. {e.content if (i <= full_count and e.content) else e.summary}"
-                for i, e in enumerate(diary_entries[:12], 1)
+        if messages:
+            # 计算 diary 部分的 token
+            enriched_query = self._enrich_search_query(
+                search_query or current_query, biography_card
             )
-            breakdown["diary"] = estimate_tokens(diary_text)
-        if history_xml:
-            breakdown["history_xml"] = estimate_tokens(history_xml)
-        if cross_group_xml:
-            breakdown["cross_group_xml"] = estimate_tokens(cross_group_xml)
+            diary_entries = self._diary.retrieve(
+                query=enriched_query,
+                group_id=group_id,
+                top_k=diary_top_k,
+                max_tokens_budget=diary_token_budget,
+            )
+            if diary_entries:
+                full_count = min(5, len(diary_entries))
+                diary_text = "\n".join(
+                    f"{i}. [{(e.created_at or '')[:16].replace('T', ' ')}] "
+                    f"{e.content if (i <= full_count and e.content) else e.summary}"
+                    if e.created_at
+                    else f"{i}. {e.content if (i <= full_count and e.content) else e.summary}"
+                    for i, e in enumerate(diary_entries[:12], 1)
+                )
+                breakdown["diary"] = estimate_tokens(diary_text)
 
-        return [
-            {"role": "system", "content": enriched_system},
-            {"role": "user", "content": current_query},
-        ], breakdown
+            # 计算历史消息部分的 token
+            history_tokens = 0
+            for msg in messages:
+                if msg.get("role") in ("user", "assistant") and msg.get("content"):
+                    history_tokens += estimate_tokens(str(msg["content"]))
+            breakdown["history"] = history_tokens
+
+        return messages, breakdown
 
     def build_history_xml(self, group_id: str, n: int = 10, *, include_pending: bool = False) -> str:
         """Build XML representation of recent conversation history.

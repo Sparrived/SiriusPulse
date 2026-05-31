@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
-from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
+from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, GenerationResult, LLMProvider
 from sirius_pulse.providers.bigmodel import BigModelProvider
 from sirius_pulse.providers.deepseek import DeepSeekProvider
 from sirius_pulse.providers.mimo import MimoProvider, MimoTokenPlanProvider
@@ -485,7 +485,7 @@ class AutoRoutingProvider(AsyncLLMProvider):
 
     async def generate_async(
         self, request: GenerationRequest, return_reasoning: bool = False
-    ) -> str | tuple[str, str]:
+    ) -> GenerationResult | tuple[str, GenerationResult]:
         selected, matched_by = self._pick_provider(request.model)
         logger.debug(
             "[Provider路由] model=%s | purpose=%s | provider_type=%s | matched_by=%s | base_url=%s | healthcheck_model=%s | models=%s",
@@ -509,7 +509,7 @@ async def probe_provider_availability(
 ) -> None:
     """Run a minimal generation request to verify provider connectivity and credentials."""
 
-    content = await provider.generate_async(
+    result = await provider.generate_async(
         GenerationRequest(
             model=model_name,
             system_prompt=_PROVIDER_HEALTHCHECK_SYSTEM_PROMPT,
@@ -519,7 +519,8 @@ async def probe_provider_availability(
             purpose="provider_healthcheck",
         )
     )
-    if not content.strip():
+    content = result.content if hasattr(result, "content") else str(result)
+    if not content or not content.strip():
         raise RuntimeError("提供商健康检查返回空内容")
 
 

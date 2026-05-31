@@ -1009,6 +1009,36 @@ class _EmotionalGroupChatEngineBase:
             )
         )
 
+        # ── 管线短路：已有 pending 队列项时，直接合并消息，跳过认知/决策 ──
+        # 插件命令需要走完整管线，不参与短路合并
+        if self.delayed_queue.has_pending(group_id):
+            is_plugin_cmd = False
+            plugin_reg = getattr(self.cognition_analyzer, "plugin_registry", None)
+            if plugin_reg is not None:
+                try:
+                    is_plugin_cmd = plugin_reg.match_message(content) is not None
+                except Exception:
+                    pass
+            if not is_plugin_cmd:
+                merged = self.delayed_queue.merge_incoming(
+                    group_id=group_id,
+                    user_id=user_id,
+                    message_content=content,
+                    speaker_name=message.speaker or "",
+                    channel=message.channel,
+                    channel_user_id=message.channel_user_id,
+                    multimodal_inputs=message.multimodal_inputs,
+                )
+                if merged:
+                    self._log_inner_thought(f"已有待回复的消息，把 {speaker} 的话也合进去～")
+                    self._background_update(group_id, message, None, None, user_id)
+                    return {
+                        "strategy": "merged",
+                        "reply": None,
+                        "emotion": {},
+                        "intent": {},
+                    }
+
         # Pure image message (no substantive text) -> generate caption via cognition,
         # save to context, but skip decision/execution. The later text message will
         # pull the caption from basic memory via XML history.

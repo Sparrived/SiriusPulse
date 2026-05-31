@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from sirius_pulse.providers.base import (
     AsyncLLMProvider,
     GenerationRequest,
+    GenerationResult,
     estimate_generation_request_input_tokens,
 )
 
@@ -24,7 +25,7 @@ class MockProvider(AsyncLLMProvider):
         self._queue = deque(self.responses)
         self.requests: list[GenerationRequest] = []
 
-    async def generate_async(self, request: GenerationRequest) -> str:
+    async def generate_async(self, request: GenerationRequest) -> GenerationResult:
         # 基础调用日志（INFO）
         msg_count = len(request.messages)
         estimated_input_tokens = estimate_generation_request_input_tokens(request)
@@ -51,6 +52,6 @@ class MockProvider(AsyncLLMProvider):
             response = self._queue.popleft()
             logger.info(f"模拟的 {request.model} 回复我了，写了 {len(response)} 个字～")
             logger.debug(f"[模型输出] mock-{request.model} | 响应内容:\n{response}")
-            return response
+            return GenerationResult(content=response)
         logger.warning(f"[模型调用] mock-{request.model} | 无配置响应")
-        return "[mock] no configured response"
+        return GenerationResult(content="[mock] no configured response")

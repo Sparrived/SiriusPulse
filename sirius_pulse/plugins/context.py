@@ -172,9 +172,10 @@ class EngineProxy:
             result = await provider.generate_async(request, return_reasoning=return_reasoning)
             duration_ms = round((time.perf_counter() - t0) * 1000, 2)
             if return_reasoning:
-                reasoning, reply = result
+                reasoning, gen_result = result
+                reply = gen_result.content or ""
             else:
-                reply = result
+                reply = result.content or ""
         except Exception as exc:
             logger.warning("[%s] generate_raw 失败: %s", task_name, exc)
             raise
