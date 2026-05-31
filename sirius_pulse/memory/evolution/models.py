@@ -128,7 +128,7 @@ class EvolutionRecord:
     source_type: str = MetaTag.STATED
     source_situation_id: str = ""
     source_group_id: str = ""
-    source_message_ids: list[str] = field(default_factory=list)
+    source_message_ids: list[str] = field(default_factory=list)  # 关联 BasicMemory 消息 ID
     extracted_at: str = field(default_factory=_now_iso)
     extracted_by_model: str = ""
 
