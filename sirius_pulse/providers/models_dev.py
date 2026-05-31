@@ -46,7 +46,10 @@ _MODELS_DEV_TO_SIRIUS: dict[str, str] = {
     "openrouter": "openai-compatible",
     "nvidia": "openai-compatible",
     "minimax": "openai-compatible",
-    "xiaomi": "openai-compatible",
+    "xiaomi": "mimo",
+    "xiaomi-token-plan-cn": "mimo-tokenplan",
+    "xiaomi-token-plan-ams": "mimo-tokenplan",
+    "xiaomi-token-plan-sgp": "mimo-tokenplan",
 }
 
 _SIRIUS_TO_MODELS_DEV: dict[str, list[str]] = {}

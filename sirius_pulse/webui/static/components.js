@@ -144,6 +144,20 @@ export class DynamicConfigForm {
     }
   }
 
+  _resolveCompositeValue(bareName) {
+    if (!bareName || !this.modelChoices) return bareName || '';
+    const exact = this.modelChoices.find(o => o.value === bareName);
+    if (exact) return exact.value;
+    const suffix = this.modelChoices.find(o => o.value.endsWith('/' + bareName));
+    return suffix ? suffix.value : bareName;
+  }
+
+  _stripProviderPrefix(value) {
+    if (!value) return '';
+    const idx = value.indexOf('/');
+    return idx >= 0 ? value.substring(idx + 1) : value;
+  }
+
   /**
    * 异步初始化（获取远程数据）
    */
@@ -312,11 +326,13 @@ export class DynamicConfigForm {
   }
 
   _renderModelSelect(key, value, desc, required) {
+    // value 可能是裸模型名，需要匹配复合格式 provider_type/model_name
+    const resolvedValue = this._resolveCompositeValue(value);
     // 如果当前值不在选项列表中，添加一个额外的选项
-    const valueInChoices = this.modelChoices.some(m => m.value === value);
+    const valueInChoices = this.modelChoices.some(m => m.value === resolvedValue);
     const options = [...this.modelChoices];
-    if (value && !valueInChoices) {
-      options.unshift({ value: value, label: `${value} (当前配置)`, tags: [] });
+    if (resolvedValue && !valueInChoices) {
+      options.unshift({ value: resolvedValue, label: `${resolvedValue} (当前配置)`, tags: [] });
     }
     
     return `
@@ -325,7 +341,7 @@ export class DynamicConfigForm {
           <label class="config-field-label">${key}${required ? '<span class="config-required">*</span>' : ''}</label>
           ${desc ? `<span class="config-field-desc">${desc}</span>` : ''}
         </div>
-        <div data-model-select="${key}" data-model-value="${value || ''}"></div>
+        <div data-model-select="${key}" data-model-value="${resolvedValue || ''}"></div>
       </div>
     `;
   }
@@ -782,7 +798,7 @@ export class DynamicConfigForm {
         options: allOptions,
         value: value,
         onChange: (val) => {
-          this.settings[key] = val;
+          this.settings[key] = this._stripProviderPrefix(val);
         },
       });
       ms.mount(el);
@@ -857,14 +873,14 @@ export class DynamicConfigForm {
       values[key] = checked;
     });
 
-    // 收集 ModelSelect 值
+    // 收集 ModelSelect 值（剥离 provider 前缀，只保留裸模型名）
     if (this._modelSelects) {
       this._modelSelects.forEach(ms => {
         const el = ms._el;
         if (el) {
           const key = el.dataset.modelSelect;
           if (key && ms.value) {
-            values[key] = ms.value;
+            values[key] = this._stripProviderPrefix(ms.value);
           }
         }
       });

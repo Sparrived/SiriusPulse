@@ -592,6 +592,10 @@ class Helpers:
         """Classify an LLM provider exception into a structured error type."""
         msg = str(exc).lower()
 
+        # 优先匹配中文 provider 包装异常
+        if "提供商请求异常" in str(exc) or "提供商 http 错误" in str(exc):
+            return "provider_error"
+
         if "timeout" in msg or "timed out" in msg or "socket" in msg:
             return "network_timeout"
         if "rate limit" in msg or "too many requests" in msg or "429" in msg:

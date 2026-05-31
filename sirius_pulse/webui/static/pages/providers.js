@@ -761,49 +761,20 @@ async function refreshModels() {
   btn.textContent = '刷新中…';
 
   try {
-    // 保存用户原有的模型配置，用于后续合并
-    const originalModelsMap = new Map();
-    providers.forEach(p => {
-      if (p.name) {
-        originalModelsMap.set(p.name, new Set(p.models || []));
-      }
-    });
-
-    const res = await post('/providers/refresh-models', { force: true });
+    // 只刷新 models.dev 缓存，不自动合并模型到 provider
+    const res = await post('/providers/refresh-models', { force: true, cache_only: true });
     if (res.success) {
+      // 清除前端缓存，让后续编辑 UI 加载最新数据
+      _modelsDevCache = {};
+      // 重新加载 provider 列表（不修改模型配置）
       const raw = Array.isArray(res.providers) ? res.providers : [];
-      providers = raw.map(p => {
-        const platformType = p.platform_type || p.type || 'openai-compatible';
-        const providerName = p.name;
-        
-        // 如果有用户原有的模型配置，合并 models.dev 的模型和用户手动添加的模型
-        if (providerName && originalModelsMap.has(providerName)) {
-          const originalModels = originalModelsMap.get(providerName);
-          const newModels = new Set(p.models || []);
-          
-          // 合并：保留用户原有的所有模型 + models.dev 的新模型
-          const mergedModels = [...new Set([...originalModels, ...newModels])];
-          
-          return {
-            ...p,
-            platform_type: platformType,
-            models: mergedModels,
-          };
-        }
-        
-        return {
-          ...p,
-          platform_type: platformType,
-        };
-      });
+      providers = raw.map(p => ({
+        ...p,
+        platform_type: p.platform_type || p.type || 'openai-compatible',
+      }));
       editingIdx = null;
       renderList();
-      if (res.changed) {
-        const total = providers.reduce((s, p) => s + (p.models ? p.models.length : 0), 0);
-        toast(`模型列表已刷新，共 ${total} 个模型`, 'success');
-      } else {
-        toast('模型列表无变化', 'info');
-      }
+      toast('models.dev 缓存已刷新，编辑 Provider 时可选择添加新模型', 'success');
     } else {
       toast(`刷新失败: ${res.error || '未知错误'}`, 'error');
     }

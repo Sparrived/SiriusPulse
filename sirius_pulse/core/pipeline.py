@@ -111,6 +111,22 @@ class Pipeline:
         sender_user = engine.user_manager.get_user(resolved_user_id, group_id)
         resolved_speaker_name = sender_user.name if sender_user else message.speaker or "unknown"
 
+        # 构建用户消息的标签
+        entry_tags: list[dict[str, str]] = []
+        mm_inputs = (
+            [dict(item) for item in message.multimodal_inputs]
+            if message.multimodal_inputs
+            else []
+        )
+        if mm_inputs:
+            # 区分表情包和普通图片
+            sticker_count = sum(1 for m in mm_inputs if m.get("sub_type") == "1")
+            image_count = len(mm_inputs) - sticker_count
+            if sticker_count > 0:
+                entry_tags.append({"type": "sticker", "label": f"动画表情 ×{sticker_count}"})
+            if image_count > 0:
+                entry_tags.append({"type": "image", "label": f"图片 ×{image_count}"})
+
         # Add to basic memory and archive to disk
         entry = engine.basic_memory.add_entry(
             group_id=group_id,
@@ -119,11 +135,8 @@ class Pipeline:
             role="human",
             content=message.content,
             channel_user_id=message.channel_user_id or "",
-            multimodal_inputs=(
-                [dict(item) for item in message.multimodal_inputs]
-                if message.multimodal_inputs
-                else None
-            ),
+            multimodal_inputs=mm_inputs if mm_inputs else None,
+            tags=entry_tags if entry_tags else None,
         )
         engine.basic_store.append(entry)
 

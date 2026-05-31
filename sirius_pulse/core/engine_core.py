@@ -893,10 +893,10 @@ class _EmotionalGroupChatEngineBase:
                 else:
                     return
 
-            # 收集被处理的标签
+            # 收集被处理的标签（仅模型输出相关）
             entry_tags: list[dict[str, str]] = []
 
-            # 表情包标签
+            # 模型输出的表情包标签
             if _result.sticker_names:
                 names_str = ", ".join(_result.sticker_names[:3])
                 entry_tags.append({
@@ -904,7 +904,7 @@ class _EmotionalGroupChatEngineBase:
                     "label": f"表情包: {names_str}" if _result.sticker_names else "表情包"
                 })
 
-            # 钉住/取消钉住指令
+            # 模型输出的钉住/取消钉住指令
             from sirius_pulse.core.pinned_message import (
                 parse_pin_messages, parse_unpin_messages
             )
@@ -915,16 +915,6 @@ class _EmotionalGroupChatEngineBase:
                 entry_tags.append({"type": "pin", "label": f"钉住消息 ×{len(pin_calls)}"})
             if unpin_calls:
                 entry_tags.append({"type": "unpin", "label": f"取消钉住 ×{len(unpin_calls)}"})
-
-            # 多模态输入（图片、表情等）
-            multimodal_inputs: list[dict[str, str]] = []
-            if _req.messages:
-                last_user_msg = _req.messages[-1]
-                multimodal_inputs = last_user_msg.get("multimodal_inputs", [])
-            if multimodal_inputs:
-                image_count = sum(1 for m in multimodal_inputs if m.get("type") == "image")
-                if image_count > 0:
-                    entry_tags.append({"type": "image", "label": f"图片 ×{image_count}"})
 
             gid = _req.group_id
             uid = _req.user_id
@@ -937,7 +927,6 @@ class _EmotionalGroupChatEngineBase:
                 speaker_name=persona_name,
                 system_prompt=_result.system_prompt,
                 tags=entry_tags,
-                multimodal_inputs=multimodal_inputs,
             )
             _engine.basic_store.append(_entry)
             try:

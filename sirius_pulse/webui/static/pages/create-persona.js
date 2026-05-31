@@ -2,6 +2,20 @@ import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, flashSuccess, $, ModelSelect } from '../components.js';
 
+function _stripProviderPrefix(value) {
+  if (!value) return '';
+  const idx = value.indexOf('/');
+  return idx >= 0 ? value.substring(idx + 1) : value;
+}
+
+function _resolveCompositeValue(bareName, options) {
+  if (!bareName) return '';
+  const exact = options.find(o => o.value === bareName);
+  if (exact) return exact.value;
+  const suffix = options.find(o => o.value.endsWith('/' + bareName));
+  return suffix ? suffix.value : bareName;
+}
+
 const CACHE_KEY = 'sirius-create-persona-draft';
 
 const QUESTIONS = [
@@ -243,7 +257,7 @@ function saveDraft() {
     personaId: $('personaId').value,
     personaName: $('personaName').value,
     personaAliases: $('personaAliases').value,
-    model: modelSelect?.value || '',
+    model: _stripProviderPrefix(modelSelect?.value || ''),
     tab: currentTab,
     answers: {},
     direct: {
@@ -276,7 +290,8 @@ function restoreDraft() {
     if (draft.personaName) $('personaName').value = draft.personaName;
     if (draft.personaAliases) $('personaAliases').value = draft.personaAliases;
     if (draft.model && modelSelect) {
-      modelSelect.setValue(draft.model);
+      const resolved = _resolveCompositeValue(draft.model, modelSelect.options);
+      modelSelect.setValue(resolved);
     }
     if (draft.tab) {
       switchTab(draft.tab);
@@ -395,7 +410,7 @@ async function createPersona() {
   const personaId = $('personaId').value.trim();
   const personaName = $('personaName').value.trim();
   const personaAliases = $('personaAliases').value.trim();
-  const model = modelSelect?.value || '';
+  const model = _stripProviderPrefix(modelSelect?.value || '');
 
   if (!personaId) {
     toast('请填写标识名称', 'error');

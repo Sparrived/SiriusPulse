@@ -33,6 +33,20 @@ const TASK_GROUPS = [
   },
 ];
 
+function _stripProviderPrefix(value) {
+  if (!value) return '';
+  const idx = value.indexOf('/');
+  return idx >= 0 ? value.substring(idx + 1) : value;
+}
+
+function _resolveCompositeValue(bareName, options) {
+  if (!bareName) return '';
+  const exact = options.find(o => o.value === bareName);
+  if (exact) return exact.value;
+  const suffix = options.find(o => o.value.endsWith('/' + bareName));
+  return suffix ? suffix.value : bareName;
+}
+
 let orchestrationData = null;
 let modelChoices = [];
 const modelSelects = {};
@@ -175,7 +189,8 @@ function _mountModelSelects(data) {
     const container = $(`msel_${field}`);
     if (!container) continue;
     const key = `${field}_model`;
-    const value = data[key] || '';
+    const bareValue = data[key] || '';
+    const value = _resolveCompositeValue(bareValue, baseOpts);
     
     // 如果当前值不在选项列表中，添加一个额外的选项
     const valueInChoices = baseOpts.some(o => o.value === value);
@@ -199,7 +214,8 @@ function _mountModelSelects(data) {
   ];
   document.querySelectorAll('.task-model-select').forEach(container => {
     const task = container.dataset.task;
-    const value = container.dataset.value || '__inherit__';
+    const bareValue = container.dataset.value || '__inherit__';
+    const value = bareValue === '__inherit__' ? bareValue : _resolveCompositeValue(bareValue, taskOpts);
     const key = `task_${task}`;
     
     // 如果当前值不在选项列表中，添加一个额外的选项
@@ -251,16 +267,17 @@ async function saveOrchestration(name) {
     const isOverridden = document.querySelector(`.task-override[data-task="${task}"]`).checked;
     const key = `task_${task}`;
     const sel = modelSelects[key];
-    taskModels[task] = isOverridden && sel ? sel.value : '__inherit__';
+    const rawVal = isOverridden && sel ? sel.value : '__inherit__';
+    taskModels[task] = rawVal === '__inherit__' ? rawVal : _stripProviderPrefix(rawVal);
     taskEnabled[task] = enabled;
   });
 
   try {
     await post(`/personas/${name}/orchestration`, {
-      analysis_model: modelSelects.analysis_model?.value || '',
-      chat_model: modelSelects.chat_model?.value || '',
-      memory_model: modelSelects.memory_model?.value || '',
-      plugin_model: modelSelects.plugin_model?.value || '',
+      analysis_model: _stripProviderPrefix(modelSelects.analysis_model?.value || ''),
+      chat_model: _stripProviderPrefix(modelSelects.chat_model?.value || ''),
+      memory_model: _stripProviderPrefix(modelSelects.memory_model?.value || ''),
+      plugin_model: _stripProviderPrefix(modelSelects.plugin_model?.value || ''),
       task_models: taskModels,
       task_enabled: taskEnabled,
     });

@@ -488,29 +488,30 @@ async def api_config_post(request: web.Request, persona_manager: Any) -> web.Res
 
 
 def _build_model_choices(persona_manager: Any) -> tuple[list[str], list[dict[str, str]]]:
-    """返回 (available_models, model_choices)。"""
+    """返回 (available_models, model_choices)。
+
+    model_choices 的 value 使用复合格式 ``{provider_type}/{model_name}``
+    以区分来自不同 provider 的同名模型。``available_models`` 保留裸模型名
+    用于下游引擎调用。
+    """
     available_models: list[str] = []
     model_choices: list[dict[str, str]] = []
+    seen_models: set[str] = set()
     try:
         provider_mgr = WorkspaceProviderManager(persona_manager.data_path)
         for cfg in provider_mgr.load().values():
             if cfg.enabled:
                 for m in cfg.models:
-                    available_models.append(m)
+                    # available_models 用裸模型名（引擎直接透传给 API）
+                    if m not in seen_models:
+                        seen_models.add(m)
+                        available_models.append(m)
+                    # model_choices 用复合值，不同 provider 的同名模型各自独立
+                    composite = f"{cfg.provider_type}/{m}"
                     model_choices.append({
-                        "label": f"{cfg.provider_type}/{m}",
-                        "value": m,
+                        "label": composite,
+                        "value": composite,
                     })
-        seen: set[str] = set()
-        deduped_models: list[str] = []
-        deduped_choices: list[dict[str, str]] = []
-        for m, c in zip(available_models, model_choices):
-            if m not in seen:
-                seen.add(m)
-                deduped_models.append(m)
-                deduped_choices.append(c)
-        available_models = deduped_models
-        model_choices = deduped_choices
     except Exception:
         LOG.warning("获取模型列表失败", exc_info=True)
         pass
@@ -534,7 +535,10 @@ def _enrich_model_tags(data_path: Any, model_choices: list[dict[str, str]]) -> N
                     if isinstance(mobj, dict) and mid not in all_models:
                         all_models[mid] = mobj
         for choice in model_choices:
-            m = all_models.get(choice["value"])
+            # value 为复合格式 provider_type/model_name，提取裸模型名查询标签
+            raw_val = choice["value"]
+            model_id = raw_val.split("/", 1)[1] if "/" in raw_val else raw_val
+            m = all_models.get(model_id)
             if not m:
                 continue
             tags: list[str] = []
