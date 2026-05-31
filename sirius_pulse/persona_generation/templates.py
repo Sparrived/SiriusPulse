@@ -857,7 +857,7 @@ def _parse_temperature(value: object, default: float) -> float:
 
 def _parse_max_tokens(value: object, default: int) -> int:
     try:
-        parsed = int(value)  # type: ignore[arg-type]
+        parsed = int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return default
     return min(8192, max(32, parsed))

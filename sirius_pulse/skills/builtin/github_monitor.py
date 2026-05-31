@@ -974,9 +974,7 @@ async def _generate_notification_text(
             task_name="github_monitor_notify",
         )
 
-        from sirius_pulse.skills.executor import strip_skill_calls
-
-        reply = strip_skill_calls(raw_reply).strip()
+        reply = raw_reply.strip()
         return reply or None
     except Exception as exc:
         logger.warning("github_monitor: 生成通知失败: %s", exc)

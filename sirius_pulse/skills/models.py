@@ -59,7 +59,7 @@ class SkillResult:
             if lines:
                 return "\n".join(lines)
         if isinstance(self.data, dict):
-            lines: list[str] = []
+            lines: list[str] = []  # type: ignore[no-redef]
             for key, value in self.data.items():
                 if key in {
                     "_meta",

@@ -58,7 +58,6 @@ def build_orchestration_policy_from_dict(
         "reply_frequency_exempt_on_mention",
         "max_concurrent_llm_calls",
         "enable_skills",
-        "skill_call_marker",
         "max_skill_rounds",
         "skill_execution_timeout",
         "auto_install_skill_deps",

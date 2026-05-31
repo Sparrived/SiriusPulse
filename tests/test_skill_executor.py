@@ -1,4 +1,4 @@
-"""技能执行器和 SKILL_CALL 解析测试。"""
+"""技能执行器测试。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +9,6 @@ from sirius_pulse.skills import (
     SkillInvocationContext,
     SkillParameter,
 )
-from sirius_pulse.skills.executor import parse_skill_calls, strip_skill_calls
 
 
 def _make_skill(name: str, desc: str, run_func, params=None):
@@ -20,36 +19,6 @@ def _make_skill(name: str, desc: str, run_func, params=None):
         source_path=None,
         _run_func=run_func,
     )
-
-
-def test_parse_simple_skill_call():
-    """解析单个 SKILL_CALL 标记。"""
-    text = '测试文本 [SKILL_CALL: search | {"query": "hello"}] 结束'
-    calls = parse_skill_calls(text)
-    assert len(calls) == 1
-    assert calls[0][0] == "search"
-    assert calls[0][1] == {"query": "hello"}
-
-
-def test_parse_multiple_skill_calls():
-    """解析多个 SKILL_CALL 标记。"""
-    text = """
-    [SKILL_CALL: bing_search | {"query": "Python"}]
-    [SKILL_CALL: file_read | {"path": "${bing_search.data}"}]
-    """
-    calls = parse_skill_calls(text)
-    assert len(calls) == 2
-    assert calls[0] == ("bing_search", {"query": "Python"})
-    assert calls[1] == ("file_read", {"path": "${bing_search.data}"})
-
-
-def test_strip_skill_calls():
-    """移除 SKILL_CALL 标记。"""
-    text = '前面 [SKILL_CALL: test | {"a": 1}] 后面'
-    clean = strip_skill_calls(text)
-    assert "SKILL_CALL" not in clean
-    assert "前面" in clean
-    assert "后面" in clean
 
 
 def test_execute_sync_skill(tmp_path: Path):

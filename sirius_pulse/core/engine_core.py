@@ -300,6 +300,8 @@ class _EmotionalGroupChatEngineBase:
         self._plugin_registry: Any | None = None
         self._plugin_executor: Any | None = None
         self._plugin_dispatcher: Any | None = None
+        self._plugin_intent_matcher: Any | None = None
+        self._plugin_intent_verifier: Any | None = None
 
         self._sticker_names: list[str] = []
 
@@ -1012,14 +1014,14 @@ class _EmotionalGroupChatEngineBase:
         # ── 管线短路：已有 pending 队列项时，直接合并消息，跳过认知/决策 ──
         # 插件命令需要走完整管线，不参与短路合并
         if self.delayed_queue.has_pending(group_id):
-            is_plugin_cmd = False
-            plugin_reg = getattr(self.cognition_analyzer, "plugin_registry", None)
-            if plugin_reg is not None:
-                try:
-                    is_plugin_cmd = plugin_reg.match_message(content) is not None
-                except Exception:
-                    pass
-            if not is_plugin_cmd:
+            is_plugin_cmd, plugin_result = await self._check_plugin_intent(content, group_id)
+            if is_plugin_cmd:
+                # 向量匹配 + LLM 验证通过，直接执行插件（跳过完整管线）
+                return await self._execute_verified_plugin(
+                    plugin_result, message, group_id, user_id
+                )
+            else:
+                # 非插件请求，短路合并
                 merged = self.delayed_queue.merge_incoming(
                     group_id=group_id,
                     user_id=user_id,
@@ -1193,6 +1195,206 @@ class _EmotionalGroupChatEngineBase:
         self._background_update(group_id, message, emotion, intent, user_id)
 
         return result
+
+    # ------------------------------------------------------------------
+    # Plugin intent detection (for pipeline short-circuit)
+    # ------------------------------------------------------------------
+
+    async def _check_plugin_intent(
+        self, content: str, group_id: str
+    ) -> tuple[bool, Any | None]:
+        """检测消息是否可能是插件请求。
+
+        三层检测（逐步升级）：
+            1. 规则匹配（PluginRegistry.match_message）— 覆盖精确指令和关键词模板
+            2. 嵌入向量相似度（PluginIntentMatcher）— 覆盖自然语言请求
+            3. 轻量 LLM 验证（PluginIntentVerifier）— 确认意图并提取参数
+
+        Args:
+            content: 用户消息内容
+            group_id: 群组 ID（用于获取上下文消息）
+
+        Returns:
+            (is_plugin, result) 元组：
+            - is_plugin=True 表示是插件请求，result 为 PluginIntentResult
+            - is_plugin=False 表示不是插件请求，result 为 None
+        """
+        # 第一层：规则匹配（最快，覆盖 /命令 和关键词模板）
+        plugin_reg = getattr(self.cognition_analyzer, "plugin_registry", None)
+        if plugin_reg is not None:
+            try:
+                match_result = plugin_reg.match_message(content)
+                if match_result is not None:
+                    # 规则匹配直接命中，构造结果
+                    from sirius_pulse.core.plugin_intent_verifier import PluginIntentResult
+
+                    return True, PluginIntentResult(
+                        is_plugin=True,
+                        plugin_name=match_result.plugin_name,
+                        confidence=1.0,
+                        reason="rule_match",
+                    )
+            except Exception:
+                pass
+
+        # 第二层：嵌入向量相似度（覆盖自然语言插件请求）
+        matcher = getattr(self, "_plugin_intent_matcher", None)
+        candidate_plugins: list[str] = []
+        if matcher is not None:
+            try:
+                candidate_plugins = matcher.match_plugin_candidates(content)
+                if not candidate_plugins:
+                    return False, None
+            except Exception:
+                return False, None
+        else:
+            # 无匹配器，跳过向量检测
+            return False, None
+
+        # 第三层：轻量 LLM 验证（向量匹配通过后确认意图并提取参数）
+        # 使用候选插件列表缩小范围，并提供上下文消息辅助识别
+        verifier = getattr(self, "_plugin_intent_verifier", None)
+        if verifier is not None:
+            try:
+                # 获取最近的上下文消息（XML 格式，复用 ContextAssembler）
+                context_xml = self._get_context_for_plugin_verify(group_id)
+
+                # 获取人格信息
+                persona_name = self.persona.name if self.persona else "AI"
+                persona_aliases = list(self.persona.aliases) if self.persona else []
+
+                result = await verifier.verify(
+                    content,
+                    candidate_plugins=candidate_plugins,
+                    context_xml=context_xml,
+                    persona_name=persona_name,
+                    persona_aliases=persona_aliases,
+                )
+                if result.is_plugin:
+                    logger.info(
+                        "插件意图验证通过: plugin=%s confidence=%.2f reason=%s",
+                        result.plugin_name, result.confidence, result.reason,
+                    )
+                    return True, result
+                else:
+                    logger.debug("插件意图验证未通过: %s", result.reason)
+            except Exception as exc:
+                logger.debug("插件意图验证异常: %s", exc)
+
+        return False, None
+
+    def _get_context_for_plugin_verify(
+        self, group_id: str, n: int = 5
+    ) -> str:
+        """获取最近的上下文消息（XML 格式），用于插件意图验证。
+
+        复用 ContextAssembler.build_history_xml() 保持格式一致。
+
+        Args:
+            group_id: 群组 ID
+            n: 获取最近 n 条消息
+
+        Returns:
+            XML 格式的历史消息字符串，失败返回空字符串。
+        """
+        try:
+            return self.context_assembler.build_history_xml(group_id, n=n)
+        except Exception:
+            return ""
+
+    async def _execute_verified_plugin(
+        self,
+        plugin_result: Any,
+        message: Any,
+        group_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        """执行已验证的插件（从轻量 LLM 验证器获取的结果）。
+
+        Args:
+            plugin_result: PluginIntentResult 包含插件名称和参数
+            message: 原始消息对象
+            group_id: 群组 ID
+            user_id: 用户 ID
+
+        Returns:
+            执行结果字典。
+        """
+        from sirius_pulse.models.response_strategy import (
+            ResponseStrategy,
+            StrategyDecision,
+        )
+
+        plugin_name = plugin_result.plugin_name
+        plugin_slots = plugin_result.slots or {}
+
+        # 检查插件是否存在
+        plugin_reg = getattr(self, "_plugin_registry", None)
+        if plugin_reg is None:
+            return {
+                "strategy": "plugin_verified",
+                "reply": None,
+                "emotion": {},
+                "intent": {},
+                "error": "插件注册表未初始化",
+            }
+
+        definition = plugin_reg.get(plugin_name)
+        if definition is None:
+            return {
+                "strategy": "plugin_verified",
+                "reply": None,
+                "emotion": {},
+                "intent": {},
+                "error": f"插件 '{plugin_name}' 未找到",
+            }
+
+        # 构造 StrategyDecision
+        decision = StrategyDecision(
+            strategy=ResponseStrategy.PLUGIN,
+            score=plugin_result.confidence,
+            threshold=0.0,
+            urgency=0.0,
+            relevance=0.0,
+            reason=f"verified_plugin_intent:{plugin_name}",
+            plugin_intent=plugin_name,
+            plugin_slots=plugin_slots,
+            plugin_render_mode=definition.render.mode if definition else "direct",
+        )
+
+        # 执行插件
+        try:
+            plugin_exec_result = await self._execute_plugin_command(
+                decision=decision,
+                message=message,
+                group_id=group_id,
+                user_id=user_id,
+            )
+            if plugin_exec_result.get("reply") and not plugin_exec_result.get("error"):
+                self._log_inner_thought(f"轻量验证后直接执行了插件 {plugin_name}～")
+                return {
+                    "strategy": "plugin_verified",
+                    "reply": plugin_exec_result["reply"],
+                    "emotion": {},
+                    "intent": {},
+                    "plugin_intent": plugin_name,
+                }
+            return {
+                "strategy": "plugin_verified",
+                "reply": None,
+                "emotion": {},
+                "intent": {},
+                "error": plugin_exec_result.get("error", "插件执行失败"),
+            }
+        except Exception as exc:
+            logger.debug("已验证插件 '%s' 执行失败: %s", plugin_name, exc)
+            return {
+                "strategy": "plugin_verified",
+                "reply": None,
+                "emotion": {},
+                "intent": {},
+                "error": str(exc),
+            }
 
     # ------------------------------------------------------------------
     # Inner thought helpers

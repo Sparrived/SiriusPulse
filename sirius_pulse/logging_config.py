@@ -193,7 +193,7 @@ class ColoredFormatter(logging.Formatter):
         *,
         defaults: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(fmt, datefmt, style, validate, defaults=defaults)
+        super().__init__(fmt, datefmt, style, validate, defaults=defaults)  # type: ignore[arg-type]
         self._name_color_cache: dict[str, str] = {}
 
     @staticmethod
@@ -413,7 +413,7 @@ def configure_logging(
             )
         else:
             # 实时刷新的文件处理器
-            file_handler = FlushingFileHandler(log_path, encoding="utf-8")
+            file_handler = FlushingFileHandler(log_path, encoding="utf-8")  # type: ignore[assignment]
 
         file_handler.setLevel(getattr(logging, level))
         # 文件处理器使用纯文本格式化器（无颜色代码）

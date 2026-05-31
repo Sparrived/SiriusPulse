@@ -113,8 +113,8 @@ class ContextAssembler:
         if recent:
             # 按 assistant 消息切分，构造 user-assistant 消息链
             current_user_entries: list[Any] = []
-            for entry in recent:
-                if entry.role == "assistant":
+            for entry in recent:  # type: ignore[assignment]
+                if entry.role == "assistant":  # type: ignore[attr-defined]
                     # 将之前累积的 user/system 消息打包为一个 user 消息
                     if current_user_entries:
                         xml_content = self._entries_to_xml(current_user_entries)

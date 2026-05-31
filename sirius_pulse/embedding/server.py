@@ -265,7 +265,7 @@ def main() -> None:
     """CLI 入口：python -m sirius_pulse.embedding.server。"""
     from sirius_pulse.logging_config import configure_logging
 
-    configure_logging("INFO")
+    configure_logging("INFO")  # type: ignore[misc]
 
     parser = argparse.ArgumentParser(description="Sirius Chat Embedding 微服务")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="监听端口")

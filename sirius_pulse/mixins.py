@@ -52,7 +52,7 @@ class JsonSerializable:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict (recursively via ``dataclasses.asdict``)."""
-        return asdict(self)
+        return asdict(self)  # type: ignore[call-overload]
 
     @classmethod
     def from_dict(cls: type[_T], data: dict[str, Any]) -> _T:

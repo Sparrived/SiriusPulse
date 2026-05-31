@@ -119,7 +119,6 @@ def _normalize_orchestration_defaults(
     sanitized = _sanitize_nullable_mapping(value, fallback=fallback)
     sanitized.pop("task_budgets", None)
     sanitized.pop("split_marker", None)
-    sanitized.pop("skill_call_marker", None)
     sanitized.pop("consolidation_enabled", None)
     policy = build_orchestration_policy_from_dict(sanitized, agent_model="")
     if policy is None:

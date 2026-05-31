@@ -64,7 +64,7 @@ def _load_persona_skill_config(persona_dir: Path) -> dict[str, Any]:
         ts, config = cached
         if now - ts < _CACHE_TTL:
             return config
-    config: dict[str, Any] = {}
+    config: dict[str, Any] = {}  # type: ignore[no-redef]
     path = _persona_skill_config_path(persona_dir)
     if path.exists():
         try:

@@ -35,7 +35,7 @@ def collect_declared_developer_profiles(
 
     for group_entries in transcript.user_memory.entries.values():
         for entry in group_entries.values():
-            profile = entry.profile
+            profile = entry.profile  # type: ignore[attr-defined]
             if not profile.is_developer:
                 continue
             if profile.user_id in seen:

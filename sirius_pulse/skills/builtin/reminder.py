@@ -1,7 +1,7 @@
 """Built-in skill for creating timed reminders.
 
 Supports both active (model-callable) and passive (background task) modes.
-- Active: AI calls [SKILL_CALL: reminder | {...}] to create/list/cancel.
+- Active: AI invokes the reminder skill via function_call to create/list/cancel.
 - Passive: create_background_tasks() registers a periodic checker that
   scans for due reminders, generates persona-styled messages, and queues
   them for delivery.

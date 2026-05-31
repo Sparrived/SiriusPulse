@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import json
 import logging
-import re
 import time
 from pathlib import Path
 from typing import Any
@@ -23,86 +22,6 @@ from sirius_pulse.skills.telemetry import SkillExecutionRecord, SkillTelemetry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
-
-# Pattern to detect a SKILL_CALL in AI output
-# Format: [SKILL_CALL: skill_name | {"param": "value"}]
-# or:     [SKILL_CALL: skill_name]  (no params)
-SKILL_CALL_PATTERN = re.compile(
-    r"\[SKILL_CALL:\s*(\w+)(?:\s*\|\s*(\{.*?\}))?\s*\]",
-    re.DOTALL,
-)
-
-
-def _extract_balanced_braces(text: str, start: int) -> str | None:
-    """从 text[start] 开始（假设是 '{'），找到匹配的 '}' 位置。"""
-    if start >= len(text) or text[start] != "{":
-        return None
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\":
-            escape = True
-            continue
-        if ch == '"' and not in_string:
-            in_string = True
-            continue
-        if ch == '"' and in_string:
-            in_string = False
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    return None
-
-
-def parse_skill_calls(text: str) -> list[tuple[str, dict[str, Any]]]:
-    """Extract all SKILL_CALL invocations from text.
-
-    Returns list of (skill_name, parameters) tuples.
-    """
-    results: list[tuple[str, dict[str, Any]]] = []
-    for match in SKILL_CALL_PATTERN.finditer(text):
-        skill_name = match.group(1).strip()
-        params_raw = match.group(2)
-        params: dict[str, Any] = {}
-        if params_raw:
-            try:
-                parsed = json.loads(params_raw)
-                if isinstance(parsed, dict):
-                    params = parsed
-            except json.JSONDecodeError:
-                # 非贪婪正则可能在嵌套 JSON 中提前截断，尝试用括号深度匹配修正
-                brace_start = text.find("{", match.start())
-                if brace_start != -1:
-                    balanced = _extract_balanced_braces(text, brace_start)
-                    if balanced:
-                        try:
-                            parsed = json.loads(balanced)
-                            if isinstance(parsed, dict):
-                                params = parsed
-                        except json.JSONDecodeError:
-                            logger.warning("SKILL_CALL参数解析失败: %s", balanced)
-                    else:
-                        logger.warning("SKILL_CALL参数解析失败: %s", params_raw)
-                else:
-                    logger.warning("SKILL_CALL参数解析失败: %s", params_raw)
-        results.append((skill_name, params))
-    return results
-
-
-def strip_skill_calls(text: str) -> str:
-    """Remove all SKILL_CALL markers from text, leaving surrounding content."""
-    return SKILL_CALL_PATTERN.sub("", text).strip()
 
 
 def _should_retry(exc: Exception) -> bool:

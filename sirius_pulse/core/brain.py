@@ -13,7 +13,7 @@ Hook 机制：
 
 设计原则：
     项目本质 = 组装消息 → 喂给 API → 拿到原生文本。
-    哪怕 [SKILL_CALL:] 也只是原生文本里的一种标记。
+    SKILL 调用通过 function_call (tools) 机制实现，不在文本中嵌入标记。
     Brain 是这一流程的唯一入口，任何外部只能通过有限的参数类来调控。
 """
 
@@ -194,6 +194,7 @@ class Brain:
         token_usage_records: list[Any] | None = None,
         sticker_names: list[str] | None = None,
         other_ai_names: list[str] | None = None,
+        skill_registry: Any | None = None,
     ) -> None:
         self.provider_async = provider_async
         self.router = model_router
@@ -205,6 +206,7 @@ class Brain:
         self.token_usage_records: list[Any] = list(token_usage_records or [])
         self.sticker_names = list(sticker_names or [])
         self.other_ai_names = list(other_ai_names or [])
+        self.skill_registry = skill_registry
 
         # 上下文函数（延迟注入，避免循环导入）
         self._recent_messages_fn: Callable[[str, int], list[dict[str, Any]]] | None = None
@@ -315,9 +317,10 @@ class Brain:
         )
         duration_ms = round((time.perf_counter() - t0) * 1000, 2)
 
-        self._record_raw_tokens(gen_request, raw, duration_ms)
+        raw_text = raw.content or ""
+        self._record_raw_tokens(gen_request, raw_text, duration_ms)
 
-        return raw
+        return raw_text
 
     # ═══════════════════════════════════════════════════════════════════
     # 通道 2：对话生成（回复、Plugin 风格化等）
@@ -543,10 +546,10 @@ class Brain:
 
             # ── 5. 用户 post-hooks（post_process 总闸 + task_filter 过滤）──
             if request.post_process:
-                for entry in self._post_hooks:
+                for entry in self._post_hooks:  # type: ignore[assignment]
                     if entry.task_filter is not None and task_name not in entry.task_filter:
                         continue
-                    entry.hook(self, request, result, ctx)
+                    entry.hook(self, request, result, ctx)  # type: ignore[arg-type, call-arg]
 
             return result
 
@@ -640,7 +643,8 @@ class Brain:
         if hasattr(self.provider_async, "generate_async"):
             return await self.provider_async.generate_async(request)
         elif isinstance(self.provider_async, LLMProvider):
-            return await asyncio.to_thread(self.provider_async.generate, request)
+            text = await asyncio.to_thread(self.provider_async.generate, request)
+            return GenerationResult(content=text)
         else:
             raise RuntimeError("配置的提供商未实现 generate/generate_async 方法。")
 

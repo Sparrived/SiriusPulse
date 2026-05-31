@@ -247,7 +247,7 @@ class Pipeline:
             pass
 
         # Memory retrieval now happens in execution via ContextAssembler
-        memories = []
+        memories: list[dict[str, Any]] = []
 
         return intent, emotion, memories, empathy
 
@@ -263,23 +263,7 @@ class Pipeline:
         """Decision layer: strategy selection with threshold and rhythm."""
         engine = self._engine
 
-        # === ✅ Plugin 命令快速路径（v1.2+）===
-        # 指令语义已明确，跳过 threshold/strategy，直接返回 PLUGIN 策略
-        if intent.social_intent == SocialIntent.PLUGIN_COMMAND:
-            return StrategyDecision(
-                strategy=ResponseStrategy.PLUGIN,
-                score=1.0,
-                threshold=0.0,  # 无需门槛
-                urgency=intent.urgency_score,
-                relevance=intent.relevance_score,
-                reason=f"plugin_command:{intent.plugin_intent}",
-                plugin_intent=intent.plugin_intent,
-                plugin_slots=dict(intent.plugin_slots),
-                plugin_render_mode=intent.plugin_render_mode,
-            )
-
         # === 消息前缀过滤 ===
-        # 以配置前缀开头的消息不进入回复流程（但 Plugin 命令已在上方放行）
         prefixes = engine.config.get("message_prefixes", [])
         if prefixes and content:
             text_stripped = content.lstrip()

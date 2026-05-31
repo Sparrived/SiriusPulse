@@ -25,7 +25,7 @@ class MockProvider(AsyncLLMProvider):
         self._queue = deque(self.responses)
         self.requests: list[GenerationRequest] = []
 
-    async def generate_async(self, request: GenerationRequest) -> GenerationResult:
+    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> GenerationResult:
         # 基础调用日志（INFO）
         msg_count = len(request.messages)
         estimated_input_tokens = estimate_generation_request_input_tokens(request)

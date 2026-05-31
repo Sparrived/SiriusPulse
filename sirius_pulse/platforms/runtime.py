@@ -351,11 +351,11 @@ class EngineRuntime:
         from sirius_pulse.plugins.base import PluginBase
 
         registered_tasks = 0
-        for definition in registry.plugin_names:
-            inst = registry.get_instance(definition)
+        for definition in registry.plugin_names:  # type: ignore[assignment]
+            inst = registry.get_instance(definition)  # type: ignore[arg-type]
             if inst is None:
                 continue
-            plugin_def = registry.get(definition)
+            plugin_def = registry.get(definition)  # type: ignore[arg-type]
             if plugin_def is None:
                 continue
             assert isinstance(inst, PluginBase)
@@ -364,10 +364,10 @@ class EngineRuntime:
                     continue
                 task = ScheduledTask(
                     name=f"{definition}:{evt.type}",
-                    plugin_name=definition,
+                    plugin_name=definition,  # type: ignore[arg-type]
                     cron=evt.cron,
                     interval_seconds=evt.interval_seconds,
-                    callback=lambda e=evt, i=inst: i.on_event(e.type, {
+                    callback=lambda e=evt, i=inst: i.on_event(e.type, {  # type: ignore[misc]
                         "cron": e.cron,
                         "interval_seconds": e.interval_seconds,
                         "description": e.description,

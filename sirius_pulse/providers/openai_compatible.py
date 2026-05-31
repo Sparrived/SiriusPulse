@@ -188,7 +188,7 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             async with client.stream("POST", url, json=wire_payload, headers=headers) as response:
                 if response.status_code >= 400:
                     body = await response.aread()
-                    raise RuntimeError(f"提供商 HTTP 错误 {response.status_code}：{body[:200]}")
+                    raise RuntimeError(f"提供商 HTTP 错误 {response.status_code}：{body[:200]}")  # type: ignore[str-bytes-safe]
                 async for line in response.aiter_lines():
                     line = line.strip()
                     if not line or not line.startswith("data:"):

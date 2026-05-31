@@ -504,7 +504,7 @@ class NapCatManager:
         # 精确更新 websocketServers[0] 的关键字段，保留其他服务器配置
         ws_servers = onebot_config.setdefault("network", {}).setdefault("websocketServers", [])
         if not ws_servers:
-            ws_servers.append(onebot_defaults["network"]["websocketServers"][0])
+            ws_servers.append(onebot_defaults["network"]["websocketServers"][0])  # type: ignore[index]
         ws0 = ws_servers[0]
         ws0["enable"] = True
         ws0["name"] = "WsServer"
@@ -828,7 +828,7 @@ class NapCatManager:
                         return {"ready": True, "self_id": str(self_id), "error": None}
                     # 收到消息但没有 self_id，也认为是就绪（可能是其他事件）
                     return {"ready": True, "self_id": None, "error": None}
-            except websockets.exceptions.InvalidStatusCode as exc:
+            except websockets.exceptions.InvalidStatusCode as exc:  # type: ignore[attr-defined]
                 if exc.status_code == 401:
                     LOG.warning("NapCat WebSocket Token 错误 (401)")
                     return {"ready": False, "self_id": None, "error": "WebSocket Token 错误"}

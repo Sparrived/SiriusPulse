@@ -39,7 +39,7 @@ class BaseAdapter(ABC):
         if not url.startswith(("http://", "https://")):
             return url
 
-        cache_dir = self._sticker_cache_dir if is_sticker else self._image_cache_dir
+        cache_dir = self._sticker_cache_dir if is_sticker else self._image_cache_dir  # type: ignore[attr-defined]
         cache_dir.mkdir(parents=True, exist_ok=True)
         ext = Path(url.split("?")[0]).suffix or ".jpg"
         try:

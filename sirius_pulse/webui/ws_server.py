@@ -103,7 +103,7 @@ class WebSocketManager:
                 if not ws.closed:
                     try:
                         await ws.close(
-                            code=web.WSCloseCode.GOING_AWAY,
+                            code=web.WSCloseCode.GOING_AWAY,  # type: ignore[attr-defined]
                             message=b"server shutting down",
                         )
                     except (ConnectionResetError, asyncio.CancelledError):

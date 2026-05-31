@@ -377,7 +377,7 @@ class PinnedMessageManager:
             统计信息字典
         """
         messages = list(self._pinned_messages.values())
-        by_group = {}
+        by_group: dict[str, int] = {}
 
         for msg in messages:
             by_group[msg.group_id] = by_group.get(msg.group_id, 0) + 1

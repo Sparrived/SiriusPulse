@@ -24,7 +24,7 @@ import websockets.exceptions
 try:
     from websockets.asyncio.client import ClientConnection as WebSocketClientProtocol
 except ImportError:
-    from websockets import WebSocketClientProtocol  # type: ignore[assignment]
+    from websockets import WebSocketClientProtocol  # type: ignore[assignment, attr-defined, no-redef]
 
 from sirius_pulse.adapters.base import BaseAdapter
 from sirius_pulse.adapters.models import (

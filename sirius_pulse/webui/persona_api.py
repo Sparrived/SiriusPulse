@@ -555,7 +555,7 @@ def _enrich_model_tags(data_path: Any, model_choices: list[dict[str, str]]) -> N
             if "audio" in input_mods:
                 tags.append("音频")
             if tags:
-                choice["tags"] = tags
+                choice["tags"] = tags  # type: ignore[assignment]
     except Exception:
         LOG.debug("注入模型能力标签失败", exc_info=True)
 

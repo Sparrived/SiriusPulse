@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
-from sirius_pulse.skills.executor import strip_skill_calls
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -148,9 +147,7 @@ class ProactiveTasks:
             )
         )
 
-        # generate_text() 已返回 clean_text（不含 SKILL_CALL 和 sticker 标签），
-        # strip_skill_calls 作为安全兜底；去重由 post-hook _hook_dedup 完成。
-        clean_reply = strip_skill_calls(reply).strip()
+        clean_reply = reply.strip()
 
         return {
             "strategy": "proactive",
@@ -176,7 +173,7 @@ class ProactiveTasks:
                         continue
                     reply = await self._generate_developer_chat(group_id)
                     if reply:
-                        clean_dev = strip_skill_calls(reply).strip()
+                        clean_dev = reply.strip()
                         engine._pending_developer_chats.setdefault(group_id, []).append(clean_dev)
                         engine._last_developer_chat_at[group_id] = now
                         engine._log_inner_thought("突然想跟开发者聊聊，发了条消息过去～")
@@ -258,7 +255,7 @@ class ProactiveTasks:
         )
         reply = raw_reply.strip()
 
-        clean_reply = strip_skill_calls(reply).strip()
+        clean_reply = reply.strip()
 
         return clean_reply or None
 
@@ -337,8 +334,8 @@ class ProactiveTasks:
 
         # 初始化话题追踪
         if not hasattr(engine, '_recent_proactive_topics'):
-            engine._recent_proactive_topics: dict[str, list[str]] = {}
-        recent = engine._recent_proactive_topics.setdefault(group_id, [])
+            engine._recent_proactive_topics = {}  # type: ignore[attr-defined]
+        recent = engine._recent_proactive_topics.setdefault(group_id, [])  # type: ignore[attr-defined]
 
         group_profile = engine.semantic_memory.get_group_profile(group_id)
         if group_profile is None:
@@ -387,7 +384,7 @@ class ProactiveTasks:
         if chosen:
             recent.append(chosen)
             if len(recent) > 5:
-                engine._recent_proactive_topics[group_id] = recent[-5:]
+                engine._recent_proactive_topics[group_id] = recent[-5:]  # type: ignore[attr-defined]
 
         return chosen
 

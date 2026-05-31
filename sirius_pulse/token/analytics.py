@@ -70,13 +70,13 @@ _AGG_COLS = (
 
 def _bucket_from_row(row: dict[str, object]) -> BucketDict:
     return BucketDict(
-        calls=int(row["calls"]),  # type: ignore[arg-type]
-        prompt_tokens=int(row["prompt_tokens"]),  # type: ignore[arg-type]
-        completion_tokens=int(row["completion_tokens"]),  # type: ignore[arg-type]
-        total_tokens=int(row["total_tokens"]),  # type: ignore[arg-type]
-        input_chars=int(row["input_chars"]),  # type: ignore[arg-type]
-        output_chars=int(row["output_chars"]),  # type: ignore[arg-type]
-        retries=int(row["retries"]),  # type: ignore[arg-type]
+        calls=int(row["calls"]),  # type: ignore[call-overload]
+        prompt_tokens=int(row["prompt_tokens"]),  # type: ignore[call-overload]
+        completion_tokens=int(row["completion_tokens"]),  # type: ignore[call-overload]
+        total_tokens=int(row["total_tokens"]),  # type: ignore[call-overload]
+        input_chars=int(row["input_chars"]),  # type: ignore[call-overload]
+        output_chars=int(row["output_chars"]),  # type: ignore[call-overload]
+        retries=int(row["retries"]),  # type: ignore[call-overload]
     )
 
 

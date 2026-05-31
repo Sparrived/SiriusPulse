@@ -43,6 +43,8 @@ class Helpers:
         """Attach SKILL registry and executor to the engine."""
         self._engine._skill_registry = skill_registry
         self._engine._skill_executor = skill_executor
+        if hasattr(self._engine, 'brain'):
+            self._engine.brain.skill_registry = skill_registry
         self._register_passive_skills()
 
     # ==================================================================
@@ -66,6 +68,32 @@ class Helpers:
             cog = getattr(self._engine, "cognition_analyzer", None)
             if cog is not None:
                 cog.plugin_registry = plugin_registry
+
+        # 初始化插件意图匹配器（嵌入向量相似度，用于管线短路合并）
+        embedding_client = getattr(self._engine, "_embedding_client", None)
+        if plugin_registry is not None and embedding_client is not None:
+            from sirius_pulse.core.plugin_intent_matcher import PluginIntentMatcher
+
+            self._engine._plugin_intent_matcher = PluginIntentMatcher(
+                embedding_client=embedding_client,
+                plugin_registry=plugin_registry,
+            )
+        else:
+            self._engine._plugin_intent_matcher = None
+
+        # 初始化插件意图验证器（轻量 LLM，用于向量匹配后的二次确认）
+        brain = getattr(self._engine, "brain", None)
+        model_router = getattr(self._engine, "model_router", None)
+        if plugin_registry is not None and brain is not None and model_router is not None:
+            from sirius_pulse.core.plugin_intent_verifier import PluginIntentVerifier
+
+            self._engine._plugin_intent_verifier = PluginIntentVerifier(
+                brain=brain,
+                model_router=model_router,
+                plugin_registry=plugin_registry,
+            )
+        else:
+            self._engine._plugin_intent_verifier = None
 
     async def execute_plugin_command(
         self,
@@ -453,7 +481,7 @@ class Helpers:
                 if isinstance(ts, str):
                     timestamps.append(datetime.fromisoformat(ts.replace("Z", "+00:00")))
                 elif hasattr(ts, "isoformat"):
-                    timestamps.append(ts)
+                    timestamps.append(ts)  # type: ignore[arg-type]
             if len(timestamps) < 2:
                 return 0.0
             span_minutes = (max(timestamps) - min(timestamps)).total_seconds() / 60.0

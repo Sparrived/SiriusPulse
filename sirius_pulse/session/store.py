@@ -277,6 +277,7 @@ class SqliteSessionStore:
         else:
             raise ValueError("SqliteSessionStore requires either work_path or path.")
         self._conn: sqlite3.Connection | None = None
+        self._session_id: str = ""
         self._ensure_schema()
 
     @classmethod

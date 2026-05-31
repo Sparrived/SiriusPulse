@@ -112,7 +112,7 @@ class PersonaManager:
             port += 1
             if port > 65535:
                 raise RuntimeError("无可用端口")
-        ports[name] = port
+        ports[name] = port  # type: ignore[assignment]
         self._save_port_registry(ports)
         LOG.info("为 %s 分配端口: %s", name, port)
         return port
@@ -126,7 +126,7 @@ class PersonaManager:
 
     def get_port(self, name: str) -> int | None:
         """获取人格当前分配的端口。"""
-        return self._load_port_registry().get(name)
+        return self._load_port_registry().get(name)  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
     # 扫描与列表
@@ -359,7 +359,7 @@ class PersonaManager:
             if inferred_port and name not in self._load_port_registry():
                 # 如果推断到了端口且未分配，直接注册
                 ports = self._load_port_registry()
-                ports[name] = port
+                ports[name] = port  # type: ignore[assignment]
                 self._save_port_registry(ports)
             adapters = PersonaAdaptersConfig(
                 adapters=[

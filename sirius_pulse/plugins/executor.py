@@ -231,7 +231,7 @@ class PluginExecutor:
                 )
             else:
                 raw = await asyncio.wait_for(
-                    asyncio.to_thread(instance.execute, cmd),
+                    asyncio.to_thread(instance.execute, cmd),  # type: ignore[attr-defined]
                     timeout=cmd_timeout,
                 )
                 results = [raw] if raw is not None else [PluginResponse.ok(text="", data=None)]

@@ -31,14 +31,14 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
     "cognition_analyze": TaskConfig(
         model_name="gpt-4o-mini",
         temperature=0.3,
-        max_tokens=512,
+        max_tokens=1024,
         timeout=15.0,
         fallback_model="deepseek-chat",
     ),
     "memory_extract": TaskConfig(
         model_name="gpt-4o-mini",
         temperature=0.3,
-        max_tokens=512,
+        max_tokens=1024,
         timeout=20.0,
         fallback_model="deepseek-chat",
     ),

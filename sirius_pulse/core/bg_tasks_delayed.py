@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -403,7 +404,7 @@ class DelayedQueueTasks:
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                     continue
 
-                ctx = SkillInvocationContext(
+                ctx = SkillInvocationContext(  # type: ignore[assignment]
                     caller=skill_caller,
                     developer_profiles=developer_profiles,
                 )
@@ -555,7 +556,6 @@ class DelayedQueueTasks:
         if any(i.strategy_decision.strategy == ResponseStrategy.IMMEDIATE for i in triggered):
             strategy = "immediate"
 
-        # Never leak raw SKILL_CALL markers to the user.
         final_reply = clean_reply or (partial_replies[-1] if partial_replies else "")
 
         # Record reply timestamp for cooldown tracking (once per tick)

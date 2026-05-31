@@ -241,7 +241,7 @@ class OrchestrationPolicy:
     # Set to 0 to disable (unlimited). Recommended: 1~3.
     max_concurrent_llm_calls: int = 1
 
-    # Skill system: allow AI to invoke external code via built-in SKILL_CALL marker
+    # Skill system: allow AI to invoke external code via function_call (tools)
     enable_skills: bool = True
     max_skill_rounds: int = 3  # max consecutive skill call rounds per turn
     skill_execution_timeout: float = 30.0  # max seconds per SKILL execution, 0 = no limit
@@ -394,6 +394,34 @@ class WorkspaceConfig:
             "provider_policy": {"prefer_workspace_registry": self.provider_policy.prefer_workspace_registry},
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "WorkspaceConfig":
+        session_defaults_payload = payload.get("session_defaults", {})
+        provider_policy_payload = payload.get("provider_policy", {})
+        return cls(
+            work_path=Path(payload.get("work_path", ".")),
+            data_path=Path(payload.get("data_path", payload.get("work_path", "."))),
+            layout_version=int(payload.get("layout_version", 2)),
+            bootstrap_signature=str(payload.get("bootstrap_signature", "")).strip(),
+            active_agent_key=str(payload.get("active_agent_key", "")).strip(),
+            session_defaults=SessionDefaults(
+                history_max_messages=int(session_defaults_payload.get("history_max_messages", 24)),
+                history_max_chars=int(session_defaults_payload.get("history_max_chars", 6000)),
+                max_recent_participant_messages=int(
+                    session_defaults_payload.get("max_recent_participant_messages", 5)
+                ),
+                enable_auto_compression=bool(
+                    session_defaults_payload.get("enable_auto_compression", True)
+                ),
+            ),
+            orchestration_defaults=dict(payload.get("orchestration_defaults", {})),
+            provider_policy=ProviderPolicy(
+                prefer_workspace_registry=bool(
+                    provider_policy_payload.get("prefer_workspace_registry", True)
+                ),
+            ),
+        )
+
 
 @dataclass(slots=True)
 class MultiModelConfig:
@@ -435,34 +463,6 @@ class MultiModelConfig:
             "max_multimodal_inputs_per_turn": self.max_multimodal_inputs_per_turn,
             "max_multimodal_value_length": self.max_multimodal_value_length,
         }
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "WorkspaceConfig":
-        session_defaults_payload = payload.get("session_defaults", {})
-        provider_policy_payload = payload.get("provider_policy", {})
-        return cls(
-            work_path=Path(payload.get("work_path", ".")),
-            data_path=Path(payload.get("data_path", payload.get("work_path", "."))),
-            layout_version=int(payload.get("layout_version", 2)),
-            bootstrap_signature=str(payload.get("bootstrap_signature", "")).strip(),
-            active_agent_key=str(payload.get("active_agent_key", "")).strip(),
-            session_defaults=SessionDefaults(
-                history_max_messages=int(session_defaults_payload.get("history_max_messages", 24)),
-                history_max_chars=int(session_defaults_payload.get("history_max_chars", 6000)),
-                max_recent_participant_messages=int(
-                    session_defaults_payload.get("max_recent_participant_messages", 5)
-                ),
-                enable_auto_compression=bool(
-                    session_defaults_payload.get("enable_auto_compression", True)
-                ),
-            ),
-            orchestration_defaults=dict(payload.get("orchestration_defaults", {})),
-            provider_policy=ProviderPolicy(
-                prefer_workspace_registry=bool(
-                    provider_policy_payload.get("prefer_workspace_registry", True)
-                ),
-            ),
-        )
 
 
 @dataclass(slots=True, init=False)

@@ -249,9 +249,9 @@ class PersonaWorker:
                 if persona:
                     adapter.set_persona_name(getattr(persona, 'name', '') or '')
             await adapter.connect()
-            await adapter.start_handling(self._runtime.engine)
+            await adapter.start_handling(self._runtime.engine)  # type: ignore[union-attr]
             self._adapters.append(adapter)
-            self._runtime.add_skill_bridge("napcat", adapter)
+            self._runtime.add_skill_bridge("napcat", adapter)  # type: ignore[union-attr]
             LOG.info("NapCat adapter 已启动: %s", adapter_cfg.ws_url)
         else:
             LOG.warning("未知 adapter 类型，已跳过: %s", type(adapter_cfg).__name__)

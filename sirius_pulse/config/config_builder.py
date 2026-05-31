@@ -97,7 +97,7 @@ def config_param(
     # 存储参数元数据，通过 __dict__ 传递给 ConfigBuilder
     return _ParamMarker(
         description=description,
-        type=param_type,
+        type=param_type,  # type: ignore[arg-type]
         required=required,
         default=default,
         choices=choices,
@@ -181,7 +181,7 @@ class ConfigBuilder:
 
         self._params.append(ParamDefinition(
             name=name,
-            type=param_type,
+            type=param_type,  # type: ignore[arg-type]
             description=description,
             required=required,
             default=default,

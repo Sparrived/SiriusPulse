@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
 from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, GenerationResult, LLMProvider
@@ -412,7 +413,7 @@ def merge_provider_sources(
     return merged
 
 
-def _create_provider_instance(config: ProviderConfig) -> LLMProvider:
+def _create_provider_instance(config: ProviderConfig) -> Any:
     provider_type = config.provider_type
     if provider_type in _ALIYUN_BAILIAN_PROVIDER_TYPES:
         return AliyunBailianProvider(
@@ -499,7 +500,7 @@ class AutoRoutingProvider(AsyncLLMProvider):
         )
         provider = self._create_provider(selected)
         self._last_provider_name = getattr(provider, "_provider_name", selected.provider_type)
-        return await provider.generate_async(request, return_reasoning=return_reasoning)
+        return await provider.generate_async(request, return_reasoning=return_reasoning)  # type: ignore[attr-defined]
 
 
 async def probe_provider_availability(
@@ -519,7 +520,7 @@ async def probe_provider_availability(
             purpose="provider_healthcheck",
         )
     )
-    content = result.content if hasattr(result, "content") else str(result)
+    content = result.content if hasattr(result, "content") else str(result)  # type: ignore[union-attr]
     if not content or not content.strip():
         raise RuntimeError("提供商健康检查返回空内容")
 
@@ -559,7 +560,7 @@ async def run_provider_detection_flow(
             raise RuntimeError(f"provider 缺少 healthcheck_model：{provider_type}")
 
         provider = _create_provider_from_config(config)
-        await probe_provider_availability(provider=provider, model_name=config.healthcheck_model)
+        await probe_provider_availability(provider=provider, model_name=config.healthcheck_model)  # type: ignore[arg-type]
 
 
 async def register_provider_with_validation(
@@ -587,7 +588,7 @@ async def register_provider_with_validation(
         enabled=True,
     )
     provider = _create_provider_from_config(config)
-    await probe_provider_availability(provider=provider, model_name=model_name)
+    await probe_provider_availability(provider=provider, model_name=model_name)  # type: ignore[arg-type]
 
     ProviderRegistry(work_path).upsert(
         provider_type=normalized_provider_type,

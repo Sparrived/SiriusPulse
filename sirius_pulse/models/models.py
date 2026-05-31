@@ -148,7 +148,7 @@ class Transcript:
         _CUSTOM = frozenset({"messages", "user_memory", "reply_runtime", "token_usage_records"})
         result: dict[str, Any] = {
             "messages": [msg.to_dict() for msg in self.messages],
-            "user_memory": self.user_memory.to_dict(),
+            "user_memory": self.user_memory.to_dict(),  # type: ignore[attr-defined]
             "reply_runtime": self.reply_runtime.to_dict(),
             "token_usage_records": [r.to_dict() for r in self.token_usage_records],
         }
@@ -194,7 +194,7 @@ class Transcript:
         )
 
         if "user_memory" in payload:
-            transcript.user_memory = UnifiedUserManager.from_dict(payload.get("user_memory", {}))
+            transcript.user_memory = UnifiedUserManager.from_dict(payload.get("user_memory", {}))  # type: ignore[attr-defined]
         else:
             # Backward compatibility for old state files.
             raw_memories = payload.get("participant_memories", {})

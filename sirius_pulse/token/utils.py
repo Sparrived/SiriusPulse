@@ -106,7 +106,7 @@ def estimate_tokens_heuristic(
     english_tokens = max(1, (english_char_count + english_chars_per_token - 1) // english_chars_per_token)
     other_tokens = max(0, (other_count + 3) // 4)
 
-    return max(1, chinese_tokens + english_tokens + other_tokens)
+    return int(max(1, chinese_tokens + english_tokens + other_tokens))
 
 
 def get_token_estimation_stats(text: str) -> dict[str, int | None]:

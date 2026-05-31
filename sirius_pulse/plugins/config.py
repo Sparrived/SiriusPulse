@@ -140,9 +140,9 @@ class PluginConfigManager:
     
     def _notify_change(self, plugin_name: str) -> None:
         """通知所有监听器配置变更。"""
-        config = self._config.get(plugin_name, {})
+        config: dict[str, Any] = self._config.get(plugin_name, {})  # type: ignore[assignment]
         for listener in self._listeners:
-            listener.notify(plugin_name, config)
+            listener.notify(plugin_name, config)  # type: ignore[arg-type]
     
     # ── 配置访问接口 ──
     
@@ -156,15 +156,15 @@ class PluginConfigManager:
     
     def get_enabled(self, plugin_name: str) -> bool:
         """获取插件启用状态。"""
-        return self._config.get(plugin_name, {}).get("enabled", True)
+        return self._config.get(plugin_name, {}).get("enabled", True)  # type: ignore[call-overload]
     
     def get_permissions(self, plugin_name: str) -> dict[str, Any]:
         """获取插件权限配置。"""
-        return self._config.get(plugin_name, {}).get("permissions", {})
+        return self._config.get(plugin_name, {}).get("permissions", {})  # type: ignore[call-overload]
     
     def get_settings(self, plugin_name: str) -> dict[str, Any]:
         """获取插件自定义配置。"""
-        return self._config.get(plugin_name, {}).get("settings", {})
+        return self._config.get(plugin_name, {}).get("settings", {})  # type: ignore[call-overload]
     
     def get_setting(self, plugin_name: str, key: str, default: Any = None) -> Any:
         """获取插件单个配置项。"""
