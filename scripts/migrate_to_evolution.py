@@ -69,7 +69,7 @@ def _build_brain_from_provider(work_path: Path):
     """
     from sirius_pulse.providers.routing import AutoRoutingProvider, ProviderRegistry
     from sirius_pulse.core.brain import Brain
-    from sirius_pulse.core.model_router import ModelRouter
+    from sirius_pulse.core.model_router import ModelRouter, TaskConfig
     from sirius_pulse.models.persona import PersonaProfile
 
     provider_keys_rel = Path("providers") / "provider_keys.json"
@@ -99,7 +99,7 @@ def _build_brain_from_provider(work_path: Path):
             models=[model],
         )
         provider = AutoRoutingProvider({"openai-compatible": cfg})
-        model_router = ModelRouter({"memory_extract": model}, default_model=model)
+        model_router = ModelRouter({"memory_extract": TaskConfig(model_name=model, temperature=0.3, max_tokens=512)})
         persona = PersonaProfile(name="迁移助手")
         brain = Brain(
             provider_async=provider,
@@ -114,19 +114,38 @@ def _build_brain_from_provider(work_path: Path):
 
     provider = AutoRoutingProvider(loaded)
 
-    model_name = ""
-    for cfg in loaded.values():
-        if cfg.healthcheck_model:
-            model_name = cfg.healthcheck_model
-            break
-        if cfg.models:
-            model_name = cfg.models[0]
-            break
+    available_models: list[tuple[str, str]] = []
+    for provider_name, cfg in loaded.items():
+        for m in cfg.models:
+            available_models.append((provider_name, m))
+        if cfg.healthcheck_model and cfg.healthcheck_model not in [m for _, m in available_models]:
+            available_models.append((provider_name, cfg.healthcheck_model))
 
-    if not model_name:
+    if not available_models:
         return None, ""
 
-    model_router = ModelRouter({"memory_extract": model_name}, default_model=model_name)
+    print("\n可用模型列表：")
+    for i, (pname, mname) in enumerate(available_models, 1):
+        print(f"  [{i}] {mname}  (provider: {pname})")
+
+    if len(available_models) == 1:
+        model_name = available_models[0][1]
+        print(f"\n仅一个可用模型，自动选择: {model_name}")
+    else:
+        while True:
+            raw = input(f"\n请选择模型编号 [1-{len(available_models)}]（回车默认 1）: ").strip()
+            if not raw:
+                choice = 0
+                break
+            if raw.isdigit() and 1 <= int(raw) <= len(available_models):
+                choice = int(raw) - 1
+                break
+            print("输入无效，请重新选择")
+        model_name = available_models[choice][1]
+
+    print(f"已选择模型: {model_name}")
+
+    model_router = ModelRouter({"memory_extract": TaskConfig(model_name=model_name, temperature=0.3, max_tokens=512)})
     persona = PersonaProfile(name="迁移助手")
     brain = Brain(
         provider_async=provider,
