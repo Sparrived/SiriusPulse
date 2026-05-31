@@ -169,6 +169,14 @@ class EvolutionChain:
         """获取某主体的所有记录（含 shadow）。"""
         return self._store.get_all_by_subject(subject)
 
+    def get_active_by_user_id(self, user_id: str) -> list[EvolutionRecord]:
+        """按 user_id 获取所有 active 记录（别名系统关联）。"""
+        return self._store.get_active_by_user_id(user_id)
+
+    def get_all_by_user_id(self, user_id: str) -> list[EvolutionRecord]:
+        """按 user_id 获取所有记录。"""
+        return self._store.get_all_by_user_id(user_id)
+
     def get_history(self, record_id: str) -> list[EvolutionRecord]:
         """获取某条记录的完整演化链（前驱 + 后继）。"""
         chain: list[EvolutionRecord] = []
@@ -400,6 +408,7 @@ class EvolutionChain:
         """从三元组和来源创建演化链记录。"""
         return EvolutionRecord(
             subject=triple.subject,
+            subject_user_id=triple.subject_user_id,
             predicate=triple.predicate,
             obj=triple.obj,
             status=RecordStatus.ACTIVE,

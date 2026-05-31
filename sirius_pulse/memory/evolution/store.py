@@ -33,6 +33,7 @@ class EvolutionStore(BaseSqliteStore):
             CREATE TABLE IF NOT EXISTS evolution_records (
                 record_id TEXT PRIMARY KEY,
                 subject TEXT NOT NULL,
+                subject_user_id TEXT DEFAULT '',
                 predicate TEXT NOT NULL,
                 obj TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
@@ -53,6 +54,8 @@ class EvolutionStore(BaseSqliteStore):
 
             CREATE INDEX IF NOT EXISTS idx_evo_subject
                 ON evolution_records(subject);
+            CREATE INDEX IF NOT EXISTS idx_evo_user_id
+                ON evolution_records(subject_user_id);
             CREATE INDEX IF NOT EXISTS idx_evo_status
                 ON evolution_records(status);
             CREATE INDEX IF NOT EXISTS idx_evo_source_situation
@@ -68,15 +71,16 @@ class EvolutionStore(BaseSqliteStore):
         data = record.to_dict()
         self.execute(
             """INSERT OR REPLACE INTO evolution_records
-               (record_id, subject, predicate, obj, status, confidence,
+               (record_id, subject, subject_user_id, predicate, obj, status, confidence,
                 initial_confidence, supersedes, superseded_by,
                 source_type, source_situation_id, source_group_id,
                 source_message_ids, extracted_at, extracted_by_model,
                 verifications, corrections)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["record_id"],
                 data["subject"],
+                data["subject_user_id"],
                 data["predicate"],
                 data["obj"],
                 data["status"],
@@ -191,6 +195,22 @@ class EvolutionStore(BaseSqliteStore):
         )
         return [r["subject"] for r in rows]
 
+    def get_active_by_user_id(self, user_id: str) -> list[EvolutionRecord]:
+        """按 user_id 获取所有 active 记录（别名系统关联）。"""
+        rows = self.fetchall(
+            "SELECT * FROM evolution_records WHERE subject_user_id = ? AND status = ?",
+            (user_id, RecordStatus.ACTIVE),
+        )
+        return [self._row_to_record(r) for r in rows]
+
+    def get_all_by_user_id(self, user_id: str) -> list[EvolutionRecord]:
+        """按 user_id 获取所有记录。"""
+        rows = self.fetchall(
+            "SELECT * FROM evolution_records WHERE subject_user_id = ?",
+            (user_id,),
+        )
+        return [self._row_to_record(r) for r in rows]
+
     # ── 内部工具 ──
 
     def _row_to_record(self, row: Any) -> EvolutionRecord:
@@ -198,6 +218,7 @@ class EvolutionStore(BaseSqliteStore):
         return EvolutionRecord(
             record_id=row["record_id"],
             subject=row["subject"],
+            subject_user_id=row["subject_user_id"] if "subject_user_id" in row.keys() else "",
             predicate=row["predicate"],
             obj=row["obj"],
             status=row["status"],

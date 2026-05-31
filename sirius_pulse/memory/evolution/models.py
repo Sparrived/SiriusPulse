@@ -57,6 +57,7 @@ class Triple:
 
     三元组是整个记忆系统的原子单位。
     - subject 必须是具体名称，禁止代词
+    - subject_user_id 关联别名系统解析的 user_id
     - confidence 表示提取置信度 [0, 1]
     - meta_tag 标记信息来源类型
     """
@@ -67,10 +68,12 @@ class Triple:
     confidence: float = 0.5
     meta_tag: str = MetaTag.STATED
     source_message_id: str = ""
+    subject_user_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "subject": self.subject,
+            "subject_user_id": self.subject_user_id,
             "predicate": self.predicate,
             "obj": self.obj,
             "confidence": self.confidence,
@@ -87,6 +90,7 @@ class Triple:
             confidence=float(data.get("confidence", 0.5)),
             meta_tag=data.get("meta_tag", MetaTag.STATED),
             source_message_id=data.get("source_message_id", ""),
+            subject_user_id=data.get("subject_user_id", ""),
         )
 
     @property
@@ -106,7 +110,8 @@ class EvolutionRecord:
     record_id: str = field(default_factory=_short_id)
 
     # ── 三元组内容 ──
-    subject: str = ""
+    subject: str = ""              # 显示名（LLM 提取的原始名称）
+    subject_user_id: str = ""      # 关联的 user_id（别名系统解析）
     predicate: str = ""
     obj: str = ""
 
@@ -137,6 +142,7 @@ class EvolutionRecord:
         return {
             "record_id": self.record_id,
             "subject": self.subject,
+            "subject_user_id": self.subject_user_id,
             "predicate": self.predicate,
             "obj": self.obj,
             "status": self.status,
@@ -159,6 +165,7 @@ class EvolutionRecord:
         return cls(
             record_id=data.get("record_id", _short_id()),
             subject=data.get("subject", ""),
+            subject_user_id=data.get("subject_user_id", ""),
             predicate=data.get("predicate", ""),
             obj=data.get("obj", ""),
             status=data.get("status", RecordStatus.ACTIVE),

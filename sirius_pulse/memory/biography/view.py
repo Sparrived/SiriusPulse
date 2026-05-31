@@ -49,12 +49,19 @@ class BiographyView:
         """获取用户传记（从演化链实时计算）。
 
         如果缓存命中则直接返回，否则从演化链计算。
+        优先按 user_id 查询，fallback 到 subject 查询。
         """
         if user_id in self._cache:
             return self._cache[user_id]
 
-        active_records = self._chain.get_active_by_subject(user_id)
-        all_records = self._chain.get_all_by_subject(user_id)
+        # 优先按 user_id 查询（别名系统关联）
+        active_records = self._chain.get_active_by_user_id(user_id)
+        all_records = self._chain.get_all_by_user_id(user_id)
+
+        # fallback: 按 subject 查询（兼容没有 user_id 的旧数据）
+        if not active_records:
+            active_records = self._chain.get_active_by_subject(user_id)
+            all_records = self._chain.get_all_by_subject(user_id)
 
         bio = self._synthesize(user_id, active_records, all_records)
         self._cache[user_id] = bio

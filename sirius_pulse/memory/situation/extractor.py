@@ -126,7 +126,15 @@ class SituationExtractor:
         if not validated_raw:
             return None
 
-        # Step 3: 转换为 Triple 对象
+        # Step 3: 构建 speaker_name → user_id 映射（别名系统关联）
+        name_to_user_id = {}
+        for e in entries:
+            if e.speaker_name and e.user_id:
+                name_to_user_id[e.speaker_name] = e.user_id
+            if e.user_id:
+                name_to_user_id[e.user_id] = e.user_id
+
+        # Step 4: 转换为 Triple 对象，关联 user_id
         triples = [
             Triple(
                 subject=t["subject"].strip(),
@@ -134,11 +142,12 @@ class SituationExtractor:
                 obj=t["obj"].strip(),
                 confidence=float(t.get("confidence", 0.5)),
                 meta_tag=t.get("meta_tag", MetaTag.STATED),
+                subject_user_id=name_to_user_id.get(t["subject"].strip(), ""),
             )
             for t in validated_raw
         ]
 
-        # Step 4: 演化链验证（核心：不信任 LLM 输出）
+        # Step 5: 演化链验证（核心：不信任 LLM 输出）
         source = SituationSource(
             type="situation_extraction",
             group_id=group_id,
