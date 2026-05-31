@@ -26,14 +26,15 @@ def test_context_window():
 
 
 def test_hard_limit():
-    """硬限制，旧消息被淘汰。"""
+    """无硬限制，所有消息均保留。"""
     mgr = BasicMemoryManager(hard_limit=5, context_window=3)
     for i in range(10):
         mgr.add_entry("g1", "u1", "user", f"msg_{i}", speaker_name="A")
 
     all_msgs = mgr.get_all("g1")
-    assert len(all_msgs) == 5  # hard_limit
-    assert all_msgs[0].content == "msg_5"  # 最老保留的是 msg_5
+    assert len(all_msgs) == 10  # 无 maxlen 限制，全部保留
+    assert all_msgs[0].content == "msg_0"
+    assert all_msgs[-1].content == "msg_9"
 
 
 def test_archive_candidates():

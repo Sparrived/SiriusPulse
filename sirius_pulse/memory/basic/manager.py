@@ -119,7 +119,7 @@ class BasicMemoryManager:
             tags=list(tags) if tags else [],
         )
 
-        window = self._windows.setdefault(gid, deque(maxlen=self.hard_limit))
+        window = self._windows.setdefault(gid, deque())
         window.append(entry)
 
         # Update heat state
@@ -256,7 +256,7 @@ class BasicMemoryManager:
         for gid, entries in data.items():
             for e in entries:
                 if isinstance(e, dict):
-                    mgr._windows.setdefault(gid, deque(maxlen=mgr.hard_limit)).append(
+                    mgr._windows.setdefault(gid, deque()).append(
                         BasicMemoryEntry.from_dict(e)
                     )
             mgr._update_heat(gid)

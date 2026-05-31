@@ -1,6 +1,6 @@
 """Context assembler: builds LLM messages from basic memory + diary RAG + situation summaries.
 
-方案 C：历史消息以 assistant 消息切分，构造 user-assistant 消息链。
+历史消息以 assistant 消息切分，构造 user-assistant 消息链。
 每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
 assistant 回复单独作为一条消息。
 
@@ -60,7 +60,7 @@ class ContextAssembler:
         system_prompt: str,
         *,
         search_query: str = "",
-        recent_n: int = 5,
+        recent_n: int = 0,
         diary_top_k: int = 12,
         diary_token_budget: int = 800,
         cross_group_user_id: str = "",
@@ -79,6 +79,9 @@ class ContextAssembler:
         """
         # 1. 获取当日 Situation 摘要（已通过演化链验证）
         today_summaries = self._get_today_summaries(group_id)
+
+        # 1.5 获取最新 Situation 涉及的原始消息的一半
+        latest_source_entries = self._get_latest_situation_source_half(group_id)
 
         # 2. 检索相关日记（优先使用 DiarySliceRetriever 三路召回）
         enriched_query = self._enrich_search_query(
@@ -126,6 +129,7 @@ class ContextAssembler:
             today_summaries=today_summaries,
             biography_sections=bio_sections,
             diary_slices=diary_slices,
+            latest_source_entries=latest_source_entries,
         )
 
         # 5. 构建消息链（方案 C）
@@ -133,8 +137,11 @@ class ContextAssembler:
             {"role": "system", "content": enriched_system}
         ]
 
-        # 获取历史条目并按 assistant 切分
-        recent = self._basic.get_context(group_id, n=recent_n)
+        # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息）
+        if recent_n > 0:
+            recent = self._basic.get_context(group_id, n=recent_n)
+        else:
+            recent = self._basic.get_all(group_id)
         pending_entries: list[Any] = []
 
         if recent and not include_pending:
@@ -207,7 +214,7 @@ class ContextAssembler:
         system_prompt: str,
         *,
         search_query: str = "",
-        recent_n: int = 5,
+        recent_n: int = 0,
         diary_top_k: int = 12,
         diary_token_budget: int = 800,
         cross_group_user_id: str = "",
@@ -280,6 +287,31 @@ class ContextAssembler:
             return []
         situations = self._situations.get_today(group_id)
         return [s.summary for s in situations if s.summary]
+
+    def _get_latest_situation_source_half(self, group_id: str) -> list[Any]:
+        """获取最新 Situation 涉及的原始消息的一半。
+
+        从 BasicMemory 窗口中查找 source_entry_ids 对应的条目，
+        取后半部分（较新的一半）返回。
+        """
+        if not self._situations:
+            return []
+        situations = self._situations.get_today(group_id)
+        if not situations:
+            return []
+        latest = situations[-1]
+        source_ids = latest.source_entry_ids
+        if not source_ids:
+            return []
+        # 从 BasicMemory 窗口中查找匹配的条目
+        all_entries = self._basic.get_all(group_id)
+        id_set = set(source_ids)
+        matched = [e for e in all_entries if e.entry_id in id_set]
+        if not matched:
+            return []
+        # 取后半部分（较新的一半）
+        half = len(matched) // 2
+        return matched[half:]
 
     # ------------------------------------------------------------------
     # Biography 传记
@@ -400,6 +432,7 @@ class ContextAssembler:
         today_summaries: list[str] | None = None,
         biography_sections: str = "",
         diary_slices: list[Any] | None = None,
+        latest_source_entries: list[Any] | None = None,
     ) -> str:
         """富化系统提示词：注入 Situation 摘要 + 日记 + 传记。"""
         from sirius_pulse.core.prompt_factory import PromptFactory
@@ -418,10 +451,16 @@ class ContextAssembler:
             if slices_text:
                 enriched += f"\n\n<diary_slices>\n{slices_text}\n</diary_slices>"
 
-        # 注入当日 Situation 摘要
+        # 注入当日 Situation 摘要 + 最新 Situation 涉及的原始消息
         if today_summaries:
             summaries_text = "\n".join(f"- {s}" for s in today_summaries)
-            enriched += f"\n\n<today_context>\n今天的经历摘要：\n{summaries_text}\n</today_context>"
+            enriched += f"\n\n<today_context>\n今天的经历摘要：\n{summaries_text}"
+            if latest_source_entries:
+                source_xml = self._entries_to_xml(
+                    latest_source_entries, tag="compressed_source_messages"
+                )
+                enriched += f"\n\n最新压缩涉及的原始消息（部分内容）：\n{source_xml}"
+            enriched += "\n</today_context>"
 
         # 注入传记信息
         if biography_sections:

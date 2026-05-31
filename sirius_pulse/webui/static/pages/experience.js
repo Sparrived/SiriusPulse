@@ -224,14 +224,6 @@ export async function init(container, params) {
             </div>
           </div>
           <div class="form-group">
-            <label>基础记忆硬限制</label>
-            ${numberInput('basic_memory_hard_limit', 0)}
-          </div>
-          <div class="form-group">
-            <label>基础上下文窗口</label>
-            ${numberInput('basic_memory_context_window', 0)}
-          </div>
-          <div class="form-group">
             <label>日记 Top-K</label>
             ${numberInput('diary_top_k', 0)}
           </div>
@@ -357,8 +349,6 @@ async function loadExperience(name) {
     form.skill_execution_timeout.value = data.skill_execution_timeout ?? 30;
 
     form.memory_depth.value = data.memory_depth || 'medium';
-    form.basic_memory_hard_limit.value = data.basic_memory_hard_limit ?? 50;
-    form.basic_memory_context_window.value = data.basic_memory_context_window ?? 20;
     form.diary_top_k.value = data.diary_top_k ?? 5;
     form.diary_token_budget.value = data.diary_token_budget ?? 2000;
 
@@ -408,8 +398,6 @@ async function saveExperience(name) {
     max_skill_rounds: parseInt(form.max_skill_rounds.value, 10),
     skill_execution_timeout: parseInt(form.skill_execution_timeout.value, 10),
     memory_depth: form.memory_depth.value,
-    basic_memory_hard_limit: parseInt(form.basic_memory_hard_limit.value, 10),
-    basic_memory_context_window: parseInt(form.basic_memory_context_window.value, 10),
     diary_top_k: parseInt(form.diary_top_k.value, 10),
     diary_token_budget: parseInt(form.diary_token_budget.value, 10),
   };

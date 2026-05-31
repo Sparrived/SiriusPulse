@@ -88,6 +88,7 @@ async function loadHistory() {
     offset: String(currentPage * PAGE_SIZE),
   });
   if (skillFilter) params.set('skill_name', skillFilter);
+  if (successFilter) params.set('success', successFilter);
 
   try {
     const data = await get(`/personas/${name}/skill-history?${params}`);

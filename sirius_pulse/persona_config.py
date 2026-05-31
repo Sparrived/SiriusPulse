@@ -163,10 +163,6 @@ class PersonaExperienceConfig:
     # 记忆深度（影响 prompt 注入的日记/记忆数量）
     memory_depth: str = "deep"  # shallow|moderate|deep
 
-    # 基础记忆限制
-    basic_memory_hard_limit: int = 30
-    basic_memory_context_window: int = 5
-
     # 日记检索参数
     diary_top_k: int = 5
     diary_token_budget: int = 800
@@ -205,8 +201,6 @@ class PersonaExperienceConfig:
             "skill_execution_timeout": self.skill_execution_timeout,
             "auto_install_skill_deps": self.auto_install_skill_deps,
             "memory_depth": self.memory_depth,
-            "basic_memory_hard_limit": self.basic_memory_hard_limit,
-            "basic_memory_context_window": self.basic_memory_context_window,
             "diary_top_k": self.diary_top_k,
             "diary_token_budget": self.diary_token_budget,
             "sticker_skip_probability": self.sticker_skip_probability,
@@ -239,8 +233,6 @@ class PersonaExperienceConfig:
             skill_execution_timeout=float(data.get("skill_execution_timeout", 30.0)),
             auto_install_skill_deps=bool(data.get("auto_install_skill_deps", True)),
             memory_depth=str(data.get("memory_depth", "deep")),
-            basic_memory_hard_limit=int(data.get("basic_memory_hard_limit", 30)),
-            basic_memory_context_window=int(data.get("basic_memory_context_window", 5)),
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
             sticker_skip_probability=float(data.get("sticker_skip_probability", 0.33)),

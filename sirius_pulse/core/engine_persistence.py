@@ -400,10 +400,7 @@ class EnginePersistence:
                 except Exception as exc:
                     logger.warning("基础记忆恢复失败，使用空实例: %s", exc)
                     from sirius_pulse.memory.basic import BasicMemoryManager
-                    engine.basic_memory = BasicMemoryManager(
-                        hard_limit=engine.config.get("basic_memory_hard_limit", 30),
-                        context_window=engine.config.get("basic_memory_context_window", 5),
-                    )
+                    engine.basic_memory = BasicMemoryManager()
 
             # Assistant emotion
             ae = state.get("assistant_emotion")

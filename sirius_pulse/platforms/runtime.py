@@ -401,9 +401,6 @@ class EngineRuntime:
         exp = self._load_experience_config()
 
         config = {
-            # v1.0 基础记忆配置
-            "basic_memory_hard_limit": int(self.plugin_config.get("basic_memory_hard_limit", exp.basic_memory_hard_limit)),
-            "basic_memory_context_window": int(self.plugin_config.get("basic_memory_context_window", exp.basic_memory_context_window)),
             # v1.0 日记记忆配置
             "diary_top_k": int(self.plugin_config.get("diary_top_k", exp.diary_top_k)),
             "diary_token_budget": int(self.plugin_config.get("diary_token_budget", exp.diary_token_budget)),

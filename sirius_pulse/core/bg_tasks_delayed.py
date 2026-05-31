@@ -218,7 +218,6 @@ class DelayedQueueTasks:
         speaker_card = pending_bio.get("speaker_card")
 
         # Use ContextAssembler to build full messages with diary RAG + XML history
-        recent_n = engine.config.get("basic_memory_context_window", 5)
         diary_top_k = engine.config.get("diary_top_k", 5)
         diary_token_budget = engine.config.get("diary_token_budget", 800)
 
@@ -231,7 +230,6 @@ class DelayedQueueTasks:
             current_query=bundle.user_content,
             system_prompt=bundle.system_prompt,
             search_query=bundle.user_content,
-            recent_n=recent_n,
             diary_top_k=diary_top_k,
             diary_token_budget=diary_token_budget,
             include_pending=False,

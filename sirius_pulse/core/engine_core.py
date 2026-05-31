@@ -177,10 +177,7 @@ class _EmotionalGroupChatEngineBase:
 
         self.semantic_memory = SemanticMemoryManager(self.work_path, storage=self._memory_storage)
 
-        self.basic_memory = BasicMemoryManager(
-            hard_limit=self.config.get("basic_memory_hard_limit", 30),
-            context_window=self.config.get("basic_memory_context_window", 5),
-        )
+        self.basic_memory = BasicMemoryManager()
         self.basic_store = BasicMemoryFileStore(self.work_path)
         self.diary_manager = DiaryManager(
             self.work_path,
