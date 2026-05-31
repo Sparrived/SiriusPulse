@@ -83,6 +83,18 @@ class Pipeline:
             )
             engine.identity_resolver.resolve(ctx, engine.user_manager, group_id)
 
+            # 将 participant 携带的别称注册到别名索引（修复别称丢失问题）
+            # register_alias 会正确处理 _alias_index、SQLite 持久化和 mentioned_count 递增
+            for alias in (p.aliases or []):
+                if alias and alias.strip():
+                    engine.user_manager.register_alias(
+                        alias, p.user_id, p.name, group_id, source="napcat",
+                    )
+                    # 同步到 UnifiedUser.aliases（供传记注入 prompt 使用）
+                    resolved = engine.user_manager.get_user(p.user_id, group_id)
+                    if resolved and alias not in resolved.aliases:
+                        resolved.aliases.append(alias)
+
         # Resolve current sender
         sender_ctx = IdentityContext(
             speaker_name=message.speaker or "unknown",
@@ -634,11 +646,19 @@ class Pipeline:
 
         # 当前发言者传记（从演化链派生）
         speaker_bio = bio_view.get_biography(user_id) if user_id else None
-        # 同步别名
+        # 同步别名（从 _alias_index 和 UnifiedUser.aliases 两个来源合并）
         if speaker_bio and user_id:
-            user_obj = mgr.get_user(user_id)
+            user_obj = mgr.get_user(user_id, group_id)
+            alias_set: set[str] = set()
             if user_obj:
-                speaker_bio.aliases = list(user_obj.aliases)
+                alias_set.update(user_obj.aliases)
+            # 也从 _alias_index 中收集该用户的所有别称
+            for alias_key, entries in mgr._alias_index.items():
+                for e in entries:
+                    if e.user_id == user_id:
+                        alias_set.add(alias_key)
+                        break
+            speaker_bio.aliases = sorted(alias_set)
 
         # 被提及者：从文本别名中收集
         mentioned: dict[str, float] = {}
@@ -656,9 +676,16 @@ class Pipeline:
         mentioned_bios: dict[str, Any] = {}
         for uid in mentioned.keys():
             bio = bio_view.get_biography(uid)
-            user_obj = mgr.get_user(uid)
+            user_obj = mgr.get_user(uid, group_id)
+            alias_set_mentioned: set[str] = set()
             if user_obj:
-                bio.aliases = list(user_obj.aliases)
+                alias_set_mentioned.update(user_obj.aliases)
+            for alias_key, entries in mgr._alias_index.items():
+                for e in entries:
+                    if e.user_id == uid:
+                        alias_set_mentioned.add(alias_key)
+                        break
+            bio.aliases = sorted(alias_set_mentioned)
             mentioned_bios[uid] = bio
 
         engine._pending_biography = {

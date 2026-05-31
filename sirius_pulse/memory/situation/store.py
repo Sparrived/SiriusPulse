@@ -158,6 +158,16 @@ class SituationStore(BaseSqliteStore):
         )
         return [self._row_to_situation(r) for r in rows]
 
+    def get_all(self, limit: int = 500) -> list[Situation]:
+        """获取所有群组的情景（不按 group_id 过滤）。"""
+        rows = self.fetchall(
+            """SELECT * FROM situations
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        return [self._row_to_situation(r) for r in rows]
+
     def mark_processed(self, situation_ids: list[str]) -> None:
         """标记指定情景为已处理（用于日记生成后）。
 

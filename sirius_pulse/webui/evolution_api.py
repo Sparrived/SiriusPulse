@@ -94,7 +94,7 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
         from sirius_pulse.memory.situation.store import SituationStore
 
         sit_store = SituationStore(db_path, read_only=True)
-        all_situations = sit_store.get_by_group("", limit=500)
+        all_situations = sit_store.get_all(limit=500)
         result["situation_stats"] = {
             "total_situations": len(all_situations),
             "today_count": len([s for s in all_situations if s.created_at[:10] == __import__("datetime").datetime.now().strftime("%Y-%m-%d")]),
@@ -112,16 +112,21 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
     # 日记统计
     try:
         diary_dir = paths.dir / "diary"
-        total_slices = 0
         total_entries = 0
         if diary_dir.exists():
             for f in diary_dir.glob("*.json"):
                 try:
                     data = json.loads(f.read_text(encoding="utf-8"))
-                    entries = data.get("entries", [])
-                    total_entries += len(entries)
-                    for e in entries:
-                        total_slices += len(e.get("slices", []))
+                    total_entries += len(data.get("entries", []))
+                except (OSError, json.JSONDecodeError):
+                    continue
+        slices_dir = diary_dir / "slices"
+        total_slices = 0
+        if slices_dir.exists():
+            for f in slices_dir.glob("*.json"):
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    total_slices += len(data.get("slices", []))
                 except (OSError, json.JSONDecodeError):
                     continue
         result["diary_stats"] = {"total_entries": total_entries, "total_slices": total_slices}
@@ -276,7 +281,7 @@ async def api_situations_list(request: web.Request, persona_manager: Any) -> web
     group_id = request.query.get("group_id", "").strip()
     limit = min(int(request.query.get("limit", "100")), 500)
 
-    situations = store.get_by_group(group_id, limit=limit) if group_id else store.get_by_group("", limit=limit)
+    situations = store.get_by_group(group_id, limit=limit) if group_id else store.get_all(limit=limit)
 
     return _json_response({
         "situations": [_situation_to_dict(s) for s in situations],
@@ -322,8 +327,8 @@ async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Re
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    diary_dir = paths.dir / "diary"
-    if not diary_dir.exists():
+    slices_dir = paths.dir / "diary" / "slices"
+    if not slices_dir.exists():
         return _json_response({"slices": [], "total": 0})
 
     limit = min(int(request.query.get("limit", "100")), 500)
@@ -331,27 +336,23 @@ async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Re
     search = request.query.get("search", "").strip().lower()
 
     slices: list[dict[str, Any]] = []
-    for diary_file in diary_dir.glob("*.json"):
+    for slice_file in slices_dir.glob("*.json"):
         try:
-            data = json.loads(diary_file.read_text(encoding="utf-8"))
+            data = json.loads(slice_file.read_text(encoding="utf-8"))
             g_id = data.get("group_id", "")
-            for entry in data.get("entries", []):
-                if not isinstance(entry, dict):
+            for slice_data in data.get("slices", []):
+                if not isinstance(slice_data, dict):
                     continue
-                for slice_data in entry.get("slices", []):
-                    if not isinstance(slice_data, dict):
+                slice_data["_group_id"] = g_id
+                if search:
+                    content = (slice_data.get("content", "") + slice_data.get("summary", "")).lower()
+                    if search not in content:
                         continue
-                    slice_data["_group_id"] = g_id
-                    slice_data["_diary_created_at"] = entry.get("created_at", "")
-                    if search:
-                        content = (slice_data.get("content", "") + slice_data.get("summary", "")).lower()
-                        if search not in content:
-                            continue
-                    slices.append(slice_data)
+                slices.append(slice_data)
         except (OSError, json.JSONDecodeError):
             continue
 
-    slices.sort(key=lambda s: s.get("_diary_created_at", "") or s.get("time_range_start", ""), reverse=True)
+    slices.sort(key=lambda s: s.get("time_range_start", ""), reverse=True)
     total = len(slices)
     slices = slices[offset:offset + limit]
 
