@@ -4,6 +4,10 @@ import { toast, $ } from '../components.js';
 
 let historyData = [];
 let skillFilter = '';
+let successFilter = '';
+let currentPage = 0;
+let totalRecords = 0;
+const PAGE_SIZE = 50;
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -19,6 +23,9 @@ export async function init(container) {
     return;
   }
 
+  currentPage = 0;
+  totalRecords = 0;
+
   container.innerHTML = `
     <div class="card" style="margin-bottom:20px">
       <div class="card-header">
@@ -30,10 +37,10 @@ export async function init(container) {
           <select id="skillFilter" class="btn btn-sm">
             <option value="">全部技能</option>
           </select>
-          <select id="limitSelect" class="btn btn-sm">
-            <option value="20">最近 20 条</option>
-            <option value="50" selected>最近 50 条</option>
-            <option value="100">最近 100 条</option>
+          <select id="successFilter" class="btn btn-sm">
+            <option value="">全部状态</option>
+            <option value="true">成功</option>
+            <option value="false">失败</option>
           </select>
           <button class="btn btn-sm" id="refreshBtn">刷新</button>
         </div>
@@ -44,6 +51,7 @@ export async function init(container) {
       <div id="historyList" style="padding:16px">
         <div style="color:var(--text-3)">加载中...</div>
       </div>
+      <div id="pagination" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--border-1)"></div>
     </div>
   `;
 
@@ -51,15 +59,20 @@ export async function init(container) {
   if (skillFilterEl) {
     skillFilterEl.addEventListener('change', (e) => {
       skillFilter = e.target.value;
-      renderHistory();
+      currentPage = 0;
+      loadHistory();
     });
   }
-  
-  const limitSelectEl = $('limitSelect');
-  if (limitSelectEl) {
-    limitSelectEl.addEventListener('change', () => loadHistory());
+
+  const successFilterEl = $('successFilter');
+  if (successFilterEl) {
+    successFilterEl.addEventListener('change', (e) => {
+      successFilter = e.target.value;
+      currentPage = 0;
+      loadHistory();
+    });
   }
-  
+
   const refreshBtn = $('refreshBtn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => loadHistory());
@@ -70,17 +83,20 @@ export async function init(container) {
 
 async function loadHistory() {
   const name = store.currentPersona;
-  const limitSelect = $('limitSelect');
-  const limit = limitSelect ? parseInt(limitSelect.value, 10) : 50;
-  const params = new URLSearchParams({ limit: String(limit) });
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(currentPage * PAGE_SIZE),
+  });
   if (skillFilter) params.set('skill_name', skillFilter);
 
   try {
     const data = await get(`/personas/${name}/skill-history?${params}`);
     historyData = data.history || [];
+    totalRecords = data.total || 0;
+    renderStats(data.stats || {});
     updateSkillFilter();
-    renderStats();
     renderHistory();
+    renderPagination();
   } catch (e) {
     toast('加载历史失败: ' + e.message, 'error');
     const historyList = $('historyList');
@@ -90,27 +106,36 @@ async function loadHistory() {
   }
 }
 
+let knownSkills = [];
+
 function updateSkillFilter() {
-  const skills = [...new Set(historyData.map(h => h.skill_name))].sort();
+  const pageSkills = historyData.map(h => h.skill_name);
+  for (const s of pageSkills) {
+    if (!knownSkills.includes(s)) knownSkills.push(s);
+  }
+  knownSkills.sort();
+
   const sel = $('skillFilter');
   if (!sel) return;
   const current = sel.value;
   sel.innerHTML = `<option value="">全部技能</option>` +
-    skills.map(s => `<option value="${s}"${s === current ? ' selected' : ''}>${s}</option>`).join('');
+    knownSkills.map(s => `<option value="${s}"${s === current ? ' selected' : ''}>${s}</option>`).join('');
 }
 
-function renderStats() {
-  const total = historyData.length;
-  const success = historyData.filter(h => h.success).length;
+function renderStats(stats) {
+  let total = 0, success = 0, totalMs = 0;
+  for (const s of Object.values(stats)) {
+    total += s.calls || 0;
+    success += s.successes || 0;
+    totalMs += s.total_ms || 0;
+  }
   const failed = total - success;
-  const avgDuration = total > 0
-    ? Math.round(historyData.reduce((sum, h) => sum + (h.duration_ms || 0), 0) / total)
-    : 0;
+  const avgDuration = total > 0 ? Math.round(totalMs / total) : 0;
   const successRate = total > 0 ? Math.round(success / total * 100) : 0;
 
   const statsGrid = $('statsGrid');
   if (!statsGrid) return;
-  
+
   statsGrid.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">总调用次数</div>
@@ -135,6 +160,30 @@ function renderStats() {
   `;
 }
 
+function renderPagination() {
+  const el = $('pagination');
+  if (!el) return;
+
+  const totalPages = Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
+  const isFirst = currentPage === 0;
+  const isLast = currentPage >= totalPages - 1;
+
+  el.innerHTML = `
+    <span style="font-size:12px;color:var(--text-3)">
+      共 ${totalRecords} 条，第 ${currentPage + 1}/${totalPages} 页
+    </span>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-sm" id="prevPage" ${isFirst ? 'disabled' : ''}>上一页</button>
+      <button class="btn btn-sm" id="nextPage" ${isLast ? 'disabled' : ''}>下一页</button>
+    </div>
+  `;
+
+  const prevBtn = $('prevPage');
+  const nextBtn = $('nextPage');
+  if (prevBtn) prevBtn.addEventListener('click', () => { currentPage--; loadHistory(); });
+  if (nextBtn) nextBtn.addEventListener('click', () => { currentPage++; loadHistory(); });
+}
+
 function formatTime(ts) {
   if (!ts) return '—';
   try {
@@ -146,13 +195,10 @@ function formatTime(ts) {
 }
 
 function renderHistory() {
-  const filtered = skillFilter
-    ? historyData.filter(h => h.skill_name === skillFilter)
-    : historyData;
   const el = $('historyList');
   if (!el) return;
 
-  if (!filtered.length) {
+  if (!historyData.length) {
     el.innerHTML = `
       <div style="padding:40px;text-align:center;color:var(--text-3)">
         <div style="font-size:36px;margin-bottom:12px">⟠</div>
@@ -164,7 +210,7 @@ function renderHistory() {
 
   el.innerHTML = `
     <div style="display:grid;gap:12px">
-      ${filtered.map(h => {
+      ${historyData.map(h => {
         const statusColor = h.success ? 'var(--success)' : 'var(--danger)';
         const statusIcon = h.success ? '✓' : '✗';
         const summary = h.result_summary || h.error || '';

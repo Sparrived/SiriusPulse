@@ -49,12 +49,20 @@ class SkillTelemetry:
         skill_name: str | None = None,
         success: bool | None = None,
         since: float = 0,
-        limit: int = 100,
-    ) -> list[SkillExecutionRecord]:
-        """Read recent records with optional filtering."""
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[SkillExecutionRecord], int]:
+        """Read records with optional filtering and pagination.
+
+        JSONL 文件按追加顺序存储（最旧在前），本方法从末尾分页返回最新记录。
+        ``offset=0`` 表示最新一页，``offset=limit`` 表示上一页，以此类推。
+
+        Returns:
+            (当前页记录列表, 符合条件的总记录数)
+        """
         results: list[SkillExecutionRecord] = []
         if not self._path.exists():
-            return results
+            return results, 0
         try:
             with open(self._path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -83,16 +91,22 @@ class SkillTelemetry:
                             result_summary=data.get("result_summary", ""),
                         )
                     )
-                    if len(results) >= limit:
-                        break
         except OSError:
             pass
-        return results
+
+        total = len(results)
+        if offset >= total:
+            return [], total
+        # 从末尾分页：offset=0 → 最新一页，offset=limit → 上一页
+        end = total - offset
+        start = max(0, end - limit)
+        return results[start:end], total
 
     def summary(self, since: float = 0) -> dict[str, Any]:
         """Return aggregate statistics per skill."""
         stats: dict[str, dict[str, Any]] = {}
-        for rec in self.query(since=since, limit=10_000):
+        records, _ = self.query(since=since, limit=10_000, offset=0)
+        for rec in records:
             s = stats.setdefault(
                 rec.skill_name,
                 {"calls": 0, "successes": 0, "failures": 0, "total_ms": 0.0, "errors": []},

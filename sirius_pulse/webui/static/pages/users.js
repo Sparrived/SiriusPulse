@@ -6,6 +6,9 @@ let usersData = null;
 let bioData = null;
 let activeGroup = '';
 let currentModal = null;
+let currentPage = 0;
+const PAGE_SIZE = 50;
+let totalRecords = 0;
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -35,7 +38,8 @@ export async function init(container) {
       </div>
       <div class="stat-grid" id="unifiedStats"></div>
     </div>
-    <div id="usersGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:20px"></div>
+    <div id="usersGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:12px"></div>
+    <div id="usersPagination" style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;margin-bottom:20px"></div>
     <div class="card" id="aliasCard">
       <div class="card-header" style="cursor:pointer" id="aliasToggle">
         <div class="card-title">别名管理</div>
@@ -71,13 +75,19 @@ function toggleAliasSection() {
 
 async function loadAll() {
   const name = store.currentPersona;
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(currentPage * PAGE_SIZE),
+  });
+  if (activeGroup) params.set('group_id', activeGroup);
   try {
     const [uData, bData] = await Promise.all([
-      get(`/personas/${name}/users`),
-      get(`/personas/${name}/biography`),
+      get(`/personas/${name}/users?${params}`),
+      get(`/personas/${name}/biography?limit=${PAGE_SIZE}&offset=0`),
     ]);
     usersData = uData;
     bioData = bData;
+    totalRecords = uData.total || (uData.users || []).length;
 
     // 处理别名数据
     const aliasIndex = bioData.alias_index || {};
@@ -97,6 +107,7 @@ async function loadAll() {
     renderGroups();
     renderUnifiedStats();
     renderCards();
+    renderPagination();
     renderAliases();
   } catch (e) {
     toast('加载数据失败: ' + e.message, 'error');
@@ -153,9 +164,10 @@ function setupGroupSearch() {
         const group = opt.dataset.group;
         activeGroup = activeGroup === group ? '' : group;
         input.value = activeGroup || '';
-        input.placeholder = activeGroup ? `群组: ${activeGroup}` : '搜索群组或用户...';
+        input.placeholder = activeGroup ? `群组: ${activeGroup}` : '搜索群组或用户...`;
         dropdown.style.display = 'none';
-        renderCards();
+        currentPage = 0;
+        loadAll();
       });
     });
   }
@@ -226,7 +238,7 @@ function renderUnifiedStats() {
   unifiedStats.innerHTML = `
     <div class="stat-card">
       <div class="stat-label">用户总数</div>
-      <div class="stat-value">${users.length}</div>
+      <div class="stat-value">${totalRecords || users.length}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">群组数量</div>
@@ -234,7 +246,7 @@ function renderUnifiedStats() {
     </div>
     <div class="stat-card">
       <div class="stat-label">传记卡片</div>
-      <div class="stat-value">${cards.length}</div>
+      <div class="stat-value">${bioData.total || cards.length}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">提炼要点</div>
@@ -249,6 +261,30 @@ function renderUnifiedStats() {
       <div class="stat-value" style="font-size:14px">${lastUpdate ? new Date(lastUpdate).toLocaleString('zh-CN') : '—'}</div>
     </div>
   `;
+}
+
+function renderPagination() {
+  const el = $('usersPagination');
+  if (!el) return;
+
+  const totalPages = Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
+  const isFirst = currentPage === 0;
+  const isLast = currentPage >= totalPages - 1;
+
+  el.innerHTML = `
+    <span style="font-size:12px;color:var(--text-3)">
+      共 ${totalRecords} 条，第 ${currentPage + 1}/${totalPages} 页
+    </span>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-sm" id="usersPrev" ${isFirst ? 'disabled' : ''}>上一页</button>
+      <button class="btn btn-sm" id="usersNext" ${isLast ? 'disabled' : ''}>下一页</button>
+    </div>
+  `;
+
+  const prevBtn = $('usersPrev');
+  const nextBtn = $('usersNext');
+  if (prevBtn) prevBtn.addEventListener('click', () => { currentPage--; loadAll(); });
+  if (nextBtn) nextBtn.addEventListener('click', () => { currentPage++; loadAll(); });
 }
 
 function hashColor(str) {
@@ -292,13 +328,10 @@ function getAliasesForUser(userId) {
 
 function renderCards() {
   const users = usersData.users || [];
-  const filteredUsers = activeGroup
-    ? users.filter(u => (u.groups || []).includes(activeGroup))
-    : users;
   const grid = $('usersGrid');
   if (!grid) return;
 
-  if (!filteredUsers.length) {
+  if (!users.length) {
     grid.innerHTML = `
       <div class="card" style="grid-column:1/-1">
         <div style="color:var(--text-3);padding:40px;text-align:center">暂无用户数据</div>
@@ -307,7 +340,7 @@ function renderCards() {
     return;
   }
 
-  grid.innerHTML = filteredUsers.map(u => {
+  grid.innerHTML = users.map(u => {
     const pct = Math.round((u.engagement_rate || 0) * 100);
     const color = engagementColor(u.engagement_rate || 0);
     const fam = calcFamiliarity(u.interaction_count || 0);

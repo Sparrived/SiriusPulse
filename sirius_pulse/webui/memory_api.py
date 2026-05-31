@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -12,6 +13,43 @@ from aiohttp import web
 from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
+
+
+def _read_tail_lines(path: Path, n: int) -> list[str]:
+    """从文件末尾倒序读取 n 行非空内容，返回倒序列表（最新在前）。"""
+    lines: list[str] = []
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        file_size = f.tell()
+        if file_size == 0:
+            return lines
+
+        buf = b""
+        pos = file_size
+        chunk_size = 8192
+
+        while pos > 0 and len(lines) < n:
+            read_size = min(chunk_size, pos)
+            pos -= read_size
+            f.seek(pos)
+            chunk = f.read(read_size)
+            buf = chunk + buf
+
+            parts = buf.split(b"\n")
+            buf = parts[0]
+            for part in reversed(parts[1:]):
+                stripped = part.strip()
+                if stripped:
+                    lines.append(stripped.decode("utf-8", errors="replace"))
+                    if len(lines) >= n:
+                        break
+
+        if buf and len(lines) < n:
+            stripped = buf.strip()
+            if stripped:
+                lines.append(stripped.decode("utf-8", errors="replace"))
+
+    return lines
 
 
 async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Response:
@@ -346,10 +384,13 @@ async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> w
 
     diary_dir = paths.dir / "diary"
     if not diary_dir.exists():
-        return _json_response({"entries": [], "stats": {}, "groups": []})
+        return _json_response({"entries": [], "stats": {}, "groups": [], "total": 0})
 
-    limit = int(request.query.get("limit", "500"))
+    limit = min(int(request.query.get("limit", "50")), 200)
+    offset = max(int(request.query.get("offset", "0")), 0)
     group_id = request.query.get("group_id", "")
+    search = request.query.get("search", "").strip().lower()
+    keyword = request.query.get("keyword", "").strip()
 
     entries: list[dict[str, Any]] = []
     groups: set[str] = set()
@@ -364,20 +405,31 @@ async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> w
             if group_id and g_id != group_id:
                 continue
             for item in data.get("entries", []):
-                if isinstance(item, dict):
-                    entries.append(item)
-                    for kw in item.get("keywords", []):
-                        keyword_counts[kw] = keyword_counts.get(kw, 0) + 1
+                if not isinstance(item, dict):
+                    continue
+                # 关键词筛选
+                if keyword and keyword not in item.get("keywords", []):
+                    continue
+                # 全文搜索（匹配内容和摘要）
+                if search:
+                    content = (item.get("content", "") + item.get("summary", "")).lower()
+                    if search not in content:
+                        continue
+                entries.append(item)
+                for kw in item.get("keywords", []):
+                    keyword_counts[kw] = keyword_counts.get(kw, 0) + 1
         except (OSError, json.JSONDecodeError):
             continue
 
-    total_count = len(entries)
+    total = len(entries)
     entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
-    if limit > 0:
-        entries = entries[:limit]
+    # 从末尾分页：offset=0 → 最新一页
+    end = total - offset
+    start = max(0, end - limit)
+    entries = entries[start:end] if end > 0 else []
 
     stats = {
-        "total": total_count,
+        "total": total,
         "groups": len(groups),
         "top_keywords": sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:20],
     }
@@ -386,6 +438,7 @@ async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> w
         "entries": entries,
         "stats": stats,
         "groups": sorted(groups),
+        "total": total,
     })
 
 
@@ -415,7 +468,7 @@ async def api_persona_vector_store_status_get(request: web.Request, persona_mana
 
 @handle_api_errors
 async def api_persona_users_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """Return user semantic profiles for a single persona."""
+    """Return user semantic profiles for a single persona (paginated)."""
     from sirius_pulse.memory.semantic.store import SemanticProfileStore
 
     name = _get_name(request)
@@ -423,19 +476,20 @@ async def api_persona_users_get(request: web.Request, persona_manager: Any) -> w
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    # SemanticProfileStore expects persona_dir and appends memory/semantic itself
     semantic_base = paths.dir / "memory" / "semantic"
     if not semantic_base.exists():
-        return _json_response({"users": [], "groups": []})
+        return _json_response({"users": [], "groups": [], "total": 0})
 
     group_id = request.query.get("group_id", "")
+    search = request.query.get("search", "").strip().lower()
+    limit = min(int(request.query.get("limit", "50")), 200)
+    offset = max(int(request.query.get("offset", "0")), 0)
     store = SemanticProfileStore(paths.dir)
 
     users: list[dict[str, Any]] = []
     groups: set[str] = set()
     seen_user_ids: set[str] = set()
 
-    # Collect available group IDs from directory structure
     users_dir = semantic_base / "users"
     if users_dir.exists():
         for g_dir in users_dir.iterdir():
@@ -443,20 +497,33 @@ async def api_persona_users_get(request: web.Request, persona_manager: Any) -> w
                 groups.add(g_dir.name)
 
     if group_id:
-        # Group-scoped query
         for profile in store.list_group_user_profiles(group_id):
             if profile.user_id and profile.user_id not in seen_user_ids:
                 seen_user_ids.add(profile.user_id)
                 users.append(profile.to_dict())
     else:
-        # Cross-group query: collect all group-local profiles
         for g in groups:
             for profile in store.list_group_user_profiles(g):
                 if profile.user_id and profile.user_id not in seen_user_ids:
                     seen_user_ids.add(profile.user_id)
                     users.append(profile.to_dict())
 
-    return _json_response({"users": users, "groups": sorted(groups)})
+    # 后端搜索：按名称或 user_id 模糊匹配
+    if search:
+        users = [
+            u for u in users
+            if search in (u.get("name", "") or "").lower()
+            or search in (u.get("user_id", "") or "").lower()
+        ]
+
+    total = len(users)
+    users.sort(key=lambda u: u.get("last_interaction_at", ""), reverse=True)
+    # 从末尾分页
+    end = total - offset
+    start = max(0, end - limit)
+    users = users[start:end] if end > 0 else []
+
+    return _json_response({"users": users, "groups": sorted(groups), "total": total})
 
 
 @handle_api_errors
@@ -503,11 +570,12 @@ async def api_persona_user_get(request: web.Request, persona_manager: Any) -> we
 
 @handle_api_errors
 async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """Return glossary terms for a persona.
+    """Return glossary terms for a persona (paginated).
 
     Query params:
       - search: text search (optional)
-      - limit: max terms (default 200)
+      - limit: max terms per page (default 50)
+      - offset: pagination offset (default 0)
     """
     from sirius_pulse.memory.glossary.manager import GlossaryManager
 
@@ -518,10 +586,12 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
 
     glossary_dir = paths.dir / "glossary"
     if not glossary_dir.exists():
-        return _json_response({"terms": [], "stats": {}})
+        return _json_response({"terms": [], "stats": {}, "total": 0})
 
     search = request.query.get("search", "")
-    limit = int(request.query.get("limit", "200"))
+    group_filter = request.query.get("group", "").strip()
+    limit = min(int(request.query.get("limit", "50")), 200)
+    offset = max(int(request.query.get("offset", "0")), 0)
 
     manager = GlossaryManager(paths.dir, persona_name=name)
 
@@ -531,6 +601,10 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
         term_dict = term.to_dict()
         terms.append(term_dict)
 
+    # 分组筛选
+    if group_filter:
+        terms = [t for t in terms if t.get("group", "") == group_filter]
+
     if search:
         search_lower = search.lower()
         terms = [
@@ -539,14 +613,16 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
             or search_lower in t.get("definition", "").lower()
         ]
 
+    total = len(terms)
     terms.sort(key=lambda t: t.get("confidence", 0) * t.get("usage_count", 1), reverse=True)
-    terms = terms[:limit]
+    # 从末尾分页
+    end = total - offset
+    start = max(0, end - limit)
+    terms = terms[start:end] if end > 0 else []
 
-    stats = {
-        "total": len(terms),
-    }
+    stats = {"total": total}
 
-    return _json_response({"terms": terms, "stats": stats})
+    return _json_response({"terms": terms, "stats": stats, "total": total})
 
 
 @handle_api_errors
@@ -734,11 +810,15 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
 
 @handle_api_errors
 async def api_persona_conversation_history_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/conversations — 返回完整对话历史。"""
+    """GET /api/personas/{name}/conversations — 返回对话历史（分页，支持搜索筛选）。"""
     name = _get_name(request)
     group_id = request.query.get("group_id", "").strip()
-    limit = min(int(request.query.get("limit", "500")), 2000)
+    limit = min(int(request.query.get("limit", "50")), 200)
     offset = max(int(request.query.get("offset", "0")), 0)
+    search = request.query.get("search", "").strip().lower()
+    speaker = request.query.get("speaker", "").strip().lower()
+    start_time = request.query.get("start", "").strip()
+    end_time = request.query.get("end", "").strip()
 
     paths = persona_manager.get_persona_paths(name)
     if paths is None:
@@ -753,8 +833,6 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
     for f in archive_dir.glob("*.jsonl"):
         groups.append(f.stem)
 
-    # 读取对话记录
-    messages: list[dict[str, Any]] = []
     target_files = []
     if group_id:
         target_file = archive_dir / f"{group_id}.jsonl"
@@ -763,31 +841,83 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
     else:
         target_files = sorted(archive_dir.glob("*.jsonl"))
 
-    for fpath in target_files:
-        g_id = fpath.stem
-        try:
-            with fpath.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                        entry["group_id"] = g_id
-                        if not entry.get("tags"):
-                            entry["tags"] = []
-                        messages.append(entry)
-                    except json.JSONDecodeError:
-                        continue
-        except OSError:
-            continue
+    has_filters = bool(search or speaker or start_time or end_time)
 
-    # 按时间排序
-    messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
-    total = len(messages)
+    if has_filters:
+        # 有筛选条件时：全量读取并过滤（无法利用倒序优化）
+        all_messages: list[dict[str, Any]] = []
+        for fpath in target_files:
+            g_id = fpath.stem
+            try:
+                with fpath.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            entry["group_id"] = g_id
+                            if not entry.get("tags"):
+                                entry["tags"] = []
+                            all_messages.append(entry)
+                        except json.JSONDecodeError:
+                            continue
+            except OSError:
+                continue
 
-    # 分页
-    messages = messages[offset:offset + limit]
+        # 应用筛选
+        if search:
+            all_messages = [m for m in all_messages if search in (m.get("content", "") or "").lower()]
+        if speaker:
+            all_messages = [
+                m for m in all_messages
+                if speaker in (m.get("speaker_name", "") or "").lower()
+                or speaker in (m.get("user_id", "") or "").lower()
+            ]
+        if start_time:
+            all_messages = [m for m in all_messages if m.get("timestamp", "") >= start_time]
+        if end_time:
+            all_messages = [m for m in all_messages if m.get("timestamp", "") <= end_time]
+
+        all_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
+        total = len(all_messages)
+        messages = all_messages[offset:offset + limit]
+    else:
+        # 无筛选条件时：使用倒序读取优化
+        # 统计总行数
+        total = 0
+        for fpath in target_files:
+            try:
+                with fpath.open("rb") as f:
+                    total += sum(1 for _ in f)
+            except OSError:
+                continue
+
+        # 倒序读取
+        need = offset + limit
+        raw_lines: list[tuple[str, str]] = []
+        for fpath in target_files:
+            g_id = fpath.stem
+            try:
+                lines = _read_tail_lines(fpath, need)
+                for line in lines:
+                    raw_lines.append((g_id, line))
+            except OSError:
+                continue
+
+        messages_raw: list[dict[str, Any]] = []
+        for g_id, line in raw_lines:
+            try:
+                entry = json.loads(line)
+                entry["group_id"] = g_id
+                if not entry.get("tags"):
+                    entry["tags"] = []
+                messages_raw.append(entry)
+            except json.JSONDecodeError:
+                continue
+
+        messages_raw.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
+        messages = messages_raw[offset:offset + limit]
 
     # 读取钉住消息
     pinned_messages: list[dict[str, Any]] = []
@@ -797,7 +927,6 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
             pinned_data = json.loads(pinned_file.read_text(encoding="utf-8"))
             pinned_msgs = pinned_data.get("messages", {})
             for msg_id, msg_data in pinned_msgs.items():
-                # 如果指定了 group_id，只返回该群组的钉住消息
                 if group_id and msg_data.get("group_id") != group_id:
                     continue
                 pinned_messages.append({

@@ -2,10 +2,14 @@ import { store } from '../store.js';
 import { get } from '../app.js';
 import { toast, $ } from '../components.js';
 
-let allEntries = [];
+let currentEntries = [];
 let diaryData = null;
 let activeKeyword = '';
 let activeGroup = '';
+let activeSearch = '';
+let currentPage = 0;
+let totalRecords = 0;
+const PAGE_SIZE = 50;
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -25,11 +29,14 @@ export async function init(container) {
     return;
   }
 
+  currentPage = 0;
+
   container.innerHTML = `
     <div class="card">
       <div class="card-header">
         <div class="card-title">日记记忆</div>
         <div style="display:flex;gap:12px;align-items:center">
+          <input type="text" id="diarySearch" placeholder="搜索日记内容..." style="width:180px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text-1)">
           <select id="diaryGroupFilter" class="btn btn-sm">
             <option value="">全部群组</option>
           </select>
@@ -39,11 +46,20 @@ export async function init(container) {
       <div id="diaryKeywords" style="margin-top:16px"></div>
     </div>
     <div style="margin-top:20px" id="diaryEntries"></div>
+    <div id="diaryPagination" style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;margin-top:12px"></div>
   `;
+
+  $('diarySearch').addEventListener('input', (e) => {
+    activeSearch = e.target.value.trim();
+    currentPage = 0;
+    loadData();
+  });
 
   $('diaryGroupFilter').addEventListener('change', (e) => {
     activeGroup = e.target.value;
-    filterAndRender();
+    currentPage = 0;
+    activeKeyword = '';
+    loadData();
   });
 
   await loadData();
@@ -55,13 +71,24 @@ async function loadData() {
     toast('请先选择一个人格', 'error');
     return;
   }
+
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(currentPage * PAGE_SIZE),
+  });
+  if (activeGroup) params.set('group_id', activeGroup);
+  if (activeSearch) params.set('search', activeSearch);
+  if (activeKeyword) params.set('keyword', activeKeyword);
+
   try {
-    diaryData = await get(`/personas/${name}/diary`);
-    allEntries = diaryData.entries || [];
+    diaryData = await get(`/personas/${name}/diary?${params}`);
+    currentEntries = diaryData.entries || [];
+    totalRecords = diaryData.total || 0;
     renderStats();
     renderGroups();
     renderKeywords();
     filterAndRender();
+    renderPagination();
   } catch (e) {
     toast('加载日记数据失败', 'error');
   }
@@ -106,21 +133,38 @@ function renderKeywords() {
     tag.addEventListener('click', () => {
       const kw = tag.dataset.keyword;
       activeKeyword = activeKeyword === kw ? '' : kw;
-      renderKeywords();
-      filterAndRender();
+      currentPage = 0;
+      loadData();
     });
   });
 }
 
 function filterAndRender() {
-  let filtered = allEntries;
-  if (activeGroup) {
-    filtered = filtered.filter(e => e.group_id === activeGroup);
-  }
-  if (activeKeyword) {
-    filtered = filtered.filter(e => (e.keywords || []).includes(activeKeyword));
-  }
-  renderEntries(filtered);
+  renderEntries(currentEntries);
+}
+
+function renderPagination() {
+  const el = $('diaryPagination');
+  if (!el) return;
+
+  const totalPages = Math.max(1, Math.ceil(totalRecords / PAGE_SIZE));
+  const isFirst = currentPage === 0;
+  const isLast = currentPage >= totalPages - 1;
+
+  el.innerHTML = `
+    <span style="font-size:12px;color:var(--text-3)">
+      共 ${totalRecords} 条，第 ${currentPage + 1}/${totalPages} 页
+    </span>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-sm" id="diaryPrev" ${isFirst ? 'disabled' : ''}>上一页</button>
+      <button class="btn btn-sm" id="diaryNext" ${isLast ? 'disabled' : ''}>下一页</button>
+    </div>
+  `;
+
+  const prevBtn = $('diaryPrev');
+  const nextBtn = $('diaryNext');
+  if (prevBtn) prevBtn.addEventListener('click', () => { currentPage--; loadData(); });
+  if (nextBtn) nextBtn.addEventListener('click', () => { currentPage++; loadData(); });
 }
 
 function formatTimestamp(ts) {
@@ -170,8 +214,8 @@ function renderEntries(entries) {
     tag.addEventListener('click', () => {
       const kw = tag.dataset.keyword;
       activeKeyword = activeKeyword === kw ? '' : kw;
-      renderKeywords();
-      filterAndRender();
+      currentPage = 0;
+      loadData();
     });
   });
 }

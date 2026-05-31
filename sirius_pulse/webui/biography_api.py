@@ -15,11 +15,14 @@ LOG = logging.getLogger("sirius.webui")
 async def api_persona_biography_list(
     request: web.Request, persona_manager: Any
 ) -> web.Response:
-    """获取人格的所有用户传记卡列表。"""
+    """获取人格的所有用户传记卡列表（分页）。"""
     name = _get_name(request)
     paths = persona_manager.get_persona_paths(name)
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
+
+    limit = min(int(request.query.get("limit", "50")), 200)
+    offset = max(int(request.query.get("offset", "0")), 0)
 
     from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
@@ -28,8 +31,15 @@ async def api_persona_biography_list(
     alias_index = mgr._alias_index
     mgr.close()
 
+    total = len(users)
+    users_sorted = sorted(users, key=lambda u: getattr(u, "last_updated_at", "") or "", reverse=True)
+    end = total - offset
+    start = max(0, end - limit)
+    page = users_sorted[start:end] if end > 0 else []
+
     return _json_response({
-        "cards": [u.to_dict() for u in users],
+        "cards": [u.to_dict() for u in page],
+        "total": total,
         "alias_index": {
             alias: [e.to_dict() for e in entries]
             for alias, entries in alias_index.items()

@@ -6,6 +6,10 @@ let allTerms = [];
 let activeSearch = '';
 let activeGroup = '';
 
+const PAGE_SIZE = 50;
+let currentPage = 0;
+let totalRecords = 0;
+
 const DOMAIN_COLORS = {
   tech: '#58a6ff',
   daily: '#a371f7',
@@ -48,11 +52,13 @@ export async function init(container) {
 
   $('glossarySearch').addEventListener('input', (e) => {
     activeSearch = e.target.value.trim().toLowerCase();
-    filterAndRender();
+    currentPage = 0;
+    loadGlossary();
   });
   $('glossaryGroupFilter').addEventListener('change', (e) => {
     activeGroup = e.target.value;
-    filterAndRender();
+    currentPage = 0;
+    loadGlossary();
   });
 
   await loadGlossary();
@@ -61,8 +67,17 @@ export async function init(container) {
 async function loadGlossary() {
   const name = store.currentPersona;
   try {
-    const data = await get(`/personas/${name}/glossary`);
+    const offset = currentPage * PAGE_SIZE;
+    let url = `/personas/${name}/glossary?limit=${PAGE_SIZE}&offset=${offset}`;
+    if (activeSearch) {
+      url += `&search=${encodeURIComponent(activeSearch)}`;
+    }
+    if (activeGroup) {
+      url += `&group=${encodeURIComponent(activeGroup)}`;
+    }
+    const data = await get(url);
     allTerms = data.terms || [];
+    totalRecords = data.total || 0;
     renderStats(data);
     renderGroupFilter(data);
     filterAndRender();
@@ -72,15 +87,12 @@ async function loadGlossary() {
 }
 
 function renderStats(data) {
-  const groups = new Set(allTerms.map(t => t.group).filter(Boolean));
+  const stats = data.stats || {};
+  const totalCount = stats.total || totalRecords || allTerms.length;
   $('glossaryStats').innerHTML = `
     <div class="stat-card">
       <div class="stat-label">术语总数</div>
-      <div class="stat-value">${allTerms.length}</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">分组数量</div>
-      <div class="stat-value">${data.groups ? data.groups.length : groups.size}</div>
+      <div class="stat-value">${totalCount}</div>
     </div>
   `;
 }
@@ -94,17 +106,7 @@ function renderGroupFilter(data) {
 }
 
 function filterAndRender() {
-  let filtered = allTerms;
-  if (activeGroup) {
-    filtered = filtered.filter(t => t.group === activeGroup);
-  }
-  if (activeSearch) {
-    filtered = filtered.filter(t =>
-      (t.term || '').toLowerCase().includes(activeSearch) ||
-      (t.definition || '').toLowerCase().includes(activeSearch)
-    );
-  }
-  renderTerms(filtered);
+  renderTerms(allTerms);
 }
 
 function confidenceBadge(conf) {
@@ -165,4 +167,47 @@ function renderTerms(terms) {
       </div>
     `;
   }).join('')}</div>`;
+  renderPagination(terms.length);
+}
+
+function renderPagination(displayedCount) {
+  const totalPages = Math.ceil(totalRecords / PAGE_SIZE);
+  if (totalPages <= 1 && !activeGroup) return;
+
+  const paginationEl = document.createElement('div');
+  paginationEl.style.cssText = 'display:flex;justify-content:center;align-items:center;gap:12px;padding:16px;margin-top:12px';
+
+  const prevDisabled = currentPage === 0;
+  const nextDisabled = currentPage >= totalPages - 1;
+
+  const start = currentPage * PAGE_SIZE + 1;
+  const end = Math.min((currentPage + 1) * PAGE_SIZE, totalRecords);
+
+  let infoText = `显示 ${start}-${end} / 共 ${totalRecords} 条`;
+  if (activeGroup) {
+    infoText += ` (当前分组: ${displayedCount} 条)`;
+  }
+
+  paginationEl.innerHTML = `
+    <button id="prevPage" class="btn btn-sm" ${prevDisabled ? 'disabled' : ''}>上一页</button>
+    <span style="font-size:13px;color:var(--text-2)">${infoText}</span>
+    <button id="nextPage" class="btn btn-sm" ${nextDisabled ? 'disabled' : ''}>下一页</button>
+  `;
+
+  const el = $('termList');
+  el.appendChild(paginationEl);
+
+  $('prevPage').addEventListener('click', () => {
+    if (currentPage > 0) {
+      currentPage--;
+      loadGlossary();
+    }
+  });
+
+  $('nextPage').addEventListener('click', () => {
+    if (currentPage < totalPages - 1) {
+      currentPage++;
+      loadGlossary();
+    }
+  });
 }

@@ -6,6 +6,8 @@ let messages = [];
 let pinnedMessages = [];
 let groups = [];
 let activeGroup = '';
+let activeSearch = '';
+let activeSpeaker = '';
 let currentOffset = 0;
 const PAGE_SIZE = 100;
 
@@ -72,7 +74,9 @@ export async function init(container) {
           <div class="card-title">历史对话分析</div>
           <div class="card-subtitle">查看 ${name} 的完整对话记录</div>
         </div>
-        <div style="display:flex;gap:12px;align-items:center">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="msgSearch" placeholder="搜索消息内容..." style="width:180px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text-1)">
+          <input type="text" id="speakerFilter" placeholder="发言人..." style="width:120px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text-1)">
           <select id="groupFilter" class="btn btn-sm">
             <option value="">全部群组</option>
           </select>
@@ -104,6 +108,30 @@ export async function init(container) {
     <div id="pagination" style="display:flex;justify-content:center;gap:12px;margin-top:20px"></div>
   `;
 
+  const msgSearchEl = $('msgSearch');
+  if (msgSearchEl) {
+    let debounceTimer;
+    msgSearchEl.addEventListener('input', (e) => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        activeSearch = e.target.value.trim();
+        currentOffset = 0;
+        loadMessages();
+      }, 400);
+    });
+  }
+  const speakerFilterEl = $('speakerFilter');
+  if (speakerFilterEl) {
+    let debounceTimer;
+    speakerFilterEl.addEventListener('input', (e) => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        activeSpeaker = e.target.value.trim();
+        currentOffset = 0;
+        loadMessages();
+      }, 400);
+    });
+  }
   const groupFilterEl = $('groupFilter');
   if (groupFilterEl) {
     groupFilterEl.addEventListener('change', (e) => {
@@ -144,6 +172,8 @@ async function loadMessages(silent = false) {
     offset: String(currentOffset),
   });
   if (activeGroup) params.set('group_id', activeGroup);
+  if (activeSearch) params.set('search', activeSearch);
+  if (activeSpeaker) params.set('speaker', activeSpeaker);
 
   try {
     const data = await get(`/personas/${name}/conversations?${params}`);

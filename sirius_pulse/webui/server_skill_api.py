@@ -188,12 +188,21 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
 
 @handle_api_errors
 async def api_persona_skill_history_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/skill-history — 返回 SKILL 执行历史详情。"""
+    """GET /api/personas/{name}/skill-history — 返回 SKILL 执行历史详情（分页，支持筛选）。"""
     from sirius_pulse.skills.telemetry import SkillTelemetry
 
     name = _get_name(request)
     skill_name = request.query.get("skill_name", "").strip() or None
+    success_str = request.query.get("success", "").strip().lower()
+    caller = request.query.get("caller", "").strip()
     limit = min(int(request.query.get("limit", "50")), 200)
+    offset = max(int(request.query.get("offset", "0")), 0)
+
+    success_filter: bool | None = None
+    if success_str == "true":
+        success_filter = True
+    elif success_str == "false":
+        success_filter = False
 
     paths = persona_manager.get_persona_paths(name)
     if paths is None:
@@ -201,10 +210,17 @@ async def api_persona_skill_history_get(request: web.Request, persona_manager: A
 
     telemetry_path = paths.dir / "skill_data" / ".telemetry.jsonl"
     if not telemetry_path.exists():
-        return _json_response({"history": []})
+        return _json_response({"history": [], "total": 0, "stats": {}})
 
     telemetry = SkillTelemetry(telemetry_path)
-    records = telemetry.query(skill_name=skill_name, limit=limit)
+    records, total = telemetry.query(
+        skill_name=skill_name, success=success_filter, limit=limit, offset=offset
+    )
+
+    # caller 筛选（在 query 之后过滤）
+    if caller:
+        records = [r for r in records if caller in (r.caller_user_id or "")]
+        total = len(records)
     items: list[dict[str, Any]] = []
     for rec in reversed(records):
         item: dict[str, Any] = {
@@ -222,7 +238,10 @@ async def api_persona_skill_history_get(request: web.Request, persona_manager: A
             item["error"] = rec.error
         items.append(item)
 
-    return _json_response({"history": items})
+    # 计算统计摘要（基于全量数据，避免前端拉取全部明细）
+    stats = telemetry.summary()
+
+    return _json_response({"history": items, "total": total, "stats": stats})
 
 
 @handle_api_errors
