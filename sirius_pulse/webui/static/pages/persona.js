@@ -148,7 +148,10 @@ export async function init(container, params) {
     loadPersonaStatus(name)
   ]);
 
-  $('personaSave').addEventListener('click', () => savePersona(name));
+  const saveBtn = $('personaSave');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => savePersona(name));
+  }
   setupStatusButtons(name);
 }
 
@@ -163,6 +166,8 @@ async function loadPersonaStatus(name) {
     const startBtn = $('personaStartBtn');
     const stopBtn = $('personaStopBtn');
     
+    if (!statusDot || !statusText || !startBtn || !stopBtn) return;
+
     statusDot.className = `status-dot ${isRunning ? 'running' : ''}`;
     statusText.textContent = isRunning ? '运行中' : '已停止';
     statusText.style.color = isRunning ? 'var(--success)' : 'var(--text-3)';
@@ -178,6 +183,8 @@ function setupStatusButtons(name) {
   const startBtn = $('personaStartBtn');
   const stopBtn = $('personaStopBtn');
   
+  if (!startBtn || !stopBtn) return;
+
   startBtn.addEventListener('click', async () => {
     try {
       startBtn.disabled = true;
@@ -246,11 +253,13 @@ async function loadPersonaData(name) {
     form.taboo_topics.value = (data.taboo_topics || []).join(', ');
     form.backstory.value = data.backstory || '';
     // 加载成功后启用保存按钮
-    $('personaSave').disabled = false;
+    const saveBtn = $('personaSave');
+    if (saveBtn) saveBtn.disabled = false;
   } catch (e) {
     toast('加载人格数据失败: ' + e.message, 'error');
     // 加载失败时保持保存按钮禁用
-    $('personaSave').disabled = true;
+    const saveBtn = $('personaSave');
+    if (saveBtn) saveBtn.disabled = true;
   }
 }
 

@@ -348,9 +348,6 @@ export async function selectPersona(name) {
   store.currentPersona = name;
   try { store.personaState = await get(`/personas/${name}/status`); } catch {}
   window.dispatchEvent(new CustomEvent('persona:focus', { detail: name }));
-  if (PERSONA_PAGES.has(currentPage)) {
-    navTo(currentPage, name);
-  }
 }
 
 async function loadPersonas() {
@@ -375,7 +372,7 @@ async function loadPersonas() {
     store.personas = personas;
     renderSidebarFooter();
     if (!store.currentPersona && store.personas.length > 0) {
-      selectPersona(store.personas[0].name);
+      await selectPersona(store.personas[0].name);
     }
   } catch {}
 }

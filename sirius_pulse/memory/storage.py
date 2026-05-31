@@ -407,6 +407,17 @@ class MemoryStorage(BaseSqliteStore):
         ).fetchall()
         return {r["alias"]: r["user_name"] for r in rows}
 
+    def get_alias_to_user_id_for_group(self, group_id: str) -> dict[str, str]:
+        """获取群组相关的别名到 user_id 的映射。"""
+        rows = self.execute(
+            """
+            SELECT DISTINCT alias, user_id FROM aliases
+            WHERE groups LIKE ?
+            """,
+            (f'%"{group_id}"%',),
+        ).fetchall()
+        return {r["alias"]: r["user_id"] for r in rows}
+
     def get_all_aliases(self) -> dict[str, list[dict[str, Any]]]:
         """获取所有别名索引。"""
         rows = self.execute("SELECT * FROM aliases").fetchall()

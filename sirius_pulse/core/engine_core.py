@@ -1125,6 +1125,18 @@ class _EmotionalGroupChatEngineBase:
                 "intent": intent.to_dict() if intent else {},
             }
 
+        # ── 插件命令快速拦截（规则匹配，零 LLM 成本） ──
+        # 精确命令（如 /ca analyse）应在进入意图识别之前被拦截，
+        # 避免被 LLM 当作自然语言处理。
+        is_plugin_cmd, plugin_result = await self._check_plugin_intent(content, group_id)
+        if is_plugin_cmd:
+            plugin_exec_result = await self._execute_verified_plugin(
+                plugin_result, message, group_id, user_id
+            )
+            # 感知层已记录消息，更新后台状态
+            self._background_update(group_id, message, None, None, user_id)
+            return plugin_exec_result
+
         # 2. Cognition (unified emotion + intent)
         intent, emotion, memories, empathy = await self._cognition(
             content,

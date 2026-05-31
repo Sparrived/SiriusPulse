@@ -90,6 +90,7 @@ class SituationExtractor:
         brain: Any,
         model_name: str,
         evolution_chain: EvolutionChain,
+        storage: Any | None = None,
     ) -> Situation | None:
         """从消息中提取三元组并生成 Situation。
 
@@ -99,6 +100,7 @@ class SituationExtractor:
             brain: Brain 实例（用于 LLM 调用）
             model_name: 模型名称（轻量模型）
             evolution_chain: 演化链实例
+            storage: MemoryStorage 实例（用于获取别名映射）
 
         Returns:
             Situation 或 None（消息不足/提取失败/全部被拒绝）
@@ -140,6 +142,18 @@ class SituationExtractor:
                 name_to_user_id[e.speaker_name] = e.user_id
             if e.user_id:
                 name_to_user_id[e.user_id] = e.user_id
+
+        # 从别名系统获取别名映射
+        if storage is not None:
+            try:
+                alias_mappings = storage.get_alias_to_user_id_for_group(group_id)
+                name_to_user_id.update(alias_mappings)
+                logger.debug(
+                    "群 %s 别名映射加载: %d 个别名",
+                    group_id, len(alias_mappings),
+                )
+            except Exception as exc:
+                logger.warning("加载别名映射失败: %s", exc)
 
         # Step 4: 转换为 Triple 对象，关联 user_id
         triples = [

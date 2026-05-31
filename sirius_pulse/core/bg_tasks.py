@@ -141,6 +141,7 @@ class BackgroundTasks:
                             brain=engine.brain,
                             model_name=cfg.model_name,
                             evolution_chain=engine.evolution_chain,
+                            storage=engine._memory_storage,
                         )
                         if situation:
                             engine.situation_store.save(situation)
@@ -172,6 +173,7 @@ class BackgroundTasks:
                                         brain=engine.brain,
                                         model_name=cfg.model_name,
                                         evolution_chain=engine.evolution_chain,
+                                        storage=engine._memory_storage,
                                     )
                                     if situation:
                                         engine.situation_store.save(situation)

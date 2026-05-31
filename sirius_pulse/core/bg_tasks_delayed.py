@@ -225,11 +225,15 @@ class DelayedQueueTasks:
         speaker_uid = resolved_uid or ""
         speaker_display = triggered[0].user_id if triggered else ""
 
+        # 提取原始聊天内容用于日记检索，避免 XML 标签干扰
+        raw_parts = [it.message_content for it in triggered if getattr(it, "message_content", None)]
+        raw_chat_content = "\n".join(raw_parts) if raw_parts else bundle.user_content
+
         msgs, ca_breakdown = engine.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
             current_query=bundle.user_content,
             system_prompt=bundle.system_prompt,
-            search_query=bundle.user_content,
+            search_query=raw_chat_content,
             diary_top_k=diary_top_k,
             diary_token_budget=diary_token_budget,
             include_pending=False,
