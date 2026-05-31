@@ -223,6 +223,23 @@ class BasicMemoryManager:
     def get_heat_state(self, group_id: str) -> HeatState | None:
         return self._heat_state.get(group_id)
 
+    def get_cold_params(self, group_id: str) -> tuple[float, float]:
+        """获取冷检测参数：(heat, seconds_since_last)。
+
+        供 ColdDetector 使用。
+        """
+        entries = self.get_all(group_id)
+        if not entries:
+            return 0.0, 999999.0
+        heat = self._heat_calc.calculate(entries)
+        last_ts = max(
+            (datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
+             for e in entries if e.timestamp),
+            default=0.0,
+        )
+        seconds_since_last = datetime.now(timezone.utc).timestamp() - last_ts
+        return heat, seconds_since_last
+
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------

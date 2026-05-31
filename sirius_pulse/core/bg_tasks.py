@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.events import SessionEvent, SessionEventType
+from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -112,58 +113,91 @@ class BackgroundTasks:
                     continue
 
                 promoted_total = 0
+                extracted_total = 0
                 for group_id in list(engine.basic_memory.list_groups()):
-                    candidates = engine.basic_memory.get_archive_candidates(group_id)
-                    if not candidates:
-                        continue
+                    heat, seconds_since_last = engine.basic_memory.get_cold_params(group_id)
+                    cold_state = engine.cold_detector.check(heat, seconds_since_last)
 
-                    # Filter out already diarized candidates
-                    candidates = [
-                        c
-                        for c in candidates
-                        if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
-                    ]
-                    if not candidates:
-                        continue
+                    # ── Layer 2: 暂冷 → 情景提取 ──
+                    if cold_state == ColdState.WARM:
+                        candidates = engine.basic_memory.get_archive_candidates(group_id)
+                        if not candidates:
+                            continue
+                        candidates = [
+                            c for c in candidates
+                            if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
+                        ]
+                        if len(candidates) < 5:
+                            continue
 
-                    # Trigger: cold group OR sufficient undiarized volume
-                    should_promote = (
-                        engine.basic_memory.is_cold(group_id) or len(candidates) >= volume_threshold
-                    )
-                    if not should_promote:
-                        continue
+                        cfg = engine.model_router.resolve("memory_extract")
+                        situation = await engine.situation_extractor.extract(
+                            group_id=group_id,
+                            entries=candidates,
+                            brain=engine.brain,
+                            model_name=cfg.model_name,
+                            evolution_chain=engine.evolution_chain,
+                        )
+                        if situation:
+                            engine.situation_store.save(situation)
+                            extracted_total += 1
+                            logger.info(
+                                "群 %s 情景提取完成: %d 个三元组",
+                                group_id, situation.validated_triple_count,
+                            )
 
-                    cfg = engine.model_router.resolve("memory_extract")
-                    result = await engine.diary_manager.generate_from_candidates(
-                        group_id=group_id,
-                        candidates=candidates,
-                        persona_name=engine.persona.name,
-                        persona_description=(
-                            engine.persona.persona_summary or engine.persona.backstory or ""
-                        ),
-                        brain=engine.brain,
-                        model_name=cfg.model_name,
-                    )
-                    if result:
-                        promoted_total += 1
-                        # Update semantic memory with LLM-extracted topics
-                        profile = engine.semantic_memory.ensure_group_profile(group_id)
-                        if result.dominant_topic:
-                            profile.dominant_topic = result.dominant_topic
-                        for topic in result.interest_topics:
-                            if topic and topic not in profile.interest_topics:
-                                profile.interest_topics.append(topic)
-                        engine.semantic_memory.save_group_profile(group_id)
+                    # ── Layer 3: 冷寂 → 日记生成 ──
+                    elif cold_state == ColdState.COLD:
+                        situations = engine.situation_store.get_today(group_id)
+                        if not situations:
+                            # fallback: 使用旧的候选消息方式
+                            candidates = engine.basic_memory.get_archive_candidates(group_id)
+                            if not candidates:
+                                continue
+                            candidates = [
+                                c for c in candidates
+                                if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
+                            ]
+                            if not candidates:
+                                continue
 
-                        # 攒消息到人物传记（零 LLM，条件更新）
-                        if getattr(engine, "biography_manager", None) is not None:
-                            try:
-                                await self._feed_biography_from_candidates(
-                                    group_id, candidates, cfg.model_name
+                            cfg = engine.model_router.resolve("memory_extract")
+                            result = await engine.diary_manager.generate_from_candidates(
+                                group_id=group_id,
+                                candidates=candidates,
+                                persona_name=engine.persona.name,
+                                persona_description=(
+                                    engine.persona.persona_summary or engine.persona.backstory or ""
+                                ),
+                                brain=engine.brain,
+                                model_name=cfg.model_name,
+                            )
+                            if result:
+                                promoted_total += 1
+                        else:
+                            # 使用新架构：从 Situation 生成日记
+                            cfg = engine.model_router.resolve("memory_extract")
+                            parsed = await engine.diary_manager._generator.generate_from_situations(
+                                group_id=group_id,
+                                situations=situations,
+                                persona_name=engine.persona.name,
+                                persona_description=(
+                                    engine.persona.persona_summary or engine.persona.backstory or ""
+                                ),
+                                brain=engine.brain,
+                                model_name=cfg.model_name,
+                            )
+                            if parsed and parsed.get("content"):
+                                promoted_total += 1
+                                logger.info(
+                                    "群 %s 从 %d 个 Situation 生成日记完成",
+                                    group_id, len(situations),
                                 )
-                            except Exception as exc:
-                                logger.warning("传记攒消息失败: %s", exc)
 
+                if extracted_total > 0:
+                    engine._log_inner_thought(
+                        f"提取了 {extracted_total} 个群的情景，记忆在沉淀中～"
+                    )
                 if promoted_total > 0:
                     engine._log_inner_thought(
                         f"整理了 {promoted_total} 个群的对话日记，过去的回忆又清晰了一点～"

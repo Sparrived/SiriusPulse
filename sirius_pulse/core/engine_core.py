@@ -37,10 +37,15 @@ from sirius_pulse.core.threshold_engine import ThresholdEngine
 
 # New v2 memory system (refactor)
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager
+from sirius_pulse.memory.biography.view import BiographyView
+from sirius_pulse.memory.cold_detector import ColdDetector
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.diary import DiaryManager
+from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.glossary import GlossaryManager
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
+from sirius_pulse.memory.situation.extractor import SituationExtractor
+from sirius_pulse.memory.situation.store import SituationStore
 from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
@@ -186,9 +191,24 @@ class _EmotionalGroupChatEngineBase:
             db_path=self.work_path / "memory.db",
         )
         self.identity_resolver = IdentityResolver()
+
+        # ── 新记忆体系组件 ──
+        self.evolution_chain = EvolutionChain(
+            db_path=self.work_path / "evolution.db",
+            embedding_client=self._embedding_client,
+        )
+        self.situation_store = SituationStore(
+            db_path=self.work_path / "situations.db",
+        )
+        self.situation_extractor = SituationExtractor()
+        self.biography_view = BiographyView(self.evolution_chain)
+        self.cold_detector = ColdDetector()
+
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,
+            situation_store=self.situation_store,
+            biography_view=self.biography_view,
         )
         self.glossary_manager = GlossaryManager(self.work_path, persona_name=self.persona.name)
 
