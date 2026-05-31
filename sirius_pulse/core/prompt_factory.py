@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════
 
 # 所有发送给 LLM 的 section 标签统一定义在此，避免分散在各模块中不一致。
-TAG_ROLE = "【角色：{name}】"
 TAG_IDENTITY_ANCHOR = "【身份锚定】"
 TAG_BACKSTORY = "【背景故事】"
 TAG_PERSONA_CORE = "【人格底色】"
@@ -228,8 +227,6 @@ class PromptFactory:
             return full_system_prompt
 
         sections: list[str] = []
-
-        sections.append(TAG_ROLE.format(name=name))
 
         identity_lines = [f"你的名字是「{name}」"]
         if aliases:

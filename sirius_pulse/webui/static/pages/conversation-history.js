@@ -343,10 +343,16 @@ function parsePromptSections(prompt) {
       currentSection = null;
       lastIndex = tagEnd;
     } else if (!isEnd) {
-      // 保存之前的文本
-      if (tagStart > lastIndex) {
-        const text = prompt.slice(lastIndex, tagStart).trim();
-        if (text) sections.push({ type: 'text', content: text });
+      // 如果有当前section，先结束它（没有结束标签的情况）
+      if (currentSection) {
+        const contentBefore = prompt.slice(currentSection.contentStart, tagStart).trim();
+        sections.push({
+          type: 'section',
+          label: currentSection.label,
+          color: currentSection.color,
+          content: contentBefore,
+        });
+        currentSection = null;
       }
 
       // 查找匹配的颜色
@@ -356,13 +362,13 @@ function parsePromptSections(prompt) {
       }
 
       // 检查是否有对应结束标签
-      const endPattern = new RegExp(`【${tagContent}(结束|完毕|完|末|尾|终止|关闭)】`);
+      const endPattern = new RegExp(`【${escapeRegex(tagContent)}(结束|完毕|完|末|尾|终止|关闭)】`);
       const hasEnd = endPattern.test(prompt.slice(tagEnd));
 
       if (hasEnd) {
         currentSection = { label: tagContent, color, contentStart: tagEnd };
       } else {
-        // 单个标签，作为独立 section
+        // 没有结束标签，作为独立section，内容为空
         sections.push({
           type: 'section',
           label: tagContent,
@@ -391,7 +397,28 @@ function parsePromptSections(prompt) {
     }
   }
 
-  return sections;
+  // 后处理：合并相邻的空section和text
+  const merged = [];
+  for (let i = 0; i < sections.length; i++) {
+    const s = sections[i];
+    if (s.type === 'section' && !s.content && i + 1 < sections.length) {
+      const next = sections[i + 1];
+      if (next.type === 'text') {
+        // 将text内容合并到section中
+        merged.push({ ...s, content: next.content });
+        i++; // 跳过下一个
+        continue;
+      }
+    }
+    merged.push(s);
+  }
+
+  return merged;
+}
+
+// 转义正则表达式特殊字符
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function estimateTokens(text) {
@@ -413,6 +440,9 @@ function renderMessageTags(tags) {
 function renderMessages() {
   const el = $('messageList');
   if (!el) return;
+
+  // 保存当前滚动位置
+  const scrollTop = el.scrollTop;
 
   // 保存当前展开的prompt-detail状态（使用data-entry-id作为标识）
   const openPromptEntryIds = new Set();
@@ -496,6 +526,9 @@ function renderMessages() {
   });
 
   bindPromptToggles();
+
+  // 恢复滚动位置
+  el.scrollTop = scrollTop;
 }
 
 function renderPromptToggle(msgId, systemPrompt, entryId = '') {
