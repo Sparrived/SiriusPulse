@@ -128,7 +128,7 @@ class DiarySliceRetriever:
 
         scores: dict[str, float] = {}
         for s in slices:
-            match_count = 0
+            match_count: float = 0
             for entity in entities:
                 if entity in s.triple_subjects:
                     match_count += 1

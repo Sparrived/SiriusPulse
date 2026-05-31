@@ -26,7 +26,8 @@ async function loadDashboard() {
     const data = await get(`/personas/${name}/memory/dashboard`);
     cachedData = data;
     if (!data.has_data) {
-      $('bioStats').innerHTML = '<div class="bio-empty" style="grid-column:1/-1">暂无记忆系统数据，请先启动人格并进行对话</div>';
+      const bioStats = $('bioStats');
+      if (bioStats) bioStats.innerHTML = '<div class="bio-empty" style="grid-column:1/-1">暂无记忆系统数据，请先启动人格并进行对话</div>';
       return;
     }
     renderStats(data);
@@ -45,10 +46,12 @@ function renderStats(data) {
   const diary = data.diary_stats || {};
 
   animateNumber($('statEvolution'), evo.active_records || 0);
-  $('statEvolutionSub').textContent = `${evo.active_records || 0} 活跃 / ${evo.total_records || 0} 总计`;
+  const evoSub = $('statEvolutionSub');
+  if (evoSub) evoSub.textContent = `${evo.active_records || 0} 活跃 / ${evo.total_records || 0} 总计`;
 
   animateNumber($('statSituation'), sit.today_count || 0);
-  $('statSituationSub').textContent = `今日 ${sit.today_count || 0} / ${sit.total_situations || 0} 总计`;
+  const sitSub = $('statSituationSub');
+  if (sitSub) sitSub.textContent = `今日 ${sit.today_count || 0} / ${sit.total_situations || 0} 总计`;
 
   animateNumber($('statDiary'), diary.total_entries || 0);
   animateNumber($('statSlices'), diary.total_slices || 0);
@@ -181,7 +184,8 @@ function renderLayers(data) {
     { name: 'Layer 4', label: '后台精炼', status: evo.superseded_records > 0 ? 'ok' : 'idle' },
   ];
 
-  $('bioLayers').innerHTML = layers.map(l =>
+  const bioLayers = $('bioLayers');
+  if (bioLayers) bioLayers.innerHTML = layers.map(l =>
     `<div class="bio-layer"><div class="bio-layer-dot ${l.status}"></div><div class="bio-layer-name">${l.name}</div><div class="bio-layer-label">${l.label}</div></div>`
   ).join('');
 }

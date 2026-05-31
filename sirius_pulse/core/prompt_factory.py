@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 # 所有发送给 LLM 的 section 标签统一定义在此，避免分散在各模块中不一致。
 TAG_IDENTITY_ANCHOR = "【身份锚定】"
-TAG_BACKSTORY = "【背景故事】"
 TAG_PERSONA_CORE = "【人格底色】"
 TAG_EMOTION_REACTION = "【情绪反应】"
 TAG_RELATIONSHIP_MODE = "【关系模式】"
@@ -232,21 +231,12 @@ class PromptFactory:
         if aliases:
             identity_lines.append(f"别名：{'、'.join(aliases)}")
         identity_anchor = "，".join(identity_lines) + "。"
-        identity_anchor += (
-            "你只会在有人@你或提到你的名字/别名时回应。"
-            "你不是群里其他人，不要替别人回答，也不要把提到别人的话当成是对你说的。"
-        )
-        sections.append(f"{TAG_IDENTITY_ANCHOR}\n{identity_anchor}")
-
-        anchor = persona_summary or ""
-        if not anchor and backstory:
-            first = backstory.split("。")[0] + "。" if "。" in backstory else backstory
-            anchor = first
-        if anchor:
-            sections.append(anchor)
-
+        
         if backstory:
-            sections.append(f"{TAG_BACKSTORY}\n{backstory}")
+            identity_anchor += f"\n{backstory}"
+        elif persona_summary:
+            identity_anchor += f"\n{persona_summary}"
+        sections.append(f"{TAG_IDENTITY_ANCHOR}\n{identity_anchor}")
 
         identity_bits: list[str] = []
         if personality_traits:
@@ -486,10 +476,6 @@ class PromptFactory:
             if short_bio:
                 lines.append(f"  {short_bio}")
 
-            anchors = getattr(card, "identity_anchors", [])
-            for anchor in anchors[:5]:
-                lines.append(f"  {anchor}")
-
             relationships = getattr(card, "relationships", [])
             for rel in relationships[:3]:
                 fact = getattr(rel, "fact_hint", "")
@@ -562,7 +548,6 @@ class PromptFactory:
         if group_profile.group_name:
             lines.append(f"群名：{group_profile.group_name}")
         norms = getattr(group_profile, "group_norms", {})
-        has_learned_length = bool(norms)  # 有 group_norms 数据即认为已学习群聊风格
         if norms:
             avg_len = norms.get("avg_message_length", 0)
             dist = norms.get("length_distribution", {})
@@ -573,8 +558,6 @@ class PromptFactory:
                     lines.append(f"这个群里大家习惯短消息（平均{avg_len:.0f}字，{short_pct}%是短消息），你也尽量简短。")
                 elif avg_len < 50:
                     lines.append(f"这个群里消息长度适中（平均{avg_len:.0f}字），你也保持类似长度。")
-        if not has_learned_length and style_params.length_instruction:
-            lines.append(f"长度要求：{style_params.length_instruction}")
         if style_params.tone_instruction:
             lines.append(f"语气要求：{style_params.tone_instruction}")
         return "\n".join(lines)
@@ -583,8 +566,6 @@ class PromptFactory:
     def build_style_fallback(style_params: Any) -> str:
         """无群体画像时的回复风格 fallback。"""
         lines = [TAG_REPLY_STYLE]
-        if style_params.length_instruction:
-            lines.append(f"长度要求：{style_params.length_instruction}")
         if style_params.tone_instruction:
             lines.append(f"语气要求：{style_params.tone_instruction}")
         return "\n".join(lines)
@@ -848,6 +829,22 @@ class PromptFactory:
         if memories:
             _add(PromptFactory.build_memory_context(memories), "memory")
 
+        # 【长度要求】注入到 USER 链的 constraint_sections
+        # 在有群聊风格并且群聊风格已经总结出字数的情况下不注入，否则注入
+        should_inject_length = True
+        if group_profile:
+            norms = getattr(group_profile, "group_norms", {})
+            if norms:
+                avg_len = norms.get("avg_message_length", 0)
+                total = norms.get("message_count", 0)
+                if total > 0 and avg_len > 0:
+                    should_inject_length = False
+        if should_inject_length and style_params.length_instruction:
+            _add(
+                f"{TAG_LENGTH_REQ}\n{style_params.length_instruction}",
+                "output_constraint", is_constraint=True,
+            )
+
         if group_profile:
             _add(
                 PromptFactory.build_group_style(group_profile, style_params),
@@ -865,12 +862,12 @@ class PromptFactory:
                 "group_style", is_constraint=True,
             )
 
-        # 技能描述已通过 tools 参数传递给 LLM，不再需要注入 prompt
-        # 保留简短的通用指导
+        # 技能指导注入到 USER 链的 constraint_sections
         if skill_registry is not None:
             _add(
-                "你有一些工具（tools）可以帮助自己或他人解决问题，你是工具的主导者，主动尝试使用工具解决问题。",
+                "【Function Call】\n你有一些工具（tools）可以帮助自己或他人解决问题，你是工具的主导者，主动尝试使用工具解决问题。",
                 "skills",
+                is_constraint=True,
             )
 
         if plugin_registry is not None:

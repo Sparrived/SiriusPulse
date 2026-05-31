@@ -41,8 +41,13 @@ class BiographyView:
     不存储独立数据，所有信息实时计算。
     """
 
-    def __init__(self, evolution_chain: EvolutionChain) -> None:
+    def __init__(
+        self,
+        evolution_chain: EvolutionChain,
+        user_manager: Any | None = None,
+    ) -> None:
         self._chain = evolution_chain
+        self._user_manager = user_manager
         self._cache: dict[str, UserBiography] = {}
 
         # 注册纠正回调：当演化链中的记录被 supersede 时，自动清除相关缓存
@@ -113,10 +118,11 @@ class BiographyView:
                 other_facts.append(r)
 
         # 生成各部分
+        name = self._get_name(user_id, identity_facts)
         identity_anchors = self._build_anchors(identity_facts, user_id)
         relationships = self._build_relationships(relationship_facts, user_id)
         short_bio = self._build_summary(
-            user_id, identity_facts, relationship_facts, preference_facts
+            name, identity_facts, relationship_facts, preference_facts
         )
 
         # 统计
@@ -130,7 +136,7 @@ class BiographyView:
 
         return UserBiography(
             user_id=user_id,
-            name=self._get_name(user_id, identity_facts),
+            name=name,
             identity_anchors=identity_anchors,
             relationships=relationships,
             short_bio=short_bio,
@@ -196,7 +202,7 @@ class BiographyView:
 
     @staticmethod
     def _build_summary(
-        _user_id: str,
+        name: str,
         identity_facts: list[EvolutionRecord],
         relationship_facts: list[EvolutionRecord],
         preference_facts: list[EvolutionRecord],
@@ -204,32 +210,44 @@ class BiographyView:
         """从各类三元组构建传记摘要。"""
         parts: list[str] = []
 
-        # 身份信息
+        # 身份信息（添加主语）
         if identity_facts:
-            identity_parts = [f"{r.predicate}{r.obj}" for r in identity_facts[:3]]
+            identity_parts = [f"{name}{r.predicate}{r.obj}" for r in identity_facts[:3]]
             parts.append("；".join(identity_parts))
 
-        # 关系信息
+        # 关系信息（添加主语）
         if relationship_facts:
-            rel_parts = [f"{r.predicate}{r.obj}" for r in relationship_facts[:2]]
+            rel_parts = [f"{name}{r.predicate}{r.obj}" for r in relationship_facts[:2]]
             parts.append("；".join(rel_parts))
 
-        # 偏好信息
+        # 偏好信息（添加主语）
         if preference_facts:
-            pref_parts = [f"{r.predicate}{r.obj}" for r in preference_facts[:2]]
+            pref_parts = [f"{name}{r.predicate}{r.obj}" for r in preference_facts[:2]]
             parts.append("；".join(pref_parts))
 
         return "。".join(parts) if parts else ""
 
     # ── 工具方法 ──
 
-    @staticmethod
     def _get_name(
-        user_id: str, identity_facts: list[EvolutionRecord]
+        self, user_id: str, identity_facts: list[EvolutionRecord]
     ) -> str:
         """获取用户显示名称。"""
-        # 从 identity_facts 中查找名字
+        # 优先从 UnifiedUserManager 获取用户的QQ名
+        if self._user_manager:
+            user = self._user_manager.get_user(user_id)
+            if user and user.name:
+                return user.name
+        
+        # 从 identity_facts 中查找名字（谓语为"是"、"叫"、"名字"的记录）
         for r in identity_facts:
             if r.predicate in ("是", "叫", "名字"):
                 return r.obj
+        
+        # 使用 subject 字段（LLM 提取的原始名称）
+        if identity_facts:
+            subject = getattr(identity_facts[0], "subject", "")
+            if subject:
+                return subject
+        
         return user_id

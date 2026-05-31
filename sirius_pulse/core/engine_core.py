@@ -202,7 +202,10 @@ class _EmotionalGroupChatEngineBase:
             conn=self._persona_db_conn,
         )
         self.situation_extractor = SituationExtractor()
-        self.biography_view = BiographyView(self.evolution_chain)
+        self.biography_view = BiographyView(
+            self.evolution_chain,
+            user_manager=self.user_manager,
+        )
         self.cold_detector = ColdDetector()
 
         # DiarySlice 存储和三路召回

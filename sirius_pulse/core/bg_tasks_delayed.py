@@ -235,6 +235,7 @@ class DelayedQueueTasks:
             include_pending=False,
             speaker_user_id=speaker_uid,
             speaker_name=speaker_display,
+            content_is_tagged=True,
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]

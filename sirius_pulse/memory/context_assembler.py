@@ -69,6 +69,7 @@ class ContextAssembler:
         speaker_user_id: str = "",
         speaker_name: str = "",
         mentioned_user_ids: list[str] | None = None,
+        content_is_tagged: bool = False,
     ) -> list[dict[str, Any]]:
         """构建消息链（方案 C：以 assistant 消息切分）。
 
@@ -76,6 +77,11 @@ class ContextAssembler:
         1. system  -- 富化后的系统提示词（含 Situation 摘要 + 日记 + 传记）
         2. user/assistant 交替 -- 历史对话（按 assistant 切分）
         3. user   -- 当前用户消息
+
+        Args:
+            content_is_tagged: 若 True 表示 current_query 已包含 <message> XML
+                标签及前缀段落（来自延迟队列合并 + PromptFactory.assemble_chat），
+                无需再用 html.escape 包装，直接作为 user 消息内容。
         """
         # 1. 获取当日 Situation 摘要（已通过演化链验证）
         today_summaries = self._get_today_summaries(group_id)
@@ -136,6 +142,13 @@ class ContextAssembler:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": enriched_system}
         ]
+
+        # 当 content_is_tagged=True 时，current_query 已由 PromptFactory.assemble_chat()
+        # 包含完整的【最近消息】XML 标签和前缀段落，直接跳过 basic_memory 历史检索
+        # 和 pending 逻辑，避免同一消息在上下文中出现两次
+        if content_is_tagged:
+            messages.append({"role": "user", "content": current_query})
+            return messages
 
         # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息）
         if recent_n > 0:
@@ -230,6 +243,7 @@ class ContextAssembler:
         speaker_user_id: str = "",
         speaker_name: str = "",
         mentioned_user_ids: list[str] | None = None,
+        content_is_tagged: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
         messages = self.build_messages(
@@ -246,6 +260,7 @@ class ContextAssembler:
             speaker_user_id=speaker_user_id,
             speaker_name=speaker_name,
             mentioned_user_ids=mentioned_user_ids,
+            content_is_tagged=content_is_tagged,
         )
 
         from sirius_pulse.token.utils import estimate_tokens

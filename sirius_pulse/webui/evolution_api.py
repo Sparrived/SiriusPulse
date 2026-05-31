@@ -50,6 +50,7 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
 
         chain = EvolutionChain(db_path, read_only=True)
         all_subjects = chain._store.get_all_subjects()
+        all_records = []
         for s in all_subjects:
             all_records.extend(chain.get_all_by_subject(s))
         active = [r for r in all_records if r.status == "active"]
@@ -100,8 +101,8 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
         }
         # 话题频率
         topic_freq: dict[str, int] = {}
-        for s in all_situations:
-            for t in s.topics:
+        for sit in all_situations:
+            for t in sit.topics:
                 topic_freq[t] = topic_freq.get(t, 0) + 1
         result["top_topics"] = sorted(topic_freq.items(), key=lambda x: x[1], reverse=True)[:15]
     except Exception as exc:
