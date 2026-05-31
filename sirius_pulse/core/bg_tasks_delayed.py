@@ -573,9 +573,9 @@ class DelayedQueueTasks:
             engine.basic_store.append(_reply_entry)
             # 反馈追踪：AI 发言后记录锚点，等待用户跟进
             target_uid = triggered[0].user_id or ""
-            engine.semantic_memory.record_response_sent(
+            engine.semantic_memory.record_ai_sent(
                 group_id=group_id,
-                user_id=target_uid,
+                target_user_id=target_uid,
                 topic_hint=clean_reply[:100],
                 response_length=len(clean_reply),
             )

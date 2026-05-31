@@ -470,7 +470,7 @@ function renderPromptToggle(msgId, systemPrompt) {
         <span>查看 LLM 输入上下文</span>
         <span style="color:var(--text-3);font-size:10px">${tokenCount} tokens · ${charCount} chars</span>
       </button>
-      <div id="${msgId}" class="prompt-detail" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+      <div id="${msgId}" class="prompt-detail" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:500px;overflow-y:auto">
         ${hasSections ? renderStructuredSections(sections) : renderRawPrompt(systemPrompt)}
       </div>
     </div>
@@ -513,6 +513,17 @@ function bindPromptToggles() {
       const arrow = btn.querySelector('.toggle-arrow');
       if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
     });
+  });
+
+  document.querySelectorAll('.prompt-detail').forEach(detail => {
+    detail.addEventListener('wheel', (e) => {
+      const { scrollTop, scrollHeight, clientHeight } = detail;
+      const atTop = e.deltaY < 0 && scrollTop === 0;
+      const atBottom = e.deltaY > 0 && scrollTop + clientHeight >= scrollHeight;
+      if (!atTop && !atBottom) {
+        e.stopPropagation();
+      }
+    }, { passive: true });
   });
 
   document.querySelectorAll('.section-header').forEach(header => {

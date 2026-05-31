@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.cognition import extract_keywords
+from sirius_pulse.memory.semantic.models import AtmosphereSnapshot
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.models import Message, UnifiedUser
@@ -442,19 +443,25 @@ class Pipeline:
 
         # Semantic: record atmosphere snapshot, resolve feedback, record interaction
         recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
-        engine.semantic_memory.record_atmosphere(
-            group_id=group_id,
-            valence=emotion.valence,
-            arousal=emotion.arousal,
+        now_iso = datetime.now(timezone.utc).isoformat()
+        snapshot = AtmosphereSnapshot(
+            timestamp=now_iso,
+            group_valence=emotion.valence,
+            group_arousal=emotion.arousal,
             active_participants=len({m.get("user_id") for m in recent_msgs}),
         )
+        engine.semantic_memory.record_atmosphere(
+            group_id=group_id,
+            snapshot=snapshot,
+        )
         if user_id:
-            engine.semantic_memory.resolve_pending_feedback(
+            engine.semantic_memory.settle_engagement(
                 group_id=group_id,
                 user_id=user_id,
                 directed_score=getattr(intent, "directed_score", 0.0),
+                timestamp=now_iso,
             )
-            engine.semantic_memory.record_user_interaction(group_id=group_id, user_id=user_id)
+            engine.semantic_memory.record_interaction(group_id=group_id, user_id=user_id, timestamp=now_iso)
 
         return decision_result
 
