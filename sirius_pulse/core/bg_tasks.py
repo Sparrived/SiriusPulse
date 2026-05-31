@@ -200,10 +200,14 @@ class BackgroundTasks:
                                     diary_id=diary_id,
                                     embedding_client=engine._embedding_client,
                                 )
-                                # 存储切片到日记管理器
+                                # 存储切片到日记管理器和切片检索器
                                 if not hasattr(engine.diary_manager, '_slices'):
                                     engine.diary_manager._slices = []
                                 engine.diary_manager._slices.extend(slices)
+
+                                # 添加到 DiarySliceRetriever 三路召回索引
+                                for s in slices:
+                                    engine.slice_retriever.add(s)
 
                                 promoted_total += 1
                                 logger.info(

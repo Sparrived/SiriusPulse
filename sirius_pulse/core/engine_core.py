@@ -207,11 +207,18 @@ class _EmotionalGroupChatEngineBase:
         self.biography_view = BiographyView(self.evolution_chain)
         self.cold_detector = ColdDetector()
 
+        # DiarySliceRetriever 三路召回
+        from sirius_pulse.memory.diary.slice_retriever import DiarySliceRetriever
+        self.slice_retriever = DiarySliceRetriever(
+            embedding_client=self._embedding_client,
+        )
+
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,
             situation_store=self.situation_store,
             biography_view=self.biography_view,
+            slice_retriever=self.slice_retriever,
         )
         self.glossary_manager = GlossaryManager(self.work_path, persona_name=self.persona.name)
 

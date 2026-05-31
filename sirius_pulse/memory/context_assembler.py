@@ -41,11 +41,13 @@ class ContextAssembler:
         diary_retriever: DiaryRetriever,
         situation_store: SituationStore | None = None,
         biography_view: BiographyView | None = None,
+        slice_retriever: Any | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._diary = diary_retriever
         self._situations = situation_store
         self._bio_view = biography_view
+        self._slice_retriever = slice_retriever
 
     # ------------------------------------------------------------------
     # Public API
@@ -78,19 +80,38 @@ class ContextAssembler:
         # 1. 获取当日 Situation 摘要（已通过演化链验证）
         today_summaries = self._get_today_summaries(group_id)
 
-        # 2. 检索相关日记
+        # 2. 检索相关日记（优先使用 DiarySliceRetriever 三路召回）
         enriched_query = self._enrich_search_query(
             search_query or current_query, speaker_user_id, mentioned_user_ids
         )
-        diary_entries = self._diary.retrieve(
-            query=enriched_query,
-            group_id=group_id,
-            top_k=diary_top_k,
-            max_tokens_budget=diary_token_budget,
-        )
+
+        # 提取查询中的实体（用于三元组精确匹配）
+        query_entities = self._extract_entities(enriched_query)
+
+        # 优先使用 DiarySliceRetriever 三路召回
+        diary_slices = []
+        if self._slice_retriever:
+            diary_slices = self._slice_retriever.retrieve(
+                query=enriched_query,
+                query_entities=query_entities,
+                group_id=group_id,
+                token_budget=diary_token_budget,
+                top_k=diary_top_k,
+            )
+
+        # fallback: 使用旧的 DiaryRetriever
+        diary_entries = []
+        if not diary_slices:
+            diary_entries = self._diary.retrieve(
+                query=enriched_query,
+                group_id=group_id,
+                top_k=diary_top_k,
+                max_tokens_budget=diary_token_budget,
+            )
+
         logger.info(
-            "ContextAssembler: group=%s | %d 条当日摘要 | %d 条日记 | query=%.30s...",
-            group_id, len(today_summaries), len(diary_entries),
+            "ContextAssembler: group=%s | %d 条当日摘要 | %d 条日记切片 | %d 条旧日记 | query=%.30s...",
+            group_id, len(today_summaries), len(diary_slices), len(diary_entries),
             search_query or current_query,
         )
 
@@ -104,6 +125,7 @@ class ContextAssembler:
             system_prompt, diary_entries,
             today_summaries=today_summaries,
             biography_sections=bio_sections,
+            diary_slices=diary_slices,
         )
 
         # 5. 构建消息链（方案 C）
@@ -377,17 +399,24 @@ class ContextAssembler:
         diary_entries: list[Any],
         today_summaries: list[str] | None = None,
         biography_sections: str = "",
+        diary_slices: list[Any] | None = None,
     ) -> str:
         """富化系统提示词：注入 Situation 摘要 + 日记 + 传记。"""
         from sirius_pulse.core.prompt_factory import PromptFactory
 
-        # 先用 PromptFactory 注入日记
+        # 先用 PromptFactory 注入日记（旧格式）
         enriched = PromptFactory.enrich_system_prompt(
             base_prompt=base_prompt,
             diary_entries=diary_entries,
             history_xml="",
             cross_group_xml="",
         )
+
+        # 注入日记切片（新格式，优先级更高）
+        if diary_slices:
+            slices_text = self._format_diary_slices(diary_slices)
+            if slices_text:
+                enriched += f"\n\n<diary_slices>\n{slices_text}\n</diary_slices>"
 
         # 注入当日 Situation 摘要
         if today_summaries:
@@ -399,6 +428,41 @@ class ContextAssembler:
             enriched += f"\n\n<biography>\n{biography_sections}\n</biography>"
 
         return enriched
+
+    @staticmethod
+    def _format_diary_slices(slices: list[Any]) -> str:
+        """格式化日记切片为文本。"""
+        lines = []
+        for i, s in enumerate(slices, 1):
+            content = getattr(s, "content", "") or ""
+            summary = getattr(s, "summary", "") or ""
+            topics = getattr(s, "topics", []) or []
+            time_start = getattr(s, "time_range_start", "") or ""
+
+            time_str = ""
+            if time_start:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
+                    time_str = f" ({dt.strftime('%m-%d %H:%M')})"
+                except (ValueError, TypeError):
+                    pass
+
+            topic_str = f" [{', '.join(topics)}]" if topics else ""
+            lines.append(f"{i}. [{time_str}{topic_str}] {summary}")
+            if content and content != summary:
+                lines.append(f"   {content[:200]}")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_entities(text: str) -> list[str]:
+        """从文本中提取实体名（简单实现）。"""
+        import re
+        # 提取中文名字（2-4个字）
+        entities = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
+        # 去重
+        return list(set(entities))[:5]
 
     def _enrich_search_query(
         self,
