@@ -624,18 +624,19 @@ class Pipeline:
     ) -> None:
         """收集人物传记信息，供 PromptFactory 使用。
 
-        结果缓存在 engine._pending_biography 字典中，
-        供 _build_delayed_prompt 等后续 prompt 组装阶段取用。
+        使用 BiographyView 从演化链派生传记。
+        结果缓存在 engine._pending_biography 字典中。
         """
         engine = self._engine
-        mgr = engine.user_manager
+        bio_view = engine.biography_view
 
-        # 当前发言者传记
-        speaker_user = mgr.get_user(user_id) if user_id else None
+        # 当前发言者传记（从演化链派生）
+        speaker_bio = bio_view.get_biography(user_id) if user_id else None
 
         # 被提及者：从文本别名中收集
         mentioned: dict[str, float] = {}
         if message_content:
+            mgr = engine.user_manager
             for alias, entries in mgr._alias_index.items():
                 if len(alias) < 2 or alias not in message_content:
                     continue
@@ -644,20 +645,18 @@ class Pipeline:
                 )
                 if uid and uid != user_id:
                     mentioned[uid] = max(mentioned.get(uid, 0), conf)
-                elif conf == 0.0:
-                    for entry in entries:
-                        if group_id in entry.groups and entry.user_id != user_id:
-                            mentioned[entry.user_id] = 0.0
 
-        mentioned_users = {uid: mgr.get_user(uid) for uid in mentioned.keys()}
-        all_aliases = mgr.get_aliases_for_group(group_id)
+        # 获取被提及者的传记
+        mentioned_bios = {
+            uid: bio_view.get_biography(uid)
+            for uid in mentioned.keys()
+        }
 
         engine._pending_biography = {
-            "speaker_user": speaker_user,
-            "mentioned_users": mentioned_users,
+            "speaker_user": speaker_bio,
+            "mentioned_users": mentioned_bios,
             "confidence": mentioned,
-            "aliases": all_aliases,
-            "affinity_score": speaker_user.affinity_score if speaker_user else 0.0,
+            "affinity_score": 0.0,
         }
 
     def background_update(
