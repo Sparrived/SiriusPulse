@@ -1,9 +1,13 @@
-"""Context assembler: builds LLM messages from basic memory + diary RAG.
+"""Context assembler: builds LLM messages from basic memory + diary RAG + situation summaries.
 
 方案 C：历史消息以 assistant 消息切分，构造 user-assistant 消息链。
 每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
-assistant 回复单独作为一条消息。这样既保留了 XML 的结构化语义（speaker、user_id），
-又让 LLM 能更好地理解对话流。
+assistant 回复单独作为一条消息。
+
+新架构增强：
+- 注入当日 Situation 摘要（暂冷压缩产物）
+- 注入 BiographyView 传记（演化链派生）
+- 支持 DiarySlice 三路召回（语义 + 三元组 + 关键词）
 """
 
 from __future__ import annotations
@@ -14,7 +18,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
+from sirius_pulse.memory.biography.view import BiographyView
 from sirius_pulse.memory.diary.indexer import DiaryRetriever
+from sirius_pulse.memory.situation.store import SituationStore
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +28,24 @@ logger = logging.getLogger(__name__)
 class ContextAssembler:
     """Assembles conversation context for LLM generation.
 
-    Combines recent basic memory (immediate context, embedded as XML in system
-    prompt) with relevant diary entries (historical context) into standard
-    OpenAI messages format.
+    Combines:
+    - Basic memory (immediate context, XML format)
+    - Situation summaries (today's validated facts)
+    - Diary entries (historical RAG)
+    - BiographyView (user profiles from evolution chain)
     """
 
     def __init__(
         self,
         basic_mgr: BasicMemoryManager,
         diary_retriever: DiaryRetriever,
+        situation_store: SituationStore | None = None,
+        biography_view: BiographyView | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._diary = diary_retriever
+        self._situations = situation_store
+        self._bio_view = biography_view
 
     # ------------------------------------------------------------------
     # Public API
@@ -52,21 +64,22 @@ class ContextAssembler:
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
         include_pending: bool = False,
-        biography_card: Any = None,
+        speaker_user_id: str = "",
+        mentioned_user_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """构建消息链（方案 C：以 assistant 消息切分）。
 
         返回多条消息：
-        1. system  -- 富化后的系统提示词（含日记）
+        1. system  -- 富化后的系统提示词（含 Situation 摘要 + 日记 + 传记）
         2. user/assistant 交替 -- 历史对话（按 assistant 切分）
         3. user   -- 当前用户消息
-
-        每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
-        assistant 回复单独作为一条消息。
         """
-        # 1. Retrieve relevant diary entries (group-isolated)
+        # 1. 获取当日 Situation 摘要（已通过演化链验证）
+        today_summaries = self._get_today_summaries(group_id)
+
+        # 2. 检索相关日记
         enriched_query = self._enrich_search_query(
-            search_query or current_query, biography_card
+            search_query or current_query, speaker_user_id, mentioned_user_ids
         )
         diary_entries = self._diary.retrieve(
             query=enriched_query,
@@ -75,25 +88,24 @@ class ContextAssembler:
             max_tokens_budget=diary_token_budget,
         )
         logger.info(
-            "ContextAssembler: group=%s | 检索到 %d 条日记 | query=%.30s...",
-            group_id,
-            len(diary_entries),
+            "ContextAssembler: group=%s | %d 条当日摘要 | %d 条日记 | query=%.30s...",
+            group_id, len(today_summaries), len(diary_entries),
             search_query or current_query,
         )
-        if diary_entries:
-            displayed = diary_entries[:12]
-            for i, entry in enumerate(displayed, 1):
-                label = entry.content if i <= 5 else entry.summary
-                logger.info(
-                    "  [日记嵌入 %d/%d] %s", i, len(displayed), label
-                )
 
-        # 2. 构建富化后的系统提示词（只含日记，不含历史）
-        enriched_system = self._enrich_system_prompt(
-            system_prompt, diary_entries, history_xml="", cross_group_xml=""
+        # 3. 获取传记信息（从演化链派生）
+        bio_sections = self._build_biography_sections(
+            speaker_user_id, mentioned_user_ids or []
         )
 
-        # 3. 构建消息链（方案 C）
+        # 4. 构建富化后的系统提示词
+        enriched_system = self._enrich_system_prompt(
+            system_prompt, diary_entries,
+            today_summaries=today_summaries,
+            biography_sections=bio_sections,
+        )
+
+        # 5. 构建消息链（方案 C）
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": enriched_system}
         ]
@@ -101,7 +113,6 @@ class ContextAssembler:
         # 获取历史条目并按 assistant 切分
         recent = self._basic.get_context(group_id, n=recent_n)
         if recent and not include_pending:
-            # 排除 assistant 最后回复之后的未回复用户消息
             last_assistant_idx = -1
             for i in range(len(recent) - 1, -1, -1):
                 if recent[i].role == "assistant":
@@ -111,27 +122,22 @@ class ContextAssembler:
                 recent = recent[: last_assistant_idx + 1]
 
         if recent:
-            # 按 assistant 消息切分，构造 user-assistant 消息链
             current_user_entries: list[Any] = []
-            for entry in recent:  # type: ignore[assignment]
-                if entry.role == "assistant":  # type: ignore[attr-defined]
-                    # 将之前累积的 user/system 消息打包为一个 user 消息
+            for entry in recent:
+                if entry.role == "assistant":
                     if current_user_entries:
                         xml_content = self._entries_to_xml(current_user_entries)
                         messages.append({"role": "user", "content": xml_content})
                         current_user_entries = []
-                    # 添加 assistant 消息
                     messages.append({"role": "assistant", "content": entry.content or ""})
                 else:
-                    # user/system 消息累积到当前批次
                     current_user_entries.append(entry)
 
-            # 处理剩余的 user/system 消息（未被 assistant 回复的）
             if current_user_entries:
                 xml_content = self._entries_to_xml(current_user_entries)
                 messages.append({"role": "user", "content": xml_content})
 
-        # 4. 添加当前用户消息
+        # 6. 添加当前用户消息
         messages.append({"role": "user", "content": current_query})
 
         return messages
@@ -149,13 +155,10 @@ class ContextAssembler:
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
         include_pending: bool = False,
-        biography_card: Any = None,
+        speaker_user_id: str = "",
+        mentioned_user_ids: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-        """构建消息链并返回 token 分布统计。
-
-        Returns a tuple of (messages, breakdown) where breakdown contains
-        token counts for diary and history sections.
-        """
+        """构建消息链并返回 token 分布统计。"""
         messages = self.build_messages(
             group_id=group_id,
             current_query=current_query,
@@ -167,17 +170,16 @@ class ContextAssembler:
             cross_group_user_id=cross_group_user_id,
             cross_group_enabled=cross_group_enabled,
             include_pending=include_pending,
-            biography_card=biography_card,
+            speaker_user_id=speaker_user_id,
+            mentioned_user_ids=mentioned_user_ids,
         )
 
-        # Compute per-module token counts
         from sirius_pulse.token.utils import estimate_tokens
 
         breakdown: dict[str, int] = {}
         if messages:
-            # 计算 diary 部分的 token
             enriched_query = self._enrich_search_query(
-                search_query or current_query, biography_card
+                search_query or current_query, speaker_user_id, mentioned_user_ids
             )
             diary_entries = self._diary.retrieve(
                 query=enriched_query,
@@ -196,7 +198,6 @@ class ContextAssembler:
                 )
                 breakdown["diary"] = estimate_tokens(diary_text)
 
-            # 计算历史消息部分的 token
             history_tokens = 0
             for msg in messages:
                 if msg.get("role") in ("user", "assistant") and msg.get("content"):
@@ -206,12 +207,50 @@ class ContextAssembler:
         return messages, breakdown
 
     def build_history_xml(self, group_id: str, n: int = 10, *, include_pending: bool = False) -> str:
-        """Build XML representation of recent conversation history.
-
-        Exported for callers (e.g. proactive / delayed responses) that want
-        to embed history into their own system prompts.
-        """
+        """Build XML representation of recent conversation history."""
         return self._build_history_xml(group_id, n=n, include_pending=include_pending)
+
+    # ------------------------------------------------------------------
+    # Situation 摘要
+    # ------------------------------------------------------------------
+
+    def _get_today_summaries(self, group_id: str) -> list[str]:
+        """获取当日 Situation 摘要列表。"""
+        if not self._situations:
+            return []
+        situations = self._situations.get_today(group_id)
+        return [s.summary for s in situations if s.summary]
+
+    # ------------------------------------------------------------------
+    # Biography 传记
+    # ------------------------------------------------------------------
+
+    def _build_biography_sections(
+        self,
+        speaker_user_id: str,
+        mentioned_user_ids: list[str],
+    ) -> str:
+        """构建传记信息段落（从演化链派生）。"""
+        if not self._bio_view:
+            return ""
+
+        parts: list[str] = []
+
+        # 发言者传记
+        if speaker_user_id:
+            bio = self._bio_view.get_biography(speaker_user_id)
+            if bio and bio.short_bio:
+                parts.append(f"【发言者】{bio.name}: {bio.short_bio}")
+
+        # 被提及者传记
+        for uid in mentioned_user_ids:
+            if uid == speaker_user_id:
+                continue
+            bio = self._bio_view.get_biography(uid)
+            if bio and bio.short_bio:
+                parts.append(f"【被提及】{bio.name}: {bio.short_bio}")
+
+        return "\n".join(parts)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -220,18 +259,6 @@ class ContextAssembler:
     def _build_history_xml(
         self, group_id: str, n: int = 5, *, include_pending: bool = False,
     ) -> str:
-        """Convert recent basic memory entries into an XML block.
-
-        By default, trailing entries after the last assistant reply are excluded,
-        because those are the pending (unanswered) user messages that will be
-        passed separately as the ``user`` role content by the caller.
-
-        When ``include_pending=True`` (used by proactive responses where
-        caller's user content is just topic context or "..."), all recent
-        entries are included — the caller's user content does not contain
-        the pending messages, so excluding them from history would lose
-        critical conversational context.
-        """
         recent = self._basic.get_context(group_id, n=n)
         if not recent:
             return ""
@@ -248,7 +275,6 @@ class ContextAssembler:
     def _build_cross_group_history_xml(
         self, user_id: str, *, exclude_group_id: str, n: int = 5
     ) -> str:
-        """Build XML of recent entries for a user across other groups."""
         entries = self._basic.get_entries_by_user(
             user_id, exclude_group_id=exclude_group_id, n=n
         )
@@ -263,7 +289,6 @@ class ContextAssembler:
         tag: str = "conversation_history",
         include_group: bool = False,
     ) -> str:
-        """Convert basic memory entries into an XML block."""
         _tz_cn = timezone(timedelta(hours=8))
         lines: list[str] = [f'<{tag}>']
         for entry in entries:
@@ -272,7 +297,6 @@ class ContextAssembler:
             safe_speaker = html.escape(speaker, quote=True)
             safe_user_id = html.escape(entry.user_id or "", quote=True)
 
-            # 从 ISO 时间戳提取时分秒
             ts_str = ""
             raw_ts = getattr(entry, "timestamp", "")
             if raw_ts:
@@ -290,12 +314,10 @@ class ContextAssembler:
 
             lines.append(f'  <message{attrs}>{safe_content}</message>')
 
-            # 为带图消息输出带归属的 image 标签
             if getattr(entry, "multimodal_inputs", None):
                 for m in entry.multimodal_inputs:
                     if m.get("type") != "image":
                         continue
-                    # 动画表情 (sub_type=1) 简化输出，不暴露本地路径
                     if m.get("sub_type") == "1":
                         lines.append(
                             f'  <image type="sticker" caption="动画表情" '
@@ -311,39 +333,65 @@ class ContextAssembler:
         lines.append(f'</{tag}>')
         return "\n".join(lines)
 
-    @staticmethod
     def _enrich_system_prompt(
+        self,
         base_prompt: str,
         diary_entries: list[Any],
-        history_xml: str = "",
-        cross_group_xml: str = "",
+        today_summaries: list[str] | None = None,
+        biography_sections: str = "",
     ) -> str:
+        """富化系统提示词：注入 Situation 摘要 + 日记 + 传记。"""
         from sirius_pulse.core.prompt_factory import PromptFactory
 
-        return PromptFactory.enrich_system_prompt(
+        # 先用 PromptFactory 注入日记
+        enriched = PromptFactory.enrich_system_prompt(
             base_prompt=base_prompt,
             diary_entries=diary_entries,
-            history_xml=history_xml,
-            cross_group_xml=cross_group_xml,
+            history_xml="",
+            cross_group_xml="",
         )
 
-    @staticmethod
-    def _enrich_search_query(base_query: str, biography_card: Any) -> str:
-        """用传记卡信息丰富日记检索 query，提高对"此人相关"日记的命中率。
+        # 注入当日 Situation 摘要
+        if today_summaries:
+            summaries_text = "\n".join(f"- {s}" for s in today_summaries)
+            enriched += f"\n\n<today_context>\n今天的经历摘要：\n{summaries_text}\n</today_context>"
 
-        将用户姓名、身份锚点和传记摘要追加到原始 query 后，
-        使语义检索和关键词检索都能兼顾"内容相关"和"人物相关"。
-        """
-        if biography_card is None:
+        # 注入传记信息
+        if biography_sections:
+            enriched += f"\n\n<biography>\n{biography_sections}\n</biography>"
+
+        return enriched
+
+    def _enrich_search_query(
+        self,
+        base_query: str,
+        speaker_user_id: str = "",
+        mentioned_user_ids: list[str] | None = None,
+    ) -> str:
+        """用传记信息丰富日记检索 query。"""
+        if not self._bio_view:
             return base_query
 
-        bio_parts = []
-        if biography_card.name:
-            bio_parts.append(biography_card.name)
-        if biography_card.identity_anchors:
-            bio_parts.extend(biography_card.identity_anchors[:3])
-        if biography_card.short_bio:
-            bio_parts.append(biography_card.short_bio[:100])
+        bio_parts: list[str] = []
+
+        # 发言者传记
+        if speaker_user_id:
+            bio = self._bio_view.get_biography(speaker_user_id)
+            if bio:
+                if bio.name:
+                    bio_parts.append(bio.name)
+                if bio.identity_anchors:
+                    bio_parts.extend(bio.identity_anchors[:3])
+                if bio.short_bio:
+                    bio_parts.append(bio.short_bio[:100])
+
+        # 被提及者传记
+        for uid in (mentioned_user_ids or []):
+            if uid == speaker_user_id:
+                continue
+            bio = self._bio_view.get_biography(uid)
+            if bio and bio.name:
+                bio_parts.append(bio.name)
 
         if not bio_parts:
             return base_query
