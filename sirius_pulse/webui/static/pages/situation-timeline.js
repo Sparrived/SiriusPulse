@@ -35,7 +35,8 @@ async function loadSituations(topicFilter) {
         (s.topics || []).some(t => t.includes(topicFilter) || topicFilter.includes(t))
       );
     }
-    $('sitCount').textContent = filtered.length;
+    const cnt = $('sitCount');
+    if (cnt) cnt.textContent = filtered.length;
     renderTimeline(filtered);
   } catch (e) {
     toast('加载情景时间线失败: ' + e.message, 'error');
