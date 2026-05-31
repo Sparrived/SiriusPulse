@@ -36,7 +36,11 @@ class DiaryFileStore:
             return []
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return [DiaryEntry.from_dict(item) for item in data.get("entries", []) if isinstance(item, dict)]
+            return [
+                DiaryEntry.from_dict(item)
+                for item in data.get("entries", [])
+                if isinstance(item, dict)
+            ]
         except (OSError, json.JSONDecodeError):
             return []
 

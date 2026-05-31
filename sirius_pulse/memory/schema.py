@@ -9,14 +9,15 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from sirius_pulse.memory.evolution.chain import EvolutionChain
-from sirius_pulse.memory.evolution.models import EvolutionRecord
+from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BehaviorSchema", "SchemaInductor"]
+__all__ = ["BehaviorSchema", "SchemaInductor", "SchemaStore"]
 
 
 @dataclass
@@ -54,6 +55,80 @@ class BehaviorSchema:
         )
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class SchemaStore(BaseSqliteStore):
+    """行为模式 SQLite 存储层。
+
+    共享 persona.db 数据库连接。
+    """
+
+    def _create_tables(self) -> None:
+        self.executescript("""
+            CREATE TABLE IF NOT EXISTS behavior_schemas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                central_proposition TEXT NOT NULL DEFAULT '',
+                supporting_evidence TEXT DEFAULT '[]',
+                expected_inferences TEXT DEFAULT '[]',
+                confidence REAL DEFAULT 0.0,
+                formed_at TEXT DEFAULT '',
+                last_validated TEXT DEFAULT '',
+                created_at TEXT DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_schema_user
+                ON behavior_schemas(user_id);
+        """)
+
+    def save(self, user_id: str, schemas: list[BehaviorSchema]) -> None:
+        """保存用户的行为模式列表（先删后插）。"""
+        self.execute(
+            "DELETE FROM behavior_schemas WHERE user_id = ?",
+            (user_id,),
+        )
+        now = _now_iso()
+        for s in schemas:
+            self.execute(
+                """INSERT INTO behavior_schemas
+                   (user_id, central_proposition, supporting_evidence,
+                    expected_inferences, confidence, formed_at, last_validated, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    user_id,
+                    s.central_proposition,
+                    json.dumps(s.supporting_evidence, ensure_ascii=False),
+                    json.dumps(s.expected_inferences, ensure_ascii=False),
+                    s.confidence,
+                    s.formed_at or now,
+                    s.last_validated or now,
+                    now,
+                ),
+            )
+        self.commit()
+
+    def load(self, user_id: str) -> list[BehaviorSchema]:
+        """加载用户的行为模式列表。"""
+        rows = self.fetchall(
+            "SELECT * FROM behavior_schemas WHERE user_id = ?",
+            (user_id,),
+        )
+        return [self._row_to_schema(r) for r in rows]
+
+    def _row_to_schema(self, row: dict[str, Any]) -> BehaviorSchema:
+        """将 SQLite 行转换为 BehaviorSchema。"""
+        return BehaviorSchema(
+            central_proposition=row["central_proposition"],
+            supporting_evidence=json.loads(row["supporting_evidence"] or "[]"),
+            expected_inferences=json.loads(row["expected_inferences"] or "[]"),
+            confidence=float(row["confidence"]),
+            formed_at=row["formed_at"],
+            last_validated=row["last_validated"],
+        )
+
+
 _SCHEMA_PROMPT = """基于以下用户事实，归纳 2-3 个核心行为模式。
 
 事实列表：
@@ -82,6 +157,9 @@ class SchemaInductor:
     """Schema 归纳器：从演化链三元组中归纳行为模式。"""
 
     MIN_FACTS = 5  # 最少事实数才触发归纳
+
+    def __init__(self, store: SchemaStore | None = None) -> None:
+        self._store = store
 
     async def induct(
         self,
@@ -151,7 +229,14 @@ class SchemaInductor:
                 confidence=float(s.get("confidence", 0.5)),
             ))
 
-        return schemas[:3]
+        result = schemas[:3]
+
+        # 持久化到存储
+        if result and self._store is not None:
+            self._store.save(user_id, result)
+            logger.info("用户 %s 的 %d 个行为模式已持久化", user_id, len(result))
+
+        return result
 
     @staticmethod
     def _parse_response(raw: str) -> dict[str, Any] | None:

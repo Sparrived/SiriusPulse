@@ -310,8 +310,9 @@ class BackgroundTasks:
                 # 1. Schema 归纳（如果该用户有足够的 active 记录）
                 active_records = engine.evolution_chain.get_active_by_subject(subject)
                 if len(active_records) >= 5:
-                    from sirius_pulse.memory.schema import SchemaInductor
-                    inductor = SchemaInductor()
+                    from sirius_pulse.memory.schema import SchemaInductor, SchemaStore
+                    schema_store = SchemaStore(conn=engine._persona_db_conn)
+                    inductor = SchemaInductor(store=schema_store)
                     schemas = await inductor.induct(
                         subject,
                         engine.evolution_chain,

@@ -183,6 +183,7 @@ class _EmotionalGroupChatEngineBase:
             self.work_path,
             vector_store=self._vector_store,
             embedding_client=self._embedding_client,
+            memory_storage=self._memory_storage,
         )
         self.user_manager = UnifiedUserManager(
             self.work_path,

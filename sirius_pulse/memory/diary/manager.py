@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
@@ -11,6 +11,9 @@ from sirius_pulse.memory.diary.generator import DiaryGenerator
 from sirius_pulse.memory.diary.indexer import DiaryIndexer, DiaryRetriever
 from sirius_pulse.memory.diary.models import DiaryEntry, DiaryGenerationResult
 from sirius_pulse.memory.diary.store import DiaryFileStore
+
+if TYPE_CHECKING:
+    from sirius_pulse.memory.storage import MemoryStorage
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +31,10 @@ class DiaryManager:
         work_path: Any,
         vector_store: Any | None = None,
         embedding_client: EmbeddingClient | None = None,
+        memory_storage: MemoryStorage | None = None,
     ) -> None:
         self._store = DiaryFileStore(work_path)
+        self._memory_storage = memory_storage
         self._indexer = DiaryIndexer(
             vector_store=vector_store,
             embedding_client=embedding_client,
@@ -123,6 +128,10 @@ class DiaryManager:
 
         # Remember the tail sources of this diary for next overlap
         self._last_diary_tail_sources[group_id] = list(result.entry.source_ids)[-overlap_tail_count:]
+        if self._memory_storage is not None:
+            self._memory_storage.save_diary_meta(
+                group_id, self._last_diary_tail_sources[group_id]
+            )
 
         logger.info(
             "群 %s 的日记写好了，总结了 %d 条对话。",
@@ -163,6 +172,11 @@ class DiaryManager:
     def load_group(self, group_id: str) -> None:
         """Load persisted entries for a group into the index."""
         entries = self._store.load(group_id)
+        # 从 SQLite 加载尾部重叠源
+        if self._memory_storage is not None:
+            last_tail = self._memory_storage.get_diary_meta(group_id)
+            if last_tail:
+                self._last_diary_tail_sources[group_id] = last_tail
         logger.info("群 %s 日记加载中: 磁盘条目=%d", group_id, len(entries))
         any_recomputed = False
         for entry in entries:

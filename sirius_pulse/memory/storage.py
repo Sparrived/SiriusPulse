@@ -8,7 +8,6 @@ import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from sirius_pulse.utils.sqlite_base import BaseSqliteStore
@@ -168,6 +167,12 @@ class MemoryStorage(BaseSqliteStore):
 
             CREATE INDEX IF NOT EXISTS idx_group_pending_ai_responses_group
                 ON group_pending_ai_responses(group_id);
+
+            CREATE TABLE IF NOT EXISTS diary_meta (
+                group_id TEXT PRIMARY KEY,
+                last_tail_sources TEXT DEFAULT '[]',
+                updated_at TEXT DEFAULT ''
+            );
         """)
 
     # ── 用户 CRUD ─────────────────────────────────────────
@@ -661,3 +666,29 @@ class MemoryStorage(BaseSqliteStore):
             "dominant_topic": row["dominant_topic"],
             "pending_ai_responses": pending_ai_responses,
         }
+
+    # ── 日记元数据 CRUD ─────────────────────────────────
+
+    def get_diary_meta(self, group_id: str) -> list[str]:
+        """获取群组的日记尾部重叠源 ID 列表。"""
+        row = self.execute(
+            "SELECT last_tail_sources FROM diary_meta WHERE group_id = ?",
+            (group_id,),
+        ).fetchone()
+        if row is None:
+            return []
+        return json.loads(row["last_tail_sources"] or "[]")
+
+    def save_diary_meta(self, group_id: str, last_tail_sources: list[str]) -> None:
+        """保存群组的日记尾部重叠源 ID 列表。"""
+        self.execute(
+            """
+            INSERT INTO diary_meta (group_id, last_tail_sources, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(group_id) DO UPDATE SET
+                last_tail_sources=excluded.last_tail_sources,
+                updated_at=excluded.updated_at
+            """,
+            (group_id, json.dumps(last_tail_sources, ensure_ascii=False), _now_iso()),
+        )
+        self.commit()
