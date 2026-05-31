@@ -90,11 +90,11 @@ class BaseSqliteStore:
     # 基础 CRUD 操作
     # ------------------------------------------------------------------
 
-    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    def execute(self, sql: str, params: tuple | list = ()) -> sqlite3.Cursor:
         """执行单条 SQL 语句。"""
         return self._conn.execute(sql, params)
 
-    def executemany(self, sql: str, params_list: list[tuple]) -> sqlite3.Cursor:
+    def executemany(self, sql: str, params_list: list[tuple] | list[list]) -> sqlite3.Cursor:
         """批量执行 SQL 语句。"""
         return self._conn.executemany(sql, params_list)
 
@@ -106,12 +106,12 @@ class BaseSqliteStore:
         """提交当前事务。"""
         self._conn.commit()
 
-    def fetchone(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
+    def fetchone(self, sql: str, params: tuple | list = ()) -> dict[str, Any] | None:
         """执行查询并返回单行结果（字典形式）。"""
         row = self._conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
-    def fetchall(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+    def fetchall(self, sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:
         """执行查询并返回所有结果（字典列表形式）。"""
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]

@@ -941,9 +941,9 @@ class _EmotionalGroupChatEngineBase:
             )
             _engine.basic_store.append(_entry)
             try:
-                _engine.semantic_memory.record_response_sent(
+                _engine.semantic_memory.record_ai_sent(
                     group_id=gid,
-                    user_id=uid or "",
+                    target_user_id=uid or "",
                     topic_hint=record_content[:100],
                     response_length=len(record_content),
                 )
@@ -1118,12 +1118,11 @@ class _EmotionalGroupChatEngineBase:
             )
         )
 
-        # Semantic: passive group norm learning from message content + intent
-        social_intent = getattr(intent, "social_intent", None)
+        # Semantic: passive group norm learning from message content
         self.semantic_memory.learn_from_message(
             group_id=group_id,
+            speaker_id=user_id,
             content=content or "",
-            social_intent=str(social_intent) if social_intent else "",
         )
 
         # 3. Decision

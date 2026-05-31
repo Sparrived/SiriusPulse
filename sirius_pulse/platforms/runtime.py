@@ -348,12 +348,18 @@ class EngineRuntime:
         self._plugin_scheduler = PluginScheduler(check_interval=10.0)
         # 通知 executor，供卸载时清理定时任务
         executor.set_scheduler(self._plugin_scheduler)
+        from sirius_pulse.plugins.base import PluginBase
+
         registered_tasks = 0
         for definition in registry.plugin_names:
             inst = registry.get_instance(definition)
             if inst is None:
                 continue
-            for evt in registry.get(definition).events if registry.get(definition) else []:
+            plugin_def = registry.get(definition)
+            if plugin_def is None:
+                continue
+            assert isinstance(inst, PluginBase)
+            for evt in plugin_def.events:
                 if not evt.cron and evt.interval_seconds <= 0:
                     continue
                 task = ScheduledTask(

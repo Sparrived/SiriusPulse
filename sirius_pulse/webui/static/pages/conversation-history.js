@@ -463,11 +463,6 @@ function renderPromptToggle(msgId, systemPrompt) {
   const sections = parsePromptSections(systemPrompt);
   const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');
 
-  const sectionBadges = sections
-    .filter(s => s.type === 'section')
-    .map(s => `<span class="tag" style="font-size:10px;padding:2px 6px;background:${s.color}22;color:${s.color};border:1px solid ${s.color}44">${s.label}</span>`)
-    .join(' ');
-
   return `
     <div style="margin-top:10px">
       <button class="btn btn-sm prompt-toggle" data-target="${msgId}" style="font-size:11px;padding:4px 10px;display:flex;align-items:center;gap:6px">
@@ -475,7 +470,6 @@ function renderPromptToggle(msgId, systemPrompt) {
         <span>查看 LLM 输入上下文</span>
         <span style="color:var(--text-3);font-size:10px">${tokenCount} tokens · ${charCount} chars</span>
       </button>
-      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">${sectionBadges}</div>
       <div id="${msgId}" class="prompt-detail" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
         ${hasSections ? renderStructuredSections(sections) : renderRawPrompt(systemPrompt)}
       </div>

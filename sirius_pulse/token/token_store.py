@@ -48,10 +48,10 @@ class TokenUsageStore(BaseSqliteStore):
     conn:
         可选的共享 SQLite 连接。传入时复用该连接，不再自行管理生命周期。
     batch_size:
-        缓冲区满时自动 flush 的阈值，默认 10。
+        缓冲区满时自动 flush 的阈值，默认 5。
     """
 
-    _DEFAULT_BATCH_SIZE = 10
+    _DEFAULT_BATCH_SIZE = 5
 
     def __init__(
         self,
@@ -383,7 +383,7 @@ class TokenUsageStore(BaseSqliteStore):
             rec["breakdown"] = {}
             if raw:
                 try:
-                    rec["breakdown"] = json.loads(raw)
+                    rec["breakdown"] = json.loads(str(raw))
                 except json.JSONDecodeError:
                     logger.warning("解码 breakdown JSON 失败", exc_info=True)
                     pass
