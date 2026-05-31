@@ -357,6 +357,7 @@ async def run_migration(work_path: Path, brain: any, model_name: str) -> None:
         total += await migrate_distilled_points(conn, chain, brain, model_name)
         total += migrate_identity_anchors(conn, chain)
         total += migrate_relationships(conn, chain)
+        conn.commit()
         logger.info("迁移完成: 共 %d 条记录", total)
     finally:
         conn.close()
