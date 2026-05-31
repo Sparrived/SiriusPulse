@@ -1,6 +1,6 @@
 """情景压缩 SQLite 存储层。
 
-与演化链共用主 memory.db，Situation 表独立。
+共享 persona.db 数据库连接。
 """
 
 from __future__ import annotations

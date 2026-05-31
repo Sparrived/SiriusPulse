@@ -282,16 +282,19 @@ async def run_migration(work_path: Path, brain: any = None, model_name: str = ""
     """
     logger.info("开始迁移: %s", work_path)
 
-    # 连接旧数据库
-    old_db_path = work_path / "memory.db"
-    if not old_db_path.exists():
-        logger.warning("旧数据库不存在: %s", old_db_path)
-        return
+    # 连接统一数据库 persona.db
+    db_path = work_path / "persona.db"
+    if not db_path.exists():
+        # 兼容旧的 memory.db
+        db_path = work_path / "memory.db"
+        if not db_path.exists():
+            logger.warning("数据库不存在: %s", db_path)
+            return
 
-    conn = sqlite3.connect(str(old_db_path))
+    conn = sqlite3.connect(str(db_path))
 
-    # 初始化演化链
-    chain = EvolutionChain(db_path=work_path / "evolution.db")
+    # 初始化演化链（共享同一连接）
+    chain = EvolutionChain(conn=conn)
 
     try:
         total = 0

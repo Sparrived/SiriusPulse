@@ -1,6 +1,6 @@
 """演化链 SQLite 存储层。
 
-独立数据库 evolution.db，与主记忆库分离。
+共享 persona.db 数据库连接。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ __all__ = ["EvolutionStore"]
 class EvolutionStore(BaseSqliteStore):
     """演化链 SQLite 存储。
 
-    独立于主 memory.db，确保演化链数据的隔离性和可追溯性。
+    共享 persona.db 数据库连接，所有表在同一数据库中。
     """
 
     def _create_tables(self) -> None:

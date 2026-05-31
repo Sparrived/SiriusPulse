@@ -169,8 +169,11 @@ class _EmotionalGroupChatEngineBase:
         self._orch_task_max_tokens = orch.get("task_max_tokens")
 
     def _init_memory_system(self) -> None:
-        # 共享同一个 SQLite 存储
-        self._memory_storage = MemoryStorage(self.work_path / "memory.db")
+        # 共享同一个 SQLite 存储（persona.db）
+        self._memory_storage = MemoryStorage(
+            self.work_path / "persona.db",
+            conn=self._persona_db_conn,
+        )
 
         self.semantic_memory = SemanticMemoryManager(self.work_path, storage=self._memory_storage)
 
@@ -188,17 +191,17 @@ class _EmotionalGroupChatEngineBase:
             self.work_path,
             persona_name=self.persona.name,
             persona_aliases=self.persona.aliases,
-            db_path=self.work_path / "memory.db",
+            conn=self._persona_db_conn,
         )
         self.identity_resolver = IdentityResolver()
 
-        # ── 新记忆体系组件 ──
+        # ── 新记忆体系组件（共享 persona.db 连接）──
         self.evolution_chain = EvolutionChain(
-            db_path=self.work_path / "evolution.db",
+            conn=self._persona_db_conn,
             embedding_client=self._embedding_client,
         )
         self.situation_store = SituationStore(
-            db_path=self.work_path / "situations.db",
+            conn=self._persona_db_conn,
         )
         self.situation_extractor = SituationExtractor()
         self.biography_view = BiographyView(self.evolution_chain)
