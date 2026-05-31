@@ -24,6 +24,9 @@ class BaseSqliteStore:
         SQLite 数据库文件路径。传入 conn 时可省略。
     conn:
         可选的共享 SQLite 连接。传入时复用该连接，不再自行管理生命周期。
+    read_only:
+        只读模式。为 True 时跳过 _create_tables() 并设置 query_only PRAGMA，
+        避免与写入方产生锁冲突（适用于 WebUI 只读 API）。
     """
 
     def __init__(
@@ -31,7 +34,10 @@ class BaseSqliteStore:
         db_path: Path | str | None = None,
         *,
         conn: sqlite3.Connection | None = None,
+        read_only: bool = False,
     ) -> None:
+        self._read_only = read_only
+
         # 共享连接模式：外部传入 conn 时复用，本实例不负责关闭
         if conn is not None:
             self._conn = conn
@@ -54,8 +60,12 @@ class BaseSqliteStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
 
-        # 子类实现表结构创建
-        self._create_tables()
+        if read_only:
+            # 只读模式：禁止一切写操作，避免与写入方锁冲突
+            self._conn.execute("PRAGMA query_only=ON")
+        else:
+            # 子类实现表结构创建
+            self._create_tables()
 
     def _create_tables(self) -> None:
         """创建表结构，子类必须实现。"""

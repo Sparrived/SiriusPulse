@@ -48,7 +48,7 @@ class BiographyView:
         # 注册纠正回调：当演化链中的记录被 supersede 时，自动清除相关缓存
         self._chain.register_correction_callback(self._on_correction)
 
-    def _on_correction(self, old_record: Any, new_record_id: str) -> None:
+    def _on_correction(self, old_record: Any, _new_record_id: str) -> None:
         """纠正回调：清除受影响用户的传记缓存。"""
         subject = getattr(old_record, "subject", "")
         user_id = getattr(old_record, "subject_user_id", "")
@@ -157,7 +157,7 @@ class BiographyView:
 
     @staticmethod
     def _build_anchors(
-        identity_facts: list[EvolutionRecord], user_id: str
+        identity_facts: list[EvolutionRecord], _user_id: str
     ) -> list[str]:
         """从身份类三元组构建身份锚点。"""
         anchors: list[str] = []
@@ -172,7 +172,7 @@ class BiographyView:
 
     @staticmethod
     def _build_relationships(
-        relationship_facts: list[EvolutionRecord], user_id: str
+        relationship_facts: list[EvolutionRecord], _user_id: str
     ) -> list[dict[str, str]]:
         """从关系类三元组构建关系列表。"""
         relationships: list[dict[str, str]] = []
@@ -196,7 +196,7 @@ class BiographyView:
 
     @staticmethod
     def _build_summary(
-        user_id: str,
+        _user_id: str,
         identity_facts: list[EvolutionRecord],
         relationship_facts: list[EvolutionRecord],
         preference_facts: list[EvolutionRecord],

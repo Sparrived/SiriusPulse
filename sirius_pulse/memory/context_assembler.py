@@ -175,7 +175,14 @@ class ContextAssembler:
 
         # 6. 添加当前用户消息（带身份标识）
         # 如果有 pending 消息，把它们和当前消息一起打包
-        all_current = pending_entries
+        # 排除与当前发言者匹配的最后一条 pending 条目，避免 current_query 重复注入
+        filtered_pending = pending_entries
+        if pending_entries and speaker_user_id:
+            for i in range(len(pending_entries) - 1, -1, -1):
+                if pending_entries[i].user_id == speaker_user_id:
+                    filtered_pending = pending_entries[:i] + pending_entries[i + 1 :]
+                    break
+        all_current = filtered_pending
         if speaker_name or speaker_user_id:
             # 用 XML 格式包装，让模型知道是谁说的
             safe_content = html.escape(current_query, quote=False)

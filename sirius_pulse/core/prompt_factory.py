@@ -807,10 +807,16 @@ class PromptFactory:
         """
 
         sections: list[str] = []
+        constraint_sections: list[str] = []  # 回复限制（长度、风格、禁忌）
         bd = PromptTokenBreakdown()
 
-        def _add(section_text: str, attr: str) -> None:
-            sections.append(section_text)
+        def _add(
+            section_text: str, attr: str, *, is_constraint: bool = False,
+        ) -> None:
+            if is_constraint:
+                constraint_sections.append(section_text)
+            else:
+                sections.append(section_text)
             setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
 
         bio = PromptFactory.build_biography_section(
@@ -823,7 +829,7 @@ class PromptFactory:
         other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
         if other_ai:
             _add(other_ai, "identity")
-        _add(PromptFactory.build_output_spec(), "output_constraint")
+        _add(PromptFactory.build_output_spec(), "output_constraint", is_constraint=True)
 
         if scene_description:
             _add(f"{TAG_CURRENT_SCENE}{scene_description}", "emotion")
@@ -843,15 +849,21 @@ class PromptFactory:
             _add(PromptFactory.build_memory_context(memories), "memory")
 
         if group_profile:
-            _add(PromptFactory.build_group_style(group_profile, style_params), "group_style")
+            _add(
+                PromptFactory.build_group_style(group_profile, style_params),
+                "group_style", is_constraint=True,
+            )
             taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
             if taboo:
-                _add(taboo, "group_style")
+                _add(taboo, "group_style", is_constraint=True)
             atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
             if atm:
                 _add(atm, "emotion")
         else:
-            _add(PromptFactory.build_style_fallback(style_params), "group_style")
+            _add(
+                PromptFactory.build_style_fallback(style_params),
+                "group_style", is_constraint=True,
+            )
 
         # 技能描述已通过 tools 参数传递给 LLM，不再需要注入 prompt
         # 保留简短的通用指导
@@ -882,6 +894,11 @@ class PromptFactory:
 
         # 添加【最近消息】标签
         user_content = f"{TAG_RECENT_MESSAGES}\n{user_content}"
+
+        # 回复限制（长度、风格、禁忌）注入到【最近消息】前面
+        if constraint_sections:
+            constraint_text = "\n\n".join(constraint_sections)
+            user_content = f"{constraint_text}\n\n{user_content}"
 
         # 钉住消息随 user 消息段带出
         if pinned_messages:

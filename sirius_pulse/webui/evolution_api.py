@@ -48,9 +48,8 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
     try:
         from sirius_pulse.memory.evolution.chain import EvolutionChain
 
-        chain = EvolutionChain(db_path)
+        chain = EvolutionChain(db_path, read_only=True)
         all_subjects = chain._store.get_all_subjects()
-        all_records = []
         for s in all_subjects:
             all_records.extend(chain.get_all_by_subject(s))
         active = [r for r in all_records if r.status == "active"]
@@ -93,7 +92,7 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
     try:
         from sirius_pulse.memory.situation.store import SituationStore
 
-        sit_store = SituationStore(db_path)
+        sit_store = SituationStore(db_path, read_only=True)
         all_situations = sit_store.get_by_group("", limit=500)
         result["situation_stats"] = {
             "total_situations": len(all_situations),
@@ -159,13 +158,13 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
 async def api_evolution_records(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/memory/evolution — 演化链记录列表。"""
     name = _get_name(request)
-    db_path, paths = _open_db(persona_manager, name)
+    db_path, _ = _open_db(persona_manager, name)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
 
-    chain = EvolutionChain(db_path)
+    chain = EvolutionChain(db_path, read_only=True)
     subject = request.query.get("subject", "").strip()
     status_filter = request.query.get("status", "").strip()
     limit = min(int(request.query.get("limit", "200")), 500)
@@ -209,7 +208,7 @@ async def api_evolution_history(request: web.Request, persona_manager: Any) -> w
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
 
-    chain = EvolutionChain(db_path)
+    chain = EvolutionChain(db_path, read_only=True)
     history = chain.get_history(record_id)
     return _json_response({
         "history": [_record_to_dict(r) for r in history],
@@ -226,7 +225,7 @@ async def api_evolution_uncertain(request: web.Request, persona_manager: Any) ->
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
 
-    chain = EvolutionChain(db_path)
+    chain = EvolutionChain(db_path, read_only=True)
     limit = min(int(request.query.get("limit", "50")), 200)
     records = chain.get_uncertain_records(limit=limit)
     return _json_response({
@@ -272,7 +271,7 @@ async def api_situations_list(request: web.Request, persona_manager: Any) -> web
 
     from sirius_pulse.memory.situation.store import SituationStore
 
-    store = SituationStore(db_path)
+    store = SituationStore(db_path, read_only=True)
     group_id = request.query.get("group_id", "").strip()
     limit = min(int(request.query.get("limit", "100")), 500)
 
@@ -381,7 +380,7 @@ async def api_biography_view(request: web.Request, persona_manager: Any) -> web.
     from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
 
-    chain = EvolutionChain(db_path)
+    chain = EvolutionChain(db_path, read_only=True)
     bio_view = BiographyView(chain)
     bio = bio_view.get_biography(user_id)
 
@@ -405,14 +404,14 @@ async def api_biography_view(request: web.Request, persona_manager: Any) -> web.
 async def api_biography_list_all(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/memory/biographies — 所有用户传记列表。"""
     name = _get_name(request)
-    db_path, paths = _open_db(persona_manager, name)
+    db_path, _ = _open_db(persona_manager, name)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
 
-    chain = EvolutionChain(db_path)
+    chain = EvolutionChain(db_path, read_only=True)
     bio_view = BiographyView(chain)
 
     # 收集所有有记录的 user_id
@@ -461,7 +460,7 @@ async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.
     from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
 
-    chain = EvolutionChain(db_path)
+    chain = EvolutionChain(db_path, read_only=True)
     bio_view = BiographyView(chain)
     bio = bio_view.get_biography(user_id)
 

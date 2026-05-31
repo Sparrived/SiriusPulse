@@ -60,11 +60,12 @@ class TokenUsageStore(BaseSqliteStore):
         session_id: str = "default",
         conn: sqlite3.Connection | None = None,
         batch_size: int = _DEFAULT_BATCH_SIZE,
+        read_only: bool = False,
     ) -> None:
         self._session_id = session_id
         self._batch_size = batch_size
         self._buffer: list[tuple] = []
-        super().__init__(db_path, conn=conn)
+        super().__init__(db_path, conn=conn, read_only=read_only)
 
     @classmethod
     def for_workspace(

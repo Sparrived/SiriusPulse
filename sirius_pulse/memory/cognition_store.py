@@ -123,11 +123,12 @@ class CognitionEventStore(BaseSqliteStore):
         *,
         conn: sqlite3.Connection | None = None,
         batch_size: int = _DEFAULT_BATCH_SIZE,
+        read_only: bool = False,
     ) -> None:
         self._batch_size = batch_size
         self._buf_events: list[tuple] = []
         self._buf_decisions: list[tuple] = []
-        super().__init__(db_path, conn=conn)
+        super().__init__(db_path, conn=conn, read_only=read_only)
 
     def _create_tables(self) -> None:
         """创建表结构并执行 schema 迁移。"""

@@ -51,8 +51,9 @@ class EvolutionChain:
         *,
         conn: Any | None = None,
         embedding_client: Any | None = None,
+        read_only: bool = False,
     ) -> None:
-        self._store = EvolutionStore(db_path=db_path, conn=conn)
+        self._store = EvolutionStore(db_path=db_path, conn=conn, read_only=read_only)
         self._embedding_client = embedding_client
 
         # 内存索引：subject → list[record_id]（仅 active）

@@ -76,7 +76,7 @@ async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Resp
         if not db_path.exists():
             continue
         try:
-            store = TokenUsageStore(str(db_path))
+            store = TokenUsageStore(str(db_path), read_only=True)
             baseline = token_analytics.compute_baseline(store)
             total_summary["total_calls"] += baseline.get("total_calls", 0)
             total_summary["total_prompt_tokens"] += baseline.get("total_prompt_tokens", 0)
@@ -190,7 +190,7 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
         LOG.warning("解析时间范围查询参数失败", exc_info=True)
         pass
 
-    store = TokenUsageStore(str(db_path))
+    store = TokenUsageStore(str(db_path), read_only=True)
     baseline = token_analytics.compute_baseline(store, start_ts=start_ts, end_ts=end_ts)
     by_model = token_analytics.group_by_model(store, start_ts=start_ts, end_ts=end_ts)
     time_series = token_analytics.time_series(store, bucket_seconds=3600, start_ts=start_ts, end_ts=end_ts)
@@ -305,7 +305,7 @@ async def api_persona_cognition_get(request: web.Request, persona_manager: Any) 
         return _json_response({"events": [], "emotion_distribution": {}})
 
     from sirius_pulse.memory.cognition_store import CognitionEventStore
-    store = CognitionEventStore(str(db_path))
+    store = CognitionEventStore(str(db_path), read_only=True)
     limit = int(request.query.get("limit", "50"))
     events = store.get_recent(limit=limit)
     group_id = request.query.get("group_id", None)
@@ -328,7 +328,7 @@ async def api_persona_cognition_analysis_get(request: web.Request, persona_manag
 
     from sirius_pulse.memory.cognition_store import CognitionEventStore
 
-    store = CognitionEventStore(str(db_path))
+    store = CognitionEventStore(str(db_path), read_only=True)
     group_id = request.query.get("group_id", None) or None
 
     result: dict[str, Any] = {"has_data": True}
