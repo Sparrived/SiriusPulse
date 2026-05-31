@@ -447,22 +447,27 @@ function renderMessages() {
   const el = $('messageList');
   if (!el) return;
 
-  // 保存当前滚动位置
-  const scrollTop = el.scrollTop;
+  // 保存当前滚动位置和内容高度（用于补偿新消息插入导致的偏移）
+  const oldScrollTop = el.scrollTop;
+  const oldScrollHeight = el.scrollHeight;
 
   // 保存当前展开的prompt-detail状态（使用data-entry-id作为标识）
   const openPromptEntryIds = new Set();
-  const openSectionEntryIds = new Set();
+  const openSectionIds = new Set();
+  const promptScrollPositions = new Map();
   el.querySelectorAll('.prompt-detail').forEach(detail => {
+    const entryId = detail.getAttribute('data-entry-id');
     if (detail.style.display !== 'none') {
-      const entryId = detail.getAttribute('data-entry-id');
       if (entryId) openPromptEntryIds.add(entryId);
+    }
+    if (entryId && detail.scrollTop > 0) {
+      promptScrollPositions.set(entryId, detail.scrollTop);
     }
   });
   el.querySelectorAll('.section-body').forEach(body => {
     if (body.style.display !== 'none') {
-      const entryId = body.getAttribute('data-entry-id');
-      if (entryId) openSectionEntryIds.add(entryId);
+      const sectionId = body.id;
+      if (sectionId) openSectionIds.add(sectionId);
     }
   });
 
@@ -502,17 +507,27 @@ function renderMessages() {
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
-        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt, entryId, openPromptEntryIds.has(entryId), openSectionEntryIds) : ''}
+        ${hasPrompt ? renderPromptToggle(msgId, systemPrompt, entryId, openPromptEntryIds.has(entryId), openSectionIds) : ''}
       </div>
     `;
   }).join('');
 
   bindPromptToggles();
 
-  // 恢复滚动位置
-  requestAnimationFrame(() => {
-    el.scrollTop = scrollTop;
-  });
+  // 恢复prompt-detail内部滚动位置
+  if (promptScrollPositions.size > 0) {
+    el.querySelectorAll('.prompt-detail').forEach(detail => {
+      const entryId = detail.getAttribute('data-entry-id');
+      if (entryId && promptScrollPositions.has(entryId)) {
+        detail.scrollTop = promptScrollPositions.get(entryId);
+      }
+    });
+  }
+
+  // 恢复滚动位置：新消息插入顶部会导致内容下移，需补偿高度差
+  const newScrollHeight = el.scrollHeight;
+  const heightDiff = newScrollHeight - oldScrollHeight;
+  el.scrollTop = oldScrollTop + heightDiff;
 }
 
 function renderPromptToggle(msgId, systemPrompt, entryId = '', isOpen = false, openSectionEntryIds = null) {
@@ -538,11 +553,11 @@ function renderPromptToggle(msgId, systemPrompt, entryId = '', isOpen = false, o
   `;
 }
 
-function renderStructuredSections(sections, entryId = '', openSectionEntryIds = null) {
+function renderStructuredSections(sections, entryId = '', openSectionIds = null) {
   return sections.map((section, idx) => {
     if (section.type === 'section') {
       const sectionId = `section-${msgIdCounter}-${idx}`;
-      const isSectionOpen = openSectionEntryIds && openSectionEntryIds.has(entryId);
+      const isSectionOpen = openSectionIds && openSectionIds.has(sectionId);
       const sectionDisplay = isSectionOpen ? 'display:block' : 'display:none';
       const sectionArrowTransform = isSectionOpen ? 'transform:rotate(90deg)' : '';
       return `
