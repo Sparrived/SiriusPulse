@@ -72,17 +72,19 @@ class DiarySlicer:
             if not content:
                 continue
 
-            # 收集三元组索引
+            # 收集三元组索引和关联情景
             all_subjects: set[str] = set()
             all_predicates: set[str] = set()
             all_record_ids: list[str] = []
             all_participants: set[str] = set()
+            all_situation_ids: list[str] = []
 
             for sit in group_situations:
                 for t in sit.triples:
                     all_subjects.add(t.subject)
                     all_predicates.add(t.predicate)
                 all_participants.update(sit.participants)
+                all_situation_ids.append(sit.situation_id)
 
             # 时间范围
             start = min(
@@ -107,6 +109,7 @@ class DiarySlicer:
                 triple_subjects=list(all_subjects),
                 triple_predicates=list(all_predicates),
                 source_record_ids=all_record_ids,
+                situation_ids=all_situation_ids,
                 participants=list(all_participants),
                 time_range_start=start,
                 time_range_end=end,

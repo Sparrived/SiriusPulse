@@ -185,19 +185,19 @@ class _EmotionalGroupChatEngineBase:
             embedding_client=self._embedding_client,
             memory_storage=self._memory_storage,
         )
-        self.user_manager = UnifiedUserManager(
-            self.work_path,
-            persona_name=self.persona.name,
-            persona_aliases=self.persona.aliases,
-            conn=self._persona_db_conn,
-        )
-        self.identity_resolver = IdentityResolver()
-
         # ── 新记忆体系组件（共享 persona.db 连接）──
         self.evolution_chain = EvolutionChain(
             conn=self._persona_db_conn,
             embedding_client=self._embedding_client,
         )
+        self.user_manager = UnifiedUserManager(
+            self.work_path,
+            persona_name=self.persona.name,
+            persona_aliases=self.persona.aliases,
+            conn=self._persona_db_conn,
+            evolution_chain=self.evolution_chain,
+        )
+        self.identity_resolver = IdentityResolver()
         self.situation_store = SituationStore(
             conn=self._persona_db_conn,
         )

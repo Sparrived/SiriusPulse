@@ -60,7 +60,9 @@ from sirius_pulse.webui.evolution_api import (
     api_evolution_history,
     api_evolution_uncertain,
     api_situations_list,
+    api_situations_delete,
     api_diary_slices as api_diary_slices_new,
+    api_diary_slices_delete,
     api_biography_view,
     api_biography_list_all,
     api_knowledge_gaps,
@@ -224,8 +226,14 @@ class WebUIServer(_WebUIServer):
     async def api_situations_list(self, request):
         return await api_situations_list(request, self.persona_manager)
 
+    async def api_situations_delete(self, request):
+        return await api_situations_delete(request, self.persona_manager)
+
     async def api_diary_slices(self, request):
         return await api_diary_slices_new(request, self.persona_manager)
+
+    async def api_diary_slices_delete(self, request):
+        return await api_diary_slices_delete(request, self.persona_manager)
 
     async def api_biography_list_all(self, request):
         return await api_biography_list_all(request, self.persona_manager)

@@ -40,6 +40,7 @@ class DiarySlice:
     triple_subjects: list[str] = field(default_factory=list)
     triple_predicates: list[str] = field(default_factory=list)
     source_record_ids: list[str] = field(default_factory=list)
+    situation_ids: list[str] = field(default_factory=list)
 
     # ── 参与者 ──
     participants: list[str] = field(default_factory=list)
@@ -64,6 +65,7 @@ class DiarySlice:
             "triple_subjects": list(self.triple_subjects),
             "triple_predicates": list(self.triple_predicates),
             "source_record_ids": list(self.source_record_ids),
+            "situation_ids": list(self.situation_ids),
             "participants": list(self.participants),
             "time_range_start": self.time_range_start,
             "time_range_end": self.time_range_end,
@@ -84,6 +86,7 @@ class DiarySlice:
             triple_subjects=list(data.get("triple_subjects", [])),
             triple_predicates=list(data.get("triple_predicates", [])),
             source_record_ids=list(data.get("source_record_ids", [])),
+            situation_ids=list(data.get("situation_ids", [])),
             participants=list(data.get("participants", [])),
             time_range_start=data.get("time_range_start", ""),
             time_range_end=data.get("time_range_end", ""),

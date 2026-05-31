@@ -69,6 +69,32 @@ class DiarySliceStore:
         if path.exists():
             path.unlink()
 
+    def delete_by_ids(self, slice_ids: list[str]) -> int:
+        """按 ID 列表批量删除切片（跨群组）。
+
+        Args:
+            slice_ids: 切片 ID 列表
+
+        Returns:
+            实际删除的切片数
+        """
+        if not slice_ids:
+            return 0
+        ids_set = set(slice_ids)
+        deleted = 0
+        for path in self._base_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                original_slices = data.get("slices", [])
+                filtered = [s for s in original_slices if s.get("slice_id") not in ids_set]
+                if len(filtered) < len(original_slices):
+                    deleted += len(original_slices) - len(filtered)
+                    data["slices"] = filtered
+                    atomic_write_json(path, data)
+            except (OSError, json.JSONDecodeError):
+                continue
+        return deleted
+
     def count(self, group_id: str) -> int:
         """统计某群组的切片数量。"""
         return len(self.load(group_id))

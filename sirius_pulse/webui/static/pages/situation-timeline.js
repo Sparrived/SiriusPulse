@@ -1,5 +1,5 @@
 import { store } from '../store.js';
-import { get } from '../app.js';
+import { get, del } from '../app.js';
 import { toast, $ } from '../components.js';
 import { renderNeuralNav, consumeNavParams, showParamHint, navigateWithParams } from './memory-nav.js';
 
@@ -14,6 +14,8 @@ export async function init(container) {
 
   renderNeuralNav('situation-timeline');
   $('sitRefreshBtn')?.addEventListener('click', () => loadSituations());
+  $('sitSelectAll')?.addEventListener('change', handleSelectAll);
+  $('sitDeleteBtn')?.addEventListener('click', handleDeleteSelected);
 
   const params = consumeNavParams();
   if (params?.topic) {
@@ -67,6 +69,7 @@ function renderTimeline(situations) {
 
     return `
     <div class="sit-node" style="animation-delay:${i * 0.06}s">
+      <input type="checkbox" class="sit-checkbox" data-id="${s.situation_id}">
       <div class="sit-card" data-id="${s.situation_id}">
         <div class="sit-time">${time}</div>
         <div class="sit-summary">${esc(s.summary)}</div>
@@ -90,12 +93,57 @@ function renderTimeline(situations) {
     });
   });
 
+  timeline.querySelectorAll('.sit-checkbox').forEach(cb => {
+    cb.addEventListener('change', updateDeleteButton);
+  });
+
   timeline.querySelectorAll('.mem-clickable-topic').forEach(el => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       navigateWithParams('evolution-chain', { subject: el.dataset.topic });
     });
   });
+
+  updateDeleteButton();
+}
+
+function handleSelectAll(e) {
+  const checked = e.target.checked;
+  document.querySelectorAll('.sit-checkbox').forEach(cb => {
+    cb.checked = checked;
+  });
+  updateDeleteButton();
+}
+
+function updateDeleteButton() {
+  const selected = document.querySelectorAll('.sit-checkbox:checked');
+  const btn = $('sitDeleteBtn');
+  if (btn) {
+    btn.classList.toggle('visible', selected.length > 0);
+    btn.textContent = selected.length > 0 ? `删除选中 (${selected.length})` : '删除选中';
+  }
+}
+
+function getSelectedIds() {
+  return Array.from(document.querySelectorAll('.sit-checkbox:checked')).map(cb => cb.dataset.id);
+}
+
+async function handleDeleteSelected() {
+  const ids = getSelectedIds();
+  if (!ids.length) return;
+
+  const name = store.currentPersona;
+  if (!name) return;
+
+  if (!confirm(`确定要删除 ${ids.length} 条情景记录吗？此操作不可恢复。`)) return;
+
+  try {
+    const result = await del(`/personas/${name}/memory/situations`, { situation_ids: ids });
+    toast(`成功删除 ${result.deleted} 条情景记录`);
+    await loadSituations();
+  } catch (e) {
+    toast('删除失败: ' + e.message, 'error');
+  }
 }
 
 function formatTime(ts) {

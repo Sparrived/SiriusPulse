@@ -182,6 +182,24 @@ class SituationStore(BaseSqliteStore):
             situation_ids,
         )
 
+    def delete_by_ids(self, situation_ids: list[str]) -> int:
+        """按 ID 列表批量删除情景。
+
+        Args:
+            situation_ids: 情景 ID 列表
+
+        Returns:
+            实际删除的记录数
+        """
+        if not situation_ids:
+            return 0
+        placeholders = ",".join(["?"] * len(situation_ids))
+        cursor = self.execute(
+            f"DELETE FROM situations WHERE situation_id IN ({placeholders})",
+            situation_ids,
+        )
+        return cursor.rowcount
+
     def delete_before(self, timestamp: str) -> int:
         """删除指定时间之前的情景（用于清理旧数据）。"""
         cursor = self.execute(

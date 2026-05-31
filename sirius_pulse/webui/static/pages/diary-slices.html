@@ -128,6 +128,104 @@
     color: var(--text-3);
     font-size: 14px;
   }
+  .ds-slice-linked {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(0,255,200,0.08);
+  }
+  .ds-linked-title {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-bottom: 6px;
+  }
+  .ds-linked-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ds-linked-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(0,255,200,0.04);
+    border: 1px solid rgba(0,255,200,0.08);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .ds-linked-item:hover {
+    background: rgba(0,255,200,0.08);
+    border-color: rgba(0,255,200,0.2);
+  }
+  .ds-linked-time {
+    font-size: 10px;
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+  .ds-linked-summary {
+    font-size: 11px;
+    color: var(--text-2);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ds-linked-tags {
+    display: flex;
+    gap: 4px;
+  }
+  .ds-linked-tag {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    color: #7b61ff;
+    background: rgba(123,97,255,0.06);
+    border: 1px solid rgba(123,97,255,0.12);
+  }
+  .ds-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ds-select-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .ds-select-all input[type="checkbox"] {
+    accent-color: #00ffc8;
+  }
+  .ds-delete-btn {
+    background: rgba(248,81,73,0.1);
+    border: 1px solid rgba(248,81,73,0.3);
+    color: #f85149;
+    padding: 7px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+    display: none;
+  }
+  .ds-delete-btn:hover {
+    background: rgba(248,81,73,0.2);
+    box-shadow: 0 0 12px rgba(248,81,73,0.2);
+  }
+  .ds-delete-btn.visible {
+    display: inline-block;
+  }
+  .ds-slice-check {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    accent-color: #00ffc8;
+    cursor: pointer;
+  }
   @media (max-width: 900px) {
     .ds-masonry { columns: 1; }
   }
@@ -136,7 +234,13 @@
 <div class="ds-page">
   <div class="ds-header">
     <input type="text" id="dsSearch" class="ds-search" placeholder="搜索记忆切片内容…">
-    <button class="ds-refresh" id="dsRefreshBtn">刷新</button>
+    <div class="ds-toolbar">
+      <label class="ds-select-all">
+        <input type="checkbox" id="dsSelectAll"> 全选
+      </label>
+      <button class="ds-delete-btn" id="dsDeleteBtn">删除选中</button>
+      <button class="ds-refresh" id="dsRefreshBtn">刷新</button>
+    </div>
   </div>
   <div class="ds-masonry" id="dsMasonry">
     <div class="ds-empty">加载中…</div>

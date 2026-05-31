@@ -256,14 +256,16 @@ class IdentityResolver:
                         best_score = score
                         best_match = user_id
 
-        # 检查别名索引
-        for alias_key in user_manager._alias_index.keys():
-            score = self._compute_similarity(speaker_lower, alias_key)
-            if score > best_score:
-                entries = user_manager._alias_index[alias_key]
-                if entries:
-                    best_score = score
-                    best_match = entries[0].user_id
+        # 检查别名缓存（委托给 EvolutionChain）
+        chain = user_manager._evolution_chain
+        if chain is not None:
+            for alias_key in chain._alias_cache.keys():
+                score = self._compute_similarity(speaker_lower, alias_key)
+                if score > best_score:
+                    entries = chain._alias_cache[alias_key]
+                    if entries:
+                        best_score = score
+                        best_match = entries[0].subject_user_id
 
         if best_match and best_score > 0.7:
             confidence = min(0.9, best_score * 0.8)

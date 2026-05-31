@@ -12,6 +12,21 @@ from sirius_pulse.webui.server_utils import _get_name, _json_response
 LOG = logging.getLogger("sirius.webui")
 
 
+def _create_managers(paths: Any, persona_name: str) -> tuple:
+    """创建 UnifiedUserManager 和 EvolutionChain 实例（共享 DB 连接）。"""
+    from sirius_pulse.memory.evolution.chain import EvolutionChain
+    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
+
+    db_path = paths.dir / "persona.db"
+    chain = EvolutionChain(db_path=db_path)
+    mgr = UnifiedUserManager(
+        work_path=paths.dir,
+        persona_name=persona_name,
+        evolution_chain=chain,
+    )
+    return mgr, chain
+
+
 async def api_persona_biography_list(
     request: web.Request, persona_manager: Any
 ) -> web.Response:
@@ -24,12 +39,16 @@ async def api_persona_biography_list(
     limit = min(int(request.query.get("limit", "50")), 200)
     offset = max(int(request.query.get("offset", "0")), 0)
 
-    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
-
-    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
+    mgr, chain = _create_managers(paths, name)
     users = mgr.list_global_users()
-    alias_index = mgr._alias_index
+
+    # 从演化链别称缓存构建别称索引
+    alias_index_data: dict[str, list[dict]] = {}
+    for alias_key, records in chain._alias_cache.items():
+        alias_index_data[alias_key] = [r.to_dict() for r in records if r.is_active]
+
     mgr.close()
+    chain.close()
 
     total = len(users)
     users_sorted = sorted(users, key=lambda u: getattr(u, "last_updated_at", "") or "", reverse=True)
@@ -40,10 +59,7 @@ async def api_persona_biography_list(
     return _json_response({
         "cards": [u.to_dict() for u in page],
         "total": total,
-        "alias_index": {
-            alias: [e.to_dict() for e in entries]
-            for alias, entries in alias_index.items()
-        },
+        "alias_index": alias_index_data,
     })
 
 
@@ -60,11 +76,10 @@ async def api_persona_biography_get(
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
-
-    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
+    mgr, chain = _create_managers(paths, name)
     user = mgr.get_global_user(user_id)
     mgr.close()
+    chain.close()
 
     if user is None:
         return _json_response({"error": "用户传记不存在"}, 404)
@@ -81,16 +96,14 @@ async def api_persona_biography_alias_index(
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
-
-    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
-    alias_index = mgr._alias_index
+    mgr, chain = _create_managers(paths, name)
+    alias_index_data: dict[str, list[dict]] = {}
+    for alias_key, records in chain._alias_cache.items():
+        alias_index_data[alias_key] = [r.to_dict() for r in records if r.is_active]
     mgr.close()
+    chain.close()
 
-    return _json_response({
-        alias: [e.to_dict() for e in entries]
-        for alias, entries in alias_index.items()
-    })
+    return _json_response(alias_index_data)
 
 
 async def api_persona_biography_alias_index_update(
@@ -115,27 +128,21 @@ async def api_persona_biography_alias_index_update(
     if not alias:
         return _json_response({"error": "缺少 alias 参数"}, 400)
 
-    from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
-
-    mgr = UnifiedUserManager(work_path=paths.dir, persona_name=name)
+    mgr, chain = _create_managers(paths, name)
 
     if action == "delete":
-        if alias in mgr._alias_index:
-            mgr._alias_index[alias] = [
-                e for e in mgr._alias_index[alias] if e.user_id != user_id
-            ]
-            if not mgr._alias_index[alias]:
-                del mgr._alias_index[alias]
-        mgr.save_to_disk()
+        chain.reject_alias(alias, user_id)
         mgr.close()
+        chain.close()
         return _json_response({"success": True})
 
     # action == "add" (default)
     if not user_id:
         mgr.close()
+        chain.close()
         return _json_response({"error": "缺少 user_id 参数"}, 400)
 
     mgr.register_alias(alias, user_id, user_name, source="manual")
-    mgr.save_to_disk()
     mgr.close()
+    chain.close()
     return _json_response({"success": True})

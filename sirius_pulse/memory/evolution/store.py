@@ -62,6 +62,8 @@ class EvolutionStore(BaseSqliteStore):
                 ON evolution_records(source_situation_id);
             CREATE INDEX IF NOT EXISTS idx_evo_group
                 ON evolution_records(source_group_id);
+            CREATE INDEX IF NOT EXISTS idx_evo_obj
+                ON evolution_records(obj);
         """)
 
     # ── 写入 ──
@@ -209,6 +211,54 @@ class EvolutionStore(BaseSqliteStore):
             "SELECT * FROM evolution_records WHERE subject_user_id = ?",
             (user_id,),
         )
+        return [self._row_to_record(r) for r in rows]
+
+    def get_by_predicate_and_obj(
+        self, predicate: str, obj: str, status: str | None = None
+    ) -> list[EvolutionRecord]:
+        """按谓语和宾语查找记录（用于别称反向查找）。"""
+        if status:
+            rows = self.fetchall(
+                "SELECT * FROM evolution_records WHERE predicate = ? AND obj = ? AND status = ?",
+                (predicate, obj, status),
+            )
+        else:
+            rows = self.fetchall(
+                "SELECT * FROM evolution_records WHERE predicate = ? AND obj = ?",
+                (predicate, obj),
+            )
+        return [self._row_to_record(r) for r in rows]
+
+    def get_by_predicate_and_user_id(
+        self, predicate: str, user_id: str, status: str | None = None
+    ) -> list[EvolutionRecord]:
+        """按谓语和 user_id 查找记录（用于获取用户的所有别称）。"""
+        if status:
+            rows = self.fetchall(
+                "SELECT * FROM evolution_records WHERE predicate = ? AND subject_user_id = ? AND status = ?",
+                (predicate, user_id, status),
+            )
+        else:
+            rows = self.fetchall(
+                "SELECT * FROM evolution_records WHERE predicate = ? AND subject_user_id = ?",
+                (predicate, user_id),
+            )
+        return [self._row_to_record(r) for r in rows]
+
+    def get_by_predicate_and_group(
+        self, predicate: str, group_id: str, status: str | None = None
+    ) -> list[EvolutionRecord]:
+        """按谓语和群组查找记录（用于获取群组的所有别称）。"""
+        if status:
+            rows = self.fetchall(
+                "SELECT * FROM evolution_records WHERE predicate = ? AND source_group_id = ? AND status = ?",
+                (predicate, group_id, status),
+            )
+        else:
+            rows = self.fetchall(
+                "SELECT * FROM evolution_records WHERE predicate = ? AND source_group_id = ?",
+                (predicate, group_id),
+            )
         return [self._row_to_record(r) for r in rows]
 
     # ── 内部工具 ──

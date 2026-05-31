@@ -1,7 +1,7 @@
 import { store } from '../store.js';
-import { get } from '../app.js';
+import { get, del } from '../app.js';
 import { toast, $ } from '../components.js';
-import { renderNeuralNav } from './memory-nav.js';
+import { renderNeuralNav, navigateWithParams } from './memory-nav.js';
 
 let debounceTimer = null;
 
@@ -14,6 +14,8 @@ export async function init(container) {
 
   renderNeuralNav('diary-slices');
   $('dsRefreshBtn')?.addEventListener('click', () => loadSlices());
+  $('dsSelectAll')?.addEventListener('change', handleSelectAll);
+  $('dsDeleteBtn')?.addEventListener('click', handleDeleteSelected);
   $('dsSearch')?.addEventListener('input', () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => loadSlices(), 300);
@@ -56,9 +58,28 @@ function renderSlices(slices) {
     const timeRange = timeStart && timeEnd ? `${timeStart} — ${timeEnd}` : (timeStart || '');
     const group = s._group_id || '';
     const participants = s.participants || [];
+    const linkedSituations = s._linked_situations || [];
+
+    const linkedHtml = linkedSituations.length > 0 ? `
+      <div class="ds-slice-linked">
+        <div class="ds-linked-title">关联情景 (${linkedSituations.length})</div>
+        <div class="ds-linked-list">
+          ${linkedSituations.map(sit => `
+            <div class="ds-linked-item" data-situation-id="${sit.situation_id}">
+              <span class="ds-linked-time">${formatLinkedTime(sit.created_at)}</span>
+              <span class="ds-linked-summary">${esc(sit.summary || '无摘要')}</span>
+              <div class="ds-linked-tags">
+                ${(sit.topics || []).slice(0, 2).map(t => `<span class="ds-linked-tag">${esc(t)}</span>`).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
 
     return `
     <div class="ds-slice">
+      <input type="checkbox" class="ds-slice-check" data-id="${s.slice_id}">
       <div class="ds-slice-summary">${esc(summary)}</div>
       ${content && content !== summary ? `<div class="ds-slice-content" onclick="this.classList.toggle('expanded')">${esc(content)}</div>` : ''}
       ${topics ? `<div class="ds-slice-topics">${topics}</div>` : ''}
@@ -68,8 +89,67 @@ function renderSlices(slices) {
         ${group ? `<span>${esc(group)}</span>` : ''}
         ${participants.length ? `<span>${participants.length} 人参与</span>` : ''}
       </div>
+      ${linkedHtml}
     </div>`;
   }).join('');
+
+  masonry.querySelectorAll('.ds-slice-check').forEach(cb => {
+    cb.addEventListener('change', updateDeleteButton);
+  });
+
+  masonry.querySelectorAll('.ds-linked-item').forEach(el => {
+    el.addEventListener('click', () => {
+      navigateWithParams('situation-timeline', { situation_id: el.dataset.situationId });
+    });
+  });
+
+  updateDeleteButton();
+}
+
+function formatLinkedTime(ts) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+  } catch { return ''; }
+}
+
+function handleSelectAll(e) {
+  const checked = e.target.checked;
+  document.querySelectorAll('.ds-slice-check').forEach(cb => {
+    cb.checked = checked;
+  });
+  updateDeleteButton();
+}
+
+function updateDeleteButton() {
+  const selected = document.querySelectorAll('.ds-slice-check:checked');
+  const btn = $('dsDeleteBtn');
+  if (btn) {
+    btn.classList.toggle('visible', selected.length > 0);
+    btn.textContent = selected.length > 0 ? `删除选中 (${selected.length})` : '删除选中';
+  }
+}
+
+function getSelectedIds() {
+  return Array.from(document.querySelectorAll('.ds-slice-check:checked')).map(cb => cb.dataset.id);
+}
+
+async function handleDeleteSelected() {
+  const ids = getSelectedIds();
+  if (!ids.length) return;
+
+  const name = store.currentPersona;
+  if (!name) return;
+
+  if (!confirm(`确定要删除 ${ids.length} 条记忆切片吗？此操作不可恢复。`)) return;
+
+  try {
+    const result = await del(`/personas/${name}/memory/diary-slices`, { slice_ids: ids });
+    toast(`成功删除 ${result.deleted} 条记忆切片`);
+    await loadSlices();
+  } catch (e) {
+    toast('删除失败: ' + e.message, 'error');
+  }
 }
 
 function formatTime(ts) {

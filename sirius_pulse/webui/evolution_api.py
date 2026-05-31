@@ -323,7 +323,7 @@ def _situation_to_dict(s: Any) -> dict[str, Any]:
 async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/memory/diary-slices — 日记切片列表。"""
     name = _get_name(request)
-    _, paths = _open_db(persona_manager, name)
+    db_path, paths = _open_db(persona_manager, name)
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
@@ -334,6 +334,22 @@ async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Re
     limit = min(int(request.query.get("limit", "100")), 500)
     offset = max(int(request.query.get("offset", "0")), 0)
     search = request.query.get("search", "").strip().lower()
+
+    # 预加载情景数据用于关联
+    situations_map: dict[str, dict[str, Any]] = {}
+    if db_path:
+        try:
+            from sirius_pulse.memory.situation.store import SituationStore
+            sit_store = SituationStore(db_path, read_only=True)
+            for sit in sit_store.get_all(limit=1000):
+                situations_map[sit.situation_id] = {
+                    "situation_id": sit.situation_id,
+                    "summary": sit.summary,
+                    "topics": sit.topics,
+                    "created_at": sit.created_at,
+                }
+        except Exception as exc:
+            LOG.debug("预加载情景数据失败: %s", exc)
 
     slices: list[dict[str, Any]] = []
     for slice_file in slices_dir.glob("*.json"):
@@ -348,6 +364,14 @@ async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Re
                     content = (slice_data.get("content", "") + slice_data.get("summary", "")).lower()
                     if search not in content:
                         continue
+                # 添加关联情景信息
+                situation_ids = slice_data.get("situation_ids", [])
+                linked_situations = [
+                    situations_map[sid]
+                    for sid in situation_ids
+                    if sid in situations_map
+                ]
+                slice_data["_linked_situations"] = linked_situations
                 slices.append(slice_data)
         except (OSError, json.JSONDecodeError):
             continue
@@ -478,3 +502,54 @@ async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.
         gaps.append({"gap_type": "sparse", "domain": "稀疏", "description": f"用户 {bio.name} 的已知信息太少（仅 {bio.active_fact_count} 条）", "importance": "medium"})
 
     return _json_response({"gaps": gaps, "total": len(gaps)})
+
+
+# ─── 删除操作 ────────────────────────────────────────────
+
+
+@handle_api_errors
+async def api_situations_delete(request: web.Request, persona_manager: Any) -> web.Response:
+    """DELETE /api/personas/{name}/memory/situations — 批量删除情景。"""
+    name = _get_name(request)
+    db_path, _ = _open_db(persona_manager, name)
+    if not db_path:
+        return _json_response({"error": "人格不存在或数据库不存在"}, 404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "请求体必须是 JSON"}, 400)
+
+    situation_ids = body.get("situation_ids", [])
+    if not situation_ids or not isinstance(situation_ids, list):
+        return _json_response({"error": "缺少 situation_ids 列表"}, 400)
+
+    from sirius_pulse.memory.situation.store import SituationStore
+
+    store = SituationStore(db_path)
+    deleted = store.delete_by_ids(situation_ids)
+    return _json_response({"deleted": deleted})
+
+
+@handle_api_errors
+async def api_diary_slices_delete(request: web.Request, persona_manager: Any) -> web.Response:
+    """DELETE /api/personas/{name}/memory/diary-slices — 批量删除日记切片。"""
+    name = _get_name(request)
+    _, paths = _open_db(persona_manager, name)
+    if paths is None:
+        return _json_response({"error": "人格不存在"}, 404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "请求体必须是 JSON"}, 400)
+
+    slice_ids = body.get("slice_ids", [])
+    if not slice_ids or not isinstance(slice_ids, list):
+        return _json_response({"error": "缺少 slice_ids 列表"}, 400)
+
+    from sirius_pulse.memory.diary.slice_store import DiarySliceStore
+
+    store = DiarySliceStore(paths.dir)
+    deleted = store.delete_by_ids(slice_ids)
+    return _json_response({"deleted": deleted})

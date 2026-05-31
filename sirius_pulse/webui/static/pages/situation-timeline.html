@@ -21,8 +21,11 @@
     box-shadow: 0 0 12px rgba(0,255,200,0.2);
   }
   .sit-timeline {
-    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
     padding-left: 30px;
+    position: relative;
   }
   .sit-timeline::before {
     content: '';
@@ -34,15 +37,17 @@
     background: linear-gradient(to bottom, rgba(0,255,200,0.3), rgba(0,229,255,0.1), transparent);
     border-radius: 1px;
   }
+  @media (max-width: 900px) {
+    .sit-timeline { grid-template-columns: 1fr; }
+  }
   .sit-node {
     position: relative;
-    margin-bottom: 16px;
     opacity: 0;
-    transform: translateX(-12px);
+    transform: translateY(8px);
     animation: sit-slide-in 0.4s ease forwards;
   }
   @keyframes sit-slide-in {
-    to { opacity: 1; transform: translateX(0); }
+    to { opacity: 1; transform: translateY(0); }
   }
   .sit-node::before {
     content: '';
@@ -138,6 +143,51 @@
     color: var(--text-3);
     font-size: 14px;
   }
+  .sit-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .sit-select-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .sit-select-all input[type="checkbox"] {
+    accent-color: #00ffc8;
+  }
+  .sit-delete-btn {
+    background: rgba(248,81,73,0.1);
+    border: 1px solid rgba(248,81,73,0.3);
+    color: #f85149;
+    padding: 7px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+    display: none;
+  }
+  .sit-delete-btn:hover {
+    background: rgba(248,81,73,0.2);
+    box-shadow: 0 0 12px rgba(248,81,73,0.2);
+  }
+  .sit-delete-btn.visible {
+    display: inline-block;
+  }
+  .sit-checkbox {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    accent-color: #00ffc8;
+    cursor: pointer;
+  }
+  .sit-node {
+    position: relative;
+  }
 </style>
 
 <div class="sit-page">
@@ -145,7 +195,13 @@
     <div style="font-size:14px;color:var(--text-2)">
       <span id="sitCount">0</span> 条情景记录
     </div>
-    <button class="sit-refresh" id="sitRefreshBtn">刷新</button>
+    <div class="sit-toolbar">
+      <label class="sit-select-all">
+        <input type="checkbox" id="sitSelectAll"> 全选
+      </label>
+      <button class="sit-delete-btn" id="sitDeleteBtn">删除选中</button>
+      <button class="sit-refresh" id="sitRefreshBtn">刷新</button>
+    </div>
   </div>
   <div class="sit-timeline" id="sitTimeline">
     <div class="sit-empty">加载中…</div>
