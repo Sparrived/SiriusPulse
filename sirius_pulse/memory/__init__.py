@@ -14,7 +14,7 @@ from sirius_pulse.memory.evolution import (
     Triple,
     ValidationResult,
 )
-from sirius_pulse.memory.situation import Situation, SituationStore
+from sirius_pulse.memory.situation import Situation, SituationStore, SituationExtractor
 from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
 
 __all__ = [
@@ -38,6 +38,7 @@ __all__ = [
     "ValidationResult",
     "Situation",
     "SituationStore",
+    "SituationExtractor",
     "ColdDetector",
     "ColdState",
 ]
