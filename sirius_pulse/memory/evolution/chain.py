@@ -177,6 +177,10 @@ class EvolutionChain:
         """按 user_id 获取所有记录。"""
         return self._store.get_all_by_user_id(user_id)
 
+    def get_uncertain_records(self, limit: int = 50) -> list[EvolutionRecord]:
+        """获取所有待验证的记录。"""
+        return self._store.get_uncertain_records(limit)
+
     def get_history(self, record_id: str) -> list[EvolutionRecord]:
         """获取某条记录的完整演化链（前驱 + 后继）。"""
         chain: list[EvolutionRecord] = []

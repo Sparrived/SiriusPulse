@@ -45,6 +45,18 @@ class BiographyView:
         self._chain = evolution_chain
         self._cache: dict[str, UserBiography] = {}
 
+        # 注册纠正回调：当演化链中的记录被 supersede 时，自动清除相关缓存
+        self._chain.register_correction_callback(self._on_correction)
+
+    def _on_correction(self, old_record: Any, new_record_id: str) -> None:
+        """纠正回调：清除受影响用户的传记缓存。"""
+        subject = getattr(old_record, "subject", "")
+        user_id = getattr(old_record, "subject_user_id", "")
+        if user_id and user_id in self._cache:
+            del self._cache[user_id]
+        elif subject and subject in self._cache:
+            del self._cache[subject]
+
     def get_biography(self, user_id: str) -> UserBiography:
         """获取用户传记（从演化链实时计算）。
 

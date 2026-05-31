@@ -188,10 +188,26 @@ class BackgroundTasks:
                                 model_name=cfg.model_name,
                             )
                             if parsed and parsed.get("content"):
+                                # 调用 DiarySlicer 切片
+                                from sirius_pulse.memory.diary.slicer import DiarySlicer
+                                slicer = DiarySlicer()
+                                diary_id = f"ds_{group_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                                slices = await slicer.slice(
+                                    diary_content=parsed["content"],
+                                    situations=situations,
+                                    group_id=group_id,
+                                    diary_id=diary_id,
+                                    embedding_client=engine._embedding_client,
+                                )
+                                # 存储切片到日记管理器
+                                if not hasattr(engine.diary_manager, '_slices'):
+                                    engine.diary_manager._slices = []
+                                engine.diary_manager._slices.extend(slices)
+
                                 promoted_total += 1
                                 logger.info(
-                                    "群 %s 从 %d 个 Situation 生成日记完成",
-                                    group_id, len(situations),
+                                    "群 %s 从 %d 个 Situation 生成日记完成，切分为 %d 个片段",
+                                    group_id, len(situations), len(slices),
                                 )
 
                 if extracted_total > 0:
