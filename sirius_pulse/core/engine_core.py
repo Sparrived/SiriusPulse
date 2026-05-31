@@ -204,11 +204,20 @@ class _EmotionalGroupChatEngineBase:
         self.biography_view = BiographyView(self.evolution_chain)
         self.cold_detector = ColdDetector()
 
-        # DiarySliceRetriever 三路召回
+        # DiarySlice 存储和三路召回
         from sirius_pulse.memory.diary.slice_retriever import DiarySliceRetriever
+        from sirius_pulse.memory.diary.slice_store import DiarySliceStore
+        self.slice_store = DiarySliceStore(self.work_path)
         self.slice_retriever = DiarySliceRetriever(
             embedding_client=self._embedding_client,
         )
+
+        # 启动时加载历史切片到检索器
+        all_slices = self.slice_store.load_all()
+        for s in all_slices:
+            self.slice_retriever.add(s)
+        if all_slices:
+            logger.info("已加载 %d 个历史日记切片", len(all_slices))
 
         self.context_assembler = ContextAssembler(
             self.basic_memory,
