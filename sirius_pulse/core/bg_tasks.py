@@ -67,6 +67,7 @@ class BackgroundTasks:
             asyncio.create_task(self.proactive.proactive_checker(), name="proactive_check"),
             asyncio.create_task(self._diary_promoter(), name="diary_promote"),
             asyncio.create_task(self._diary_consolidator(), name="diary_consolidator"),
+            asyncio.create_task(self._background_refiner(), name="background_refiner"),
             asyncio.create_task(self.proactive.proactive_developer_chat_checker(), name="dev_chat"),
         ]
         for t in tasks:
@@ -273,6 +274,68 @@ class BackgroundTasks:
                     )
             except Exception as exc:
                 logger.warning("Diary consolidation failed for %s: %s", group_id, exc)
+
+    # ==================================================================
+    # Layer 4: 后台精炼（Schema 归纳 + 知识缺口检测）
+    # ==================================================================
+
+    async def _background_refiner(self) -> None:
+        """Layer 4: 后台精炼任务。
+
+        运行频率较低（默认每小时），对已有记忆进行深度加工：
+        1. Schema 归纳：从演化链归纳行为模式
+        2. 知识缺口检测：检测传记中的缺失信息
+        """
+        engine = self._engine
+        interval = engine.config.get("refine_interval_seconds", 3600)
+        while engine._bg_running:
+            await asyncio.sleep(interval)
+            try:
+                await self._run_refinement()
+            except Exception as exc:
+                logger.warning("Background refinement failed: %s", exc)
+
+    async def _run_refinement(self) -> None:
+        """执行后台精炼。"""
+        engine = self._engine
+        cfg = engine.model_router.resolve("memory_extract")
+
+        # 获取所有有记录的用户
+        all_subjects = engine.evolution_chain._store.get_all_subjects()
+
+        for subject in all_subjects[:20]:  # 限制每次处理的用户数
+            try:
+                # 1. Schema 归纳（如果该用户有足够的 active 记录）
+                active_records = engine.evolution_chain.get_active_by_subject(subject)
+                if len(active_records) >= 5:
+                    from sirius_pulse.memory.schema import SchemaInductor
+                    inductor = SchemaInductor()
+                    schemas = await inductor.induct(
+                        subject,
+                        engine.evolution_chain,
+                        engine.brain,
+                        cfg.model_name,
+                    )
+                    if schemas:
+                        logger.info(
+                            "用户 %s 归纳了 %d 个行为模式",
+                            subject, len(schemas),
+                        )
+
+                # 2. 知识缺口检测
+                bio = engine.biography_view.get_biography(subject)
+                if bio:
+                    from sirius_pulse.memory.gap_detector import GapDetector
+                    gaps = GapDetector.detect(bio)
+                    if gaps:
+                        hint = GapDetector.build_prompt_hint(gaps)
+                        logger.debug(
+                            "用户 %s 存在 %d 个知识缺口: %s",
+                            subject, len(gaps), hint[:50],
+                        )
+
+            except Exception as exc:
+                logger.warning("Refinement failed for %s: %s", subject, exc)
 
     # ==================================================================
     # 委托方法（向后兼容）
