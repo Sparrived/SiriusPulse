@@ -98,6 +98,7 @@ class BasicMemoryManager:
         channel_user_id: str = "",
         multimodal_inputs: list[dict[str, str]] | None = None,
         tags: list[dict[str, str]] | None = None,
+        conversation_chain: list[dict[str, Any]] | None = None,
     ) -> BasicMemoryEntry:
         """Add an entry to a group's basic memory window."""
         gid = group_id or "default"
@@ -117,6 +118,7 @@ class BasicMemoryManager:
                 if isinstance(item, dict)
             ],
             tags=list(tags) if tags else [],
+            conversation_chain=list(conversation_chain) if conversation_chain else [],
         )
 
         window = self._windows.setdefault(gid, deque())

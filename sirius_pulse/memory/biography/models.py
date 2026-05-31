@@ -30,6 +30,9 @@ class UserBiography:
     relationships: list[dict[str, str]] = field(default_factory=list)
     short_bio: str = ""
 
+    # ── 从 UnifiedUser 同步 ──
+    aliases: list[str] = field(default_factory=list)
+
     # ── 来源追溯 ──
     source_record_ids: list[str] = field(default_factory=list)
 
@@ -46,6 +49,7 @@ class UserBiography:
             "identity_anchors": list(self.identity_anchors),
             "relationships": list(self.relationships),
             "short_bio": self.short_bio,
+            "aliases": list(self.aliases),
             "source_record_ids": list(self.source_record_ids),
             "active_fact_count": self.active_fact_count,
             "superseded_fact_count": self.superseded_fact_count,

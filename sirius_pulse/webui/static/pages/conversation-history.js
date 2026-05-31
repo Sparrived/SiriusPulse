@@ -485,6 +485,9 @@ function renderMessages() {
   const openPromptEntryIds = new Set();
   const openSectionIds = new Set();
   const promptScrollPositions = new Map();
+  // 保存当前展开的chain-detail状态
+  const openChainEntryIds = new Set();
+  const chainScrollPositions = new Map();
   el.querySelectorAll('.prompt-detail').forEach(detail => {
     const entryId = detail.getAttribute('data-entry-id');
     if (detail.style.display !== 'none') {
@@ -498,6 +501,15 @@ function renderMessages() {
     if (body.style.display !== 'none') {
       const sectionId = body.id;
       if (sectionId) openSectionIds.add(sectionId);
+    }
+  });
+  el.querySelectorAll('.chain-detail').forEach(detail => {
+    const entryId = detail.getAttribute('data-entry-id');
+    if (detail.style.display !== 'none') {
+      if (entryId) openChainEntryIds.add(entryId);
+    }
+    if (entryId && detail.scrollTop > 0) {
+      chainScrollPositions.set(entryId, detail.scrollTop);
     }
   });
 
@@ -520,8 +532,11 @@ function renderMessages() {
     const content = m.content || '';
     const groupId = m.group_id || '';
     const systemPrompt = m.system_prompt || '';
+    const conversationChain = m.conversation_chain || [];
     const hasPrompt = m.role === 'assistant' && systemPrompt;
+    const hasChain = m.role === 'assistant' && conversationChain.length > 0;
     const msgId = `msg-${msgIdCounter++}`;
+    const chainMsgId = `chain-${msgIdCounter++}`;
     const entryId = m.entry_id || m.timestamp || `idx-${idx}`;
     const tags = m.tags || [];
 
@@ -537,12 +552,14 @@ function renderMessages() {
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
+        ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, openChainEntryIds.has(entryId)) : ''}
         ${hasPrompt ? renderPromptToggle(msgId, systemPrompt, entryId, openPromptEntryIds.has(entryId), openSectionIds) : ''}
       </div>
     `;
   }).join('');
 
   bindPromptToggles();
+  bindChainToggles();
 
   // 恢复prompt-detail内部滚动位置
   if (promptScrollPositions.size > 0) {
@@ -550,6 +567,16 @@ function renderMessages() {
       const entryId = detail.getAttribute('data-entry-id');
       if (entryId && promptScrollPositions.has(entryId)) {
         detail.scrollTop = promptScrollPositions.get(entryId);
+      }
+    });
+  }
+
+  // 恢复chain-detail内部滚动位置
+  if (chainScrollPositions.size > 0) {
+    el.querySelectorAll('.chain-detail').forEach(detail => {
+      const entryId = detail.getAttribute('data-entry-id');
+      if (entryId && chainScrollPositions.has(entryId)) {
+        detail.scrollTop = chainScrollPositions.get(entryId);
       }
     });
   }
@@ -610,6 +637,138 @@ function renderStructuredSections(sections, entryId = '', openSectionIds = null)
 
 function renderRawPrompt(systemPrompt) {
   return `<div style="padding:10px 12px;background:var(--bg-1);font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:400px;overflow-y:auto;font-family:monospace">${escapeHtml(systemPrompt)}</div>`;
+}
+
+const CHAIN_ROLE_STYLES = {
+  system:    { color: '#9e9e9e', label: 'SYSTEM', bg: '#9e9e9e08' },
+  user:      { color: 'var(--accent)', label: 'USER', bg: 'var(--accent)08' },
+  assistant: { color: 'var(--success)', label: 'ASSISTANT', bg: 'var(--success)08' },
+};
+
+function renderConversationChainToggle(chainMsgId, chain, entryId = '', isOpen = false) {
+  const msgCount = chain.length;
+  const totalChars = chain.reduce((sum, m) => sum + (m.content || '').length, 0);
+  const totalTokens = estimateTokens(chain.map(m => m.content || '').join(''));
+
+  const displayStyle = isOpen ? 'display:block' : 'display:none';
+  const arrowTransform = isOpen ? 'transform:rotate(90deg)' : '';
+
+  // 统计各角色消息数
+  const roleCounts = {};
+  chain.forEach(m => {
+    const r = m.role || 'unknown';
+    roleCounts[r] = (roleCounts[r] || 0) + 1;
+  });
+  const roleSummary = Object.entries(roleCounts)
+    .map(([r, c]) => `${r}×${c}`)
+    .join(' ');
+
+  return `
+    <div style="margin-top:10px">
+      <button class="btn btn-sm chain-toggle" data-target="${chainMsgId}" style="font-size:11px;padding:4px 10px;display:flex;align-items:center;gap:6px;background:var(--accent)11;border:1px solid var(--accent)33">
+        <span class="toggle-arrow" style="display:inline-block;transition:transform 0.2s;${arrowTransform}">▸</span>
+        <span>查看 LLM 消息链</span>
+        <span style="color:var(--text-3);font-size:10px">${msgCount} 条消息 · ${totalTokens} tokens · ${roleSummary}</span>
+      </button>
+      <div id="${chainMsgId}" class="chain-detail" data-entry-id="${entryId}" style="${displayStyle};margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:600px;overflow-y:auto">
+        ${renderChainMessages(chain)}
+      </div>
+    </div>
+  `;
+}
+
+function renderChainMessages(chain) {
+  return chain.map((msg, idx) => {
+    const role = msg.role || 'unknown';
+    const style = CHAIN_ROLE_STYLES[role] || CHAIN_ROLE_STYLES.system;
+    const content = msg.content || '';
+    const isSystem = role === 'system';
+    const truncated = isSystem ? truncate(content, 300) : content;
+
+    // 对 system 消息做结构化解析
+    if (isSystem && content.length > 100) {
+      return renderChainSystemMessage(content, style, idx);
+    }
+
+    return `
+      <div style="border-bottom:1px solid var(--border);background:${style.bg}">
+        <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
+          <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
+          <span style="font-size:10px;color:var(--text-3);margin-left:auto">${estimateTokens(content)} tokens</span>
+        </div>
+        <div style="padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:300px;overflow-y:auto;font-family:monospace">${escapeHtml(truncated)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderChainSystemMessage(content, style, idx) {
+  const sections = parsePromptSections(content);
+  const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');
+  const sectionIdPrefix = `chain-sys-${msgIdCounter}-${idx}`;
+
+  const sectionHtml = hasSections ? sections.map((section, sIdx) => {
+    if (section.type === 'section') {
+      const sid = `${sectionIdPrefix}-${sIdx}`;
+      return `
+        <div style="border-bottom:1px solid var(--border)">
+          <div class="chain-section-header" data-target="${sid}"
+               style="padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;background:${section.color}08">
+            <span class="chain-section-arrow" style="display:inline-block;transition:transform 0.2s;font-size:10px;color:var(--text-3)">▸</span>
+            <span style="font-size:11px;font-weight:600;color:${section.color}">${section.label}</span>
+            <span style="font-size:10px;color:var(--text-3);margin-left:auto">${section.content.length} chars</span>
+          </div>
+          <div id="${sid}" class="chain-section-body" style="display:none;padding:6px 12px;background:var(--bg-1);font-size:10px;color:var(--text-2);line-height:1.4;white-space:pre-wrap;max-height:200px;overflow-y:auto;font-family:monospace">${escapeHtml(section.content)}</div>
+        </div>
+      `;
+    }
+    return `<div style="padding:6px 12px;font-size:10px;color:var(--text-2);line-height:1.4;white-space:pre-wrap;max-height:150px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(truncate(section.content, 300))}</div>`;
+  }).join('') : escapeHtml(truncate(content, 500));
+
+  return `
+    <div style="border-bottom:1px solid var(--border);background:${style.bg}">
+      <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
+        <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
+        <span style="font-size:10px;color:var(--text-3);margin-left:auto">${estimateTokens(content)} tokens · ${content.length} chars</span>
+      </div>
+      ${sectionHtml}
+    </div>
+  `;
+}
+
+function bindChainToggles() {
+  document.querySelectorAll('.chain-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      if (!target) return;
+      const isOpen = target.style.display !== 'none';
+      target.style.display = isOpen ? 'none' : 'block';
+      const arrow = btn.querySelector('.toggle-arrow');
+      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+    });
+  });
+
+  document.querySelectorAll('.chain-detail').forEach(detail => {
+    detail.addEventListener('wheel', (e) => {
+      const { scrollTop, scrollHeight, clientHeight } = detail;
+      const atTop = e.deltaY < 0 && scrollTop === 0;
+      const atBottom = e.deltaY > 0 && scrollTop + clientHeight >= scrollHeight;
+      if (!atTop && !atBottom) {
+        e.stopPropagation();
+      }
+    }, { passive: true });
+  });
+
+  document.querySelectorAll('.chain-section-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const target = document.getElementById(header.dataset.target);
+      if (!target) return;
+      const isOpen = target.style.display !== 'none';
+      target.style.display = isOpen ? 'none' : 'block';
+      const arrow = header.querySelector('.chain-section-arrow');
+      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+    });
+  });
 }
 
 function bindPromptToggles() {

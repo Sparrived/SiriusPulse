@@ -562,7 +562,7 @@ class PromptFactory:
         if group_profile.group_name:
             lines.append(f"群名：{group_profile.group_name}")
         norms = getattr(group_profile, "group_norms", {})
-        has_learned_length = False
+        has_learned_length = bool(norms)  # 有 group_norms 数据即认为已学习群聊风格
         if norms:
             avg_len = norms.get("avg_message_length", 0)
             dist = norms.get("length_distribution", {})
@@ -571,10 +571,8 @@ class PromptFactory:
                 short_pct = round(dist.get("short", 0) / total * 100)
                 if avg_len < 20:
                     lines.append(f"这个群里大家习惯短消息（平均{avg_len:.0f}字，{short_pct}%是短消息），你也尽量简短。")
-                    has_learned_length = True
                 elif avg_len < 50:
                     lines.append(f"这个群里消息长度适中（平均{avg_len:.0f}字），你也保持类似长度。")
-                    has_learned_length = True
         if not has_learned_length and style_params.length_instruction:
             lines.append(f"长度要求：{style_params.length_instruction}")
         if style_params.tone_instruction:

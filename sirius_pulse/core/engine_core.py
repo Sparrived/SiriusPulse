@@ -964,6 +964,11 @@ class _EmotionalGroupChatEngineBase:
             gid = _req.group_id
             uid = _req.user_id
             persona_name = _engine.persona.name if _engine.persona else "assistant"
+            # 构建完整 LLM 消息链：system + user/assistant 交替
+            chain_msgs: list[dict[str, Any]] = []
+            if _result.system_prompt:
+                chain_msgs.append({"role": "system", "content": _result.system_prompt})
+            chain_msgs.extend(_req.messages)
             _entry = _engine.basic_memory.add_entry(
                 group_id=gid,
                 user_id="assistant",
@@ -972,6 +977,7 @@ class _EmotionalGroupChatEngineBase:
                 speaker_name=persona_name,
                 system_prompt=_result.system_prompt,
                 tags=entry_tags,
+                conversation_chain=chain_msgs,
             )
             _engine.basic_store.append(_entry)
             try:

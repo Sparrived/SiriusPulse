@@ -470,6 +470,10 @@ class DelayedQueueTasks:
                 messages.append({"role": "user", "content": skill_multimodal})
 
             # Persist intermediate skill turns into basic memory
+            _chain: list[dict[str, Any]] = [
+                {"role": "system", "content": chat_result.system_prompt}
+            ]
+            _chain.extend(messages)
             _entry = engine.basic_memory.add_entry(
                 group_id=group_id,
                 user_id="assistant",
@@ -477,6 +481,7 @@ class DelayedQueueTasks:
                 content=reply,
                 speaker_name=engine.persona.name if engine.persona else "assistant",
                 system_prompt=chat_result.system_prompt,
+                conversation_chain=_chain,
             )
             engine.basic_store.append(_entry)
 
@@ -535,6 +540,10 @@ class DelayedQueueTasks:
             engine._recent_sent_replies[group_id] = recent_replies
 
         if clean_reply:
+            _chain2: list[dict[str, Any]] = [
+                {"role": "system", "content": chat_result.system_prompt}
+            ]
+            _chain2.extend(messages)
             _reply_entry = engine.basic_memory.add_entry(
                 group_id=group_id,
                 user_id="assistant",
@@ -542,6 +551,7 @@ class DelayedQueueTasks:
                 content=clean_reply,
                 speaker_name=engine.persona.name if engine.persona else "assistant",
                 system_prompt=chat_result.system_prompt,
+                conversation_chain=_chain2,
             )
             engine.basic_store.append(_reply_entry)
             # 反馈追踪：AI 发言后记录锚点，等待用户跟进

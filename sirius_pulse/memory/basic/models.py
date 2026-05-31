@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sirius_pulse.mixins import JsonSerializable
 
@@ -26,6 +27,7 @@ class BasicMemoryEntry(JsonSerializable):
     channel_user_id: str = ""  # platform raw id (e.g. QQ number) for name constraints
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
     tags: list[dict[str, str]] = field(default_factory=list)  # 内容标签（表情包、钉住等）
+    conversation_chain: list[dict[str, Any]] = field(default_factory=list)  # LLM 消息链
 
 
 @dataclass(slots=True)
