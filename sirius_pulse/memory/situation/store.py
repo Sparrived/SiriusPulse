@@ -40,14 +40,25 @@ class SituationStore(BaseSqliteStore):
                 time_range_start TEXT DEFAULT '',
                 time_range_end TEXT DEFAULT '',
                 validated_triple_count INTEGER DEFAULT 0,
-                rejected_triple_count INTEGER DEFAULT 0
+                rejected_triple_count INTEGER DEFAULT 0,
+                processed INTEGER DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_sit_group
                 ON situations(group_id);
             CREATE INDEX IF NOT EXISTS idx_sit_created
                 ON situations(created_at);
+            CREATE INDEX IF NOT EXISTS idx_sit_processed
+                ON situations(group_id, processed);
         """)
+
+        # 兼容旧表：添加 processed 列（如果不存在）
+        try:
+            self.execute(
+                "ALTER TABLE situations ADD COLUMN processed INTEGER DEFAULT 0"
+            )
+        except Exception:
+            pass  # 列已存在
 
     # ── 写入 ──
 
@@ -86,25 +97,38 @@ class SituationStore(BaseSqliteStore):
         )
         return self._row_to_situation(row) if row else None
 
-    def get_today(self, group_id: str) -> list[Situation]:
-        """获取某群组今天的所有情景（按时间排序）。"""
+    def get_today(self, group_id: str, unprocessed_only: bool = True) -> list[Situation]:
+        """获取某群组今天的情景（按时间排序）。
+
+        Args:
+            group_id: 群组 ID
+            unprocessed_only: 是否只返回未处理的（默认 True）
+        """
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        rows = self.fetchall(
-            """SELECT * FROM situations
-               WHERE group_id = ? AND created_at >= ?
-               ORDER BY created_at""",
-            (group_id, f"{today}T00:00:00"),
-        )
+        if unprocessed_only:
+            rows = self.fetchall(
+                """SELECT * FROM situations
+                   WHERE group_id = ? AND created_at >= ? AND processed = 0
+                   ORDER BY created_at""",
+                (group_id, f"{today}T00:00:00"),
+            )
+        else:
+            rows = self.fetchall(
+                """SELECT * FROM situations
+                   WHERE group_id = ? AND created_at >= ?
+                   ORDER BY created_at""",
+                (group_id, f"{today}T00:00:00"),
+            )
         return [self._row_to_situation(r) for r in rows]
 
     def get_unprocessed(self, group_id: str) -> list[Situation]:
-        """获取某群组尚未用于日记生成的情景。
+        """获取某群组所有未处理的情景（按时间排序）。
 
-        标记为 "unprocessed" 的情景将在冷寂时用于生成日记。
+        用于"活跃 → 冷寂"循环中获取待处理的情景。
         """
         rows = self.fetchall(
             """SELECT * FROM situations
-               WHERE group_id = ? AND summary != ''
+               WHERE group_id = ? AND processed = 0
                ORDER BY created_at""",
             (group_id,),
         )
@@ -125,6 +149,20 @@ class SituationStore(BaseSqliteStore):
         )
         return [self._row_to_situation(r) for r in rows]
 
+    def mark_processed(self, situation_ids: list[str]) -> None:
+        """标记指定情景为已处理（用于日记生成后）。
+
+        Args:
+            situation_ids: 情景 ID 列表
+        """
+        if not situation_ids:
+            return
+        placeholders = ",".join(["?"] * len(situation_ids))
+        self.execute(
+            f"UPDATE situations SET processed = 1 WHERE situation_id IN ({placeholders})",
+            situation_ids,
+        )
+
     def delete_before(self, timestamp: str) -> int:
         """删除指定时间之前的情景（用于清理旧数据）。"""
         cursor = self.execute(
@@ -140,6 +178,24 @@ class SituationStore(BaseSqliteStore):
             (group_id,),
         )
         return row["cnt"] if row else 0
+
+    def get_extracted_entry_ids(self, group_id: str) -> set[str]:
+        """获取某群组已提取过的消息 ID 集合。
+
+        用于避免重复提取同一批消息为情景。
+        """
+        rows = self.fetchall(
+            "SELECT source_entry_ids FROM situations WHERE group_id = ?",
+            (group_id,),
+        )
+        result: set[str] = set()
+        for row in rows:
+            try:
+                ids = json.loads(row["source_entry_ids"] or "[]")
+                result.update(ids)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return result
 
     # ── 内部工具 ──
 

@@ -124,9 +124,12 @@ class BackgroundTasks:
                         candidates = engine.basic_memory.get_archive_candidates(group_id)
                         if not candidates:
                             continue
+                        # 过滤已生成日记或已提取情景的消息
+                        extracted_ids = engine.situation_store.get_extracted_entry_ids(group_id)
                         candidates = [
                             c for c in candidates
                             if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
+                            and c.entry_id not in extracted_ids
                         ]
                         if len(candidates) < 5:
                             continue
@@ -149,33 +152,39 @@ class BackgroundTasks:
 
                     # ── Layer 3: 冷寂 → 日记生成 ──
                     elif cold_state == ColdState.COLD:
-                        situations = engine.situation_store.get_today(group_id)
+                        situations = engine.situation_store.get_unprocessed(group_id)
                         if not situations:
-                            # fallback: 使用旧的候选消息方式
+                            # COLD 但无 situations：先尝试补提情景（WARM 阶段可能未触发）
                             candidates = engine.basic_memory.get_archive_candidates(group_id)
-                            if not candidates:
-                                continue
-                            candidates = [
-                                c for c in candidates
-                                if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
-                            ]
-                            if not candidates:
-                                continue
+                            if candidates:
+                                # 过滤已生成日记或已提取情景的消息
+                                extracted_ids = engine.situation_store.get_extracted_entry_ids(group_id)
+                                undiarized = [
+                                    c for c in candidates
+                                    if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
+                                    and c.entry_id not in extracted_ids
+                                ]
+                                if len(undiarized) >= 5:
+                                    cfg = engine.model_router.resolve("memory_extract")
+                                    situation = await engine.situation_extractor.extract(
+                                        group_id=group_id,
+                                        entries=undiarized,
+                                        brain=engine.brain,
+                                        model_name=cfg.model_name,
+                                        evolution_chain=engine.evolution_chain,
+                                    )
+                                    if situation:
+                                        engine.situation_store.save(situation)
+                                        extracted_total += 1
+                                        logger.info(
+                                            "群 %s COLD 补提情景: %d 个三元组",
+                                            group_id, situation.validated_triple_count,
+                                        )
 
-                            cfg = engine.model_router.resolve("memory_extract")
-                            result = await engine.diary_manager.generate_from_candidates(
-                                group_id=group_id,
-                                candidates=candidates,
-                                persona_name=engine.persona.name,
-                                persona_description=(
-                                    engine.persona.persona_summary or engine.persona.backstory or ""
-                                ),
-                                brain=engine.brain,
-                                model_name=cfg.model_name,
-                            )
-                            if result:
-                                promoted_total += 1
-                        else:
+                            # 重新获取 situations
+                            situations = engine.situation_store.get_unprocessed(group_id)
+
+                        if situations:
                             # 使用新架构：从 Situation 生成日记
                             cfg = engine.model_router.resolve("memory_extract")
                             parsed = await engine.diary_manager._generator.generate_from_situations(
@@ -207,11 +216,41 @@ class BackgroundTasks:
                                 for s in slices:
                                     engine.slice_retriever.add(s)
 
+                                # 标记 situations 为已处理，避免重复生成
+                                engine.situation_store.mark_processed(
+                                    [s.situation_id for s in situations]
+                                )
+
                                 promoted_total += 1
                                 logger.info(
                                     "群 %s 从 %d 个 Situation 生成日记完成，切分为 %d 个片段",
                                     group_id, len(situations), len(slices),
                                 )
+                        else:
+                            # 补提后仍无 situations：使用旧的候选消息方式
+                            candidates = engine.basic_memory.get_archive_candidates(group_id)
+                            if not candidates:
+                                continue
+                            candidates = [
+                                c for c in candidates
+                                if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
+                            ]
+                            if not candidates:
+                                continue
+
+                            cfg = engine.model_router.resolve("memory_extract")
+                            result = await engine.diary_manager.generate_from_candidates(
+                                group_id=group_id,
+                                candidates=candidates,
+                                persona_name=engine.persona.name,
+                                persona_description=(
+                                    engine.persona.persona_summary or engine.persona.backstory or ""
+                                ),
+                                brain=engine.brain,
+                                model_name=cfg.model_name,
+                            )
+                            if result:
+                                promoted_total += 1
 
                 if extracted_total > 0:
                     engine._log_inner_thought(
