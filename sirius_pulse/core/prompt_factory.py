@@ -568,8 +568,19 @@ class PromptFactory:
             pinned_time = msg.pinned_at[:16].replace("T", " ") if msg.pinned_at else ""
             reason_attr = f' reason="{_html.escape(msg.reason, quote=True)}"' if msg.reason else ''
 
+            # 复用 conversation_history 的倒排索引
+            conv_index = msg.metadata.get("conversation_index", 0)
+            index_attr = f' index="{conv_index}"' if conv_index else ""
+            # 平台消息 ID（用于引用回复）
+            p_msg_id = msg.metadata.get("platform_message_id", "")
+            msg_id_attr = (
+                f' msg_id="{_html.escape(str(p_msg_id), quote=True)}"'
+                if p_msg_id else ""
+            )
+
             lines.append(
-                f'<pinned_message speaker="{safe_speaker}" user_id="{safe_uid}" '
+                f'<pinned_message{index_attr}{msg_id_attr} '
+                f'speaker="{safe_speaker}" user_id="{safe_uid}" '
                 f'time="{pinned_time}"{reason_attr}>'
             )
             lines.append(msg.content)
@@ -907,7 +918,10 @@ class PromptFactory:
             safe_speaker = _html.escape(speaker_name or "有人", quote=True)
             safe_uid = _html.escape(channel_user_id or "", quote=True)
             now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
-            sender_line = f'<message speaker="{safe_speaker}" user_id="{safe_uid}" time="{now_str}">'
+            sender_line = (
+                f'<message index="1" speaker="{safe_speaker}" '
+                f'user_id="{safe_uid}" time="{now_str}">'
+            )
             user_content = f"{sender_line}\n{message_content}\n</message>"
 
         # 添加【最近消息】标签

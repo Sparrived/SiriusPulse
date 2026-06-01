@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import time
@@ -534,7 +535,12 @@ class NapCatAdapter(BaseAdapter):
         for seg in event.get("message", []):
             seg_type = seg.get("type")
             data = seg.get("data", {})
-            if seg_type == "text":
+            if seg_type == "reply":
+                # 引用消息：尝试获取被引用消息内容并注入 prompt
+                quote_text = await self._resolve_quote_content(data)
+                if quote_text:
+                    parts.append(quote_text)
+            elif seg_type == "text":
                 parts.append(data.get("text", ""))
             elif seg_type == "at":
                 target_uid = str(data.get("qq", ""))
@@ -567,6 +573,47 @@ class NapCatAdapter(BaseAdapter):
 
         return "".join(parts).strip()
 
+    async def _resolve_quote_content(self, data: dict[str, Any]) -> str:
+        """解析引用消息段，通过 get_msg API 获取被引用消息内容。
+
+        Returns:
+            格式化的引用文本，如 ``[引用消息 msg_id="123" speaker="张三"] 内容 [/引用消息]``
+            获取失败时返回空字符串。
+        """
+        msg_id = str(data.get("id", ""))
+        if not msg_id:
+            return ""
+        try:
+            resp = await self.call_api("get_msg", {"message_id": int(msg_id)})
+            msg_data = resp.get("data", {})
+            # 提取被引用消息的文本内容
+            raw_segments = msg_data.get("message", [])
+            text_parts: list[str] = []
+            for seg in raw_segments:
+                if seg.get("type") == "text":
+                    text_parts.append(seg.get("data", {}).get("text", ""))
+            quote_text = "".join(text_parts).strip()
+            if not quote_text:
+                return ""
+            # 提取发送者信息
+            sender = msg_data.get("sender", {})
+            nickname = sender.get("nickname", "") or sender.get("card", "") or ""
+            safe_nick = html.escape(nickname, quote=True) if nickname else ""
+            safe_msg_id = html.escape(msg_id, quote=True)
+            # 截断过长的引用内容
+            if len(quote_text) > 200:
+                quote_text = quote_text[:200] + "..."
+            safe_quote = html.escape(quote_text, quote=False)
+            if safe_nick:
+                return (
+                    f'[引用消息 msg_id="{safe_msg_id}" speaker="{safe_nick}"]'
+                    f'{safe_quote}[/引用消息]'
+                )
+            return f'[引用消息 msg_id="{safe_msg_id}"]{safe_quote}[/引用消息]'
+        except Exception as exc:
+            LOG.debug("获取引用消息失败 (msg_id=%s): %s", msg_id, exc)
+            return ""
+
     async def _render_private_prompt(self, event: dict[str, Any]) -> str:
         """将私聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
         from ..protocol import _face_to_text, build_image_label
@@ -578,7 +625,11 @@ class NapCatAdapter(BaseAdapter):
         for seg in event.get("message", []):
             seg_type = seg.get("type")
             data = seg.get("data", {})
-            if seg_type == "text":
+            if seg_type == "reply":
+                quote_text = await self._resolve_quote_content(data)
+                if quote_text:
+                    parts.append(quote_text)
+            elif seg_type == "text":
                 parts.append(data.get("text", ""))
             elif seg_type == "face":
                 parts.append(_face_to_text(data))

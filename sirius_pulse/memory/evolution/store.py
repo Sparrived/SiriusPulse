@@ -65,6 +65,9 @@ class EvolutionStore(BaseSqliteStore):
             CREATE INDEX IF NOT EXISTS idx_evo_obj
                 ON evolution_records(obj);
         """)
+        self._ensure_columns("evolution_records", {
+            "subject_user_id": "TEXT DEFAULT ''",
+        })
 
     # ── 写入 ──
 
@@ -268,7 +271,7 @@ class EvolutionStore(BaseSqliteStore):
         return EvolutionRecord(
             record_id=row["record_id"],
             subject=row["subject"],
-            subject_user_id=row["subject_user_id"] if "subject_user_id" in row.keys() else "",
+            subject_user_id=row["subject_user_id"],
             predicate=row["predicate"],
             obj=row["obj"],
             status=row["status"],

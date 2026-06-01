@@ -175,6 +175,9 @@ class MemoryStorage(BaseSqliteStore):
                 updated_at TEXT DEFAULT ''
             );
         """)
+        self._ensure_columns("aliases", {
+            "status": "TEXT DEFAULT 'active'",
+        })
 
     # ── 用户 CRUD ─────────────────────────────────────────
 
@@ -472,7 +475,7 @@ class MemoryStorage(BaseSqliteStore):
             "first_seen_at": row["first_seen_at"],
             "last_seen_at": row["last_seen_at"],
             "source": row["source"],
-            "status": row["status"] if "status" in row.keys() else "active",
+            "status": row["status"],
         }
 
     # ── 语义画像 CRUD ─────────────────────────────────────

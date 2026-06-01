@@ -49,26 +49,14 @@ class SituationStore(BaseSqliteStore):
         """)
 
         # 先确保 processed 列存在，再创建依赖该列的索引
-        self._ensure_processed_column()
+        self._ensure_columns("situations", {
+            "processed": "INTEGER DEFAULT 0",
+        })
 
         self.executescript("""
             CREATE INDEX IF NOT EXISTS idx_sit_processed
                 ON situations(group_id, processed);
         """)
-
-    def _ensure_processed_column(self) -> None:
-        """确保 processed 列存在（兼容旧表）。"""
-        try:
-            # 检查列是否存在
-            rows = self.fetchall("PRAGMA table_info(situations)")
-            columns = {row["name"] for row in rows}
-            if "processed" not in columns:
-                self.execute(
-                    "ALTER TABLE situations ADD COLUMN processed INTEGER DEFAULT 0"
-                )
-                logger.info("已为 situations 表添加 processed 列")
-        except Exception as exc:
-            logger.warning("检查/添加 processed 列失败: %s", exc)
 
     # ── 写入 ──
 

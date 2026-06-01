@@ -5,9 +5,12 @@
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["BaseSqliteStore"]
 
@@ -125,6 +128,49 @@ class BaseSqliteStore:
         """执行查询并返回所有结果（字典列表形式）。"""
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Schema 自动迁移
+    # ------------------------------------------------------------------
+
+    def _ensure_columns(
+        self, table_name: str, columns: dict[str, str]
+    ) -> None:
+        """确保表包含所有预期列，自动补齐缺失列。
+
+        CREATE TABLE IF NOT EXISTS 不会修改已存在的表结构，
+        此方法通过 PRAGMA table_info 检测差异并 ALTER TABLE 补列。
+
+        以后需要给表加字段时，只需：
+        1. 在 CREATE TABLE 中添加列定义（新库生效）
+        2. 在 _create_tables 中调用此方法补齐旧库
+
+        Parameters
+        ----------
+        table_name:
+            表名
+        columns:
+            {列名: "TYPE DEFAULT value"} 格式的期望列定义
+        """
+        existing = {
+            row["name"]
+            for row in self.execute(
+                f"PRAGMA table_info({table_name})"
+            ).fetchall()
+        }
+        for col_name, col_def in columns.items():
+            if col_name not in existing:
+                try:
+                    self.execute(
+                        f"ALTER TABLE {table_name}"
+                        f" ADD COLUMN {col_name} {col_def}"
+                    )
+                    self.commit()
+                    logger.info(
+                        "自动迁移：为 %s 表补齐列 %s", table_name, col_name
+                    )
+                except sqlite3.OperationalError:
+                    pass
 
     # ------------------------------------------------------------------
     # Schema 版本管理

@@ -870,21 +870,33 @@ class _EmotionalGroupChatEngineBase:
                         # 获取消息的发言者信息
                         speaker = ""
                         user_id = ""
+                        platform_msg_id = ""
                         if index == 0 and _req.messages:
                             # 当前用户消息
                             last_msg = _req.messages[-1]
                             speaker = last_msg.get("speaker", "")
                             user_id = last_msg.get("user_id", "")
+                            platform_msg_id = last_msg.get("platform_message_id", "")
                         elif recent_messages and abs(index) <= len(recent_messages):
                             msg = recent_messages[index]
                             user_id = msg.get("user_id", "")
+                            platform_msg_id = msg.get("platform_message_id", "")
+
+                        # 构建 metadata，保存对话索引供 prompt 复用
+                        meta: dict[str, Any] = {}
+                        if user_id:
+                            meta["user_id"] = user_id
+                        if index != 0:
+                            meta["conversation_index"] = index
+                        if platform_msg_id:
+                            meta["platform_message_id"] = platform_msg_id
 
                         _engine.pin_message(
                             content=content,
                             speaker=speaker or "用户",
                             group_id=gid,
                             reason=call.get("reason", ""),
-                            metadata={"user_id": user_id} if user_id else None,
+                            metadata=meta if meta else None,
                         )
                         logger.info("模型主动钉住消息: %s", content[:50])
                     except Exception as exc:

@@ -200,7 +200,7 @@ class ContextAssembler:
                 safe_speaker = html.escape(speaker_name or speaker_user_id, quote=True)
                 safe_uid = html.escape(speaker_user_id, quote=True)
                 current_xml = (
-                    f'<message speaker="{safe_speaker}" user_id="{safe_uid}">'
+                    f'<message index="1" speaker="{safe_speaker}" user_id="{safe_uid}">'
                     f'{safe_content}</message>'
                 )
                 # 把 pending 消息和当前消息合并

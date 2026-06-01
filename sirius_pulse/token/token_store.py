@@ -83,21 +83,16 @@ class TokenUsageStore(BaseSqliteStore):
         for idx_sql in _CREATE_INDEXES:
             self.execute(idx_sql)
         # Schema migration: add columns if upgrading from v1
-        existing_cols = {
-            row[1] for row in self.execute("PRAGMA table_info(token_usage)")
-        }
-        for col, ddl in (
-            ("persona_name", "ALTER TABLE token_usage ADD COLUMN persona_name TEXT NOT NULL DEFAULT ''"),
-            ("group_id", "ALTER TABLE token_usage ADD COLUMN group_id TEXT NOT NULL DEFAULT ''"),
-            ("provider_name", "ALTER TABLE token_usage ADD COLUMN provider_name TEXT NOT NULL DEFAULT ''"),
-            ("breakdown_json", "ALTER TABLE token_usage ADD COLUMN breakdown_json TEXT NOT NULL DEFAULT ''"),
-            ("duration_ms", "ALTER TABLE token_usage ADD COLUMN duration_ms REAL NOT NULL DEFAULT 0"),
-            ("error_type", "ALTER TABLE token_usage ADD COLUMN error_type TEXT NOT NULL DEFAULT ''"),
-            ("error_message", "ALTER TABLE token_usage ADD COLUMN error_message TEXT NOT NULL DEFAULT ''"),
-            ("conversation_depth", "ALTER TABLE token_usage ADD COLUMN conversation_depth INTEGER NOT NULL DEFAULT 0"),
-        ):
-            if col not in existing_cols:
-                self.execute(ddl)
+        self._ensure_columns("token_usage", {
+            "persona_name": "TEXT NOT NULL DEFAULT ''",
+            "group_id": "TEXT NOT NULL DEFAULT ''",
+            "provider_name": "TEXT NOT NULL DEFAULT ''",
+            "breakdown_json": "TEXT NOT NULL DEFAULT ''",
+            "duration_ms": "REAL NOT NULL DEFAULT 0",
+            "error_type": "TEXT NOT NULL DEFAULT ''",
+            "error_message": "TEXT NOT NULL DEFAULT ''",
+            "conversation_depth": "INTEGER NOT NULL DEFAULT 0",
+        })
         self.set_schema_version(_SCHEMA_VERSION, f"{_META_KEY_PREFIX}schema_version")
 
     # ------------------------------------------------------------------

@@ -80,21 +80,6 @@ _CREATE_DECISION_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_de_strategy ON decision_events(strategy);",
 ]
 
-# Columns added in schema v2
-_V2_COLUMNS = {
-    "directed_score": "REAL NOT NULL DEFAULT 0",
-    "sarcasm_score": "REAL NOT NULL DEFAULT 0",
-    "entitlement_score": "REAL NOT NULL DEFAULT 0",
-    "turn_gap_readiness": "REAL NOT NULL DEFAULT 0.5",
-    "directed_signals": "TEXT NOT NULL DEFAULT '{}'",
-}
-
-
-def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    """Check whether a column already exists in a table."""
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return any(row[1] == column for row in rows)
-
 
 class CognitionEventStore(BaseSqliteStore):
     """Append-only SQLite store for cognition analysis events.
@@ -137,9 +122,13 @@ class CognitionEventStore(BaseSqliteStore):
             self.execute(idx_sql)
 
         # Migrate v1 -> v2
-        for col, dtype in _V2_COLUMNS.items():
-            if not _column_exists(self._conn, "cognition_events", col):
-                self.execute(f"ALTER TABLE cognition_events ADD COLUMN {col} {dtype}")
+        self._ensure_columns("cognition_events", {
+            "directed_score": "REAL NOT NULL DEFAULT 0",
+            "sarcasm_score": "REAL NOT NULL DEFAULT 0",
+            "entitlement_score": "REAL NOT NULL DEFAULT 0",
+            "turn_gap_readiness": "REAL NOT NULL DEFAULT 0.5",
+            "directed_signals": "TEXT NOT NULL DEFAULT '{}'",
+        })
 
         # Migrate v2 -> v3: decision_events table
         self.execute(_CREATE_DECISION_TABLE)
