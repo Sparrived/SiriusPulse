@@ -70,7 +70,6 @@ TAG_GROUP_TABOO = "【群规禁忌】"
 TAG_ATMOSPHERE_TREND = "【氛围趋势】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
 TAG_GLOSSARY = "【名词解释】"
-TAG_MEMORY_SPEC = "【记忆规范】"
 
 # 钉住消息标签
 TAG_PINNED_MESSAGES = "【钉住的重要消息】"
@@ -670,14 +669,6 @@ class PromptFactory:
         """构建当前时间 section。"""
         return f"{TAG_CURRENT_TIME}{now_str}（北京时间）"
 
-    @staticmethod
-    def build_memory_spec_section() -> str:
-        """构建记忆规范 section。"""
-        return (
-            f"{TAG_MEMORY_SPEC}\n"
-            "1. 不凭空捏造对其他人的事实，不表述上下文没有展示的对他人的事实。\n"
-            "2. 可以根据既有上下文推断事件，但需要带有可能性的表述。"
-        )
 
     @staticmethod
     def build_taboo_section(taboo_topics: list[str]) -> str:

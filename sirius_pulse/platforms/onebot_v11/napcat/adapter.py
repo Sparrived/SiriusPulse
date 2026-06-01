@@ -505,6 +505,9 @@ class NapCatAdapter(BaseAdapter):
                         mm_item["sub_type"] = "1"
                     multimodal_inputs.append(mm_item)
 
+        # 提取平台消息 ID（用于引用回复）
+        msg_id = str(raw_event.get("message_id", ""))
+
         return ParsedEvent(
             group_id=gid,
             user_id=uid,
@@ -513,6 +516,7 @@ class NapCatAdapter(BaseAdapter):
             prompt=prompt,
             nickname=nickname,
             card=card,
+            message_id=msg_id,
             multimodal_inputs=multimodal_inputs,
         )
 
@@ -712,6 +716,7 @@ class NapCatAdapter(BaseAdapter):
             channel="qq_native_sirius_pulse",
             channel_user_id=parsed.user_id,
             group_id=group_id,
+            message_id=parsed.message_id,
             multimodal_inputs=parsed.multimodal_inputs,
             adapter_type="napcat",
             sender_type="other_ai" if is_peer_ai else "human",
@@ -842,11 +847,64 @@ class NapCatAdapter(BaseAdapter):
 
     # ─── 消息发送（引擎回调） ─────────────────────────────
 
+    @staticmethod
+    def _parse_ref_markers(text: str) -> tuple[str, list[dict[str, str]]]:
+        """解析文本中的 [REF:...] 引用标记。
+
+        Returns:
+            (清理后的文本, 引用列表)
+        """
+        import re
+        ref_pattern = re.compile(
+            r'\[REF:index=(\d+)\s+msg_id="([^"]*)"\s+speaker="([^"]*)"\s+content="([^"]*)"\]'
+        )
+        refs: list[dict[str, str]] = []
+        clean_text = text
+
+        for match in ref_pattern.finditer(text):
+            refs.append({
+                "index": match.group(1),
+                "msg_id": match.group(2),
+                "speaker": match.group(3),
+                "content": match.group(4),
+            })
+            clean_text = clean_text.replace(match.group(0), "", 1)
+
+        return clean_text.strip(), refs
+
     async def _send_group_text(self, group_id: str, text: str) -> None:
         async with self._get_reply_lock(group_id):
             try:
-                await self.send_group_msg(group_id, text)
-                LOG.info("回复群 %s: %s", group_id, text[:120])
+                # 解析引用标记
+                clean_text, refs = self._parse_ref_markers(text)
+
+                # 如果有引用且有有效的 msg_id，使用 reply segment
+                if refs and refs[0].get("msg_id"):
+                    msg_id = refs[0]["msg_id"]
+                    segments: list[dict[str, Any]] = [
+                        {"type": "reply", "data": {"id": msg_id}},
+                        {"type": "text", "data": {"text": clean_text}},
+                    ]
+                    await self.send_group_msg(group_id, segments)
+                    LOG.info(
+                        "回复群 %s (引用 msg_id=%s): %s",
+                        group_id, msg_id, clean_text[:120],
+                    )
+                elif refs:
+                    # 有引用但没有 msg_id，使用文本格式
+                    ref_lines = []
+                    for ref in refs:
+                        speaker = ref.get("speaker", "未知")
+                        content = ref.get("content", "")
+                        if len(content) > 80:
+                            content = content[:80] + "..."
+                        ref_lines.append(f"> {speaker}: {content}")
+                    formatted_reply = "\n".join(ref_lines) + "\n" + clean_text
+                    await self.send_group_msg(group_id, formatted_reply)
+                    LOG.info("回复群 %s: %s", group_id, formatted_reply[:120])
+                else:
+                    await self.send_group_msg(group_id, clean_text)
+                    LOG.info("回复群 %s: %s", group_id, clean_text[:120])
             except Exception as exc:
                 LOG.warning("发送群消息失败: %s", exc)
 

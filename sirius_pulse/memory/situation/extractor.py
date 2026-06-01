@@ -95,6 +95,7 @@ class SituationExtractor:
         model_name: str,
         evolution_chain: EvolutionChain,
         storage: Any | None = None,
+        user_manager: Any | None = None,
     ) -> Situation | None:
         """从消息中提取三元组并生成 Situation。
 
@@ -103,8 +104,9 @@ class SituationExtractor:
             entries: 候选消息列表
             brain: Brain 实例（用于 LLM 调用）
             model_name: 模型名称（轻量模型）
-            evolution_chain: 演化链实例
-            storage: MemoryStorage 实例（用于获取别名映射）
+            evolution_chain: 演化链实例（三元组验证）
+            storage: MemoryStorage 实例
+            user_manager: UnifiedUserManager 实例（别称注册）
 
         Returns:
             Situation 或 None（消息不足/提取失败/全部被拒绝）
@@ -157,8 +159,8 @@ class SituationExtractor:
                 continue
             validated_raw.append((subject, predicate, obj))
 
-        # Step 3: 别称处理（别称格式：["ID", "别称"]）
-        if raw_aliases and evolution_chain is not None:
+        # Step 3: 别称处理（别称格式：["ID", "别称"]）→ 写入 aliases 表
+        if raw_aliases and user_manager is not None:
             for alias_entry in raw_aliases:
                 if not isinstance(alias_entry, list) or len(alias_entry) != 2:
                     continue
@@ -173,7 +175,7 @@ class SituationExtractor:
                 if alias == alias_user_id:
                     continue
                 user_display = known_entities.get(alias_user_id, alias_user_id)
-                evolution_chain.register_alias(
+                user_manager.register_alias(
                     alias, alias_user_id, user_display, group_id, source="llm_discovery",
                 )
                 logger.debug("别称发现: %s → %s (%s)", alias, alias_user_id, user_display)

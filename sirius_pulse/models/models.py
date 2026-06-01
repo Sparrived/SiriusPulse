@@ -20,6 +20,7 @@ class Message(JsonSerializable):
     channel: str | None = None
     channel_user_id: str | None = None
     group_id: str | None = None
+    message_id: str | None = None  # 平台消息 ID（用于引用回复）
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
     # 回复策略：always(默认总是回复) / never(只记忆不回复) / auto(自动判断是否需要回复)
     reply_mode: str = "always"

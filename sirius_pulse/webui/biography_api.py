@@ -12,19 +12,11 @@ from sirius_pulse.webui.server_utils import _get_name, _json_response
 LOG = logging.getLogger("sirius.webui")
 
 
-def _create_managers(paths: Any, persona_name: str) -> tuple:
-    """创建 UnifiedUserManager 和 EvolutionChain 实例（共享 DB 连接）。"""
-    from sirius_pulse.memory.evolution.chain import EvolutionChain
+def _create_manager(paths: Any, persona_name: str):
+    """创建 UnifiedUserManager 实例。"""
     from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
-    db_path = paths.dir / "persona.db"
-    chain = EvolutionChain(db_path=db_path)
-    mgr = UnifiedUserManager(
-        work_path=paths.dir,
-        persona_name=persona_name,
-        evolution_chain=chain,
-    )
-    return mgr, chain
+    return UnifiedUserManager(work_path=paths.dir, persona_name=persona_name)
 
 
 def _get_storage(paths: Any):
@@ -46,15 +38,11 @@ async def api_persona_biography_list(
     limit = min(int(request.query.get("limit", "50")), 200)
     offset = max(int(request.query.get("offset", "0")), 0)
 
-    mgr, chain = _create_managers(paths, name)
+    mgr = _create_manager(paths, name)
     storage = _get_storage(paths)
     users = mgr.list_global_users()
-
-    # 从 aliases 表构建别名索引
     alias_index_data = storage.get_all_aliases()
-
     mgr.close()
-    chain.close()
     storage.close()
 
     total = len(users)
@@ -83,10 +71,9 @@ async def api_persona_biography_get(
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    mgr, chain = _create_managers(paths, name)
+    mgr = _create_manager(paths, name)
     user = mgr.get_global_user(user_id)
     mgr.close()
-    chain.close()
 
     if user is None:
         return _json_response({"error": "用户传记不存在"}, 404)

@@ -402,10 +402,15 @@ class ContextAssembler:
         *,
         tag: str = "conversation_history",
         include_group: bool = False,
+        start_index: int = 1,
+        reverse_index: bool = True,
     ) -> str:
         _tz_cn = timezone(timedelta(hours=8))
         lines: list[str] = [f'<{tag}>']
-        for entry in entries:
+        total = len(entries)
+        for i, entry in enumerate(entries):
+            # reverse_index=True 时：最新消息 index=1，最旧消息 index=total
+            idx = (total - i) if reverse_index else (i + start_index)
             speaker = entry.speaker_name or entry.user_id or "unknown"
             safe_content = html.escape(entry.content or "", quote=False)
             safe_speaker = html.escape(speaker, quote=True)
@@ -419,12 +424,17 @@ class ContextAssembler:
                 except (ValueError, TypeError):
                     ts_str = ""
 
-            attrs = f' speaker="{safe_speaker}" user_id="{safe_user_id}"'
+            attrs = f' index="{idx}" speaker="{safe_speaker}" user_id="{safe_user_id}"'
             if ts_str:
                 attrs += f' time="{ts_str}"'
             if include_group and getattr(entry, "group_id", None):
                 safe_group = html.escape(entry.group_id, quote=True)
                 attrs += f' group="{safe_group}"'
+            # 添加平台消息 ID（用于引用回复）
+            msg_id = getattr(entry, "platform_message_id", "")
+            if msg_id:
+                safe_msg_id = html.escape(str(msg_id), quote=True)
+                attrs += f' msg_id="{safe_msg_id}"'
 
             lines.append(f'  <message{attrs}>{safe_content}</message>')
 

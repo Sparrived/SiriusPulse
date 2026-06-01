@@ -392,6 +392,8 @@ class Helpers:
                 "user_id": e.user_id,
                 "content": e.content,
                 "timestamp": e.timestamp,
+                "speaker": e.speaker_name or e.user_id,
+                "platform_message_id": e.platform_message_id,
             }
             for e in entries
         ]

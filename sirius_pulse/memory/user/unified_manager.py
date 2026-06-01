@@ -2,7 +2,7 @@
 
 职责：
 - 用户注册、解析、群隔离
-- 别名管理（委托给 EvolutionChain）
+- 别名索引和消歧
 - 传记蒸馏和更新
 
 存储：SQLite（懒加载 + 写穿缓存）
@@ -18,6 +18,7 @@ from typing import Any
 
 from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.user.unified_models import (
+    AliasEntry,
     RelationshipAnchor,
     UnifiedUser,
 )
@@ -46,7 +47,7 @@ class UnifiedUserManager:
 
     功能：
     - 用户注册和解析
-    - 别名管理（委托给 EvolutionChain）
+    - 别名索引和消歧
     - 传记蒸馏和更新
 
     存储策略：懒加载 + 写穿缓存
@@ -63,7 +64,6 @@ class UnifiedUserManager:
         db_path: Path | str | None = None,
         *,
         conn: sqlite3.Connection | None = None,
-        evolution_chain: Any | None = None,
     ) -> None:
         self._work_path = Path(work_path) if work_path else None
 
@@ -90,8 +90,9 @@ class UnifiedUserManager:
         # 懒加载标记
         self._users_loaded = False
 
-        # 别名管理委托给 EvolutionChain
-        self._evolution_chain: Any | None = evolution_chain
+        # 别名索引（懒加载 + 写穿缓存）
+        self._alias_index: dict[str, list[AliasEntry]] = {}
+        self._aliases_loaded = False
 
     # ── 懒加载 ─────────────────────────────────────────
 
@@ -117,6 +118,31 @@ class UnifiedUserManager:
 
         self._users_loaded = True
 
+    def _ensure_aliases_loaded(self) -> None:
+        """确保别名索引已加载。"""
+        if self._aliases_loaded:
+            return
+        aliases_data = self._storage.get_all_aliases()
+        logger.info("从 SQLite 加载别名: %d 个", len(aliases_data))
+        for alias, entries_data in aliases_data.items():
+            self._alias_index[alias] = [AliasEntry.from_dict(e) for e in entries_data]
+        self._aliases_loaded = True
+
+    def _save_alias_to_storage(self, alias: str, entry: AliasEntry) -> None:
+        """将别名单条目写穿到 SQLite。"""
+        self._storage.save_alias_entry({
+            "alias": alias,
+            "user_id": entry.user_id,
+            "user_name": entry.user_name,
+            "weight": entry.weight,
+            "groups": entry.groups,
+            "mentioned_count": entry.mentioned_count,
+            "confidence": entry.confidence,
+            "first_seen_at": entry.first_seen_at,
+            "last_seen_at": entry.last_seen_at,
+            "source": entry.source,
+        })
+
     def reload(self) -> None:
         """强制从 SQLite 重新加载所有数据。"""
         self._global_users.clear()
@@ -124,6 +150,8 @@ class UnifiedUserManager:
         self._speaker_index.clear()
         self._identity_index.clear()
         self._users_loaded = False
+        self._alias_index.clear()
+        self._aliases_loaded = False
 
     def close(self) -> None:
         """关闭存储连接。"""
@@ -147,20 +175,64 @@ class UnifiedUserManager:
             for user_id in group:
                 self._storage.add_group_member(group_id, user_id)
 
+        for alias, entries in self._alias_index.items():
+            for entry in entries:
+                self._save_alias_to_storage(alias, entry)
+
     # ── 启动清理 ─────────────────────────────────────────
 
     def _cleanup_on_startup(self) -> None:
-        """启动时清理。"""
-        if self._evolution_chain is None:
-            return
-
-        cleaned = self._evolution_chain.cleanup_polluted_aliases()
+        """启动时清理别名。"""
+        cleaned = self._cleanup_polluted_aliases()
         if cleaned:
             logger.info("启动时清理了 %d 个人格身份别名污染", cleaned)
-
-        decayed = self._evolution_chain.decay_alias_records()
+        decayed = self._decay_all_aliases()
         if decayed:
             logger.info("启动时衰减+清理了 %d 个别名条目", decayed)
+
+    def _cleanup_polluted_aliases(self) -> int:
+        """清理被人格身份名称污染的别名条目。"""
+        self._ensure_aliases_loaded()
+        cleaned = 0
+        to_remove: list[tuple[str, str]] = []
+        for alias, entries in self._alias_index.items():
+            if self._is_persona_identity(alias):
+                for entry in entries:
+                    self._storage.delete_alias_entry(alias, entry.user_id)
+                to_remove.append((alias, ""))
+                cleaned += len(entries)
+                continue
+            persona_entries = [e for e in entries if self._is_persona_identity(e.user_id)]
+            for entry in persona_entries:
+                self._storage.delete_alias_entry(alias, entry.user_id)
+                entries.remove(entry)
+                cleaned += 1
+        for alias, _ in to_remove:
+            self._alias_index.pop(alias, None)
+        return cleaned
+
+    def _decay_all_aliases(self) -> int:
+        """对所有别名条目应用时间衰减。"""
+        self._ensure_aliases_loaded()
+        decayed = 0
+        empty_keys: list[str] = []
+        for alias, entries in self._alias_index.items():
+            filtered = []
+            for entry in entries:
+                days = _days_since(entry.last_seen_at)
+                entry.confidence = AliasEntry.apply_time_decay(entry.confidence, days)
+                if entry.confidence >= AliasEntry.DECAY_THRESHOLD:
+                    filtered.append(entry)
+                else:
+                    self._storage.delete_alias_entry(alias, entry.user_id)
+                    decayed += 1
+            if filtered:
+                self._alias_index[alias] = filtered
+            else:
+                empty_keys.append(alias)
+        for alias in empty_keys:
+            del self._alias_index[alias]
+        return decayed
 
     # ── 内部工具 ─────────────────────────────────────────
 
@@ -335,12 +407,54 @@ class UnifiedUserManager:
         recent_speakers: list[str] | None = None,
         at_user_id: str | None = None,
     ) -> tuple[str | None, float, list[str]]:
-        """别名消歧解析。委托给 EvolutionChain。"""
-        if self._evolution_chain is None:
+        """别名消歧解析。从 _alias_index 读取。"""
+        self._ensure_aliases_loaded()
+        alias_lower = alias.strip().lower()
+        entries = self._alias_index.get(alias_lower, [])
+        if not entries:
             return None, 0.0, []
-        return self._evolution_chain.resolve_alias(
-            alias, group_id, recent_speakers, at_user_id
+        self._decay_alias_key(alias_lower)
+        if group_id:
+            group_entries = [e for e in entries if group_id in e.groups]
+            if not group_entries:
+                group_entries = entries
+        else:
+            group_entries = entries
+        if len(group_entries) == 1:
+            entry = group_entries[0]
+            return entry.user_id, entry.confidence, []
+        sorted_entries = sorted(
+            group_entries, key=lambda e: e.confidence, reverse=True
         )
+        if at_user_id:
+            for e in group_entries:
+                if e.user_id == at_user_id:
+                    conf = min(0.98, e.confidence + 0.30)
+                    others = [
+                        x.user_id for x in group_entries if x.user_id != e.user_id
+                    ]
+                    return e.user_id, conf, others
+        if recent_speakers:
+            seen: set[str] = set()
+            for speaker in recent_speakers:
+                if speaker in seen:
+                    continue
+                seen.add(speaker)
+                for e in group_entries:
+                    if e.user_id == speaker:
+                        conf = min(0.85, e.confidence + 0.20)
+                        others = [
+                            x.user_id
+                            for x in group_entries
+                            if x.user_id != e.user_id
+                        ]
+                        return e.user_id, conf, others
+        if len(sorted_entries) >= 2:
+            if sorted_entries[0].confidence > sorted_entries[1].confidence * 1.5:
+                conf = min(0.70, sorted_entries[0].confidence)
+                others = [x.user_id for x in sorted_entries[1:]]
+                return sorted_entries[0].user_id, conf, others
+        return None, 0.0, [e.user_id for e in group_entries]
 
     def register_alias(
         self,
@@ -350,28 +464,82 @@ class UnifiedUserManager:
         group_id: str = "",
         source: str = "napcat",
     ) -> None:
-        """注册别名。委托给 EvolutionChain。"""
-        if self._evolution_chain is None:
-            return
-
+        """注册别名。直接操作 _alias_index + aliases 表。"""
+        self._ensure_aliases_loaded()
         if self._is_persona_identity(alias.strip().lower()):
             return
-
-        self._evolution_chain.register_alias(
-            alias, user_id, user_name, group_id, source
-        )
-
-    def bump_alias_weight(self, alias: str, user_id: str, group_id: str) -> None:
-        """增加别名权重。委托给 EvolutionChain。"""
-        if self._evolution_chain is None:
+        alias_lower = alias.strip().lower()
+        if not alias_lower:
             return
-        self._evolution_chain.bump_alias(alias, user_id, group_id)
+        if alias_lower not in self._alias_index:
+            self._alias_index[alias_lower] = []
+        for entry in self._alias_index[alias_lower]:
+            if entry.user_id == user_id:
+                entry.mentioned_count += 1
+                entry.confidence = AliasEntry.compute_confidence(
+                    entry.mentioned_count, entry.source
+                )
+                entry.last_seen_at = _now_iso()
+                if group_id and group_id not in entry.groups:
+                    entry.groups.append(group_id)
+                self._save_alias_to_storage(alias_lower, entry)
+                return
+        entry = AliasEntry(
+            user_id=user_id,
+            user_name=user_name,
+            groups=[group_id] if group_id else [],
+            mentioned_count=1,
+            confidence=AliasEntry.compute_confidence(1, source),
+            first_seen_at=_now_iso(),
+            last_seen_at=_now_iso(),
+            source=source,
+        )
+        self._alias_index[alias_lower].append(entry)
+        self._save_alias_to_storage(alias_lower, entry)
+
+    def _decay_alias_key(self, alias_lower: str) -> None:
+        """对单个别名应用时间衰减，移除低于阈值的条目。"""
+        entries = self._alias_index.get(alias_lower, [])
+        filtered = []
+        for entry in entries:
+            days = _days_since(entry.last_seen_at)
+            entry.confidence = AliasEntry.apply_time_decay(entry.confidence, days)
+            if entry.confidence >= AliasEntry.DECAY_THRESHOLD:
+                filtered.append(entry)
+            else:
+                self._storage.delete_alias_entry(alias_lower, entry.user_id)
+        if filtered:
+            self._alias_index[alias_lower] = filtered
+        elif alias_lower in self._alias_index:
+            del self._alias_index[alias_lower]
 
     def get_aliases_for_group(self, group_id: str) -> dict[str, str]:
-        """获取群组相关的别名速查表。委托给 EvolutionChain。"""
-        if self._evolution_chain is None:
-            return {}
-        return self._evolution_chain.get_aliases_for_group(group_id)
+        """获取群组相关的别名速查表。"""
+        self._ensure_aliases_loaded()
+        result: dict[str, str] = {}
+        for alias, entries in self._alias_index.items():
+            for e in entries:
+                if group_id in e.groups:
+                    result[alias] = e.user_name
+                    break
+        return result
+
+    def bump_alias_weight(self, alias: str, user_id: str, group_id: str) -> None:
+        """增加别名权重。"""
+        self._ensure_aliases_loaded()
+        alias_lower = alias.strip().lower()
+        if alias_lower not in self._alias_index:
+            return
+        for entry in self._alias_index[alias_lower]:
+            if entry.user_id == user_id:
+                entry.mentioned_count += 1
+                entry.confidence = AliasEntry.compute_confidence(
+                    entry.mentioned_count, entry.source
+                )
+                entry.last_seen_at = _now_iso()
+                if group_id not in entry.groups:
+                    entry.groups.append(group_id)
+                self._save_alias_to_storage(alias_lower, entry)
 
     # ── 公共 API：传记管理 ──────────────────────────────────
 

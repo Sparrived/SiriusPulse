@@ -356,8 +356,7 @@ class Brain:
 
             # ── 2. 默认 pre: 人格注入（无条件，最高优先级）──
             persona_base = self.persona.build_system_prompt()
-            memory_spec = PromptFactory.build_memory_spec_section()
-            system_prompt = persona_base + "\n\n" + memory_spec + "\n\n" + system_prompt
+            system_prompt = persona_base + "\n\n" + system_prompt
 
             # ── 3. 默认 pre: 语气对齐 ──
             if self._get_tone_alignment_fn is not None:

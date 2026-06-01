@@ -151,4 +151,5 @@ class ParsedEvent:
     prompt: str = ""               # 渲染后的文本（表情→文字，图片→标签）
     nickname: str = ""
     card: str = ""
+    message_id: str = ""           # 平台消息 ID（用于引用回复）
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)

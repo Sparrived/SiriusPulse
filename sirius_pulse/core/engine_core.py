@@ -185,19 +185,19 @@ class _EmotionalGroupChatEngineBase:
             embedding_client=self._embedding_client,
             memory_storage=self._memory_storage,
         )
-        # ── 新记忆体系组件（共享 persona.db 连接）──
-        self.evolution_chain = EvolutionChain(
-            conn=self._persona_db_conn,
-            embedding_client=self._embedding_client,
-        )
         self.user_manager = UnifiedUserManager(
             self.work_path,
             persona_name=self.persona.name,
             persona_aliases=self.persona.aliases,
             conn=self._persona_db_conn,
-            evolution_chain=self.evolution_chain,
         )
         self.identity_resolver = IdentityResolver()
+
+        # ── 新记忆体系组件（共享 persona.db 连接）──
+        self.evolution_chain = EvolutionChain(
+            conn=self._persona_db_conn,
+            embedding_client=self._embedding_client,
+        )
         self.situation_store = SituationStore(
             conn=self._persona_db_conn,
         )
@@ -1002,13 +1002,91 @@ class _EmotionalGroupChatEngineBase:
             )
             _engine._persist_group_state(_req.group_id)
 
+        # ── priority 10: [REPLY:xxx] 引用回复解析 ──
+        def _hook_reply_reference(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            """解析模型输出中的 [REPLY:xxx] 指令，引用历史消息进行回复。"""
+            raw_text = _result.raw_text
+            if not raw_text:
+                return
+
+            # 匹配 [REPLY:xxx] 指令（支持多个）
+            reply_pattern = re.compile(r'\[REPLY:(\d+)\]')
+            reply_matches = reply_pattern.findall(raw_text)
+            if not reply_matches:
+                return
+
+            # 获取最近的历史消息（用于查找引用内容）
+            gid = _req.group_id
+            recent_messages = _engine._get_recent_messages(gid, n=50)
+            if not recent_messages:
+                return
+
+            # 构建 index -> 消息内容的映射（倒排：最新消息 index=1）
+            total = len(recent_messages)
+            message_map: dict[int, dict[str, str]] = {}
+            for i, msg in enumerate(recent_messages):
+                idx = total - i
+                message_map[idx] = {
+                    "content": msg.get("content", ""),
+                    "speaker": msg.get("speaker", msg.get("user_id", "unknown")),
+                    "platform_message_id": msg.get("platform_message_id", ""),
+                }
+
+            # 处理每个 [REPLY:xxx] 指令
+            processed_text = raw_text
+            for match in reply_matches:
+                ref_index = int(match)
+                ref_msg = message_map.get(ref_index)
+                if ref_msg:
+                    # 构建引用标记，供适配器层解析
+                    msg_id = ref_msg.get("platform_message_id", "")
+                    ref_marker = (
+                        f'[REF:index={ref_index} '
+                        f'msg_id="{msg_id}" '
+                        f'speaker="{ref_msg["speaker"]}" '
+                        f'content="{ref_msg["content"][:100]}"]'
+                    )
+                    # 将 [REPLY:xxx] 替换为引用标记
+                    processed_text = processed_text.replace(
+                        f'[REPLY:{match}]', ref_marker, 1
+                    )
+                else:
+                    # 找不到对应消息，移除指令
+                    processed_text = processed_text.replace(
+                        f'[REPLY:{match}]', '', 1
+                    )
+
+            # 更新结果
+            _result.raw_text = processed_text
+            # 同步更新 clean_text（移除引用标记后的纯文本）
+            _result.clean_text = reply_pattern.sub('', _result.clean_text or "")
+
         # task_filter 交给 Brain 调度时检查，hook 闭包不关心
-        self.brain.register_post_hook(_hook_depth, priority=0, task_filter=_TASKS_CHAT_PROACTIVE)
-        self.brain.register_post_hook(_hook_pin_messages, priority=15, task_filter=_TASKS_CHAT_PROACTIVE)
-        self.brain.register_post_hook(_hook_stickers, priority=20, task_filter=_TASKS_CHAT_PROACTIVE)
-        self.brain.register_post_hook(_hook_dedup, priority=30, task_filter=_TASKS_CHAT)
-        self.brain.register_post_hook(_hook_memory, priority=40, task_filter=_TASKS_CHAT_PROACTIVE)
-        self.brain.register_post_hook(_hook_timestamp, priority=50, task_filter=_TASKS_CHAT_PROACTIVE)
+        _CHAT = _TASKS_CHAT
+        _ALL = _TASKS_CHAT_PROACTIVE
+        self.brain.register_post_hook(
+            _hook_depth, priority=0, task_filter=_ALL
+        )
+        self.brain.register_post_hook(
+            _hook_reply_reference, priority=10, task_filter=_ALL
+        )
+        self.brain.register_post_hook(
+            _hook_pin_messages, priority=15, task_filter=_ALL
+        )
+        self.brain.register_post_hook(
+            _hook_stickers, priority=20, task_filter=_ALL
+        )
+        self.brain.register_post_hook(
+            _hook_dedup, priority=30, task_filter=_CHAT
+        )
+        self.brain.register_post_hook(
+            _hook_memory, priority=40, task_filter=_ALL
+        )
+        self.brain.register_post_hook(
+            _hook_timestamp, priority=50, task_filter=_ALL
+        )
 
     # ==================================================================
     # Public API

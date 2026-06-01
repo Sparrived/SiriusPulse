@@ -96,6 +96,7 @@ class BasicMemoryManager:
         system_prompt: str = "",
         timestamp: str | None = None,
         channel_user_id: str = "",
+        platform_message_id: str = "",
         multimodal_inputs: list[dict[str, str]] | None = None,
         tags: list[dict[str, str]] | None = None,
         conversation_chain: list[dict[str, Any]] | None = None,
@@ -113,6 +114,7 @@ class BasicMemoryManager:
             timestamp=timestamp or now_iso(),
             system_prompt=system_prompt,
             channel_user_id=channel_user_id,
+            platform_message_id=platform_message_id,
             multimodal_inputs=[
                 dict(item) for item in (multimodal_inputs or [])
                 if isinstance(item, dict)

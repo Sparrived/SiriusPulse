@@ -25,6 +25,7 @@ class BasicMemoryEntry(JsonSerializable):
     speaker_name: str = "" # display name (nickname, card, or persona name)
     system_prompt: str = ""  # system prompt used for this assistant turn
     channel_user_id: str = ""  # platform raw id (e.g. QQ number) for name constraints
+    platform_message_id: str = ""  # platform message_id (e.g. OneBot message_id)
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
     tags: list[dict[str, str]] = field(default_factory=list)  # 内容标签（表情包、钉住等）
     conversation_chain: list[dict[str, Any]] = field(default_factory=list)  # LLM 消息链

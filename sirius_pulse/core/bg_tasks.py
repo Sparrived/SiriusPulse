@@ -142,6 +142,7 @@ class BackgroundTasks:
                             model_name=cfg.model_name,
                             evolution_chain=engine.evolution_chain,
                             storage=engine._memory_storage,
+                            user_manager=engine.user_manager,
                         )
                         if situation:
                             engine.situation_store.save(situation)
@@ -174,6 +175,7 @@ class BackgroundTasks:
                                         model_name=cfg.model_name,
                                         evolution_chain=engine.evolution_chain,
                                         storage=engine._memory_storage,
+                                        user_manager=engine.user_manager,
                                     )
                                     if situation:
                                         engine.situation_store.save(situation)
