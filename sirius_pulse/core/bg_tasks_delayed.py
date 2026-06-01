@@ -15,7 +15,6 @@ from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
-from sirius_pulse.core.utils import parse_sticker_tags
 from sirius_pulse.providers.base import ToolCall
 
 if TYPE_CHECKING:
@@ -286,12 +285,11 @@ class DelayedQueueTasks:
                     task_name="response_generate",
                     enable_skills=True,
                     caller_is_developer=caller_is_developer,
-                    post_process=False,
+                    post_process=True,
                 )
             )
             reply = chat_result.raw_text.strip()
             round_clean = chat_result.clean_text
-            round_stickers = chat_result.sticker_names
 
             # 检查是否有 tool_calls
             tool_calls = chat_result.tool_calls or []
@@ -305,13 +303,8 @@ class DelayedQueueTasks:
                 for tc in tool_calls
             )
 
-            # 使用 chat_result 已解析好的 clean_text 和 sticker_names
+            # 使用 chat_result 已由 hooks 处理好的 clean_text
             non_skill_text = round_clean
-            if non_skill_text and round_stickers:
-                asyncio.create_task(
-                    engine._send_stickers_by_names(group_id, round_stickers)
-                )
-                logger.info("partial reply 中解析到表情包: %s", round_stickers)
             last_round_had_partial = False
             if non_skill_text and not all_silent:
                 engine._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
@@ -363,13 +356,8 @@ class DelayedQueueTasks:
             }
             messages.append(assistant_msg)
 
-            # 处理 partial reply
+            # 处理 partial reply（hooks 已处理 sticker/pin/dedup）
             non_skill_text = round_clean
-            if non_skill_text and round_stickers:
-                asyncio.create_task(
-                    engine._send_stickers_by_names(group_id, round_stickers)
-                )
-                logger.info("partial reply 中解析到表情包: %s", round_stickers)
             last_round_had_partial = False
             if non_skill_text and not all_silent:
                 engine._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
@@ -474,22 +462,6 @@ class DelayedQueueTasks:
             if skill_multimodal:
                 messages.append({"role": "user", "content": skill_multimodal})
 
-            # Persist intermediate skill turns into basic memory
-            _chain: list[dict[str, Any]] = [
-                {"role": "system", "content": chat_result.system_prompt}
-            ]
-            _chain.extend(messages)
-            _entry = engine.basic_memory.add_entry(
-                group_id=group_id,
-                user_id="assistant",
-                role="assistant",
-                content=reply,
-                speaker_name=engine.persona.name if engine.persona else "assistant",
-                system_prompt=chat_result.system_prompt,
-                conversation_chain=_chain,
-            )
-            engine.basic_store.append(_entry)
-
         # If the loop ended because max rounds were exhausted and the last round
         # already sent a partial reply, don't duplicate that text as the final reply.
         ended_because_max_rounds = (
@@ -506,67 +478,11 @@ class DelayedQueueTasks:
             )
             reply = ""
 
-        # Record assistant reply into basic memory so future turns can see it
-        clean_reply = reply.strip()
-        sticker_names: list[str] = []
-
-        # 解析表情包标签 [STICKERS: ...] 并异步发送
-        if clean_reply:
-            clean_reply, sticker_names = parse_sticker_tags(clean_reply, engine._sticker_names)
-            if sticker_names:
-                asyncio.create_task(
-                    engine._send_stickers_by_names(group_id, sticker_names)
-                )
-                logger.info("模型请求发送表情包: %s", sticker_names)
-
-        # 纯表情包回复：构造标签内容确保被记录到记忆中
-        if not clean_reply and sticker_names:
-            clean_reply = f"[STICKERS: {', '.join(sticker_names)}]"
-
-        # Deduplication: suppress if nearly identical to a recent reply
-        if clean_reply:
-            now_ts = datetime.now(timezone.utc).timestamp()
-            recent_replies = engine._recent_sent_replies.get(group_id, [])
-            recent_replies = [(t, r) for t, r in recent_replies if now_ts - t < engine._reply_dedup_window]
-            if any(
-                engine._text_similarity(clean_reply, r) > engine._reply_dedup_threshold
-                for _, r in recent_replies
-            ):
-                logger.debug(
-                    "Suppressing duplicate reply for %s (window=%ds, threshold=%.2f): %s...",
-                    group_id,
-                    engine._reply_dedup_window,
-                    engine._reply_dedup_threshold,
-                    clean_reply[:40],
-                )
-                clean_reply = ""
-            else:
-                recent_replies.append((now_ts, clean_reply))
-            engine._recent_sent_replies[group_id] = recent_replies
-
-        if clean_reply:
-            _chain2: list[dict[str, Any]] = [
-                {"role": "system", "content": chat_result.system_prompt}
-            ]
-            _chain2.extend(messages)
-            _reply_entry = engine.basic_memory.add_entry(
-                group_id=group_id,
-                user_id="assistant",
-                role="assistant",
-                content=clean_reply,
-                speaker_name=engine.persona.name if engine.persona else "assistant",
-                system_prompt=chat_result.system_prompt,
-                conversation_chain=_chain2,
-            )
-            engine.basic_store.append(_reply_entry)
-            # 反馈追踪：AI 发言后记录锚点，等待用户跟进
-            target_uid = triggered[0].user_id or ""
-            engine.semantic_memory.record_ai_sent(
-                group_id=group_id,
-                target_user_id=target_uid,
-                topic_hint=clean_reply[:100],
-                response_length=len(clean_reply),
-            )
+        # 最终回复：hooks 已处理 pin/sticker/dedup/memory/timestamp
+        if ended_because_max_rounds and last_round_had_partial:
+            clean_reply = ""
+        else:
+            clean_reply = chat_result.clean_text if chat_result else ""
 
         # Determine return strategy
         from sirius_pulse.models.response_strategy import ResponseStrategy
@@ -576,10 +492,6 @@ class DelayedQueueTasks:
             strategy = "immediate"
 
         final_reply = clean_reply or (partial_replies[-1] if partial_replies else "")
-
-        # Record reply timestamp for cooldown tracking (once per tick)
-        engine._last_reply_at[group_id] = datetime.now(timezone.utc).timestamp()
-        engine._persist_group_state(group_id)
 
         # Emit event with full reply data for external delivery
         await engine.event_bus.emit(
@@ -671,7 +583,7 @@ class DelayedQueueTasks:
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
             pinned_messages=engine.get_pinned_messages_for_prompt(group_id),
-            sticker_names=getattr(engine, 'sticker_names', None),
+            sticker_names=getattr(engine, '_sticker_names', None),
         )
         if glossary:
             bundle.system_prompt = f"{TAG_GLOSSARY}\n{glossary}\n\n{bundle.system_prompt}"
