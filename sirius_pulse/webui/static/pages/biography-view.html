@@ -4,7 +4,58 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .bio-view-filters {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex: 1;
+    min-width: 200px;
+  }
+  .bio-search {
+    flex: 1;
+    min-width: 150px;
+    background: var(--bg-3);
+    border: 1px solid rgba(0,255,200,0.12);
+    color: var(--text-1);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.3s;
+  }
+  .bio-search:focus {
+    border-color: rgba(0,255,200,0.4);
+  }
+  .bio-select {
+    background: var(--bg-3);
+    border: 1px solid rgba(0,255,200,0.12);
+    color: var(--text-1);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+  }
+  .bio-stats {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .bio-stat-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .bio-stat-value {
+    font-weight: 600;
+    color: #00ffc8;
+    font-family: var(--font-mono);
   }
   .bio-view-refresh {
     background: rgba(0,255,200,0.08);
@@ -52,8 +103,50 @@
     font-family: var(--font-display);
     font-size: 20px;
     color: var(--text-1);
-    margin-bottom: 6px;
+    margin-bottom: 2px;
     text-shadow: 0 0 12px rgba(0,255,200,0.15);
+  }
+  .bio-user-header {
+    margin-bottom: 6px;
+  }
+  .bio-user-id {
+    font-size: 11px;
+    color: var(--text-3);
+    font-family: var(--font-mono);
+  }
+  .bio-aliases {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .bio-aliases-label {
+    font-size: 11px;
+    color: var(--text-3);
+    margin-right: 2px;
+  }
+  .bio-alias {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    color: #7b61ff;
+    background: rgba(123,97,255,0.08);
+    border: 1px solid rgba(123,97,255,0.15);
+    gap: 4px;
+  }
+  .bio-alias-delete {
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .bio-alias-delete:hover {
+    opacity: 1;
+    color: #f85149;
   }
   .bio-user-bio {
     font-size: 13px;
@@ -164,9 +257,17 @@
 
 <div class="bio-view-page">
   <div class="bio-view-header">
-    <div style="font-size:14px;color:var(--text-2)">从演化链自动派生的用户传记</div>
+    <div class="bio-view-filters">
+      <input type="text" id="bioSearch" class="bio-search" placeholder="搜索用户名、别名、传记...">
+      <select id="bioSort" class="bio-select">
+        <option value="facts">按活跃事实排序</option>
+        <option value="name">按名称排序</option>
+        <option value="recent">按最近更新排序</option>
+      </select>
+    </div>
     <button class="bio-view-refresh" id="bioViewRefreshBtn">刷新</button>
   </div>
+  <div class="bio-stats" id="bioStats"></div>
   <div class="bio-grid" id="bioGrid">
     <div class="bio-empty">加载中…</div>
   </div>

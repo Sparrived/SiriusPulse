@@ -189,13 +189,34 @@
     align-items: center;
     gap: 12px;
   }
+  .ds-multi-btn {
+    background: rgba(0,255,200,0.08);
+    border: 1px solid rgba(0,255,200,0.2);
+    color: #00ffc8;
+    padding: 7px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+  }
+  .ds-multi-btn:hover {
+    background: rgba(0,255,200,0.15);
+    box-shadow: 0 0 12px rgba(0,255,200,0.2);
+  }
+  .ds-multi-btn.active {
+    background: rgba(0,255,200,0.2);
+    border-color: rgba(0,255,200,0.4);
+  }
   .ds-select-all {
-    display: flex;
+    display: none;
     align-items: center;
     gap: 6px;
     font-size: 13px;
     color: var(--text-2);
     cursor: pointer;
+  }
+  .ds-select-all.visible {
+    display: flex;
   }
   .ds-select-all input[type="checkbox"] {
     accent-color: #00ffc8;
@@ -220,11 +241,21 @@
   }
   .ds-slice-check {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 14px;
+    left: 14px;
     z-index: 2;
     accent-color: #00ffc8;
     cursor: pointer;
+    opacity: 0;
+    transform: scale(0);
+    transition: all 0.2s ease;
+  }
+  .ds-slice-check.visible {
+    opacity: 1;
+    transform: scale(1);
+  }
+  .ds-slice.selecting {
+    padding-left: 38px;
   }
   @media (max-width: 900px) {
     .ds-masonry { columns: 1; }
@@ -235,10 +266,11 @@
   <div class="ds-header">
     <input type="text" id="dsSearch" class="ds-search" placeholder="搜索记忆切片内容…">
     <div class="ds-toolbar">
-      <label class="ds-select-all">
+      <label class="ds-select-all" id="dsSelectAllWrap">
         <input type="checkbox" id="dsSelectAll"> 全选
       </label>
       <button class="ds-delete-btn" id="dsDeleteBtn">删除选中</button>
+      <button class="ds-multi-btn" id="dsMultiBtn">多选</button>
       <button class="ds-refresh" id="dsRefreshBtn">刷新</button>
     </div>
   </div>

@@ -27,6 +27,13 @@ def _create_managers(paths: Any, persona_name: str) -> tuple:
     return mgr, chain
 
 
+def _get_storage(paths: Any):
+    """获取 MemoryStorage 实例。"""
+    from sirius_pulse.memory.storage import MemoryStorage
+    db_path = paths.dir / "memory.db"
+    return MemoryStorage(db_path)
+
+
 async def api_persona_biography_list(
     request: web.Request, persona_manager: Any
 ) -> web.Response:
@@ -40,15 +47,15 @@ async def api_persona_biography_list(
     offset = max(int(request.query.get("offset", "0")), 0)
 
     mgr, chain = _create_managers(paths, name)
+    storage = _get_storage(paths)
     users = mgr.list_global_users()
 
-    # 从演化链别称缓存构建别称索引
-    alias_index_data: dict[str, list[dict]] = {}
-    for alias_key, records in chain._alias_cache.items():
-        alias_index_data[alias_key] = [r.to_dict() for r in records if r.is_active]
+    # 从 aliases 表构建别名索引
+    alias_index_data = storage.get_all_aliases()
 
     mgr.close()
     chain.close()
+    storage.close()
 
     total = len(users)
     users_sorted = sorted(users, key=lambda u: getattr(u, "last_updated_at", "") or "", reverse=True)
@@ -96,12 +103,9 @@ async def api_persona_biography_alias_index(
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    mgr, chain = _create_managers(paths, name)
-    alias_index_data: dict[str, list[dict]] = {}
-    for alias_key, records in chain._alias_cache.items():
-        alias_index_data[alias_key] = [r.to_dict() for r in records if r.is_active]
-    mgr.close()
-    chain.close()
+    storage = _get_storage(paths)
+    alias_index_data = storage.get_all_aliases()
+    storage.close()
 
     return _json_response(alias_index_data)
 
@@ -128,21 +132,32 @@ async def api_persona_biography_alias_index_update(
     if not alias:
         return _json_response({"error": "缺少 alias 参数"}, 400)
 
-    mgr, chain = _create_managers(paths, name)
+    storage = _get_storage(paths)
 
     if action == "delete":
-        chain.reject_alias(alias, user_id)
-        mgr.close()
-        chain.close()
+        storage.delete_alias_entry(alias, user_id)
+        storage.close()
+        return _json_response({"success": True})
+
+    if action == "shadow":
+        storage.shadow_alias_entry(alias, user_id)
+        storage.close()
         return _json_response({"success": True})
 
     # action == "add" (default)
     if not user_id:
-        mgr.close()
-        chain.close()
+        storage.close()
         return _json_response({"error": "缺少 user_id 参数"}, 400)
 
-    mgr.register_alias(alias, user_id, user_name, source="manual")
-    mgr.close()
-    chain.close()
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+    storage.save_alias_entry({
+        "alias": alias,
+        "user_id": user_id,
+        "user_name": user_name,
+        "source": "manual",
+        "first_seen_at": now_iso,
+        "last_seen_at": now_iso,
+    })
+    storage.close()
     return _json_response({"success": True})

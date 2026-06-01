@@ -3,6 +3,14 @@ import { get } from '../app.js';
 import { toast, $ } from '../components.js';
 import { renderNeuralNav, consumeNavParams, showParamHint, makeClickableUser, navigateWithParams } from './memory-nav.js';
 
+const sourceTypeMap = {
+  'stated': '明确陈述',
+  'inferred': '推断',
+  'uncertain': '不确定',
+  'user_corrected': '用户纠正',
+  'migration': '迁移',
+};
+
 let allRecords = [];
 
 export async function init(container) {
@@ -71,6 +79,7 @@ function renderRecords(records) {
   list.innerHTML = records.map(r => {
     const conf = Math.round((r.confidence || 0) * 100);
     const time = r.extracted_at ? formatTime(r.extracted_at) : '';
+    const sourceTypeLabel = sourceTypeMap[r.source_type] || r.source_type || '';
     return `
     <div class="evo-record" data-status="${r.status}" data-id="${r.record_id}" data-subject="${esc(r.subject)}" data-uid="${esc(r.subject_user_id || '')}">
       <div class="evo-triple">
@@ -85,10 +94,27 @@ function renderRecords(records) {
         <span>置信度</span>
         <span class="evo-confidence-bar"><span class="evo-confidence-fill" style="width:${conf}%"></span></span>
         <span style="font-family:var(--font-mono)">${conf}%</span>
-        <span>${r.source_type || ''}</span>
         ${time ? `<span>${time}</span>` : ''}
         ${r.supersedes?.length ? `<span>取代 ${r.supersedes.length} 条</span>` : ''}
       </div>
+      <div class="evo-source">
+        ${sourceTypeLabel ? `<span class="evo-source-tag">${sourceTypeLabel}</span>` : ''}
+        ${r.source_group_id ? `<span class="evo-source-tag">群: ${esc(r.source_group_id)}</span>` : ''}
+        ${r.source_situation_id ? `<span class="evo-source-tag clickable" data-sid="${esc(r.source_situation_id)}">情景: ${esc(r.source_situation_id.slice(0, 8))}…</span>` : ''}
+        ${r.extracted_by_model ? `<span class="evo-source-tag model">${esc(r.extracted_by_model)}</span>` : ''}
+      </div>
+      ${r.source_messages?.length ? `
+        <div class="evo-messages">
+          <div class="evo-messages-header">来源消息 (${r.source_messages.length})</div>
+          ${r.source_messages.map(m => `
+            <div class="evo-message-item">
+              <span class="evo-message-speaker">${esc(m.speaker_name || m.role)}</span>
+              <span class="evo-message-content">${esc(m.content)}</span>
+              <span class="evo-message-time">${formatTime(m.timestamp)}</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
       <div class="evo-history" id="hist-${r.record_id}"></div>
     </div>`;
   }).join('');
@@ -109,6 +135,13 @@ function renderRecords(records) {
         if (subject) { const el = $('evoSearch'); if (el) el.value = subject; }
         filterAndRender();
       }
+    });
+  });
+
+  list.querySelectorAll('.evo-source-tag.clickable').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigateWithParams('situation-timeline', { situationId: el.dataset.sid });
     });
   });
 }

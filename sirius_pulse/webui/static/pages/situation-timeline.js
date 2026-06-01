@@ -4,6 +4,7 @@ import { toast, $ } from '../components.js';
 import { renderNeuralNav, consumeNavParams, showParamHint, navigateWithParams } from './memory-nav.js';
 
 let cachedSituations = [];
+let isMultiMode = false;
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -16,6 +17,7 @@ export async function init(container) {
   $('sitRefreshBtn')?.addEventListener('click', () => loadSituations());
   $('sitSelectAll')?.addEventListener('change', handleSelectAll);
   $('sitDeleteBtn')?.addEventListener('click', handleDeleteSelected);
+  $('sitMultiBtn')?.addEventListener('click', toggleMultiMode);
 
   const params = consumeNavParams();
   if (params?.topic) {
@@ -23,6 +25,27 @@ export async function init(container) {
   }
 
   await loadSituations(params?.topic);
+}
+
+function toggleMultiMode() {
+  isMultiMode = !isMultiMode;
+  const btn = $('sitMultiBtn');
+  const selectAllWrap = $('sitSelectAllWrap');
+
+  if (btn) btn.classList.toggle('active', isMultiMode);
+  if (selectAllWrap) selectAllWrap.classList.toggle('visible', isMultiMode);
+
+  document.querySelectorAll('.sit-checkbox').forEach(cb => {
+    cb.classList.toggle('visible', isMultiMode);
+  });
+  document.querySelectorAll('.sit-node').forEach(node => {
+    node.classList.toggle('selecting', isMultiMode);
+  });
+
+  if (!isMultiMode) {
+    document.querySelectorAll('.sit-checkbox').forEach(cb => { cb.checked = false; });
+    updateDeleteButton();
+  }
 }
 
 async function loadSituations(topicFilter) {

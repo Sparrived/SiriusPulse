@@ -89,6 +89,7 @@ class MemoryStorage(BaseSqliteStore):
                 first_seen_at TEXT DEFAULT '',
                 last_seen_at TEXT DEFAULT '',
                 source TEXT DEFAULT 'napcat',
+                status TEXT DEFAULT 'active',
                 created_at TEXT DEFAULT '',
                 PRIMARY KEY (alias, user_id)
             );
@@ -396,6 +397,35 @@ class MemoryStorage(BaseSqliteStore):
         )
         self.commit()
 
+    def shadow_alias_entry(self, alias: str, user_id: str) -> bool:
+        """将别名条目标记为 shadow 状态。
+
+        Shadow 状态的别名不参与召回，但保留可追溯性。
+
+        Returns:
+            是否找到并标记了条目
+        """
+        cursor = self.execute(
+            "UPDATE aliases SET status = 'shadow' WHERE alias = ? AND user_id = ? AND status = 'active'",
+            (alias, user_id),
+        )
+        self.commit()
+        return cursor.rowcount > 0
+
+    def get_aliases_by_user(self, user_id: str, status: str = "active") -> list[dict[str, Any]]:
+        """获取用户的所有别名。"""
+        if status:
+            rows = self.execute(
+                "SELECT * FROM aliases WHERE user_id = ? AND status = ?",
+                (user_id, status),
+            ).fetchall()
+        else:
+            rows = self.execute(
+                "SELECT * FROM aliases WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        return [self._row_to_alias(row) for row in rows]
+
     def get_aliases_for_group(self, group_id: str) -> dict[str, str]:
         """获取群组相关的别名速查表。"""
         rows = self.execute(
@@ -442,6 +472,7 @@ class MemoryStorage(BaseSqliteStore):
             "first_seen_at": row["first_seen_at"],
             "last_seen_at": row["last_seen_at"],
             "source": row["source"],
+            "status": row["status"] if "status" in row.keys() else "active",
         }
 
     # ── 语义画像 CRUD ─────────────────────────────────────

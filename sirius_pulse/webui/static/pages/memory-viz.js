@@ -46,12 +46,6 @@ export async function init(container) {
       </div>
       <div id="clusterChart" class="chart-container" style="min-height:400px;padding:16px"></div>
     </div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">用户-话题二部图</div>
-      </div>
-      <div id="graphChart" class="chart-container" style="min-height:400px;padding:16px"></div>
-    </div>
   `;
 
   $('refreshViz').addEventListener('click', () => loadViz());
@@ -93,7 +87,6 @@ async function loadViz() {
 
     renderTimeline(data.basic_timeline || {});
     renderCluster(data.diary_entries || []);
-    renderGraph(data);
   } catch (e) {
     toast('加载可视化数据失败: ' + e.message, 'error');
   }
@@ -329,100 +322,5 @@ function renderCluster2D(container, entries) {
         raw: e,
       })),
     })),
-  });
-}
-
-function renderGraph(data) {
-  const container = $('graphChart');
-  if (!container) return;
-  
-  const userNodes = data.user_nodes || [];
-  const topicNodes = data.topic_nodes || [];
-  const links = data.user_topic_links || [];
-
-  if (!userNodes.length && !topicNodes.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:80px 0">暂无用户-话题数据</div>';
-    return;
-  }
-
-  const topicConnCount = {};
-  links.forEach(l => {
-    const tId = (l.target || '').replace(/^t_/, '');
-    topicConnCount[tId] = (topicConnCount[tId] || 0) + 1;
-  });
-
-  const validTopicIds = new Set(Object.entries(topicConnCount).filter(([, c]) => c >= 2).map(([id]) => id));
-  const validLinks = links.filter(l => {
-    const tId = (l.target || '').replace(/^t_/, '');
-    return validTopicIds.has(tId);
-  });
-
-  const usedUserIds = new Set(validLinks.map(l => (l.source || '').replace(/^u_/, '')));
-  const usedTopicIds = new Set(validLinks.map(l => (l.target || '').replace(/^t_/, '')));
-
-  function userColor(engagement) {
-    if (engagement > 0.5) return '#3fb950';
-    if (engagement > 0.2) return '#58a6ff';
-    if (engagement > 0) return '#e3b341';
-    return '#8b949e';
-  }
-
-  const nodes = [
-    ...userNodes.filter(u => usedUserIds.has(u.user_id || u.id)).map(u => ({
-      id: 'u_' + (u.user_id || u.id),
-      name: u.name || u.user_id || u.id,
-      symbolSize: 12 + (u.engagement || 0) * 20,
-      itemStyle: { color: userColor(u.engagement || 0) },
-      category: 0,
-    })),
-    ...topicNodes.filter(t => usedTopicIds.has(t.id || t.topic_id)).map(t => ({
-      id: 't_' + (t.id || t.topic_id),
-      name: t.name || t.topic || t.id,
-      symbolSize: 14,
-      itemStyle: { color: '#a371f7' },
-      category: 1,
-    })),
-  ];
-
-  const graphLinks = validLinks.map(l => ({
-    source: l.source,
-    target: l.target,
-    lineStyle: { color: '#30363d', width: 1 },
-  }));
-
-  const chart = getChart(container);
-  if (chart) charts.push(chart);
-
-  setChartOption(container, {
-    backgroundColor: 'transparent',
-    tooltip: {
-      formatter: (p) => {
-        if (p.dataType === 'node') {
-          return `<b>${p.name}</b><br/>类别: ${p.category === 0 ? '用户' : '话题'}`;
-        }
-        return '';
-      },
-    },
-    legend: {
-      data: ['用户', '话题'],
-      textStyle: { color: '#8b949e', fontSize: 11 },
-      top: 0,
-    },
-    series: [{
-      type: 'graph',
-      layout: 'force',
-      roam: true,
-      draggable: true,
-      force: { repulsion: 120, edgeLength: [60, 160], gravity: 0.1 },
-      categories: [
-        { name: '用户' },
-        { name: '话题' },
-      ],
-      data: nodes,
-      links: graphLinks,
-      label: { show: true, fontSize: 11, color: '#c9d1d9' },
-      lineStyle: { opacity: 0.4, curveness: 0.1 },
-      emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
-    }],
   });
 }

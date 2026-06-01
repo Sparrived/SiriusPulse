@@ -4,6 +4,7 @@ import { toast, $ } from '../components.js';
 import { renderNeuralNav, navigateWithParams } from './memory-nav.js';
 
 let debounceTimer = null;
+let isMultiMode = false;
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -16,12 +17,34 @@ export async function init(container) {
   $('dsRefreshBtn')?.addEventListener('click', () => loadSlices());
   $('dsSelectAll')?.addEventListener('change', handleSelectAll);
   $('dsDeleteBtn')?.addEventListener('click', handleDeleteSelected);
+  $('dsMultiBtn')?.addEventListener('click', toggleMultiMode);
   $('dsSearch')?.addEventListener('input', () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => loadSlices(), 300);
   });
 
   await loadSlices();
+}
+
+function toggleMultiMode() {
+  isMultiMode = !isMultiMode;
+  const btn = $('dsMultiBtn');
+  const selectAllWrap = $('dsSelectAllWrap');
+
+  if (btn) btn.classList.toggle('active', isMultiMode);
+  if (selectAllWrap) selectAllWrap.classList.toggle('visible', isMultiMode);
+
+  document.querySelectorAll('.ds-slice-check').forEach(cb => {
+    cb.classList.toggle('visible', isMultiMode);
+  });
+  document.querySelectorAll('.ds-slice').forEach(slice => {
+    slice.classList.toggle('selecting', isMultiMode);
+  });
+
+  if (!isMultiMode) {
+    document.querySelectorAll('.ds-slice-check').forEach(cb => { cb.checked = false; });
+    updateDeleteButton();
+  }
 }
 
 async function loadSlices() {

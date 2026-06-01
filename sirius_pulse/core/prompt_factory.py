@@ -34,12 +34,6 @@ logger = logging.getLogger(__name__)
 
 # 所有发送给 LLM 的 section 标签统一定义在此，避免分散在各模块中不一致。
 TAG_IDENTITY_ANCHOR = "【身份锚定】"
-TAG_PERSONA_CORE = "【人格底色】"
-TAG_EMOTION_REACTION = "【情绪反应】"
-TAG_RELATIONSHIP_MODE = "【关系模式】"
-TAG_SPEECH_STYLE = "【说话方式】"
-TAG_RESPONSE_HABIT = "【回应习惯】"
-TAG_SCENE_BEHAVIOR = "【场景行为】"
 
 TAG_SCENE_LOCATION = "【场景定位】"
 TAG_IDENTITY_VERIFY = "【身份识别】"
@@ -76,6 +70,7 @@ TAG_GROUP_TABOO = "【群规禁忌】"
 TAG_ATMOSPHERE_TREND = "【氛围趋势】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
 TAG_GLOSSARY = "【名词解释】"
+TAG_MEMORY_SPEC = "【记忆规范】"
 
 # 钉住消息标签
 TAG_PINNED_MESSAGES = "【钉住的重要消息】"
@@ -223,31 +218,34 @@ class PromptFactory:
         if full_system_prompt:
             return full_system_prompt
 
-        sections: list[str] = []
+        # 构建身份锚定段落（合并人格底色、情绪反应、关系模式、说话方式、回应习惯）
+        identity_parts: list[str] = []
 
+        # 基本身份信息
         identity_lines = [f"你的名字是「{name}」"]
         if aliases:
             identity_lines.append(f"别名：{'、'.join(aliases)}")
-        identity_anchor = "，".join(identity_lines) + "。"
-        
-        if backstory:
-            identity_anchor += f"\n{backstory}"
-        elif persona_summary:
-            identity_anchor += f"\n{persona_summary}"
-        sections.append(f"{TAG_IDENTITY_ANCHOR}\n{identity_anchor}")
+        identity_parts.append("，".join(identity_lines) + "。")
 
-        identity_bits: list[str] = []
+        if backstory:
+            identity_parts.append(backstory)
+        elif persona_summary:
+            identity_parts.append(persona_summary)
+
+        # 人格底色
+        persona_bits: list[str] = []
         if personality_traits:
-            identity_bits.append(f"{'、'.join(personality_traits[:5])}")
+            persona_bits.append(f"{'、'.join(personality_traits[:5])}")
         if core_values:
-            identity_bits.append(f"骨子里看重{'、'.join(core_values[:3])}")
+            persona_bits.append(f"骨子里看重{'、'.join(core_values[:3])}")
         if flaws:
-            identity_bits.append(f"缺点也明显：{'、'.join(flaws[:3])}")
-        if identity_bits:
-            sections.append(
-                f"{TAG_PERSONA_CORE}\n{name}给人的整体感觉是{'，'.join(identity_bits)}。"
+            persona_bits.append(f"缺点也明显：{'、'.join(flaws[:3])}")
+        if persona_bits:
+            identity_parts.append(
+                f"{name}给人的整体感觉是{'，'.join(persona_bits)}。"
             )
 
+        # 情绪反应
         emo_lines: list[str] = []
         baseline = emotional_baseline or {}
         valence = baseline.get("valence", 0.0)
@@ -267,8 +265,9 @@ class PromptFactory:
         if empathy_style:
             emo_lines.append(f"安慰人的方式是{empathy_style}")
         if emo_lines:
-            sections.append(TAG_EMOTION_REACTION + "\n" + "；".join(emo_lines) + "。")
+            identity_parts.append("；".join(emo_lines) + "。")
 
+        # 关系模式
         rel_lines: list[str] = []
         if social_role:
             role_desc = {
@@ -283,8 +282,9 @@ class PromptFactory:
         if boundaries:
             rel_lines.append(f"原则：{'；'.join(boundaries[:3])}")
         if rel_lines:
-            sections.append(TAG_RELATIONSHIP_MODE + "\n" + "；".join(rel_lines) + "。")
+            identity_parts.append("；".join(rel_lines) + "。")
 
+        # 说话方式
         speech_bits: list[str] = []
         if communication_style:
             speech_bits.append(f"说话{communication_style}")
@@ -300,8 +300,9 @@ class PromptFactory:
             }
             speech_bits.append(humor_map.get(humor_style, f"幽默风格偏{humor_style}"))
         if speech_bits:
-            sections.append(TAG_SPEECH_STYLE + "\n" + "；".join(speech_bits) + "。")
+            identity_parts.append("；".join(speech_bits) + "。")
 
+        # 回应习惯
         silence_bits: list[str] = []
         freq_map = {
             "high": "看到消息基本都会回，话比较多",
@@ -315,16 +316,15 @@ class PromptFactory:
         if preferred_topics:
             silence_bits.append(f"聊到{'、'.join(preferred_topics[:3])}会特别来劲")
         if silence_bits:
-            sections.append(TAG_RESPONSE_HABIT + "\n" + "；".join(silence_bits) + "。")
+            identity_parts.append("；".join(silence_bits) + "。")
 
-        sections.append(
-            TAG_SCENE_BEHAVIOR + "\n"
+        # 场景行为指导
+        identity_parts.append(
             "你在一个多人聊天场景里，会收到其他人的消息。"
-            "不需要每条都回，按自己的性格和当下的情绪决定是否开口。"
             "回应时用自己的说话方式，不要刻意解释或总结。"
         )
 
-        prompt = "\n\n".join(sections)
+        prompt = f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
         if len(prompt) > 1200:
             prompt = prompt[:1197] + "…"
         return prompt
@@ -506,7 +506,8 @@ class PromptFactory:
             alias_hint = ""
             if aliases:
                 alias_hint = f"（别称：{'、'.join(aliases[:4])}）"
-            lines.append(f"关于{name}{alias_hint}：")
+            uid_hint = f"（{uid}）" if uid else ""
+            lines.append(f"关于{name}{uid_hint}{alias_hint}：")
 
             # 写入浓缩传记全文（short_bio 是人物介绍的核心内容）
             short_bio = getattr(card, "short_bio", "")
@@ -668,6 +669,15 @@ class PromptFactory:
     def build_current_time_section(now_str: str) -> str:
         """构建当前时间 section。"""
         return f"{TAG_CURRENT_TIME}{now_str}（北京时间）"
+
+    @staticmethod
+    def build_memory_spec_section() -> str:
+        """构建记忆规范 section。"""
+        return (
+            f"{TAG_MEMORY_SPEC}\n"
+            "1. 不凭空捏造对其他人的事实，不表述上下文没有展示的对他人的事实。\n"
+            "2. 可以根据既有上下文推断事件，但需要带有可能性的表述。"
+        )
 
     @staticmethod
     def build_taboo_section(taboo_topics: list[str]) -> str:

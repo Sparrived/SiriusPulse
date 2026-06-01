@@ -468,6 +468,52 @@ class EvolutionChain:
 
         return found
 
+    def shadow_alias(self, alias: str, user_id: str) -> bool:
+        """将指定别称记录标记为 shadow 状态。
+
+        Shadow 状态的记录不参与召回，但保留可追溯性。
+
+        Returns:
+            是否找到并标记了记录
+        """
+        if not alias or not alias.strip():
+            return False
+
+        alias_lower = alias.strip().lower()
+        records = self._alias_cache.get(alias_lower, [])
+        found = False
+
+        for record in records:
+            if record.subject_user_id == user_id and record.is_active:
+                record.status = RecordStatus.SHADOW
+                record.add_correction(
+                    old_value=record.obj,
+                    new_value="",
+                    reason="通过 Web UI 标记为 shadow",
+                )
+                self._store.save_record(record)
+                self._record_cache[record.record_id] = record
+
+                # 从索引中移除
+                subject_records = self._subject_index.get(record.subject, [])
+                if record.record_id in subject_records:
+                    subject_records.remove(record.record_id)
+
+                found = True
+                logger.info("Shadow 别称: %s → %s", alias_lower, user_id)
+
+        if found:
+            # 清理缓存
+            self._alias_cache[alias_lower] = [
+                r for r in records if not (
+                    r.subject_user_id == user_id and r.status == RecordStatus.SHADOW
+                )
+            ]
+            if not self._alias_cache[alias_lower]:
+                del self._alias_cache[alias_lower]
+
+        return found
+
     def decay_alias_records(self) -> None:
         """对别称记录进行时间衰减。
 

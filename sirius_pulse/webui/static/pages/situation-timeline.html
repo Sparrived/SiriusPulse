@@ -36,6 +36,7 @@
   }
   .sit-node {
     position: relative;
+    margin-bottom: 16px;
     opacity: 0;
     transform: translateY(8px);
     animation: sit-slide-in 0.4s ease forwards;
@@ -142,13 +143,34 @@
     align-items: center;
     gap: 12px;
   }
+  .sit-multi-btn {
+    background: rgba(0,255,200,0.08);
+    border: 1px solid rgba(0,255,200,0.2);
+    color: #00ffc8;
+    padding: 7px 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+  }
+  .sit-multi-btn:hover {
+    background: rgba(0,255,200,0.15);
+    box-shadow: 0 0 12px rgba(0,255,200,0.2);
+  }
+  .sit-multi-btn.active {
+    background: rgba(0,255,200,0.2);
+    border-color: rgba(0,255,200,0.4);
+  }
   .sit-select-all {
-    display: flex;
+    display: none;
     align-items: center;
     gap: 6px;
     font-size: 13px;
     color: var(--text-2);
     cursor: pointer;
+  }
+  .sit-select-all.visible {
+    display: flex;
   }
   .sit-select-all input[type="checkbox"] {
     accent-color: #00ffc8;
@@ -173,14 +195,24 @@
   }
   .sit-checkbox {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 16px;
+    left: 12px;
     z-index: 2;
     accent-color: #00ffc8;
     cursor: pointer;
+    opacity: 0;
+    transform: scale(0);
+    transition: all 0.2s ease;
+  }
+  .sit-checkbox.visible {
+    opacity: 1;
+    transform: scale(1);
   }
   .sit-node {
     position: relative;
+  }
+  .sit-node.selecting .sit-card {
+    padding-left: 36px;
   }
 </style>
 
@@ -190,10 +222,11 @@
       <span id="sitCount">0</span> 条情景记录
     </div>
     <div class="sit-toolbar">
-      <label class="sit-select-all">
+      <label class="sit-select-all" id="sitSelectAllWrap">
         <input type="checkbox" id="sitSelectAll"> 全选
       </label>
       <button class="sit-delete-btn" id="sitDeleteBtn">删除选中</button>
+      <button class="sit-multi-btn" id="sitMultiBtn">多选</button>
       <button class="sit-refresh" id="sitRefreshBtn">刷新</button>
     </div>
   </div>

@@ -164,7 +164,7 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
 async def api_evolution_records(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/memory/evolution — 演化链记录列表。"""
     name = _get_name(request)
-    db_path, _ = _open_db(persona_manager, name)
+    db_path, paths = _open_db(persona_manager, name)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
@@ -192,8 +192,34 @@ async def api_evolution_records(request: web.Request, persona_manager: Any) -> w
     records.sort(key=lambda r: r.extracted_at or "", reverse=True)
     records = records[offset:offset + limit]
 
+    # 预加载消息内容
+    messages_cache: dict[str, dict[str, Any]] = {}
+    if paths:
+        try:
+            from sirius_pulse.memory.basic.store import BasicMemoryFileStore
+            store = BasicMemoryFileStore(paths.dir)
+            # 收集所有需要的消息ID
+            all_msg_ids: set[str] = set()
+            for r in records:
+                all_msg_ids.update(r.source_message_ids)
+            # 批量加载消息
+            for group_dir in (paths.dir / "archive").glob("*.jsonl"):
+                group_id = group_dir.stem
+                for entry in store.read_all(group_id):
+                    if entry.entry_id in all_msg_ids:
+                        messages_cache[entry.entry_id] = {
+                            "entry_id": entry.entry_id,
+                            "speaker_name": entry.speaker_name,
+                            "role": entry.role,
+                            "content": entry.content[:200] + ("..." if len(entry.content) > 200 else ""),
+                            "timestamp": entry.timestamp,
+                            "group_id": entry.group_id,
+                        }
+        except Exception as exc:
+            LOG.debug("预加载消息内容失败: %s", exc)
+
     return _json_response({
-        "records": [_record_to_dict(r) for r in records],
+        "records": [_record_to_dict(r, messages_cache) for r in records],
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -240,8 +266,15 @@ async def api_evolution_uncertain(request: web.Request, persona_manager: Any) ->
     })
 
 
-def _record_to_dict(r: Any) -> dict[str, Any]:
+def _record_to_dict(r: Any, messages_cache: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """将 EvolutionRecord 转为 JSON 字典。"""
+    # 获取关联的消息内容
+    source_messages = []
+    if messages_cache and r.source_message_ids:
+        for msg_id in r.source_message_ids:
+            if msg_id in messages_cache:
+                source_messages.append(messages_cache[msg_id])
+
     return {
         "record_id": r.record_id,
         "subject": r.subject,
@@ -257,6 +290,7 @@ def _record_to_dict(r: Any) -> dict[str, Any]:
         "source_situation_id": r.source_situation_id,
         "source_group_id": r.source_group_id,
         "source_message_ids": r.source_message_ids,
+        "source_messages": source_messages,
         "extracted_at": r.extracted_at,
         "extracted_by_model": r.extracted_by_model,
         "verifications": r.verifications,
@@ -430,12 +464,13 @@ async def api_biography_view(request: web.Request, persona_manager: Any) -> web.
 async def api_biography_list_all(request: web.Request, persona_manager: Any) -> web.Response:
     """GET /api/personas/{name}/memory/biographies — 所有用户传记列表。"""
     name = _get_name(request)
-    db_path, _ = _open_db(persona_manager, name)
+    db_path, paths = _open_db(persona_manager, name)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
+    from sirius_pulse.memory.storage import MemoryStorage
 
     chain = EvolutionChain(db_path, read_only=True)
     bio_view = BiographyView(chain)
@@ -450,6 +485,16 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
         if r.subject_user_id:
             user_ids.add(r.subject_user_id)
 
+    # 从 aliases 表获取用户别名
+    memory_db_path = paths.dir / "memory.db"
+    storage = MemoryStorage(memory_db_path, read_only=True) if memory_db_path.exists() else None
+    user_aliases_map: dict[str, list[str]] = {}
+    if storage:
+        for uid in user_ids:
+            aliases = storage.get_aliases_by_user(uid, status="active")
+            user_aliases_map[uid] = [a["alias"] for a in aliases]
+        storage.close()
+
     bios: list[dict[str, Any]] = []
     for uid in user_ids:
         bio = bio_view.get_biography(uid)
@@ -459,6 +504,7 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
             "identity_anchors": bio.identity_anchors,
             "relationships": bio.relationships,
             "short_bio": bio.short_bio,
+            "aliases": user_aliases_map.get(uid, []),
             "active_fact_count": bio.active_fact_count,
             "superseded_fact_count": bio.superseded_fact_count,
             "uncertain_fact_count": bio.uncertain_fact_count,
