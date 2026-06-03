@@ -1019,43 +1019,57 @@ class _EmotionalGroupChatEngineBase:
 
             logger.info("[REPLY] 发现引用指令: %s", reply_matches)
 
-            # 获取最近的历史消息（用于查找引用内容）
+            # 获取所有历史消息（用于查找引用内容）
             gid = _req.group_id
-            recent_entries = _engine.basic_memory.get_all(gid)[-50:]
-            recent_user_entries = [
-                entry for entry in recent_entries
+            all_entries = _engine.basic_memory.get_all(gid)
+            all_user_entries = [
+                entry for entry in all_entries
                 if getattr(entry, "role", "") != "assistant"
             ]
-            if not recent_user_entries:
+            if not all_user_entries:
                 logger.info("[REPLY] 没有找到用户消息")
                 return
 
-            # 构建 index -> 消息内容的映射（与 prompt 中的倒排 index 保持一致）
-            total = len(recent_user_entries)
-            message_map: dict[int, dict[str, str]] = {}
-            for i, entry in enumerate(recent_user_entries):
+            # 构建两个映射：
+            # 1. index -> 消息内容（与 prompt 中的倒排 index 保持一致）
+            # 2. platform_message_id -> 消息内容
+            total = len(all_user_entries)
+            index_map: dict[int, dict[str, str]] = {}
+            msg_id_map: dict[str, dict[str, str]] = {}
+            for i, entry in enumerate(all_user_entries):
                 idx = total - i
                 msg_id = getattr(entry, "platform_message_id", "") or ""
-                message_map[idx] = {
+                msg_data = {
                     "content": getattr(entry, "content", "") or "",
                     "speaker": getattr(entry, "speaker_name", "")
                     or getattr(entry, "user_id", "unknown"),
                     "platform_message_id": msg_id,
                 }
-                # 只记录前几条消息，避免日志过多
-                if i < 3:
-                    logger.info("[REPLY] 消息 idx=%d, msg_id=%s, speaker=%s", idx, msg_id, message_map[idx]["speaker"])
+                index_map[idx] = msg_data
+                if msg_id:
+                    msg_id_map[msg_id] = msg_data
+
+            logger.info("[REPLY] 共 %d 条用户消息, %d 条有msg_id", len(all_user_entries), len(msg_id_map))
 
             # 处理每个 [REPLY:xxx] 指令
             processed_text = raw_text
             for match in reply_matches:
-                ref_index = int(match)
-                ref_msg = message_map.get(ref_index)
+                ref_id = match
+                # 优先通过 platform_message_id 查找
+                ref_msg = msg_id_map.get(ref_id)
+                if not ref_msg:
+                    # 如果找不到，尝试作为索引查找
+                    try:
+                        ref_index = int(ref_id)
+                        ref_msg = index_map.get(ref_index)
+                    except ValueError:
+                        pass
+
                 if ref_msg:
                     # 构建引用标记，供适配器层解析
                     msg_id = ref_msg.get("platform_message_id", "")
                     ref_marker = (
-                        f'[REF:index={ref_index} '
+                        f'[REF:index={ref_id} '
                         f'msg_id="{msg_id}" '
                         f'speaker="{ref_msg["speaker"]}" '
                         f'content="{ref_msg["content"][:100]}"]'
@@ -1067,7 +1081,7 @@ class _EmotionalGroupChatEngineBase:
                     )
                 else:
                     # 找不到对应消息，移除指令
-                    logger.info("[REPLY] 未找到 idx=%d 对应的消息", ref_index)
+                    logger.info("[REPLY] 未找到 id=%s 对应的消息", ref_id)
                     processed_text = processed_text.replace(
                         f'[REPLY:{match}]', '', 1
                     )
