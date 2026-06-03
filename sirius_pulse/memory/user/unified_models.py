@@ -71,8 +71,13 @@ class AliasEntry:
         """根据提及次数和来源计算基础置信度（对数增长）。"""
         if mentioned_count <= 0:
             return 0.0
-        initial = 0.50 if source == "napcat" else 0.30
-        base = min(0.95, initial + 0.20 * math.log2(mentioned_count))
+        if source == "manual":
+            initial = 0.95
+        elif source == "napcat":
+            initial = 0.50
+        else:
+            initial = 0.30
+        base = min(0.98, initial + 0.20 * math.log2(mentioned_count))
         return round(base, 4)
 
     @staticmethod
