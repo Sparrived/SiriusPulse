@@ -442,6 +442,8 @@ class ContextAssembler:
             from sirius_pulse.core.prompt_factory import PromptFactory
             msg_id = getattr(entry, "platform_message_id", "")
             group = getattr(entry, "group_id", "") if include_group else ""
+            safe_speaker = html.escape(entry.speaker_name or entry.user_id or "unknown", quote=True)
+            safe_user_id = html.escape(entry.user_id or "", quote=True)
             tagged = PromptFactory.tag_message(
                 entry.content or "",
                 speaker=entry.speaker_name or entry.user_id or "unknown",

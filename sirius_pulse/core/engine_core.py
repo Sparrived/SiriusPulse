@@ -1201,6 +1201,47 @@ class _EmotionalGroupChatEngineBase:
         if message.multimodal_inputs and self._is_pure_image_message(message.content):
             has_sticker = any(m.get("sub_type") == "1" for m in (message.multimodal_inputs or []))
             label = "动画表情" if has_sticker else "图片"
+
+            # 优化：对于纯动画表情消息，如果已有缓存，直接使用缓存的caption，
+            # 跳过 _cognition() 调用，避免不必要的LLM意图识别
+            cached_sticker_caption = ""
+            if has_sticker:
+                for m in (message.multimodal_inputs or []):
+                    if m.get("type") == "image" and m.get("sub_type") == "1":
+                        path = str(m.get("value", ""))
+                        cache_key = self.cognition_analyzer._image_cache_key(path)
+                        cache = self.cognition_analyzer._image_caption_cache
+                        if cache_key and cache_key in cache:
+                            cached_sticker_caption = cache[cache_key]
+                            break
+
+            if cached_sticker_caption:
+                # 缓存命中：直接使用缓存的caption，跳过_cognition()
+                self._log_inner_thought(f"{speaker} 发了一张{label}，缓存命中，直接记录～")
+                caption = cached_sticker_caption
+                recent = self.basic_memory.get_context(group_id, n=1)
+                if recent:
+                    last_entry = recent[0]
+                    # 动画表情：去掉无意义的文件哈希，替换为描述
+                    stripped = re.sub(
+                        r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)",
+                        "", last_entry.content or "",
+                    ).strip()
+                    sticker_tag = f"【动画表情：{caption}】"
+                    last_entry.content = (
+                        f"{stripped} {sticker_tag}" if stripped else sticker_tag
+                    )
+                    if last_entry.multimodal_inputs:
+                        for m in last_entry.multimodal_inputs:
+                            if m.get("type") == "image":
+                                m["caption"] = caption
+                return {
+                    "strategy": "silent",
+                    "reply": None,
+                    "emotion": {},
+                    "intent": {},
+                }
+
             self._log_inner_thought(f"{speaker} 发了一张{label}，我先默默记下来～")
             intent, emotion, memories, empathy = await self._cognition(
                 content,
