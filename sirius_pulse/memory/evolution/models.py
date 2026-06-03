@@ -68,6 +68,7 @@ class Triple:
     confidence: float = 0.5
     meta_tag: str = MetaTag.STATED
     source_message_id: str = ""
+    source_record_id: str = ""
     subject_user_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,6 +80,7 @@ class Triple:
             "confidence": self.confidence,
             "meta_tag": self.meta_tag,
             "source_message_id": self.source_message_id,
+            "source_record_id": self.source_record_id,
         }
 
     @classmethod
@@ -90,6 +92,7 @@ class Triple:
             confidence=float(data.get("confidence", 0.5)),
             meta_tag=data.get("meta_tag", MetaTag.STATED),
             source_message_id=data.get("source_message_id", ""),
+            source_record_id=data.get("source_record_id", ""),
             subject_user_id=data.get("subject_user_id", ""),
         )
 
@@ -232,6 +235,7 @@ class EvolutionRecord:
 class SituationSource:
     """情景来源：记录信息提取的上下文。"""
     type: str = "situation_extraction"
+    situation_id: str = ""
     group_id: str = ""
     model: str = ""
     message_ids: list[str] = field(default_factory=list)
@@ -239,6 +243,7 @@ class SituationSource:
     def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.type,
+            "situation_id": self.situation_id,
             "group_id": self.group_id,
             "model": self.model,
             "message_ids": list(self.message_ids),
@@ -248,6 +253,7 @@ class SituationSource:
     def from_dict(cls, data: dict[str, Any]) -> SituationSource:
         return cls(
             type=data.get("type", "situation_extraction"),
+            situation_id=data.get("situation_id", ""),
             group_id=data.get("group_id", ""),
             model=data.get("model", ""),
             message_ids=list(data.get("message_ids", [])),

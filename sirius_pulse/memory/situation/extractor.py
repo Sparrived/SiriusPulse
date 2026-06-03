@@ -19,6 +19,15 @@ from sirius_pulse.memory.evolution.models import (
     SituationSource,
     Triple,
 )
+from sirius_pulse.memory.provenance import (
+    ClaimAttribution,
+    ClaimStatus,
+    ClaimType,
+    Evidence,
+    ExtractionRun,
+    MemoryClaim,
+    ProvenanceStore,
+)
 from sirius_pulse.memory.situation.models import Situation
 
 logger = logging.getLogger(__name__)
@@ -96,6 +105,7 @@ class SituationExtractor:
         evolution_chain: EvolutionChain,
         storage: Any | None = None,
         user_manager: Any | None = None,
+        provenance_store: ProvenanceStore | None = None,
     ) -> Situation | None:
         """从消息中提取三元组并生成 Situation。
 
@@ -132,11 +142,13 @@ class SituationExtractor:
 
         # Step 1.5: 构建实体集合（user_id → display_name）
         known_entities: dict[str, str] = {}  # user_id → display_name
+        speaker_entry_ids: dict[str, list[str]] = {}
         for e in entries:
             uid = (e.user_id or "").strip()
             name = (e.speaker_name or "").strip()
             if uid:
                 known_entities[uid] = name or uid
+                speaker_entry_ids.setdefault(uid, []).append(e.entry_id)
 
         # Step 2: 结构化校验 + 实体校验 + 质量过滤（不信任 LLM 输出）
         validated_raw = []
@@ -193,9 +205,12 @@ class SituationExtractor:
             for s, p, o in validated_raw
         ]
 
+        situation_id = str(uuid.uuid4())[:8]
+
         # Step 5: 演化链验证（核心：不信任 LLM 输出）
         source = SituationSource(
             type="situation_extraction",
+            situation_id=situation_id,
             group_id=group_id,
             model=model_name,
             message_ids=[e.entry_id for e in entries],
@@ -225,7 +240,7 @@ class SituationExtractor:
         topics = self._extract_topics(accepted_records)
 
         situation = Situation(
-            situation_id=str(uuid.uuid4())[:8],
+            situation_id=situation_id,
             group_id=group_id,
             created_at=datetime.now(timezone.utc).isoformat(),
             triples=[self._record_to_triple(r) for r in accepted_records],
@@ -238,6 +253,18 @@ class SituationExtractor:
             validated_triple_count=len(accepted_records),
             rejected_triple_count=rejected_count,
         )
+
+        if provenance_store is not None:
+            self._persist_provenance(
+                provenance_store=provenance_store,
+                group_id=group_id,
+                entries=entries,
+                accepted_records=accepted_records,
+                model_name=model_name,
+                situation_id=situation_id,
+                speaker_entry_ids=speaker_entry_ids,
+                known_entities=known_entities,
+            )
 
         logger.info(
             "群 %s 情景提取完成: %d 个三元组通过验证, %d 个被拒绝",
@@ -331,10 +358,102 @@ class SituationExtractor:
             obj=record.obj,
             confidence=record.confidence,
             meta_tag=record.source_type,
+            source_record_id=record.record_id,
             source_message_id=record.source_message_ids[0]
             if record.source_message_ids
             else "",
+            subject_user_id=record.subject_user_id,
         )
+
+    @staticmethod
+    def _persist_provenance(
+        *,
+        provenance_store: ProvenanceStore,
+        group_id: str,
+        entries: list[BasicMemoryEntry],
+        accepted_records: list[Any],
+        model_name: str,
+        situation_id: str,
+        speaker_entry_ids: dict[str, list[str]],
+        known_entities: dict[str, str],
+    ) -> None:
+        evidence_by_entry: dict[str, Evidence] = {}
+        for entry in entries:
+            evidence = provenance_store.save_evidence(Evidence(
+                source_type="message",
+                group_id=group_id,
+                message_id=entry.entry_id,
+                platform_message_id=entry.platform_message_id,
+                speaker_user_id=entry.user_id,
+                speaker_name=entry.speaker_name,
+                content_quote=(entry.content or "")[:500],
+                observed_at=entry.timestamp,
+                metadata={"role": entry.role},
+            ))
+            evidence_by_entry[entry.entry_id] = evidence
+
+        run = provenance_store.save_run(ExtractionRun(
+            task="situation_extract",
+            model=model_name,
+            prompt_version="situation-triples-v1",
+            input_evidence_ids=[e.evidence_id for e in evidence_by_entry.values()],
+            metadata={"situation_id": situation_id, "group_id": group_id},
+        ))
+
+        for record in accepted_records:
+            if provenance_store.find_claim_by_source_record(record.record_id):
+                continue
+            subject_user_id = getattr(record, "subject_user_id", "") or getattr(record, "subject", "")
+            subject_entry_ids = speaker_entry_ids.get(subject_user_id, [])
+            if subject_entry_ids:
+                evidence_ids = [
+                    evidence_by_entry[eid].evidence_id
+                    for eid in subject_entry_ids
+                    if eid in evidence_by_entry
+                ]
+                attribution = ClaimAttribution.SELF_STATED
+                status = ClaimStatus.ACTIVE
+            else:
+                evidence_ids = [e.evidence_id for e in evidence_by_entry.values()]
+                attribution = ClaimAttribution.THIRD_PARTY_CLAIM
+                status = ClaimStatus.CANDIDATE
+
+            claim = MemoryClaim(
+                subject_user_id=subject_user_id,
+                subject_label=known_entities.get(subject_user_id, getattr(record, "subject", "")),
+                fact_type=SituationExtractor._fact_type_from_record(record),
+                value=f"{record.predicate}{record.obj}",
+                predicate=record.predicate,
+                object_value=record.obj,
+                status=status,
+                attribution=attribution,
+                confidence=record.confidence,
+                evidence_ids=evidence_ids,
+                extraction_run_id=run.run_id,
+                source="situation_extraction",
+                source_record_id=record.record_id,
+                source_situation_id=situation_id,
+                source_group_id=group_id,
+                observed_at=record.extracted_at,
+            )
+            provenance_store.save_claim(claim)
+
+    @staticmethod
+    def _fact_type_from_record(record: Any) -> str:
+        predicate = getattr(record, "predicate", "") or ""
+        if predicate == "别名":
+            return ClaimType.ALIAS
+        if any(p in predicate for p in ("住", "来自", "工作", "就读", "职业", "专业", "学校", "公司", "是")):
+            return ClaimType.IDENTITY
+        if any(p in predicate for p in ("喜欢", "爱吃", "爱好", "兴趣", "讨厌", "擅长")):
+            return ClaimType.PREFERENCE
+        if any(p in predicate for p in ("习惯", "常用")):
+            return ClaimType.HABIT
+        if any(p in predicate for p in ("朋友", "同事", "同学", "室友", "关系", "认识")):
+            return ClaimType.RELATIONSHIP
+        if any(p in predicate for p in ("最近", "正在", "计划", "准备")):
+            return ClaimType.LONG_STATE
+        return ClaimType.OTHER
 
     @staticmethod
     def _build_summary_from_records(records: list[Any]) -> str:

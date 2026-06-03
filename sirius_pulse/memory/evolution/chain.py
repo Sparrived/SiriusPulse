@@ -842,11 +842,11 @@ class EvolutionChain:
             confidence=triple.confidence,
             initial_confidence=triple.confidence,
             source_type=triple.meta_tag,
-            source_situation_id="",
+            source_situation_id=source.situation_id,
             source_group_id=source.group_id,
             source_message_ids=[triple.source_message_id]
             if triple.source_message_id
-            else [],
+            else list(source.message_ids),
             extracted_by_model=source.model,
         )
 

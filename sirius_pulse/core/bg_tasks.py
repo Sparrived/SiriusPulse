@@ -157,6 +157,7 @@ class BackgroundTasks:
                             evolution_chain=engine.evolution_chain,
                             storage=engine._memory_storage,
                             user_manager=engine.user_manager,
+                            provenance_store=getattr(engine, "provenance_store", None),
                         )
                         if situation:
                             engine.situation_store.save(situation)
@@ -190,6 +191,7 @@ class BackgroundTasks:
                                         evolution_chain=engine.evolution_chain,
                                         storage=engine._memory_storage,
                                         user_manager=engine.user_manager,
+                                        provenance_store=getattr(engine, "provenance_store", None),
                                     )
                                     if situation:
                                         engine.situation_store.save(situation)

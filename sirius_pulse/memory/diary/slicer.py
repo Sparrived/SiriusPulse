@@ -83,6 +83,8 @@ class DiarySlicer:
                 for t in sit.triples:
                     all_subjects.add(t.subject)
                     all_predicates.add(t.predicate)
+                    if getattr(t, "source_record_id", ""):
+                        all_record_ids.append(t.source_record_id)
                 all_participants.update(sit.participants)
                 all_situation_ids.append(sit.situation_id)
 
