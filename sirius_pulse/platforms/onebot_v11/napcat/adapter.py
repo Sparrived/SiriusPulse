@@ -928,7 +928,7 @@ class NapCatAdapter(BaseAdapter):
             try:
                 # 解析引用标记
                 clean_text, refs = self._parse_ref_markers(text)
-                LOG.debug("[REF] 解析引用标记: refs=%s, clean_text=%s", refs, clean_text[:100])
+                LOG.info("[REF] 解析引用标记: refs=%s, clean_text=%s", refs, clean_text[:100])
 
                 # 如果有引用且有有效的 msg_id，使用 reply segment
                 if refs and refs[0].get("msg_id"):
