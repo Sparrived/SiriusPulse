@@ -1017,6 +1017,8 @@ class _EmotionalGroupChatEngineBase:
             if not reply_matches:
                 return
 
+            logger.debug("[REPLY] 发现引用指令: %s", reply_matches)
+
             # 获取最近的历史消息（用于查找引用内容）
             gid = _req.group_id
             recent_entries = _engine.basic_memory.get_all(gid)[-50:]
@@ -1025,6 +1027,7 @@ class _EmotionalGroupChatEngineBase:
                 if getattr(entry, "role", "") != "assistant"
             ]
             if not recent_user_entries:
+                logger.debug("[REPLY] 没有找到用户消息")
                 return
 
             # 构建 index -> 消息内容的映射（与 prompt 中的倒排 index 保持一致）
@@ -1032,12 +1035,14 @@ class _EmotionalGroupChatEngineBase:
             message_map: dict[int, dict[str, str]] = {}
             for i, entry in enumerate(recent_user_entries):
                 idx = total - i
+                msg_id = getattr(entry, "platform_message_id", "") or ""
                 message_map[idx] = {
                     "content": getattr(entry, "content", "") or "",
                     "speaker": getattr(entry, "speaker_name", "")
                     or getattr(entry, "user_id", "unknown"),
-                    "platform_message_id": getattr(entry, "platform_message_id", "") or "",
+                    "platform_message_id": msg_id,
                 }
+                logger.debug("[REPLY] 消息 idx=%d, msg_id=%s, speaker=%s", idx, msg_id, message_map[idx]["speaker"])
 
             # 处理每个 [REPLY:xxx] 指令
             processed_text = raw_text
@@ -1053,12 +1058,14 @@ class _EmotionalGroupChatEngineBase:
                         f'speaker="{ref_msg["speaker"]}" '
                         f'content="{ref_msg["content"][:100]}"]'
                     )
+                    logger.debug("[REPLY] 构建引用标记: %s", ref_marker)
                     # 将 [REPLY:xxx] 替换为引用标记
                     processed_text = processed_text.replace(
                         f'[REPLY:{match}]', ref_marker, 1
                     )
                 else:
                     # 找不到对应消息，移除指令
+                    logger.debug("[REPLY] 未找到 idx=%d 对应的消息", ref_index)
                     processed_text = processed_text.replace(
                         f'[REPLY:{match}]', '', 1
                     )

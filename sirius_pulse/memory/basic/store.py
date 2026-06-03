@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
+
+# Windows文件替换重试配置
+_REPLACE_MAX_RETRIES = 3
+_REPLACE_RETRY_DELAY = 0.1  # 100ms
 
 
 class BasicMemoryFileStore:
@@ -24,6 +29,22 @@ class BasicMemoryFileStore:
         self._base_dir = layout.work_path / "archive"
         self._base_dir.mkdir(parents=True, exist_ok=True)
 
+    def _atomic_replace(self, tmp: Path, target: Path) -> None:
+        """原子替换文件，Windows下添加重试机制。"""
+        for attempt in range(_REPLACE_MAX_RETRIES):
+            try:
+                tmp.replace(target)
+                return
+            except PermissionError:
+                if attempt < _REPLACE_MAX_RETRIES - 1:
+                    logger.warning(
+                        "文件替换失败，重试中 (%d/%d): %s",
+                        attempt + 1, _REPLACE_MAX_RETRIES, target,
+                    )
+                    time.sleep(_REPLACE_RETRY_DELAY)
+                else:
+                    raise
+
     def append(self, entry: BasicMemoryEntry) -> None:
         """Atomically append a single entry to the group's archive file."""
         path = self._path(entry.group_id)
@@ -32,7 +53,7 @@ class BasicMemoryFileStore:
         # Read existing if any, append, then atomic replace
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         tmp.write_text(existing + line, encoding="utf-8")
-        tmp.replace(path)
+        self._atomic_replace(tmp, path)
 
     def append_batch(self, group_id: str, entries: list[BasicMemoryEntry]) -> None:
         """Atomically append multiple entries."""
@@ -43,7 +64,7 @@ class BasicMemoryFileStore:
         tmp = path.with_suffix(path.suffix + ".tmp")
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         tmp.write_text(existing + lines, encoding="utf-8")
-        tmp.replace(path)
+        self._atomic_replace(tmp, path)
 
     def read_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Read all archived entries for a group."""

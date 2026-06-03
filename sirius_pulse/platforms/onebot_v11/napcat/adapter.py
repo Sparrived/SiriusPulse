@@ -928,6 +928,7 @@ class NapCatAdapter(BaseAdapter):
             try:
                 # 解析引用标记
                 clean_text, refs = self._parse_ref_markers(text)
+                LOG.debug("[REF] 解析引用标记: refs=%s, clean_text=%s", refs, clean_text[:100])
 
                 # 如果有引用且有有效的 msg_id，使用 reply segment
                 if refs and refs[0].get("msg_id"):
@@ -952,7 +953,7 @@ class NapCatAdapter(BaseAdapter):
                         ref_lines.append(f"> {speaker}: {content}")
                     formatted_reply = "\n".join(ref_lines) + "\n" + clean_text
                     await self.send_group_msg(group_id, formatted_reply)
-                    LOG.info("回复群 %s: %s", group_id, formatted_reply[:120])
+                    LOG.info("回复群 %s (引用但无msg_id): %s", group_id, formatted_reply[:120])
                 else:
                     await self.send_group_msg(group_id, clean_text)
                     LOG.info("回复群 %s: %s", group_id, clean_text[:120])
