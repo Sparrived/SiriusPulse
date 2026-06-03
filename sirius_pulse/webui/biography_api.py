@@ -16,14 +16,45 @@ def _create_manager(paths: Any, persona_name: str):
     """创建 UnifiedUserManager 实例。"""
     from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
-    return UnifiedUserManager(work_path=paths.dir, persona_name=persona_name)
+    db_path = paths.dir / "persona.db"
+    if not db_path.exists():
+        db_path = paths.dir / "memory.db"
+    return UnifiedUserManager(
+        work_path=paths.dir,
+        persona_name=persona_name,
+        db_path=db_path,
+    )
 
 
 def _get_storage(paths: Any):
     """获取 MemoryStorage 实例。"""
     from sirius_pulse.memory.storage import MemoryStorage
-    db_path = paths.dir / "memory.db"
+    db_path = paths.dir / "persona.db"
+    if not db_path.exists():
+        db_path = paths.dir / "memory.db"
     return MemoryStorage(db_path)
+
+
+def _get_provenance_store(paths: Any):
+    from sirius_pulse.memory.provenance.store import ProvenanceStore
+    db_path = paths.dir / "persona.db"
+    if not db_path.exists():
+        return None
+    return ProvenanceStore(db_path)
+
+
+def _set_alias_claim_status(paths: Any, alias: str, user_id: str, status: str) -> None:
+    store = _get_provenance_store(paths)
+    if store is None:
+        return
+    try:
+        claim = store.find_claim_by_source_record(f"alias:{alias}:{user_id}")
+        if not claim:
+            return
+        claim.status = status
+        store.save_claim(claim)
+    finally:
+        store.close()
 
 
 async def api_persona_biography_list(
@@ -124,11 +155,15 @@ async def api_persona_biography_alias_index_update(
     if action == "delete":
         storage.delete_alias_entry(alias, user_id)
         storage.close()
+        from sirius_pulse.memory.provenance.models import ClaimStatus
+        _set_alias_claim_status(paths, alias, user_id, ClaimStatus.REJECTED)
         return _json_response({"success": True})
 
     if action == "shadow":
         storage.shadow_alias_entry(alias, user_id)
         storage.close()
+        from sirius_pulse.memory.provenance.models import ClaimStatus
+        _set_alias_claim_status(paths, alias, user_id, ClaimStatus.SHADOW)
         return _json_response({"success": True})
 
     # action == "add" (default)
@@ -136,15 +171,14 @@ async def api_persona_biography_alias_index_update(
         storage.close()
         return _json_response({"error": "缺少 user_id 参数"}, 400)
 
-    from datetime import datetime, timezone
-    now_iso = datetime.now(timezone.utc).isoformat()
-    storage.save_alias_entry({
-        "alias": alias,
-        "user_id": user_id,
-        "user_name": user_name,
-        "source": "manual",
-        "first_seen_at": now_iso,
-        "last_seen_at": now_iso,
-    })
     storage.close()
+    provenance = _get_provenance_store(paths)
+    mgr = _create_manager(paths, name)
+    mgr.set_provenance_store(provenance)
+    try:
+        mgr.register_alias(alias, user_id, user_name or user_id, source="manual")
+    finally:
+        mgr.close()
+        if provenance is not None:
+            provenance.close()
     return _json_response({"success": True})

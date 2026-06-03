@@ -14,6 +14,7 @@ from sirius_pulse.memory.provenance import (
     MemoryClaim,
     ProvenanceStore,
 )
+from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 
 
 def test_evidence_when_same_source_snapshot_saved_then_deduplicates(tmp_path):
@@ -110,6 +111,28 @@ def test_read_only_store_when_provenance_tables_do_not_exist_then_returns_empty_
     assert store.list_claims() == ([], 0)
     assert store.get_claim("missing") is None
     assert store.list_subject_user_ids() == []
+
+
+def test_alias_registration_when_llm_then_manual_then_claim_is_upgraded(tmp_path):
+    db_path = tmp_path / "persona.db"
+    store = ProvenanceStore(db_path)
+    manager = UnifiedUserManager(db_path=db_path, provenance_store=store)
+
+    manager.register_alias("alicey", "u1", "Alice", "g1", source="llm_discovery")
+    claim = store.find_claim_by_source_record("alias:alicey:u1")
+
+    assert claim is not None
+    assert claim.status == ClaimStatus.CANDIDATE
+    assert claim.attribution == ClaimAttribution.INFERRED
+
+    manager.register_alias("alicey", "u1", "Alice", "g1", source="manual")
+    upgraded = store.find_claim_by_source_record("alias:alicey:u1")
+
+    assert upgraded is not None
+    assert upgraded.claim_id == claim.claim_id
+    assert upgraded.status == ClaimStatus.ACTIVE
+    assert upgraded.attribution == ClaimAttribution.MANUAL
+    assert upgraded.profile_safe is True
 
 
 def test_migration_when_legacy_tables_exist_then_creates_typed_claims_idempotently(tmp_path):

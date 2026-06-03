@@ -7,7 +7,9 @@ import pytest
 from sirius_pulse.memory.diary.slicer import DiarySlicer
 from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.evolution.models import MetaTag, SituationSource, Triple
+from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.memory.situation.models import Situation
+from sirius_pulse.memory.situation.extractor import SituationExtractor
 
 
 @pytest.mark.asyncio
@@ -62,3 +64,41 @@ async def test_diary_slicer_carries_source_record_ids_from_situation_triples():
     )
 
     assert slices[0].source_record_ids == ["rec1"]
+
+
+def test_situation_provenance_only_marks_subject_authored_matching_message_as_self_stated():
+    entries = [
+        BasicMemoryEntry(
+            entry_id="m1",
+            group_id="g1",
+            user_id="u1",
+            role="human",
+            content="今天天气真不错",
+            timestamp="2026-01-01T00:00:00+00:00",
+            speaker_name="Alice",
+        ),
+        BasicMemoryEntry(
+            entry_id="m2",
+            group_id="g1",
+            user_id="u2",
+            role="human",
+            content="Alice 住在深圳",
+            timestamp="2026-01-01T00:00:01+00:00",
+            speaker_name="Bob",
+        ),
+    ]
+
+    assert SituationExtractor._self_stated_entry_ids(
+        entries=entries,
+        subject_user_id="u1",
+        predicate="住在",
+        obj="深圳",
+    ) == []
+
+    entries[0].content = "我住在深圳"
+    assert SituationExtractor._self_stated_entry_ids(
+        entries=entries,
+        subject_user_id="u1",
+        predicate="住在",
+        obj="深圳",
+    ) == ["m1"]

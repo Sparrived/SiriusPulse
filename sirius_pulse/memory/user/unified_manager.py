@@ -30,6 +30,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _alias_source_rank(source: str) -> int:
+    if source == "manual":
+        return 3
+    if source == "napcat":
+        return 2
+    if source == "llm_discovery":
+        return 1
+    return 0
+
+
 def _days_since(iso_dt: str, default: float = 30.0) -> float:
     """计算从 iso 时间到现在过去了多少天。"""
     if not iso_dt:
@@ -64,6 +74,7 @@ class UnifiedUserManager:
         db_path: Path | str | None = None,
         *,
         conn: sqlite3.Connection | None = None,
+        provenance_store: Any | None = None,
     ) -> None:
         self._work_path = Path(work_path) if work_path else None
 
@@ -93,6 +104,7 @@ class UnifiedUserManager:
         # 别名索引（懒加载 + 写穿缓存）
         self._alias_index: dict[str, list[AliasEntry]] = {}
         self._aliases_loaded = False
+        self._provenance_store = provenance_store
 
     # ── 懒加载 ─────────────────────────────────────────
 
@@ -142,6 +154,82 @@ class UnifiedUserManager:
             "last_seen_at": entry.last_seen_at,
             "source": entry.source,
         })
+        self._save_alias_claim(alias, entry)
+
+    def set_provenance_store(self, provenance_store: Any | None) -> None:
+        """Attach the evidence ledger used by online alias writes."""
+        self._provenance_store = provenance_store
+
+    def _save_alias_claim(self, alias: str, entry: AliasEntry) -> None:
+        store = self._provenance_store
+        if store is None or not alias or not entry.user_id:
+            return
+
+        from sirius_pulse.memory.provenance.models import (
+            ClaimAttribution,
+            ClaimStatus,
+            ClaimType,
+            ExtractionRun,
+            MemoryClaim,
+        )
+
+        source_key = f"alias:{alias}:{entry.user_id}"
+        existing = store.find_claim_by_source_record(source_key)
+        existing_status = (
+            getattr(existing.status, "value", existing.status)
+            if existing else ""
+        )
+        if (
+            existing_status in {ClaimStatus.REJECTED.value, ClaimStatus.SHADOW.value}
+            and entry.source != "manual"
+        ):
+            return
+
+        if entry.source == "manual":
+            status = ClaimStatus.ACTIVE
+            attribution = ClaimAttribution.MANUAL
+        elif entry.source == "napcat":
+            status = ClaimStatus.ACTIVE
+            attribution = ClaimAttribution.SECOND_PERSON_CONFIRMED
+        else:
+            status = ClaimStatus.CANDIDATE
+            attribution = ClaimAttribution.INFERRED
+
+        run_id = existing.extraction_run_id if existing else ""
+        if not run_id:
+            run = store.save_run(ExtractionRun(
+                task="alias_register",
+                model="alias_index",
+                prompt_version="provenance-v1",
+                metadata={"source": entry.source},
+            ))
+            run_id = run.run_id
+
+        kwargs = {
+            "subject_user_id": entry.user_id,
+            "subject_label": entry.user_name or entry.user_id,
+            "fact_type": ClaimType.ALIAS,
+            "value": alias,
+            "predicate": "别名",
+            "object_value": alias,
+            "status": status,
+            "attribution": attribution,
+            "confidence": entry.confidence,
+            "evidence_ids": list(existing.evidence_ids) if existing else [],
+            "extraction_run_id": run_id,
+            "source": "alias_index",
+            "source_record_id": source_key,
+            "source_group_id": ",".join(entry.groups),
+            "observed_at": entry.last_seen_at or entry.first_seen_at,
+            "metadata": {
+                "groups": list(entry.groups),
+                "mentioned_count": entry.mentioned_count,
+                "alias_source": entry.source,
+            },
+        }
+        if existing:
+            kwargs["claim_id"] = existing.claim_id
+        store.save_claim(MemoryClaim(**kwargs))
 
     def reload(self) -> None:
         """强制从 SQLite 重新加载所有数据。"""
@@ -476,6 +564,8 @@ class UnifiedUserManager:
         for entry in self._alias_index[alias_lower]:
             if entry.user_id == user_id:
                 entry.mentioned_count += 1
+                if _alias_source_rank(source) > _alias_source_rank(entry.source):
+                    entry.source = source
                 entry.confidence = AliasEntry.compute_confidence(
                     entry.mentioned_count, entry.source
                 )

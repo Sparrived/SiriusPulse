@@ -200,6 +200,7 @@ class _EmotionalGroupChatEngineBase:
             embedding_client=self._embedding_client,
         )
         self.provenance_store = ProvenanceStore(conn=self._persona_db_conn)
+        self.user_manager.set_provenance_store(self.provenance_store)
         try:
             migrated = self.provenance_store.migrate_from_legacy_tables()
             if any(migrated.values()):

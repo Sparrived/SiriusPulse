@@ -436,7 +436,13 @@ class EnginePersistence:
                 try:
                     from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
                     # 使用新的 UnifiedUserManager 加载旧格式数据
-                    engine.user_manager = UnifiedUserManager(work_path=engine.work_path)
+                    engine.user_manager = UnifiedUserManager(
+                        work_path=engine.work_path,
+                        persona_name=getattr(getattr(engine, "persona", None), "name", ""),
+                        persona_aliases=getattr(getattr(engine, "persona", None), "aliases", []),
+                        conn=getattr(engine, "_persona_db_conn", None),
+                        provenance_store=getattr(engine, "provenance_store", None),
+                    )
                     engine.user_manager._load_user_manager_data(user_mgr_data)  # type: ignore[attr-defined]
                 except Exception as exc:
                     logger.warning("用户管理器恢复失败，使用空实例: %s", exc)

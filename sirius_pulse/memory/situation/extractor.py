@@ -404,7 +404,13 @@ class SituationExtractor:
             if provenance_store.find_claim_by_source_record(record.record_id):
                 continue
             subject_user_id = getattr(record, "subject_user_id", "") or getattr(record, "subject", "")
-            subject_entry_ids = speaker_entry_ids.get(subject_user_id, [])
+            value = f"{record.predicate}{record.obj}"
+            subject_entry_ids = SituationExtractor._self_stated_entry_ids(
+                entries=entries,
+                subject_user_id=subject_user_id,
+                predicate=record.predicate,
+                obj=record.obj,
+            )
             if subject_entry_ids:
                 evidence_ids = [
                     evidence_by_entry[eid].evidence_id
@@ -422,7 +428,7 @@ class SituationExtractor:
                 subject_user_id=subject_user_id,
                 subject_label=known_entities.get(subject_user_id, getattr(record, "subject", "")),
                 fact_type=SituationExtractor._fact_type_from_record(record),
-                value=f"{record.predicate}{record.obj}",
+                value=value,
                 predicate=record.predicate,
                 object_value=record.obj,
                 status=status,
@@ -454,6 +460,50 @@ class SituationExtractor:
         if any(p in predicate for p in ("最近", "正在", "计划", "准备")):
             return ClaimType.LONG_STATE
         return ClaimType.OTHER
+
+    @staticmethod
+    def _self_stated_entry_ids(
+        *,
+        entries: list[BasicMemoryEntry],
+        subject_user_id: str,
+        predicate: str,
+        obj: str,
+    ) -> list[str]:
+        """Return subject-authored messages that visibly support a claim."""
+        if not subject_user_id:
+            return []
+
+        predicate = (predicate or "").strip()
+        obj = (obj or "").strip()
+        if not obj:
+            return []
+
+        result: list[str] = []
+        for entry in entries:
+            if (entry.user_id or "").strip() != subject_user_id:
+                continue
+            text = (entry.content or "").strip()
+            if not text:
+                continue
+            if SituationExtractor._message_supports_self_claim(text, predicate, obj):
+                result.append(entry.entry_id)
+        return result
+
+    @staticmethod
+    def _message_supports_self_claim(text: str, predicate: str, obj: str) -> bool:
+        lowered = text.lower()
+        obj_lower = obj.lower()
+        value = f"{predicate}{obj}".lower()
+        if value and value in lowered:
+            return True
+
+        first_person_markers = ("我", "咱", "本人", "自己")
+        has_first_person = any(marker in text for marker in first_person_markers)
+        predicate_lower = predicate.lower()
+        if obj_lower and obj_lower in lowered and (has_first_person or predicate_lower in lowered):
+            compact = "".join(text.split())
+            return bool(obj and obj in compact)
+        return False
 
     @staticmethod
     def _build_summary_from_records(records: list[Any]) -> str:
