@@ -43,6 +43,7 @@ from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.diary import DiaryManager
 from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.glossary import GlossaryManager
+from sirius_pulse.memory.provenance import ProvenanceStore
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.situation.extractor import SituationExtractor
 from sirius_pulse.memory.situation.store import SituationStore
@@ -198,6 +199,13 @@ class _EmotionalGroupChatEngineBase:
             conn=self._persona_db_conn,
             embedding_client=self._embedding_client,
         )
+        self.provenance_store = ProvenanceStore(conn=self._persona_db_conn)
+        try:
+            migrated = self.provenance_store.migrate_from_legacy_tables()
+            if any(migrated.values()):
+                logger.info("记忆证据账本迁移完成: %s", migrated)
+        except Exception as exc:
+            logger.warning("记忆证据账本迁移失败: %s", exc)
         self.situation_store = SituationStore(
             conn=self._persona_db_conn,
         )
@@ -205,6 +213,7 @@ class _EmotionalGroupChatEngineBase:
         self.biography_view = BiographyView(
             self.evolution_chain,
             user_manager=self.user_manager,
+            provenance_store=self.provenance_store,
         )
         self.cold_detector = ColdDetector()
 

@@ -1,6 +1,6 @@
 """传记视图数据模型。
 
-UserBiography 从演化链 active 三元组自动派生，不存储独立数据。
+UserBiography 是当前记忆账本的投影视图，不作为真相源存储。
 """
 
 from __future__ import annotations
@@ -16,16 +16,16 @@ def _now_iso() -> str:
 
 @dataclass
 class UserBiography:
-    """用户传记：演化链的投影。
+    """用户传记：证据账本 / 演化链的投影。
 
-    不存储独立数据，所有信息从 EvolutionChain 的 active 三元组派生。
-    当演化链中的三元组被 supersede 时，传记自动更新。
+    不存储独立数据，优先从 provenance active claims 派生；
+    没有新账本数据时 fallback 到 EvolutionChain。
     """
 
     user_id: str = ""
     name: str = ""
 
-    # ── 从演化链 active 三元组生成 ──
+    # ── 从 active claims / active 三元组生成 ──
     identity_anchors: list[str] = field(default_factory=list)
     relationships: list[dict[str, str]] = field(default_factory=list)
     short_bio: str = ""
@@ -34,6 +34,7 @@ class UserBiography:
     aliases: list[str] = field(default_factory=list)
 
     # ── 来源追溯 ──
+    source_claim_ids: list[str] = field(default_factory=list)
     source_record_ids: list[str] = field(default_factory=list)
 
     # ── 统计 ──
@@ -50,6 +51,7 @@ class UserBiography:
             "relationships": list(self.relationships),
             "short_bio": self.short_bio,
             "aliases": list(self.aliases),
+            "source_claim_ids": list(self.source_claim_ids),
             "source_record_ids": list(self.source_record_ids),
             "active_fact_count": self.active_fact_count,
             "superseded_fact_count": self.superseded_fact_count,
@@ -66,6 +68,7 @@ class UserBiography:
             relationships=list(data.get("relationships", [])),
             short_bio=data.get("short_bio", ""),
             aliases=list(data.get("aliases", [])),
+            source_claim_ids=list(data.get("source_claim_ids", [])),
             source_record_ids=list(data.get("source_record_ids", [])),
             active_fact_count=int(data.get("active_fact_count", 0)),
             superseded_fact_count=int(data.get("superseded_fact_count", 0)),

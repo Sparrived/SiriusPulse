@@ -446,6 +446,9 @@ class EnginePersistence:
             engine.context_assembler = ContextAssembler(
                 engine.basic_memory,
                 engine.diary_manager._retriever,
+                situation_store=getattr(engine, "situation_store", None),
+                biography_view=getattr(engine, "biography_view", None),
+                slice_retriever=getattr(engine, "slice_retriever", None),
             )
 
             # Token usage records

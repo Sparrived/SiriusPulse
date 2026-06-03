@@ -1,7 +1,7 @@
-"""传记视图：从演化链自动派生用户传记。
+"""传记视图：从证据账本自动派生用户传记。
 
-不存储独立数据，所有信息来自 EvolutionChain 的 active 三元组。
-当演化链中的三元组被 supersede 时，传记自动更新。
+不存储独立数据。优先从 provenance active/profile-safe claims 派生；
+没有新账本数据时 fallback 到 EvolutionChain 的 active 三元组。
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from typing import Any
 from sirius_pulse.memory.biography.models import UserBiography
 from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.evolution.models import EvolutionRecord, RecordStatus
+from sirius_pulse.memory.provenance.models import ClaimStatus, ClaimType, MemoryClaim
+from sirius_pulse.memory.provenance.store import ProvenanceStore
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +37,21 @@ _PREFERENCE_PREDICATES = {
 
 
 class BiographyView:
-    """传记视图：演化链的投影。
+    """传记视图：证据账本的投影。
 
-    从 EvolutionChain 的 active 三元组自动派生用户传记。
-    不存储独立数据，所有信息实时计算。
+    从 ProvenanceStore 的强归属 active claims 自动派生用户传记。
+    旧 EvolutionChain 作为兼容 fallback。
     """
 
     def __init__(
         self,
         evolution_chain: EvolutionChain,
         user_manager: Any | None = None,
+        provenance_store: ProvenanceStore | None = None,
     ) -> None:
         self._chain = evolution_chain
         self._user_manager = user_manager
+        self._provenance = provenance_store
         self._cache: dict[str, UserBiography] = {}
 
         # 注册纠正回调：当演化链中的记录被 supersede 时，自动清除相关缓存
@@ -63,13 +67,21 @@ class BiographyView:
             del self._cache[subject]
 
     def get_biography(self, user_id: str) -> UserBiography:
-        """获取用户传记（从演化链实时计算）。
+        """获取用户传记（从证据账本实时计算）。
 
-        如果缓存命中则直接返回，否则从演化链计算。
-        优先按 user_id 查询，fallback 到 subject 查询。
+        如果缓存命中则直接返回；优先从 provenance claims 计算，
+        没有强归属 claim 时 fallback 到 EvolutionChain。
         """
         if user_id in self._cache:
             return self._cache[user_id]
+
+        if self._provenance is not None:
+            claims = self._provenance.get_active_profile_claims(user_id)
+            if claims:
+                all_claims = self._provenance.get_claims_for_user(user_id, limit=1000)
+                bio = self._synthesize_from_claims(user_id, claims, all_claims)
+                self._cache[user_id] = bio
+                return bio
 
         # 优先按 user_id 查询（别名系统关联）
         active_records = self._chain.get_active_by_user_id(user_id)
@@ -142,6 +154,54 @@ class BiographyView:
             short_bio=short_bio,
             source_record_ids=[r.record_id for r in active_records],
             active_fact_count=active_count,
+            superseded_fact_count=superseded_count,
+            uncertain_fact_count=uncertain_count,
+        )
+
+    def _synthesize_from_claims(
+        self,
+        user_id: str,
+        active_claims: list[MemoryClaim],
+        all_claims: list[MemoryClaim],
+    ) -> UserBiography:
+        """从强归属 active claims 合成传记。"""
+        identity_claims: list[MemoryClaim] = []
+        relationship_claims: list[MemoryClaim] = []
+        preference_claims: list[MemoryClaim] = []
+        state_claims: list[MemoryClaim] = []
+
+        for claim in active_claims:
+            if claim.fact_type == ClaimType.IDENTITY:
+                identity_claims.append(claim)
+            elif claim.fact_type == ClaimType.RELATIONSHIP:
+                relationship_claims.append(claim)
+            elif claim.fact_type in (ClaimType.PREFERENCE, ClaimType.HABIT):
+                preference_claims.append(claim)
+            elif claim.fact_type == ClaimType.LONG_STATE:
+                state_claims.append(claim)
+
+        name = self._get_name_from_claims(user_id, identity_claims)
+        identity_anchors = self._build_claim_anchors(identity_claims + state_claims)
+        relationships = self._build_claim_relationships(relationship_claims)
+        short_bio = self._build_claim_summary(
+            name, identity_claims, relationship_claims, preference_claims, state_claims
+        )
+
+        superseded_count = sum(
+            1 for c in all_claims if c.status == ClaimStatus.SUPERSEDED
+        )
+        uncertain_count = sum(
+            1 for c in all_claims if c.status == ClaimStatus.CANDIDATE
+        )
+
+        return UserBiography(
+            user_id=user_id,
+            name=name,
+            identity_anchors=identity_anchors,
+            relationships=relationships,
+            short_bio=short_bio,
+            source_claim_ids=[c.claim_id for c in active_claims],
+            active_fact_count=len(active_claims),
             superseded_fact_count=superseded_count,
             uncertain_fact_count=uncertain_count,
         )
@@ -228,6 +288,72 @@ class BiographyView:
         return "。".join(parts) if parts else ""
 
     # ── 工具方法 ──
+
+    @staticmethod
+    def _build_claim_anchors(claims: list[MemoryClaim]) -> list[str]:
+        anchors: list[str] = []
+        for claim in claims:
+            value = claim.value or claim.object_value
+            if value and value not in anchors:
+                anchors.append(value)
+        return anchors[:10]
+
+    @staticmethod
+    def _build_claim_relationships(claims: list[MemoryClaim]) -> list[dict[str, str]]:
+        relationships: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for claim in claims:
+            target = claim.object_value or claim.value
+            relation = claim.predicate or "关系"
+            key = f"{relation}|{target}"
+            if key in seen:
+                continue
+            seen.add(key)
+            relationships.append({
+                "target": target,
+                "relation": relation,
+                "fact_hint": claim.value or f"{relation}{target}",
+                "claim_id": claim.claim_id,
+            })
+        return relationships[:10]
+
+    @staticmethod
+    def _build_claim_summary(
+        name: str,
+        identity_claims: list[MemoryClaim],
+        relationship_claims: list[MemoryClaim],
+        preference_claims: list[MemoryClaim],
+        state_claims: list[MemoryClaim],
+    ) -> str:
+        parts: list[str] = []
+        identity_values = [c.value for c in identity_claims[:3] if c.value]
+        state_values = [c.value for c in state_claims[:2] if c.value]
+        relationship_values = [c.value for c in relationship_claims[:2] if c.value]
+        preference_values = [c.value for c in preference_claims[:2] if c.value]
+
+        if identity_values:
+            parts.append(f"{name}{'；'.join(identity_values)}")
+        if state_values:
+            parts.append(f"近期状态：{'；'.join(state_values)}")
+        if relationship_values:
+            parts.append(f"关系：{'；'.join(relationship_values)}")
+        if preference_values:
+            parts.append(f"偏好/习惯：{'；'.join(preference_values)}")
+        return "。".join(parts)
+
+    def _get_name_from_claims(
+        self, user_id: str, identity_claims: list[MemoryClaim]
+    ) -> str:
+        if self._user_manager:
+            user = self._user_manager.get_user(user_id)
+            if user and user.name:
+                return user.name
+        for claim in identity_claims:
+            if claim.predicate in ("叫", "名字") and claim.object_value:
+                return claim.object_value
+            if claim.subject_label and len(claim.subject_label) <= 10:
+                return claim.subject_label
+        return user_id
 
     def _get_name(
         self, user_id: str, identity_facts: list[EvolutionRecord]

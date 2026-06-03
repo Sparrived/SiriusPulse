@@ -16,6 +16,15 @@ from sirius_pulse.memory.evolution import (
 )
 from sirius_pulse.memory.situation import Situation, SituationStore, SituationExtractor
 from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
+from sirius_pulse.memory.provenance import (
+    ClaimAttribution,
+    ClaimStatus,
+    ClaimType,
+    Evidence,
+    ExtractionRun,
+    MemoryClaim,
+    ProvenanceStore,
+)
 
 __all__ = [
     "BasicMemoryManager",
@@ -41,4 +50,11 @@ __all__ = [
     "SituationExtractor",
     "ColdDetector",
     "ColdState",
+    "ClaimAttribution",
+    "ClaimStatus",
+    "ClaimType",
+    "Evidence",
+    "ExtractionRun",
+    "MemoryClaim",
+    "ProvenanceStore",
 ]
