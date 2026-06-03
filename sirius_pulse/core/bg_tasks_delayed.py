@@ -493,6 +493,9 @@ class DelayedQueueTasks:
 
         final_reply = clean_reply or (partial_replies[-1] if partial_replies else "")
 
+        # 获取引用回复信息
+        reply_references = chat_result.reply_references if chat_result else []
+
         # Emit event with full reply data for external delivery
         await engine.event_bus.emit(
             SessionEvent(
@@ -512,6 +515,7 @@ class DelayedQueueTasks:
                 "item_id": triggered[0].item_id,
                 "reply": final_reply,
                 "partial_replies": partial_replies,
+                "reply_references": reply_references,
             }
         ]
 

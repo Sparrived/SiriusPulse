@@ -93,6 +93,8 @@ class ChatResult:
     # 兼容旧接口
     has_skill_call: bool = False
     skill_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    # 引用回复信息（由 _hook_reply_reference 填充）
+    reply_references: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

@@ -1051,8 +1051,8 @@ class _EmotionalGroupChatEngineBase:
 
             logger.info("[REPLY] 共 %d 条用户消息, %d 条有msg_id", len(all_user_entries), len(msg_id_map))
 
-            # 处理每个 [REPLY:xxx] 指令
-            processed_text = raw_text
+            # 处理每个 [REPLY:xxx] 指令，直接存储引用信息
+            refs: list[dict[str, str]] = []
             for match in reply_matches:
                 ref_id = match
                 # 优先通过 platform_message_id 查找
@@ -1066,29 +1066,21 @@ class _EmotionalGroupChatEngineBase:
                         pass
 
                 if ref_msg:
-                    # 构建引用标记，供适配器层解析
                     msg_id = ref_msg.get("platform_message_id", "")
-                    ref_marker = (
-                        f'[REF:index={ref_id} '
-                        f'msg_id="{msg_id}" '
-                        f'speaker="{ref_msg["speaker"]}" '
-                        f'content="{ref_msg["content"][:100]}"]'
-                    )
-                    logger.info("[REPLY] 构建引用标记: %s", ref_marker)
-                    # 将 [REPLY:xxx] 替换为引用标记
-                    processed_text = processed_text.replace(
-                        f'[REPLY:{match}]', ref_marker, 1
-                    )
+                    refs.append({
+                        "msg_id": msg_id,
+                        "speaker": ref_msg["speaker"],
+                        "content": ref_msg["content"][:100],
+                    })
+                    logger.info("[REPLY] 找到引用消息: msg_id=%s, speaker=%s", msg_id, ref_msg["speaker"])
                 else:
-                    # 找不到对应消息，移除指令
                     logger.info("[REPLY] 未找到 id=%s 对应的消息", ref_id)
-                    processed_text = processed_text.replace(
-                        f'[REPLY:{match}]', '', 1
-                    )
 
-            # 更新结果
-            _result.raw_text = processed_text
-            # 同步更新 clean_text（移除引用标记后的纯文本）
+            # 存储引用信息到 _result，adapter 直接读取
+            _result.reply_references = refs
+
+            # 从文本中移除 [REPLY:xxx] 指令
+            _result.raw_text = reply_pattern.sub('', _result.raw_text)
             _result.clean_text = reply_pattern.sub('', _result.clean_text or "")
 
         # task_filter 交给 Brain 调度时检查，hook 闭包不关心

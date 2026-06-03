@@ -865,13 +865,14 @@ class NapCatAdapter(BaseAdapter):
                     results = []
                 for result in results:
                     reply = result.get("reply", "")
+                    reply_refs = result.get("reply_references", [])
                     if gid.startswith("private_"):
                         uid = gid.replace("private_", "").replace("qq_", "")
                         if reply:
-                            await self._send_private_text(uid, reply)
+                            await self._send_private_text(uid, reply, reply_refs)
                     elif gid in self._get_allowed_group_ids():
                         if reply:
-                            await self._send_group_text(gid, reply)
+                            await self._send_group_text(gid, reply, reply_refs)
             elif event.type == SessionEventType.DEVELOPER_CHAT_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 reply = event.data.get("reply", "")
@@ -923,44 +924,44 @@ class NapCatAdapter(BaseAdapter):
 
         return clean_text.strip(), refs
 
-    async def _send_group_text(self, group_id: str, text: str) -> None:
+    async def _send_group_text(
+        self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
+    ) -> None:
         async with self._get_reply_lock(group_id):
             try:
-                # 解析引用标记
-                clean_text, refs = self._parse_ref_markers(text)
-                LOG.info("[REF] 解析引用标记: refs=%s, clean_text=%s", refs, clean_text[:100])
-
                 # 如果有引用且有有效的 msg_id，使用 reply segment
-                if refs and refs[0].get("msg_id"):
-                    msg_id = refs[0]["msg_id"]
+                if reply_refs and reply_refs[0].get("msg_id"):
+                    msg_id = reply_refs[0]["msg_id"]
                     segments: list[dict[str, Any]] = [
                         {"type": "reply", "data": {"id": msg_id}},
-                        {"type": "text", "data": {"text": clean_text}},
+                        {"type": "text", "data": {"text": text}},
                     ]
                     await self.send_group_msg(group_id, segments)
                     LOG.info(
                         "回复群 %s (引用 msg_id=%s): %s",
-                        group_id, msg_id, clean_text[:120],
+                        group_id, msg_id, text[:120],
                     )
-                elif refs:
+                elif reply_refs:
                     # 有引用但没有 msg_id，使用文本格式
                     ref_lines = []
-                    for ref in refs:
+                    for ref in reply_refs:
                         speaker = ref.get("speaker", "未知")
                         content = ref.get("content", "")
                         if len(content) > 80:
                             content = content[:80] + "..."
                         ref_lines.append(f"> {speaker}: {content}")
-                    formatted_reply = "\n".join(ref_lines) + "\n" + clean_text
+                    formatted_reply = "\n".join(ref_lines) + "\n" + text
                     await self.send_group_msg(group_id, formatted_reply)
                     LOG.info("回复群 %s (引用但无msg_id): %s", group_id, formatted_reply[:120])
                 else:
-                    await self.send_group_msg(group_id, clean_text)
-                    LOG.info("回复群 %s: %s", group_id, clean_text[:120])
+                    await self.send_group_msg(group_id, text)
+                    LOG.info("回复群 %s: %s", group_id, text[:120])
             except Exception as exc:
                 LOG.warning("发送群消息失败: %s", exc)
 
-    async def _send_private_text(self, user_id: str, text: str) -> None:
+    async def _send_private_text(
+        self, user_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
+    ) -> None:
         async with self._get_reply_lock(user_id):
             try:
                 await self.send_private_msg(user_id, text)
