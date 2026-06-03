@@ -258,6 +258,8 @@ class ProvenanceStore(BaseSqliteStore):
             self.save_claim(claim)
 
     def get_claim(self, claim_id: str) -> MemoryClaim | None:
+        if not self._claims_table_ready():
+            return None
         row = self.fetchone(
             "SELECT * FROM memory_claims WHERE claim_id = ?",
             (claim_id,),
@@ -272,6 +274,8 @@ class ProvenanceStore(BaseSqliteStore):
         profile_safe_only: bool = False,
         limit: int = 200,
     ) -> list[MemoryClaim]:
+        if not self._claims_table_ready():
+            return []
         conditions = ["subject_user_id = ?"]
         params: list[Any] = [user_id]
         if status:
@@ -299,7 +303,61 @@ class ProvenanceStore(BaseSqliteStore):
             profile_safe_only=True,
         )
 
+    def list_claims(
+        self,
+        *,
+        user_id: str = "",
+        status: str = "",
+        fact_type: str = "",
+        attribution: str = "",
+        source: str = "",
+        profile_safe_only: bool = False,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> tuple[list[MemoryClaim], int]:
+        """Return claims for ledger browsers and maintenance tools."""
+        if not self._claims_table_ready():
+            return [], 0
+        conditions: list[str] = []
+        params: list[Any] = []
+        if user_id:
+            conditions.append("subject_user_id = ?")
+            params.append(user_id)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if fact_type:
+            conditions.append("fact_type = ?")
+            params.append(fact_type)
+        if attribution:
+            conditions.append("attribution = ?")
+            params.append(attribution)
+        if source:
+            conditions.append("source = ?")
+            params.append(source)
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        total_row = self.fetchone(
+            f"SELECT COUNT(*) AS n FROM memory_claims {where}",
+            params,
+        )
+        rows = self.fetchall(
+            f"""
+            SELECT * FROM memory_claims
+            {where}
+            ORDER BY observed_at DESC, claim_id DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, limit, offset],
+        )
+        claims = [self._row_to_claim(r) for r in rows]
+        if profile_safe_only:
+            claims = [c for c in claims if c.profile_safe]
+        return claims, int(total_row["n"] if total_row else 0)
+
     def list_subject_user_ids(self, *, status: str | None = None) -> list[str]:
+        if not self._claims_table_ready():
+            return []
         if status:
             rows = self.fetchall(
                 """
@@ -332,6 +390,8 @@ class ProvenanceStore(BaseSqliteStore):
         }
 
     def find_claim_by_source_record(self, source_record_id: str) -> MemoryClaim | None:
+        if not self._claims_table_ready():
+            return None
         row = self.fetchone(
             "SELECT * FROM memory_claims WHERE source_record_id = ? LIMIT 1",
             (source_record_id,),
@@ -339,6 +399,13 @@ class ProvenanceStore(BaseSqliteStore):
         return self._row_to_claim(row) if row else None
 
     def stats(self) -> dict[str, Any]:
+        if not self._claims_table_ready():
+            return {
+                "total_claims": 0,
+                "total_evidence": 0,
+                "by_status": {},
+                "by_type": {},
+            }
         total_claims = self.fetchone("SELECT COUNT(*) AS n FROM memory_claims")["n"]
         total_evidence = self.fetchone("SELECT COUNT(*) AS n FROM memory_evidence")["n"]
         by_status = {
@@ -608,6 +675,9 @@ class ProvenanceStore(BaseSqliteStore):
             (table_name,),
         )
         return row is not None
+
+    def _claims_table_ready(self) -> bool:
+        return self._table_exists("memory_claims")
 
     @staticmethod
     def _json_list(raw: Any) -> list[Any]:

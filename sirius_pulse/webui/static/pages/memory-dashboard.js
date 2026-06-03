@@ -44,6 +44,7 @@ function renderStats(data) {
   const evo = data.evolution_stats || {};
   const sit = data.situation_stats || {};
   const diary = data.diary_stats || {};
+  const prov = data.provenance_stats || {};
 
   animateNumber($('statEvolution'), evo.active_records || 0);
   const evoSub = $('statEvolutionSub');
@@ -56,6 +57,8 @@ function renderStats(data) {
   animateNumber($('statDiary'), diary.total_entries || 0);
   animateNumber($('statSlices'), diary.total_slices || 0);
   animateNumber($('statUsers'), data.user_count || 0);
+  animateNumber($('statClaims'), prov.total_claims || 0);
+  animateNumber($('statEvidence'), prov.total_evidence || 0);
 
   const statCards = document.querySelectorAll('.bio-stat-card');
   if (statCards[0]) makeClickableStat(statCards[0], 'evolution-chain');
@@ -63,6 +66,8 @@ function renderStats(data) {
   if (statCards[2]) makeClickableStat(statCards[2], 'diary-slices');
   if (statCards[3]) makeClickableStat(statCards[3], 'diary-slices');
   if (statCards[4]) makeClickableStat(statCards[4], 'biography-view');
+  if (statCards[5]) makeClickableStat(statCards[5], 'memory-claims');
+  if (statCards[6]) makeClickableStat(statCards[6], 'memory-claims');
 }
 
 function renderConfidenceChart(dist) {
@@ -175,9 +180,11 @@ function renderLayers(data) {
   const evo = data.evolution_stats || {};
   const sit = data.situation_stats || {};
   const diary = data.diary_stats || {};
+  const prov = data.provenance_stats || {};
 
   const layers = [
     { name: 'Layer 0', label: '感知层', status: evo.total_records > 0 ? 'ok' : 'idle' },
+    { name: 'Ledger', label: '证据账本', status: prov.total_claims > 0 ? 'ok' : 'idle' },
     { name: 'Layer 1', label: '回复层', status: diary.total_entries > 0 ? 'ok' : 'idle' },
     { name: 'Layer 2', label: '暂冷压缩', status: sit.total_situations > 0 ? 'ok' : 'idle' },
     { name: 'Layer 3', label: '冷寂总结', status: diary.total_entries > 0 ? 'ok' : 'idle' },

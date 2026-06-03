@@ -70,6 +70,48 @@ def test_claim_provenance_when_claim_has_evidence_and_run_then_returns_full_chai
     assert store.get_active_profile_claims("u1")[0].profile_safe is True
 
 
+def test_list_claims_when_filters_are_supplied_then_returns_matching_total(tmp_path):
+    store = ProvenanceStore(tmp_path / "persona.db")
+    store.save_claim(MemoryClaim(
+        subject_user_id="u1",
+        subject_label="Alice",
+        fact_type=ClaimType.IDENTITY,
+        value="lives in Shenzhen",
+        status=ClaimStatus.ACTIVE,
+        attribution=ClaimAttribution.SELF_STATED,
+        confidence=0.8,
+    ))
+    store.save_claim(MemoryClaim(
+        subject_user_id="u1",
+        subject_label="Alice",
+        fact_type=ClaimType.PREFERENCE,
+        value="likes tea",
+        status=ClaimStatus.CANDIDATE,
+        attribution=ClaimAttribution.THIRD_PARTY_CLAIM,
+        confidence=0.4,
+    ))
+
+    claims, total = store.list_claims(user_id="u1", status=ClaimStatus.ACTIVE)
+
+    assert total == 1
+    assert [c.value for c in claims] == ["lives in Shenzhen"]
+
+
+def test_read_only_store_when_provenance_tables_do_not_exist_then_returns_empty_results(tmp_path):
+    db_path = tmp_path / "persona.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE users (user_id TEXT PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+
+    store = ProvenanceStore(db_path, read_only=True)
+
+    assert store.stats()["total_claims"] == 0
+    assert store.list_claims() == ([], 0)
+    assert store.get_claim("missing") is None
+    assert store.list_subject_user_ids() == []
+
+
 def test_migration_when_legacy_tables_exist_then_creates_typed_claims_idempotently(tmp_path):
     db_path = tmp_path / "persona.db"
     conn = sqlite3.connect(str(db_path))

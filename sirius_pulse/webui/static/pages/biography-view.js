@@ -84,11 +84,13 @@ function renderStats(bios) {
 
   const totalAliases = bios.reduce((sum, b) => sum + (b.aliases || []).length, 0);
   const totalFacts = bios.reduce((sum, b) => sum + (b.active_fact_count || 0), 0);
+  const totalClaims = bios.reduce((sum, b) => sum + (b.source_claim_ids || []).length, 0);
 
   el.innerHTML = `
     <span class="bio-stat-item">用户 <span class="bio-stat-value">${bios.length}</span></span>
     <span class="bio-stat-item">别名 <span class="bio-stat-value">${totalAliases}</span></span>
     <span class="bio-stat-item">活跃事实 <span class="bio-stat-value">${totalFacts}</span></span>
+    <span class="bio-stat-item">画像 claims <span class="bio-stat-value">${totalClaims}</span></span>
   `;
 }
 
@@ -110,6 +112,8 @@ function renderBios(bios, highlightUserId) {
     const aliases = (b.aliases || []).map(a =>
       `<span class="bio-alias">${esc(a)}<span class="bio-alias-delete" data-alias="${esc(a)}" data-uid="${b.user_id}" title="标记为 shadow">×</span></span>`
     ).join('');
+    const claimCount = (b.source_claim_ids || []).length;
+    const firstClaimId = claimCount ? b.source_claim_ids[0] : '';
 
     return `
     <div class="bio-user-card" data-uid="${b.user_id}" data-name="${esc(b.name)}" ${isHighlight ? 'style="border-color:rgba(0,255,200,0.5);box-shadow:0 0 24px rgba(0,255,200,0.15)"' : ''}>
@@ -125,6 +129,7 @@ function renderBios(bios, highlightUserId) {
         <span class="bio-fact-stat"><span class="bio-fact-dot active"></span><span class="bio-fact-count">${b.active_fact_count || 0}</span> 活跃</span>
         <span class="bio-fact-stat"><span class="bio-fact-dot superseded"></span><span class="bio-fact-count">${b.superseded_fact_count || 0}</span> 取代</span>
         <span class="bio-fact-stat"><span class="bio-fact-dot uncertain"></span><span class="bio-fact-count">${b.uncertain_fact_count || 0}</span> 待定</span>
+        ${claimCount ? `<button class="bio-claim-link" data-uid="${esc(b.user_id)}" data-name="${esc(b.name)}" data-claim-id="${esc(firstClaimId)}">${claimCount} claims</button>` : ''}
       </div>
       <div class="bio-gaps" id="gaps-${b.user_id}"></div>
     </div>`;
@@ -143,6 +148,17 @@ function renderBios(bios, highlightUserId) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       shadowAlias(btn.dataset.alias, btn.dataset.uid);
+    });
+  });
+
+  grid.querySelectorAll('.bio-claim-link').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigateWithParams('memory-claims', {
+        userId: btn.dataset.uid,
+        userName: btn.dataset.name,
+        claimId: btn.dataset.claimId,
+      });
     });
   });
 

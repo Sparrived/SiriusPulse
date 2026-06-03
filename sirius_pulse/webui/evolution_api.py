@@ -16,6 +16,10 @@ from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_ap
 LOG = logging.getLogger("sirius.webui")
 
 
+def _value_of(value: Any) -> str:
+    return getattr(value, "value", value)
+
+
 def _open_db(persona_manager: Any, name: str) -> tuple[Any, Any]:
     """获取人格的 db_path 和 paths，失败返回 (None, None)。"""
     paths = persona_manager.get_persona_paths(name)
@@ -88,6 +92,21 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
     except Exception as exc:
         LOG.debug("读取演化链统计失败: %s", exc)
         result["evolution_stats"] = {"total_records": 0, "active_records": 0, "superseded_records": 0, "uncertain_records": 0, "rejected_records": 0}
+
+    try:
+        from sirius_pulse.memory.provenance.store import ProvenanceStore
+
+        provenance = ProvenanceStore(db_path, read_only=True)
+        result["provenance_stats"] = provenance.stats()
+        provenance.close()
+    except Exception as exc:
+        LOG.debug("读取证据账本统计失败: %s", exc)
+        result["provenance_stats"] = {
+            "total_claims": 0,
+            "total_evidence": 0,
+            "by_status": {},
+            "by_type": {},
+        }
 
     # 情景统计
     try:
@@ -298,6 +317,76 @@ def _record_to_dict(r: Any, messages_cache: dict[str, dict[str, Any]] | None = N
     }
 
 
+@handle_api_errors
+async def api_memory_claims(request: web.Request, persona_manager: Any) -> web.Response:
+    """GET /api/personas/{name}/memory/claims — 证据优先的 claim 账本。"""
+    name = _get_name(request)
+    db_path, _ = _open_db(persona_manager, name)
+    if not db_path:
+        return _json_response({"error": "人格不存在或数据库不存在"}, 404)
+
+    from sirius_pulse.memory.provenance.store import ProvenanceStore
+
+    limit = min(int(request.query.get("limit", "200")), 500)
+    offset = max(int(request.query.get("offset", "0")), 0)
+    store = ProvenanceStore(db_path, read_only=True)
+    try:
+        claims, total = store.list_claims(
+            user_id=request.query.get("user_id", "").strip(),
+            status=request.query.get("status", "").strip(),
+            fact_type=request.query.get("fact_type", "").strip(),
+            attribution=request.query.get("attribution", "").strip(),
+            source=request.query.get("source", "").strip(),
+            profile_safe_only=request.query.get("profile_safe", "").lower() in {"1", "true", "yes"},
+            limit=limit,
+            offset=offset,
+        )
+        stats = store.stats()
+    finally:
+        store.close()
+
+    return _json_response({
+        "claims": [_claim_to_dict(c) for c in claims],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "stats": stats,
+    })
+
+
+@handle_api_errors
+async def api_memory_claim_provenance(request: web.Request, persona_manager: Any) -> web.Response:
+    """GET /api/personas/{name}/memory/claims/{claim_id}/provenance — 单条 claim 的证据链。"""
+    name = _get_name(request)
+    claim_id = str(request.match_info.get("claim_id", "")).strip()
+    if not claim_id:
+        return _json_response({"error": "缺少 claim_id"}, 400)
+
+    db_path, _ = _open_db(persona_manager, name)
+    if not db_path:
+        return _json_response({"error": "人格不存在或数据库不存在"}, 404)
+
+    from sirius_pulse.memory.provenance.store import ProvenanceStore
+
+    store = ProvenanceStore(db_path, read_only=True)
+    try:
+        data = store.get_claim_provenance(claim_id)
+    finally:
+        store.close()
+    if not data:
+        return _json_response({"error": "claim 不存在"}, 404)
+    return _json_response(data)
+
+
+def _claim_to_dict(claim: Any) -> dict[str, Any]:
+    data = claim.to_dict()
+    data["status"] = _value_of(data.get("status"))
+    data["attribution"] = _value_of(data.get("attribution"))
+    data["fact_type"] = _value_of(data.get("fact_type"))
+    data["profile_safe"] = bool(getattr(claim, "profile_safe", False))
+    return data
+
+
 # ─── 情景时间线 ──────────────────────────────────────────
 
 
@@ -439,10 +528,13 @@ async def api_biography_view(request: web.Request, persona_manager: Any) -> web.
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
+    from sirius_pulse.memory.provenance.store import ProvenanceStore
 
     chain = EvolutionChain(db_path, read_only=True)
-    bio_view = BiographyView(chain)
+    provenance = ProvenanceStore(db_path, read_only=True)
+    bio_view = BiographyView(chain, provenance_store=provenance)
     bio = bio_view.get_biography(user_id)
+    provenance.close()
 
     return _json_response({
         "biography": {
@@ -455,6 +547,7 @@ async def api_biography_view(request: web.Request, persona_manager: Any) -> web.
             "superseded_fact_count": bio.superseded_fact_count,
             "uncertain_fact_count": bio.uncertain_fact_count,
             "source_record_ids": bio.source_record_ids,
+            "source_claim_ids": bio.source_claim_ids,
             "generated_at": bio.generated_at,
         }
     })
@@ -470,10 +563,12 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
+    from sirius_pulse.memory.provenance.store import ProvenanceStore
     from sirius_pulse.memory.storage import MemoryStorage
 
     chain = EvolutionChain(db_path, read_only=True)
-    bio_view = BiographyView(chain)
+    provenance = ProvenanceStore(db_path, read_only=True)
+    bio_view = BiographyView(chain, provenance_store=provenance)
 
     # 收集所有有记录的 user_id
     all_subjects = chain._store.get_all_subjects()
@@ -484,6 +579,8 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
     for r in all_records:
         if r.subject_user_id:
             user_ids.add(r.subject_user_id)
+    for uid in provenance.list_subject_user_ids():
+        user_ids.add(uid)
 
     # 从 aliases 表获取用户别名
     memory_db_path = paths.dir / "memory.db"
@@ -508,7 +605,10 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
             "active_fact_count": bio.active_fact_count,
             "superseded_fact_count": bio.superseded_fact_count,
             "uncertain_fact_count": bio.uncertain_fact_count,
+            "source_record_ids": bio.source_record_ids,
+            "source_claim_ids": bio.source_claim_ids,
         })
+    provenance.close()
 
     bios.sort(key=lambda b: b["active_fact_count"], reverse=True)
     return _json_response({"biographies": bios, "total": len(bios)})
@@ -531,10 +631,13 @@ async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.
 
     from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
+    from sirius_pulse.memory.provenance.store import ProvenanceStore
 
     chain = EvolutionChain(db_path, read_only=True)
-    bio_view = BiographyView(chain)
+    provenance = ProvenanceStore(db_path, read_only=True)
+    bio_view = BiographyView(chain, provenance_store=provenance)
     bio = bio_view.get_biography(user_id)
+    provenance.close()
 
     # 简单的知识缺口分析
     gaps: list[dict[str, Any]] = []

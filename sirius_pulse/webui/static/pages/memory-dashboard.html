@@ -58,7 +58,7 @@
   }
   .bio-stats {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 14px;
     margin-bottom: 24px;
   }
@@ -277,6 +277,16 @@
       <div class="bio-stat-label">已知用户</div>
       <div class="bio-stat-value" id="statUsers">—</div>
       <div class="bio-stat-sub" id="statUsersSub">用户画像</div>
+    </div>
+    <div class="bio-stat-card">
+      <div class="bio-stat-label">Claims</div>
+      <div class="bio-stat-value" id="statClaims">—</div>
+      <div class="bio-stat-sub" id="statClaimsSub">事实账本</div>
+    </div>
+    <div class="bio-stat-card">
+      <div class="bio-stat-label">Evidence</div>
+      <div class="bio-stat-value" id="statEvidence">—</div>
+      <div class="bio-stat-sub" id="statEvidenceSub">证据快照</div>
     </div>
   </div>
 

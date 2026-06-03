@@ -59,6 +59,8 @@ from sirius_pulse.webui.evolution_api import (
     api_evolution_records,
     api_evolution_history,
     api_evolution_uncertain,
+    api_memory_claims,
+    api_memory_claim_provenance,
     api_situations_list,
     api_situations_delete,
     api_diary_slices as api_diary_slices_new,
@@ -222,6 +224,12 @@ class WebUIServer(_WebUIServer):
 
     async def api_evolution_uncertain(self, request):
         return await api_evolution_uncertain(request, self.persona_manager)
+
+    async def api_memory_claims(self, request):
+        return await api_memory_claims(request, self.persona_manager)
+
+    async def api_memory_claim_provenance(self, request):
+        return await api_memory_claim_provenance(request, self.persona_manager)
 
     async def api_situations_list(self, request):
         return await api_situations_list(request, self.persona_manager)

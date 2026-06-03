@@ -24,6 +24,7 @@ const PAGE_META = {
   'memory-viz': { title: '记忆可视化', breadcrumb: 'Memory / Visualization', icon: '◲' },
   'memory-dashboard': { title: '记忆神经中枢', breadcrumb: 'Memory / Neural Hub', icon: '🧬' },
   'evolution-chain': { title: '演化链', breadcrumb: 'Memory / Evolution Chain', icon: '🧫' },
+  'memory-claims': { title: '证据账本', breadcrumb: 'Memory / Claims Ledger', icon: '▣' },
   'situation-timeline': { title: '情景脉搏', breadcrumb: 'Memory / Situation Pulse', icon: '💫' },
   'biography-view': { title: '基因图谱', breadcrumb: 'Memory / Genome', icon: '🧮' },
   'diary-slices': { title: '记忆切片', breadcrumb: 'Memory / Slices', icon: '🔬' },
@@ -52,6 +53,7 @@ const NAV_GROUPS = [
   { id: 'memory', label: '记忆', items: [
     { page: 'memory-dashboard', icon: '🧬', label: '神经中枢' },
     { page: 'evolution-chain', icon: '🧫', label: '演化链' },
+    { page: 'memory-claims', icon: '▣', label: '证据账本' },
     { page: 'situation-timeline', icon: '💫', label: '情景脉搏' },
     { page: 'biography-view', icon: '🧮', label: '基因图谱' },
     { page: 'diary-slices', icon: '🔬', label: '记忆切片' },
@@ -70,7 +72,7 @@ const PERSONA_PAGES = new Set([
   'token-tracker', 'cognition', 'skills-tracker', 'conversation-history',
   'diary', 'glossary', 'memory-viz', 'create-persona',
   'memory-dashboard', 'evolution-chain', 'situation-timeline',
-  'biography-view', 'diary-slices',
+  'memory-claims', 'biography-view', 'diary-slices',
 ]);
 
 let currentPage = '';
