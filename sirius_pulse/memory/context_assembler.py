@@ -165,19 +165,11 @@ class ContextAssembler:
                 recent = recent[: last_assistant_idx + 1]
 
         if recent:
-            user_entries = [entry for entry in recent if entry.role != "assistant"]
-            index_map = {
-                id(entry): len(user_entries) - i
-                for i, entry in enumerate(user_entries)
-            }
             current_user_entries: list[Any] = []
             for entry in recent:
                 if entry.role == "assistant":
                     if current_user_entries:
-                        xml_content = self._entries_to_xml(
-                            current_user_entries,
-                            index_map=index_map,
-                        )
+                        xml_content = self._entries_to_xml(current_user_entries)
                         messages.append({"role": "user", "content": xml_content})
                         current_user_entries = []
                     messages.append({"role": "assistant", "content": entry.content or ""})
@@ -185,10 +177,7 @@ class ContextAssembler:
                     current_user_entries.append(entry)
 
             if current_user_entries:
-                xml_content = self._entries_to_xml(
-                    current_user_entries,
-                    index_map=index_map,
-                )
+                xml_content = self._entries_to_xml(current_user_entries)
                 messages.append({"role": "user", "content": xml_content})
 
         # 6. 添加当前用户消息（带身份标识）
@@ -416,19 +405,10 @@ class ContextAssembler:
         *,
         tag: str = "conversation_history",
         include_group: bool = False,
-        start_index: int = 1,
-        reverse_index: bool = True,
-        index_map: dict[int, int] | None = None,
     ) -> str:
         _tz_cn = timezone(timedelta(hours=8))
         lines: list[str] = [f'<{tag}>']
-        total = len(entries)
-        for i, entry in enumerate(entries):
-            if index_map is not None:
-                idx = index_map.get(id(entry), i + start_index)
-            else:
-                idx = (total - i) if reverse_index else (i + start_index)
-
+        for entry in entries:
             # 解析时间
             ts_str = ""
             raw_ts = getattr(entry, "timestamp", "")
@@ -451,7 +431,6 @@ class ContextAssembler:
                 platform_message_id=msg_id,
                 time_str=ts_str,
                 group_id=group,
-                fallback_index=str(idx),
             )
             lines.append(f'  {tagged}')
 

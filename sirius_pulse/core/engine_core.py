@@ -823,21 +823,18 @@ class _EmotionalGroupChatEngineBase:
 
             # 处理取消钉住指令
             if unpin_calls:
-                gid = _req.group_id
                 for call in unpin_calls:
                     try:
-                        if call.get("all"):
-                            # 取消所有钉住
-                            count = _engine._pinned_manager.unpin_all(group_id=gid)
-                            logger.info("模型取消所有钉住: %d 条", count)
-                        elif call.get("reason"):
-                            # 根据原因取消钉住
-                            count = _engine._pinned_manager.unpin_by_reason(call["reason"])
-                            logger.info("模型根据原因取消钉住: %s, %d 条", call["reason"], count)
-                        elif call.get("content"):
-                            # 根据内容关键词取消钉住
-                            count = _engine._pinned_manager.unpin_by_content(call["content"])
-                            logger.info("模型根据内容取消钉住: %s, %d 条", call["content"], count)
+                        msg_id = call.get("msg_id", "")
+                        if msg_id:
+                            # 根据消息ID取消钉住
+                            success = _engine._pinned_manager.unpin_message(msg_id)
+                            if success:
+                                logger.info("模型根据消息ID取消钉住: %s", msg_id)
+                            else:
+                                logger.warning("未找到消息ID对应的钉住消息: %s", msg_id)
+                        else:
+                            logger.warning("UNPIN_MESSAGE 指令缺少 msg_id: %s", call)
                     except Exception as exc:
                         logger.warning("取消钉住失败: %s", exc)
 
@@ -850,50 +847,35 @@ class _EmotionalGroupChatEngineBase:
 
                 for call in pin_calls:
                     try:
-                        content = call.get("content", "")
-                        index = call.get("index", 0)
-
-                        # 如果没有指定内容，根据 index 获取原始消息
-                        if not content:
-                            if index == 0:
-                                # 默认钉住当前用户消息：从最后一个 user 消息中提取真实内容
-                                if _req.messages:
-                                    last_msg = _req.messages[-1]
-                                    raw_current = last_msg.get("content", "")
-                                    content = PromptFactory._extract_last_message_text(raw_current)
-                                    speaker = PromptFactory._extract_last_message_speaker(raw_current)
-                            elif recent_messages:
-                                # 使用 index 引用历史消息（负数表示从后往前）
-                                msg_index = index if index < 0 else index
-                                if abs(msg_index) <= len(recent_messages):
-                                    content = recent_messages[msg_index].get("content", "")
-
-                        if not content:
-                            logger.warning("无法获取要钉住的消息内容")
+                        msg_id = call.get("msg_id", "")
+                        if not msg_id:
+                            logger.warning("PIN_MESSAGE 指令缺少 msg_id: %s", call)
                             continue
 
-                        # 获取消息的发言者信息
+                        # 通过 msg_id 查找消息
+                        content = ""
                         speaker = ""
                         user_id = ""
                         platform_msg_id = ""
-                        if index == 0 and _req.messages:
-                            # 当前用户消息
-                            last_msg = _req.messages[-1]
-                            speaker = last_msg.get("speaker", "")
-                            user_id = last_msg.get("user_id", "")
-                            platform_msg_id = last_msg.get("platform_message_id", "")
-                        elif recent_messages and abs(index) <= len(recent_messages):
-                            msg = recent_messages[index]
-                            speaker = msg.get("speaker", msg.get("user_id", ""))
-                            user_id = msg.get("user_id", "")
-                            platform_msg_id = msg.get("platform_message_id", "")
 
-                        # 构建 metadata，保存对话索引供 prompt 复用
+                        if recent_messages:
+                            # 在最近消息中查找匹配的 platform_message_id
+                            for msg in recent_messages:
+                                if msg.get("platform_message_id") == msg_id:
+                                    content = msg.get("content", "")
+                                    speaker = msg.get("speaker", msg.get("user_id", ""))
+                                    user_id = msg.get("user_id", "")
+                                    platform_msg_id = msg_id
+                                    break
+
+                        if not content:
+                            logger.warning("未找到消息ID对应的钉住消息: %s", msg_id)
+                            continue
+
+                        # 构建 metadata
                         meta: dict[str, Any] = {}
                         if user_id:
                             meta["user_id"] = user_id
-                        if index != 0:
-                            meta["conversation_index"] = index
                         if platform_msg_id:
                             meta["platform_message_id"] = platform_msg_id
 

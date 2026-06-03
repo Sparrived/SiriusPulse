@@ -340,18 +340,14 @@ class PromptFactory:
             f"{TAG_OUTPUT_SPEC}\n"
             "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
             "2. 直接输出你要说的话，禁止任何形式的换行符出现。\n"
-            "3. 如果你需要记住某条重要消息以便后续使用，可以在回复中插入钉住指令（指令需完全遵循以下格式，严禁自创格式）：\n"
-            '   - 钉住当前用户消息：[PIN_MESSAGE: {"reason": "原因"}]\n'
-            '   - 钉住上一条消息：[PIN_MESSAGE: {"index": -1, "reason": "原因"}]\n'
-            '   - 钉住指定内容：[PIN_MESSAGE: {"content": "内容", "reason": "原因"}]\n'
-            "4. 如果你认为某条钉住的消息已经不再需要，可以取消钉住（指令需完全遵循以下格式，严禁自创格式）：\n"
-            '   - 根据原因取消：[UNPIN_MESSAGE: {"reason": "原因"}]\n'
-            '   - 根据内容取消：[UNPIN_MESSAGE: {"content": "关键词"}]\n'
-            '   - 取消所有钉住：[UNPIN_MESSAGE: {"all": true}]\n'
+            "3. 当你需要记住某条重要消息以便后续使用，可以在回复中插入钉住指令（指令需完全遵循以下格式，严禁自创格式）：\n"
+            '   - 钉住上一条消息：[PIN_MESSAGE: {"msg_id": msg_id, "reason": "原因"}]\n'
+            "4. 如果你认为某条钉住的消息已经不再需要，必须取消钉住（指令需完全遵循以下格式，严禁自创格式）：\n"
+            '   - 取消钉住格式：[UNPIN_MESSAGE: {"msg_id": msg_id}]\n'
             "   钉住的消息会在后续对话中自动携带，直到达到最大携带次数。\n"
             "5. 钉住和取消钉住可以在一次回复中同时出现。\n"
             "6. 主动使用并维护钉住/取消钉住消息的功能，这能让你更好地记住重要消息或维持规则。\n"
-            "7. 当你需要直接引用某条带 index 的历史消息回复时，可以在回复开头插入 [REPLY:index]，例如 [REPLY:1]；只能使用最近消息中真实出现的 index，不要自创编号。\n"
+            "7. 你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id"
         )
         if sticker_names:
             names_str = "、".join(sticker_names)
@@ -592,7 +588,6 @@ class PromptFactory:
         platform_message_id: str = "",
         time_str: str = "",
         group_id: str = "",
-        fallback_index: str = "1",
     ) -> str:
         """统一生成 <message> XML 标签。
 
@@ -602,10 +597,9 @@ class PromptFactory:
             content: 消息文本内容。
             speaker: 发言者显示名称。
             user_id: 发言者平台用户 ID。
-            platform_message_id: 平台消息 ID，用作 index 保证缓存一致性。
+            platform_message_id: 平台消息 ID（用于引用回复）。
             time_str: 时间字符串（HH:MM:SS），为空时自动使用当前时间。
             group_id: 群组 ID（可选，用于跨群历史消息）。
-            fallback_index: 无 platform_message_id 时的回退 index。
 
         Returns:
             完整的 <message> XML 标签字符串。
@@ -615,31 +609,23 @@ class PromptFactory:
         safe_speaker = _html_mod.escape(speaker or "有人", quote=True)
         safe_uid = _html_mod.escape(user_id or "", quote=True)
 
-        # index 优先使用平台消息 ID
-        safe_index = (
-            _html_mod.escape(str(platform_message_id), quote=True)
-            if platform_message_id
-            else fallback_index
-        )
-
         # 时间
         if not time_str:
             time_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
 
-        attrs = f'index="{safe_index}" speaker="{safe_speaker}" user_id="{safe_uid}" time="{time_str}"'
+        attrs = f'speaker="{safe_speaker}" user_id="{safe_uid}" time="{time_str}"'
 
         # 可选：群组 ID
         if group_id:
             safe_group = _html_mod.escape(group_id, quote=True)
             attrs += f' group="{safe_group}"'
 
-        # 可选：平台消息 ID 属性（用于引用回复，与 index 分离）
+        # 可选：平台消息 ID（用于引用回复）
         if platform_message_id:
             safe_msg_id = _html_mod.escape(str(platform_message_id), quote=True)
             attrs += f' msg_id="{safe_msg_id}"'
 
         return f'<message {attrs}>{safe_content}</message>'
-        return ""
 
     @staticmethod
     def build_pinned_messages_context(

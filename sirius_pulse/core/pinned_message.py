@@ -479,18 +479,14 @@ class PinnedMessageManager:
 # ---------------------------------------------------------------------------
 
 # 钉住指令正则模式：
-# [PIN_MESSAGE: {"content": "...", "reason": "..."}]  - 钉住指定内容
-# [PIN_MESSAGE: {"reason": "..."}]  - 钉住当前用户消息
-# [PIN_MESSAGE: {"index": -1, "reason": "..."}]  - 钉住最近的第N条消息
+# [PIN_MESSAGE: {"msg_id": msg_id, "reason": "..."}]  - 钉住指定消息ID的消息
 PIN_MESSAGE_PATTERN = re.compile(
     r'\[PIN_MESSAGE:\s*(\{.*?\})\s*\]',
     re.DOTALL,
 )
 
 # 取消钉住指令正则模式：
-# [UNPIN_MESSAGE: {"reason": "..."}]  - 根据原因取消钉住
-# [UNPIN_MESSAGE: {"content": "..."}]  - 根据内容关键词取消钉住
-# [UNPIN_MESSAGE: {"all": true}]  - 取消所有钉住
+# [UNPIN_MESSAGE: {"msg_id": msg_id}]  - 根据消息ID取消钉住
 UNPIN_MESSAGE_PATTERN = re.compile(
     r'\[UNPIN_MESSAGE:\s*(\{.*?\})\s*\]',
     re.DOTALL,
@@ -501,9 +497,7 @@ def parse_pin_messages(text: str) -> list[dict[str, Any]]:
     """从文本中解析钉住指令。
 
     指令格式：
-    - [PIN_MESSAGE: {"content": "...", "reason": "..."}]  - 钉住指定内容
-    - [PIN_MESSAGE: {"reason": "..."}]  - 钉住当前用户消息（content 为空时）
-    - [PIN_MESSAGE: {"index": -1, "reason": "..."}]  - 钉住最近的第N条消息
+    - [PIN_MESSAGE: {"msg_id": msg_id, "reason": "..."}]  - 钉住指定消息ID的消息
 
     Args:
         text: 包含钉住指令的文本
@@ -517,10 +511,13 @@ def parse_pin_messages(text: str) -> list[dict[str, Any]]:
         try:
             parsed = json.loads(params_raw)
             if isinstance(parsed, dict):
+                msg_id = str(parsed.get("msg_id", ""))
+                if not msg_id:
+                    logger.warning("PIN_MESSAGE 指令缺少 msg_id 字段: %s", params_raw)
+                    continue
                 result = {
-                    "content": str(parsed.get("content", "")),
+                    "msg_id": msg_id,
                     "reason": str(parsed.get("reason", "")),
-                    "index": int(parsed.get("index", 0)),
                 }
                 results.append(result)
         except (json.JSONDecodeError, ValueError):
@@ -532,9 +529,7 @@ def parse_unpin_messages(text: str) -> list[dict[str, Any]]:
     """从文本中解析取消钉住指令。
 
     指令格式：
-    - [UNPIN_MESSAGE: {"reason": "..."}]  - 根据原因取消钉住
-    - [UNPIN_MESSAGE: {"content": "..."}]  - 根据内容关键词取消钉住
-    - [UNPIN_MESSAGE: {"all": true}]  - 取消所有钉住
+    - [UNPIN_MESSAGE: {"msg_id": msg_id}]  - 根据消息ID取消钉住
 
     Args:
         text: 包含取消钉住指令的文本
@@ -548,10 +543,12 @@ def parse_unpin_messages(text: str) -> list[dict[str, Any]]:
         try:
             parsed = json.loads(params_raw)
             if isinstance(parsed, dict):
+                msg_id = str(parsed.get("msg_id", ""))
+                if not msg_id:
+                    logger.warning("UNPIN_MESSAGE 指令缺少 msg_id 字段: %s", params_raw)
+                    continue
                 result = {
-                    "reason": str(parsed.get("reason", "")),
-                    "content": str(parsed.get("content", "")),
-                    "all": bool(parsed.get("all", False)),
+                    "msg_id": msg_id,
                 }
                 results.append(result)
         except (json.JSONDecodeError, ValueError):
