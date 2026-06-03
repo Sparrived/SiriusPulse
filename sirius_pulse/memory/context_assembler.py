@@ -70,6 +70,7 @@ class ContextAssembler:
         speaker_name: str = "",
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
+        platform_message_id: str = "",
     ) -> list[dict[str, Any]]:
         """构建消息链（方案 C：以 assistant 消息切分）。
 
@@ -206,13 +207,13 @@ class ContextAssembler:
                         break
             all_current = filtered_pending
             if speaker_name or speaker_user_id:
-                # 用 XML 格式包装，让模型知道是谁说的
-                safe_content = html.escape(current_query, quote=False)
-                safe_speaker = html.escape(speaker_name or speaker_user_id, quote=True)
-                safe_uid = html.escape(speaker_user_id, quote=True)
-                current_xml = (
-                    f'<message index="1" speaker="{safe_speaker}" user_id="{safe_uid}">'
-                    f'{safe_content}</message>'
+                # 使用统一的 tag_message 生成 <message> 标签
+                from sirius_pulse.core.prompt_factory import PromptFactory
+                current_xml = PromptFactory.tag_message(
+                    current_query,
+                    speaker=speaker_name or speaker_user_id,
+                    user_id=speaker_user_id,
+                    platform_message_id=platform_message_id,
                 )
                 # 把 pending 消息和当前消息合并
                 if all_current:
@@ -253,6 +254,7 @@ class ContextAssembler:
         speaker_name: str = "",
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
+        platform_message_id: str = "",
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
         messages = self.build_messages(
@@ -270,6 +272,7 @@ class ContextAssembler:
             speaker_name=speaker_name,
             mentioned_user_ids=mentioned_user_ids,
             content_is_tagged=content_is_tagged,
+            platform_message_id=platform_message_id,
         )
 
         from sirius_pulse.token.utils import estimate_tokens
@@ -425,11 +428,8 @@ class ContextAssembler:
                 idx = index_map.get(id(entry), i + start_index)
             else:
                 idx = (total - i) if reverse_index else (i + start_index)
-            speaker = entry.speaker_name or entry.user_id or "unknown"
-            safe_content = html.escape(entry.content or "", quote=False)
-            safe_speaker = html.escape(speaker, quote=True)
-            safe_user_id = html.escape(entry.user_id or "", quote=True)
 
+            # 解析时间
             ts_str = ""
             raw_ts = getattr(entry, "timestamp", "")
             if raw_ts:
@@ -438,27 +438,32 @@ class ContextAssembler:
                 except (ValueError, TypeError):
                     ts_str = ""
 
-            attrs = f' index="{idx}" speaker="{safe_speaker}" user_id="{safe_user_id}"'
-            if ts_str:
-                attrs += f' time="{ts_str}"'
-            if include_group and getattr(entry, "group_id", None):
-                safe_group = html.escape(entry.group_id, quote=True)
-                attrs += f' group="{safe_group}"'
-            # 添加平台消息 ID（用于引用回复）
+            # 使用统一的 tag_message 生成 <message> 标签
+            from sirius_pulse.core.prompt_factory import PromptFactory
             msg_id = getattr(entry, "platform_message_id", "")
-            if msg_id:
-                safe_msg_id = html.escape(str(msg_id), quote=True)
-                attrs += f' msg_id="{safe_msg_id}"'
-
-            lines.append(f'  <message{attrs}>{safe_content}</message>')
+            group = getattr(entry, "group_id", "") if include_group else ""
+            tagged = PromptFactory.tag_message(
+                entry.content or "",
+                speaker=entry.speaker_name or entry.user_id or "unknown",
+                user_id=entry.user_id or "",
+                platform_message_id=msg_id,
+                time_str=ts_str,
+                group_id=group,
+                fallback_index=str(idx),
+            )
+            lines.append(f'  {tagged}')
 
             if getattr(entry, "multimodal_inputs", None):
                 for m in entry.multimodal_inputs:
                     if m.get("type") != "image":
                         continue
                     if m.get("sub_type") == "1":
+                        # 优先使用缓存的caption，否则使用默认值
+                        sticker_caption = html.escape(
+                            str(m.get("caption", "动画表情")), quote=True
+                        )
                         lines.append(
-                            f'  <image type="sticker" caption="动画表情" '
+                            f'  <image type="sticker" caption="{sticker_caption}" '
                             f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
                         )
                         continue

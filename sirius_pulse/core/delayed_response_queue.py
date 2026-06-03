@@ -20,6 +20,7 @@ from sirius_pulse.models.response_strategy import (
     StrategyDecision,
 )
 from sirius_pulse.core.rhythm import RhythmAnalysis
+from sirius_pulse.core.prompt_factory import PromptFactory
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class DelayedResponseQueue:
         heat_level: str = "warm",
         pace: str = "steady",
         speaker_name: str = "",
+        platform_message_id: str = "",
     ) -> DelayedResponseItem:
         """Add an item to the delayed queue.
 
@@ -81,17 +83,14 @@ class DelayedResponseQueue:
         message extends the window by 1 second (capped at 12s).
         """
         from sirius_pulse.core.utils import now_iso
-        import html as _html
-        from datetime import datetime, timedelta, timezone
 
-        def _tag_content(content: str, sp: str, uid: str) -> str:
-            safe_sp = _html.escape(sp or "有人", quote=True)
-            safe_uid = _html.escape(uid or "", quote=True)
-            now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
-            return (
-                f'<message speaker="{safe_sp}" user_id="{safe_uid}" time="{now_str}">'
-                f"\n{content}\n</message>"
-            )
+        # 使用统一的 tag_message 生成 <message> 标签
+        tagged = PromptFactory.tag_message(
+            message_content,
+            speaker=speaker_name,
+            user_id=channel_user_id or "",
+            platform_message_id=platform_message_id,
+        )
 
         # Debounce: merge with any existing pending item in the same group.
         # This prevents multiple independent replies during high-frequency
@@ -100,7 +99,7 @@ class DelayedResponseQueue:
         queue = self._queues.get(group_id, [])
         for item in queue:
             if item.status == "pending":
-                item.message_content += f"\n{_tag_content(message_content, speaker_name, channel_user_id or '')}"
+                item.message_content += f"\n{tagged}"
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
                     if item.strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
                         item.window_seconds = min(
@@ -139,14 +138,13 @@ class DelayedResponseQueue:
                 )
                 return item
 
-        tagged_content = _tag_content(message_content, speaker_name, channel_user_id or "")
         item = DelayedResponseItem(
             item_id=f"dri_{uuid.uuid4().hex[:12]}",
             group_id=group_id,
             user_id=user_id,
             channel=channel,
             channel_user_id=channel_user_id,
-            message_content=tagged_content,
+            message_content=tagged,
             speaker_name=speaker_name,
             strategy_decision=strategy_decision,
             emotion_state=dict(emotion_state or {}),
@@ -246,6 +244,7 @@ class DelayedResponseQueue:
         channel: str | None = None,
         channel_user_id: str | None = None,
         multimodal_inputs: list[dict[str, str]] | None = None,
+        platform_message_id: str = "",
     ) -> bool:
         """轻量合并：将新消息合并进已有 pending 项，跳过完整管线。
 
@@ -259,15 +258,12 @@ class DelayedResponseQueue:
         for item in queue:
             if item.status != "pending":
                 continue
-            import html as _html
-            from datetime import datetime, timedelta, timezone
-
-            safe_sp = _html.escape(speaker_name or "有人", quote=True)
-            safe_uid = _html.escape(channel_user_id or "", quote=True)
-            now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
-            tagged = (
-                f'<message speaker="{safe_sp}" user_id="{safe_uid}" time="{now_str}">'
-                f"\n{message_content}\n</message>"
+            # 使用统一的 tag_message 生成 <message> 标签
+            tagged = PromptFactory.tag_message(
+                message_content,
+                speaker=speaker_name,
+                user_id=channel_user_id or "",
+                platform_message_id=platform_message_id,
             )
             item.message_content += f"\n{tagged}"
             if multimodal_inputs:

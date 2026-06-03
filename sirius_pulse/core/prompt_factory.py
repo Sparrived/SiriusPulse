@@ -582,6 +582,63 @@ class PromptFactory:
         )
         if matches:
             return matches[-1].group(1).strip()
+
+    @staticmethod
+    def tag_message(
+        content: str,
+        *,
+        speaker: str = "",
+        user_id: str = "",
+        platform_message_id: str = "",
+        time_str: str = "",
+        group_id: str = "",
+        fallback_index: str = "1",
+    ) -> str:
+        """统一生成 <message> XML 标签。
+
+        所有需要生成 <message> 标签的地方都应调用此方法，保证格式一致。
+
+        Args:
+            content: 消息文本内容。
+            speaker: 发言者显示名称。
+            user_id: 发言者平台用户 ID。
+            platform_message_id: 平台消息 ID，用作 index 保证缓存一致性。
+            time_str: 时间字符串（HH:MM:SS），为空时自动使用当前时间。
+            group_id: 群组 ID（可选，用于跨群历史消息）。
+            fallback_index: 无 platform_message_id 时的回退 index。
+
+        Returns:
+            完整的 <message> XML 标签字符串。
+        """
+        _html_mod = _html
+        safe_content = _html_mod.escape(content or "", quote=False)
+        safe_speaker = _html_mod.escape(speaker or "有人", quote=True)
+        safe_uid = _html_mod.escape(user_id or "", quote=True)
+
+        # index 优先使用平台消息 ID
+        safe_index = (
+            _html_mod.escape(str(platform_message_id), quote=True)
+            if platform_message_id
+            else fallback_index
+        )
+
+        # 时间
+        if not time_str:
+            time_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
+
+        attrs = f'index="{safe_index}" speaker="{safe_speaker}" user_id="{safe_uid}" time="{time_str}"'
+
+        # 可选：群组 ID
+        if group_id:
+            safe_group = _html_mod.escape(group_id, quote=True)
+            attrs += f' group="{safe_group}"'
+
+        # 可选：平台消息 ID 属性（用于引用回复，与 index 分离）
+        if platform_message_id:
+            safe_msg_id = _html_mod.escape(str(platform_message_id), quote=True)
+            attrs += f' msg_id="{safe_msg_id}"'
+
+        return f'<message {attrs}>{safe_content}</message>'
         return ""
 
     @staticmethod
@@ -848,6 +905,7 @@ class PromptFactory:
         adapter_type: str | None = None,
         pinned_messages: list[Any] | None = None,
         sticker_names: list[str] | None = None,
+        platform_message_id: str = "",
     ) -> PromptBundle:
         """统一组装聊天响应 prompt。返回 PromptBundle。
 
@@ -954,14 +1012,13 @@ class PromptFactory:
         if content_is_tagged:
             user_content = message_content
         else:
-            safe_speaker = _html.escape(speaker_name or "有人", quote=True)
-            safe_uid = _html.escape(channel_user_id or "", quote=True)
-            now_str = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
-            sender_line = (
-                f'<message index="1" speaker="{safe_speaker}" '
-                f'user_id="{safe_uid}" time="{now_str}">'
+            # 使用统一的 tag_message 生成 <message> 标签
+            user_content = PromptFactory.tag_message(
+                message_content,
+                speaker=speaker_name,
+                user_id=channel_user_id,
+                platform_message_id=platform_message_id,
             )
-            user_content = f"{sender_line}\n{message_content}\n</message>"
 
         # 添加【最近消息】标签
         user_content = f"{TAG_RECENT_MESSAGES}\n{user_content}"

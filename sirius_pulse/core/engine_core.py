@@ -1183,6 +1183,7 @@ class _EmotionalGroupChatEngineBase:
                     channel=message.channel,
                     channel_user_id=message.channel_user_id,
                     multimodal_inputs=message.multimodal_inputs,
+                    platform_message_id=getattr(message, "message_id", "") or "",
                 )
                 if merged:
                     self._log_inner_thought(f"已有待回复的消息，把 {speaker} 的话也合进去～")

@@ -67,6 +67,7 @@ class EvolutionStore(BaseSqliteStore):
         """)
         self._ensure_columns("evolution_records", {
             "subject_user_id": "TEXT DEFAULT ''",
+            "status": "TEXT NOT NULL DEFAULT 'active'",
         })
 
     # ── 写入 ──

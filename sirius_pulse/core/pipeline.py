@@ -585,6 +585,7 @@ class Pipeline:
                 heat_level=rhythm.heat_level,
                 pace=rhythm.pace,
                 speaker_name=message.speaker or "",
+                platform_message_id=message.message_id or "",
             )
             engine._persist_group_state(group_id)
             return {
@@ -611,6 +612,7 @@ class Pipeline:
                 heat_level=rhythm.heat_level,
                 pace=rhythm.pace,
                 speaker_name=message.speaker or "",
+                platform_message_id=message.message_id or "",
             )
             engine._persist_group_state(group_id)
             return {
