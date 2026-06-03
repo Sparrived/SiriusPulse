@@ -18,6 +18,7 @@ from __future__ import annotations
 import html as _html
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -350,11 +351,12 @@ class PromptFactory:
             "   钉住的消息会在后续对话中自动携带，直到达到最大携带次数。\n"
             "5. 钉住和取消钉住可以在一次回复中同时出现。\n"
             "6. 主动使用并维护钉住/取消钉住消息的功能，这能让你更好地记住重要消息或维持规则。\n"
+            "7. 当你需要直接引用某条带 index 的历史消息回复时，可以在回复开头插入 [REPLY:index]，例如 [REPLY:1]；只能使用最近消息中真实出现的 index，不要自创编号。\n"
         )
         if sticker_names:
             names_str = "、".join(sticker_names)
             spec += (
-                "7. 你可以使用 [STICKERS: \"名称1\", \"名称2\", \"名称3\"] 格式"
+                "8. 你可以使用 [STICKERS: \"名称1\", \"名称2\", \"名称3\"] 格式"
                 "选择表情包，系统会在你提供的名称中随机选择一个发送。"
                 f"可选表情包：{names_str}\n"
             )
@@ -547,6 +549,42 @@ class PromptFactory:
         return "\n".join(lines)
 
     @staticmethod
+    def _extract_last_message_text(content: str) -> str:
+        """从复合 prompt 中提取最后一条 <message> 的纯内容。
+
+        适用于从当前 user prompt 中抽取真实用户发言，避免把整段 prompt
+        （含钉住区、输出规范、最近消息等）误钉住。
+        """
+        if not content:
+            return ""
+        matches = list(
+            re.finditer(
+                r"<message\b[^>]*>([\s\S]*?)</message>",
+                content,
+                flags=re.IGNORECASE,
+            )
+        )
+        if matches:
+            return matches[-1].group(1).strip()
+        return content.strip()
+
+    @staticmethod
+    def _extract_last_message_speaker(content: str) -> str:
+        """从复合 prompt 中提取最后一条 <message> 的 speaker。"""
+        if not content:
+            return ""
+        matches = list(
+            re.finditer(
+                r"<message\b[^>]*speaker=\"([^\"]*)\"[^>]*>",
+                content,
+                flags=re.IGNORECASE,
+            )
+        )
+        if matches:
+            return matches[-1].group(1).strip()
+        return ""
+
+    @staticmethod
     def build_pinned_messages_context(
         pinned_messages: list[Any],
     ) -> str:
@@ -583,7 +621,8 @@ class PromptFactory:
                 f'speaker="{safe_speaker}" user_id="{safe_uid}" '
                 f'time="{pinned_time}"{reason_attr}>'
             )
-            lines.append(msg.content)
+            pinned_content = PromptFactory._extract_last_message_text(msg.content)
+            lines.append(pinned_content)
             lines.append('</pinned_message>')
         lines.append(TAG_PINNED_MESSAGES_END)
 

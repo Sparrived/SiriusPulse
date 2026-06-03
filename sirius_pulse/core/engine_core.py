@@ -30,7 +30,7 @@ from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
-from sirius_pulse.core.prompt_factory import StyleAdapter
+from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
 from sirius_pulse.core.response_strategy import ResponseStrategyEngine
 from sirius_pulse.core.rhythm import RhythmAnalyzer
 from sirius_pulse.core.threshold_engine import ThresholdEngine
@@ -350,6 +350,7 @@ class _EmotionalGroupChatEngineBase:
         self._plugin_intent_verifier: Any | None = None
 
         self._sticker_names: list[str] = []
+        self._sticker_oppositions: dict[str, list[str]] = {}
 
         self._bg_tasks: set[asyncio.Task] = set()
         self._bg_running = False
@@ -855,8 +856,12 @@ class _EmotionalGroupChatEngineBase:
                         # 如果没有指定内容，根据 index 获取原始消息
                         if not content:
                             if index == 0:
-                                # 默认钉住当前用户消息
-                                content = _req.messages[-1].get("content", "") if _req.messages else ""
+                                # 默认钉住当前用户消息：从最后一个 user 消息中提取真实内容
+                                if _req.messages:
+                                    last_msg = _req.messages[-1]
+                                    raw_current = last_msg.get("content", "")
+                                    content = PromptFactory._extract_last_message_text(raw_current)
+                                    speaker = PromptFactory._extract_last_message_speaker(raw_current)
                             elif recent_messages:
                                 # 使用 index 引用历史消息（负数表示从后往前）
                                 msg_index = index if index < 0 else index
@@ -879,6 +884,7 @@ class _EmotionalGroupChatEngineBase:
                             platform_msg_id = last_msg.get("platform_message_id", "")
                         elif recent_messages and abs(index) <= len(recent_messages):
                             msg = recent_messages[index]
+                            speaker = msg.get("speaker", msg.get("user_id", ""))
                             user_id = msg.get("user_id", "")
                             platform_msg_id = msg.get("platform_message_id", "")
 
@@ -1031,19 +1037,24 @@ class _EmotionalGroupChatEngineBase:
 
             # 获取最近的历史消息（用于查找引用内容）
             gid = _req.group_id
-            recent_messages = _engine._get_recent_messages(gid, n=50)
-            if not recent_messages:
+            recent_entries = _engine.basic_memory.get_all(gid)[-50:]
+            recent_user_entries = [
+                entry for entry in recent_entries
+                if getattr(entry, "role", "") != "assistant"
+            ]
+            if not recent_user_entries:
                 return
 
-            # 构建 index -> 消息内容的映射（倒排：最新消息 index=1）
-            total = len(recent_messages)
+            # 构建 index -> 消息内容的映射（与 prompt 中的倒排 index 保持一致）
+            total = len(recent_user_entries)
             message_map: dict[int, dict[str, str]] = {}
-            for i, msg in enumerate(recent_messages):
+            for i, entry in enumerate(recent_user_entries):
                 idx = total - i
                 message_map[idx] = {
-                    "content": msg.get("content", ""),
-                    "speaker": msg.get("speaker", msg.get("user_id", "unknown")),
-                    "platform_message_id": msg.get("platform_message_id", ""),
+                    "content": getattr(entry, "content", "") or "",
+                    "speaker": getattr(entry, "speaker_name", "")
+                    or getattr(entry, "user_id", "unknown"),
+                    "platform_message_id": getattr(entry, "platform_message_id", "") or "",
                 }
 
             # 处理每个 [REPLY:xxx] 指令

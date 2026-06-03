@@ -169,10 +169,10 @@ async function renderConfigModal(config, skillName) {
     if (body) body.innerHTML = html;
     form.render();
     
-    // 保存时使用表单收集的值
+    // 保存时使用表单收集的值，包装在 config 键下以匹配 API 期望的结构
     $('modalSave')?.addEventListener('click', async () => {
       const values = form.collectValues();
-      await saveConfig(values, skillName);
+      await saveConfig({ config: values }, skillName);
     });
   } else {
     // 无参数时显示 JSON 编辑器
@@ -198,7 +198,7 @@ async function renderConfigModal(config, skillName) {
       if (extraText) {
         try {
           const extra = JSON.parse(extraText);
-          Object.assign(payload, extra);
+          payload.config = extra;
         } catch {
           toast('JSON 格式错误', 'error');
           return;

@@ -20,7 +20,7 @@ def atomic_json_save(path: Path, data: dict[str, Any], *, indent: int = 2) -> No
     避免并发写入时损坏数据。
 
     此函数被 PluginConfigManager、SkillDataStore 和
-    _save_persona_skill_config 共同使用。
+    WebUI Skill API 共同使用。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")

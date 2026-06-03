@@ -331,7 +331,14 @@ class EngineRuntime:
             return
 
         # 创建执行器和调度器
-        executor = PluginExecutor(registry, persona_data_path=persona_data_path, engine=engine)
+        from sirius_pulse.plugins.config import get_config_manager
+        plugins_config_manager = get_config_manager(plugins_dir)
+        executor = PluginExecutor(
+            registry,
+            persona_data_path=persona_data_path,
+            engine=engine,
+            config_manager=plugins_config_manager,
+        )
         dispatcher = OutputDispatcher()
 
         # 实例化所有 Plugin

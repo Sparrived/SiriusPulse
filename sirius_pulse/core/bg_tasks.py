@@ -69,6 +69,7 @@ class BackgroundTasks:
             asyncio.create_task(self._diary_consolidator(), name="diary_consolidator"),
             asyncio.create_task(self._background_refiner(), name="background_refiner"),
             asyncio.create_task(self.proactive.proactive_developer_chat_checker(), name="dev_chat"),
+            asyncio.create_task(self._sticker_cache_warmup(), name="sticker_cache_warmup"),
         ]
         for t in tasks:
             engine._bg_tasks.add(t)
@@ -92,6 +93,19 @@ class BackgroundTasks:
                 logger.warning("被动SKILL on_unload 失败: %s", exc)
         if hasattr(engine, "_passive_skill_unloaders"):
             engine._passive_skill_unloaders.clear()
+
+    async def _sticker_cache_warmup(self) -> None:
+        """启动后异步预热表情包二元对立缓存。"""
+        engine = self._engine
+        try:
+            sticker = getattr(engine, "_sticker", None)
+            if sticker is None:
+                return
+            await sticker.warmup_opposition_cache()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("表情包缓存预热失败: %s", exc)
 
     # ==================================================================
     # 日记相关任务

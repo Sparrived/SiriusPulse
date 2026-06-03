@@ -1,4 +1,9 @@
-"""WebUI Skill 管理 API — 每人格独立的 Skill 配置与启停。"""
+"""WebUI Skill 管理 API — 每人格独立的 Skill 配置与启停。
+
+所有 skill 的配置和启停状态统一存储在各自的 data_store 文件中：
+  {persona_dir}/skill_data/{skill_name}.json
+其中 _enabled 字段表示启停状态，其余为 skill 配置参数。
+"""
 
 from __future__ import annotations
 
@@ -17,23 +22,13 @@ LOG = logging.getLogger("sirius.webui")
 
 # ── 模块级缓存，避免每次 API 请求都重新扫描磁盘和执行 importlib ──
 _skill_registry_cache: dict[str, tuple[float, SkillRegistry]] = {}
-_skill_config_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _CACHE_TTL = 60.0  # 秒
-
-
-def _skill_config_path(persona_dir: Path, skill_name: str) -> Path:
-    return persona_dir / "skill_data" / f"{skill_name}.config.json"
-
-
-def _persona_skill_config_path(persona_dir: Path) -> Path:
-    return persona_dir / "skill_data" / ".persona_skills.json"
 
 
 def _invalidate_skill_cache(persona_dir: Path) -> None:
     """清除指定人格的 skill 缓存。"""
     key = str(persona_dir)
     _skill_registry_cache.pop(key, None)
-    _skill_config_cache.pop(key, None)
 
 
 def _load_skill_registry(persona_dir: Path) -> SkillRegistry:
@@ -55,33 +50,32 @@ def _load_skill_registry(persona_dir: Path) -> SkillRegistry:
     return registry
 
 
-def _load_persona_skill_config(persona_dir: Path) -> dict[str, Any]:
-    """加载人格级 skill 配置（启停状态、默认参数等），带模块级缓存。"""
-    key = str(persona_dir)
-    now = time.monotonic()
-    cached = _skill_config_cache.get(key)
-    if cached is not None:
-        ts, config = cached
-        if now - ts < _CACHE_TTL:
-            return config
-    config: dict[str, Any] = {}  # type: ignore[no-redef]
-    path = _persona_skill_config_path(persona_dir)
-    if path.exists():
-        try:
-            config = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            LOG.warning("加载人格 skill 配置失败", exc_info=True)
-    _skill_config_cache[key] = (now, config)
-    return config
+def _load_skill_data_store(persona_dir: Path, skill_name: str) -> dict[str, Any]:
+    """从 data_store 文件读取 skill 的完整数据（配置 + 运行时状态）。"""
+    store_path = persona_dir / "skill_data" / f"{skill_name}.json"
+    if not store_path.exists():
+        return {}
+    try:
+        raw = json.loads(store_path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        LOG.warning("读取 skill data_store 失败: %s", store_path, exc_info=True)
+        return {}
 
 
-def _save_persona_skill_config(persona_dir: Path, config: dict[str, Any]) -> None:
-    """保存人格级 skill 配置，并清除配置缓存。"""
+def _save_skill_data_store(persona_dir: Path, skill_name: str, data: dict[str, Any]) -> None:
+    """原子写入 skill 的 data_store 文件。"""
     from sirius_pulse.config.file_io import atomic_json_save
 
-    atomic_json_save(_persona_skill_config_path(persona_dir), config)
-    # 写入后清除配置缓存，确保下次读取拿到最新值
-    _skill_config_cache.pop(str(persona_dir), None)
+    store_path = persona_dir / "skill_data" / f"{skill_name}.json"
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_json_save(store_path, data)
+
+
+def _extract_config(data: dict[str, Any], skill: Any) -> dict[str, Any]:
+    """从 data_store 数据中提取配置字段（过滤掉 _ 前缀的元数据和运行时字段）。"""
+    config_keys: set[str] = {p.name for p in skill.parameters}
+    return {k: v for k, v in data.items() if k in config_keys}
 
 
 @handle_api_errors
@@ -93,16 +87,15 @@ async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> 
         return _json_response({"error": "人格不存在"}, 404)
 
     registry = _load_skill_registry(paths.dir)
-    persona_config = _load_persona_skill_config(paths.dir)
 
     skills: list[dict[str, Any]] = []
     for skill in registry.all_skills():
-        skill_cfg = persona_config.get(skill.name, {})
+        data = _load_skill_data_store(paths.dir, skill.name)
         skills.append({
             "name": skill.name,
             "description": skill.description,
             "version": skill.version,
-            "enabled": skill_cfg.get("enabled", True),
+            "enabled": data.get("_enabled", True),
             "developer_only": skill.developer_only,
             "silent": skill.silent,
             "tags": skill.tags,
@@ -117,7 +110,7 @@ async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> 
                 }
                 for p in skill.parameters
             ],
-            "config": skill_cfg.get("config", {}),
+            "config": _extract_config(data, skill),
         })
 
     return _json_response({"skills": skills})
@@ -142,11 +135,9 @@ async def api_persona_skill_toggle(request: web.Request, persona_manager: Any) -
 
     enabled = bool(body.get("enabled", True))
 
-    persona_config = _load_persona_skill_config(paths.dir)
-    if skill_name not in persona_config:
-        persona_config[skill_name] = {}
-    persona_config[skill_name]["enabled"] = enabled
-    _save_persona_skill_config(paths.dir, persona_config)
+    data = _load_skill_data_store(paths.dir, skill_name)
+    data["_enabled"] = enabled
+    _save_skill_data_store(paths.dir, skill_name, data)
 
     LOG.info("Skill %s/%s enabled=%s", name, skill_name, enabled)
     return _json_response({"success": True, "skill": skill_name, "enabled": enabled})
@@ -164,24 +155,24 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    persona_config = _load_persona_skill_config(paths.dir)
-    skill_cfg = persona_config.get(skill_name, {})
-
-    # 同时返回 skill 的元数据（参数定义等）
     registry = _load_skill_registry(paths.dir)
     skill = registry.get(skill_name)
+
+    data = _load_skill_data_store(paths.dir, skill_name)
+    config = _extract_config(data, skill) if skill else {}
+
     meta: dict[str, Any] = {}
     if skill is not None:
-            meta = {
-                "name": skill.name,
-                "description": skill.description,
-                "parameters": skill.get_parameter_schema(),
-            }
+        meta = {
+            "name": skill.name,
+            "description": skill.description,
+            "parameters": skill.get_parameter_schema(),
+        }
 
     return _json_response({
         "skill": skill_name,
-        "config": skill_cfg.get("config", {}),
-        "enabled": skill_cfg.get("enabled", True),
+        "config": config,
+        "enabled": data.get("_enabled", True),
         "meta": meta,
     })
 
@@ -261,50 +252,18 @@ async def api_persona_skill_config_post(request: web.Request, persona_manager: A
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    persona_config = _load_persona_skill_config(paths.dir)
-    if skill_name not in persona_config:
-        persona_config[skill_name] = {}
-    skill_cfg = body.get("config", {})
-    persona_config[skill_name]["config"] = skill_cfg
-    if "enabled" in body:
-        persona_config[skill_name]["enabled"] = bool(body["enabled"])
-    _save_persona_skill_config(paths.dir, persona_config)
+    # 读取现有 data_store（保留运行时字段如 _last_poll_at）
+    data = _load_skill_data_store(paths.dir, skill_name)
 
-    # 同时将 config 同步到 data_store 文件，使 SKILL 通过 store.reload() 感知变更
-    _sync_config_to_data_store(paths.dir, skill_name, skill_cfg)
+    # 合并配置：新配置覆盖同名键，运行时字段保留
+    skill_cfg = body.get("config", {})
+    if isinstance(skill_cfg, dict):
+        data.update(skill_cfg)
+
+    if "enabled" in body:
+        data["_enabled"] = bool(body["enabled"])
+
+    _save_skill_data_store(paths.dir, skill_name, data)
 
     LOG.info("Skill 配置已保存 %s/%s", name, skill_name)
     return _json_response({"success": True, "skill": skill_name})
-
-
-def _sync_config_to_data_store(persona_dir: Path, skill_name: str, config: dict[str, Any]) -> None:
-    """将 skill 配置 merge 写入 data_store 文件，保留已有的运行时字段。
-
-    data_store 文件路径为 skill_data/{skill_name}.json。
-    合并策略：config 中的键覆盖 data_store 中的同名键，data_store 中其余键保留。
-    """
-    if not isinstance(config, dict) or not config:
-        return
-
-    store_path = persona_dir / "skill_data" / f"{skill_name}.json"
-    existing: dict[str, Any] = {}
-    if store_path.exists():
-        try:
-            existing = json.loads(store_path.read_text(encoding="utf-8"))
-        except Exception:
-            LOG.warning("读取 data_store 文件失败", exc_info=True)
-            pass
-
-    if not isinstance(existing, dict):
-        existing = {}
-
-    # 合并：config 覆盖已有同名键，其余保留
-    merged = dict(existing)
-    for key, value in config.items():
-        merged[key] = value
-
-    # 原子写入
-    store_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = store_path.with_suffix(store_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(store_path)

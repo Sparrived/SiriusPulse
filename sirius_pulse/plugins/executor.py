@@ -36,12 +36,14 @@ class PluginExecutor:
         default_execution_timeout: float = 30.0,
         engine: Any = None,
         adapter: Any = None,
+        config_manager: Any = None,
     ) -> None:
         self._registry = registry
         self._persona_data_path = persona_data_path or Path(".")
         self._default_timeout = default_execution_timeout
         self._engine = engine
         self._adapter = adapter
+        self._config_manager = config_manager
         # 速率限制状态：{plugin_name: {minute_calls: [(timestamp, ...)], hour_calls: [(timestamp, ...)]}}
         self._rate_state: dict[str, dict[str, Any]] = {}
         # PluginScheduler 引用（由 runtime 注入，用于卸载时清理定时任务）
@@ -87,9 +89,10 @@ class PluginExecutor:
             "render_mode": definition.render.mode,
         }
         # 注入用户在 WebUI 中配置的自定义 settings
-        user_settings = getattr(definition, "user_settings", None)
-        if isinstance(user_settings, dict):
-            config.update(user_settings)
+        if self._config_manager is not None:
+            user_settings = self._config_manager.get_settings(definition.name)
+            if isinstance(user_settings, dict):
+                config.update(user_settings)
         ctx = PluginContext.create(
             plugin_name=definition.name,
             data_store=data_store,
