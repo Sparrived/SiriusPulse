@@ -1011,13 +1011,20 @@ class _EmotionalGroupChatEngineBase:
             if not raw_text:
                 return
 
-            # 匹配 [REPLY:xxx] 指令（支持多个）
-            reply_pattern = re.compile(r'\[REPLY:(\d+)\]')
-            reply_matches = reply_pattern.findall(raw_text)
+            # 匹配 [REPLY:xxx] / [REPLY:msg_id="xxx"] 指令（支持多个）
+            reply_pattern = re.compile(
+                r'\[REPLY:\s*(?:msg_id\s*=\s*"([^"]+)"|([^\]\s]+))\s*\]'
+            )
+            reply_matches = [
+                msg_id or plain_id
+                for msg_id, plain_id in reply_pattern.findall(raw_text)
+            ]
             if not reply_matches:
                 return
 
             logger.info("[REPLY] 发现引用指令: %s", reply_matches)
+            _result.raw_text = reply_pattern.sub('', _result.raw_text)
+            _result.clean_text = reply_pattern.sub('', _result.clean_text or "")
 
             # 获取所有历史消息（用于查找引用内容）
             gid = _req.group_id
@@ -1078,10 +1085,6 @@ class _EmotionalGroupChatEngineBase:
 
             # 存储引用信息到 _result，adapter 直接读取
             _result.reply_references = refs
-
-            # 从文本中移除 [REPLY:xxx] 指令
-            _result.raw_text = reply_pattern.sub('', _result.raw_text)
-            _result.clean_text = reply_pattern.sub('', _result.clean_text or "")
 
         # task_filter 交给 Brain 调度时检查，hook 闭包不关心
         _CHAT = _TASKS_CHAT

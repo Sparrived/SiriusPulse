@@ -1,4 +1,5 @@
-"""SessionEventBus 异步事件总线测试。"""
+"""会话事件总线的业务行为测试。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,142 +9,110 @@ import pytest
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
 
 
-class TestEventBusBasic:
-    """基础发布/订阅测试。"""
+async def _wait_for_subscriber(bus: SessionEventBus, expected: int = 1) -> None:
+    for _ in range(20):
+        if bus.subscriber_count >= expected:
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("subscriber did not attach in time")
 
-    @pytest.mark.asyncio
-    async def test_emit_and_subscribe(self):
-        bus = SessionEventBus()
-        events: list[SessionEvent] = []
 
-        async def collector():
-            async for event in bus.subscribe():
-                events.append(event)
+@pytest.mark.asyncio
+async def test_event_bus_when_monitor_subscribes_then_it_receives_engine_events():
+    bus = SessionEventBus()
+    events: list[SessionEvent] = []
 
-        task = asyncio.create_task(collector())
-        await asyncio.sleep(0.01)
+    async def monitor() -> None:
+        async for event in bus.subscribe():
+            events.append(event)
 
-        event = SessionEvent(type=SessionEventType.PERCEPTION_COMPLETED, data={"key": "value"})
-        await bus.emit(event)
-        await asyncio.sleep(0.01)
+    task = asyncio.create_task(monitor())
+    await _wait_for_subscriber(bus)
 
-        await bus.close()
+    await bus.emit(
+        SessionEvent(type=SessionEventType.PERCEPTION_COMPLETED, data={"group_id": "group_a"})
+    )
+    await bus.close()
+    await task
+
+    assert [event.type for event in events] == [SessionEventType.PERCEPTION_COMPLETED]
+    assert events[0].data["group_id"] == "group_a"
+    assert events[0].timestamp > 0
+
+
+@pytest.mark.asyncio
+async def test_event_bus_when_two_clients_watch_session_then_both_see_same_decision():
+    bus = SessionEventBus()
+    received: list[list[SessionEventType]] = [[], []]
+
+    async def monitor(index: int) -> None:
+        async for event in bus.subscribe():
+            received[index].append(event.type)
+
+    task_a = asyncio.create_task(monitor(0))
+    task_b = asyncio.create_task(monitor(1))
+    await _wait_for_subscriber(bus, expected=2)
+
+    await bus.emit(SessionEvent(type=SessionEventType.DECISION_COMPLETED))
+    await bus.close()
+    await asyncio.gather(task_a, task_b)
+
+    assert received == [[SessionEventType.DECISION_COMPLETED], [SessionEventType.DECISION_COMPLETED]]
+
+
+@pytest.mark.asyncio
+async def test_event_bus_when_session_closes_then_subscribers_finish_cleanly():
+    bus = SessionEventBus()
+    finished = False
+
+    async def monitor() -> None:
+        nonlocal finished
+        async for _event in bus.subscribe():
+            pass
+        finished = True
+
+    task = asyncio.create_task(monitor())
+    await _wait_for_subscriber(bus)
+
+    await bus.close()
+    await task
+
+    assert finished is True
+    assert bus.closed is True
+    assert bus.subscriber_count == 0
+
+
+@pytest.mark.asyncio
+async def test_event_bus_when_closed_then_late_engine_events_are_ignored():
+    bus = SessionEventBus()
+    await bus.close()
+
+    await bus.emit(SessionEvent(type=SessionEventType.EXECUTION_COMPLETED))
+
+    assert bus.closed is True
+    assert bus.subscriber_count == 0
+
+
+@pytest.mark.asyncio
+async def test_event_bus_when_monitor_is_slow_then_session_keeps_running():
+    bus = SessionEventBus()
+    first_event_received = asyncio.Event()
+
+    async def slow_monitor() -> None:
+        async for event in bus.subscribe(max_queue_size=1):
+            first_event_received.set()
+            if event.data.get("index") == 0:
+                await asyncio.Event().wait()
+
+    task = asyncio.create_task(slow_monitor())
+    await _wait_for_subscriber(bus)
+
+    for index in range(5):
+        await bus.emit(SessionEvent(type=SessionEventType.CUSTOM, data={"index": index}))
+
+    await asyncio.wait_for(first_event_received.wait(), timeout=1.0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
         await task
-
-        assert len(events) == 1
-        assert events[0].type == SessionEventType.PERCEPTION_COMPLETED
-        assert events[0].data["key"] == "value"
-
-    @pytest.mark.asyncio
-    async def test_multiple_subscribers_receive_same_event(self):
-        bus = SessionEventBus()
-        results: list[list[SessionEvent]] = [[], []]
-
-        async def collector(idx: int):
-            async for event in bus.subscribe():
-                results[idx].append(event)
-
-        task0 = asyncio.create_task(collector(0))
-        task1 = asyncio.create_task(collector(1))
-        await asyncio.sleep(0.01)
-
-        await bus.emit(SessionEvent(type=SessionEventType.COGNITION_COMPLETED))
-        await asyncio.sleep(0.01)
-
-        await bus.close()
-        await asyncio.gather(task0, task1)
-
-        assert len(results[0]) == 1
-        assert len(results[1]) == 1
-        assert results[0][0].type == SessionEventType.COGNITION_COMPLETED
-        assert results[1][0].type == SessionEventType.COGNITION_COMPLETED
-
-
-class TestEventBusClose:
-    """关闭行为测试。"""
-
-    @pytest.mark.asyncio
-    async def test_close_terminates_subscribers(self):
-        bus = SessionEventBus()
-        events: list[SessionEvent] = []
-
-        async def collector():
-            async for event in bus.subscribe():
-                events.append(event)
-
-        task = asyncio.create_task(collector())
-        await asyncio.sleep(0.01)
-
-        await bus.emit(SessionEvent(type=SessionEventType.DECISION_COMPLETED))
-        await asyncio.sleep(0.01)
-        await bus.close()
-        await task
-
-        assert len(events) == 1
-
-    @pytest.mark.asyncio
-    async def test_emit_after_close_is_noop(self):
-        bus = SessionEventBus()
-        await bus.close()
-
-        await bus.emit(SessionEvent(type=SessionEventType.EXECUTION_COMPLETED))
-
-    @pytest.mark.asyncio
-    async def test_closed_property(self):
-        bus = SessionEventBus()
-        assert not bus.closed
-        await bus.close()
-        assert bus.closed
-
-
-class TestEventBusProperties:
-    """属性测试。"""
-
-    @pytest.mark.asyncio
-    async def test_subscriber_count(self):
-        bus = SessionEventBus()
-        assert bus.subscriber_count == 0
-
-        async def collector():
-            async for event in bus.subscribe():
-                pass
-
-        task = asyncio.create_task(collector())
-        await asyncio.sleep(0.01)
-        assert bus.subscriber_count == 1
-
-        await bus.close()
-        await task
-
-    @pytest.mark.asyncio
-    async def test_event_timestamp_auto_set(self):
-        bus = SessionEventBus()
-        event = SessionEvent(type=SessionEventType.PERCEPTION_COMPLETED)
-        assert event.timestamp > 0
-
-        await bus.close()
-
-
-class TestEventBusQueueOverflow:
-    """队列溢出测试。"""
-
-    @pytest.mark.asyncio
-    async def test_full_queue_drops_event(self):
-        bus = SessionEventBus()
-        events: list[SessionEvent] = []
-
-        async def slow_collector():
-            async for event in bus.subscribe(max_queue_size=2):
-                events.append(event)
-
-        task = asyncio.create_task(slow_collector())
-        await asyncio.sleep(0.01)
-
-        for i in range(10):
-            await bus.emit(SessionEvent(type=SessionEventType.PERCEPTION_COMPLETED, data={"i": i}))
-        await asyncio.sleep(0.05)
-
-        await bus.close()
-        await task
-
-        assert len(events) <= 10
+    assert bus.closed is False

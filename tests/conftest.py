@@ -1,4 +1,4 @@
-"""Test fixtures for critical runtime nodes."""
+"""业务场景测试共享夹具。"""
 from __future__ import annotations
 
 import sys
@@ -13,19 +13,20 @@ if str(project_root) not in sys.path:
 
 @pytest.fixture
 def tmp_skill_dir(tmp_path: Path) -> Path:
-    """临时技能目录，含一个测试技能文件。"""
+    """模拟用户在工作区安装的本地技能目录。"""
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
     skill_file = skills_dir / "test_hello.py"
-    skill_file.write_text("""
+    skill_file.write_text(
+        """
 SKILL_META = {
     "name": "test_hello",
-    "description": "测试用打招呼技能",
+    "description": "给群友发送问候",
     "version": "1.0",
     "parameters": {
         "name": {
             "type": "str",
-            "description": "要打招呼的人",
+            "description": "要问候的群友",
             "required": False,
             "default": "世界",
         },
@@ -38,5 +39,7 @@ def run(name: str = "世界", **kwargs) -> dict:
         "data": {"greeting": f"你好，{name}！"},
         "text": f"你好，{name}！",
     }
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     return skills_dir

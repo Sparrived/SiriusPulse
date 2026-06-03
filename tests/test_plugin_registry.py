@@ -1,5 +1,8 @@
-"""插件注册中心关键路径测试。"""
+"""插件注册中心在用户消息入口上的业务行为测试。"""
+
 from __future__ import annotations
+
+import pytest
 
 from sirius_pulse.plugins import PluginRegistry
 from sirius_pulse.plugins.models import (
@@ -10,106 +13,146 @@ from sirius_pulse.plugins.models import (
 )
 
 
-def _make_plugin_def(name: str, commands: list[PluginCommandDef]) -> PluginDefinition:
+def _plugin(
+    name: str,
+    commands: list[PluginCommandDef],
+    *,
+    description: str = "test plugin",
+    permissions: PluginPermissionDef | None = None,
+) -> PluginDefinition:
     return PluginDefinition(
         name=name,
         display_name=name,
-        description="test plugin",
+        description=description,
         version="1.0",
         commands=commands,
         events=[],
         parameters=[],
-        permissions=PluginPermissionDef(),
+        permissions=permissions or PluginPermissionDef(),
         render=PluginRenderDef(),
         dependencies=[],
         source_path=None,
     )
 
 
-def test_register_and_get():
-    """注册插件并查找。"""
+def test_plugin_registry_when_plugin_is_registered_then_user_command_can_find_it():
     registry = PluginRegistry()
-    definition = _make_plugin_def("test_plugin", [])
-    registry.register(definition, None)
-
-    assert registry.get("test_plugin") is definition
-    assert "test_plugin" in registry.plugin_names
-    assert registry.plugin_count == 1
-
-
-def test_match_prefix_command():
-    """前缀匹配插件指令。"""
-    registry = PluginRegistry()
-    cmd_def = PluginCommandDef(
-        name="dice",
-        patterns=["/dice"],
-        pattern_type="prefix",
-        description="掷骰子",
+    definition = _plugin(
+        "dice_plugin",
+        [
+            PluginCommandDef(
+                name="dice",
+                patterns=["/dice"],
+                pattern_type="prefix",
+                description="掷骰子",
+            )
+        ],
     )
-    definition = _make_plugin_def("dice_plugin", [cmd_def])
-    registry.register(definition, None)
 
-    result = registry.match_message("/dice 100")
-    assert result is not None
-    assert result.plugin_name == "dice_plugin"
-    assert result.command_name == "dice"
+    registry.register(definition, instance=None)
+    match = registry.match_message("/dice 100")
 
-    result = registry.match_message("/roll 100")
-    assert result is None
+    assert registry.get("dice_plugin") is definition
+    assert match is not None
+    assert match.plugin_name == "dice_plugin"
+    assert match.command_name == "dice"
+    assert match.lexed is not None
+    assert match.lexed.positional_args == ["100"]
 
 
-def test_match_keyword_command():
-    """关键词匹配插件指令。"""
+def test_plugin_registry_when_user_uses_unrelated_command_then_no_plugin_is_selected():
     registry = PluginRegistry()
-    cmd_def = PluginCommandDef(
-        name="weather",
-        patterns=["天气"],
-        pattern_type="keyword",
-        description="查天气",
+    registry.register(
+        _plugin(
+            "dice_plugin",
+            [PluginCommandDef(name="dice", patterns=["/dice"], pattern_type="prefix")],
+        ),
+        instance=None,
     )
-    definition = _make_plugin_def("weather_plugin", [cmd_def])
-    registry.register(definition, None)
 
-    result = registry.match_message("/北京天气怎么样")
-    assert result is not None
-    assert result.plugin_name == "weather_plugin"
+    assert registry.match_message("/weather Beijing") is None
 
 
-def test_get_plugin_descriptions():
-    """生成 LLM 用插件描述。"""
+def test_plugin_registry_when_keyword_plugin_exists_then_natural_language_can_match_it():
     registry = PluginRegistry()
-    cmd_def = PluginCommandDef(
-        name="dice",
-        patterns=["/dice"],
-        pattern_type="prefix",
-        description="掷骰子：/dice [max]",
+    registry.register(
+        _plugin(
+            "weather_plugin",
+            [PluginCommandDef(name="weather", patterns=["天气"], pattern_type="keyword")],
+        ),
+        instance=None,
     )
-    definition = _make_plugin_def("dice_plugin", [cmd_def])
-    registry.register(definition, None)
 
-    desc = registry.get_plugin_descriptions(caller_is_developer=False)
-    assert isinstance(desc, str)
-    assert "dice" in desc
+    match = registry.match_message("帮我看看北京天气怎么样")
+
+    assert match is not None
+    assert match.plugin_name == "weather_plugin"
+    assert match.confidence == 0.9
 
 
-def test_unregister():
-    """注销插件。"""
+def test_plugin_registry_when_plugin_is_hidden_from_intent_then_description_excludes_it():
     registry = PluginRegistry()
-    definition = _make_plugin_def("temp_plugin", [])
-    registry.register(definition, None)
-    assert registry.plugin_count == 1
+    registry.register(
+        _plugin(
+            "admin_plugin",
+            [PluginCommandDef(name="admin", patterns=["/admin"], pattern_type="prefix")],
+            description="管理员工具",
+            permissions=PluginPermissionDef(hidden_from_intent=True),
+        ),
+        instance=None,
+    )
 
-    registry.unregister("temp_plugin")
+    assert registry.get_plugin_descriptions(caller_is_developer=True) == ""
+    assert registry.match_message("/admin reload") is not None
+
+
+def test_plugin_registry_when_plugin_is_developer_only_then_normal_users_do_not_see_it():
+    registry = PluginRegistry()
+    registry.register(
+        _plugin(
+            "debug_plugin",
+            [PluginCommandDef(name="debug", patterns=["/debug"], pattern_type="prefix")],
+            description="调试工具",
+            permissions=PluginPermissionDef(developer_only=True),
+        ),
+        instance=None,
+    )
+
+    assert registry.get_plugin_descriptions(caller_is_developer=False) == ""
+    assert "debug_plugin" in registry.get_plugin_descriptions(caller_is_developer=True)
+
+
+def test_plugin_registry_when_duplicate_plugin_name_is_loaded_then_registry_rejects_it():
+    registry = PluginRegistry()
+    registry.register(_plugin("same_name", []), instance=None)
+
+    with pytest.raises(ValueError):
+        registry.register(_plugin("same_name", []), instance=None)
+
+
+def test_plugin_registry_when_plugin_is_uninstalled_then_its_commands_stop_matching():
+    registry = PluginRegistry()
+    registry.register(
+        _plugin(
+            "temporary_plugin",
+            [PluginCommandDef(name="temp", patterns=["/temp"], pattern_type="prefix")],
+        ),
+        instance=None,
+    )
+
+    registry.unregister("temporary_plugin")
+
+    assert registry.get("temporary_plugin") is None
+    assert registry.match_message("/temp") is None
     assert registry.plugin_count == 0
-    assert registry.get("temp_plugin") is None
 
 
-def test_clear():
-    """清空所有插件。"""
+def test_plugin_registry_when_workspace_reloads_then_clear_removes_all_runtime_plugins():
     registry = PluginRegistry()
-    registry.register(_make_plugin_def("a", []), None)
-    registry.register(_make_plugin_def("b", []), None)
-    assert registry.plugin_count == 2
+    registry.register(_plugin("a", []), instance=None)
+    registry.register(_plugin("b", []), instance=None)
 
     registry.clear()
+
+    assert registry.plugin_names == []
     assert registry.plugin_count == 0

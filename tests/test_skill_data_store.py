@@ -1,4 +1,5 @@
-"""技能数据存储持久化测试。"""
+"""技能持久化数据在用户偏好场景中的业务行为测试。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,55 +7,69 @@ from pathlib import Path
 from sirius_pulse.skills.data_store import SkillDataStore
 
 
-def test_get_set_delete(tmp_path: Path):
-    """基本读写删除。"""
-    store = SkillDataStore(tmp_path / "test_skill.json")
-    assert store.get("key1") is None
-    assert store.get("key1", "default") == "default"
-
-    store.set("key1", "value1")
-    assert store.get("key1") == "value1"
-
-    assert store.delete("key1") is True
-    assert store.get("key1") is None
-    assert store.delete("nonexistent") is False
-
-
-def test_persistence(tmp_path: Path):
-    """数据持久化到文件。"""
-    store_path = tmp_path / "test_persist.json"
+def test_skill_store_when_skill_saves_user_preference_then_next_instance_reads_it(
+    tmp_path: Path,
+):
+    store_path = tmp_path / "skill_data" / "weather.json"
     store = SkillDataStore(store_path)
-    store.set("name", "test")
-    store.set("count", 42)
+
+    store.set("default_city", "杭州")
+    store.set("units", "metric")
     store.save()
 
-    # 从文件重新加载
-    store2 = SkillDataStore(store_path)
-    assert store2.get("name") == "test"
-    assert store2.get("count") == 42
+    reloaded = SkillDataStore(store_path)
+    assert reloaded.get("default_city") == "杭州"
+    assert reloaded.get("units") == "metric"
 
 
-def test_keys_and_all(tmp_path: Path):
-    """获取所有键和值。"""
-    store = SkillDataStore(tmp_path / "test_keys.json")
+def test_skill_store_when_key_is_missing_then_default_value_is_returned(tmp_path: Path):
+    store = SkillDataStore(tmp_path / "skill_data" / "prefs.json")
+
+    assert store.get("missing") is None
+    assert store.get("missing", "fallback") == "fallback"
+
+
+def test_skill_store_when_user_clears_preference_then_key_disappears_after_save(
+    tmp_path: Path,
+):
+    store_path = tmp_path / "skill_data" / "prefs.json"
+    store = SkillDataStore(store_path)
+    store.set("timezone", "Asia/Shanghai")
+    store.save()
+
+    assert store.delete("timezone") is True
+    store.save()
+
+    assert SkillDataStore(store_path).get("timezone") is None
+    assert store.delete("timezone") is False
+
+
+def test_skill_store_when_webui_lists_settings_then_all_keys_are_returned(tmp_path: Path):
+    store = SkillDataStore(tmp_path / "skill_data" / "prefs.json")
     store.set("a", 1)
     store.set("b", 2)
-    store.set("c", 3)
 
-    keys = store.keys()
-    assert set(keys) == {"a", "b", "c"}
-
-    all_data = store.all()
-    assert all_data == {"a": 1, "b": 2, "c": 3}
+    assert set(store.keys()) == {"a", "b"}
+    assert store.all() == {"a": 1, "b": 2}
 
 
-def test_dirty_flag(tmp_path: Path):
-    """脏数据标记。"""
-    store = SkillDataStore(tmp_path / "test_dirty.json")
-    assert not store.is_dirty
+def test_skill_store_when_data_changes_then_dirty_flag_tracks_unsaved_state(tmp_path: Path):
+    store = SkillDataStore(tmp_path / "skill_data" / "prefs.json")
 
-    store.set("k", "v")
-    assert store.is_dirty
-
+    assert store.is_dirty is False
+    store.set("enabled", True)
+    assert store.is_dirty is True
     store.save()
-    assert not store.is_dirty
+    assert store.is_dirty is False
+
+
+def test_skill_store_when_existing_file_is_corrupted_then_skill_starts_with_empty_store(
+    tmp_path: Path,
+):
+    store_path = tmp_path / "skill_data" / "prefs.json"
+    store_path.parent.mkdir(parents=True)
+    store_path.write_text("{broken json", encoding="utf-8")
+
+    store = SkillDataStore(store_path)
+
+    assert store.all() == {}

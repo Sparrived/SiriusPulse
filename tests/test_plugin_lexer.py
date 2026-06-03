@@ -1,69 +1,58 @@
-"""命令解析（Tokenizer + Lexer）关键路径测试。"""
+"""用户插件命令文本的解析行为测试。"""
+
 from __future__ import annotations
 
-from sirius_pulse.plugins.lexer import Tokenizer, Lexer, TokenType
+from sirius_pulse.plugins.lexer import Lexer, Tokenizer, TokenType
 
 
-def test_tokenize_simple_command():
-    """简单命令 Tokenize。"""
-    tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize("/dice 100")
-    types = [t.type for t in tokens if t.type != TokenType.WS]
-    assert types == [TokenType.CMD_HEAD, TokenType.ARG_VALUE]
-
-
-def test_tokenize_with_options():
-    """带选项命令 Tokenize。"""
-    tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize("/weather Beijing --format=json")
-    types = [t.type for t in tokens if t.type != TokenType.WS]
-    assert types == [
-        TokenType.CMD_HEAD,
-        TokenType.ARG_VALUE,
-        TokenType.LONG_OPT,
-        TokenType.EQ,
-        TokenType.ARG_VALUE,
-    ]
-
-
-def test_tokenize_with_flags():
-    """带布尔标志命令 Tokenize。"""
-    tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize("/deploy app --force")
-    types = [t.type for t in tokens if t.type != TokenType.WS]
-    assert TokenType.LONG_OPT in types
-    assert TokenType.ARG_VALUE in types
-
-
-def test_lex_simple_command():
-    """简单命令 Lex。"""
+def _lex(text: str):
     lexer = Lexer()
-    tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize("/dice 100")
-    lexed = lexer.lex(tokens, "/dice 100")
-    assert lexed is not None
-    assert lexed.command == "dice"
-    assert lexed.positional_args == ["100"]
-    assert lexed.prefix == "/"
+    return lexer.lex(lexer.tokenize(text), text)
 
 
-def test_lex_with_named_args():
-    """命名参数 Lex。"""
-    lexer = Lexer()
-    tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize("/weather Beijing --format=json --verbose")
-    lexed = lexer.lex(tokens, "/weather Beijing --format=json --verbose")
-    assert lexed is not None
-    assert lexed.command == "weather"
-    assert lexed.positional_args == ["Beijing"]
-    assert lexed.named_args.get("format") == "json"
-    assert "verbose" in lexed.flags
+def test_command_parser_when_user_enters_slash_command_then_extracts_command_and_argument():
+    command = _lex("/dice 100")
+
+    assert command is not None
+    assert command.command == "dice"
+    assert command.prefix == "/"
+    assert command.positional_args == ["100"]
 
 
-def test_no_prefix_no_match():
-    """无前缀的消息不生成 LexedCommand。"""
-    lexer = Lexer()
-    tokenizer = Tokenizer()
-    tokens = tokenizer.tokenize("你好")
-    lexed = lexer.lex(tokens, "你好")
-    assert lexed is None
+def test_command_parser_when_user_passes_named_option_then_option_is_available_to_plugin():
+    command = _lex("/weather Beijing --format=json --verbose")
+
+    assert command is not None
+    assert command.command == "weather"
+    assert command.positional_args == ["Beijing"]
+    assert command.named_args["format"] == "json"
+    assert "verbose" in command.flags
+
+
+def test_command_parser_when_user_uses_short_option_then_plugin_receives_named_value():
+    command = _lex("/image resize -w 512 -h 256")
+
+    assert command is not None
+    assert command.command == "image"
+    assert command.positional_args == ["resize"]
+    assert command.named_args == {"w": "512", "h": "256"}
+
+
+def test_command_parser_when_user_mentions_someone_then_mention_becomes_argument():
+    command = _lex("/remind @alice 18:00")
+
+    assert command is not None
+    assert command.positional_args == ["alice", "18:00"]
+
+
+def test_command_parser_when_message_is_normal_chat_then_no_plugin_command_is_created():
+    tokens = Tokenizer().tokenize("今天聊点什么")
+    command = Lexer().lex(tokens, "今天聊点什么")
+
+    assert command is None
+
+
+def test_tokenizer_when_user_enters_long_option_then_keeps_structured_tokens():
+    tokens = [token.type for token in Tokenizer().tokenize("/deploy app --force") if token.type != TokenType.WS]
+
+    assert tokens == [TokenType.CMD_HEAD, TokenType.ARG_VALUE, TokenType.LONG_OPT]

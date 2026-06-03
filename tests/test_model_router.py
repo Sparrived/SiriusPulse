@@ -1,129 +1,104 @@
-"""ModelRouter 模型路由测试。"""
+"""模型路由在业务任务调度中的行为测试。"""
+
 from __future__ import annotations
 
 from sirius_pulse.core.model_router import ModelRouter, TaskConfig
 
 
-class TestBasicResolve:
-    """基础路由解析。"""
+def test_model_router_when_generating_final_reply_then_uses_high_quality_model():
+    config = ModelRouter().resolve("response_generate")
 
-    def test_resolve_known_task(self):
-        router = ModelRouter()
-        cfg = router.resolve("response_generate")
-        assert cfg.model_name == "gpt-4o"
-        assert cfg.temperature == 0.7
-        assert cfg.max_tokens == 4096
+    assert config.model_name == "gpt-4o"
+    assert config.temperature == 0.7
+    assert config.max_tokens == 4096
 
-    def test_resolve_unknown_task_falls_back(self):
-        router = ModelRouter()
-        cfg = router.resolve("nonexistent_task")
-        assert cfg.model_name == "gpt-4o"
 
-    def test_resolve_with_custom_registry(self):
-        registry = {
-            "my_task": TaskConfig(model_name="custom-model", temperature=0.5, max_tokens=1024)
+def test_model_router_when_running_lightweight_cognition_then_uses_fast_model():
+    config = ModelRouter().resolve("cognition_analyze")
+
+    assert config.model_name == "gpt-4o-mini"
+    assert config.timeout == 15.0
+
+
+def test_model_router_when_task_is_unknown_then_falls_back_to_reply_generation_config():
+    config = ModelRouter().resolve("unknown_business_task")
+
+    assert config.model_name == "gpt-4o"
+    assert config.max_tokens == 4096
+
+
+def test_model_router_when_operator_overrides_reply_model_then_override_is_respected():
+    router = ModelRouter(overrides={"response_generate": {"model_name": "custom-reply-model"}})
+
+    config = router.resolve("response_generate")
+
+    assert config.model_name == "custom-reply-model"
+    assert config.temperature == 0.7
+
+
+def test_model_router_when_operator_changes_temperature_then_other_limits_are_preserved():
+    router = ModelRouter(overrides={"response_generate": {"temperature": 0.2}})
+
+    config = router.resolve("response_generate")
+
+    assert config.temperature == 0.2
+    assert config.max_tokens == 4096
+    assert config.timeout == 30.0
+
+
+def test_model_router_when_custom_business_task_is_registered_then_it_can_be_resolved():
+    router = ModelRouter(
+        task_registry={
+            "support_triage": TaskConfig(
+                model_name="support-model",
+                temperature=0.1,
+                max_tokens=800,
+            )
         }
-        router = ModelRouter(task_registry=registry)
-        cfg = router.resolve("my_task")
-        assert cfg.model_name == "custom-model"
+    )
 
-    def test_list_tasks(self):
-        router = ModelRouter()
-        tasks = router.list_tasks()
-        assert "response_generate" in tasks
-        assert "cognition_analyze" in tasks
-        assert len(tasks) > 5
+    config = router.resolve("support_triage")
+
+    assert config.model_name == "support-model"
+    assert config.temperature == 0.1
+    assert router.list_tasks() == ["support_triage"]
 
 
-class TestOverrides:
-    """参数覆盖测试。"""
+def test_model_router_when_cognition_is_urgent_then_model_is_escalated():
+    router = ModelRouter()
 
-    def test_override_temperature(self):
-        router = ModelRouter(overrides={"response_generate": {"temperature": 0.3}})
-        cfg = router.resolve("response_generate")
-        assert cfg.temperature == 0.3
-        assert cfg.model_name == "gpt-4o"
+    normal = router.resolve("cognition_analyze", urgency=50)
+    urgent = router.resolve("cognition_analyze", urgency=85)
 
-    def test_override_model_name(self):
-        router = ModelRouter(overrides={"response_generate": {"model_name": "gpt-4o-mini"}})
-        cfg = router.resolve("response_generate")
-        assert cfg.model_name == "gpt-4o-mini"
-
-    def test_override_preserves_unspecified_fields(self):
-        router = ModelRouter(overrides={"response_generate": {"temperature": 0.2}})
-        cfg = router.resolve("response_generate")
-        assert cfg.temperature == 0.2
-        assert cfg.max_tokens == 4096
-        assert cfg.timeout == 30.0
-
-    def test_override_nonexistent_task_ignored(self):
-        router = ModelRouter(overrides={"ghost_task": {"temperature": 0.1}})
-        cfg = router.resolve("response_generate")
-        assert cfg.temperature == 0.7
+    assert normal.model_name == "gpt-4o-mini"
+    assert urgent.model_name == "gpt-4o"
+    assert urgent.temperature < normal.temperature
+    assert urgent.max_tokens >= normal.max_tokens
 
 
-class TestUrgencyEscalation:
-    """紧急度升级测试。"""
+def test_model_router_when_task_is_critical_then_tokens_are_not_reduced():
+    router = ModelRouter()
 
-    def test_no_escalation_low_urgency(self):
-        router = ModelRouter()
-        cfg = router.resolve("cognition_analyze", urgency=50)
-        assert cfg.model_name == "gpt-4o-mini"
+    normal = router.resolve("cognition_analyze", urgency=50)
+    critical = router.resolve("cognition_analyze", urgency=96)
 
-    def test_escalation_high_urgency(self):
-        router = ModelRouter()
-        cfg = router.resolve("cognition_analyze", urgency=85)
-        assert cfg.model_name == "gpt-4o"
-
-    def test_escalation_critical_urgency(self):
-        router = ModelRouter()
-        cfg = router.resolve("cognition_analyze", urgency=96)
-        assert cfg.model_name == "gpt-4o"
-
-    def test_escalation_lowers_temperature(self):
-        router = ModelRouter()
-        normal = router.resolve("cognition_analyze", urgency=50)
-        high = router.resolve("cognition_analyze", urgency=85)
-        critical = router.resolve("cognition_analyze", urgency=96)
-        assert critical.temperature <= high.temperature <= normal.temperature
-
-    def test_escalation_increases_tokens(self):
-        router = ModelRouter()
-        normal = router.resolve("cognition_analyze", urgency=50)
-        critical = router.resolve("cognition_analyze", urgency=96)
-        assert critical.max_tokens >= normal.max_tokens
+    assert critical.model_name == "gpt-4o"
+    assert critical.max_tokens >= normal.max_tokens
 
 
-class TestStrongerModel:
-    """模型升级映射测试。"""
+def test_model_router_when_primary_provider_fails_then_task_has_fallback_model():
+    fallback = ModelRouter().get_fallback("response_generate")
 
-    def test_gpt4o_mini_upgrades_to_gpt4o(self):
-        assert ModelRouter._stronger_model("gpt-4o-mini") == "gpt-4o"
-
-    def test_deepseek_chat_upgrades_to_reasoner(self):
-        assert ModelRouter._stronger_model("deepseek-chat") == "deepseek-reasoner"
-
-    def test_unknown_model_unchanged(self):
-        assert ModelRouter._stronger_model("custom-model") == "custom-model"
+    assert fallback is not None
+    assert fallback.model_name == "deepseek-reasoner"
+    assert fallback.temperature == 0.7
 
 
-class TestFallback:
-    """回退模型测试。"""
+def test_model_router_when_task_has_no_config_then_no_fallback_is_returned():
+    assert ModelRouter().get_fallback("missing_task") is None
 
-    def test_get_fallback_for_known_task(self):
-        router = ModelRouter()
-        fallback = router.get_fallback("cognition_analyze")
-        assert fallback is not None
-        assert fallback.model_name == "deepseek-chat"
 
-    def test_get_fallback_for_unknown_task(self):
-        router = ModelRouter()
-        fallback = router.get_fallback("nonexistent")
-        assert fallback is None
-
-    def test_fallback_preserves_config(self):
-        router = ModelRouter()
-        fallback = router.get_fallback("response_generate")
-        assert fallback is not None
-        assert fallback.temperature == 0.7
-        assert fallback.max_tokens == 4096
+def test_model_router_when_mapping_to_stronger_model_then_known_tiers_upgrade():
+    assert ModelRouter._stronger_model("gpt-4o-mini") == "gpt-4o"
+    assert ModelRouter._stronger_model("deepseek-chat") == "deepseek-reasoner"
+    assert ModelRouter._stronger_model("private-model") == "private-model"

@@ -1,137 +1,138 @@
-"""ThresholdEngine 动态阈值计算测试。"""
+"""动态参与阈值的业务行为测试。"""
+
 from __future__ import annotations
 
 from sirius_pulse.core.threshold_engine import ThresholdEngine
 from sirius_pulse.memory.semantic.models import UserSemanticProfile
 
 
-class TestThresholdEngineDefaults:
-    """默认参数下的阈值计算。"""
+def test_threshold_when_admin_sets_bot_more_expressive_then_reply_bar_gets_lower():
+    engine = ThresholdEngine()
 
-    def test_default_sensitivity_produces_mid_range(self):
-        engine = ThresholdEngine()
-        result = engine.compute(sensitivity=0.5, heat_level="warm", hour_of_day=12)
-        assert 0.3 <= result <= 0.7
+    quiet = engine.compute(sensitivity=0.0, heat_level="warm", hour_of_day=12)
+    expressive = engine.compute(sensitivity=1.0, heat_level="warm", hour_of_day=12)
 
-    def test_high_sensitivity_lowers_threshold(self):
-        engine = ThresholdEngine()
-        high = engine.compute(sensitivity=1.0, heat_level="warm", hour_of_day=12)
-        low = engine.compute(sensitivity=0.0, heat_level="warm", hour_of_day=12)
-        assert high < low
-
-    def test_result_clamped_to_valid_range(self):
-        engine = ThresholdEngine(base_low=0.0, base_high=0.0)
-        result = engine.compute(sensitivity=0.5, heat_level="cold", hour_of_day=3)
-        assert result >= 0.1
-
-    def test_result_clamped_upper_bound(self):
-        engine = ThresholdEngine(base_low=2.0, base_high=2.0)
-        result = engine.compute(
-            sensitivity=0.0,
-            heat_level="overheated",
-            messages_per_minute=10,
-            hour_of_day=3,
-            sender_type="other_ai",
-        )
-        assert result <= 0.9
+    assert expressive < quiet
 
 
-class TestActivityFactor:
-    """热度等级对阈值的影响。"""
+def test_threshold_when_group_is_hot_then_bot_requires_stronger_reason_to_reply():
+    engine = ThresholdEngine()
 
-    def test_cold_heat_reduces_threshold(self):
-        engine = ThresholdEngine()
-        cold = engine.compute(sensitivity=0.5, heat_level="cold", hour_of_day=12)
-        warm = engine.compute(sensitivity=0.5, heat_level="warm", hour_of_day=12)
-        assert cold < warm
+    warm = engine.compute(sensitivity=0.5, heat_level="warm", hour_of_day=12)
+    hot = engine.compute(sensitivity=0.5, heat_level="hot", hour_of_day=12)
+    overheated = engine.compute(sensitivity=0.5, heat_level="overheated", hour_of_day=12)
 
-    def test_hot_heat_raises_threshold(self):
-        engine = ThresholdEngine()
-        hot = engine.compute(sensitivity=0.5, heat_level="hot", hour_of_day=12)
-        warm = engine.compute(sensitivity=0.5, heat_level="warm", hour_of_day=12)
-        assert hot > warm
-
-    def test_overheated_raises_threshold_further(self):
-        engine = ThresholdEngine()
-        hot = engine.compute(sensitivity=0.5, heat_level="hot", hour_of_day=12)
-        overheated = engine.compute(sensitivity=0.5, heat_level="overheated", hour_of_day=12)
-        assert overheated > hot
-
-    def test_high_message_rate_raises_threshold(self):
-        engine = ThresholdEngine()
-        fast = engine.compute(
-            sensitivity=0.5, heat_level="warm", messages_per_minute=10, hour_of_day=12
-        )
-        slow = engine.compute(
-            sensitivity=0.5, heat_level="warm", messages_per_minute=0.1, hour_of_day=12
-        )
-        assert fast > slow
+    assert warm < hot < overheated
 
 
-class TestEngagementFactor:
-    """用户画像对阈值的影响。"""
+def test_threshold_when_group_is_quiet_then_bot_can_join_more_easily():
+    engine = ThresholdEngine()
 
-    def test_no_profile_returns_baseline(self):
-        engine = ThresholdEngine()
-        no_profile = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=None)
-        assert no_profile > 0
+    cold = engine.compute(sensitivity=0.5, heat_level="cold", hour_of_day=12)
+    warm = engine.compute(sensitivity=0.5, heat_level="warm", hour_of_day=12)
 
-    def test_new_user_low_engagement_factor(self):
-        engine = ThresholdEngine()
-        profile = UserSemanticProfile(
-            engagement_rate=0.8, first_interaction_at="", interaction_count=0
-        )
-        result = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=profile)
-        baseline = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=None)
-        assert result < baseline
-
-    def test_high_engagement_user_lowers_threshold(self):
-        engine = ThresholdEngine()
-        profile = UserSemanticProfile(
-            engagement_rate=0.7, first_interaction_at="2026-01-01", interaction_count=50
-        )
-        result = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=profile)
-        baseline = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=None)
-        assert result < baseline
-
-    def test_low_engagement_user_raises_threshold(self):
-        engine = ThresholdEngine()
-        profile = UserSemanticProfile(
-            engagement_rate=0.05, first_interaction_at="2026-01-01", interaction_count=5
-        )
-        result = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=profile)
-        baseline = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=None)
-        assert result > baseline
+    assert cold < warm
 
 
-class TestTimeFactor:
-    """时段对阈值的影响。"""
+def test_threshold_when_messages_are_arriving_too_fast_then_reply_bar_rises():
+    engine = ThresholdEngine()
 
-    def test_night_raises_threshold(self):
-        engine = ThresholdEngine()
-        night = engine.compute(sensitivity=0.5, hour_of_day=3)
-        day = engine.compute(sensitivity=0.5, hour_of_day=12)
-        assert night > day
+    slow = engine.compute(
+        sensitivity=0.5,
+        heat_level="warm",
+        messages_per_minute=0.1,
+        hour_of_day=12,
+    )
+    fast = engine.compute(
+        sensitivity=0.5,
+        heat_level="warm",
+        messages_per_minute=10,
+        hour_of_day=12,
+    )
 
-    def test_evening_lowers_threshold(self):
-        engine = ThresholdEngine()
-        evening = engine.compute(sensitivity=0.5, hour_of_day=20)
-        day = engine.compute(sensitivity=0.5, hour_of_day=12)
-        assert evening < day
+    assert fast > slow
 
 
-class TestPeerFactor:
-    """AI 发送者门槛提升。"""
+def test_threshold_when_user_often_engages_then_bot_can_reply_more_readily():
+    engine = ThresholdEngine()
+    familiar = UserSemanticProfile(
+        user_id="u1",
+        engagement_rate=0.7,
+        interaction_count=50,
+        first_interaction_at="2026-01-01T00:00:00+00:00",
+    )
 
-    def test_other_ai_raises_threshold(self):
-        engine = ThresholdEngine()
-        ai = engine.compute(sensitivity=0.5, hour_of_day=12, sender_type="other_ai")
-        human = engine.compute(sensitivity=0.5, hour_of_day=12, sender_type="human")
-        assert ai > human
+    baseline = engine.compute(sensitivity=0.5, hour_of_day=12)
+    familiar_threshold = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=familiar)
 
-    def test_other_ai_factor_is_1_3(self):
-        engine = ThresholdEngine()
-        ai = engine.compute(sensitivity=0.5, hour_of_day=12, sender_type="other_ai")
-        human = engine.compute(sensitivity=0.5, hour_of_day=12, sender_type="human")
-        ratio = ai / human
-        assert abs(ratio - 1.3) < 0.01
+    assert familiar_threshold < baseline
+
+
+def test_threshold_when_user_rarely_responds_then_bot_becomes_more_conservative():
+    engine = ThresholdEngine()
+    quiet_user = UserSemanticProfile(
+        user_id="u1",
+        engagement_rate=0.05,
+        interaction_count=5,
+        first_interaction_at="2026-01-01T00:00:00+00:00",
+    )
+
+    baseline = engine.compute(sensitivity=0.5, hour_of_day=12)
+    quiet_user_threshold = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=quiet_user)
+
+    assert quiet_user_threshold > baseline
+
+
+def test_threshold_when_user_is_new_then_bot_is_welcoming():
+    engine = ThresholdEngine()
+    new_user = UserSemanticProfile(user_id="new", engagement_rate=0.8, interaction_count=0)
+
+    baseline = engine.compute(sensitivity=0.5, hour_of_day=12)
+    new_user_threshold = engine.compute(sensitivity=0.5, hour_of_day=12, user_profile=new_user)
+
+    assert new_user_threshold < baseline
+
+
+def test_threshold_when_it_is_late_night_then_bot_replies_less_often():
+    engine = ThresholdEngine()
+
+    noon = engine.compute(sensitivity=0.5, hour_of_day=12)
+    late_night = engine.compute(sensitivity=0.5, hour_of_day=3)
+
+    assert late_night > noon
+
+
+def test_threshold_when_evening_chat_time_arrives_then_bot_can_be_more_active():
+    engine = ThresholdEngine()
+
+    workday = engine.compute(sensitivity=0.5, hour_of_day=12)
+    evening = engine.compute(sensitivity=0.5, hour_of_day=20)
+
+    assert evening < workday
+
+
+def test_threshold_when_sender_is_other_ai_then_bar_is_higher_than_for_human():
+    engine = ThresholdEngine()
+
+    human = engine.compute(sensitivity=0.5, hour_of_day=12, sender_type="human")
+    peer_ai = engine.compute(sensitivity=0.5, hour_of_day=12, sender_type="other_ai")
+
+    assert peer_ai > human
+
+
+def test_threshold_when_extreme_inputs_arrive_then_result_stays_in_safe_range():
+    low = ThresholdEngine(base_low=0.0, base_high=0.0).compute(
+        sensitivity=0.5,
+        heat_level="cold",
+        hour_of_day=3,
+    )
+    high = ThresholdEngine(base_low=2.0, base_high=2.0).compute(
+        sensitivity=0.0,
+        heat_level="overheated",
+        messages_per_minute=10,
+        hour_of_day=3,
+        sender_type="other_ai",
+    )
+
+    assert low == 0.1
+    assert high == 0.9
