@@ -71,6 +71,11 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "strict"
 addopts = "--basetemp=.pytest_tmp"
+markers = [
+	"integration: cross-module integration tests that use only local fakes and tmp_path",
+	"slow: opt-in tests that may take longer than the default suite budget",
+	"external: opt-in tests that require network, services, or host integrations",
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]

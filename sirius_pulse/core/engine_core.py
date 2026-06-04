@@ -171,8 +171,9 @@ class _EmotionalGroupChatEngineBase:
 
     def _init_memory_system(self) -> None:
         # 共享同一个 SQLite 存储（persona.db）
+        persona_db_path = self.work_path / "persona.db"
         self._memory_storage = MemoryStorage(
-            self.work_path / "persona.db",
+            persona_db_path,
             conn=self._persona_db_conn,
         )
 
@@ -196,10 +197,14 @@ class _EmotionalGroupChatEngineBase:
 
         # ── 新记忆体系组件（共享 persona.db 连接）──
         self.evolution_chain = EvolutionChain(
+            db_path=persona_db_path,
             conn=self._persona_db_conn,
             embedding_client=self._embedding_client,
         )
-        self.provenance_store = ProvenanceStore(conn=self._persona_db_conn)
+        self.provenance_store = ProvenanceStore(
+            persona_db_path,
+            conn=self._persona_db_conn,
+        )
         self.user_manager.set_provenance_store(self.provenance_store)
         try:
             migrated = self.provenance_store.migrate_from_legacy_tables()
@@ -208,6 +213,7 @@ class _EmotionalGroupChatEngineBase:
         except Exception as exc:
             logger.warning("记忆证据账本迁移失败: %s", exc)
         self.situation_store = SituationStore(
+            persona_db_path,
             conn=self._persona_db_conn,
         )
         self.situation_extractor = SituationExtractor()
