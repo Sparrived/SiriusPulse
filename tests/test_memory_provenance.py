@@ -15,6 +15,7 @@ from sirius_pulse.memory.provenance import (
     ProvenanceStore,
 )
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
+from sirius_pulse.memory.user.unified_models import UnifiedUser
 
 
 def test_evidence_when_same_source_snapshot_saved_then_deduplicates(tmp_path):
@@ -117,6 +118,7 @@ def test_alias_registration_when_llm_then_manual_then_claim_is_upgraded(tmp_path
     db_path = tmp_path / "persona.db"
     store = ProvenanceStore(db_path)
     manager = UnifiedUserManager(db_path=db_path, provenance_store=store)
+    manager.register_user(UnifiedUser(user_id="u1", name="Alice"), group_id="g1")
 
     manager.register_alias("alicey", "u1", "Alice", "g1", source="llm_discovery")
     claim = store.find_claim_by_source_record("alias:alicey:u1")

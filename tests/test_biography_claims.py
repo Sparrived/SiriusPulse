@@ -54,6 +54,7 @@ def test_biography_when_no_claims_then_falls_back_to_evolution_chain(tmp_path):
         obj="杭州",
         status=RecordStatus.ACTIVE,
     ))
+    chain._store.commit()
     provenance = ProvenanceStore(db_path)
 
     bio = BiographyView(chain, provenance_store=provenance).get_biography("u1")
