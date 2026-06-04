@@ -117,6 +117,7 @@ class CognitionEventStore(BaseSqliteStore):
 
     def _create_tables(self) -> None:
         """创建表结构并执行 schema 迁移。"""
+        self.ensure_meta_table()
         self.execute(_CREATE_TABLE)
         for idx_sql in _CREATE_INDEXES:
             self.execute(idx_sql)
