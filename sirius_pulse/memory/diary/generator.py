@@ -91,8 +91,6 @@ class DiaryGenerator:
         if not candidates:
             return None
 
-        from sirius_pulse.core.brain import RawRequest
-
         system_prompt = _DIARY_SYSTEM_PROMPT
         user_prompt = _build_diary_user_prompt(
             persona_name, persona_description, candidates
@@ -100,50 +98,43 @@ class DiaryGenerator:
 
         parsed: dict[str, Any] | None = None
         for attempt in range(max_retries + 1):
-            raw_request = RawRequest(
-                model=model_name,
-                system_prompt=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                purpose="diary_generate",
-                response_format={"type": "json_object"},
-            )
-
             try:
-                raw = await brain.raw_call(raw_request)
+                parsed = await self._call_diary_llm_json(
+                    brain=brain,
+                    model_name=model_name,
+                    system_prompt=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    purpose="diary_generate",
+                )
             except Exception as exc:
                 logger.error(
                     "日记生成 LLM 调用已耗尽所有重试 (group=%s): %s",
                     group_id, exc,
                 )
                 return None
-
-            parsed = self._parse_response(raw)
             if parsed:
                 break
-
-            if attempt < max_retries:
-                logger.warning(
-                    "日记生成响应 JSON 解析失败 (group=%s, attempt=%d/%d)，准备重试",
-                    group_id,
-                    attempt + 1,
-                    max_retries + 1,
-                )
-                system_prompt = (
-                    _DIARY_SYSTEM_PROMPT
-                    + "\n\n【重要提醒】上一次的输出不是合法 JSON，"
-                    "请确保本次输出是严格合法的 JSON 对象，不要包含任何其他文字。"
-                )
-            else:
+            if attempt >= max_retries:
                 logger.warning(
                     "日记生成响应 JSON 解析失败 (group=%s)，已耗尽 %d 次重试",
                     group_id,
                     max_retries + 1,
                 )
                 return None
+            logger.warning(
+                "日记生成响应 JSON 解析失败 (group=%s, attempt=%d/%d)，准备重试",
+                group_id,
+                attempt + 1,
+                max_retries + 1,
+            )
+            system_prompt = (
+                _DIARY_SYSTEM_PROMPT
+                + "\n\n【重要提醒】上一次的输出不是合法 JSON，"
+                "请确保本次输出是严格合法的 JSON 对象，不要包含任何其他文字。"
+            )
 
-        assert parsed is not None
         now_iso = datetime.now(timezone.utc).isoformat()
         entry = DiaryEntry(
             entry_id=f"dgy_{uuid.uuid4().hex[:12]}",
@@ -168,18 +159,18 @@ class DiaryGenerator:
     # ── 从 Situation 生成日记（新架构）──
 
     _SITUATION_DIARY_PROMPT = """你是 {persona_name}，{persona_description}。
-你正在回顾今天在群里的经历，写一篇日记。
+你正在回顾群里这段被压缩归档的经历，写一篇日记。
 
-今天的经历摘要（按时间顺序）：
+情景摘要（按时间顺序）：
 {situations_text}
 
 写作要求：
-- 以"{persona_name}"的第一人称口吻书写，像你本人在回忆今天的经历
+- 以"{persona_name}"的第一人称口吻书写，像你本人在回忆这段经历
 - 表达你自己的感受、看法、立场，不要旁观者视角
 - 明确提到每个人做了什么、说了什么，用自然的口吻转述
 - 保留重要信息、观点、约定、情绪变化
 - 去除重复内容
-- 如果今天有人提到了值得记住的事情（约定、计划、重要决定），重点记录
+- 如果这段经历里有人提到了值得记住的事情（约定、计划、重要决定），重点记录
 - 不限制长度，充分叙述
 
 输出 JSON：
@@ -212,8 +203,6 @@ class DiaryGenerator:
         if not situations:
             return None
 
-        from sirius_pulse.core.brain import RawRequest
-
         # 构建情景摘要文本
         situations_text = self._build_situations_text(situations)
         system_prompt = self._SITUATION_DIARY_PROMPT.format(
@@ -224,43 +213,35 @@ class DiaryGenerator:
 
         parsed: dict[str, Any] | None = None
         for attempt in range(max_retries + 1):
-            raw_request = RawRequest(
-                model=model_name,
-                system_prompt=system_prompt,
-                messages=[{"role": "user", "content": "请根据以上经历写日记。"}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                purpose="diary_from_situation",
-                response_format={"type": "json_object"},
-            )
-
             try:
-                raw = await brain.raw_call(raw_request)
+                parsed = await self._call_diary_llm_json(
+                    brain=brain,
+                    model_name=model_name,
+                    system_prompt=system_prompt,
+                    messages=[{"role": "user", "content": "请根据以上经历写日记。"}],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    purpose="diary_from_situation",
+                )
             except Exception as exc:
                 logger.error(
                     "Situation 日记生成 LLM 调用失败 (group=%s): %s",
                     group_id, exc,
                 )
                 return None
-
-            parsed = self._parse_response(raw)
             if parsed and parsed.get("content"):
                 break
-
-            if attempt < max_retries:
-                logger.warning(
-                    "Situation 日记生成 JSON 解析失败 (group=%s, attempt=%d)",
-                    group_id, attempt + 1,
-                )
-                system_prompt += (
-                    "\n\n【重要提醒】请确保输出是严格合法的 JSON 对象。"
-                )
-            else:
+            if attempt >= max_retries:
                 logger.warning(
                     "Situation 日记生成 JSON 解析失败 (group=%s)，已耗尽重试",
                     group_id,
                 )
                 return None
+            logger.warning(
+                "Situation 日记生成 JSON 解析失败 (group=%s, attempt=%d)",
+                group_id, attempt + 1,
+            )
+            system_prompt += "\n\n【重要提醒】请确保输出是严格合法的 JSON 对象。"
 
         return parsed
 
@@ -290,6 +271,31 @@ class DiaryGenerator:
         return "\n".join(lines)
 
     # ── 内部工具 ──
+
+    async def _call_diary_llm_json(
+        self,
+        *,
+        brain: Any,
+        model_name: str,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        purpose: str,
+    ) -> dict[str, Any] | None:
+        """Call Brain once and parse a diary JSON response."""
+        from sirius_pulse.core.brain import RawRequest
+
+        raw_request = RawRequest(
+            model=model_name,
+            system_prompt=system_prompt,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            purpose=purpose,
+            response_format={"type": "json_object"},
+        )
+        return self._parse_response(await brain.raw_call(raw_request))
 
     @staticmethod
     def _parse_response(raw: str) -> dict[str, Any] | None:

@@ -18,6 +18,7 @@ from typing import Any, Protocol
 
 from sirius_pulse.models import Transcript
 from sirius_pulse.utils.layout import WorkspaceLayout
+from sirius_pulse.utils.sqlite_base import open_sqlite_connection
 
 __all__ = [
     "SessionStore",
@@ -289,12 +290,7 @@ class SqliteSessionStore:
         return self._path
 
     def _connect(self) -> sqlite3.Connection:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        return conn
+        return open_sqlite_connection(self._path, timeout=10)
 
     @contextmanager
     def _managed_connection(self):

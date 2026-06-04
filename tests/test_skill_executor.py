@@ -199,6 +199,58 @@ async def test_skill_executor_when_async_skill_finishes_then_result_is_returned(
     assert result.to_display_text() == "异步完成：Alice"
 
 
+@pytest.mark.asyncio
+async def test_skill_executor_when_async_skill_required_param_is_missing_then_fails_before_run(
+    tmp_path: Path,
+):
+    called = False
+
+    async def run(query: str) -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return {"success": True, "text": query}
+
+    skill = _make_skill(
+        "async_search",
+        run,
+        params=[
+            SkillParameter(name="query", type="str", description="搜索词", required=True),
+        ],
+    )
+    executor = SkillExecutor(work_path=tmp_path)
+
+    result = await executor.execute_async(skill, {}, invocation_context=_context())
+
+    assert result.success is False
+    assert "query" in result.error
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_skill_executor_when_async_developer_skill_called_by_user_then_access_is_denied(
+    tmp_path: Path,
+):
+    called = False
+
+    async def run() -> dict[str, Any]:
+        nonlocal called
+        called = True
+        return {"success": True, "text": "secret"}
+
+    skill = _make_skill("async_shell", run, developer_only=True)
+    executor = SkillExecutor(work_path=tmp_path)
+
+    result = await executor.execute_async(
+        skill,
+        {},
+        invocation_context=_context(is_developer=False),
+    )
+
+    assert result.success is False
+    assert "developer" in result.error.lower() or "开发" in result.error
+    assert called is False
+
+
 def test_skill_executor_when_skill_raises_error_then_failure_is_visible_to_model(
     tmp_path: Path,
 ):

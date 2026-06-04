@@ -31,6 +31,7 @@ from typing import Any, Callable
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
 from sirius_pulse.core.utils import parse_sticker_tags, strip_conversation_history_xml
 from sirius_pulse.providers.base import GenerationResult, ToolCall
+from sirius_pulse.utils.retry import async_retry
 
 logger = logging.getLogger(__name__)
 
@@ -629,30 +630,27 @@ class Brain:
         from sirius_pulse.providers.base import get_last_generation_usage
 
         current = gen_request
-        last_exc: Exception | None = None
-        for attempt in range(retry_max + 1):
-            try:
-                result = await self._provider_call(current)
-                # 立即捕获 token 用量，避免后续 await 点被其他协程覆盖
-                real_usage = get_last_generation_usage()
-                return result, current, real_usage
-            except Exception as exc:
-                last_exc = exc
-                if attempt < retry_max:
-                    logger.warning(
-                        "%s LLM 调用失败 (attempt=%d/%d): %s",
-                        purpose_desc, attempt + 1, retry_max + 1, exc,
-                    )
-                    await asyncio.sleep(retry_delay)
-                    if rebuild_fn:
-                        current = await rebuild_fn() if asyncio.iscoroutinefunction(rebuild_fn) else rebuild_fn()
-                else:
-                    logger.error(
-                        "%s LLM 调用已耗尽 %d 次重试: %s",
-                        purpose_desc, retry_max + 1, exc,
-                    )
-        # 所有重试均失败，抛出最后一次异常
-        raise last_exc  # type: ignore[misc]
+
+        async def call_provider() -> tuple[GenerationResult, Any, dict | None]:
+            result = await self._provider_call(current)
+            # 立即捕获 token 用量，避免后续 await 点被其他协程覆盖
+            real_usage = get_last_generation_usage()
+            return result, current, real_usage
+
+        async def refresh_request(_attempt: int, _total: int, _exc: Exception) -> None:
+            nonlocal current
+            if rebuild_fn is not None:
+                rebuilt = rebuild_fn()
+                current = await rebuilt if asyncio.iscoroutine(rebuilt) else rebuilt
+
+        return await async_retry(
+            call_provider,
+            max_retries=retry_max,
+            delay=retry_delay,
+            should_retry=lambda _: True,
+            before_retry=refresh_request,
+            description=f"{purpose_desc} LLM 调用",
+        )
 
     async def _provider_call(self, request: Any) -> GenerationResult:
         """调用 provider 生成回复。"""

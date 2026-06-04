@@ -5,7 +5,7 @@
 assistant 回复单独作为一条消息。
 
 新架构增强：
-- 注入当日 Situation 摘要（暂冷压缩产物）
+- 注入未处理 Situation 摘要（暂冷压缩产物）
 - 注入 BiographyView 传记（演化链派生）
 - 支持 DiarySlice 三路召回（语义 + 三元组 + 关键词）
 """
@@ -30,7 +30,7 @@ class ContextAssembler:
 
     Combines:
     - Basic memory (immediate context, XML format)
-    - Situation summaries (today's validated facts)
+    - Situation summaries (unprocessed compressed situations)
     - Diary entries (historical RAG)
     - BiographyView (user profiles from evolution chain)
     """
@@ -84,8 +84,8 @@ class ContextAssembler:
                 标签及前缀段落（来自延迟队列合并 + PromptFactory.assemble_chat），
                 无需再用 html.escape 包装，直接作为 user 消息内容。
         """
-        # 1. 获取当日 Situation 摘要（已通过演化链验证）
-        today_summaries = self._get_recent_summaries(group_id)
+        # 1. 获取未处理的 Situation 摘要（已通过演化链验证）
+        situation_summaries = self._get_recent_summaries(group_id)
 
         # 1.5 获取最新 Situation 涉及的原始消息的一半
         latest_source_entries = self._get_latest_situation_source_half(group_id)
@@ -120,8 +120,8 @@ class ContextAssembler:
             )
 
         logger.info(
-            "ContextAssembler: group=%s | %d 条当日摘要 | %d 条日记切片 | %d 条旧日记 | query=%.30s...",
-            group_id, len(today_summaries), len(diary_slices), len(diary_entries),
+            "ContextAssembler: group=%s | %d 条未处理情景摘要 | %d 条日记切片 | %d 条旧日记 | query=%.30s...",
+            group_id, len(situation_summaries), len(diary_slices), len(diary_entries),
             search_query or current_query,
         )
 
@@ -133,7 +133,7 @@ class ContextAssembler:
         # 4. 构建富化后的系统提示词
         enriched_system = self._enrich_system_prompt(
             system_prompt, diary_entries,
-            today_summaries=today_summaries,
+            situation_summaries=situation_summaries,
             biography_sections=bio_sections,
             diary_slices=diary_slices,
             latest_source_entries=latest_source_entries,
@@ -461,7 +461,7 @@ class ContextAssembler:
         self,
         base_prompt: str,
         diary_entries: list[Any],
-        today_summaries: list[str] | None = None,
+        situation_summaries: list[str] | None = None,
         biography_sections: str = "",
         diary_slices: list[Any] | None = None,
         latest_source_entries: list[Any] | None = None,
@@ -483,16 +483,16 @@ class ContextAssembler:
             if slices_text:
                 enriched += f"\n\n<diary_slices>\n{slices_text}\n</diary_slices>"
 
-        # 注入当日 Situation 摘要 + 最新 Situation 涉及的原始消息
-        if today_summaries:
-            summaries_text = "\n".join(f"- {s}" for s in today_summaries)
-            enriched += f"\n\n<today_context>\n今天的经历摘要：\n{summaries_text}"
+        # 注入未处理的 Situation 摘要 + 最新 Situation 涉及的原始消息
+        if situation_summaries:
+            summaries_text = "\n".join(f"- {s}" for s in situation_summaries)
+            enriched += f"\n\n<situation_context>\n未归档情景摘要：\n{summaries_text}"
             if latest_source_entries:
                 source_xml = self._entries_to_xml(
                     latest_source_entries, tag="compressed_source_messages"
                 )
                 enriched += f"\n\n最新压缩涉及的原始消息（部分内容）：\n{source_xml}"
-            enriched += "\n</today_context>"
+            enriched += "\n</situation_context>"
 
         # 注入传记信息
         if biography_sections:

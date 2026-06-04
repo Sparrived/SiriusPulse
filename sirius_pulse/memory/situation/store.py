@@ -21,7 +21,7 @@ __all__ = ["SituationStore"]
 class SituationStore(BaseSqliteStore):
     """情景压缩存储。
 
-    存储暂冷时生成的 Situation，供当日上下文注入和冷寂日记生成使用。
+    存储暂冷时生成的 Situation，供情景上下文注入和冷寂日记生成使用。
     """
 
     def _create_tables(self) -> None:

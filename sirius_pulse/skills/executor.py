@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,19 +21,16 @@ from sirius_pulse.skills.models import (
 from sirius_pulse.skills.security import validate_skill_access
 from sirius_pulse.skills.telemetry import SkillExecutionRecord, SkillTelemetry
 from sirius_pulse.utils.layout import WorkspaceLayout
+from sirius_pulse.utils.retry import async_retry, is_transient_error, sync_retry
 
 logger = logging.getLogger(__name__)
 
 
-def _should_retry(exc: Exception) -> bool:
-    """Heuristic: is this exception likely transient and worth retrying?"""
-    if isinstance(exc, (TimeoutError, ConnectionError)):
-        return True
-    exc_name = type(exc).__name__.lower()
-    return any(
-        keyword in exc_name
-        for keyword in ("timeout", "connection", "temporary", "network", "retry", "unreachable")
-    )
+@dataclass(slots=True)
+class _PreparedSkillCall:
+    params: dict[str, Any]
+    data_store: SkillDataStore
+    resolved_params: dict[str, Any]
 
 
 class SkillExecutor:
@@ -128,87 +126,53 @@ class SkillExecutor:
                 logger.warning("Skill execute failed: %s -> no run() function", skill.name)
                 return skill_result
 
-            # Resolve chain-context template placeholders before validation
-            if chain_context is not None:
-                params = chain_context.resolve_templates(params)
-
-            # Validate required parameters
-            for param_def in skill.parameters:
-                if param_def.required and param_def.name not in params:
-                    skill_result = SkillResult(
-                        success=False,
-                        error=f"缺少必填参数: {param_def.name}",
-                    )
-                    logger.warning(
-                        "Skill execute failed: %s -> missing required param '%s'",
-                        skill.name,
-                        param_def.name,
-                    )
-                    return skill_result
-
-            # Apply defaults for optional parameters
-            call_params: dict[str, Any] = {}
-            for param_def in skill.parameters:
-                if param_def.name in params:
-                    call_params[param_def.name] = _coerce_type(
-                        params[param_def.name], param_def.type
-                    )
-                elif param_def.default is not None:
-                    call_params[param_def.name] = param_def.default
-
-            access_error = validate_skill_access(skill=skill, invocation_context=invocation_context)
-            if access_error:
-                skill_result = SkillResult(success=False, error=access_error)
-                logger.warning("Skill execute failed: %s -> access denied: %s", skill.name, access_error)
+            prepared = self._prepare_skill_call(
+                skill,
+                params,
+                chain_context=chain_context,
+                invocation_context=invocation_context,
+            )
+            if isinstance(prepared, SkillResult):
+                skill_result = prepared
                 return skill_result
-
-            data_store = self._get_data_store(skill.name)
-            injection_plan = _build_injection_plan(skill._run_func)
-            if injection_plan.accepts("data_store"):
-                call_params["data_store"] = data_store
-            if invocation_context is not None and injection_plan.accepts("invocation_context"):
-                call_params["invocation_context"] = invocation_context
-            bridge = self.get_bridge_for_skill(skill)
-            if bridge is not None and injection_plan.accepts("bridge"):
-                call_params["bridge"] = bridge
-            if injection_plan.accepts("chat_context") and self._chat_context:
-                call_params["chat_context"] = dict(self._chat_context)
+            params = prepared.resolved_params
+            call_params = prepared.params
+            data_store = prepared.data_store
 
             logger.info("Skill execute calling: %s(final_params=%s)", skill.name, call_params)
 
-            # Run with optional retry for transient failures
-            for attempt in range(max_retries + 1):
-                try:
-                    if inspect.iscoroutinefunction(skill._run_func):
-                        # Synchronous execute() cannot await; raise so caller uses execute_async
-                        raise RuntimeError(
-                            f"SKILL '{skill.name}' is async and must be executed via execute_async"
-                        )
-                    result = skill._run_func(**call_params)
-                    # Persist data store after execution
-                    data_store.save()
-                    skill_result = SkillResult.from_raw_result(result)
-                    skill_result.success = True if skill_result.error == "" else skill_result.success
-                    logger.info(
-                        "Skill execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
-                        "multimodal_blocks=%d",
-                        skill.name,
-                        skill_result.success,
-                        skill_result.to_display_text()[:200],
-                        len(skill_result.text_blocks),
-                        len(skill_result.multimodal_blocks),
+            def run_skill_once() -> SkillResult:
+                if inspect.iscoroutinefunction(skill._run_func):
+                    # Synchronous execute() cannot await; raise so caller uses execute_async
+                    raise RuntimeError(
+                        f"SKILL '{skill.name}' is async and must be executed via execute_async"
                     )
-                    break
-                except Exception as exc:
-                    if attempt < max_retries and _should_retry(exc):
-                        logger.warning(
-                            "SKILL '%s' 第%d次执行失败（将重试）: %s",
-                            skill.name, attempt + 1, exc,
-                        )
-                        continue
-                    logger.error("SKILL '%s' 执行异常: %s", skill.name, exc)
-                    skill_result = SkillResult(success=False, error=str(exc))
-                    break
+                result = skill._run_func(**call_params)
+                # Persist data store after execution
+                data_store.save()
+                current_result = SkillResult.from_raw_result(result)
+                current_result.success = True if current_result.error == "" else current_result.success
+                logger.info(
+                    "Skill execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
+                    "multimodal_blocks=%d",
+                    skill.name,
+                    current_result.success,
+                    current_result.to_display_text()[:200],
+                    len(current_result.text_blocks),
+                    len(current_result.multimodal_blocks),
+                )
+                return current_result
+
+            try:
+                skill_result = sync_retry(
+                    run_skill_once,
+                    max_retries=max_retries,
+                    should_retry=is_transient_error,
+                    description=f"SKILL '{skill.name}'",
+                )
+            except Exception as exc:
+                logger.error("SKILL '%s' 执行异常: %s", skill.name, exc)
+                skill_result = SkillResult(success=False, error=str(exc))
         finally:
             # Telemetry is best-effort and must not affect the result
             if skill_result is not None:
@@ -327,54 +291,49 @@ class SkillExecutor:
                 logger.warning("Skill async execute failed: %s -> no run() function", skill.name)
                 return SkillResult(success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数")
 
-            # Resolve chain-context template placeholders before validation
-            if chain_context is not None:
-                params = chain_context.resolve_templates(params)
+            prepared = self._prepare_skill_call(
+                skill,
+                params,
+                chain_context=chain_context,
+                invocation_context=invocation_context,
+            )
+            if isinstance(prepared, SkillResult):
+                skill_result = prepared
+            else:
+                params = prepared.resolved_params
+                call_params = prepared.params
+                data_store = prepared.data_store
 
-            call_params = dict(params)
-            data_store = self._get_data_store(skill.name)
-            injection_plan = _build_injection_plan(skill._run_func)
-            if injection_plan.accepts("data_store"):
-                call_params["data_store"] = data_store
-            if invocation_context is not None and injection_plan.accepts("invocation_context"):
-                call_params["invocation_context"] = invocation_context
-            bridge = self.get_bridge_for_skill(skill)
-            if bridge is not None and injection_plan.accepts("bridge"):
-                call_params["bridge"] = bridge
-            if injection_plan.accepts("chat_context") and self._chat_context:
-                call_params["chat_context"] = dict(self._chat_context)
+                logger.info("Skill async execute calling: %s(final_params=%s)", skill.name, call_params)
 
-            logger.info("Skill async execute calling: %s(final_params=%s)", skill.name, call_params)
-
-            skill_result: SkillResult | None = None
-            for attempt in range(max_retries + 1):
-                try:
+                async def run_skill_once() -> SkillResult:
                     result = await skill._run_func(**call_params)
                     data_store.save()
-                    skill_result = SkillResult.from_raw_result(result)
-                    skill_result.success = True if skill_result.error == "" else skill_result.success
+                    current_result = SkillResult.from_raw_result(result)
+                    current_result.success = True if current_result.error == "" else current_result.success
                     logger.info(
                         "Skill async execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
                         "multimodal_blocks=%d",
                         skill.name,
-                        skill_result.success,
-                        skill_result.to_display_text()[:200],
-                        len(skill_result.text_blocks),
-                        len(skill_result.multimodal_blocks),
+                        current_result.success,
+                        current_result.to_display_text()[:200],
+                        len(current_result.text_blocks),
+                        len(current_result.multimodal_blocks),
                     )
-                    break
+                    return current_result
+
+                try:
+                    skill_result = await async_retry(
+                        run_skill_once,
+                        max_retries=max_retries,
+                        should_retry=is_transient_error,
+                        description=f"SKILL '{skill.name}'",
+                    )
                 except Exception as exc:
-                    if attempt < max_retries and _should_retry(exc):
-                        logger.warning(
-                            "SKILL '%s' 第%d次执行失败（将重试）: %s",
-                            skill.name, attempt + 1, exc,
-                        )
-                        continue
                     logger.error("SKILL '%s' 执行异常: %s", skill.name, exc)
                     skill_result = SkillResult.from_raw_result(str(exc))
                     skill_result.success = False
                     skill_result.error = str(exc)
-                    break
 
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             if skill_result is not None:
@@ -411,6 +370,55 @@ class SkillExecutor:
         """Persist all dirty data stores."""
         for store in self._data_stores.values():
             store.save()
+
+    def _prepare_skill_call(
+        self,
+        skill: SkillDefinition,
+        params: dict[str, Any],
+        *,
+        chain_context: SkillChainContext | None,
+        invocation_context: SkillInvocationContext | None,
+    ) -> _PreparedSkillCall | SkillResult:
+        if chain_context is not None:
+            params = chain_context.resolve_templates(params)
+
+        for param_def in skill.parameters:
+            if param_def.required and param_def.name not in params:
+                logger.warning(
+                    "Skill execute failed: %s -> missing required param '%s'",
+                    skill.name,
+                    param_def.name,
+                )
+                return SkillResult(success=False, error=f"缺少必填参数: {param_def.name}")
+
+        access_error = validate_skill_access(skill=skill, invocation_context=invocation_context)
+        if access_error:
+            logger.warning("Skill execute failed: %s -> access denied: %s", skill.name, access_error)
+            return SkillResult(success=False, error=access_error)
+
+        call_params: dict[str, Any] = {}
+        for param_def in skill.parameters:
+            if param_def.name in params:
+                call_params[param_def.name] = _coerce_type(params[param_def.name], param_def.type)
+            elif param_def.default is not None:
+                call_params[param_def.name] = param_def.default
+
+        data_store = self._get_data_store(skill.name)
+        injection_plan = _build_injection_plan(skill._run_func)
+        if injection_plan.accepts("data_store"):
+            call_params["data_store"] = data_store
+        if invocation_context is not None and injection_plan.accepts("invocation_context"):
+            call_params["invocation_context"] = invocation_context
+        bridge = self.get_bridge_for_skill(skill)
+        if bridge is not None and injection_plan.accepts("bridge"):
+            call_params["bridge"] = bridge
+        if injection_plan.accepts("chat_context") and self._chat_context:
+            call_params["chat_context"] = dict(self._chat_context)
+        return _PreparedSkillCall(
+            params=call_params,
+            data_store=data_store,
+            resolved_params=params,
+        )
 
 
 def _coerce_type(value: Any, type_hint: str) -> Any:

@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 
+from sirius_pulse.utils.sqlite_base import open_sqlite_connection
 from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui.monitoring")
@@ -53,22 +53,28 @@ def _calc_uptime_seconds(status: dict[str, Any] | None) -> float:
         return 0.0
 
 
-def _read_token_usage(persona_dir: Path) -> dict[str, int]:
-    """从 persona.db 读取聚合的 token 使用统计。"""
+def _fetch_persona_db_row(persona_dir: Path, sql: str) -> tuple[Any, ...] | None:
     db_path = persona_dir / "persona.db"
     if not db_path.exists():
-        return {"total_input": 0, "total_output": 0, "call_count": 0}
+        return None
+    conn = open_sqlite_connection(db_path, timeout=5, create_parent=False)
     try:
-        conn = sqlite3.connect(str(db_path), timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        row = conn.execute(
+        return conn.execute(sql).fetchone()
+    finally:
+        conn.close()
+
+
+def _read_token_usage(persona_dir: Path) -> dict[str, int]:
+    """从 persona.db 读取聚合的 token 使用统计。"""
+    try:
+        row = _fetch_persona_db_row(
+            persona_dir,
             """SELECT
                 COALESCE(SUM(prompt_tokens), 0)  AS total_input,
                 COALESCE(SUM(completion_tokens), 0) AS total_output,
                 COUNT(*) AS call_count
-            FROM token_usage"""
-        ).fetchone()
-        conn.close()
+            FROM token_usage""",
+        )
         if row:
             return {
                 "total_input": int(row[0]),
@@ -76,7 +82,7 @@ def _read_token_usage(persona_dir: Path) -> dict[str, int]:
                 "call_count": int(row[2]),
             }
     except Exception:
-        LOG.debug("读取 token 使用数据失败: %s", db_path, exc_info=True)
+        LOG.debug("读取 token 使用数据失败: %s", persona_dir / "persona.db", exc_info=True)
     return {"total_input": 0, "total_output": 0, "call_count": 0}
 
 
@@ -128,17 +134,14 @@ def _count_user_profiles(persona_dir: Path) -> int:
 
 def _count_cognition_events(persona_dir: Path) -> int:
     """统计认知事件总数。"""
-    db_path = persona_dir / "persona.db"
-    if not db_path.exists():
-        return 0
     try:
-        conn = sqlite3.connect(str(db_path), timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        row = conn.execute("SELECT COUNT(*) FROM cognition_events").fetchone()
-        conn.close()
+        row = _fetch_persona_db_row(
+            persona_dir,
+            "SELECT COUNT(*) FROM cognition_events",
+        )
         return int(row[0]) if row else 0
     except Exception:
-        LOG.debug("读取认知事件数据失败: %s", db_path, exc_info=True)
+        LOG.debug("读取认知事件数据失败: %s", persona_dir / "persona.db", exc_info=True)
         return 0
 
 

@@ -9,6 +9,8 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from sirius_pulse.utils.sqlite_base import open_sqlite_connection
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["PersonaDatabase"]
@@ -22,15 +24,11 @@ class PersonaDatabase:
 
     def __init__(self, db_path: Path | str) -> None:
         self._db_path = Path(db_path)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            str(self._db_path),
+        self._conn = open_sqlite_connection(
+            self._db_path,
             check_same_thread=False,
             timeout=10,
         )
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
         self._ensure_meta_table()
         logger.info("PersonaDatabase 已打开: %s", self._db_path)
 
