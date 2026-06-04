@@ -215,6 +215,7 @@ class Brain:
         self._get_tone_alignment_fn: Callable[[str], str] | None = None
         self._classify_exception_fn: Callable[[Exception], str] | None = None
         self._get_pinned_messages_fn: Callable[[str], list[Any]] | None = None
+        self.current_adapter_type_fn: Callable[[], str | None] | None = None
 
         # ── Hook 注册表 ──
         self._pre_hooks: list[_PreHookEntry] = []
@@ -419,7 +420,11 @@ class Brain:
                     metadata={"is_developer": request.caller_is_developer},
                 )
                 inv_ctx = SkillInvocationContext(caller=caller)
-                adapter_type = getattr(self, "_current_adapter_type", None)
+                adapter_type = (
+                    self.current_adapter_type_fn()
+                    if self.current_adapter_type_fn is not None
+                    else None
+                )
                 tools = self.skill_registry.build_tools_list(
                     invocation_context=inv_ctx,
                     adapter_type=adapter_type,

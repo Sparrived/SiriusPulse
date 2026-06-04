@@ -45,6 +45,13 @@ class Helpers:
         self._engine._skill_executor = skill_executor
         if hasattr(self._engine, 'brain'):
             self._engine.brain.skill_registry = skill_registry
+            self._engine.brain.current_adapter_type_fn = (
+                lambda: getattr(self._engine, "_current_adapter_type", "") or None
+            )
+        if skill_executor is not None:
+            from sirius_pulse.core.skill_engine_context import SkillEngineContextImpl
+
+            skill_executor.set_engine_context(SkillEngineContextImpl(self._engine))
         self._register_passive_skills()
 
     # ==================================================================

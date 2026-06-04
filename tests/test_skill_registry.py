@@ -96,6 +96,19 @@ def test_skill_registry_when_adapter_is_limited_then_only_matching_skills_are_vi
     assert "discord_image" not in descriptions
 
 
+def test_skill_registry_when_adapter_is_unknown_then_adapter_limited_skills_are_hidden():
+    registry = SkillRegistry()
+    registry.register(_skill("qq_image", adapter_types=["napcat"]))
+    registry.register(_skill("plain_note"))
+
+    descriptions = registry.build_tool_descriptions()
+    tools = registry.build_tools_list()
+
+    assert "qq_image" not in descriptions
+    assert "plain_note" in descriptions
+    assert [tool["function"]["name"] for tool in tools] == ["plain_note"]
+
+
 def test_skill_registry_when_workspace_hot_reloads_then_removed_skills_disappear():
     registry = SkillRegistry()
     registry.replace_all([_skill("old_skill"), _skill("keep_skill")])

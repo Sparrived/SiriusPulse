@@ -351,9 +351,8 @@ class SkillRegistry:
             ):
                 continue
             # 适配器过滤
-            if skill.adapter_types and adapter_type is not None:
-                if adapter_type not in skill.adapter_types:
-                    continue
+            if skill.adapter_types and adapter_type not in skill.adapter_types:
+                continue
             tools.append(skill.to_tool_schema())
         return tools
 
@@ -392,9 +391,8 @@ class SkillRegistry:
                 continue
 
             # Adapter filtering: skip skills that are locked to other adapters
-            if skill.adapter_types and adapter_type is not None:
-                if adapter_type not in skill.adapter_types:
-                    continue
+            if skill.adapter_types and adapter_type not in skill.adapter_types:
+                continue
 
             security_note = "（仅 developer 可调用）" if skill.developer_only else ""
             if compact:

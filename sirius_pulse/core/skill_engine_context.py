@@ -139,6 +139,79 @@ class SkillEngineContextImpl:
     def activate_private_group(self, group_id: str) -> None:
         self._engine._active_private_groups.add(group_id)
 
+    async def send_sticker_by_names(
+        self,
+        group_id: str,
+        names: list[str],
+    ) -> dict[str, Any]:
+        """Send one sticker chosen from the provided candidate names."""
+        return await self._engine._send_stickers_by_names(group_id, names)
+
+    def list_sticker_names(self) -> list[str]:
+        """Return sticker names available to the current persona."""
+        return list(getattr(self._engine, "_sticker_names", []) or [])
+
+    def pin_recent_message_by_id(
+        self,
+        group_id: str,
+        msg_id: str,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Pin a recent human message by its platform message id."""
+        msg_id = str(msg_id or "").strip()
+        if not msg_id:
+            return {"success": False, "error": "msg_id 不能为空"}
+
+        recent_messages = self._engine._get_recent_messages(group_id, n=10)
+        for msg in recent_messages:
+            if str(msg.get("platform_message_id", "")) != msg_id:
+                continue
+
+            content = str(msg.get("content", "") or "")
+            if not content:
+                return {
+                    "success": False,
+                    "error": f"消息 {msg_id} 没有可钉住的文本内容",
+                }
+
+            metadata: dict[str, Any] = {}
+            user_id = str(msg.get("user_id", "") or "")
+            if user_id:
+                metadata["user_id"] = user_id
+            metadata["platform_message_id"] = msg_id
+
+            pinned = self._engine.pin_message(
+                content=content,
+                speaker=str(msg.get("speaker", "") or "用户"),
+                group_id=group_id,
+                reason=reason,
+                metadata=metadata,
+            )
+            return {
+                "success": True,
+                "summary": f"已钉住消息 {msg_id}",
+                "pinned_message": pinned,
+            }
+
+        return {
+            "success": False,
+            "error": f"未在最近消息中找到 msg_id={msg_id}",
+        }
+
+    def unpin_message(self, message_id: str) -> dict[str, Any]:
+        """Unpin one pinned message by pinned-message id."""
+        message_id = str(message_id or "").strip()
+        if not message_id:
+            return {"success": False, "error": "message_id 不能为空"}
+        success = self._engine.unpin_message(message_id)
+        if success:
+            return {"success": True, "summary": f"已取消钉住 {message_id}"}
+        return {"success": False, "error": f"未找到钉住消息 {message_id}"}
+
+    def get_pinned_messages(self, group_id: str) -> list[dict[str, Any]]:
+        """Return active pinned messages without incrementing prompt carry count."""
+        return self._engine.get_pinned_messages(group_id=group_id)
+
     # ── 用户查找 API（委托给 UserLookupService）──────────────
 
     @property

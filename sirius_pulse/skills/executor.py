@@ -44,6 +44,7 @@ class SkillExecutor:
         self._telemetry = SkillTelemetry(self._layout.skill_data_dir() / ".telemetry.jsonl")
         self._bridges: dict[str, Any] = {}
         self._chat_context: dict[str, Any] = {}
+        self._engine_context: Any | None = None
 
     def set_chat_context(self, group_id: str = "", user_id: str = "") -> None:
         """Set current chat context so skills know where they are being invoked from."""
@@ -65,6 +66,10 @@ class SkillExecutor:
     def set_bridge(self, adapter_type: str, bridge: Any) -> None:
         """Register a platform bridge for a given adapter type."""
         self._bridges[adapter_type] = bridge
+
+    def set_engine_context(self, engine_context: Any) -> None:
+        """Register the limited engine context injected into trusted built-in skills."""
+        self._engine_context = engine_context
 
     def get_bridge_for_skill(self, skill: SkillDefinition) -> Any | None:
         """Return the best-matching bridge for a skill.
@@ -173,6 +178,12 @@ class SkillExecutor:
                 call_params["bridge"] = bridge
             if injection_plan.accepts("chat_context") and self._chat_context:
                 call_params["chat_context"] = dict(self._chat_context)
+            if (
+                self._engine_context is not None
+                and _can_receive_engine_context(skill)
+                and injection_plan.accepts("engine_context")
+            ):
+                call_params["engine_context"] = self._engine_context
 
             logger.info("Skill execute calling: %s(final_params=%s)", skill.name, call_params)
 
@@ -343,6 +354,12 @@ class SkillExecutor:
                 call_params["bridge"] = bridge
             if injection_plan.accepts("chat_context") and self._chat_context:
                 call_params["chat_context"] = dict(self._chat_context)
+            if (
+                self._engine_context is not None
+                and _can_receive_engine_context(skill)
+                and injection_plan.accepts("engine_context")
+            ):
+                call_params["engine_context"] = self._engine_context
 
             logger.info("Skill async execute calling: %s(final_params=%s)", skill.name, call_params)
 
@@ -444,6 +461,17 @@ def _coerce_type(value: Any, type_hint: str) -> Any:
                 return [v.strip() for v in value.split(",") if v.strip()]
         return value
     return value
+
+
+def _can_receive_engine_context(skill: SkillDefinition) -> bool:
+    """Only package built-ins may receive the privileged engine context."""
+    if skill.source_path is None:
+        return False
+    try:
+        builtin_dir = (Path(__file__).resolve().parent / "builtin").resolve()
+        return skill.source_path.resolve().is_relative_to(builtin_dir)
+    except Exception:
+        return False
 
 
 class _InjectionPlan:

@@ -24,6 +24,7 @@ def _make_skill(
     params: list[SkillParameter] | None = None,
     developer_only: bool = False,
     adapter_types: list[str] | None = None,
+    source_path: Path | None = None,
 ) -> SkillDefinition:
     return SkillDefinition(
         name=name,
@@ -31,7 +32,7 @@ def _make_skill(
         parameters=params or [],
         developer_only=developer_only,
         adapter_types=adapter_types or [],
-        source_path=None,
+        source_path=source_path,
         _run_func=run_func,
     )
 
@@ -164,6 +165,67 @@ def test_skill_executor_when_skill_accepts_chat_context_then_receives_current_ch
     assert result.to_display_text() == "private"
     assert seen["chat_id"] == "10001"
     assert seen["is_private"] is True
+
+
+def test_skill_executor_when_skill_accepts_engine_context_then_receives_it(tmp_path: Path):
+    seen: dict[str, Any] = {}
+    engine_context = object()
+
+    def run(engine_context=None) -> dict[str, Any]:
+        seen["engine_context"] = engine_context
+        return {"success": True, "text": "ok"}
+
+    executor = SkillExecutor(work_path=tmp_path)
+    executor.set_engine_context(engine_context)
+    builtin_path = Path(__file__).resolve().parents[1] / "sirius_pulse" / "skills" / "builtin" / "needs_engine.py"
+    skill = _make_skill("needs_engine", run, source_path=builtin_path)
+
+    result = executor.execute(skill, {}, invocation_context=_context())
+
+    assert result.success is True
+    assert seen["engine_context"] is engine_context
+
+
+def test_skill_executor_when_workspace_skill_accepts_engine_context_then_it_is_not_injected(
+    tmp_path: Path,
+):
+    seen: dict[str, Any] = {}
+    engine_context = object()
+
+    def run(engine_context=None) -> dict[str, Any]:
+        seen["engine_context"] = engine_context
+        return {"success": True, "text": "ok"}
+
+    executor = SkillExecutor(work_path=tmp_path)
+    executor.set_engine_context(engine_context)
+    skill = _make_skill("workspace_needs_engine", run, source_path=tmp_path / "skills" / "x.py")
+
+    result = executor.execute(skill, {}, invocation_context=_context())
+
+    assert result.success is True
+    assert seen["engine_context"] is None
+
+
+@pytest.mark.asyncio
+async def test_skill_executor_when_async_skill_accepts_engine_context_then_receives_it(
+    tmp_path: Path,
+):
+    seen: dict[str, Any] = {}
+    engine_context = object()
+
+    async def run(engine_context=None) -> dict[str, Any]:
+        seen["engine_context"] = engine_context
+        return {"success": True, "text": "ok"}
+
+    executor = SkillExecutor(work_path=tmp_path)
+    executor.set_engine_context(engine_context)
+    builtin_path = Path(__file__).resolve().parents[1] / "sirius_pulse" / "skills" / "builtin" / "async_needs_engine.py"
+    skill = _make_skill("async_needs_engine", run, source_path=builtin_path)
+
+    result = await executor.execute_async(skill, {}, invocation_context=_context())
+
+    assert result.success is True
+    assert seen["engine_context"] is engine_context
 
 
 def test_skill_executor_when_normal_user_calls_developer_skill_then_access_is_denied(

@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.delayed_response_queue import _parse_iso
@@ -21,6 +22,13 @@ if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 
 logger = logging.getLogger(__name__)
+
+_AUTONOMOUS_MESSAGE_SKILLS = {
+    "send_sticker",
+    "pin_message",
+    "unpin_message",
+    "list_pinned_messages",
+}
 
 
 class DelayedQueueTasks:
@@ -389,7 +397,11 @@ class DelayedQueueTasks:
                     continue
 
                 # Engagement-based permission
-                if caller_engagement < 0.1 and not caller_is_developer:
+                if (
+                    caller_engagement < 0.1
+                    and not caller_is_developer
+                    and not self._is_autonomous_message_skill(skill)
+                ):
                     err_msg = f"Skill '{skill_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
                     logger.warning(err_msg)
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
@@ -616,3 +628,19 @@ class DelayedQueueTasks:
                 store.save()
         except Exception as exc:
             logger.warning("Failed to inject group_id into reminder: %s", exc)
+
+    @staticmethod
+    def _is_autonomous_message_skill(skill: Any) -> bool:
+        """Return True for package built-ins that replace legacy prompt tags."""
+        if getattr(skill, "name", "") not in _AUTONOMOUS_MESSAGE_SKILLS:
+            return False
+        source_path = getattr(skill, "source_path", None)
+        if source_path is None:
+            return False
+        try:
+            builtin_dir = (
+                Path(__file__).resolve().parents[1] / "skills" / "builtin"
+            ).resolve()
+            return source_path.resolve().is_relative_to(builtin_dir)
+        except Exception:
+            return False
