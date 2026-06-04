@@ -106,6 +106,8 @@ def extract_image_name(seg: dict[str, Any], index: int, fallback_prefix: str = "
     for raw in candidates:
         text = str(raw or "").strip()
         if text:
+            if text.startswith(("data:", "base64:")):
+                continue
             from urllib.parse import urlparse
             parsed = urlparse(text)
             for candidate in (parsed.path, text):
