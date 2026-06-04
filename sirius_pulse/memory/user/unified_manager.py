@@ -683,5 +683,42 @@ class UnifiedUserManager:
         self._global_users[user.user_id] = user
         self._save_user_to_storage(user)
 
+    def to_dict(self) -> dict[str, dict[str, Any]]:
+        """Serialize cached group user profiles for session persistence."""
+        self._ensure_users_loaded()
+        return {
+            group_id: {
+                user_id: user.to_dict()
+                for user_id, user in group.items()
+            }
+            for group_id, group in self.entries.items()
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "UnifiedUserManager":
+        """Restore cached group user profiles from a session payload."""
+        manager = cls()
+        manager.entries.clear()
+        manager._global_users.clear()
+        manager._speaker_index.clear()
+        manager._identity_index.clear()
+
+        for group_id, raw_group in (data or {}).items():
+            if not isinstance(raw_group, dict):
+                continue
+            group = manager._ensure_group(str(group_id or "default"))
+            for user_id, raw_user in raw_group.items():
+                if not isinstance(raw_user, dict):
+                    continue
+                user = UnifiedUser.from_dict(raw_user)
+                if not user.user_id:
+                    user.user_id = str(user_id)
+                group[user.user_id] = user
+                manager._global_users[user.user_id] = user
+                manager._update_indices(user)
+
+        manager._users_loaded = True
+        return manager
+
 
 __all__ = ["UnifiedUserManager"]

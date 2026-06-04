@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS session_reply_runtime_assistant_turns (
 _CREATE_USER_PROFILES_TABLE = """
 CREATE TABLE IF NOT EXISTS session_user_profiles (
     session_id TEXT NOT NULL DEFAULT '',
+    group_id TEXT NOT NULL DEFAULT 'default',
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
     persona TEXT NOT NULL DEFAULT '',
@@ -106,7 +107,7 @@ CREATE TABLE IF NOT EXISTS session_user_profiles (
     aliases TEXT NOT NULL DEFAULT '[]',
     traits TEXT NOT NULL DEFAULT '[]',
     metadata TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY (session_id, user_id)
+    PRIMARY KEY (session_id, group_id, user_id)
 )
 """
 
@@ -350,10 +351,24 @@ class SqliteSessionStore:
         ).fetchone()
         return row is not None
 
+    @staticmethod
+    def _ensure_columns(
+        conn: sqlite3.Connection,
+        table_name: str,
+        columns: dict[str, str],
+    ) -> None:
+        existing = {
+            str(row["name"])
+            for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        for column_name, column_def in columns.items():
+            if column_name not in existing:
+                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+
 
     @staticmethod
     def _has_session_data(conn: sqlite3.Connection) -> bool:
-        row = conn.execute("SELECT 1 FROM session_meta WHERE id = 1").fetchone()
+        row = conn.execute("SELECT 1 FROM session_meta LIMIT 1").fetchone()
         return row is not None
 
 
@@ -427,16 +442,18 @@ class SqliteSessionStore:
             ],
         )
 
-        for group_entries in transcript.user_memory.entries.values():
+        transcript.user_memory._ensure_users_loaded()
+        for group_id, group_entries in transcript.user_memory.entries.items():
             for user_id, profile in group_entries.items():
                 conn.execute(
                     """
                     INSERT INTO session_user_profiles(
-                        session_id, user_id, name, persona, identities, aliases, traits, metadata
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                        session_id, group_id, user_id, name, persona, identities, aliases, traits, metadata
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         self._session_id,
+                        group_id,
                         user_id,
                         profile.name,
                         profile.persona,
@@ -512,10 +529,11 @@ class SqliteSessionStore:
         ).fetchall():
             fact_rows_by_user.setdefault(str(row["user_id"]), []).append(row)
 
-        entries: dict[str, dict[str, Any]] = {}
+        groups: dict[str, dict[str, Any]] = {}
         for profile_row in profile_rows:
             user_id = str(profile_row["user_id"])
-            entries[user_id] = {
+            group_id = str(profile_row["group_id"] or "default")
+            groups.setdefault(group_id, {})[user_id] = {
                 "user_id": user_id,
                 "name": str(profile_row["name"]),
                 "persona": str(profile_row["persona"]),
@@ -541,7 +559,7 @@ class SqliteSessionStore:
                     (self._session_id,),
                 ).fetchall()
             ],
-            "user_memory": {"default": entries},
+            "user_memory": groups,
             "reply_runtime": {
                 "user_last_turn_at": {
                     str(row["user_id"]): str(row["last_turn_at"])
@@ -600,6 +618,7 @@ class SqliteSessionStore:
 
     def _ensure_schema(self) -> None:
         with self._managed_connection() as conn:
+            conn.execute(_CREATE_META_TABLE)
             conn.execute(_CREATE_SESSION_META_TABLE)
             conn.execute(_CREATE_MESSAGES_TABLE)
             conn.execute(_CREATE_REPLY_RUNTIME_TABLE)
@@ -610,6 +629,9 @@ class SqliteSessionStore:
             conn.execute(_CREATE_USER_RUNTIME_TABLE)
             conn.execute(_CREATE_USER_FACTS_TABLE)
             conn.execute(_CREATE_TOKEN_USAGE_TABLE)
+            self._ensure_columns(conn, "session_user_profiles", {
+                "group_id": "TEXT NOT NULL DEFAULT 'default'",
+            })
             for index_sql in _CREATE_INDEXES:
                 conn.execute(index_sql)
             self._set_meta(conn, "session_store_schema_version", str(_SESSION_STORE_SCHEMA_VERSION))
