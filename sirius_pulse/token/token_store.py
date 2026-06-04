@@ -16,6 +16,7 @@ from typing import Any
 from sirius_pulse.config import TokenUsageRecord
 from sirius_pulse.token.token_utils import (
     _CREATE_INDEXES,
+    _CREATE_META,
     _CREATE_TABLE,
     _META_KEY_PREFIX,
     _SCHEMA_VERSION,
@@ -78,7 +79,8 @@ class TokenUsageStore(BaseSqliteStore):
 
     def _create_tables(self) -> None:
         """创建表结构并执行 schema 迁移。"""
-        # _meta 表由 PersonaDatabase 统一创建，此处不再重复建表
+        # Create _meta before BaseSqliteStore writes the schema version.
+        self.execute(_CREATE_META)
         self.execute(_CREATE_TABLE)
         for idx_sql in _CREATE_INDEXES:
             self.execute(idx_sql)
