@@ -71,6 +71,7 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
+        pinned_messages: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         """构建消息链（方案 C：以 assistant 消息切分）。
 
@@ -144,6 +145,17 @@ class ContextAssembler:
             {"role": "system", "content": enriched_system}
         ]
 
+        pinned_context = ""
+        if pinned_messages:
+            from sirius_pulse.core.prompt_factory import PromptFactory
+
+            pinned_context = PromptFactory.build_pinned_messages_context(pinned_messages)
+
+        def _with_pinned_context(content: str) -> str:
+            if not pinned_context:
+                return content
+            return f"{pinned_context}\n\n{content}" if content else pinned_context
+
         # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息，上限 50 条）
         if recent_n > 0:
             recent = self._basic.get_context(group_id, n=recent_n)
@@ -184,7 +196,7 @@ class ContextAssembler:
         # 当 content_is_tagged=True 时，current_query 已由 PromptFactory.assemble_chat()
         # 包含完整的 XML 标签和前缀段落（传记、情绪、关系、技能等），直接使用
         if content_is_tagged:
-            messages.append({"role": "user", "content": current_query})
+            messages.append({"role": "user", "content": _with_pinned_context(current_query)})
         else:
             # 如果有 pending 消息，把它们和当前消息一起打包
             # 排除与当前发言者匹配的最后一条 pending 条目，避免 current_query 重复注入
@@ -214,15 +226,15 @@ class ContextAssembler:
                         and not line.startswith("</pending_messages>")
                     ]
                     combined = "\n".join(pending_lines) + "\n" + current_xml
-                    messages.append({"role": "user", "content": combined})
+                    messages.append({"role": "user", "content": _with_pinned_context(combined)})
                 else:
-                    messages.append({"role": "user", "content": current_xml})
+                    messages.append({"role": "user", "content": _with_pinned_context(current_xml)})
             else:
                 if all_current:
                     pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
-                    messages.append({"role": "user", "content": pending_xml + "\n" + current_query})
+                    messages.append({"role": "user", "content": _with_pinned_context(pending_xml + "\n" + current_query)})
                 else:
-                    messages.append({"role": "user", "content": current_query})
+                    messages.append({"role": "user", "content": _with_pinned_context(current_query)})
 
         return messages
 
@@ -244,6 +256,7 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
+        pinned_messages: list[Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
         messages = self.build_messages(
@@ -262,6 +275,7 @@ class ContextAssembler:
             mentioned_user_ids=mentioned_user_ids,
             content_is_tagged=content_is_tagged,
             platform_message_id=platform_message_id,
+            pinned_messages=pinned_messages,
         )
 
         from sirius_pulse.token.utils import estimate_tokens

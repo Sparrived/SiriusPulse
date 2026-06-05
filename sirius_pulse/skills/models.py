@@ -190,6 +190,7 @@ class SkillDefinition:
     version: str = "1.0.0"
     developer_only: bool = False
     silent: bool = False
+    model_visible: bool = True
     tags: list[str] = field(default_factory=list)
     adapter_types: list[str] = field(default_factory=list)
     source_path: Path | None = None

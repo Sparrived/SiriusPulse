@@ -260,6 +260,7 @@ class SkillRegistry:
         version = str(meta.get("version", "1.0.0")).strip()
         developer_only = bool(meta.get("developer_only", False))
         silent = bool(meta.get("silent", False))
+        model_visible = bool(meta.get("model_visible", True))
         tags: list[str] = []
         raw_tags = meta.get("tags", [])
         if isinstance(raw_tags, list):
@@ -314,6 +315,7 @@ class SkillRegistry:
             version=version,
             developer_only=developer_only,
             silent=silent,
+            model_visible=model_visible,
             tags=tags,
             adapter_types=adapter_types,
             source_path=file_path,
@@ -341,6 +343,8 @@ class SkillRegistry:
         """
         tools: list[dict[str, Any]] = []
         for skill in self._skills.values():
+            if not skill.model_visible:
+                continue
             # 被动技能（仅有后台任务或触发器，无 run 函数）不参与 function_call
             if skill._run_func is None and skill.is_passive:
                 continue
@@ -380,6 +384,8 @@ class SkillRegistry:
 
         lines: list[str] = []
         for skill in self._skills.values():
+            if not skill.model_visible:
+                continue
             # Passive-only skills (has factories but no run func) are not callable by the model
             if skill._run_func is None and skill.is_passive:
                 continue

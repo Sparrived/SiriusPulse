@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from sirius_pulse.core.prompt_factory import PromptBundle, PromptFactory, StyleAdapter
+from sirius_pulse.core.pinned_message import PinnedMessage
+from sirius_pulse.core.prompt_factory import (
+    TAG_PINNED_MESSAGES,
+    PromptBundle,
+    PromptFactory,
+    StyleAdapter,
+)
+from sirius_pulse.memory.basic import BasicMemoryManager
+from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.token.utils import PromptTokenBreakdown
 
 
@@ -73,3 +81,39 @@ def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
     assert params.temperature == 0.2
     assert params.length_instruction
     assert params.tone_instruction
+
+
+class _NoopDiaryRetriever:
+    def retrieve(self, **kwargs):
+        return []
+
+
+def test_context_assembler_when_pinned_messages_are_provided_then_injects_current_prompt():
+    assembler = ContextAssembler(
+        BasicMemoryManager(),
+        _NoopDiaryRetriever(),
+    )
+    pinned = PinnedMessage(
+        message_id="pin_1",
+        content="Remember the deployment window.",
+        speaker="Alice",
+        group_id="group_a",
+        reason="ops",
+    )
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="What should I do next?",
+        system_prompt="system",
+        pinned_messages=[pinned],
+    )
+
+    assert TAG_PINNED_MESSAGES in messages[-1]["content"]
+    assert "<pinned_message" in messages[-1]["content"]
+    assert "Remember the deployment window." in messages[-1]["content"]
+
+
+def test_output_spec_does_not_tell_model_to_list_pinned_messages():
+    spec = PromptFactory.build_output_spec()
+
+    assert "list_pinned_messages" not in spec

@@ -14,6 +14,7 @@ def _skill(
     description: str | None = None,
     developer_only: bool = False,
     adapter_types: list[str] | None = None,
+    model_visible: bool = True,
 ) -> SkillDefinition:
     def run(**kwargs):
         return {"success": True, "text": name}
@@ -24,6 +25,7 @@ def _skill(
         parameters=[],
         developer_only=developer_only,
         adapter_types=adapter_types or [],
+        model_visible=model_visible,
         source_path=None,
         _run_func=run,
     )
@@ -107,6 +109,19 @@ def test_skill_registry_when_adapter_is_unknown_then_adapter_limited_skills_are_
     assert "qq_image" not in descriptions
     assert "plain_note" in descriptions
     assert [tool["function"]["name"] for tool in tools] == ["plain_note"]
+
+
+def test_skill_registry_when_skill_is_not_model_visible_then_tool_is_hidden():
+    registry = SkillRegistry()
+    registry.register(_skill("pin_message"))
+    registry.register(_skill("list_pinned_messages", model_visible=False))
+
+    descriptions = registry.build_tool_descriptions()
+    tools = registry.build_tools_list()
+
+    assert "pin_message" in descriptions
+    assert "list_pinned_messages" not in descriptions
+    assert [tool["function"]["name"] for tool in tools] == ["pin_message"]
 
 
 def test_skill_registry_when_workspace_hot_reloads_then_removed_skills_disappear():

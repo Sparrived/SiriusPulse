@@ -10,6 +10,7 @@ SKILL_META = {
         "查看当前聊天中已经钉住的消息。需要取消钉住、确认现有长期上下文时使用。"
     ),
     "version": "1.0.0",
+    "model_visible": False,
     "tags": ["memory", "pinned_message"],
     "dependencies": [],
     "parameters": [],

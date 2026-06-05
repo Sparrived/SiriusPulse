@@ -27,7 +27,6 @@ _AUTONOMOUS_MESSAGE_SKILLS = {
     "send_sticker",
     "pin_message",
     "unpin_message",
-    "list_pinned_messages",
 }
 
 
@@ -247,6 +246,11 @@ class DelayedQueueTasks:
             speaker_user_id=speaker_uid,
             speaker_name=speaker_display,
             content_is_tagged=True,
+            pinned_messages=(
+                engine.get_pinned_messages_for_prompt(group_id)
+                if hasattr(engine, "get_pinned_messages_for_prompt")
+                else []
+            ),
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]
@@ -598,7 +602,6 @@ class DelayedQueueTasks:
             plugin_registry=getattr(engine, '_plugin_registry', None),
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
-            pinned_messages=engine.get_pinned_messages_for_prompt(group_id),
             sticker_names=getattr(engine, '_sticker_names', None),
         )
         if glossary:
