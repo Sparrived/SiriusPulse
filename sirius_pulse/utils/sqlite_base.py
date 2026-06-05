@@ -12,7 +12,59 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BaseSqliteStore"]
+__all__ = ["BaseSqliteStore", "configure_sqlite_connection", "open_sqlite_connection"]
+
+
+def configure_sqlite_connection(
+    conn: sqlite3.Connection,
+    *,
+    row_factory: bool = True,
+    foreign_keys: bool = True,
+    journal_mode: str | None = "WAL",
+    query_only: bool = False,
+) -> sqlite3.Connection:
+    """Apply the project's standard SQLite connection pragmas."""
+    if row_factory:
+        conn.row_factory = sqlite3.Row
+    if journal_mode:
+        mode = journal_mode.strip().upper()
+        if not mode.replace("_", "").isalnum():
+            raise ValueError(f"invalid SQLite journal_mode: {journal_mode!r}")
+        conn.execute(f"PRAGMA journal_mode={mode}")
+    if foreign_keys:
+        conn.execute("PRAGMA foreign_keys=ON")
+    if query_only:
+        conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
+def open_sqlite_connection(
+    db_path: Path | str,
+    *,
+    timeout: float = 10,
+    check_same_thread: bool = True,
+    row_factory: bool = True,
+    foreign_keys: bool = True,
+    journal_mode: str | None = "WAL",
+    query_only: bool = False,
+    create_parent: bool = True,
+) -> sqlite3.Connection:
+    """Open a SQLite connection with shared project defaults."""
+    path = Path(db_path)
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(
+        str(path),
+        check_same_thread=check_same_thread,
+        timeout=timeout,
+    )
+    return configure_sqlite_connection(
+        conn,
+        row_factory=row_factory,
+        foreign_keys=foreign_keys,
+        journal_mode=journal_mode,
+        query_only=query_only,
+    )
 
 
 class BaseSqliteStore:
@@ -50,22 +102,19 @@ class BaseSqliteStore:
             if db_path is None:
                 raise ValueError("db_path 和 conn 不能同时为空")
             self._db_path = Path(db_path)
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(
-                str(self._db_path),
+            self._conn = open_sqlite_connection(
+                self._db_path,
                 check_same_thread=False,
-                timeout=10,
+                query_only=read_only,
             )
             self._own_conn = True
 
-        # 统一配置 PRAGMA
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
+        if conn is not None:
+            configure_sqlite_connection(conn, query_only=read_only)
 
         if read_only:
             # 只读模式：禁止一切写操作，避免与写入方锁冲突
-            self._conn.execute("PRAGMA query_only=ON")
+            pass
         else:
             # 子类实现表结构创建
             self._create_tables()
