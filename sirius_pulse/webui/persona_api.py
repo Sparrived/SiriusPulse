@@ -145,6 +145,65 @@ async def api_persona_status_get(request: web.Request, persona_manager: Any) -> 
     return _json_response({"name": name, "status": status})
 
 
+def _read_log_delta(log_file: Any, offset: int, lines: int) -> dict[str, Any]:
+    if not log_file.exists():
+        return {"lines": [], "offset": 0, "size": 0, "exists": False}
+    size = log_file.stat().st_size
+    if offset <= 0:
+        all_lines = log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+        return {
+            "lines": all_lines[-lines:] if len(all_lines) > lines else all_lines,
+            "offset": size,
+            "size": size,
+            "exists": True,
+        }
+    if offset > size:
+        offset = 0
+    with log_file.open("rb") as f:
+        f.seek(offset)
+        chunk = f.read()
+    text = chunk.decode("utf-8", errors="ignore")
+    return {"lines": text.splitlines(), "offset": size, "size": size, "exists": True}
+
+
+async def api_system_logs_get(request: web.Request, persona_manager: Any) -> web.Response:
+    raw_lines = request.query.get("lines", "300")
+    raw_offset = request.query.get("offset", "0")
+    try:
+        lines = min(2000, max(1, int(raw_lines)))
+    except ValueError:
+        lines = 300
+    try:
+        offset = max(0, int(raw_offset))
+    except ValueError:
+        offset = 0
+    log_file = persona_manager.data_path / "logs" / "webui.log"
+    payload = _read_log_delta(log_file, offset, lines)
+    payload.update({"target": "webui", "name": "WebUI", "path": str(log_file)})
+    return _json_response(payload)
+
+
+async def api_persona_logs_get(request: web.Request, persona_manager: Any) -> web.Response:
+    name = _get_name(request)
+    paths = persona_manager.get_persona_paths(name)
+    if paths is None:
+        return _json_response({"error": "人格不存在"}, 404)
+    raw_lines = request.query.get("lines", "300")
+    raw_offset = request.query.get("offset", "0")
+    try:
+        lines = min(2000, max(1, int(raw_lines)))
+    except ValueError:
+        lines = 300
+    try:
+        offset = max(0, int(raw_offset))
+    except ValueError:
+        offset = 0
+    log_file = persona_manager.get_log_file(name)
+    payload = _read_log_delta(log_file, offset, lines)
+    payload.update({"target": "persona", "name": name, "path": str(log_file)})
+    return _json_response(payload)
+
+
 @handle_api_errors
 async def api_persona_start(request: web.Request, persona_manager: Any) -> web.Response:
     name = _get_name(request)

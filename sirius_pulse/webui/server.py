@@ -27,6 +27,8 @@ from sirius_pulse.webui.persona_api import (
     api_persona_start,
     api_persona_stop,
     api_persona_restart,
+    api_system_logs_get,
+    api_persona_logs_get,
     api_persona_get,
     api_persona_post,
     api_persona_interview_get,
@@ -133,6 +135,12 @@ class WebUIServer(_WebUIServer):
 
     async def api_persona_restart(self, request):
         return await api_persona_restart(request, self.persona_manager)
+
+    async def api_system_logs_get(self, request):
+        return await api_system_logs_get(request, self.persona_manager)
+
+    async def api_persona_logs_get(self, request):
+        return await api_persona_logs_get(request, self.persona_manager)
 
     # ─── 多人格 API: 人格配置 ─────────────────────────────
 

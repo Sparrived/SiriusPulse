@@ -59,20 +59,22 @@ jobs:
           pip install -e .[dev]
       
       - name: Lint with pylint
+        continue-on-error: true
         run: |
-          pylint sirius_pulse --fail-under=8.0 --disable=C0111,W0212 || true
+          pylint sirius_pulse --fail-under=8.0 --disable=C0111,W0212
       
       - name: Format check with black
         run: |
-          black --check sirius_pulse tests || true
+          black --check sirius_pulse tests
       
       - name: Import sorting check with isort
         run: |
-          isort --check-only sirius_pulse tests || true
+          isort --check-only sirius_pulse tests
       
       - name: Type check with mypy
+        continue-on-error: true
         run: |
-          mypy sirius_pulse --ignore-missing-imports || true
+          mypy sirius_pulse --ignore-missing-imports
 
   security:
     name: Security Scanning
@@ -94,8 +96,9 @@ jobs:
           pip install bandit
       
       - name: Security scan with bandit
+        continue-on-error: true
         run: |
-          bandit -r sirius_pulse -ll || true
+          bandit -r sirius_pulse -ll
 
   build:
     name: Build Distribution
@@ -113,7 +116,7 @@ jobs:
       
       - name: Install build dependencies
         run: |
-          python -m pip install --upgrade pip setuptools wheel build
+          python -m pip install --upgrade pip setuptools wheel build twine
       
       - name: Build distribution
         run: |
@@ -121,7 +124,11 @@ jobs:
       
       - name: Verify distribution
         run: |
-          python -m twine check dist/* || true
+          python -m twine check dist/*
+
+      - name: Verify wheel runtime assets
+        run: |
+          python -c "import pathlib, zipfile; wheel=next(pathlib.Path('dist').glob('*.whl')); names=zipfile.ZipFile(wheel).namelist(); assert any(n.endswith('entry_points.txt') for n in names), 'missing console entry points'; assert any(n.endswith('sirius_pulse/webui/static/index.html') for n in names), 'missing WebUI static files'"
       
       - name: Store built distributions
         uses: actions/upload-artifact@v4

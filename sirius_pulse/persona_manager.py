@@ -126,7 +126,11 @@ class PersonaManager:
 
     def get_port(self, name: str) -> int | None:
         """获取人格当前分配的端口。"""
-        return self._load_port_registry().get(name)  # type: ignore[return-value]
+        record = self._load_port_registry().get(name)
+        if isinstance(record, dict):
+            port = record.get("port")
+            return int(port) if port is not None else None
+        return record
 
     # ------------------------------------------------------------------
     # 扫描与列表
@@ -438,7 +442,7 @@ class PersonaManager:
     # ------------------------------------------------------------------
 
     def start_persona(self, name: str) -> bool:
-        """启动单个人格子进程（Windows 下创建独立控制台窗口）。"""
+        """启动单个人格子进程。"""
         if self.is_running(name):
             LOG.warning("人格已在运行: %s", name)
             return True
@@ -458,13 +462,15 @@ class PersonaManager:
             self.global_config.get("log_level", "INFO"),
         ]
 
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
         if sys.platform == "win32":
-            # CREATE_NEW_CONSOLE: 独立窗口
-            # CREATE_NEW_PROCESS_GROUP: 支持 Ctrl+Break 终止
-            kwargs["creationflags"] = (
-                subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP
-            )
+            kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
 
         try:
             proc = subprocess.Popen(
@@ -515,7 +521,12 @@ class PersonaManager:
         # 先发送 SIGTERM（Windows 用 CTRL_BREAK_EVENT）
         try:
             if sys.platform == "win32":
-                proc.send_signal(signal.CTRL_BREAK_EVENT)
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True,
+                    timeout=10.0,
+                    check=False,
+                )
             else:
                 proc.send_signal(signal.SIGTERM)
         except Exception as exc:
@@ -635,7 +646,9 @@ class PersonaManager:
 
     def stop_all(self) -> None:
         """停止所有人格。"""
-        for name in list(self._processes.keys()):
+        names = {info["name"] for info in self.list_personas() if info.get("running")}
+        names.update(self._processes.keys())
+        for name in sorted(names):
             self.stop_persona(name)
 
     def get_persona_dir(self, name: str) -> Path:
@@ -693,6 +706,9 @@ class PersonaManager:
         except Exception as exc:
             LOG.warning("读取日志失败 %s: %s", name, exc)
             return []
+
+    def get_log_file(self, name: str) -> Path:
+        return self.personas_dir / name / "logs" / "worker.log"
 
 
 __all__ = ["PersonaManager"]

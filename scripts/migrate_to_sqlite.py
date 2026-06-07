@@ -1,10 +1,10 @@
 """迁移脚本：将 JSON 数据迁移到 SQLite。
 
 用法：
-    python -m sirius_pulse.memory.migrate_to_sqlite <persona_path>
+    python scripts/migrate_to_sqlite.py <persona_path>
 
 示例：
-    python -m sirius_pulse.memory.migrate_to_sqlite data/personas/sirius
+    python scripts/migrate_to_sqlite.py data/personas/sirius
 """
 
 from __future__ import annotations
@@ -634,8 +634,8 @@ def main() -> None:
     import sys
 
     if len(sys.argv) < 2:
-        print("用法: python -m sirius_pulse.memory.migrate_to_sqlite <persona_path>")
-        print("示例: python -m sirius_pulse.memory.migrate_to_sqlite data/personas/sirius")
+        print("用法: python scripts/migrate_to_sqlite.py <persona_path>")
+        print("示例: python scripts/migrate_to_sqlite.py data/personas/sirius")
         sys.exit(1)
 
     persona_path = Path(sys.argv[1])

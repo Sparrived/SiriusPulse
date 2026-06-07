@@ -28,6 +28,10 @@ dependencies = [
 	"websockets>=11.0.0",
 ]
 
+[project.scripts]
+sirius-pulse = "sirius_pulse.cli:main"
+sirius-chat = "sirius_pulse.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/Sparrived/SiriusChat"
 Documentation = "https://github.com/Sparrived/SiriusChat"
@@ -70,11 +74,16 @@ quality = [
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "strict"
-addopts = "--basetemp=.pytest_tmp"
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 include = ["sirius_pulse*"]
+
+[tool.setuptools.package-data]
+"sirius_pulse.webui" = ["static/*", "static/pages/*"]

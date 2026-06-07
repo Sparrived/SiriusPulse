@@ -1,4 +1,4 @@
-"""API 文档自动生成脚本——适配删除 api/ 层后的新结构."""
+"""Python API 文档自动生成脚本."""
 
 import ast
 import importlib
@@ -156,7 +156,7 @@ def collect_public_api() -> dict[str, dict]:
 
 def generate_markdown_doc(modules: dict[str, dict]) -> str:
     """生成 markdown 格式的 API 文档."""
-    md = "# Sirius Chat API 文档\n\n"
+    md = "# Python API\n\n"
     md += "自动生成的 Python API 参考文档（基于 `sirius_pulse` 顶层公开导出）。\n\n"
 
     if not modules:
@@ -235,7 +235,7 @@ def generate_json_doc(modules: dict[str, dict]) -> dict:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python generate_api_docs.py <format> [<output_path>]")
+        print("Usage: python scripts/generate_api_docs.py <format> [<output_path>]")
         print("Formats: markdown, json")
         sys.exit(1)
 
@@ -244,14 +244,14 @@ if __name__ == "__main__":
     modules = collect_public_api()
 
     if output_format == "markdown":
-        output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("docs/api.md")
+        output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("docs/reference/python-api.md")
         doc = generate_markdown_doc(modules)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(doc, encoding='utf-8')
         print(f"[OK] Markdown API 文档已生成: {output_path}")
 
     elif output_format == "json":
-        output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("docs/api.json")
+        output_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("docs/reference/python-api.json")
         doc = generate_json_doc(modules)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', encoding='utf-8') as f:

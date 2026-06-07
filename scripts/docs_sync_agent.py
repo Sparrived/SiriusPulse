@@ -69,7 +69,7 @@ PATH_TO_DOCS: dict[str, set[str]] = {
     "sirius_pulse/core/bg_tasks.py":         {"guide/architecture-overview.md", "guide/engine-architecture.md"},
     "sirius_pulse/core/prompt_factory.py":   {"guide/architecture-overview.md"},
     "sirius_pulse/core/helpers.py":          {"guide/architecture-overview.md"},
-    "sirius_pulse/core/brain.py":            {"api/brain-api.md"},
+    "sirius_pulse/core/brain.py":            {"reference/brain-api.md"},
     "sirius_pulse/core/":                    {"guide/architecture-overview.md", "guide/engine-architecture.md"},
 
     # Provider
@@ -83,7 +83,7 @@ PATH_TO_DOCS: dict[str, set[str]] = {
     "sirius_pulse/session/":     {"guide/memory-system.md"},
 
     # 技能系统
-    "sirius_pulse/skills/":      {"extensions/skill-overview.md", "api/skills-api.md", "extensions/skill-authoring.md"},
+    "sirius_pulse/skills/":      {"extensions/skill-overview.md", "reference/skills-api.md", "extensions/skill-authoring.md"},
 
     # 平台适配
     "sirius_pulse/platforms/":   {"guide/platform-napcat.md"},
@@ -92,7 +92,7 @@ PATH_TO_DOCS: dict[str, set[str]] = {
     "sirius_pulse/embedding/":   {"guide/architecture-overview.md"},
 
     # 数据模型
-    "sirius_pulse/models/":      {"api/plugins-api.md", "api/skills-api.md"},
+    "sirius_pulse/models/":      {"reference/plugins-api.md", "reference/skills-api.md"},
 
     # 人格管理
     "sirius_pulse/persona_manager.py": {"guide/persona-system.md"},
@@ -102,7 +102,7 @@ PATH_TO_DOCS: dict[str, set[str]] = {
     "sirius_pulse/webui/":       {"reference/webui-api.md"},
 
     # Plugin 系统
-    "sirius_pulse/plugins/":     {"extensions/plugin-overview.md", "api/plugins-api.md", "extensions/plugin-authoring.md"},
+    "sirius_pulse/plugins/":     {"extensions/plugin-overview.md", "reference/plugins-api.md", "extensions/plugin-authoring.md"},
 
     # 顶层 API
     "sirius_pulse/__init__.py":  {"reference/python-api.md"},

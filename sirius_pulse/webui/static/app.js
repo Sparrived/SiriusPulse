@@ -19,6 +19,7 @@ const PAGE_META = {
   'cognition': { title: '认知分析', breadcrumb: 'Analytics / Cognition', icon: '◎' },
   'skills-tracker': { title: 'Skill 追踪', breadcrumb: 'Analytics / Skills', icon: '⟠' },
   'conversation-history': { title: '对话分析', breadcrumb: 'Analytics / Conversations', icon: '◧' },
+  'logs': { title: '实时日志', breadcrumb: 'Operations / Logs', icon: '▣' },
   'diary': { title: '日记', breadcrumb: 'Memory / Diary', icon: '◫' },
   'glossary': { title: '名词解释', breadcrumb: 'Memory / Glossary', icon: '◱' },
   'memory-viz': { title: '记忆可视化', breadcrumb: 'Memory / Visualization', icon: '◲' },
@@ -48,6 +49,7 @@ const NAV_GROUPS = [
     { page: 'cognition', icon: '◎', label: '认知分析' },
     { page: 'skills-tracker', icon: '⟠', label: 'Skill 追踪' },
     { page: 'conversation-history', icon: '◧', label: '对话分析' },
+    { page: 'logs', icon: '▣', label: '实时日志' },
   ]},
   { id: 'memory', label: '记忆', items: [
     { page: 'memory-dashboard', icon: '🧬', label: '神经中枢' },
@@ -68,6 +70,7 @@ const NAV_GROUPS = [
 const PERSONA_PAGES = new Set([
   'persona', 'orchestration', 'experience', 'adapters', 'skills',
   'token-tracker', 'cognition', 'skills-tracker', 'conversation-history',
+  'logs',
   'diary', 'glossary', 'memory-viz', 'create-persona',
   'memory-dashboard', 'evolution-chain', 'situation-timeline',
   'biography-view', 'diary-slices',

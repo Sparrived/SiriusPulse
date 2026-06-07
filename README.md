@@ -106,13 +106,21 @@ Perception → Cognition → Decision → Execution → Background
 pip install sirius-pulse
 ```
 
-### 2️⃣ 启动 WebUI
+### 2️⃣ 启动 CLI
+
+```bash
+sirius-pulse
+```
+
+默认会进入交互式 CLI。可以在首页查看人格状态，并选择启动运行模式、后台 WebUI、查看日志或管理人格。
+
+如需启动 WebUI，也可以在 CLI 中选择 **WebUI 面板**，或运行后台服务命令：
 
 ```bash
 sirius-pulse webui
 ```
 
-打开 `http://localhost:8080`，一切配置都通过可视化面板完成：
+命令会立即返回，不占用 CLI 终端。打开 `http://localhost:8080`，可视化配置通过管理面板完成：
 
 | WebUI 页面 | 做什么 |
 |-----------|------|
@@ -122,27 +130,35 @@ sirius-pulse webui
 | **Provider** | 填 API Key（支持 DeepSeek / SiliconFlow 等） |
 | **NapCat** | 配置 QQ 号、扫码登录 |
 | **适配器** | 将人格绑定到 QQ 号 |
+| **实时日志** | 在 WebUI 内查看 WebUI 与人格 worker 日志 |
 
-### 3️⃣ 前台启动（可选）
+### 3️⃣ 后台运行
 
-熟悉后又想不依赖 WebUI 运行：
+WebUI、人格 worker 与 NapCat 会以后台子进程运行，不再弹出独立控制台窗口。日志可在 WebUI 的 **实时日志** 页面查看，也可以通过 CLI 查看最近日志。
+在交互式 CLI 中按 `Ctrl+C` 或输入 `q` 退出时，会触发统一清理流程，停止后台 WebUI、WebUI 托管的 Embedding 微服务以及所有运行中的人格。
 
 ```bash
 sirius-pulse run              # 启动所有已配置人格 + WebUI
-sirius-pulse persona start my-bot   # 前台启动单人格
+sirius-pulse persona start my-bot   # 后台启动单人格
 ```
 
 ### CLI 命令
 
 | 命令 | 说明 |
 |------|------|
-| `sirius-pulse webui` | 启动 WebUI 管理模式 |
+| `sirius-pulse` | 默认进入交互式 CLI |
+| `sirius-pulse cli` | 显式进入交互式 CLI |
+| `sirius-pulse webui` | 后台启动 WebUI 管理服务 |
+| `sirius-pulse webui --status` | 查看后台 WebUI 状态 |
+| `sirius-pulse webui --stop` | 停止后台 WebUI |
+| `sirius-pulse webui --foreground` | 前台运行 WebUI（调试用） |
 | `sirius-pulse run` | 启动所有已启用人格 + WebUI |
 | `sirius-pulse persona create <name>` | 创建新人格 |
-| `sirius-pulse persona start <name>` | 前台启动单个人格 |
+| `sirius-pulse persona start <name>` | 后台启动单个人格 |
 | `sirius-pulse persona list` | 列出所有人格 |
 | `sirius-pulse persona stop <name>` | 停止人格 |
 | `sirius-pulse persona remove <name>` | 删除人格 |
+| `sirius-pulse persona logs <name>` | 查看人格日志 |
 
 ### Python API
 
@@ -351,7 +367,7 @@ class MyPlugin(PluginBase):
 
 ## 📚 文档
 
-> 💡 **月白说**：文档都在 文档见 [SiriusPulse-Docs](https://sirius-pulse-docs.vercel.app/extensions/)下喵～第一次使用的话，建议从 `architecture.md` 开始看哦(｡•̀ᴗ-)✧
+> 💡 **月白说**：文档见 [SiriusPulse-Docs](https://sirius-pulse-docs.vercel.app/) 下喵～第一次使用的话，建议从 [系统架构全景](https://sirius-pulse-docs.vercel.app/guide/architecture-overview) 开始看哦(｡•̀ᴗ-)✧
 
 | 板块 | 内容 |
 |------|------|
@@ -399,7 +415,7 @@ python -m pytest tests/ --cov=sirius_pulse
 
 1. **Fork** 项目并创建分支：`git checkout -b feat/my-feature`
 2. **开发**并编写测试
-3. **验证**：`python -m pytest tests/ -q && make lint`
+3. **验证**：`python -m pytest tests/ -q && python scripts/ci_check.py`
 4. **提交**：遵循 [Conventional Commits](https://www.conventionalcommits.org/) 格式
 5. **推送**并发起 Pull Request
 
@@ -407,9 +423,9 @@ python -m pytest tests/ --cov=sirius_pulse
 
 ```bash
 pip install -e ".[dev,test,provider,quality]"
-make format   # black + isort
-make lint     # pylint + flake8
-make typecheck  # mypy
+black sirius_pulse tests
+isort sirius_pulse tests
+python scripts/ci_check.py
 ```
 
 ---

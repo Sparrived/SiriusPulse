@@ -661,13 +661,20 @@ class NapCatManager:
 
         LOG.info("正在启动 NapCat (实例: %s, reboot=%s): %s", self.instance_dir.name, reboot, " ".join(cmd))
         try:
-            # Windows 下使用 CREATE_NEW_CONSOLE 让 QQ 窗口独立显示
-            creationflags = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
+            kwargs = {
+                "env": env,
+                "cwd": str(self.instance_dir),
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs["start_new_session"] = True
             self._process = subprocess.Popen(
                 cmd,
-                env=env,
-                cwd=str(self.instance_dir),
-                creationflags=creationflags,
+                **kwargs,
             )
         except Exception as exc:
             LOG.error("启动 NapCat 失败: %s", exc)
@@ -677,7 +684,7 @@ class NapCatManager:
         self._write_pid_file(self._process.pid)
         return {
             "success": True,
-            "message": f"NapCat 已启动 (pid={self._process.pid})。首次使用请在弹出的 QQ 窗口中扫码登录。",
+            "message": f"NapCat 已后台启动 (pid={self._process.pid})。首次使用请在 QQ 客户端完成登录。",
         }
 
     async def stop(

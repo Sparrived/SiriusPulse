@@ -1480,7 +1480,6 @@
   - `.pre-commit-config.yaml`：预提交钩子配置（black, isort, flake8, mypy, bandit, yamllint 等）
   - `scripts/ci_check.py`：本地/CI 代码质量检查脚本（格式、lint、类型、测试、覆盖率）
   - `scripts/setup_dev_env.py`：开发环境自动初始化脚本
-  - `Makefile`：便捷的开发命令集（format, lint, typecheck, test, build 等）
 - **PROJECT_ISSUES.md**: 项目问题与改进方向追踪文档
   - P0（5项）、P1（4项）、P2（4项）优先级划分
   - 3个月 roadmap 与进度矩阵

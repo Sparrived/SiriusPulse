@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 # 项目根目录
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SIRIUS_CHAT = PROJECT_ROOT / "sirius_pulse"
 TESTS = PROJECT_ROOT / "tests"
 
