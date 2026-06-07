@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Adapter 配置
 # ---------------------------------------------------------------------------
 
+
 @dataclass(slots=True)
 class NapCatAdapterConfig:
     """NapCat OneBot v11 连接配置。"""
@@ -127,6 +128,7 @@ class PersonaAdaptersConfig:
 # Experience 配置
 # ---------------------------------------------------------------------------
 
+
 @dataclass(slots=True)
 class PersonaExperienceConfig:
     """人格体验参数——控制运行时行为风格。"""
@@ -221,7 +223,9 @@ class PersonaExperienceConfig:
             min_reply_interval_seconds=float(data.get("min_reply_interval_seconds", 0.0)),
             reply_frequency_window_seconds=float(data.get("reply_frequency_window_seconds", 60.0)),
             reply_frequency_max_replies=int(data.get("reply_frequency_max_replies", 8)),
-            reply_frequency_exempt_on_mention=bool(data.get("reply_frequency_exempt_on_mention", True)),
+            reply_frequency_exempt_on_mention=bool(
+                data.get("reply_frequency_exempt_on_mention", True)
+            ),
             max_concurrent_llm_calls=int(data.get("max_concurrent_llm_calls", 1)),
             enable_skills=bool(data.get("enable_skills", True)),
             other_ai_names=[str(v) for v in data.get("other_ai_names", [])],
@@ -260,6 +264,7 @@ class PersonaExperienceConfig:
 # ---------------------------------------------------------------------------
 # 便捷函数
 # ---------------------------------------------------------------------------
+
 
 class PersonaConfigPaths:
     """人格目录下各配置文件的路径约定。"""

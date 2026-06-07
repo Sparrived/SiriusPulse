@@ -91,9 +91,7 @@ _config.group("高级设置").add(
 SKILL_META = {
     "name": "reminder",
     "description": (
-        "设置定时提醒，支持一次性、间隔重复、每日、每周重复提醒。"
-        "到达指定时间后会通知对应的用户。"
-        "可以用 list 查看所有提醒，用 cancel 取消指定提醒。"
+        "设置定时提醒，支持一次性、间隔重复、每日、每周重复提醒。" "到达指定时间后会通知对应的用户。" "可以用 list 查看所有提醒，用 cancel 取消指定提醒。"
     ),
     "version": "2.0.0",
     "tags": ["utility", "time"],
@@ -104,6 +102,7 @@ SKILL_META = {
 
 
 # ── Active: model-callable run() ──────────────────────────────────────
+
 
 def run(
     action: str = "create",
@@ -160,6 +159,7 @@ def run(
 
 # ── Passive: background task factory ──────────────────────────────────
 
+
 def create_background_tasks(ctx: Any) -> list[Any]:
     """Register a periodic reminder checker as a background task.
 
@@ -173,11 +173,13 @@ def create_background_tasks(ctx: Any) -> list[Any]:
 
     interval = ctx.get_config_value("reminder_check_interval_seconds", 10)
 
-    return [BackgroundTaskSpec(
-        name="reminder_check",
-        interval_seconds=interval,
-        task_func=_check_due_reminders,
-    )]
+    return [
+        BackgroundTaskSpec(
+            name="reminder_check",
+            interval_seconds=interval,
+            task_func=_check_due_reminders,
+        )
+    ]
 
 
 async def _check_and_fire_reminders(ctx: Any) -> None:
@@ -251,8 +253,8 @@ async def _execute_skill_chain(
     if executor is None:
         return []
 
-    from sirius_pulse.skills.models import SkillInvocationContext
     from sirius_pulse.memory.user.unified_models import UnifiedUser
+    from sirius_pulse.skills.models import SkillInvocationContext
 
     caller = UnifiedUser(user_id=user_id, name=user_name)
     inv_ctx = SkillInvocationContext(caller=caller)
@@ -272,14 +274,14 @@ async def _execute_skill_chain(
                 logger.warning("Reminder %s skill '%s' not found", reminder_id, skill_name)
                 skill_results.append({"skill": skill_name, "params": params, "error": "未找到"})
                 continue
-            result = await executor.execute_async(
-                skill, params, invocation_context=inv_ctx
+            result = await executor.execute_async(skill, params, invocation_context=inv_ctx)
+            skill_results.append(
+                {
+                    "skill": skill_name,
+                    "params": params,
+                    "result": result.to_display_text() if result.success else result.error,
+                }
             )
-            skill_results.append({
-                "skill": skill_name,
-                "params": params,
-                "result": result.to_display_text() if result.success else result.error,
-            })
         except Exception as exc:
             logger.warning("Reminder %s skill_chain failed: %s -> %s", reminder_id, skill_name, exc)
             skill_results.append({"skill": skill_name, "params": params, "error": str(exc)})
@@ -324,7 +326,9 @@ async def _generate_reminder_message(
         )
 
         reply = await ctx.generate_text(
-            system_prompt, messages, group_id,
+            system_prompt,
+            messages,
+            group_id,
             task_name="proactive_generate",
             post_process=True,
         )
@@ -336,6 +340,7 @@ async def _generate_reminder_message(
 
 
 # ── Reminder due-detection ────────────────────────────────────────────
+
 
 def _is_reminder_due(reminder: dict[str, Any], now: datetime) -> bool:
     """Check whether a single reminder should fire at *now*."""
@@ -412,6 +417,7 @@ def _is_reminder_due(reminder: dict[str, Any], now: datetime) -> bool:
 
 
 # ── CRUD helpers ──────────────────────────────────────────────────────
+
 
 def _do_create(
     content: str,
@@ -574,9 +580,7 @@ def _do_list(data_store: Any | None) -> dict[str, Any]:
     }
 
 
-def _do_cancel(
-    reminder_id: str, data_store: Any | None, requester_id: str = ""
-) -> dict[str, Any]:
+def _do_cancel(reminder_id: str, data_store: Any | None, requester_id: str = "") -> dict[str, Any]:
     if not reminder_id:
         return {
             "success": False,
@@ -612,6 +616,7 @@ def _do_cancel(
 
 
 # ── Utilities ─────────────────────────────────────────────────────────
+
 
 def _is_valid_hhmm(value: str) -> bool:
     try:

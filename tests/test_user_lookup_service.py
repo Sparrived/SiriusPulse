@@ -78,7 +78,9 @@ def test_user_lookup_when_platform_uid_resolves_then_returns_profile_name_and_so
 
 def test_user_lookup_when_name_resolves_without_profile_then_uses_display_name():
     resolver = FakeResolver(
-        SimpleNamespace(user_id="u-missing", source="alias_fuzzy", confidence=0.6, display_name="Display")
+        SimpleNamespace(
+            user_id="u-missing", source="alias_fuzzy", confidence=0.6, display_name="Display"
+        )
     )
     manager = FakeUserManager()
     service = UserLookupService(resolver, manager)

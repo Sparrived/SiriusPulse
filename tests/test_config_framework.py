@@ -14,7 +14,12 @@ from sirius_pulse.config import (
     SessionDefaults,
     WorkspaceConfig,
 )
-from sirius_pulse.config.config_builder import ConfigBuilder, build_parameters_from_class, config_param, secret
+from sirius_pulse.config.config_builder import (
+    ConfigBuilder,
+    build_parameters_from_class,
+    config_param,
+    secret,
+)
 from sirius_pulse.config.config_helpers import (
     _build_session_defaults,
     _build_workspace_config_from_payload,
@@ -42,7 +47,11 @@ from sirius_pulse.config.helpers import (
     create_multimodel_config,
     setup_multimodel_config,
 )
-from sirius_pulse.config.jsonc import load_json_document, loads_json_document, write_session_config_jsonc
+from sirius_pulse.config.jsonc import (
+    load_json_document,
+    loads_json_document,
+    write_session_config_jsonc,
+)
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 
@@ -78,7 +87,9 @@ def test_session_config_jsonc_when_written_then_round_trips_payload(tmp_path):
     assert load_json_document(target) == payload
 
 
-def test_config_manager_when_loading_json_then_resolves_env_and_relative_paths(tmp_path, monkeypatch):
+def test_config_manager_when_loading_json_then_resolves_env_and_relative_paths(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("SIRIUS_TEST_MODEL", "env-model")
     config_path = tmp_path / "configs" / "session.json"
     config_path.parent.mkdir()
@@ -113,7 +124,9 @@ def test_config_manager_when_loading_json_then_resolves_env_and_relative_paths(t
     assert config.orchestration.memory_extract_batch_size == 2
 
 
-def test_config_manager_when_workspace_config_is_saved_then_manifest_and_snapshot_round_trip(tmp_path):
+def test_config_manager_when_workspace_config_is_saved_then_manifest_and_snapshot_round_trip(
+    tmp_path,
+):
     manager = ConfigManager()
     work_path = tmp_path / "workspace"
     data_path = tmp_path / "runtime"
@@ -156,7 +169,9 @@ def test_models_when_orchestration_policy_resolves_models_then_validates_modes()
         agent_model="fallback-model",
     )
 
-    assert policy.resolve_model_for_task("memory_extract", default_model="default") == "memory-model"
+    assert (
+        policy.resolve_model_for_task("memory_extract", default_model="default") == "memory-model"
+    )
     assert policy.resolve_model_for_task("response_generate", default_model="default") == "default"
     assert policy.is_task_enabled("memory_extract") is False
     assert policy.is_task_enabled("unknown_task") is True
@@ -183,12 +198,38 @@ def test_config_builder_when_params_are_declared_then_metadata_is_rendered():
     )
 
     assert class_params == [
-        {"name": "api_key", "type": "password", "description": "API key", "required": True, "group": "auth"},
-        {"name": "limit", "type": "int", "description": "Limit", "required": False, "default": 3, "group": "runtime"},
+        {
+            "name": "api_key",
+            "type": "password",
+            "description": "API key",
+            "required": True,
+            "group": "auth",
+        },
+        {
+            "name": "limit",
+            "type": "int",
+            "description": "Limit",
+            "required": False,
+            "default": 3,
+            "group": "runtime",
+        },
     ]
     assert builder_params == [
-        {"name": "api_key", "type": "password", "description": "", "required": True, "group": "auth"},
-        {"name": "enabled", "type": "boolean", "description": "", "required": False, "default": True, "group": "auth"},
+        {
+            "name": "api_key",
+            "type": "password",
+            "description": "",
+            "required": True,
+            "group": "auth",
+        },
+        {
+            "name": "enabled",
+            "type": "boolean",
+            "description": "",
+            "required": False,
+            "default": True,
+            "group": "auth",
+        },
     ]
 
 
@@ -226,7 +267,9 @@ def test_workspace_config_when_serialized_then_paths_and_nested_defaults_round_t
     assert restored.provider_policy.prefer_workspace_registry is False
 
 
-def test_config_helpers_when_values_need_coercion_then_defaults_and_nested_cleanup_are_applied(tmp_path):
+def test_config_helpers_when_values_need_coercion_then_defaults_and_nested_cleanup_are_applied(
+    tmp_path,
+):
     fallback = {
         "keep": "fallback",
         "nested": {"old": 1, "missing": "kept"},
@@ -274,7 +317,9 @@ def test_config_helpers_when_env_vars_are_resolved_then_nested_values_are_replac
     }
 
 
-def test_config_helpers_when_workspace_payload_is_built_then_nulls_keep_fallback_and_legacy_fields_are_removed(tmp_path):
+def test_config_helpers_when_workspace_payload_is_built_then_nulls_keep_fallback_and_legacy_fields_are_removed(
+    tmp_path,
+):
     layout = WorkspaceLayout(tmp_path / "data", config_path=tmp_path / "config", layout_version=7)
     fallback = WorkspaceConfig(
         work_path=tmp_path / "fallback-work",
@@ -347,7 +392,9 @@ def test_config_helpers_when_session_defaults_payload_is_missing_then_fallback_i
     assert copied is not fallback
 
 
-def test_config_helpers_when_session_config_dict_is_loaded_then_paths_agent_and_orchestration_are_built(tmp_path):
+def test_config_helpers_when_session_config_dict_is_loaded_then_paths_agent_and_orchestration_are_built(
+    tmp_path,
+):
     payload = {
         "work_path": "work",
         "data_path": "data",
@@ -406,7 +453,9 @@ def test_config_helpers_when_multimodal_agent_helpers_are_used_then_metadata_is_
     assert created.max_tokens == 42
 
 
-def test_config_helpers_when_orchestration_shortcuts_are_used_then_session_config_is_replaced(tmp_path):
+def test_config_helpers_when_orchestration_shortcuts_are_used_then_session_config_is_replaced(
+    tmp_path,
+):
     config = SessionConfig(
         work_path=tmp_path,
         preset=AgentPreset(

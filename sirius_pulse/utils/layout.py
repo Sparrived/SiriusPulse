@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, unquote
 
-
 _DEFAULT_SESSION_FILENAME_SQLITE = "session_state.db"
 _DEFAULT_SESSION_FILENAME_JSON = "session_state.json"
 

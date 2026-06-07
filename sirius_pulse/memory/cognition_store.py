@@ -122,13 +122,16 @@ class CognitionEventStore(BaseSqliteStore):
             self.execute(idx_sql)
 
         # Migrate v1 -> v2
-        self._ensure_columns("cognition_events", {
-            "directed_score": "REAL NOT NULL DEFAULT 0",
-            "sarcasm_score": "REAL NOT NULL DEFAULT 0",
-            "entitlement_score": "REAL NOT NULL DEFAULT 0",
-            "turn_gap_readiness": "REAL NOT NULL DEFAULT 0.5",
-            "directed_signals": "TEXT NOT NULL DEFAULT '{}'",
-        })
+        self._ensure_columns(
+            "cognition_events",
+            {
+                "directed_score": "REAL NOT NULL DEFAULT 0",
+                "sarcasm_score": "REAL NOT NULL DEFAULT 0",
+                "entitlement_score": "REAL NOT NULL DEFAULT 0",
+                "turn_gap_readiness": "REAL NOT NULL DEFAULT 0.5",
+                "directed_signals": "TEXT NOT NULL DEFAULT '{}'",
+            },
+        )
 
         # Migrate v2 -> v3: decision_events table
         self.execute(_CREATE_DECISION_TABLE)
@@ -160,12 +163,26 @@ class CognitionEventStore(BaseSqliteStore):
         """暂存认知事件到缓冲区，满时自动 flush。"""
         ts = timestamp if timestamp is not None else time.time()
         signals_json = json.dumps(directed_signals or {}, ensure_ascii=False)
-        self._buf_events.append((
-            ts, group_id, user_id, valence, arousal, basic_emotion,
-            intensity, social_intent, urgency_score, relevance_score, confidence,
-            directed_score, sarcasm_score, entitlement_score, turn_gap_readiness,
-            signals_json,
-        ))
+        self._buf_events.append(
+            (
+                ts,
+                group_id,
+                user_id,
+                valence,
+                arousal,
+                basic_emotion,
+                intensity,
+                social_intent,
+                urgency_score,
+                relevance_score,
+                confidence,
+                directed_score,
+                sarcasm_score,
+                entitlement_score,
+                turn_gap_readiness,
+                signals_json,
+            )
+        )
         if len(self._buf_events) >= self._batch_size:
             self.flush()
 
@@ -230,12 +247,28 @@ class CognitionEventStore(BaseSqliteStore):
     ) -> None:
         """暂存决策事件到缓冲区，满时自动 flush。"""
         ts = timestamp if timestamp is not None else time.time()
-        self._buf_decisions.append((
-            ts, group_id, user_id, strategy, score, threshold, reason,
-            directed_score, urgency, entitlement, sarcasm,
-            heat_level, msg_rate, cooldown, since_reply,
-            expressiveness, sensitivity, affinity,
-        ))
+        self._buf_decisions.append(
+            (
+                ts,
+                group_id,
+                user_id,
+                strategy,
+                score,
+                threshold,
+                reason,
+                directed_score,
+                urgency,
+                entitlement,
+                sarcasm,
+                heat_level,
+                msg_rate,
+                cooldown,
+                since_reply,
+                expressiveness,
+                sensitivity,
+                affinity,
+            )
+        )
         if len(self._buf_decisions) >= self._batch_size:
             self.flush()
 
@@ -279,12 +312,8 @@ class CognitionEventStore(BaseSqliteStore):
         """
         self.flush()
         cutoff = time.time() - days * 86400
-        c1 = self.execute(
-            "DELETE FROM cognition_events WHERE timestamp < ?", (cutoff,)
-        ).rowcount
-        c2 = self.execute(
-            "DELETE FROM decision_events WHERE timestamp < ?", (cutoff,)
-        ).rowcount
+        c1 = self.execute("DELETE FROM cognition_events WHERE timestamp < ?", (cutoff,)).rowcount
+        c2 = self.execute("DELETE FROM decision_events WHERE timestamp < ?", (cutoff,)).rowcount
         self.commit()
         removed = (c1 or 0) + (c2 or 0)
         if removed:

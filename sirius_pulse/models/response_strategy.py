@@ -31,9 +31,9 @@ class StrategyDecision:
     context: dict[str, Any] = field(default_factory=dict)
 
     # === Plugin 命令字段（v1.2+）===
-    plugin_intent: str | None = None       # Plugin 名称
+    plugin_intent: str | None = None  # Plugin 名称
     plugin_slots: dict[str, Any] = field(default_factory=dict)  # 参数槽位
-    plugin_render_mode: str = "direct"     # 渲染模式
+    plugin_render_mode: str = "direct"  # 渲染模式
 
 
 @dataclass(slots=True)
@@ -56,8 +56,10 @@ class DelayedResponseItem:
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
     adapter_type: str | None = None
     heat_level: str = "warm"  # cold | warm | hot | overheated
-    pace: str = "steady"      # accelerating | steady | decelerating | silent
-    related_user_ids: list[str] = field(default_factory=list)  # merged messages may involve multiple users
+    pace: str = "steady"  # accelerating | steady | decelerating | silent
+    related_user_ids: list[str] = field(
+        default_factory=list
+    )  # merged messages may involve multiple users
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -34,19 +34,19 @@ from __future__ import annotations
 from sirius_pulse.plugins.base import PluginBase
 from sirius_pulse.plugins.context import EngineProxy, PluginContext, PluginDataStore
 from sirius_pulse.plugins.decorators import (
+    GroupCommandMeta,
+    PluginCommandGroupMeta,
+    PluginCommandMeta,
     command,
     command_group,
     group_command,
-    PluginCommandMeta,
-    PluginCommandGroupMeta,
-    GroupCommandMeta,
 )
 from sirius_pulse.plugins.dispatcher import DispatchedOutput
 from sirius_pulse.plugins.models import (
     ArgNode,
     CommandAST,
-    ImageAttachment,
     GroupMention,
+    ImageAttachment,
     MessageReference,
     PatternType,
     PluginCommandDef,

@@ -14,13 +14,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.rhythm import RhythmAnalysis
 from sirius_pulse.models.response_strategy import (
     DelayedResponseItem,
     ResponseStrategy,
     StrategyDecision,
 )
-from sirius_pulse.core.rhythm import RhythmAnalysis
-from sirius_pulse.core.prompt_factory import PromptFactory
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +102,7 @@ class DelayedResponseQueue:
                 item.message_content += f"\n{tagged}"
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
                     if item.strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
-                        item.window_seconds = min(
-                            item.window_seconds + 1.0, _IMMEDIATE_WINDOW_MAX
-                        )
+                        item.window_seconds = min(item.window_seconds + 1.0, _IMMEDIATE_WINDOW_MAX)
                     else:
                         item.window_seconds = _IMMEDIATE_DEBOUNCE_SECONDS
                     item.strategy_decision = strategy_decision
@@ -272,7 +270,9 @@ class DelayedResponseQueue:
                 item.related_user_ids.append(user_id)
             logger.debug(
                 "管线短路合并: group=%s item=%s content=%d chars",
-                group_id, item.item_id, len(item.message_content),
+                group_id,
+                item.item_id,
+                len(item.message_content),
             )
             return True
         return False

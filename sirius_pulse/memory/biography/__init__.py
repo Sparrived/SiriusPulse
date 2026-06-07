@@ -8,13 +8,13 @@
 
 from __future__ import annotations
 
+from sirius_pulse.memory.biography.models import UserBiography
+from sirius_pulse.memory.biography.view import BiographyView
 from sirius_pulse.memory.user.unified_models import (
     AliasEntry,
     RelationshipAnchor,
     UnifiedUser,
 )
-from sirius_pulse.memory.biography.models import UserBiography
-from sirius_pulse.memory.biography.view import BiographyView
 
 __all__ = [
     "UnifiedUser",

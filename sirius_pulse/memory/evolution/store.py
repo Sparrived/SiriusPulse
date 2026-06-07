@@ -10,12 +10,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 from sirius_pulse.memory.evolution.models import (
     EvolutionRecord,
     RecordStatus,
     Triple,
 )
+from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,8 @@ class EvolutionStore(BaseSqliteStore):
     """
 
     def _create_tables(self) -> None:
-        self.executescript("""
+        self.executescript(
+            """
             CREATE TABLE IF NOT EXISTS evolution_records (
                 record_id TEXT PRIMARY KEY,
                 subject TEXT NOT NULL,
@@ -64,11 +65,15 @@ class EvolutionStore(BaseSqliteStore):
                 ON evolution_records(source_group_id);
             CREATE INDEX IF NOT EXISTS idx_evo_obj
                 ON evolution_records(obj);
-        """)
-        self._ensure_columns("evolution_records", {
-            "subject_user_id": "TEXT DEFAULT ''",
-            "status": "TEXT NOT NULL DEFAULT 'active'",
-        })
+        """
+        )
+        self._ensure_columns(
+            "evolution_records",
+            {
+                "subject_user_id": "TEXT DEFAULT ''",
+                "status": "TEXT NOT NULL DEFAULT 'active'",
+            },
+        )
 
     # ── 写入 ──
 
@@ -196,9 +201,7 @@ class EvolutionStore(BaseSqliteStore):
 
     def get_all_subjects(self) -> list[str]:
         """获取所有有记录的主体名称。"""
-        rows = self.fetchall(
-            "SELECT DISTINCT subject FROM evolution_records"
-        )
+        rows = self.fetchall("SELECT DISTINCT subject FROM evolution_records")
         return [r["subject"] for r in rows]
 
     def get_active_by_user_id(self, user_id: str) -> list[EvolutionRecord]:

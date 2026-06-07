@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field, fields, MISSING
+from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
-from sirius_pulse.developer_profiles import metadata_declares_developer
-from sirius_pulse.mixins import JsonSerializable
-from sirius_pulse.memory.user.unified_models import UnifiedUser
-from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.config import TokenUsageRecord
+from sirius_pulse.developer_profiles import metadata_declares_developer
+from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
+from sirius_pulse.memory.user.unified_models import UnifiedUser
+from sirius_pulse.mixins import JsonSerializable
 
 
 @dataclass(slots=True)
@@ -54,9 +54,6 @@ class ReplyRuntimeState(JsonSerializable):
     assistant_reply_timestamps: list[str] = field(default_factory=list)
 
 
-
-
-
 @dataclass(slots=True)
 class Transcript:
     messages: list[Message] = field(default_factory=list)
@@ -85,7 +82,9 @@ class Transcript:
     ) -> None:
         self.user_memory.register_user(participant, group_id=group_id)
 
-    def find_user_by_channel_uid(self, *, channel: str, uid: str, group_id: str = "default") -> UnifiedUser | None:
+    def find_user_by_channel_uid(
+        self, *, channel: str, uid: str, group_id: str = "default"
+    ) -> UnifiedUser | None:
         user_id = self.user_memory.resolve_user_id(platform=channel, external_uid=uid)
         if user_id is None:
             return None
@@ -188,8 +187,7 @@ class Transcript:
             messages=[Message.from_dict(item) for item in payload.get("messages", [])],
             reply_runtime=reply_runtime,
             token_usage_records=[
-                TokenUsageRecord.from_dict(item)
-                for item in payload.get("token_usage_records", [])
+                TokenUsageRecord.from_dict(item) for item in payload.get("token_usage_records", [])
             ],
             **simple_kwargs,
         )
@@ -224,6 +222,8 @@ class Transcript:
             else:
                 content = message.content
             if message.multimodal_inputs:
-                content = PromptFactory.append_multimodal_descriptions(content, message.multimodal_inputs)
+                content = PromptFactory.append_multimodal_descriptions(
+                    content, message.multimodal_inputs
+                )
             history.append({"role": message.role, "content": content})
         return history

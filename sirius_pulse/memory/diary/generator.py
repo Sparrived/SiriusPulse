@@ -94,9 +94,7 @@ class DiaryGenerator:
         from sirius_pulse.core.brain import RawRequest
 
         system_prompt = _DIARY_SYSTEM_PROMPT
-        user_prompt = _build_diary_user_prompt(
-            persona_name, persona_description, candidates
-        )
+        user_prompt = _build_diary_user_prompt(persona_name, persona_description, candidates)
 
         parsed: dict[str, Any] | None = None
         for attempt in range(max_retries + 1):
@@ -115,7 +113,8 @@ class DiaryGenerator:
             except Exception as exc:
                 logger.error(
                     "日记生成 LLM 调用已耗尽所有重试 (group=%s): %s",
-                    group_id, exc,
+                    group_id,
+                    exc,
                 )
                 return None
 
@@ -131,8 +130,7 @@ class DiaryGenerator:
                     max_retries + 1,
                 )
                 system_prompt = (
-                    _DIARY_SYSTEM_PROMPT
-                    + "\n\n【重要提醒】上一次的输出不是合法 JSON，"
+                    _DIARY_SYSTEM_PROMPT + "\n\n【重要提醒】上一次的输出不是合法 JSON，"
                     "请确保本次输出是严格合法的 JSON 对象，不要包含任何其他文字。"
                 )
             else:
@@ -151,13 +149,14 @@ class DiaryGenerator:
             created_at=now_iso,
             source_ids=[e.entry_id for e in candidates],
             content=(parsed.get("content") or "")[:300],
-            keywords=[str(k).strip() for k in (parsed.get("keywords") or []) if str(k).strip()][:10],
+            keywords=[str(k).strip() for k in (parsed.get("keywords") or []) if str(k).strip()][
+                :10
+            ],
             summary=(parsed.get("summary") or "")[:50],
         )
         dominant_topic = str(parsed.get("dominant_topic") or "").strip()[:20]
         interest_topics = [
-            str(t).strip() for t in (parsed.get("interest_topics") or [])
-            if str(t).strip()
+            str(t).strip() for t in (parsed.get("interest_topics") or []) if str(t).strip()
         ][:10]
         return DiaryGenerationResult(
             entry=entry,
@@ -239,7 +238,8 @@ class DiaryGenerator:
             except Exception as exc:
                 logger.error(
                     "Situation 日记生成 LLM 调用失败 (group=%s): %s",
-                    group_id, exc,
+                    group_id,
+                    exc,
                 )
                 return None
 
@@ -250,11 +250,10 @@ class DiaryGenerator:
             if attempt < max_retries:
                 logger.warning(
                     "Situation 日记生成 JSON 解析失败 (group=%s, attempt=%d)",
-                    group_id, attempt + 1,
+                    group_id,
+                    attempt + 1,
                 )
-                system_prompt += (
-                    "\n\n【重要提醒】请确保输出是严格合法的 JSON 对象。"
-                )
+                system_prompt += "\n\n【重要提醒】请确保输出是严格合法的 JSON 对象。"
             else:
                 logger.warning(
                     "Situation 日记生成 JSON 解析失败 (group=%s)，已耗尽重试",
@@ -272,9 +271,7 @@ class DiaryGenerator:
             time_str = ""
             if sit.time_range_start:
                 try:
-                    dt = datetime.fromisoformat(
-                        sit.time_range_start.replace("Z", "+00:00")
-                    )
+                    dt = datetime.fromisoformat(sit.time_range_start.replace("Z", "+00:00"))
                     time_str = f" ({dt.strftime('%H:%M')})"
                 except (ValueError, TypeError):
                     pass
@@ -283,9 +280,7 @@ class DiaryGenerator:
             if sit.participants:
                 participants_str = f" [参与者: {', '.join(sit.participants[:5])}]"
 
-            lines.append(
-                f"【片段{idx}{time_str}{participants_str}】{sit.summary}"
-            )
+            lines.append(f"【片段{idx}{time_str}{participants_str}】{sit.summary}")
 
         return "\n".join(lines)
 

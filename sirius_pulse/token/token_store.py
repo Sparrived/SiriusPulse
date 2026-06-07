@@ -85,16 +85,19 @@ class TokenUsageStore(BaseSqliteStore):
         for idx_sql in _CREATE_INDEXES:
             self.execute(idx_sql)
         # Schema migration: add columns if upgrading from v1
-        self._ensure_columns("token_usage", {
-            "persona_name": "TEXT NOT NULL DEFAULT ''",
-            "group_id": "TEXT NOT NULL DEFAULT ''",
-            "provider_name": "TEXT NOT NULL DEFAULT ''",
-            "breakdown_json": "TEXT NOT NULL DEFAULT ''",
-            "duration_ms": "REAL NOT NULL DEFAULT 0",
-            "error_type": "TEXT NOT NULL DEFAULT ''",
-            "error_message": "TEXT NOT NULL DEFAULT ''",
-            "conversation_depth": "INTEGER NOT NULL DEFAULT 0",
-        })
+        self._ensure_columns(
+            "token_usage",
+            {
+                "persona_name": "TEXT NOT NULL DEFAULT ''",
+                "group_id": "TEXT NOT NULL DEFAULT ''",
+                "provider_name": "TEXT NOT NULL DEFAULT ''",
+                "breakdown_json": "TEXT NOT NULL DEFAULT ''",
+                "duration_ms": "REAL NOT NULL DEFAULT 0",
+                "error_type": "TEXT NOT NULL DEFAULT ''",
+                "error_message": "TEXT NOT NULL DEFAULT ''",
+                "conversation_depth": "INTEGER NOT NULL DEFAULT 0",
+            },
+        )
         self.set_schema_version(_SCHEMA_VERSION, f"{_META_KEY_PREFIX}schema_version")
 
     # ------------------------------------------------------------------
@@ -104,28 +107,30 @@ class TokenUsageStore(BaseSqliteStore):
     def add(self, record: TokenUsageRecord, *, timestamp: float | None = None) -> None:
         """暂存单条记录到缓冲区，满时自动 flush。"""
         ts = timestamp if timestamp is not None else time.time()
-        self._buffer.append((
-            self._session_id,
-            ts,
-            record.actor_id,
-            record.task_name,
-            record.model,
-            record.prompt_tokens,
-            record.completion_tokens,
-            record.total_tokens,
-            record.input_chars,
-            record.output_chars,
-            record.estimation_method,
-            record.retries_used,
-            record.persona_name,
-            record.group_id,
-            record.provider_name,
-            record.breakdown_json,
-            record.duration_ms,
-            record.error_type,
-            record.error_message,
-            record.conversation_depth,
-        ))
+        self._buffer.append(
+            (
+                self._session_id,
+                ts,
+                record.actor_id,
+                record.task_name,
+                record.model,
+                record.prompt_tokens,
+                record.completion_tokens,
+                record.total_tokens,
+                record.input_chars,
+                record.output_chars,
+                record.estimation_method,
+                record.retries_used,
+                record.persona_name,
+                record.group_id,
+                record.provider_name,
+                record.breakdown_json,
+                record.duration_ms,
+                record.error_type,
+                record.error_message,
+                record.conversation_depth,
+            )
+        )
         if len(self._buffer) >= self._batch_size:
             self.flush()
 
@@ -135,28 +140,30 @@ class TokenUsageStore(BaseSqliteStore):
             return
         ts = timestamp if timestamp is not None else time.time()
         for r in records:
-            self._buffer.append((
-                self._session_id,
-                ts,
-                r.actor_id,
-                r.task_name,
-                r.model,
-                r.prompt_tokens,
-                r.completion_tokens,
-                r.total_tokens,
-                r.input_chars,
-                r.output_chars,
-                r.estimation_method,
-                r.retries_used,
-                r.persona_name,
-                r.group_id,
-                r.provider_name,
-                r.breakdown_json,
-                r.duration_ms,
-                r.error_type,
-                r.error_message,
-                r.conversation_depth,
-            ))
+            self._buffer.append(
+                (
+                    self._session_id,
+                    ts,
+                    r.actor_id,
+                    r.task_name,
+                    r.model,
+                    r.prompt_tokens,
+                    r.completion_tokens,
+                    r.total_tokens,
+                    r.input_chars,
+                    r.output_chars,
+                    r.estimation_method,
+                    r.retries_used,
+                    r.persona_name,
+                    r.group_id,
+                    r.provider_name,
+                    r.breakdown_json,
+                    r.duration_ms,
+                    r.error_type,
+                    r.error_message,
+                    r.conversation_depth,
+                )
+            )
         if len(self._buffer) >= self._batch_size:
             self.flush()
 
@@ -187,9 +194,7 @@ class TokenUsageStore(BaseSqliteStore):
         """
         self.flush()
         cutoff = time.time() - days * 86400
-        cursor = self.execute(
-            "DELETE FROM token_usage WHERE timestamp < ?", (cutoff,)
-        )
+        cursor = self.execute("DELETE FROM token_usage WHERE timestamp < ?", (cutoff,))
         self.commit()
         removed = cursor.rowcount or 0
         if removed:
@@ -375,7 +380,9 @@ class TokenUsageStore(BaseSqliteStore):
         end_ts: float | None = None,
     ) -> list[dict[str, object]]:
         """Return recent records with parsed breakdown dict attached."""
-        records = self.fetch_records_filtered(limit=limit, offset=offset, start_ts=start_ts, end_ts=end_ts)
+        records = self.fetch_records_filtered(
+            limit=limit, offset=offset, start_ts=start_ts, end_ts=end_ts
+        )
         for rec in records:
             raw = rec.get("breakdown_json", "")
             rec["breakdown"] = {}
@@ -551,7 +558,9 @@ class TokenUsageStore(BaseSqliteStore):
         ).fetchone()
         return {
             "by_task": [dict(row) for row in rows],
-            "overall": dict(overall) if overall else {"calls": 0, "avg_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0},
+            "overall": dict(overall)
+            if overall
+            else {"calls": 0, "avg_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0},
         }
 
     def get_efficiency_stats(
@@ -591,7 +600,16 @@ class TokenUsageStore(BaseSqliteStore):
             FROM token_usage{where}""",
             params,
         ).fetchone()
-        return dict(row) if row else {"calls": 0, "chars_per_token": 0.0, "output_chars_per_token": 0.0, "output_ratio": 0.0}
+        return (
+            dict(row)
+            if row
+            else {
+                "calls": 0,
+                "chars_per_token": 0.0,
+                "output_chars_per_token": 0.0,
+                "output_ratio": 0.0,
+            }
+        )
 
     def get_empty_reply_stats(
         self,
@@ -674,7 +692,9 @@ class TokenUsageStore(BaseSqliteStore):
         return {
             "total_calls": overall[0] if overall else 0,
             "failure_calls": overall[1] if overall else 0,
-            "failure_rate_pct": round(overall[1] * 100.0 / overall[0], 2) if overall and overall[0] else 0.0,
+            "failure_rate_pct": round(overall[1] * 100.0 / overall[0], 2)
+            if overall and overall[0]
+            else 0.0,
             "by_type": [dict(row) for row in by_type],
         }
 
@@ -741,7 +761,11 @@ class TokenUsageStore(BaseSqliteStore):
                 WHERE timestamp >= ? AND timestamp <= ?""",
                 (start, end),
             ).fetchone()
-            return dict(row) if row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            return (
+                dict(row)
+                if row
+                else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
 
         current = _agg(current_start, current_end)
         previous = _agg(previous_start, previous_end)
@@ -757,7 +781,9 @@ class TokenUsageStore(BaseSqliteStore):
             "change_calls": _pct(current["calls"], previous["calls"]),
             "change_total_tokens": _pct(current["total_tokens"], previous["total_tokens"]),
             "change_prompt_tokens": _pct(current["prompt_tokens"], previous["prompt_tokens"]),
-            "change_completion_tokens": _pct(current["completion_tokens"], previous["completion_tokens"]),
+            "change_completion_tokens": _pct(
+                current["completion_tokens"], previous["completion_tokens"]
+            ),
         }
 
     @property

@@ -34,10 +34,10 @@ class PersonaProfile:
     # ------------------------------------------------------------------
     # Expression style
     # ------------------------------------------------------------------
-    communication_style: str = ""          # concise/detailed/formal/casual/humorous/...
-    speech_rhythm: str = ""                # description of speaking pace/patterns
-    emoji_preference: str = ""             # heavy/moderate/light/none
-    humor_style: str = ""                  # sarcastic/wholesome/dark/dry/witty/none
+    communication_style: str = ""  # concise/detailed/formal/casual/humorous/...
+    speech_rhythm: str = ""  # description of speaking pace/patterns
+    emoji_preference: str = ""  # heavy/moderate/light/none
+    humor_style: str = ""  # sarcastic/wholesome/dark/dry/witty/none
     typical_greetings: list[str] = field(default_factory=list)
     typical_signoffs: list[str] = field(default_factory=list)
 
@@ -50,8 +50,8 @@ class PersonaProfile:
     emotional_range: dict[str, float] = field(
         default_factory=lambda: {"min_valence": -0.5, "max_valence": 0.8}
     )
-    empathy_style: str = ""                # warm/practical/distant/playful/mentor
-    stress_response: str = ""              # how they react under pressure
+    empathy_style: str = ""  # warm/practical/distant/playful/mentor
+    stress_response: str = ""  # how they react under pressure
 
     # ------------------------------------------------------------------
     # Behavior boundaries
@@ -59,21 +59,21 @@ class PersonaProfile:
     boundaries: list[str] = field(default_factory=list)
     taboo_topics: list[str] = field(default_factory=list)
     preferred_topics: list[str] = field(default_factory=list)
-    social_role: str = ""                  # observer/mediator/leader/jester/caregiver
+    social_role: str = ""  # observer/mediator/leader/jester/caregiver
 
     # ------------------------------------------------------------------
     # Runtime preferences
     # ------------------------------------------------------------------
     max_tokens_preference: int = 128
     temperature_preference: float = 0.7
-    reply_frequency: str = "moderate"      # high/moderate/low/selective
+    reply_frequency: str = "moderate"  # high/moderate/low/selective
 
     # ------------------------------------------------------------------
     # Metadata
     # ------------------------------------------------------------------
     version: str = "1.0"
     created_at: str = ""
-    source: str = "template"               # template/keyword/interview/manual/roleplay_bridge
+    source: str = "template"  # template/keyword/interview/manual/roleplay_bridge
 
     # ------------------------------------------------------------------
     # Serialization
@@ -130,8 +130,12 @@ class PersonaProfile:
             humor_style=data.get("humor_style", ""),
             typical_greetings=list(data.get("typical_greetings", [])),
             typical_signoffs=list(data.get("typical_signoffs", [])),
-            emotional_baseline=dict(data.get("emotional_baseline", {"valence": 0.2, "arousal": 0.3})),
-            emotional_range=dict(data.get("emotional_range", {"min_valence": -0.5, "max_valence": 0.8})),
+            emotional_baseline=dict(
+                data.get("emotional_baseline", {"valence": 0.2, "arousal": 0.3})
+            ),
+            emotional_range=dict(
+                data.get("emotional_range", {"min_valence": -0.5, "max_valence": 0.8})
+            ),
             empathy_style=data.get("empathy_style", ""),
             stress_response=data.get("stress_response", ""),
             boundaries=list(data.get("boundaries", [])),

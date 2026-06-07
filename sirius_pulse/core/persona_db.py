@@ -36,9 +36,7 @@ class PersonaDatabase:
 
     def _ensure_meta_table(self) -> None:
         self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS _meta ("
-            "key TEXT PRIMARY KEY, value TEXT NOT NULL"
-            ")"
+            "CREATE TABLE IF NOT EXISTS _meta (" "key TEXT PRIMARY KEY, value TEXT NOT NULL" ")"
         )
         self._conn.commit()
 

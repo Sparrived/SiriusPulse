@@ -30,7 +30,9 @@ def test_cold_detector_when_candidate_counts_are_low_then_triggers_are_suppresse
 
 
 def test_gap_detector_when_biography_is_sparse_then_reports_profile_gaps_and_hint():
-    bio = UserBiography(user_id="u1", short_bio="tiny", uncertain_fact_count=2, superseded_fact_count=4)
+    bio = UserBiography(
+        user_id="u1", short_bio="tiny", uncertain_fact_count=2, superseded_fact_count=4
+    )
 
     gaps = GapDetector.detect(bio)
     hint = GapDetector.build_prompt_hint(gaps)
@@ -91,11 +93,31 @@ def test_rhythm_analyzer_when_messages_are_bursty_then_detects_burst_and_attenti
 
 def test_rhythm_analyzer_static_helpers_when_intervals_change_then_pace_and_drift_are_reported():
     accelerating = [
-        {"user_id": "u1", "content": "first shared topic", "timestamp": "2026-01-01T00:00:00+00:00"},
-        {"user_id": "u2", "content": "second shared topic", "timestamp": "2026-01-01T00:20:00+00:00"},
-        {"user_id": "u3", "content": "third shared topic", "timestamp": "2026-01-01T00:21:00+00:00"},
-        {"user_id": "u4", "content": "fourth shared topic", "timestamp": "2026-01-01T00:21:30+00:00"},
-        {"user_id": "u5", "content": "fifth shared topic", "timestamp": "2026-01-01T00:21:45+00:00"},
+        {
+            "user_id": "u1",
+            "content": "first shared topic",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        },
+        {
+            "user_id": "u2",
+            "content": "second shared topic",
+            "timestamp": "2026-01-01T00:20:00+00:00",
+        },
+        {
+            "user_id": "u3",
+            "content": "third shared topic",
+            "timestamp": "2026-01-01T00:21:00+00:00",
+        },
+        {
+            "user_id": "u4",
+            "content": "fourth shared topic",
+            "timestamp": "2026-01-01T00:21:30+00:00",
+        },
+        {
+            "user_id": "u5",
+            "content": "fifth shared topic",
+            "timestamp": "2026-01-01T00:21:45+00:00",
+        },
     ]
     drifting = [
         {"user_id": "u1", "content": "alpha beta", "timestamp": "2026-01-01T00:00:00+00:00"},

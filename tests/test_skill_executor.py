@@ -177,7 +177,13 @@ def test_skill_executor_when_skill_accepts_engine_context_then_receives_it(tmp_p
 
     executor = SkillExecutor(work_path=tmp_path)
     executor.set_engine_context(engine_context)
-    builtin_path = Path(__file__).resolve().parents[1] / "sirius_pulse" / "skills" / "builtin" / "needs_engine.py"
+    builtin_path = (
+        Path(__file__).resolve().parents[1]
+        / "sirius_pulse"
+        / "skills"
+        / "builtin"
+        / "needs_engine.py"
+    )
     skill = _make_skill("needs_engine", run, source_path=builtin_path)
 
     result = executor.execute(skill, {}, invocation_context=_context())
@@ -219,7 +225,13 @@ async def test_skill_executor_when_async_skill_accepts_engine_context_then_recei
 
     executor = SkillExecutor(work_path=tmp_path)
     executor.set_engine_context(engine_context)
-    builtin_path = Path(__file__).resolve().parents[1] / "sirius_pulse" / "skills" / "builtin" / "async_needs_engine.py"
+    builtin_path = (
+        Path(__file__).resolve().parents[1]
+        / "sirius_pulse"
+        / "skills"
+        / "builtin"
+        / "async_needs_engine.py"
+    )
     skill = _make_skill("async_needs_engine", run, source_path=builtin_path)
 
     result = await executor.execute_async(skill, {}, invocation_context=_context())

@@ -130,18 +130,20 @@ class UnifiedUserManager:
 
     def _save_alias_to_storage(self, alias: str, entry: AliasEntry) -> None:
         """将别名单条目写穿到 SQLite。"""
-        self._storage.save_alias_entry({
-            "alias": alias,
-            "user_id": entry.user_id,
-            "user_name": entry.user_name,
-            "weight": entry.weight,
-            "groups": entry.groups,
-            "mentioned_count": entry.mentioned_count,
-            "confidence": entry.confidence,
-            "first_seen_at": entry.first_seen_at,
-            "last_seen_at": entry.last_seen_at,
-            "source": entry.source,
-        })
+        self._storage.save_alias_entry(
+            {
+                "alias": alias,
+                "user_id": entry.user_id,
+                "user_name": entry.user_name,
+                "weight": entry.weight,
+                "groups": entry.groups,
+                "mentioned_count": entry.mentioned_count,
+                "confidence": entry.confidence,
+                "first_seen_at": entry.first_seen_at,
+                "last_seen_at": entry.last_seen_at,
+                "source": entry.source,
+            }
+        )
 
     def reload(self) -> None:
         """强制从 SQLite 重新加载所有数据。"""
@@ -423,16 +425,12 @@ class UnifiedUserManager:
         if len(group_entries) == 1:
             entry = group_entries[0]
             return entry.user_id, entry.confidence, []
-        sorted_entries = sorted(
-            group_entries, key=lambda e: e.confidence, reverse=True
-        )
+        sorted_entries = sorted(group_entries, key=lambda e: e.confidence, reverse=True)
         if at_user_id:
             for e in group_entries:
                 if e.user_id == at_user_id:
                     conf = min(0.98, e.confidence + 0.30)
-                    others = [
-                        x.user_id for x in group_entries if x.user_id != e.user_id
-                    ]
+                    others = [x.user_id for x in group_entries if x.user_id != e.user_id]
                     return e.user_id, conf, others
         if recent_speakers:
             seen: set[str] = set()
@@ -443,11 +441,7 @@ class UnifiedUserManager:
                 for e in group_entries:
                     if e.user_id == speaker:
                         conf = min(0.85, e.confidence + 0.20)
-                        others = [
-                            x.user_id
-                            for x in group_entries
-                            if x.user_id != e.user_id
-                        ]
+                        others = [x.user_id for x in group_entries if x.user_id != e.user_id]
                         return e.user_id, conf, others
         if len(sorted_entries) >= 2:
             if sorted_entries[0].confidence > sorted_entries[1].confidence * 1.5:

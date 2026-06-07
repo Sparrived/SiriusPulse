@@ -104,7 +104,9 @@ def test_models_dev_when_cost_has_tiers_then_context_selects_matching_price():
     tier = parse_model_cost(model, context_tokens=1001)
 
     assert base == ModelCost(input_per_m=1.0, output_per_m=2.0, cache_read_per_m=0.1)
-    assert tier == ModelCost(input_per_m=4.0, output_per_m=8.0, cache_read_per_m=0.5, cache_write_per_m=0.7)
+    assert tier == ModelCost(
+        input_per_m=4.0, output_per_m=8.0, cache_read_per_m=0.5, cache_write_per_m=0.7
+    )
     assert parse_model_cost({}) == ModelCost(input_per_m=0.0, output_per_m=0.0)
     assert estimate_cost(tier, input_tokens=1_000_000, output_tokens=500_000) == 8.0
 
@@ -145,7 +147,9 @@ def test_models_dev_when_listing_provider_models_then_deduplicates_and_sorts_ids
     }
 
 
-def test_models_dev_cache_when_disk_cache_exists_then_uses_it_without_network(tmp_path, monkeypatch):
+def test_models_dev_cache_when_disk_cache_exists_then_uses_it_without_network(
+    tmp_path, monkeypatch
+):
     data = _models_data()
     atomic_write_json(tmp_path / "models_dev_cache.json", data)
     cache = ModelsDevCache(tmp_path)
@@ -156,7 +160,9 @@ def test_models_dev_cache_when_disk_cache_exists_then_uses_it_without_network(tm
     assert cache.get(force_refresh=True) == {"network": {}}
 
 
-def test_models_dev_cache_when_network_fails_then_returns_expired_memory_cache(tmp_path, monkeypatch):
+def test_models_dev_cache_when_network_fails_then_returns_expired_memory_cache(
+    tmp_path, monkeypatch
+):
     cache = ModelsDevCache(tmp_path, ttl=0)
     cache._memory_cache = {"old": {}}
     cache._cache_time = 0
@@ -165,7 +171,9 @@ def test_models_dev_cache_when_network_fails_then_returns_expired_memory_cache(t
     assert cache.get(force_refresh=True) == {"old": {}}
 
 
-def test_models_dev_when_auto_fill_runs_then_only_empty_provider_model_lists_are_changed(tmp_path, monkeypatch):
+def test_models_dev_when_auto_fill_runs_then_only_empty_provider_model_lists_are_changed(
+    tmp_path, monkeypatch
+):
     data = _models_data()
 
     class FakeCache:

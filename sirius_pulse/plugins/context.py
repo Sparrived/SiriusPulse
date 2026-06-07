@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # EngineProxy —— 引擎能力的安全代理
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class EngineProxy:
     """引擎代理，暴露 Plugin 可安全调用的引擎能力。
 
@@ -27,9 +28,9 @@ class EngineProxy:
     """
 
     def __init__(self) -> None:
-        self._engine: Any = None                                 # EmotionalGroupChatEngine 引用
+        self._engine: Any = None  # EmotionalGroupChatEngine 引用
         self._plugin_name: str = ""
-        self._user_lookup: Any = None                            # UserLookupService 实例
+        self._user_lookup: Any = None  # UserLookupService 实例
 
     def _bind(self, engine: Any, plugin_name: str) -> None:
         """绑定到实际的引擎实例。"""
@@ -38,6 +39,7 @@ class EngineProxy:
         # 延迟初始化 UserLookupService
         if engine is not None:
             from sirius_pulse.core.user_lookup import UserLookupService
+
             self._user_lookup = UserLookupService(
                 identity_resolver=engine.identity_resolver,
                 user_manager=engine.user_manager,
@@ -56,7 +58,9 @@ class EngineProxy:
             task_name="plugin_generate",
         )
 
-    async def generate_text_analysis(self, prompt: str, *, group_id: str = "", **kwargs: Any) -> str:
+    async def generate_text_analysis(
+        self, prompt: str, *, group_id: str = "", **kwargs: Any
+    ) -> str:
         """调用 Brain.generate_text() 使用分析小模型生成结构化分析文本。
 
         用于 Plugin 内部的轻量分析任务（如事件链摘要、话题标签提取），
@@ -104,7 +108,10 @@ class EngineProxy:
         if provider is None:
             return "[未配置 provider]"
 
-        from sirius_pulse.providers.base import GenerationRequest, estimate_generation_request_input_tokens
+        from sirius_pulse.providers.base import (
+            GenerationRequest,
+            estimate_generation_request_input_tokens,
+        )
 
         # 1. 人格注入（自动拼装到 system_prompt 开头）
         if inject_persona:
@@ -125,7 +132,9 @@ class EngineProxy:
                     persona_lines.append(f"沟通风格：{style}")
                 if persona_lines:
                     persona_block = "\n".join(persona_lines)
-                    system_prompt = f"{persona_block}\n\n{system_prompt}" if system_prompt else persona_block
+                    system_prompt = (
+                        f"{persona_block}\n\n{system_prompt}" if system_prompt else persona_block
+                    )
 
         # 2. 模型解析：model 参数 > task_name 路由 > 默认
         resolved_model = model
@@ -191,8 +200,12 @@ class EngineProxy:
             real_usage = get_last_generation_usage()
             if real_usage and isinstance(real_usage, dict):
                 prompt_tokens = int(real_usage.get("prompt_tokens", estimated_input_tokens))
-                completion_tokens = int(real_usage.get("completion_tokens", estimated_output_tokens))
-                total_tokens = int(real_usage.get("total_tokens", prompt_tokens + completion_tokens))
+                completion_tokens = int(
+                    real_usage.get("completion_tokens", estimated_output_tokens)
+                )
+                total_tokens = int(
+                    real_usage.get("total_tokens", prompt_tokens + completion_tokens)
+                )
                 estimation_method = "provider_real"
             else:
                 prompt_tokens = estimated_input_tokens
@@ -201,7 +214,9 @@ class EngineProxy:
                 estimation_method = "tiktoken" if estimated_output_tokens > 0 else "char_div4"
 
             persona_name = getattr(getattr(self._engine, "persona", None), "name", "")
-            provider_name = getattr(provider, "_last_provider_name", getattr(provider, "_provider_name", "unknown"))
+            provider_name = getattr(
+                provider, "_last_provider_name", getattr(provider, "_provider_name", "unknown")
+            )
 
             record = TokenUsageRecord(
                 actor_id="assistant",
@@ -210,7 +225,9 @@ class EngineProxy:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
-                input_chars=len(system_prompt) + len(prompt) + sum(len(str(m.get("content", ""))) for m in (messages or [])),
+                input_chars=len(system_prompt)
+                + len(prompt)
+                + sum(len(str(m.get("content", ""))) for m in (messages or [])),
                 output_chars=output_chars,
                 estimation_method=estimation_method,
                 retries_used=0,
@@ -355,6 +372,7 @@ class EngineProxy:
                 event = SessionEvent(type=evt_type, data=data)
                 # 使用同步方式发射（简化）
                 import asyncio
+
                 try:
                     loop = asyncio.get_running_loop()
                     loop.create_task(event_bus.emit(event))
@@ -368,6 +386,7 @@ class EngineProxy:
 # ═══════════════════════════════════════════════════════════════════════
 # PluginDataStore —— 插件独立数据存储
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class PluginDataStore:
     """Plugin 独立的 JSON 文件数据存储。
@@ -399,7 +418,9 @@ class PluginDataStore:
         import json as _json
 
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        self._file.write_text(_json.dumps(self._cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._file.write_text(
+            _json.dumps(self._cache, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def get(self, key: str, default: Any = None) -> Any:
         """读取数据。"""
@@ -423,6 +444,7 @@ class PluginDataStore:
 # ═══════════════════════════════════════════════════════════════════════
 # PluginContext —— Plugin 执行上下文
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class MessageContext:

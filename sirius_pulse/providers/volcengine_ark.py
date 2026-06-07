@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.providers.base import DEFAULT_TIMEOUT_SECONDS
+from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 
 DEFAULT_VOLCENGINE_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 

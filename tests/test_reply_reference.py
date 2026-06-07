@@ -80,4 +80,3 @@ def test_reply_reference_when_marker_is_present_then_extracts_ref_and_strips_mar
     assert "[REPLY:" not in result.raw_text
     assert "[REPLY:" not in result.clean_text
     assert result.clean_text.strip() == "reply body"
-

@@ -79,24 +79,24 @@ class IntentAnalysisV3:
 
     # === directedness multi-dimensional scoring (0.0 ~ 1.0) ===
     # Layer 1: Structural (platform metadata)
-    mention_score: float = 0.0        # @mention exact match
-    reference_score: float = 0.0      # reply_to / quote reference
-    at_all_score: float = 0.0         # @all / @everyone
+    mention_score: float = 0.0  # @mention exact match
+    reference_score: float = 0.0  # reply_to / quote reference
+    at_all_score: float = 0.0  # @all / @everyone
 
     # Layer 2: Linguistic (surface text features)
-    name_match_score: float = 0.0     # nickname/name match
+    name_match_score: float = 0.0  # nickname/name match
     second_person_score: float = 0.0  # density of "你/您"
-    question_score: float = 0.0       # interrogative patterns
-    imperative_score: float = 0.0     # imperative/request patterns
+    question_score: float = 0.0  # interrogative patterns
+    imperative_score: float = 0.0  # imperative/request patterns
 
     # Layer 3: Semantic (content understanding)
-    topic_relevance_score: float = 0.0      # topic vs AI persona overlap
-    emotional_disclosure_score: float = 0.0 # emotional expression seeking support
-    attention_seeking_score: float = 0.0    # attention-seeking phrases
+    topic_relevance_score: float = 0.0  # topic vs AI persona overlap
+    emotional_disclosure_score: float = 0.0  # emotional expression seeking support
+    attention_seeking_score: float = 0.0  # attention-seeking phrases
 
     # Layer 4: Contextual (conversation dynamics)
-    recency_score: float = 0.0        # recent interaction with AI
-    turn_taking_score: float = 0.0    # turn-alternation pattern
+    recency_score: float = 0.0  # recent interaction with AI
+    turn_taking_score: float = 0.0  # turn-alternation pattern
 
     # === synthesized directed score ===
     directed_score: float = 0.0  # 0.0 ~ 1.0, synthesized from 12-dim + LLM
@@ -110,10 +110,10 @@ class IntentAnalysisV3:
     sticker_caption: str = ""  # 动画表情描述文本（缓存命中时使用）
 
     # === Plugin 意图识别字段（v1.2+）===
-    plugin_intent: str | None = None       # 匹配到的插件意图ID，如 "weather"
-    plugin_confidence: float = 0.0         # 插件匹配置信度
+    plugin_intent: str | None = None  # 匹配到的插件意图ID，如 "weather"
+    plugin_confidence: float = 0.0  # 插件匹配置信度
     plugin_slots: dict[str, Any] = field(default_factory=dict)  # 提取的参数槽位
-    plugin_render_mode: str = "direct"     # direct | llm | silent
+    plugin_render_mode: str = "direct"  # direct | llm | silent
 
     def to_dict(self) -> dict[str, Any]:
         return {

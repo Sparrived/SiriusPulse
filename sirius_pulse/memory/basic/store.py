@@ -39,7 +39,9 @@ class BasicMemoryFileStore:
                 if attempt < _REPLACE_MAX_RETRIES - 1:
                     logger.warning(
                         "文件替换失败，重试中 (%d/%d): %s",
-                        attempt + 1, _REPLACE_MAX_RETRIES, target,
+                        attempt + 1,
+                        _REPLACE_MAX_RETRIES,
+                        target,
                     )
                     time.sleep(_REPLACE_RETRY_DELAY)
                 else:
@@ -94,6 +96,7 @@ class BasicMemoryFileStore:
     @staticmethod
     def _safe_name(name: str) -> str:
         import re
+
         base = re.sub(r"[^a-zA-Z0-9_\-\u4e00-\u9fff]+", "_", name.strip())
         base = re.sub(r"_+", "_", base).strip("_")
         return base or "default"

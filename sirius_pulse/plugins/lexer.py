@@ -24,17 +24,18 @@ logger = logging.getLogger(__name__)
 # Token 定义
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class TokenType(Enum):
     """Token 类型枚举。"""
 
-    CMD_HEAD = auto()      # 指令头：/weather 中的 weather
-    LONG_OPT = auto()      # 长选项：--unit
-    SHORT_OPT = auto()     # 短选项：-u
-    EQ = auto()             # = 赋值符
-    ARG_VALUE = auto()     # 参数值
-    WS = auto()             # 空白
-    LITERAL = auto()        # 无法识别的字面量
-    MENTION = auto()        # @ 提及
+    CMD_HEAD = auto()  # 指令头：/weather 中的 weather
+    LONG_OPT = auto()  # 长选项：--unit
+    SHORT_OPT = auto()  # 短选项：-u
+    EQ = auto()  # = 赋值符
+    ARG_VALUE = auto()  # 参数值
+    WS = auto()  # 空白
+    LITERAL = auto()  # 无法识别的字面量
+    MENTION = auto()  # @ 提及
 
 
 @dataclass(slots=True)
@@ -50,6 +51,7 @@ class Token:
 # ═══════════════════════════════════════════════════════════════════════
 # Tokenizer —— 将原始文本拆分为 Token 序列
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class Tokenizer:
     """基于状态机的 Tokenizer。
@@ -93,7 +95,9 @@ class Tokenizer:
 
             # 短选项：-x
             if ch == "-" and i + 1 < n and text[i + 1].isalpha():
-                tokens.append(Token(TokenType.SHORT_OPT, text[i + 1 : i + 2], raw=text[i:i + 2], position=i))
+                tokens.append(
+                    Token(TokenType.SHORT_OPT, text[i + 1 : i + 2], raw=text[i : i + 2], position=i)
+                )
                 i += 2
                 continue
 
@@ -110,7 +114,9 @@ class Tokenizer:
                 while j < n and (text[j].isalnum() or text[j] == "_"):
                     j += 1
                 if j > i + 1:
-                    tokens.append(Token(TokenType.CMD_HEAD, text[i + 1 : j], raw=text[i:j], position=i))
+                    tokens.append(
+                        Token(TokenType.CMD_HEAD, text[i + 1 : j], raw=text[i:j], position=i)
+                    )
                     i = j
                     continue
                 # 单个前缀字符后没有字母 → 当作字面量
@@ -142,6 +148,7 @@ class Tokenizer:
 # Lexer —— Token 序列 → 结构化指令信息
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class LexedCommand:
     """Lexer 输出的结构化指令信息。
@@ -152,14 +159,14 @@ class LexedCommand:
     - subcommands=["report", "daily"]（完整子命令路径）
     """
 
-    command: str                               # 标准化指令名（小写）
-    raw_command: str                           # 原始指令文本
-    prefix: str                                # 触发前缀 "/" / "#" / ""
-    subcommand: str = ""                       # 第一级子命令名（向后兼容）
+    command: str  # 标准化指令名（小写）
+    raw_command: str  # 原始指令文本
+    prefix: str  # 触发前缀 "/" / "#" / ""
+    subcommand: str = ""  # 第一级子命令名（向后兼容）
     subcommands: list[str] = field(default_factory=list)  # 完整子命令路径
     positional_args: list[str] = field(default_factory=list)  # 位置参数
     named_args: dict[str, str] = field(default_factory=dict)  # --key=value 或 -k value
-    flags: set[str] = field(default_factory=set)               # 布尔标志（--verbose, -v）
+    flags: set[str] = field(default_factory=set)  # 布尔标志（--verbose, -v）
     raw_text: str = ""
 
     @property
@@ -244,7 +251,11 @@ class Lexer:
 
             if tok.type == TokenType.EQ:
                 # --key=value 中的 =，后面跟着值
-                if pending_opt and i + 1 < len(tokens) and tokens[i + 1].type in (TokenType.ARG_VALUE, TokenType.LITERAL):
+                if (
+                    pending_opt
+                    and i + 1 < len(tokens)
+                    and tokens[i + 1].type in (TokenType.ARG_VALUE, TokenType.LITERAL)
+                ):
                     val = tokens[i + 1].value
                     result.named_args[pending_opt] = val
                     pending_opt = None
@@ -282,6 +293,7 @@ class Lexer:
 # ═══════════════════════════════════════════════════════════════════════
 # CommandParser —— LexedCommand + PluginDefinition → CommandAST
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class CommandParser:
     """将 LexedCommand 与 PluginDefinition 的参数定义绑定，生成 CommandAST。"""
@@ -376,6 +388,7 @@ class CommandParser:
 # ═══════════════════════════════════════════════════════════════════════
 # PluginMatcher —— 在 Registry 之外做文本级匹配
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class MatchResult:
@@ -494,13 +507,18 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
     multi_word: list[tuple[str, str]] = []
     logger.info(
         "多词pattern检查: plugin=%s, commands=%d, lexed_cmd=%r, args=%r, prefix=%r",
-        plugin_def.name, len(plugin_def.commands),
-        lexed.command, lexed.positional_args, lexed.prefix,
+        plugin_def.name,
+        len(plugin_def.commands),
+        lexed.command,
+        lexed.positional_args,
+        lexed.prefix,
     )
     for cmd_def in plugin_def.commands:
         logger.info(
             "  cmd_def name=%r, type=%r, patterns=%r",
-            cmd_def.name, cmd_def.pattern_type, cmd_def.patterns,
+            cmd_def.name,
+            cmd_def.pattern_type,
+            cmd_def.patterns,
         )
         if cmd_def.pattern_type == "prefix":
             for pattern in cmd_def.patterns:
@@ -531,20 +549,21 @@ def _apply_multiword_patterns(lexed: LexedCommand, plugin_def: PluginDefinition)
         extra = len(parts) - 1  # command 已占第一个词
         if len(lexed.positional_args) < extra:
             continue
-        candidate = lexed.command + " " + " ".join(
-            a.lower() for a in lexed.positional_args[:extra]
-        )
+        candidate = lexed.command + " " + " ".join(a.lower() for a in lexed.positional_args[:extra])
         logger.info("  尝试匹配: candidate=%r vs pattern=%r", candidate, pattern)
         if candidate == pattern:
             # 设置子命令路径
             if extra >= 1:
                 consumed_args = [a.lower() for a in lexed.positional_args[:extra]]
                 lexed.subcommand = consumed_args[0]  # 第一级子命令（向后兼容）
-                lexed.subcommands = consumed_args     # 完整子命令路径
+                lexed.subcommands = consumed_args  # 完整子命令路径
             lexed.positional_args = lexed.positional_args[extra:]
             logger.info(
                 "  ✓ 匹配成功，消费 %d 个 args，subcommand=%r，subcommands=%r，剩余: %r",
-                extra, lexed.subcommand, lexed.subcommands, lexed.positional_args,
+                extra,
+                lexed.subcommand,
+                lexed.subcommands,
+                lexed.positional_args,
             )
             return
 
@@ -577,6 +596,4 @@ def match_plugin(text: str, plugin_def: PluginDefinition) -> MatchResult | None:
     Returns:
         MatchResult 或 None
     """
-    return _default_matcher.match(
-        text, plugin_def.commands, plugin_def.name, lexer=_default_lexer
-    )
+    return _default_matcher.match(text, plugin_def.commands, plugin_def.name, lexer=_default_lexer)

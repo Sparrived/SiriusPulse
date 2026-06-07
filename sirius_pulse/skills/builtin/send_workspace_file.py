@@ -14,10 +14,7 @@ _config = ConfigBuilder()
 _config.group("文件发送").add(
     "file_name",
     type="str",
-    description=(
-        "data/personaworkspace 目录下的文件路径（可含子目录），"
-        "例如 notes.md、images/photo.png"
-    ),
+    description=("data/personaworkspace 目录下的文件路径（可含子目录），" "例如 notes.md、images/photo.png"),
     required=True,
 )
 _config.group("文件发送").add(
@@ -28,9 +25,7 @@ _config.group("文件发送").add(
 
 SKILL_META = {
     "name": "send_workspace_file",
-    "description": (
-        "从 data/personaworkspace 目录发送文件到当前对话（群聊或私聊）。"
-    ),
+    "description": ("从 data/personaworkspace 目录发送文件到当前对话（群聊或私聊）。"),
     "version": "1.0.0",
     "tags": ["napcat", "file", "messaging"],
     "adapter_types": ["napcat"],

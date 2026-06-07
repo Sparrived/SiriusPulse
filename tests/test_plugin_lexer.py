@@ -53,6 +53,10 @@ def test_command_parser_when_message_is_normal_chat_then_no_plugin_command_is_cr
 
 
 def test_tokenizer_when_user_enters_long_option_then_keeps_structured_tokens():
-    tokens = [token.type for token in Tokenizer().tokenize("/deploy app --force") if token.type != TokenType.WS]
+    tokens = [
+        token.type
+        for token in Tokenizer().tokenize("/deploy app --force")
+        if token.type != TokenType.WS
+    ]
 
     assert tokens == [TokenType.CMD_HEAD, TokenType.ARG_VALUE, TokenType.LONG_OPT]

@@ -82,12 +82,13 @@ TAG_RECENT_MESSAGES = "【最近消息】"
 # 消息渲染标签
 TAG_FACE = "[表情：{name}]"
 TAG_IMAGE = "【图片：{name}】"
-TAG_STICKER = "[STICKERS：\"{name}\"]"
+TAG_STICKER = '[STICKERS："{name}"]'
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # 共用数据模型
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @dataclass(slots=True)
 class PromptBundle:
@@ -185,6 +186,7 @@ class StyleAdapter:
 # PromptFactory
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class PromptFactory:
     """无状态 prompt 构建工具类。所有方法均为静态方法。"""
 
@@ -241,9 +243,7 @@ class PromptFactory:
         if flaws:
             persona_bits.append(f"缺点也明显：{'、'.join(flaws[:3])}")
         if persona_bits:
-            identity_parts.append(
-                f"{name}给人的整体感觉是{'，'.join(persona_bits)}。"
-            )
+            identity_parts.append(f"{name}给人的整体感觉是{'，'.join(persona_bits)}。")
 
         # 情绪反应
         emo_lines: list[str] = []
@@ -319,10 +319,7 @@ class PromptFactory:
             identity_parts.append("；".join(silence_bits) + "。")
 
         # 场景行为指导
-        identity_parts.append(
-            "你在一个多人聊天场景里，会收到其他人的消息。"
-            "回应时用自己的说话方式，不要刻意解释或总结。"
-        )
+        identity_parts.append("你在一个多人聊天场景里，会收到其他人的消息。" "回应时用自己的说话方式，不要刻意解释或总结。")
 
         prompt = f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
         if len(prompt) > 1200:
@@ -371,11 +368,7 @@ class PromptFactory:
             latest = group_profile.atmosphere_history[-1]
             group_valence = latest.group_valence
             active_count = getattr(latest, "active_participants", 0)
-        mood_desc = (
-            "挺热络" if group_valence > 0.2
-            else "有点低沉" if group_valence < -0.2
-            else "一般"
-        )
+        mood_desc = "挺热络" if group_valence > 0.2 else "有点低沉" if group_valence < -0.2 else "一般"
         group_line = f"群里氛围{mood_desc}"
         if active_count:
             group_line += f"，当前约{active_count}人在聊"
@@ -422,7 +415,9 @@ class PromptFactory:
         # 单用户场景：直接返回单用户描述
         if len(user_profiles) == 1:
             return PromptFactory.build_relationship_context(
-                user_profiles[0], caller_is_developer, speaker_name=speaker_name,
+                user_profiles[0],
+                caller_is_developer,
+                speaker_name=speaker_name,
             )
 
         # 多用户场景：收集各用户描述并合并
@@ -620,7 +615,7 @@ class PromptFactory:
             safe_msg_id = _html_mod.escape(str(platform_message_id), quote=True)
             attrs += f' msg_id="{safe_msg_id}"'
 
-        return f'<message {attrs}>{safe_content}</message>'
+        return f"<message {attrs}>{safe_content}</message>"
 
     @staticmethod
     def build_pinned_messages_context(
@@ -642,26 +637,23 @@ class PromptFactory:
             safe_speaker = _html.escape(msg.speaker or "系统", quote=True)
             safe_uid = _html.escape(msg.metadata.get("user_id", ""), quote=True)
             pinned_time = msg.pinned_at[:16].replace("T", " ") if msg.pinned_at else ""
-            reason_attr = f' reason="{_html.escape(msg.reason, quote=True)}"' if msg.reason else ''
+            reason_attr = f' reason="{_html.escape(msg.reason, quote=True)}"' if msg.reason else ""
 
             # 复用 conversation_history 的倒排索引
             conv_index = msg.metadata.get("conversation_index", 0)
             index_attr = f' index="{conv_index}"' if conv_index else ""
             # 平台消息 ID（用于引用回复）
             p_msg_id = msg.metadata.get("platform_message_id", "")
-            msg_id_attr = (
-                f' msg_id="{_html.escape(str(p_msg_id), quote=True)}"'
-                if p_msg_id else ""
-            )
+            msg_id_attr = f' msg_id="{_html.escape(str(p_msg_id), quote=True)}"' if p_msg_id else ""
 
             lines.append(
-                f'<pinned_message{index_attr}{msg_id_attr} '
+                f"<pinned_message{index_attr}{msg_id_attr} "
                 f'speaker="{safe_speaker}" user_id="{safe_uid}" '
                 f'time="{pinned_time}"{reason_attr}>'
             )
             pinned_content = PromptFactory._extract_last_message_text(msg.content)
             lines.append(pinned_content)
-            lines.append('</pinned_message>')
+            lines.append("</pinned_message>")
         lines.append(TAG_PINNED_MESSAGES_END)
 
         return "\n".join(lines)
@@ -741,8 +733,7 @@ class PromptFactory:
                 return ""
             lines = [
                 f"{TAG_PLUGIN_AWARENESS}",
-                "群友可能会使用以下插件功能。你不需要主动调用它们，"
-                "但如果群友问起，你可以介绍或引导：",
+                "群友可能会使用以下插件功能。你不需要主动调用它们，" "但如果群友问起，你可以介绍或引导：",
             ]
             for inject in injects:
                 for line in inject.strip().split("\n"):
@@ -756,7 +747,6 @@ class PromptFactory:
     def build_current_time_section(now_str: str) -> str:
         """构建当前时间 section。"""
         return f"{TAG_CURRENT_TIME}{now_str}（北京时间）"
-
 
     @staticmethod
     def build_taboo_section(taboo_topics: list[str]) -> str:
@@ -804,10 +794,12 @@ class PromptFactory:
         sections: list[str] = []
         if identity:
             sections.append(identity)
-        sections.extend([
-            f"{TAG_TONE}亲密、自然、像老朋友一样。不要机械，不要过度热情。",
-            f"{TAG_TOPIC}{topic}",
-        ])
+        sections.extend(
+            [
+                f"{TAG_TONE}亲密、自然、像老朋友一样。不要机械，不要过度热情。",
+                f"{TAG_TOPIC}{topic}",
+            ]
+        )
         if user_profile and user_profile.first_interaction_at:
             count = getattr(user_profile, "interaction_count", 0)
             if count > 30:
@@ -832,15 +824,9 @@ class PromptFactory:
             sections.append(identity)
         who = user_name or user_id or "用户"
         if target == "self":
-            sections.append(
-                f"到时间了，该去做之前答应 {who} 的事了：{content}。"
-                f"随便说两句就行，不用太正式，就像平时聊天一样。"
-            )
+            sections.append(f"到时间了，该去做之前答应 {who} 的事了：{content}。" f"随便说两句就行，不用太正式，就像平时聊天一样。")
         else:
-            sections.append(
-                f"到时间了，该提醒 {who} 了：{content}。"
-                f"随便说两句就行，不用太正式，就像平时聊天一样。"
-            )
+            sections.append(f"到时间了，该提醒 {who} 了：{content}。" f"随便说两句就行，不用太正式，就像平时聊天一样。")
 
         if skill_results:
             results_text = "\n".join(
@@ -848,10 +834,7 @@ class PromptFactory:
                 f"{json.dumps(sr.get('result') or sr.get('error'), ensure_ascii=False, default=str)}"
                 for i, sr in enumerate(skill_results)
             )
-            sections.append(
-                f"顺便一提，刚才已经执行了这些操作：\n{results_text}\n"
-                f"有结果的话直接带进去说，不用刻意汇报。"
-            )
+            sections.append(f"顺便一提，刚才已经执行了这些操作：\n{results_text}\n" f"有结果的话直接带进去说，不用刻意汇报。")
 
         if skill_desc:
             sections.append(skill_desc)
@@ -917,7 +900,10 @@ class PromptFactory:
         bd = PromptTokenBreakdown()
 
         def _add(
-            section_text: str, attr: str, *, is_constraint: bool = False,
+            section_text: str,
+            attr: str,
+            *,
+            is_constraint: bool = False,
         ) -> None:
             if is_constraint:
                 constraint_sections.append(section_text)
@@ -937,17 +923,22 @@ class PromptFactory:
             _add(other_ai, "identity")
         _add(
             PromptFactory.build_output_spec(sticker_names=sticker_names),
-            "output_constraint", is_constraint=True,
+            "output_constraint",
+            is_constraint=True,
         )
 
         if emotion is not None:
             _add(
-                PromptFactory.build_emotion_context(emotion, group_profile, speaker_name=speaker_name),
+                PromptFactory.build_emotion_context(
+                    emotion, group_profile, speaker_name=speaker_name
+                ),
                 "emotion",
             )
 
         rel_ctx = PromptFactory.build_relationship_contexts(
-            user_profiles or [], caller_is_developer, speaker_name=speaker_name,
+            user_profiles or [],
+            caller_is_developer,
+            speaker_name=speaker_name,
         )
         if rel_ctx:
             _add(rel_ctx, "relationship")
@@ -958,7 +949,8 @@ class PromptFactory:
         if group_profile:
             _add(
                 PromptFactory.build_group_style(group_profile, style_params),
-                "group_style", is_constraint=True,
+                "group_style",
+                is_constraint=True,
             )
             taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
             if taboo:
@@ -969,7 +961,8 @@ class PromptFactory:
         else:
             _add(
                 PromptFactory.build_style_fallback(style_params),
-                "group_style", is_constraint=True,
+                "group_style",
+                is_constraint=True,
             )
 
         # 技能指导注入到 USER 链的 constraint_sections
@@ -982,7 +975,8 @@ class PromptFactory:
 
         if plugin_registry is not None:
             plugin_awareness = PromptFactory.build_plugin_awareness_section(
-                plugin_registry, caller_is_developer=caller_is_developer,
+                plugin_registry,
+                caller_is_developer=caller_is_developer,
             )
             if plugin_awareness:
                 _add(plugin_awareness, "skills")
@@ -1093,7 +1087,7 @@ class PromptFactory:
     @staticmethod
     def render_image_label(label_prefix: str, display_name: str) -> str:
         """渲染图片/动画表情标签。"""
-        return f"[{label_prefix}：\"{display_name}\"]"
+        return f'[{label_prefix}："{display_name}"]'
 
     @staticmethod
     def render_multimodal_item(mtype: str, value: str) -> str:
@@ -1103,7 +1097,7 @@ class PromptFactory:
     @staticmethod
     def render_speaker_line(speaker: str, content: str) -> str:
         """渲染发言人+内容行（用于 Transcript 和 as_chat_history）。"""
-        return f"【\"{speaker}\" 说】{content}"
+        return f'【"{speaker}" 说】{content}'
 
     @staticmethod
     def render_speaker_lines_summary(items: list[str]) -> str:
@@ -1111,7 +1105,9 @@ class PromptFactory:
         return " | ".join(items)
 
     @staticmethod
-    def append_multimodal_descriptions(content: str, multimodal_inputs: list[dict[str, str]]) -> str:
+    def append_multimodal_descriptions(
+        content: str, multimodal_inputs: list[dict[str, str]]
+    ) -> str:
         """为 as_chat_history 追加多媒体附件描述。"""
         parts: list[str] = []
         for item in multimodal_inputs:
@@ -1189,21 +1185,25 @@ class PromptFactory:
             parts.append(TAG_HISTORY_DIARY_END)
 
         if cross_group_xml:
-            parts.extend([
-                "",
-                TAG_CROSS_GROUP_RECORD,
-                "以下是你和这位用户在其它群中的近期互动（供参考，不要向当前群成员提及其它群的存在）：",
-                cross_group_xml,
-                TAG_CROSS_GROUP_RECORD_END,
-            ])
+            parts.extend(
+                [
+                    "",
+                    TAG_CROSS_GROUP_RECORD,
+                    "以下是你和这位用户在其它群中的近期互动（供参考，不要向当前群成员提及其它群的存在）：",
+                    cross_group_xml,
+                    TAG_CROSS_GROUP_RECORD_END,
+                ]
+            )
 
         if history_xml:
-            parts.extend([
-                "",
-                TAG_RECENT_CONVERSATION,
-                "以下是最新的几条消息，按时间顺序排列：",
-                history_xml,
-                TAG_RECENT_CONVERSATION_END,
-            ])
+            parts.extend(
+                [
+                    "",
+                    TAG_RECENT_CONVERSATION,
+                    "以下是最新的几条消息，按时间顺序排列：",
+                    history_xml,
+                    TAG_RECENT_CONVERSATION_END,
+                ]
+            )
 
         return "\n".join(parts)

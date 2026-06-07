@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sirius_pulse.plugins.models import PluginDefinition, PluginResponse, RenderMode
@@ -29,7 +29,6 @@ class DispatchedOutput:
 
 
 class OutputDispatcher:
-
     async def dispatch(
         self,
         result: "PluginResponse",
@@ -57,9 +56,12 @@ class OutputDispatcher:
                 logger.warning("Plugin %s: llm 模式但 engine 未绑定，回退到 direct 模式", definition.name)
                 return self._handle_direct(result, definition)
             return await self._handle_llm(
-                result, definition,
-                engine=engine, adapter=adapter,
-                group_id=group_id, user_id=user_id,
+                result,
+                definition,
+                engine=engine,
+                adapter=adapter,
+                group_id=group_id,
+                user_id=user_id,
                 **kwargs,
             )
 
@@ -123,13 +125,12 @@ class OutputDispatcher:
 
         # ── 1. 输出规范（人格已由 Brain 注入）──
         from sirius_pulse.core.prompt_factory import PromptFactory
+
         sections.append(PromptFactory.build_output_spec())
 
         # ── 2. 插件执行结果 ──
         sections.append("\n【指令执行结果】")
-        sections.append(
-            f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据："
-        )
+        sections.append(f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据：")
         sections.append(data_json)
 
         # ── 3. 表达要求 ──

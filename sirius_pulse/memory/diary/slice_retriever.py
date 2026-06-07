@@ -119,9 +119,7 @@ class DiarySliceRetriever:
 
     # ── 路径 2: 三元组精确匹配 ──
 
-    def _triple_search(
-        self, entities: list[str], slices: list[DiarySlice]
-    ) -> dict[str, float]:
+    def _triple_search(self, entities: list[str], slices: list[DiarySlice]) -> dict[str, float]:
         """三元组精确匹配。"""
         if not entities or not slices:
             return {}
@@ -142,9 +140,7 @@ class DiarySliceRetriever:
 
     # ── 路径 3: 关键词匹配 ──
 
-    def _keyword_search(
-        self, query: str, slices: list[DiarySlice]
-    ) -> dict[str, float]:
+    def _keyword_search(self, query: str, slices: list[DiarySlice]) -> dict[str, float]:
         """关键词匹配。"""
         if not query or not slices:
             return {}

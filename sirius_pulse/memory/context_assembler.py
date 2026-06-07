@@ -122,18 +122,20 @@ class ContextAssembler:
 
         logger.info(
             "ContextAssembler: group=%s | %d 条当日摘要 | %d 条日记切片 | %d 条旧日记 | query=%.30s...",
-            group_id, len(today_summaries), len(diary_slices), len(diary_entries),
+            group_id,
+            len(today_summaries),
+            len(diary_slices),
+            len(diary_entries),
             search_query or current_query,
         )
 
         # 3. 获取传记信息（从演化链派生）
-        bio_sections = self._build_biography_sections(
-            speaker_user_id, mentioned_user_ids or []
-        )
+        bio_sections = self._build_biography_sections(speaker_user_id, mentioned_user_ids or [])
 
         # 4. 构建富化后的系统提示词
         enriched_system = self._enrich_system_prompt(
-            system_prompt, diary_entries,
+            system_prompt,
+            diary_entries,
             today_summaries=today_summaries,
             biography_sections=bio_sections,
             diary_slices=diary_slices,
@@ -141,9 +143,7 @@ class ContextAssembler:
         )
 
         # 5. 构建消息链（方案 C）
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": enriched_system}
-        ]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
 
         pinned_context = ""
         if pinned_messages:
@@ -173,7 +173,7 @@ class ContextAssembler:
 
             if last_assistant_idx >= 0:
                 # last_assistant 之后的消息是 pending（未回复的）
-                pending_entries = recent[last_assistant_idx + 1:]
+                pending_entries = recent[last_assistant_idx + 1 :]
                 recent = recent[: last_assistant_idx + 1]
 
         if recent:
@@ -210,6 +210,7 @@ class ContextAssembler:
             if speaker_name or speaker_user_id:
                 # 使用统一的 tag_message 生成 <message> 标签
                 from sirius_pulse.core.prompt_factory import PromptFactory
+
                 current_xml = PromptFactory.tag_message(
                     current_query,
                     speaker=speaker_name or speaker_user_id,
@@ -221,8 +222,10 @@ class ContextAssembler:
                     pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
                     # 去掉外层标签，只保留 message 标签
                     pending_lines = [
-                        line for line in pending_xml.split("\n")
-                        if line.strip() and not line.startswith("<pending_messages>")
+                        line
+                        for line in pending_xml.split("\n")
+                        if line.strip()
+                        and not line.startswith("<pending_messages>")
                         and not line.startswith("</pending_messages>")
                     ]
                     combined = "\n".join(pending_lines) + "\n" + current_xml
@@ -232,9 +235,16 @@ class ContextAssembler:
             else:
                 if all_current:
                     pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
-                    messages.append({"role": "user", "content": _with_pinned_context(pending_xml + "\n" + current_query)})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": _with_pinned_context(pending_xml + "\n" + current_query),
+                        }
+                    )
                 else:
-                    messages.append({"role": "user", "content": _with_pinned_context(current_query)})
+                    messages.append(
+                        {"role": "user", "content": _with_pinned_context(current_query)}
+                    )
 
         return messages
 
@@ -310,7 +320,9 @@ class ContextAssembler:
 
         return messages, breakdown
 
-    def build_history_xml(self, group_id: str, n: int = 10, *, include_pending: bool = False) -> str:
+    def build_history_xml(
+        self, group_id: str, n: int = 10, *, include_pending: bool = False
+    ) -> str:
         """Build XML representation of recent conversation history."""
         return self._build_history_xml(group_id, n=n, include_pending=include_pending)
 
@@ -388,7 +400,11 @@ class ContextAssembler:
     # ------------------------------------------------------------------
 
     def _build_history_xml(
-        self, group_id: str, n: int = 5, *, include_pending: bool = False,
+        self,
+        group_id: str,
+        n: int = 5,
+        *,
+        include_pending: bool = False,
     ) -> str:
         recent = self._basic.get_context(group_id, n=n)
         if not recent:
@@ -406,9 +422,7 @@ class ContextAssembler:
     def _build_cross_group_history_xml(
         self, user_id: str, *, exclude_group_id: str, n: int = 5
     ) -> str:
-        entries = self._basic.get_entries_by_user(
-            user_id, exclude_group_id=exclude_group_id, n=n
-        )
+        entries = self._basic.get_entries_by_user(user_id, exclude_group_id=exclude_group_id, n=n)
         if not entries:
             return ""
         return self._entries_to_xml(entries, tag="cross_group_history", include_group=True)
@@ -421,7 +435,7 @@ class ContextAssembler:
         include_group: bool = False,
     ) -> str:
         _tz_cn = timezone(timedelta(hours=8))
-        lines: list[str] = [f'<{tag}>']
+        lines: list[str] = [f"<{tag}>"]
         for entry in entries:
             # 解析时间
             ts_str = ""
@@ -434,6 +448,7 @@ class ContextAssembler:
 
             # 使用统一的 tag_message 生成 <message> 标签
             from sirius_pulse.core.prompt_factory import PromptFactory
+
             msg_id = getattr(entry, "platform_message_id", "")
             group = getattr(entry, "group_id", "") if include_group else ""
             safe_speaker = html.escape(entry.speaker_name or entry.user_id or "unknown", quote=True)
@@ -446,7 +461,7 @@ class ContextAssembler:
                 time_str=ts_str,
                 group_id=group,
             )
-            lines.append(f'  {tagged}')
+            lines.append(f"  {tagged}")
 
             if getattr(entry, "multimodal_inputs", None):
                 for m in entry.multimodal_inputs:
@@ -454,9 +469,7 @@ class ContextAssembler:
                         continue
                     if m.get("sub_type") == "1":
                         # 优先使用缓存的caption，否则使用默认值
-                        sticker_caption = html.escape(
-                            str(m.get("caption", "动画表情")), quote=True
-                        )
+                        sticker_caption = html.escape(str(m.get("caption", "动画表情")), quote=True)
                         lines.append(
                             f'  <image type="sticker" caption="{sticker_caption}" '
                             f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
@@ -468,7 +481,7 @@ class ContextAssembler:
                         f'  <image src="{url}" caption="{caption}" '
                         f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
                     )
-        lines.append(f'</{tag}>')
+        lines.append(f"</{tag}>")
         return "\n".join(lines)
 
     def _enrich_system_prompt(
@@ -528,6 +541,7 @@ class ContextAssembler:
             if time_start:
                 try:
                     from datetime import datetime
+
                     dt = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
                     time_str = f" ({dt.strftime('%m-%d %H:%M')})"
                 except (ValueError, TypeError):
@@ -544,8 +558,9 @@ class ContextAssembler:
     def _extract_entities(text: str) -> list[str]:
         """从文本中提取实体名（简单实现）。"""
         import re
+
         # 提取中文名字（2-4个字）
-        entities = re.findall(r'[\u4e00-\u9fff]{2,4}', text)
+        entities = re.findall(r"[\u4e00-\u9fff]{2,4}", text)
         # 去重
         return list(set(entities))[:5]
 
@@ -573,7 +588,7 @@ class ContextAssembler:
                     bio_parts.append(bio.short_bio[:100])
 
         # 被提及者传记
-        for uid in (mentioned_user_ids or []):
+        for uid in mentioned_user_ids or []:
             if uid == speaker_user_id:
                 continue
             bio = self._bio_view.get_biography(uid)

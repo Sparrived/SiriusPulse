@@ -6,9 +6,7 @@ from typing import Any
 
 SKILL_META = {
     "name": "list_pinned_messages",
-    "description": (
-        "查看当前聊天中已经钉住的消息。需要取消钉住、确认现有长期上下文时使用。"
-    ),
+    "description": ("查看当前聊天中已经钉住的消息。需要取消钉住、确认现有长期上下文时使用。"),
     "version": "1.0.0",
     "model_visible": False,
     "tags": ["memory", "pinned_message"],
@@ -48,9 +46,7 @@ def run(
         speaker = item.get("speaker") or "系统"
         reason = item.get("reason") or "无原因"
         content = str(item.get("content", "")).replace("\n", " ")
-        lines.append(
-            f"- {item.get('message_id')}: {speaker} | {reason} | {content[:120]}"
-        )
+        lines.append(f"- {item.get('message_id')}: {speaker} | {reason} | {content[:120]}")
 
     return {
         "success": True,

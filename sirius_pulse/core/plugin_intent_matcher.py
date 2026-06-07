@@ -71,16 +71,24 @@ class PluginIntentMatcher:
 
         # 占位符通用替换映射（保持语义完整性）
         _SLOT_DEFAULTS = {
-            "city": "某个城市", "query": "某个问题", "text": "一些文本",
-            "url": "一个链接", "name": "某个人", "date": "某个日期",
-            "time": "某个时间", "keyword": "关键词", "topic": "某个话题",
+            "city": "某个城市",
+            "query": "某个问题",
+            "text": "一些文本",
+            "url": "一个链接",
+            "name": "某个人",
+            "date": "某个日期",
+            "time": "某个时间",
+            "keyword": "关键词",
+            "topic": "某个话题",
         }
 
         def _clean_slot(s: str) -> str:
             """将 {slot} 替换为通用词而非删除，保持语义完整。"""
+
             def _replace(m: re.Match) -> str:
                 slot = m.group(1).lower()
                 return _SLOT_DEFAULTS.get(slot, "")
+
             return re.sub(r"\{([^}]+)\}", _replace, s).strip()
 
         texts: list[str] = []

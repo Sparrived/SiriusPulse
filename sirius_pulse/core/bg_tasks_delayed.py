@@ -391,7 +391,9 @@ class DelayedQueueTasks:
                     params = json.loads(tc.function_arguments) if tc.function_arguments else {}
                 except json.JSONDecodeError:
                     params = {}
-                    logger.warning("tool_call 参数解析失败: %s, arguments=%s", skill_name, tc.function_arguments)
+                    logger.warning(
+                        "tool_call 参数解析失败: %s, arguments=%s", skill_name, tc.function_arguments
+                    )
 
                 skill = engine._skill_registry.get(skill_name)
                 if skill is None:
@@ -423,7 +425,10 @@ class DelayedQueueTasks:
                 )
                 logger.info(
                     "Skill execute: %s(params=%s, caller=%s, group=%s)",
-                    skill_name, params, caller_user_id, group_id,
+                    skill_name,
+                    params,
+                    caller_user_id,
+                    group_id,
                 )
                 try:
                     result = await engine._skill_executor.execute_async(
@@ -431,7 +436,8 @@ class DelayedQueueTasks:
                     )
                     logger.info(
                         "Skill execute success: %s -> %s",
-                        skill_name, "success" if result.success else "failed",
+                        skill_name,
+                        "success" if result.success else "failed",
                     )
                     if result.success:
                         tool_content = result.to_display_text()
@@ -446,6 +452,7 @@ class DelayedQueueTasks:
                             definition = params.get("definition", "")
                             if term and definition:
                                 from sirius_pulse.memory.glossary import GlossaryTerm
+
                                 engine.glossary_manager.add_or_update(
                                     group_id,
                                     GlossaryTerm(term=term, definition=definition, source="skill"),
@@ -599,10 +606,10 @@ class DelayedQueueTasks:
             biography_mentioned=pending_bio.get("mentioned_cards"),
             biography_confidence=pending_bio.get("confidence"),
             skill_registry=engine._skill_registry,
-            plugin_registry=getattr(engine, '_plugin_registry', None),
+            plugin_registry=getattr(engine, "_plugin_registry", None),
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
-            sticker_names=getattr(engine, '_sticker_names', None),
+            sticker_names=getattr(engine, "_sticker_names", None),
         )
         if glossary:
             bundle.system_prompt = f"{TAG_GLOSSARY}\n{glossary}\n\n{bundle.system_prompt}"
@@ -641,9 +648,7 @@ class DelayedQueueTasks:
         if source_path is None:
             return False
         try:
-            builtin_dir = (
-                Path(__file__).resolve().parents[1] / "skills" / "builtin"
-            ).resolve()
+            builtin_dir = (Path(__file__).resolve().parents[1] / "skills" / "builtin").resolve()
             return source_path.resolve().is_relative_to(builtin_dir)
         except Exception:
             return False

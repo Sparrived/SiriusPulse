@@ -39,7 +39,9 @@ class SkillExecutor:
     """Execute skills with parameter validation, retry, telemetry, and data store injection."""
 
     def __init__(self, work_path: Path | WorkspaceLayout) -> None:
-        self._layout = work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
+        self._layout = (
+            work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
+        )
         self._data_stores: dict[str, SkillDataStore] = {}
         self._telemetry = SkillTelemetry(self._layout.skill_data_dir() / ".telemetry.jsonl")
         self._bridges: dict[str, Any] = {}
@@ -129,7 +131,9 @@ class SkillExecutor:
 
         try:
             if skill._run_func is None:
-                skill_result = SkillResult(success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数")
+                skill_result = SkillResult(
+                    success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数"
+                )
                 logger.warning("Skill execute failed: %s -> no run() function", skill.name)
                 return skill_result
 
@@ -164,7 +168,9 @@ class SkillExecutor:
             access_error = validate_skill_access(skill=skill, invocation_context=invocation_context)
             if access_error:
                 skill_result = SkillResult(success=False, error=access_error)
-                logger.warning("Skill execute failed: %s -> access denied: %s", skill.name, access_error)
+                logger.warning(
+                    "Skill execute failed: %s -> access denied: %s", skill.name, access_error
+                )
                 return skill_result
 
             data_store = self._get_data_store(skill.name)
@@ -199,7 +205,9 @@ class SkillExecutor:
                     # Persist data store after execution
                     data_store.save()
                     skill_result = SkillResult.from_raw_result(result)
-                    skill_result.success = True if skill_result.error == "" else skill_result.success
+                    skill_result.success = (
+                        True if skill_result.error == "" else skill_result.success
+                    )
                     logger.info(
                         "Skill execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
                         "multimodal_blocks=%d",
@@ -214,7 +222,9 @@ class SkillExecutor:
                     if attempt < max_retries and _should_retry(exc):
                         logger.warning(
                             "SKILL '%s' 第%d次执行失败（将重试）: %s",
-                            skill.name, attempt + 1, exc,
+                            skill.name,
+                            attempt + 1,
+                            exc,
                         )
                         continue
                     logger.error("SKILL '%s' 执行异常: %s", skill.name, exc)
@@ -248,7 +258,9 @@ class SkillExecutor:
         if chain_context is not None and skill_result is not None:
             chain_context.store(skill.name, skill_result)
 
-        return skill_result if skill_result is not None else SkillResult(success=False, error="未知错误")
+        return (
+            skill_result if skill_result is not None else SkillResult(success=False, error="未知错误")
+        )
 
     async def execute_async(
         self,
@@ -369,7 +381,9 @@ class SkillExecutor:
                     result = await skill._run_func(**call_params)
                     data_store.save()
                     skill_result = SkillResult.from_raw_result(result)
-                    skill_result.success = True if skill_result.error == "" else skill_result.success
+                    skill_result.success = (
+                        True if skill_result.error == "" else skill_result.success
+                    )
                     logger.info(
                         "Skill async execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
                         "multimodal_blocks=%d",
@@ -384,7 +398,9 @@ class SkillExecutor:
                     if attempt < max_retries and _should_retry(exc):
                         logger.warning(
                             "SKILL '%s' 第%d次执行失败（将重试）: %s",
-                            skill.name, attempt + 1, exc,
+                            skill.name,
+                            attempt + 1,
+                            exc,
                         )
                         continue
                     logger.error("SKILL '%s' 执行异常: %s", skill.name, exc)
@@ -398,7 +414,11 @@ class SkillExecutor:
                 try:
                     caller_id = ""
                     if invocation_context is not None:
-                        caller_id = getattr(invocation_context, "caller_user_id", "") or getattr(invocation_context, "caller", "") or ""
+                        caller_id = (
+                            getattr(invocation_context, "caller_user_id", "")
+                            or getattr(invocation_context, "caller", "")
+                            or ""
+                        )
                     summary = skill_result.to_display_text()[:500] if skill_result.success else ""
                     self._telemetry.record(
                         SkillExecutionRecord(
@@ -419,7 +439,11 @@ class SkillExecutor:
             if chain_context is not None and skill_result is not None:
                 chain_context.store(skill.name, skill_result)
 
-            return skill_result if skill_result is not None else SkillResult(success=False, error="未知错误")
+            return (
+                skill_result
+                if skill_result is not None
+                else SkillResult(success=False, error="未知错误")
+            )
         except Exception as exc:
             logger.error("Skill async execute exception: %s -> %s", skill.name, exc)
             return SkillResult(success=False, error=str(exc))

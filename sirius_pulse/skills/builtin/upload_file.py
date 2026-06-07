@@ -22,9 +22,7 @@ _config.group("文件上传").add(
 
 SKILL_META = {
     "name": "upload_file",
-    "description": (
-        "上传本地文件到当前对话"
-    ),
+    "description": ("上传本地文件到当前对话"),
     "version": "1.0.0",
     "tags": ["napcat", "file", "messaging"],
     "adapter_types": ["napcat"],

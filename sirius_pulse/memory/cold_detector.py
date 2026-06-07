@@ -18,9 +18,10 @@ __all__ = ["ColdDetector", "ColdState"]
 
 class ColdState:
     """冷检测状态常量。"""
-    HOT = "hot"       # 活跃，不做任何处理
-    WARM = "warm"     # 暂冷，触发情景压缩（Layer 2）
-    COLD = "cold"     # 冷寂，触发日记总结（Layer 3）
+
+    HOT = "hot"  # 活跃，不做任何处理
+    WARM = "warm"  # 暂冷，触发情景压缩（Layer 2）
+    COLD = "cold"  # 冷寂，触发日记总结（Layer 3）
 
 
 class ColdDetector:

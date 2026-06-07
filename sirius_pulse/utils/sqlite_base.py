@@ -182,9 +182,7 @@ class BaseSqliteStore:
     # Schema 自动迁移
     # ------------------------------------------------------------------
 
-    def _ensure_columns(
-        self, table_name: str, columns: dict[str, str]
-    ) -> None:
+    def _ensure_columns(self, table_name: str, columns: dict[str, str]) -> None:
         """确保表包含所有预期列，自动补齐缺失列。
 
         CREATE TABLE IF NOT EXISTS 不会修改已存在的表结构，
@@ -202,22 +200,14 @@ class BaseSqliteStore:
             {列名: "TYPE DEFAULT value"} 格式的期望列定义
         """
         existing = {
-            row["name"]
-            for row in self.execute(
-                f"PRAGMA table_info({table_name})"
-            ).fetchall()
+            row["name"] for row in self.execute(f"PRAGMA table_info({table_name})").fetchall()
         }
         for col_name, col_def in columns.items():
             if col_name not in existing:
                 try:
-                    self.execute(
-                        f"ALTER TABLE {table_name}"
-                        f" ADD COLUMN {col_name} {col_def}"
-                    )
+                    self.execute(f"ALTER TABLE {table_name}" f" ADD COLUMN {col_name} {col_def}")
                     self.commit()
-                    logger.info(
-                        "自动迁移：为 %s 表补齐列 %s", table_name, col_name
-                    )
+                    logger.info("自动迁移：为 %s 表补齐列 %s", table_name, col_name)
                 except sqlite3.OperationalError:
                     pass
 
@@ -227,9 +217,7 @@ class BaseSqliteStore:
 
     def get_schema_version(self, key: str = "schema_version") -> int:
         """获取当前 schema 版本号。"""
-        row = self._conn.execute(
-            "SELECT value FROM _meta WHERE key = ?", (key,)
-        ).fetchone()
+        row = self._conn.execute("SELECT value FROM _meta WHERE key = ?", (key,)).fetchone()
         return int(row[0]) if row else 0
 
     def set_schema_version(self, version: int, key: str = "schema_version") -> None:
@@ -243,8 +231,6 @@ class BaseSqliteStore:
     def ensure_meta_table(self) -> None:
         """确保 _meta 表存在。"""
         self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS _meta ("
-            "key TEXT PRIMARY KEY, value TEXT NOT NULL"
-            ")"
+            "CREATE TABLE IF NOT EXISTS _meta (" "key TEXT PRIMARY KEY, value TEXT NOT NULL" ")"
         )
         self._conn.commit()

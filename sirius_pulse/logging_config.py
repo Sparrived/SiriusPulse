@@ -106,21 +106,21 @@ def _archive_old_logs(log_file: Path) -> None:
     """
     将已存在的日志文件归档到 archive 目录下
     需在日志处理器创建前调用，确保文件未被锁定
-    
+
     Args:
         log_file: 日志文件路径
     """
     if not log_file.exists():
         return
-    
+
     # 创建归档目录
     archive_dir = log_file.parent / "archive"
     archive_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # 使用时间戳为旧日志重命名，避免冲突
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     archive_file = archive_dir / f"{log_file.stem}_{timestamp}{log_file.suffix}"
-    
+
     try:
         # 先复制，再删除原文件（比直接移动更安全）
         shutil.copy2(str(log_file), str(archive_file))
@@ -134,13 +134,13 @@ def setup_log_archival(log_file: Path) -> None:
     """
     在应用启动时调用，在创建日志处理器之前执行
     将旧日志文件归档
-    
+
     Args:
         log_file: 主日志文件路径
     """
     # 确保日志文件的父目录存在
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # 执行归档
     _archive_old_logs(log_file)
 
@@ -148,6 +148,7 @@ def setup_log_archival(log_file: Path) -> None:
 # 初始化 colorama（Windows 终端 ANSI 支持）
 try:
     import colorama
+
     colorama.init()
     _COLORAMA_OK = True
 except ImportError:
@@ -162,23 +163,23 @@ class ColoredFormatter(logging.Formatter):
 
     # 级别颜色
     LEVEL_STYLES: dict[str, tuple[str, str]] = {
-        "DEBUG": ("\033[36m", "\033[0m"),      # 青色
-        "INFO": ("\033[32m", "\033[0m"),       # 绿色
-        "WARNING": ("\033[33m", "\033[0m"),    # 黄色
-        "ERROR": ("\033[31m", "\033[0m"),      # 红色
+        "DEBUG": ("\033[36m", "\033[0m"),  # 青色
+        "INFO": ("\033[32m", "\033[0m"),  # 绿色
+        "WARNING": ("\033[33m", "\033[0m"),  # 黄色
+        "ERROR": ("\033[31m", "\033[0m"),  # 红色
         "CRITICAL": ("\033[1;37;41m", "\033[0m"),  # 白字红底加粗
     }
 
     # logger 名称颜色池（用于区分不同模块）
     NAME_COLORS = [
-        "\033[34m",   # 蓝色
-        "\033[35m",   # 紫色
-        "\033[36m",   # 青色
-        "\033[32m",   # 绿色
-        "\033[33m",   # 黄色
-        "\033[94m",   # 亮蓝
-        "\033[95m",   # 亮紫
-        "\033[96m",   # 亮青
+        "\033[34m",  # 蓝色
+        "\033[35m",  # 紫色
+        "\033[36m",  # 青色
+        "\033[32m",  # 绿色
+        "\033[33m",  # 黄色
+        "\033[94m",  # 亮蓝
+        "\033[95m",  # 亮紫
+        "\033[96m",  # 亮青
     ]
     DIM = "\033[2m"
     RESET = "\033[0m"
@@ -236,9 +237,7 @@ class ColoredFormatter(logging.Formatter):
         time_str = f"{self.DIM}{self.formatTime(record, '%H:%M:%S')}{self.RESET}"
 
         # 级别（彩色）
-        level_color, level_reset = self.LEVEL_STYLES.get(
-            record.levelname, ("", "")
-        )
+        level_color, level_reset = self.LEVEL_STYLES.get(record.levelname, ("", ""))
         level_str = f"{level_color}{record.levelname:<{level_width}}{level_reset}"
 
         # logger 名称（彩色）
@@ -313,7 +312,6 @@ class PlainFormatter(logging.Formatter):
             if extra_parts:
                 result += f" ({', '.join(extra_parts)})"
         return result
-
 
 
 # 默认需要上调到 WARNING 的第三方库 logger 名称
@@ -436,7 +434,7 @@ def configure_logging(
             model_handler.setFormatter(JSONFormatter())
         else:
             model_handler.setFormatter(PlainFormatter())
-        
+
         # 只处理 provider 相关的日志
         model_logger = logging.getLogger("sirius_pulse.providers")
         model_logger.addHandler(model_handler)

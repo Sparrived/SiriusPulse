@@ -20,9 +20,7 @@ _config.group("图片发送").add(
 
 SKILL_META = {
     "name": "send_image",
-    "description": (
-        "发送图片到当前对话。"
-    ),
+    "description": ("发送图片到当前对话。"),
     "version": "1.0.0",
     "tags": ["napcat", "image", "messaging"],
     "silent": True,

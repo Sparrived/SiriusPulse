@@ -114,7 +114,9 @@ class SituationExtractor:
         if len(entries) < MIN_CANDIDATES:
             logger.debug(
                 "群 %s 情景提取消息不足 %d 条（当前 %d 条）",
-                group_id, MIN_CANDIDATES, len(entries),
+                group_id,
+                MIN_CANDIDATES,
+                len(entries),
             )
             return None
 
@@ -176,7 +178,11 @@ class SituationExtractor:
                     continue
                 user_display = known_entities.get(alias_user_id, alias_user_id)
                 user_manager.register_alias(
-                    alias, alias_user_id, user_display, group_id, source="llm_discovery",
+                    alias,
+                    alias_user_id,
+                    user_display,
+                    group_id,
+                    source="llm_discovery",
                 )
                 logger.debug("别称发现: %s → %s (%s)", alias, alias_user_id, user_display)
 
@@ -203,16 +209,14 @@ class SituationExtractor:
         validation = await evolution_chain.validate_and_commit(triples, source)
 
         # Step 5: 只保留通过验证的三元组
-        accepted_records = [
-            r for r in validation.records
-            if r.status in ("active", "uncertain")
-        ]
+        accepted_records = [r for r in validation.records if r.status in ("active", "uncertain")]
         rejected_count = validation.rejected_count
 
         if not accepted_records:
             logger.info(
                 "群 %s 情景提取：所有三元组被拒绝（%d 个）",
-                group_id, len(raw_triples),
+                group_id,
+                len(raw_triples),
             )
             return None
 
@@ -241,7 +245,9 @@ class SituationExtractor:
 
         logger.info(
             "群 %s 情景提取完成: %d 个三元组通过验证, %d 个被拒绝",
-            group_id, len(accepted_records), rejected_count,
+            group_id,
+            len(accepted_records),
+            rejected_count,
         )
         return situation
 
@@ -263,9 +269,11 @@ class SituationExtractor:
             name = (e.speaker_name or "").strip()
             if uid and uid not in entity_map:
                 entity_map[uid] = name or uid
-        entities_text = "\n".join(
-            f"- {name}({uid})" for uid, name in entity_map.items()
-        ) if entity_map else "（无）"
+        entities_text = (
+            "\n".join(f"- {name}({uid})" for uid, name in entity_map.items())
+            if entity_map
+            else "（无）"
+        )
 
         conversation = self._build_conversation_text(entries)
         user_prompt = _TRIPLE_EXTRACTION_PROMPT.format(
@@ -331,9 +339,7 @@ class SituationExtractor:
             obj=record.obj,
             confidence=record.confidence,
             meta_tag=record.source_type,
-            source_message_id=record.source_message_ids[0]
-            if record.source_message_ids
-            else "",
+            source_message_id=record.source_message_ids[0] if record.source_message_ids else "",
         )
 
     @staticmethod

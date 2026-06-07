@@ -24,6 +24,7 @@ class SkillEngineContextImpl:
         self._engine = engine
         # 组合 UserLookupService
         from sirius_pulse.core.user_lookup import UserLookupService
+
         self._user_lookup = UserLookupService(
             identity_resolver=engine.identity_resolver,
             user_manager=engine.user_manager,
@@ -54,14 +55,14 @@ class SkillEngineContextImpl:
         **kwargs: Any,
     ) -> str:
         return await self._engine.brain.generate_text(
-            system_prompt, messages, group_id,
+            system_prompt,
+            messages,
+            group_id,
             task_name=task_name,
             post_process=post_process,
         )
 
-    def queue_pending_message(
-        self, group_id: str, text: str, adapter_type: str = ""
-    ) -> None:
+    def queue_pending_message(self, group_id: str, text: str, adapter_type: str = "") -> None:
         self._engine._pending_reminders.setdefault(group_id, []).append(
             {"text": text, "adapter_type": adapter_type}
         )
@@ -71,9 +72,7 @@ class SkillEngineContextImpl:
         if mapped is None:
             logger.warning("未知事件类型: %s", event_type)
             return
-        await self._engine.event_bus.emit(
-            SessionEvent(type=mapped, data=data)
-        )
+        await self._engine.event_bus.emit(SessionEvent(type=mapped, data=data))
 
     def get_active_groups(self) -> list[str]:
         return list(self._engine._group_last_message_at.keys())
@@ -101,6 +100,7 @@ class SkillEngineContextImpl:
 
     def record_reply_timestamp(self, group_id: str) -> None:
         from datetime import datetime, timezone
+
         self._engine._last_reply_at[group_id] = datetime.now(timezone.utc).timestamp()
 
     def persist_group_state(self, group_id: str) -> None:
@@ -110,11 +110,12 @@ class SkillEngineContextImpl:
         """获取技能描述文本（用于被动技能的 prompt 注入）。"""
         if self._engine._skill_registry is None:
             return ""
-        from sirius_pulse.skills.models import SkillInvocationContext
         from sirius_pulse.memory.user.unified_models import UnifiedUser
+        from sirius_pulse.skills.models import SkillInvocationContext
 
         caller = UnifiedUser(
-            user_id="caller", name="caller",
+            user_id="caller",
+            name="caller",
             metadata={"is_developer": caller_is_developer},
         )
         ctx = SkillInvocationContext(caller=caller)

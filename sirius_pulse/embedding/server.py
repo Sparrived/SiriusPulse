@@ -32,6 +32,7 @@ MAX_ENCODE_BATCH = 64
 def _model_available_locally(model_name: str) -> bool:
     """Detect whether model files exist in local HF cache."""
     from pathlib import Path as _Path
+
     cache_dir = _Path(os.path.expanduser("~"), ".cache", "huggingface", "hub")
     safe_name = "models--" + model_name.replace("/", "--")
     snapshots = cache_dir / safe_name / "snapshots"
@@ -43,6 +44,7 @@ def _model_available_locally(model_name: str) -> bool:
 @dataclass
 class _PendingRequest:
     """队列中的待处理请求，通过 Future 返回结果。"""
+
     texts: list[str]
     future: asyncio.Future[list[list[float]]]
 
@@ -68,11 +70,11 @@ class _BatchProcessor:
     def _load_model(self) -> None:
         """预加载 sentence-transformers 模型（启动时调用，非懒加载）。
 
-自动检测本地模型文件：已缓存 → 离线加载；未缓存 → 在线下载后离线加载。
-"""
+        自动检测本地模型文件：已缓存 → 离线加载；未缓存 → 在线下载后离线加载。"""
         if self._model is not None:
             return
         from sentence_transformers import SentenceTransformer
+
         local = _model_available_locally(self.model_name)
         if local:
             os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -126,9 +128,7 @@ class _BatchProcessor:
                 if remaining <= 0:
                     break
                 try:
-                    req = await asyncio.wait_for(
-                        self._queue.get(), timeout=remaining
-                    )
+                    req = await asyncio.wait_for(self._queue.get(), timeout=remaining)
                     batch.append(req)
                 except asyncio.TimeoutError:
                     break
@@ -153,13 +153,9 @@ class _BatchProcessor:
             loop = asyncio.get_running_loop()
             t0 = time.monotonic()
             try:
-                all_embeddings = await loop.run_in_executor(
-                    None, self._encode_sync, all_texts
-                )
+                all_embeddings = await loop.run_in_executor(None, self._encode_sync, all_texts)
                 duration_ms = round((time.monotonic() - t0) * 1000, 1)
-                logger.info(
-                    "Embedding 推理完成: %d 条文本, %.1fms", total_texts, duration_ms
-                )
+                logger.info("Embedding 推理完成: %d 条文本, %.1fms", total_texts, duration_ms)
             except Exception as exc:
                 # 推理失败，通知所有等待的请求
                 logger.error("Embedding 推理失败: %s", exc)
@@ -192,9 +188,7 @@ async def _handle_embed(request: Any) -> Any:
 
     texts = body.get("texts")
     if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
-        return web.json_response(
-            {"error": "texts must be a list of strings"}, status=400
-        )
+        return web.json_response({"error": "texts must be a list of strings"}, status=400)
 
     if not texts:
         return web.json_response({"embeddings": []})
@@ -212,10 +206,12 @@ async def _handle_health(request: Any) -> Any:
     """GET /health — 健康检查。"""
     from aiohttp import web
 
-    return web.json_response({
-        "status": "ok",
-        "model": _processor.model_name if _processor else "unknown",
-    })
+    return web.json_response(
+        {
+            "status": "ok",
+            "model": _processor.model_name if _processor else "unknown",
+        }
+    )
 
 
 async def _start_processor(app: Any) -> None:

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.evolution.models import (
     EvolutionAction,
     EvolutionRecord,
@@ -12,7 +13,6 @@ from sirius_pulse.memory.evolution.models import (
     ValidationResult,
 )
 from sirius_pulse.memory.evolution.store import EvolutionStore
-from sirius_pulse.memory.evolution.chain import EvolutionChain
 
 __all__ = [
     "EvolutionAction",

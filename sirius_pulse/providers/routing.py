@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
-from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, GenerationResult, LLMProvider
+from sirius_pulse.providers.base import (
+    AsyncLLMProvider,
+    GenerationRequest,
+    GenerationResult,
+    LLMProvider,
+)
 from sirius_pulse.providers.bigmodel import BigModelProvider
 from sirius_pulse.providers.deepseek import DeepSeekProvider
 from sirius_pulse.providers.mimo import MimoProvider, MimoTokenPlanProvider

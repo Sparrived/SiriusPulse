@@ -21,8 +21,7 @@ from sirius_pulse.config.models import (
 )
 from sirius_pulse.utils.layout import WorkspaceLayout
 
-
-_ENV_VAR_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _coerce_int(value: object, default: int) -> int:
@@ -124,11 +123,7 @@ def _normalize_orchestration_defaults(
     if policy is None:
         return {}
     normalized = asdict(policy)
-    return {
-        key: normalized[key]
-        for key in sanitized
-        if key in normalized
-    }
+    return {key: normalized[key] for key in sanitized if key in normalized}
 
 
 def _build_session_defaults(payload: object, fallback: SessionDefaults) -> SessionDefaults:
@@ -271,6 +266,7 @@ def _resolve_values(obj: Any) -> Any:
 
 def _resolve_env_vars(text: str) -> str:
     """Resolve environment variables in a string."""
+
     def replacer(match: re.Match[str]) -> str:
         var_name = match.group(1)
         return os.environ.get(var_name, match.group(0))
@@ -359,9 +355,7 @@ def _dict_to_session_config(config_dict: dict[str, Any], base_dir: Path) -> Sess
         preset=preset,
         history_max_messages=int(config_dict.get("history_max_messages", 24)),
         history_max_chars=int(config_dict.get("history_max_chars", 6000)),
-        max_recent_participant_messages=int(
-            config_dict.get("max_recent_participant_messages", 5)
-        ),
+        max_recent_participant_messages=int(config_dict.get("max_recent_participant_messages", 5)),
         enable_auto_compression=config_dict.get("enable_auto_compression", True),
         orchestration=orchestration,
     )

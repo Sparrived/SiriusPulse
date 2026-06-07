@@ -9,22 +9,25 @@
 
 from __future__ import annotations
 
-# ── Core engine ──
-from sirius_pulse.core.brain import Brain, ChatRequest, ChatResult, PreHook, PostHook
-from sirius_pulse.core.emotional_engine import (
-    EmotionalGroupChatEngine,
-    create_emotional_engine,
+# ── Adapter 框架（v1.3+）──
+from sirius_pulse.adapters import (
+    AtSegment,
+    BaseAdapter,
+    FileSegment,
+    ImageSegment,
+    MessageGroup,
+    MessageSegment,
+    ParsedEvent,
+    ReplySegment,
+    TextSegment,
+    VoiceSegment,
+    at,
+    file,
+    image,
+    reply,
+    text,
+    voice,
 )
-from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
-from sirius_pulse.core.identity_resolver import IdentityContext, IdentityResolution, IdentityResolver
-from sirius_pulse.core.model_router import ModelRouter, TaskConfig
-from sirius_pulse.core.pinned_message import PinnedMessage, PinnedMessageManager
-from sirius_pulse.core.proactive_trigger import ProactiveTrigger
-from sirius_pulse.core.prompt_factory import PromptFactory, PromptBundle, StyleAdapter, StyleParams
-from sirius_pulse.core.response_strategy import ResponseStrategyEngine
-from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
-from sirius_pulse.core.rhythm import RhythmAnalysis, RhythmAnalyzer
-from sirius_pulse.core.threshold_engine import ThresholdEngine
 
 # ── Config / Models ──
 from sirius_pulse.config import (
@@ -40,72 +43,6 @@ from sirius_pulse.config import (
     WorkspaceBootstrap,
     WorkspaceConfig,
 )
-from sirius_pulse.config.helpers import (
-    configure_full_orchestration,
-    configure_orchestration_models,
-    configure_orchestration_retries,
-    configure_orchestration_temperatures,
-    auto_configure_multimodal_agent,
-    create_agent_with_multimodal,
-    create_multimodel_config,
-    setup_multimodel_config,
-)
-from sirius_pulse.config.manager import ConfigManager
-
-# ── Models ──
-from sirius_pulse.models import Message, Transcript
-from sirius_pulse.models.emotion import (
-    AssistantEmotionState,
-    EmotionState,
-    EmpathyStrategy,
-)
-from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
-from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
-
-# ── Memory ──
-from sirius_pulse.memory.user.unified_models import UnifiedUser
-
-# ── Providers ──
-from sirius_pulse.providers.base import AsyncLLMProvider, LLMProvider
-from sirius_pulse.providers import (
-    AliyunBailianProvider,
-    AutoRoutingProvider,
-    BigModelProvider,
-    MimoProvider,
-    MimoTokenPlanProvider,
-    MockProvider,
-    OpenAICompatibleProvider,
-    ProviderConfig,
-    ProviderRegistry,
-    SiliconFlowProvider,
-    VolcengineArkProvider,
-    WorkspaceProviderManager,
-    ensure_provider_platform_supported,
-    get_supported_provider_platforms,
-    merge_provider_sources,
-    normalize_provider_type,
-    probe_provider_availability,
-    register_provider_with_validation,
-    run_provider_detection_flow,
-)
-# ── Session / Workspace ──
-from sirius_pulse.session.store import JsonSessionStore, SessionStoreFactory, SqliteSessionStore
-from sirius_pulse.utils.layout import WorkspaceLayout
-
-# ── Skills ──
-from sirius_pulse.skills import (
-    BackgroundTaskSpec,
-    SkillDataStore,
-    SkillDefinition,
-    SkillEngineContext,
-    SkillExecutor,
-    SkillInvocationContext,
-    SkillParameter,
-    SkillPassiveType,
-    SkillRegistry,
-    SkillResult,
-    TriggerSpec,
-)
 
 # ── Config Builder (shared between plugins and skills) ──
 from sirius_pulse.config.config_builder import (
@@ -115,87 +52,38 @@ from sirius_pulse.config.config_builder import (
     config_param,
     secret,
 )
+from sirius_pulse.config.helpers import (
+    auto_configure_multimodal_agent,
+    configure_full_orchestration,
+    configure_orchestration_models,
+    configure_orchestration_retries,
+    configure_orchestration_temperatures,
+    create_agent_with_multimodal,
+    create_multimodel_config,
+    setup_multimodel_config,
+)
+from sirius_pulse.config.manager import ConfigManager
 
-# ── Plugin system（v1.2+）──
-from sirius_pulse.plugins import (
-    PluginBase,
-    PluginContext,
-    PluginDefinition,
-    PluginResponse,
-    CommandAST,
-    PluginRegistry,
-    PluginLoader,
-    PluginLoadError,
-    PluginExecutor,
-    OutputDispatcher,
-    Tokenizer,
-    Lexer,
-    CommandParser,
-    PluginMatcher,
-    MatchResult,
-    EngineProxy,
-    MessageContext,
-    PluginDataStore,
-    ArgNode,
-    RenderMode,
-    TriggerType,
-    PatternType,
-    PluginCommandDef,
-    PluginEventDef,
-    PluginParameterDef,
-    PluginPermissionDef,
-    PluginRenderDef,
-    PluginNaturalLangDef,
-    UserMention,
-    GroupMention,
-    MessageReference,
-    ImageAttachment,
-    parse_command,
-    match_plugin,
-    command,
-    PluginCommandMeta,
+# ── Core engine ──
+from sirius_pulse.core.brain import Brain, ChatRequest, ChatResult, PostHook, PreHook
+from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
+from sirius_pulse.core.emotional_engine import (
+    EmotionalGroupChatEngine,
+    create_emotional_engine,
 )
-
-# ── Adapter 框架（v1.3+）──
-from sirius_pulse.adapters import (
-    BaseAdapter,
-    MessageGroup,
-    MessageSegment,
-    TextSegment,
-    AtSegment,
-    ImageSegment,
-    VoiceSegment,
-    FileSegment,
-    ReplySegment,
-    ParsedEvent,
-    text,
-    at,
-    image,
-    voice,
-    file,
-    reply,
+from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
+from sirius_pulse.core.identity_resolver import (
+    IdentityContext,
+    IdentityResolution,
+    IdentityResolver,
 )
-
-# ── Token usage ──
-from sirius_pulse.token.token_store import TokenUsageStore
-from sirius_pulse.token.usage import (
-    TokenUsageBaseline,
-    build_token_usage_baseline,
-    summarize_token_usage,
-)
-from sirius_pulse.token.analytics import (
-    AnalyticsReport,
-    BaselineDict,
-    BucketDict,
-    TimeSliceDict,
-    compute_baseline,
-    full_report,
-    group_by_actor,
-    group_by_model,
-    group_by_session,
-    group_by_task,
-    time_series,
-)
+from sirius_pulse.core.model_router import ModelRouter, TaskConfig
+from sirius_pulse.core.pinned_message import PinnedMessage, PinnedMessageManager
+from sirius_pulse.core.proactive_trigger import ProactiveTrigger
+from sirius_pulse.core.prompt_factory import PromptBundle, PromptFactory, StyleAdapter, StyleParams
+from sirius_pulse.core.response_strategy import ResponseStrategyEngine
+from sirius_pulse.core.rhythm import RhythmAnalysis, RhythmAnalyzer
+from sirius_pulse.core.threshold_engine import ThresholdEngine
 
 # ── Exceptions ──
 from sirius_pulse.exceptions import (
@@ -225,6 +113,123 @@ from sirius_pulse.logging_config import (
     configure_logging,
     get_logger,
 )
+
+# ── Memory ──
+from sirius_pulse.memory.user.unified_models import UnifiedUser
+
+# ── Models ──
+from sirius_pulse.models import Message, Transcript
+from sirius_pulse.models.emotion import (
+    AssistantEmotionState,
+    EmotionState,
+    EmpathyStrategy,
+)
+from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
+from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
+
+# ── Plugin system（v1.2+）──
+from sirius_pulse.plugins import (
+    ArgNode,
+    CommandAST,
+    CommandParser,
+    EngineProxy,
+    GroupMention,
+    ImageAttachment,
+    Lexer,
+    MatchResult,
+    MessageContext,
+    MessageReference,
+    OutputDispatcher,
+    PatternType,
+    PluginBase,
+    PluginCommandDef,
+    PluginCommandMeta,
+    PluginContext,
+    PluginDataStore,
+    PluginDefinition,
+    PluginEventDef,
+    PluginExecutor,
+    PluginLoader,
+    PluginLoadError,
+    PluginMatcher,
+    PluginNaturalLangDef,
+    PluginParameterDef,
+    PluginPermissionDef,
+    PluginRegistry,
+    PluginRenderDef,
+    PluginResponse,
+    RenderMode,
+    Tokenizer,
+    TriggerType,
+    UserMention,
+    command,
+    match_plugin,
+    parse_command,
+)
+from sirius_pulse.providers import (
+    AliyunBailianProvider,
+    AutoRoutingProvider,
+    BigModelProvider,
+    MimoProvider,
+    MimoTokenPlanProvider,
+    MockProvider,
+    OpenAICompatibleProvider,
+    ProviderConfig,
+    ProviderRegistry,
+    SiliconFlowProvider,
+    VolcengineArkProvider,
+    WorkspaceProviderManager,
+    ensure_provider_platform_supported,
+    get_supported_provider_platforms,
+    merge_provider_sources,
+    normalize_provider_type,
+    probe_provider_availability,
+    register_provider_with_validation,
+    run_provider_detection_flow,
+)
+
+# ── Providers ──
+from sirius_pulse.providers.base import AsyncLLMProvider, LLMProvider
+
+# ── Session / Workspace ──
+from sirius_pulse.session.store import JsonSessionStore, SessionStoreFactory, SqliteSessionStore
+
+# ── Skills ──
+from sirius_pulse.skills import (
+    BackgroundTaskSpec,
+    SkillDataStore,
+    SkillDefinition,
+    SkillEngineContext,
+    SkillExecutor,
+    SkillInvocationContext,
+    SkillParameter,
+    SkillPassiveType,
+    SkillRegistry,
+    SkillResult,
+    TriggerSpec,
+)
+from sirius_pulse.token.analytics import (
+    AnalyticsReport,
+    BaselineDict,
+    BucketDict,
+    TimeSliceDict,
+    compute_baseline,
+    full_report,
+    group_by_actor,
+    group_by_model,
+    group_by_session,
+    group_by_task,
+    time_series,
+)
+
+# ── Token usage ──
+from sirius_pulse.token.token_store import TokenUsageStore
+from sirius_pulse.token.usage import (
+    TokenUsageBaseline,
+    build_token_usage_baseline,
+    summarize_token_usage,
+)
+from sirius_pulse.utils.layout import WorkspaceLayout
 
 __all__ = [
     # Core engine

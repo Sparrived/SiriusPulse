@@ -6,16 +6,16 @@ import json
 import logging
 import socket
 import threading
-from pathlib import Path
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import web
 
 from sirius_pulse.providers.base import AsyncLLMProvider
-from sirius_pulse.providers.routing import WorkspaceProviderManager
 from sirius_pulse.providers.routing import (
     ProviderConfig,
+    WorkspaceProviderManager,
     _create_provider_instance,
     ensure_provider_platform_supported,
     probe_provider_availability,
@@ -26,8 +26,8 @@ from sirius_pulse.webui.server_skill_api import (
     api_persona_skill_config_get,
     api_persona_skill_config_post,
     api_persona_skill_history_get,
-    api_persona_skills_get,
     api_persona_skill_toggle,
+    api_persona_skills_get,
 )
 from sirius_pulse.webui.server_utils import _json_response
 from sirius_pulse.webui.ws_server import WebSocketManager, setup_ws_routes
@@ -71,9 +71,7 @@ class WebUIServer:
         self._embedding_thread: threading.Thread | None = None
         self._embedding_ready: bool = False
         self._embedding_error: str = ""
-        self._embedding_port: int = int(
-            persona_manager.global_config.get("embedding_port", 18900)
-        )
+        self._embedding_port: int = int(persona_manager.global_config.get("embedding_port", 18900))
         self.auth_manager.get_or_create_admin_password()
         self._setup_routes()
         setup_ws_routes(self.app, self.ws_manager)
@@ -81,72 +79,206 @@ class WebUIServer:
     # ─── 子类 API 桩方法（Pylance 类型提示用，运行时由 server.py 覆盖）───
 
     if TYPE_CHECKING:
-        async def api_tokens_get(self, request: web.Request) -> web.Response: ...
-        async def api_telemetry_get(self, request: web.Request) -> web.Response: ...
-        async def api_personas_get(self, request: web.Request) -> web.Response: ...
-        async def api_personas_post(self, request: web.Request) -> web.Response: ...
-        async def api_personas_delete(self, request: web.Request) -> web.Response: ...
-        async def api_persona_get_single(self, request: web.Request) -> web.Response: ...
-        async def api_persona_status_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_start(self, request: web.Request) -> web.Response: ...
-        async def api_persona_stop(self, request: web.Request) -> web.Response: ...
-        async def api_persona_restart(self, request: web.Request) -> web.Response: ...
-        async def api_system_logs_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_logs_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_post(self, request: web.Request) -> web.Response: ...
-        async def api_persona_interview_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_interview(self, request: web.Request) -> web.Response: ...
-        async def api_orchestration_get(self, request: web.Request) -> web.Response: ...
-        async def api_orchestration_post(self, request: web.Request) -> web.Response: ...
-        async def api_experience_get(self, request: web.Request) -> web.Response: ...
-        async def api_experience_post(self, request: web.Request) -> web.Response: ...
-        async def api_adapters_get(self, request: web.Request) -> web.Response: ...
-        async def api_adapters_post(self, request: web.Request) -> web.Response: ...
-        async def api_engine_reload(self, request: web.Request) -> web.Response: ...
-        async def api_persona_tokens_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_cognition_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_cognition_analysis_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_diary_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_vector_store_status_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_users_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_user_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_glossary_get(self, request: web.Request) -> web.Response: ...
-        async def api_config_post(self, request: web.Request) -> web.Response: ...
-        async def api_persona_memory_viz(self, request: web.Request) -> web.Response: ...
-        async def api_memory_dashboard(self, request: web.Request) -> web.Response: ...
-        async def api_evolution_records(self, request: web.Request) -> web.Response: ...
-        async def api_evolution_history(self, request: web.Request) -> web.Response: ...
-        async def api_evolution_uncertain(self, request: web.Request) -> web.Response: ...
-        async def api_situations_list(self, request: web.Request) -> web.Response: ...
-        async def api_situations_delete(self, request: web.Request) -> web.Response: ...
-        async def api_diary_slices(self, request: web.Request) -> web.Response: ...
-        async def api_diary_slices_delete(self, request: web.Request) -> web.Response: ...
-        async def api_biography_list_all(self, request: web.Request) -> web.Response: ...
-        async def api_biography_view(self, request: web.Request) -> web.Response: ...
-        async def api_knowledge_gaps(self, request: web.Request) -> web.Response: ...
-        async def api_persona_conversation_history_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_biography_list(self, request: web.Request) -> web.Response: ...
-        async def api_persona_biography_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_biography_alias_index(self, request: web.Request) -> web.Response: ...
-        async def api_persona_biography_alias_index_update(self, request: web.Request) -> web.Response: ...
-        async def api_plugins_get(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_detail_get(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_toggle(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_config_get(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_config_post(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_settings_get(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_settings_post(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_setting_post(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_setting_delete(self, request: web.Request) -> web.Response: ...
-        async def api_plugins_reload(self, request: web.Request) -> web.Response: ...
-        async def api_plugin_monitor_repos_get(self, request: web.Request) -> web.Response: ...
-        async def api_persona_clone(self, request: web.Request) -> web.Response: ...
-        async def api_auth_login(self, request: web.Request) -> web.Response: ...
-        async def api_auth_status(self, request: web.Request) -> web.Response: ...
-        async def api_monitoring_overview(self, request: web.Request) -> web.Response: ...
-        async def api_monitoring_persona_metrics(self, request: web.Request) -> web.Response: ...
-        async def api_monitoring_health(self, request: web.Request) -> web.Response: ...
+
+        async def api_tokens_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_telemetry_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_personas_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_personas_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_personas_delete(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_get_single(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_status_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_start(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_stop(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_restart(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_system_logs_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_logs_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_interview_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_interview(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_orchestration_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_orchestration_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_experience_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_experience_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_adapters_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_adapters_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_engine_reload(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_tokens_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_cognition_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_cognition_analysis_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_diary_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_vector_store_status_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_users_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_user_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_glossary_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_config_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_memory_viz(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_memory_dashboard(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_evolution_records(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_evolution_history(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_evolution_uncertain(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_situations_list(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_situations_delete(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_diary_slices(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_diary_slices_delete(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_biography_list_all(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_biography_view(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_knowledge_gaps(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_conversation_history_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_biography_list(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_biography_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_biography_alias_index(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_biography_alias_index_update(
+            self, request: web.Request
+        ) -> web.Response:
+            ...
+
+        async def api_plugins_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_detail_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_toggle(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_config_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_config_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_settings_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_settings_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_setting_post(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_setting_delete(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugins_reload(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_plugin_monitor_repos_get(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_persona_clone(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_auth_login(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_auth_status(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_monitoring_overview(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_monitoring_persona_metrics(self, request: web.Request) -> web.Response:
+            ...
+
+        async def api_monitoring_health(self, request: web.Request) -> web.Response:
+            ...
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
@@ -159,7 +291,9 @@ class WebUIServer:
         self.app.router.add_post("/api/providers", self.api_providers_post)
         self.app.router.add_post("/api/providers/probe", self.api_providers_probe)
         self.app.router.add_post("/api/providers/refresh-models", self.api_providers_refresh_models)
-        self.app.router.add_get("/api/providers/models-dev/{provider_type}", self.api_providers_models_dev_get)
+        self.app.router.add_get(
+            "/api/providers/models-dev/{provider_type}", self.api_providers_models_dev_get
+        )
         self.app.router.add_get("/api/models", self.api_available_models_get)
         self.app.router.add_get("/api/tokens", self.api_tokens_get)
         self.app.router.add_get("/api/telemetry", self.api_telemetry_get)
@@ -182,8 +316,12 @@ class WebUIServer:
         self.app.router.add_get("/api/personas/{name}/persona", self.api_persona_get)
         self.app.router.add_post("/api/personas/{name}/persona", self.api_persona_post)
         self.app.router.add_post("/api/personas/{name}/persona/save", self.api_persona_post)
-        self.app.router.add_get("/api/personas/{name}/persona/interview", self.api_persona_interview_get)
-        self.app.router.add_post("/api/personas/{name}/persona/interview", self.api_persona_interview)
+        self.app.router.add_get(
+            "/api/personas/{name}/persona/interview", self.api_persona_interview_get
+        )
+        self.app.router.add_post(
+            "/api/personas/{name}/persona/interview", self.api_persona_interview
+        )
         self.app.router.add_get("/api/personas/{name}/orchestration", self.api_orchestration_get)
         self.app.router.add_post("/api/personas/{name}/orchestration", self.api_orchestration_post)
         self.app.router.add_get("/api/personas/{name}/experience", self.api_experience_get)
@@ -199,11 +337,15 @@ class WebUIServer:
 
         # Cognition events (per persona)
         self.app.router.add_get("/api/personas/{name}/cognition", self.api_persona_cognition_get)
-        self.app.router.add_get("/api/personas/{name}/cognition/analysis", self.api_persona_cognition_analysis_get)
+        self.app.router.add_get(
+            "/api/personas/{name}/cognition/analysis", self.api_persona_cognition_analysis_get
+        )
 
         # Diary entries (per persona)
         self.app.router.add_get("/api/personas/{name}/diary", self.api_persona_diary_get)
-        self.app.router.add_get("/api/personas/{name}/vector-store-status", self.api_persona_vector_store_status_get)
+        self.app.router.add_get(
+            "/api/personas/{name}/vector-store-status", self.api_persona_vector_store_status_get
+        )
 
         # User semantic profiles (per persona)
         self.app.router.add_get("/api/personas/{name}/users", self.api_persona_users_get)
@@ -217,10 +359,18 @@ class WebUIServer:
 
         # Skill 管理（每人格独立）
         self.app.router.add_get("/api/personas/{name}/skills", self.api_persona_skills_get)
-        self.app.router.add_post("/api/personas/{name}/skills/{skill_name}/toggle", self.api_persona_skill_toggle)
-        self.app.router.add_get("/api/personas/{name}/skills/{skill_name}/config", self.api_persona_skill_config_get)
-        self.app.router.add_post("/api/personas/{name}/skills/{skill_name}/config", self.api_persona_skill_config_post)
-        self.app.router.add_get("/api/personas/{name}/skill-history", self.api_persona_skill_history_get)
+        self.app.router.add_post(
+            "/api/personas/{name}/skills/{skill_name}/toggle", self.api_persona_skill_toggle
+        )
+        self.app.router.add_get(
+            "/api/personas/{name}/skills/{skill_name}/config", self.api_persona_skill_config_get
+        )
+        self.app.router.add_post(
+            "/api/personas/{name}/skills/{skill_name}/config", self.api_persona_skill_config_post
+        )
+        self.app.router.add_get(
+            "/api/personas/{name}/skill-history", self.api_persona_skill_history_get
+        )
 
         # 记忆可视化
         self.app.router.add_get("/api/personas/{name}/memory-viz", self.api_persona_memory_viz)
@@ -228,24 +378,46 @@ class WebUIServer:
         # 新记忆系统 API
         self.app.router.add_get("/api/personas/{name}/memory/dashboard", self.api_memory_dashboard)
         self.app.router.add_get("/api/personas/{name}/memory/evolution", self.api_evolution_records)
-        self.app.router.add_get("/api/personas/{name}/memory/evolution/uncertain", self.api_evolution_uncertain)
-        self.app.router.add_get("/api/personas/{name}/memory/evolution/{record_id}/history", self.api_evolution_history)
+        self.app.router.add_get(
+            "/api/personas/{name}/memory/evolution/uncertain", self.api_evolution_uncertain
+        )
+        self.app.router.add_get(
+            "/api/personas/{name}/memory/evolution/{record_id}/history", self.api_evolution_history
+        )
         self.app.router.add_get("/api/personas/{name}/memory/situations", self.api_situations_list)
-        self.app.router.add_delete("/api/personas/{name}/memory/situations", self.api_situations_delete)
+        self.app.router.add_delete(
+            "/api/personas/{name}/memory/situations", self.api_situations_delete
+        )
         self.app.router.add_get("/api/personas/{name}/memory/diary-slices", self.api_diary_slices)
-        self.app.router.add_delete("/api/personas/{name}/memory/diary-slices", self.api_diary_slices_delete)
-        self.app.router.add_get("/api/personas/{name}/memory/biographies", self.api_biography_list_all)
-        self.app.router.add_get("/api/personas/{name}/memory/biography/{user_id}", self.api_biography_view)
-        self.app.router.add_get("/api/personas/{name}/memory/gaps/{user_id}", self.api_knowledge_gaps)
+        self.app.router.add_delete(
+            "/api/personas/{name}/memory/diary-slices", self.api_diary_slices_delete
+        )
+        self.app.router.add_get(
+            "/api/personas/{name}/memory/biographies", self.api_biography_list_all
+        )
+        self.app.router.add_get(
+            "/api/personas/{name}/memory/biography/{user_id}", self.api_biography_view
+        )
+        self.app.router.add_get(
+            "/api/personas/{name}/memory/gaps/{user_id}", self.api_knowledge_gaps
+        )
 
         # 对话历史
-        self.app.router.add_get("/api/personas/{name}/conversations", self.api_persona_conversation_history_get)
+        self.app.router.add_get(
+            "/api/personas/{name}/conversations", self.api_persona_conversation_history_get
+        )
 
         # 人物传记管理（每人格独立）
         self.app.router.add_get("/api/personas/{name}/biography", self.api_persona_biography_list)
-        self.app.router.add_get("/api/personas/{name}/biography/aliases", self.api_persona_biography_alias_index)
-        self.app.router.add_post("/api/personas/{name}/biography/aliases", self.api_persona_biography_alias_index_update)
-        self.app.router.add_get("/api/personas/{name}/biography/{user_id}", self.api_persona_biography_get)
+        self.app.router.add_get(
+            "/api/personas/{name}/biography/aliases", self.api_persona_biography_alias_index
+        )
+        self.app.router.add_post(
+            "/api/personas/{name}/biography/aliases", self.api_persona_biography_alias_index_update
+        )
+        self.app.router.add_get(
+            "/api/personas/{name}/biography/{user_id}", self.api_persona_biography_get
+        )
 
         # 认证 API
         self.app.router.add_post("/api/auth/login", self.api_auth_login)
@@ -253,7 +425,9 @@ class WebUIServer:
 
         # 监控 API
         self.app.router.add_get("/api/monitoring/overview", self.api_monitoring_overview)
-        self.app.router.add_get("/api/monitoring/{name}/metrics", self.api_monitoring_persona_metrics)
+        self.app.router.add_get(
+            "/api/monitoring/{name}/metrics", self.api_monitoring_persona_metrics
+        )
         self.app.router.add_get("/api/monitoring/{name}/health", self.api_monitoring_health)
 
         # 人格克隆
@@ -266,9 +440,15 @@ class WebUIServer:
         self.app.router.add_get("/api/plugins/{plugin_name}/config", self.api_plugin_config_get)
         self.app.router.add_put("/api/plugins/{plugin_name}/config", self.api_plugin_config_post)
         self.app.router.add_get("/api/plugins/{plugin_name}/settings", self.api_plugin_settings_get)
-        self.app.router.add_post("/api/plugins/{plugin_name}/settings", self.api_plugin_settings_post)
-        self.app.router.add_post("/api/plugins/{plugin_name}/settings/{key}", self.api_plugin_setting_post)
-        self.app.router.add_delete("/api/plugins/{plugin_name}/settings/{key}", self.api_plugin_setting_delete)
+        self.app.router.add_post(
+            "/api/plugins/{plugin_name}/settings", self.api_plugin_settings_post
+        )
+        self.app.router.add_post(
+            "/api/plugins/{plugin_name}/settings/{key}", self.api_plugin_setting_post
+        )
+        self.app.router.add_delete(
+            "/api/plugins/{plugin_name}/settings/{key}", self.api_plugin_setting_delete
+        )
         self.app.router.add_post("/api/plugins/reload", self.api_plugins_reload)
         self.app.router.add_get("/api/plugins/monitor_repos", self.api_plugin_monitor_repos_get)
 
@@ -325,8 +505,9 @@ class WebUIServer:
 
         if not self._is_port_free(self._embedding_port):
             # 端口被占用：可能是外部已启动，尝试健康检查
-            import urllib.request
             import json as _json
+            import urllib.request
+
             try:
                 req = urllib.request.Request(
                     f"http://127.0.0.1:{self._embedding_port}/health", method="GET"
@@ -352,7 +533,9 @@ class WebUIServer:
 
         def _run_server() -> None:
             import time as _time
+
             from sirius_pulse.embedding.server import create_app
+
             max_retries = 3
             for attempt in range(max_retries):
                 try:
@@ -405,12 +588,14 @@ class WebUIServer:
             except Exception:
                 LOG.warning("读取全局配置失败", exc_info=True)
                 pass
-        return _json_response({
-            "webui_host": self.host,
-            "webui_port": self.port,
-            "auto_manage_napcat": True,
-            "log_level": "INFO",
-        })
+        return _json_response(
+            {
+                "webui_host": self.host,
+                "webui_port": self.port,
+                "auto_manage_napcat": True,
+                "log_level": "INFO",
+            }
+        )
 
     async def api_global_config_post(self, request: web.Request) -> web.Response:
         try:
@@ -452,9 +637,11 @@ class WebUIServer:
         self._embedding_ready = False
         self._embedding_error = ""
         import time as _time
+
         _time.sleep(1)
         self._start_embedding_service()
         import asyncio as _aio
+
         for _ in range(30):
             await _aio.sleep(1)
             if self._embedding_ready:
@@ -567,7 +754,9 @@ class WebUIServer:
         if not provider_cfg or not isinstance(provider_cfg, dict):
             return _json_response({"error": f"未找到 Provider: {provider_name}"}, 404)
 
-        provider_type = str(provider_cfg.get("type", "") or provider_cfg.get("platform_type", "") or provider_name).strip()
+        provider_type = str(
+            provider_cfg.get("type", "") or provider_cfg.get("platform_type", "") or provider_name
+        ).strip()
         api_key = str(provider_cfg.get("api_key", "")).strip()
         base_url = str(provider_cfg.get("base_url", "")).strip()
         healthcheck_model = str(provider_cfg.get("healthcheck_model", "")).strip()
@@ -625,11 +814,13 @@ class WebUIServer:
                 cache = ModelsDevCache(Path(self.persona_manager.data_path))
                 cache.get(force_refresh=True)
                 providers_data = self._load_providers_raw()
-                return _json_response({
-                    "success": True,
-                    "changed": False,
-                    "providers": providers_data,
-                })
+                return _json_response(
+                    {
+                        "success": True,
+                        "changed": False,
+                        "providers": providers_data,
+                    }
+                )
 
             provider_mgr = WorkspaceProviderManager(self.persona_manager.data_path)
             changed = provider_mgr.refresh_models_from_dev(force=force)
@@ -637,11 +828,13 @@ class WebUIServer:
                 self._notify_provider_reload()
             # 重新加载并返回更新后的 provider 列表
             providers_data = self._load_providers_raw()
-            return _json_response({
-                "success": True,
-                "changed": changed,
-                "providers": providers_data,
-            })
+            return _json_response(
+                {
+                    "success": True,
+                    "changed": changed,
+                    "providers": providers_data,
+                }
+            )
         except Exception as exc:
             LOG.warning("刷新模型列表失败", exc_info=True)
             return _json_response({"success": False, "error": str(exc)})
@@ -707,10 +900,12 @@ class WebUIServer:
                             available_models.append(m)
                         # model_choices 用复合值，不同 provider 的同名模型各自独立
                         composite = f"{cfg.provider_type}/{m}"
-                        model_choices.append({
-                            "label": composite,
-                            "value": composite,
-                        })
+                        model_choices.append(
+                            {
+                                "label": composite,
+                                "value": composite,
+                            }
+                        )
         except Exception:
             LOG.warning("获取模型列表失败", exc_info=True)
             pass
@@ -721,6 +916,7 @@ class WebUIServer:
     def _enrich_model_choices(self, model_choices: list[dict[str, Any]]) -> None:
         """为 model_choices 中的每一项注入 models.dev 能力标签。"""
         from sirius_pulse.providers.models_dev import ModelsDevCache, get_provider_models
+
         try:
             cache = ModelsDevCache(Path(self.persona_manager.data_path))
             data = cache.get()
@@ -760,10 +956,12 @@ class WebUIServer:
     async def api_available_models_get(self, request: web.Request) -> web.Response:
         """返回全局可用模型列表（含 provider 前缀显示名）。"""
         available_models, model_choices = self._build_model_choices()
-        return _json_response({
-            "available_models": available_models,
-            "model_choices": model_choices,
-        })
+        return _json_response(
+            {
+                "available_models": available_models,
+                "model_choices": model_choices,
+            }
+        )
 
     # ─── Skill 管理 API 代理方法 ──────────────────────────
 

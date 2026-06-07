@@ -151,10 +151,7 @@ def _check_config_files(persona_dir: Path) -> tuple[str, list[str]]:
 
 def _check_memory_system(persona_dir: Path) -> str:
     """检查记忆系统是否可访问（至少有一个记忆子目录存在）。"""
-    has_memory = any(
-        (persona_dir / d).exists()
-        for d in ("memory", "diary", "token")
-    )
+    has_memory = any((persona_dir / d).exists() for d in ("memory", "diary", "token"))
     if not has_memory:
         return "empty"
     return "ok"
@@ -167,7 +164,8 @@ def _check_memory_system(persona_dir: Path) -> str:
 
 @handle_api_errors
 async def api_monitoring_overview(
-    request: web.Request, persona_manager: Any,
+    request: web.Request,
+    persona_manager: Any,
 ) -> web.Response:
     """GET /api/monitoring/overview — 全局概览。
 
@@ -188,24 +186,29 @@ async def api_monitoring_overview(
         if running:
             running_count += 1
 
-        personas_info.append({
-            "name": name,
-            "running": running,
-            "pid": pid,
-            "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
-        })
+        personas_info.append(
+            {
+                "name": name,
+                "running": running,
+                "pid": pid,
+                "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
+            }
+        )
 
-    return _json_response({
-        "total_personas": len(personas_info),
-        "running_personas": running_count,
-        "personas": personas_info,
-        "total_connections": 0,  # 占位，未来由 WS manager 填充
-    })
+    return _json_response(
+        {
+            "total_personas": len(personas_info),
+            "running_personas": running_count,
+            "personas": personas_info,
+            "total_connections": 0,  # 占位，未来由 WS manager 填充
+        }
+    )
 
 
 @handle_api_errors
 async def api_monitoring_persona_metrics(
-    request: web.Request, persona_manager: Any,
+    request: web.Request,
+    persona_manager: Any,
 ) -> web.Response:
     """GET /api/monitoring/{name}/metrics — 单人格详细指标。
 
@@ -230,26 +233,29 @@ async def api_monitoring_persona_metrics(
     user_count = _count_user_profiles(persona_dir)
     event_count = _count_cognition_events(persona_dir)
 
-    return _json_response({
-        "persona": name,
-        "running": running,
-        "pid": pid,
-        "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
-        "token_usage": token_usage,
-        "memory": {
-            "diary_count": diary_count,
-            "glossary_count": glossary_count,
-            "user_count": user_count,
-        },
-        "cognition": {
-            "event_count": event_count,
-        },
-    })
+    return _json_response(
+        {
+            "persona": name,
+            "running": running,
+            "pid": pid,
+            "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
+            "token_usage": token_usage,
+            "memory": {
+                "diary_count": diary_count,
+                "glossary_count": glossary_count,
+                "user_count": user_count,
+            },
+            "cognition": {
+                "event_count": event_count,
+            },
+        }
+    )
 
 
 @handle_api_errors
 async def api_monitoring_health(
-    request: web.Request, persona_manager: Any,
+    request: web.Request,
+    persona_manager: Any,
 ) -> web.Response:
     """GET /api/monitoring/{name}/health — 健康检查。
 
@@ -279,20 +285,22 @@ async def api_monitoring_health(
 
     healthy = running and config_status == "ok" and memory_status == "ok"
 
-    return _json_response({
-        "persona": name,
-        "healthy": healthy,
-        "checks": {
-            "process": {
-                "status": process_status,
-                "pid": pid,
+    return _json_response(
+        {
+            "persona": name,
+            "healthy": healthy,
+            "checks": {
+                "process": {
+                    "status": process_status,
+                    "pid": pid,
+                },
+                "config": {
+                    "status": config_status,
+                    "files": missing_files,
+                },
+                "memory": {
+                    "status": memory_status,
+                },
             },
-            "config": {
-                "status": config_status,
-                "files": missing_files,
-            },
-            "memory": {
-                "status": memory_status,
-            },
-        },
-    })
+        }
+    )

@@ -30,7 +30,8 @@ class MemoryStorage(BaseSqliteStore):
 
     def _create_tables(self) -> None:
         """创建表结构。"""
-        self.executescript("""
+        self.executescript(
+            """
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL DEFAULT '',
@@ -174,18 +175,20 @@ class MemoryStorage(BaseSqliteStore):
                 last_tail_sources TEXT DEFAULT '[]',
                 updated_at TEXT DEFAULT ''
             );
-        """)
-        self._ensure_columns("aliases", {
-            "status": "TEXT DEFAULT 'active'",
-        })
+        """
+        )
+        self._ensure_columns(
+            "aliases",
+            {
+                "status": "TEXT DEFAULT 'active'",
+            },
+        )
 
     # ── 用户 CRUD ─────────────────────────────────────────
 
     def get_user(self, user_id: str) -> dict[str, Any] | None:
         """获取用户。"""
-        row = self.execute(
-            "SELECT * FROM users WHERE user_id = ?", (user_id,)
-        ).fetchone()
+        row = self.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
         if row is None:
             return None
         return self._row_to_user(row)
@@ -354,9 +357,7 @@ class MemoryStorage(BaseSqliteStore):
 
     def get_alias_entries(self, alias: str) -> list[dict[str, Any]]:
         """获取别名的所有条目。"""
-        rows = self.execute(
-            "SELECT * FROM aliases WHERE alias = ?", (alias,)
-        ).fetchall()
+        rows = self.execute("SELECT * FROM aliases WHERE alias = ?", (alias,)).fetchall()
         return [self._row_to_alias(row) for row in rows]
 
     def save_alias_entry(self, entry: dict[str, Any]) -> None:

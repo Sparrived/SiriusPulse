@@ -54,8 +54,8 @@ def _read_tail_lines(path: Path, n: int) -> list[str]:
 
 async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Response:
     """Return aggregated token usage across all personas."""
-    from sirius_pulse.token.token_store import TokenUsageStore
     from sirius_pulse.token import analytics as token_analytics
+    from sirius_pulse.token.token_store import TokenUsageStore
 
     total_summary = {
         "total_calls": 0,
@@ -82,30 +82,45 @@ async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Resp
             total_summary["total_prompt_tokens"] += baseline.get("total_prompt_tokens", 0)
             total_summary["total_completion_tokens"] += baseline.get("total_completion_tokens", 0)
             total_summary["total_tokens"] += baseline.get("total_tokens", 0)
-            persona_breakdown.append({
-                "name": name,
-                "calls": baseline.get("total_calls", 0),
-                "prompt_tokens": baseline.get("total_prompt_tokens", 0),
-                "completion_tokens": baseline.get("total_completion_tokens", 0),
-                "total_tokens": baseline.get("total_tokens", 0),
-            })
+            persona_breakdown.append(
+                {
+                    "name": name,
+                    "calls": baseline.get("total_calls", 0),
+                    "prompt_tokens": baseline.get("total_prompt_tokens", 0),
+                    "completion_tokens": baseline.get("total_completion_tokens", 0),
+                    "total_tokens": baseline.get("total_tokens", 0),
+                }
+            )
         except Exception as exc:
             LOG.warning("读取 Token 统计失败 %s: %s", name, exc)
 
-    response_avg: dict[str, Any] = {"total_calls": 0, "avg_total_tokens": 0, "avg_prompt_tokens": 0, "avg_completion_tokens": 0}
+    response_avg: dict[str, Any] = {
+        "total_calls": 0,
+        "avg_total_tokens": 0,
+        "avg_prompt_tokens": 0,
+        "avg_completion_tokens": 0,
+    }
     if total_summary["total_calls"]:
         response_avg = {
             "total_calls": total_summary["total_calls"],
-            "avg_total_tokens": round(total_summary["total_tokens"] / total_summary["total_calls"], 1),
-            "avg_prompt_tokens": round(total_summary["total_prompt_tokens"] / total_summary["total_calls"], 1),
-            "avg_completion_tokens": round(total_summary["total_completion_tokens"] / total_summary["total_calls"], 1),
+            "avg_total_tokens": round(
+                total_summary["total_tokens"] / total_summary["total_calls"], 1
+            ),
+            "avg_prompt_tokens": round(
+                total_summary["total_prompt_tokens"] / total_summary["total_calls"], 1
+            ),
+            "avg_completion_tokens": round(
+                total_summary["total_completion_tokens"] / total_summary["total_calls"], 1
+            ),
         }
 
-    return _json_response({
-        "summary": total_summary,
-        "response_avg": response_avg,
-        "personas": persona_breakdown,
-    })
+    return _json_response(
+        {
+            "summary": total_summary,
+            "response_avg": response_avg,
+            "personas": persona_breakdown,
+        }
+    )
 
 
 async def api_telemetry_get(request: web.Request, persona_manager: Any) -> web.Response:
@@ -158,10 +173,12 @@ async def api_telemetry_get(request: web.Request, persona_manager: Any) -> web.R
             "avg_ms": round(stats["total_ms"] / calls, 1) if calls else 0,
         }
 
-    return _json_response({
-        "total_calls": total_calls,
-        "skills": skills,
-    })
+    return _json_response(
+        {
+            "total_calls": total_calls,
+            "skills": skills,
+        }
+    )
 
 
 @handle_api_errors
@@ -171,8 +188,8 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
-    from sirius_pulse.token.token_store import TokenUsageStore
     from sirius_pulse.token import analytics as token_analytics
+    from sirius_pulse.token.token_store import TokenUsageStore
 
     db_path = paths.dir / "persona.db"
     if not db_path.exists():
@@ -193,7 +210,9 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
     store = TokenUsageStore(str(db_path), read_only=True)
     baseline = token_analytics.compute_baseline(store, start_ts=start_ts, end_ts=end_ts)
     by_model = token_analytics.group_by_model(store, start_ts=start_ts, end_ts=end_ts)
-    time_series = token_analytics.time_series(store, bucket_seconds=3600, start_ts=start_ts, end_ts=end_ts)
+    time_series = token_analytics.time_series(
+        store, bucket_seconds=3600, start_ts=start_ts, end_ts=end_ts
+    )
 
     # 转换为前端期望的格式
     summary = {
@@ -208,7 +227,9 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
             "total_calls": summary["total_calls"],
             "avg_total_tokens": round(summary["total_tokens"] / summary["total_calls"], 1),
             "avg_prompt_tokens": round(summary["total_prompt_tokens"] / summary["total_calls"], 1),
-            "avg_completion_tokens": round(summary["total_completion_tokens"] / summary["total_calls"], 1),
+            "avg_completion_tokens": round(
+                summary["total_completion_tokens"] / summary["total_calls"], 1
+            ),
         }
 
     # hourly 数据（按小时聚合，用于时间序列图）
@@ -220,14 +241,16 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
         except Exception:
             LOG.warning("读取 token 文件失败", exc_info=True)
             continue
-        hourly.append({
-            "hour_ts": hour_ts,
-            "hour": dt.hour,
-            "calls": ts.get("calls", 0),
-            "prompt_tokens": ts.get("prompt_tokens", 0),
-            "completion_tokens": ts.get("completion_tokens", 0),
-            "total_tokens": ts.get("total_tokens", 0),
-        })
+        hourly.append(
+            {
+                "hour_ts": hour_ts,
+                "hour": dt.hour,
+                "calls": ts.get("calls", 0),
+                "prompt_tokens": ts.get("prompt_tokens", 0),
+                "completion_tokens": ts.get("completion_tokens", 0),
+                "total_tokens": ts.get("total_tokens", 0),
+            }
+        )
 
     # hourly_distribution: 按小时聚合的调用分布
     hourly_distribution: dict[int, int] = {}
@@ -235,8 +258,7 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
         hour = h["hour"]
         hourly_distribution[hour] = hourly_distribution.get(hour, 0) + h["calls"]
     hourly_distribution_list = [
-        {"hour": h, "calls": c}
-        for h, c in sorted(hourly_distribution.items())
+        {"hour": h, "calls": c} for h, c in sorted(hourly_distribution.items())
     ]
 
     # by_model 转换为前端期望的格式
@@ -256,8 +278,12 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
     by_provider = store.get_breakdown_by("provider_name", start_ts=start_ts, end_ts=end_ts)
     by_task = store.get_breakdown_by("task_name", start_ts=start_ts, end_ts=end_ts)
     section_breakdown = store.get_section_breakdown(start_ts=start_ts, end_ts=end_ts)
-    section_breakdown_by_task = store.get_section_breakdown_by_task(start_ts=start_ts, end_ts=end_ts)
-    recent_with_breakdown = store.get_recent_records_with_breakdown(limit=100, start_ts=start_ts, end_ts=end_ts)
+    section_breakdown_by_task = store.get_section_breakdown_by_task(
+        start_ts=start_ts, end_ts=end_ts
+    )
+    recent_with_breakdown = store.get_recent_records_with_breakdown(
+        limit=100, start_ts=start_ts, end_ts=end_ts
+    )
 
     # 统计指标
     total_tokens = summary["total_tokens"]
@@ -270,27 +296,29 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
             "completion_pct": round(completion_tokens * 100.0 / total_tokens, 1),
         }
 
-    return _json_response({
-        "summary": summary,
-        "response_avg": response_avg,
-        "hourly": hourly,
-        "hourly_distribution": hourly_distribution_list,
-        "by_model": by_model_list,
-        "by_group": by_group,
-        "by_provider": by_provider,
-        "by_task": by_task,
-        "section_breakdown": section_breakdown,
-        "section_breakdown_by_task": section_breakdown_by_task,
-        "recent_with_breakdown": recent_with_breakdown,
-        "ratio": ratio,
-        "efficiency_stats": store.get_efficiency_stats(start_ts=start_ts, end_ts=end_ts),
-        "retry_stats": store.get_retry_stats(start_ts=start_ts, end_ts=end_ts),
-        "duration_stats": store.get_duration_stats(start_ts=start_ts, end_ts=end_ts),
-        "empty_reply_stats": store.get_empty_reply_stats(start_ts=start_ts, end_ts=end_ts),
-        "failure_stats": store.get_failure_stats(start_ts=start_ts, end_ts=end_ts),
-        "depth_stats": store.get_conversation_depth_stats(start_ts=start_ts, end_ts=end_ts),
-        "period_comparison": store.get_period_comparison(start_ts=start_ts, end_ts=end_ts),
-    })
+    return _json_response(
+        {
+            "summary": summary,
+            "response_avg": response_avg,
+            "hourly": hourly,
+            "hourly_distribution": hourly_distribution_list,
+            "by_model": by_model_list,
+            "by_group": by_group,
+            "by_provider": by_provider,
+            "by_task": by_task,
+            "section_breakdown": section_breakdown,
+            "section_breakdown_by_task": section_breakdown_by_task,
+            "recent_with_breakdown": recent_with_breakdown,
+            "ratio": ratio,
+            "efficiency_stats": store.get_efficiency_stats(start_ts=start_ts, end_ts=end_ts),
+            "retry_stats": store.get_retry_stats(start_ts=start_ts, end_ts=end_ts),
+            "duration_stats": store.get_duration_stats(start_ts=start_ts, end_ts=end_ts),
+            "empty_reply_stats": store.get_empty_reply_stats(start_ts=start_ts, end_ts=end_ts),
+            "failure_stats": store.get_failure_stats(start_ts=start_ts, end_ts=end_ts),
+            "depth_stats": store.get_conversation_depth_stats(start_ts=start_ts, end_ts=end_ts),
+            "period_comparison": store.get_period_comparison(start_ts=start_ts, end_ts=end_ts),
+        }
+    )
 
 
 @handle_api_errors
@@ -305,6 +333,7 @@ async def api_persona_cognition_get(request: web.Request, persona_manager: Any) 
         return _json_response({"events": [], "emotion_distribution": {}})
 
     from sirius_pulse.memory.cognition_store import CognitionEventStore
+
     store = CognitionEventStore(str(db_path), read_only=True)
     limit = int(request.query.get("limit", "50"))
     events = store.get_recent(limit=limit)
@@ -315,7 +344,9 @@ async def api_persona_cognition_get(request: web.Request, persona_manager: Any) 
 
 
 @handle_api_errors
-async def api_persona_cognition_analysis_get(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_persona_cognition_analysis_get(
+    request: web.Request, persona_manager: Any
+) -> web.Response:
     """Return rich cognition analysis: intent/user/hourly/score distributions + decision stats."""
     name = _get_name(request)
     paths = persona_manager.get_persona_paths(name)
@@ -434,15 +465,19 @@ async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> w
         "top_keywords": sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:20],
     }
 
-    return _json_response({
-        "entries": entries,
-        "stats": stats,
-        "groups": sorted(groups),
-        "total": total,
-    })
+    return _json_response(
+        {
+            "entries": entries,
+            "stats": stats,
+            "groups": sorted(groups),
+            "total": total,
+        }
+    )
 
 
-async def api_persona_vector_store_status_get(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_persona_vector_store_status_get(
+    request: web.Request, persona_manager: Any
+) -> web.Response:
     name = _get_name(request)
     paths = persona_manager.get_persona_paths(name)
     if paths is None:
@@ -457,13 +492,15 @@ async def api_persona_vector_store_status_get(request: web.Request, persona_mana
         return _json_response(stats)
     except Exception as exc:
         LOG.warning("读取向量存储状态失败 %s: %s", name, exc)
-        return _json_response({
-            "available": False,
-            "total_entries": 0,
-            "groups": [],
-            "model": DiaryVectorStore.MODEL_NAME,
-            "error": str(exc),
-        })
+        return _json_response(
+            {
+                "available": False,
+                "total_entries": 0,
+                "groups": [],
+                "model": DiaryVectorStore.MODEL_NAME,
+                "error": str(exc),
+            }
+        )
 
 
 @handle_api_errors
@@ -511,7 +548,8 @@ async def api_persona_users_get(request: web.Request, persona_manager: Any) -> w
     # 后端搜索：按名称或 user_id 模糊匹配
     if search:
         users = [
-            u for u in users
+            u
+            for u in users
             if search in (u.get("name", "") or "").lower()
             or search in (u.get("user_id", "") or "").lower()
         ]
@@ -608,7 +646,8 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
     if search:
         search_lower = search.lower()
         terms = [
-            t for t in terms
+            t
+            for t in terms
             if search_lower in t.get("term", "").lower()
             or search_lower in t.get("definition", "").lower()
         ]
@@ -674,13 +713,15 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
                                 day_bucket[day][gid] = {"human": 0, "assistant": 0, "system": 0}
                             day_bucket[day][gid][role] = day_bucket[day][gid].get(role, 0) + 1
 
-                            recent_entries.append({
-                                "group_id": gid,
-                                "speaker_name": data.get("speaker_name", ""),
-                                "role": role,
-                                "content": data.get("content", "")[:120],
-                                "timestamp": ts,
-                            })
+                            recent_entries.append(
+                                {
+                                    "group_id": gid,
+                                    "speaker_name": data.get("speaker_name", ""),
+                                    "role": role,
+                                    "content": data.get("content", "")[:120],
+                                    "timestamp": ts,
+                                }
+                            )
                         except (json.JSONDecodeError, TypeError):
                             continue
             except OSError:
@@ -709,15 +750,17 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
                     if not isinstance(item, dict):
                         continue
                     emb = item.get("embedding")
-                    diary_entries.append({
-                        "entry_id": item.get("entry_id", ""),
-                        "group_id": g_id,
-                        "created_at": item.get("created_at", ""),
-                        "summary": item.get("summary", ""),
-                        "content": item.get("content", "")[:300],
-                        "keywords": item.get("keywords", []),
-                        "embedding": emb,
-                    })
+                    diary_entries.append(
+                        {
+                            "entry_id": item.get("entry_id", ""),
+                            "group_id": g_id,
+                            "created_at": item.get("created_at", ""),
+                            "summary": item.get("summary", ""),
+                            "content": item.get("content", "")[:300],
+                            "keywords": item.get("keywords", []),
+                            "embedding": emb,
+                        }
+                    )
                     for kw in item.get("keywords", []):
                         keyword_freq[kw] = keyword_freq.get(kw, 0) + 1
                         if kw not in group_keyword_map.setdefault(g_id, set()):
@@ -757,12 +800,14 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
                         group_users[gid].add(uid)
                         engagement = u_data.get("engagement_rate", 0)
                         count = u_data.get("interaction_count", 0)
-                        user_nodes.append({
-                            "user_id": uid,
-                            "name": u_data.get("name", uid),
-                            "engagement_rate": engagement,
-                            "interaction_count": count,
-                        })
+                        user_nodes.append(
+                            {
+                                "user_id": uid,
+                                "name": u_data.get("name", uid),
+                                "engagement_rate": engagement,
+                                "interaction_count": count,
+                            }
+                        )
                     except (OSError, json.JSONDecodeError, TypeError):
                         continue
 
@@ -775,8 +820,7 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
             topic_group_count[kw] = topic_group_count.get(kw, 0) + 1
     # 过滤低价值关键词，保留跨群出现或高频的话题
     valid_topics = {
-        kw for kw in topic_group_count
-        if topic_group_count[kw] >= 2 or keyword_freq.get(kw, 0) >= 3
+        kw for kw in topic_group_count if topic_group_count[kw] >= 2 or keyword_freq.get(kw, 0) >= 3
     }
     for t in sorted(valid_topics):
         topic_nodes.append({"id": t, "name": t})
@@ -792,24 +836,28 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
     for uid, kw in sorted(link_set):
         user_topic_links.append({"source": f"u_{uid}", "target": f"t_{kw}"})
 
-    return _json_response({
-        "groups": sorted(all_groups),
-        "basic_timeline": {
-            "days": days_sorted,
-            "groups": groups_in_data,
-            "buckets": day_bucket,
-            "recent": recent_entries,
-        },
-        "diary_entries": diary_entries,
-        "diary_top_keywords": top_keywords,
-        "user_nodes": user_nodes,
-        "topic_nodes": topic_nodes,
-        "user_topic_links": user_topic_links,
-    })
+    return _json_response(
+        {
+            "groups": sorted(all_groups),
+            "basic_timeline": {
+                "days": days_sorted,
+                "groups": groups_in_data,
+                "buckets": day_bucket,
+                "recent": recent_entries,
+            },
+            "diary_entries": diary_entries,
+            "diary_top_keywords": top_keywords,
+            "user_nodes": user_nodes,
+            "topic_nodes": topic_nodes,
+            "user_topic_links": user_topic_links,
+        }
+    )
 
 
 @handle_api_errors
-async def api_persona_conversation_history_get(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_persona_conversation_history_get(
+    request: web.Request, persona_manager: Any
+) -> web.Response:
     """GET /api/personas/{name}/conversations — 返回对话历史（分页，支持搜索筛选）。"""
     name = _get_name(request)
     group_id = request.query.get("group_id", "").strip()
@@ -867,10 +915,13 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
 
         # 应用筛选
         if search:
-            all_messages = [m for m in all_messages if search in (m.get("content", "") or "").lower()]
+            all_messages = [
+                m for m in all_messages if search in (m.get("content", "") or "").lower()
+            ]
         if speaker:
             all_messages = [
-                m for m in all_messages
+                m
+                for m in all_messages
                 if speaker in (m.get("speaker_name", "") or "").lower()
                 or speaker in (m.get("user_id", "") or "").lower()
             ]
@@ -881,7 +932,7 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
 
         all_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
         total = len(all_messages)
-        messages = all_messages[offset:offset + limit]
+        messages = all_messages[offset : offset + limit]
     else:
         # 无筛选条件时：使用倒序读取优化
         # 统计总行数
@@ -917,7 +968,7 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
                 continue
 
         messages_raw.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
-        messages = messages_raw[offset:offset + limit]
+        messages = messages_raw[offset : offset + limit]
 
     # 读取钉住消息
     pinned_messages: list[dict[str, Any]] = []
@@ -929,24 +980,28 @@ async def api_persona_conversation_history_get(request: web.Request, persona_man
             for msg_id, msg_data in pinned_msgs.items():
                 if group_id and msg_data.get("group_id") != group_id:
                     continue
-                pinned_messages.append({
-                    "message_id": msg_id,
-                    "content": msg_data.get("content", ""),
-                    "speaker": msg_data.get("speaker", ""),
-                    "group_id": msg_data.get("group_id", "default"),
-                    "reason": msg_data.get("reason", ""),
-                    "pinned_at": msg_data.get("pinned_at", ""),
-                    "current_carry_count": msg_data.get("current_carry_count", 0),
-                    "max_carry_count": msg_data.get("max_carry_count", 100),
-                })
+                pinned_messages.append(
+                    {
+                        "message_id": msg_id,
+                        "content": msg_data.get("content", ""),
+                        "speaker": msg_data.get("speaker", ""),
+                        "group_id": msg_data.get("group_id", "default"),
+                        "reason": msg_data.get("reason", ""),
+                        "pinned_at": msg_data.get("pinned_at", ""),
+                        "current_carry_count": msg_data.get("current_carry_count", 0),
+                        "max_carry_count": msg_data.get("max_carry_count", 100),
+                    }
+                )
         except (OSError, json.JSONDecodeError):
             pass
 
-    return _json_response({
-        "messages": messages,
-        "groups": sorted(groups),
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "pinned_messages": pinned_messages,
-    })
+    return _json_response(
+        {
+            "messages": messages,
+            "groups": sorted(groups),
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "pinned_messages": pinned_messages,
+        }
+    )

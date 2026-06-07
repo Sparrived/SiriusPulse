@@ -26,29 +26,32 @@ def _short_id() -> str:
 
 class EvolutionAction(str, Enum):
     """演化链决策动作。"""
-    ADD = "add"                     # 全新信息，直接添加
-    SUPERSEDE = "supersede"         # 矛盾信息，取代旧记录
-    UPDATE = "update"               # 补充信息，合并到现有记录
-    REJECT = "reject"               # 拒绝（低置信度或幻觉）
+
+    ADD = "add"  # 全新信息，直接添加
+    SUPERSEDE = "supersede"  # 矛盾信息，取代旧记录
+    UPDATE = "update"  # 补充信息，合并到现有记录
+    REJECT = "reject"  # 拒绝（低置信度或幻觉）
     MARK_UNCERTAIN = "mark_uncertain"  # 无法确定，标记待验证
 
 
 class RecordStatus(str, Enum):
     """演化链记录状态。"""
-    ACTIVE = "active"               # 当前有效
-    SUPERSEDED = "superseded"       # 被新信息取代（保留历史）
-    SHADOW = "shadow"               # 阴影状态（不参与召回，保留可追溯）
-    UNCERTAIN = "uncertain"         # 待验证
-    REJECTED = "rejected"           # 被拒绝（幻觉/低质量）
+
+    ACTIVE = "active"  # 当前有效
+    SUPERSEDED = "superseded"  # 被新信息取代（保留历史）
+    SHADOW = "shadow"  # 阴影状态（不参与召回，保留可追溯）
+    UNCERTAIN = "uncertain"  # 待验证
+    REJECTED = "rejected"  # 被拒绝（幻觉/低质量）
 
 
 class MetaTag(str, Enum):
     """元认知标记：信息来源类型。"""
-    STATED = "stated"               # 明确陈述
-    INFERRED = "inferred"           # 有直接证据暗示
-    UNCERTAIN = "uncertain"         # 不确定
+
+    STATED = "stated"  # 明确陈述
+    INFERRED = "inferred"  # 有直接证据暗示
+    UNCERTAIN = "uncertain"  # 不确定
     USER_CORRECTED = "user_corrected"  # 用户显式纠正
-    MIGRATION = "migration"         # 从旧系统迁移
+    MIGRATION = "migration"  # 从旧系统迁移
 
 
 @dataclass(slots=True)
@@ -110,8 +113,8 @@ class EvolutionRecord:
     record_id: str = field(default_factory=_short_id)
 
     # ── 三元组内容 ──
-    subject: str = ""              # 显示名（LLM 提取的原始名称）
-    subject_user_id: str = ""      # 关联的 user_id（别名系统解析）
+    subject: str = ""  # 显示名（LLM 提取的原始名称）
+    subject_user_id: str = ""  # 关联的 user_id（别名系统解析）
     predicate: str = ""
     obj: str = ""
 
@@ -203,12 +206,14 @@ class EvolutionRecord:
         confidence_delta: float = 0.0,
     ) -> None:
         """记录一次验证事件。"""
-        self.verifications.append({
-            "verified_at": _now_iso(),
-            "type": verification_type,
-            "details": details,
-            "confidence_delta": confidence_delta,
-        })
+        self.verifications.append(
+            {
+                "verified_at": _now_iso(),
+                "type": verification_type,
+                "details": details,
+                "confidence_delta": confidence_delta,
+            }
+        )
         self.confidence = max(0.0, min(1.0, self.confidence + confidence_delta))
 
     def add_correction(
@@ -219,18 +224,21 @@ class EvolutionRecord:
         cascade_affected: list[str] | None = None,
     ) -> None:
         """记录一次纠正事件。"""
-        self.corrections.append({
-            "corrected_at": _now_iso(),
-            "old_value": old_value,
-            "new_value": new_value,
-            "reason": reason,
-            "cascade_affected": cascade_affected or [],
-        })
+        self.corrections.append(
+            {
+                "corrected_at": _now_iso(),
+                "old_value": old_value,
+                "new_value": new_value,
+                "reason": reason,
+                "cascade_affected": cascade_affected or [],
+            }
+        )
 
 
 @dataclass
 class SituationSource:
     """情景来源：记录信息提取的上下文。"""
+
     type: str = "situation_extraction"
     group_id: str = ""
     model: str = ""
@@ -257,6 +265,7 @@ class SituationSource:
 @dataclass
 class ValidationResult:
     """验证结果：一次 validate_and_commit 的返回。"""
+
     records: list[EvolutionRecord] = field(default_factory=list)
     actions: list[EvolutionAction] = field(default_factory=list)
     rejected_triples: list[Triple] = field(default_factory=list)

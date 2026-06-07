@@ -7,13 +7,13 @@ from typing import cast
 import httpx
 
 from sirius_pulse.providers.base import (
+    DEFAULT_TIMEOUT_SECONDS,
     AsyncLLMProvider,
+    GenerationRequest,
     GenerationResult,
     ToolCall,
     build_chat_completion_payload,
     build_generation_debug_context,
-    DEFAULT_TIMEOUT_SECONDS,
-    GenerationRequest,
     prepare_openai_compatible_messages,
     resolve_generation_timeout_seconds,
     set_last_generation_usage,
@@ -28,7 +28,9 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
 
     _provider_name = "openai-compatible"
 
-    def __init__(self, *, base_url: str, api_key: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self, *, base_url: str, api_key: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
@@ -36,7 +38,9 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
     def _build_url(self, request: GenerationRequest) -> str:
         return f"{self._base_url}/v1/chat/completions"
 
-    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> GenerationResult | tuple[str, GenerationResult]:
+    async def generate_async(
+        self, request: GenerationRequest, return_reasoning: bool = False
+    ) -> GenerationResult | tuple[str, GenerationResult]:
         timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
         url = self._build_url(request)
         debug_context = build_generation_debug_context(
@@ -130,12 +134,14 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
                 if not isinstance(tc, dict):
                     continue
                 func = tc.get("function", {})
-                tool_calls.append(ToolCall(
-                    id=str(tc.get("id", "")),
-                    type=str(tc.get("type", "function")),
-                    function_name=str(func.get("name", "")),
-                    function_arguments=str(func.get("arguments", "")),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=str(tc.get("id", "")),
+                        type=str(tc.get("type", "function")),
+                        function_name=str(func.get("name", "")),
+                        function_arguments=str(func.get("arguments", "")),
+                    )
+                )
 
         content = extract_assistant_text(message)
         finish_reason = str(choice.get("finish_reason", "stop"))
@@ -174,7 +180,9 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
         url = self._build_url(request)
         payload = build_chat_completion_payload(request, provider_name=self._provider_name)
-        wire_messages, _ = prepare_openai_compatible_messages(cast(list[dict[str, object]], payload["messages"]))
+        wire_messages, _ = prepare_openai_compatible_messages(
+            cast(list[dict[str, object]], payload["messages"])
+        )
         wire_payload = dict(payload)
         wire_payload["messages"] = wire_messages
         wire_payload["stream"] = True

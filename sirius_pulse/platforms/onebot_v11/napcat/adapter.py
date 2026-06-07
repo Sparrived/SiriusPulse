@@ -29,13 +29,17 @@ except ImportError:
 
 from sirius_pulse.adapters.base import BaseAdapter
 from sirius_pulse.adapters.models import (
-    MessageGroup, TextSegment, AtSegment,
-    ImageSegment, VoiceSegment, FileSegment, ReplySegment,
+    AtSegment,
+    FileSegment,
+    ImageSegment,
+    MessageGroup,
     ParsedEvent,
+    ReplySegment,
+    TextSegment,
+    VoiceSegment,
 )
-from sirius_pulse.models.models import Message, UnifiedUser
-
 from sirius_pulse.core.events import SessionEvent, SessionEventType
+from sirius_pulse.models.models import Message, UnifiedUser
 
 LOG = logging.getLogger("sirius.platforms.napcat")
 
@@ -49,6 +53,7 @@ def _is_ws_closed(ws: Any) -> bool:
     except AttributeError:
         try:
             from websockets.protocol import State
+
             return ws.state != State.OPEN
         except Exception:
             return getattr(ws, "close_code", None) is not None
@@ -206,7 +211,10 @@ class NapCatAdapter(BaseAdapter):
                     except Exception as exc:
                         LOG.warning("Listen task ended: %s", exc)
                 else:
-                    if self._MAX_RECONNECT_ATTEMPTS > 0 and attempts >= self._MAX_RECONNECT_ATTEMPTS:
+                    if (
+                        self._MAX_RECONNECT_ATTEMPTS > 0
+                        and attempts >= self._MAX_RECONNECT_ATTEMPTS
+                    ):
                         LOG.error(
                             "NapCat WS 重连次数耗尽 (%s 次)，停止重连",
                             self._MAX_RECONNECT_ATTEMPTS,
@@ -449,7 +457,15 @@ class NapCatAdapter(BaseAdapter):
             elif isinstance(seg, ReplySegment):
                 segments.append({"type": "reply", "data": {"id": seg.message_id}})
             elif isinstance(seg, FileSegment):
-                segments.append({"type": "file", "data": {"file": seg.file_path, "name": seg.name or Path(seg.file_path).name}})
+                segments.append(
+                    {
+                        "type": "file",
+                        "data": {
+                            "file": seg.file_path,
+                            "name": seg.name or Path(seg.file_path).name,
+                        },
+                    }
+                )
         return segments
 
     # ─── 事件解析（OneBot → 引擎格式） ──────────────────────
@@ -521,9 +537,7 @@ class NapCatAdapter(BaseAdapter):
             multimodal_inputs=multimodal_inputs,
         )
 
-    async def _render_group_prompt(
-        self, event: dict[str, Any], self_id: str, group_id: str
-    ) -> str:
+    async def _render_group_prompt(self, event: dict[str, Any], self_id: str, group_id: str) -> str:
         """将群聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
         from ..protocol import _face_to_text, build_image_label
 
@@ -605,10 +619,7 @@ class NapCatAdapter(BaseAdapter):
                 quote_text = quote_text[:200] + "..."
             safe_quote = html.escape(quote_text, quote=False)
             if safe_nick:
-                return (
-                    f'[引用消息 msg_id="{safe_msg_id}" speaker="{safe_nick}"]'
-                    f'{safe_quote}[/引用消息]'
-                )
+                return f'[引用消息 msg_id="{safe_msg_id}" speaker="{safe_nick}"]' f"{safe_quote}[/引用消息]"
             return f'[引用消息 msg_id="{safe_msg_id}"]{safe_quote}[/引用消息]'
         except Exception as exc:
             LOG.debug("获取引用消息失败 (msg_id=%s): %s", msg_id, exc)
@@ -682,6 +693,7 @@ class NapCatAdapter(BaseAdapter):
     @staticmethod
     def extract_sender_names(event: dict[str, Any]) -> tuple[str, str]:
         from ..protocol import extract_sender_names
+
         return extract_sender_names(event)
 
     # ─── 事件入口 ─────────────────────────────────────────
@@ -857,9 +869,7 @@ class NapCatAdapter(BaseAdapter):
                         await self._send_group_text(gid, text)
 
                 try:
-                    results = await engine.tick_delayed_queue(
-                        gid, on_partial_reply=_send_partial
-                    )
+                    results = await engine.tick_delayed_queue(gid, on_partial_reply=_send_partial)
                 except Exception as exc:
                     LOG.warning("Delayed queue tick 失败 (%s): %s", gid, exc)
                     results = []
@@ -907,6 +917,7 @@ class NapCatAdapter(BaseAdapter):
             (清理后的文本, 引用列表)
         """
         import re
+
         ref_pattern = re.compile(
             r'\[REF:index=(\d+)\s+msg_id="([^"]*)"\s+speaker="([^"]*)"\s+content="([^"]*)"\]'
         )
@@ -914,12 +925,14 @@ class NapCatAdapter(BaseAdapter):
         clean_text = text
 
         for match in ref_pattern.finditer(text):
-            refs.append({
-                "index": match.group(1),
-                "msg_id": match.group(2),
-                "speaker": match.group(3),
-                "content": match.group(4),
-            })
+            refs.append(
+                {
+                    "index": match.group(1),
+                    "msg_id": match.group(2),
+                    "speaker": match.group(3),
+                    "content": match.group(4),
+                }
+            )
             clean_text = clean_text.replace(match.group(0), "", 1)
 
         return clean_text.strip(), refs
@@ -939,7 +952,9 @@ class NapCatAdapter(BaseAdapter):
                     await self.send_group_msg(group_id, segments)
                     LOG.info(
                         "回复群 %s (引用 msg_id=%s): %s",
-                        group_id, msg_id, text[:120],
+                        group_id,
+                        msg_id,
+                        text[:120],
                     )
                 elif reply_refs:
                     # 有引用但没有 msg_id，使用文本格式

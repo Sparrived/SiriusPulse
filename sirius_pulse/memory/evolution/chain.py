@@ -117,9 +117,7 @@ class EvolutionChain:
                 result.actions.append(EvolutionAction.ADD)
             else:
                 # 有矛盾 → 比较置信度决定动作
-                action, record = await self._resolve_conflict(
-                    triple, conflicts, source
-                )
+                action, record = await self._resolve_conflict(triple, conflicts, source)
                 result.records.append(record)
                 result.actions.append(action)
 
@@ -260,14 +258,14 @@ class EvolutionChain:
         for record in existing_records:
             if record.subject_user_id == user_id and record.is_active:
                 # 已存在 → 增强验证
-                record.add_verification(
-                    "mention", group_id, confidence_delta=0.05
-                )
+                record.add_verification("mention", group_id, confidence_delta=0.05)
                 record.source_group_id = group_id
                 self._store.save_record(record)
                 logger.debug(
                     "别称验证增强: %s → %s (confidence=%.2f)",
-                    alias_lower, user_id, record.confidence,
+                    alias_lower,
+                    user_id,
+                    record.confidence,
                 )
                 return
 
@@ -293,7 +291,10 @@ class EvolutionChain:
         self._persist_record(record)
         logger.debug(
             "别称注册: %s → %s (%s, confidence=%.2f)",
-            alias_lower, user_id, source, confidence,
+            alias_lower,
+            user_id,
+            source,
+            confidence,
         )
 
     def resolve_alias(
@@ -326,10 +327,7 @@ class EvolutionChain:
 
         # 按 group_id 过滤：仅保留与当前群组相关的记录
         if group_id:
-            filtered = [
-                r for r in records
-                if self._record_matches_group(r, group_id)
-            ]
+            filtered = [r for r in records if self._record_matches_group(r, group_id)]
             # 如果过滤后为空，回退到全量
             if filtered:
                 records = filtered
@@ -379,10 +377,7 @@ class EvolutionChain:
         result: dict[str, str] = {}
         for alias_lower, records in self._alias_cache.items():
             for record in records:
-                if (
-                    record.is_active
-                    and record.source_group_id == group_id
-                ):
+                if record.is_active and record.source_group_id == group_id:
                     result[alias_lower] = record.subject
                     break  # 每个别称取第一个匹配即可
         return result
@@ -398,9 +393,7 @@ class EvolutionChain:
         )
         return [r.obj for r in records]
 
-    def bump_alias(
-        self, alias: str, user_id: str, group_id: str
-    ) -> None:
+    def bump_alias(self, alias: str, user_id: str, group_id: str) -> None:
         """在活跃事件中对别称记录进行 bump 验证。
 
         每次别称被提及使用时调用，增强置信度。
@@ -412,13 +405,13 @@ class EvolutionChain:
         records = self._alias_cache.get(alias_lower, [])
         for record in records:
             if record.subject_user_id == user_id and record.is_active:
-                record.add_verification(
-                    "bump", group_id, confidence_delta=0.05
-                )
+                record.add_verification("bump", group_id, confidence_delta=0.05)
                 self._store.save_record(record)
                 logger.debug(
                     "别称 bump: %s → %s (confidence=%.2f)",
-                    alias_lower, user_id, record.confidence,
+                    alias_lower,
+                    user_id,
+                    record.confidence,
                 )
                 return
 
@@ -459,9 +452,9 @@ class EvolutionChain:
         if found:
             # 清理缓存
             self._alias_cache[alias_lower] = [
-                r for r in records if not (
-                    r.subject_user_id == user_id and r.status == RecordStatus.REJECTED
-                )
+                r
+                for r in records
+                if not (r.subject_user_id == user_id and r.status == RecordStatus.REJECTED)
             ]
             if not self._alias_cache[alias_lower]:
                 del self._alias_cache[alias_lower]
@@ -505,9 +498,9 @@ class EvolutionChain:
         if found:
             # 清理缓存
             self._alias_cache[alias_lower] = [
-                r for r in records if not (
-                    r.subject_user_id == user_id and r.status == RecordStatus.SHADOW
-                )
+                r
+                for r in records
+                if not (r.subject_user_id == user_id and r.status == RecordStatus.SHADOW)
             ]
             if not self._alias_cache[alias_lower]:
                 del self._alias_cache[alias_lower]
@@ -535,14 +528,10 @@ class EvolutionChain:
             # 取最后一次验证时间，无验证则用提取时间
             last_time_str = record.extracted_at
             if record.verifications:
-                last_time_str = record.verifications[-1].get(
-                    "verified_at", last_time_str
-                )
+                last_time_str = record.verifications[-1].get("verified_at", last_time_str)
 
             try:
-                last_time = datetime.fromisoformat(
-                    last_time_str.replace("Z", "+00:00")
-                )
+                last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
                 days = (now - last_time).days
             except (ValueError, TypeError):
                 continue
@@ -551,35 +540,36 @@ class EvolutionChain:
                 continue
 
             # 衰减
-            record.confidence *= 0.95 ** days
+            record.confidence *= 0.95**days
 
             if record.confidence < 0.10:
                 record.status = RecordStatus.SHADOW
                 logger.debug(
                     "别称衰减至 SHADOW: %s → %s (confidence=%.3f)",
-                    record.obj, record.subject_user_id, record.confidence,
+                    record.obj,
+                    record.subject_user_id,
+                    record.confidence,
                 )
                 # 从别称缓存中移除
                 alias_key = record.obj.lower()
                 alias_list = self._alias_cache.get(alias_key, [])
                 self._alias_cache[alias_key] = [
-                    r for r in alias_list
-                    if r.record_id != record.record_id
+                    r for r in alias_list if r.record_id != record.record_id
                 ]
                 if not self._alias_cache[alias_key]:
                     del self._alias_cache[alias_key]
             else:
                 logger.debug(
                     "别称衰减: %s → %s (confidence=%.3f, days=%d)",
-                    record.obj, record.subject_user_id,
-                    record.confidence, days,
+                    record.obj,
+                    record.subject_user_id,
+                    record.confidence,
+                    days,
                 )
 
             self._store.save_record(record)
 
-    def cleanup_polluted_aliases(
-        self, persona_name: str, persona_aliases: list[str]
-    ) -> None:
+    def cleanup_polluted_aliases(self, persona_name: str, persona_aliases: list[str]) -> None:
         """清理被污染的别称记录。
 
         将 obj 等于人格名称或人格别名的记录标记为 REJECTED。
@@ -616,8 +606,7 @@ class EvolutionChain:
             alias_key = record.obj.lower()
             alias_list = self._alias_cache.get(alias_key, [])
             self._alias_cache[alias_key] = [
-                r for r in alias_list
-                if r.record_id != record.record_id
+                r for r in alias_list if r.record_id != record.record_id
             ]
             if not self._alias_cache[alias_key]:
                 del self._alias_cache[alias_key]
@@ -626,7 +615,8 @@ class EvolutionChain:
 
             logger.info(
                 "清理污染别称: %s → %s (REJECTED)",
-                record.obj, record.subject_user_id,
+                record.obj,
+                record.subject_user_id,
             )
 
     # ── 内部：别称辅助 ──
@@ -691,9 +681,7 @@ class EvolutionChain:
 
         return conflicts
 
-    def _find_exact_contradiction(
-        self, new_triple: Triple
-    ) -> list[EvolutionRecord]:
+    def _find_exact_contradiction(self, new_triple: Triple) -> list[EvolutionRecord]:
         """Layer 1: 结构化矛盾。
 
         同一主体、同一谓语，但宾语不同。
@@ -712,9 +700,7 @@ class EvolutionChain:
 
         return conflicts
 
-    def _find_semantic_contradiction(
-        self, new_triple: Triple
-    ) -> list[EvolutionRecord]:
+    def _find_semantic_contradiction(self, new_triple: Triple) -> list[EvolutionRecord]:
         """Layer 2: 语义矛盾。
 
         通过 embedding 相似度检测语义上矛盾的信息。
@@ -750,16 +736,12 @@ class EvolutionChain:
             # 高相似度 + 不同内容 → 可能矛盾
             if similarity > 0.8 and record.content_key != new_triple.content_key:
                 # 简单的矛盾信号：包含否定词或反义
-                if self._has_contradiction_signal(
-                    new_triple.predicate, record.predicate
-                ):
+                if self._has_contradiction_signal(new_triple.predicate, record.predicate):
                     conflicts.append(record)
 
         return conflicts
 
-    def _find_temporal_contradiction(
-        self, new_triple: Triple
-    ) -> list[EvolutionRecord]:
+    def _find_temporal_contradiction(self, new_triple: Triple) -> list[EvolutionRecord]:
         """Layer 3: 时序矛盾。
 
         同一属性随时间变化。
@@ -776,9 +758,7 @@ class EvolutionChain:
             if record.obj != new_triple.obj:
                 # 检查时间跨度
                 try:
-                    old_time = datetime.fromisoformat(
-                        record.extracted_at.replace("Z", "+00:00")
-                    )
+                    old_time = datetime.fromisoformat(record.extracted_at.replace("Z", "+00:00"))
                     new_time = datetime.now(timezone.utc)
                     days_diff = (new_time - old_time).days
 
@@ -829,9 +809,7 @@ class EvolutionChain:
 
     # ── 内部：记录操作 ──
 
-    def _create_record(
-        self, triple: Triple, source: SituationSource
-    ) -> EvolutionRecord:
+    def _create_record(self, triple: Triple, source: SituationSource) -> EvolutionRecord:
         """从三元组和来源创建演化链记录。"""
         return EvolutionRecord(
             subject=triple.subject,
@@ -844,15 +822,11 @@ class EvolutionChain:
             source_type=triple.meta_tag,
             source_situation_id="",
             source_group_id=source.group_id,
-            source_message_ids=[triple.source_message_id]
-            if triple.source_message_id
-            else [],
+            source_message_ids=[triple.source_message_id] if triple.source_message_id else [],
             extracted_by_model=source.model,
         )
 
-    def _supersede_record(
-        self, old_record: EvolutionRecord, new_record_id: str
-    ) -> None:
+    def _supersede_record(self, old_record: EvolutionRecord, new_record_id: str) -> None:
         """将旧记录标记为 superseded。"""
         old_record.status = RecordStatus.SUPERSEDED
         old_record.superseded_by = new_record_id
@@ -967,9 +941,7 @@ class EvolutionChain:
 
         # 包含否定词
         negations = {"不", "没", "无", "非", "别", "未"}
-        if any(n in pred_a for n in negations) != any(
-            n in pred_b for n in negations
-        ):
+        if any(n in pred_a for n in negations) != any(n in pred_b for n in negations):
             return True
 
         return False

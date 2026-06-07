@@ -12,22 +12,6 @@ Key components:
 - SkillDataStore: Persistent key-value storage for skills
 """
 
-from sirius_pulse.skills.models import (
-    BackgroundTaskSpec,
-    SkillDefinition,
-    SkillEngineContext,
-    SkillInvocationContext,
-    SkillParameter,
-    SkillPassiveType,
-    SkillResult,
-    SkillChainContext,
-    TriggerSpec,
-)
-from sirius_pulse.skills.registry import SkillRegistry
-from sirius_pulse.skills.executor import SkillExecutor
-from sirius_pulse.skills.data_store import SkillDataStore
-from sirius_pulse.skills.dependency_resolver import resolve_skill_dependencies
-
 # Re-export config builder utilities for skill developers
 from sirius_pulse.config.config_builder import (
     ConfigBuilder,
@@ -36,6 +20,21 @@ from sirius_pulse.config.config_builder import (
     config_param,
     secret,
 )
+from sirius_pulse.skills.data_store import SkillDataStore
+from sirius_pulse.skills.dependency_resolver import resolve_skill_dependencies
+from sirius_pulse.skills.executor import SkillExecutor
+from sirius_pulse.skills.models import (
+    BackgroundTaskSpec,
+    SkillChainContext,
+    SkillDefinition,
+    SkillEngineContext,
+    SkillInvocationContext,
+    SkillParameter,
+    SkillPassiveType,
+    SkillResult,
+    TriggerSpec,
+)
+from sirius_pulse.skills.registry import SkillRegistry
 
 __all__ = [
     "BackgroundTaskSpec",

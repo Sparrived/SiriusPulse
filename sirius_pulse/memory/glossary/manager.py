@@ -68,9 +68,7 @@ class GlossaryManager:
 
                 data = json.loads(legacy_path.read_text(encoding="utf-8"))
                 terms = {
-                    k: GlossaryTerm.from_dict(v)
-                    for k, v in data.items()
-                    if isinstance(v, dict)
+                    k: GlossaryTerm.from_dict(v) for k, v in data.items() if isinstance(v, dict)
                 }
                 for key, term in terms.items():
                     existing = all_terms.get(key)
@@ -82,7 +80,10 @@ class GlossaryManager:
                             existing.source = term.source
                         seen = set(existing.context_examples)
                         for ex in term.context_examples:
-                            if ex not in seen and len(existing.context_examples) < MAX_CONTEXT_EXAMPLES:
+                            if (
+                                ex not in seen
+                                and len(existing.context_examples) < MAX_CONTEXT_EXAMPLES
+                            ):
                                 existing.context_examples.append(ex)
                                 seen.add(ex)
                         related_set = set(existing.related_terms)
@@ -121,9 +122,7 @@ class GlossaryManager:
 
             data = json.loads(self._path.read_text(encoding="utf-8"))
             self._terms = {
-                k: GlossaryTerm.from_dict(v)
-                for k, v in data.items()
-                if isinstance(v, dict)
+                k: GlossaryTerm.from_dict(v) for k, v in data.items() if isinstance(v, dict)
             }
         except (OSError, json.JSONDecodeError):
             self._terms = {}
@@ -163,9 +162,9 @@ class GlossaryManager:
         existing = terms.get(key)
         if existing is not None:
             existing.usage_count += 1
-            existing.last_updated_at = __import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ).isoformat()
+            existing.last_updated_at = (
+                __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+            )
             if term.confidence > existing.confidence:
                 existing.definition = term.definition
                 existing.confidence = term.confidence

@@ -16,17 +16,27 @@
 
 from __future__ import annotations
 
+from sirius_pulse.config.config_builder import (
+    ConfigBuilder,
+    build_parameters_from_class,
+    config_param,
+    secret,
+)
 from sirius_pulse.plugins.base import PluginBase
-from sirius_pulse.config.config_builder import ConfigBuilder, config_param, secret, build_parameters_from_class
 from sirius_pulse.plugins.context import (
     EngineProxy,
     MessageContext,
     PluginContext,
     PluginDataStore,
 )
-from sirius_pulse.plugins.decorators import command, PluginCommandMeta, discover_commands, dispatch_command
+from sirius_pulse.plugins.decorators import (
+    PluginCommandMeta,
+    command,
+    discover_commands,
+    dispatch_command,
+)
 from sirius_pulse.plugins.dispatcher import DispatchedOutput, OutputDispatcher
-from sirius_pulse.plugins.events import PluginEvent, PluginEventType, TimerEvent, EngineEvent
+from sirius_pulse.plugins.events import EngineEvent, PluginEvent, PluginEventType, TimerEvent
 from sirius_pulse.plugins.executor import PluginExecutor
 from sirius_pulse.plugins.lexer import (
     CommandParser,
@@ -35,28 +45,28 @@ from sirius_pulse.plugins.lexer import (
     MatchResult,
     PluginMatcher,
     Tokenizer,
-    parse_command,
     match_plugin,
+    parse_command,
 )
-from sirius_pulse.plugins.loader import PluginLoadError, PluginLoader
+from sirius_pulse.plugins.loader import PluginLoader, PluginLoadError
 from sirius_pulse.plugins.models import (
     ArgNode,
     CommandAST,
+    GroupMention,
+    ImageAttachment,
+    MessageReference,
     PatternType,
     PluginCommandDef,
     PluginDefinition,
     PluginEventDef,
+    PluginNaturalLangDef,
     PluginParameterDef,
     PluginPermissionDef,
     PluginRenderDef,
     PluginResponse,
-    PluginNaturalLangDef,
     RenderMode,
     TriggerType,
     UserMention,
-    GroupMention,
-    MessageReference,
-    ImageAttachment,
 )
 from sirius_pulse.plugins.registry import PluginRegistry
 from sirius_pulse.plugins.scheduler import PluginScheduler, ScheduledTask

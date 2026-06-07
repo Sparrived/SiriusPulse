@@ -65,7 +65,7 @@ jobs:
       
       - name: Format check with black
         run: |
-          black --check sirius_pulse tests
+          black --check --fast sirius_pulse tests
       
       - name: Import sorting check with isort
         run: |

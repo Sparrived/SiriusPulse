@@ -80,7 +80,7 @@ class AliasEntry:
         """时间衰减：每过去一天，置信度衰减 5%。"""
         if days_since_last_seen <= 0:
             return confidence
-        return round(max(0.0, confidence * (0.95 ** days_since_last_seen)), 4)
+        return round(max(0.0, confidence * (0.95**days_since_last_seen)), 4)
 
     DECAY_THRESHOLD: ClassVar[float] = 0.10
 

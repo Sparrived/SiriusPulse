@@ -92,14 +92,17 @@ def test_delayed_queue_when_merging_incoming_then_appends_to_existing_pending_it
     queue = DelayedResponseQueue()
     item = queue.enqueue("group-1", "u1", "first", _decision(ResponseStrategy.DELAYED))
 
-    assert queue.merge_incoming(
-        "group-1",
-        "u2",
-        "second",
-        speaker_name="Bob",
-        channel_user_id="qq-2",
-        multimodal_inputs=[{"type": "image", "value": "b.png"}],
-    ) is True
+    assert (
+        queue.merge_incoming(
+            "group-1",
+            "u2",
+            "second",
+            speaker_name="Bob",
+            channel_user_id="qq-2",
+            multimodal_inputs=[{"type": "image", "value": "b.png"}],
+        )
+        is True
+    )
 
     assert "second" in item.message_content
     assert item.related_user_ids == ["u1", "u2"]

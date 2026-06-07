@@ -111,9 +111,7 @@ class AuthManager:
 
         return password
 
-    def create_token(
-        self, username: str, role: str = "admin", expires_hours: int = 24
-    ) -> str:
+    def create_token(self, username: str, role: str = "admin", expires_hours: int = 24) -> str:
         """签发 JWT 令牌。
 
         Args:
@@ -179,9 +177,7 @@ class AuthManager:
             # 验证签名
             secret = self.get_or_create_secret()
             message = f"{header_b64}.{payload_b64}".encode("utf-8")
-            expected_sig = hmac.new(
-                secret.encode("utf-8"), message, hashlib.sha256
-            ).digest()
+            expected_sig = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
             actual_sig = _b64_decode(signature_b64)
 
             if not hmac.compare_digest(expected_sig, actual_sig):

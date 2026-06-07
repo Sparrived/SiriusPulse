@@ -65,7 +65,13 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
             "rejected_records": len(rejected),
         }
         # 计算置信度分布
-        conf_buckets: dict[str, int] = {"0.0-0.3": 0, "0.3-0.5": 0, "0.5-0.7": 0, "0.7-0.9": 0, "0.9-1.0": 0}
+        conf_buckets: dict[str, int] = {
+            "0.0-0.3": 0,
+            "0.3-0.5": 0,
+            "0.5-0.7": 0,
+            "0.7-0.9": 0,
+            "0.9-1.0": 0,
+        }
         for r in all_records:
             c = r.confidence
             if c < 0.3:
@@ -84,10 +90,18 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
         predicate_freq: dict[str, int] = {}
         for r in active:
             predicate_freq[r.predicate] = predicate_freq.get(r.predicate, 0) + 1
-        result["top_predicates"] = sorted(predicate_freq.items(), key=lambda x: x[1], reverse=True)[:15]
+        result["top_predicates"] = sorted(predicate_freq.items(), key=lambda x: x[1], reverse=True)[
+            :15
+        ]
     except Exception as exc:
         LOG.debug("读取演化链统计失败: %s", exc)
-        result["evolution_stats"] = {"total_records": 0, "active_records": 0, "superseded_records": 0, "uncertain_records": 0, "rejected_records": 0}
+        result["evolution_stats"] = {
+            "total_records": 0,
+            "active_records": 0,
+            "superseded_records": 0,
+            "uncertain_records": 0,
+            "rejected_records": 0,
+        }
 
     # 情景统计
     try:
@@ -97,7 +111,14 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
         all_situations = sit_store.get_all(limit=500)
         result["situation_stats"] = {
             "total_situations": len(all_situations),
-            "today_count": len([s for s in all_situations if s.created_at[:10] == __import__("datetime").datetime.now().strftime("%Y-%m-%d")]),
+            "today_count": len(
+                [
+                    s
+                    for s in all_situations
+                    if s.created_at[:10]
+                    == __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+                ]
+            ),
         }
         # 话题频率
         topic_freq: dict[str, int] = {}
@@ -190,13 +211,14 @@ async def api_evolution_records(request: web.Request, persona_manager: Any) -> w
 
     total = len(records)
     records.sort(key=lambda r: r.extracted_at or "", reverse=True)
-    records = records[offset:offset + limit]
+    records = records[offset : offset + limit]
 
     # 预加载消息内容
     messages_cache: dict[str, dict[str, Any]] = {}
     if paths:
         try:
             from sirius_pulse.memory.basic.store import BasicMemoryFileStore
+
             store = BasicMemoryFileStore(paths.dir)
             # 收集所有需要的消息ID
             all_msg_ids: set[str] = set()
@@ -211,19 +233,22 @@ async def api_evolution_records(request: web.Request, persona_manager: Any) -> w
                             "entry_id": entry.entry_id,
                             "speaker_name": entry.speaker_name,
                             "role": entry.role,
-                            "content": entry.content[:200] + ("..." if len(entry.content) > 200 else ""),
+                            "content": entry.content[:200]
+                            + ("..." if len(entry.content) > 200 else ""),
                             "timestamp": entry.timestamp,
                             "group_id": entry.group_id,
                         }
         except Exception as exc:
             LOG.debug("预加载消息内容失败: %s", exc)
 
-    return _json_response({
-        "records": [_record_to_dict(r, messages_cache) for r in records],
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-    })
+    return _json_response(
+        {
+            "records": [_record_to_dict(r, messages_cache) for r in records],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        }
+    )
 
 
 @handle_api_errors
@@ -242,9 +267,11 @@ async def api_evolution_history(request: web.Request, persona_manager: Any) -> w
 
     chain = EvolutionChain(db_path, read_only=True)
     history = chain.get_history(record_id)
-    return _json_response({
-        "history": [_record_to_dict(r) for r in history],
-    })
+    return _json_response(
+        {
+            "history": [_record_to_dict(r) for r in history],
+        }
+    )
 
 
 @handle_api_errors
@@ -260,13 +287,17 @@ async def api_evolution_uncertain(request: web.Request, persona_manager: Any) ->
     chain = EvolutionChain(db_path, read_only=True)
     limit = min(int(request.query.get("limit", "50")), 200)
     records = chain.get_uncertain_records(limit=limit)
-    return _json_response({
-        "records": [_record_to_dict(r) for r in records],
-        "total": len(records),
-    })
+    return _json_response(
+        {
+            "records": [_record_to_dict(r) for r in records],
+            "total": len(records),
+        }
+    )
 
 
-def _record_to_dict(r: Any, messages_cache: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+def _record_to_dict(
+    r: Any, messages_cache: dict[str, dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """将 EvolutionRecord 转为 JSON 字典。"""
     # 获取关联的消息内容
     source_messages = []
@@ -315,25 +346,31 @@ async def api_situations_list(request: web.Request, persona_manager: Any) -> web
     group_id = request.query.get("group_id", "").strip()
     limit = min(int(request.query.get("limit", "100")), 500)
 
-    situations = store.get_by_group(group_id, limit=limit) if group_id else store.get_all(limit=limit)
+    situations = (
+        store.get_by_group(group_id, limit=limit) if group_id else store.get_all(limit=limit)
+    )
 
-    return _json_response({
-        "situations": [_situation_to_dict(s) for s in situations],
-        "total": len(situations),
-    })
+    return _json_response(
+        {
+            "situations": [_situation_to_dict(s) for s in situations],
+            "total": len(situations),
+        }
+    )
 
 
 def _situation_to_dict(s: Any) -> dict[str, Any]:
     """将 Situation 转为 JSON 字典。"""
     triples = []
     for t in s.triples:
-        triples.append({
-            "subject": t.subject,
-            "predicate": t.predicate,
-            "obj": t.obj,
-            "confidence": t.confidence,
-            "meta_tag": t.meta_tag,
-        })
+        triples.append(
+            {
+                "subject": t.subject,
+                "predicate": t.predicate,
+                "obj": t.obj,
+                "confidence": t.confidence,
+                "meta_tag": t.meta_tag,
+            }
+        )
     return {
         "situation_id": s.situation_id,
         "group_id": s.group_id,
@@ -374,6 +411,7 @@ async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Re
     if db_path:
         try:
             from sirius_pulse.memory.situation.store import SituationStore
+
             sit_store = SituationStore(db_path, read_only=True)
             for sit in sit_store.get_all(limit=1000):
                 situations_map[sit.situation_id] = {
@@ -395,15 +433,15 @@ async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Re
                     continue
                 slice_data["_group_id"] = g_id
                 if search:
-                    content = (slice_data.get("content", "") + slice_data.get("summary", "")).lower()
+                    content = (
+                        slice_data.get("content", "") + slice_data.get("summary", "")
+                    ).lower()
                     if search not in content:
                         continue
                 # 添加关联情景信息
                 situation_ids = slice_data.get("situation_ids", [])
                 linked_situations = [
-                    situations_map[sid]
-                    for sid in situation_ids
-                    if sid in situations_map
+                    situations_map[sid] for sid in situation_ids if sid in situations_map
                 ]
                 slice_data["_linked_situations"] = linked_situations
                 slices.append(slice_data)
@@ -412,14 +450,16 @@ async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Re
 
     slices.sort(key=lambda s: s.get("time_range_start", ""), reverse=True)
     total = len(slices)
-    slices = slices[offset:offset + limit]
+    slices = slices[offset : offset + limit]
 
-    return _json_response({
-        "slices": slices,
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-    })
+    return _json_response(
+        {
+            "slices": slices,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        }
+    )
 
 
 # ─── 传记面板 ────────────────────────────────────────────
@@ -437,27 +477,29 @@ async def api_biography_view(request: web.Request, persona_manager: Any) -> web.
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
-    from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
+    from sirius_pulse.memory.evolution.chain import EvolutionChain
 
     chain = EvolutionChain(db_path, read_only=True)
     bio_view = BiographyView(chain)
     bio = bio_view.get_biography(user_id)
 
-    return _json_response({
-        "biography": {
-            "user_id": bio.user_id,
-            "name": bio.name,
-            "identity_anchors": bio.identity_anchors,
-            "relationships": bio.relationships,
-            "short_bio": bio.short_bio,
-            "active_fact_count": bio.active_fact_count,
-            "superseded_fact_count": bio.superseded_fact_count,
-            "uncertain_fact_count": bio.uncertain_fact_count,
-            "source_record_ids": bio.source_record_ids,
-            "generated_at": bio.generated_at,
+    return _json_response(
+        {
+            "biography": {
+                "user_id": bio.user_id,
+                "name": bio.name,
+                "identity_anchors": bio.identity_anchors,
+                "relationships": bio.relationships,
+                "short_bio": bio.short_bio,
+                "active_fact_count": bio.active_fact_count,
+                "superseded_fact_count": bio.superseded_fact_count,
+                "uncertain_fact_count": bio.uncertain_fact_count,
+                "source_record_ids": bio.source_record_ids,
+                "generated_at": bio.generated_at,
+            }
         }
-    })
+    )
 
 
 @handle_api_errors
@@ -468,8 +510,8 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
-    from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
+    from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.storage import MemoryStorage
 
     chain = EvolutionChain(db_path, read_only=True)
@@ -498,17 +540,19 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
     bios: list[dict[str, Any]] = []
     for uid in user_ids:
         bio = bio_view.get_biography(uid)
-        bios.append({
-            "user_id": bio.user_id,
-            "name": bio.name,
-            "identity_anchors": bio.identity_anchors,
-            "relationships": bio.relationships,
-            "short_bio": bio.short_bio,
-            "aliases": user_aliases_map.get(uid, []),
-            "active_fact_count": bio.active_fact_count,
-            "superseded_fact_count": bio.superseded_fact_count,
-            "uncertain_fact_count": bio.uncertain_fact_count,
-        })
+        bios.append(
+            {
+                "user_id": bio.user_id,
+                "name": bio.name,
+                "identity_anchors": bio.identity_anchors,
+                "relationships": bio.relationships,
+                "short_bio": bio.short_bio,
+                "aliases": user_aliases_map.get(uid, []),
+                "active_fact_count": bio.active_fact_count,
+                "superseded_fact_count": bio.superseded_fact_count,
+                "uncertain_fact_count": bio.uncertain_fact_count,
+            }
+        )
 
     bios.sort(key=lambda b: b["active_fact_count"], reverse=True)
     return _json_response({"biographies": bios, "total": len(bios)})
@@ -529,8 +573,8 @@ async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
-    from sirius_pulse.memory.evolution.chain import EvolutionChain
     from sirius_pulse.memory.biography.view import BiographyView
+    from sirius_pulse.memory.evolution.chain import EvolutionChain
 
     chain = EvolutionChain(db_path, read_only=True)
     bio_view = BiographyView(chain)
@@ -539,13 +583,41 @@ async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.
     # 简单的知识缺口分析
     gaps: list[dict[str, Any]] = []
     if not bio.identity_anchors:
-        gaps.append({"gap_type": "identity", "domain": "身份", "description": f"用户 {bio.name} 的身份信息不足", "importance": "high"})
+        gaps.append(
+            {
+                "gap_type": "identity",
+                "domain": "身份",
+                "description": f"用户 {bio.name} 的身份信息不足",
+                "importance": "high",
+            }
+        )
     if not bio.relationships:
-        gaps.append({"gap_type": "social", "domain": "社交", "description": f"用户 {bio.name} 的社交关系未知", "importance": "medium"})
+        gaps.append(
+            {
+                "gap_type": "social",
+                "domain": "社交",
+                "description": f"用户 {bio.name} 的社交关系未知",
+                "importance": "medium",
+            }
+        )
     if bio.uncertain_fact_count > 0:
-        gaps.append({"gap_type": "uncertain", "domain": "待确认", "description": f"有 {bio.uncertain_fact_count} 条待确认的事实", "importance": "low"})
+        gaps.append(
+            {
+                "gap_type": "uncertain",
+                "domain": "待确认",
+                "description": f"有 {bio.uncertain_fact_count} 条待确认的事实",
+                "importance": "low",
+            }
+        )
     if bio.active_fact_count < 3:
-        gaps.append({"gap_type": "sparse", "domain": "稀疏", "description": f"用户 {bio.name} 的已知信息太少（仅 {bio.active_fact_count} 条）", "importance": "medium"})
+        gaps.append(
+            {
+                "gap_type": "sparse",
+                "domain": "稀疏",
+                "description": f"用户 {bio.name} 的已知信息太少（仅 {bio.active_fact_count} 条）",
+                "importance": "medium",
+            }
+        )
 
     return _json_response({"gaps": gaps, "total": len(gaps)})
 

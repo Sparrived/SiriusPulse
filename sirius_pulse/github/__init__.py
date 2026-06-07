@@ -21,7 +21,12 @@ from sirius_pulse.github.event_bridge import (
     set_issue_repos,
 )
 from sirius_pulse.github.events import fetch_repo_events
-from sirius_pulse.github.webhook import GitHubWebhookServer, RepoFilter, WebhookHandler, verify_signature
+from sirius_pulse.github.webhook import (
+    GitHubWebhookServer,
+    RepoFilter,
+    WebhookHandler,
+    verify_signature,
+)
 
 __all__ = [
     "GitHubClient",

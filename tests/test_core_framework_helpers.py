@@ -40,7 +40,9 @@ def test_core_utils_when_sticker_tags_are_present_then_names_are_extracted_and_t
     assert cleaned == "hello  [known] [ignored]"
     assert names == ["smile", "wave", "bad"]
 
-    cleaned_keyword, keyword_names = parse_sticker_tags("ok [known] [extra] [third] [fourth]", ["known", "extra", "third"])
+    cleaned_keyword, keyword_names = parse_sticker_tags(
+        "ok [known] [extra] [third] [fourth]", ["known", "extra", "third"]
+    )
     assert cleaned_keyword.split() == ["ok", "[fourth]"]
     assert keyword_names == ["known", "extra", "third"]
 
@@ -76,14 +78,19 @@ def test_orchestration_store_when_file_is_invalid_then_empty_config_is_returned(
     assert OrchestrationStore.load(tmp_path) == {}
 
 
-def test_persona_database_when_used_as_context_manager_then_meta_table_exists_and_connection_closes(tmp_path):
+def test_persona_database_when_used_as_context_manager_then_meta_table_exists_and_connection_closes(
+    tmp_path,
+):
     db_path = tmp_path / "persona" / "persona.db"
 
     with PersonaDatabase(db_path) as database:
         assert database.db_path == db_path
         database.conn.execute("INSERT INTO _meta(key, value) VALUES (?, ?)", ("schema", "1"))
         database.conn.commit()
-        assert database.conn.execute("SELECT value FROM _meta WHERE key = 'schema'").fetchone()[0] == "1"
+        assert (
+            database.conn.execute("SELECT value FROM _meta WHERE key = 'schema'").fetchone()[0]
+            == "1"
+        )
 
     reopened = sqlite3.connect(db_path)
     try:
@@ -93,12 +100,23 @@ def test_persona_database_when_used_as_context_manager_then_meta_table_exists_an
 
 
 def test_provider_url_helpers_when_base_urls_vary_then_expected_request_roots_are_returned():
-    assert _normalize_aliyun_bailian_base_url("") == "https://dashscope.aliyuncs.com/compatible-mode"
+    assert (
+        _normalize_aliyun_bailian_base_url("") == "https://dashscope.aliyuncs.com/compatible-mode"
+    )
     assert (
         _normalize_aliyun_bailian_base_url("https://dashscope.aliyuncs.com/compatible-mode/v1/")
         == "https://dashscope.aliyuncs.com/compatible-mode"
     )
     assert _normalize_bigmodel_base_url("") == "https://open.bigmodel.cn/api/paas/v4"
-    assert _normalize_bigmodel_base_url("https://open.bigmodel.cn/api/paas") == "https://open.bigmodel.cn/api/paas/v4"
-    assert _normalize_bigmodel_base_url("https://open.bigmodel.cn") == "https://open.bigmodel.cn/api/paas/v4"
-    assert _normalize_mimo_base_url("https://api.xiaomimimo.com/v1/") == "https://api.xiaomimimo.com/v1"
+    assert (
+        _normalize_bigmodel_base_url("https://open.bigmodel.cn/api/paas")
+        == "https://open.bigmodel.cn/api/paas/v4"
+    )
+    assert (
+        _normalize_bigmodel_base_url("https://open.bigmodel.cn")
+        == "https://open.bigmodel.cn/api/paas/v4"
+    )
+    assert (
+        _normalize_mimo_base_url("https://api.xiaomimimo.com/v1/")
+        == "https://api.xiaomimimo.com/v1"
+    )

@@ -73,7 +73,7 @@ class ChatRequest:
     post_process: bool = False  # True = 启用 hook 调度（总闸），False = 完全跳过
 
     # ── 重试控制（transport 级） ──
-    retry_max: int = 1       # 最多重试次数（总调用次数 = retry_max + 1）
+    retry_max: int = 1  # 最多重试次数（总调用次数 = retry_max + 1）
     retry_delay: float = 1.0  # 重试间隔（秒）
 
 
@@ -114,7 +114,7 @@ class RawRequest:
     response_format: dict[str, object] | None = None
 
     # ── 重试控制（transport 级） ──
-    retry_max: int = 2       # 最多重试次数（总调用次数 = retry_max + 1）
+    retry_max: int = 2  # 最多重试次数（总调用次数 = retry_max + 1）
     retry_delay: float = 1.0  # 重试间隔（秒）
 
 
@@ -145,6 +145,7 @@ class _PreHookEntry:
     task_filter: None = 始终执行（用户自定义 hook 默认）
                  非 None = 仅当 ctx["task_name"] 在集合中时执行（引擎内置 hook）
     """
+
     hook: PreHook
     priority: int = 0
     task_filter: set[str] | None = None
@@ -157,6 +158,7 @@ class _PostHookEntry:
     task_filter: None = 始终执行（用户自定义 hook 默认）
                  非 None = 仅当 ctx["task_name"] 在集合中时执行（引擎内置 hook）
     """
+
     hook: PostHook
     priority: int = 100
     task_filter: set[str] | None = None
@@ -280,7 +282,9 @@ class Brain:
         - result: ChatResult（可修改 clean_text、sticker_names 等）
         - ctx: 跨 hook 共享的字典
         """
-        self._post_hooks.append(_PostHookEntry(hook=hook, priority=priority, task_filter=task_filter))
+        self._post_hooks.append(
+            _PostHookEntry(hook=hook, priority=priority, task_filter=task_filter)
+        )
         self._post_hooks.sort(key=lambda e: e.priority)
 
     # ═══════════════════════════════════════════════════════════════════
@@ -374,14 +378,18 @@ class Brain:
             china_tz = timezone(timedelta(hours=8))
             now_dt = datetime.now(china_tz)
             weekdays = [
-                "星期一", "星期二", "星期三", "星期四",
-                "星期五", "星期六", "星期日",
+                "星期一",
+                "星期二",
+                "星期三",
+                "星期四",
+                "星期五",
+                "星期六",
+                "星期日",
             ]
             wd = weekdays[now_dt.weekday()]
             now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} {now_dt.strftime('%H:%M:%S')}"
             system_prompt = (
-                PromptFactory.build_current_time_section(now_str)
-                + "\n\n" + system_prompt
+                PromptFactory.build_current_time_section(now_str) + "\n\n" + system_prompt
             )
 
             # ── 默认 pre: 模型路由 ──
@@ -403,7 +411,9 @@ class Brain:
                 effective_temperature = request.style_params.temperature
             elif request.temperature is not None or request.max_tokens is not None:
                 effective_max_tokens = request.max_tokens if request.max_tokens else cfg.max_tokens
-                effective_temperature = request.temperature if request.temperature else cfg.temperature
+                effective_temperature = (
+                    request.temperature if request.temperature else cfg.temperature
+                )
             else:
                 effective_max_tokens = cfg.max_tokens
                 effective_temperature = cfg.temperature
@@ -411,8 +421,8 @@ class Brain:
             # ── 构建 tools 参数 ──
             tools = None
             if request.enable_skills and self.skill_registry is not None:
-                from sirius_pulse.skills.models import SkillInvocationContext
                 from sirius_pulse.memory.user.unified_models import UnifiedUser
+                from sirius_pulse.skills.models import SkillInvocationContext
 
                 caller = UnifiedUser(
                     user_id=request.user_id or "caller",
@@ -461,14 +471,16 @@ class Brain:
                 china_tz = timezone(timedelta(hours=8))
                 now_dt = datetime.now(china_tz)
                 weekdays = [
-                    "星期一", "星期二", "星期三", "星期四",
-                    "星期五", "星期六", "星期日",
+                    "星期一",
+                    "星期二",
+                    "星期三",
+                    "星期四",
+                    "星期五",
+                    "星期六",
+                    "星期日",
                 ]
                 wd = weekdays[now_dt.weekday()]
-                now_str = (
-                    f"{now_dt.strftime('%Y-%m-%d')} {wd} "
-                    f"{now_dt.strftime('%H:%M:%S')}"
-                )
+                now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} " f"{now_dt.strftime('%H:%M:%S')}"
                 fresh_time = PromptFactory.build_current_time_section(now_str)
                 fresh_system_prompt = fresh_time + "\n\n" + base_system_prompt
                 return GenerationRequest(
@@ -489,7 +501,8 @@ class Brain:
                     request.group_id,
                     system_prompt,
                     "\n".join(
-                        f"  [{m.get('role')}] {m.get('content', '')[:200]}" for m in request.messages
+                        f"  [{m.get('role')}] {m.get('content', '')[:200]}"
+                        for m in request.messages
                     ),
                 )
 
@@ -646,15 +659,24 @@ class Brain:
                 if attempt < retry_max:
                     logger.warning(
                         "%s LLM 调用失败 (attempt=%d/%d): %s",
-                        purpose_desc, attempt + 1, retry_max + 1, exc,
+                        purpose_desc,
+                        attempt + 1,
+                        retry_max + 1,
+                        exc,
                     )
                     await asyncio.sleep(retry_delay)
                     if rebuild_fn:
-                        current = await rebuild_fn() if asyncio.iscoroutinefunction(rebuild_fn) else rebuild_fn()
+                        current = (
+                            await rebuild_fn()
+                            if asyncio.iscoroutinefunction(rebuild_fn)
+                            else rebuild_fn()
+                        )
                 else:
                     logger.error(
                         "%s LLM 调用已耗尽 %d 次重试: %s",
-                        purpose_desc, retry_max + 1, exc,
+                        purpose_desc,
+                        retry_max + 1,
+                        exc,
                     )
         # 所有重试均失败，抛出最后一次异常
         raise last_exc  # type: ignore[misc]
@@ -716,9 +738,7 @@ class Brain:
             prompt_tokens=estimated_input_tokens,
             completion_tokens=estimated_output_tokens,
             total_tokens=estimated_input_tokens + estimated_output_tokens,
-            input_chars=sum(
-                len(str(m.get("content", ""))) for m in (gen_request.messages or [])
-            )
+            input_chars=sum(len(str(m.get("content", ""))) for m in (gen_request.messages or []))
             + len(gen_request.system_prompt),
             output_chars=len(raw_output),
             estimation_method="tiktoken" if estimated_output_tokens > 0 else "char_div4",

@@ -63,7 +63,7 @@ def extract_keywords(text: str) -> set[str]:
     for chunk in chinese_chunks:
         if len(chunk) >= 2:
             for i in range(len(chunk) - 1):
-                keywords.add(chunk[i:i + 2])
+                keywords.add(chunk[i : i + 2])
     # 英文二元组：相邻单词
     if len(english_words) >= 2:
         for i in range(len(english_words) - 1):
@@ -244,18 +244,48 @@ _URGENCY_KEYWORDS = {
 
 # 主观题/观点询问关键词 —— 被点名时出现这些词应触发 IMMEDIATE
 _SUBJECTIVE_KEYWORDS: tuple[str, ...] = (
-    "你觉得", "你认为", "你怎么看", "你的看法", "你喜欢",
-    "你觉得呢", "你觉得怎么样", "你的意见", "你觉得如何",
-    "你更喜欢", "你最", "你讨厌", "你不喜欢", "你觉得好",
+    "你觉得",
+    "你认为",
+    "你怎么看",
+    "你的看法",
+    "你喜欢",
+    "你觉得呢",
+    "你觉得怎么样",
+    "你的意见",
+    "你觉得如何",
+    "你更喜欢",
+    "你最",
+    "你讨厌",
+    "你不喜欢",
+    "你觉得好",
     "你怎么看",
 )
 
 # 需要上下文才能正确理解的短消息模式 —— 单独看像 filler，但有上下文时应视为对话延续
 _CONTEXT_DEPENDENT_PATTERNS: tuple[str, ...] = (
-    "为什么", "怎么回事", "真的吗", "那怎么办", "怎么办呢",
-    "然后呢", "后来呢", "什么意思", "怎么说", "不会吧",
-    "这样啊", "原来如此", "懂了", "这样吗", "那行", "好吧",
-    "哦", "嗯嗯", "对对", "确实", "可以", "好的", "行吧",
+    "为什么",
+    "怎么回事",
+    "真的吗",
+    "那怎么办",
+    "怎么办呢",
+    "然后呢",
+    "后来呢",
+    "什么意思",
+    "怎么说",
+    "不会吧",
+    "这样啊",
+    "原来如此",
+    "懂了",
+    "这样吗",
+    "那行",
+    "好吧",
+    "哦",
+    "嗯嗯",
+    "对对",
+    "确实",
+    "可以",
+    "好的",
+    "行吧",
 )
 
 _LLM_COGNITION_PROMPT = """分析以下消息的【情感状态】、【社交意图】和【指向性】。
@@ -385,9 +415,7 @@ class CognitionAnalyzer:
         search_query = message  # fallback when no LLM or LLM fails
 
         # 3. Compute 12-dimensional directedness scores (rule-based, zero cost)
-        directed_scores = self._compute_directed_scores(
-            message, user_id, context_messages
-        )
+        directed_scores = self._compute_directed_scores(message, user_id, context_messages)
 
         # 4. Intent analysis via LLM when provider is available.
         #    LLM failure → rule-based scores remain (safe degradation).
@@ -398,7 +426,10 @@ class CognitionAnalyzer:
         if self.provider_async is not None:
             try:
                 llm_result = await self._llm_cognition(
-                    message, context_messages, current_user_id=user_id, sender_type=sender_type,
+                    message,
+                    context_messages,
+                    current_user_id=user_id,
+                    sender_type=sender_type,
                     multimodal_inputs=multimodal_inputs,
                     caller_is_developer=caller_is_developer,
                     group_aliases=group_aliases,
@@ -431,15 +462,13 @@ class CognitionAnalyzer:
         self._update_trajectory(user_id, emotion)
 
         # 规范化 subtype
-        if hasattr(subtype, 'value'):
+        if hasattr(subtype, "value"):
             subtype_str = subtype.value
         else:
             subtype_str = str(subtype)
 
         # 6. Intent scoring
-        urgency = self._calculate_urgency(
-            message, user_id, group_id, emotion, context_messages
-        )
+        urgency = self._calculate_urgency(message, user_id, group_id, emotion, context_messages)
         relevance = self._calculate_relevance(message, social_intent, user_id, group_id)
         # Prefer LLM's urgency/relevance when available
         if llm_urgency is not None and llm_urgency > 0:
@@ -477,7 +506,9 @@ class CognitionAnalyzer:
             # If explicitly addressed, never treat as silent filler
             if social_intent == SocialIntent.SILENT:
                 social_intent = SocialIntent.SOCIAL
-                subtype = SocialSubtype.TOPIC_DISCUSSION if subtype == SilentSubtype.FILLER else subtype
+                subtype = (
+                    SocialSubtype.TOPIC_DISCUSSION if subtype == SilentSubtype.FILLER else subtype
+                )
 
             is_question = "?" in message or "？" in message
             is_subjective = any(kw in message for kw in _SUBJECTIVE_KEYWORDS)
@@ -647,7 +678,9 @@ class CognitionAnalyzer:
             if not content:
                 continue
             # Mark AI messages explicitly
-            display_name = f"{uid}(AI)" if uid == "assistant" or (ai_name and uid == ai_name) else uid
+            display_name = (
+                f"{uid}(AI)" if uid == "assistant" or (ai_name and uid == ai_name) else uid
+            )
             time_str = f"【{ts}】" if ts else ""
             lines.append(f"{time_str}【{display_name}】{content}")
         context_text = "\n最近对话上下文：\n" + "\n".join(lines) + "\n" if lines else ""
@@ -670,9 +703,7 @@ class CognitionAnalyzer:
         ]
         for item in multimodal_inputs:
             if item.get("type") == "image":
-                content.append(
-                    {"type": "image_url", "image_url": {"url": str(item["value"])}}
-                )
+                content.append({"type": "image_url", "image_url": {"url": str(item["value"])}})
         return [{"role": "user", "content": content}]
 
     async def _llm_cognition(
@@ -710,11 +741,9 @@ class CognitionAnalyzer:
         # Build conversation context block with participant info
         conv_ctx = ""
         if context_messages:
-            participants = sorted({
-                m.get("user_id", "")
-                for m in context_messages
-                if m.get("user_id")
-            })
+            participants = sorted(
+                {m.get("user_id", "") for m in context_messages if m.get("user_id")}
+            )
             if participants:
                 conv_ctx += f"\n【对话参与者】{', '.join(participants)}\n"
             if current_user_id:
@@ -731,11 +760,9 @@ class CognitionAnalyzer:
                     alias_lines.append(f'"{alias}" → {user_name}')
             if alias_lines:
                 user_alias_note = (
-                    "【本群用户别称】\n"
-                    + "\n".join(alias_lines[:15])
-                    + "\n注意：上述别称属于其他用户。"
-                      "如果消息中只提到这些别称（而没有 @AI 或直呼 AI 名字），"
-                      "说明消息不是指向当前 AI 的，directed_score 应该较低。\n"
+                    "【本群用户别称】\n" + "\n".join(alias_lines[:15]) + "\n注意：上述别称属于其他用户。"
+                    "如果消息中只提到这些别称（而没有 @AI 或直呼 AI 名字），"
+                    "说明消息不是指向当前 AI 的，directed_score 应该较低。\n"
                 )
 
         prompt = _LLM_COGNITION_PROMPT.format(
@@ -855,6 +882,7 @@ class CognitionAnalyzer:
             raw = await self.provider_async.generate_async(request)
         elif isinstance(self.provider_async, LLMProvider):
             import asyncio
+
             raw = await asyncio.to_thread(self.provider_async.generate, request)
         else:
             return None
@@ -935,7 +963,10 @@ class CognitionAnalyzer:
 
         # Extract string fields: "key": "value"
         for key in (
-            "basic_emotion", "social_intent", "intent_subtype", "search_query",
+            "basic_emotion",
+            "social_intent",
+            "intent_subtype",
+            "search_query",
         ):
             pattern = rf'"{key}"\s*:\s*"([^"]*)"'
             m = re.search(pattern, raw)
@@ -943,8 +974,15 @@ class CognitionAnalyzer:
                 fields[key] = m.group(1)
 
         # Extract numeric fields
-        for key in ("valence", "arousal", "intensity", "confidence",
-                    "urgency_score", "relevance_score", "directed_score"):
+        for key in (
+            "valence",
+            "arousal",
+            "intensity",
+            "confidence",
+            "urgency_score",
+            "relevance_score",
+            "directed_score",
+        ):
             pattern = rf'"{key}"\s*:\s*([-\d.]+)'
             m = re.search(pattern, raw)
             if m:
@@ -1090,6 +1128,7 @@ class CognitionAnalyzer:
         if user_id not in self.trajectories:
             self.trajectories[user_id] = []
         from sirius_pulse.core.utils import now_iso
+
         self.trajectories[user_id].append((now_iso(), emotion))
         if len(self.trajectories[user_id]) > 100:
             self.trajectories[user_id] = self.trajectories[user_id][-100:]
@@ -1167,7 +1206,9 @@ class CognitionAnalyzer:
             indicators += 0.15
 
         # Excessive laughter emoji/punctuation
-        laugh_count = text_lower.count("哈哈") + text_lower.count("haha") + text.count("😂") + text.count("🤣")
+        laugh_count = (
+            text_lower.count("哈哈") + text_lower.count("haha") + text.count("😂") + text.count("🤣")
+        )
         if laugh_count >= 3:
             indicators += 0.15
 
@@ -1225,7 +1266,9 @@ class CognitionAnalyzer:
                 persona_keywords.add(self.persona.social_role)
 
             if persona_keywords:
-                text_words = set(re.findall(r"[\u4e00-\u9fff]+", text)) | set(re.findall(r"[a-zA-Z]+", text_lower))
+                text_words = set(re.findall(r"[\u4e00-\u9fff]+", text)) | set(
+                    re.findall(r"[a-zA-Z]+", text_lower)
+                )
                 pk_lower = {k.lower() for k in persona_keywords}
                 overlap = len(text_words & pk_lower)
                 # Strong overlap → high entitlement
@@ -1324,18 +1367,41 @@ class CognitionAnalyzer:
 
         # question_score: interrogative patterns
         question_markers = [
-            r"吗[？?]", r"呢[？?]", r"什么[？?]", r"怎么[？?]", r"为什么[？?]",
-            r"如何[？?]", r"哪里[？?]", r"谁[？?]", r"多少[？?]", r"能不能",
-            r"可以吗", r"行不行", r"好不好", r"怎么样", r"如何看待",
+            r"吗[？?]",
+            r"呢[？?]",
+            r"什么[？?]",
+            r"怎么[？?]",
+            r"为什么[？?]",
+            r"如何[？?]",
+            r"哪里[？?]",
+            r"谁[？?]",
+            r"多少[？?]",
+            r"能不能",
+            r"可以吗",
+            r"行不行",
+            r"好不好",
+            r"怎么样",
+            r"如何看待",
         ]
         q_count = sum(1 for p in question_markers if re.search(p, text_lower))
-        scores["question_score"] = min(1.0, q_count * 0.3 + (0.2 if "?" in text or "？" in text else 0.0))
+        scores["question_score"] = min(
+            1.0, q_count * 0.3 + (0.2 if "?" in text or "？" in text else 0.0)
+        )
 
         # imperative_score: imperative/request patterns
         imperative_markers = [
-            r"帮我", r"给我", r"替我", r"为?我", r"翻译[一下]?",
-            r"想[要个]?[ ]?.*[吧吗]?", r"来[ ]?.*[吧吗]?", r"请[ ]?.*",
-            r"试试", r"看看", r"听听", r"说说",
+            r"帮我",
+            r"给我",
+            r"替我",
+            r"为?我",
+            r"翻译[一下]?",
+            r"想[要个]?[ ]?.*[吧吗]?",
+            r"来[ ]?.*[吧吗]?",
+            r"请[ ]?.*",
+            r"试试",
+            r"看看",
+            r"听听",
+            r"说说",
         ]
         i_count = sum(1 for p in imperative_markers if re.search(p, text_lower))
         scores["imperative_score"] = min(1.0, i_count * 0.3)
@@ -1361,18 +1427,51 @@ class CognitionAnalyzer:
 
         # emotional_disclosure_score: emotional expression seeking support
         emotional_markers = [
-            "难过", "伤心", "痛苦", "累", "烦", "郁闷", "崩溃", "绝望",
-            "开心", "高兴", "兴奋", "激动", "感动", "欣慰",
-            "孤独", "寂寞", "害怕", "担心", "焦虑", "紧张",
-            "呜呜", "泪目", "扎心", "难受", "emo",
+            "难过",
+            "伤心",
+            "痛苦",
+            "累",
+            "烦",
+            "郁闷",
+            "崩溃",
+            "绝望",
+            "开心",
+            "高兴",
+            "兴奋",
+            "激动",
+            "感动",
+            "欣慰",
+            "孤独",
+            "寂寞",
+            "害怕",
+            "担心",
+            "焦虑",
+            "紧张",
+            "呜呜",
+            "泪目",
+            "扎心",
+            "难受",
+            "emo",
         ]
         ed_count = sum(1 for w in emotional_markers if w in text_lower)
-        scores["emotional_disclosure_score"] = min(1.0, ed_count * 0.25 + (0.15 if any(w in text_lower for w in ["感觉", "觉得", "心情"]) else 0.0))
+        scores["emotional_disclosure_score"] = min(
+            1.0,
+            ed_count * 0.25 + (0.15 if any(w in text_lower for w in ["感觉", "觉得", "心情"]) else 0.0),
+        )
 
         # attention_seeking_score: attention-seeking phrases
         attention_markers = [
-            "有人吗", "在吗", "在不在", "理我", "理一下", "看看我",
-            "回我", "回复我", "说话", "说句话", "吱个声",
+            "有人吗",
+            "在吗",
+            "在不在",
+            "理我",
+            "理一下",
+            "看看我",
+            "回我",
+            "回复我",
+            "说话",
+            "说句话",
+            "吱个声",
         ]
         at_count = sum(1 for w in attention_markers if w in text_lower)
         scores["attention_seeking_score"] = min(1.0, at_count * 0.4)
@@ -1421,10 +1520,13 @@ class CognitionAnalyzer:
         # @others guard: message explicitly addresses someone other than AI
         # → force low directed_score regardless of LLM prediction
         if other_mention >= 0.5 and mention_score < 0.5:
-            return min(0.3, max(
-                0.0,
-                rule_scores.get("recency_score", 0.0) * 0.15,
-            ))
+            return min(
+                0.3,
+                max(
+                    0.0,
+                    rule_scores.get("recency_score", 0.0) * 0.15,
+                ),
+            )
 
         name_match = rule_scores.get("name_match_score", 0.0)
         second_person = rule_scores.get("second_person_score", 0.0)
@@ -1453,10 +1555,13 @@ class CognitionAnalyzer:
             rule_scores.get("emotional_disclosure_score", 0.0),
             rule_scores.get("attention_seeking_score", 0.0) * 0.3,
         )
-        contextual = max(
-            rule_scores.get("recency_score", 0.0),
-            rule_scores.get("turn_taking_score", 0.0),
-        ) * 0.15
+        contextual = (
+            max(
+                rule_scores.get("recency_score", 0.0),
+                rule_scores.get("turn_taking_score", 0.0),
+            )
+            * 0.15
+        )
 
         base = max(structural, strong_linguistic)
 
@@ -1541,7 +1646,11 @@ class CognitionAnalyzer:
             )
             return SocialIntent.HELP_SEEKING, subtype, min(0.95, 0.6 + help_score * 0.1)
 
-        if emotional_score >= 2 and emotional_score >= help_score and emotional_score >= social_score:
+        if (
+            emotional_score >= 2
+            and emotional_score >= help_score
+            and emotional_score >= social_score
+        ):
             subtype = (
                 EmotionalSubtype.VENTING  # type: ignore[assignment]
                 if any(k in text for k in {"烦", "累", "难受", "崩溃"})
@@ -1608,7 +1717,9 @@ class CognitionAnalyzer:
     ) -> float:
         # Lower base relevance to reduce overall reply frequency.
         # Only help-seeking and emotional intents get a modest boost.
-        role_match = 0.8 if social_intent in (SocialIntent.HELP_SEEKING, SocialIntent.EMOTIONAL) else 0.1
+        role_match = (
+            0.8 if social_intent in (SocialIntent.HELP_SEEKING, SocialIntent.EMOTIONAL) else 0.1
+        )
         return min(1.0, 0.22 + role_match * 0.4)
 
     @staticmethod
@@ -1618,5 +1729,3 @@ class CognitionAnalyzer:
         if social_intent in (SocialIntent.EMOTIONAL, SocialIntent.SOCIAL):
             return "chat"
         return "chat"
-
-

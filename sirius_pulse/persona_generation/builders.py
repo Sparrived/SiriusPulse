@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Awaitable, Callable, cast
 
 from sirius_pulse.config import Agent, SessionConfig
-from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
 from sirius_pulse.persona_generation.templates import (
     DependencyFileSnapshot,
     GeneratedSessionPreset,
@@ -33,6 +32,7 @@ from sirius_pulse.persona_generation.templates import (
     _save_persona_generation_trace,
     persist_generated_agent_profile,
 )
+from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
 
 ROLEPLAY_GENERATION_MAX_TOKENS_DEFAULT = 5120
 ROLEPLAY_GENERATION_TIMEOUT_SECONDS_DEFAULT = 120.0
@@ -165,7 +165,9 @@ def _extract_json_number_field(raw: str, field_names: tuple[str, ...]) -> float 
     return None
 
 
-def _extract_partial_roleplay_payload(raw: str) -> tuple[dict[str, object], list[str], list[str]] | None:
+def _extract_partial_roleplay_payload(
+    raw: str,
+) -> tuple[dict[str, object], list[str], list[str]] | None:
     candidate = _strip_wrapped_json_code_fence(raw)
     payload: dict[str, object] = {}
     truncated_fields: list[str] = []
@@ -255,10 +257,14 @@ def _load_dependency_file_snapshots(
         seen.add(normalized)
         resolved = _resolve_dependency_file_path(dependency_root, normalized)
         if not resolved.exists():
-            snapshots.append(DependencyFileSnapshot(path=normalized, exists=False, error="file_not_found"))
+            snapshots.append(
+                DependencyFileSnapshot(path=normalized, exists=False, error="file_not_found")
+            )
             continue
         if resolved.is_dir():
-            snapshots.append(DependencyFileSnapshot(path=normalized, exists=False, error="is_directory"))
+            snapshots.append(
+                DependencyFileSnapshot(path=normalized, exists=False, error="is_directory")
+            )
             continue
         raw_bytes = resolved.read_bytes()
         content = raw_bytes.decode("utf-8", errors="replace")
@@ -326,8 +332,7 @@ def _build_generation_system_prompt(prompt_enhancements: list[str]) -> str:
 
 
 _GENERATION_OUTPUT_SCHEMA = (
-    '生成：{"agent_persona":"...","global_system_prompt":"...",'
-    '"temperature":0.7,"max_tokens":512}'
+    '生成：{"agent_persona":"...","global_system_prompt":"...",' '"temperature":0.7,"max_tokens":512}'
 )
 
 
@@ -359,7 +364,9 @@ def _build_generation_user_prompt(
     lines.append("\n【生成目标】")
     lines.append("- 用户更希望通过上位描述来构建人格，请优先使用高层维度，而不是要求用户自己写完整 prompt。")
     lines.append("- 需要把抽象输入展开为具体的人物小传、关系距离、情绪反应、语言习惯、回复节奏和互动边界。")
-    lines.append("- global_system_prompt 必须写成详细、结构化、可执行的人格提示词，不是几十字简介；至少明确角色定位、人物小传、核心驱动力、关系层级、情绪机制、语言风格、行为边界、回复策略。")
+    lines.append(
+        "- global_system_prompt 必须写成详细、结构化、可执行的人格提示词，不是几十字简介；至少明确角色定位、人物小传、核心驱动力、关系层级、情绪机制、语言风格、行为边界、回复策略。"
+    )
     lines.append("- 如果输入较少，也要在不违背输入的前提下补出可信细节，不要只复述原句。")
     lines.append("- 除非输入本身就是风格样本，不要把原句直接拼贴成最终系统提示词。")
     lines.append("- 产出的人格应默认偏向短回复、轻量解释和纯文本表达，避免动辄长段落、长列表和 markdown 排版。")
@@ -642,8 +649,7 @@ def _build_preset_from_response(
     if not agent_persona and not global_system_prompt:
         if _looks_like_roleplay_json_response(raw):
             raise PersonaGenerationResponseError(
-                "人格生成响应缺少 agent_persona 和 global_system_prompt 字段。"
-                "请检查模型输出格式。",
+                "人格生成响应缺少 agent_persona 和 global_system_prompt 字段。" "请检查模型输出格式。",
                 raw_response=raw,
                 parsed_payload={"parsed_payload": parsed},
             )
@@ -664,8 +670,12 @@ def _build_preset_from_response(
     if not global_system_prompt:
         global_system_prompt = agent_persona
 
-    temperature_value = parsed.get("temperature", parsed.get("recommended_temperature", base_temperature))
-    max_tokens_value = parsed.get("max_tokens", parsed.get("recommended_max_tokens", base_max_tokens))
+    temperature_value = parsed.get(
+        "temperature", parsed.get("recommended_temperature", base_temperature)
+    )
+    max_tokens_value = parsed.get(
+        "max_tokens", parsed.get("recommended_max_tokens", base_max_tokens)
+    )
     return GeneratedSessionPreset(
         agent=Agent(
             name=agent_name,
@@ -943,9 +953,9 @@ async def aupdate_agent_prompt(
         trait_keywords=trait_keywords,
         answers=answers,
         background=background,
-        dependency_files=[
-            _normalize_dependency_file_path(item) for item in dependency_files
-        ] if dependency_files is not None else None,
+        dependency_files=[_normalize_dependency_file_path(item) for item in dependency_files]
+        if dependency_files is not None
+        else None,
         agent_alias=agent_alias,
         output_language=output_language,
     )

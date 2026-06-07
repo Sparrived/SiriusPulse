@@ -34,6 +34,7 @@ class BaseAdapter(ABC):
         子类可覆写 _cache_image_headers() 来适配不同平台的请求头要求。
         """
         import hashlib
+
         import aiohttp
 
         if not url.startswith(("http://", "https://")):
@@ -81,7 +82,8 @@ class BaseAdapter(ABC):
             return
         files = sorted(
             [f for f in cache_dir.iterdir() if not f.name.endswith(".url")],
-            key=lambda p: p.stat().st_mtime, reverse=True
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
         )
         if len(files) > max_files:
             for old_file in files[max_files:]:
@@ -169,8 +171,11 @@ class BaseAdapter(ABC):
         """踢出群成员。"""
         return await self.call_api(
             "set_group_kick",
-            {"group_id": int(group_id), "user_id": int(user_id),
-             "reject_add_request": reject_add_request},
+            {
+                "group_id": int(group_id),
+                "user_id": int(user_id),
+                "reject_add_request": reject_add_request,
+            },
         )
 
     async def set_group_ban(
@@ -197,9 +202,7 @@ class BaseAdapter(ABC):
             {"group_id": int(group_id), "user_id": int(user_id), "enable": enable},
         )
 
-    async def set_group_card(
-        self, group_id: str, user_id: str, card: str = ""
-    ) -> dict[str, Any]:
+    async def set_group_card(self, group_id: str, user_id: str, card: str = "") -> dict[str, Any]:
         """设置群名片。"""
         return await self.call_api(
             "set_group_card",

@@ -85,10 +85,14 @@ class Pipeline:
 
             # 将 participant 携带的别称注册到演化链（修复别称丢失问题）
             # EvolutionChain.register_alias 会创建/更新演化记录并维护别称缓存
-            for alias in (p.aliases or []):
+            for alias in p.aliases or []:
                 if alias and alias.strip():
                     engine.user_manager.register_alias(
-                        alias, p.user_id, p.name, group_id, source="napcat",
+                        alias,
+                        p.user_id,
+                        p.name,
+                        group_id,
+                        source="napcat",
                     )
                     # 同步到 UnifiedUser.aliases（供传记注入 prompt 使用）
                     resolved = engine.user_manager.get_user(p.user_id, group_id)
@@ -116,7 +120,10 @@ class Pipeline:
         if resolution.confidence < 0.5 and resolution.source != "unresolved":
             logger.debug(
                 "身份解析低置信度: speaker=%s user_id=%s confidence=%.2f source=%s",
-                message.speaker, resolution.user_id, resolution.confidence, resolution.source,
+                message.speaker,
+                resolution.user_id,
+                resolution.confidence,
+                resolution.source,
             )
 
         resolved_user_id = resolution.user_id
@@ -126,9 +133,7 @@ class Pipeline:
         # 构建用户消息的标签
         entry_tags: list[dict[str, str]] = []
         mm_inputs = (
-            [dict(item) for item in message.multimodal_inputs]
-            if message.multimodal_inputs
-            else []
+            [dict(item) for item in message.multimodal_inputs] if message.multimodal_inputs else []
         )
         if mm_inputs:
             # 区分表情包和普通图片
@@ -189,7 +194,10 @@ class Pipeline:
             pass
 
         emotion, intent, empathy = await engine.cognition_analyzer.analyze(
-            content, user_id, group_id, context_messages,
+            content,
+            user_id,
+            group_id,
+            context_messages,
             sender_type=sender_type,
             multimodal_inputs=multimodal_inputs,
             caller_is_developer=caller_is_developer,
@@ -226,9 +234,13 @@ class Pipeline:
                 user_id=user_id or "",
                 valence=getattr(emotion, "valence", 0.0),
                 arousal=getattr(emotion, "arousal", 0.3),
-                basic_emotion=getattr(getattr(emotion, "basic_emotion", None), "name", "") if getattr(emotion, "basic_emotion", None) else "",
+                basic_emotion=getattr(getattr(emotion, "basic_emotion", None), "name", "")
+                if getattr(emotion, "basic_emotion", None)
+                else "",
                 intensity=getattr(emotion, "intensity", 0.5),
-                social_intent=getattr(getattr(intent, "social_intent", None), "value", "") if getattr(intent, "social_intent", None) else getattr(intent, "intent_type", ""),
+                social_intent=getattr(getattr(intent, "social_intent", None), "value", "")
+                if getattr(intent, "social_intent", None)
+                else getattr(intent, "intent_type", ""),
                 urgency_score=getattr(intent, "urgency_score", 0.0),
                 relevance_score=getattr(intent, "relevance_score", 0.5),
                 confidence=getattr(intent, "confidence", 0.8),
@@ -317,7 +329,10 @@ class Pipeline:
             threshold *= 1.3
         elif freq == "selective":
             # Only reply when strongly directed (>=threshold) or high urgency
-            if intent.directed_score < engine.expressiveness.directed_threshold and intent.urgency_score < 70:
+            if (
+                intent.directed_score < engine.expressiveness.directed_threshold
+                and intent.urgency_score < 70
+            ):
                 threshold *= 2.0
 
         # Entitlement suppression: if AI is not qualified for this topic, raise threshold
@@ -340,17 +355,15 @@ class Pipeline:
                 factor = 1.0 + min(0.40, abs(affinity) * 0.25)
                 threshold *= factor
             if abs(affinity) > 0.3:
-                engine._log_inner_thought(
-                    f"对ta的认知是affinity={affinity:.2f}，响应门槛调整了"
-                )
+                engine._log_inner_thought(f"对ta的认知是affinity={affinity:.2f}，响应门槛调整了")
 
         intent.threshold = threshold
-        intent.activity_factor = engine.threshold_engine._activity_factor(rhythm.heat_level, msg_rate)
+        intent.activity_factor = engine.threshold_engine._activity_factor(
+            rhythm.heat_level, msg_rate
+        )
         intent.time_factor = engine.threshold_engine._time_factor(None)
         if user_profile:
-            intent.engagement_factor = engine.threshold_engine._engagement_factor(
-                user_profile
-            )
+            intent.engagement_factor = engine.threshold_engine._engagement_factor(user_profile)
 
         sensitivity = engine.config.get("sensitivity", 0.5)
         directed_gate = engine.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
@@ -369,7 +382,9 @@ class Pipeline:
         now = datetime.now(timezone.utc).timestamp()
         last_reply = engine._last_reply_at.get(group_id, 0)
         seconds_since_reply = now - last_reply
-        cooldown = engine.config.get("reply_cooldown_seconds", engine.expressiveness.cooldown_seconds)
+        cooldown = engine.config.get(
+            "reply_cooldown_seconds", engine.expressiveness.cooldown_seconds
+        )
         if seconds_since_reply < cooldown and decision_result.strategy == ResponseStrategy.DELAYED:
             decision_result = StrategyDecision(
                 strategy=ResponseStrategy.SILENT,
@@ -404,7 +419,9 @@ class Pipeline:
             "expressiveness=%.2f sensitivity=%.2f reason=%s",
             group_id,
             user_id,
-            decision_result.strategy.value if hasattr(decision_result.strategy, "value") else str(decision_result.strategy),
+            decision_result.strategy.value
+            if hasattr(decision_result.strategy, "value")
+            else str(decision_result.strategy),
             decision_result.score,
             decision_result.threshold,
             intent.directed_score,
@@ -425,7 +442,11 @@ class Pipeline:
 
         # 持久化决策事件到 cognition_events.db（供 WebUI 分析）
         try:
-            strategy_val = decision_result.strategy.value if hasattr(decision_result.strategy, "value") else str(decision_result.strategy)
+            strategy_val = (
+                decision_result.strategy.value
+                if hasattr(decision_result.strategy, "value")
+                else str(decision_result.strategy)
+            )
             engine.cognition_store.add_decision(
                 group_id=group_id or "",
                 user_id=user_id or "",
@@ -441,7 +462,9 @@ class Pipeline:
                 msg_rate=msg_rate,
                 cooldown=cooldown,
                 since_reply=seconds_since_reply,
-                expressiveness=engine.expressiveness.expressiveness if engine.expressiveness else 0.5,
+                expressiveness=engine.expressiveness.expressiveness
+                if engine.expressiveness
+                else 0.5,
                 sensitivity=engine.config.get("sensitivity", 0.5),
                 affinity=affinity,
             )
@@ -471,7 +494,9 @@ class Pipeline:
                 directed_score=getattr(intent, "directed_score", 0.0),
                 timestamp=now_iso,
             )
-            engine.semantic_memory.record_interaction(group_id=group_id, user_id=user_id, timestamp=now_iso)
+            engine.semantic_memory.record_interaction(
+                group_id=group_id, user_id=user_id, timestamp=now_iso
+            )
 
         return decision_result
 
@@ -491,7 +516,7 @@ class Pipeline:
 
         # === ✅ Plugin 命令执行路径（v1.2+）===
         if decision.strategy == ResponseStrategy.PLUGIN and decision.plugin_intent:
-            if hasattr(engine, '_execute_plugin_command'):
+            if hasattr(engine, "_execute_plugin_command"):
                 plugin_result = await engine._execute_plugin_command(
                     decision=decision,
                     message=message,
@@ -567,60 +592,30 @@ class Pipeline:
                 "intent": intent.to_dict(),
             }
 
-        emotion_state = emotion.to_dict()
-
         if decision.strategy == ResponseStrategy.IMMEDIATE:
             engine._log_inner_thought("让我先稍等片刻，看看有没有后续消息...")
-            engine.delayed_queue.enqueue(
+            return self._queue_response(
+                decision=decision,
+                message=message,
+                intent=intent,
+                emotion=emotion,
+                memories=memories,
                 group_id=group_id,
                 user_id=user_id,
-                message_content=message.content,
-                strategy_decision=decision,
-                emotion_state=emotion_state,
-                candidate_memories=[m.get("content", "") for m in memories],
-                channel=message.channel,
-                channel_user_id=message.channel_user_id,
-                multimodal_inputs=message.multimodal_inputs,
-                adapter_type=message.adapter_type,
-                heat_level=rhythm.heat_level,
-                pace=rhythm.pace,
-                speaker_name=message.speaker or "",
-                platform_message_id=message.message_id or "",
+                rhythm=rhythm,
             )
-            engine._persist_group_state(group_id)
-            return {
-                "strategy": "immediate",
-                "reply": None,
-                "emotion": emotion.to_dict(),
-                "intent": intent.to_dict(),
-                "thought": "",
-                "partial_replies": [],
-            }
 
         if decision.strategy == ResponseStrategy.DELAYED:
-            engine.delayed_queue.enqueue(
+            return self._queue_response(
+                decision=decision,
+                message=message,
+                intent=intent,
+                emotion=emotion,
+                memories=memories,
                 group_id=group_id,
                 user_id=user_id,
-                message_content=message.content,
-                strategy_decision=decision,
-                emotion_state=emotion_state,
-                candidate_memories=[m.get("content", "") for m in memories],
-                channel=message.channel,
-                channel_user_id=message.channel_user_id,
-                multimodal_inputs=message.multimodal_inputs,
-                adapter_type=message.adapter_type,
-                heat_level=rhythm.heat_level,
-                pace=rhythm.pace,
-                speaker_name=message.speaker or "",
-                platform_message_id=message.message_id or "",
+                rhythm=rhythm,
             )
-            engine._persist_group_state(group_id)
-            return {
-                "strategy": "delayed",
-                "reply": None,
-                "emotion": emotion.to_dict(),
-                "intent": intent.to_dict(),
-            }
 
         engine._persist_group_state(group_id)
 
@@ -630,6 +625,48 @@ class Pipeline:
             "emotion": emotion.to_dict(),
             "intent": intent.to_dict(),
         }
+
+    def _queue_response(
+        self,
+        *,
+        decision: StrategyDecision,
+        message: Message,
+        intent: IntentAnalysisV3,
+        emotion: EmotionState,
+        memories: list[dict[str, Any]],
+        group_id: str,
+        user_id: str,
+        rhythm: Any,
+    ) -> dict[str, Any]:
+        engine = self._engine
+        emotion_state = emotion.to_dict()
+        engine.delayed_queue.enqueue(
+            group_id=group_id,
+            user_id=user_id,
+            message_content=message.content,
+            strategy_decision=decision,
+            emotion_state=emotion_state,
+            candidate_memories=[m.get("content", "") for m in memories],
+            channel=message.channel,
+            channel_user_id=message.channel_user_id,
+            multimodal_inputs=message.multimodal_inputs,
+            adapter_type=message.adapter_type,
+            heat_level=rhythm.heat_level,
+            pace=rhythm.pace,
+            speaker_name=message.speaker or "",
+            platform_message_id=message.message_id or "",
+        )
+        engine._persist_group_state(group_id)
+        result = {
+            "strategy": decision.strategy.value,
+            "reply": None,
+            "emotion": emotion_state,
+            "intent": intent.to_dict(),
+        }
+        if decision.strategy == ResponseStrategy.IMMEDIATE:
+            result["thought"] = ""
+            result["partial_replies"] = []
+        return result
 
     def _collect_biography_section(
         self,
@@ -670,7 +707,8 @@ class Pipeline:
                 if len(alias) < 2 or alias not in message_content:
                     continue
                 uid, conf, _ = mgr.resolve_alias(
-                    alias, group_id=group_id,
+                    alias,
+                    group_id=group_id,
                 )
                 if uid and uid != user_id:
                     mentioned[uid] = max(mentioned.get(uid, 0), conf)
@@ -726,10 +764,6 @@ class Pipeline:
                 display_name = nickname
                 if speaker_name and speaker_name != nickname:
                     display_name = f"{nickname}({speaker_name})"
-                engine.semantic_memory.set_user_profile_fields(
-                    group_id, user_id, name=display_name
-                )
+                engine.semantic_memory.set_user_profile_fields(group_id, user_id, name=display_name)
             elif speaker_name:
-                engine.semantic_memory.set_user_profile_fields(
-                    group_id, user_id, name=speaker_name
-                )
+                engine.semantic_memory.set_user_profile_fields(group_id, user_id, name=speaker_name)

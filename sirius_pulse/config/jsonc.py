@@ -7,7 +7,6 @@ from typing import Any
 
 from sirius_pulse.config.models import MemoryPolicy, OrchestrationPolicy
 
-
 _SESSION_CONFIG_HEADER = [
     "Sirius Chat session config.",
     "This file accepts JSONC-style comments and can be edited directly.",
@@ -253,10 +252,10 @@ def _render_jsonc_mapping(payload: Mapping[str, Any], *, path: str) -> list[str]
         rendered_value = _render_jsonc_value(value, path=child_path)
         suffix = "," if index < len(items) - 1 else ""
         if len(rendered_value) == 1:
-            lines.append(f'{json.dumps(str(key), ensure_ascii=False)}: {rendered_value[0]}{suffix}')
+            lines.append(f"{json.dumps(str(key), ensure_ascii=False)}: {rendered_value[0]}{suffix}")
             continue
 
-        lines.append(f'{json.dumps(str(key), ensure_ascii=False)}: {rendered_value[0]}')
+        lines.append(f"{json.dumps(str(key), ensure_ascii=False)}: {rendered_value[0]}")
         lines.extend(_indent_lines(rendered_value[1:-1], 2))
         lines.append(f"{rendered_value[-1]}{suffix}")
 

@@ -243,6 +243,7 @@ class NapCatManager:
     def _is_port_listening(port: int, host: str = "localhost") -> bool:
         """快速检测指定端口是否在监听（TCP connect，0.5s 超时）。"""
         import socket as _socket
+
         try:
             sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
             sock.settimeout(0.5)
@@ -284,11 +285,13 @@ class NapCatManager:
         """检查指定 pid 的进程是否仍在运行。"""
         try:
             import psutil
+
             return psutil.pid_exists(pid)
         except Exception:
             # fallback: 尝试发送信号 0（Unix）或 ctypes OpenProcess（Windows）
             if sys.platform == "win32":
                 import ctypes
+
                 kernel32 = ctypes.windll.kernel32
                 handle = kernel32.OpenProcess(0x0400, False, pid)  # PROCESS_QUERY_INFORMATION
                 if handle:
@@ -355,7 +358,9 @@ class NapCatManager:
 
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             if version == "latest":
-                resp = await client.get(GITHUB_API, headers={"Accept": "application/vnd.github.v3+json"})
+                resp = await client.get(
+                    GITHUB_API, headers={"Accept": "application/vnd.github.v3+json"}
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 tag = data["tag_name"]
@@ -406,7 +411,7 @@ class NapCatManager:
                 prefix = list(top_dirs)[0] + "/"
                 for member in zf.namelist():
                     if member.startswith(prefix):
-                        target = self.install_dir / member[len(prefix):]
+                        target = self.install_dir / member[len(prefix) :]
                         if member.endswith("/"):
                             target.mkdir(parents=True, exist_ok=True)
                         else:
@@ -659,7 +664,9 @@ class NapCatManager:
         if reboot:
             cmd.append("--reboot")
 
-        LOG.info("正在启动 NapCat (实例: %s, reboot=%s): %s", self.instance_dir.name, reboot, " ".join(cmd))
+        LOG.info(
+            "正在启动 NapCat (实例: %s, reboot=%s): %s", self.instance_dir.name, reboot, " ".join(cmd)
+        )
         try:
             kwargs = {
                 "env": env,
@@ -669,7 +676,9 @@ class NapCatManager:
                 "stderr": subprocess.DEVNULL,
             }
             if sys.platform == "win32":
-                kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                kwargs["creationflags"] = (
+                    subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                )
             else:
                 kwargs["start_new_session"] = True
             self._process = subprocess.Popen(
@@ -830,7 +839,9 @@ class NapCatManager:
                     if self_id:
                         LOG.info(
                             "NapCat WebSocket 已就绪 (%s:%s, QQ=%s)",
-                            host, port, self_id,
+                            host,
+                            port,
+                            self_id,
                         )
                         return {"ready": True, "self_id": str(self_id), "error": None}
                     # 收到消息但没有 self_id，也认为是就绪（可能是其他事件）

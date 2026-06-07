@@ -16,91 +16,95 @@
 
 from __future__ import annotations
 
-from sirius_pulse.webui.server_core import WebUIServer as _WebUIServer
-from sirius_pulse.webui.server_utils import _json_response
-from sirius_pulse.webui.persona_api import (
-    api_personas_get,
-    api_personas_post,
-    api_personas_delete,
-    api_persona_get_single,
-    api_persona_status_get,
-    api_persona_start,
-    api_persona_stop,
-    api_persona_restart,
-    api_system_logs_get,
-    api_persona_logs_get,
-    api_persona_get,
-    api_persona_post,
-    api_persona_interview_get,
-    api_persona_interview,
-    api_orchestration_get,
-    api_orchestration_post,
-    api_experience_get,
-    api_experience_post,
-    api_adapters_get,
-    api_adapters_post,
-    api_engine_reload,
-    api_config_post,
-)
-from sirius_pulse.webui.memory_api import (
-    api_tokens_get,
-    api_telemetry_get,
-    api_persona_tokens_get,
-    api_persona_cognition_get,
-    api_persona_cognition_analysis_get,
-    api_persona_diary_get,
-    api_persona_vector_store_status_get,
-    api_persona_users_get,
-    api_persona_user_get,
-    api_persona_glossary_get,
-    api_persona_memory_viz,
-    api_persona_conversation_history_get,
-)
-from sirius_pulse.webui.evolution_api import (
-    api_memory_dashboard,
-    api_evolution_records,
-    api_evolution_history,
-    api_evolution_uncertain,
-    api_situations_list,
-    api_situations_delete,
-    api_diary_slices as api_diary_slices_new,
-    api_diary_slices_delete,
-    api_biography_view,
-    api_biography_list_all,
-    api_knowledge_gaps,
-)
 from sirius_pulse.webui.biography_api import (
-    api_persona_biography_list,
-    api_persona_biography_get,
     api_persona_biography_alias_index,
     api_persona_biography_alias_index_update,
+    api_persona_biography_get,
+    api_persona_biography_list,
+)
+from sirius_pulse.webui.evolution_api import (
+    api_biography_list_all,
+    api_biography_view,
+)
+from sirius_pulse.webui.evolution_api import api_diary_slices as api_diary_slices_new
+from sirius_pulse.webui.evolution_api import (
+    api_diary_slices_delete,
+    api_evolution_history,
+    api_evolution_records,
+    api_evolution_uncertain,
+    api_knowledge_gaps,
+    api_memory_dashboard,
+    api_situations_delete,
+    api_situations_list,
+)
+from sirius_pulse.webui.memory_api import (
+    api_persona_cognition_analysis_get,
+    api_persona_cognition_get,
+    api_persona_conversation_history_get,
+    api_persona_diary_get,
+    api_persona_glossary_get,
+    api_persona_memory_viz,
+    api_persona_tokens_get,
+    api_persona_user_get,
+    api_persona_users_get,
+    api_persona_vector_store_status_get,
+    api_telemetry_get,
+    api_tokens_get,
+)
+from sirius_pulse.webui.monitoring_api import api_monitoring_health as _api_monitoring_health
+from sirius_pulse.webui.monitoring_api import api_monitoring_overview as _api_monitoring_overview
+from sirius_pulse.webui.monitoring_api import (
+    api_monitoring_persona_metrics as _api_monitoring_persona_metrics,
+)
+from sirius_pulse.webui.persona_api import (
+    api_adapters_get,
+    api_adapters_post,
+    api_config_post,
+    api_engine_reload,
+    api_experience_get,
+    api_experience_post,
+    api_orchestration_get,
+    api_orchestration_post,
+)
+from sirius_pulse.webui.persona_api import api_persona_clone as _api_persona_clone
+from sirius_pulse.webui.persona_api import (
+    api_persona_get,
+    api_persona_get_single,
+    api_persona_interview,
+    api_persona_interview_get,
+    api_persona_logs_get,
+    api_persona_post,
+    api_persona_restart,
+    api_persona_start,
+    api_persona_status_get,
+    api_persona_stop,
+    api_personas_delete,
+    api_personas_get,
+    api_personas_post,
+    api_system_logs_get,
+)
+from sirius_pulse.webui.server_core import WebUIServer as _WebUIServer
+from sirius_pulse.webui.server_plugin_api import (
+    api_plugin_config_get,
+    api_plugin_config_post,
+    api_plugin_detail_get,
+    api_plugin_monitor_repos_get,
+    api_plugin_setting_delete,
+    api_plugin_setting_post,
+    api_plugin_settings_get,
+    api_plugin_settings_post,
+    api_plugin_toggle,
+    api_plugins_get,
+    api_plugins_reload,
 )
 from sirius_pulse.webui.server_skill_api import (
-    api_persona_skills_get,
-    api_persona_skill_toggle,
     api_persona_skill_config_get,
     api_persona_skill_config_post,
     api_persona_skill_history_get,
+    api_persona_skill_toggle,
+    api_persona_skills_get,
 )
-from sirius_pulse.webui.server_plugin_api import (
-    api_plugins_get,
-    api_plugin_detail_get,
-    api_plugin_toggle,
-    api_plugin_config_get,
-    api_plugin_config_post,
-    api_plugin_settings_get,
-    api_plugin_settings_post,
-    api_plugin_setting_post,
-    api_plugin_setting_delete,
-    api_plugins_reload,
-    api_plugin_monitor_repos_get,
-)
-from sirius_pulse.webui.monitoring_api import (
-    api_monitoring_overview as _api_monitoring_overview,
-    api_monitoring_persona_metrics as _api_monitoring_persona_metrics,
-    api_monitoring_health as _api_monitoring_health,
-)
-from sirius_pulse.webui.persona_api import api_persona_clone as _api_persona_clone
+from sirius_pulse.webui.server_utils import _json_response
 
 
 class WebUIServer(_WebUIServer):

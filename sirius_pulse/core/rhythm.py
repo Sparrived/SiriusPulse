@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.core.cognition import extract_keywords
+from sirius_pulse.models.emotion import EmotionState
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 class RhythmAnalysis:
     """Conversation rhythm analysis result."""
 
-    heat_level: str = "warm"           # cold | warm | hot | overheated
+    heat_level: str = "warm"  # cold | warm | hot | overheated
     heat_score: float = 0.0
-    pace: str = "steady"               # accelerating | steady | decelerating | silent
+    pace: str = "steady"  # accelerating | steady | decelerating | silent
     gap_since_last_message: float = 0.0  # seconds
-    topic_stability: float = 0.5       # 0~1
-    topic_drift: float = 0.0           # v1.3+: 0~1, 窗口内话题漂移度，高值=发生了话题转换
+    topic_stability: float = 0.5  # 0~1
+    topic_drift: float = 0.0  # v1.3+: 0~1, 窗口内话题漂移度，高值=发生了话题转换
     collective_mood: EmotionState | None = None
     attention_window_open: bool = False
     burst_detected: bool = False
@@ -196,6 +196,7 @@ class RhythmAnalyzer:
     def _detect_burst(messages: list[dict[str, Any]]) -> bool:
         """Detect if a user sent >=4 messages within 15 seconds."""
         from collections import defaultdict
+
         user_msgs: dict[str, list[datetime]] = defaultdict(list)
         for m in messages[-15:]:
             uid = m.get("user_id", "")

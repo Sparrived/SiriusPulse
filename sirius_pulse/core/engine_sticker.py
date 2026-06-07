@@ -46,7 +46,8 @@ class EngineSticker:
             return []
         image_extensions = {".gif", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
         return [
-            f for f in stickers_dir.iterdir()
+            f
+            for f in stickers_dir.iterdir()
             if f.is_file() and f.suffix.lower() in image_extensions
         ]
 
@@ -87,7 +88,8 @@ class EngineSticker:
 
         chosen_name = random.choice(names[:3])
         candidates = [
-            f for f in self._available_sticker_files()
+            f
+            for f in self._available_sticker_files()
             if self._sticker_name_from_file(f) == chosen_name
         ]
         if not candidates:
@@ -151,7 +153,7 @@ class EngineSticker:
         system_prompt = (
             "你只负责把表情包名称分成明显的二元对立关系。"
             "必须只使用给定名称，不允许发明新词。"
-            "返回 JSON，格式为 {\"pairs\": [{\"base\": \"A\", \"opposites\": [\"B\", \"C\"]}] }。"
+            '返回 JSON，格式为 {"pairs": [{"base": "A", "opposites": ["B", "C"]}] }。'
             "base 和 opposites 都必须来自候选列表。"
             "只保留你非常确定的对立关系。"
         )
@@ -200,7 +202,8 @@ class EngineSticker:
             if not isinstance(base, str) or not isinstance(opps, list):
                 continue
             filtered = [
-                name for name in opps
+                name
+                for name in opps
                 if isinstance(name, str) and name in available and name != base
             ]
             if filtered:

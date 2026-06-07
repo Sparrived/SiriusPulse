@@ -127,11 +127,11 @@ class DiaryManager:
         sources.update(result.entry.source_ids)
 
         # Remember the tail sources of this diary for next overlap
-        self._last_diary_tail_sources[group_id] = list(result.entry.source_ids)[-overlap_tail_count:]
+        self._last_diary_tail_sources[group_id] = list(result.entry.source_ids)[
+            -overlap_tail_count:
+        ]
         if self._memory_storage is not None:
-            self._memory_storage.save_diary_meta(
-                group_id, self._last_diary_tail_sources[group_id]
-            )
+            self._memory_storage.save_diary_meta(group_id, self._last_diary_tail_sources[group_id])
 
         logger.info(
             "群 %s 的日记写好了，总结了 %d 条对话。",
@@ -273,9 +273,7 @@ class DiaryManager:
         old_source_ids: set[str] = set()
         for e in old:
             old_source_ids.update(e.source_ids)
-        self._indexer._entries = [
-            e for e in self._indexer._entries if e.group_id != group_id
-        ]
+        self._indexer._entries = [e for e in self._indexer._entries if e.group_id != group_id]
 
         # 2. Clear vector store for this group once (instead of per-entry)
         vs = self._indexer._vector_store

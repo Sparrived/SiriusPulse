@@ -22,7 +22,7 @@ slot-based (no ``__dict__`` overhead).
 """
 from __future__ import annotations
 
-from dataclasses import asdict, fields, MISSING
+from dataclasses import MISSING, asdict, fields
 from typing import Any, TypeVar
 
 _T = TypeVar("_T", bound="JsonSerializable")

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from sirius_pulse.exceptions import (
-    ConflictingMemoryError,
     ConfigError,
+    ConflictingMemoryError,
     ContentValidationError,
     InvalidConfigError,
     JSONParseError,

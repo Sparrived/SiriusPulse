@@ -209,7 +209,9 @@ class ConfigManager:
     ) -> None:
         """Persist workspace-level config and a human-readable session snapshot."""
         config_root = Path(work_path)
-        runtime_root_source = data_path if data_path is not None else (config.data_path or config.work_path)
+        runtime_root_source = (
+            data_path if data_path is not None else (config.data_path or config.work_path)
+        )
         runtime_root = Path(runtime_root_source)
         layout = WorkspaceLayout(runtime_root, config_path=config_root)
         layout.ensure_directories()
@@ -253,7 +255,9 @@ class ConfigManager:
         config_root = Path(work_path)
         runtime_root = Path(data_path) if data_path is not None else config_root
         layout = WorkspaceLayout(runtime_root, config_path=config_root)
-        workspace_config = self.load_workspace_config(layout.config_root, data_path=layout.data_root)
+        workspace_config = self.load_workspace_config(
+            layout.config_root, data_path=layout.data_root
+        )
         agents, selected = load_generated_agent_library(layout.config_root)
         agent_key = str((overrides or {}).get("agent_key", "")).strip()
         resolved_agent_key = agent_key or workspace_config.active_agent_key or selected

@@ -32,9 +32,7 @@ class FakeEngineContext:
     def list_sticker_names(self) -> list[str]:
         return ["开心", "收到", "疑惑"]
 
-    async def send_sticker_by_names(
-        self, group_id: str, names: list[str]
-    ) -> dict[str, Any]:
+    async def send_sticker_by_names(self, group_id: str, names: list[str]) -> dict[str, Any]:
         self.sent_stickers.append((group_id, names))
         return {
             "success": True,
@@ -66,10 +64,7 @@ class FakeEngineContext:
         return {"success": True, "summary": "ok"}
 
     def get_pinned_messages(self, group_id: str) -> list[dict[str, Any]]:
-        return [
-            item for item in self.pinned.values()
-            if item.get("group_id") == group_id
-        ]
+        return [item for item in self.pinned.values() if item.get("group_id") == group_id]
 
 
 @pytest.mark.asyncio

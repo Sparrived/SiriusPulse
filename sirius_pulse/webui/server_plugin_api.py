@@ -15,8 +15,8 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.plugins.loader import PluginLoader
 from sirius_pulse.plugins.config import get_config_manager
+from sirius_pulse.plugins.loader import PluginLoader
 from sirius_pulse.plugins.models import PluginDefinition
 from sirius_pulse.webui.server_core import _json_response
 from sirius_pulse.webui.server_utils import handle_api_errors
@@ -62,6 +62,7 @@ def _load_definitions_cached(plugins_dir: Path) -> list[PluginDefinition]:
 # API: 插件列表
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @handle_api_errors
 async def api_plugins_get(request: web.Request, manager: Any) -> web.Response:
     """GET /api/plugins — 列出所有插件及其元数据。"""
@@ -77,50 +78,52 @@ async def api_plugins_get(request: web.Request, manager: Any) -> web.Response:
         plugin_config = config_manager.get_config(d.name)
         source_file = _find_source_file(d.source_path) if d.source_path else None
 
-        plugins.append({
-            "name": d.name,
-            "display_name": d.display_name or d.name,
-            "description": d.description,
-            "version": d.version,
-            "author": d.author,
-            "enabled": plugin_config["enabled"],
-            "prompt_inject": d.prompt_inject or "",
-            "permissions": {
-                "hidden_from_intent": d.permissions.hidden_from_intent,
-            },
-            "commands": [
-                {
-                    "name": c.name,
-                    "patterns": c.patterns,
-                    "pattern_type": c.pattern_type,
-                    "description": c.description,
-                    "hidden_from_intent": c.hidden_from_intent,
-                }
-                for c in d.commands
-            ],
-            "events": [
-                {
-                    "type": e.type,
-                    "cron": e.cron,
-                    "description": e.description,
-                }
-                for e in d.events
-            ],
-            "parameters": [
-                {
-                    "name": p.name,
-                    "type": p.type,
-                    "description": p.description,
-                    "required": p.required,
-                    "default": p.default,
-                }
-                for p in d.parameters
-            ],
-            "nl_examples": d.natural_language.examples if d.natural_language else [],
-            "source_file": source_file,
-            "has_source": source_file is not None,
-            "settings": plugin_config["settings"],
-        })
+        plugins.append(
+            {
+                "name": d.name,
+                "display_name": d.display_name or d.name,
+                "description": d.description,
+                "version": d.version,
+                "author": d.author,
+                "enabled": plugin_config["enabled"],
+                "prompt_inject": d.prompt_inject or "",
+                "permissions": {
+                    "hidden_from_intent": d.permissions.hidden_from_intent,
+                },
+                "commands": [
+                    {
+                        "name": c.name,
+                        "patterns": c.patterns,
+                        "pattern_type": c.pattern_type,
+                        "description": c.description,
+                        "hidden_from_intent": c.hidden_from_intent,
+                    }
+                    for c in d.commands
+                ],
+                "events": [
+                    {
+                        "type": e.type,
+                        "cron": e.cron,
+                        "description": e.description,
+                    }
+                    for e in d.events
+                ],
+                "parameters": [
+                    {
+                        "name": p.name,
+                        "type": p.type,
+                        "description": p.description,
+                        "required": p.required,
+                        "default": p.default,
+                    }
+                    for p in d.parameters
+                ],
+                "nl_examples": d.natural_language.examples if d.natural_language else [],
+                "source_file": source_file,
+                "has_source": source_file is not None,
+                "settings": plugin_config["settings"],
+            }
+        )
 
     return _json_response({"plugins": plugins})
 
@@ -128,6 +131,7 @@ async def api_plugins_get(request: web.Request, manager: Any) -> web.Response:
 # ═══════════════════════════════════════════════════════════════════════
 # API: github_monitor 仓库列表（供插件表单 active_repos 复用）
 # ═══════════════════════════════════════════════════════════════════════
+
 
 async def api_plugin_monitor_repos_get(request: web.Request, manager: Any) -> web.Response:
     """GET /api/plugins/monitor_repos — 获取 github_monitor 的仓库列表。"""
@@ -173,6 +177,7 @@ def _find_source_file(plugin_path: Path | None) -> str | None:
 # API: 插件详情（含源码）
 # ═══════════════════════════════════════════════════════════════════════
 
+
 async def api_plugin_detail_get(request: web.Request, manager: Any) -> web.Response:
     """GET /api/plugins/{plugin_name} — 获取插件详情，含源码内容。"""
     plugin_name = str(request.match_info.get("plugin_name", "")).strip()
@@ -200,58 +205,63 @@ async def api_plugin_detail_get(request: web.Request, manager: Any) -> web.Respo
             except Exception as exc:
                 LOG.warning("读取源码失败 %s: %s", source_path, exc)
 
-    return _json_response({
-        "name": definition.name,
-        "display_name": definition.display_name or definition.name,
-        "description": definition.description,
-        "version": definition.version,
-        "author": definition.author,
-        "prompt_inject": definition.prompt_inject or "",
-        "hidden_from_intent": definition.permissions.hidden_from_intent,
-        "enabled": plugin_config["enabled"],
-        "commands": [
-            {
-                "name": c.name,
-                "patterns": c.patterns,
-                "pattern_type": c.pattern_type,
-                "description": c.description,
-                "examples": c.examples,
-                "hidden_from_intent": c.hidden_from_intent,
-            }
-            for c in definition.commands
-        ],
-        "events": [
-            {
-                "type": e.type,
-                "cron": e.cron,
-                "description": e.description,
-            }
-            for e in definition.events
-        ],
-        "parameters": [
-            {
-                "name": p.name,
-                "type": p.type,
-                "description": p.description,
-                "required": p.required,
-                "default": p.default,
-                "choices": p.choices,
-                "group": p.group,
-            }
-            for p in definition.parameters
-        ],
-        "nl_examples": definition.natural_language.examples if definition.natural_language else [],
-        "nl_slots": definition.natural_language.slots if definition.natural_language else {},
-        "source_file": source_file,
-        "source_content": source_content,
-        "settings": plugin_config["settings"],
-        "permissions": plugin_config["permissions"],
-    })
+    return _json_response(
+        {
+            "name": definition.name,
+            "display_name": definition.display_name or definition.name,
+            "description": definition.description,
+            "version": definition.version,
+            "author": definition.author,
+            "prompt_inject": definition.prompt_inject or "",
+            "hidden_from_intent": definition.permissions.hidden_from_intent,
+            "enabled": plugin_config["enabled"],
+            "commands": [
+                {
+                    "name": c.name,
+                    "patterns": c.patterns,
+                    "pattern_type": c.pattern_type,
+                    "description": c.description,
+                    "examples": c.examples,
+                    "hidden_from_intent": c.hidden_from_intent,
+                }
+                for c in definition.commands
+            ],
+            "events": [
+                {
+                    "type": e.type,
+                    "cron": e.cron,
+                    "description": e.description,
+                }
+                for e in definition.events
+            ],
+            "parameters": [
+                {
+                    "name": p.name,
+                    "type": p.type,
+                    "description": p.description,
+                    "required": p.required,
+                    "default": p.default,
+                    "choices": p.choices,
+                    "group": p.group,
+                }
+                for p in definition.parameters
+            ],
+            "nl_examples": definition.natural_language.examples
+            if definition.natural_language
+            else [],
+            "nl_slots": definition.natural_language.slots if definition.natural_language else {},
+            "source_file": source_file,
+            "source_content": source_content,
+            "settings": plugin_config["settings"],
+            "permissions": plugin_config["permissions"],
+        }
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # API: 启用/禁用
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @handle_api_errors
 async def api_plugin_toggle(request: web.Request, manager: Any) -> web.Response:
@@ -277,6 +287,7 @@ async def api_plugin_toggle(request: web.Request, manager: Any) -> web.Response:
 # API: 插件权限配置
 # ═══════════════════════════════════════════════════════════════════════
 
+
 async def api_plugin_config_get(request: web.Request, manager: Any) -> web.Response:
     """GET /api/plugins/{plugin_name}/config — 获取插件权限配置。"""
     plugin_name = str(request.match_info.get("plugin_name", "")).strip()
@@ -286,13 +297,15 @@ async def api_plugin_config_get(request: web.Request, manager: Any) -> web.Respo
     config_manager = _get_config_manager(manager)
     permissions = config_manager.get_permissions(plugin_name)
 
-    return _json_response({
-        "plugin": plugin_name,
-        "group_blacklist": permissions.get("group_blacklist", []),
-        "developer_only": permissions.get("developer_only", False),
-        "hidden_from_intent": permissions.get("hidden_from_intent", False),
-        "rate_limit_calls_per_minute": permissions.get("rate_limit_calls_per_minute", 60),
-    })
+    return _json_response(
+        {
+            "plugin": plugin_name,
+            "group_blacklist": permissions.get("group_blacklist", []),
+            "developer_only": permissions.get("developer_only", False),
+            "hidden_from_intent": permissions.get("hidden_from_intent", False),
+            "rate_limit_calls_per_minute": permissions.get("rate_limit_calls_per_minute", 60),
+        }
+    )
 
 
 async def api_plugin_config_post(request: web.Request, manager: Any) -> web.Response:
@@ -310,7 +323,9 @@ async def api_plugin_config_post(request: web.Request, manager: Any) -> web.Resp
     permissions: dict[str, Any] = {}
 
     if "group_blacklist" in body and isinstance(body["group_blacklist"], list):
-        permissions["group_blacklist"] = [str(v).strip() for v in body["group_blacklist"] if str(v).strip()]
+        permissions["group_blacklist"] = [
+            str(v).strip() for v in body["group_blacklist"] if str(v).strip()
+        ]
 
     if "developer_only" in body:
         permissions["developer_only"] = bool(body["developer_only"])
@@ -335,6 +350,7 @@ async def api_plugin_config_post(request: web.Request, manager: Any) -> web.Resp
 # API: 插件自定义配置（如 chat_analyzer 的时间配置）
 # ═══════════════════════════════════════════════════════════════════════
 
+
 async def api_plugin_settings_get(request: web.Request, manager: Any) -> web.Response:
     """GET /api/plugins/{plugin_name}/settings — 获取插件自定义配置。"""
     plugin_name = str(request.match_info.get("plugin_name", "")).strip()
@@ -344,10 +360,12 @@ async def api_plugin_settings_get(request: web.Request, manager: Any) -> web.Res
     config_manager = _get_config_manager(manager)
     settings = config_manager.get_settings(plugin_name)
 
-    return _json_response({
-        "plugin": plugin_name,
-        "settings": settings,
-    })
+    return _json_response(
+        {
+            "plugin": plugin_name,
+            "settings": settings,
+        }
+    )
 
 
 async def api_plugin_settings_post(request: web.Request, manager: Any) -> web.Response:
@@ -376,7 +394,7 @@ async def api_plugin_setting_post(request: web.Request, manager: Any) -> web.Res
     """POST /api/plugins/{plugin_name}/settings/{key} — 设置单个配置项。"""
     plugin_name = str(request.match_info.get("plugin_name", "")).strip()
     key = str(request.match_info.get("key", "")).strip()
-    
+
     if not plugin_name:
         return _json_response({"error": "缺少 plugin_name"}, 400)
     if not key:
@@ -400,7 +418,7 @@ async def api_plugin_setting_delete(request: web.Request, manager: Any) -> web.R
     """DELETE /api/plugins/{plugin_name}/settings/{key} — 删除单个配置项。"""
     plugin_name = str(request.match_info.get("plugin_name", "")).strip()
     key = str(request.match_info.get("key", "")).strip()
-    
+
     if not plugin_name:
         return _json_response({"error": "缺少 plugin_name"}, 400)
     if not key:
@@ -416,6 +434,7 @@ async def api_plugin_setting_delete(request: web.Request, manager: Any) -> web.R
 # ═══════════════════════════════════════════════════════════════════════
 # API: 刷新插件（重新加载）
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @handle_api_errors
 async def api_plugins_reload(request: web.Request, manager: Any) -> web.Response:
@@ -440,8 +459,10 @@ async def api_plugins_reload(request: web.Request, manager: Any) -> web.Response
     enabled_count = sum(1 for d in definitions if config_manager.get_enabled(d.name))
     LOG.info("插件刷新完成: %d 个 (启用 %d)", count, enabled_count)
 
-    return _json_response({
-        "success": True,
-        "total": count,
-        "enabled": enabled_count,
-    })
+    return _json_response(
+        {
+            "success": True,
+            "total": count,
+            "enabled": enabled_count,
+        }
+    )

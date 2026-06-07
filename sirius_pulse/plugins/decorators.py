@@ -42,7 +42,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 if TYPE_CHECKING:
     from sirius_pulse.plugins.models import CommandAST, PluginResponse
@@ -57,6 +57,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 # PluginCommandMeta —— 装饰器记录的指令元数据
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass(slots=True)
 class PluginCommandMeta:
     """由 @command 装饰器记录的指令元数据。
@@ -65,24 +66,24 @@ class PluginCommandMeta:
     以及方法引用（handler）。
     """
 
-    name: str                              # 指令名（对应 CommandAST.command）
-    prefix: str = field(default="")        # 指令前缀（如 "/"、"#"），空串表示无前缀
-    patterns: list[str] = field(default_factory=list)          # 触发词列表（不含前缀）
-    pattern_type: str = "prefix"           # prefix | keyword | regex
-    render_mode: str = "direct"            # direct | llm | silent
-    description: str = ""                  # 人类可读的描述
-    examples: list[str] = field(default_factory=list)          # 使用示例
-    hidden_from_intent: bool = False       # 是否对意图识别隐藏（v1.3+）
+    name: str  # 指令名（对应 CommandAST.command）
+    prefix: str = field(default="")  # 指令前缀（如 "/"、"#"），空串表示无前缀
+    patterns: list[str] = field(default_factory=list)  # 触发词列表（不含前缀）
+    pattern_type: str = "prefix"  # prefix | keyword | regex
+    render_mode: str = "direct"  # direct | llm | silent
+    description: str = ""  # 人类可读的描述
+    examples: list[str] = field(default_factory=list)  # 使用示例
+    hidden_from_intent: bool = False  # 是否对意图识别隐藏（v1.3+）
     # LLM 渲染参数
     system_prompt_suffix: str = ""
     max_tokens: int = 500
     temperature: float = 0.8
     mood_hint: str = ""
     # 执行超时
-    timeout: float = 0.0                   # 单次执行超时秒数，0 使用默认值
+    timeout: float = 0.0  # 单次执行超时秒数，0 使用默认值
     # 内部引用
-    handler: Callable[..., Any] | None = None   # 绑定的方法
-    handler_is_async: bool = False              # 是否为异步方法
+    handler: Callable[..., Any] | None = None  # 绑定的方法
+    handler_is_async: bool = False  # 是否为异步方法
 
     @property
     def is_async(self) -> bool:
@@ -109,16 +110,16 @@ class PluginCommandGroupMeta:
     支持嵌套指令组（通过 parent 参数）。
     """
 
-    name: str                              # 指令组名（如 "ca"）
-    prefix: str = field(default="")        # 指令前缀（如 "/"、"#"），空串表示无前缀
-    patterns: list[str] = field(default_factory=list)          # 触发词列表（不含前缀）
-    pattern_type: str = "prefix"           # prefix | keyword | regex
-    description: str = ""                  # 人类可读的描述
-    examples: list[str] = field(default_factory=list)          # 使用示例
-    hidden_from_intent: bool = False       # 是否对意图识别隐藏
-    parent: str = ""                       # 父指令组名（用于嵌套，如 "ca"）
+    name: str  # 指令组名（如 "ca"）
+    prefix: str = field(default="")  # 指令前缀（如 "/"、"#"），空串表示无前缀
+    patterns: list[str] = field(default_factory=list)  # 触发词列表（不含前缀）
+    pattern_type: str = "prefix"  # prefix | keyword | regex
+    description: str = ""  # 人类可读的描述
+    examples: list[str] = field(default_factory=list)  # 使用示例
+    hidden_from_intent: bool = False  # 是否对意图识别隐藏
+    parent: str = ""  # 父指令组名（用于嵌套，如 "ca"）
     # 内部引用
-    handler: Callable[..., Any] | None = None   # 绑定的方法（通常为空函数）
+    handler: Callable[..., Any] | None = None  # 绑定的方法（通常为空函数）
 
     @property
     def full_patterns(self) -> list[str]:
@@ -146,24 +147,24 @@ class GroupCommandMeta:
     支持嵌套指令组（通过 parent 参数）。
     """
 
-    name: str                              # 子命令名（如 "analyse"）
-    patterns: list[str] = field(default_factory=list)          # 触发词列表（不含前缀和组名）
-    pattern_type: str = "prefix"           # prefix | keyword | regex
-    render_mode: str = "direct"            # direct | llm | silent
-    description: str = ""                  # 人类可读的描述
-    examples: list[str] = field(default_factory=list)          # 使用示例
-    hidden_from_intent: bool = False       # 是否对意图识别隐藏
-    parent: str = ""                       # 父指令组名（用于嵌套，如 "ca" 或 "ca.report"）
+    name: str  # 子命令名（如 "analyse"）
+    patterns: list[str] = field(default_factory=list)  # 触发词列表（不含前缀和组名）
+    pattern_type: str = "prefix"  # prefix | keyword | regex
+    render_mode: str = "direct"  # direct | llm | silent
+    description: str = ""  # 人类可读的描述
+    examples: list[str] = field(default_factory=list)  # 使用示例
+    hidden_from_intent: bool = False  # 是否对意图识别隐藏
+    parent: str = ""  # 父指令组名（用于嵌套，如 "ca" 或 "ca.report"）
     # LLM 渲染参数
     system_prompt_suffix: str = ""
     max_tokens: int = 500
     temperature: float = 0.8
     mood_hint: str = ""
     # 执行超时
-    timeout: float = 0.0                   # 单次执行超时秒数，0 使用默认值
+    timeout: float = 0.0  # 单次执行超时秒数，0 使用默认值
     # 内部引用
-    handler: Callable[..., Any] | None = None   # 绑定的方法
-    handler_is_async: bool = False              # 是否为异步方法
+    handler: Callable[..., Any] | None = None  # 绑定的方法
+    handler_is_async: bool = False  # 是否为异步方法
 
     @property
     def is_async(self) -> bool:
@@ -184,6 +185,7 @@ class GroupCommandMeta:
 # ═══════════════════════════════════════════════════════════════════════
 # @command 装饰器
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def command(
     name: str,
@@ -282,6 +284,7 @@ def _get_command_meta(func: Callable[..., Any]) -> PluginCommandMeta | None:
 # @command_group 装饰器
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def command_group(
     name: str,
     *,
@@ -353,6 +356,7 @@ def _get_command_group_meta(func: Callable[..., Any]) -> PluginCommandGroupMeta 
 # ═══════════════════════════════════════════════════════════════════════
 # @group_command 装饰器
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def group_command(
     name: str,
@@ -440,6 +444,7 @@ def _get_group_command_meta(func: Callable[..., Any]) -> GroupCommandMeta | None
 # ═══════════════════════════════════════════════════════════════════════
 # _discover_commands —— 扫描 PluginBase 子类的 @command 方法
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def discover_commands(instance: object) -> dict[str, PluginCommandMeta]:
     """扫描 PluginBase 实例上所有带 @command 装饰器的方法。
@@ -545,7 +550,9 @@ def discover_command_groups(
                     handler=bound,
                 )
                 groups[group_meta.name] = (group_meta, {})
-                logger.debug("发现 @command_group: %s → %s.%s", group_meta.name, cls.__name__, attr_name)
+                logger.debug(
+                    "发现 @command_group: %s → %s.%s", group_meta.name, cls.__name__, attr_name
+                )
 
             # 检查 @group_command
             sub_meta = _get_group_command_meta(attr)
@@ -571,7 +578,9 @@ def discover_command_groups(
                 if cls.__name__ not in sub_commands:
                     sub_commands[cls.__name__] = {}
                 sub_commands[cls.__name__][sub_meta.name] = sub_meta
-                logger.debug("发现 @group_command: %s → %s.%s", sub_meta.name, cls.__name__, attr_name)
+                logger.debug(
+                    "发现 @group_command: %s → %s.%s", sub_meta.name, cls.__name__, attr_name
+                )
 
     # 将子命令关联到对应的指令组
     for group_name, (group_meta, _) in groups.items():
@@ -625,7 +634,8 @@ async def dispatch_command_stream(
     instance: object,
     cmd: "CommandAST",
     command_handlers: dict[str, "PluginCommandMeta"],
-    command_groups: dict[str, tuple["PluginCommandGroupMeta", dict[str, "GroupCommandMeta"]]] | None = None,
+    command_groups: dict[str, tuple["PluginCommandGroupMeta", dict[str, "GroupCommandMeta"]]]
+    | None = None,
 ) -> list["PluginResponse"]:
     """根据 CommandAST.command 路由到对应的 @command 方法并调用。
 
@@ -718,9 +728,11 @@ async def dispatch_command_stream(
     # 回退到普通指令
     meta = command_handlers.get(cmd.command)
     if meta is None or meta.handler is None:
-        return [PluginResponse.fail(
-            f"Plugin '{getattr(instance, '_name', '?')}' 未定义指令 '{cmd.command}' 的处理器"
-        )]
+        return [
+            PluginResponse.fail(
+                f"Plugin '{getattr(instance, '_name', '?')}' 未定义指令 '{cmd.command}' 的处理器"
+            )
+        ]
 
     handler = meta.handler
 
@@ -733,15 +745,20 @@ async def dispatch_command_stream(
     # 解析字符串注解（兼容 from __future__ import annotations 导致的字符串化）
     try:
         from typing import get_type_hints
+
         resolved_hints = get_type_hints(handler, include_extras=False)
     except Exception:
         resolved_hints = {}
 
     # 打印注解解析结果（调试用）
-    if any(isinstance(p.annotation, str) for p in sig.parameters.values() if p.name not in ("self", "cls")):
+    if any(
+        isinstance(p.annotation, str)
+        for p in sig.parameters.values()
+        if p.name not in ("self", "cls")
+    ):
         logger.info(
             "插件 %s 指令 %s 字符串注解已解析：%s",
-            getattr(instance, '_name', '?'),
+            getattr(instance, "_name", "?"),
             cmd.command,
             {k: v for k, v in resolved_hints.items()},
         )
@@ -763,7 +780,7 @@ async def dispatch_command_stream(
             if isinstance(annotation, type) and not isinstance(coerced, annotation):
                 logger.info(
                     "插件 %s 指令 %s 参数 %s 类型不匹配: 值=%r(%s) 期望=%s，使用默认值",
-                    getattr(instance, '_name', '?'),
+                    getattr(instance, "_name", "?"),
                     cmd.command,
                     param_name,
                     coerced,
@@ -811,16 +828,14 @@ async def dispatch_command_stream(
             if param.default is not inspect.Parameter.empty:
                 bound_args[param_name] = param.default
             else:
-                return [PluginResponse.fail(
-                    f"指令 '{cmd.command}' 缺少必填参数 '{param_name}'"
-                )]
+                return [PluginResponse.fail(f"指令 '{cmd.command}' 缺少必填参数 '{param_name}'")]
             continue
 
         # rest args 模式：只剩最后一个未绑定 string 参数时，合并剩余位置参数
         remaining_unbound = [
-            pn for pn, p in sig.parameters.items()
-            if pn not in ("self", "cls") and pn not in bound_args
-            and pn != param_name
+            pn
+            for pn, p in sig.parameters.items()
+            if pn not in ("self", "cls") and pn not in bound_args and pn != param_name
         ]
         if not remaining_unbound and annotation is str:
             joined = " ".join(str(a.value) for a in cmd.args[pos_idx:])
@@ -834,7 +849,7 @@ async def dispatch_command_stream(
     # ── 打印参数解析结果（调试用）──
     logger.info(
         "插件 %s 指令 %s 参数绑定结果：%s",
-        getattr(instance, '_name', '?'),
+        getattr(instance, "_name", "?"),
         cmd.command,
         {k: (v, type(v).__name__) for k, v in bound_args.items()},
     )
@@ -862,10 +877,12 @@ async def _dispatch_group_command(
 
     handler = sub_meta.handler
     if handler is None:
-        return [PluginResponse.fail(
-            f"Plugin '{getattr(instance, '_name', '?')}' 指令组 '{cmd.command}' "
-            f"的子命令 '{cmd.subcommand}' 未定义处理器"
-        )]
+        return [
+            PluginResponse.fail(
+                f"Plugin '{getattr(instance, '_name', '?')}' 指令组 '{cmd.command}' "
+                f"的子命令 '{cmd.subcommand}' 未定义处理器"
+            )
+        ]
 
     # 类型感知的参数映射
     try:
@@ -876,6 +893,7 @@ async def _dispatch_group_command(
     # 解析字符串注解
     try:
         from typing import get_type_hints
+
         resolved_hints = get_type_hints(handler, include_extras=False)
     except Exception:
         resolved_hints = {}
@@ -916,15 +934,17 @@ async def _dispatch_group_command(
             if param.default is not inspect.Parameter.empty:
                 bound_args[param_name] = param.default
             else:
-                return [PluginResponse.fail(
-                    f"指令 '{cmd.command} {cmd.subcommand}' 缺少必填参数 '{param_name}'"
-                )]
+                return [
+                    PluginResponse.fail(
+                        f"指令 '{cmd.command} {cmd.subcommand}' 缺少必填参数 '{param_name}'"
+                    )
+                ]
             continue
 
         remaining_unbound = [
-            pn for pn, p in sig.parameters.items()
-            if pn not in ("self", "cls") and pn not in bound_args
-            and pn != param_name
+            pn
+            for pn, p in sig.parameters.items()
+            if pn not in ("self", "cls") and pn not in bound_args and pn != param_name
         ]
         if not remaining_unbound and annotation is str:
             joined = " ".join(str(a.value) for a in cmd.args[pos_idx:])
@@ -981,7 +1001,7 @@ async def _invoke_handler(
     except Exception as exc:
         logger.error(
             "Plugin 指令处理器异常 [%s.%s]: %s",
-            getattr(instance, '_name', '?'),
+            getattr(instance, "_name", "?"),
             meta.name,
             exc,
             exc_info=True,
@@ -989,7 +1009,9 @@ async def _invoke_handler(
         return [PluginResponse.fail(f"指令执行异常: {exc}")]
 
 
-def _normalize_stream_item(raw: Any, meta: "PluginCommandMeta | GroupCommandMeta") -> "PluginResponse":
+def _normalize_stream_item(
+    raw: Any, meta: "PluginCommandMeta | GroupCommandMeta"
+) -> "PluginResponse":
     """将 handler 产出归一化为 PluginResponse。
 
     - None → 空成功

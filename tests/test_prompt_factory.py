@@ -25,7 +25,7 @@ def test_prompt_factory_when_message_is_tagged_then_escapes_content_and_attribut
     tagged = PromptFactory.tag_message(
         'hello <world> & "friends"',
         speaker='Alice "A"',
-        user_id='u&1',
+        user_id="u&1",
         platform_message_id='msg"1',
         time_str="12:34:56",
         group_id='group"1',
@@ -40,10 +40,12 @@ def test_prompt_factory_when_message_is_tagged_then_escapes_content_and_attribut
 
 
 def test_prompt_factory_when_extracting_last_message_then_reads_last_tag():
-    content = "\n".join([
-        PromptFactory.tag_message("first", speaker="Alice", time_str="00:00:01"),
-        PromptFactory.tag_message("second", speaker="Bob", time_str="00:00:02"),
-    ])
+    content = "\n".join(
+        [
+            PromptFactory.tag_message("first", speaker="Alice", time_str="00:00:01"),
+            PromptFactory.tag_message("second", speaker="Bob", time_str="00:00:02"),
+        ]
+    )
 
     assert PromptFactory._extract_last_message_text(content) == "second"
     assert PromptFactory._extract_last_message_speaker(content) == "Bob"

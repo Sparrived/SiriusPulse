@@ -82,8 +82,7 @@ class GroupSemanticProfile:
             "taboo_topics": list(self.taboo_topics),
             "dominant_topic": self.dominant_topic,
             "pending_ai_responses": [
-                r.to_dict() for r in self.pending_ai_responses
-                if isinstance(r, ResponseRecord)
+                r.to_dict() for r in self.pending_ai_responses if isinstance(r, ResponseRecord)
             ],
         }
 
@@ -146,8 +145,7 @@ class UserSemanticProfile:
             "first_interaction_at": self.first_interaction_at,
             "last_interaction_at": self.last_interaction_at,
             "pending_responses": [
-                r.to_dict() for r in self.pending_responses
-                if isinstance(r, ResponseRecord)
+                r.to_dict() for r in self.pending_responses if isinstance(r, ResponseRecord)
             ],
         }
 

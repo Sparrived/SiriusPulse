@@ -13,13 +13,13 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
 # 定时任务连续失败时的退避策略
-_MAX_CONSECUTIVE_FAILURES = 5          # 连续失败上限
-_BACKOFF_BASE_SECONDS = 30             # 退避起始间隔（秒）
+_MAX_CONSECUTIVE_FAILURES = 5  # 连续失败上限
+_BACKOFF_BASE_SECONDS = 30  # 退避起始间隔（秒）
 
 
 @dataclass
@@ -28,12 +28,12 @@ class ScheduledTask:
 
     name: str
     plugin_name: str
-    cron: str = field(default="")                   # cron 表达式（简化支持）
-    interval_seconds: float = field(default=0.0)    # 间隔秒数
+    cron: str = field(default="")  # cron 表达式（简化支持）
+    interval_seconds: float = field(default=0.0)  # 间隔秒数
     last_run: float = field(default=0.0)
     callback: Callable[[], Awaitable[None]] | None = field(default=None)
-    consecutive_failures: int = field(default=0)    # 连续失败次数（用于退避）
-    disabled: bool = field(default=False)           # 是否已停用
+    consecutive_failures: int = field(default=0)  # 连续失败次数（用于退避）
+    disabled: bool = field(default=False)  # 是否已停用
 
 
 class PluginScheduler:
@@ -51,7 +51,9 @@ class PluginScheduler:
     def add_task(self, task: ScheduledTask) -> None:
         """添加一个定时任务。"""
         self._tasks.append(task)
-        logger.info("注册定时任务: %s（cron=%s, interval=%.1fs）", task.name, task.cron, task.interval_seconds)
+        logger.info(
+            "注册定时任务: %s（cron=%s, interval=%.1fs）", task.name, task.cron, task.interval_seconds
+        )
 
     def remove_task(self, name: str) -> None:
         """移除一个定时任务。"""
@@ -109,12 +111,15 @@ class PluginScheduler:
                             task.disabled = True
                             logger.error(
                                 "定时任务 %s 连续失败 %d 次，已自动停用",
-                                task.name, task.consecutive_failures,
+                                task.name,
+                                task.consecutive_failures,
                             )
                         else:
                             logger.error(
                                 "定时任务 %s 执行失败（第%d次）: %s",
-                                task.name, task.consecutive_failures, exc,
+                                task.name,
+                                task.consecutive_failures,
+                                exc,
                             )
             await asyncio.sleep(self._check_interval)
 
@@ -149,7 +154,12 @@ class PluginScheduler:
         last_struct = time.localtime(last_run) if last_run > 0 else None
 
         # 如果上次运行在同一分钟，跳过
-        if last_struct and now_struct.tm_min == last_struct.tm_min and now_struct.tm_hour == last_struct.tm_hour and now_struct.tm_mday == last_struct.tm_mday:
+        if (
+            last_struct
+            and now_struct.tm_min == last_struct.tm_min
+            and now_struct.tm_hour == last_struct.tm_hour
+            and now_struct.tm_mday == last_struct.tm_mday
+        ):
             return False
 
         try:
@@ -172,7 +182,9 @@ class PluginScheduler:
             if month != "*" and not _match_field(month, now_struct.tm_mon):
                 return False
             # 检查星期
-            if weekday != "*" and not _match_field(weekday, now_struct.tm_wday + 1):  # tm_wday: 0=Mon, cron: 0=Sun
+            if weekday != "*" and not _match_field(
+                weekday, now_struct.tm_wday + 1
+            ):  # tm_wday: 0=Mon, cron: 0=Sun
                 return False
 
             return True

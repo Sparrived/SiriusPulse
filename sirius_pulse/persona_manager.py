@@ -46,6 +46,7 @@ class PersonaManager:
         self._port_registry_path = self.data_path / "adapter_port_registry.json"
 
         import atexit
+
         atexit.register(self._cleanup_stale_worker_statuses)
 
     # ------------------------------------------------------------------
@@ -78,6 +79,7 @@ class PersonaManager:
     def _is_port_free(port: int) -> bool:
         """检查端口是否在 OS 层面可用。"""
         import socket
+
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind(("localhost", port))
@@ -331,8 +333,14 @@ class PersonaManager:
         else:
             paths.orchestration.write_text(
                 json.dumps(
-                    {"analysis_model": "gpt-4o-mini", "chat_model": "gpt-4o", "memory_model": "gpt-4o-mini", "plugin_model": "gpt-4o-mini"},
-                    ensure_ascii=False, indent=2,
+                    {
+                        "analysis_model": "gpt-4o-mini",
+                        "chat_model": "gpt-4o",
+                        "memory_model": "gpt-4o-mini",
+                        "plugin_model": "gpt-4o-mini",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
                 ),
                 encoding="utf-8",
             )
@@ -372,7 +380,9 @@ class PersonaManager:
                         token="napcat_ws",
                         qq_number=inferred_qq,
                         allowed_group_ids=[str(v) for v in bridge_cfg.get("allowed_group_ids", [])],
-                        allowed_private_user_ids=[str(v) for v in bridge_cfg.get("allowed_private_user_ids", [])],
+                        allowed_private_user_ids=[
+                            str(v) for v in bridge_cfg.get("allowed_private_user_ids", [])
+                        ],
                         enable_group_chat=bool(bridge_cfg.get("enable_group_chat", True)),
                         enable_private_chat=bool(bridge_cfg.get("enable_private_chat", True)),
                         root=str(bridge_cfg.get("root", "")),
@@ -468,7 +478,9 @@ class PersonaManager:
             "stderr": subprocess.DEVNULL,
         }
         if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
         else:
             kwargs["start_new_session"] = True
 
@@ -504,13 +516,19 @@ class PersonaManager:
                         if result.returncode == 0:
                             LOG.info("已终止孤儿进程: %s (pid=%s)", name, pid)
                         else:
-                            LOG.warning("终止孤儿进程失败 %s (pid=%s): %s", name, pid, result.stderr.decode(errors="ignore"))
+                            LOG.warning(
+                                "终止孤儿进程失败 %s (pid=%s): %s",
+                                name,
+                                pid,
+                                result.stderr.decode(errors="ignore"),
+                            )
                         return True
                     except Exception as exc:
                         LOG.warning("终止孤儿进程失败 %s: %s", name, exc)
                 else:
                     try:
                         import os as _os
+
                         _os.kill(pid, signal.SIGTERM)
                         LOG.info("已向孤儿进程发送 SIGTERM: %s (pid=%s)", name, pid)
                         return True
@@ -570,10 +588,12 @@ class PersonaManager:
         """检测 PID 是否存活（Windows 安全）。"""
         try:
             import psutil
+
             return psutil.pid_exists(pid)
         except Exception:
             if sys.platform == "win32":
                 import ctypes
+
                 kernel32 = ctypes.windll.kernel32
                 handle = kernel32.OpenProcess(0x0400, False, pid)  # PROCESS_QUERY_INFORMATION
                 if handle:
@@ -582,6 +602,7 @@ class PersonaManager:
                 return False
             try:
                 import os
+
                 os.kill(pid, 0)
                 return True
             except OSError:
@@ -604,7 +625,8 @@ class PersonaManager:
             if not self._is_pid_persona_worker(pid):
                 LOG.warning(
                     "人格 %s 的 worker_status PID=%s 不是 persona_worker，可能是 PID 重用",
-                    name, pid,
+                    name,
+                    pid,
                 )
                 return False
             # 额外检查：心跳是否超时（防止 PID 重用或进程僵死）
@@ -612,6 +634,7 @@ class PersonaManager:
             if heartbeat_at:
                 try:
                     from datetime import datetime, timezone
+
                     last_hb = datetime.fromisoformat(heartbeat_at)
                     if last_hb.tzinfo is None:
                         last_hb = last_hb.replace(tzinfo=timezone.utc)
@@ -629,6 +652,7 @@ class PersonaManager:
         """检查指定 PID 的进程是否真的是 persona_worker。"""
         try:
             import psutil
+
             proc = psutil.Process(pid)
             cmdline = " ".join(proc.cmdline())
             return "persona_worker" in cmdline

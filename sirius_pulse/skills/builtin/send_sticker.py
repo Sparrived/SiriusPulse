@@ -10,19 +10,13 @@ _config = ConfigBuilder()
 _config.group("表情包发送").add(
     "names",
     type="list",
-    description=(
-        "候选表情包名称列表。请只填写可选表情包名称中的原始名称，"
-        "系统会从前 3 个候选中随机选择 1 个发送。"
-    ),
+    description=("候选表情包名称列表。请只填写可选表情包名称中的原始名称，" "系统会从前 3 个候选中随机选择 1 个发送。"),
     required=True,
 )
 
 SKILL_META = {
     "name": "send_sticker",
-    "description": (
-        "发送一张当前人格表情包到当前聊天。适合在回复的同时表达情绪；"
-        "调用后不需要额外汇报发送结果。"
-    ),
+    "description": ("发送一张当前人格表情包到当前聊天。适合在回复的同时表达情绪；" "调用后不需要额外汇报发送结果。"),
     "version": "1.0.0",
     "tags": ["sticker", "messaging", "napcat"],
     "silent": True,

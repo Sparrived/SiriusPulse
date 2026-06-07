@@ -94,7 +94,9 @@ class GitHubClient:
 
     # ── JSON 快捷方法 ──
 
-    async def get_json(self, path: str, **kwargs: Any) -> list[dict[str, Any]] | dict[str, Any] | None:
+    async def get_json(
+        self, path: str, **kwargs: Any
+    ) -> list[dict[str, Any]] | dict[str, Any] | None:
         """GET 并解析 JSON 响应体。非 200 时返回 None。"""
         resp = await self._client.get(path, **kwargs)
         if resp.status_code == 200:

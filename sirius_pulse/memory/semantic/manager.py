@@ -49,6 +49,7 @@ class SemanticMemoryManager:
             self._owns_storage = False
         else:
             from pathlib import Path
+
             db_path = Path(work_path) / "memory.db" if work_path else ":memory:"
             self._storage = MemoryStorage(db_path)
             self._owns_storage = True
@@ -190,9 +191,7 @@ class SemanticMemoryManager:
                     record.was_engaged = True
                     record.engagement_latency_s = latency
                     user_profile = self.get_user_profile(group_id, user_id)
-                    user_profile.engagement_rate = (
-                        user_profile.engagement_rate * 0.9 + 0.1
-                    )
+                    user_profile.engagement_rate = user_profile.engagement_rate * 0.9 + 0.1
                     self.save_user_profile(group_id, user_id)
                     settled = True
                 break

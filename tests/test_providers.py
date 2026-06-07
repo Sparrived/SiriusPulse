@@ -63,7 +63,9 @@ def test_chat_payload_when_provider_disables_thinking_then_includes_provider_def
 
 def test_chat_payload_when_bailian_provider_then_uses_enable_thinking_flag():
     payload = build_chat_completion_payload(
-        GenerationRequest(model="qwen-plus", system_prompt="", messages=[{"role": "user", "content": "hello"}]),
+        GenerationRequest(
+            model="qwen-plus", system_prompt="", messages=[{"role": "user", "content": "hello"}]
+        ),
         provider_name="aliyun-bailian",
     )
 
@@ -75,7 +77,13 @@ def test_generation_debug_context_when_multimodal_messages_exist_then_counts_par
         model="test-model",
         system_prompt="system",
         messages=[
-            {"role": "user", "content": [{"type": "text", "text": "one"}, {"type": "image_url", "image_url": {"url": "x"}}]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "one"},
+                    {"type": "image_url", "image_url": {"url": "x"}},
+                ],
+            },
             {"role": "assistant", "content": "two"},
         ],
         tools=[{"type": "function"}],
@@ -110,16 +118,23 @@ def test_prepare_messages_when_local_image_path_is_used_then_converts_to_data_ur
 
 
 def test_prepare_messages_when_invalid_local_image_path_is_used_then_drops_that_part():
-    prepared, stats = prepare_openai_compatible_messages([
-        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "missing.png"}}]},
-    ])
+    prepared, stats = prepare_openai_compatible_messages(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "image_url", "image_url": {"url": "missing.png"}}],
+            },
+        ]
+    )
 
     assert stats["local_image_path_conversions"] == 0
     assert prepared == [{"role": "user", "content": []}]
 
 
 def test_timeout_when_request_overrides_default_then_uses_request_value():
-    request = GenerationRequest(model="test-model", system_prompt="", messages=[], timeout_seconds=12)
+    request = GenerationRequest(
+        model="test-model", system_prompt="", messages=[], timeout_seconds=12
+    )
 
     assert resolve_generation_timeout_seconds(request, 30) == 12
 
@@ -133,6 +148,9 @@ def test_timeout_when_value_is_invalid_then_raises():
 
 
 def test_extract_assistant_text_when_provider_uses_nested_content_then_returns_first_text():
-    assert extract_assistant_text({"content": [{"text": "first"}, {"text": "second"}]}) == "first\nsecond"
+    assert (
+        extract_assistant_text({"content": [{"text": "first"}, {"text": "second"}]})
+        == "first\nsecond"
+    )
     assert extract_assistant_text({"reasoning_content": {"text": "thought"}}) == "thought"
     assert extract_assistant_text({"refusal": "blocked"}) == "blocked"

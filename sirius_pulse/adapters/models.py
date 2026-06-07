@@ -136,6 +136,7 @@ def reply(message_id: str) -> ReplySegment:
 # ParsedEvent —— 平台事件解析后的标准化格式
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass(slots=True)
 class ParsedEvent:
     """平台事件解析后的结构化数据。
@@ -147,9 +148,9 @@ class ParsedEvent:
     group_id: str = ""
     user_id: str = ""
     self_id: str = ""
-    message_type: str = ""         # "group" | "private"
-    prompt: str = ""               # 渲染后的文本（表情→文字，图片→标签）
+    message_type: str = ""  # "group" | "private"
+    prompt: str = ""  # 渲染后的文本（表情→文字，图片→标签）
     nickname: str = ""
     card: str = ""
-    message_id: str = ""           # 平台消息 ID（用于引用回复）
+    message_id: str = ""  # 平台消息 ID（用于引用回复）
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)

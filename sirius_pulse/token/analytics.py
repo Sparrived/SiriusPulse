@@ -10,10 +10,10 @@ from typing import TypedDict
 
 from sirius_pulse.token.token_store import TokenUsageStore
 
-
 # ------------------------------------------------------------------
 # Result types
 # ------------------------------------------------------------------
+
 
 class BucketDict(TypedDict):
     calls: int
@@ -115,6 +115,7 @@ def _build_where(
 # ------------------------------------------------------------------
 # Public query API
 # ------------------------------------------------------------------
+
 
 def compute_baseline(
     store: TokenUsageStore,
@@ -254,16 +255,19 @@ def time_series(
         [bucket_seconds, bucket_seconds, *params],
     ).fetchall()
     from datetime import datetime, timezone
+
     result: list[TimeSliceDict] = []
     for r in rows:
         dt = datetime.fromtimestamp(float(r["ts_bucket"]), tz=timezone.utc)
-        result.append(TimeSliceDict(
-            time_bucket=dt.isoformat(),
-            calls=int(r["calls"]),
-            prompt_tokens=int(r["prompt_tokens"]),
-            completion_tokens=int(r["completion_tokens"]),
-            total_tokens=int(r["total_tokens"]),
-        ))
+        result.append(
+            TimeSliceDict(
+                time_bucket=dt.isoformat(),
+                calls=int(r["calls"]),
+                prompt_tokens=int(r["prompt_tokens"]),
+                completion_tokens=int(r["completion_tokens"]),
+                total_tokens=int(r["total_tokens"]),
+            )
+        )
     return result
 
 

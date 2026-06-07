@@ -95,6 +95,7 @@ class SemanticProfileStore:
     @staticmethod
     def _safe_name(name: str) -> str:
         import re
+
         base = re.sub(r"[^a-zA-Z0-9_\-\u4e00-\u9fff]+", "_", name.strip())
         base = re.sub(r"_+", "_", base).strip("_")
         return base or "default"

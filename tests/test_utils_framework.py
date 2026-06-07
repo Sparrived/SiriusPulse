@@ -7,7 +7,11 @@ import pytest
 
 from sirius_pulse.utils.json_io import atomic_write_json, read_json
 from sirius_pulse.utils.query_builder import QueryBuilder
-from sirius_pulse.utils.sqlite_base import BaseSqliteStore, configure_sqlite_connection, open_sqlite_connection
+from sirius_pulse.utils.sqlite_base import (
+    BaseSqliteStore,
+    configure_sqlite_connection,
+    open_sqlite_connection,
+)
 
 
 class ExampleStore(BaseSqliteStore):
@@ -50,7 +54,9 @@ def test_query_builder_when_conditions_are_added_then_builds_select_delete_and_c
     builder = QueryBuilder().where("group_id = ?", "g1").where_optional("actor_id = ?", "u1")
 
     assert builder.build_where() == (" WHERE group_id = ? AND actor_id = ?", ["g1", "u1"])
-    assert builder.build_select("token_usage", "id, total_tokens", order_by="id DESC", limit=5, offset=2) == (
+    assert builder.build_select(
+        "token_usage", "id, total_tokens", order_by="id DESC", limit=5, offset=2
+    ) == (
         "SELECT id, total_tokens FROM token_usage WHERE group_id = ? AND actor_id = ? ORDER BY id DESC LIMIT 5 OFFSET 2",
         ["g1", "u1"],
     )

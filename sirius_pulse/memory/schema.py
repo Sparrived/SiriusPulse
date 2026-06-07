@@ -23,8 +23,9 @@ __all__ = ["BehaviorSchema", "SchemaInductor", "SchemaStore"]
 @dataclass
 class BehaviorSchema:
     """行为模式：从多条三元组中归纳出的抽象模式。"""
+
     schema_id: str = ""
-    central_proposition: str = ""     # 核心命题
+    central_proposition: str = ""  # 核心命题
     supporting_evidence: list[str] = field(default_factory=list)
     expected_inferences: list[str] = field(default_factory=list)
     confidence: float = 0.0
@@ -66,7 +67,8 @@ class SchemaStore(BaseSqliteStore):
     """
 
     def _create_tables(self) -> None:
-        self.executescript("""
+        self.executescript(
+            """
             CREATE TABLE IF NOT EXISTS behavior_schemas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
@@ -81,7 +83,8 @@ class SchemaStore(BaseSqliteStore):
 
             CREATE INDEX IF NOT EXISTS idx_schema_user
                 ON behavior_schemas(user_id);
-        """)
+        """
+        )
 
     def save(self, user_id: str, schemas: list[BehaviorSchema]) -> None:
         """保存用户的行为模式列表（先删后插）。"""
@@ -189,8 +192,7 @@ class SchemaInductor:
 
         # 构建事实文本
         facts_text = "\n".join(
-            f"- {r.subject}{r.predicate}{r.obj} (置信度: {r.confidence:.2f})"
-            for r in records[:20]
+            f"- {r.subject}{r.predicate}{r.obj} (置信度: {r.confidence:.2f})" for r in records[:20]
         )
 
         # 调用 LLM 归纳
@@ -222,12 +224,14 @@ class SchemaInductor:
         for s in parsed.get("schemas", []):
             if not s.get("central_proposition"):
                 continue
-            schemas.append(BehaviorSchema(
-                central_proposition=s["central_proposition"],
-                supporting_evidence=s.get("supporting_evidence", []),
-                expected_inferences=s.get("expected_inferences", []),
-                confidence=float(s.get("confidence", 0.5)),
-            ))
+            schemas.append(
+                BehaviorSchema(
+                    central_proposition=s["central_proposition"],
+                    supporting_evidence=s.get("supporting_evidence", []),
+                    expected_inferences=s.get("expected_inferences", []),
+                    confidence=float(s.get("confidence", 0.5)),
+                )
+            )
 
         result = schemas[:3]
 

@@ -91,27 +91,29 @@ async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> 
     skills: list[dict[str, Any]] = []
     for skill in registry.all_skills():
         data = _load_skill_data_store(paths.dir, skill.name)
-        skills.append({
-            "name": skill.name,
-            "description": skill.description,
-            "version": skill.version,
-            "enabled": data.get("_enabled", True),
-            "developer_only": skill.developer_only,
-            "silent": skill.silent,
-            "tags": skill.tags,
-            "adapter_types": skill.adapter_types,
-            "parameters": [
-                {
-                    "name": p.name,
-                    "type": p.type,
-                    "description": p.description,
-                    "required": p.required,
-                    "default": p.default,
-                }
-                for p in skill.parameters
-            ],
-            "config": _extract_config(data, skill),
-        })
+        skills.append(
+            {
+                "name": skill.name,
+                "description": skill.description,
+                "version": skill.version,
+                "enabled": data.get("_enabled", True),
+                "developer_only": skill.developer_only,
+                "silent": skill.silent,
+                "tags": skill.tags,
+                "adapter_types": skill.adapter_types,
+                "parameters": [
+                    {
+                        "name": p.name,
+                        "type": p.type,
+                        "description": p.description,
+                        "required": p.required,
+                        "default": p.default,
+                    }
+                    for p in skill.parameters
+                ],
+                "config": _extract_config(data, skill),
+            }
+        )
 
     return _json_response({"skills": skills})
 
@@ -169,12 +171,14 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
             "parameters": skill.get_parameter_schema(),
         }
 
-    return _json_response({
-        "skill": skill_name,
-        "config": config,
-        "enabled": data.get("_enabled", True),
-        "meta": meta,
-    })
+    return _json_response(
+        {
+            "skill": skill_name,
+            "config": config,
+            "enabled": data.get("_enabled", True),
+            "meta": meta,
+        }
+    )
 
 
 @handle_api_errors

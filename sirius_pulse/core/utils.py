@@ -82,8 +82,10 @@ def parse_sticker_tags(
                 remaining_slots -= 1
         # 从文本中移除所有匹配到的表情包 [keyword]
         if known:
+
             def _replace_bracket(m: re.Match[str]) -> str:
                 return "" if m.group(1).strip() in known else m.group(0)
+
             cleaned = re.sub(bracket_pattern, _replace_bracket, cleaned)
 
     chosen = names[:3]

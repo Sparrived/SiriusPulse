@@ -197,11 +197,7 @@ class PluginLoader:
 
         for attr_name in dir(module):
             attr = getattr(module, attr_name, None)
-            if (
-                isinstance(attr, type)
-                and issubclass(attr, PluginBase)
-                and attr is not PluginBase
-            ):
+            if isinstance(attr, type) and issubclass(attr, PluginBase) and attr is not PluginBase:
                 return attr
 
         return None
@@ -222,10 +218,7 @@ class PluginLoader:
                 for node in ast.walk(tree):
                     if isinstance(node, ast.Assign):
                         for target in node.targets:
-                            if (
-                                isinstance(target, ast.Name)
-                                and target.id == "_plugin_dependencies"
-                            ):
+                            if isinstance(target, ast.Name) and target.id == "_plugin_dependencies":
                                 if isinstance(node.value, ast.List):
                                     return [
                                         elt.value
@@ -295,9 +288,7 @@ class PluginLoader:
             install_cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
             logger.info("安装 Chromium 浏览器: %s", " ".join(install_cmd))
             try:
-                result = subprocess.run(
-                    install_cmd, capture_output=True, text=True, timeout=300.0
-                )
+                result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=300.0)
                 if result.returncode == 0:
                     logger.info("Chromium 安装成功")
                 else:

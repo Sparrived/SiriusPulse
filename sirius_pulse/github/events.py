@@ -50,7 +50,11 @@ async def fetch_repo_events(
         if resp.status_code in (403, 429):
             logger.warning(
                 "github: %s/%s API %d（可能触发速率限制，第 %d/%d 次）",
-                owner, repo, resp.status_code, attempt, max_retries,
+                owner,
+                repo,
+                resp.status_code,
+                attempt,
+                max_retries,
             )
             if attempt < max_retries:
                 await asyncio.sleep(2.0 * attempt)

@@ -57,6 +57,7 @@ def secret(description: str = "", **kwargs) -> Any:
 @dataclass
 class ParamDefinition:
     """参数定义。"""
+
     name: str
     type: str = "str"
     description: str = ""
@@ -108,6 +109,7 @@ def config_param(
 @dataclass
 class _ParamMarker:
     """参数标记，用于在 dataclass 中存储配置元数据。"""
+
     description: str = ""
     type: str = "str"
     required: bool = False
@@ -179,16 +181,18 @@ class ConfigBuilder:
         if isinstance(type, builtins_type):
             param_type = _TYPE_MAP.get(type, "str")
 
-        self._params.append(ParamDefinition(
-            name=name,
-            type=param_type,  # type: ignore[arg-type]
-            description=description,
-            required=required,
-            default=default,
-            choices=choices,
-            group=group or self._current_group,
-            fields=fields,
-        ))
+        self._params.append(
+            ParamDefinition(
+                name=name,
+                type=param_type,  # type: ignore[arg-type]
+                description=description,
+                required=required,
+                default=default,
+                choices=choices,
+                group=group or self._current_group,
+                fields=fields,
+            )
+        )
         return self
 
     def build(self) -> list[dict[str, Any]]:
@@ -235,13 +239,15 @@ def build_parameters_from_class(config_class: type) -> list[dict[str, Any]]:
         if name.startswith("_"):
             continue
         if isinstance(value, _ParamMarker):
-            params.append({
-                "name": name,
-                "type": value.type,
-                "description": value.description,
-                "required": value.required,
-                **({"default": value.default} if value.default is not None else {}),
-                **({"choices": value.choices} if value.choices else {}),
-                **({"group": value.group} if value.group else {}),
-            })
+            params.append(
+                {
+                    "name": name,
+                    "type": value.type,
+                    "description": value.description,
+                    "required": value.required,
+                    **({"default": value.default} if value.default is not None else {}),
+                    **({"choices": value.choices} if value.choices else {}),
+                    **({"group": value.group} if value.group else {}),
+                }
+            )
     return params

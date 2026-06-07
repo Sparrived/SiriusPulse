@@ -2,7 +2,9 @@
 通过必应搜索引擎自动检索网络信息。
 """
 from __future__ import annotations
+
 from typing import Any
+
 import requests
 
 from sirius_pulse.config.config_builder import ConfigBuilder
@@ -24,6 +26,7 @@ SEARCH_URL = "https://www.bing.com/search"
 
 from bs4 import BeautifulSoup
 
+
 def run(query: str, count: int = 3, data_store: Any = None, **kwargs: Any) -> dict:
     """
     通过抓取必应网页搜索结果实现网络检索，无需 API Key。
@@ -43,7 +46,7 @@ def run(query: str, count: int = 3, data_store: Any = None, **kwargs: Any) -> di
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
         results: list[dict[str, Any]] = []
-        for item in soup.select("li.b_algo")[:max(1, min(count, 5))]:
+        for item in soup.select("li.b_algo")[: max(1, min(count, 5))]:
             title_tag = item.select_one("h2 a")
             snippet_tag = item.select_one(".b_caption p") or item.select_one("p")
             url = title_tag["href"] if title_tag and title_tag.has_attr("href") else None

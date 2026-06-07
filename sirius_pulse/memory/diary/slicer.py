@@ -55,9 +55,9 @@ class DiarySlicer:
         """
         if not situations:
             # 没有 Situation，整篇日记作为一个切片
-            return [self._create_single_slice(
-                diary_content, group_id, diary_id, [], embedding_client
-            )]
+            return [
+                self._create_single_slice(diary_content, group_id, diary_id, [], embedding_client)
+            ]
 
         # 按主题分组 Situation
         topic_groups = self._group_by_topics(situations)
@@ -65,9 +65,7 @@ class DiarySlicer:
         slices: list[DiarySlice] = []
         for idx, (topic, group_situations) in enumerate(topic_groups.items()):
             # 从日记中提取与该主题相关的段落
-            content = self._extract_relevant_paragraphs(
-                diary_content, group_situations
-            )
+            content = self._extract_relevant_paragraphs(diary_content, group_situations)
 
             if not content:
                 continue
@@ -129,15 +127,15 @@ class DiarySlicer:
 
         logger.info(
             "群 %s 日记切片完成: %d 个 Situation → %d 个切片",
-            group_id, len(situations), len(slices),
+            group_id,
+            len(situations),
+            len(slices),
         )
         return slices
 
     # ── 内部方法 ──
 
-    def _group_by_topics(
-        self, situations: list[Situation]
-    ) -> dict[str, list[Situation]]:
+    def _group_by_topics(self, situations: list[Situation]) -> dict[str, list[Situation]]:
         """按主题分组 Situation。
 
         没有主题的 Situation 归入 "其它" 组。
@@ -192,10 +190,10 @@ class DiarySlicer:
 
         # 如果没有匹配到，返回整篇日记（后续切片会处理）
         if not relevant:
-            return diary_content[:self.MAX_SLICE_CHARS]
+            return diary_content[: self.MAX_SLICE_CHARS]
 
         result = "\n".join(relevant)
-        return result[:self.MAX_SLICE_CHARS]
+        return result[: self.MAX_SLICE_CHARS]
 
     def _create_single_slice(
         self,
@@ -210,7 +208,7 @@ class DiarySlicer:
             slice_id=str(uuid.uuid4())[:8],
             diary_id=diary_id,
             group_id=group_id,
-            content=content[:self.MAX_SLICE_CHARS],
+            content=content[: self.MAX_SLICE_CHARS],
             summary=content[:50] if content else "",
             index=0,
         )

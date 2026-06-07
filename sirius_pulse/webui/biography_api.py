@@ -22,13 +22,12 @@ def _create_manager(paths: Any, persona_name: str):
 def _get_storage(paths: Any):
     """获取 MemoryStorage 实例。"""
     from sirius_pulse.memory.storage import MemoryStorage
+
     db_path = paths.dir / "memory.db"
     return MemoryStorage(db_path)
 
 
-async def api_persona_biography_list(
-    request: web.Request, persona_manager: Any
-) -> web.Response:
+async def api_persona_biography_list(request: web.Request, persona_manager: Any) -> web.Response:
     """获取人格的所有用户传记卡列表（分页）。"""
     name = _get_name(request)
     paths = persona_manager.get_persona_paths(name)
@@ -46,21 +45,23 @@ async def api_persona_biography_list(
     storage.close()
 
     total = len(users)
-    users_sorted = sorted(users, key=lambda u: getattr(u, "last_updated_at", "") or "", reverse=True)
+    users_sorted = sorted(
+        users, key=lambda u: getattr(u, "last_updated_at", "") or "", reverse=True
+    )
     end = total - offset
     start = max(0, end - limit)
     page = users_sorted[start:end] if end > 0 else []
 
-    return _json_response({
-        "cards": [u.to_dict() for u in page],
-        "total": total,
-        "alias_index": alias_index_data,
-    })
+    return _json_response(
+        {
+            "cards": [u.to_dict() for u in page],
+            "total": total,
+            "alias_index": alias_index_data,
+        }
+    )
 
 
-async def api_persona_biography_get(
-    request: web.Request, persona_manager: Any
-) -> web.Response:
+async def api_persona_biography_get(request: web.Request, persona_manager: Any) -> web.Response:
     """获取单个用户的传记卡详情。"""
     name = _get_name(request)
     user_id = str(request.match_info.get("user_id", "")).strip()
@@ -137,14 +138,17 @@ async def api_persona_biography_alias_index_update(
         return _json_response({"error": "缺少 user_id 参数"}, 400)
 
     from datetime import datetime, timezone
+
     now_iso = datetime.now(timezone.utc).isoformat()
-    storage.save_alias_entry({
-        "alias": alias,
-        "user_id": user_id,
-        "user_name": user_name,
-        "source": "manual",
-        "first_seen_at": now_iso,
-        "last_seen_at": now_iso,
-    })
+    storage.save_alias_entry(
+        {
+            "alias": alias,
+            "user_id": user_id,
+            "user_name": user_name,
+            "source": "manual",
+            "first_seen_at": now_iso,
+            "last_seen_at": now_iso,
+        }
+    )
     storage.close()
     return _json_response({"success": True})

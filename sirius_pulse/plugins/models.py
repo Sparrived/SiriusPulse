@@ -29,32 +29,33 @@ class RenderMode(enum.Enum):
 class TriggerType(enum.Enum):
     """Plugin 触发方式。"""
 
-    COMMAND = "command"          # 用户指令触发（关键词/前缀/正则）
-    EVENT_TIMER = "timer"        # 定时事件（cron/interval）
-    EVENT_WEBHOOK = "webhook"    # Webhook 事件
-    EVENT_ENGINE = "engine"      # 引擎生命周期事件
-    EVENT_FILESYSTEM = "fs"      # 文件系统事件
+    COMMAND = "command"  # 用户指令触发（关键词/前缀/正则）
+    EVENT_TIMER = "timer"  # 定时事件（cron/interval）
+    EVENT_WEBHOOK = "webhook"  # Webhook 事件
+    EVENT_ENGINE = "engine"  # 引擎生命周期事件
+    EVENT_FILESYSTEM = "fs"  # 文件系统事件
 
 
 class PatternType(enum.Enum):
     """指令匹配模式类型。"""
 
-    PREFIX = "prefix"            # 前缀匹配（如 "/天气"）
-    REGEX = "regex"              # 正则匹配
-    KEYWORD = "keyword"          # 关键词包含匹配
+    PREFIX = "prefix"  # 前缀匹配（如 "/天气"）
+    REGEX = "regex"  # 正则匹配
+    KEYWORD = "keyword"  # 关键词包含匹配
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # 指令 AST
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass(slots=True)
 class ArgNode:
     """指令参数节点。"""
 
     value: str | int | float | bool
-    raw: str                       # 原始字符串
-    type_hint: str = "str"         # 来自 Plugin 参数定义的类型提示
+    raw: str  # 原始字符串
+    type_hint: str = "str"  # 来自 Plugin 参数定义的类型提示
 
 
 @dataclass(slots=True)
@@ -70,14 +71,14 @@ class CommandAST:
         /tools image resize        → command="tools", subcommand="image", subcommands=["image", "resize"]
     """
 
-    command: str                          # 指令名，如 "weather" 或指令组名 "ca"
-    raw_text: str                         # 原始完整文本
-    prefix: str = ""                      # 触发前缀，如 "/"、"#"
-    subcommand: str = ""                  # 第一级子命令名，如 "analyse"（向后兼容）
+    command: str  # 指令名，如 "weather" 或指令组名 "ca"
+    raw_text: str  # 原始完整文本
+    prefix: str = ""  # 触发前缀，如 "/"、"#"
+    subcommand: str = ""  # 第一级子命令名，如 "analyse"（向后兼容）
     subcommands: list[str] = field(default_factory=list)  # 完整子命令路径，如 ["report", "daily"]
-    args: list[ArgNode] = field(default_factory=list)           # 位置参数列表
-    kwargs: dict[str, ArgNode] = field(default_factory=dict)    # 命名参数
-    flags: set[str] = field(default_factory=set)                # 布尔开关
+    args: list[ArgNode] = field(default_factory=list)  # 位置参数列表
+    kwargs: dict[str, ArgNode] = field(default_factory=dict)  # 命名参数
+    flags: set[str] = field(default_factory=set)  # 布尔开关
 
     @property
     def command_path(self) -> list[str]:
@@ -160,7 +161,10 @@ class CommandAST:
             "raw_text": self.raw_text,
             "prefix": self.prefix,
             "args": [{"value": a.value, "raw": a.raw, "type_hint": a.type_hint} for a in self.args],
-            "kwargs": {k: {"value": v.value, "raw": v.raw, "type_hint": v.type_hint} for k, v in self.kwargs.items()},
+            "kwargs": {
+                k: {"value": v.value, "raw": v.raw, "type_hint": v.type_hint}
+                for k, v in self.kwargs.items()
+            },
             "flags": sorted(self.flags),
         }
         if self.subcommands:
@@ -174,16 +178,17 @@ class CommandAST:
 # Plugin 定义
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass(slots=True)
 class PluginCommandDef:
     """Plugin 指令触发器定义。"""
 
-    name: str                              # 指令名（对应 CommandAST.command）
-    patterns: list[str] = field(default_factory=list)          # 触发词列表
-    pattern_type: str = "prefix"           # prefix | regex | keyword
+    name: str  # 指令名（对应 CommandAST.command）
+    patterns: list[str] = field(default_factory=list)  # 触发词列表
+    pattern_type: str = "prefix"  # prefix | regex | keyword
     description: str = ""
     examples: list[str] = field(default_factory=list)
-    hidden_from_intent: bool = False       # 是否对意图识别隐藏（v1.3+）
+    hidden_from_intent: bool = False  # 是否对意图识别隐藏（v1.3+）
 
 
 @dataclass(slots=True)
@@ -194,21 +199,21 @@ class PluginCommandGroupDef:
     例如：/ca analyse、/ca summary、/ca export
     """
 
-    name: str                              # 指令组名（如 "ca"）
-    patterns: list[str] = field(default_factory=list)          # 触发词列表（不含前缀）
-    pattern_type: str = "prefix"           # prefix | regex | keyword
-    description: str = ""                  # 指令组描述
-    examples: list[str] = field(default_factory=list)          # 使用示例
-    hidden_from_intent: bool = False       # 是否对意图识别隐藏
+    name: str  # 指令组名（如 "ca"）
+    patterns: list[str] = field(default_factory=list)  # 触发词列表（不含前缀）
+    pattern_type: str = "prefix"  # prefix | regex | keyword
+    description: str = ""  # 指令组描述
+    examples: list[str] = field(default_factory=list)  # 使用示例
+    hidden_from_intent: bool = False  # 是否对意图识别隐藏
 
 
 @dataclass(slots=True)
 class PluginEventDef:
     """Plugin 事件触发器定义。"""
 
-    type: str                              # "timer.daily" / "webhook" / "engine.xxx"
-    cron: str = ""                         # cron 表达式（定时事件）
-    interval_seconds: float = 0.0          # 间隔秒数（interval 事件）
+    type: str  # "timer.daily" / "webhook" / "engine.xxx"
+    cron: str = ""  # cron 表达式（定时事件）
+    interval_seconds: float = 0.0  # 间隔秒数（interval 事件）
     description: str = ""
 
 
@@ -216,8 +221,8 @@ class PluginEventDef:
 class PluginParameterDef(ConfigParameter):
     """Plugin 参数定义 —— 继承 ConfigParameter，新增命令行特有字段。"""
 
-    position: int = 0                      # 位置参数序号
-    choices: list[str] | None = None       # 可选值限制
+    position: int = 0  # 位置参数序号
+    choices: list[str] | None = None  # 可选值限制
 
 
 @dataclass(slots=True)
@@ -229,9 +234,9 @@ class PluginPermissionDef:
     """
 
     developer_only: bool = False
-    hidden_from_intent: bool = False       # 是否对意图识别隐藏（v1.3+）
+    hidden_from_intent: bool = False  # 是否对意图识别隐藏（v1.3+）
     adapter_types: list[str] = field(default_factory=list)
-    group_blacklist: list[str] = field(default_factory=list)    # 群黑名单
+    group_blacklist: list[str] = field(default_factory=list)  # 群黑名单
     rate_limit_calls_per_minute: int = 60
     rate_limit_calls_per_hour: int = 1000
 
@@ -240,8 +245,8 @@ class PluginPermissionDef:
 class PluginRenderDef:
     """Plugin 渲染策略定义。"""
 
-    mode: str = "direct"                   # direct | llm | silent
-    system_prompt_suffix: str = ""         # llm 模式下追加的 system prompt
+    mode: str = "direct"  # direct | llm | silent
+    system_prompt_suffix: str = ""  # llm 模式下追加的 system prompt
     max_tokens: int = 500
     temperature: float = 0.8
 
@@ -250,7 +255,7 @@ class PluginRenderDef:
 class PluginNaturalLangDef:
     """自然语言触发定义（用于 CognitionAnalyzer 融合识别）。"""
 
-    examples: list[str] = field(default_factory=list)           # 示例语料，如 "帮我查一下{city}的天气"
+    examples: list[str] = field(default_factory=list)  # 示例语料，如 "帮我查一下{city}的天气"
     slots: dict[str, dict[str, Any]] = field(default_factory=dict)  # 槽位定义
 
 
@@ -262,8 +267,8 @@ class PluginDefinition:
     """
 
     # ── 基本信息 ──
-    name: str                              # 内部标识名
-    display_name: str = ""                 # 显示名称
+    name: str  # 内部标识名
+    display_name: str = ""  # 显示名称
     description: str = ""
     version: str = "1.0.0"
     author: str = ""
@@ -287,10 +292,10 @@ class PluginDefinition:
     resources: list[str] = field(default_factory=list)
 
     # ── 提示注入（v1.3+）──
-    prompt_inject: str = ""                # 注入到人格 prompt 的额外提示词，让模型知晓插件能力
+    prompt_inject: str = ""  # 注入到人格 prompt 的额外提示词，让模型知晓插件能力
 
     # ── 内部字段 ──
-    source_path: Path | None = None        # 插件文件夹路径
+    source_path: Path | None = None  # 插件文件夹路径
     _plugin_class: type | None = field(default=None, repr=False)  # PluginBase 子类
     user_settings: dict[str, Any] = field(default_factory=dict, repr=False)  # 运行时用户配置
 
@@ -314,46 +319,54 @@ class PluginDefinition:
         # 解析触发器
         commands: list[PluginCommandDef] = []
         for cmd_raw in data.get("triggers", {}).get("commands", []):
-            commands.append(PluginCommandDef(
-                name=cmd_raw.get("name", ""),
-                patterns=cmd_raw.get("patterns", []),
-                pattern_type=cmd_raw.get("pattern_type", "prefix"),
-                description=cmd_raw.get("description", ""),
-                examples=cmd_raw.get("examples", []),
-            ))
+            commands.append(
+                PluginCommandDef(
+                    name=cmd_raw.get("name", ""),
+                    patterns=cmd_raw.get("patterns", []),
+                    pattern_type=cmd_raw.get("pattern_type", "prefix"),
+                    description=cmd_raw.get("description", ""),
+                    examples=cmd_raw.get("examples", []),
+                )
+            )
 
         # 解析指令组（v1.4+）
         command_groups: list[PluginCommandGroupDef] = []
         for group_raw in data.get("triggers", {}).get("command_groups", []):
-            command_groups.append(PluginCommandGroupDef(
-                name=group_raw.get("name", ""),
-                patterns=group_raw.get("patterns", []),
-                pattern_type=group_raw.get("pattern_type", "prefix"),
-                description=group_raw.get("description", ""),
-                examples=group_raw.get("examples", []),
-            ))
+            command_groups.append(
+                PluginCommandGroupDef(
+                    name=group_raw.get("name", ""),
+                    patterns=group_raw.get("patterns", []),
+                    pattern_type=group_raw.get("pattern_type", "prefix"),
+                    description=group_raw.get("description", ""),
+                    examples=group_raw.get("examples", []),
+                )
+            )
 
         events: list[PluginEventDef] = []
         for evt_raw in data.get("triggers", {}).get("events", []):
-            events.append(PluginEventDef(
-                type=evt_raw.get("type", ""),
-                cron=evt_raw.get("cron", ""),
-                interval_seconds=float(evt_raw.get("interval_seconds", 0)),
-                description=evt_raw.get("description", ""),
-            ))
+            events.append(
+                PluginEventDef(
+                    type=evt_raw.get("type", ""),
+                    cron=evt_raw.get("cron", ""),
+                    interval_seconds=float(evt_raw.get("interval_seconds", 0)),
+                    description=evt_raw.get("description", ""),
+                )
+            )
 
         # 解析参数
         parameters: list[PluginParameterDef] = []
         for name, param_raw in data.get("parameters", {}).items():
-            parameters.append(PluginParameterDef(
-                name=name,
-                type=param_raw.get("type", "str"),
-                description=param_raw.get("description", ""),
-                required=param_raw.get("required", False),
-                default=param_raw.get("default"),
-                position=param_raw.get("position", 0),
-                choices=param_raw.get("choices"),
-            ))
+            parameters.append(
+                PluginParameterDef(
+                    name=name,
+                    type=param_raw.get("type", "str"),
+                    description=param_raw.get("description", ""),
+                    required=param_raw.get("required", False),
+                    default=param_raw.get("default"),
+                    position=param_raw.get("position", 0),
+                    choices=param_raw.get("choices"),
+                )
+            )
 
         # 解析自然语言触发
         nl_raw = data.get("natural_language")
@@ -429,12 +442,14 @@ class PluginDefinition:
                 continue
 
             duration_minutes = int(entry.get("duration", 1440))
-            events.append(PluginEventDef(
-                type="timer.schedule",
-                cron=cron,
-                interval_seconds=float(duration_minutes * 60),
-                description=f"每日 {time_str} 定时触发（持续 {duration_minutes} 分钟）",
-            ))
+            events.append(
+                PluginEventDef(
+                    type="timer.schedule",
+                    cron=cron,
+                    interval_seconds=float(duration_minutes * 60),
+                    description=f"每日 {time_str} 定时触发（持续 {duration_minutes} 分钟）",
+                )
+            )
         return events
 
     @classmethod
@@ -453,17 +468,20 @@ class PluginDefinition:
             instance = plugin_cls()
         except Exception:
             instance = object.__new__(plugin_cls)
-        from sirius_pulse.plugins.decorators import discover_commands, discover_command_groups
+        from sirius_pulse.plugins.decorators import discover_command_groups, discover_commands
+
         cmd_metas = discover_commands(instance)
         for cmd_name, meta in cmd_metas.items():
-            commands.append(PluginCommandDef(
-                name=cmd_name,
-                patterns=meta.full_patterns,
-                pattern_type=meta.pattern_type,
-                description=meta.description,
-                examples=meta.examples,
-                hidden_from_intent=getattr(meta, 'hidden_from_intent', False),
-            ))
+            commands.append(
+                PluginCommandDef(
+                    name=cmd_name,
+                    patterns=meta.full_patterns,
+                    pattern_type=meta.pattern_type,
+                    description=meta.description,
+                    examples=meta.examples,
+                    hidden_from_intent=getattr(meta, "hidden_from_intent", False),
+                )
+            )
 
         # 发现指令组
         group_metas = discover_command_groups(instance)
@@ -476,72 +494,83 @@ class PluginDefinition:
                     for sub_pattern in sub_meta.patterns:
                         full_patterns.append(f"{group_pattern} {sub_pattern}")
 
-                commands.append(PluginCommandDef(
-                    name=group_name,  # 指令组名
-                    patterns=full_patterns,
-                    pattern_type=group_meta.pattern_type,
-                    description=sub_meta.description or group_meta.description,
-                    examples=sub_meta.examples or group_meta.examples,
-                    hidden_from_intent=getattr(sub_meta, 'hidden_from_intent', False) or getattr(group_meta, 'hidden_from_intent', False),
-                ))
+                commands.append(
+                    PluginCommandDef(
+                        name=group_name,  # 指令组名
+                        patterns=full_patterns,
+                        pattern_type=group_meta.pattern_type,
+                        description=sub_meta.description or group_meta.description,
+                        examples=sub_meta.examples or group_meta.examples,
+                        hidden_from_intent=getattr(sub_meta, "hidden_from_intent", False)
+                        or getattr(group_meta, "hidden_from_intent", False),
+                    )
+                )
 
-            command_groups.append(PluginCommandGroupDef(
-                name=group_name,
-                patterns=group_meta.full_patterns,
-                pattern_type=group_meta.pattern_type,
-                description=group_meta.description,
-                examples=group_meta.examples,
-            ))
+            command_groups.append(
+                PluginCommandGroupDef(
+                    name=group_name,
+                    patterns=group_meta.full_patterns,
+                    pattern_type=group_meta.pattern_type,
+                    description=group_meta.description,
+                    examples=group_meta.examples,
+                )
+            )
 
         # 事件：合并 _plugin_events 和 _plugin_schedule
         events: list[PluginEventDef] = []
-        for evt_raw in getattr(plugin_cls, '_plugin_events', []) or []:
-            events.append(PluginEventDef(
-                type=evt_raw.get("type", ""),
-                cron=evt_raw.get("cron", ""),
-                interval_seconds=float(evt_raw.get("interval_seconds", 0)),
-                description=evt_raw.get("description", ""),
-            ))
+        for evt_raw in getattr(plugin_cls, "_plugin_events", []) or []:
+            events.append(
+                PluginEventDef(
+                    type=evt_raw.get("type", ""),
+                    cron=evt_raw.get("cron", ""),
+                    interval_seconds=float(evt_raw.get("interval_seconds", 0)),
+                    description=evt_raw.get("description", ""),
+                )
+            )
         # _plugin_schedule 是 _plugin_events 的声明式简写（v1.3+）
-        schedule_raw = getattr(plugin_cls, '_plugin_schedule', []) or []
+        schedule_raw = getattr(plugin_cls, "_plugin_schedule", []) or []
         if schedule_raw:
             events.extend(PluginDefinition._schedule_to_events(schedule_raw))
 
         # 自然语言触发
-        nl_examples = getattr(plugin_cls, '_plugin_nl_examples', []) or []
-        nl_slots = getattr(plugin_cls, '_plugin_nl_slots', {}) or {}
+        nl_examples = getattr(plugin_cls, "_plugin_nl_examples", []) or []
+        nl_slots = getattr(plugin_cls, "_plugin_nl_slots", {}) or {}
         nl_def: PluginNaturalLangDef | None = None
         if nl_examples or nl_slots:
             nl_def = PluginNaturalLangDef(examples=list(nl_examples), slots=dict(nl_slots))
 
         # 参数：从 _plugin_parameters 类属性读取（优先于 NL slots 构建）
         parameters: list[PluginParameterDef] = []
-        params_from_class = getattr(plugin_cls, '_plugin_parameters', None) or []
+        params_from_class = getattr(plugin_cls, "_plugin_parameters", None) or []
         if params_from_class:
             for i, p in enumerate(params_from_class):
-                parameters.append(PluginParameterDef(
-                    name=p.get("name", ""),
-                    type=p.get("type", "str"),
-                    description=p.get("description", ""),
-                    required=p.get("required", False),
-                    default=p.get("default"),
-                    position=p.get("position", i),
-                    choices=p.get("choices"),
-                    group=p.get("group", ""),
-                ))
+                parameters.append(
+                    PluginParameterDef(
+                        name=p.get("name", ""),
+                        type=p.get("type", "str"),
+                        description=p.get("description", ""),
+                        required=p.get("required", False),
+                        default=p.get("default"),
+                        position=p.get("position", i),
+                        choices=p.get("choices"),
+                        group=p.get("group", ""),
+                    )
+                )
         elif nl_slots:
             for i, (slot_name, slot_info) in enumerate(nl_slots.items()):
-                parameters.append(PluginParameterDef(
-                    name=slot_name,
-                    type=slot_info.get("type", "str"),
-                    description=slot_info.get("description", ""),
-                    required=slot_info.get("required", True),
-                    default=slot_info.get("default"),
-                    position=i,
-                ))
+                parameters.append(
+                    PluginParameterDef(
+                        name=slot_name,
+                        type=slot_info.get("type", "str"),
+                        description=slot_info.get("description", ""),
+                        required=slot_info.get("required", True),
+                        default=slot_info.get("default"),
+                        position=i,
+                    )
+                )
 
         # 权限
-        perm_raw = getattr(plugin_cls, '_plugin_permissions', None) or {}
+        perm_raw = getattr(plugin_cls, "_plugin_permissions", None) or {}
         permissions = PluginPermissionDef(
             developer_only=perm_raw.get("developer_only", False),
             hidden_from_intent=perm_raw.get("hidden_from_intent", False),
@@ -552,19 +581,19 @@ class PluginDefinition:
         )
 
         return PluginDefinition(
-            name=getattr(plugin_cls, '_plugin_name', '') or plugin_cls.__name__,
-            display_name=getattr(plugin_cls, '_plugin_display_name', '') or '',
-            description=getattr(plugin_cls, '_plugin_description', '') or '',
-            version=getattr(plugin_cls, '_plugin_version', '') or '1.0.0',
-            author=getattr(plugin_cls, '_plugin_author', '') or '',
+            name=getattr(plugin_cls, "_plugin_name", "") or plugin_cls.__name__,
+            display_name=getattr(plugin_cls, "_plugin_display_name", "") or "",
+            description=getattr(plugin_cls, "_plugin_description", "") or "",
+            version=getattr(plugin_cls, "_plugin_version", "") or "1.0.0",
+            author=getattr(plugin_cls, "_plugin_author", "") or "",
             commands=commands,
             command_groups=command_groups,
             events=events,
             parameters=parameters,
             natural_language=nl_def,
             permissions=permissions,
-            dependencies=getattr(plugin_cls, '_plugin_dependencies', []) or [],
-            prompt_inject=getattr(plugin_cls, '_plugin_prompt_inject', '') or '',
+            dependencies=getattr(plugin_cls, "_plugin_dependencies", []) or [],
+            prompt_inject=getattr(plugin_cls, "_plugin_prompt_inject", "") or "",
             source_path=source_path,
         )
 
@@ -582,6 +611,7 @@ class PluginDefinition:
 # Plugin 响应 —— handler 返回给框架的输出契约
 # ═══════════════════════════════════════════════════════════════════════
 
+
 @dataclass(slots=True)
 class PluginResponse:
     """Plugin 处理器返回给框架的响应。
@@ -596,14 +626,14 @@ class PluginResponse:
     """
 
     success: bool = True
-    data: Any = None                     # 结构化数据（llm 模式下用于人格化生成）
-    text: str = ""                        # 纯文本输出（direct 模式下直接发送）
-    error: str = ""                       # 错误信息
-    render_mode: str = ""                 # 覆盖 plugin.json / @command 中的 render.mode
-    mood_hint: str = ""                   # 情绪提示（用于 llm 风格化）
-    tone_override: str = ""               # 语气覆写
+    data: Any = None  # 结构化数据（llm 模式下用于人格化生成）
+    text: str = ""  # 纯文本输出（direct 模式下直接发送）
+    error: str = ""  # 错误信息
+    render_mode: str = ""  # 覆盖 plugin.json / @command 中的 render.mode
+    mood_hint: str = ""  # 情绪提示（用于 llm 风格化）
+    tone_override: str = ""  # 语气覆写
     image_urls: list[str] = field(default_factory=list)
-    message_group: Any = None             # MessageGroup | None（多模态输出：图片/语音/文件等）
+    message_group: Any = None  # MessageGroup | None（多模态输出：图片/语音/文件等）
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
@@ -620,6 +650,7 @@ class PluginResponse:
 # ═══════════════════════════════════════════════════════════════════════
 # 平台感知数据类型
 # ═══════════════════════════════════════════════════════════════════════
+
 
 @dataclass(slots=True)
 class UserMention:

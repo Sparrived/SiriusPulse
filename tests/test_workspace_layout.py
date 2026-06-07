@@ -13,8 +13,14 @@ def test_workspace_layout_when_config_and_data_roots_differ_then_paths_use_expec
     assert layout.provider_registry_path() == config_root / "providers" / "provider_keys.json"
     assert layout.generated_agents_path() == config_root / "roleplay" / "generated_agents.json"
     assert layout.token_usage_db_path() == data_root / "token" / "token_usage.db"
-    assert layout.session_store_path("chat-1") == data_root / "sessions" / "chat-1" / "session_state.db"
-    assert layout.session_store_path("chat-1", backend="json") == data_root / "sessions" / "chat-1" / "session_state.json"
+    assert (
+        layout.session_store_path("chat-1")
+        == data_root / "sessions" / "chat-1" / "session_state.db"
+    )
+    assert (
+        layout.session_store_path("chat-1", backend="json")
+        == data_root / "sessions" / "chat-1" / "session_state.json"
+    )
 
 
 def test_workspace_layout_when_session_id_has_special_chars_then_slug_round_trips(tmp_path):
@@ -45,7 +51,9 @@ def test_workspace_layout_when_ensuring_directories_then_creates_runtime_and_con
     assert layout.session_dir("chat A/B").is_dir()
 
 
-def test_workspace_layout_when_skills_exist_then_watch_paths_include_skill_files_and_readme(tmp_path):
+def test_workspace_layout_when_skills_exist_then_watch_paths_include_skill_files_and_readme(
+    tmp_path,
+):
     layout = WorkspaceLayout(tmp_path)
     layout.ensure_directories()
     (layout.skills_dir() / "b.py").write_text("", encoding="utf-8")

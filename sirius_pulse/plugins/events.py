@@ -42,8 +42,8 @@ class PluginEvent:
 class TimerEvent(PluginEvent):
     """定时器事件。"""
 
-    cron: str = ""                   # cron 表达式
-    interval_seconds: float = 0.0    # 间隔秒数
+    cron: str = ""  # cron 表达式
+    interval_seconds: float = 0.0  # 间隔秒数
 
 
 @dataclass(slots=True)

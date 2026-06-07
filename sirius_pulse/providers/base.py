@@ -246,9 +246,7 @@ def prepare_openai_compatible_messages(
                     elif not raw_url.lower().startswith(("http://", "https://", "data:")):
                         # 跳过无效的图片 URL（例如已清理的本地缓存路径），
                         # 避免提供商返回 400 Bad Request。
-                        logger.warning(
-                            "跳过无效的图片 URL（非本地文件且非网络地址）: %s", raw_url
-                        )
+                        logger.warning("跳过无效的图片 URL（非本地文件且非网络地址）: %s", raw_url)
                         continue
             prepared_parts.append(prepared_part)
 
@@ -286,7 +284,9 @@ class LLMProvider(Protocol):
 
 @runtime_checkable
 class AsyncLLMProvider(Protocol):
-    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> GenerationResult | tuple[str, GenerationResult]:
+    async def generate_async(
+        self, request: GenerationRequest, return_reasoning: bool = False
+    ) -> GenerationResult | tuple[str, GenerationResult]:
         """Generate one assistant message asynchronously from the upstream provider.
 
         When return_reasoning=True, returns (reasoning_content, GenerationResult) tuple.

@@ -12,7 +12,9 @@ from sirius_pulse.adapters.models import (
     TextSegment,
     VoiceSegment,
     at,
-    file as file_segment,
+)
+from sirius_pulse.adapters.models import file as file_segment
+from sirius_pulse.adapters.models import (
     image,
     reply,
     text,
@@ -104,7 +106,9 @@ def test_persona_templates_when_template_names_are_normalized_then_aliases_are_s
 
 
 def test_persona_templates_when_formatting_and_serializing_specs_then_values_round_trip():
-    answer = RolePlayAnswer(question="What matters?", answer="Trust.", perspective="", details="core value")
+    answer = RolePlayAnswer(
+        question="What matters?", answer="Trust.", perspective="", details="core value"
+    )
     spec = PersonaSpec(
         agent_name="Agent",
         agent_alias="Al",
@@ -138,7 +142,9 @@ def test_persona_templates_when_normalizing_keys_and_paths_then_values_are_stabl
     assert _normalize_agent_key(" A / B ") == "A_B"
     assert _normalize_agent_key(" / ") == "generated_agent"
     assert _normalize_dependency_file_path(r".\docs//profile.txt") == "docs/profile.txt"
-    assert _resolve_dependency_file_path(tmp_path, "docs/profile.txt") == tmp_path / "docs/profile.txt"
+    assert (
+        _resolve_dependency_file_path(tmp_path, "docs/profile.txt") == tmp_path / "docs/profile.txt"
+    )
     assert _resolve_dependency_file_path(tmp_path, str(absolute_file)) == absolute_file
 
 
@@ -149,9 +155,15 @@ def test_persona_generation_when_json_is_wrapped_or_partial_then_payload_can_be_
         '"recommended_temperature":0.4,"recommended_max_tokens":900}'
     )
 
-    assert _strip_wrapped_json_code_fence(wrapped) == '{"agent_persona":"p","global_system_prompt":"prompt"}'
+    assert (
+        _strip_wrapped_json_code_fence(wrapped)
+        == '{"agent_persona":"p","global_system_prompt":"prompt"}'
+    )
     assert _looks_like_roleplay_json_response(wrapped) is True
-    assert _extract_json_payload(wrapped) == {"agent_persona": "p", "global_system_prompt": "prompt"}
+    assert _extract_json_payload(wrapped) == {
+        "agent_persona": "p",
+        "global_system_prompt": "prompt",
+    }
     assert _decode_json_string_fragment('line\\nquote\\"') == 'line\nquote"'
     assert _extract_json_string_field('{"prompt":"hello', ("prompt",)) == ("hello", False)
     assert _extract_json_number_field('{"temperature":0.25}', ("temperature",)) == 0.25
@@ -169,7 +181,9 @@ def test_persona_generation_when_json_is_wrapped_or_partial_then_payload_can_be_
     assert extract_json('```json\n{"x": 1}\n```') == '{"x": 1}'
 
 
-def test_persona_generation_when_loading_dependency_snapshots_then_missing_and_dirs_are_reported(tmp_path):
+def test_persona_generation_when_loading_dependency_snapshots_then_missing_and_dirs_are_reported(
+    tmp_path,
+):
     notes = tmp_path / "notes.txt"
     folder = tmp_path / "folder"
     notes.write_text("hello world", encoding="utf-8")
@@ -193,7 +207,9 @@ def test_persona_generation_when_loading_dependency_snapshots_then_missing_and_d
     assert "folder" in prompt
 
 
-def test_persona_generation_when_preparing_input_then_spec_is_validated_and_dependencies_are_included(tmp_path):
+def test_persona_generation_when_preparing_input_then_spec_is_validated_and_dependencies_are_included(
+    tmp_path,
+):
     with pytest.raises(ValueError):
         _prepare_persona_generation_input(
             PersonaSpec(),

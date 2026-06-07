@@ -18,11 +18,11 @@ class BasicMemoryEntry(JsonSerializable):
 
     entry_id: str
     group_id: str
-    user_id: str           # real user_id, "assistant", or "system"
-    role: str              # "human" | "assistant" | "system"
+    user_id: str  # real user_id, "assistant", or "system"
+    role: str  # "human" | "assistant" | "system"
     content: str
-    timestamp: str         # ISO 8601
-    speaker_name: str = "" # display name (nickname, card, or persona name)
+    timestamp: str  # ISO 8601
+    speaker_name: str = ""  # display name (nickname, card, or persona name)
     system_prompt: str = ""  # system prompt used for this assistant turn
     channel_user_id: str = ""  # platform raw id (e.g. QQ number) for name constraints
     platform_message_id: str = ""  # platform message_id (e.g. OneBot message_id)

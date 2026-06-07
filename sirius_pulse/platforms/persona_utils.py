@@ -120,6 +120,7 @@ async def generate_persona_from_interview(
             raw = await provider.generate_async(request)
         else:
             import asyncio
+
             raw = await asyncio.to_thread(provider.generate, request)
     except Exception as exc:
         LOG.error("LLM 人格生成失败，pending state 保留在 %s: %s", pending_path, exc)

@@ -236,10 +236,7 @@ class PinnedMessageManager:
         Returns:
             取消的数量
         """
-        to_remove = [
-            mid for mid, msg in self._pinned_messages.items()
-            if msg.reason == reason
-        ]
+        to_remove = [mid for mid, msg in self._pinned_messages.items() if msg.reason == reason]
         for mid in to_remove:
             del self._pinned_messages[mid]
 
@@ -258,7 +255,9 @@ class PinnedMessageManager:
             取消的数量
         """
         if group_id is not None:
-            to_remove = [mid for mid, msg in self._pinned_messages.items() if msg.group_id == group_id]
+            to_remove = [
+                mid for mid, msg in self._pinned_messages.items() if msg.group_id == group_id
+            ]
         else:
             to_remove = list(self._pinned_messages.keys())
 
@@ -280,8 +279,7 @@ class PinnedMessageManager:
             取消的数量
         """
         to_remove = [
-            mid for mid, msg in self._pinned_messages.items()
-            if content_keyword in msg.content
+            mid for mid, msg in self._pinned_messages.items() if content_keyword in msg.content
         ]
         for mid in to_remove:
             del self._pinned_messages[mid]
@@ -395,10 +393,7 @@ class PinnedMessageManager:
         Returns:
             清理的数量
         """
-        to_remove = [
-            mid for mid, msg in self._pinned_messages.items()
-            if msg.is_expired
-        ]
+        to_remove = [mid for mid, msg in self._pinned_messages.items() if msg.is_expired]
         for mid in to_remove:
             del self._pinned_messages[mid]
 
@@ -410,10 +405,7 @@ class PinnedMessageManager:
         Returns:
             清理的数量
         """
-        to_remove = [
-            mid for mid, msg in self._pinned_messages.items()
-            if msg.is_count_exceeded
-        ]
+        to_remove = [mid for mid, msg in self._pinned_messages.items() if msg.is_count_exceeded]
         for mid in to_remove:
             del self._pinned_messages[mid]
             logger.info("消息已超过最大携带次数，自动取消钉住: %s", mid)
@@ -481,14 +473,14 @@ class PinnedMessageManager:
 # 钉住指令正则模式：
 # [PIN_MESSAGE: {"msg_id": msg_id, "reason": "..."}]  - 钉住指定消息ID的消息
 PIN_MESSAGE_PATTERN = re.compile(
-    r'\[PIN_MESSAGE:\s*(\{.*?\})\s*\]',
+    r"\[PIN_MESSAGE:\s*(\{.*?\})\s*\]",
     re.DOTALL,
 )
 
 # 取消钉住指令正则模式：
 # [UNPIN_MESSAGE: {"msg_id": msg_id}]  - 根据消息ID取消钉住
 UNPIN_MESSAGE_PATTERN = re.compile(
-    r'\[UNPIN_MESSAGE:\s*(\{.*?\})\s*\]',
+    r"\[UNPIN_MESSAGE:\s*(\{.*?\})\s*\]",
     re.DOTALL,
 )
 

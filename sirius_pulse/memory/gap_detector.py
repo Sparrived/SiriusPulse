@@ -22,17 +22,19 @@ __all__ = ["GapType", "KnowledgeGap", "GapDetector"]
 
 class GapType(str, Enum):
     """知识缺口类型。"""
-    PROFILE_INCOMPLETE = "profile_incomplete"     # 传记信息不完整
-    STALE_UNVERIFIED = "stale_unverified"         # 信息过时未验证
-    INFERRED_UNVERIFIED = "inferred_unverified"   # 推断信息未确认
-    UNRESOLVED_CONFLICT = "unresolved_conflict"   # 信息矛盾未解决
+
+    PROFILE_INCOMPLETE = "profile_incomplete"  # 传记信息不完整
+    STALE_UNVERIFIED = "stale_unverified"  # 信息过时未验证
+    INFERRED_UNVERIFIED = "inferred_unverified"  # 推断信息未确认
+    UNRESOLVED_CONFLICT = "unresolved_conflict"  # 信息矛盾未解决
 
 
 @dataclass
 class KnowledgeGap:
     """知识缺口。"""
+
     gap_type: str
-    domain: str           # 缺口领域: basic_info, relationships, identity, fact
+    domain: str  # 缺口领域: basic_info, relationships, identity, fact
     description: str
     importance: str = "medium"  # high / medium / low
 
@@ -95,28 +97,34 @@ class GapDetector:
         gaps: list[KnowledgeGap] = []
 
         if not bio.short_bio or len(bio.short_bio) < 20:
-            gaps.append(KnowledgeGap(
-                gap_type=GapType.PROFILE_INCOMPLETE,
-                domain="basic_info",
-                description="传记信息过少",
-                importance="high",
-            ))
+            gaps.append(
+                KnowledgeGap(
+                    gap_type=GapType.PROFILE_INCOMPLETE,
+                    domain="basic_info",
+                    description="传记信息过少",
+                    importance="high",
+                )
+            )
 
         if not bio.relationships:
-            gaps.append(KnowledgeGap(
-                gap_type=GapType.PROFILE_INCOMPLETE,
-                domain="relationships",
-                description="未发现关系信息",
-                importance="medium",
-            ))
+            gaps.append(
+                KnowledgeGap(
+                    gap_type=GapType.PROFILE_INCOMPLETE,
+                    domain="relationships",
+                    description="未发现关系信息",
+                    importance="medium",
+                )
+            )
 
         if not bio.identity_anchors:
-            gaps.append(KnowledgeGap(
-                gap_type=GapType.PROFILE_INCOMPLETE,
-                domain="identity",
-                description="未提取到身份特征",
-                importance="medium",
-            ))
+            gaps.append(
+                KnowledgeGap(
+                    gap_type=GapType.PROFILE_INCOMPLETE,
+                    domain="identity",
+                    description="未提取到身份特征",
+                    importance="medium",
+                )
+            )
 
         return gaps
 
@@ -127,12 +135,14 @@ class GapDetector:
 
         # 检查 uncertain 事实数
         if bio.uncertain_fact_count > 0:
-            gaps.append(KnowledgeGap(
-                gap_type=GapType.INFERRED_UNVERIFIED,
-                domain="fact",
-                description=f"有 {bio.uncertain_fact_count} 条待确认信息",
-                importance="low",
-            ))
+            gaps.append(
+                KnowledgeGap(
+                    gap_type=GapType.INFERRED_UNVERIFIED,
+                    domain="fact",
+                    description=f"有 {bio.uncertain_fact_count} 条待确认信息",
+                    importance="low",
+                )
+            )
 
         return gaps
 
@@ -143,11 +153,13 @@ class GapDetector:
 
         # 检查被取代的事实数（说明存在过矛盾）
         if bio.superseded_fact_count > 3:
-            gaps.append(KnowledgeGap(
-                gap_type=GapType.UNRESOLVED_CONFLICT,
-                domain="fact",
-                description=f"有 {bio.superseded_fact_count} 条被取代的信息",
-                importance="medium",
-            ))
+            gaps.append(
+                KnowledgeGap(
+                    gap_type=GapType.UNRESOLVED_CONFLICT,
+                    domain="fact",
+                    description=f"有 {bio.superseded_fact_count} 条被取代的信息",
+                    importance="medium",
+                )
+            )
 
         return gaps

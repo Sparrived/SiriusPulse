@@ -8,6 +8,13 @@ builders    LLM 异步生成（原 prompt_builders）
 
 from __future__ import annotations
 
+from sirius_pulse.persona_generation.builders import (
+    abuild_roleplay_prompt_from_answers_and_apply,
+    agenerate_agent_prompts_from_answers,
+    agenerate_from_persona_spec,
+    aregenerate_agent_prompt_from_dependencies,
+    aupdate_agent_prompt,
+)
 from sirius_pulse.persona_generation.templates import (
     DependencyFileSnapshot,
     GeneratedSessionPreset,
@@ -25,13 +32,6 @@ from sirius_pulse.persona_generation.templates import (
     load_persona_spec,
     persist_generated_agent_profile,
     select_generated_agent_profile,
-)
-from sirius_pulse.persona_generation.builders import (
-    abuild_roleplay_prompt_from_answers_and_apply,
-    agenerate_agent_prompts_from_answers,
-    agenerate_from_persona_spec,
-    aregenerate_agent_prompt_from_dependencies,
-    aupdate_agent_prompt,
 )
 
 __all__ = [

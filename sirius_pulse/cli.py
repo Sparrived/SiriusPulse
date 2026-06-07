@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime
+import contextlib
+import io
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ import socket
 import subprocess
 import sys
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -37,6 +39,7 @@ REPO_ROOT = Path(os.environ.get("SIRIUS_PULSE_HOME", Path.cwd())).expanduser().r
 DATA_DIR = REPO_ROOT / "data"
 GLOBAL_CONFIG_PATH = DATA_DIR / "global_config.json"
 WEBUI_STATUS_PATH = DATA_DIR / "webui_status.json"
+_TUI_SCREEN_ACTIVE = False
 
 
 class _Ansi:
@@ -100,14 +103,56 @@ def _prompt(message: str) -> str:
 
 def _header(title: str, subtitle: str | None = None) -> None:
     _clear_screen()
-    width = 74
-    print(_paint("╭" + "─" * width + "╮", _Ansi.BLUE))
-    print(_paint("│", _Ansi.BLUE) + _pad(" Sirius Pulse ", width) + _paint("│", _Ansi.BLUE))
-    print(_paint("│", _Ansi.BLUE) + _center(title, width) + _paint("│", _Ansi.BLUE))
-    if subtitle:
-        print(_paint("│", _Ansi.BLUE) + _center(subtitle, width) + _paint("│", _Ansi.BLUE))
-    print(_paint("╰" + "─" * width + "╯", _Ansi.BLUE))
+    print(_header_text(title, subtitle), end="")
     print()
+
+
+def _header_text(title: str, subtitle: str | None = None) -> str:
+    width = 74
+    lines = [
+        _paint("╭" + "─" * width + "╮", _Ansi.BLUE),
+        _paint("│", _Ansi.BLUE) + _pad(" Sirius Pulse ", width) + _paint("│", _Ansi.BLUE),
+        _paint("│", _Ansi.BLUE) + _center(title, width) + _paint("│", _Ansi.BLUE),
+    ]
+    if subtitle:
+        lines.append(_paint("│", _Ansi.BLUE) + _center(subtitle, width) + _paint("│", _Ansi.BLUE))
+    lines.append(_paint("╰" + "─" * width + "╯", _Ansi.BLUE))
+    return "\n".join(lines) + "\n"
+
+
+def _capture_render(render: Callable[[], None] | None) -> str:
+    if render is None:
+        return ""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        render()
+    return buffer.getvalue()
+
+
+def _write_frame(frame: str) -> None:
+    if sys.stdout.isatty():
+        sys.stdout.write("\033[?25l\033[H\033[J" + frame)
+    else:
+        sys.stdout.write(frame)
+    sys.stdout.flush()
+
+
+def _enter_tui_screen() -> None:
+    global _TUI_SCREEN_ACTIVE
+    if not sys.stdout.isatty() or _TUI_SCREEN_ACTIVE:
+        return
+    sys.stdout.write("\033[?1049h\033[?25l\033[2J\033[H")
+    sys.stdout.flush()
+    _TUI_SCREEN_ACTIVE = True
+
+
+def _exit_tui_screen() -> None:
+    global _TUI_SCREEN_ACTIVE
+    if not _TUI_SCREEN_ACTIVE:
+        return
+    sys.stdout.write("\033[?25h\033[?1049l")
+    sys.stdout.flush()
+    _TUI_SCREEN_ACTIVE = False
 
 
 def _menu_item(key: str, label: str, detail: str) -> None:
@@ -115,6 +160,94 @@ def _menu_item(key: str, label: str, detail: str) -> None:
         f"  {_paint(_pad(key, 12), _Ansi.BOLD, _Ansi.CYAN)}  "
         f"{_paint(_pad(label, 20), _Ansi.BOLD)} {_paint(detail, _Ansi.DIM)}"
     )
+
+
+def _read_menu_key() -> str:
+    if not sys.stdin.isatty():
+        return _prompt("\n选择操作: ").lower()
+    if sys.platform == "win32":
+        import msvcrt
+
+        ch = msvcrt.getwch()
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch in {"\r", "\n"}:
+            return "enter"
+        if ch == "\x1b":
+            return "esc"
+        if ch in {"\x00", "\xe0"}:
+            nxt = msvcrt.getwch()
+            if nxt == "H":
+                return "up"
+            if nxt == "P":
+                return "down"
+        return ch.lower()
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch in {"\r", "\n"}:
+            return "enter"
+        if ch == "\x1b":
+            seq = sys.stdin.read(2)
+            if seq == "[A":
+                return "up"
+            if seq == "[B":
+                return "down"
+            return "esc"
+        return ch.lower()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _select_menu(
+    title: str,
+    subtitle: str,
+    items: list[tuple[str, str, str]],
+    render_extra: Callable[[], None] | None = None,
+) -> str:
+    selected = 0
+    try:
+        while True:
+            parts = [_header_text(title, subtitle)]
+            extra = _capture_render(render_extra)
+            if extra:
+                parts.append(extra.rstrip("\n") + "\n\n")
+            parts.append(_paint("使用 ↑/↓ 选择，Enter 确认，Esc 返回，Ctrl+C 退出", _Ansi.DIM) + "\n\n")
+            for idx, (key, label, detail) in enumerate(items):
+                active = idx == selected
+                marker = ">" if active else " "
+                row_key = _paint(_pad(key, 8), _Ansi.BOLD, _Ansi.CYAN)
+                row_label = _paint(_pad(label, 18), _Ansi.BOLD)
+                row_detail = _paint(detail, _Ansi.DIM)
+                line = f"  {marker} {row_key} {row_label} {row_detail}"
+                parts.append((_paint(line, _Ansi.BLUE, _Ansi.BOLD) if active else line) + "\n")
+            frame = "".join(parts)
+            _write_frame(frame)
+            key = _read_menu_key()
+            if key == "up":
+                selected = (selected - 1) % len(items)
+            elif key == "down":
+                selected = (selected + 1) % len(items)
+            elif key == "enter":
+                return items[selected][0]
+            elif key == "esc":
+                return "b"
+            else:
+                for idx, (item_key, _label, _detail) in enumerate(items):
+                    if key == item_key.lower():
+                        selected = idx
+                        return item_key
+    finally:
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[?25h")
+            sys.stdout.flush()
 
 
 def _status_badge(running: bool) -> str:
@@ -137,7 +270,12 @@ def _print_persona_table() -> list[dict[str, Any]]:
         print(_paint("还没有人格。可以在「人格管理」中创建第一个人格。", _Ansi.YELLOW))
         return []
 
-    print(_paint(f"{_pad('序号', 6)}{_pad('人格', 18)}{_pad('角色名', 18)}{_pad('状态', 16)}{_pad('PID', 10)}{_pad('端口', 8)}", _Ansi.BOLD))
+    print(
+        _paint(
+            f"{_pad('序号', 6)}{_pad('人格', 18)}{_pad('角色名', 18)}{_pad('状态', 16)}{_pad('PID', 10)}{_pad('端口', 8)}",
+            _Ansi.BOLD,
+        )
+    )
     print(_paint("─" * 76, _Ansi.DIM))
     for idx, persona in enumerate(personas, 1):
         name = str(persona.get("name") or "-")[:16]
@@ -155,6 +293,17 @@ def _select_persona(prompt_text: str = "选择人格序号或名称: ") -> str |
     personas = _print_persona_table()
     if not personas:
         return None
+    if sys.stdin.isatty():
+        items = [
+            (str(idx), str(persona["name"]), str(persona.get("persona_name") or "—"))
+            for idx, persona in enumerate(personas, 1)
+        ]
+        items.append(("b", "返回", "取消选择"))
+        choice = _select_menu("选择人格", "使用方向键选择目标人格", items)
+        if choice in {"b", "back", "q"}:
+            return None
+        index = int(choice) - 1
+        return str(personas[index]["name"])
     value = _prompt(f"\n{prompt_text}")
     if not value:
         return None
@@ -248,7 +397,12 @@ def _start_webui_background() -> dict[str, Any]:
     running, status = _webui_status()
     config = _load_global_config()
     if running and status:
-        return {"started": False, "running": True, "pid": status.get("pid"), "url": _webui_url(config)}
+        return {
+            "started": False,
+            "running": True,
+            "pid": status.get("pid"),
+            "url": _webui_url(config),
+        }
 
     cmd = [sys.executable, "-m", "sirius_pulse.cli", "webui", "--foreground"]
     kwargs: dict[str, Any] = {
@@ -273,7 +427,9 @@ def _stop_webui_background() -> bool:
     pid = int(status.get("pid") or 0)
     if pid and _pid_exists(pid):
         if sys.platform == "win32":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True)
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True
+            )
         else:
             os.kill(pid, signal.SIGTERM)
     WEBUI_STATUS_PATH.unlink(missing_ok=True)
@@ -311,9 +467,7 @@ def _load_global_config() -> dict:
         try:
             return json.loads(GLOBAL_CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception as exc:
-            logging.getLogger("sirius.main").warning(
-                "全局配置读取失败: %s，使用默认", exc
-            )
+            logging.getLogger("sirius.main").warning("全局配置读取失败: %s，使用默认", exc)
     config = _default_global_config()
     GLOBAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     GLOBAL_CONFIG_PATH.write_text(
@@ -374,8 +528,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         LOG.error("Embedding 服务在 60 秒内未就绪，无法启动人格")
         await webui.stop()
         raise RuntimeError(
-            f"Embedding 服务不可用 ({emb_url})。"
-            "请检查日志或手动启动: python -m sirius_pulse.embedding.server"
+            f"Embedding 服务不可用 ({emb_url})。" "请检查日志或手动启动: python -m sirius_pulse.embedding.server"
         )
 
     # ── 启动所有已启用人格（worker 子进程会自动管理 NapCat 实例）──
@@ -463,9 +616,7 @@ def _cmd_persona_list(args: argparse.Namespace) -> None:
         print("暂无任何人格。使用 `python main.py persona create <name>` 创建。")
         return
 
-    print(
-        f"{'人格名':<12} {'角色名':<12} {'状态':<8} {'PID':<8} {'端口':<8} {'Adapter'}"
-    )
+    print(f"{'人格名':<12} {'角色名':<12} {'状态':<8} {'PID':<8} {'端口':<8} {'Adapter'}")
     print("-" * 70)
     for p in personas:
         status = "运行中" if p.get("running") else "已停止"
@@ -562,9 +713,7 @@ async def _cmd_persona_start(args: argparse.Namespace) -> None:
         if isinstance(a, NapCatAdapterConfig) and a.enabled and a.qq_number:
             from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
 
-            napcat_install_dir = str(
-                config.get("napcat_install_dir", str(REPO_ROOT / "napcat"))
-            )
+            napcat_install_dir = str(config.get("napcat_install_dir", str(REPO_ROOT / "napcat")))
             napcat_mgr = NapCatManager.for_persona(
                 global_install_dir=napcat_install_dir,
                 persona_name=args.name,
@@ -680,18 +829,25 @@ def _cli_start_all() -> None:
 def _cli_open_webui() -> None:
     config = _load_global_config()
     running, status = _webui_status()
-    _header("WebUI 管理面板", "WebUI 作为后台服务运行，不占用 CLI 终端")
-    print(f"地址: {_paint(_webui_url(config), _Ansi.GREEN, _Ansi.BOLD)}")
-    if running and status:
-        print(_paint(f"状态: 运行中 (pid={status.get('pid')})", _Ansi.GREEN))
-    else:
-        print(_paint("状态: 未运行", _Ansi.YELLOW))
-    print()
-    _menu_item("1", "启动/打开", "后台启动 WebUI 并立即返回 CLI")
-    _menu_item("2", "查看状态", "显示后台服务 PID 与启动时间")
-    _menu_item("3", "停止服务", "关闭后台 WebUI")
-    _menu_item("b", "返回首页", "回到主菜单")
-    choice = _prompt("\n选择操作: ").lower()
+
+    def render_status() -> None:
+        print(f"地址: {_paint(_webui_url(config), _Ansi.GREEN, _Ansi.BOLD)}")
+        if running and status:
+            print(_paint(f"状态: 运行中 (pid={status.get('pid')})", _Ansi.GREEN))
+        else:
+            print(_paint("状态: 未运行", _Ansi.YELLOW))
+
+    choice = _select_menu(
+        "WebUI 管理面板",
+        "WebUI 作为后台服务运行，不占用 CLI 终端",
+        [
+            ("1", "启动/打开", "后台启动 WebUI 并立即返回 CLI"),
+            ("2", "查看状态", "显示后台服务 PID 与启动时间"),
+            ("3", "停止服务", "关闭后台 WebUI"),
+            ("b", "返回首页", "回到主菜单"),
+        ],
+        render_status,
+    ).lower()
     if choice == "1":
         result = _start_webui_background()
         state = "已在后台运行" if not result["started"] else "已后台启动"
@@ -707,15 +863,18 @@ def _cli_open_webui() -> None:
 
 def _cli_personas() -> None:
     while True:
-        _header("人格管理", "查看状态、创建人格、启停单个人格")
-        _print_persona_table()
-        print()
-        _menu_item("1", "创建人格", "生成独立配置目录与默认适配器")
-        _menu_item("2", "启动人格", "前台启动单个人格")
-        _menu_item("3", "停止人格", "停止后台运行的人格")
-        _menu_item("4", "查看详情", "显示心跳、端口与目录")
-        _menu_item("b", "返回首页", "回到主菜单")
-        choice = _prompt("\n选择操作: ").lower()
+        choice = _select_menu(
+            "人格管理",
+            "查看状态、创建人格、启停单个人格",
+            [
+                ("1", "创建人格", "生成独立配置目录与默认适配器"),
+                ("2", "启动人格", "后台启动单个人格"),
+                ("3", "停止人格", "停止后台运行的人格"),
+                ("4", "查看详情", "显示心跳、端口与目录"),
+                ("b", "返回首页", "回到主菜单"),
+            ],
+            _print_persona_table,
+        ).lower()
         if choice in {"b", "back", "q"}:
             return
         if choice == "1":
@@ -726,8 +885,8 @@ def _cli_personas() -> None:
         elif choice == "2":
             name = _select_persona()
             if name:
-                _header(f"启动人格 {name}", "该模式会占用当前终端")
-                print(_paint("按 Ctrl+C 可停止该人格。", _Ansi.YELLOW))
+                _header(f"启动人格 {name}", "人格会作为后台子进程运行")
+                print(_paint("启动后可在 WebUI 实时日志页面查看运行日志。", _Ansi.YELLOW))
                 if _prompt("继续启动？[Y/n] ").lower() not in {"n", "no", "否"}:
                     asyncio.run(_cmd_persona_start(argparse.Namespace(name=name)))
         elif choice == "3":
@@ -778,23 +937,36 @@ def _cli_config() -> None:
 
 
 def _cmd_cli(args: argparse.Namespace) -> None:
+    if os.environ.get("SIRIUS_PULSE_LEGACY_CLI") == "1":
+        _cmd_legacy_cli(args)
+        return
     configure_logging(level="WARNING", format_type="console")
+    from sirius_pulse.tui import run_textual_cli
+
+    result = run_textual_cli()
+    if result.action == "run":
+        asyncio.run(_cmd_run(argparse.Namespace()))
+
+
+def _cmd_legacy_cli(args: argparse.Namespace) -> None:
+    configure_logging(level="WARNING", format_type="console")
+    _enter_tui_screen()
     try:
         while True:
             config = _load_global_config()
-            _header(
+            choice = _select_menu(
                 "交互式控制台",
                 f"data: {DATA_DIR} · webui: http://localhost:{config.get('webui_port', 8080)}",
-            )
-            _print_persona_table()
-            print()
-            _menu_item("1", "启动运行模式", "所有已启用人格 + WebUI")
-            _menu_item("2", "WebUI 面板", "后台服务，不占用 CLI 终端")
-            _menu_item("3", "人格管理", "创建、查看、启停单个人格")
-            _menu_item("4", "日志界面", "查看人格 worker 日志")
-            _menu_item("5", "运行配置", "查看路径、端口与日志级别")
-            _menu_item("q", "退出", "关闭 CLI")
-            choice = _prompt("\n选择操作: ").lower()
+                [
+                    ("1", "启动运行模式", "所有已启用人格 + WebUI"),
+                    ("2", "WebUI 面板", "后台服务，不占用 CLI 终端"),
+                    ("3", "人格管理", "创建、查看、启停单个人格"),
+                    ("4", "日志界面", "查看人格 worker 日志"),
+                    ("5", "运行配置", "查看路径、端口与日志级别"),
+                    ("q", "退出", "关闭 CLI"),
+                ],
+                _print_persona_table,
+            ).lower()
             if choice in {"q", "quit", "exit", "退出"}:
                 _shutdown_services()
                 print(_paint("再见。", _Ansi.GREEN))
@@ -812,6 +984,8 @@ def _cmd_cli(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         _shutdown_services()
         print(_paint("已退出。", _Ansi.GREEN))
+    finally:
+        _exit_tui_screen()
 
 
 # ---------------------------------------------------------------------------
@@ -847,12 +1021,10 @@ def main() -> int:
     remove_parser.add_argument("name", help="人格标识名")
 
     migrate_parser = persona_sub.add_parser("migrate", help="从旧目录迁移人格")
-    migrate_parser.add_argument(
-        "--source", required=True, help="源目录路径（如 data/bot）"
-    )
+    migrate_parser.add_argument("--source", required=True, help="源目录路径（如 data/bot）")
     migrate_parser.add_argument("--name", required=True, help="目标人格标识名")
 
-    start_parser = persona_sub.add_parser("start", help="前台启动单个人格")
+    start_parser = persona_sub.add_parser("start", help="后台启动单个人格")
     start_parser.add_argument("name", help="人格标识名")
 
     stop_parser = persona_sub.add_parser("stop", help="停止单个人格")

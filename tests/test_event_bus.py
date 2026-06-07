@@ -57,7 +57,10 @@ async def test_event_bus_when_two_clients_watch_session_then_both_see_same_decis
     await bus.close()
     await asyncio.gather(task_a, task_b)
 
-    assert received == [[SessionEventType.DECISION_COMPLETED], [SessionEventType.DECISION_COMPLETED]]
+    assert received == [
+        [SessionEventType.DECISION_COMPLETED],
+        [SessionEventType.DECISION_COMPLETED],
+    ]
 
 
 @pytest.mark.asyncio

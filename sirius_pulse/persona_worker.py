@@ -143,9 +143,7 @@ class PersonaWorker:
         except Exception:
             return False
 
-    async def _ensure_napcat_running(
-        self, adapter_cfg: "NapCatAdapterConfig"
-    ) -> bool:
+    async def _ensure_napcat_running(self, adapter_cfg: "NapCatAdapterConfig") -> bool:
         """检查 NapCat WS 是否可达，不可达则自动启动实例并等待就绪。
 
         Returns True if WS is (now) reachable, False on failure.
@@ -176,6 +174,7 @@ class PersonaWorker:
         if config_path.exists():
             try:
                 import json as _json
+
                 gcfg = _json.loads(config_path.read_text(encoding="utf-8"))
                 napcat_install_dir = gcfg.get("napcat_install_dir")
             except Exception:
@@ -245,9 +244,9 @@ class PersonaWorker:
                 },
             )
             if self._runtime is not None and self._runtime.engine is not None:
-                persona = getattr(self._runtime.engine, 'persona', None)
+                persona = getattr(self._runtime.engine, "persona", None)
                 if persona:
-                    adapter.set_persona_name(getattr(persona, 'name', '') or '')
+                    adapter.set_persona_name(getattr(persona, "name", "") or "")
             await adapter.connect()
             await adapter.start_handling(self._runtime.engine)  # type: ignore[union-attr]
             self._adapters.append(adapter)
@@ -294,6 +293,7 @@ class PersonaWorker:
                 if not subdir.is_dir() or subdir.name == self.persona_dir.name:
                     continue
                 from sirius_pulse.core.persona_store import PersonaStore
+
                 other_persona = PersonaStore.load(subdir)
                 if other_persona:
                     other_ai_names.append(other_persona.name)
@@ -312,11 +312,13 @@ class PersonaWorker:
 
     async def _heartbeat_loop(self) -> None:
         while self._running:
-            self._write_status({
-                "status": "running",
-                "pid": os.getpid(),
-                "heartbeat_at": _now_iso(),
-            })
+            self._write_status(
+                {
+                    "status": "running",
+                    "pid": os.getpid(),
+                    "heartbeat_at": _now_iso(),
+                }
+            )
             self._check_enabled_flag()
             self._check_config_reload()
             await asyncio.sleep(10)
@@ -520,11 +522,13 @@ class PersonaWorker:
             except Exception as exc:
                 LOG.warning("EngineRuntime 停止失败: %s", exc)
 
-        self._write_status({
-            "status": "stopped",
-            "pid": os.getpid(),
-            "stopped_at": _now_iso(),
-        })
+        self._write_status(
+            {
+                "status": "stopped",
+                "pid": os.getpid(),
+                "stopped_at": _now_iso(),
+            }
+        )
         LOG.info("人格工作进程已停止")
 
 
@@ -532,8 +536,10 @@ class PersonaWorker:
 # 入口
 # ---------------------------------------------------------------------------
 
+
 def _now_iso() -> str:
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).isoformat()
 
 

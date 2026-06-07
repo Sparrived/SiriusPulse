@@ -113,7 +113,9 @@ def build_token_usage_baseline(records: list[TokenUsageRecord]) -> TokenUsageBas
         avg_tokens_per_call=total_tokens / total_calls,
         avg_prompt_tokens_per_call=total_prompt_tokens / total_calls,
         avg_completion_tokens_per_call=total_completion_tokens / total_calls,
-        completion_to_prompt_ratio=(total_completion_tokens / total_prompt_tokens) if total_prompt_tokens else 0.0,
+        completion_to_prompt_ratio=(total_completion_tokens / total_prompt_tokens)
+        if total_prompt_tokens
+        else 0.0,
         retry_rate=retried_calls / total_calls,
     )
 

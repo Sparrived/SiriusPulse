@@ -45,6 +45,7 @@ _INTERVIEW_QUESTIONS: list[str] = [
 # Generator class
 # ============================================================================
 
+
 class PersonaGenerator:
     """Creates PersonaProfile via templates or interview."""
 
@@ -53,8 +54,9 @@ class PersonaGenerator:
         """Create persona from a built-in archetype (zero LLM cost)."""
         data = _ARCHETYPES.get(archetype_name)
         if data is None:
-            raise ValueError(f"Unknown archetype: {archetype_name}. "
-                           f"Available: {list(_ARCHETYPES.keys())}")
+            raise ValueError(
+                f"Unknown archetype: {archetype_name}. " f"Available: {list(_ARCHETYPES.keys())}"
+            )
 
         profile = PersonaProfile(
             source="template",
@@ -199,8 +201,11 @@ _PERSONA_JSON_SCHEMA = {
 }
 
 
-def _build_llm_request(prompt: str, *, purpose: str = "persona_generate", model: str = "gpt-4o-mini") -> Any:
+def _build_llm_request(
+    prompt: str, *, purpose: str = "persona_generate", model: str = "gpt-4o-mini"
+) -> Any:
     from sirius_pulse.providers.base import GenerationRequest
+
     return GenerationRequest(
         model=model,
         system_prompt="",
@@ -213,6 +218,7 @@ def _build_llm_request(prompt: str, *, purpose: str = "persona_generate", model:
 
 def _run_async(coro, request):
     import asyncio
+
     try:
         # 如果当前线程没有运行中的事件循环，直接使用
         loop = asyncio.get_event_loop()
@@ -222,6 +228,7 @@ def _run_async(coro, request):
         pass
     # 已有事件循环在运行（如在 async 函数中被调用），创建新 loop 在新线程运行
     import concurrent.futures
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(lambda: asyncio.new_event_loop().run_until_complete(coro(request)))
         return future.result()
@@ -229,6 +236,7 @@ def _run_async(coro, request):
 
 def _run_sync(func, request):
     import asyncio
+
     try:
         loop = asyncio.get_event_loop()
         if not loop.is_running():
@@ -236,8 +244,11 @@ def _run_sync(func, request):
     except RuntimeError:
         pass
     import concurrent.futures
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(lambda: asyncio.new_event_loop().run_until_complete(asyncio.to_thread(func, request)))
+        future = executor.submit(
+            lambda: asyncio.new_event_loop().run_until_complete(asyncio.to_thread(func, request))
+        )
         return future.result()
 
 
@@ -266,6 +277,7 @@ def _extract_section(
 ) -> None:
     """Best-effort extraction of a section from global_system_prompt."""
     import re
+
     # Look for keyword followed by content until next section or end
     pattern = re.compile(
         rf"{re.escape(keyword)}\s*[：:]\s*(.+?)(?=\n\s*(?:{ '|'.join(re.escape(h) for h in _SECTION_HEADERS )}|$)",

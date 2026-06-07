@@ -43,11 +43,14 @@ class WebSocketManager:
         LOG.info("WebSocket 已连接: persona=%s, 当前连接数=%d", name, self.connection_count)
 
         # 发送握手确认
-        await self._safe_send_json(ws, {
-            "type": "connected",
-            "persona": name,
-            "timestamp": time.time(),
-        })
+        await self._safe_send_json(
+            ws,
+            {
+                "type": "connected",
+                "persona": name,
+                "timestamp": time.time(),
+            },
+        )
 
         try:
             async for msg in ws:
@@ -133,7 +136,9 @@ class WebSocketManager:
             self._connections.pop(name, None)
 
     async def _broadcast(
-        self, targets: list[web.WebSocketResponse], payload: dict[str, Any],
+        self,
+        targets: list[web.WebSocketResponse],
+        payload: dict[str, Any],
     ) -> None:
         """向一组连接发送 JSON 消息，自动清理断开的连接。"""
         dead: list[tuple[str, web.WebSocketResponse]] = []

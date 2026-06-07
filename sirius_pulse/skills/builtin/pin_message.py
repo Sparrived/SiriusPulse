@@ -22,10 +22,7 @@ _config.group("钉住消息").add(
 
 SKILL_META = {
     "name": "pin_message",
-    "description": (
-        "把最近聊天中的一条重要消息钉住，让它在后续对话中自动作为上下文携带。"
-        "当用户提出长期规则、重要约定、需要稍后持续记住的信息时使用。"
-    ),
+    "description": ("把最近聊天中的一条重要消息钉住，让它在后续对话中自动作为上下文携带。" "当用户提出长期规则、重要约定、需要稍后持续记住的信息时使用。"),
     "version": "1.0.0",
     "tags": ["memory", "pinned_message"],
     "silent": True,
@@ -64,9 +61,7 @@ def run(
         return {
             "success": True,
             "summary": result.get("summary", "已钉住消息"),
-            "text_blocks": [
-                f"已钉住消息：{pinned.get('message_id', '')}".strip()
-            ],
+            "text_blocks": [f"已钉住消息：{pinned.get('message_id', '')}".strip()],
             "internal_metadata": result,
         }
     return {

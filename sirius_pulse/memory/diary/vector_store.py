@@ -96,12 +96,14 @@ class DiaryVectorStore:
                 ids=[entry.entry_id],
                 embeddings=[embedding],
                 documents=[entry.content],
-                metadatas=[{
-                    "group_id": entry.group_id,
-                    "summary": entry.summary,
-                    "keywords": ",".join(entry.keywords),
-                    "created_at": entry.created_at,
-                }],
+                metadatas=[
+                    {
+                        "group_id": entry.group_id,
+                        "summary": entry.summary,
+                        "keywords": ",".join(entry.keywords),
+                        "created_at": entry.created_at,
+                    }
+                ],
             )
             logger.debug("日记向量已存储: %s", entry.entry_id)
         except Exception as exc:
@@ -182,12 +184,15 @@ class DiaryVectorStore:
                     ids=[e.entry_id for e in group_entries],
                     embeddings=[e.embedding for e in group_entries],
                     documents=[e.content for e in group_entries],
-                    metadatas=[{
-                        "group_id": e.group_id,
-                        "summary": e.summary,
-                        "keywords": ",".join(e.keywords),
-                        "created_at": e.created_at,
-                    } for e in group_entries],
+                    metadatas=[
+                        {
+                            "group_id": e.group_id,
+                            "summary": e.summary,
+                            "keywords": ",".join(e.keywords),
+                            "created_at": e.created_at,
+                        }
+                        for e in group_entries
+                    ],
                 )
                 total += len(group_entries)
             except Exception as exc:
@@ -241,7 +246,7 @@ class DiaryVectorStore:
                     cnt = coll.count()
                     total += cnt
                     # Derive group_id from collection name
-                    gid = name[len(self.COLLECTION_PREFIX):]
+                    gid = name[len(self.COLLECTION_PREFIX) :]
                     groups.append({"group_id": gid, "count": cnt})
                 except Exception:
                     continue

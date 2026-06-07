@@ -84,7 +84,7 @@ class ExpressivenessConfig:
 @dataclass(slots=True)
 class Agent:
     """AI agent definition with model and parameters."""
-    
+
     name: str
     persona: str
     model: str
@@ -96,7 +96,7 @@ class Agent:
 @dataclass(slots=True)
 class AgentPreset:
     """Pre-configured agent with system prompt."""
-    
+
     agent: Agent
     global_system_prompt: str
 
@@ -136,66 +136,72 @@ class WorkspaceBootstrap:
 @dataclass(slots=True)
 class MemoryPolicy:
     """Centralized memory system configuration.
-    
+
     Controls memory fact limits, confidence thresholds, decay behaviour,
     observed-set caps and prompt-injection budget.
     """
+
     max_facts_per_user: int = 50
     transient_confidence_threshold: float = 0.85
     event_dedup_window_minutes: int = 5
     max_observed_set_size: int = 100
     max_summary_facts_per_type: int = 5
     max_summary_total_chars: int = 2000
-    decay_schedule: dict[int, float] = field(default_factory=lambda: {
-        7: 0.95,
-        30: 0.80,
-        60: 0.55,
-        90: 0.30,
-        180: 0.05,
-    })
+    decay_schedule: dict[int, float] = field(
+        default_factory=lambda: {
+            7: 0.95,
+            30: 0.80,
+            60: 0.55,
+            90: 0.30,
+            180: 0.05,
+        }
+    )
 
 
 @dataclass(slots=True)
 class OrchestrationPolicy:
     """Multi-model orchestration strategy (required).
-    
+
     Supports two configuration approaches:
-    
+
     Approach 1 - Unified Model: all tasks use the same model
         - Set unified_model: model name
         - Simplifies configuration, suitable for small task volumes
-        
+
     Approach 2 - Per-Task Configuration: specify model for each task
         - Set task_models: {"memory_extract": "model-a", "event_extract": "model-b", ...}
         - Supports fine-grained task-level control
-    
+
     Task Enablement:
         - All tasks (memory_extract, event_extract, intent_analysis) enabled by default
         - Use task_enabled dict to enable/disable specific tasks
         - Example: task_enabled={"memory_extract": False} disables memory extraction tasks
     """
+
     # Configuration approach selection (choose one, cannot both be empty)
     unified_model: str = ""  # Approach 1: all tasks use this model (higher priority)
     task_models: dict[str, str] = field(default_factory=dict)  # Approach 2: per-task configuration
-    
+
     # Task enablement control (bool fields, all enabled by default)
-    task_enabled: dict[str, bool] = field(default_factory=lambda: {
-        "memory_extract": True,
-        "cognition_analyze": True,
-    })
-    
+    task_enabled: dict[str, bool] = field(
+        default_factory=lambda: {
+            "memory_extract": True,
+            "cognition_analyze": True,
+        }
+    )
+
     # Per-task parameter tuning
     task_temperatures: dict[str, float] = field(default_factory=dict)
     task_max_tokens: dict[str, int] = field(default_factory=dict)
     task_retries: dict[str, int] = field(default_factory=dict)
-    
+
     # Multimodal processing configuration
     max_multimodal_inputs_per_turn: int = 4
     max_multimodal_value_length: int = 4096
-    
+
     # Prompt-driven content splitting (built-in marker; AI autonomously decides granularity)
     enable_prompt_driven_splitting: bool = True
-    
+
     # Memory Extract frequency control (避免调用过于频繁导致内容碎片化)
     memory_extract_batch_size: int = 1  # 每隔N条消息执行一次提取（1=每次，3=每3条）
     memory_extract_min_content_length: int = 0  # 最小内容长度阈值（字符数），0=无限制
@@ -206,32 +212,37 @@ class OrchestrationPolicy:
     # Background memory consolidation (后台记忆归纳; live session 启动后静默常驻)
     consolidation_interval_seconds: int = 7200  # 归纳间隔（秒）
     consolidation_min_entries: int = 6  # 事件最少条数
-    consolidation_min_notes: int = 4   # 摘要最少条数
+    consolidation_min_notes: int = 4  # 摘要最少条数
     consolidation_min_facts: int = 15  # 事实最少条数
 
     # Engagement decision system (参与决策系统, v0.14.0 重写)
     session_reply_mode: str = "always"  # auto|always|never
     engagement_sensitivity: float = 0.5  # 0.0(极度克制) - 1.0(积极参与)
-    heat_window_seconds: float = 60.0    # 热度分析滑动窗口（秒）
+    heat_window_seconds: float = 60.0  # 热度分析滑动窗口（秒）
 
-    
     # Pending-message batching: when the queued messages for a session exceed
     # this threshold, runtime enters backlog-silent mode and merges consecutive
     # turns from the same speaker into a single model call. Set to 0 to disable.
     pending_message_threshold: float = 4.0
-    
+
     # Memory policy (centralized memory system configuration)
     memory: MemoryPolicy = field(default_factory=MemoryPolicy)
 
     # Self-memory system (AI diary + glossary)
     enable_self_memory: bool = True
-    self_memory_extract_batch_size: int = 3  # AI replies between self-memory extractions (count-based trigger)
-    self_memory_min_chars: int = 0  # Also trigger when AI reply ≥ N chars (0 = disabled; OR logic with batch_size)
+    self_memory_extract_batch_size: int = (
+        3  # AI replies between self-memory extractions (count-based trigger)
+    )
+    self_memory_min_chars: int = (
+        0  # Also trigger when AI reply ≥ N chars (0 = disabled; OR logic with batch_size)
+    )
     self_memory_max_diary_prompt_entries: int = 6  # Max diary entries injected into prompt
     self_memory_max_glossary_prompt_terms: int = 15  # Max glossary terms injected into prompt
 
     # Reply frequency limiter (global rate control independent of auto_reply)
-    min_reply_interval_seconds: float = 0.0  # Minimum gap between two assistant replies; 0 = disabled
+    min_reply_interval_seconds: float = (
+        0.0  # Minimum gap between two assistant replies; 0 = disabled
+    )
     reply_frequency_window_seconds: float = 60.0  # Sliding window
     reply_frequency_max_replies: int = 8  # Max replies within the window
     reply_frequency_exempt_on_mention: bool = True  # Bypass limit when AI is directly mentioned
@@ -262,7 +273,7 @@ class OrchestrationPolicy:
         if self.unified_model:
             return self.unified_model.strip()
         return default_model.strip()
-    
+
     def validate(self) -> None:
         """Validate configuration legitimacy."""
         if not self.unified_model and not self.task_models:
@@ -270,7 +281,7 @@ class OrchestrationPolicy:
                 "Multi-model orchestration configuration error: must specify either "
                 "unified_model (approach 1) or task_models (approach 2)."
             )
-        
+
         if self.unified_model and self.task_models:
             raise ValueError(
                 "Multi-model orchestration configuration error: unified_model (approach 1) "
@@ -300,9 +311,7 @@ class OrchestrationPolicy:
             "none",
             "no_reply",
         }:
-            raise ValueError(
-                "session_reply_mode 仅支持 auto/smart/always/never/silent/none/no_reply。"
-            )
+            raise ValueError("session_reply_mode 仅支持 auto/smart/always/never/silent/none/no_reply。")
 
         if not 0.0 <= self.engagement_sensitivity <= 1.0:
             raise ValueError("engagement_sensitivity 必须在 [0,1] 范围内。")
@@ -323,7 +332,9 @@ class ConfigParameter:
     """
 
     name: str
-    type: str = "str"  # str | int | float | bool | list | model | password | object_array | checkbox_group
+    type: str = (
+        "str"  # str | int | float | bool | list | model | password | object_array | checkbox_group
+    )
     description: str = ""
     required: bool = False
     default: Any = None
@@ -335,7 +346,7 @@ class ConfigParameter:
 @dataclass(slots=True)
 class TokenUsageRecord(JsonSerializable):
     """Record of token usage for a task execution."""
-    
+
     actor_id: str
     task_name: str
     model: str
@@ -391,7 +402,9 @@ class WorkspaceConfig:
                 "enable_auto_compression": self.session_defaults.enable_auto_compression,
             },
             "orchestration_defaults": dict(self.orchestration_defaults),
-            "provider_policy": {"prefer_workspace_registry": self.provider_policy.prefer_workspace_registry},
+            "provider_policy": {
+                "prefer_workspace_registry": self.provider_policy.prefer_workspace_registry
+            },
         }
 
     @classmethod
@@ -468,7 +481,7 @@ class MultiModelConfig:
 @dataclass(slots=True, init=False)
 class SessionConfig:
     """Session configuration including agent, paths, and orchestration policy."""
-    
+
     preset: AgentPreset
     work_path: Path
     data_path: Path
@@ -500,11 +513,11 @@ class SessionConfig:
         self.max_recent_participant_messages = max_recent_participant_messages
         self.enable_auto_compression = enable_auto_compression
         self.session_id = str(session_id).strip() or "default"
-        
+
         # If no orchestration provided, create default: use main AI model as unified model
         if orchestration is None:
             orchestration = OrchestrationPolicy(unified_model=preset.agent.model)
-        
+
         self.orchestration = orchestration
         # Validate multi-model orchestration configuration
         self.orchestration.validate()
@@ -515,7 +528,9 @@ class SessionConfig:
 
     @agent.setter
     def agent(self, value: Agent) -> None:
-        self.preset = AgentPreset(agent=value, global_system_prompt=self.preset.global_system_prompt)
+        self.preset = AgentPreset(
+            agent=value, global_system_prompt=self.preset.global_system_prompt
+        )
 
     @property
     def global_system_prompt(self) -> str:

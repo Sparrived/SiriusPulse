@@ -69,7 +69,9 @@ class PluginRegistry:
             new_path = definition.source_path
             logger.warning(
                 "插件名冲突: '%s' 已被 %s 注册，新路径 %s 将被跳过",
-                definition.name, old_path, new_path,
+                definition.name,
+                old_path,
+                new_path,
             )
             raise ValueError(f"插件名 '{definition.name}' 已存在，跳过注册")
 
@@ -123,8 +125,7 @@ class PluginRegistry:
                 continue
             # 保留来自 plugin.json 的条目：检查是否也存在于 command_metas
             is_decorator = any(
-                hasattr(m, 'name') and getattr(m, 'name', '') == cn
-                for m in command_metas.values()
+                hasattr(m, "name") and getattr(m, "name", "") == cn for m in command_metas.values()
             )
             if not is_decorator:
                 kept.append((p, pt, pn, cn))
@@ -134,15 +135,17 @@ class PluginRegistry:
         # 注意：hidden_from_intent 的指令也需要加入索引，
         # 因为显式命令（以 /、#、! 开头）应忽略 hidden_from_intent 标记
         for meta in command_metas.values():
-            if not hasattr(meta, 'full_patterns'):
+            if not hasattr(meta, "full_patterns"):
                 continue
-            for pattern in getattr(meta, 'full_patterns', []):
-                self._commands_index.append((
-                    pattern,
-                    getattr(meta, 'pattern_type', 'prefix'),
-                    plugin_name,
-                    getattr(meta, 'name', ''),
-                ))
+            for pattern in getattr(meta, "full_patterns", []):
+                self._commands_index.append(
+                    (
+                        pattern,
+                        getattr(meta, "pattern_type", "prefix"),
+                        plugin_name,
+                        getattr(meta, "name", ""),
+                    )
+                )
         logger.debug("同步 %s 的 @command 元数据: %d 条指令", plugin_name, len(command_metas))
 
     def get(self, name: str) -> "PluginDefinition | None":
@@ -277,7 +280,7 @@ class PluginRegistry:
             visible_commands = [c for c in definition.commands if not c.hidden_from_intent]
             if not visible_commands:
                 continue
-            desc = (definition.display_name or definition.name)
+            desc = definition.display_name or definition.name
             if definition.description:
                 # 只取第一句话（到第一个句号），避免长描述诱导 LLM 误判
                 short_desc = definition.description.split("。")[0].split("，")[0]
@@ -338,9 +341,7 @@ class PluginRegistry:
             (p, pt, pn, cn) for p, pt, pn, cn in self._commands_index if pn != name
         ]
         for evt_type in list(self._events_index.keys()):
-            self._events_index[evt_type] = [
-                n for n in self._events_index[evt_type] if n != name
-            ]
+            self._events_index[evt_type] = [n for n in self._events_index[evt_type] if n != name]
             if not self._events_index[evt_type]:
                 del self._events_index[evt_type]
         logger.info("注销 Plugin: %s", name)

@@ -43,7 +43,7 @@ class Helpers:
         """Attach SKILL registry and executor to the engine."""
         self._engine._skill_registry = skill_registry
         self._engine._skill_executor = skill_executor
-        if hasattr(self._engine, 'brain'):
+        if hasattr(self._engine, "brain"):
             self._engine.brain.skill_registry = skill_registry
             self._engine.brain.current_adapter_type_fn = (
                 lambda: getattr(self._engine, "_current_adapter_type", "") or None
@@ -189,9 +189,7 @@ class Helpers:
                         ctx, engine.user_manager, group_id
                     )
                     if resolution.user_id:
-                        caller_profile = engine.user_manager.get_user(
-                            resolution.user_id, group_id
-                        )
+                        caller_profile = engine.user_manager.get_user(resolution.user_id, group_id)
                         caller_is_developer = bool(
                             caller_profile and getattr(caller_profile, "is_developer", False)
                         )
@@ -240,9 +238,7 @@ class Helpers:
             if not result.success:
                 last_error = result.error or "未知错误"
                 if is_last:
-                    final_reply = (
-                        f"[{definition.display_name or plugin_name}] 执行失败: {last_error}"
-                    )
+                    final_reply = f"[{definition.display_name or plugin_name}] 执行失败: {last_error}"
                 continue
 
             any_success = True
@@ -355,9 +351,7 @@ class Helpers:
                         trigger_specs = [trigger_specs]
                     for spec in trigger_specs:
                         engine._passive_skill_triggers.setdefault(spec.event_type, []).append(spec)
-                        logger.info(
-                            "被动SKILL触发器已注册: %s (事件: %s)", spec.name, spec.event_type
-                        )
+                        logger.info("被动SKILL触发器已注册: %s (事件: %s)", spec.name, spec.event_type)
             except Exception as exc:
                 logger.warning("注册被动SKILL失败 (%s): %s", skill.name, exc)
 
@@ -510,9 +504,7 @@ class Helpers:
         """
         if not content:
             return False
-        cleaned = re.sub(
-            r"[【\[](图片\d*|动画表情)[：:]\s*[^\]】]+[】\]]", "", content
-        ).strip()
+        cleaned = re.sub(r"[【\[](图片\d*|动画表情)[：:]\s*[^\]】]+[】\]]", "", content).strip()
         return not cleaned
 
     @staticmethod

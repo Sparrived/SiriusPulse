@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
-
 from sirius_pulse.providers.base import DEFAULT_TIMEOUT_SECONDS
+from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 
 DEFAULT_YTEA_BASE_URL = "https://api.ytea.top"
 

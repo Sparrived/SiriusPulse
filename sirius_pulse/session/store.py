@@ -309,13 +309,14 @@ class SqliteSessionStore:
             finally:
                 conn.close()
 
-
     @staticmethod
     def _json_dumps(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False)
 
     @staticmethod
-    def _json_loads_dict(raw: str | None, default: dict[str, object] | None = None) -> dict[str, object]:
+    def _json_loads_dict(
+        raw: str | None, default: dict[str, object] | None = None
+    ) -> dict[str, object]:
         if not raw:
             return dict(default or {})
         try:
@@ -354,12 +355,10 @@ class SqliteSessionStore:
         ).fetchone()
         return row is not None
 
-
     @staticmethod
     def _has_session_data(conn: sqlite3.Connection) -> bool:
         row = conn.execute("SELECT 1 FROM session_meta WHERE id = 1").fetchone()
         return row is not None
-
 
     @staticmethod
     def _delete_session_rows(conn: sqlite3.Connection) -> None:
@@ -461,8 +460,20 @@ class SqliteSessionStore:
                     ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        self._session_id, user_id, "", "[]", "[]", "[]", "[]",
-                        "", "", "[]", "[]", "[]", "[]", None,
+                        self._session_id,
+                        user_id,
+                        "",
+                        "[]",
+                        "[]",
+                        "[]",
+                        "[]",
+                        "",
+                        "",
+                        "[]",
+                        "[]",
+                        "[]",
+                        "[]",
+                        None,
                     ),
                 )
                 conn.execute(

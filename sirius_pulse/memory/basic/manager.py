@@ -38,7 +38,8 @@ class HeatCalculator:
         cutoff = now.timestamp() - 300.0  # 5 minutes
 
         recent = [
-            e for e in entries
+            e
+            for e in entries
             if e.timestamp
             and datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp() > cutoff
         ]
@@ -50,7 +51,11 @@ class HeatCalculator:
         unique_speakers_factor = min(1.0, unique_speakers / 5.0)
 
         last_ts = max(
-            (datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp() for e in entries if e.timestamp),
+            (
+                datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
+                for e in entries
+                if e.timestamp
+            ),
             default=now.timestamp(),
         )
         seconds_since_last = max(0.0, now.timestamp() - last_ts)
@@ -104,6 +109,7 @@ class BasicMemoryManager:
         """Add an entry to a group's basic memory window."""
         gid = group_id or "default"
         from sirius_pulse.core.utils import now_iso
+
         entry = BasicMemoryEntry(
             entry_id=f"bme_{uuid.uuid4().hex[:12]}",
             group_id=gid,
@@ -116,8 +122,7 @@ class BasicMemoryManager:
             channel_user_id=channel_user_id,
             platform_message_id=platform_message_id,
             multimodal_inputs=[
-                dict(item) for item in (multimodal_inputs or [])
-                if isinstance(item, dict)
+                dict(item) for item in (multimodal_inputs or []) if isinstance(item, dict)
             ],
             tags=list(tags) if tags else [],
             conversation_chain=list(conversation_chain) if conversation_chain else [],
@@ -142,7 +147,7 @@ class BasicMemoryManager:
         window = self._windows.get(group_id or "default", deque())
         if len(window) <= self.context_window:
             return []
-        return list(window)[:-self.context_window]
+        return list(window)[: -self.context_window]
 
     def get_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Get all entries in a group's window."""
@@ -179,7 +184,8 @@ class BasicMemoryManager:
         # Sort by timestamp descending, take most recent n
         all_entries.sort(
             key=lambda e: datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
-            if e.timestamp else 0.0,
+            if e.timestamp
+            else 0.0,
             reverse=True,
         )
         return all_entries[:n]
@@ -200,7 +206,11 @@ class BasicMemoryManager:
             return False
         _heat = self._heat_calc.calculate(entries)
         last_ts = max(
-            (datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp() for e in entries if e.timestamp),
+            (
+                datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
+                for e in entries
+                if e.timestamp
+            ),
             default=0.0,
         )
         seconds_since_last = datetime.now(timezone.utc).timestamp() - last_ts
@@ -209,13 +219,19 @@ class BasicMemoryManager:
     def _update_heat(self, group_id: str) -> None:
         entries = self.get_all(group_id)
         last_ts = max(
-            (datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp() for e in entries if e.timestamp),
+            (
+                datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
+                for e in entries
+                if e.timestamp
+            ),
             default=0.0,
         )
         recent = [
-            e for e in entries
+            e
+            for e in entries
             if e.timestamp
-            and datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp() > last_ts - 300.0
+            and datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
+            > last_ts - 300.0
         ]
         self._heat_state[group_id] = HeatState(
             message_count_5min=len(recent),
@@ -237,8 +253,11 @@ class BasicMemoryManager:
             return 0.0, 999999.0
         heat = self._heat_calc.calculate(entries)
         last_ts = max(
-            (datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
-             for e in entries if e.timestamp),
+            (
+                datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
+                for e in entries
+                if e.timestamp
+            ),
             default=0.0,
         )
         seconds_since_last = datetime.now(timezone.utc).timestamp() - last_ts
@@ -249,10 +268,7 @@ class BasicMemoryManager:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            gid: [e.to_dict() for e in entries]
-            for gid, entries in self._windows.items()
-        }
+        return {gid: [e.to_dict() for e in entries] for gid, entries in self._windows.items()}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BasicMemoryManager":
@@ -260,8 +276,6 @@ class BasicMemoryManager:
         for gid, entries in data.items():
             for e in entries:
                 if isinstance(e, dict):
-                    mgr._windows.setdefault(gid, deque()).append(
-                        BasicMemoryEntry.from_dict(e)
-                    )
+                    mgr._windows.setdefault(gid, deque()).append(BasicMemoryEntry.from_dict(e))
             mgr._update_heat(gid)
         return mgr

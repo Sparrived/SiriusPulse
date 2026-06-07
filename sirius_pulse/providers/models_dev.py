@@ -61,6 +61,7 @@ for _md_id, _sp_type in _MODELS_DEV_TO_SIRIUS.items():
 # 数据类
 # ──────────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True, slots=True)
 class ModelCost:
     """模型价格信息（USD / 百万 tokens）。"""
@@ -86,6 +87,7 @@ class ModelFilter:
 # ──────────────────────────────────────────────────────────────────
 # 缓存管理
 # ──────────────────────────────────────────────────────────────────
+
 
 class ModelsDevCache:
     """models.dev 本地缓存管理器。
@@ -161,6 +163,7 @@ class ModelsDevCache:
 # Provider 映射
 # ──────────────────────────────────────────────────────────────────
 
+
 def get_models_dev_provider_ids(sirius_provider_type: str) -> list[str]:
     """返回 Sirius Pulse provider_type 对应的 models.dev provider ID 列表。"""
     return _SIRIUS_TO_MODELS_DEV.get(sirius_provider_type, [])
@@ -169,6 +172,7 @@ def get_models_dev_provider_ids(sirius_provider_type: str) -> list[str]:
 # ──────────────────────────────────────────────────────────────────
 # 查询函数
 # ──────────────────────────────────────────────────────────────────
+
 
 def get_provider_models(data: dict[str, Any], provider_id: str) -> dict[str, dict[str, Any]]:
     """获取指定 models.dev provider 的所有模型。"""
@@ -242,8 +246,7 @@ def estimate_cost(
 ) -> float:
     """估算单次调用成本（USD）。"""
     return (
-        input_tokens * cost.input_per_m / 1_000_000
-        + output_tokens * cost.output_per_m / 1_000_000
+        input_tokens * cost.input_per_m / 1_000_000 + output_tokens * cost.output_per_m / 1_000_000
     )
 
 
@@ -345,18 +348,20 @@ def list_provider_model_details(
             limit = m.get("limit", {})
             ctx = limit.get("context", 0) if isinstance(limit, dict) else 0
             cost = m.get("cost", {})
-            results.append({
-                "id": mid,
-                "name": m.get("name", mid),
-                "tool_call": bool(m.get("tool_call", False)),
-                "reasoning": bool(m.get("reasoning", False)),
-                "structured_output": bool(m.get("structured_output", False)),
-                "vision": "image" in input_mods,
-                "audio": "audio" in input_mods,
-                "context": ctx if isinstance(ctx, int) else 0,
-                "input_cost": cost.get("input", 0) if isinstance(cost, dict) else 0,
-                "output_cost": cost.get("output", 0) if isinstance(cost, dict) else 0,
-            })
+            results.append(
+                {
+                    "id": mid,
+                    "name": m.get("name", mid),
+                    "tool_call": bool(m.get("tool_call", False)),
+                    "reasoning": bool(m.get("reasoning", False)),
+                    "structured_output": bool(m.get("structured_output", False)),
+                    "vision": "image" in input_mods,
+                    "audio": "audio" in input_mods,
+                    "context": ctx if isinstance(ctx, int) else 0,
+                    "input_cost": cost.get("input", 0) if isinstance(cost, dict) else 0,
+                    "output_cost": cost.get("output", 0) if isinstance(cost, dict) else 0,
+                }
+            )
 
     results.sort(key=lambda x: x["id"])
     return results
@@ -365,6 +370,7 @@ def list_provider_model_details(
 # ──────────────────────────────────────────────────────────────────
 # 自动填充: 供 ProviderRegistry 使用
 # ──────────────────────────────────────────────────────────────────
+
 
 def auto_fill_models_from_dev(
     config_root: Path,

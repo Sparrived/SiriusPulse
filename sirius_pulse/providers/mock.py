@@ -25,7 +25,9 @@ class MockProvider(AsyncLLMProvider):
         self._queue = deque(self.responses)
         self.requests: list[GenerationRequest] = []
 
-    async def generate_async(self, request: GenerationRequest, return_reasoning: bool = False) -> GenerationResult:
+    async def generate_async(
+        self, request: GenerationRequest, return_reasoning: bool = False
+    ) -> GenerationResult:
         # 基础调用日志（INFO）
         msg_count = len(request.messages)
         estimated_input_tokens = estimate_generation_request_input_tokens(request)
@@ -46,7 +48,7 @@ class MockProvider(AsyncLLMProvider):
             f"[模型调用详情] mock-{request.model} | 完整输入:\n"
             f"{json.dumps(debug_input, ensure_ascii=False, indent=2)}"
         )
-        
+
         self.requests.append(request)
         if self._queue:
             response = self._queue.popleft()

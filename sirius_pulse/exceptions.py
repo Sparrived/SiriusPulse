@@ -300,7 +300,7 @@ class OrchestrationConfigError(ConfigError):
         message: str | None = None,
     ) -> None:
         """初始化多模型协同配置错误。
-        
+
         Args:
             missing_models: 缺失的模型配置，映射为 {任务名: [缺失的模型列表]}
             message: 自定义错误消息
@@ -314,7 +314,7 @@ class OrchestrationConfigError(ConfigError):
                 f"  缺失的模型: {models_str}\n"
                 f"请使用 configure_orchestration_models() 函数添加配置。"
             )
-        
+
         context = {"missing_models": missing_models}
         super().__init__(
             message,

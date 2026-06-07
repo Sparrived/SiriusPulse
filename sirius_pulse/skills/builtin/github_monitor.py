@@ -362,16 +362,24 @@ async def _poll_github_events(ctx: Any) -> None:
                         payload = event.get("payload", {}) or {}
                         if payload.get("action") == "opened":
                             await notify_issue_opened(
-                                {"action": "opened", "issue": payload.get("issue", {}),
-                                 "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                                {
+                                    "action": "opened",
+                                    "issue": payload.get("issue", {}),
+                                    "repository": {"full_name": f"{owner}/{repo}"},
+                                    "sender": event.get("actor", {}),
+                                },
                                 f"{owner}/{repo}",
                             )
                     elif etype == "PullRequestEvent":
                         payload = event.get("payload", {}) or {}
                         if payload.get("action") in ("opened", "synchronize"):
                             await notify_pr_event(
-                                {"action": payload.get("action"), "pull_request": payload.get("pull_request", {}),
-                                 "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                                {
+                                    "action": payload.get("action"),
+                                    "pull_request": payload.get("pull_request", {}),
+                                    "repository": {"full_name": f"{owner}/{repo}"},
+                                    "sender": event.get("actor", {}),
+                                },
                                 f"{owner}/{repo}",
                                 payload.get("action", ""),
                             )
@@ -379,9 +387,13 @@ async def _poll_github_events(ctx: Any) -> None:
                         payload = event.get("payload", {}) or {}
                         if payload.get("action") == "created":
                             await notify_issue_comment(
-                                {"action": "created", "comment": payload.get("comment", {}),
-                                 "issue": payload.get("issue", {}),
-                                 "repository": {"full_name": f"{owner}/{repo}"}, "sender": event.get("actor", {})},
+                                {
+                                    "action": "created",
+                                    "comment": payload.get("comment", {}),
+                                    "issue": payload.get("issue", {}),
+                                    "repository": {"full_name": f"{owner}/{repo}"},
+                                    "sender": event.get("actor", {}),
+                                },
                                 f"{owner}/{repo}",
                             )
 
@@ -404,7 +416,9 @@ async def _poll_github_events(ctx: Any) -> None:
                         if event.get("type", "") == "IssueCommentEvent":
                             actor_login = (event.get("actor", {}) or {}).get("login", "")
                             if actor_login and actor_login != bot_login:
-                                logger.debug("github_monitor: %s 跳过非AI评论 @%s", repo_key, actor_login)
+                                logger.debug(
+                                    "github_monitor: %s 跳过非AI评论 @%s", repo_key, actor_login
+                                )
                                 continue
                     canonical = event_info.get("canonical_url", event_info.get("url", ""))
                     grouped.setdefault(canonical, []).append(event_info)
@@ -433,9 +447,14 @@ async def _poll_github_events(ctx: Any) -> None:
                     merged_info = _merge_event_group(group)
 
                     # coding 接管仓库：跳过标签添加/删除事件，AI会自动管理标签
-                    if merged_info.get("type") == "IssuesEvent" and merged_info.get("action") in ("labeled", "unlabeled"):
+                    if merged_info.get("type") == "IssuesEvent" and merged_info.get("action") in (
+                        "labeled",
+                        "unlabeled",
+                    ):
                         if repo_key in get_issue_repos():
-                            logger.debug("github_monitor: %s 跳过标签事件 %s", repo_key, merged_info.get("action"))
+                            logger.debug(
+                                "github_monitor: %s 跳过标签事件 %s", repo_key, merged_info.get("action")
+                            )
                             continue
 
                     # 截图：PR 事件截 /files diff 页，Push 截 compare 页，其余截主页面
@@ -452,7 +471,9 @@ async def _poll_github_events(ctx: Any) -> None:
                             logger.warning("github_monitor: 截图失败 (%s): %s", screenshot_url, exc)
 
                     # LLM 生成：每个合并组仅调用一次
-                    notification = await _generate_notification_text(ctx, merged_info, screenshot_path)
+                    notification = await _generate_notification_text(
+                        ctx, merged_info, screenshot_path
+                    )
 
                     if not notification:
                         continue
@@ -696,9 +717,7 @@ def _merge_event_group(events: list[dict[str, Any]]) -> dict[str, Any]:
     merged_body = "\n---\n".join(bodies) if bodies else primary.get("body", "")
 
     primary["actor"] = (
-        "、".join(actors)
-        if len(actors) > 1
-        else (actors[0] if actors else primary.get("actor", ""))
+        "、".join(actors) if len(actors) > 1 else (actors[0] if actors else primary.get("actor", ""))
     )
     primary["merged_actions"] = merged_actions
     primary["merged_count"] = len(events)

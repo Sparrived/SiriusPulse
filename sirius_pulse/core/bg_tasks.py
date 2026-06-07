@@ -38,6 +38,7 @@ class BackgroundTasks:
         """获取主动消息任务组件（延迟初始化）。"""
         if self._proactive is None:
             from sirius_pulse.core.bg_tasks_proactive import ProactiveTasks
+
             self._proactive = ProactiveTasks(self._engine)
         return self._proactive
 
@@ -46,6 +47,7 @@ class BackgroundTasks:
         """获取延迟队列任务组件（延迟初始化）。"""
         if self._delayed is None:
             from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
+
             self._delayed = DelayedQueueTasks(self._engine)
         return self._delayed
 
@@ -141,7 +143,8 @@ class BackgroundTasks:
                         # 过滤已生成日记或已提取情景的消息
                         extracted_ids = engine.situation_store.get_extracted_entry_ids(group_id)
                         candidates = [
-                            c for c in candidates
+                            c
+                            for c in candidates
                             if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
                             and c.entry_id not in extracted_ids
                         ]
@@ -163,7 +166,8 @@ class BackgroundTasks:
                             extracted_total += 1
                             logger.info(
                                 "群 %s 情景提取完成: %d 个三元组",
-                                group_id, situation.validated_triple_count,
+                                group_id,
+                                situation.validated_triple_count,
                             )
 
                     # ── Layer 3: 冷寂 → 日记生成 ──
@@ -174,10 +178,15 @@ class BackgroundTasks:
                             candidates = engine.basic_memory.get_archive_candidates(group_id)
                             if candidates:
                                 # 过滤已生成日记或已提取情景的消息
-                                extracted_ids = engine.situation_store.get_extracted_entry_ids(group_id)
+                                extracted_ids = engine.situation_store.get_extracted_entry_ids(
+                                    group_id
+                                )
                                 undiarized = [
-                                    c for c in candidates
-                                    if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
+                                    c
+                                    for c in candidates
+                                    if not engine.diary_manager.is_source_diarized(
+                                        group_id, c.entry_id
+                                    )
                                     and c.entry_id not in extracted_ids
                                 ]
                                 if len(undiarized) >= 5:
@@ -196,7 +205,8 @@ class BackgroundTasks:
                                         extracted_total += 1
                                         logger.info(
                                             "群 %s COLD 补提情景: %d 个三元组",
-                                            group_id, situation.validated_triple_count,
+                                            group_id,
+                                            situation.validated_triple_count,
                                         )
 
                             # 重新获取 situations
@@ -218,6 +228,7 @@ class BackgroundTasks:
                             if parsed and parsed.get("content"):
                                 # 调用 DiarySlicer 切片
                                 from sirius_pulse.memory.diary.slicer import DiarySlicer
+
                                 slicer = DiarySlicer()
                                 diary_id = f"ds_{group_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
                                 slices = await slicer.slice(
@@ -242,7 +253,9 @@ class BackgroundTasks:
                                 promoted_total += 1
                                 logger.info(
                                     "群 %s 从 %d 个 Situation 生成日记完成，切分为 %d 个片段",
-                                    group_id, len(situations), len(slices),
+                                    group_id,
+                                    len(situations),
+                                    len(slices),
                                 )
                         else:
                             # 补提后仍无 situations：使用旧的候选消息方式
@@ -250,7 +263,8 @@ class BackgroundTasks:
                             if not candidates:
                                 continue
                             candidates = [
-                                c for c in candidates
+                                c
+                                for c in candidates
                                 if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
                             ]
                             if not candidates:
@@ -271,13 +285,9 @@ class BackgroundTasks:
                                 promoted_total += 1
 
                 if extracted_total > 0:
-                    engine._log_inner_thought(
-                        f"提取了 {extracted_total} 个群的情景，记忆在沉淀中～"
-                    )
+                    engine._log_inner_thought(f"提取了 {extracted_total} 个群的情景，记忆在沉淀中～")
                 if promoted_total > 0:
-                    engine._log_inner_thought(
-                        f"整理了 {promoted_total} 个群的对话日记，过去的回忆又清晰了一点～"
-                    )
+                    engine._log_inner_thought(f"整理了 {promoted_total} 个群的对话日记，过去的回忆又清晰了一点～")
             except Exception as exc:
                 logger.warning("Diary promotion failed: %s", exc)
 
@@ -294,8 +304,8 @@ class BackgroundTasks:
 
     async def _run_diary_consolidation(self) -> None:
         """Find similar diary entries and merge them via LLM."""
-        from sirius_pulse.memory.diary.consolidator import DiaryConsolidator
         from sirius_pulse.core.brain import RawRequest
+        from sirius_pulse.memory.diary.consolidator import DiaryConsolidator
 
         engine = self._engine
         consolidator = DiaryConsolidator(engine.diary_manager, engine.config)
@@ -368,6 +378,7 @@ class BackgroundTasks:
                 active_records = engine.evolution_chain.get_active_by_subject(subject)
                 if len(active_records) >= 5:
                     from sirius_pulse.memory.schema import SchemaInductor, SchemaStore
+
                     schema_store = SchemaStore(conn=engine._persona_db_conn)
                     inductor = SchemaInductor(store=schema_store)
                     schemas = await inductor.induct(
@@ -379,19 +390,23 @@ class BackgroundTasks:
                     if schemas:
                         logger.info(
                             "用户 %s 归纳了 %d 个行为模式",
-                            subject, len(schemas),
+                            subject,
+                            len(schemas),
                         )
 
                 # 2. 知识缺口检测
                 bio = engine.biography_view.get_biography(subject)
                 if bio:
                     from sirius_pulse.memory.gap_detector import GapDetector
+
                     gaps = GapDetector.detect(bio)
                     if gaps:
                         hint = GapDetector.build_prompt_hint(gaps)
                         logger.debug(
                             "用户 %s 存在 %d 个知识缺口: %s",
-                            subject, len(gaps), hint[:50],
+                            subject,
+                            len(gaps),
+                            hint[:50],
                         )
 
             except Exception as exc:

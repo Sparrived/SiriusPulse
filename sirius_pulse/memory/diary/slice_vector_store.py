@@ -92,18 +92,20 @@ class DiarySliceVectorStore:
                 ids=[slice.slice_id],
                 embeddings=[embedding],
                 documents=[slice.content],
-                metadatas=[{
-                    "group_id": slice.group_id,
-                    "diary_id": slice.diary_id,
-                    "summary": slice.summary,
-                    "topics": ",".join(slice.topics),
-                    "keywords": ",".join(slice.keywords),
-                    "triple_subjects": ",".join(slice.triple_subjects),
-                    "participants": ",".join(slice.participants),
-                    "time_range_start": slice.time_range_start,
-                    "time_range_end": slice.time_range_end,
-                    "index": slice.index,
-                }],
+                metadatas=[
+                    {
+                        "group_id": slice.group_id,
+                        "diary_id": slice.diary_id,
+                        "summary": slice.summary,
+                        "topics": ",".join(slice.topics),
+                        "keywords": ",".join(slice.keywords),
+                        "triple_subjects": ",".join(slice.triple_subjects),
+                        "participants": ",".join(slice.participants),
+                        "time_range_start": slice.time_range_start,
+                        "time_range_end": slice.time_range_end,
+                        "index": slice.index,
+                    }
+                ],
             )
             logger.debug("切片向量已存储: %s", slice.slice_id)
         except Exception as exc:
@@ -130,18 +132,21 @@ class DiarySliceVectorStore:
                     ids=[s.slice_id for s in group_slices],
                     embeddings=[s.embedding for s in group_slices],
                     documents=[s.content for s in group_slices],
-                    metadatas=[{
-                        "group_id": s.group_id,
-                        "diary_id": s.diary_id,
-                        "summary": s.summary,
-                        "topics": ",".join(s.topics),
-                        "keywords": ",".join(s.keywords),
-                        "triple_subjects": ",".join(s.triple_subjects),
-                        "participants": ",".join(s.participants),
-                        "time_range_start": s.time_range_start,
-                        "time_range_end": s.time_range_end,
-                        "index": s.index,
-                    } for s in group_slices],
+                    metadatas=[
+                        {
+                            "group_id": s.group_id,
+                            "diary_id": s.diary_id,
+                            "summary": s.summary,
+                            "topics": ",".join(s.topics),
+                            "keywords": ",".join(s.keywords),
+                            "triple_subjects": ",".join(s.triple_subjects),
+                            "participants": ",".join(s.participants),
+                            "time_range_start": s.time_range_start,
+                            "time_range_end": s.time_range_end,
+                            "index": s.index,
+                        }
+                        for s in group_slices
+                    ],
                 )
                 total += len(group_slices)
             except Exception as exc:
@@ -231,7 +236,7 @@ class DiarySliceVectorStore:
                     coll = self._client.get_collection(name)
                     cnt = coll.count()
                     total += cnt
-                    gid = name[len(self.COLLECTION_PREFIX):]
+                    gid = name[len(self.COLLECTION_PREFIX) :]
                     groups.append({"group_id": gid, "count": cnt})
                 except Exception:
                     continue

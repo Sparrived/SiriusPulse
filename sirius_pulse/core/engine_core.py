@@ -18,17 +18,17 @@ from typing import Any
 
 from sirius_pulse.core.bg_tasks import BackgroundTasks
 from sirius_pulse.core.brain import Brain
+from sirius_pulse.core.cognition import CognitionAnalyzer
+from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
+from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.engine_persistence import EnginePersistence
 from sirius_pulse.core.engine_sticker import EngineSticker
-from sirius_pulse.core.pinned_message import PinnedMessageManager
-from sirius_pulse.core.pipeline import Pipeline
-from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
-from sirius_pulse.core.cognition import CognitionAnalyzer
-from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
 from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter
+from sirius_pulse.core.pinned_message import PinnedMessageManager
+from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
 from sirius_pulse.core.response_strategy import ResponseStrategyEngine
@@ -212,6 +212,7 @@ class _EmotionalGroupChatEngineBase:
         from sirius_pulse.memory.diary.slice_retriever import DiarySliceRetriever
         from sirius_pulse.memory.diary.slice_store import DiarySliceStore
         from sirius_pulse.memory.diary.slice_vector_store import DiarySliceVectorStore
+
         self.slice_store = DiarySliceStore(self.work_path)
         self.slice_vector_store = DiarySliceVectorStore(
             persist_dir=self.work_path / "chroma_slices",
@@ -367,7 +368,9 @@ class _EmotionalGroupChatEngineBase:
         self._bot_platform_uids: dict[str, str] = {}
 
         self._recent_sent_replies: dict[str, list[tuple[float, str]]] = {}
-        self._reply_dedup_window = self.config.get("reply_dedup_window_seconds", REPLY_DEDUP_WINDOW_SECONDS)
+        self._reply_dedup_window = self.config.get(
+            "reply_dedup_window_seconds", REPLY_DEDUP_WINDOW_SECONDS
+        )
         self._reply_dedup_threshold = self.config.get("reply_dedup_threshold", 0.85)
 
         self._active_private_groups: set[str] = set()
@@ -409,7 +412,7 @@ class _EmotionalGroupChatEngineBase:
         self._pinned_manager = PinnedMessageManager(max_carry_count=max_carry_count)
 
         # 注入钉住消息回调到 Brain
-        if hasattr(self, 'brain'):
+        if hasattr(self, "brain"):
             self.brain.set_context_fns(
                 pinned_messages_fn=self.get_pinned_messages_for_prompt,
             )
@@ -452,9 +455,7 @@ class _EmotionalGroupChatEngineBase:
         user_id: str,
     ) -> dict[str, Any]:
         """Execute a Plugin command and produce the reply."""
-        return await self._helpers.execute_plugin_command(
-            decision, message, group_id, user_id
-        )
+        return await self._helpers.execute_plugin_command(decision, message, group_id, user_id)
 
     def _register_passive_skills(self) -> None:
         """Discover passive SKILLs and instantiate their background tasks / triggers."""
@@ -576,7 +577,9 @@ class _EmotionalGroupChatEngineBase:
     ) -> tuple[Any, Any, list[Any], Any]:
         """Cognitive layer: unified emotion + intent + empathy + memory retrieval."""
         return await self._pipeline.cognition(
-            content, user_id, group_id,
+            content,
+            user_id,
+            group_id,
             sender_type=sender_type,
             multimodal_inputs=multimodal_inputs,
             caller_is_developer=caller_is_developer,
@@ -799,22 +802,22 @@ class _EmotionalGroupChatEngineBase:
         _TASKS_CHAT_PROACTIVE = {"response_generate", "proactive_generate"}
 
         # ── priority 0: 对话深度追踪 ──
-        def _hook_depth(
-            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
-        ) -> None:
+        def _hook_depth(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             gid = _req.group_id
             now_ts = time.time()
             last_ts = _engine._last_reply_at.get(gid, 0)
             _engine._last_reply_depth[gid] = (
-                _engine._last_reply_depth.get(gid, 0) + 1 if now_ts - last_ts < 2 * HEARTBEAT_TIMEOUT_SECONDS else 1
+                _engine._last_reply_depth.get(gid, 0) + 1
+                if now_ts - last_ts < 2 * HEARTBEAT_TIMEOUT_SECONDS
+                else 1
             )
 
         # ── priority 15: 钉住/取消钉住指令解析 ──
-        def _hook_pin_messages(
-            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
-        ) -> None:
+        def _hook_pin_messages(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             from sirius_pulse.core.pinned_message import (
-                parse_pin_messages, parse_unpin_messages, strip_pin_messages
+                parse_pin_messages,
+                parse_unpin_messages,
+                strip_pin_messages,
             )
 
             raw_text = _result.raw_text
@@ -894,9 +897,7 @@ class _EmotionalGroupChatEngineBase:
             _result.clean_text = strip_pin_messages(_result.clean_text)
 
         # ── priority 20: 表情包发送 ──
-        def _hook_stickers(
-            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
-        ) -> None:
+        def _hook_stickers(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             if not _result.sticker_names:
                 return
             asyncio.create_task(
@@ -904,9 +905,7 @@ class _EmotionalGroupChatEngineBase:
             )
 
         # ── priority 30: 回复去重（仅常规对话）──
-        def _hook_dedup(
-            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
-        ) -> None:
+        def _hook_dedup(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             if not _result.clean_text:
                 return
             gid = _req.group_id
@@ -915,13 +914,13 @@ class _EmotionalGroupChatEngineBase:
             window = _engine._reply_dedup_window
             threshold = _engine._reply_dedup_threshold
             recent = [(t, r) for t, r in recent if now_ts - t < window]
-            if any(
-                _engine._text_similarity(_result.clean_text, r) > threshold
-                for _, r in recent
-            ):
+            if any(_engine._text_similarity(_result.clean_text, r) > threshold for _, r in recent):
                 logger.debug(
                     "去重抑制: %s (window=%ds, threshold=%.2f): %s...",
-                    gid, window, threshold, _result.clean_text[:40],
+                    gid,
+                    window,
+                    threshold,
+                    _result.clean_text[:40],
                 )
                 _result.clean_text = ""
             else:
@@ -929,9 +928,7 @@ class _EmotionalGroupChatEngineBase:
             _engine._recent_sent_replies[gid] = recent
 
         # ── priority 40: 记忆记录 ──
-        def _hook_memory(
-            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
-        ) -> None:
+        def _hook_memory(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             # 确定要记录的内容：优先使用 clean_text，
             # 若为空但有表情包则记录表情包标签（确保纯表情包回复也被记录）
             record_content = _result.clean_text
@@ -947,15 +944,16 @@ class _EmotionalGroupChatEngineBase:
             # 模型输出的表情包标签
             if _result.sticker_names:
                 names_str = ", ".join(_result.sticker_names[:3])
-                entry_tags.append({
-                    "type": "sticker",
-                    "label": f"表情包: {names_str}" if _result.sticker_names else "表情包"
-                })
+                entry_tags.append(
+                    {
+                        "type": "sticker",
+                        "label": f"表情包: {names_str}" if _result.sticker_names else "表情包",
+                    }
+                )
 
             # 模型输出的钉住/取消钉住指令
-            from sirius_pulse.core.pinned_message import (
-                parse_pin_messages, parse_unpin_messages
-            )
+            from sirius_pulse.core.pinned_message import parse_pin_messages, parse_unpin_messages
+
             raw_text = _result.raw_text
             pin_calls = parse_pin_messages(raw_text)
             unpin_calls = parse_unpin_messages(raw_text)
@@ -994,12 +992,8 @@ class _EmotionalGroupChatEngineBase:
                 pass
 
         # ── priority 50: 回复时间戳+持久化 ──
-        def _hook_timestamp(
-            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
-        ) -> None:
-            _engine._last_reply_at[_req.group_id] = (
-                datetime.now(timezone.utc).timestamp()
-            )
+        def _hook_timestamp(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
+            _engine._last_reply_at[_req.group_id] = datetime.now(timezone.utc).timestamp()
             _engine._persist_group_state(_req.group_id)
 
         # ── priority 10: [REPLY:xxx] 引用回复解析 ──
@@ -1012,26 +1006,22 @@ class _EmotionalGroupChatEngineBase:
                 return
 
             # 匹配 [REPLY:xxx] / [REPLY:msg_id="xxx"] 指令（支持多个）
-            reply_pattern = re.compile(
-                r'\[REPLY:\s*(?:msg_id\s*=\s*"([^"]+)"|([^\]\s]+))\s*\]'
-            )
+            reply_pattern = re.compile(r'\[REPLY:\s*(?:msg_id\s*=\s*"([^"]+)"|([^\]\s]+))\s*\]')
             reply_matches = [
-                msg_id or plain_id
-                for msg_id, plain_id in reply_pattern.findall(raw_text)
+                msg_id or plain_id for msg_id, plain_id in reply_pattern.findall(raw_text)
             ]
             if not reply_matches:
                 return
 
             logger.info("[REPLY] 发现引用指令: %s", reply_matches)
-            _result.raw_text = reply_pattern.sub('', _result.raw_text)
-            _result.clean_text = reply_pattern.sub('', _result.clean_text or "")
+            _result.raw_text = reply_pattern.sub("", _result.raw_text)
+            _result.clean_text = reply_pattern.sub("", _result.clean_text or "")
 
             # 获取所有历史消息（用于查找引用内容）
             gid = _req.group_id
             all_entries = _engine.basic_memory.get_all(gid)
             all_user_entries = [
-                entry for entry in all_entries
-                if getattr(entry, "role", "") != "assistant"
+                entry for entry in all_entries if getattr(entry, "role", "") != "assistant"
             ]
             if not all_user_entries:
                 logger.info("[REPLY] 没有找到用户消息")
@@ -1074,11 +1064,13 @@ class _EmotionalGroupChatEngineBase:
 
                 if ref_msg:
                     msg_id = ref_msg.get("platform_message_id", "")
-                    refs.append({
-                        "msg_id": msg_id,
-                        "speaker": ref_msg["speaker"],
-                        "content": ref_msg["content"][:100],
-                    })
+                    refs.append(
+                        {
+                            "msg_id": msg_id,
+                            "speaker": ref_msg["speaker"],
+                            "content": ref_msg["content"][:100],
+                        }
+                    )
                     logger.info("[REPLY] 找到引用消息: msg_id=%s, speaker=%s", msg_id, ref_msg["speaker"])
                 else:
                     logger.info("[REPLY] 未找到 id=%s 对应的消息", ref_id)
@@ -1089,27 +1081,13 @@ class _EmotionalGroupChatEngineBase:
         # task_filter 交给 Brain 调度时检查，hook 闭包不关心
         _CHAT = _TASKS_CHAT
         _ALL = _TASKS_CHAT_PROACTIVE
-        self.brain.register_post_hook(
-            _hook_depth, priority=0, task_filter=_ALL
-        )
-        self.brain.register_post_hook(
-            _hook_reply_reference, priority=10, task_filter=_ALL
-        )
-        self.brain.register_post_hook(
-            _hook_pin_messages, priority=15, task_filter=_ALL
-        )
-        self.brain.register_post_hook(
-            _hook_stickers, priority=20, task_filter=_ALL
-        )
-        self.brain.register_post_hook(
-            _hook_dedup, priority=30, task_filter=_CHAT
-        )
-        self.brain.register_post_hook(
-            _hook_memory, priority=40, task_filter=_ALL
-        )
-        self.brain.register_post_hook(
-            _hook_timestamp, priority=50, task_filter=_ALL
-        )
+        self.brain.register_post_hook(_hook_depth, priority=0, task_filter=_ALL)
+        self.brain.register_post_hook(_hook_reply_reference, priority=10, task_filter=_ALL)
+        self.brain.register_post_hook(_hook_pin_messages, priority=15, task_filter=_ALL)
+        self.brain.register_post_hook(_hook_stickers, priority=20, task_filter=_ALL)
+        self.brain.register_post_hook(_hook_dedup, priority=30, task_filter=_CHAT)
+        self.brain.register_post_hook(_hook_memory, priority=40, task_filter=_ALL)
+        self.brain.register_post_hook(_hook_timestamp, priority=50, task_filter=_ALL)
 
     # ==================================================================
     # Public API
@@ -1206,7 +1184,7 @@ class _EmotionalGroupChatEngineBase:
             # 跳过 _cognition() 调用，避免不必要的LLM意图识别
             cached_sticker_caption = ""
             if has_sticker:
-                for m in (message.multimodal_inputs or []):
+                for m in message.multimodal_inputs or []:
                     if m.get("type") == "image" and m.get("sub_type") == "1":
                         path = str(m.get("value", ""))
                         cache_key = self.cognition_analyzer._image_cache_key(path)
@@ -1225,12 +1203,11 @@ class _EmotionalGroupChatEngineBase:
                     # 动画表情：去掉无意义的文件哈希，替换为描述
                     stripped = re.sub(
                         r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)",
-                        "", last_entry.content or "",
+                        "",
+                        last_entry.content or "",
                     ).strip()
                     sticker_tag = f"【动画表情：{caption}】"
-                    last_entry.content = (
-                        f"{stripped} {sticker_tag}" if stripped else sticker_tag
-                    )
+                    last_entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
                     if last_entry.multimodal_inputs:
                         for m in last_entry.multimodal_inputs:
                             if m.get("type") == "image":
@@ -1253,7 +1230,7 @@ class _EmotionalGroupChatEngineBase:
             )
             # 回写图片/表情描述到 basic_memory
             # 优先使用 sticker_caption（动画表情缓存），否则使用 image_caption
-            caption = intent.image_caption or getattr(intent, 'sticker_caption', '')
+            caption = intent.image_caption or getattr(intent, "sticker_caption", "")
             if caption:
                 recent = self.basic_memory.get_context(group_id, n=1)
                 if recent:
@@ -1262,7 +1239,8 @@ class _EmotionalGroupChatEngineBase:
                         # 动画表情：去掉无意义的文件哈希，替换为描述
                         stripped = re.sub(
                             r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)",
-                            "", last_entry.content or "",
+                            "",
+                            last_entry.content or "",
                         ).strip()
                         sticker_tag = f"【动画表情：{caption}】"
                         last_entry.content = (
@@ -1305,7 +1283,7 @@ class _EmotionalGroupChatEngineBase:
 
         # 如果 cognition 生成了图片描述，回写到 basic_memory 最后一条 entry
         # 优先使用 sticker_caption（动画表情缓存），否则使用 image_caption
-        caption = intent.image_caption or getattr(intent, 'sticker_caption', '')
+        caption = intent.image_caption or getattr(intent, "sticker_caption", "")
         if caption:
             recent = self.basic_memory.get_context(group_id, n=1)
             if recent:
@@ -1329,9 +1307,7 @@ class _EmotionalGroupChatEngineBase:
                         r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)", "", original_content
                     ).strip()
                     sticker_tag = f"【动画表情：{caption}】"
-                    last_entry.content = (
-                        f"{stripped} {sticker_tag}" if stripped else sticker_tag
-                    )
+                    last_entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
                     # 也存入 multimodal_inputs 供 sticker learning 管道使用
                     for m in last_entry.multimodal_inputs:
                         if m.get("type") == "image":
@@ -1420,9 +1396,7 @@ class _EmotionalGroupChatEngineBase:
     # Plugin intent detection (for pipeline short-circuit)
     # ------------------------------------------------------------------
 
-    async def _check_plugin_intent(
-        self, content: str, group_id: str
-    ) -> tuple[bool, Any | None]:
+    async def _check_plugin_intent(self, content: str, group_id: str) -> tuple[bool, Any | None]:
         """检测消息是否可能是插件请求。
 
         三层检测（逐步升级）：
@@ -1493,7 +1467,9 @@ class _EmotionalGroupChatEngineBase:
                 if result.is_plugin:
                     logger.info(
                         "插件意图验证通过: plugin=%s confidence=%.2f reason=%s",
-                        result.plugin_name, result.confidence, result.reason,
+                        result.plugin_name,
+                        result.confidence,
+                        result.reason,
                     )
                     return True, result
                 else:
@@ -1503,9 +1479,7 @@ class _EmotionalGroupChatEngineBase:
 
         return False, None
 
-    def _get_context_for_plugin_verify(
-        self, group_id: str, n: int = 5
-    ) -> str:
+    def _get_context_for_plugin_verify(self, group_id: str, n: int = 5) -> str:
         """获取最近的上下文消息（XML 格式），用于插件意图验证。
 
         复用 ContextAssembler.build_history_xml() 保持格式一致。

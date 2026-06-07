@@ -396,10 +396,12 @@ class EnginePersistence:
             if basic_mem_data:
                 try:
                     from sirius_pulse.memory.basic import BasicMemoryManager
+
                     engine.basic_memory = BasicMemoryManager.from_dict(basic_mem_data)
                 except Exception as exc:
                     logger.warning("基础记忆恢复失败，使用空实例: %s", exc)
                     from sirius_pulse.memory.basic import BasicMemoryManager
+
                     engine.basic_memory = BasicMemoryManager()
 
             # Assistant emotion
@@ -435,6 +437,7 @@ class EnginePersistence:
             if user_mgr_data:
                 try:
                     from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
+
                     # 使用新的 UnifiedUserManager 加载旧格式数据
                     engine.user_manager = UnifiedUserManager(work_path=engine.work_path)
                     engine.user_manager._load_user_manager_data(user_mgr_data)  # type: ignore[attr-defined]
@@ -443,6 +446,7 @@ class EnginePersistence:
 
             # Re-bind context assembler to restored basic_memory
             from sirius_pulse.memory.context_assembler import ContextAssembler
+
             engine.context_assembler = ContextAssembler(
                 engine.basic_memory,
                 engine.diary_manager._retriever,
@@ -479,6 +483,7 @@ class EnginePersistence:
             if pinned_data:
                 try:
                     from sirius_pulse.core.pinned_message import PinnedMessageManager
+
                     engine._pinned_manager = PinnedMessageManager.from_dict(pinned_data)
                     logger.info(
                         "钉住消息已恢复，共 %d 条",

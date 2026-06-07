@@ -19,18 +19,41 @@ __all__ = ["BiographyView"]
 
 # 谓语分类映射
 _IDENTITY_PREDICATES = {
-    "是", "住在", "住在", "工作于", "就读于", "来自", "搬到",
-    "职位", "职业", "专业", "学校", "公司",
+    "是",
+    "住在",
+    "住在",
+    "工作于",
+    "就读于",
+    "来自",
+    "搬到",
+    "职位",
+    "职业",
+    "专业",
+    "学校",
+    "公司",
 }
 
 _RELATIONSHIP_PREDICATES = {
-    "认识", "是朋友", "是同事", "是同学", "是室友",
-    "喜欢", "讨厌", "暗恋", "追求",
+    "认识",
+    "是朋友",
+    "是同事",
+    "是同学",
+    "是室友",
+    "喜欢",
+    "讨厌",
+    "暗恋",
+    "追求",
 }
 
 _PREFERENCE_PREDICATES = {
-    "爱吃", "喜欢做", "习惯", "常用", "推荐",
-    "爱好", "兴趣", "擅长",
+    "爱吃",
+    "喜欢做",
+    "习惯",
+    "常用",
+    "推荐",
+    "爱好",
+    "兴趣",
+    "擅长",
 }
 
 
@@ -121,18 +144,12 @@ class BiographyView:
         name = self._get_name(user_id, identity_facts)
         identity_anchors = self._build_anchors(identity_facts, user_id)
         relationships = self._build_relationships(relationship_facts, user_id)
-        short_bio = self._build_summary(
-            name, identity_facts, relationship_facts, preference_facts
-        )
+        short_bio = self._build_summary(name, identity_facts, relationship_facts, preference_facts)
 
         # 统计
         active_count = len(active_records)
-        superseded_count = sum(
-            1 for r in all_records if r.status == RecordStatus.SUPERSEDED
-        )
-        uncertain_count = sum(
-            1 for r in all_records if r.status == RecordStatus.UNCERTAIN
-        )
+        superseded_count = sum(1 for r in all_records if r.status == RecordStatus.SUPERSEDED)
+        uncertain_count = sum(1 for r in all_records if r.status == RecordStatus.UNCERTAIN)
 
         return UserBiography(
             user_id=user_id,
@@ -162,9 +179,7 @@ class BiographyView:
     # ── 身份锚点 ──
 
     @staticmethod
-    def _build_anchors(
-        identity_facts: list[EvolutionRecord], _user_id: str
-    ) -> list[str]:
+    def _build_anchors(identity_facts: list[EvolutionRecord], _user_id: str) -> list[str]:
         """从身份类三元组构建身份锚点。"""
         anchors: list[str] = []
         for r in identity_facts:
@@ -190,11 +205,13 @@ class BiographyView:
                 continue
             seen.add(key)
 
-            relationships.append({
-                "target": r.obj,
-                "relation": r.predicate,
-                "fact_hint": f"{r.predicate}{r.obj}",
-            })
+            relationships.append(
+                {
+                    "target": r.obj,
+                    "relation": r.predicate,
+                    "fact_hint": f"{r.predicate}{r.obj}",
+                }
+            )
 
         return relationships[:10]
 
@@ -229,16 +246,14 @@ class BiographyView:
 
     # ── 工具方法 ──
 
-    def _get_name(
-        self, user_id: str, identity_facts: list[EvolutionRecord]
-    ) -> str:
+    def _get_name(self, user_id: str, identity_facts: list[EvolutionRecord]) -> str:
         """获取用户显示名称。"""
         # 优先从 UnifiedUserManager 获取用户的QQ名
         if self._user_manager:
             user = self._user_manager.get_user(user_id)
             if user and user.name:
                 return user.name
-        
+
         # 尝试从 subject_user_id 字段获取真正的用户 ID，再查询名称
         if self._user_manager and identity_facts:
             for r in identity_facts:
@@ -246,17 +261,17 @@ class BiographyView:
                     user = self._user_manager.get_user(r.subject_user_id)
                     if user and user.name:
                         return user.name
-        
+
         # 从 identity_facts 中查找名字（谓语为"叫"、"名字"的记录）
         for r in identity_facts:
             if r.predicate in ("叫", "名字"):
                 return r.obj
-        
+
         # 使用 subject 字段（LLM 提取的原始名称），但需要验证是否是合理的名称
         if identity_facts:
             subject = getattr(identity_facts[0], "subject", "")
             # 长度超过 10 个字符的 subject 通常是 LLM 提取的描述，不是真正的名称
             if subject and len(subject) <= 10:
                 return subject
-        
+
         return user_id

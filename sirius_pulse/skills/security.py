@@ -61,9 +61,7 @@ def validate_skill_access(
         return ""
 
     if invocation_context is None:
-        return (
-            f"SKILL '{skill.name}' 仅允许 developer 调用，但当前调用未提供开发者上下文。"
-        )
+        return f"SKILL '{skill.name}' 仅允许 developer 调用，但当前调用未提供开发者上下文。"
 
     if not invocation_context.has_declared_developer:
         return (

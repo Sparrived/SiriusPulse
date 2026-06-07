@@ -41,10 +41,14 @@ class RecordingAdapter(BaseAdapter):
     async def parse_event(self, raw_event: dict[str, Any]) -> ParsedEvent | None:
         return ParsedEvent(prompt=str(raw_event.get("prompt", "")))
 
-    async def send_group_message(self, group_id: str, message: MessageGroup | str) -> dict[str, Any]:
+    async def send_group_message(
+        self, group_id: str, message: MessageGroup | str
+    ) -> dict[str, Any]:
         return {"group_id": group_id, "message": message}
 
-    async def send_private_message(self, user_id: str, message: MessageGroup | str) -> dict[str, Any]:
+    async def send_private_message(
+        self, user_id: str, message: MessageGroup | str
+    ) -> dict[str, Any]:
         return {"user_id": user_id, "message": message}
 
     async def call_api(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -79,7 +83,9 @@ async def test_base_adapter_when_default_api_methods_are_called_then_actions_and
 
 
 @pytest.mark.asyncio
-async def test_base_adapter_when_optional_defaults_are_used_then_safe_empty_values_are_returned(tmp_path):
+async def test_base_adapter_when_optional_defaults_are_used_then_safe_empty_values_are_returned(
+    tmp_path,
+):
     adapter = RecordingAdapter()
     old_file = tmp_path / "old.bin"
     new_file = tmp_path / "new.bin"
@@ -129,8 +135,14 @@ def test_onebot_protocol_when_image_names_are_normalized_then_duplicates_and_fal
     counter: dict[str, int] = {}
 
     assert sanitize_image_name("'folder%20name/[photo].png\n'") == "folder name/(photo).png"
-    assert extract_image_name({"data": {"url": "https://example.test/images/pic.png?x=1"}}, 1) == "pic.png"
-    assert extract_image_name({"data": {"file": "data:image/png;base64,abcd"}}, 2, "fallback") == "fallback_2"
+    assert (
+        extract_image_name({"data": {"url": "https://example.test/images/pic.png?x=1"}}, 1)
+        == "pic.png"
+    )
+    assert (
+        extract_image_name({"data": {"file": "data:image/png;base64,abcd"}}, 2, "fallback")
+        == "fallback_2"
+    )
     assert dedupe_image_name("pic.png", counter) == "pic.png"
     assert dedupe_image_name("pic.png", counter) == "pic#2.png"
     label = build_image_label({"data": {"filename": "pic.png"}}, 3, "image", counter)
@@ -192,10 +204,15 @@ def test_skill_security_when_developer_only_skill_is_validated_then_access_depen
         skill=developer_skill,
         invocation_context=SkillInvocationContext(caller=user, developer_profiles=[developer]),
     )
-    assert validate_skill_access(
-        skill=developer_skill,
-        invocation_context=SkillInvocationContext(caller=developer, developer_profiles=[developer]),
-    ) == ""
+    assert (
+        validate_skill_access(
+            skill=developer_skill,
+            invocation_context=SkillInvocationContext(
+                caller=developer, developer_profiles=[developer]
+            ),
+        )
+        == ""
+    )
     with pytest.raises(PermissionError):
         ensure_developer_access(
             skill_name="server_shell",
@@ -203,7 +220,9 @@ def test_skill_security_when_developer_only_skill_is_validated_then_access_depen
         )
 
 
-def test_skill_telemetry_when_records_are_written_then_query_filters_and_summary_are_stable(tmp_path: Path):
+def test_skill_telemetry_when_records_are_written_then_query_filters_and_summary_are_stable(
+    tmp_path: Path,
+):
     path = tmp_path / "skill_data" / ".telemetry.jsonl"
     telemetry = SkillTelemetry(path)
     telemetry.record(SkillExecutionRecord("alpha", 1.0, True, 10.0, params={"q": "a"}))

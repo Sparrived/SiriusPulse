@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-import tempfile
 from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
@@ -86,7 +86,7 @@ def run(
                 "type": "text",
                 "label": "artifact_path",
                 "value": f"截图已保存到本地路径：{output_path}",
-            }
+            },
         ],
         "multimodal_blocks": [
             {
@@ -118,9 +118,7 @@ def _capture_desktop_image(*, all_screens: bool) -> Any:
     try:
         from PIL import ImageGrab
     except ImportError as exc:
-        raise RuntimeError(
-            "桌面截图需要 Pillow，请启用 auto_install_skill_deps 或手动安装 Pillow。"
-        ) from exc
+        raise RuntimeError("桌面截图需要 Pillow，请启用 auto_install_skill_deps 或手动安装 Pillow。") from exc
 
     try:
         return ImageGrab.grab(all_screens=all_screens)

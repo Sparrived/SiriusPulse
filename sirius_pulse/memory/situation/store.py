@@ -9,9 +9,9 @@ import json
 import logging
 from typing import Any
 
-from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 from sirius_pulse.memory.evolution.models import Triple
 from sirius_pulse.memory.situation.models import Situation
+from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,8 @@ class SituationStore(BaseSqliteStore):
     """
 
     def _create_tables(self) -> None:
-        self.executescript("""
+        self.executescript(
+            """
             CREATE TABLE IF NOT EXISTS situations (
                 situation_id TEXT PRIMARY KEY,
                 group_id TEXT NOT NULL,
@@ -46,17 +47,23 @@ class SituationStore(BaseSqliteStore):
                 ON situations(group_id);
             CREATE INDEX IF NOT EXISTS idx_sit_created
                 ON situations(created_at);
-        """)
+        """
+        )
 
         # 先确保 processed 列存在，再创建依赖该列的索引
-        self._ensure_columns("situations", {
-            "processed": "INTEGER DEFAULT 0",
-        })
+        self._ensure_columns(
+            "situations",
+            {
+                "processed": "INTEGER DEFAULT 0",
+            },
+        )
 
-        self.executescript("""
+        self.executescript(
+            """
             CREATE INDEX IF NOT EXISTS idx_sit_processed
                 ON situations(group_id, processed);
-        """)
+        """
+        )
 
     # ── 写入 ──
 
@@ -230,10 +237,7 @@ class SituationStore(BaseSqliteStore):
             situation_id=row["situation_id"],
             group_id=row["group_id"],
             created_at=row["created_at"],
-            triples=[
-                Triple.from_dict(t)
-                for t in json.loads(row["triples"] or "[]")
-            ],
+            triples=[Triple.from_dict(t) for t in json.loads(row["triples"] or "[]")],
             participants=json.loads(row["participants"] or "[]"),
             topics=json.loads(row["topics"] or "[]"),
             summary=row["summary"],

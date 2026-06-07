@@ -62,9 +62,7 @@ class UserLookupService:
             )
             if not resolution.user_id or resolution.source == "unresolved":
                 return None
-            profile = self._user_manager.get_user(
-                resolution.user_id, group_id or "default"
-            )
+            profile = self._user_manager.get_user(resolution.user_id, group_id or "default")
             return {
                 "user_id": resolution.user_id,
                 "name": profile.name if profile else resolution.display_name,
@@ -106,9 +104,7 @@ class UserLookupService:
             )
             if not resolution.user_id or resolution.source == "unresolved":
                 return None
-            profile = self._user_manager.get_user(
-                resolution.user_id, group_id or "default"
-            )
+            profile = self._user_manager.get_user(resolution.user_id, group_id or "default")
             return {
                 "user_id": resolution.user_id,
                 "name": profile.name if profile else resolution.display_name,

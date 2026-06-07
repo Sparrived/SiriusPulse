@@ -194,9 +194,10 @@ class ModelRouter:
         """
         base = self._registry.get(task_name)
         if base is None:
-            base = self._registry.get("response_generate", TaskConfig(
-                model_name="gpt-4o", temperature=0.7, max_tokens=512
-            ))
+            base = self._registry.get(
+                "response_generate",
+                TaskConfig(model_name="gpt-4o", temperature=0.7, max_tokens=512),
+            )
 
         model = base.model_name
         temperature = base.temperature

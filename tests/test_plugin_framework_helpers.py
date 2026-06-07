@@ -79,7 +79,10 @@ def test_plugin_definition_when_loaded_from_dict_then_nested_contracts_are_parse
                     "choices": ["Paris"],
                 }
             },
-            "natural_language": {"examples": ["weather in {city}"], "slots": {"city": {"type": "str"}}},
+            "natural_language": {
+                "examples": ["weather in {city}"],
+                "slots": {"city": {"type": "str"}},
+            },
             "permissions": {
                 "developer_only": True,
                 "hidden_from_intent": True,
@@ -87,7 +90,12 @@ def test_plugin_definition_when_loaded_from_dict_then_nested_contracts_are_parse
                 "group_blacklist": ["g1"],
                 "rate_limit": {"calls_per_minute": 2, "calls_per_hour": 20},
             },
-            "render": {"mode": "llm", "system_prompt_suffix": "suffix", "max_tokens": 50, "temperature": 0.2},
+            "render": {
+                "mode": "llm",
+                "system_prompt_suffix": "suffix",
+                "max_tokens": 50,
+                "temperature": 0.2,
+            },
             "dependencies": ["requests"],
             "resources": ["template.txt"],
             "prompt_inject": "can forecast",
@@ -154,7 +162,9 @@ def test_plugin_response_when_using_factories_then_success_and_failure_payloads_
     assert failed.error == "nope"
 
 
-def test_plugin_data_store_when_values_change_then_json_persists_and_invalid_files_fallback(tmp_path):
+def test_plugin_data_store_when_values_change_then_json_persists_and_invalid_files_fallback(
+    tmp_path,
+):
     store = PluginDataStore(tmp_path, "demo")
     store.set("count", 1)
     store.set("items", ["a"])
@@ -171,14 +181,16 @@ def test_plugin_data_store_when_values_change_then_json_persists_and_invalid_fil
     assert PluginDataStore(tmp_path, "broken").all() == {}
 
 
-def test_plugin_context_and_base_when_setup_is_missing_or_present_then_helpers_use_context(tmp_path):
+def test_plugin_context_and_base_when_setup_is_missing_or_present_then_helpers_use_context(
+    tmp_path,
+):
     plugin = PluginBase()
 
     with pytest.raises(RuntimeError):
         _ = plugin.ctx
     with pytest.raises(RuntimeError):
         plugin.get_data_store()
-    assert plugin.render_template("missing.txt", {}) .startswith("[")
+    assert plugin.render_template("missing.txt", {}).startswith("[")
 
     data_store = PluginDataStore(tmp_path, "demo")
     adapter = object()
@@ -283,8 +295,13 @@ def test_plugin_config_manager_when_old_config_is_loaded_then_updates_notify_and
     assert "demo" in manager.get_all_configs()
     assert json.loads(config_path.read_text(encoding="utf-8"))["demo"]["settings"]["quiet"] is True
 
-    config_path.write_text(json.dumps({"demo": {"enabled": False, "permissions": {}, "settings": {}}}), encoding="utf-8")
-    manager.add_listener(lambda name, config: notifications.append((f"reload:{name}", dict(config))))
+    config_path.write_text(
+        json.dumps({"demo": {"enabled": False, "permissions": {}, "settings": {}}}),
+        encoding="utf-8",
+    )
+    manager.add_listener(
+        lambda name, config: notifications.append((f"reload:{name}", dict(config)))
+    )
     manager.reload()
     assert manager.get_enabled("demo") is False
     assert notifications[-1][0] == "reload:demo"

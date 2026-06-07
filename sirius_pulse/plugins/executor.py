@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sirius_pulse.plugins.models import CommandAST, PluginDefinition, PluginResponse
@@ -68,8 +68,8 @@ class PluginExecutor:
         Returns:
             PluginBase 实例或 None
         """
-        from sirius_pulse.plugins.context import PluginContext
         from sirius_pulse.plugins import PluginDataStore  # noqa: F811
+        from sirius_pulse.plugins.context import PluginContext
 
         plugin_class = definition._plugin_class
         if plugin_class is None:
@@ -83,7 +83,11 @@ class PluginExecutor:
             return None
 
         # 创建上下文
-        data_store = PluginDataStore(self._persona_data_path, definition.name) if self._persona_data_path else None
+        data_store = (
+            PluginDataStore(self._persona_data_path, definition.name)
+            if self._persona_data_path
+            else None
+        )
         config = {
             "plugin_path": str(definition.source_path) if definition.source_path else "",
             "render_mode": definition.render.mode,
@@ -181,7 +185,9 @@ class PluginExecutor:
 
         # ── 权限校验 ──
         perm_error = self._check_permissions(
-            definition, group_id=group_id, user_id=user_id,
+            definition,
+            group_id=group_id,
+            user_id=user_id,
             caller_is_developer=caller_is_developer,
         )
         if perm_error:
@@ -206,7 +212,7 @@ class PluginExecutor:
             return [PluginResponse.fail(f"Plugin {plugin_name} 实例化失败")]
 
         # ── 注入运行时上下文 ──
-        if hasattr(instance, '_ctx') and instance._ctx is not None:
+        if hasattr(instance, "_ctx") and instance._ctx is not None:
             if engine is not None:
                 instance._ctx.engine._bind(engine, plugin_name)
             if adapter is not None:
@@ -217,17 +223,17 @@ class PluginExecutor:
         # ── 执行（带超时保护，支持命令级超时覆盖）──
         # 从 @command 装饰器元数据读取命令级 timeout，未设置则使用默认值
         cmd_timeout = self._default_timeout
-        if hasattr(instance, 'get_command_metas'):
+        if hasattr(instance, "get_command_metas"):
             cmd_metas = instance.get_command_metas()
             cmd_meta = cmd_metas.get(cmd.command) if isinstance(cmd_metas, dict) else None
-            if cmd_meta is not None and hasattr(cmd_meta, 'timeout'):
-                meta_timeout = getattr(cmd_meta, 'timeout', 0.0)
+            if cmd_meta is not None and hasattr(cmd_meta, "timeout"):
+                meta_timeout = getattr(cmd_meta, "timeout", 0.0)
                 if meta_timeout > 0:
                     cmd_timeout = meta_timeout
 
         try:
             # execute_async 总是返回 list[PluginResponse]，此处无需额外类型检查
-            if hasattr(instance, 'execute_async'):
+            if hasattr(instance, "execute_async"):
                 results = await asyncio.wait_for(
                     instance.execute_async(cmd),
                     timeout=cmd_timeout,
@@ -308,7 +314,7 @@ class PluginExecutor:
     async def unload(self, plugin_name: str) -> None:
         """卸载指定 Plugin。"""
         instance = self._registry.get_instance(plugin_name)
-        if instance is not None and hasattr(instance, 'on_unload'):
+        if instance is not None and hasattr(instance, "on_unload"):
             try:
                 on_unload = instance.on_unload
                 if asyncio.iscoroutinefunction(on_unload):

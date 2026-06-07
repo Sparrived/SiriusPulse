@@ -138,10 +138,7 @@ class DiaryConsolidator:
                 # so heavily-merged entries require higher similarity to merge again.
                 effective_threshold = max(
                     self.threshold,
-                    max(
-                        self.threshold + 0.03 * indexed[c][1].merge_count
-                        for c in cluster_indices
-                    ),
+                    max(self.threshold + 0.03 * indexed[c][1].merge_count for c in cluster_indices),
                 )
                 # Strict: b must be similar to ALL existing members in the cluster
                 if all(sim_matrix[b][c] >= effective_threshold for c in cluster_indices):
@@ -150,10 +147,7 @@ class DiaryConsolidator:
                 # Cap cluster size to avoid overly large prompts
                 if len(cluster_indices) > self.max_cluster_size:
                     # Keep the most similar ones to the first entry
-                    scored = [
-                        (b, sim_matrix[a][b])
-                        for b in cluster_indices[1:]
-                    ]
+                    scored = [(b, sim_matrix[a][b]) for b in cluster_indices[1:]]
                     scored.sort(key=lambda x: x[1], reverse=True)
                     cluster_indices = [a] + [b for b, _ in scored[: self.max_cluster_size - 1]]
                 for idx in cluster_indices:

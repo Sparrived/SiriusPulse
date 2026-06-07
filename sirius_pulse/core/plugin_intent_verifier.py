@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 class PluginIntentResult:
     """插件意图验证结果。"""
 
-    is_plugin: bool                          # 是否是插件请求
-    plugin_name: str = ""                    # 插件名称（仅当 is_plugin=True 时有效）
-    confidence: float = 0.0                  # 置信度
-    slots: dict[str, Any] | None = None      # 提取的参数槽位
-    reason: str = ""                         # 判断理由（用于调试）
+    is_plugin: bool  # 是否是插件请求
+    plugin_name: str = ""  # 插件名称（仅当 is_plugin=True 时有效）
+    confidence: float = 0.0  # 置信度
+    slots: dict[str, Any] | None = None  # 提取的参数槽位
+    reason: str = ""  # 判断理由（用于调试）
 
 
 class PluginIntentVerifier:
@@ -157,11 +157,7 @@ class PluginIntentVerifier:
 
         # 构建身份信息
         aliases_str = "、".join(persona_aliases) if persona_aliases else "无"
-        identity_section = (
-            f"## AI 身份\n"
-            f"- 名称：{persona_name}\n"
-            f"- 别名：{aliases_str}\n"
-        )
+        identity_section = f"## AI 身份\n" f"- 名称：{persona_name}\n" f"- 别名：{aliases_str}\n"
 
         system_prompt = (
             f"你是一个插件意图验证器。你正在帮助 AI「{persona_name}」判断用户是否在请求它执行某个功能。\n"

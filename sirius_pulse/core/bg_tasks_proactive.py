@@ -337,7 +337,7 @@ class ProactiveTasks:
         import random
 
         # 初始化话题追踪
-        if not hasattr(engine, '_recent_proactive_topics'):
+        if not hasattr(engine, "_recent_proactive_topics"):
             engine._recent_proactive_topics = {}  # type: ignore[attr-defined]
         recent = engine._recent_proactive_topics.setdefault(group_id, [])  # type: ignore[attr-defined]
 
@@ -404,7 +404,7 @@ class ProactiveTasks:
             topics = []
             seen = set()
             for entry in recent:
-                raw = getattr(entry, 'summary', '') or getattr(entry, 'content', '') or ''
+                raw = getattr(entry, "summary", "") or getattr(entry, "content", "") or ""
                 fragment = raw.strip()[:15]
                 if fragment and fragment not in seen:
                     seen.add(fragment)
@@ -422,9 +422,11 @@ class ProactiveTasks:
         # 再尝试读取 experience.json 取得最新值
         try:
             from pathlib import Path
+
             exp_path = Path(engine.work_path) / "experience.json"
             if exp_path.exists():
                 import json
+
                 exp = json.loads(exp_path.read_text(encoding="utf-8"))
                 if not exp.get("proactive_enabled", True):
                     return False

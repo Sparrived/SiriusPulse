@@ -15,16 +15,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.core.emotional_engine import create_emotional_engine
-from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
+from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_emotional_engine
 from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.embedding.client import EmbeddingClient
-from sirius_pulse.providers.routing import AutoRoutingProvider, ProviderConfig
-from sirius_pulse.skills.registry import SkillRegistry
-from sirius_pulse.skills.executor import SkillExecutor
 from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
+from sirius_pulse.providers.routing import AutoRoutingProvider, ProviderConfig
+from sirius_pulse.skills.executor import SkillExecutor
+from sirius_pulse.skills.registry import SkillRegistry
 from sirius_pulse.token.token_store import TokenUsageStore
 
 LOG = logging.getLogger("sirius.platforms.runtime")
@@ -101,7 +100,9 @@ class EngineRuntime:
     ) -> None:
         self.work_path = Path(work_path).resolve()
         self.work_path.mkdir(parents=True, exist_ok=True)
-        self.global_data_path = Path(global_data_path).resolve() if global_data_path else self.work_path
+        self.global_data_path = (
+            Path(global_data_path).resolve() if global_data_path else self.work_path
+        )
         self.plugin_config = dict(plugin_config or {})
         self._engine: EmotionalGroupChatEngine | None = None
         self._running = False
@@ -138,15 +139,20 @@ class EngineRuntime:
     def is_ready(self) -> bool:
         """检查引擎是否已就绪（provider + persona 均配置完成）。"""
         if not self.has_provider_config():
-            LOG.warning("引擎未就绪: 未配置 Provider。请在 WebUI 的「Provider 配置」页面添加 API Key，或在 data/providers/provider_keys.json 中配置。")
+            LOG.warning(
+                "引擎未就绪: 未配置 Provider。请在 WebUI 的「Provider 配置」页面添加 API Key，或在 data/providers/provider_keys.json 中配置。"
+            )
             return False
         if not self.has_persona():
-            LOG.warning("引擎未就绪: 未找到人格配置。请在 WebUI 的「人格配置」页面保存人格，或检查 %s/engine_state/persona.json 是否存在。", self.work_path)
+            LOG.warning(
+                "引擎未就绪: 未找到人格配置。请在 WebUI 的「人格配置」页面保存人格，或检查 %s/engine_state/persona.json 是否存在。",
+                self.work_path,
+            )
             return False
         # embedding 服务在冷却期内 → 静默返回，避免每秒刷 WARNING
         if self._embedding_build_failed:
             now = time.monotonic()
-            cooldown = min(300.0, 30.0 * (2 ** self._embedding_fail_count))
+            cooldown = min(300.0, 30.0 * (2**self._embedding_fail_count))
             if (now - self._embedding_last_fail_at) < cooldown:
                 return False
         try:
@@ -163,6 +169,7 @@ class EngineRuntime:
         # 1) 优先从全局 ProviderRegistry 持久化加载（多人格架构）
         try:
             from sirius_pulse.providers.routing import ProviderRegistry
+
             registry = ProviderRegistry(self.global_data_path)
             loaded = registry.load()
             if loaded:
@@ -173,6 +180,7 @@ class EngineRuntime:
         # 2) 回退到人格目录（兼容旧版单人格架构）
         try:
             from sirius_pulse.providers.routing import ProviderRegistry
+
             registry = ProviderRegistry(self.work_path)
             loaded = registry.load()
             if loaded:
@@ -273,7 +281,7 @@ class EngineRuntime:
             count = 0
             for name in list(plugin_registry.plugin_names):
                 instance = plugin_registry.get_instance(name)
-                if instance is not None and hasattr(instance, '_ctx') and instance._ctx is not None:
+                if instance is not None and hasattr(instance, "_ctx") and instance._ctx is not None:
                     instance._ctx.adapter = bridge
                     count += 1
             if count > 0:
@@ -289,10 +297,10 @@ class EngineRuntime:
             LOG.info("插件目录不存在，跳过 Plugin 初始化: %s", plugins_dir)
             return
 
+        from sirius_pulse.plugins.dispatcher import OutputDispatcher
+        from sirius_pulse.plugins.executor import PluginExecutor
         from sirius_pulse.plugins.loader import PluginLoader
         from sirius_pulse.plugins.registry import PluginRegistry
-        from sirius_pulse.plugins.executor import PluginExecutor
-        from sirius_pulse.plugins.dispatcher import OutputDispatcher
 
         # 确保插件目录存在
         PluginLoader.ensure_plugins_directory(plugins_dir)
@@ -332,6 +340,7 @@ class EngineRuntime:
 
         # 创建执行器和调度器
         from sirius_pulse.plugins.config import get_config_manager
+
         plugins_config_manager = get_config_manager(plugins_dir)
         executor = PluginExecutor(
             registry,
@@ -351,10 +360,15 @@ class EngineRuntime:
             plugin_executor=executor,
             plugin_dispatcher=dispatcher,
         )
-        LOG.info("Plugin runtime 已挂载，共 %d 个插件: %s", registry.plugin_count, ", ".join(registry.plugin_names))
+        LOG.info(
+            "Plugin runtime 已挂载，共 %d 个插件: %s",
+            registry.plugin_count,
+            ", ".join(registry.plugin_names),
+        )
 
         # 创建并启动 PluginScheduler（使 _plugin_events / _plugin_schedule 定时事件生效）
         from sirius_pulse.plugins.scheduler import PluginScheduler, ScheduledTask
+
         self._plugin_scheduler = PluginScheduler(check_interval=10.0)
         # 通知 executor，供卸载时清理定时任务
         executor.set_scheduler(self._plugin_scheduler)
@@ -377,11 +391,14 @@ class EngineRuntime:
                     plugin_name=definition,  # type: ignore[arg-type]
                     cron=evt.cron,
                     interval_seconds=evt.interval_seconds,
-                    callback=lambda e=evt, i=inst: i.on_event(e.type, {  # type: ignore[misc]
-                        "cron": e.cron,
-                        "interval_seconds": e.interval_seconds,
-                        "description": e.description,
-                    }),
+                    callback=lambda e=evt, i=inst: i.on_event(
+                        e.type,
+                        {  # type: ignore[misc]
+                            "cron": e.cron,
+                            "interval_seconds": e.interval_seconds,
+                            "description": e.description,
+                        },
+                    ),
                 )
                 self._plugin_scheduler.add_task(task)
                 registered_tasks += 1
@@ -413,25 +430,47 @@ class EngineRuntime:
         config = {
             # v1.0 日记记忆配置
             "diary_top_k": int(self.plugin_config.get("diary_top_k", exp.diary_top_k)),
-            "diary_token_budget": int(self.plugin_config.get("diary_token_budget", exp.diary_token_budget)),
+            "diary_token_budget": int(
+                self.plugin_config.get("diary_token_budget", exp.diary_token_budget)
+            ),
             # 行为控制
             "sensitivity": float(self.plugin_config.get("sensitivity", 0.5)),
             "expressiveness": {"expressiveness": exp.expressiveness},
             "reply_cooldown_seconds": int(self.plugin_config.get("reply_cooldown_seconds", 12)),
             "max_skill_rounds": int(self.plugin_config.get("max_skill_rounds", 3)),
-            "cross_group_memory_enabled": bool(self.plugin_config.get("cross_group_memory_enabled", True)),
+            "cross_group_memory_enabled": bool(
+                self.plugin_config.get("cross_group_memory_enabled", True)
+            ),
             # 主动消息
-            "proactive_enabled": bool(self.plugin_config.get("proactive_enabled", exp.proactive_enabled)),
+            "proactive_enabled": bool(
+                self.plugin_config.get("proactive_enabled", exp.proactive_enabled)
+            ),
             # 后台任务
-            "delayed_queue_tick_interval_seconds": int(self.plugin_config.get("delayed_queue_tick_interval_seconds", 3)),
-            "proactive_check_interval_seconds": int(self.plugin_config.get("proactive_check_interval_seconds", 60)),
-            "proactive_silence_minutes": int(self.plugin_config.get("proactive_silence_minutes", 60)),
-            "proactive_active_start_hour": int(self.plugin_config.get("proactive_active_start_hour", 8)),
-            "proactive_active_end_hour": int(self.plugin_config.get("proactive_active_end_hour", 23)),
-            "memory_promote_interval_seconds": int(self.plugin_config.get("memory_promote_interval_seconds", 300)),
+            "delayed_queue_tick_interval_seconds": int(
+                self.plugin_config.get("delayed_queue_tick_interval_seconds", 3)
+            ),
+            "proactive_check_interval_seconds": int(
+                self.plugin_config.get("proactive_check_interval_seconds", 60)
+            ),
+            "proactive_silence_minutes": int(
+                self.plugin_config.get("proactive_silence_minutes", 60)
+            ),
+            "proactive_active_start_hour": int(
+                self.plugin_config.get("proactive_active_start_hour", 8)
+            ),
+            "proactive_active_end_hour": int(
+                self.plugin_config.get("proactive_active_end_hour", 23)
+            ),
+            "memory_promote_interval_seconds": int(
+                self.plugin_config.get("memory_promote_interval_seconds", 300)
+            ),
             # Developer proactive private-chat memory conversations
-            "proactive_developer_chat_interval_seconds": int(self.plugin_config.get("proactive_developer_chat_interval_seconds", 1800)),
-            "proactive_developer_min_silence_seconds": int(self.plugin_config.get("proactive_developer_min_silence_seconds", 120)),
+            "proactive_developer_chat_interval_seconds": int(
+                self.plugin_config.get("proactive_developer_chat_interval_seconds", 1800)
+            ),
+            "proactive_developer_min_silence_seconds": int(
+                self.plugin_config.get("proactive_developer_min_silence_seconds", 120)
+            ),
             # 消息前缀过滤
             "message_prefixes": list(self.plugin_config.get("message_prefixes", [])),
         }
@@ -444,18 +483,14 @@ class EngineRuntime:
             LOG.warning("日记向量存储未启用，将使用纯内存索引")
 
         # 创建共享 Embedding 客户端（连接 Embedding 微服务）
-        embedding_url = os.environ.get(
-            "SIRIUS_EMBEDDING_URL", "http://127.0.0.1:18900"
-        )
+        embedding_url = os.environ.get("SIRIUS_EMBEDDING_URL", "http://127.0.0.1:18900")
 
         # 指数退避：失败后冷却，避免每次消息都阻塞 60 秒
         now = time.monotonic()
-        cooldown = min(300.0, 30.0 * (2 ** self._embedding_fail_count))
+        cooldown = min(300.0, 30.0 * (2**self._embedding_fail_count))
         if self._embedding_build_failed and (now - self._embedding_last_fail_at) < cooldown:
             remaining = int(cooldown - (now - self._embedding_last_fail_at))
-            raise RuntimeError(
-                f"Embedding 服务不可用 ({embedding_url})，{remaining}秒后重试。"
-            )
+            raise RuntimeError(f"Embedding 服务不可用 ({embedding_url})，{remaining}秒后重试。")
 
         embedding_client = EmbeddingClient(base_url=embedding_url)
         LOG.info("等待共享 Embedding 服务就绪: %s ...", embedding_url)
@@ -471,7 +506,9 @@ class EngineRuntime:
             self._embedding_build_failed = True
             self._embedding_last_fail_at = time.monotonic()
             self._embedding_fail_count = min(self._embedding_fail_count + 1, 4)
-            LOG.error("共享 Embedding 服务不可用: %s (连续失败 %d 次)", embedding_url, self._embedding_fail_count)
+            LOG.error(
+                "共享 Embedding 服务不可用: %s (连续失败 %d 次)", embedding_url, self._embedding_fail_count
+            )
             raise RuntimeError(
                 f"Embedding 服务不可用 ({embedding_url})。"
                 "请在 WebUI 检查 Embedding 状态，或手动启动: "
@@ -579,18 +616,18 @@ class EngineRuntime:
 
         # 关闭统一人格数据库连接
         # 先 flush 所有使用共享连接的缓冲写入，避免数据丢失
-        if hasattr(self, 'token_store') and self.token_store is not None:
+        if hasattr(self, "token_store") and self.token_store is not None:
             try:
                 self.token_store.flush()
             except Exception as exc:
                 LOG.warning("TokenUsageStore flush 失败: %s", exc)
-        if self._engine is not None and hasattr(self._engine, 'cognition_store'):
+        if self._engine is not None and hasattr(self._engine, "cognition_store"):
             try:
                 self._engine.cognition_store.flush()
             except Exception as exc:
                 LOG.warning("CognitionEventStore flush 失败: %s", exc)
 
-        if hasattr(self, 'persona_db') and self.persona_db is not None:
+        if hasattr(self, "persona_db") and self.persona_db is not None:
             try:
                 self.persona_db.close()
             except Exception as exc:

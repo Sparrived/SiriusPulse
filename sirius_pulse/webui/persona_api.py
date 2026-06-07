@@ -13,7 +13,11 @@ from aiohttp import web
 from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.models.persona import PersonaProfile
-from sirius_pulse.persona_config import AdapterConfig, PersonaAdaptersConfig, PersonaExperienceConfig
+from sirius_pulse.persona_config import (
+    AdapterConfig,
+    PersonaAdaptersConfig,
+    PersonaExperienceConfig,
+)
 from sirius_pulse.platforms.persona_utils import generate_persona_from_interview
 from sirius_pulse.providers.routing import WorkspaceProviderManager
 from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
@@ -115,11 +119,13 @@ async def api_persona_get_single(request: web.Request, persona_manager: Any) -> 
         except Exception:
             LOG.warning("读取人格状态失败", exc_info=True)
             pass
-    return _json_response({
-        "name": name,
-        "persona_name": profile.name,
-        "status": status,
-    })
+    return _json_response(
+        {
+            "name": name,
+            "persona_name": profile.name,
+            "status": status,
+        }
+    )
 
 
 async def api_persona_status_get(request: web.Request, persona_manager: Any) -> web.Response:
@@ -236,37 +242,39 @@ async def api_persona_get(request: web.Request, persona_manager: Any) -> web.Res
     profile = PersonaStore.load(paths.dir)
     if profile is None:
         profile = PersonaProfile(name=name)
-    return _json_response({
-        "name": profile.name,
-        "aliases": profile.aliases,
-        "persona_summary": profile.persona_summary,
-        "full_system_prompt": profile.full_system_prompt,
-        "personality_traits": profile.personality_traits,
-        "backstory": profile.backstory,
-        "core_values": profile.core_values,
-        "flaws": profile.flaws,
-        "motivations": profile.motivations,
-        "communication_style": profile.communication_style,
-        "speech_rhythm": profile.speech_rhythm,
-        "emoji_preference": profile.emoji_preference,
-        "humor_style": profile.humor_style,
-        "typical_greetings": profile.typical_greetings,
-        "typical_signoffs": profile.typical_signoffs,
-        "emotional_baseline": profile.emotional_baseline,
-        "emotional_range": profile.emotional_range,
-        "empathy_style": profile.empathy_style,
-        "stress_response": profile.stress_response,
-        "boundaries": profile.boundaries,
-        "taboo_topics": profile.taboo_topics,
-        "preferred_topics": profile.preferred_topics,
-        "social_role": profile.social_role,
-        "max_tokens_preference": profile.max_tokens_preference,
-        "temperature_preference": profile.temperature_preference,
-        "reply_frequency": profile.reply_frequency,
-        "version": profile.version,
-        "created_at": profile.created_at,
-        "source": profile.source,
-    })
+    return _json_response(
+        {
+            "name": profile.name,
+            "aliases": profile.aliases,
+            "persona_summary": profile.persona_summary,
+            "full_system_prompt": profile.full_system_prompt,
+            "personality_traits": profile.personality_traits,
+            "backstory": profile.backstory,
+            "core_values": profile.core_values,
+            "flaws": profile.flaws,
+            "motivations": profile.motivations,
+            "communication_style": profile.communication_style,
+            "speech_rhythm": profile.speech_rhythm,
+            "emoji_preference": profile.emoji_preference,
+            "humor_style": profile.humor_style,
+            "typical_greetings": profile.typical_greetings,
+            "typical_signoffs": profile.typical_signoffs,
+            "emotional_baseline": profile.emotional_baseline,
+            "emotional_range": profile.emotional_range,
+            "empathy_style": profile.empathy_style,
+            "stress_response": profile.stress_response,
+            "boundaries": profile.boundaries,
+            "taboo_topics": profile.taboo_topics,
+            "preferred_topics": profile.preferred_topics,
+            "social_role": profile.social_role,
+            "max_tokens_preference": profile.max_tokens_preference,
+            "temperature_preference": profile.temperature_preference,
+            "reply_frequency": profile.reply_frequency,
+            "version": profile.version,
+            "created_at": profile.created_at,
+            "source": profile.source,
+        }
+    )
 
 
 async def api_persona_post(request: web.Request, persona_manager: Any) -> web.Response:
@@ -286,15 +294,35 @@ async def api_persona_post(request: web.Request, persona_manager: Any) -> web.Re
 
     persona_data = body.get("persona", body)
     for key in (
-        "name", "aliases", "persona_summary", "full_system_prompt",
-        "personality_traits", "backstory", "core_values", "flaws",
-        "motivations", "communication_style", "speech_rhythm",
-        "emoji_preference", "humor_style",
-        "typical_greetings", "typical_signoffs", "emotional_baseline",
-        "emotional_range", "empathy_style", "stress_response",
-        "boundaries", "taboo_topics", "preferred_topics", "social_role",
-        "max_tokens_preference", "temperature_preference", "reply_frequency",
-        "version", "created_at", "source",
+        "name",
+        "aliases",
+        "persona_summary",
+        "full_system_prompt",
+        "personality_traits",
+        "backstory",
+        "core_values",
+        "flaws",
+        "motivations",
+        "communication_style",
+        "speech_rhythm",
+        "emoji_preference",
+        "humor_style",
+        "typical_greetings",
+        "typical_signoffs",
+        "emotional_baseline",
+        "emotional_range",
+        "empathy_style",
+        "stress_response",
+        "boundaries",
+        "taboo_topics",
+        "preferred_topics",
+        "social_role",
+        "max_tokens_preference",
+        "temperature_preference",
+        "reply_frequency",
+        "version",
+        "created_at",
+        "source",
     ):
         if key in persona_data:
             setattr(profile, key, persona_data[key])
@@ -315,18 +343,22 @@ async def api_persona_interview_get(request: web.Request, persona_manager: Any) 
     try:
         if record_path.exists():
             data = json.loads(record_path.read_text(encoding="utf-8"))
-            return _json_response({
-                "answers": data.get("answers", {}),
-                "name": data.get("name", ""),
-                "aliases": data.get("aliases", []),
-            })
+            return _json_response(
+                {
+                    "answers": data.get("answers", {}),
+                    "name": data.get("name", ""),
+                    "aliases": data.get("aliases", []),
+                }
+            )
         if pending_path.exists():
             data = json.loads(pending_path.read_text(encoding="utf-8"))
-            return _json_response({
-                "answers": data.get("answers", {}),
-                "name": data.get("name", ""),
-                "aliases": data.get("aliases", []),
-            })
+            return _json_response(
+                {
+                    "answers": data.get("answers", {}),
+                    "name": data.get("name", ""),
+                    "aliases": data.get("aliases", []),
+                }
+            )
         return _json_response({"answers": {}, "name": "", "aliases": []})
     except Exception as exc:
         LOG.warning("读取 interview 记录失败: %s", exc)
@@ -350,6 +382,7 @@ async def api_persona_interview(request: web.Request, persona_manager: Any) -> w
         return _json_response({"error": "人格不存在"}, 404)
 
     from sirius_pulse.providers.routing import AutoRoutingProvider
+
     provider_mgr = WorkspaceProviderManager(persona_manager.data_path)
     providers = provider_mgr.load()
     provider = None
@@ -413,33 +446,35 @@ async def api_experience_get(request: web.Request, persona_manager: Any) -> web.
         return _json_response({"error": "人格不存在"}, 404)
 
     exp = PersonaExperienceConfig.load(paths.experience)
-    return _json_response({
-        "reply_mode": exp.reply_mode,
-        "engagement_sensitivity": exp.engagement_sensitivity,
-        "expressiveness": exp.expressiveness,
-        "heat_window_seconds": exp.heat_window_seconds,
-        "proactive_enabled": exp.proactive_enabled,
-        "proactive_interval_seconds": exp.proactive_interval_seconds,
-        "proactive_active_start_hour": exp.proactive_active_start_hour,
-        "proactive_active_end_hour": exp.proactive_active_end_hour,
-        "delay_reply_enabled": exp.delay_reply_enabled,
-        "pending_message_threshold": exp.pending_message_threshold,
-        "min_reply_interval_seconds": exp.min_reply_interval_seconds,
-        "reply_frequency_window_seconds": exp.reply_frequency_window_seconds,
-        "reply_frequency_max_replies": exp.reply_frequency_max_replies,
-        "reply_frequency_exempt_on_mention": exp.reply_frequency_exempt_on_mention,
-        "max_concurrent_llm_calls": exp.max_concurrent_llm_calls,
-        "memory_depth": exp.memory_depth,
-        "diary_top_k": exp.diary_top_k,
-        "diary_token_budget": exp.diary_token_budget,
-        "enable_skills": exp.enable_skills,
-        "max_skill_rounds": exp.max_skill_rounds,
-        "skill_execution_timeout": exp.skill_execution_timeout,
-        "auto_install_skill_deps": exp.auto_install_skill_deps,
-        "other_ai_names": exp.other_ai_names,
-        "message_prefixes": exp.message_prefixes,
-        "pinned_message_max_carry_count": exp.pinned_message_max_carry_count,
-    })
+    return _json_response(
+        {
+            "reply_mode": exp.reply_mode,
+            "engagement_sensitivity": exp.engagement_sensitivity,
+            "expressiveness": exp.expressiveness,
+            "heat_window_seconds": exp.heat_window_seconds,
+            "proactive_enabled": exp.proactive_enabled,
+            "proactive_interval_seconds": exp.proactive_interval_seconds,
+            "proactive_active_start_hour": exp.proactive_active_start_hour,
+            "proactive_active_end_hour": exp.proactive_active_end_hour,
+            "delay_reply_enabled": exp.delay_reply_enabled,
+            "pending_message_threshold": exp.pending_message_threshold,
+            "min_reply_interval_seconds": exp.min_reply_interval_seconds,
+            "reply_frequency_window_seconds": exp.reply_frequency_window_seconds,
+            "reply_frequency_max_replies": exp.reply_frequency_max_replies,
+            "reply_frequency_exempt_on_mention": exp.reply_frequency_exempt_on_mention,
+            "max_concurrent_llm_calls": exp.max_concurrent_llm_calls,
+            "memory_depth": exp.memory_depth,
+            "diary_top_k": exp.diary_top_k,
+            "diary_token_budget": exp.diary_token_budget,
+            "enable_skills": exp.enable_skills,
+            "max_skill_rounds": exp.max_skill_rounds,
+            "skill_execution_timeout": exp.skill_execution_timeout,
+            "auto_install_skill_deps": exp.auto_install_skill_deps,
+            "other_ai_names": exp.other_ai_names,
+            "message_prefixes": exp.message_prefixes,
+            "pinned_message_max_carry_count": exp.pinned_message_max_carry_count,
+        }
+    )
 
 
 async def api_experience_post(request: web.Request, persona_manager: Any) -> web.Response:
@@ -457,15 +492,31 @@ async def api_experience_post(request: web.Request, persona_manager: Any) -> web
     experience_data = body.get("experience", body)
 
     for key in (
-        "reply_mode", "engagement_sensitivity", "expressiveness", "heat_window_seconds",
-        "proactive_enabled", "proactive_interval_seconds", "proactive_active_start_hour",
-        "proactive_active_end_hour", "delay_reply_enabled", "pending_message_threshold",
-        "min_reply_interval_seconds", "reply_frequency_window_seconds",
-        "reply_frequency_max_replies", "reply_frequency_exempt_on_mention",
-        "max_concurrent_llm_calls", "memory_depth", "diary_top_k", "diary_token_budget",
-        "enable_skills", "max_skill_rounds", "skill_execution_timeout",
-        "auto_install_skill_deps", "other_ai_names",
-        "message_prefixes", "pinned_message_max_carry_count",
+        "reply_mode",
+        "engagement_sensitivity",
+        "expressiveness",
+        "heat_window_seconds",
+        "proactive_enabled",
+        "proactive_interval_seconds",
+        "proactive_active_start_hour",
+        "proactive_active_end_hour",
+        "delay_reply_enabled",
+        "pending_message_threshold",
+        "min_reply_interval_seconds",
+        "reply_frequency_window_seconds",
+        "reply_frequency_max_replies",
+        "reply_frequency_exempt_on_mention",
+        "max_concurrent_llm_calls",
+        "memory_depth",
+        "diary_top_k",
+        "diary_token_budget",
+        "enable_skills",
+        "max_skill_rounds",
+        "skill_execution_timeout",
+        "auto_install_skill_deps",
+        "other_ai_names",
+        "message_prefixes",
+        "pinned_message_max_carry_count",
     ):
         if key in experience_data:
             setattr(exp, key, experience_data[key])
@@ -533,7 +584,13 @@ async def api_config_post(request: web.Request, persona_manager: Any) -> web.Res
         return _json_response({"error": "无 adapter 可配置"}, 400)
 
     # 只更新第一个 napcat adapter
-    for key in ("allowed_group_ids", "allowed_private_user_ids", "enable_group_chat", "enable_private_chat", "root"):
+    for key in (
+        "allowed_group_ids",
+        "allowed_private_user_ids",
+        "enable_group_chat",
+        "enable_private_chat",
+        "root",
+    ):
         if key in body and adapters.adapters:
             setattr(adapters.adapters[0], key, body[key])
 
@@ -563,10 +620,12 @@ def _build_model_choices(persona_manager: Any) -> tuple[list[str], list[dict[str
                         available_models.append(m)
                     # model_choices 用复合值，不同 provider 的同名模型各自独立
                     composite = f"{cfg.provider_type}/{m}"
-                    model_choices.append({
-                        "label": composite,
-                        "value": composite,
-                    })
+                    model_choices.append(
+                        {
+                            "label": composite,
+                            "value": composite,
+                        }
+                    )
     except Exception:
         LOG.warning("获取模型列表失败", exc_info=True)
         pass
@@ -577,7 +636,9 @@ def _build_model_choices(persona_manager: Any) -> tuple[list[str], list[dict[str
 def _enrich_model_tags(data_path: Any, model_choices: list[dict[str, str]]) -> None:
     """为 model_choices 注入 models.dev 能力标签。"""
     from pathlib import Path
+
     from sirius_pulse.providers.models_dev import ModelsDevCache
+
     try:
         cache = ModelsDevCache(Path(data_path))
         data = cache.get()

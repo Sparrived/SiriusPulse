@@ -78,7 +78,9 @@ def test_token_store_when_filters_are_used_then_returns_matching_rows(tmp_path):
 def test_token_store_when_breakdown_is_present_then_aggregates_sections(tmp_path):
     store = TokenUsageStore(tmp_path / "token.db")
     store.add(_record(breakdown={"memory": 4, "history": 6}), timestamp=1.0)
-    store.add(_record(task_name="cognition_analyze", breakdown={"memory": 3, "skills": 9}), timestamp=2.0)
+    store.add(
+        _record(task_name="cognition_analyze", breakdown={"memory": 3, "skills": 9}), timestamp=2.0
+    )
     store.flush()
 
     assert store.get_section_breakdown() == {"history": 6, "memory": 7, "skills": 9}
@@ -88,8 +90,16 @@ def test_token_store_when_breakdown_is_present_then_aggregates_sections(tmp_path
 
 def test_token_store_when_records_span_tasks_then_summary_and_breakdowns_are_available(tmp_path):
     store = TokenUsageStore(tmp_path / "token.db")
-    store.add(_record(task_name="response_generate", prompt=12, completion=8, retries_used=1, duration_ms=120), timestamp=1.0)
-    store.add(_record(task_name="cognition_analyze", prompt=7, completion=3, duration_ms=40), timestamp=2.0)
+    store.add(
+        _record(
+            task_name="response_generate", prompt=12, completion=8, retries_used=1, duration_ms=120
+        ),
+        timestamp=1.0,
+    )
+    store.add(
+        _record(task_name="cognition_analyze", prompt=7, completion=3, duration_ms=40),
+        timestamp=2.0,
+    )
     store.flush()
 
     summary = store.get_summary()
@@ -108,10 +118,18 @@ def test_token_store_when_records_span_tasks_then_summary_and_breakdowns_are_ava
 
 def test_token_store_when_failures_and_empty_replies_exist_then_stats_are_reported(tmp_path):
     store = TokenUsageStore(tmp_path / "token.db")
-    store.add_many([
-        _record(task_name="response_generate", prompt=8, completion=0, error_type="timeout", conversation_depth=3),
-        _record(task_name="cognition_analyze", prompt=8, completion=4),
-    ])
+    store.add_many(
+        [
+            _record(
+                task_name="response_generate",
+                prompt=8,
+                completion=0,
+                error_type="timeout",
+                conversation_depth=3,
+            ),
+            _record(task_name="cognition_analyze", prompt=8, completion=4),
+        ]
+    )
     store.flush()
 
     assert store.get_empty_reply_stats()["empty_calls"] == 1
