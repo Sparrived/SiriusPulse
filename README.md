@@ -388,6 +388,8 @@ npm run build     # 构建
 
 ## 🧪 测试
 
+测试必须从业务侧出发，围绕用户实际使用路径编写。优先验证用户输入、系统处理、最终响应或持久化结果之间的业务闭环，避免只为了覆盖内部函数、私有实现或临时分支而编写脱离业务语义的测试。
+
 ```bash
 # 运行全部测试（< 2 秒）
 python -m pytest tests/ -q
@@ -414,7 +416,7 @@ python -m pytest tests/ --cov=sirius_pulse
 > 💡 **月白说**：欢迎每一个小伙伴来一起玩耍喵～(｡♥‿♥｡)
 
 1. **Fork** 项目并创建分支：`git checkout -b feat/my-feature`
-2. **开发**并编写测试
+2. **开发**并从业务侧编写测试，覆盖用户实际使用场景
 3. **验证**：`python -m pytest tests/ -q && python scripts/ci_check.py`
 4. **提交**：遵循 [Conventional Commits](https://www.conventionalcommits.org/) 格式
 5. **推送**并发起 Pull Request
