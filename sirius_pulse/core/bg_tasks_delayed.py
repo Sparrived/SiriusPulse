@@ -280,7 +280,6 @@ class DelayedQueueTasks:
 
         max_skill_rounds = engine.config.get("max_skill_rounds", 8)
         partial_replies: list[str] = []
-        _any_partial_sent = False
         last_round_had_partial = False
         _round = 0
         tool_calls: list[ToolCall] = []
@@ -321,7 +320,6 @@ class DelayedQueueTasks:
             if non_skill_text and not all_silent:
                 engine._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
                 last_round_had_partial = True
-                _any_partial_sent = True
                 if on_partial_reply is not None:
                     try:
                         await on_partial_reply(non_skill_text)
@@ -367,21 +365,6 @@ class DelayedQueueTasks:
                 ],
             }
             messages.append(assistant_msg)
-
-            # 处理 partial reply（hooks 已处理 sticker/pin/dedup）
-            non_skill_text = round_clean
-            last_round_had_partial = False
-            if non_skill_text and not all_silent:
-                engine._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
-                last_round_had_partial = True
-                _any_partial_sent = True
-                if on_partial_reply is not None:
-                    try:
-                        await on_partial_reply(non_skill_text)
-                    except Exception as exc:
-                        logger.warning("on_partial_reply failed: %s", exc)
-                else:
-                    partial_replies.append(non_skill_text)
 
             # 逐个执行 tool_call 并收集结果
             skill_multimodal: list[dict[str, Any]] = []

@@ -29,6 +29,7 @@ from sirius_pulse.webui.server_skill_api import (
     api_persona_skill_toggle,
     api_persona_skills_get,
 )
+from sirius_pulse.webui.model_catalog import build_model_catalog
 from sirius_pulse.webui.server_utils import _json_response
 from sirius_pulse.webui.ws_server import WebSocketManager, setup_ws_routes
 
@@ -879,89 +880,9 @@ class WebUIServer:
 
     # ─── 全局 API: 可用模型列表 ───────────────────────────
 
-    def _build_model_choices(self) -> tuple[list[str], list[dict[str, str]]]:
-        """返回 (available_models, model_choices)。
-
-        model_choices 的 value 使用复合格式 ``{provider_type}/{model_name}``
-        以区分来自不同 provider 的同名模型。``available_models`` 保留裸模型名
-        用于下游引擎调用。
-        """
-        available_models: list[str] = []
-        model_choices: list[dict[str, str]] = []
-        seen_models: set[str] = set()
-        try:
-            provider_mgr = WorkspaceProviderManager(self.persona_manager.data_path)
-            for cfg in provider_mgr.load().values():
-                if cfg.enabled:
-                    for m in cfg.models:
-                        # available_models 用裸模型名（引擎直接透传给 API）
-                        if m not in seen_models:
-                            seen_models.add(m)
-                            available_models.append(m)
-                        # model_choices 用复合值，不同 provider 的同名模型各自独立
-                        composite = f"{cfg.provider_type}/{m}"
-                        model_choices.append(
-                            {
-                                "label": composite,
-                                "value": composite,
-                            }
-                        )
-        except Exception:
-            LOG.warning("获取模型列表失败", exc_info=True)
-            pass
-        # 从 models.dev 注入能力标签
-        self._enrich_model_choices(model_choices)
-        return available_models, model_choices
-
-    def _enrich_model_choices(self, model_choices: list[dict[str, Any]]) -> None:
-        """为 model_choices 中的每一项注入 models.dev 能力标签。"""
-        from sirius_pulse.providers.models_dev import ModelsDevCache, get_provider_models
-
-        try:
-            cache = ModelsDevCache(Path(self.persona_manager.data_path))
-            data = cache.get()
-            if not data:
-                return
-            all_models: dict[str, dict[str, object]] = {}
-            for prov in data.values():
-                if isinstance(prov, dict):
-                    for mid, mobj in prov.get("models", {}).items():
-                        if isinstance(mobj, dict) and mid not in all_models:
-                            all_models[mid] = mobj
-            for choice in model_choices:
-                # value 为复合格式 provider_type/model_name，提取裸模型名查询标签
-                raw_val = choice["value"]
-                model_id = raw_val.split("/", 1)[1] if "/" in raw_val else raw_val
-                m = all_models.get(model_id)
-                if not m:
-                    continue
-                tags: list[str] = []
-                if m.get("tool_call"):
-                    tags.append("函数调用")
-                if m.get("reasoning"):
-                    tags.append("推理")
-                if m.get("structured_output"):
-                    tags.append("结构化")
-                modalities = m.get("modalities", {})
-                input_mods = modalities.get("input", []) if isinstance(modalities, dict) else []
-                if "image" in input_mods:
-                    tags.append("视觉")
-                if "audio" in input_mods:
-                    tags.append("音频")
-                if tags:
-                    choice["tags"] = tags
-        except Exception:
-            LOG.debug("注入模型能力标签失败", exc_info=True)
-
     async def api_available_models_get(self, request: web.Request) -> web.Response:
         """返回全局可用模型列表（含 provider 前缀显示名）。"""
-        available_models, model_choices = self._build_model_choices()
-        return _json_response(
-            {
-                "available_models": available_models,
-                "model_choices": model_choices,
-            }
-        )
+        return _json_response(build_model_catalog(self.persona_manager.data_path))
 
     # ─── Skill 管理 API 代理方法 ──────────────────────────
 

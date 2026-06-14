@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import pytest
+
+from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
+from sirius_pulse.providers.base import ToolCall
+from sirius_pulse.skills.models import SkillResult
 
 
 def _decision(strategy: ResponseStrategy, *, urgency: float = 50.0) -> StrategyDecision:
@@ -131,3 +138,89 @@ def test_delayed_queue_when_corrupted_entry_exists_then_tick_filters_it_out():
 
     assert queue.tick("group-1", []) == []
     assert queue.get_pending("group-1") == []
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_tool_call_has_text_then_sends_partial_once():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "check status",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    tool_call = ToolCall(
+        id="call-1",
+        function_name="lookup",
+        function_arguments='{"query": "status"}',
+    )
+    chat_results = [
+        SimpleNamespace(
+            raw_text="I will check.",
+            clean_text="I will check.",
+            tool_calls=[tool_call],
+            reply_references=[],
+        ),
+        SimpleNamespace(
+            raw_text="Everything is ready.",
+            clean_text="Everything is ready.",
+            tool_calls=[],
+            reply_references=[],
+        ),
+    ]
+    skill = SimpleNamespace(name="lookup", silent=False, developer_only=False)
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    engine = SimpleNamespace(
+        config={"max_skill_rounds": 2},
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(user_id="u1")
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "check status"},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(chat=AsyncMock(side_effect=chat_results)),
+        _skill_registry=SimpleNamespace(get=lambda name: skill),
+        _skill_executor=SimpleNamespace(
+            set_chat_context=lambda **kwargs: None,
+            execute_async=AsyncMock(return_value=SkillResult(success=True, data={"ok": True})),
+        ),
+        _pending_biography={},
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="check status",
+        token_breakdown=None,
+    )
+    partials: list[str] = []
+
+    async def capture_partial(text: str) -> None:
+        partials.append(text)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
+
+    assert partials == ["I will check."]
+    assert results[0]["reply"] == "Everything is ready."
