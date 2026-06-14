@@ -864,9 +864,13 @@ class NapCatAdapter(BaseAdapter):
                 async def _send_partial(text: str) -> None:
                     if gid.startswith("private_"):
                         uid = gid.replace("private_", "").replace("qq_", "")
-                        await self._send_private_text(uid, text)
+                        sent = await self._send_private_text(uid, text)
                     elif gid in self._get_allowed_group_ids():
-                        await self._send_group_text(gid, text)
+                        sent = await self._send_group_text(gid, text)
+                    else:
+                        raise RuntimeError(f"Partial reply target is not allowed: {gid}")
+                    if not sent:
+                        raise RuntimeError(f"Failed to send partial reply: {gid}")
 
                 try:
                     results = await engine.tick_delayed_queue(gid, on_partial_reply=_send_partial)
@@ -939,7 +943,7 @@ class NapCatAdapter(BaseAdapter):
 
     async def _send_group_text(
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
-    ) -> None:
+    ) -> bool:
         async with self._get_reply_lock(group_id):
             try:
                 # 如果有引用且有有效的 msg_id，使用 reply segment
@@ -971,18 +975,22 @@ class NapCatAdapter(BaseAdapter):
                 else:
                     await self.send_group_msg(group_id, text)
                     LOG.info("回复群 %s: %s", group_id, text[:120])
+                return True
             except Exception as exc:
                 LOG.warning("发送群消息失败: %s", exc)
+                return False
 
     async def _send_private_text(
         self, user_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
-    ) -> None:
+    ) -> bool:
         async with self._get_reply_lock(user_id):
             try:
                 await self.send_private_msg(user_id, text)
                 LOG.info("回复私聊 %s: %s", user_id, text[:120])
+                return True
             except Exception as exc:
                 LOG.warning("发送私聊消息失败: %s", exc)
+                return False
 
     async def _send_group_image(self, group_id: str, image_path: str) -> None:
         """发送群聊图片。"""

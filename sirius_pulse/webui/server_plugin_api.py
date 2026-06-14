@@ -18,8 +18,7 @@ from aiohttp import web
 from sirius_pulse.plugins.config import get_config_manager
 from sirius_pulse.plugins.loader import PluginLoader
 from sirius_pulse.plugins.models import PluginDefinition
-from sirius_pulse.webui.server_core import _json_response
-from sirius_pulse.webui.server_utils import handle_api_errors
+from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
 

@@ -438,6 +438,9 @@ class EngineRuntime:
             "expressiveness": {"expressiveness": exp.expressiveness},
             "reply_cooldown_seconds": int(self.plugin_config.get("reply_cooldown_seconds", 12)),
             "max_skill_rounds": int(self.plugin_config.get("max_skill_rounds", 3)),
+            "partial_reply_lead_seconds": float(
+                self.plugin_config.get("partial_reply_lead_seconds", 1.5)
+            ),
             "cross_group_memory_enabled": bool(
                 self.plugin_config.get("cross_group_memory_enabled", True)
             ),

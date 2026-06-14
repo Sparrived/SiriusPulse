@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -281,6 +282,7 @@ class DelayedQueueTasks:
         max_skill_rounds = engine.config.get("max_skill_rounds", 8)
         partial_replies: list[str] = []
         last_round_had_partial = False
+        last_partial_sent_at: float | None = None
         _round = 0
         tool_calls: list[ToolCall] = []
         reply = ""
@@ -320,13 +322,12 @@ class DelayedQueueTasks:
             if non_skill_text and not all_silent:
                 engine._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
                 last_round_had_partial = True
-                if on_partial_reply is not None:
-                    try:
-                        await on_partial_reply(non_skill_text)
-                    except Exception as exc:
-                        logger.warning("on_partial_reply failed: %s", exc)
-                else:
-                    partial_replies.append(non_skill_text)
+                if on_partial_reply is None:
+                    raise RuntimeError(
+                        "Tool execution requires on_partial_reply when partial text is present"
+                    )
+                await on_partial_reply(non_skill_text)
+                last_partial_sent_at = time.monotonic()
 
             # Execute tool_calls and collect results
             from sirius_pulse.memory.user.unified_models import UnifiedUser
@@ -498,6 +499,20 @@ class DelayedQueueTasks:
             strategy = "immediate"
 
         final_reply = clean_reply or (partial_replies[-1] if partial_replies else "")
+
+        # Fast tools can finish before the client has had time to visually render
+        # the partial reply. Keep a minimum lead window without delaying tool work.
+        if final_reply and last_partial_sent_at is not None:
+            try:
+                lead_seconds = max(
+                    0.0,
+                    float(engine.config.get("partial_reply_lead_seconds", 1.5)),
+                )
+            except (TypeError, ValueError):
+                lead_seconds = 1.5
+            remaining = lead_seconds - (time.monotonic() - last_partial_sent_at)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
 
         # 获取引用回复信息
         reply_references = chat_result.reply_references if chat_result else []
