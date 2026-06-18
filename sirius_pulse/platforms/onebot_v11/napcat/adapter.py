@@ -505,6 +505,9 @@ class NapCatAdapter(BaseAdapter):
             return None
 
         multimodal_inputs: list[dict[str, str]] = []
+        # 提取 @ 提及目标（用于小跟班触发判断等平台级语义）
+        at_user_ids: list[str] = []
+        mention_all = False
         for seg in raw_event.get("message", []):
             if seg.get("type") == "image":
                 data = seg.get("data", {})
@@ -521,6 +524,12 @@ class NapCatAdapter(BaseAdapter):
                     if is_sticker:
                         mm_item["sub_type"] = "1"
                     multimodal_inputs.append(mm_item)
+            elif seg.get("type") == "at":
+                at_qq = str(seg.get("data", {}).get("qq", ""))
+                if at_qq == "all":
+                    mention_all = True
+                elif at_qq:
+                    at_user_ids.append(at_qq)
 
         # 提取平台消息 ID（用于引用回复）
         msg_id = str(raw_event.get("message_id", ""))
@@ -535,6 +544,8 @@ class NapCatAdapter(BaseAdapter):
             card=card,
             message_id=msg_id,
             multimodal_inputs=multimodal_inputs,
+            at_user_ids=at_user_ids,
+            mention_all=mention_all,
         )
 
     async def _render_group_prompt(self, event: dict[str, Any], self_id: str, group_id: str) -> str:
@@ -749,6 +760,13 @@ class NapCatAdapter(BaseAdapter):
         if self._engine is not None and parsed.self_id:
             self._engine._bot_platform_uids["qq_native_sirius_pulse"] = parsed.self_id
 
+        # ── 小跟班模式：早期过滤 ──
+        sidekick_cfg = self.plugin_config.get("sidekick", {})
+        if sidekick_cfg.get("enabled"):
+            handled = await self._try_sidekick_dispatch(parsed, sidekick_cfg)
+            if handled:
+                return
+
         speaker_name = parsed.card or parsed.nickname or f"qq_{parsed.user_id}"
         uid = f"qq_{parsed.user_id}"
         group_id = parsed.group_id
@@ -829,6 +847,105 @@ class NapCatAdapter(BaseAdapter):
             LOG.exception("引擎处理错误 (%s/%s): %s", group_id, parsed.user_id, exc)
         except Exception as exc:
             LOG.exception("消息处理异常 (%s/%s): %s", group_id, parsed.user_id, exc)
+
+    # ─── 小跟班模式 ──────────────────────────────────────
+
+    async def _try_sidekick_dispatch(
+        self, parsed: ParsedEvent, cfg: dict[str, Any]
+    ) -> bool:
+        """尝试以小跟班模式处理消息。
+
+        Returns True 表示消息已被小跟班处理（或被忽略），不应走普通路径。
+        Returns False 表示不满足小跟班条件，应走普通路径。
+        """
+        # 忽略自己发的消息
+        if parsed.self_id and parsed.user_id == parsed.self_id:
+            return True
+
+        host_qq_ids = [str(v) for v in cfg.get("host_qq_ids", [])]
+        host_aliases = [str(v) for v in cfg.get("host_aliases", [])]
+        allow_private = bool(cfg.get("allow_private_from_host", False))
+        allow_text_alias = bool(cfg.get("allow_text_alias_trigger", False))
+        require_at_self = bool(cfg.get("require_at_self", True))
+
+        # 群聊：检查 allowed_group_ids
+        if parsed.message_type == "group":
+            allowed_groups = self._get_allowed_group_ids()
+            if allowed_groups and parsed.group_id not in allowed_groups:
+                return True  # 不在允许的群中，忽略
+        elif parsed.message_type == "private":
+            if not allow_private:
+                return True  # 私聊默认忽略
+        else:
+            return True
+
+        # 检查发送者是否为宿主
+        is_host = str(parsed.user_id) in host_qq_ids
+        if not is_host and host_aliases:
+            sender_name = parsed.card or parsed.nickname or ""
+            is_host = any(alias in sender_name for alias in host_aliases) if allow_text_alias else False
+        if not is_host:
+            return True  # 非宿主，忽略（以小跟班模式）
+
+        # 群聊必须 @self
+        if parsed.message_type == "group" and require_at_self:
+            self_id = str(parsed.self_id)
+            qq_number = str(self.plugin_config.get("qq_number", ""))
+            mentioned_self = self_id in parsed.at_user_ids or (qq_number and qq_number in parsed.at_user_ids)
+            if not mentioned_self:
+                return True  # 宿主未 @ 小跟班
+
+        # 满足所有条件：提取任务文本并分发
+        task_text = self._extract_sidekick_task(parsed, cfg)
+        if not task_text:
+            return True
+
+        LOG.info("[小跟班] 宿主 %s 指派任务: %s", parsed.user_id, task_text[:100])
+
+        # 调用引擎的小跟班处理方法
+        if self._engine is None or not self._engine_ready():
+            LOG.warning("[小跟班] 引擎未就绪，忽略任务")
+            return True
+
+        try:
+            result = await self._engine.process_sidekick_task(
+                host_user_id=parsed.user_id,
+                host_nickname=parsed.nickname or parsed.card or f"qq_{parsed.user_id}",
+                task_text=task_text,
+                group_id=parsed.group_id,
+                message_type=parsed.message_type,
+                platform_message_id=parsed.message_id,
+                at_user_ids=parsed.at_user_ids,
+                mention_all=parsed.mention_all,
+            )
+            # 发送回复
+            reply = result.get("reply", "")
+            if reply:
+                if parsed.message_type == "group":
+                    await self._send_group_text(parsed.group_id, reply)
+                else:
+                    await self._send_private_text(parsed.user_id, reply)
+        except Exception as exc:
+            LOG.exception("[小跟班] 任务处理异常: %s", exc)
+
+        return True
+
+    def _extract_sidekick_task(self, parsed: ParsedEvent, cfg: dict[str, Any]) -> str:
+        """从消息中提取小跟班任务文本，去除 @ 自我提及。"""
+        if not cfg.get("strip_self_mention_from_task", True):
+            return parsed.prompt
+
+        text = parsed.prompt
+        # 去除 @bot 的昵称标记（prompt 中渲染为 @bot_name 或 @qq_12345）
+        persona_name = self._persona_name
+        if persona_name:
+            text = text.replace(f"@{persona_name}", "").strip()
+        qq_number = str(self.plugin_config.get("qq_number", ""))
+        if qq_number:
+            text = text.replace(f"@qq_{qq_number}", "").strip()
+        # 去除 @全体成员
+        text = text.replace("@全体成员", "").strip()
+        return text
 
     # ─── 事件总线监听 ────────────────────────────────────
 

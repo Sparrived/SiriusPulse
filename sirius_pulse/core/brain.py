@@ -179,7 +179,7 @@ class Brain:
 
     - chat(request: ChatRequest) → ChatResult
       上下文感知的对话生成。内置默认处理链：
-        pre:  人格注入 → 语气对齐 → 当前时间注入 → 模型路由 → 风格覆盖 → 构建请求
+        pre:  人格注入 → 语气对齐 → 模型路由 → 风格覆盖 → 构建请求 → 当前时间追加
         call: provider.generate_async()
         post: XML 剥离 → SKIP 检测 → SKILL 解析 → 表情包解析 → token 记录
       可通过 register_pre_hook / register_post_hook 扩展。
@@ -389,7 +389,7 @@ class Brain:
             wd = weekdays[now_dt.weekday()]
             now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} {now_dt.strftime('%H:%M:%S')}"
             system_prompt = (
-                PromptFactory.build_current_time_section(now_str) + "\n\n" + system_prompt
+                system_prompt + "\n\n" + PromptFactory.build_current_time_section(now_str)
             )
 
             # ── 默认 pre: 模型路由 ──
@@ -482,7 +482,7 @@ class Brain:
                 wd = weekdays[now_dt.weekday()]
                 now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} " f"{now_dt.strftime('%H:%M:%S')}"
                 fresh_time = PromptFactory.build_current_time_section(now_str)
-                fresh_system_prompt = fresh_time + "\n\n" + base_system_prompt
+                fresh_system_prompt = base_system_prompt + "\n\n" + fresh_time
                 return GenerationRequest(
                     model=cfg.model_name,
                     system_prompt=fresh_system_prompt.strip(),

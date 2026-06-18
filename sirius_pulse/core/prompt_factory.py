@@ -843,6 +843,53 @@ class PromptFactory:
         messages = [{"role": "user", "content": "（提醒时间到了）"}]
         return system_prompt, messages
 
+    @staticmethod
+    def assemble_sidekick_task_prompt(
+        *,
+        host_name: str,
+        task_text: str,
+        skill_registry: Any | None = None,
+        caller_is_developer: bool = False,
+        adapter_type: str | None = None,
+    ) -> str:
+        """构建小跟班任务执行的 system prompt。
+
+        Args:
+            host_name: 宿主（指派人）的显示名称。
+            task_text: 宿主指派的任务文本。
+            skill_registry: 可用的技能注册表（为 None 则不注入技能说明）。
+            caller_is_developer: 宿主是否为 developer。
+            adapter_type: 适配器类型。
+
+        Returns:
+            完整的 system prompt 字符串。
+        """
+        sections: list[str] = [
+            "你现在处于「小跟班」模式。你是一个任务执行 Agent，由宿主通过 @ 提及指派任务。",
+            f"宿主 {host_name} 给你指派了以下任务：",
+            task_text,
+            "请立即执行任务并简洁汇报结果。不要闲聊、不要主动扩展话题、不要试图与宿主或其他 AI 进行多轮对话。",
+            "如果任务描述不清晰或缺少必要信息，简短地请求澄清。",
+            "如果任务超出你的能力范围，明确说明无法完成。",
+        ]
+
+        if skill_registry is not None:
+            tool_desc = skill_registry.build_tool_descriptions(
+                invocation_context=None,
+                compact=True,
+                adapter_type=adapter_type,
+            )
+            if tool_desc:
+                sections.append(
+                    "你可以使用以下工具来完成任务：\n" + tool_desc
+                )
+                sections.append(
+                    "【Function Call】\n你有一些工具（tools）可以帮助解决问题，"
+                    "主动尝试使用工具完成任务。"
+                )
+
+        return "\n\n".join(sections)
+
     # ──────────────────────────────────────────────────────────────────
     # 响应组装（返回 PromptBundle）
     # ──────────────────────────────────────────────────────────────────
@@ -896,7 +943,7 @@ class PromptFactory:
         """
 
         sections: list[str] = []
-        constraint_sections: list[str] = []  # 回复限制（长度、风格、禁忌）
+        constraint_sections: list[str] = []  # 回复限制（需要紧跟消息的动态约束）
         bd = PromptTokenBreakdown()
 
         def _add(
@@ -911,6 +958,25 @@ class PromptFactory:
                 sections.append(section_text)
             setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
 
+        # ── L0 极稳：几乎不变，缓存前缀基石 ──
+        other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
+        if other_ai:
+            _add(other_ai, "identity")
+        _add(PromptFactory.build_output_spec(sticker_names=sticker_names), "output_constraint")
+
+        # ── L1 半稳：数小时级变化 ──
+        if group_profile:
+            _add(
+                PromptFactory.build_group_style(group_profile, style_params),
+                "group_style",
+            )
+            taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
+            if taboo:
+                _add(taboo, "group_style")
+        else:
+            _add(PromptFactory.build_style_fallback(style_params), "group_style")
+
+        # ── L2 变动：每条消息级变化 ──
         bio = PromptFactory.build_biography_section(
             speaker_card=biography_speaker,
             mentioned_cards=biography_mentioned,
@@ -918,15 +984,12 @@ class PromptFactory:
         )
         if bio:
             _add(bio, "identity")
-        other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
-        if other_ai:
-            _add(other_ai, "identity")
-        _add(
-            PromptFactory.build_output_spec(sticker_names=sticker_names),
-            "output_constraint",
-            is_constraint=True,
-        )
+        if group_profile:
+            atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
+            if atm:
+                _add(atm, "emotion")
 
+        # ── L3 高频：每次 LLM 调用级变化 ──
         if emotion is not None:
             _add(
                 PromptFactory.build_emotion_context(
@@ -946,31 +1009,11 @@ class PromptFactory:
         if memories:
             _add(PromptFactory.build_memory_context(memories), "memory")
 
-        if group_profile:
-            _add(
-                PromptFactory.build_group_style(group_profile, style_params),
-                "group_style",
-                is_constraint=True,
-            )
-            taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
-            if taboo:
-                _add(taboo, "group_style", is_constraint=True)
-            atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
-            if atm:
-                _add(atm, "emotion")
-        else:
-            _add(
-                PromptFactory.build_style_fallback(style_params),
-                "group_style",
-                is_constraint=True,
-            )
-
-        # 技能指导注入到 USER 链的 constraint_sections
+        # 技能指导注入到 system prompt（L3 层）
         if skill_registry is not None:
             _add(
                 "【Function Call】\n你有一些工具（tools）可以帮助自己或他人解决问题，你是工具的主导者，主动尝试使用工具解决问题。",
                 "skills",
-                is_constraint=True,
             )
 
         if plugin_registry is not None:

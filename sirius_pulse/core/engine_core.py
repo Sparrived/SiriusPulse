@@ -158,6 +158,7 @@ class _EmotionalGroupChatEngineBase:
             "plugin_analyze": plugin_model,
             "plugin_render": plugin_model,
             "plugin_raw": plugin_model,
+            "sidekick_execute": chat_model,
         }
         orch_task_models = orch.get("task_models")
         if isinstance(orch_task_models, dict):
@@ -798,8 +799,8 @@ class _EmotionalGroupChatEngineBase:
         """
         _engine = self
 
-        _TASKS_CHAT = {"response_generate"}
-        _TASKS_CHAT_PROACTIVE = {"response_generate", "proactive_generate"}
+        _TASKS_CHAT = {"response_generate", "sidekick_execute"}
+        _TASKS_CHAT_PROACTIVE = {"response_generate", "proactive_generate", "sidekick_execute"}
 
         # ── priority 0: 对话深度追踪 ──
         def _hook_depth(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
@@ -1391,6 +1392,205 @@ class _EmotionalGroupChatEngineBase:
         self._background_update(group_id, message, emotion, intent, user_id)
 
         return result
+
+    async def process_sidekick_task(
+        self,
+        *,
+        host_user_id: str,
+        host_nickname: str,
+        task_text: str,
+        group_id: str,
+        message_type: str = "group",
+        platform_message_id: str = "",
+        at_user_ids: list[str] | None = None,
+        mention_all: bool = False,
+    ) -> dict[str, Any]:
+        """小跟班任务处理入口——跳过社交决策，直接执行任务。
+
+        Args:
+            host_user_id: 宿主的平台用户 ID。
+            host_nickname: 宿主的显示名称。
+            task_text: 去除 @ 后的任务文本。
+            group_id: 群组 ID（或私聊 ID）。
+            message_type: "group" 或 "private"。
+            platform_message_id: 平台消息 ID。
+            at_user_ids: 原始 @ 列表。
+            mention_all: 是否 @ 了全体成员。
+
+        Returns:
+            与 process_message 兼容的 dict: {"reply": str, "partial_replies": list, "message_group": Any}
+        """
+        from sirius_pulse.skills.models import SkillInvocationContext
+
+        sidekick_cfg = self.config.get("sidekick", {})
+        max_skill_rounds = sidekick_cfg.get("max_skill_rounds") or self.config.get(
+            "max_skill_rounds", 3
+        )
+        enable_skills = sidekick_cfg.get("enable_skills", True)
+
+        # 注册宿主用户信息
+        uid = f"qq_{host_user_id}"
+        participant = UnifiedUser(
+            name=host_nickname,
+            user_id=uid,
+            identities={"qq_native_sirius_pulse": host_user_id},
+            metadata={"platform": "qq", "qq_uid": host_user_id, "is_ai": True},
+        )
+        self._perception(
+            group_id,
+            Message(
+                role="user",
+                content=task_text,
+                speaker=host_nickname,
+                channel="qq_native_sirius_pulse",
+                channel_user_id=host_user_id,
+                group_id=group_id,
+                message_id=platform_message_id,
+                sender_type="other_ai",
+            ),
+            [participant],
+        )
+
+        # 构建小跟班任务 prompt
+        system_prompt = PromptFactory.assemble_sidekick_task_prompt(
+            host_name=host_nickname,
+            task_text=task_text,
+            skill_registry=self._skill_registry if enable_skills else None,
+            caller_is_developer=bool(sidekick_cfg.get("trust_host_as_developer", False)),
+            adapter_type="napcat",
+        )
+
+        # 使用 ContextAssembler 构建完整消息
+        msgs, _ = self.context_assembler.build_messages_with_breakdown(
+            group_id=group_id,
+            current_query=task_text,
+            system_prompt=system_prompt,
+            include_pending=False,
+        )
+        system_prompt = msgs[0]["content"]
+        messages = msgs[1:]
+
+        # Brain.chat 调用
+        from sirius_pulse.core.brain import ChatRequest
+
+        chat_result = await self.brain.chat(
+            ChatRequest(
+                group_id=group_id,
+                user_id=uid,
+                system_prompt=system_prompt,
+                messages=messages,
+                task_name="sidekick_execute",
+                enable_skills=enable_skills,
+                caller_is_developer=bool(
+                    sidekick_cfg.get("trust_host_as_developer", False)
+                ),
+                post_process=False,  # 小跟班不走引擎 post hooks
+            )
+        )
+
+        reply = chat_result.clean_text or ""
+        reply_references = chat_result.reply_references or []
+
+        # 简单的 tool-call 循环（复用 bg_tasks_delayed 的模式）
+        tool_calls = chat_result.tool_calls or []
+        if tool_calls and self._skill_registry and self._skill_executor:
+            for _round in range(max_skill_rounds):
+                # 构建 assistant 消息
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": reply or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function_name,
+                                "arguments": tc.function_arguments,
+                            },
+                        }
+                        for tc in tool_calls
+                    ],
+                }
+                messages.append(assistant_msg)
+
+                # 执行 tool calls
+                for tc in tool_calls:
+                    skill = self._skill_registry.get(tc.function_name)
+                    if skill is None:
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": f"Skill '{tc.function_name}' not found",
+                            }
+                        )
+                        continue
+
+                    # 技能权限检查
+                    allowed_skills = sidekick_cfg.get("allowed_skills", [])
+                    denied_skills = sidekick_cfg.get("denied_skills", [])
+                    if denied_skills and tc.function_name in denied_skills:
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": f"Skill '{tc.function_name}' is denied",
+                            }
+                        )
+                        continue
+                    if allowed_skills and tc.function_name not in allowed_skills:
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": f"Skill '{tc.function_name}' not in allowed list",
+                            }
+                        )
+                        continue
+
+                    try:
+                        import json
+
+                        params = json.loads(tc.function_arguments) if tc.function_arguments else {}
+                    except Exception:
+                        params = {}
+
+                    ctx = SkillInvocationContext(caller=participant)
+                    try:
+                        result = await self._skill_executor.execute_async(
+                            skill, params, invocation_context=ctx
+                        )
+                        tool_content = (
+                            result.to_display_text() if result.success else (result.error or "Unknown error")
+                        )
+                    except Exception as exc:
+                        tool_content = str(exc)
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
+                    )
+
+                # 再次调用 LLM
+                chat_result = await self.brain.chat(
+                    ChatRequest(
+                        group_id=group_id,
+                        user_id=uid,
+                        system_prompt=system_prompt,
+                        messages=messages,
+                        task_name="sidekick_execute",
+                        enable_skills=enable_skills,
+                        post_process=False,
+                    )
+                )
+                reply = chat_result.clean_text or ""
+                tool_calls = chat_result.tool_calls or []
+                if not tool_calls:
+                    break
+
+        return {
+            "reply": reply,
+            "partial_replies": [],
+            "reply_references": reply_references,
+        }
 
     # ------------------------------------------------------------------
     # Plugin intent detection (for pipeline short-circuit)

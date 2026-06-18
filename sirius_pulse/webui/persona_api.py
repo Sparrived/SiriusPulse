@@ -473,6 +473,7 @@ async def api_experience_get(request: web.Request, persona_manager: Any) -> web.
             "other_ai_names": exp.other_ai_names,
             "message_prefixes": exp.message_prefixes,
             "pinned_message_max_carry_count": exp.pinned_message_max_carry_count,
+            "sidekick": exp.sidekick.to_dict(),
         }
     )
 
@@ -520,6 +521,11 @@ async def api_experience_post(request: web.Request, persona_manager: Any) -> web
     ):
         if key in experience_data:
             setattr(exp, key, experience_data[key])
+
+    if "sidekick" in experience_data:
+        from sirius_pulse.persona_config import SidekickConfig
+
+        exp.sidekick = SidekickConfig.from_dict(experience_data["sidekick"])
 
     exp.save(paths.experience)
     _request_config_reload(name, "experience", persona_manager)

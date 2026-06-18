@@ -496,9 +496,14 @@ class ContextAssembler:
         """富化系统提示词：注入 Situation 摘要 + 日记 + 传记。"""
         from sirius_pulse.core.prompt_factory import PromptFactory
 
-        # 先用 PromptFactory 注入日记（旧格式）
+        # 注入传记信息（较稳定，放最前面以最大化缓存前缀匹配）
+        enriched = base_prompt
+        if biography_sections:
+            enriched += f"\n\n<biography>\n{biography_sections}\n</biography>"
+
+        # 注入日记（旧格式）
         enriched = PromptFactory.enrich_system_prompt(
-            base_prompt=base_prompt,
+            base_prompt=enriched,
             diary_entries=diary_entries,
             history_xml="",
             cross_group_xml="",
@@ -510,7 +515,7 @@ class ContextAssembler:
             if slices_text:
                 enriched += f"\n\n<diary_slices>\n{slices_text}\n</diary_slices>"
 
-        # 注入当日 Situation 摘要 + 最新 Situation 涉及的原始消息
+        # 注入当日 Situation 摘要 + 最新 Situation 涉及的原始消息（变化最频繁，放最后）
         if today_summaries:
             summaries_text = "\n".join(f"- {s}" for s in today_summaries)
             enriched += f"\n\n<today_context>\n今天的经历摘要：\n{summaries_text}"
@@ -520,10 +525,6 @@ class ContextAssembler:
                 )
                 enriched += f"\n\n最新压缩涉及的原始消息（部分内容）：\n{source_xml}"
             enriched += "\n</today_context>"
-
-        # 注入传记信息
-        if biography_sections:
-            enriched += f"\n\n<biography>\n{biography_sections}\n</biography>"
 
         return enriched
 

@@ -610,7 +610,7 @@ class DelayedQueueTasks:
             sticker_names=getattr(engine, "_sticker_names", None),
         )
         if glossary:
-            bundle.system_prompt = f"{TAG_GLOSSARY}\n{glossary}\n\n{bundle.system_prompt}"
+            bundle.system_prompt = f"{bundle.system_prompt}\n\n{TAG_GLOSSARY}\n{glossary}"
         return bundle
 
     def _inject_group_id_into_latest_reminder(self, group_id: str) -> None:
