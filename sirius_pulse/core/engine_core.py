@@ -206,6 +206,7 @@ class _EmotionalGroupChatEngineBase:
             self.basic_memory,
             self.diary_manager._retriever,
             biography_view=self.biography_view,
+            is_source_diarized=self.diary_manager.is_source_diarized,
         )
         self.glossary_manager = GlossaryManager(self.work_path, persona_name=self.persona.name)
 
@@ -908,14 +909,6 @@ class _EmotionalGroupChatEngineBase:
             # 从 clean_text 中移除钉住/取消钉住指令标记
             _result.clean_text = strip_pin_messages(_result.clean_text)
 
-        # ── priority 20: 表情包发送 ──
-        def _hook_stickers(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
-            if not _result.sticker_names:
-                return
-            asyncio.create_task(
-                _engine._send_stickers_by_names(_req.group_id, _result.sticker_names)
-            )
-
         # ── priority 30: 回复去重（仅常规对话）──
         def _hook_dedup(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             if not _result.clean_text:
@@ -941,27 +934,13 @@ class _EmotionalGroupChatEngineBase:
 
         # ── priority 40: 记忆记录 ──
         def _hook_memory(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
-            # 确定要记录的内容：优先使用 clean_text，
-            # 若为空但有表情包则记录表情包标签（确保纯表情包回复也被记录）
+            # 确定要记录的内容：只记录实际文本回复。
             record_content = _result.clean_text
             if not record_content:
-                if _result.sticker_names:
-                    record_content = f"[STICKERS: {', '.join(_result.sticker_names)}]"
-                else:
-                    return
+                return
 
             # 收集被处理的标签（仅模型输出相关）
             entry_tags: list[dict[str, str]] = []
-
-            # 模型输出的表情包标签
-            if _result.sticker_names:
-                names_str = ", ".join(_result.sticker_names[:3])
-                entry_tags.append(
-                    {
-                        "type": "sticker",
-                        "label": f"表情包: {names_str}" if _result.sticker_names else "表情包",
-                    }
-                )
 
             # 模型输出的钉住/取消钉住指令
             from sirius_pulse.core.pinned_message import parse_pin_messages, parse_unpin_messages
@@ -1096,7 +1075,6 @@ class _EmotionalGroupChatEngineBase:
         self.brain.register_post_hook(_hook_depth, priority=0, task_filter=_ALL)
         self.brain.register_post_hook(_hook_reply_reference, priority=10, task_filter=_ALL)
         self.brain.register_post_hook(_hook_pin_messages, priority=15, task_filter=_ALL)
-        self.brain.register_post_hook(_hook_stickers, priority=20, task_filter=_ALL)
         self.brain.register_post_hook(_hook_dedup, priority=30, task_filter=_CHAT)
         self.brain.register_post_hook(_hook_memory, priority=40, task_filter=_ALL)
         self.brain.register_post_hook(_hook_timestamp, priority=50, task_filter=_ALL)
@@ -1501,10 +1479,16 @@ class _EmotionalGroupChatEngineBase:
 
         reply = chat_result.clean_text or ""
         reply_references = chat_result.reply_references or []
+        deferred_sticker_names: list[str] = []
 
         # 简单的 tool-call 循环（复用 bg_tasks_delayed 的模式）
         tool_calls = chat_result.tool_calls or []
         if tool_calls and self._skill_registry and self._skill_executor:
+            from sirius_pulse.core.sticker_delivery import (
+                dedupe_sticker_names,
+                defer_send_sticker_tool,
+            )
+
             for _round in range(max_skill_rounds):
                 # 构建 assistant 消息
                 assistant_msg = {
@@ -1526,6 +1510,13 @@ class _EmotionalGroupChatEngineBase:
 
                 # 执行 tool calls
                 for tc in tool_calls:
+                    try:
+                        import json
+
+                        params = json.loads(tc.function_arguments) if tc.function_arguments else {}
+                    except Exception:
+                        params = {}
+
                     skill = self._skill_registry.get(tc.function_name)
                     if skill is None:
                         messages.append(
@@ -1534,6 +1525,17 @@ class _EmotionalGroupChatEngineBase:
                                 "tool_call_id": tc.id,
                                 "content": f"Skill '{tc.function_name}' not found",
                             }
+                        )
+                        continue
+
+                    if tc.function_name == "send_sticker":
+                        names, tool_content = defer_send_sticker_tool(
+                            params,
+                            available_names=getattr(self, "_sticker_names", []) or [],
+                        )
+                        deferred_sticker_names.extend(names)
+                        messages.append(
+                            {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
                         )
                         continue
 
@@ -1558,13 +1560,6 @@ class _EmotionalGroupChatEngineBase:
                             }
                         )
                         continue
-
-                    try:
-                        import json
-
-                        params = json.loads(tc.function_arguments) if tc.function_arguments else {}
-                    except Exception:
-                        params = {}
 
                     ctx = SkillInvocationContext(caller=participant)
                     try:
@@ -1596,11 +1591,14 @@ class _EmotionalGroupChatEngineBase:
                 tool_calls = chat_result.tool_calls or []
                 if not tool_calls:
                     break
+        else:
+            from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
 
         return {
             "reply": reply,
             "partial_replies": [],
             "reply_references": reply_references,
+            "sticker_names": dedupe_sticker_names(deferred_sticker_names),
         }
 
     # ------------------------------------------------------------------

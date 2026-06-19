@@ -908,6 +908,7 @@ class NapCatAdapter(BaseAdapter):
                         await self._send_group_text(group_id, clean_reply)
                     else:
                         await self._send_private_text(parsed.user_id, clean_reply)
+            await self._send_stickers_after_reply(group_id, result.get("sticker_names", []))
         except asyncio.CancelledError:
             raise
         except RuntimeError as exc:
@@ -992,6 +993,10 @@ class NapCatAdapter(BaseAdapter):
                     await self._send_group_text(parsed.group_id, reply)
                 else:
                     await self._send_private_text(parsed.user_id, reply)
+            await self._send_stickers_after_reply(
+                parsed.group_id,
+                result.get("sticker_names", []),
+            )
         except Exception as exc:
             LOG.exception("[小跟班] 任务处理异常: %s", exc)
 
@@ -1038,10 +1043,13 @@ class NapCatAdapter(BaseAdapter):
             if event.type == SessionEventType.PROACTIVE_RESPONSE_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 reply = event.data.get("reply", "")
-                if reply and gid in self._get_allowed_group_ids():
+                sticker_names = event.data.get("sticker_names", [])
+                if gid in self._get_allowed_group_ids():
                     if not engine.is_proactive_enabled(gid):
                         return
-                    await self._send_group_text(gid, reply)
+                    if reply:
+                        await self._send_group_text(gid, reply)
+                    await self._send_stickers_after_reply(gid, sticker_names)
             elif event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
 
@@ -1064,13 +1072,16 @@ class NapCatAdapter(BaseAdapter):
                 for result in results:
                     reply = result.get("reply", "")
                     reply_refs = result.get("reply_references", [])
+                    sticker_names = result.get("sticker_names", [])
                     if gid.startswith("private_"):
                         uid = gid.replace("private_", "").replace("qq_", "")
                         if reply:
                             await self._send_private_text(uid, reply, reply_refs)
+                        await self._send_stickers_after_reply(gid, sticker_names)
                     elif gid in self._get_allowed_group_ids():
                         if reply:
                             await self._send_group_text(gid, reply, reply_refs)
+                        await self._send_stickers_after_reply(gid, sticker_names)
             elif event.type == SessionEventType.DEVELOPER_CHAT_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 reply = event.data.get("reply", "")
@@ -1194,6 +1205,20 @@ class NapCatAdapter(BaseAdapter):
             except Exception as exc:
                 LOG.warning("发送私聊消息失败: %s", exc)
                 return False
+
+    async def _send_stickers_after_reply(self, group_id: str, names: Any) -> None:
+        if not names or self._engine is None:
+            return
+        if isinstance(names, str):
+            sticker_names = [names.strip()] if names.strip() else []
+        else:
+            sticker_names = [str(name).strip() for name in names if str(name).strip()]
+        if not sticker_names:
+            return
+        try:
+            await self._engine._send_stickers_by_names(group_id, sticker_names)
+        except Exception as exc:
+            LOG.warning("发送回复后的表情包失败: %s", exc)
 
     async def _send_group_image(self, group_id: str, image_path: str) -> None:
         """发送群聊图片。"""

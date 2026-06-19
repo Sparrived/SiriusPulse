@@ -168,6 +168,30 @@ class DiaryManager:
         existing = self._store.load(group_id)
         existing.append(entry)
         self._store.save(group_id, existing)
+        sources = self._diarized_sources.setdefault(group_id, set())
+        sources.update(entry.source_ids)
+
+    def add_entries(self, group_id: str, entries: list[DiaryEntry]) -> None:
+        """Add entries while preserving all existing diary entries."""
+        if not entries:
+            return
+        self.ensure_group_loaded(group_id)
+        existing = self._store.load(group_id)
+        existing_ids = {entry.entry_id for entry in existing}
+        sources = self._diarized_sources.setdefault(group_id, set())
+        changed = False
+
+        for entry in entries:
+            if entry.entry_id in existing_ids:
+                continue
+            self._indexer.add(entry)
+            existing.append(entry)
+            existing_ids.add(entry.entry_id)
+            sources.update(entry.source_ids)
+            changed = True
+
+        if changed:
+            self._store.save(group_id, existing)
 
     def load_group(self, group_id: str) -> None:
         """Load persisted entries for a group into the index."""
@@ -263,6 +287,9 @@ class DiaryManager:
         return [e for e in self._indexer.list_all() if e.group_id == group_id]
 
     def replace_entries(self, group_id: str, new_entries: list[DiaryEntry]) -> None:
+        """Preserve old entries and append new entries for consolidation."""
+        self.add_entries(group_id, new_entries)
+        return
         """Replace all entries for a group (used after consolidation).
 
         Batch-clears the in-memory index and vector store for this group,

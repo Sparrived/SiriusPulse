@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
-from sirius_pulse.core.utils import parse_sticker_tags, strip_conversation_history_xml
+from sirius_pulse.core.utils import strip_conversation_history_xml
 from sirius_pulse.providers.base import GenerationResult, ToolCall
 
 logger = logging.getLogger(__name__)
@@ -555,11 +555,7 @@ class Brain:
             # ── 默认 post: 处理 tool_calls ──
             tool_calls: list[ToolCall] = gen_result.tool_calls or []
 
-            # ── 默认 post: 解析表情包标签 ──
-            sticker_names: list[str] = []
             clean_reply = reply.strip()
-            if clean_reply:
-                clean_reply, sticker_names = parse_sticker_tags(clean_reply, self.sticker_names)
 
             # ── 默认 post: 记录 token 用量 ──
             token_record = self._record_chat_tokens(
@@ -582,7 +578,7 @@ class Brain:
                 duration_ms=duration_ms,
                 token_record=token_record,
                 system_prompt=system_prompt,
-                sticker_names=sticker_names,
+                sticker_names=[],
                 has_tool_call=bool(tool_calls),
                 tool_calls=tool_calls,
             )

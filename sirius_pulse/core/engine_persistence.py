@@ -450,6 +450,8 @@ class EnginePersistence:
             engine.context_assembler = ContextAssembler(
                 engine.basic_memory,
                 engine.diary_manager._retriever,
+                biography_view=getattr(engine, "biography_view", None),
+                is_source_diarized=engine.diary_manager.is_source_diarized,
             )
 
             # Token usage records

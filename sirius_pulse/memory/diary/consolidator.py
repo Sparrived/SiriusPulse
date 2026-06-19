@@ -95,6 +95,12 @@ class DiaryConsolidator:
         if len(entries) < self.min_entries:
             return []
 
+        covered_ids = self._covered_diary_ids(entries)
+        if covered_ids:
+            entries = [e for e in entries if e.entry_id not in covered_ids]
+            if len(entries) < self.min_entries:
+                return []
+
         # Only consider entries that have embeddings
         indexed = [(i, e) for i, e in enumerate(entries) if e.embedding]
         if len(indexed) < 2:
@@ -185,8 +191,11 @@ class DiaryConsolidator:
 
         # Aggregate source_ids from all merged entries
         all_source_ids: list[str] = []
+        source_diary_ids: list[str] = []
         for e in cluster:
             all_source_ids.extend(e.source_ids)
+            source_diary_ids.append(e.entry_id)
+            source_diary_ids.extend(e.source_diary_ids)
 
         # Merge count = max merge_count in cluster + 1
         merged_count = max(e.merge_count for e in cluster) + 1
@@ -198,13 +207,51 @@ class DiaryConsolidator:
                 (e.created_at for e in cluster),
                 default=datetime.now(timezone.utc).isoformat(),
             ),
-            source_ids=all_source_ids,
+            source_ids=self._dedupe(all_source_ids),
             content=content,
             keywords=keywords,
             summary=summary,
             embedding=None,  # Will be computed on add() if model available
             merge_count=merged_count,
+            source_diary_ids=self._dedupe(source_diary_ids),
         )
+
+    def append_merged_entries(
+        self,
+        group_id: str,
+        clusters: list[list[DiaryEntry]],
+        merged: list[DiaryEntry],
+    ) -> None:
+        """Append merged entries while retaining all originals."""
+        if not merged:
+            return
+        before = len(self.manager.get_entries_for_group(group_id))
+        self.manager.add_entries(group_id, merged)
+        logger.info(
+            "Diary consolidation for %s: appended %d merged entries from %d clusters, preserved %d originals",
+            group_id,
+            len(merged),
+            len(clusters),
+            before,
+        )
+
+    @staticmethod
+    def _covered_diary_ids(entries: list[DiaryEntry]) -> set[str]:
+        covered: set[str] = set()
+        for entry in entries:
+            covered.update(entry.source_diary_ids or [])
+        return covered
+
+    @staticmethod
+    def _dedupe(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
 
     def rebuild_entries(
         self,
@@ -212,6 +259,9 @@ class DiaryConsolidator:
         clusters: list[list[DiaryEntry]],
         merged: list[DiaryEntry],
     ) -> None:
+        """Backward-compatible append-only consolidation entry point."""
+        self.append_merged_entries(group_id, clusters, merged)
+        return
         """Atomically replace clustered old entries with merged entries."""
         entries = self.manager.get_entries_for_group(group_id)
         clustered_ids = {e.entry_id for cluster in clusters for e in cluster}

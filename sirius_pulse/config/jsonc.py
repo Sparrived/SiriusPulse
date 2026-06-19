@@ -96,6 +96,7 @@ def build_default_orchestration_payload() -> dict[str, Any]:
         "memory_extract_min_content_length": defaults.memory_extract_min_content_length,
         "event_extract_batch_size": defaults.event_extract_batch_size,
         "consolidation_interval_seconds": defaults.consolidation_interval_seconds,
+        "memory_idle_consolidation_seconds": defaults.memory_idle_consolidation_seconds,
         "consolidation_min_entries": defaults.consolidation_min_entries,
         "consolidation_min_notes": defaults.consolidation_min_notes,
         "consolidation_min_facts": defaults.consolidation_min_facts,

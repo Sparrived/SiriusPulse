@@ -201,6 +201,7 @@ class OrchestrationPolicy:
 
     # Prompt-driven content splitting (built-in marker; AI autonomously decides granularity)
     enable_prompt_driven_splitting: bool = True
+    memory_idle_consolidation_seconds: int = 3600
 
     # Memory Extract frequency control (避免调用过于频繁导致内容碎片化)
     memory_extract_batch_size: int = 1  # 每隔N条消息执行一次提取（1=每次，3=每3条）
@@ -319,6 +320,8 @@ class OrchestrationPolicy:
             raise ValueError("heat_window_seconds 必须大于 0。")
         if self.pending_message_threshold < 0:
             raise ValueError("pending_message_threshold 不能小于 0。")
+        if self.memory_idle_consolidation_seconds <= 0:
+            raise ValueError("memory_idle_consolidation_seconds must be greater than 0.")
         if self.min_reply_interval_seconds < 0:
             raise ValueError("min_reply_interval_seconds 不能小于 0。")
 

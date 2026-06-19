@@ -333,3 +333,84 @@ async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed()
         await tasks.tick_delayed_queue("group-1", on_partial_reply=fail_partial_send)
 
     execute_skill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_deferred():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "send sticker",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    tool_call = ToolCall(
+        id="call-sticker",
+        function_name="send_sticker",
+        function_arguments='{"names": ["开心"]}',
+    )
+    skill = SimpleNamespace(name="send_sticker", silent=True, developer_only=False)
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    execute_skill = AsyncMock(return_value=SkillResult(success=True, data={"sent": True}))
+    engine = SimpleNamespace(
+        config={"max_skill_rounds": 2},
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(user_id="u1")
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "send sticker"},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(
+            chat=AsyncMock(
+                return_value=SimpleNamespace(
+                    raw_text="先说正文",
+                    clean_text="先说正文",
+                    tool_calls=[tool_call],
+                    reply_references=[],
+                    sticker_names=[],
+                )
+            )
+        ),
+        _skill_registry=SimpleNamespace(get=lambda name: skill),
+        _skill_executor=SimpleNamespace(
+            set_chat_context=lambda **kwargs: None,
+            execute_async=execute_skill,
+        ),
+        _sticker_names=["开心"],
+        _pending_biography={},
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="send sticker",
+        token_breakdown=None,
+    )
+
+    results = await tasks.tick_delayed_queue("group-1")
+
+    execute_skill.assert_not_awaited()
+    assert results[0]["reply"] == "先说正文"
+    assert results[0]["sticker_names"] == ["开心"]

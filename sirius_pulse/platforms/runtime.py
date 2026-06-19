@@ -467,6 +467,9 @@ class EngineRuntime:
             "memory_promote_interval_seconds": int(
                 self.plugin_config.get("memory_promote_interval_seconds", 300)
             ),
+            "memory_idle_consolidation_seconds": int(
+                self.plugin_config.get("memory_idle_consolidation_seconds", 3600)
+            ),
             # Developer proactive private-chat memory conversations
             "proactive_developer_chat_interval_seconds": int(
                 self.plugin_config.get("proactive_developer_chat_interval_seconds", 1800)

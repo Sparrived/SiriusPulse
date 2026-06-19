@@ -40,7 +40,7 @@ class ColdDetector:
     WARM_SILENCE_SECONDS = 300
 
     # 冷寂阈值：30 分钟
-    COLD_SILENCE_SECONDS = 1800
+    COLD_SILENCE_SECONDS = 3600
 
     @staticmethod
     def check(heat: float, seconds_since_last: float) -> str:

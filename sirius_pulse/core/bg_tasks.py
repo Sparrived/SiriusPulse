@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.memory.cold_detector import ColdState
 
 if TYPE_CHECKING:
@@ -122,6 +122,7 @@ class BackgroundTasks:
         engine = self._engine
         interval = engine.config.get("memory_promote_interval_seconds", 180)
         volume_threshold = engine.config.get("diary_volume_threshold", 8)
+        idle_consolidation_seconds = engine.config.get("memory_idle_consolidation_seconds", 3600)
         while engine._bg_running:
             await asyncio.sleep(interval)
             try:
@@ -135,7 +136,10 @@ class BackgroundTasks:
 
                     # ── Layer 3: 冷寂 → 日记生成 ──
                     if cold_state == ColdState.COLD:
-                        candidates = engine.basic_memory.get_archive_candidates(group_id)
+                        candidates = engine.basic_memory.get_consolidation_candidates(
+                            group_id,
+                            include_context=seconds_since_last >= idle_consolidation_seconds,
+                        )
                         if not candidates:
                             continue
                         candidates = [
@@ -211,7 +215,7 @@ class BackgroundTasks:
 
                 if merged_entries:
                     await asyncio.to_thread(
-                        consolidator.rebuild_entries, group_id, clusters, merged_entries
+                        consolidator.append_merged_entries, group_id, clusters, merged_entries
                     )
                     engine._log_inner_thought(
                         f"整理了 {len(clusters)} 组相似日记，合并成 {len(merged_entries)} 条喵~"

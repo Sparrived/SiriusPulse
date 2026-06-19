@@ -115,6 +115,66 @@ def test_context_assembler_when_pinned_messages_are_provided_then_injects_curren
     assert "Remember the deployment window." in messages[-1]["content"]
 
 
+def test_context_assembler_keeps_completed_history_in_system_prefix_until_diary_promotion():
+    basic = BasicMemoryManager()
+    basic.add_entry("group_a", "alice", "human", "first human", speaker_name="Alice")
+    basic.add_entry("group_a", "assistant", "assistant", "first reply", speaker_name="Bot")
+    basic.add_entry("group_a", "bob", "human", "pending human", speaker_name="Bob")
+    assembler = ContextAssembler(
+        basic,
+        _NoopDiaryRetriever(),
+        is_source_diarized=lambda _group_id, _entry_id: False,
+    )
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="current question",
+        system_prompt="system",
+        speaker_user_id="bob",
+        speaker_name="Bob",
+    )
+    system_before = messages[0]["content"]
+
+    assert system_before.startswith("<cacheable_conversation_history>")
+    assert "first human" in system_before
+    assert "first reply" in system_before
+    assert "pending human" not in system_before
+    assert [message["role"] for message in messages[1:]] == ["user"]
+
+    basic.add_entry("group_a", "charlie", "human", "another pending", speaker_name="Charlie")
+    messages_after_pending = assembler.build_messages(
+        group_id="group_a",
+        current_query="current question",
+        system_prompt="system",
+        speaker_user_id="bob",
+        speaker_name="Bob",
+    )
+
+    assert messages_after_pending[0]["content"] == system_before
+
+
+def test_context_assembler_removes_diarized_sources_from_system_prefix():
+    basic = BasicMemoryManager()
+    first = basic.add_entry("group_a", "alice", "human", "first human", speaker_name="Alice")
+    second = basic.add_entry("group_a", "assistant", "assistant", "first reply", speaker_name="Bot")
+    diarized = {first.entry_id, second.entry_id}
+    assembler = ContextAssembler(
+        basic,
+        _NoopDiaryRetriever(),
+        is_source_diarized=lambda _group_id, entry_id: entry_id in diarized,
+    )
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="current question",
+        system_prompt="system",
+    )
+
+    assert "<cacheable_conversation_history>" not in messages[0]["content"]
+    assert "first human" not in messages[0]["content"]
+    assert "first reply" not in messages[0]["content"]
+
+
 def test_output_spec_does_not_tell_model_to_list_pinned_messages():
     spec = PromptFactory.build_output_spec()
 

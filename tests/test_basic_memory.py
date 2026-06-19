@@ -34,6 +34,25 @@ def test_diary_candidates_when_dialogue_outgrows_context_then_returns_older_turn
     assert [entry.content for entry in candidates] == ["turn-0", "turn-1", "turn-2"]
 
 
+def test_consolidation_candidates_when_group_is_idle_then_include_active_context():
+    mgr = BasicMemoryManager(context_window=2)
+
+    for index in range(5):
+        mgr.add_entry("group_a", "alice", "user", f"turn-{index}", speaker_name="Alice")
+
+    hot_candidates = mgr.get_consolidation_candidates("group_a", include_context=False)
+    idle_candidates = mgr.get_consolidation_candidates("group_a", include_context=True)
+
+    assert [entry.content for entry in hot_candidates] == ["turn-0", "turn-1", "turn-2"]
+    assert [entry.content for entry in idle_candidates] == [
+        "turn-0",
+        "turn-1",
+        "turn-2",
+        "turn-3",
+        "turn-4",
+    ]
+
+
 def test_group_memory_when_two_groups_are_active_then_dialogues_stay_isolated():
     mgr = BasicMemoryManager()
 
@@ -87,13 +106,13 @@ def test_group_cold_signal_when_last_message_is_old_then_diary_can_be_promoted()
         "alice",
         "user",
         "很久前的聊天",
-        timestamp=_old_timestamp(minutes_ago=40),
+        timestamp=_old_timestamp(minutes_ago=70),
     )
 
     heat, seconds_since_last = mgr.get_cold_params("group_a")
 
     assert heat < 0.35
-    assert seconds_since_last >= 30 * 60
+    assert seconds_since_last >= 60 * 60
 
 
 def test_clear_group_when_admin_resets_session_then_only_target_group_is_removed():

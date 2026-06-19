@@ -83,7 +83,6 @@ TAG_RECENT_MESSAGES = "【最近消息】"
 # 消息渲染标签
 TAG_FACE = "[表情：{name}]"
 TAG_IMAGE = "【图片：{name}】"
-TAG_STICKER = '[STICKERS："{name}"]'
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -346,7 +345,7 @@ class PromptFactory:
         if sticker_names:
             names_str = "、".join(sticker_names)
             spec += (
-                "\n7. 需要发送表情包时，使用 send_sticker 工具，names 参数只能填下面的可选名称；不要把 [STICKERS] 标记写进正文。"
+                "\n7. 需要发送表情包时，使用 send_sticker 工具，names 参数只能填下面的可选名称；不要把表情包名称或任何发送标记写进正文。"
                 f"可选表情包：{names_str}\n"
             )
         return spec

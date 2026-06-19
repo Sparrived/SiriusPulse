@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -36,10 +37,12 @@ class ContextAssembler:
         basic_mgr: BasicMemoryManager,
         diary_retriever: DiaryRetriever,
         biography_view: BiographyView | None = None,
+        is_source_diarized: Callable[[str, str], bool] | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._diary = diary_retriever
         self._bio_view = biography_view
+        self._is_source_diarized = is_source_diarized
 
     # ------------------------------------------------------------------
     # Public API
@@ -121,10 +124,7 @@ class ContextAssembler:
             return f"{pinned_context}\n\n{content}" if content else pinned_context
 
         # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息，上限 50 条）
-        if recent_n > 0:
-            recent = self._basic.get_context(group_id, n=recent_n)
-        else:
-            recent = self._basic.get_all(group_id)[-50:]
+        recent = self._cacheable_history_entries(group_id)
         pending_entries: list[Any] = []
 
         if recent and not include_pending:
@@ -139,6 +139,16 @@ class ContextAssembler:
                 # last_assistant 之后的消息是 pending（未回复的）
                 pending_entries = recent[last_assistant_idx + 1 :]
                 recent = recent[: last_assistant_idx + 1]
+
+        history_xml = self._entries_to_xml(recent) if recent else ""
+        enriched_system = self._enrich_system_prompt(
+            system_prompt,
+            diary_entries,
+            biography_sections=bio_sections,
+            history_xml=history_xml,
+        )
+        messages = [{"role": "system", "content": enriched_system}]
+        recent = []
 
         if recent:
             current_user_entries: list[Any] = []
@@ -290,6 +300,25 @@ class ContextAssembler:
         """Build XML representation of recent conversation history."""
         return self._build_history_xml(group_id, n=n, include_pending=include_pending)
 
+    def _cacheable_history_entries(self, group_id: str) -> list[Any]:
+        entries = self._basic.get_all(group_id)
+        if not entries or self._is_source_diarized is None:
+            return list(entries)
+
+        result: list[Any] = []
+        for entry in entries:
+            entry_id = getattr(entry, "entry_id", "")
+            if not entry_id:
+                result.append(entry)
+                continue
+            try:
+                diarized = self._is_source_diarized(group_id, entry_id)
+            except Exception:
+                diarized = False
+            if not diarized:
+                result.append(entry)
+        return result
+
     # ------------------------------------------------------------------
     # Biography 传记
     # ------------------------------------------------------------------
@@ -415,6 +444,7 @@ class ContextAssembler:
         base_prompt: str,
         diary_entries: list[Any],
         biography_sections: str = "",
+        history_xml: str = "",
     ) -> str:
         """富化系统提示词：注入日记 + 传记。"""
         from sirius_pulse.core.prompt_factory import PromptFactory
@@ -432,6 +462,16 @@ class ContextAssembler:
             cross_group_xml="",
         )
 
+        if history_xml:
+            history_prefix = "\n".join(
+                [
+                    "<cacheable_conversation_history>",
+                    "Completed raw messages not yet promoted into diary memory.",
+                    history_xml,
+                    "</cacheable_conversation_history>",
+                ]
+            )
+            return f"{history_prefix}\n\n{enriched}"
         return enriched
 
     def _enrich_search_query(

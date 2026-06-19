@@ -21,6 +21,7 @@ class DiaryEntry(JsonSerializable):
         summary: One-line summary (≤50 chars recommended).
         embedding: Semantic vector for RAG retrieval (optional).
         merge_count: How many times this entry has been merged with others.
+        source_diary_ids: Diary entry_ids covered by this higher-level entry.
     """
 
     entry_id: str
@@ -32,6 +33,7 @@ class DiaryEntry(JsonSerializable):
     summary: str = ""
     embedding: list[float] | None = None
     merge_count: int = 0
+    source_diary_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

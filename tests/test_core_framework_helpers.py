@@ -5,7 +5,8 @@ import sqlite3
 
 from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.core.persona_db import PersonaDatabase
-from sirius_pulse.core.utils import now_iso, parse_sticker_tags, strip_conversation_history_xml
+from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.utils import now_iso, strip_conversation_history_xml
 from sirius_pulse.developer_profiles import metadata_declares_developer
 from sirius_pulse.providers.aliyun_bailian import _normalize_aliyun_bailian_base_url
 from sirius_pulse.providers.bigmodel import _normalize_bigmodel_base_url
@@ -31,27 +32,11 @@ def test_core_utils_when_history_xml_is_present_then_only_conversation_history_b
     assert "T" in now_iso()
 
 
-def test_core_utils_when_sticker_tags_are_present_then_names_are_extracted_and_text_is_cleaned():
-    cleaned, names = parse_sticker_tags(
-        'hello [STICKERS: "smile", 「wave」, bad] [known] [ignored]',
-        sticker_names=["known", "extra"],
-    )
+def test_prompt_factory_when_stickers_are_available_then_output_spec_uses_tool_call_only():
+    spec = PromptFactory.build_output_spec(sticker_names=["开心"])
 
-    assert cleaned == "hello  [known] [ignored]"
-    assert names == ["smile", "wave", "bad"]
-
-    cleaned_keyword, keyword_names = parse_sticker_tags(
-        "ok [known] [extra] [third] [fourth]", ["known", "extra", "third"]
-    )
-    assert cleaned_keyword.split() == ["ok", "[fourth]"]
-    assert keyword_names == ["known", "extra", "third"]
-
-
-def test_core_utils_when_sticker_tag_uses_fullwidth_colon_then_it_is_supported():
-    cleaned, names = parse_sticker_tags("[STICKERS： one, two] body")
-
-    assert cleaned == "body"
-    assert names == ["one", "two"]
+    assert "send_sticker" in spec
+    assert "任何发送标记" in spec
 
 
 def test_orchestration_store_when_config_is_saved_then_json_round_trips_atomically(tmp_path):

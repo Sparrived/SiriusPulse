@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
+from sirius_pulse.core.sticker_delivery import collect_deferred_stickers_from_tool_calls
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -126,14 +127,24 @@ class ProactiveTasks:
             else:
                 token_breakdown[key] = token_breakdown.get(key, 0) + val
 
-        raw_reply = await engine.brain.generate_text(
-            system_prompt,
-            messages,
-            group_id,
-            style_params=style,
-            post_process=True,
+        from sirius_pulse.core.brain import ChatRequest
+
+        chat_result = await engine.brain.chat(
+            ChatRequest(
+                group_id=group_id,
+                user_id="",
+                system_prompt=system_prompt,
+                messages=messages,
+                task_name="proactive_generate",
+                style_params=style,
+                post_process=True,
+            )
         )
-        reply = raw_reply.strip()
+        reply = (chat_result.clean_text or "").strip()
+        sticker_names = collect_deferred_stickers_from_tool_calls(
+            chat_result.tool_calls,
+            available_names=getattr(engine, "_sticker_names", []) or [],
+        )
 
         await engine.event_bus.emit(
             SessionEvent(
@@ -142,6 +153,7 @@ class ProactiveTasks:
                     "group_id": group_id,
                     "trigger_type": trigger["trigger_type"],
                     "reply": reply,
+                    "sticker_names": sticker_names,
                 },
             )
         )
@@ -152,6 +164,7 @@ class ProactiveTasks:
             "strategy": "proactive",
             "trigger_type": trigger["trigger_type"],
             "reply": clean_reply,
+            "sticker_names": sticker_names,
         }
 
     # ------------------------------------------------------------------

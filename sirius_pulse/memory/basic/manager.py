@@ -73,7 +73,7 @@ class HeatCalculator:
 class BasicMemoryManager:
     """Manages per-group basic memory windows.
 
-    - Retains up to HARD_LIMIT messages in memory.
+    - Retains raw messages in memory for later append-only archival.
     - Always keeps the most recent CONTEXT_WINDOW messages active.
     - Older messages are "archive candidates" for diary promotion.
     - Tracks heat per group for cold-detection.
@@ -148,6 +148,23 @@ class BasicMemoryManager:
         if len(window) <= self.context_window:
             return []
         return list(window)[: -self.context_window]
+
+    def get_consolidation_candidates(
+        self,
+        group_id: str,
+        *,
+        include_context: bool = False,
+    ) -> list[BasicMemoryEntry]:
+        """Get raw messages eligible for diary consolidation.
+
+        During normal chat flow the active context window stays out of diary
+        generation. Once a group has been idle long enough, callers can include
+        that active context so the whole finished conversation segment is
+        summarized without deleting the raw entries.
+        """
+        if include_context:
+            return self.get_all(group_id)
+        return self.get_archive_candidates(group_id)
 
     def get_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Get all entries in a group's window."""

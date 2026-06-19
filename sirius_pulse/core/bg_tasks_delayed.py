@@ -17,6 +17,7 @@ from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
+from sirius_pulse.core.sticker_delivery import dedupe_sticker_names, defer_send_sticker_tool
 from sirius_pulse.providers.base import ToolCall
 
 if TYPE_CHECKING:
@@ -283,6 +284,7 @@ class DelayedQueueTasks:
         tool_calls: list[ToolCall] = []
         reply = ""
         chat_result: Any = None
+        deferred_sticker_names: list[str] = []
 
         for _round in range(max_skill_rounds + 1):
             chat_result = await engine.brain.chat(
@@ -380,6 +382,17 @@ class DelayedQueueTasks:
                     err_msg = f"Skill '{skill_name}' not found"
                     logger.warning(err_msg)
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                    continue
+
+                if skill_name == "send_sticker":
+                    names, tool_content = defer_send_sticker_tool(
+                        params,
+                        available_names=getattr(engine, "_sticker_names", []) or [],
+                    )
+                    deferred_sticker_names.extend(names)
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
+                    )
                     continue
 
                 # Engagement-based permission
@@ -481,7 +494,7 @@ class DelayedQueueTasks:
             )
             reply = ""
 
-        # 最终回复：hooks 已处理 pin/sticker/dedup/memory/timestamp
+        # 最终回复：hooks 已处理 pin/dedup/memory/timestamp
         if ended_because_max_rounds and last_round_had_partial:
             clean_reply = ""
         else:
@@ -512,6 +525,7 @@ class DelayedQueueTasks:
 
         # 获取引用回复信息
         reply_references = chat_result.reply_references if chat_result else []
+        sticker_names = dedupe_sticker_names(deferred_sticker_names)
 
         # Emit event with full reply data for external delivery
         await engine.event_bus.emit(
@@ -522,6 +536,7 @@ class DelayedQueueTasks:
                     "item_id": triggered[0].item_id,
                     "reply": final_reply,
                     "partial_replies": partial_replies,
+                    "sticker_names": sticker_names,
                 },
             )
         )
@@ -533,6 +548,7 @@ class DelayedQueueTasks:
                 "reply": final_reply,
                 "partial_replies": partial_replies,
                 "reply_references": reply_references,
+                "sticker_names": sticker_names,
             }
         ]
 

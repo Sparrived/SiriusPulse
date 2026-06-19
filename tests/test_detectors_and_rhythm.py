@@ -17,12 +17,13 @@ def test_cold_detector_when_heat_and_silence_vary_then_selects_expected_state():
     assert ColdDetector.check(heat=1.0, seconds_since_last=9999) == ColdState.HOT
     assert ColdDetector.check(heat=0.0, seconds_since_last=299) == ColdState.HOT
     assert ColdDetector.check(heat=0.0, seconds_since_last=300) == ColdState.WARM
-    assert ColdDetector.check(heat=0.0, seconds_since_last=1800) == ColdState.COLD
+    assert ColdDetector.check(heat=0.0, seconds_since_last=3599) == ColdState.WARM
+    assert ColdDetector.check(heat=0.0, seconds_since_last=3600) == ColdState.COLD
 
 
 def test_cold_detector_when_candidate_counts_are_low_then_diary_trigger_is_suppressed():
-    assert ColdDetector.should_generate_diary(0.0, 1800, candidate_count=12) is True
-    assert ColdDetector.should_generate_diary(0.0, 1800, candidate_count=11) is False
+    assert ColdDetector.should_generate_diary(0.0, 3600, candidate_count=12) is True
+    assert ColdDetector.should_generate_diary(0.0, 3600, candidate_count=11) is False
     assert ColdDetector.should_generate_diary(0.0, 300, candidate_count=12) is False
 
 
