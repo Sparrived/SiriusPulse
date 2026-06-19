@@ -1318,9 +1318,17 @@ class CognitionAnalyzer:
         scores["mention_score"] = mention
 
         # other_mention_score: message clearly addresses someone other than AI
+        # 当 AI 名字已在文本中出现时，不算作 @别人（如 "月白，@我一下"）
         other_mention = 0.0
         if mention < 0.5 and re.search(r"@\S+", text):
-            other_mention = 1.0
+            name_in_text = False
+            if self.ai_name:
+                for name in [self.ai_name] + self.ai_aliases:
+                    if name and name.lower() in text_lower:
+                        name_in_text = True
+                        break
+            if not name_in_text:
+                other_mention = 1.0
         scores["other_mention_score"] = other_mention
 
         # at_all_score: @all / @everyone / @所有人
