@@ -3,7 +3,7 @@
 增强版解析链（四层）:
   L1: platform_id 精确匹配（confidence=1.0）
   L1.5: Bot 自身检测（confidence=1.0）
-  L2: alias_index 精确匹配（confidence=0.9）
+  L2: 已确认别名精确匹配（confidence 来自别名记录）
   L3: 模糊匹配（confidence=0.7-0.9）
   L4: 上下文推断（confidence=0.6）
 """
@@ -127,7 +127,7 @@ class IdentityResolver:
         解析链:
         L1: platform_id 精确匹配（confidence=1.0）
         L1.5: Bot 自身检测（confidence=1.0）
-        L2: alias_index 精确匹配（confidence=0.9）
+        L2: 已确认别名精确匹配（confidence 来自别名记录）
         L3: 模糊匹配（confidence=0.7-0.9）
         L4: 上下文推断（confidence=0.6）
 
@@ -167,7 +167,7 @@ class IdentityResolver:
                 display_name=speaker,
             )
 
-        # L2: alias_index 精确匹配
+        # L2: 已确认别名精确匹配
         if speaker:
             alias_result = user_manager.resolve_alias(
                 speaker,
@@ -249,13 +249,6 @@ class IdentityResolver:
                     best_score = score
                     best_match = user_id
 
-            for alias in user.aliases:
-                if alias:
-                    score = self._compute_similarity(speaker_lower, alias.lower())
-                    if score > best_score:
-                        best_score = score
-                        best_match = user_id
-
         # 检查别名索引
         for alias_key in user_manager._alias_index.keys():
             score = self._compute_similarity(speaker_lower, alias_key)
@@ -312,7 +305,7 @@ class IdentityResolver:
             group = user_manager._ensure_group(group_id)
             if recent_user_id in group:
                 user = group[recent_user_id]
-                if speaker.lower() in [user.name.lower()] + [a.lower() for a in user.aliases]:
+                if speaker.lower() == user.name.lower():
                     return IdentityResolution(
                         user_id=recent_user_id,
                         confidence=0.6,

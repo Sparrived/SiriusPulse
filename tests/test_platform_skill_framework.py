@@ -70,6 +70,7 @@ async def test_base_adapter_when_default_api_methods_are_called_then_actions_and
     await adapter.set_group_admin("100", "200", enable=False)
     await adapter.set_group_card("100", "200", card="Card")
     await adapter.set_group_name("100", "Group")
+    await adapter.send_poke("200", "100")
 
     assert adapter.calls == [
         ("delete_msg", {"message_id": 42}),
@@ -79,6 +80,7 @@ async def test_base_adapter_when_default_api_methods_are_called_then_actions_and
         ("set_group_admin", {"group_id": 100, "user_id": 200, "enable": False}),
         ("set_group_card", {"group_id": 100, "user_id": 200, "card": "Card"}),
         ("set_group_name", {"group_id": 100, "group_name": "Group"}),
+        ("group_poke", {"group_id": 100, "user_id": 200}),
     ]
 
 

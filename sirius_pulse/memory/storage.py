@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from sirius_pulse.memory.alias_policy import validate_person_alias
 from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 
 logger = logging.getLogger(__name__)
@@ -355,19 +356,36 @@ class MemoryStorage(BaseSqliteStore):
 
     # ── 别名 CRUD ─────────────────────────────────────────
 
-    def get_alias_entries(self, alias: str) -> list[dict[str, Any]]:
+    def get_alias_entries(self, alias: str, status: str = "active") -> list[dict[str, Any]]:
         """获取别名的所有条目。"""
-        rows = self.execute("SELECT * FROM aliases WHERE alias = ?", (alias,)).fetchall()
+        if status:
+            rows = self.execute(
+                "SELECT * FROM aliases WHERE alias = ? AND status = ?",
+                (alias, status),
+            ).fetchall()
+        else:
+            rows = self.execute("SELECT * FROM aliases WHERE alias = ?", (alias,)).fetchall()
         return [self._row_to_alias(row) for row in rows]
 
     def save_alias_entry(self, entry: dict[str, Any]) -> None:
         """保存别名条目。"""
+        ok, alias, reason = validate_person_alias(str(entry.get("alias", "")))
+        user_id = str(entry.get("user_id", "")).strip()
+        if not ok:
+            logger.info("拒绝保存别名: %s (%s)", entry.get("alias", ""), reason)
+            return
+        if not user_id:
+            return
+        self.execute(
+            "DELETE FROM aliases WHERE alias = ? AND user_id != ?",
+            (alias, user_id),
+        )
         self.execute(
             """
             INSERT INTO aliases (
                 alias, user_id, user_name, weight, groups, mentioned_count,
-                confidence, first_seen_at, last_seen_at, source, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confidence, first_seen_at, last_seen_at, source, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(alias, user_id) DO UPDATE SET
                 user_name=excluded.user_name,
                 weight=excluded.weight,
@@ -375,11 +393,12 @@ class MemoryStorage(BaseSqliteStore):
                 mentioned_count=excluded.mentioned_count,
                 confidence=excluded.confidence,
                 last_seen_at=excluded.last_seen_at,
-                source=excluded.source
+                source=excluded.source,
+                status=excluded.status
             """,
             (
-                entry.get("alias", ""),
-                entry.get("user_id", ""),
+                alias,
+                user_id,
                 entry.get("user_name", ""),
                 float(entry.get("weight", 1.0)),
                 json.dumps(entry.get("groups", []), ensure_ascii=False),
@@ -388,10 +407,17 @@ class MemoryStorage(BaseSqliteStore):
                 entry.get("first_seen_at", ""),
                 entry.get("last_seen_at", ""),
                 entry.get("source", "napcat"),
+                entry.get("status", "active"),
                 entry.get("created_at", _now_iso()),
             ),
         )
         self.commit()
+
+    def delete_alias(self, alias: str) -> int:
+        """删除一个别名下的所有映射。"""
+        cursor = self.execute("DELETE FROM aliases WHERE alias = ?", (alias,))
+        self.commit()
+        return cursor.rowcount
 
     def delete_alias_entry(self, alias: str, user_id: str) -> None:
         """删除别名条目。"""
@@ -435,7 +461,7 @@ class MemoryStorage(BaseSqliteStore):
         rows = self.execute(
             """
             SELECT DISTINCT alias, user_name FROM aliases
-            WHERE groups LIKE ?
+            WHERE groups LIKE ? AND status = 'active'
             """,
             (f'%"{group_id}"%',),
         ).fetchall()
@@ -446,15 +472,18 @@ class MemoryStorage(BaseSqliteStore):
         rows = self.execute(
             """
             SELECT DISTINCT alias, user_id FROM aliases
-            WHERE groups LIKE ?
+            WHERE groups LIKE ? AND status = 'active'
             """,
             (f'%"{group_id}"%',),
         ).fetchall()
         return {r["alias"]: r["user_id"] for r in rows}
 
-    def get_all_aliases(self) -> dict[str, list[dict[str, Any]]]:
+    def get_all_aliases(self, status: str = "active") -> dict[str, list[dict[str, Any]]]:
         """获取所有别名索引。"""
-        rows = self.execute("SELECT * FROM aliases").fetchall()
+        if status:
+            rows = self.execute("SELECT * FROM aliases WHERE status = ?", (status,)).fetchall()
+        else:
+            rows = self.execute("SELECT * FROM aliases").fetchall()
         result: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             alias = row["alias"]

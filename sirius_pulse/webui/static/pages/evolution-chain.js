@@ -1,7 +1,7 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
 import { toast, $ } from '../components.js';
-import { renderNeuralNav, consumeNavParams, showParamHint, makeClickableUser, navigateWithParams } from './memory-nav.js';
+import { renderNeuralNav, consumeNavParams, showParamHint, navigateWithParams } from './memory-nav.js';
 
 const sourceTypeMap = {
   'stated': '明确陈述',
@@ -100,7 +100,6 @@ function renderRecords(records) {
       <div class="evo-source">
         ${sourceTypeLabel ? `<span class="evo-source-tag">${sourceTypeLabel}</span>` : ''}
         ${r.source_group_id ? `<span class="evo-source-tag">群: ${esc(r.source_group_id)}</span>` : ''}
-        ${r.source_situation_id ? `<span class="evo-source-tag clickable" data-sid="${esc(r.source_situation_id)}">情景: ${esc(r.source_situation_id.slice(0, 8))}…</span>` : ''}
         ${r.extracted_by_model ? `<span class="evo-source-tag model">${esc(r.extracted_by_model)}</span>` : ''}
       </div>
       ${r.source_messages?.length ? `
@@ -138,12 +137,6 @@ function renderRecords(records) {
     });
   });
 
-  list.querySelectorAll('.evo-source-tag.clickable').forEach(el => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      navigateWithParams('situation-timeline', { situationId: el.dataset.sid });
-    });
-  });
 }
 
 async function toggleHistory(el) {

@@ -39,6 +39,7 @@ from sirius_pulse.adapters.models import (
     VoiceSegment,
 )
 from sirius_pulse.core.events import SessionEvent, SessionEventType
+from sirius_pulse.core.qq_mentions import parse_qq_at_mentions
 from sirius_pulse.models.models import Message, UnifiedUser
 
 LOG = logging.getLogger("sirius.platforms.napcat")
@@ -106,6 +107,9 @@ class NapCatAdapter(BaseAdapter):
         self._last_not_ready_log: float = 0.0
         self._reply_locks: dict[str, asyncio.Lock] = {}
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._group_member_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+        self._bot_admin_cache: dict[str, tuple[float, bool]] = {}
+        self._group_metadata_ttl = 300.0
 
         # API 限流：每群/私聊独立，每秒最多 1 条消息
         self._last_api_call_at: dict[str, float] = {}
@@ -662,6 +666,67 @@ class NapCatAdapter(BaseAdapter):
 
         return "".join(parts).strip()
 
+    async def _publish_group_metadata(self, group_id: str, self_id: str = "") -> None:
+        """Refresh QQ group metadata used by prompt-time @ and admin-only tools."""
+        engine = self._engine
+        if engine is None or not group_id:
+            return
+
+        members = await self._get_cached_group_members(group_id)
+        if members and hasattr(engine, "update_qq_group_members"):
+            try:
+                engine.update_qq_group_members(group_id, members)
+            except Exception as exc:
+                LOG.debug("更新 QQ 群成员缓存失败 (%s): %s", group_id, exc)
+
+        is_admin = await self._get_cached_bot_admin(group_id, self_id, members)
+        if hasattr(engine, "update_qq_bot_group_admin"):
+            try:
+                engine.update_qq_bot_group_admin(group_id, is_admin)
+            except Exception as exc:
+                LOG.debug("更新 QQ Bot 管理员缓存失败 (%s): %s", group_id, exc)
+
+    async def _get_cached_group_members(self, group_id: str) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        cached = self._group_member_cache.get(group_id)
+        if cached and now - cached[0] < self._group_metadata_ttl:
+            return list(cached[1])
+        try:
+            members = await self.get_group_member_list(group_id)
+            self._group_member_cache[group_id] = (now, list(members))
+            return list(members)
+        except Exception as exc:
+            LOG.debug("获取群成员列表失败 (%s): %s", group_id, exc)
+            return list(cached[1]) if cached else []
+
+    async def _get_cached_bot_admin(
+        self,
+        group_id: str,
+        self_id: str = "",
+        members: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        now = time.monotonic()
+        cached = self._bot_admin_cache.get(group_id)
+        if cached and now - cached[0] < self._group_metadata_ttl:
+            return cached[1]
+
+        role = ""
+        if self_id:
+            for member in members or []:
+                if str(member.get("user_id", "")) == str(self_id):
+                    role = str(member.get("role", "") or "").strip()
+                    break
+            if not role:
+                try:
+                    info = await self.get_group_member_info(group_id, self_id)
+                    role = str(info.get("role", "") or "").strip()
+                except Exception as exc:
+                    LOG.debug("获取 Bot 群身份失败 (%s/%s): %s", group_id, self_id, exc)
+
+        is_admin = role in {"admin", "owner"}
+        self._bot_admin_cache[group_id] = (now, is_admin)
+        return is_admin
+
     # ─── 图片缓存 ───────────────────────────────────────────
 
     @staticmethod
@@ -759,6 +824,8 @@ class NapCatAdapter(BaseAdapter):
         # 记录 Bot 自身的 platform_uid
         if self._engine is not None and parsed.self_id:
             self._engine._bot_platform_uids["qq_native_sirius_pulse"] = parsed.self_id
+        if parsed.message_type == "group":
+            await self._publish_group_metadata(parsed.group_id, parsed.self_id)
 
         # ── 小跟班模式：早期过滤 ──
         sidekick_cfg = self.plugin_config.get("sidekick", {})
@@ -1068,8 +1135,8 @@ class NapCatAdapter(BaseAdapter):
                     msg_id = reply_refs[0]["msg_id"]
                     segments: list[dict[str, Any]] = [
                         {"type": "reply", "data": {"id": msg_id}},
-                        {"type": "text", "data": {"text": text}},
                     ]
+                    segments.extend(self._group_text_to_segments(group_id, text))
                     await self.send_group_msg(group_id, segments)
                     LOG.info(
                         "回复群 %s (引用 msg_id=%s): %s",
@@ -1087,15 +1154,34 @@ class NapCatAdapter(BaseAdapter):
                             content = content[:80] + "..."
                         ref_lines.append(f"> {speaker}: {content}")
                     formatted_reply = "\n".join(ref_lines) + "\n" + text
-                    await self.send_group_msg(group_id, formatted_reply)
+                    await self.send_group_msg(
+                        group_id, self._group_text_to_segments(group_id, formatted_reply)
+                    )
                     LOG.info("回复群 %s (引用但无msg_id): %s", group_id, formatted_reply[:120])
                 else:
-                    await self.send_group_msg(group_id, text)
+                    await self.send_group_msg(group_id, self._group_text_to_segments(group_id, text))
                     LOG.info("回复群 %s: %s", group_id, text[:120])
                 return True
             except Exception as exc:
                 LOG.warning("发送群消息失败: %s", exc)
                 return False
+
+    def _group_text_to_segments(self, group_id: str, text: str) -> list[dict[str, Any]]:
+        member_ids = self._valid_group_member_ids(group_id)
+        message_group = parse_qq_at_mentions(text, valid_user_ids=member_ids)
+        if message_group is None:
+            return [{"type": "text", "data": {"text": text}}]
+        return self._message_group_to_onebot(message_group)
+
+    def _valid_group_member_ids(self, group_id: str) -> set[str] | None:
+        cached = self._group_member_cache.get(str(group_id))
+        if not cached:
+            return None
+        updated_at, members = cached
+        if time.monotonic() - updated_at > self._group_metadata_ttl:
+            return None
+        ids = {str(member.get("user_id", "") or "").strip() for member in members}
+        return {user_id for user_id in ids if user_id}
 
     async def _send_private_text(
         self, user_id: str, text: str, reply_refs: list[dict[str, str]] | None = None

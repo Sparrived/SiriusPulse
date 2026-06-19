@@ -1,9 +1,8 @@
 const MEMORY_PAGES = [
   { id: 'memory-dashboard', label: '神经中枢', icon: '🧬', layer: 'Hub' },
   { id: 'evolution-chain', label: '演化链', icon: '🧫', layer: 'L0-L2' },
-  { id: 'situation-timeline', label: '情景脉搏', icon: '💫', layer: 'L2' },
   { id: 'biography-view', label: '基因图谱', icon: '🧮', layer: 'L0' },
-  { id: 'diary-slices', label: '记忆切片', icon: '🔬', layer: 'L3' },
+  { id: 'diary', label: '日记', icon: '◫', layer: 'L3' },
 ];
 
 let navStyleInjected = false;
@@ -218,7 +217,7 @@ export function makeClickableTopic(el, topic) {
   el.classList.add('mem-clickable');
   el.addEventListener('click', (e) => {
     e.stopPropagation();
-    navigateWithParams('situation-timeline', { topic });
+    navigateWithParams('diary', { search: topic });
   });
 }
 

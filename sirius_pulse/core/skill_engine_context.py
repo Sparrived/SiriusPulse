@@ -137,8 +137,114 @@ class SkillEngineContextImpl:
     def get_current_adapter_type(self) -> str:
         return self._engine._current_adapter_type
 
+    def is_qq_bot_group_admin(self, group_id: str) -> bool:
+        checker = getattr(self._engine, "is_qq_bot_group_admin", None)
+        return bool(checker(group_id)) if callable(checker) else False
+
     def activate_private_group(self, group_id: str) -> None:
         self._engine._active_private_groups.add(group_id)
+
+    def manage_person_alias(
+        self,
+        *,
+        action: str,
+        alias: str = "",
+        target_user_id: str = "",
+        target_name: str = "",
+        group_id: str = "",
+        confidence: float = 0.0,
+        evidence: str = "",
+    ) -> dict[str, Any]:
+        """Manage confirmed person aliases through the engine-owned user manager."""
+        action_key = str(action or "").strip().lower()
+        alias_key = str(alias or "").strip().lower()
+        group_key = group_id or "default"
+
+        if action_key == "list":
+            return {
+                "success": True,
+                "aliases": self._engine.user_manager.list_alias_entries(group_key),
+            }
+
+        if action_key == "resolve":
+            uid, conf, others = self._engine.user_manager.resolve_alias(alias_key, group_id=group_key)
+            if not uid:
+                return {"success": True, "found": False, "alias": alias_key}
+            user = self._engine.user_manager.get_user(uid, group_key)
+            return {
+                "success": True,
+                "found": True,
+                "alias": alias_key,
+                "user_id": uid,
+                "user_name": user.name if user else "",
+                "confidence": conf,
+                "others": others,
+            }
+
+        if action_key == "remove":
+            removed = self._engine.user_manager.delete_alias(alias_key, target_user_id)
+            return {"success": True, "removed": removed, "alias": alias_key}
+
+        if action_key != "add":
+            return {"success": False, "error": f"不支持的 action: {action}"}
+
+        target = self._resolve_alias_target(group_key, target_user_id, target_name)
+        if target is None:
+            return {
+                "success": False,
+                "error": "无法确认别称目标，请提供明确的 target_user_id 或群内精确 target_name",
+            }
+        uid, user_name = target
+        saved = self._engine.user_manager.register_alias(
+            alias_key,
+            uid,
+            user_name,
+            group_key,
+            source="model_skill",
+            confidence=confidence,
+        )
+        if not saved:
+            return {
+                "success": False,
+                "error": "别称未登记，可能为空、属于宽泛称呼，或与 AI 自身身份冲突",
+                "alias": alias_key,
+            }
+        return {
+            "success": True,
+            "alias": alias_key,
+            "user_id": uid,
+            "user_name": user_name,
+            "confidence": confidence,
+            "evidence": evidence,
+        }
+
+    def _resolve_alias_target(
+        self,
+        group_id: str,
+        target_user_id: str = "",
+        target_name: str = "",
+    ) -> tuple[str, str] | None:
+        user_manager = self._engine.user_manager
+        uid = str(target_user_id or "").strip()
+        name = str(target_name or "").strip()
+        if uid:
+            user = user_manager.get_user(uid, group_id) or user_manager.get_global_user(uid)
+            return uid, (user.name if user else name)
+        if not name:
+            return None
+        name_lower = name.lower()
+        matches = [
+            user
+            for user in user_manager.list_users(group_id)
+            if user.user_id.lower() == name_lower or user.name.lower() == name_lower
+        ]
+        if len(matches) == 1:
+            return matches[0].user_id, matches[0].name
+        resolved = user_manager.resolve_user_id(speaker=name)
+        if resolved:
+            user = user_manager.get_user(resolved, group_id) or user_manager.get_global_user(resolved)
+            return resolved, (user.name if user else name)
+        return None
 
     async def send_sticker_by_names(
         self,

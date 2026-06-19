@@ -129,7 +129,7 @@ class EvolutionRecord:
 
     # ── 来源追溯 ──
     source_type: str = MetaTag.STATED
-    source_situation_id: str = ""
+    source_record_id: str = ""
     source_group_id: str = ""
     source_message_ids: list[str] = field(default_factory=list)  # 关联 BasicMemory 消息 ID
     extracted_at: str = field(default_factory=_now_iso)
@@ -154,7 +154,7 @@ class EvolutionRecord:
             "supersedes": list(self.supersedes),
             "superseded_by": self.superseded_by,
             "source_type": self.source_type,
-            "source_situation_id": self.source_situation_id,
+            "source_record_id": self.source_record_id,
             "source_group_id": self.source_group_id,
             "source_message_ids": list(self.source_message_ids),
             "extracted_at": self.extracted_at,
@@ -177,7 +177,7 @@ class EvolutionRecord:
             supersedes=list(data.get("supersedes", [])),
             superseded_by=data.get("superseded_by"),
             source_type=data.get("source_type", MetaTag.STATED),
-            source_situation_id=data.get("source_situation_id", ""),
+            source_record_id=data.get("source_record_id", ""),
             source_group_id=data.get("source_group_id", ""),
             source_message_ids=list(data.get("source_message_ids", [])),
             extracted_at=data.get("extracted_at", _now_iso()),
@@ -236,10 +236,10 @@ class EvolutionRecord:
 
 
 @dataclass
-class SituationSource:
-    """情景来源：记录信息提取的上下文。"""
+class RecordSource:
+    """记录来源：记录信息提取的上下文。"""
 
-    type: str = "situation_extraction"
+    type: str = "memory_record"
     group_id: str = ""
     model: str = ""
     message_ids: list[str] = field(default_factory=list)
@@ -253,9 +253,9 @@ class SituationSource:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SituationSource:
+    def from_dict(cls, data: dict[str, Any]) -> RecordSource:
         return cls(
-            type=data.get("type", "situation_extraction"),
+            type=data.get("type", "memory_record"),
             group_id=data.get("group_id", ""),
             model=data.get("model", ""),
             message_ids=list(data.get("message_ids", [])),

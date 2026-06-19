@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.events import SessionEvent, SessionEventType
-from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
+from sirius_pulse.memory.cold_detector import ColdState
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -116,9 +115,9 @@ class BackgroundTasks:
     async def _diary_promoter(self) -> None:
         """Periodically promote basic memory entries to diary summaries.
 
-        Trigger conditions (OR):
+        Trigger conditions:
         1. Group is cold (heat < threshold AND silence >= threshold).
-        2. Sufficient volume of undiarized archive candidates.
+        2. The group has enough undiarized archive candidates.
         """
         engine = self._engine
         interval = engine.config.get("memory_promote_interval_seconds", 180)
@@ -130,162 +129,38 @@ class BackgroundTasks:
                     continue
 
                 promoted_total = 0
-                extracted_total = 0
                 for group_id in list(engine.basic_memory.list_groups()):
                     heat, seconds_since_last = engine.basic_memory.get_cold_params(group_id)
                     cold_state = engine.cold_detector.check(heat, seconds_since_last)
 
-                    # ── Layer 2: 暂冷 → 情景提取 ──
-                    if cold_state == ColdState.WARM:
+                    # ── Layer 3: 冷寂 → 日记生成 ──
+                    if cold_state == ColdState.COLD:
                         candidates = engine.basic_memory.get_archive_candidates(group_id)
                         if not candidates:
                             continue
-                        # 过滤已生成日记或已提取情景的消息
-                        extracted_ids = engine.situation_store.get_extracted_entry_ids(group_id)
                         candidates = [
                             c
                             for c in candidates
                             if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
-                            and c.entry_id not in extracted_ids
                         ]
-                        if len(candidates) < 5:
+                        if not candidates:
                             continue
 
                         cfg = engine.model_router.resolve("memory_extract")
-                        situation = await engine.situation_extractor.extract(
+                        result = await engine.diary_manager.generate_from_candidates(
                             group_id=group_id,
-                            entries=candidates,
+                            candidates=candidates,
+                            persona_name=engine.persona.name,
+                            persona_description=(
+                                engine.persona.persona_summary or engine.persona.backstory or ""
+                            ),
                             brain=engine.brain,
                             model_name=cfg.model_name,
-                            evolution_chain=engine.evolution_chain,
-                            storage=engine._memory_storage,
-                            user_manager=engine.user_manager,
+                            min_candidate_count=volume_threshold,
                         )
-                        if situation:
-                            engine.situation_store.save(situation)
-                            extracted_total += 1
-                            logger.info(
-                                "群 %s 情景提取完成: %d 个三元组",
-                                group_id,
-                                situation.validated_triple_count,
-                            )
+                        if result:
+                            promoted_total += 1
 
-                    # ── Layer 3: 冷寂 → 日记生成 ──
-                    elif cold_state == ColdState.COLD:
-                        situations = engine.situation_store.get_unprocessed(group_id)
-                        if not situations:
-                            # COLD 但无 situations：先尝试补提情景（WARM 阶段可能未触发）
-                            candidates = engine.basic_memory.get_archive_candidates(group_id)
-                            if candidates:
-                                # 过滤已生成日记或已提取情景的消息
-                                extracted_ids = engine.situation_store.get_extracted_entry_ids(
-                                    group_id
-                                )
-                                undiarized = [
-                                    c
-                                    for c in candidates
-                                    if not engine.diary_manager.is_source_diarized(
-                                        group_id, c.entry_id
-                                    )
-                                    and c.entry_id not in extracted_ids
-                                ]
-                                if len(undiarized) >= 5:
-                                    cfg = engine.model_router.resolve("memory_extract")
-                                    situation = await engine.situation_extractor.extract(
-                                        group_id=group_id,
-                                        entries=undiarized,
-                                        brain=engine.brain,
-                                        model_name=cfg.model_name,
-                                        evolution_chain=engine.evolution_chain,
-                                        storage=engine._memory_storage,
-                                        user_manager=engine.user_manager,
-                                    )
-                                    if situation:
-                                        engine.situation_store.save(situation)
-                                        extracted_total += 1
-                                        logger.info(
-                                            "群 %s COLD 补提情景: %d 个三元组",
-                                            group_id,
-                                            situation.validated_triple_count,
-                                        )
-
-                            # 重新获取 situations
-                            situations = engine.situation_store.get_unprocessed(group_id)
-
-                        if situations:
-                            # 使用新架构：从 Situation 生成日记
-                            cfg = engine.model_router.resolve("memory_extract")
-                            parsed = await engine.diary_manager._generator.generate_from_situations(
-                                group_id=group_id,
-                                situations=situations,
-                                persona_name=engine.persona.name,
-                                persona_description=(
-                                    engine.persona.persona_summary or engine.persona.backstory or ""
-                                ),
-                                brain=engine.brain,
-                                model_name=cfg.model_name,
-                            )
-                            if parsed and parsed.get("content"):
-                                # 调用 DiarySlicer 切片
-                                from sirius_pulse.memory.diary.slicer import DiarySlicer
-
-                                slicer = DiarySlicer()
-                                diary_id = f"ds_{group_id}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-                                slices = await slicer.slice(
-                                    diary_content=parsed["content"],
-                                    situations=situations,
-                                    group_id=group_id,
-                                    diary_id=diary_id,
-                                    embedding_client=engine._embedding_client,
-                                )
-                                # 持久化切片到文件
-                                engine.slice_store.append(group_id, slices)
-
-                                # 添加到 DiarySliceRetriever 三路召回索引
-                                for s in slices:
-                                    engine.slice_retriever.add(s)
-
-                                # 标记 situations 为已处理，避免重复生成
-                                engine.situation_store.mark_processed(
-                                    [s.situation_id for s in situations]
-                                )
-
-                                promoted_total += 1
-                                logger.info(
-                                    "群 %s 从 %d 个 Situation 生成日记完成，切分为 %d 个片段",
-                                    group_id,
-                                    len(situations),
-                                    len(slices),
-                                )
-                        else:
-                            # 补提后仍无 situations：使用旧的候选消息方式
-                            candidates = engine.basic_memory.get_archive_candidates(group_id)
-                            if not candidates:
-                                continue
-                            candidates = [
-                                c
-                                for c in candidates
-                                if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
-                            ]
-                            if not candidates:
-                                continue
-
-                            cfg = engine.model_router.resolve("memory_extract")
-                            result = await engine.diary_manager.generate_from_candidates(
-                                group_id=group_id,
-                                candidates=candidates,
-                                persona_name=engine.persona.name,
-                                persona_description=(
-                                    engine.persona.persona_summary or engine.persona.backstory or ""
-                                ),
-                                brain=engine.brain,
-                                model_name=cfg.model_name,
-                            )
-                            if result:
-                                promoted_total += 1
-
-                if extracted_total > 0:
-                    engine._log_inner_thought(f"提取了 {extracted_total} 个群的情景，记忆在沉淀中～")
                 if promoted_total > 0:
                     engine._log_inner_thought(f"整理了 {promoted_total} 个群的对话日记，过去的回忆又清晰了一点～")
             except Exception as exc:

@@ -83,22 +83,6 @@ class Pipeline:
             )
             engine.identity_resolver.resolve(ctx, engine.user_manager, group_id)
 
-            # 将 participant 携带的别称注册到演化链（修复别称丢失问题）
-            # EvolutionChain.register_alias 会创建/更新演化记录并维护别称缓存
-            for alias in p.aliases or []:
-                if alias and alias.strip():
-                    engine.user_manager.register_alias(
-                        alias,
-                        p.user_id,
-                        p.name,
-                        group_id,
-                        source="napcat",
-                    )
-                    # 同步到 UnifiedUser.aliases（供传记注入 prompt 使用）
-                    resolved = engine.user_manager.get_user(p.user_id, group_id)
-                    if resolved and alias not in resolved.aliases:
-                        resolved.aliases.append(alias)
-
         # Resolve current sender
         sender_ctx = IdentityContext(
             speaker_name=message.speaker or "unknown",
@@ -677,7 +661,7 @@ class Pipeline:
         """收集人物传记信息，供 PromptFactory 使用。
 
         使用 BiographyView 从演化链派生传记，并从 UnifiedUserManager
-        同步别名到传记对象中，使 PromptFactory 能注入别名提示。
+        同步已确认别名到传记对象中，使 PromptFactory 能注入别名提示。
         结果缓存在 engine._pending_biography 字典中。
         """
         engine = self._engine
@@ -686,12 +670,9 @@ class Pipeline:
 
         # 当前发言者传记（从演化链派生）
         speaker_bio = bio_view.get_biography(user_id) if user_id else None
-        # 同步别名（从 _alias_index 和 UnifiedUser.aliases 合并）
+        # 同步已确认别名（仅来自 _alias_index）
         if speaker_bio and user_id:
-            user_obj = mgr.get_user(user_id, group_id)
             alias_set: set[str] = set()
-            if user_obj:
-                alias_set.update(user_obj.aliases)
             # 也从 _alias_index 中收集该用户的所有别称
             for alias_key, entries in mgr._alias_index.items():
                 for e in entries:
@@ -717,10 +698,7 @@ class Pipeline:
         mentioned_bios: dict[str, Any] = {}
         for uid in mentioned.keys():
             bio = bio_view.get_biography(uid)
-            user_obj = mgr.get_user(uid, group_id)
             alias_set_mentioned: set[str] = set()
-            if user_obj:
-                alias_set_mentioned.update(user_obj.aliases)
             for alias_key, entries in mgr._alias_index.items():
                 for e in entries:
                     if e.user_id == uid:

@@ -8,7 +8,6 @@ in emotional_engine.py to form the complete EmotionalGroupChatEngine.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -44,8 +43,6 @@ from sirius_pulse.memory.diary import DiaryManager
 from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.glossary import GlossaryManager
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
-from sirius_pulse.memory.situation.extractor import SituationExtractor
-from sirius_pulse.memory.situation.store import SituationStore
 from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
@@ -199,44 +196,16 @@ class _EmotionalGroupChatEngineBase:
             conn=self._persona_db_conn,
             embedding_client=self._embedding_client,
         )
-        self.situation_store = SituationStore(
-            conn=self._persona_db_conn,
-        )
-        self.situation_extractor = SituationExtractor()
         self.biography_view = BiographyView(
             self.evolution_chain,
             user_manager=self.user_manager,
         )
         self.cold_detector = ColdDetector()
 
-        # DiarySlice 存储和三路召回
-        from sirius_pulse.memory.diary.slice_retriever import DiarySliceRetriever
-        from sirius_pulse.memory.diary.slice_store import DiarySliceStore
-        from sirius_pulse.memory.diary.slice_vector_store import DiarySliceVectorStore
-
-        self.slice_store = DiarySliceStore(self.work_path)
-        self.slice_vector_store = DiarySliceVectorStore(
-            persist_dir=self.work_path / "chroma_slices",
-            model_name=getattr(self._embedding_client, "model_name", ""),
-        )
-        self.slice_retriever = DiarySliceRetriever(
-            embedding_client=self._embedding_client,
-            vector_store=self.slice_vector_store,
-        )
-
-        # 启动时加载历史切片到检索器
-        all_slices = self.slice_store.load_all()
-        for s in all_slices:
-            self.slice_retriever.add(s)
-        if all_slices:
-            logger.info("已加载 %d 个历史日记切片", len(all_slices))
-
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,
-            situation_store=self.situation_store,
             biography_view=self.biography_view,
-            slice_retriever=self.slice_retriever,
         )
         self.glossary_manager = GlossaryManager(self.work_path, persona_name=self.persona.name)
 
@@ -367,6 +336,8 @@ class _EmotionalGroupChatEngineBase:
         self._current_adapter_type: str = ""
         # Bot 在各平台的 UID（如 {"qq_native_sirius_pulse": "123456"}）
         self._bot_platform_uids: dict[str, str] = {}
+        self._qq_group_members: dict[str, tuple[float, list[dict[str, str]]]] = {}
+        self._qq_bot_group_admin: dict[str, tuple[bool, float]] = {}
 
         self._recent_sent_replies: dict[str, list[tuple[float, str]]] = {}
         self._reply_dedup_window = self.config.get(
@@ -433,6 +404,46 @@ class _EmotionalGroupChatEngineBase:
             skill_registry=skill_registry,
             skill_executor=skill_executor,
         )
+
+    def update_qq_group_members(self, group_id: str, members: list[dict[str, Any]]) -> None:
+        """Cache QQ group members for prompt-time @ mention hints."""
+        from sirius_pulse.core.qq_mentions import normalize_qq_member
+
+        gid = str(group_id or "").strip()
+        if not gid:
+            return
+        normalized = [normalize_qq_member(member) for member in members if isinstance(member, dict)]
+        self._qq_group_members[gid] = (time.monotonic(), [m for m in normalized if m["user_id"]])
+
+    def get_qq_group_members_for_prompt(
+        self,
+        group_id: str,
+        *,
+        max_age_seconds: float = 300.0,
+    ) -> list[dict[str, str]]:
+        gid = str(group_id or "").strip()
+        cached = self._qq_group_members.get(gid)
+        if not cached:
+            return []
+        updated_at, members = cached
+        if time.monotonic() - updated_at > max_age_seconds:
+            return []
+        return list(members)
+
+    def update_qq_bot_group_admin(self, group_id: str, is_admin: bool) -> None:
+        gid = str(group_id or "").strip()
+        if gid:
+            self._qq_bot_group_admin[gid] = (bool(is_admin), time.monotonic())
+
+    def is_qq_bot_group_admin(self, group_id: str, *, max_age_seconds: float = 300.0) -> bool:
+        gid = str(group_id or "").strip()
+        cached = self._qq_bot_group_admin.get(gid)
+        if not cached:
+            return False
+        is_admin, updated_at = cached
+        if time.monotonic() - updated_at > max_age_seconds:
+            return False
+        return bool(is_admin)
 
     def set_plugin_runtime(
         self,

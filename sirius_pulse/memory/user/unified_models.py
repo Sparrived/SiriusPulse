@@ -50,7 +50,7 @@ class RelationshipAnchor:
 
 @dataclass(slots=True)
 class AliasEntry:
-    """别名条目 — 一对多结构，支持同名消歧。
+    """别名条目 — 一个别名只能指向一个用户。
 
     置信度由 mentioned_count + source 通过 compute_confidence 计算，
     再经时间衰减（apply_time_decay）得到最终值。
@@ -67,7 +67,7 @@ class AliasEntry:
     source: str = "napcat"
 
     @staticmethod
-    def compute_confidence(mentioned_count: int, source: str = "llm_discovery") -> float:
+    def compute_confidence(mentioned_count: int, source: str = "model_skill") -> float:
         """根据提及次数和来源计算基础置信度（对数增长）。"""
         if mentioned_count <= 0:
             return 0.0

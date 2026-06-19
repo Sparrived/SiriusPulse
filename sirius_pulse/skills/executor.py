@@ -172,6 +172,13 @@ class SkillExecutor:
                     "Skill execute failed: %s -> access denied: %s", skill.name, access_error
                 )
                 return skill_result
+            admin_error = self._validate_admin_requirement(skill)
+            if admin_error:
+                skill_result = SkillResult(success=False, error=admin_error)
+                logger.warning(
+                    "Skill execute failed: %s -> admin denied: %s", skill.name, admin_error
+                )
+                return skill_result
 
             data_store = self._get_data_store(skill.name)
             injection_plan = _build_injection_plan(skill._run_func)
@@ -355,6 +362,9 @@ class SkillExecutor:
                 params = chain_context.resolve_templates(params)
 
             call_params = dict(params)
+            admin_error = self._validate_admin_requirement(skill)
+            if admin_error:
+                return SkillResult(success=False, error=admin_error)
             data_store = self._get_data_store(skill.name)
             injection_plan = _build_injection_plan(skill._run_func)
             if injection_plan.accepts("data_store"):
@@ -452,6 +462,18 @@ class SkillExecutor:
         """Persist all dirty data stores."""
         for store in self._data_stores.values():
             store.save()
+
+    def _validate_admin_requirement(self, skill: SkillDefinition) -> str:
+        if not skill.admin_required:
+            return ""
+        chat_context = self._chat_context or {}
+        if chat_context.get("chat_type") != "group":
+            return f"SKILL '{skill.name}' 只能在群聊中由管理员 Bot 执行"
+        group_id = str(chat_context.get("chat_id") or chat_context.get("group_id") or "")
+        checker = getattr(self._engine_context, "is_qq_bot_group_admin", None)
+        if callable(checker) and checker(group_id):
+            return ""
+        return f"SKILL '{skill.name}' 需要 Bot 是当前群管理员"
 
 
 def _coerce_type(value: Any, type_hint: str) -> Any:

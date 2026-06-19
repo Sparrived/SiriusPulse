@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
 import { toast, $ } from '../components.js';
+import { consumeNavParams, showParamHint } from './memory-nav.js';
 
 let currentEntries = [];
 let diaryData = null;
@@ -61,6 +62,20 @@ export async function init(container) {
     activeKeyword = '';
     loadData();
   });
+
+  const params = consumeNavParams();
+  if (params?.search) {
+    activeSearch = params.search;
+    const searchEl = $('diarySearch');
+    if (searchEl) searchEl.value = params.search;
+    showParamHint(`话题: ${params.search}`, () => {
+      activeSearch = '';
+      const el = $('diarySearch');
+      if (el) el.value = '';
+      currentPage = 0;
+      loadData();
+    });
+  }
 
   await loadData();
 }

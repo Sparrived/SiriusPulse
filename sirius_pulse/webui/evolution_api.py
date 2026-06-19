@@ -1,6 +1,6 @@
 """WebUI API endpoints for the new unified memory system.
 
-暴露演化链、情景、日记切片、传记、知识缺口、行为模式等接口。
+暴露演化链、传记、知识缺口、行为模式等接口。
 """
 
 from __future__ import annotations
@@ -103,57 +103,32 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
             "rejected_records": 0,
         }
 
-    # 情景统计
-    try:
-        from sirius_pulse.memory.situation.store import SituationStore
-
-        sit_store = SituationStore(db_path, read_only=True)
-        all_situations = sit_store.get_all(limit=500)
-        result["situation_stats"] = {
-            "total_situations": len(all_situations),
-            "today_count": len(
-                [
-                    s
-                    for s in all_situations
-                    if s.created_at[:10]
-                    == __import__("datetime").datetime.now().strftime("%Y-%m-%d")
-                ]
-            ),
-        }
-        # 话题频率
-        topic_freq: dict[str, int] = {}
-        for sit in all_situations:
-            for t in sit.topics:
-                topic_freq[t] = topic_freq.get(t, 0) + 1
-        result["top_topics"] = sorted(topic_freq.items(), key=lambda x: x[1], reverse=True)[:15]
-    except Exception as exc:
-        LOG.debug("读取情景统计失败: %s", exc)
-        result["situation_stats"] = {"total_situations": 0, "today_count": 0}
-
     # 日记统计
     try:
         diary_dir = paths.dir / "diary"
         total_entries = 0
+        topic_freq: dict[str, int] = {}
         if diary_dir.exists():
             for f in diary_dir.glob("*.json"):
                 try:
                     data = json.loads(f.read_text(encoding="utf-8"))
-                    total_entries += len(data.get("entries", []))
+                    entries = data.get("entries", [])
+                    total_entries += len(entries)
+                    for item in entries:
+                        if not isinstance(item, dict):
+                            continue
+                        for keyword in item.get("keywords", []):
+                            key = str(keyword).strip()
+                            if key:
+                                topic_freq[key] = topic_freq.get(key, 0) + 1
                 except (OSError, json.JSONDecodeError):
                     continue
-        slices_dir = diary_dir / "slices"
-        total_slices = 0
-        if slices_dir.exists():
-            for f in slices_dir.glob("*.json"):
-                try:
-                    data = json.loads(f.read_text(encoding="utf-8"))
-                    total_slices += len(data.get("slices", []))
-                except (OSError, json.JSONDecodeError):
-                    continue
-        result["diary_stats"] = {"total_entries": total_entries, "total_slices": total_slices}
+        result["diary_stats"] = {"total_entries": total_entries}
+        result["top_topics"] = sorted(topic_freq.items(), key=lambda x: x[1], reverse=True)[:15]
     except Exception as exc:
         LOG.debug("读取日记统计失败: %s", exc)
-        result["diary_stats"] = {"total_entries": 0, "total_slices": 0}
+        result["diary_stats"] = {"total_entries": 0}
+        result["top_topics"] = []
 
     # 用户统计
     try:
@@ -318,7 +293,6 @@ def _record_to_dict(
         "supersedes": r.supersedes,
         "superseded_by": r.superseded_by,
         "source_type": r.source_type,
-        "source_situation_id": r.source_situation_id,
         "source_group_id": r.source_group_id,
         "source_message_ids": r.source_message_ids,
         "source_messages": source_messages,
@@ -327,139 +301,6 @@ def _record_to_dict(
         "verifications": r.verifications,
         "corrections": r.corrections,
     }
-
-
-# ─── 情景时间线 ──────────────────────────────────────────
-
-
-@handle_api_errors
-async def api_situations_list(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/situations — 情景列表。"""
-    name = _get_name(request)
-    db_path, _ = _open_db(persona_manager, name)
-    if not db_path:
-        return _json_response({"error": "人格不存在或数据库不存在"}, 404)
-
-    from sirius_pulse.memory.situation.store import SituationStore
-
-    store = SituationStore(db_path, read_only=True)
-    group_id = request.query.get("group_id", "").strip()
-    limit = min(int(request.query.get("limit", "100")), 500)
-
-    situations = (
-        store.get_by_group(group_id, limit=limit) if group_id else store.get_all(limit=limit)
-    )
-
-    return _json_response(
-        {
-            "situations": [_situation_to_dict(s) for s in situations],
-            "total": len(situations),
-        }
-    )
-
-
-def _situation_to_dict(s: Any) -> dict[str, Any]:
-    """将 Situation 转为 JSON 字典。"""
-    triples = []
-    for t in s.triples:
-        triples.append(
-            {
-                "subject": t.subject,
-                "predicate": t.predicate,
-                "obj": t.obj,
-                "confidence": t.confidence,
-                "meta_tag": t.meta_tag,
-            }
-        )
-    return {
-        "situation_id": s.situation_id,
-        "group_id": s.group_id,
-        "created_at": s.created_at,
-        "triples": triples,
-        "participants": s.participants,
-        "topics": s.topics,
-        "summary": s.summary,
-        "source_entry_ids": s.source_entry_ids,
-        "time_range_start": s.time_range_start,
-        "time_range_end": s.time_range_end,
-        "validated_triple_count": s.validated_triple_count,
-        "rejected_triple_count": s.rejected_triple_count,
-    }
-
-
-# ─── 日记切片 ────────────────────────────────────────────
-
-
-@handle_api_errors
-async def api_diary_slices(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/diary-slices — 日记切片列表。"""
-    name = _get_name(request)
-    db_path, paths = _open_db(persona_manager, name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
-
-    slices_dir = paths.dir / "diary" / "slices"
-    if not slices_dir.exists():
-        return _json_response({"slices": [], "total": 0})
-
-    limit = min(int(request.query.get("limit", "100")), 500)
-    offset = max(int(request.query.get("offset", "0")), 0)
-    search = request.query.get("search", "").strip().lower()
-
-    # 预加载情景数据用于关联
-    situations_map: dict[str, dict[str, Any]] = {}
-    if db_path:
-        try:
-            from sirius_pulse.memory.situation.store import SituationStore
-
-            sit_store = SituationStore(db_path, read_only=True)
-            for sit in sit_store.get_all(limit=1000):
-                situations_map[sit.situation_id] = {
-                    "situation_id": sit.situation_id,
-                    "summary": sit.summary,
-                    "topics": sit.topics,
-                    "created_at": sit.created_at,
-                }
-        except Exception as exc:
-            LOG.debug("预加载情景数据失败: %s", exc)
-
-    slices: list[dict[str, Any]] = []
-    for slice_file in slices_dir.glob("*.json"):
-        try:
-            data = json.loads(slice_file.read_text(encoding="utf-8"))
-            g_id = data.get("group_id", "")
-            for slice_data in data.get("slices", []):
-                if not isinstance(slice_data, dict):
-                    continue
-                slice_data["_group_id"] = g_id
-                if search:
-                    content = (
-                        slice_data.get("content", "") + slice_data.get("summary", "")
-                    ).lower()
-                    if search not in content:
-                        continue
-                # 添加关联情景信息
-                situation_ids = slice_data.get("situation_ids", [])
-                linked_situations = [
-                    situations_map[sid] for sid in situation_ids if sid in situations_map
-                ]
-                slice_data["_linked_situations"] = linked_situations
-                slices.append(slice_data)
-        except (OSError, json.JSONDecodeError):
-            continue
-
-    slices.sort(key=lambda s: s.get("time_range_start", ""), reverse=True)
-    total = len(slices)
-    slices = slices[offset : offset + limit]
-
-    return _json_response(
-        {
-            "slices": slices,
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-        }
-    )
 
 
 # ─── 传记面板 ────────────────────────────────────────────
@@ -622,52 +463,3 @@ async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.
     return _json_response({"gaps": gaps, "total": len(gaps)})
 
 
-# ─── 删除操作 ────────────────────────────────────────────
-
-
-@handle_api_errors
-async def api_situations_delete(request: web.Request, persona_manager: Any) -> web.Response:
-    """DELETE /api/personas/{name}/memory/situations — 批量删除情景。"""
-    name = _get_name(request)
-    db_path, _ = _open_db(persona_manager, name)
-    if not db_path:
-        return _json_response({"error": "人格不存在或数据库不存在"}, 404)
-
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "请求体必须是 JSON"}, 400)
-
-    situation_ids = body.get("situation_ids", [])
-    if not situation_ids or not isinstance(situation_ids, list):
-        return _json_response({"error": "缺少 situation_ids 列表"}, 400)
-
-    from sirius_pulse.memory.situation.store import SituationStore
-
-    store = SituationStore(db_path)
-    deleted = store.delete_by_ids(situation_ids)
-    return _json_response({"deleted": deleted})
-
-
-@handle_api_errors
-async def api_diary_slices_delete(request: web.Request, persona_manager: Any) -> web.Response:
-    """DELETE /api/personas/{name}/memory/diary-slices — 批量删除日记切片。"""
-    name = _get_name(request)
-    _, paths = _open_db(persona_manager, name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
-
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "请求体必须是 JSON"}, 400)
-
-    slice_ids = body.get("slice_ids", [])
-    if not slice_ids or not isinstance(slice_ids, list):
-        return _json_response({"error": "缺少 slice_ids 列表"}, 400)
-
-    from sirius_pulse.memory.diary.slice_store import DiarySliceStore
-
-    store = DiarySliceStore(paths.dir)
-    deleted = store.delete_by_ids(slice_ids)
-    return _json_response({"deleted": deleted})

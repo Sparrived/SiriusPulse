@@ -20,13 +20,10 @@ def test_cold_detector_when_heat_and_silence_vary_then_selects_expected_state():
     assert ColdDetector.check(heat=0.0, seconds_since_last=1800) == ColdState.COLD
 
 
-def test_cold_detector_when_candidate_counts_are_low_then_triggers_are_suppressed():
-    assert ColdDetector.should_extract_situation(0.0, 300, candidate_count=5) is True
-    assert ColdDetector.should_extract_situation(0.0, 300, candidate_count=4) is False
-    assert ColdDetector.should_extract_situation(0.0, 1800, candidate_count=5) is False
-    assert ColdDetector.should_generate_diary(0.0, 1800, situation_count=1) is True
-    assert ColdDetector.should_generate_diary(0.0, 1800, situation_count=0) is False
-    assert ColdDetector.should_generate_diary(0.0, 300, situation_count=1) is False
+def test_cold_detector_when_candidate_counts_are_low_then_diary_trigger_is_suppressed():
+    assert ColdDetector.should_generate_diary(0.0, 1800, candidate_count=12) is True
+    assert ColdDetector.should_generate_diary(0.0, 1800, candidate_count=11) is False
+    assert ColdDetector.should_generate_diary(0.0, 300, candidate_count=12) is False
 
 
 def test_gap_detector_when_biography_is_sparse_then_reports_profile_gaps_and_hint():

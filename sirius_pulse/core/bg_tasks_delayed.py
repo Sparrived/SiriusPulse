@@ -220,10 +220,6 @@ class DelayedQueueTasks:
             adapter_type=adapter_type,
         )
 
-        # 读取 speaker_card 用于丰富日记检索 query
-        pending_bio: dict = getattr(engine, "_pending_biography", {}) or {}
-        speaker_card = pending_bio.get("speaker_card")
-
         # Use ContextAssembler to build full messages with diary RAG + XML history
         diary_top_k = engine.config.get("diary_top_k", 5)
         diary_token_budget = engine.config.get("diary_token_budget", 800)
@@ -608,6 +604,11 @@ class DelayedQueueTasks:
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
             sticker_names=getattr(engine, "_sticker_names", None),
+            qq_mention_members=(
+                engine.get_qq_group_members_for_prompt(group_id)
+                if hasattr(engine, "get_qq_group_members_for_prompt")
+                else []
+            ),
         )
         if glossary:
             bundle.system_prompt = f"{bundle.system_prompt}\n\n{TAG_GLOSSARY}\n{glossary}"

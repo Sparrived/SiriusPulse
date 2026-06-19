@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.memory.storage import MemoryStorage
+from sirius_pulse.memory.alias_policy import validate_person_alias
 from sirius_pulse.memory.user.unified_models import (
     AliasEntry,
     RelationshipAnchor,
@@ -125,7 +126,10 @@ class UnifiedUserManager:
         aliases_data = self._storage.get_all_aliases()
         logger.info("从 SQLite 加载别名: %d 个", len(aliases_data))
         for alias, entries_data in aliases_data.items():
-            self._alias_index[alias] = [AliasEntry.from_dict(e) for e in entries_data]
+            entries = [AliasEntry.from_dict(e) for e in entries_data]
+            canonical = self._choose_alias_entry(alias, entries)
+            if canonical is not None:
+                self._alias_index[alias] = [canonical]
         self._aliases_loaded = True
 
     def _save_alias_to_storage(self, alias: str, entry: AliasEntry) -> None:
@@ -253,7 +257,7 @@ class UnifiedUserManager:
 
     def _update_indices(self, user: UnifiedUser) -> None:
         """更新索引。"""
-        for label in (user.name, user.user_id, *user.aliases):
+        for label in (user.name, user.user_id):
             if label:
                 self._speaker_index[self._normalize(label)] = user.user_id
         for platform, external_uid in user.identities.items():
@@ -265,6 +269,20 @@ class UnifiedUserManager:
         return bool(self._persona_name and alias_lower == self._persona_name) or (
             alias_lower in self._persona_aliases
         )
+
+    def _choose_alias_entry(self, alias: str, entries: list[AliasEntry]) -> AliasEntry | None:
+        """Keep only the strongest active mapping for an alias."""
+        if not entries:
+            return None
+        canonical = sorted(
+            entries,
+            key=lambda e: (e.confidence, e.mentioned_count, e.last_seen_at),
+            reverse=True,
+        )[0]
+        for entry in entries:
+            if entry.user_id != canonical.user_id:
+                self._storage.delete_alias_entry(alias, entry.user_id)
+        return canonical
 
     def _sync_to_global(self, user: UnifiedUser) -> None:
         """同步到全局用户缓存。"""
@@ -416,39 +434,16 @@ class UnifiedUserManager:
         if not entries:
             return None, 0.0, []
         self._decay_alias_key(alias_lower)
-        if group_id:
-            group_entries = [e for e in entries if group_id in e.groups]
-            if not group_entries:
-                group_entries = entries
-        else:
-            group_entries = entries
-        if len(group_entries) == 1:
-            entry = group_entries[0]
-            return entry.user_id, entry.confidence, []
-        sorted_entries = sorted(group_entries, key=lambda e: e.confidence, reverse=True)
-        if at_user_id:
-            for e in group_entries:
-                if e.user_id == at_user_id:
-                    conf = min(0.98, e.confidence + 0.30)
-                    others = [x.user_id for x in group_entries if x.user_id != e.user_id]
-                    return e.user_id, conf, others
-        if recent_speakers:
-            seen: set[str] = set()
-            for speaker in recent_speakers:
-                if speaker in seen:
-                    continue
-                seen.add(speaker)
-                for e in group_entries:
-                    if e.user_id == speaker:
-                        conf = min(0.85, e.confidence + 0.20)
-                        others = [x.user_id for x in group_entries if x.user_id != e.user_id]
-                        return e.user_id, conf, others
-        if len(sorted_entries) >= 2:
-            if sorted_entries[0].confidence > sorted_entries[1].confidence * 1.5:
-                conf = min(0.70, sorted_entries[0].confidence)
-                others = [x.user_id for x in sorted_entries[1:]]
-                return sorted_entries[0].user_id, conf, others
-        return None, 0.0, [e.user_id for e in group_entries]
+        entries = self._alias_index.get(alias_lower, [])
+        if not entries:
+            return None, 0.0, []
+        entry = entries[0]
+        conf = entry.confidence
+        if at_user_id and entry.user_id == at_user_id:
+            conf = min(0.98, conf + 0.10)
+        elif recent_speakers and entry.user_id in recent_speakers:
+            conf = min(0.95, conf + 0.05)
+        return entry.user_id, conf, []
 
     def register_alias(
         self,
@@ -457,39 +452,53 @@ class UnifiedUserManager:
         user_name: str,
         group_id: str = "",
         source: str = "napcat",
-    ) -> None:
-        """注册别名。直接操作 _alias_index + aliases 表。"""
+        confidence: float | None = None,
+    ) -> bool:
+        """注册别名。一个别名只能指向一个用户。"""
         self._ensure_aliases_loaded()
-        if self._is_persona_identity(alias.strip().lower()):
-            return
-        alias_lower = alias.strip().lower()
-        if not alias_lower:
-            return
-        if alias_lower not in self._alias_index:
-            self._alias_index[alias_lower] = []
-        for entry in self._alias_index[alias_lower]:
+        ok, alias_lower, reason = validate_person_alias(alias)
+        if not ok:
+            logger.info("拒绝别名注册: %s (%s)", alias, reason)
+            return False
+        if self._is_persona_identity(alias_lower):
+            return False
+        replaced = [e for e in self._alias_index.get(alias_lower, []) if e.user_id != user_id]
+        for entry in replaced:
+            self._storage.delete_alias_entry(alias_lower, entry.user_id)
+        for entry in self._alias_index.get(alias_lower, []):
             if entry.user_id == user_id:
                 entry.mentioned_count += 1
-                entry.confidence = AliasEntry.compute_confidence(
-                    entry.mentioned_count, entry.source
-                )
+                if confidence is None:
+                    entry.confidence = AliasEntry.compute_confidence(
+                        entry.mentioned_count, entry.source
+                    )
+                else:
+                    entry.confidence = max(0.0, min(1.0, float(confidence)))
                 entry.last_seen_at = _now_iso()
                 if group_id and group_id not in entry.groups:
                     entry.groups.append(group_id)
+                entry.user_name = user_name or entry.user_name
+                entry.source = source or entry.source
                 self._save_alias_to_storage(alias_lower, entry)
-                return
+                self._alias_index[alias_lower] = [entry]
+                return True
         entry = AliasEntry(
             user_id=user_id,
             user_name=user_name,
             groups=[group_id] if group_id else [],
             mentioned_count=1,
-            confidence=AliasEntry.compute_confidence(1, source),
+            confidence=(
+                max(0.0, min(1.0, float(confidence)))
+                if confidence is not None
+                else AliasEntry.compute_confidence(1, source)
+            ),
             first_seen_at=_now_iso(),
             last_seen_at=_now_iso(),
             source=source,
         )
-        self._alias_index[alias_lower].append(entry)
+        self._alias_index[alias_lower] = [entry]
         self._save_alias_to_storage(alias_lower, entry)
+        return True
 
     def _decay_alias_key(self, alias_lower: str) -> None:
         """对单个别名应用时间衰减，移除低于阈值的条目。"""
@@ -517,6 +526,50 @@ class UnifiedUserManager:
                     result[alias] = e.user_name
                     break
         return result
+
+    def list_alias_entries(self, group_id: str = "") -> dict[str, dict[str, Any]]:
+        """列出当前已确认别名映射。"""
+        self._ensure_aliases_loaded()
+        result: dict[str, dict[str, Any]] = {}
+        for alias, entries in self._alias_index.items():
+            if not entries:
+                continue
+            entry = entries[0]
+            if group_id and entry.groups and group_id not in entry.groups:
+                continue
+            result[alias] = {
+                "alias": alias,
+                "user_id": entry.user_id,
+                "user_name": entry.user_name,
+                "groups": list(entry.groups),
+                "confidence": entry.confidence,
+                "mentioned_count": entry.mentioned_count,
+                "source": entry.source,
+                "first_seen_at": entry.first_seen_at,
+                "last_seen_at": entry.last_seen_at,
+            }
+        return result
+
+    def delete_alias(self, alias: str, user_id: str = "") -> bool:
+        """删除一个别名映射。"""
+        self._ensure_aliases_loaded()
+        alias_lower = alias.strip().lower()
+        entries = self._alias_index.get(alias_lower, [])
+        if not entries:
+            return False
+        removed = False
+        remaining: list[AliasEntry] = []
+        for entry in entries:
+            if user_id and entry.user_id != user_id:
+                remaining.append(entry)
+                continue
+            self._storage.delete_alias_entry(alias_lower, entry.user_id)
+            removed = True
+        if remaining:
+            self._alias_index[alias_lower] = remaining
+        else:
+            self._alias_index.pop(alias_lower, None)
+        return removed
 
     def bump_alias_weight(self, alias: str, user_id: str, group_id: str) -> None:
         """增加别名权重。"""
@@ -569,10 +622,6 @@ class UnifiedUserManager:
             total_chars = sum(len(m) for m in user.pending_messages)
 
         user.pending_message_count += len(messages)
-
-        if discovered_aliases:
-            for alias in discovered_aliases:
-                self.register_alias(alias, user_id, name, group_id, source="llm_discovery")
 
         # 写穿到 SQLite
         self._save_user_to_storage(user)

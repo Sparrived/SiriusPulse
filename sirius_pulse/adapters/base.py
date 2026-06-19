@@ -128,6 +128,15 @@ class BaseAdapter(ABC):
         """撤回消息。默认通过 call_api 实现。"""
         return await self.call_api("delete_msg", {"message_id": int(message_id)})
 
+    async def send_poke(self, user_id: str, group_id: str = "") -> dict[str, Any]:
+        """戳一戳群成员或私聊用户。"""
+        if group_id:
+            return await self.call_api(
+                "group_poke",
+                {"group_id": int(group_id), "user_id": int(user_id)},
+            )
+        return await self.call_api("friend_poke", {"user_id": int(user_id)})
+
     # ── 群信息 ──
 
     async def get_group_member_list(self, group_id: str) -> list[dict[str, Any]]:

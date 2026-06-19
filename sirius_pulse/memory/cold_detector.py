@@ -1,7 +1,7 @@
 """两阶段冷检测器。
 
 替代现有 HeatCalculator.is_cold() 的单一阈值逻辑。
-- 暂冷（warm）：5 分钟无消息 → 触发情景压缩
+- 暂冷（warm）：5 分钟无消息 → 短暂空闲状态
 - 冷寂（cold）：30 分钟无消息 → 触发日记总结
 """
 
@@ -20,7 +20,7 @@ class ColdState:
     """冷检测状态常量。"""
 
     HOT = "hot"  # 活跃，不做任何处理
-    WARM = "warm"  # 暂冷，触发情景压缩（Layer 2）
+    WARM = "warm"  # 暂冷，保留状态分层
     COLD = "cold"  # 冷寂，触发日记总结（Layer 3）
 
 
@@ -66,39 +66,20 @@ class ColdDetector:
         return ColdState.HOT
 
     @staticmethod
-    def should_extract_situation(
-        heat: float,
-        seconds_since_last: float,
-        candidate_count: int,
-        min_candidates: int = 5,
-    ) -> bool:
-        """判断是否应该触发情景提取。
-
-        条件：
-        1. 处于 WARM 状态（暂冷）
-        2. 候选消息数 >= 最小阈值
-        """
-        if ColdDetector.check(heat, seconds_since_last) != ColdState.WARM:
-            return False
-        if candidate_count < min_candidates:
-            return False
-        return True
-
-    @staticmethod
     def should_generate_diary(
         heat: float,
         seconds_since_last: float,
-        situation_count: int,
-        min_situations: int = 1,
+        candidate_count: int,
+        min_candidates: int = 12,
     ) -> bool:
         """判断是否应该触发日记生成。
 
         条件：
         1. 处于 COLD 状态（冷寂）
-        2. 待处理的 Situation 数 >= 最小阈值
+        2. 未归档候选消息数 >= 最小阈值
         """
         if ColdDetector.check(heat, seconds_since_last) != ColdState.COLD:
             return False
-        if situation_count < min_situations:
+        if candidate_count < min_candidates:
             return False
         return True

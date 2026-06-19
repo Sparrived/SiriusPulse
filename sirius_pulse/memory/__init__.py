@@ -19,7 +19,6 @@ from sirius_pulse.memory.evolution import (
     ValidationResult,
 )
 from sirius_pulse.memory.glossary import GlossaryManager, GlossaryTerm
-from sirius_pulse.memory.situation import Situation, SituationExtractor, SituationStore
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 
@@ -42,9 +41,6 @@ __all__ = [
     "EvolutionAction",
     "Triple",
     "ValidationResult",
-    "Situation",
-    "SituationStore",
-    "SituationExtractor",
     "ColdDetector",
     "ColdState",
 ]

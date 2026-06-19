@@ -18,12 +18,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from sirius_pulse.memory.alias_policy import validate_person_alias
 from sirius_pulse.memory.evolution.models import (
     EvolutionAction,
     EvolutionRecord,
     MetaTag,
     RecordStatus,
-    SituationSource,
+    RecordSource,
     Triple,
     ValidationResult,
 )
@@ -81,7 +82,7 @@ class EvolutionChain:
     async def validate_and_commit(
         self,
         new_triples: list[Triple],
-        source: SituationSource,
+        source: RecordSource,
     ) -> ValidationResult:
         """验证新三元组并提交到演化链。
 
@@ -144,7 +145,7 @@ class EvolutionChain:
             meta_tag=MetaTag.USER_CORRECTED,
             source_message_id=source_message_id,
         )
-        source = SituationSource(
+        source = RecordSource(
             type="user_corrected",
             group_id=group_id,
             message_ids=[source_message_id],
@@ -234,7 +235,7 @@ class EvolutionChain:
         user_name: str,
         group_id: str = "",
         source: str = "napcat",
-    ) -> None:
+    ) -> bool:
         """注册别称到演化链。
 
         如同一 (alias_lower, user_id) 已存在则增强验证；
@@ -245,29 +246,43 @@ class EvolutionChain:
             user_id: 关联的用户 ID
             user_name: 用户显示名（记录 subject）
             group_id: 来源群组 ID
-            source: 来源类型，"napcat" 或 "llm_discovery"
+            source: 来源类型，例如 "model_skill" 或 "manual"
         """
-        alias_stripped = alias.strip()
-        if not alias_stripped:
-            return
-
-        alias_lower = alias_stripped.lower()
+        ok, alias_lower, reason = validate_person_alias(alias)
+        if not ok:
+            logger.info("拒绝别称注册: %s (%s)", alias, reason)
+            return False
 
         # 在缓存中查找同一 (alias_lower, user_id) 的已有记录
-        existing_records = self._alias_cache.get(alias_lower, [])
+        existing_records = [r for r in self._alias_cache.get(alias_lower, []) if r.is_active]
+        same_record: EvolutionRecord | None = None
         for record in existing_records:
             if record.subject_user_id == user_id and record.is_active:
-                # 已存在 → 增强验证
-                record.add_verification("mention", group_id, confidence_delta=0.05)
-                record.source_group_id = group_id
-                self._store.save_record(record)
-                logger.debug(
-                    "别称验证增强: %s → %s (confidence=%.2f)",
-                    alias_lower,
-                    user_id,
-                    record.confidence,
-                )
-                return
+                same_record = record
+                continue
+            record.status = RecordStatus.SHADOW
+            record.add_correction(
+                old_value=record.subject_user_id,
+                new_value=user_id,
+                reason="同一别称只能映射到一个用户",
+            )
+            self._store.save_record(record)
+
+        if same_record is not None:
+            # 已存在 → 增强验证
+            same_record.add_verification("mention", group_id, confidence_delta=0.05)
+            same_record.source_group_id = group_id
+            self._store.save_record(same_record)
+            self._alias_cache[alias_lower] = [same_record]
+            logger.debug(
+                "别称验证增强: %s → %s (confidence=%.2f)",
+                alias_lower,
+                user_id,
+                same_record.confidence,
+            )
+            return True
+
+        self._alias_cache.pop(alias_lower, None)
 
         # 不存在 → 创建新记录
         if source == "napcat":
@@ -296,6 +311,7 @@ class EvolutionChain:
             source,
             confidence,
         )
+        return True
 
     def resolve_alias(
         self,
@@ -324,6 +340,7 @@ class EvolutionChain:
         records = self._alias_cache.get(alias_lower, [])
         if not records:
             return None, 0.0, []
+        records = self._coalesce_alias_records(alias_lower, records)
 
         # 按 group_id 过滤：仅保留与当前群组相关的记录
         if group_id:
@@ -634,6 +651,27 @@ class EvolutionChain:
                 return True
         return False
 
+    def _coalesce_alias_records(
+        self, alias_lower: str, records: list[EvolutionRecord]
+    ) -> list[EvolutionRecord]:
+        """Keep one active record per alias and shadow weaker duplicates."""
+        active = [record for record in records if record.is_active]
+        if len(active) <= 1:
+            self._alias_cache[alias_lower] = active
+            return active
+        active.sort(key=lambda record: record.confidence, reverse=True)
+        winner = active[0]
+        for record in active[1:]:
+            record.status = RecordStatus.SHADOW
+            record.add_correction(
+                old_value=record.subject_user_id,
+                new_value=winner.subject_user_id,
+                reason="同一别称只能映射到一个用户",
+            )
+            self._store.save_record(record)
+        self._alias_cache[alias_lower] = [winner]
+        return [winner]
+
     # ── 内部：基础校验 ──
 
     def _validate_basic(self, triple: Triple) -> str | None:
@@ -777,7 +815,7 @@ class EvolutionChain:
         self,
         new_triple: Triple,
         conflicts: list[EvolutionRecord],
-        source: SituationSource,
+        source: RecordSource,
     ) -> tuple[EvolutionAction, EvolutionRecord]:
         """解决冲突：比较置信度，决定动作。"""
 
@@ -809,7 +847,7 @@ class EvolutionChain:
 
     # ── 内部：记录操作 ──
 
-    def _create_record(self, triple: Triple, source: SituationSource) -> EvolutionRecord:
+    def _create_record(self, triple: Triple, source: RecordSource) -> EvolutionRecord:
         """从三元组和来源创建演化链记录。"""
         return EvolutionRecord(
             subject=triple.subject,
@@ -820,7 +858,7 @@ class EvolutionChain:
             confidence=triple.confidence,
             initial_confidence=triple.confidence,
             source_type=triple.meta_tag,
-            source_situation_id="",
+            source_record_id="",
             source_group_id=source.group_id,
             source_message_ids=[triple.source_message_id] if triple.source_message_id else [],
             extracted_by_model=source.model,
@@ -910,6 +948,8 @@ class EvolutionChain:
                 if alias_key not in self._alias_cache:
                     self._alias_cache[alias_key] = []
                 self._alias_cache[alias_key].append(record)
+        for alias_key, records in list(self._alias_cache.items()):
+            self._coalesce_alias_records(alias_key, records)
 
     # ── 内部：工具方法 ──
 

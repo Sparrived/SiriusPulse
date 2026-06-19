@@ -137,6 +137,13 @@ async def api_persona_biography_alias_index_update(
         storage.close()
         return _json_response({"error": "缺少 user_id 参数"}, 400)
 
+    from sirius_pulse.memory.alias_policy import validate_person_alias
+
+    valid_alias, alias, reason = validate_person_alias(alias)
+    if not valid_alias:
+        storage.close()
+        return _json_response({"error": reason}, 400)
+
     from datetime import datetime, timezone
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -146,6 +153,7 @@ async def api_persona_biography_alias_index_update(
             "user_id": user_id,
             "user_name": user_name,
             "source": "manual",
+            "confidence": 0.95,
             "first_seen_at": now_iso,
             "last_seen_at": now_iso,
         }

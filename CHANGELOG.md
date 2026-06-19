@@ -163,7 +163,7 @@
 - **新增 7 个模块系统详解文档**：
   - `docs/engine-emotional.md` — 情感化群聊引擎：四层认知管线、后台任务、事件总线
   - `docs/engine-legacy.md` — Legacy AsyncRolePlayEngine 定位、与 Emotional 引擎对比、迁移路径
-  - `docs/memory-system.md` — 三层记忆底座：工作/情景/语义记忆的数据流、激活度衰减、检索机制
+  - `docs/memory-system.md` — 三层记忆底座：工作/日记/语义记忆的数据流、激活度衰减、检索机制
   - `docs/emotion-intent-analysis.md` — 情感分析（2D valence-arousal + 19 种情绪映射）与意图分析 v3（目的驱动分类）
   - `docs/skill-system.md` — SKILL 插件机制：文件格式、AI 自主调用、依赖自动安装、数据存储
   - `docs/workspace-runtime.md` — 工作空间运行时：目录结构、配置热刷新、会话管理、引擎生命周期
@@ -174,7 +174,7 @@
 
 ### Added (v0.28 Emotional Group Chat Engine)
 
-- **全新引擎 `EmotionalGroupChatEngine`**：基于论文《AI记忆系统与情感化助手：群聊场景可落地方案框架》的四层认知架构（感知→认知→决策→执行）与三层记忆底座（工作→情景→语义）。
+- **全新引擎 `EmotionalGroupChatEngine`**：基于论文《AI记忆系统与情感化助手：群聊场景可落地方案框架》的四层认知架构（感知→认知→决策→执行）与三层记忆底座（工作→日记→语义）。
 - **群聊隔离**：`UserMemoryManager.entries` 改为 `{group_id: {user_id: Entry}}` 双层字典；所有记忆操作按 `group_id` 隔离。
 - **情感分析 `EmotionAnalyzer`**：2D valence-arousal 模型，19种基本情感映射，规则引擎为主 + LLM fallback；支持情感轨迹、群体情感聚合、情感孤岛检测。
 - **意图分析 v3 `IntentAnalyzerV3`**：目的驱动分类（help_seeking / emotional / social / silent）， urgency/relevance 量化评分，规则为主 + LLM fallback。
@@ -187,7 +187,7 @@
 - **主动触发器 `ProactiveTrigger`**：时间/记忆/情感三种触发类型，带冷却机制。
 - **模型路由 `ModelRouter`**：按任务类型自动选择模型、温度、token 上限；urgency 升级切换更强模型。
 - **三层记忆底座**：
-  - `WorkingMemoryManager`：按群滑动窗口，关键信息保护，自动晋升到情景记忆。
+  - `WorkingMemoryManager`：按群滑动窗口，关键信息保护，自动晋升到长期日记记忆。
   - `EpisodicMemoryManager`：结构化事件存储，激活度遗忘曲线，支持复合查询。
   - `SemanticMemoryManager`：用户画像（兴趣图谱、关系状态）+ 群体画像（氛围历史、规范）。
 - **语义检索 `MemoryRetriever`**：关键词 + 语义相似度（可选 sentence-transformers）+ 用户画像检索。

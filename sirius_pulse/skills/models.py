@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
-logger = logging.getLogger(__name__)
-
 from sirius_pulse.config.models import ConfigParameter
 from sirius_pulse.memory.user.unified_models import UnifiedUser
+
+logger = logging.getLogger(__name__)
 
 # Pre-compiled regex for skill-chain template placeholders (${skill_name} / ${skill_name.field})
 _TEMPLATE_RE = re.compile(r"\$\{([^}]+)\}")
@@ -189,6 +189,7 @@ class SkillDefinition:
     parameters: list[SkillParameter] = field(default_factory=list)
     version: str = "1.0.0"
     developer_only: bool = False
+    admin_required: bool = False
     silent: bool = False
     model_visible: bool = True
     tags: list[str] = field(default_factory=list)
@@ -253,19 +254,19 @@ class SkillDefinition:
         """根据 fields 定义构建数组项的 JSON Schema。"""
         properties: dict[str, Any] = {}
         required: list[str] = []
-        for field in fields:
-            name = field.get("name", "")
+        for field_def in fields:
+            name = field_def.get("name", "")
             if not name:
                 continue
-            field_type = SkillDefinition._map_type_to_json_schema(field.get("type", "str"))
+            field_type = SkillDefinition._map_type_to_json_schema(field_def.get("type", "str"))
             prop: dict[str, Any] = {
                 "type": field_type,
-                "description": field.get("description", ""),
+                "description": field_def.get("description", ""),
             }
-            if field.get("choices"):
-                prop["enum"] = field["choices"]
+            if field_def.get("choices"):
+                prop["enum"] = field_def["choices"]
             properties[name] = prop
-            if field.get("required"):
+            if field_def.get("required"):
                 required.append(name)
         schema: dict[str, Any] = {
             "type": "object",
@@ -444,6 +445,20 @@ class SkillEngineContext(Protocol):
 
     def activate_private_group(self, group_id: str) -> None:
         """将私聊群组标记为活跃（以便延迟队列轮询）。"""
+        ...
+
+    def manage_person_alias(
+        self,
+        *,
+        action: str,
+        alias: str = "",
+        target_user_id: str = "",
+        target_name: str = "",
+        group_id: str = "",
+        confidence: float = 0.0,
+        evidence: str = "",
+    ) -> dict[str, Any]:
+        """管理已确认的人物别称映射。"""
         ...
 
 

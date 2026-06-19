@@ -48,6 +48,11 @@ class Helpers:
             self._engine.brain.current_adapter_type_fn = (
                 lambda: getattr(self._engine, "_current_adapter_type", "") or None
             )
+            self._engine.brain.current_admin_allowed_fn = (
+                lambda group_id: bool(self._engine.is_qq_bot_group_admin(group_id))
+                if hasattr(self._engine, "is_qq_bot_group_admin")
+                else False
+            )
         if skill_executor is not None:
             from sirius_pulse.core.skill_engine_context import SkillEngineContextImpl
 

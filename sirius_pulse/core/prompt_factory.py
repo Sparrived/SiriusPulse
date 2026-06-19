@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_pulse.core.constants import RESPONSE_MAX_TOKENS
+from sirius_pulse.core.qq_mentions import build_qq_mention_section
 from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -916,6 +917,7 @@ class PromptFactory:
         adapter_type: str | None = None,
         pinned_messages: list[Any] | None = None,
         sticker_names: list[str] | None = None,
+        qq_mention_members: list[dict[str, Any]] | None = None,
         platform_message_id: str = "",
     ) -> PromptBundle:
         """统一组装聊天响应 prompt。返回 PromptBundle。
@@ -1015,6 +1017,11 @@ class PromptFactory:
                 "【Function Call】\n你有一些工具（tools）可以帮助自己或他人解决问题，你是工具的主导者，主动尝试使用工具解决问题。",
                 "skills",
             )
+
+        if adapter_type == "napcat" and qq_mention_members:
+            mention_section = build_qq_mention_section(qq_mention_members)
+            if mention_section:
+                _add(mention_section, "output_constraint")
 
         if plugin_registry is not None:
             plugin_awareness = PromptFactory.build_plugin_awareness_section(

@@ -13,6 +13,7 @@ def _skill(
     *,
     description: str | None = None,
     developer_only: bool = False,
+    admin_required: bool = False,
     adapter_types: list[str] | None = None,
     model_visible: bool = True,
 ) -> SkillDefinition:
@@ -24,6 +25,7 @@ def _skill(
         description=description or f"{name} skill",
         parameters=[],
         developer_only=developer_only,
+        admin_required=admin_required,
         adapter_types=adapter_types or [],
         model_visible=model_visible,
         source_path=None,
@@ -133,3 +135,23 @@ def test_skill_registry_when_workspace_hot_reloads_then_removed_skills_disappear
     assert registry.skill_names == ["new_skill"]
     assert registry.get("old_skill") is None
     assert registry.get("new_skill") is not None
+
+
+def test_skill_registry_when_skill_requires_admin_then_visible_only_for_admin_group():
+    registry = SkillRegistry()
+    registry.register(_skill("mute_member", admin_required=True, adapter_types=["napcat"]))
+
+    assert registry.build_tools_list(adapter_type="napcat", chat_type="group") == []
+    assert registry.build_tools_list(
+        adapter_type="napcat",
+        chat_type="private",
+        admin_allowed=True,
+    ) == []
+
+    tools = registry.build_tools_list(
+        adapter_type="napcat",
+        chat_type="group",
+        admin_allowed=True,
+    )
+
+    assert [tool["function"]["name"] for tool in tools] == ["mute_member"]

@@ -257,6 +257,7 @@ class SkillRegistry:
         description = str(meta.get("description", "")).strip()
         version = str(meta.get("version", "1.0.0")).strip()
         developer_only = bool(meta.get("developer_only", False))
+        admin_required = bool(meta.get("admin_required", False))
         silent = bool(meta.get("silent", False))
         model_visible = bool(meta.get("model_visible", True))
         tags: list[str] = []
@@ -312,6 +313,7 @@ class SkillRegistry:
             parameters=parameters,
             version=version,
             developer_only=developer_only,
+            admin_required=admin_required,
             silent=silent,
             model_visible=model_visible,
             tags=tags,
@@ -329,6 +331,8 @@ class SkillRegistry:
         *,
         invocation_context: SkillInvocationContext | None = None,
         adapter_type: str | None = None,
+        chat_type: str | None = None,
+        admin_allowed: bool = False,
     ) -> list[dict[str, Any]]:
         """构建 OpenAI tools 列表，用于原生 function_call。
 
@@ -355,6 +359,8 @@ class SkillRegistry:
             # 适配器过滤
             if skill.adapter_types and adapter_type not in skill.adapter_types:
                 continue
+            if skill.admin_required and not (chat_type == "group" and admin_allowed):
+                continue
             tools.append(skill.to_tool_schema())
         return tools
 
@@ -364,6 +370,8 @@ class SkillRegistry:
         invocation_context: SkillInvocationContext | None = None,
         compact: bool = False,
         adapter_type: str | None = None,
+        chat_type: str | None = None,
+        admin_allowed: bool = False,
     ) -> str:
         """Build a formatted text block describing all available skills.
 
@@ -397,8 +405,15 @@ class SkillRegistry:
             # Adapter filtering: skip skills that are locked to other adapters
             if skill.adapter_types and adapter_type not in skill.adapter_types:
                 continue
+            if skill.admin_required and not (chat_type == "group" and admin_allowed):
+                continue
 
-            security_note = "（仅 developer 可调用）" if skill.developer_only else ""
+            security_notes: list[str] = []
+            if skill.developer_only:
+                security_notes.append("仅 developer 可调用")
+            if skill.admin_required:
+                security_notes.append("需要 Bot 是当前群管理员")
+            security_note = f"（{'，'.join(security_notes)}）" if security_notes else ""
             if compact:
                 param_sig = _build_compact_param_signature(skill.parameters)
                 sig = f"{skill.name}{param_sig}" if param_sig else skill.name

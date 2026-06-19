@@ -1,13 +1,11 @@
-"""Context assembler: builds LLM messages from basic memory + diary RAG + situation summaries.
+"""Context assembler: builds LLM messages from basic memory + diary RAG.
 
 历史消息以 assistant 消息切分，构造 user-assistant 消息链。
 每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
 assistant 回复单独作为一条消息。
 
 新架构增强：
-- 注入当日 Situation 摘要（暂冷压缩产物）
 - 注入 BiographyView 传记（演化链派生）
-- 支持 DiarySlice 三路召回（语义 + 三元组 + 关键词）
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ from typing import Any
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
 from sirius_pulse.memory.biography.view import BiographyView
 from sirius_pulse.memory.diary.indexer import DiaryRetriever
-from sirius_pulse.memory.situation.store import SituationStore
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +27,6 @@ class ContextAssembler:
 
     Combines:
     - Basic memory (immediate context, XML format)
-    - Situation summaries (today's validated facts)
     - Diary entries (historical RAG)
     - BiographyView (user profiles from evolution chain)
     """
@@ -39,15 +35,11 @@ class ContextAssembler:
         self,
         basic_mgr: BasicMemoryManager,
         diary_retriever: DiaryRetriever,
-        situation_store: SituationStore | None = None,
         biography_view: BiographyView | None = None,
-        slice_retriever: Any | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._diary = diary_retriever
-        self._situations = situation_store
         self._bio_view = biography_view
-        self._slice_retriever = slice_retriever
 
     # ------------------------------------------------------------------
     # Public API
@@ -76,7 +68,7 @@ class ContextAssembler:
         """构建消息链（方案 C：以 assistant 消息切分）。
 
         返回多条消息：
-        1. system  -- 富化后的系统提示词（含 Situation 摘要 + 日记 + 传记）
+        1. system  -- 富化后的系统提示词（含日记 + 传记）
         2. user/assistant 交替 -- 历史对话（按 assistant 切分）
         3. user   -- 当前用户消息
 
@@ -85,64 +77,36 @@ class ContextAssembler:
                 标签及前缀段落（来自延迟队列合并 + PromptFactory.assemble_chat），
                 无需再用 html.escape 包装，直接作为 user 消息内容。
         """
-        # 1. 获取当日 Situation 摘要（已通过演化链验证）
-        today_summaries = self._get_recent_summaries(group_id)
-
-        # 1.5 获取最新 Situation 涉及的原始消息的一半
-        latest_source_entries = self._get_latest_situation_source_half(group_id)
-
-        # 2. 检索相关日记（优先使用 DiarySliceRetriever 三路召回）
+        # 1. 检索相关日记
         enriched_query = self._enrich_search_query(
             search_query or current_query, speaker_user_id, mentioned_user_ids
         )
 
-        # 提取查询中的实体（用于三元组精确匹配）
-        query_entities = self._extract_entities(enriched_query)
-
-        # 优先使用 DiarySliceRetriever 三路召回
-        diary_slices = []
-        if self._slice_retriever:
-            diary_slices = self._slice_retriever.retrieve(
-                query=enriched_query,
-                query_entities=query_entities,
-                group_id=group_id,
-                token_budget=diary_token_budget,
-                top_k=diary_top_k,
-            )
-
-        # fallback: 使用旧的 DiaryRetriever
-        diary_entries = []
-        if not diary_slices:
-            diary_entries = self._diary.retrieve(
-                query=enriched_query,
-                group_id=group_id,
-                top_k=diary_top_k,
-                max_tokens_budget=diary_token_budget,
-            )
+        diary_entries = self._diary.retrieve(
+            query=enriched_query,
+            group_id=group_id,
+            top_k=diary_top_k,
+            max_tokens_budget=diary_token_budget,
+        )
 
         logger.info(
-            "ContextAssembler: group=%s | %d 条当日摘要 | %d 条日记切片 | %d 条旧日记 | query=%.30s...",
+            "ContextAssembler: group=%s | %d 条日记 | query=%.30s...",
             group_id,
-            len(today_summaries),
-            len(diary_slices),
             len(diary_entries),
             search_query or current_query,
         )
 
-        # 3. 获取传记信息（从演化链派生）
+        # 2. 获取传记信息（从演化链派生）
         bio_sections = self._build_biography_sections(speaker_user_id, mentioned_user_ids or [])
 
-        # 4. 构建富化后的系统提示词
+        # 3. 构建富化后的系统提示词
         enriched_system = self._enrich_system_prompt(
             system_prompt,
             diary_entries,
-            today_summaries=today_summaries,
             biography_sections=bio_sections,
-            diary_slices=diary_slices,
-            latest_source_entries=latest_source_entries,
         )
 
-        # 5. 构建消息链（方案 C）
+        # 4. 构建消息链（方案 C）
         messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
 
         pinned_context = ""
@@ -327,44 +291,6 @@ class ContextAssembler:
         return self._build_history_xml(group_id, n=n, include_pending=include_pending)
 
     # ------------------------------------------------------------------
-    # Situation 摘要
-    # ------------------------------------------------------------------
-
-    def _get_recent_summaries(self, group_id: str) -> list[str]:
-        """获取未处理的 Situation 摘要列表（只要没被转译为日记就一直携带）。"""
-        if not self._situations:
-            return []
-        # 只注入未处理的 situations，已处理的不再携带
-        situations = self._situations.get_recent(group_id, unprocessed_only=True)
-        return [s.summary for s in situations if s.summary]
-
-    def _get_latest_situation_source_half(self, group_id: str) -> list[Any]:
-        """获取最新 Situation 涉及的原始消息的一半。
-
-        从 BasicMemory 窗口中查找 source_entry_ids 对应的条目，
-        取后半部分（较新的一半）返回。
-        """
-        if not self._situations:
-            return []
-        # 获取未处理的 situations（只要没被转译为日记就一直携带）
-        situations = self._situations.get_recent(group_id, unprocessed_only=True)
-        if not situations:
-            return []
-        latest = situations[-1]
-        source_ids = latest.source_entry_ids
-        if not source_ids:
-            return []
-        # 从 BasicMemory 窗口中查找匹配的条目
-        all_entries = self._basic.get_all(group_id)
-        id_set = set(source_ids)
-        matched = [e for e in all_entries if e.entry_id in id_set]
-        if not matched:
-            return []
-        # 取后半部分（较新的一半）
-        half = len(matched) // 2
-        return matched[half:]
-
-    # ------------------------------------------------------------------
     # Biography 传记
     # ------------------------------------------------------------------
 
@@ -488,12 +414,9 @@ class ContextAssembler:
         self,
         base_prompt: str,
         diary_entries: list[Any],
-        today_summaries: list[str] | None = None,
         biography_sections: str = "",
-        diary_slices: list[Any] | None = None,
-        latest_source_entries: list[Any] | None = None,
     ) -> str:
-        """富化系统提示词：注入 Situation 摘要 + 日记 + 传记。"""
+        """富化系统提示词：注入日记 + 传记。"""
         from sirius_pulse.core.prompt_factory import PromptFactory
 
         # 注入传记信息（较稳定，放最前面以最大化缓存前缀匹配）
@@ -509,61 +432,7 @@ class ContextAssembler:
             cross_group_xml="",
         )
 
-        # 注入日记切片（新格式，优先级更高）
-        if diary_slices:
-            slices_text = self._format_diary_slices(diary_slices)
-            if slices_text:
-                enriched += f"\n\n<diary_slices>\n{slices_text}\n</diary_slices>"
-
-        # 注入当日 Situation 摘要 + 最新 Situation 涉及的原始消息（变化最频繁，放最后）
-        if today_summaries:
-            summaries_text = "\n".join(f"- {s}" for s in today_summaries)
-            enriched += f"\n\n<today_context>\n今天的经历摘要：\n{summaries_text}"
-            if latest_source_entries:
-                source_xml = self._entries_to_xml(
-                    latest_source_entries, tag="compressed_source_messages"
-                )
-                enriched += f"\n\n最新压缩涉及的原始消息（部分内容）：\n{source_xml}"
-            enriched += "\n</today_context>"
-
         return enriched
-
-    @staticmethod
-    def _format_diary_slices(slices: list[Any]) -> str:
-        """格式化日记切片为文本。"""
-        lines = []
-        for i, s in enumerate(slices, 1):
-            content = getattr(s, "content", "") or ""
-            summary = getattr(s, "summary", "") or ""
-            topics = getattr(s, "topics", []) or []
-            time_start = getattr(s, "time_range_start", "") or ""
-
-            time_str = ""
-            if time_start:
-                try:
-                    from datetime import datetime
-
-                    dt = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
-                    time_str = f" ({dt.strftime('%m-%d %H:%M')})"
-                except (ValueError, TypeError):
-                    pass
-
-            topic_str = f" [{', '.join(topics)}]" if topics else ""
-            lines.append(f"{i}. [{time_str}{topic_str}] {summary}")
-            if content and content != summary:
-                lines.append(f"   {content[:200]}")
-
-        return "\n".join(lines)
-
-    @staticmethod
-    def _extract_entities(text: str) -> list[str]:
-        """从文本中提取实体名（简单实现）。"""
-        import re
-
-        # 提取中文名字（2-4个字）
-        entities = re.findall(r"[\u4e00-\u9fff]{2,4}", text)
-        # 去重
-        return list(set(entities))[:5]
 
     def _enrich_search_query(
         self,

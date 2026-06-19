@@ -31,16 +31,12 @@ from sirius_pulse.webui.evolution_api import (
     api_biography_list_all,
     api_biography_view,
 )
-from sirius_pulse.webui.evolution_api import api_diary_slices as api_diary_slices_new
 from sirius_pulse.webui.evolution_api import (
-    api_diary_slices_delete,
     api_evolution_history,
     api_evolution_records,
     api_evolution_uncertain,
     api_knowledge_gaps,
     api_memory_dashboard,
-    api_situations_delete,
-    api_situations_list,
 )
 from sirius_pulse.webui.memory_api import (
     api_persona_cognition_analysis_get,
@@ -153,10 +149,6 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_evolution_records": api_evolution_records,
     "api_evolution_history": api_evolution_history,
     "api_evolution_uncertain": api_evolution_uncertain,
-    "api_situations_list": api_situations_list,
-    "api_situations_delete": api_situations_delete,
-    "api_diary_slices": api_diary_slices_new,
-    "api_diary_slices_delete": api_diary_slices_delete,
     "api_biography_list_all": api_biography_list_all,
     "api_biography_view": api_biography_view,
     "api_knowledge_gaps": api_knowledge_gaps,

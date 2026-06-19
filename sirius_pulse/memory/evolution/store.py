@@ -43,7 +43,7 @@ class EvolutionStore(BaseSqliteStore):
                 supersedes TEXT DEFAULT '[]',
                 superseded_by TEXT,
                 source_type TEXT NOT NULL DEFAULT 'stated',
-                source_situation_id TEXT DEFAULT '',
+                source_record_id TEXT DEFAULT '',
                 source_group_id TEXT DEFAULT '',
                 source_message_ids TEXT DEFAULT '[]',
                 extracted_at TEXT NOT NULL DEFAULT '',
@@ -59,8 +59,6 @@ class EvolutionStore(BaseSqliteStore):
                 ON evolution_records(subject_user_id);
             CREATE INDEX IF NOT EXISTS idx_evo_status
                 ON evolution_records(status);
-            CREATE INDEX IF NOT EXISTS idx_evo_source_situation
-                ON evolution_records(source_situation_id);
             CREATE INDEX IF NOT EXISTS idx_evo_group
                 ON evolution_records(source_group_id);
             CREATE INDEX IF NOT EXISTS idx_evo_obj
@@ -72,8 +70,14 @@ class EvolutionStore(BaseSqliteStore):
             {
                 "subject_user_id": "TEXT DEFAULT ''",
                 "status": "TEXT NOT NULL DEFAULT 'active'",
+                "source_record_id": "TEXT DEFAULT ''",
             },
         )
+        self.execute(
+            "CREATE INDEX IF NOT EXISTS idx_evo_source_record "
+            "ON evolution_records(source_record_id)"
+        )
+        self.commit()
 
     # ── 写入 ──
 
@@ -84,7 +88,7 @@ class EvolutionStore(BaseSqliteStore):
             """INSERT OR REPLACE INTO evolution_records
                (record_id, subject, subject_user_id, predicate, obj, status, confidence,
                 initial_confidence, supersedes, superseded_by,
-                source_type, source_situation_id, source_group_id,
+                source_type, source_record_id, source_group_id,
                 source_message_ids, extracted_at, extracted_by_model,
                 verifications, corrections)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -100,7 +104,7 @@ class EvolutionStore(BaseSqliteStore):
                 json.dumps(data["supersedes"], ensure_ascii=False),
                 data["superseded_by"],
                 data["source_type"],
-                data["source_situation_id"],
+                data["source_record_id"],
                 data["source_group_id"],
                 json.dumps(data["source_message_ids"], ensure_ascii=False),
                 data["extracted_at"],
@@ -153,14 +157,6 @@ class EvolutionStore(BaseSqliteStore):
                 "SELECT * FROM evolution_records WHERE source_group_id = ?",
                 (group_id,),
             )
-        return [self._row_to_record(r) for r in rows]
-
-    def get_by_situation(self, situation_id: str) -> list[EvolutionRecord]:
-        """获取某情景来源的所有记录。"""
-        rows = self.fetchall(
-            "SELECT * FROM evolution_records WHERE source_situation_id = ?",
-            (situation_id,),
-        )
         return [self._row_to_record(r) for r in rows]
 
     def get_uncertain_records(self, limit: int = 50) -> list[EvolutionRecord]:
@@ -284,7 +280,7 @@ class EvolutionStore(BaseSqliteStore):
             supersedes=json.loads(row["supersedes"] or "[]"),
             superseded_by=row["superseded_by"],
             source_type=row["source_type"],
-            source_situation_id=row["source_situation_id"],
+            source_record_id=row.get("source_record_id", ""),
             source_group_id=row["source_group_id"],
             source_message_ids=json.loads(row["source_message_ids"] or "[]"),
             extracted_at=row["extracted_at"],

@@ -218,6 +218,7 @@ class Brain:
         self._classify_exception_fn: Callable[[Exception], str] | None = None
         self._get_pinned_messages_fn: Callable[[str], list[Any]] | None = None
         self.current_adapter_type_fn: Callable[[], str | None] | None = None
+        self.current_admin_allowed_fn: Callable[[str], bool] | None = None
 
         # ── Hook 注册表 ──
         self._pre_hooks: list[_PreHookEntry] = []
@@ -438,6 +439,12 @@ class Brain:
                 tools = self.skill_registry.build_tools_list(
                     invocation_context=inv_ctx,
                     adapter_type=adapter_type,
+                    chat_type="private" if request.group_id.startswith("private_") else "group",
+                    admin_allowed=(
+                        self.current_admin_allowed_fn(request.group_id)
+                        if self.current_admin_allowed_fn is not None
+                        else False
+                    ),
                 )
                 if not tools:
                     tools = None
