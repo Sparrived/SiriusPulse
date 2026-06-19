@@ -1231,8 +1231,8 @@ class NapCatAdapter(BaseAdapter):
 
         # 按名字长度降序排列，避免短名误匹配长名
         sorted_names = sorted(name_to_id.keys(), key=len, reverse=True)
-        # 匹配 @xxx：排除 @{...} 格式，捕获文字或纯数字
-        pattern = re.compile(r"@(?!\{)([一-鿿\w][一-鿿\w ]{0,20}|\d{5,12})")
+        # 匹配 @xxx：排除 @{...} 格式，纯数字分支放前面优先匹配
+        pattern = re.compile(r"@(?!\{)(\d{5,12}|[一-鿿\w][一-鿿\w ]{0,20})")
 
         def _replace(m: re.Match) -> str:
             raw = m.group(1).strip()
