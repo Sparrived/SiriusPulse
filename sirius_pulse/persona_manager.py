@@ -479,7 +479,9 @@ class PersonaManager:
         }
         if sys.platform == "win32":
             kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.CREATE_NO_WINDOW
             )
         else:
             kwargs["start_new_session"] = True
@@ -499,44 +501,51 @@ class PersonaManager:
 
     def stop_persona(self, name: str, timeout: int = 10) -> bool:
         """停止单个人格子进程。"""
+        status_path = self.personas_dir / name / "engine_state" / "worker_status.json"
+
         proc = self._processes.get(name)
         if proc is None:
             # 可能没有 tracked，尝试通过状态文件推断 PID
             status = self._read_worker_status(name)
             pid = status.get("pid") if status else None
-            if pid:
-                if sys.platform == "win32":
-                    # Windows: 使用 taskkill 终止孤儿进程（比 CTRL_BREAK_EVENT 更可靠）
-                    try:
-                        result = subprocess.run(
-                            ["taskkill", "/PID", str(pid), "/T", "/F"],
-                            capture_output=True,
-                            timeout=10.0,
+            if not pid:
+                return False
+
+            killed = False
+            if sys.platform == "win32":
+                try:
+                    result = subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        capture_output=True,
+                        timeout=10.0,
+                    )
+                    if result.returncode == 0:
+                        LOG.info("已终止孤儿进程: %s (pid=%s)", name, pid)
+                        killed = True
+                    else:
+                        LOG.warning(
+                            "终止孤儿进程失败 %s (pid=%s): %s",
+                            name,
+                            pid,
+                            result.stderr.decode(errors="ignore"),
                         )
-                        if result.returncode == 0:
-                            LOG.info("已终止孤儿进程: %s (pid=%s)", name, pid)
-                        else:
-                            LOG.warning(
-                                "终止孤儿进程失败 %s (pid=%s): %s",
-                                name,
-                                pid,
-                                result.stderr.decode(errors="ignore"),
-                            )
-                        return True
-                    except Exception as exc:
-                        LOG.warning("终止孤儿进程失败 %s: %s", name, exc)
-                else:
-                    try:
-                        import os as _os
+                except Exception as exc:
+                    LOG.warning("终止孤儿进程失败 %s: %s", name, exc)
+            else:
+                try:
+                    import os as _os
 
-                        _os.kill(pid, signal.SIGTERM)
-                        LOG.info("已向孤儿进程发送 SIGTERM: %s (pid=%s)", name, pid)
-                        return True
-                    except Exception as exc:
-                        LOG.warning("终止孤儿进程失败 %s: %s", name, exc)
-            return False
+                    _os.kill(pid, signal.SIGTERM)
+                    LOG.info("已向孤儿进程发送 SIGTERM: %s (pid=%s)", name, pid)
+                    killed = True
+                except Exception as exc:
+                    LOG.warning("终止孤儿进程失败 %s: %s", name, exc)
 
-        # 先发送 SIGTERM（Windows 用 CTRL_BREAK_EVENT）
+            if killed:
+                self._cleanup_worker_status(status_path)
+            return killed
+
+        # Windows: taskkill /T /F 强制终止整个进程树
         try:
             if sys.platform == "win32":
                 subprocess.run(
@@ -562,8 +571,18 @@ class PersonaManager:
                 LOG.error("强制终止失败 %s: %s", name, exc)
 
         self._processes.pop(name, None)
+        self._cleanup_worker_status(status_path)
         LOG.info("人格已停止: %s", name)
         return True
+
+    @staticmethod
+    def _cleanup_worker_status(status_path: Path) -> None:
+        """清理 worker_status.json，避免 UI 显示过期状态。"""
+        try:
+            if status_path.exists():
+                status_path.unlink()
+        except Exception:
+            LOG.warning("清理 worker_status.json 失败", exc_info=True)
 
     def _cleanup_stale_worker_statuses(self) -> None:
         """清理所有过期的 worker_status.json（atexit 钩子）。"""

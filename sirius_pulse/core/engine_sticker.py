@@ -250,17 +250,6 @@ class EngineSticker:
             return None
         return self._pick_sticker_choice(wrong_names)
 
-    def _build_missend_followup_text(self) -> str:
-        """生成撤回后补发时附带的人格化失误说明。"""
-        persona_name = getattr(getattr(self._engine, "persona", None), "name", "我") or "我"
-        candidates = [
-            f"刚刚手滑点错了，{persona_name}先把它撤了……这张才对。",
-            "等下，刚才那个表情完全不对劲，我重发一下。",
-            "啊不是那张，我刚刚发错表情包了，换这张。",
-            "刚才那个不算，表情包选错频道了。",
-        ]
-        return random.choice(candidates)
-
     async def _send_sticker_message(
         self,
         adapter: Any,
@@ -318,12 +307,7 @@ class EngineSticker:
             wrong_result = await self._send_sticker_message(adapter, group_id, wrong)
             await asyncio.sleep(STICKER_MISSEND_RECALL_DELAY_SECONDS)
             await self._recall_message(adapter, wrong_result)
-            await self._send_sticker_message(
-                adapter,
-                group_id,
-                intended,
-                text=self._build_missend_followup_text(),
-            )
+            await self._send_sticker_message(adapter, group_id, intended)
             logger.info(
                 "触发表情包错发: wrong=%s intended=%s group=%s",
                 wrong.file_path.name,

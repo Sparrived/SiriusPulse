@@ -123,8 +123,7 @@ async def test_sticker_when_wrong_image_is_missent_then_it_is_recalled_and_corre
     assert adapter.deleted == ["101"]
     assert len(adapter.sent) == 2
     assert adapter.sent[0][2][0]["data"]["file"].endswith("讨厌.png")
-    assert adapter.sent[1][2][0]["type"] == "text"
-    assert adapter.sent[1][2][1]["data"]["file"].endswith("喜欢.png")
+    assert adapter.sent[1][2][0]["data"]["file"].endswith("喜欢.png")
     assert engine.brain.requests == []
 
 

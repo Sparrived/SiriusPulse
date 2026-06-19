@@ -412,7 +412,11 @@ def _start_webui_background() -> dict[str, Any]:
         "stderr": subprocess.DEVNULL,
     }
     if sys.platform == "win32":
-        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = (
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_NO_WINDOW
+        )
     else:
         kwargs["start_new_session"] = True
     process = subprocess.Popen(cmd, **kwargs)
