@@ -30,9 +30,7 @@ def test_build_qq_mention_section_lists_member_ids_and_syntax():
     )
 
     assert "@{QQ号}" in section
-    assert "123: Alice" in section
-    assert "456: BobCard" in section
-    assert "admin" in section
+    assert "不要编造" in section
 
 
 @pytest.mark.asyncio

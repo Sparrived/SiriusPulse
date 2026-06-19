@@ -34,29 +34,11 @@ def build_qq_mention_section(
     max_members: int = 80,
 ) -> str:
     """Build a compact prompt section teaching inline QQ at syntax."""
-    normalized = [
-        item for item in (normalize_qq_member(member) for member in members) if item["user_id"]
-    ]
-    if not normalized:
-        return ""
-
-    shown = normalized[:max_members]
-    lines = [
-        "【QQ @提及】",
-        "当前 QQ 群聊可以在回复正文中插入 @{QQ号} 来 @ 某个群成员；这个标记会在发送前自动转换成真正的 @。只能使用下列 QQ 号，不要编造。",
-    ]
-    for member in shown:
-        suffix_parts = []
-        if member["role"] in {"owner", "admin"}:
-            suffix_parts.append(member["role"])
-        if member["title"]:
-            suffix_parts.append(member["title"])
-        suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
-        lines.append(f"- {member['user_id']}: {member['display_name']}{suffix}")
-    remaining = len(normalized) - len(shown)
-    if remaining > 0:
-        lines.append(f"- 其余 {remaining} 名成员未列出；未列出的成员不要使用 @ 标记。")
-    return "\n".join(lines)
+    return (
+        "【QQ @提及】"
+        "\n在回复正文中插入 @{QQ号} 可以 @ 某个群成员，发送前会自动转换成真正的 @。"
+        "\n从上下文消息中获取发送者的 QQ 号来使用，不要编造 QQ 号。"
+    )
 
 
 def parse_qq_at_mentions(

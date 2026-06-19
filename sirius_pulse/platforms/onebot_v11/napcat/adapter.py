@@ -1194,11 +1194,53 @@ class NapCatAdapter(BaseAdapter):
                 return False
 
     def _group_text_to_segments(self, group_id: str, text: str) -> list[dict[str, Any]]:
+        text = self._convert_fake_at_mentions(group_id, text)
         member_ids = self._valid_group_member_ids(group_id)
         message_group = parse_qq_at_mentions(text, valid_user_ids=member_ids)
         if message_group is None:
             return [{"type": "text", "data": {"text": text}}]
         return self._message_group_to_onebot(message_group)
+
+    def _convert_fake_at_mentions(self, group_id: str, text: str) -> str:
+        """将模型输出的 @昵称 转换为 @{QQ号} 格式。"""
+        import re
+
+        cached = self._group_member_cache.get(str(group_id))
+        if not cached:
+            return text
+        _, members = cached
+        if not members:
+            return text
+
+        # 构建 昵称/群名片 → user_id 的映射（取最短匹配优先）
+        name_to_id: dict[str, str] = {}
+        for member in members:
+            uid = str(member.get("user_id", "") or "").strip()
+            if not uid:
+                continue
+            card = str(member.get("card", "") or "").strip()
+            nickname = str(member.get("nickname", "") or "").strip()
+            if card:
+                name_to_id[card] = uid
+            if nickname:
+                name_to_id[nickname] = uid
+
+        if not name_to_id:
+            return text
+
+        # 按名字长度降序排列，避免短名误匹配长名
+        sorted_names = sorted(name_to_id.keys(), key=len, reverse=True)
+        # 匹配 @xxx 模式（xxx 不是纯数字且不是已有的 @{xxx} 格式）
+        pattern = re.compile(r"@(?!\{)([一-鿿\w][一-鿿\w ]{0,20})")
+
+        def _replace(m: re.Match) -> str:
+            name = m.group(1).strip()
+            for known in sorted_names:
+                if name == known:
+                    return f"@{{{name_to_id[known]}}}"
+            return m.group(0)
+
+        return pattern.sub(_replace, text)
 
     def _valid_group_member_ids(self, group_id: str) -> set[str] | None:
         cached = self._group_member_cache.get(str(group_id))
