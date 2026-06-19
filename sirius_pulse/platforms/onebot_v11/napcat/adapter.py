@@ -1202,7 +1202,7 @@ class NapCatAdapter(BaseAdapter):
         return self._message_group_to_onebot(message_group)
 
     def _convert_fake_at_mentions(self, group_id: str, text: str) -> str:
-        """将模型输出的 @昵称 转换为 @{QQ号} 格式。"""
+        """将模型输出的 @昵称/@别称/@QQ号 转换为 @{QQ号} 格式。"""
         import re
 
         cached = self._group_member_cache.get(str(group_id))
@@ -1212,31 +1212,36 @@ class NapCatAdapter(BaseAdapter):
         if not members:
             return text
 
-        # 构建 昵称/群名片 → user_id 的映射（取最短匹配优先）
+        # 构建 名称 → user_id 的映射（群名片、昵称、别称）
         name_to_id: dict[str, str] = {}
+        # 合法 QQ 号集合（用于校验纯数字 @xxx）
+        valid_ids: set[str] = set()
         for member in members:
             uid = str(member.get("user_id", "") or "").strip()
             if not uid:
                 continue
-            card = str(member.get("card", "") or "").strip()
-            nickname = str(member.get("nickname", "") or "").strip()
-            if card:
-                name_to_id[card] = uid
-            if nickname:
-                name_to_id[nickname] = uid
+            valid_ids.add(uid)
+            for field_key in ("card", "nickname", "alias"):
+                val = str(member.get(field_key, "") or "").strip()
+                if val:
+                    name_to_id[val] = uid
 
-        if not name_to_id:
+        if not name_to_id and not valid_ids:
             return text
 
         # 按名字长度降序排列，避免短名误匹配长名
         sorted_names = sorted(name_to_id.keys(), key=len, reverse=True)
-        # 匹配 @xxx 模式（xxx 不是纯数字且不是已有的 @{xxx} 格式）
-        pattern = re.compile(r"@(?!\{)([一-鿿\w][一-鿿\w ]{0,20})")
+        # 匹配 @xxx：排除 @{...} 格式，捕获文字或纯数字
+        pattern = re.compile(r"@(?!\{)([一-鿿\w][一-鿿\w ]{0,20}|\d{5,12})")
 
         def _replace(m: re.Match) -> str:
-            name = m.group(1).strip()
+            raw = m.group(1).strip()
+            # 纯数字：校验是否为合法群成员 QQ 号
+            if raw.isdigit():
+                return f"@{{{raw}}}" if raw in valid_ids else m.group(0)
+            # 文字：匹配昵称/群名片/别称
             for known in sorted_names:
-                if name == known:
+                if raw == known:
                     return f"@{{{name_to_id[known]}}}"
             return m.group(0)
 
