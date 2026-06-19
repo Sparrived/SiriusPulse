@@ -1139,6 +1139,22 @@ class NapCatAdapter(BaseAdapter):
     async def _send_group_text(
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
+        # 最终兜底：按换行符拆分为多条消息，仅首条携带引用
+        lines = [line for line in text.split("\n") if line.strip()]
+        if len(lines) > 1:
+            first = True
+            for line in lines:
+                refs = reply_refs if first else None
+                ok = await self._send_group_text_single(group_id, line, refs)
+                if not ok:
+                    return False
+                first = False
+            return True
+        return await self._send_group_text_single(group_id, text, reply_refs)
+
+    async def _send_group_text_single(
+        self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
+    ) -> bool:
         async with self._get_reply_lock(group_id):
             try:
                 # 如果有引用且有有效的 msg_id，使用 reply segment
@@ -1197,6 +1213,17 @@ class NapCatAdapter(BaseAdapter):
     async def _send_private_text(
         self, user_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
+        # 最终兜底：按换行符拆分为多条消息
+        lines = [line for line in text.split("\n") if line.strip()]
+        if len(lines) > 1:
+            for line in lines:
+                ok = await self._send_private_text_single(user_id, line)
+                if not ok:
+                    return False
+            return True
+        return await self._send_private_text_single(user_id, text)
+
+    async def _send_private_text_single(self, user_id: str, text: str) -> bool:
         async with self._get_reply_lock(user_id):
             try:
                 await self.send_private_msg(user_id, text)
