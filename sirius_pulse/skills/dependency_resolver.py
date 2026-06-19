@@ -409,6 +409,7 @@ def _install_packages(packages: list[str], skill_name: str) -> list[str]:
             capture_output=True,
             text=True,
             timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         if result.returncode == 0:
             logger.info("'%s' 的依赖 %s 已经装好了", skill_name, ", ".join(packages))

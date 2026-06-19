@@ -224,6 +224,7 @@ class NapCatManager:
                     capture_output=True,
                     text=True,
                     timeout=5.0,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 return "QQ.exe" in result.stdout
             except Exception:

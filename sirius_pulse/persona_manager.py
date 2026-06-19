@@ -518,6 +518,7 @@ class PersonaManager:
                         ["taskkill", "/PID", str(pid), "/T", "/F"],
                         capture_output=True,
                         timeout=10.0,
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                     )
                     if result.returncode == 0:
                         LOG.info("已终止孤儿进程: %s (pid=%s)", name, pid)
@@ -553,6 +554,7 @@ class PersonaManager:
                     capture_output=True,
                     timeout=10.0,
                     check=False,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
             else:
                 proc.send_signal(signal.SIGTERM)

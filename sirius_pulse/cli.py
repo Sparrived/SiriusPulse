@@ -356,6 +356,7 @@ def _pid_exists(pid: int) -> bool:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         return str(pid) in result.stdout
     try:
@@ -432,7 +433,10 @@ def _stop_webui_background() -> bool:
     if pid and _pid_exists(pid):
         if sys.platform == "win32":
             subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
         else:
             os.kill(pid, signal.SIGTERM)

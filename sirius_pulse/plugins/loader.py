@@ -251,7 +251,11 @@ class PluginLoader:
         uv_available = False
         try:
             result = subprocess.run(
-                ["uv", "--version"], capture_output=True, text=True, timeout=5.0
+                ["uv", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
             uv_available = result.returncode == 0
         except Exception:
@@ -272,7 +276,13 @@ class PluginLoader:
 
             logger.info("安装插件依赖: %s", " ".join(cmd))
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120.0)
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120.0,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
                 if result.returncode == 0:
                     logger.info("依赖安装成功: %s", dep)
                     success_count += 1
@@ -288,7 +298,13 @@ class PluginLoader:
             install_cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
             logger.info("安装 Chromium 浏览器: %s", " ".join(install_cmd))
             try:
-                result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=300.0)
+                result = subprocess.run(
+                    install_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300.0,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
                 if result.returncode == 0:
                     logger.info("Chromium 安装成功")
                 else:
