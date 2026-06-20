@@ -285,20 +285,35 @@ class DelayedQueueTasks:
         reply = ""
         chat_result: Any = None
         deferred_sticker_names: list[str] = []
+        pending_chat_result: Any = None
+        sticker_text_retry_used = False
+        ended_because_max_rounds = False
 
-        for _round in range(max_skill_rounds + 1):
-            chat_result = await engine.brain.chat(
-                ChatRequest(
-                    group_id=group_id,
-                    user_id=item.user_id or "",
-                    system_prompt=system_prompt,
-                    messages=messages,
-                    task_name="response_generate",
-                    enable_skills=True,
-                    caller_is_developer=caller_is_developer,
-                    post_process=True,
+        while True:
+            if pending_chat_result is not None:
+                chat_result = pending_chat_result
+                pending_chat_result = None
+            else:
+                if _round > max_skill_rounds:
+                    ended_because_max_rounds = bool(
+                        tool_calls
+                        and engine._skill_registry is not None
+                        and engine._skill_executor is not None
+                    )
+                    break
+                chat_result = await engine.brain.chat(
+                    ChatRequest(
+                        group_id=group_id,
+                        user_id=item.user_id or "",
+                        system_prompt=system_prompt,
+                        messages=messages,
+                        task_name="response_generate",
+                        enable_skills=True,
+                        caller_is_developer=caller_is_developer,
+                        post_process=True,
+                    )
                 )
-            )
+                _round += 1
             reply = chat_result.raw_text.strip()
             round_clean = chat_result.clean_text
 
@@ -470,8 +485,30 @@ class DelayedQueueTasks:
                 if idx < len(tool_calls) - 1:
                     await asyncio.sleep(2)
 
-            # If all skills were silent, skip the follow-up generation round.
+            # If the model only picked a sticker, give it one text-only retry
+            # without exposing the sticker tool again.
             if all_silent:
+                only_sticker_calls = all(tc.function_name == "send_sticker" for tc in tool_calls)
+                if only_sticker_calls and not non_skill_text and not sticker_text_retry_used:
+                    sticker_text_retry_used = True
+                    pending_chat_result = await engine.brain.chat(
+                        ChatRequest(
+                            group_id=group_id,
+                            user_id=item.user_id or "",
+                            system_prompt=(
+                                system_prompt
+                                + "\n\nYou already selected a sticker for this turn. "
+                                "Now write the text reply only. Do not call send_sticker again."
+                            ),
+                            messages=messages,
+                            task_name="response_generate",
+                            enable_skills=True,
+                            disabled_skill_names={"send_sticker"},
+                            caller_is_developer=caller_is_developer,
+                            post_process=True,
+                        )
+                    )
+                    continue
                 break
 
             # 如果有多模态内容，作为 user 消息注入
@@ -480,12 +517,6 @@ class DelayedQueueTasks:
 
         # If the loop ended because max rounds were exhausted and the last round
         # already sent a partial reply, don't duplicate that text as the final reply.
-        ended_because_max_rounds = (
-            _round == max_skill_rounds
-            and tool_calls
-            and engine._skill_registry is not None
-            and engine._skill_executor is not None
-        )
         if ended_because_max_rounds and last_round_had_partial:
             logger.debug(
                 "Chain hit max_skill_rounds=%d; last partial already sent, "

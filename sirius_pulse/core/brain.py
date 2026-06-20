@@ -64,6 +64,7 @@ class ChatRequest:
     # ── SKILL 控制 ──
     enable_skills: bool = True
     caller_is_developer: bool = False
+    disabled_skill_names: set[str] = field(default_factory=set)
 
     # ── 对话深度 ──
     last_reply_at: float = 0.0
@@ -446,6 +447,13 @@ class Brain:
                         else False
                     ),
                 )
+                if request.disabled_skill_names:
+                    disabled = set(request.disabled_skill_names)
+                    tools = [
+                        tool
+                        for tool in tools
+                        if str(tool.get("function", {}).get("name", "")) not in disabled
+                    ]
                 if not tools:
                     tools = None
 
