@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from sirius_pulse.core.pinned_message import PinnedMessage
 from sirius_pulse.core.prompt_factory import (
     TAG_PINNED_MESSAGES,
@@ -81,8 +83,54 @@ def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
 
     assert params.max_tokens == 64
     assert params.temperature == 0.2
-    assert params.length_instruction
+    assert params.length_instruction == ""
     assert params.tone_instruction
+
+
+def test_output_spec_allows_newline_split_with_short_sentences():
+    spec = PromptFactory.build_output_spec()
+
+    assert "多句话可以用换行符分割" in spec
+    assert "每句话不可超过 15 字" in spec
+    assert "禁止任何形式的换行符" not in spec
+
+
+def test_persona_prompt_drops_length_biased_speech_fields():
+    prompt = PromptFactory.build_persona_prompt(
+        name="Bot",
+        communication_style="简短随意",
+        speech_rhythm="短句慢慢说",
+    )
+
+    assert "简短" not in prompt
+    assert "短句" not in prompt
+    assert "说话随意" not in prompt
+
+
+def test_assemble_chat_does_not_inject_group_style_length_learning():
+    group_profile = SimpleNamespace(
+        taboo_topics=[],
+        atmosphere_history=[],
+        group_norms={
+            "avg_message_length": 8,
+            "length_distribution": {"short": 10},
+            "message_count": 10,
+        },
+    )
+    style_params = StyleAdapter().adapt(pace="silent", persona=None)
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+    )
+
+    assert "【群体风格】" not in bundle.system_prompt
+    assert "【回复风格】" not in bundle.system_prompt
+    assert "平均8字" not in bundle.system_prompt
+    assert "尽量简短" not in bundle.system_prompt
+    assert "控制在 30 字" not in bundle.system_prompt
 
 
 class _NoopDiaryRetriever:

@@ -43,8 +43,6 @@ TAG_OUTPUT_SPEC = "【输出规范】"
 TAG_CURRENT_EMOTION = "【发言者情绪】"
 TAG_RELATIONSHIP_STATUS = "【互动指导】"
 TAG_RELATED_MEMORY = "【相关记忆】"
-TAG_GROUP_STYLE = "【群体风格】"
-TAG_REPLY_STYLE = "【回复风格】"
 TAG_CROSS_GROUP = "【跨群认知】"
 TAG_BIOGRAPHY = "【人物速查】"
 TAG_MY_SKILLS = "【我的能力】"
@@ -117,22 +115,13 @@ class StyleParams:
 
 
 class StyleAdapter:
-    """根据对话节奏、用户偏好适配回复语气与长度指令。
+    """根据用户偏好适配回复语气与生成参数。
 
     max_tokens 由 ModelRouter 按任务类型决定，此处不再动态缩减，
     避免在 SKILL 调用场景下因 token 预算不足导致技能标记被截断。
-    对话节奏（pace）信号转为 prompt 级长度指令，引导模型自主控制输出长度。
     """
 
     _DEFAULT_MAX_TOKENS: int = RESPONSE_MAX_TOKENS
-
-    # 对话节奏 → prompt 长度引导
-    _PACE_LENGTH_HINTS: dict[str, str] = {
-        "accelerating": "对话节奏在加快，请保持简短，跟上节奏。",
-        "steady": "",
-        "decelerating": "对话节奏在放缓，可以适当展开，但控制在 30 字以内。",
-        "silent": "群里比较安静，可以稍微多说一点，但控制在 30 字以内。",
-    }
 
     def adapt(
         self,
@@ -144,12 +133,6 @@ class StyleAdapter:
         max_tokens = self._DEFAULT_MAX_TOKENS
         temperature = 0.7
         tone_instruction = "保持自然友好"
-        length_instructions: list[str] = []
-
-        # 节奏信号 → prompt 级长度引导（不截断 max_tokens）
-        pace_hint = self._PACE_LENGTH_HINTS.get(pace, "")
-        if pace_hint:
-            length_instructions.append(pace_hint)
 
         # 人格风格覆盖
         if persona:
@@ -159,9 +142,7 @@ class StyleAdapter:
                 temperature = persona.temperature_preference
             if persona.communication_style:
                 style = persona.communication_style.strip().lower()
-                if style == "detailed":
-                    length_instructions.append("可以给出较详细的解释。")
-                elif style == "formal":
+                if style == "formal":
                     tone_instruction = "保持礼貌正式的语气"
                 elif style == "casual":
                     tone_instruction = "保持轻松随意的语气，可以用表情"
@@ -178,7 +159,7 @@ class StyleAdapter:
             max_tokens=max_tokens,
             temperature=temperature,
             tone_instruction=tone_instruction,
-            length_instruction=" ".join(length_instructions),
+            length_instruction="",
         )
 
 
@@ -251,9 +232,9 @@ class PromptFactory:
         valence = baseline.get("valence", 0.0)
         arousal = baseline.get("arousal", 0.3)
         if valence > 0.3:
-            emo_lines.append("心情不错的时候话会多一点，愿意接梗")
+            emo_lines.append("心情不错的时候愿意接梗")
         elif valence < -0.3:
-            emo_lines.append("心情不好的时候不太想说话，回复很简短")
+            emo_lines.append("心情不好的时候不太想说话，反应会更克制")
         else:
             emo_lines.append("平时情绪平稳，不会因为小事大起大落")
         if arousal > 0.5:
@@ -305,7 +286,7 @@ class PromptFactory:
         # 回应习惯
         silence_bits: list[str] = []
         freq_map = {
-            "high": "看到消息基本都会回，话比较多",
+            "high": "看到消息基本都会回，反应积极",
             "moderate": "看到感兴趣的话题才接话",
             "low": "很少主动说话，只在想说的时候开口",
             "selective": "只回自己关心的话题，其他的直接忽略",
@@ -319,7 +300,10 @@ class PromptFactory:
             identity_parts.append("；".join(silence_bits) + "。")
 
         # 场景行为指导
-        identity_parts.append("你在一个多人聊天场景里，会收到其他人的消息。" "除了写文件以外，禁止输出任何markdown格式。")
+        identity_parts.append(
+            "你在一个多人聊天场景里，会收到其他人的消息。"
+            "除了写文件以外，禁止输出任何markdown格式。"
+        )
 
         prompt = f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
         if len(prompt) > 1200:
@@ -336,7 +320,7 @@ class PromptFactory:
         spec = (
             f"{TAG_OUTPUT_SPEC}\n"
             "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
-            "2. 直接输出你要说的话，禁止任何形式的换行符出现。\n"
+            "2. 多句话可以用换行符分割，但每句话不可超过 15 字，不允许超过三句话，非写文件的情况下不输出Markdown标签。\n"
             "3. 需要记住某条重要消息、长期规则或约定时，使用 pin_message 工具；不要把钉住指令写进正文。\n"
             "4. 认为某条钉住消息已过期或不再需要时，使用 unpin_message 工具；现有钉住消息会自动出现在【钉住的重要消息】区。\n"
             "5. 工具调用可以和自然语言回复同时发生；若工具只是发送表情包或维护钉住消息，不需要等待工具结果再解释。\n"
@@ -368,7 +352,9 @@ class PromptFactory:
             latest = group_profile.atmosphere_history[-1]
             group_valence = latest.group_valence
             active_count = getattr(latest, "active_participants", 0)
-        mood_desc = "挺热络" if group_valence > 0.2 else "有点低沉" if group_valence < -0.2 else "一般"
+        mood_desc = (
+            "挺热络" if group_valence > 0.2 else "有点低沉" if group_valence < -0.2 else "一般"
+        )
         group_line = f"群里氛围{mood_desc}"
         if active_count:
             group_line += f"，当前约{active_count}人在聊"
@@ -395,7 +381,7 @@ class PromptFactory:
         if rate >= 0.6:
             return f"{TAG_RELATIONSHIP_STATUS}{who}经常回应你的消息，你们互动很好，可以自然放松。"
         if count >= 10 and rate < 0.15:
-            return f"{TAG_RELATIONSHIP_STATUS}{who}很少回应你的消息，尽量简洁，不要强行搭话。"
+            return f"{TAG_RELATIONSHIP_STATUS}{who}很少回应你的消息，不要强行搭话。"
 
         return None
 
@@ -457,7 +443,7 @@ class PromptFactory:
                 names = "、".join(negative_users[:3])
                 if len(negative_users) > 3:
                     names += f"等{len(negative_users)}人"
-                parts.append(f"{names}很少回应你的消息，尽量简洁，不要强行搭话。")
+                parts.append(f"{names}很少回应你的消息，不要强行搭话。")
 
         if not parts:
             return None
@@ -659,35 +645,6 @@ class PromptFactory:
         return "\n".join(lines)
 
     @staticmethod
-    def build_group_style(group_profile: Any, style_params: Any) -> str:
-        """构建群体风格 section（基于实际消息统计 + 反馈数据）。"""
-        lines = [TAG_GROUP_STYLE]
-        if group_profile.group_name:
-            lines.append(f"群名：{group_profile.group_name}")
-        norms = getattr(group_profile, "group_norms", {})
-        if norms:
-            avg_len = norms.get("avg_message_length", 0)
-            dist = norms.get("length_distribution", {})
-            total = norms.get("message_count", 0)
-            if total > 0 and avg_len > 0:
-                short_pct = round(dist.get("short", 0) / total * 100)
-                if avg_len < 20:
-                    lines.append(f"这个群里大家习惯短消息（平均{avg_len:.0f}字，{short_pct}%是短消息），你也尽量简短。")
-                elif avg_len < 50:
-                    lines.append(f"这个群里消息长度适中（平均{avg_len:.0f}字），你也保持类似长度。")
-        if style_params.tone_instruction:
-            lines.append(f"语气要求：{style_params.tone_instruction}")
-        return "\n".join(lines)
-
-    @staticmethod
-    def build_style_fallback(style_params: Any) -> str:
-        """无群体画像时的回复风格 fallback。"""
-        lines = [TAG_REPLY_STYLE]
-        if style_params.tone_instruction:
-            lines.append(f"语气要求：{style_params.tone_instruction}")
-        return "\n".join(lines)
-
-    @staticmethod
     def build_other_ai_instruction(other_ai_names: list[str]) -> str:
         """构建群中其他 AI 成员区分指令。"""
         if not other_ai_names:
@@ -733,7 +690,8 @@ class PromptFactory:
                 return ""
             lines = [
                 f"{TAG_PLUGIN_AWARENESS}",
-                "群友可能会使用以下插件功能。你不需要主动调用它们，" "但如果群友问起，你可以介绍或引导：",
+                "群友可能会使用以下插件功能。"
+                "如果群友问起，你可以介绍或引导：",
             ]
             for inject in injects:
                 for line in inject.strip().split("\n"):
@@ -824,9 +782,15 @@ class PromptFactory:
             sections.append(identity)
         who = user_name or user_id or "用户"
         if target == "self":
-            sections.append(f"到时间了，该去做之前答应 {who} 的事了：{content}。" f"随便说两句就行，不用太正式，就像平时聊天一样。")
+            sections.append(
+                f"到时间了，该去做之前答应 {who} 的事了：{content}。"
+                f"语气自然，不用太正式，就像平时聊天一样。"
+            )
         else:
-            sections.append(f"到时间了，该提醒 {who} 了：{content}。" f"随便说两句就行，不用太正式，就像平时聊天一样。")
+            sections.append(
+                f"到时间了，该提醒 {who} 了：{content}。"
+                f"语气自然，不用太正式，就像平时聊天一样。"
+            )
 
         if skill_results:
             results_text = "\n".join(
@@ -834,7 +798,10 @@ class PromptFactory:
                 f"{json.dumps(sr.get('result') or sr.get('error'), ensure_ascii=False, default=str)}"
                 for i, sr in enumerate(skill_results)
             )
-            sections.append(f"顺便一提，刚才已经执行了这些操作：\n{results_text}\n" f"有结果的话直接带进去说，不用刻意汇报。")
+            sections.append(
+                f"顺便一提，刚才已经执行了这些操作：\n{results_text}\n"
+                f"有结果的话直接带进去说，不用刻意汇报。"
+            )
 
         if skill_desc:
             sections.append(skill_desc)
@@ -868,8 +835,8 @@ class PromptFactory:
             "你现在处于「小跟班」模式。你是一个任务执行 Agent，由宿主通过 @ 提及指派任务。",
             f"宿主 {host_name} 给你指派了以下任务：",
             task_text,
-            "请立即执行任务并简洁汇报结果。不要闲聊、不要主动扩展话题、不要试图与宿主或其他 AI 进行多轮对话。",
-            "如果任务描述不清晰或缺少必要信息，简短地请求澄清。",
+            "请立即执行任务并汇报结果。不要闲聊、不要主动扩展话题、不要试图与宿主或其他 AI 进行多轮对话。",
+            "如果任务描述不清晰或缺少必要信息，请求澄清。",
             "如果任务超出你的能力范围，明确说明无法完成。",
         ]
 
@@ -880,9 +847,7 @@ class PromptFactory:
                 adapter_type=adapter_type,
             )
             if tool_desc:
-                sections.append(
-                    "你可以使用以下工具来完成任务：\n" + tool_desc
-                )
+                sections.append("你可以使用以下工具来完成任务：\n" + tool_desc)
                 sections.append(
                     "【Function Call】\n你有一些工具（tools）可以帮助解决问题，"
                     "主动尝试使用工具完成任务。"
@@ -944,7 +909,7 @@ class PromptFactory:
         """
 
         sections: list[str] = []
-        constraint_sections: list[str] = []  # 回复限制（需要紧跟消息的动态约束）
+        constraint_sections: list[str] = []
         bd = PromptTokenBreakdown()
 
         def _add(
@@ -967,15 +932,9 @@ class PromptFactory:
 
         # ── L1 半稳：数小时级变化 ──
         if group_profile:
-            _add(
-                PromptFactory.build_group_style(group_profile, style_params),
-                "group_style",
-            )
             taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
             if taboo:
                 _add(taboo, "group_style")
-        else:
-            _add(PromptFactory.build_style_fallback(style_params), "group_style")
 
         # ── L2 变动：每条消息级变化 ──
         bio = PromptFactory.build_biography_section(
@@ -1047,7 +1006,7 @@ class PromptFactory:
         # 添加【最近消息】标签
         user_content = f"{TAG_RECENT_MESSAGES}\n{user_content}"
 
-        # 回复限制（长度、风格、禁忌）注入到【最近消息】前面
+        # 动态约束注入到【最近消息】前面
         if constraint_sections:
             constraint_text = "\n\n".join(constraint_sections)
             user_content = f"{constraint_text}\n\n{user_content}"
@@ -1098,7 +1057,10 @@ class PromptFactory:
         if other_ai:
             _add(other_ai, "identity")
         if topic_context:
-            _add(f"{TAG_TOPIC_SUGGESTION}你可以基于这段群聊记忆自然地开启话题：{topic_context}", "memory")
+            _add(
+                f"{TAG_TOPIC_SUGGESTION}你可以基于这段群聊记忆自然地开启话题：{topic_context}",
+                "memory",
+            )
 
         if group_profile and group_profile.interest_topics:
             topics = ", ".join(group_profile.interest_topics[:3])

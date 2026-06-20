@@ -1375,13 +1375,6 @@ class _EmotionalGroupChatEngineBase:
             )
         )
 
-        # Semantic: passive group norm learning from message content
-        self.semantic_memory.learn_from_message(
-            group_id=group_id,
-            speaker_id=user_id,
-            content=content or "",
-        )
-
         # 3. Decision
         decision = self._decision(
             intent, emotion, group_id, user_id, message.sender_type or "human", content

@@ -189,8 +189,8 @@ class ModelRouter:
             - urgency > 80: upgrade to stronger model, lower temperature
             - urgency > 95: strongest model, more tokens
 
-        heat_level 不再影响 max_tokens：长度控制已移至 StyleAdapter 的 prompt 指令层，
-        避免在 SKILL 调用场景下因 token 预算不足导致技能标记被截断。
+        heat_level 不再影响 max_tokens，避免在 SKILL 调用场景下
+        因 token 预算不足导致技能标记被截断。
         """
         base = self._registry.get(task_name)
         if base is None:

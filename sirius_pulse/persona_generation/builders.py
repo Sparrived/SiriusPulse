@@ -220,7 +220,7 @@ def _collect_prompt_enhancements(spec: PersonaSpec) -> list[str]:
         "relationship": ("关系", "信任", "亲密", "依恋", "长期陪伴", "连接感"),
         "backstory": ("原型", "人生", "小传", "成长", "经历", "出身", "社会位置", "生活阶段"),
         "contrast": ("矛盾", "反差", "表面", "内里", "嘴硬", "心软", "缺点", "执念", "不完美"),
-        "voice": ("口语", "方言", "口头禅", "短句", "节奏", "停顿", "简洁", "不要太像AI", "ai味"),
+        "voice": ("口语", "方言", "口头禅", "节奏", "停顿", "不要太像AI", "ai味"),
         "boundary": ("边界", "拒绝", "越界", "雷区", "禁忌", "分寸"),
     }
     if any(keyword in corpus for keyword in keyword_groups["anthropomorphic"]):
@@ -230,7 +230,9 @@ def _collect_prompt_enhancements(spec: PersonaSpec) -> list[str]:
     if any(keyword in corpus for keyword in keyword_groups["relationship"]):
         enhancements.append("强化关系连续性：突出信任建立、陪伴感和长期互动的一致性。")
     if any(keyword in corpus for keyword in keyword_groups["backstory"]):
-        enhancements.append("强化人物小传：补足社会位置、关键经历和生活痕迹，让角色像从真实人生里长出来。")
+        enhancements.append(
+            "强化人物小传：补足社会位置、关键经历和生活痕迹，让角色像从真实人生里长出来。"
+        )
     if any(keyword in corpus for keyword in keyword_groups["contrast"]):
         enhancements.append("强化复杂度：保留表里反差、核心矛盾与不完美，避免单一正能量人设。")
     if any(keyword in corpus for keyword in keyword_groups["voice"]):
@@ -299,7 +301,9 @@ def _format_dependency_snapshots_for_prompt(
         lines.append(f"- path={snapshot.path}")
         lines.append(f"  sha256={snapshot.sha256}")
         if truncated:
-            lines.append(f"  note=内容过长，仅向模型注入前 {max_chars_per_file} 字；完整内容已本地持久化")
+            lines.append(
+                f"  note=内容过长，仅向模型注入前 {max_chars_per_file} 字；完整内容已本地持久化"
+            )
         lines.append("  content=")
         lines.append(content)
     return "\n".join(lines)
@@ -315,10 +319,10 @@ def _build_generation_system_prompt(prompt_enhancements: list[str]) -> str:
         "2. agent_persona：3-5 个关键词以 '/' 分隔，≤30 字，直接概括核心特质，无需完整句子。",
         "3. global_system_prompt：完整的角色扮演指南，必须详细、结构化、可直接落地，不要只写一段短摘要或宣传文案；建议 900-1600 字。",
         "4. global_system_prompt 至少要包含这些结构段落：<role_profile>、<life_story>、<core_drives>、<relationship_rules>、<emotional_mechanics>、<speech_style>、<behavior_boundaries>、<response_strategy>、<safety>。",
-        "5. 每个段落都要落到具体细节：人物原型/社会位置/经历痕迹、核心矛盾与小缺点、关系从陌生到亲近的变化、情绪触发与恢复方式、词汇与句长偏好、口头禅/停顿、禁止项、信息不足时如何回应。",
+        "5. 每个段落都要落到具体细节：人物原型/社会位置/经历痕迹、核心矛盾与小缺点、关系从陌生到亲近的变化、情绪触发与恢复方式、词汇习惯、口头禅/停顿、禁止项、信息不足时如何回应。",
         "6. 这里的“结构化”指 global_system_prompt 自身必须清晰分段，可使用 XML-like 标签或其他明确段落标识；这不等于要求角色在日常回复里使用 markdown。",
         "7. 优先生成真实而不完美的人：允许有小缺点、小执念、小习惯和情绪波动，避免设定成全能、永远正确、永远温柔的模板角色。",
-        "8. 回复风格要贴近真人交流：默认短句、口语、少解释，避免客服腔、说明书腔、机械式关怀和过度解释。不要把角色写成长篇输出型 narrator。",
+        "8. 回复风格要贴近真人交流：口语、自然、有个人表达习惯，避免客服腔、说明书腔、机械式关怀和过度解释。",
         "9. 默认使用纯文本交流，不主动使用 markdown 标题、列表、表格或代码块；只有用户明确要求，或任务天然需要结构化输出时才这样做。",
         "10. 若提供依赖文件，必须抽取其中稳定、可复用的人格线索与表达逻辑，不要逐字照抄原文；若只有抽象素材，也要主动补足可信细节。",
         "11. 若输入给了具体台词、经典语录或风格样本，只抽取其语言逻辑和情绪肌理，不要大段照搬。",
@@ -332,7 +336,8 @@ def _build_generation_system_prompt(prompt_enhancements: list[str]) -> str:
 
 
 _GENERATION_OUTPUT_SCHEMA = (
-    '生成：{"agent_persona":"...","global_system_prompt":"...",' '"temperature":0.7,"max_tokens":512}'
+    '生成：{"agent_persona":"...","global_system_prompt":"...",'
+    '"temperature":0.7,"max_tokens":512}'
 )
 
 
@@ -362,14 +367,20 @@ def _build_generation_user_prompt(
     lines.append(f"max_tokens={base_max_tokens}")
 
     lines.append("\n【生成目标】")
-    lines.append("- 用户更希望通过上位描述来构建人格，请优先使用高层维度，而不是要求用户自己写完整 prompt。")
-    lines.append("- 需要把抽象输入展开为具体的人物小传、关系距离、情绪反应、语言习惯、回复节奏和互动边界。")
+    lines.append(
+        "- 用户更希望通过上位描述来构建人格，请优先使用高层维度，而不是要求用户自己写完整 prompt。"
+    )
+    lines.append(
+        "- 需要把抽象输入展开为具体的人物小传、关系距离、情绪反应、语言习惯、回复节奏和互动边界。"
+    )
     lines.append(
         "- global_system_prompt 必须写成详细、结构化、可执行的人格提示词，不是几十字简介；至少明确角色定位、人物小传、核心驱动力、关系层级、情绪机制、语言风格、行为边界、回复策略。"
     )
     lines.append("- 如果输入较少，也要在不违背输入的前提下补出可信细节，不要只复述原句。")
     lines.append("- 除非输入本身就是风格样本，不要把原句直接拼贴成最终系统提示词。")
-    lines.append("- 产出的人格应默认偏向短回复、轻量解释和纯文本表达，避免动辄长段落、长列表和 markdown 排版。")
+    lines.append(
+        "- 产出的人格应默认偏向短回复、轻量解释和纯文本表达，避免动辄长段落、长列表和 markdown 排版。"
+    )
 
     lines.append("\n【结构化提示词骨架】")
     lines.append("<role_profile>角色定位、社会位置、人物原型、第一印象</role_profile>")
@@ -649,7 +660,8 @@ def _build_preset_from_response(
     if not agent_persona and not global_system_prompt:
         if _looks_like_roleplay_json_response(raw):
             raise PersonaGenerationResponseError(
-                "人格生成响应缺少 agent_persona 和 global_system_prompt 字段。" "请检查模型输出格式。",
+                "人格生成响应缺少 agent_persona 和 global_system_prompt 字段。"
+                "请检查模型输出格式。",
                 raw_response=raw,
                 parsed_payload={"parsed_payload": parsed},
             )
@@ -953,9 +965,11 @@ async def aupdate_agent_prompt(
         trait_keywords=trait_keywords,
         answers=answers,
         background=background,
-        dependency_files=[_normalize_dependency_file_path(item) for item in dependency_files]
-        if dependency_files is not None
-        else None,
+        dependency_files=(
+            [_normalize_dependency_file_path(item) for item in dependency_files]
+            if dependency_files is not None
+            else None
+        ),
         agent_alias=agent_alias,
         output_language=output_language,
     )

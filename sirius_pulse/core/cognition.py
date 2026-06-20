@@ -33,6 +33,39 @@ from sirius_pulse.models.intent_v3 import (
 logger = logging.getLogger(__name__)
 
 
+_LENGTH_BIAS_KEYWORDS = (
+    "简短",
+    "短句",
+    "短回复",
+    "详细",
+    "细说",
+    "长篇",
+    "长句",
+    "字数",
+    "篇幅",
+    "回复长度",
+    "多说",
+    "少说",
+    "话多",
+    "话少",
+    "少解释",
+    "多解释",
+    "concise",
+    "detailed",
+    "long-form",
+)
+
+
+def _drop_length_biased_text(text: str | None) -> str:
+    if not text:
+        return ""
+    normalized = text.strip()
+    lowered = normalized.lower()
+    if any(keyword in lowered for keyword in _LENGTH_BIAS_KEYWORDS):
+        return ""
+    return normalized
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # 关键词提取工具（含中文二元组 Bigram）
 # ═══════════════════════════════════════════════════════════════════════
@@ -645,8 +678,9 @@ class CognitionAnalyzer:
                 parts.append(first[:60])
             if p.personality_traits:
                 parts.append(f"你的性格是{'、'.join(p.personality_traits[:3])}。")
-            if p.communication_style:
-                parts.append(f"说话风格：{p.communication_style}。")
+            communication_style = _drop_length_biased_text(p.communication_style)
+            if communication_style:
+                parts.append(f"说话风格：{communication_style}。")
             if p.social_role:
                 parts.append(f"在群里通常是{p.social_role}角色。")
 
@@ -760,7 +794,9 @@ class CognitionAnalyzer:
                     alias_lines.append(f'"{alias}" → {user_name}')
             if alias_lines:
                 user_alias_note = (
-                    "【本群用户别称】\n" + "\n".join(alias_lines[:15]) + "\n注意：上述别称属于其他用户。"
+                    "【本群用户别称】\n"
+                    + "\n".join(alias_lines[:15])
+                    + "\n注意：上述别称属于其他用户。"
                     "如果消息中只提到这些别称（而没有 @AI 或直呼 AI 名字），"
                     "说明消息不是指向当前 AI 的，directed_score 应该较低。\n"
                 )
@@ -1207,7 +1243,10 @@ class CognitionAnalyzer:
 
         # Excessive laughter emoji/punctuation
         laugh_count = (
-            text_lower.count("哈哈") + text_lower.count("haha") + text.count("😂") + text.count("🤣")
+            text_lower.count("哈哈")
+            + text_lower.count("haha")
+            + text.count("😂")
+            + text.count("🤣")
         )
         if laugh_count >= 3:
             indicators += 0.15
@@ -1464,7 +1503,8 @@ class CognitionAnalyzer:
         ed_count = sum(1 for w in emotional_markers if w in text_lower)
         scores["emotional_disclosure_score"] = min(
             1.0,
-            ed_count * 0.25 + (0.15 if any(w in text_lower for w in ["感觉", "觉得", "心情"]) else 0.0),
+            ed_count * 0.25
+            + (0.15 if any(w in text_lower for w in ["感觉", "觉得", "心情"]) else 0.0),
         )
 
         # attention_seeking_score: attention-seeking phrases

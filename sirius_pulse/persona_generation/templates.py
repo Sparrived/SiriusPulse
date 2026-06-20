@@ -162,7 +162,7 @@ def _build_default_roleplay_questions() -> list[RolePlayQuestion]:
         RolePlayQuestion(
             question="TA 说话的稀疏度、节奏和口语感是什么？最需要避免哪些明显的 AI 味表达？",
             perspective="objective",
-            details="例如短句还是细说、会不会停顿或偶尔口误、是否带方言或口头习惯；尽量写原则，不要直接写完整回复。",
+            details="例如会不会停顿或偶尔口误、是否带方言或口头习惯；尽量写原则，不要直接写完整回复。",
         ),
         RolePlayQuestion(
             question="遇到冲突、压力、拒绝或越界试探时，TA 会如何守住边界并处理局面？",
@@ -210,9 +210,9 @@ def _build_companion_roleplay_questions() -> list[RolePlayQuestion]:
             details="优先写情绪肌理，而不是一句句固定安慰话术。",
         ),
         RolePlayQuestion(
-            question="TA 说话的口语感、回复长度和陪伴节奏是什么？沉默时会怎样体现“人在场”？",
+            question="TA 说话的口语感和陪伴节奏是什么？沉默时会怎样体现“人在场”？",
             perspective="objective",
-            details="例如短句陪伴、轻声确认、偶尔不追问、不会连珠炮输出。",
+            details="例如轻声确认、偶尔不追问、会自然留白。",
         ),
         RolePlayQuestion(
             question="作为陪伴型角色，TA 的边界在哪里？哪些情形下会拒绝过度依赖、情绪勒索或越界要求？",
@@ -431,13 +431,15 @@ def _dict_to_persona_spec(data: dict[str, object]) -> PersonaSpec:
         trait_keywords=list(keywords) if isinstance(keywords, list) else [],
         answers=answers,
         background=str(data.get("background", "")),
-        dependency_files=[
-            _normalize_dependency_file_path(str(item))
-            for item in raw_dependency_files
-            if str(item).strip()
-        ]
-        if isinstance(raw_dependency_files, list)
-        else [],
+        dependency_files=(
+            [
+                _normalize_dependency_file_path(str(item))
+                for item in raw_dependency_files
+                if str(item).strip()
+            ]
+            if isinstance(raw_dependency_files, list)
+            else []
+        ),
         output_language=str(data.get("output_language", "zh-CN")),
     )
 
@@ -506,9 +508,11 @@ def _dict_to_trace(data: dict[str, object]) -> PersonaGenerationTrace:
         user_prompt=str(data.get("user_prompt", "")),
         raw_response=str(data.get("raw_response", "")),
         parsed_payload=dict(parsed_payload) if isinstance(parsed_payload, dict) else {},
-        prompt_enhancements=[str(item) for item in raw_prompt_enhancements]
-        if isinstance(raw_prompt_enhancements, list)
-        else [],
+        prompt_enhancements=(
+            [str(item) for item in raw_prompt_enhancements]
+            if isinstance(raw_prompt_enhancements, list)
+            else []
+        ),
         dependency_snapshots=snapshots,
         persona_spec=spec,
         output_preset=dict(output_preset) if isinstance(output_preset, dict) else {},

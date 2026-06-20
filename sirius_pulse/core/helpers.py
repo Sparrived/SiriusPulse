@@ -48,8 +48,8 @@ class Helpers:
             self._engine.brain.current_adapter_type_fn = (
                 lambda: getattr(self._engine, "_current_adapter_type", "") or None
             )
-            self._engine.brain.current_admin_allowed_fn = (
-                lambda group_id: bool(self._engine.is_qq_bot_group_admin(group_id))
+            self._engine.brain.current_admin_allowed_fn = lambda group_id: (
+                bool(self._engine.is_qq_bot_group_admin(group_id))
                 if hasattr(self._engine, "is_qq_bot_group_admin")
                 else False
             )
@@ -243,7 +243,9 @@ class Helpers:
             if not result.success:
                 last_error = result.error or "未知错误"
                 if is_last:
-                    final_reply = f"[{definition.display_name or plugin_name}] 执行失败: {last_error}"
+                    final_reply = (
+                        f"[{definition.display_name or plugin_name}] 执行失败: {last_error}"
+                    )
                 continue
 
             any_success = True
@@ -356,7 +358,9 @@ class Helpers:
                         trigger_specs = [trigger_specs]
                     for spec in trigger_specs:
                         engine._passive_skill_triggers.setdefault(spec.event_type, []).append(spec)
-                        logger.info("被动SKILL触发器已注册: %s (事件: %s)", spec.name, spec.event_type)
+                        logger.info(
+                            "被动SKILL触发器已注册: %s (事件: %s)", spec.name, spec.event_type
+                        )
             except Exception as exc:
                 logger.warning("注册被动SKILL失败 (%s): %s", skill.name, exc)
 
@@ -472,7 +476,7 @@ class Helpers:
         elif avg_valence > 0.4 and avg_arousal <= 0.6:
             return "当前群聊氛围轻松愉快，保持友好自然的交流即可。"
         elif avg_arousal < 0.3:
-            return "当前群聊比较平淡，保持简洁、不突兀的回应。"
+            return "当前群聊比较平淡，请自然回应，不要显得突兀。"
         return ""
 
     @staticmethod

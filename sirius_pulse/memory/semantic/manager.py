@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime
 from typing import Any
 
@@ -21,23 +20,10 @@ _MAX_PENDING_RECORDS = 20
 _FEEDBACK_WINDOW = 20
 _FEEDBACK_TIMEOUT_S = FEEDBACK_TIMEOUT_SECONDS
 
-_EMOJI_PATTERN = re.compile(
-    "["
-    "\U0001f600-\U0001f64f"
-    "\U0001f300-\U0001f5ff"
-    "\U0001f680-\U0001f6ff"
-    "\U0001f1e0-\U0001f1ff"
-    "\U00002702-\U000027b0"
-    "\U000024c2-\U0001f251"
-    "]+",
-    flags=re.UNICODE,
-)
-
 
 class SemanticMemoryManager:
     """Manages semantic profiles with SQLite persistence.
 
-    - Group norms: inferred from message stream (passive learning)
     - Atmosphere history: recorded after each cognition cycle
     - User interaction count: incremented per message
     - Response feedback: AI 发言后记录锚点，用户跟进时结算 engagement
@@ -117,21 +103,6 @@ class SemanticMemoryManager:
     def list_group_user_profiles(self, group_id: str) -> list[UserSemanticProfile]:
         profiles_data = self._storage.list_semantic_profiles(group_id)
         return [UserSemanticProfile.from_dict(d) for d in profiles_data]
-
-    # ------------------------------------------------------------------
-    # Passive learning: group norms from message stream
-    # ------------------------------------------------------------------
-
-    def learn_from_message(
-        self,
-        group_id: str,
-        speaker_id: str,
-        content: str,
-        *,
-        channel: str | None = None,
-    ) -> None:
-        profile = self.ensure_group_profile(group_id)
-        profile.group_norms["last_active"] = datetime.now().isoformat()
 
     def record_atmosphere(
         self,
