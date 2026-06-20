@@ -52,6 +52,93 @@ def _read_tail_lines(path: Path, n: int) -> list[str]:
     return lines
 
 
+def _conversation_entry_key(entry: dict[str, Any]) -> str:
+    entry_id = str(entry.get("entry_id") or "").strip()
+    if entry_id:
+        return f"id:{entry_id}"
+    timestamp = str(entry.get("timestamp") or "")
+    role = str(entry.get("role") or "")
+    user_id = str(entry.get("user_id") or "")
+    content = str(entry.get("content") or "")[:120]
+    return f"fallback:{timestamp}:{role}:{user_id}:{content}"
+
+
+def _load_runtime_basic_memory_messages(paths: Any, group_id: str = "") -> list[dict[str, Any]]:
+    """Load the active basic-memory window used for prompt assembly.
+
+    The archive files are append-only display history. The active prompt context
+    is restored from engine_state/basic_memory.json, so exposing it here lets the
+    WebUI inspect the same recent LLM chains that generation uses.
+    """
+    state_path = paths.engine_state / "basic_memory.json"
+    if not state_path.exists():
+        return []
+
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return []
+
+    if not isinstance(raw, dict):
+        return []
+
+    messages: list[dict[str, Any]] = []
+    for gid, entries in raw.items():
+        gid_text = str(gid)
+        if group_id and gid_text != group_id:
+            continue
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            item = dict(entry)
+            item["group_id"] = item.get("group_id") or gid_text
+            if not item.get("tags"):
+                item["tags"] = []
+            messages.append(item)
+    return messages
+
+
+def _merge_conversation_messages(
+    archive_messages: list[dict[str, Any]],
+    runtime_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+
+    for source in (archive_messages, runtime_messages):
+        for message in source:
+            key = _conversation_entry_key(message)
+            if key not in merged:
+                order.append(key)
+            merged[key] = message
+
+    return [merged[key] for key in order]
+
+
+def _conversation_message_matches_filters(
+    message: dict[str, Any],
+    *,
+    search: str,
+    speaker: str,
+    start_time: str,
+    end_time: str,
+) -> bool:
+    if search and search not in (message.get("content", "") or "").lower():
+        return False
+    if speaker:
+        speaker_name = (message.get("speaker_name", "") or "").lower()
+        user_id = (message.get("user_id", "") or "").lower()
+        if speaker not in speaker_name and speaker not in user_id:
+            return False
+    if start_time and message.get("timestamp", "") < start_time:
+        return False
+    if end_time and message.get("timestamp", "") > end_time:
+        return False
+    return True
+
+
 async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Response:
     """Return aggregated token usage across all personas."""
     from sirius_pulse.token import analytics as token_analytics
@@ -873,21 +960,32 @@ async def api_persona_conversation_history_get(
         return _json_response({"error": "人格不存在"}, 404)
 
     archive_dir = paths.dir / "archive"
-    if not archive_dir.exists():
-        return _json_response({"messages": [], "groups": [], "total": 0, "pinned_messages": []})
 
     # 获取所有群组
     groups = []
-    for f in archive_dir.glob("*.jsonl"):
-        groups.append(f.stem)
+    if archive_dir.exists():
+        for f in archive_dir.glob("*.jsonl"):
+            groups.append(f.stem)
+
+    runtime_messages = _load_runtime_basic_memory_messages(paths, group_id)
+    runtime_groups = {
+        str(message.get("group_id") or "")
+        for message in runtime_messages
+        if str(message.get("group_id") or "").strip()
+    }
+    groups = sorted(set(groups) | runtime_groups)
 
     target_files = []
-    if group_id:
-        target_file = archive_dir / f"{group_id}.jsonl"
-        if target_file.exists():
-            target_files.append(target_file)
-    else:
-        target_files = sorted(archive_dir.glob("*.jsonl"))
+    if archive_dir.exists():
+        if group_id:
+            target_file = archive_dir / f"{group_id}.jsonl"
+            if target_file.exists():
+                target_files.append(target_file)
+        else:
+            target_files = sorted(archive_dir.glob("*.jsonl"))
+
+    if not target_files and not runtime_messages:
+        return _json_response({"messages": [], "groups": groups, "total": 0, "pinned_messages": []})
 
     has_filters = bool(search or speaker or start_time or end_time)
 
@@ -913,22 +1011,20 @@ async def api_persona_conversation_history_get(
             except OSError:
                 continue
 
+        all_messages = _merge_conversation_messages(all_messages, runtime_messages)
+
         # 应用筛选
-        if search:
-            all_messages = [
-                m for m in all_messages if search in (m.get("content", "") or "").lower()
-            ]
-        if speaker:
-            all_messages = [
-                m
-                for m in all_messages
-                if speaker in (m.get("speaker_name", "") or "").lower()
-                or speaker in (m.get("user_id", "") or "").lower()
-            ]
-        if start_time:
-            all_messages = [m for m in all_messages if m.get("timestamp", "") >= start_time]
-        if end_time:
-            all_messages = [m for m in all_messages if m.get("timestamp", "") <= end_time]
+        all_messages = [
+            m
+            for m in all_messages
+            if _conversation_message_matches_filters(
+                m,
+                search=search,
+                speaker=speaker,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        ]
 
         all_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
         total = len(all_messages)
@@ -967,8 +1063,12 @@ async def api_persona_conversation_history_get(
             except json.JSONDecodeError:
                 continue
 
-        messages_raw.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
-        messages = messages_raw[offset : offset + limit]
+        merged_messages = _merge_conversation_messages(messages_raw, runtime_messages)
+        runtime_extra = max(0, len(merged_messages) - len(messages_raw))
+        total += runtime_extra
+
+        merged_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
+        messages = merged_messages[offset : offset + limit]
 
     # 读取钉住消息
     pinned_messages: list[dict[str, Any]] = []

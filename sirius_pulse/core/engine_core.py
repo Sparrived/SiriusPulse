@@ -48,7 +48,7 @@ from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3
 from sirius_pulse.models.models import Message, Transcript, UnifiedUser
-from sirius_pulse.models.response_strategy import StrategyDecision
+from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 
 logger = logging.getLogger(__name__)
 
@@ -1037,7 +1037,9 @@ class _EmotionalGroupChatEngineBase:
                 if msg_id:
                     msg_id_map[msg_id] = msg_data
 
-            logger.info("[REPLY] 共 %d 条用户消息, %d 条有msg_id", len(all_user_entries), len(msg_id_map))
+            logger.info(
+                "[REPLY] 共 %d 条用户消息, %d 条有msg_id", len(all_user_entries), len(msg_id_map)
+            )
 
             # 处理每个 [REPLY:xxx] 指令，直接存储引用信息
             refs: list[dict[str, str]] = []
@@ -1062,7 +1064,9 @@ class _EmotionalGroupChatEngineBase:
                             "content": ref_msg["content"][:100],
                         }
                     )
-                    logger.info("[REPLY] 找到引用消息: msg_id=%s, speaker=%s", msg_id, ref_msg["speaker"])
+                    logger.info(
+                        "[REPLY] 找到引用消息: msg_id=%s, speaker=%s", msg_id, ref_msg["speaker"]
+                    )
                 else:
                     logger.info("[REPLY] 未找到 id=%s 对应的消息", ref_id)
 
@@ -1131,6 +1135,52 @@ class _EmotionalGroupChatEngineBase:
                 data={"group_id": group_id, "user_id": user_id},
             )
         )
+
+        # Bot 正在发送多段回复时到达的新消息：不打断当前发送。
+        # 只有明确点名当前 bot 的消息才进入 delayed queue，避免立刻抢话。
+        if getattr(message, "received_during_bot_send", False):
+            self._background_update(group_id, message, None, None, user_id)
+            if self._message_explicitly_mentions_current_bot(message):
+                decision = StrategyDecision(
+                    strategy=ResponseStrategy.DELAYED,
+                    score=1.0,
+                    threshold=0.0,
+                    urgency=60.0,
+                    relevance=1.0,
+                    reason="received_during_bot_send_mention",
+                )
+                self.delayed_queue.enqueue(
+                    group_id=group_id,
+                    user_id=user_id,
+                    message_content=content,
+                    strategy_decision=decision,
+                    emotion_state={},
+                    candidate_memories=[],
+                    channel=message.channel,
+                    channel_user_id=message.channel_user_id,
+                    multimodal_inputs=message.multimodal_inputs,
+                    adapter_type=message.adapter_type,
+                    heat_level="warm",
+                    pace="steady",
+                    speaker_name=message.speaker or "",
+                    platform_message_id=message.message_id or "",
+                )
+                self._persist_group_state(group_id)
+                self._log_inner_thought(f"{speaker} 在我发送时点名我，先排进延迟回复～")
+                return {
+                    "strategy": "delayed",
+                    "reply": None,
+                    "emotion": {},
+                    "intent": {},
+                }
+
+            self._log_inner_thought(f"{speaker} 在我发送时插话，我先不打断当前回复～")
+            return {
+                "strategy": "silent",
+                "reply": None,
+                "emotion": {},
+                "intent": {},
+            }
 
         # ── 管线短路：已有 pending 队列项时，直接合并消息，跳过认知/决策 ──
         # 插件命令需要走完整管线，不参与短路合并
@@ -1470,9 +1520,7 @@ class _EmotionalGroupChatEngineBase:
                 messages=messages,
                 task_name="sidekick_execute",
                 enable_skills=enable_skills,
-                caller_is_developer=bool(
-                    sidekick_cfg.get("trust_host_as_developer", False)
-                ),
+                caller_is_developer=bool(sidekick_cfg.get("trust_host_as_developer", False)),
                 post_process=False,  # 小跟班不走引擎 post hooks
             )
         )
@@ -1567,7 +1615,9 @@ class _EmotionalGroupChatEngineBase:
                             skill, params, invocation_context=ctx
                         )
                         tool_content = (
-                            result.to_display_text() if result.success else (result.error or "Unknown error")
+                            result.to_display_text()
+                            if result.success
+                            else (result.error or "Unknown error")
                         )
                     except Exception as exc:
                         tool_content = str(exc)
@@ -1857,6 +1907,27 @@ class _EmotionalGroupChatEngineBase:
                 first_pos = pos
                 first_who = who
         return first_who == "other"
+
+    def _message_explicitly_mentions_current_bot(self, message: Message) -> bool:
+        """Return True when a message explicitly names or @mentions this bot."""
+        if getattr(message, "mentions_current_bot", False):
+            return True
+        text = (getattr(message, "content", "") or "").strip()
+        if not text or not getattr(self, "persona", None):
+            return False
+        names = [self.persona.name, *getattr(self.persona, "aliases", [])]
+        return any(self._text_mentions_name(text, name) for name in names if name)
+
+    @staticmethod
+    def _text_mentions_name(text: str, name: str) -> bool:
+        needle = (name or "").strip().lower()
+        if not needle:
+            return False
+        haystack = (text or "").lower()
+        if any("\u4e00" <= ch <= "\u9fff" for ch in needle):
+            return needle in haystack
+        pattern = rf"(?<![a-z0-9_])@?{re.escape(needle)}(?![a-z0-9_])"
+        return re.search(pattern, haystack) is not None
 
     def _log_inner_thought(self, thought: str, intensity: float = 0.5) -> None:
         """Log an inner thought for observability."""

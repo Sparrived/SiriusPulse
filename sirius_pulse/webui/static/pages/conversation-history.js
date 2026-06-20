@@ -326,6 +326,22 @@ function truncate(str, max = 500) {
   return str.length > max ? str.slice(0, max) + '...' : str;
 }
 
+function buildConversationChain(message) {
+  if (!message || message.role !== 'assistant') return [];
+
+  const chain = Array.isArray(message.conversation_chain)
+    ? message.conversation_chain.filter(m => m && typeof m === 'object')
+    : [];
+  const systemPrompt = message.system_prompt || '';
+
+  if (!systemPrompt) return chain;
+
+  const hasSystem = chain.some(m => m.role === 'system' && m.content);
+  if (hasSystem) return chain;
+
+  return [{ role: 'system', content: systemPrompt }, ...chain];
+}
+
 const SECTION_COLORS = {
   '角色': '#e91e63', '身份锚定': '#9c27b0', '背景故事': '#673ab7',
   '场景定位': '#cddc39', '身份识别': '#ffc107', '输出规范': '#ff9800',
@@ -510,7 +526,7 @@ function renderMessages() {
     const speakerName = m.speaker_name || m.user_id || roleStyle.label;
     const content = m.content || '';
     const groupId = m.group_id || '';
-    const conversationChain = m.conversation_chain || [];
+    const conversationChain = buildConversationChain(m);
     const hasChain = m.role === 'assistant' && conversationChain.length > 0;
     const chainMsgId = `chain-${msgIdCounter++}`;
     const entryId = m.entry_id || m.timestamp || `idx-${idx}`;
@@ -664,6 +680,64 @@ function parseXmlMessages(content) {
   return items;
 }
 
+function extractXmlBlock(content, tagName) {
+  if (!content || !tagName) return null;
+  const pattern = new RegExp(`<${escapeRegex(tagName)}(?:\\s[^>]*)?>[\\s\\S]*?<\\/${escapeRegex(tagName)}>`, 'i');
+  const match = pattern.exec(content);
+  if (!match) return null;
+  const start = match.index;
+  const end = start + match[0].length;
+  return {
+    block: match[0],
+    rest: (content.slice(0, start) + content.slice(end)).trim(),
+  };
+}
+
+function renderInjectedHistorySection(block) {
+  const parsed = parseXmlMessages(block) || [];
+  const messageCount = parsed.filter(item => item.type === 'message').length;
+  const imageCount = parsed.filter(item => item.type === 'image').length;
+  const summary = [
+    `${messageCount} messages`,
+    imageCount ? `${imageCount} images` : '',
+    `${estimateTokens(block)} tokens`,
+  ].filter(Boolean).join(' · ');
+
+  const body = parsed.length ? parsed.map(item => {
+    if (item.type === 'image') {
+      return `
+        <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)">
+          <span style="font-size:10px;font-weight:600;color:${getSpeakerColor(item.speaker)}">${escapeHtml(item.speaker || 'unknown')}</span>
+          <span style="font-size:10px;color:var(--text-3)">${item.sticker ? 'sticker' : 'image'} ${escapeHtml(item.caption || '')}</span>
+        </div>
+      `;
+    }
+    const speakerColor = getSpeakerColor(item.speaker || 'unknown');
+    return `
+      <div style="padding:6px 12px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span style="font-size:10px;font-weight:600;color:${speakerColor}">${escapeHtml(item.speaker || 'unknown')}</span>
+          ${item.userId ? `<span style="font-size:9px;color:var(--text-3)">${escapeHtml(item.userId)}</span>` : ''}
+          ${item.time ? `<span style="font-size:9px;color:var(--text-3);margin-left:auto">${escapeHtml(item.time)}</span>` : ''}
+        </div>
+        <div style="font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap">${escapeHtml(item.content)}</div>
+      </div>
+    `;
+  }).join('') : `
+    <div style="padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;font-family:monospace">${escapeHtml(truncate(block, 1200))}</div>
+  `;
+
+  return `
+    <div style="border-bottom:1px solid var(--border);background:var(--accent)06">
+      <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:var(--accent)12">
+        <span style="font-size:11px;font-weight:600;color:var(--accent)">Injected conversation history</span>
+        <span style="font-size:10px;color:var(--text-3);margin-left:auto">${summary}</span>
+      </div>
+      <div style="max-height:260px;overflow-y:auto">${body}</div>
+    </div>
+  `;
+}
+
 function renderChainUserMessage(content, style, idx) {
   const parsed = parseXmlMessages(content);
 
@@ -722,11 +796,13 @@ function renderChainUserMessage(content, style, idx) {
 }
 
 function renderChainSystemMessage(content, style, idx) {
-  const sections = parsePromptSections(content);
+  const injectedHistory = extractXmlBlock(content, 'cacheable_conversation_history');
+  const visibleContent = injectedHistory ? injectedHistory.rest : content;
+  const sections = parsePromptSections(visibleContent);
   const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');
   const sectionIdPrefix = `chain-sys-${msgIdCounter}-${idx}`;
 
-  const sectionHtml = hasSections ? sections.map((section, sIdx) => {
+  const promptHtml = hasSections ? sections.map((section, sIdx) => {
     if (section.type === 'section') {
       const sid = `${sectionIdPrefix}-${sIdx}`;
       return `
@@ -742,7 +818,12 @@ function renderChainSystemMessage(content, style, idx) {
       `;
     }
     return `<div style="padding:6px 12px;font-size:10px;color:var(--text-2);line-height:1.4;white-space:pre-wrap;max-height:150px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(truncate(section.content, 300))}</div>`;
-  }).join('') : escapeHtml(truncate(content, 500));
+  }).join('') : (
+    visibleContent
+      ? `<div style="padding:6px 12px;font-size:10px;color:var(--text-2);line-height:1.4;white-space:pre-wrap;max-height:150px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(truncate(visibleContent, 500))}</div>`
+      : ''
+  );
+  const injectedHistoryHtml = injectedHistory ? renderInjectedHistorySection(injectedHistory.block) : '';
 
   return `
     <div style="border-bottom:1px solid var(--border);background:${style.bg}">
@@ -750,7 +831,8 @@ function renderChainSystemMessage(content, style, idx) {
         <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
         <span style="font-size:10px;color:var(--text-3);margin-left:auto">${estimateTokens(content)} tokens · ${content.length} chars</span>
       </div>
-      ${sectionHtml}
+      ${injectedHistoryHtml}
+      ${promptHtml}
     </div>
   `;
 }

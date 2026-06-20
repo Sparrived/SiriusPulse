@@ -106,6 +106,7 @@ class NapCatAdapter(BaseAdapter):
         self._engine: Any = None
         self._last_not_ready_log: float = 0.0
         self._reply_locks: dict[str, asyncio.Lock] = {}
+        self._reply_send_active_counts: dict[str, int] = {}
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._group_member_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._bot_admin_cache: dict[str, tuple[float, bool]] = {}
@@ -634,7 +635,10 @@ class NapCatAdapter(BaseAdapter):
                 quote_text = quote_text[:200] + "..."
             safe_quote = html.escape(quote_text, quote=False)
             if safe_nick:
-                return f'[引用消息 msg_id="{safe_msg_id}" speaker="{safe_nick}"]' f"{safe_quote}[/引用消息]"
+                return (
+                    f'[引用消息 msg_id="{safe_msg_id}" speaker="{safe_nick}"]'
+                    f"{safe_quote}[/引用消息]"
+                )
             return f'[引用消息 msg_id="{safe_msg_id}"]{safe_quote}[/引用消息]'
         except Exception as exc:
             LOG.debug("获取引用消息失败 (msg_id=%s): %s", msg_id, exc)
@@ -793,6 +797,7 @@ class NapCatAdapter(BaseAdapter):
             return
         if not self._enabled:
             return
+        self._mark_event_if_received_during_reply_send(event, str(event.get("group_id", "")))
         if self._engine is None or not self._engine_ready():
             self._log_not_ready()
             return
@@ -805,6 +810,7 @@ class NapCatAdapter(BaseAdapter):
             return
         if not self._enabled:
             return
+        self._mark_event_if_received_during_reply_send(event, f"private_{uid}")
         if self._engine is None or not self._engine_ready():
             self._log_not_ready()
             return
@@ -840,6 +846,14 @@ class NapCatAdapter(BaseAdapter):
 
         peer_ai_ids = self.plugin_config.get("peer_ai_ids", [])
         is_peer_ai = str(parsed.user_id) in [str(v) for v in peer_ai_ids]
+        qq_number = str(self.plugin_config.get("qq_number", "") or "").strip()
+        mentions_current_bot = bool(
+            parsed.message_type == "group"
+            and (
+                (parsed.self_id and parsed.self_id in parsed.at_user_ids)
+                or (qq_number and qq_number in parsed.at_user_ids)
+            )
+        )
 
         participant = UnifiedUser(
             name=parsed.nickname or f"qq_{parsed.user_id}",
@@ -868,6 +882,8 @@ class NapCatAdapter(BaseAdapter):
             multimodal_inputs=parsed.multimodal_inputs,
             adapter_type="napcat",
             sender_type="other_ai" if is_peer_ai else "human",
+            received_during_bot_send=bool(event.get("_sirius_received_during_reply_send")),
+            mentions_current_bot=mentions_current_bot,
         )
 
         msg_preview = (parsed.prompt or "")[:200].replace("\n", " ")
@@ -918,9 +934,7 @@ class NapCatAdapter(BaseAdapter):
 
     # ─── 小跟班模式 ──────────────────────────────────────
 
-    async def _try_sidekick_dispatch(
-        self, parsed: ParsedEvent, cfg: dict[str, Any]
-    ) -> bool:
+    async def _try_sidekick_dispatch(self, parsed: ParsedEvent, cfg: dict[str, Any]) -> bool:
         """尝试以小跟班模式处理消息。
 
         Returns True 表示消息已被小跟班处理（或被忽略），不应走普通路径。
@@ -951,7 +965,9 @@ class NapCatAdapter(BaseAdapter):
         is_host = str(parsed.user_id) in host_qq_ids
         if not is_host and host_aliases:
             sender_name = parsed.card or parsed.nickname or ""
-            is_host = any(alias in sender_name for alias in host_aliases) if allow_text_alias else False
+            is_host = (
+                any(alias in sender_name for alias in host_aliases) if allow_text_alias else False
+            )
         if not is_host:
             return True  # 非宿主，忽略（以小跟班模式）
 
@@ -959,7 +975,9 @@ class NapCatAdapter(BaseAdapter):
         if parsed.message_type == "group" and require_at_self:
             self_id = str(parsed.self_id)
             qq_number = str(self.plugin_config.get("qq_number", ""))
-            mentioned_self = self_id in parsed.at_user_ids or (qq_number and qq_number in parsed.at_user_ids)
+            mentioned_self = self_id in parsed.at_user_ids or (
+                qq_number and qq_number in parsed.at_user_ids
+            )
             if not mentioned_self:
                 return True  # 宿主未 @ 小跟班
 
@@ -1139,59 +1157,77 @@ class NapCatAdapter(BaseAdapter):
     async def _send_group_text(
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
-        # 最终兜底：按换行符拆分为多条消息，仅首条携带引用
-        lines = [line for line in text.split("\n") if line.strip()]
-        if len(lines) > 1:
-            first = True
-            for line in lines:
-                refs = reply_refs if first else None
-                ok = await self._send_group_text_single(group_id, line, refs)
-                if not ok:
-                    return False
-                first = False
-            return True
-        return await self._send_group_text_single(group_id, text, reply_refs)
+        key = str(group_id)
+        self._begin_reply_send(key)
+        try:
+            async with self._get_reply_lock(key):
+                # 最终兜底：按换行符拆分为多条消息，仅首条携带引用
+                lines = [line for line in text.splitlines() if line.strip()]
+                if len(lines) > 1:
+                    first = True
+                    for line in lines:
+                        if not first:
+                            await self._sleep_before_reply_part(line)
+                        refs = reply_refs if first else None
+                        ok = await self._send_group_text_single_locked(group_id, line, refs)
+                        if not ok:
+                            return False
+                        first = False
+                    return True
+                return await self._send_group_text_single_locked(group_id, text, reply_refs)
+        finally:
+            self._end_reply_send(key)
 
     async def _send_group_text_single(
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
-        async with self._get_reply_lock(group_id):
-            try:
-                # 如果有引用且有有效的 msg_id，使用 reply segment
-                if reply_refs and reply_refs[0].get("msg_id"):
-                    msg_id = reply_refs[0]["msg_id"]
-                    segments: list[dict[str, Any]] = [
-                        {"type": "reply", "data": {"id": msg_id}},
-                    ]
-                    segments.extend(self._group_text_to_segments(group_id, text))
-                    await self.send_group_msg(group_id, segments)
-                    LOG.info(
-                        "回复群 %s (引用 msg_id=%s): %s",
-                        group_id,
-                        msg_id,
-                        text[:120],
-                    )
-                elif reply_refs:
-                    # 有引用但没有 msg_id，使用文本格式
-                    ref_lines = []
-                    for ref in reply_refs:
-                        speaker = ref.get("speaker", "未知")
-                        content = ref.get("content", "")
-                        if len(content) > 80:
-                            content = content[:80] + "..."
-                        ref_lines.append(f"> {speaker}: {content}")
-                    formatted_reply = "\n".join(ref_lines) + "\n" + text
-                    await self.send_group_msg(
-                        group_id, self._group_text_to_segments(group_id, formatted_reply)
-                    )
-                    LOG.info("回复群 %s (引用但无msg_id): %s", group_id, formatted_reply[:120])
-                else:
-                    await self.send_group_msg(group_id, self._group_text_to_segments(group_id, text))
-                    LOG.info("回复群 %s: %s", group_id, text[:120])
-                return True
-            except Exception as exc:
-                LOG.warning("发送群消息失败: %s", exc)
-                return False
+        key = str(group_id)
+        self._begin_reply_send(key)
+        try:
+            async with self._get_reply_lock(key):
+                return await self._send_group_text_single_locked(group_id, text, reply_refs)
+        finally:
+            self._end_reply_send(key)
+
+    async def _send_group_text_single_locked(
+        self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
+    ) -> bool:
+        try:
+            # 如果有引用且有有效的 msg_id，使用 reply segment
+            if reply_refs and reply_refs[0].get("msg_id"):
+                msg_id = reply_refs[0]["msg_id"]
+                segments: list[dict[str, Any]] = [
+                    {"type": "reply", "data": {"id": msg_id}},
+                ]
+                segments.extend(self._group_text_to_segments(group_id, text))
+                await self.send_group_msg(group_id, segments)
+                LOG.info(
+                    "回复群 %s (引用 msg_id=%s): %s",
+                    group_id,
+                    msg_id,
+                    text[:120],
+                )
+            elif reply_refs:
+                # 有引用但没有 msg_id，使用文本格式
+                ref_lines = []
+                for ref in reply_refs:
+                    speaker = ref.get("speaker", "未知")
+                    content = ref.get("content", "")
+                    if len(content) > 80:
+                        content = content[:80] + "..."
+                    ref_lines.append(f"> {speaker}: {content}")
+                formatted_reply = "\n".join(ref_lines) + "\n" + text
+                await self.send_group_msg(
+                    group_id, self._group_text_to_segments(group_id, formatted_reply)
+                )
+                LOG.info("回复群 %s (引用但无msg_id): %s", group_id, formatted_reply[:120])
+            else:
+                await self.send_group_msg(group_id, self._group_text_to_segments(group_id, text))
+                LOG.info("回复群 %s: %s", group_id, text[:120])
+            return True
+        except Exception as exc:
+            LOG.warning("发送群消息失败: %s", exc)
+            return False
 
     def _group_text_to_segments(self, group_id: str, text: str) -> list[dict[str, Any]]:
         text = self._convert_fake_at_mentions(group_id, text)
@@ -1260,25 +1296,43 @@ class NapCatAdapter(BaseAdapter):
     async def _send_private_text(
         self, user_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
-        # 最终兜底：按换行符拆分为多条消息
-        lines = [line for line in text.split("\n") if line.strip()]
-        if len(lines) > 1:
-            for line in lines:
-                ok = await self._send_private_text_single(user_id, line)
-                if not ok:
-                    return False
-            return True
-        return await self._send_private_text_single(user_id, text)
+        key = f"private_{user_id}"
+        self._begin_reply_send(key)
+        try:
+            async with self._get_reply_lock(key):
+                # 最终兜底：按换行符拆分为多条消息
+                lines = [line for line in text.splitlines() if line.strip()]
+                if len(lines) > 1:
+                    first = True
+                    for line in lines:
+                        if not first:
+                            await self._sleep_before_reply_part(line)
+                        ok = await self._send_private_text_single_locked(user_id, line)
+                        if not ok:
+                            return False
+                        first = False
+                    return True
+                return await self._send_private_text_single_locked(user_id, text)
+        finally:
+            self._end_reply_send(key)
 
     async def _send_private_text_single(self, user_id: str, text: str) -> bool:
-        async with self._get_reply_lock(user_id):
-            try:
-                await self.send_private_msg(user_id, text)
-                LOG.info("回复私聊 %s: %s", user_id, text[:120])
-                return True
-            except Exception as exc:
-                LOG.warning("发送私聊消息失败: %s", exc)
-                return False
+        key = f"private_{user_id}"
+        self._begin_reply_send(key)
+        try:
+            async with self._get_reply_lock(key):
+                return await self._send_private_text_single_locked(user_id, text)
+        finally:
+            self._end_reply_send(key)
+
+    async def _send_private_text_single_locked(self, user_id: str, text: str) -> bool:
+        try:
+            await self.send_private_msg(user_id, text)
+            LOG.info("回复私聊 %s: %s", user_id, text[:120])
+            return True
+        except Exception as exc:
+            LOG.warning("发送私聊消息失败: %s", exc)
+            return False
 
     async def _send_stickers_after_reply(self, group_id: str, names: Any) -> None:
         if not names or self._engine is None:
@@ -1320,6 +1374,56 @@ class NapCatAdapter(BaseAdapter):
             lock = asyncio.Lock()
             self._reply_locks[key] = lock
         return lock
+
+    def _mark_event_if_received_during_reply_send(
+        self, event: dict[str, Any], send_key: str
+    ) -> None:
+        if send_key and self._is_reply_send_active(send_key):
+            event["_sirius_received_during_reply_send"] = True
+
+    def _begin_reply_send(self, send_key: str) -> None:
+        if not send_key:
+            return
+        self._reply_send_active_counts[send_key] = (
+            self._reply_send_active_counts.get(send_key, 0) + 1
+        )
+
+    def _end_reply_send(self, send_key: str) -> None:
+        if not send_key:
+            return
+        remaining = self._reply_send_active_counts.get(send_key, 0) - 1
+        if remaining > 0:
+            self._reply_send_active_counts[send_key] = remaining
+        else:
+            self._reply_send_active_counts.pop(send_key, None)
+
+    def _is_reply_send_active(self, send_key: str) -> bool:
+        return self._reply_send_active_counts.get(send_key, 0) > 0
+
+    async def _sleep_before_reply_part(self, line: str) -> None:
+        delay = self._reply_part_delay_seconds(line)
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def _reply_part_delay_seconds(self, line: str) -> float:
+        if self.plugin_config.get("human_reply_delay_enabled", True) is False:
+            return 0.0
+        chars = len((line or "").strip())
+        if chars <= 0:
+            return 0.0
+        chars_per_second = max(
+            1.0,
+            self._config_float("human_reply_chars_per_second", 8.0),
+        )
+        min_delay = max(0.0, self._config_float("human_reply_min_delay_seconds", 0.8))
+        max_delay = max(min_delay, self._config_float("human_reply_max_delay_seconds", 4.0))
+        return min(max(chars / chars_per_second, min_delay), max_delay)
+
+    def _config_float(self, key: str, default: float) -> float:
+        try:
+            return float(self.plugin_config.get(key, default))
+        except (TypeError, ValueError):
+            return default
 
     def _engine_ready(self) -> bool:
         """检查引擎是否已就绪。"""

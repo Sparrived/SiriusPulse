@@ -319,7 +319,7 @@ class PromptFactory:
             identity_parts.append("；".join(silence_bits) + "。")
 
         # 场景行为指导
-        identity_parts.append("你在一个多人聊天场景里，会收到其他人的消息。" "回应时用自己的说话方式，不要刻意解释或总结。")
+        identity_parts.append("你在一个多人聊天场景里，会收到其他人的消息。" "除了写文件以外，禁止输出任何markdown格式。")
 
         prompt = f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
         if len(prompt) > 1200:
@@ -338,7 +338,7 @@ class PromptFactory:
             "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
             "2. 直接输出你要说的话，禁止任何形式的换行符出现。\n"
             "3. 需要记住某条重要消息、长期规则或约定时，使用 pin_message 工具；不要把钉住指令写进正文。\n"
-            "4. 认为某条钉住消息已过期或不再需要时，使用 unpin_message 工具；现有钉住消息会自动出现在【钉住的重要消息】区，不要为了查看它们调用工具。\n"
+            "4. 认为某条钉住消息已过期或不再需要时，使用 unpin_message 工具；现有钉住消息会自动出现在【钉住的重要消息】区。\n"
             "5. 工具调用可以和自然语言回复同时发生；若工具只是发送表情包或维护钉住消息，不需要等待工具结果再解释。\n"
             "6. 你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。"
         )
