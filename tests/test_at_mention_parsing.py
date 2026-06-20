@@ -21,6 +21,30 @@ def test_parse_qq_at_mentions_when_id_is_known_then_builds_at_segment():
     assert group[3].text == "@{999}"
 
 
+def test_parse_qq_at_mentions_accepts_bare_numeric_model_output():
+    group = parse_qq_at_mentions("hi @123456 and @qq_789012")
+
+    assert group is not None
+    assert isinstance(group[1], AtSegment)
+    assert group[1].user_id == "123456"
+    assert isinstance(group[3], AtSegment)
+    assert group[3].user_id == "789012"
+
+
+def test_parse_qq_at_mentions_keeps_unknown_bare_numeric_when_ids_are_known():
+    group = parse_qq_at_mentions("hi @123456 and @789012", valid_user_ids={"123456"})
+
+    assert group is not None
+    assert isinstance(group[1], AtSegment)
+    assert group[1].user_id == "123456"
+    assert isinstance(group[3], TextSegment)
+    assert group[3].text == "@789012"
+
+
+def test_parse_qq_at_mentions_does_not_split_long_numeric_ids():
+    assert parse_qq_at_mentions("hi @1234567890123") is None
+
+
 def test_build_qq_mention_section_lists_member_ids_and_syntax():
     section = build_qq_mention_section(
         [
@@ -59,6 +83,31 @@ async def test_napcat_group_text_sender_converts_inline_at_marker():
                 {"type": "at", "data": {"qq": "123"}},
                 {"type": "text", "data": {"text": " "}},
                 {"type": "text", "data": {"text": "@{999}"}},
+            ],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_napcat_group_text_sender_converts_bare_numeric_at_without_member_cache():
+    adapter = NapCatAdapter("ws://example.invalid")
+    sent: list[tuple[str, object]] = []
+
+    async def fake_send_group_msg(group_id, message):
+        sent.append((str(group_id), message))
+        return {"ok": True}
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+
+    ok = await adapter._send_group_text("100", "hi @123456")
+
+    assert ok is True
+    assert sent == [
+        (
+            "100",
+            [
+                {"type": "text", "data": {"text": "hi "}},
+                {"type": "at", "data": {"qq": "123456"}},
             ],
         )
     ]

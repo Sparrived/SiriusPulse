@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 from sirius_pulse.adapters.models import AtSegment, MessageGroup, TextSegment
 
-QQ_AT_PATTERN = re.compile(r"@\{(\d+)\}")
+QQ_AT_PATTERN = re.compile(r"@\{(\d+)\}|@(qq_)?(\d{5,12})(?!\d)")
 
 
 def normalize_qq_member(member: dict[str, Any]) -> dict[str, str]:
@@ -41,14 +41,20 @@ def build_qq_mention_section(
     )
 
 
+def _matched_qq_id(match: re.Match[str]) -> str:
+    return match.group(1) or match.group(3)
+
+
 def parse_qq_at_mentions(
     text: str,
     *,
     valid_user_ids: set[str] | None = None,
 ) -> MessageGroup | None:
-    """Parse inline ``@{123}`` markers into MessageGroup at segments.
+    """Parse inline QQ mention markers into MessageGroup at segments.
 
-    Unknown IDs are left as literal text when a valid ID set is provided.
+    Supports both the preferred ``@{123}`` form and common model output like
+    ``@123`` or ``@qq_123``. Unknown IDs are left as literal text when a valid
+    ID set is provided.
     Returns None when the text contains no mention marker.
     """
     if not text or QQ_AT_PATTERN.search(text) is None:
@@ -60,7 +66,7 @@ def parse_qq_at_mentions(
         if match.start() > cursor:
             segments.append(TextSegment(text[cursor : match.start()]))
 
-        user_id = match.group(1)
+        user_id = _matched_qq_id(match)
         if valid_user_ids is None or user_id in valid_user_ids:
             segments.append(AtSegment(user_id))
         else:
