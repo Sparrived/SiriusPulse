@@ -90,7 +90,7 @@ class _EmotionalGroupChatEngineBase:
         self._init_pipeline()
         self._init_persistence()
         self._init_sticker()
-        self._init_pinned_messages()
+
         self._register_engine_hooks()
 
     def _init_expressiveness(self) -> None:
@@ -270,7 +270,6 @@ class _EmotionalGroupChatEngineBase:
         )
         self.brain.set_context_fns(
             recent_messages_fn=self._get_recent_messages,
-            tone_alignment_fn=self._get_tone_alignment,
             classify_exception_fn=self._classify_exception,
         )
         self.cognition_analyzer.brain = self.brain
@@ -373,22 +372,6 @@ class _EmotionalGroupChatEngineBase:
         """初始化 Sticker 组件（组合模式）。"""
         self._sticker = EngineSticker(self)
 
-    def _init_pinned_messages(self) -> None:
-        """初始化消息钉住管理器。"""
-        from sirius_pulse.persona_config import PersonaExperienceConfig
-
-        # 从 experience 配置中获取最大携带次数
-        experience_path = Path(self.work_path) / "experience.json"
-        experience = PersonaExperienceConfig.load(experience_path)
-        max_carry_count = experience.pinned_message_max_carry_count
-
-        self._pinned_manager = PinnedMessageManager(max_carry_count=max_carry_count)
-
-        # 注入钉住消息回调到 Brain
-        if hasattr(self, "brain"):
-            self.brain.set_context_fns(
-                pinned_messages_fn=self.get_pinned_messages_for_prompt,
-            )
 
     # ==================================================================
     # 向后兼容的委托方法（委托给 Helpers 组件）
@@ -481,10 +464,6 @@ class _EmotionalGroupChatEngineBase:
     def _get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
         """获取最近n条消息。"""
         return self._helpers.get_recent_messages(group_id, n)
-
-    def _get_tone_alignment(self, group_id: str) -> str:
-        """Detect current group tone from atmosphere history for style alignment."""
-        return self._helpers.get_tone_alignment(group_id)
 
     @staticmethod
     def _is_pure_image_message(content: str) -> bool:
@@ -673,104 +652,6 @@ class _EmotionalGroupChatEngineBase:
         """Check if proactive triggers are enabled for a group."""
         return self._persistence.is_proactive_enabled(group_id)
 
-    # ==================================================================
-    # 消息钉住 API（委托给 PinnedMessageManager）
-    # ==================================================================
-
-    def pin_message(
-        self,
-        content: str,
-        speaker: str = "",
-        group_id: str = "default",
-        reason: str = "",
-        ttl_hours: float | None = None,
-        max_carry_count: int | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """钉住一条消息。
-
-        Args:
-            content: 消息内容
-            speaker: 发言者名称
-            group_id: 所属群组 ID
-            reason: 钉住原因
-            ttl_hours: 消息存活时间（小时）
-            max_carry_count: 最大携带次数（超过后自动取消）
-            metadata: 额外元数据
-
-        Returns:
-            钉住的消息信息
-        """
-        pinned = self._pinned_manager.pin_message(
-            content=content,
-            speaker=speaker,
-            group_id=group_id,
-            reason=reason,
-            ttl_hours=ttl_hours,
-            max_carry_count=max_carry_count,
-            metadata=metadata,
-        )
-
-        return pinned.to_dict()
-
-    def unpin_message(self, message_id: str) -> bool:
-        """取消钉住一条消息。
-
-        Args:
-            message_id: 消息 ID
-
-        Returns:
-            是否成功取消
-        """
-        return self._pinned_manager.unpin_message(message_id)
-
-    def unpin_by_reason(self, reason: str) -> int:
-        """根据原因取消钉住消息。
-
-        Args:
-            reason: 钉住原因
-
-        Returns:
-            取消的数量
-        """
-        return self._pinned_manager.unpin_by_reason(reason)
-
-    def get_pinned_messages(
-        self,
-        group_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """获取钉住的消息列表。
-
-        Args:
-            group_id: 过滤指定群组的消息，None 表示所有群组
-
-        Returns:
-            钉住的消息列表
-        """
-        messages = self._pinned_manager.get_pinned_messages(group_id=group_id)
-        return [msg.to_dict() for msg in messages]
-
-    def get_pinned_messages_for_prompt(self, group_id: str) -> list[Any]:
-        """获取钉住的消息列表（用于 prompt 注入），并增加携带计数。
-
-        每次调用此方法，所有返回的消息的携带计数都会增加。
-        当携带计数超过最大携带次数时，消息会被自动取消钉住。
-
-        Args:
-            group_id: 群组 ID
-
-        Returns:
-            钉住的消息对象列表
-        """
-        return self._pinned_manager.get_pinned_messages_for_prompt(group_id=group_id)
-
-    def get_pinned_statistics(self) -> dict[str, Any]:
-        """获取钉住消息的统计信息。
-
-        Returns:
-            统计信息字典
-        """
-        return self._pinned_manager.get_statistics()
 
     # ==================================================================
     # 向后兼容的委托方法（委托给 Sticker 组件）
@@ -825,90 +706,6 @@ class _EmotionalGroupChatEngineBase:
                 else 1
             )
 
-        # ── priority 15: 钉住/取消钉住指令解析 ──
-        def _hook_pin_messages(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
-            from sirius_pulse.core.pinned_message import (
-                parse_pin_messages,
-                parse_unpin_messages,
-                strip_pin_messages,
-            )
-
-            raw_text = _result.raw_text
-            pin_calls = parse_pin_messages(raw_text)
-            unpin_calls = parse_unpin_messages(raw_text)
-
-            # 处理取消钉住指令
-            if unpin_calls:
-                for call in unpin_calls:
-                    try:
-                        msg_id = call.get("msg_id", "")
-                        if msg_id:
-                            # 根据消息ID取消钉住
-                            success = _engine._pinned_manager.unpin_message(msg_id)
-                            if success:
-                                logger.info("模型根据消息ID取消钉住: %s", msg_id)
-                            else:
-                                logger.warning("未找到消息ID对应的钉住消息: %s", msg_id)
-                        else:
-                            logger.warning("UNPIN_MESSAGE 指令缺少 msg_id: %s", call)
-                    except Exception as exc:
-                        logger.warning("取消钉住失败: %s", exc)
-
-            # 处理钉住指令
-            if pin_calls:
-                gid = _req.group_id
-
-                # 获取最近的消息历史（用于引用）
-                recent_messages = _engine._get_recent_messages(gid, n=10)
-
-                for call in pin_calls:
-                    try:
-                        msg_id = call.get("msg_id", "")
-                        if not msg_id:
-                            logger.warning("PIN_MESSAGE 指令缺少 msg_id: %s", call)
-                            continue
-
-                        # 通过 msg_id 查找消息
-                        content = ""
-                        speaker = ""
-                        user_id = ""
-                        platform_msg_id = ""
-
-                        if recent_messages:
-                            # 在最近消息中查找匹配的 platform_message_id
-                            for msg in recent_messages:
-                                if msg.get("platform_message_id") == msg_id:
-                                    content = msg.get("content", "")
-                                    speaker = msg.get("speaker", msg.get("user_id", ""))
-                                    user_id = msg.get("user_id", "")
-                                    platform_msg_id = msg_id
-                                    break
-
-                        if not content:
-                            logger.warning("未找到消息ID对应的钉住消息: %s", msg_id)
-                            continue
-
-                        # 构建 metadata
-                        meta: dict[str, Any] = {}
-                        if user_id:
-                            meta["user_id"] = user_id
-                        if platform_msg_id:
-                            meta["platform_message_id"] = platform_msg_id
-
-                        _engine.pin_message(
-                            content=content,
-                            speaker=speaker or "用户",
-                            group_id=gid,
-                            reason=call.get("reason", ""),
-                            metadata=meta if meta else None,
-                        )
-                        logger.info("模型主动钉住消息: %s", content[:50])
-                    except Exception as exc:
-                        logger.warning("钉住消息失败: %s", exc)
-
-            # 从 clean_text 中移除钉住/取消钉住指令标记
-            _result.clean_text = strip_pin_messages(_result.clean_text)
-
         # ── priority 30: 回复去重（仅常规对话）──
         def _hook_dedup(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             if not _result.clean_text:
@@ -941,17 +738,6 @@ class _EmotionalGroupChatEngineBase:
 
             # 收集被处理的标签（仅模型输出相关）
             entry_tags: list[dict[str, str]] = []
-
-            # 模型输出的钉住/取消钉住指令
-            from sirius_pulse.core.pinned_message import parse_pin_messages, parse_unpin_messages
-
-            raw_text = _result.raw_text
-            pin_calls = parse_pin_messages(raw_text)
-            unpin_calls = parse_unpin_messages(raw_text)
-            if pin_calls:
-                entry_tags.append({"type": "pin", "label": f"钉住消息 ×{len(pin_calls)}"})
-            if unpin_calls:
-                entry_tags.append({"type": "unpin", "label": f"取消钉住 ×{len(unpin_calls)}"})
 
             gid = _req.group_id
             uid = _req.user_id

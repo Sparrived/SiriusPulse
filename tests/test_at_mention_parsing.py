@@ -55,6 +55,7 @@ def test_build_qq_mention_section_lists_member_ids_and_syntax():
 
     assert "@{QQ号}" in section
     assert "不要编造" in section
+    assert "【QQ @提及】" not in section
 
 
 @pytest.mark.asyncio

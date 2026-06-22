@@ -140,6 +140,86 @@ class DiaryManager:
         )
         return result
 
+    async def generate_topic_clustered(
+        self,
+        *,
+        group_id: str,
+        candidates: list[BasicMemoryEntry],
+        persona_name: str,
+        persona_description: str,
+        brain: Any,
+        model_name: str,
+        min_candidate_count: int = 12,
+        topic_cluster_model: str = "",
+    ) -> list[DiaryGenerationResult]:
+        """Generate diary entries via topic clustering.
+
+        Instead of sending all candidates to a single LLM call, this:
+        1. Clusters candidates by topic using a lightweight LLM call
+        2. Generates a separate diary entry per cluster
+
+        Returns a list of DiaryGenerationResult (may be empty if all fail).
+        """
+        if not candidates:
+            return []
+
+        if len(candidates) < min_candidate_count:
+            logger.debug(
+                "Group %s: not enough candidates (%d < %d)",
+                group_id,
+                len(candidates),
+                min_candidate_count,
+            )
+            return []
+
+        from sirius_pulse.memory.diary.clusterer import TopicClusterer
+
+        clusterer = TopicClusterer()
+        clusters = await clusterer.cluster(
+            candidates=candidates,
+            persona_name=persona_name,
+            brain=brain,
+            model_name=topic_cluster_model or model_name,
+        )
+
+        results: list[DiaryGenerationResult] = []
+        for cluster in clusters:
+            if len(cluster.entries) < 3:
+                continue
+
+            result = await self._generator.generate(
+                group_id=group_id,
+                candidates=cluster.entries,
+                persona_name=persona_name,
+                persona_description=persona_description,
+                brain=brain,
+                model_name=model_name,
+            )
+            if result is None:
+                continue
+
+            self.add_entry(group_id, result.entry)
+
+            sources = self._diarized_sources.setdefault(group_id, set())
+            sources.update(result.entry.source_ids)
+
+            self._last_diary_tail_sources[group_id] = list(result.entry.source_ids)[-3:]
+            if self._memory_storage is not None:
+                self._memory_storage.save_diary_meta(
+                    group_id, self._last_diary_tail_sources[group_id]
+                )
+
+            logger.info(
+                "Group %s diary [%s] written from %d messages.",
+                group_id,
+                cluster.label,
+                len(result.entry.source_ids),
+            )
+            results.append(result)
+
+        return results
+
+
     def ensure_group_loaded(self, group_id: str) -> None:
         """Lazy-load persisted entries for a group if not already loaded.
 

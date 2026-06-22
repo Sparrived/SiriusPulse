@@ -33,11 +33,10 @@ def build_qq_mention_section(
     *,
     max_members: int = 80,
 ) -> str:
-    """Build a compact prompt section teaching inline QQ at syntax."""
+    """Build compact QQ at syntax guidance for output specs."""
     return (
-        "【QQ @提及】"
-        "\n在回复正文中插入 @{QQ号} 可以 @ 某个群成员，发送前会自动转换成真正的 @。"
-        "\n从上下文消息中获取发送者的 QQ 号来使用，不要编造 QQ 号。"
+        "在回复正文中插入 @{QQ号} 可以 @ 某个群成员，发送前会自动转换成真正的 @。"
+        "从上下文消息中获取发送者的 QQ 号来使用，不要编造 QQ 号。"
     )
 
 

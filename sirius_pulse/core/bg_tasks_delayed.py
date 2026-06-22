@@ -27,8 +27,6 @@ logger = logging.getLogger(__name__)
 
 _AUTONOMOUS_MESSAGE_SKILLS = {
     "send_sticker",
-    "pin_message",
-    "unpin_message",
 }
 
 
@@ -244,11 +242,6 @@ class DelayedQueueTasks:
             speaker_user_id=speaker_uid,
             speaker_name=speaker_display,
             content_is_tagged=True,
-            pinned_messages=(
-                engine.get_pinned_messages_for_prompt(group_id)
-                if hasattr(engine, "get_pinned_messages_for_prompt")
-                else []
-            ),
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]

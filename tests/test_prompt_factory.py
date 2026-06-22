@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from sirius_pulse.core.pinned_message import PinnedMessage
 from sirius_pulse.core.prompt_factory import (
+    TAG_HISTORY_DIARY,
     TAG_PINNED_MESSAGES,
     PromptBundle,
     PromptFactory,
@@ -133,9 +134,61 @@ def test_assemble_chat_does_not_inject_group_style_length_learning():
     assert "控制在 30 字" not in bundle.system_prompt
 
 
+def test_assemble_chat_when_atmosphere_history_exists_then_does_not_inject_trend():
+    group_profile = SimpleNamespace(
+        taboo_topics=[],
+        atmosphere_history=[
+            SimpleNamespace(group_valence=-0.4),
+            SimpleNamespace(group_valence=0.0),
+            SimpleNamespace(group_valence=0.5),
+            SimpleNamespace(group_valence=0.7),
+        ],
+    )
+    style_params = StyleAdapter().adapt(pace="steady", persona=None)
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+    )
+
+    assert "【氛围趋势】" not in bundle.system_prompt
+    assert "群聊氛围正在" not in bundle.system_prompt
+
+
+def test_assemble_chat_puts_function_call_and_qq_mentions_in_output_spec():
+    group_profile = SimpleNamespace(taboo_topics=[], atmosphere_history=[])
+    style_params = StyleAdapter().adapt(pace="steady", persona=None)
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+        skill_registry=object(),
+        adapter_type="napcat",
+        qq_mention_members=[{"user_id": "123456", "nickname": "Alice"}],
+    )
+
+    assert "【输出规范】" in bundle.system_prompt
+    assert "Function Call" in bundle.system_prompt
+    assert "@{QQ号}" in bundle.system_prompt
+    assert "【Function Call】" not in bundle.system_prompt
+    assert "【QQ @提及】" not in bundle.system_prompt
+
+
 class _NoopDiaryRetriever:
     def retrieve(self, **kwargs):
         return []
+
+
+class _StaticDiaryRetriever:
+    def __init__(self, entries):
+        self.entries = entries
+
+    def retrieve(self, **kwargs):
+        return self.entries
 
 
 def test_context_assembler_when_pinned_messages_are_provided_then_injects_current_prompt():
@@ -161,6 +214,29 @@ def test_context_assembler_when_pinned_messages_are_provided_then_injects_curren
     assert TAG_PINNED_MESSAGES in messages[-1]["content"]
     assert "<pinned_message" in messages[-1]["content"]
     assert "Remember the deployment window." in messages[-1]["content"]
+
+
+def test_context_assembler_when_diary_exists_then_injects_user_message_not_system():
+    diary_entry = SimpleNamespace(
+        created_at="2026-06-21T10:11:12",
+        content="Alice promised to deploy after lunch.",
+        summary="deployment promise",
+    )
+    assembler = ContextAssembler(
+        BasicMemoryManager(),
+        _StaticDiaryRetriever([diary_entry]),
+    )
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="What should I do next?",
+        system_prompt="system",
+    )
+
+    assert TAG_HISTORY_DIARY not in messages[0]["content"]
+    assert TAG_HISTORY_DIARY in messages[-1]["content"]
+    assert "Alice promised to deploy after lunch." in messages[-1]["content"]
+    assert "What should I do next?" in messages[-1]["content"]
 
 
 def test_context_assembler_keeps_completed_history_in_system_prefix_until_diary_promotion():

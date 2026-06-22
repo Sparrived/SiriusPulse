@@ -24,7 +24,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_pulse.core.constants import RESPONSE_MAX_TOKENS
-from sirius_pulse.core.qq_mentions import build_qq_mention_section
 from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,6 @@ TAG_SKILL_RESULT = "【技能执行结果】"
 TAG_SKILL_TRUNCATED = "【注：技能结果过长，已截断至前 {limit} 字符，原始长度 {orig} 字符】"
 TAG_CURRENT_TIME = "【当前时间】"
 TAG_GROUP_TABOO = "【群规禁忌】"
-TAG_ATMOSPHERE_TREND = "【氛围趋势】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
 TAG_GLOSSARY = "【名词解释】"
 
@@ -267,10 +265,8 @@ class PromptFactory:
 
         # 说话方式
         speech_bits: list[str] = []
-        if communication_style:
-            speech_bits.append(f"说话{communication_style}")
-        if speech_rhythm:
-            speech_bits.append(speech_rhythm)
+        # communication_style / speech_rhythm 容易把长度偏置写进身份锚定，
+        # 回复长度由输出规范和模型路由控制。
         if humor_style:
             humor_map = {
                 "sarcastic": " sarcasm 是常态，不损人不会说话",
@@ -315,24 +311,37 @@ class PromptFactory:
     # ──────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def build_output_spec(sticker_names: list[str] | None = None) -> str:
+    def build_output_spec(
+        sticker_names: list[str] | None = None,
+        *,
+        supports_function_call: bool = False,
+        supports_qq_mentions: bool = False,
+    ) -> str:
         """输出规范，防止模型添加多余前缀。"""
-        spec = (
-            f"{TAG_OUTPUT_SPEC}\n"
-            "1. 不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。\n"
-            "2. 多句话可以用换行符分割，但每句话不可超过 15 字，不允许超过三句话，非写文件的情况下不输出Markdown标签。\n"
-            "3. 需要记住某条重要消息、长期规则或约定时，使用 pin_message 工具；不要把钉住指令写进正文。\n"
-            "4. 认为某条钉住消息已过期或不再需要时，使用 unpin_message 工具；现有钉住消息会自动出现在【钉住的重要消息】区。\n"
-            "5. 工具调用可以和自然语言回复同时发生；若工具只是发送表情包或维护钉住消息，不需要等待工具结果再解释。\n"
-            "6. 你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。"
-        )
+        items = [
+            "不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。",
+            "多句话可以用换行符分割，但每句话不可超过 15 字，不允许超过三句话，非写文件的情况下不输出Markdown标签。",
+            "需要记住某条重要消息、长期规则或约定时，使用 pin_message 工具；不要把钉住指令写进正文。",
+            "认为某条钉住消息已过期或不再需要时，使用 unpin_message 工具；现有钉住消息会自动出现在【钉住的重要消息】区。",
+            "工具调用可以和自然语言回复同时发生；若工具只是发送表情包或维护钉住消息，不需要等待工具结果再解释。",
+            "你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。",
+        ]
+        if supports_function_call:
+            items.append(
+                "你有可用工具（tools）时，可以通过 Function Call 主动解决问题；工具调用不要写成正文标记。"
+            )
+        if supports_qq_mentions:
+            items.append(
+                "在 QQ 群回复正文中插入 @{QQ号} 可以 @ 某个群成员；只使用上下文消息里真实出现的 QQ 号，不要编造。"
+            )
         if sticker_names:
             names_str = "、".join(sticker_names)
-            spec += (
-                "\n7. 需要发送表情包时，使用 send_sticker 工具，names 参数只能填下面的可选名称；不要把表情包名称或任何发送标记写进正文。"
-                f"可选表情包：{names_str}\n"
+            items.append(
+                "需要发送表情包时，使用 send_sticker 工具，names 参数只能填下面的可选名称；不要把表情包名称或任何发送标记写进正文。"
+                f"可选表情包：{names_str}"
             )
-        return spec
+        numbered = "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
+        return f"{TAG_OUTPUT_SPEC}\n{numbered}"
 
     @staticmethod
     def build_emotion_context(
@@ -604,47 +613,6 @@ class PromptFactory:
         return f"<message {attrs}>{safe_content}</message>"
 
     @staticmethod
-    def build_pinned_messages_context(
-        pinned_messages: list[Any],
-    ) -> str:
-        """构建钉住消息 section。
-
-        Args:
-            pinned_messages: 钉住的消息列表（PinnedMessage 对象列表）
-
-        Returns:
-            格式化的钉住消息上下文
-        """
-        if not pinned_messages:
-            return ""
-
-        lines = [TAG_PINNED_MESSAGES]
-        for msg in pinned_messages:
-            safe_speaker = _html.escape(msg.speaker or "系统", quote=True)
-            safe_uid = _html.escape(msg.metadata.get("user_id", ""), quote=True)
-            pinned_time = msg.pinned_at[:16].replace("T", " ") if msg.pinned_at else ""
-            reason_attr = f' reason="{_html.escape(msg.reason, quote=True)}"' if msg.reason else ""
-
-            # 复用 conversation_history 的倒排索引
-            conv_index = msg.metadata.get("conversation_index", 0)
-            index_attr = f' index="{conv_index}"' if conv_index else ""
-            # 平台消息 ID（用于引用回复）
-            p_msg_id = msg.metadata.get("platform_message_id", "")
-            msg_id_attr = f' msg_id="{_html.escape(str(p_msg_id), quote=True)}"' if p_msg_id else ""
-
-            lines.append(
-                f"<pinned_message{index_attr}{msg_id_attr} "
-                f'speaker="{safe_speaker}" user_id="{safe_uid}" '
-                f'time="{pinned_time}"{reason_attr}>'
-            )
-            pinned_content = PromptFactory._extract_last_message_text(msg.content)
-            lines.append(pinned_content)
-            lines.append("</pinned_message>")
-        lines.append(TAG_PINNED_MESSAGES_END)
-
-        return "\n".join(lines)
-
-    @staticmethod
     def build_other_ai_instruction(other_ai_names: list[str]) -> str:
         """构建群中其他 AI 成员区分指令。"""
         if not other_ai_names:
@@ -713,34 +681,6 @@ class PromptFactory:
             return ""
         topics = "、".join(taboo_topics[:5])
         return f"{TAG_GROUP_TABOO}\n本群不讨论以下话题，请避免主动引入：{topics}"
-
-    @staticmethod
-    def build_atmosphere_trend(atmosphere_history: list[Any]) -> str:
-        """基于最近快照计算氛围趋势并返回 prompt section。"""
-        if len(atmosphere_history) < 3:
-            return ""
-        recent = atmosphere_history[-5:]
-        valences = [s.group_valence for s in recent if hasattr(s, "group_valence")]
-        if len(valences) < 3:
-            return ""
-        half = max(1, len(valences) // 2)
-        early = sum(valences[:half]) / half
-        later = sum(valences[half:]) / (len(valences) - half)
-        delta = later - early
-        if delta > 0.15:
-            desc = "群聊氛围正在升温，大家越来越兴奋"
-        elif delta < -0.15:
-            desc = "群聊氛围正在降温，大家逐渐冷淡"
-        else:
-            desc = "群聊氛围平稳"
-        avg_v = sum(valences) / len(valences)
-        if avg_v > 0.3:
-            mood = "整体情绪偏积极"
-        elif avg_v < -0.3:
-            mood = "整体情绪偏消极"
-        else:
-            mood = "整体情绪中性"
-        return f"{TAG_ATMOSPHERE_TREND}\n{desc}，{mood}。"
 
     @staticmethod
     def build_developer_chat_sections(
@@ -848,10 +788,7 @@ class PromptFactory:
             )
             if tool_desc:
                 sections.append("你可以使用以下工具来完成任务：\n" + tool_desc)
-                sections.append(
-                    "【Function Call】\n你有一些工具（tools）可以帮助解决问题，"
-                    "主动尝试使用工具完成任务。"
-                )
+                sections.append(PromptFactory.build_output_spec(supports_function_call=True))
 
         return "\n\n".join(sections)
 
@@ -879,7 +816,6 @@ class PromptFactory:
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
         adapter_type: str | None = None,
-        pinned_messages: list[Any] | None = None,
         sticker_names: list[str] | None = None,
         qq_mention_members: list[dict[str, Any]] | None = None,
         platform_message_id: str = "",
@@ -903,7 +839,6 @@ class PromptFactory:
             plugin_registry: 插件注册表（v1.3+）。
             caller_is_developer: 调用者是否为开发者。
             adapter_type: 适配器类型（用于技能过滤）。
-            pinned_messages: 钉住的消息列表。
 
         人格注入已由 Brain.chat() 默认 pre 步骤处理，此处不再管理。
         """
@@ -928,7 +863,14 @@ class PromptFactory:
         other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
         if other_ai:
             _add(other_ai, "identity")
-        _add(PromptFactory.build_output_spec(sticker_names=sticker_names), "output_constraint")
+        _add(
+            PromptFactory.build_output_spec(
+                sticker_names=sticker_names,
+                supports_function_call=skill_registry is not None,
+                supports_qq_mentions=adapter_type == "napcat" and bool(qq_mention_members),
+            ),
+            "output_constraint",
+        )
 
         # ── L1 半稳：数小时级变化 ──
         if group_profile:
@@ -944,11 +886,6 @@ class PromptFactory:
         )
         if bio:
             _add(bio, "identity")
-        if group_profile:
-            atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
-            if atm:
-                _add(atm, "emotion")
-
         # ── L3 高频：每次 LLM 调用级变化 ──
         if emotion is not None:
             _add(
@@ -968,18 +905,6 @@ class PromptFactory:
 
         if memories:
             _add(PromptFactory.build_memory_context(memories), "memory")
-
-        # 技能指导注入到 system prompt（L3 层）
-        if skill_registry is not None:
-            _add(
-                "【Function Call】\n你有一些工具（tools）可以帮助自己或他人解决问题，你是工具的主导者，主动尝试使用工具解决问题。",
-                "skills",
-            )
-
-        if adapter_type == "napcat" and qq_mention_members:
-            mention_section = build_qq_mention_section(qq_mention_members)
-            if mention_section:
-                _add(mention_section, "output_constraint")
 
         if plugin_registry is not None:
             plugin_awareness = PromptFactory.build_plugin_awareness_section(
@@ -1010,12 +935,6 @@ class PromptFactory:
         if constraint_sections:
             constraint_text = "\n\n".join(constraint_sections)
             user_content = f"{constraint_text}\n\n{user_content}"
-
-        # 钉住消息随 user 消息段带出
-        if pinned_messages:
-            pinned_ctx = PromptFactory.build_pinned_messages_context(pinned_messages)
-            if pinned_ctx:
-                user_content = f"{pinned_ctx}\n\n{user_content}"
 
         bd.user_message = estimate_tokens(user_content)
 
@@ -1069,9 +988,6 @@ class PromptFactory:
             taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
             if taboo:
                 _add(taboo, "group_style")
-            atm = PromptFactory.build_atmosphere_trend(group_profile.atmosphere_history or [])
-            if atm:
-                _add(atm, "emotion")
 
         system_prompt = "\n\n".join(sections)
         bd.system_prompt_total = estimate_tokens(system_prompt)

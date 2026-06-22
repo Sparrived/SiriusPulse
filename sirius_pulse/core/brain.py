@@ -180,7 +180,7 @@ class Brain:
 
     - chat(request: ChatRequest) → ChatResult
       上下文感知的对话生成。内置默认处理链：
-        pre:  人格注入 → 语气对齐 → 模型路由 → 风格覆盖 → 构建请求 → 当前时间追加
+        pre:  人格注入 → 当前时间入消息链 → 模型路由 → 风格覆盖 → 构建请求
         call: provider.generate_async()
         post: XML 剥离 → SKIP 检测 → SKILL 解析 → 表情包解析 → token 记录
       可通过 register_pre_hook / register_post_hook 扩展。
@@ -215,9 +215,7 @@ class Brain:
 
         # 上下文函数（延迟注入，避免循环导入）
         self._recent_messages_fn: Callable[[str, int], list[dict[str, Any]]] | None = None
-        self._get_tone_alignment_fn: Callable[[str], str] | None = None
         self._classify_exception_fn: Callable[[Exception], str] | None = None
-        self._get_pinned_messages_fn: Callable[[str], list[Any]] | None = None
         self.current_adapter_type_fn: Callable[[], str | None] | None = None
         self.current_admin_allowed_fn: Callable[[str], bool] | None = None
 
@@ -236,19 +234,55 @@ class Brain:
         self,
         *,
         recent_messages_fn: Callable[[str, int], list[dict[str, Any]]] | None = None,
-        tone_alignment_fn: Callable[[str], str] | None = None,
         classify_exception_fn: Callable[[Exception], str] | None = None,
-        pinned_messages_fn: Callable[[str], list[Any]] | None = None,
     ) -> None:
         """注入引擎上下文函数（延迟绑定，避免循环导入）。"""
         if recent_messages_fn is not None:
             self._recent_messages_fn = recent_messages_fn
-        if tone_alignment_fn is not None:
-            self._get_tone_alignment_fn = tone_alignment_fn
         if classify_exception_fn is not None:
             self._classify_exception_fn = classify_exception_fn
-        if pinned_messages_fn is not None:
-            self._get_pinned_messages_fn = pinned_messages_fn
+
+    @staticmethod
+    def _build_current_time_context() -> str:
+        china_tz = timezone(timedelta(hours=8))
+        now_dt = datetime.now(china_tz)
+        weekdays = [
+            "星期一",
+            "星期二",
+            "星期三",
+            "星期四",
+            "星期五",
+            "星期六",
+            "星期日",
+        ]
+        wd = weekdays[now_dt.weekday()]
+        now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} {now_dt.strftime('%H:%M:%S')}"
+        return PromptFactory.build_current_time_section(now_str)
+
+    @staticmethod
+    def _inject_user_context_message(
+        messages: list[dict[str, Any]],
+        context: str,
+    ) -> list[dict[str, Any]]:
+        """Prefix context to the first user message without mutating caller data."""
+        copied: list[dict[str, Any]] = []
+        injected = False
+
+        for message in messages:
+            item = dict(message)
+            if not injected and item.get("role") == "user":
+                content = item.get("content", "")
+                if isinstance(content, list):
+                    item["content"] = [{"type": "text", "text": context}, *content]
+                else:
+                    text = "" if content is None else str(content)
+                    item["content"] = f"{context}\n\n{text}" if text else context
+                injected = True
+            copied.append(item)
+
+        if not injected:
+            return [{"role": "user", "content": context}, *copied]
+        return copied
 
     # ═══════════════════════════════════════════════════════════════════
     # Hook 注册 API
@@ -343,7 +377,7 @@ class Brain:
 
         处理链：
         1. 用户 pre-hooks（按注册顺序）
-        2. 默认 pre: 语气对齐 → 时间注入 → 模型路由 → 风格覆盖
+        2. 默认 pre: 人格注入 → 当前时间入消息链 → 模型路由 → 风格覆盖
         3. provider.generate_async()（带 transport 级重试，重试时刷新上下文）
         4. 默认 post: XML 剥离 → SKIP 检测 → SKILL 解析 → 表情包解析 → token 记录
         5. 用户 post-hooks（按注册顺序）
@@ -367,31 +401,13 @@ class Brain:
             persona_base = self.persona.build_system_prompt()
             system_prompt = persona_base + "\n\n" + system_prompt
 
-            # ── 3. 默认 pre: 语气对齐 ──
-            if self._get_tone_alignment_fn is not None:
-                tone_hint = self._get_tone_alignment_fn(request.group_id)
-                if tone_hint:
-                    system_prompt = system_prompt + "\n\n" + tone_hint
-
-            # 保存时间注入前的 prompt 基底，用于重试时以最新时间刷新
+            # 保存 prompt 基底，用于重试时刷新消息链里的当前时间
             base_system_prompt = system_prompt
 
-            # ── 默认 pre: 当前时间注入 ──
-            china_tz = timezone(timedelta(hours=8))
-            now_dt = datetime.now(china_tz)
-            weekdays = [
-                "星期一",
-                "星期二",
-                "星期三",
-                "星期四",
-                "星期五",
-                "星期六",
-                "星期日",
-            ]
-            wd = weekdays[now_dt.weekday()]
-            now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} {now_dt.strftime('%H:%M:%S')}"
-            system_prompt = (
-                system_prompt + "\n\n" + PromptFactory.build_current_time_section(now_str)
+            # ── 默认 pre: 当前时间注入到 user/assistant 消息链 ──
+            messages_with_time = self._inject_user_context_message(
+                request.messages,
+                self._build_current_time_context(),
             )
 
             # ── 默认 pre: 模型路由 ──
@@ -463,7 +479,7 @@ class Brain:
             gen_request = GenerationRequest(
                 model=cfg.model_name,
                 system_prompt=system_prompt.strip(),
-                messages=request.messages,
+                messages=messages_with_time,
                 tools=tools,
                 temperature=effective_temperature,
                 max_tokens=effective_max_tokens,
@@ -483,25 +499,14 @@ class Brain:
                         if entry.task_filter is not None and task_name not in entry.task_filter:
                             continue
                         entry.hook(self, request, ctx)
-                china_tz = timezone(timedelta(hours=8))
-                now_dt = datetime.now(china_tz)
-                weekdays = [
-                    "星期一",
-                    "星期二",
-                    "星期三",
-                    "星期四",
-                    "星期五",
-                    "星期六",
-                    "星期日",
-                ]
-                wd = weekdays[now_dt.weekday()]
-                now_str = f"{now_dt.strftime('%Y-%m-%d')} {wd} " f"{now_dt.strftime('%H:%M:%S')}"
-                fresh_time = PromptFactory.build_current_time_section(now_str)
-                fresh_system_prompt = base_system_prompt + "\n\n" + fresh_time
+                fresh_messages = self._inject_user_context_message(
+                    request.messages,
+                    self._build_current_time_context(),
+                )
                 return GenerationRequest(
                     model=cfg.model_name,
-                    system_prompt=fresh_system_prompt.strip(),
-                    messages=request.messages,
+                    system_prompt=base_system_prompt.strip(),
+                    messages=fresh_messages,
                     tools=tools,
                     temperature=effective_temperature,
                     max_tokens=effective_max_tokens,
@@ -514,10 +519,10 @@ class Brain:
                 logger.debug(
                     "LLM prompt for group=%s:\nSYSTEM:\n%s\n\nMESSAGES:\n%s",
                     request.group_id,
-                    system_prompt,
+                    gen_request.system_prompt,
                     "\n".join(
                         f"  [{m.get('role')}] {m.get('content', '')[:200]}"
-                        for m in request.messages
+                        for m in gen_request.messages
                     ),
                 )
 
@@ -568,7 +573,7 @@ class Brain:
             # ── 默认 post: 记录 token 用量 ──
             token_record = self._record_chat_tokens(
                 gen_request=gen_request,
-                system_prompt_used=system_prompt,
+                system_prompt_used=gen_request.system_prompt,
                 reply=reply,
                 estimated_input_tokens=estimated_input_tokens,
                 duration_ms=duration_ms,
@@ -585,7 +590,7 @@ class Brain:
                 model_name=cfg.model_name,
                 duration_ms=duration_ms,
                 token_record=token_record,
-                system_prompt=system_prompt,
+                system_prompt=gen_request.system_prompt,
                 sticker_names=[],
                 has_tool_call=bool(tool_calls),
                 tool_calls=tool_calls,

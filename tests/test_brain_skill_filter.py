@@ -67,3 +67,35 @@ async def test_brain_chat_when_skill_is_disabled_then_tool_schema_is_not_sent_to
         for tool in (provider.last_request.tools or [])
     ]
     assert tool_names == ["lookup"]
+
+
+@pytest.mark.asyncio
+async def test_brain_chat_injects_current_time_into_user_message_not_system_prompt():
+    provider = _Provider()
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="model",
+                max_tokens=100,
+                temperature=0.1,
+                timeout=30,
+            )
+        ),
+        persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
+    )
+
+    await brain.chat(
+        ChatRequest(
+            group_id="group-1",
+            user_id="u1",
+            system_prompt="system",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+    )
+
+    assert provider.last_request is not None
+    assert "【当前时间】" not in provider.last_request.system_prompt
+    assert provider.last_request.messages[0]["role"] == "user"
+    assert "【当前时间】" in provider.last_request.messages[0]["content"]
+    assert "hello" in provider.last_request.messages[0]["content"]

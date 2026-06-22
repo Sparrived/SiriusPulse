@@ -1,7 +1,7 @@
-"""Model router: task-aware LLM model selection for v0.28+.
+﻿"""Model router: task-aware LLM model selection for v0.28+.
 
 Maps cognitive tasks to optimal (model, temperature, max_tokens, timeout)
-configurations. Supports dynamic escalation (high-urgency → stronger model)
+configurations. Supports dynamic escalation (high-urgency 鈫?stronger model)
 and user-defined overrides via engine config.
 """
 
@@ -27,7 +27,7 @@ class TaskConfig:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
-    # Lightweight tasks → fast/cheap models
+    # Lightweight tasks 鈫?fast/cheap models
     "cognition_analyze": TaskConfig(
         model_name="gpt-4o-mini",
         temperature=0.3,
@@ -42,7 +42,7 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=20.0,
         fallback_model="deepseek-chat",
     ),
-    # High-quality tasks → stronger models
+    # High-quality tasks 鈫?stronger models
     "response_generate": TaskConfig(
         model_name="gpt-4o",
         temperature=0.7,
@@ -57,7 +57,7 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=20.0,
         fallback_model="deepseek-chat",
     ),
-    # Plugin 分析任务 → 小模型
+    # Plugin 鍒嗘瀽浠诲姟 鈫?灏忔ā鍨?
     "plugin_analyze": TaskConfig(
         model_name="gpt-4o-mini",
         temperature=0.5,
@@ -65,7 +65,7 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=30.0,
         fallback_model="deepseek-chat",
     ),
-    # Plugin 其他
+    # Plugin 鍏朵粬
     "plugin_generate": TaskConfig(
         model_name="gpt-4o-mini",
         temperature=0.7,
@@ -87,7 +87,7 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=30.0,
         fallback_model="deepseek-chat",
     ),
-    # 被动技能
+    # 琚姩鎶€鑳?
     "passive_skill": TaskConfig(
         model_name="gpt-4o",
         temperature=0.8,
@@ -102,11 +102,18 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=20.0,
         fallback_model="deepseek-chat",
     ),
-    # 记忆维护
+    # 璁板繂缁存姢
     "diary_generate": TaskConfig(
         model_name="gpt-4o-mini",
         temperature=0.5,
         max_tokens=512,
+        timeout=20.0,
+        fallback_model="deepseek-chat",
+    ),
+    "topic_cluster": TaskConfig(
+        model_name="gpt-4o-mini",
+        temperature=0.3,
+        max_tokens=1024,
         timeout=20.0,
         fallback_model="deepseek-chat",
     ),
@@ -133,8 +140,8 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
     ),
 }
 # Urgency thresholds for escalation
-_URGENCY_ESCALATE = 80  # urgency > 80 → use stronger model
-_URGENCY_CRITICAL = 95  # urgency > 95 → strongest model + more tokens
+_URGENCY_ESCALATE = 80  # urgency > 80 鈫?use stronger model
+_URGENCY_CRITICAL = 95  # urgency > 95 鈫?strongest model + more tokens
 
 
 class ModelRouter:
@@ -155,7 +162,7 @@ class ModelRouter:
         """Initialize router.
 
         Args:
-            task_registry: Full task→config mapping. If None, uses defaults.
+            task_registry: Full task鈫抍onfig mapping. If None, uses defaults.
             overrides: Partial overrides per task (e.g.
                 {"response_generate": {"temperature": 0.5}}).
         """
@@ -189,9 +196,7 @@ class ModelRouter:
             - urgency > 80: upgrade to stronger model, lower temperature
             - urgency > 95: strongest model, more tokens
 
-        heat_level 不再影响 max_tokens，避免在 SKILL 调用场景下
-        因 token 预算不足导致技能标记被截断。
-        """
+        heat_level 涓嶅啀褰卞搷 max_tokens锛岄伩鍏嶅湪 SKILL 璋冪敤鍦烘櫙涓?        鍥?token 棰勭畻涓嶈冻瀵艰嚧鎶€鑳芥爣璁拌鎴柇銆?        """
         base = self._registry.get(task_name)
         if base is None:
             base = self._registry.get(
@@ -260,3 +265,4 @@ class ModelRouter:
             "claude-3-sonnet": "claude-3-opus",
         }
         return tiers.get(current, current)
+

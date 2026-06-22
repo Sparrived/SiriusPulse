@@ -457,28 +457,6 @@ class Helpers:
 
         return min(1.0, base_score + boost)
 
-    def get_tone_alignment(self, group_id: str) -> str:
-        """Detect current group tone from atmosphere history for style alignment."""
-        group_profile = self._engine.semantic_memory.get_group_profile(group_id)
-        if not group_profile or not group_profile.atmosphere_history:
-            return ""
-
-        recent = group_profile.atmosphere_history[-3:]
-        avg_valence = sum(getattr(s, "group_valence", 0.0) for s in recent) / len(recent)
-        avg_arousal = sum(getattr(s, "group_arousal", 0.0) for s in recent) / len(recent)
-
-        if avg_valence < -0.3 and avg_arousal > 0.5:
-            return "当前群聊氛围偏激烈/吐槽，请保持冷静共情的态度，不要火上浇油或过于轻浮。"
-        elif avg_valence < -0.3 and avg_arousal <= 0.5:
-            return "当前群聊氛围偏低落，请温柔耐心地回应，给予安慰和支持。"
-        elif avg_valence > 0.4 and avg_arousal > 0.6:
-            return "当前群聊氛围很兴奋热闹，你可以积极参与，保持轻松愉快的语气。"
-        elif avg_valence > 0.4 and avg_arousal <= 0.6:
-            return "当前群聊氛围轻松愉快，保持友好自然的交流即可。"
-        elif avg_arousal < 0.3:
-            return "当前群聊比较平淡，请自然回应，不要显得突兀。"
-        return ""
-
     @staticmethod
     def message_rate_per_minute(recent_msgs: list[dict[str, Any]]) -> float:
         """Estimate messages per minute from recent message timestamps."""

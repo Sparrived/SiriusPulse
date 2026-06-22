@@ -66,14 +66,13 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
-        pinned_messages: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         """构建消息链（方案 C：以 assistant 消息切分）。
 
         返回多条消息：
-        1. system  -- 富化后的系统提示词（含日记 + 传记）
+        1. system  -- 富化后的系统提示词（含传记）
         2. user/assistant 交替 -- 历史对话（按 assistant 切分）
-        3. user   -- 当前用户消息
+        3. user   -- 当前用户消息（含日记上下文）
 
         Args:
             content_is_tagged: 若 True 表示 current_query 已包含 <message> XML
@@ -105,23 +104,18 @@ class ContextAssembler:
         # 3. 构建富化后的系统提示词
         enriched_system = self._enrich_system_prompt(
             system_prompt,
-            diary_entries,
             biography_sections=bio_sections,
         )
 
         # 4. 构建消息链（方案 C）
         messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
 
-        pinned_context = ""
-        if pinned_messages:
-            from sirius_pulse.core.prompt_factory import PromptFactory
+        diary_context = self._build_diary_context(diary_entries)
 
-            pinned_context = PromptFactory.build_pinned_messages_context(pinned_messages)
-
-        def _with_pinned_context(content: str) -> str:
-            if not pinned_context:
+        def _with_user_context(content: str) -> str:
+            if not diary_context:
                 return content
-            return f"{pinned_context}\n\n{content}" if content else pinned_context
+            return f"{diary_context}\n\n{content}" if content else diary_context
 
         # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息，上限 50 条）
         recent = self._cacheable_history_entries(group_id)
@@ -143,7 +137,6 @@ class ContextAssembler:
         history_xml = self._entries_to_xml(recent) if recent else ""
         enriched_system = self._enrich_system_prompt(
             system_prompt,
-            diary_entries,
             biography_sections=bio_sections,
             history_xml=history_xml,
         )
@@ -170,7 +163,7 @@ class ContextAssembler:
         # 当 content_is_tagged=True 时，current_query 已由 PromptFactory.assemble_chat()
         # 包含完整的 XML 标签和前缀段落（传记、情绪、关系、技能等），直接使用
         if content_is_tagged:
-            messages.append({"role": "user", "content": _with_pinned_context(current_query)})
+            messages.append({"role": "user", "content": _with_user_context(current_query)})
         else:
             # 如果有 pending 消息，把它们和当前消息一起打包
             # 排除与当前发言者匹配的最后一条 pending 条目，避免 current_query 重复注入
@@ -203,21 +196,21 @@ class ContextAssembler:
                         and not line.startswith("</pending_messages>")
                     ]
                     combined = "\n".join(pending_lines) + "\n" + current_xml
-                    messages.append({"role": "user", "content": _with_pinned_context(combined)})
+                    messages.append({"role": "user", "content": _with_user_context(combined)})
                 else:
-                    messages.append({"role": "user", "content": _with_pinned_context(current_xml)})
+                    messages.append({"role": "user", "content": _with_user_context(current_xml)})
             else:
                 if all_current:
                     pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
                     messages.append(
                         {
                             "role": "user",
-                            "content": _with_pinned_context(pending_xml + "\n" + current_query),
+                            "content": _with_user_context(pending_xml + "\n" + current_query),
                         }
                     )
                 else:
                     messages.append(
-                        {"role": "user", "content": _with_pinned_context(current_query)}
+                        {"role": "user", "content": _with_user_context(current_query)}
                     )
 
         return messages
@@ -334,12 +327,6 @@ class ContextAssembler:
 
         parts: list[str] = []
 
-        # 发言者传记
-        if speaker_user_id:
-            bio = self._bio_view.get_biography(speaker_user_id)
-            if bio and bio.short_bio:
-                parts.append(f"【发言者】{bio.name}: {bio.short_bio}")
-
         # 被提及者传记
         for uid in mentioned_user_ids:
             if uid == speaker_user_id:
@@ -349,6 +336,26 @@ class ContextAssembler:
                 parts.append(f"【被提及】{bio.name}: {bio.short_bio}")
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_diary_context(diary_entries: list[Any]) -> str:
+        """构建日记上下文，作为 user 消息链的一部分注入。"""
+        if not diary_entries:
+            return ""
+
+        from sirius_pulse.core.prompt_factory import TAG_HISTORY_DIARY, TAG_HISTORY_DIARY_END
+
+        entries = diary_entries[:12]
+        full_text_count = min(5, len(entries))
+        lines = [TAG_HISTORY_DIARY]
+        for i, entry in enumerate(entries, 1):
+            ts = (getattr(entry, "created_at", "") or "")[:16].replace("T", " ")
+            content = getattr(entry, "content", "")
+            summary = getattr(entry, "summary", "")
+            text = content if (i <= full_text_count and content) else summary
+            lines.append(f"{i}. [{ts}] {text}" if ts else f"{i}. {text}")
+        lines.append(TAG_HISTORY_DIARY_END)
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -442,25 +449,14 @@ class ContextAssembler:
     def _enrich_system_prompt(
         self,
         base_prompt: str,
-        diary_entries: list[Any],
         biography_sections: str = "",
         history_xml: str = "",
     ) -> str:
-        """富化系统提示词：注入日记 + 传记。"""
-        from sirius_pulse.core.prompt_factory import PromptFactory
-
+        """富化系统提示词：注入传记和可缓存历史。"""
         # 注入传记信息（较稳定，放最前面以最大化缓存前缀匹配）
         enriched = base_prompt
         if biography_sections:
             enriched += f"\n\n<biography>\n{biography_sections}\n</biography>"
-
-        # 注入日记（旧格式）
-        enriched = PromptFactory.enrich_system_prompt(
-            base_prompt=enriched,
-            diary_entries=diary_entries,
-            history_xml="",
-            cross_group_xml="",
-        )
 
         if history_xml:
             history_prefix = "\n".join(

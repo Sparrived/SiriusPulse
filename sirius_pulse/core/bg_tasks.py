@@ -151,19 +151,37 @@ class BackgroundTasks:
                             continue
 
                         cfg = engine.model_router.resolve("memory_extract")
-                        result = await engine.diary_manager.generate_from_candidates(
-                            group_id=group_id,
-                            candidates=candidates,
-                            persona_name=engine.persona.name,
-                            persona_description=(
-                                engine.persona.persona_summary or engine.persona.backstory or ""
-                            ),
-                            brain=engine.brain,
-                            model_name=cfg.model_name,
-                            min_candidate_count=volume_threshold,
-                        )
-                        if result:
-                            promoted_total += 1
+                        # Use topic clustering when there are many candidates
+                        # to avoid information loss from a single diary call.
+                        if len(candidates) > volume_threshold * 2:
+                            cluster_cfg = engine.model_router.resolve("topic_cluster")
+                            results = await engine.diary_manager.generate_topic_clustered(
+                                group_id=group_id,
+                                candidates=candidates,
+                                persona_name=engine.persona.name,
+                                persona_description=(
+                                    engine.persona.persona_summary or engine.persona.backstory or ""
+                                ),
+                                brain=engine.brain,
+                                model_name=cfg.model_name,
+                                min_candidate_count=volume_threshold,
+                                topic_cluster_model=cluster_cfg.model_name,
+                            )
+                            promoted_total += len(results)
+                        else:
+                            result = await engine.diary_manager.generate_from_candidates(
+                                group_id=group_id,
+                                candidates=candidates,
+                                persona_name=engine.persona.name,
+                                persona_description=(
+                                    engine.persona.persona_summary or engine.persona.backstory or ""
+                                ),
+                                brain=engine.brain,
+                                model_name=cfg.model_name,
+                                min_candidate_count=volume_threshold,
+                            )
+                            if result:
+                                promoted_total += 1
 
                 if promoted_total > 0:
                     engine._log_inner_thought(f"整理了 {promoted_total} 个群的对话日记，过去的回忆又清晰了一点～")
