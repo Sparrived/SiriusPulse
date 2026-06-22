@@ -861,7 +861,6 @@ class _EmotionalGroupChatEngineBase:
         _ALL = _TASKS_CHAT_PROACTIVE
         self.brain.register_post_hook(_hook_depth, priority=0, task_filter=_ALL)
         self.brain.register_post_hook(_hook_reply_reference, priority=10, task_filter=_ALL)
-        self.brain.register_post_hook(_hook_pin_messages, priority=15, task_filter=_ALL)
         self.brain.register_post_hook(_hook_dedup, priority=30, task_filter=_CHAT)
         self.brain.register_post_hook(_hook_memory, priority=40, task_filter=_ALL)
         self.brain.register_post_hook(_hook_timestamp, priority=50, task_filter=_ALL)

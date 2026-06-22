@@ -768,9 +768,11 @@ async def _cmd_persona_start(args: argparse.Namespace) -> None:
         LOG.exception("人格工作进程异常退出")
         raise
     finally:
-        if napcat_mgr and napcat_mgr.is_running:
-            LOG.info("正在停止 NapCat...")
-            await napcat_mgr.stop()
+        if napcat_mgr:
+            # 保留 NapCat 进程运行，仅断开管理器引用
+            # 这样下次启动人格时可以复用已登录的会话，避免重复扫码
+            await napcat_mgr.stop(preserve_session=True)
+            LOG.info("已断开 NapCat 管理器引用（QQ 进程保持运行）")
 
 
 def _cmd_persona_stop(args: argparse.Namespace) -> None:
