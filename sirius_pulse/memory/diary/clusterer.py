@@ -1,4 +1,4 @@
-﻿"""Topic clustering for diary generation candidates.
+"""Topic clustering for diary generation candidates.
 
 Splits a large batch of conversation messages into topic-based clusters
 so that each cluster can be independently summarized into a diary entry.
@@ -111,9 +111,7 @@ class TopicClusterer:
                 )
                 system_prompt = (
                     _CLUSTER_SYSTEM_PROMPT
-                    + "
-
-【重要提醒】上一次输出不是合法 JSON，"
+                    + "\n\n【重要提醒】上一次输出不是合法 JSON，"
                     "请确保本次输出是严格合法的 JSON 对象，不要包含任何其他文字。"
                 )
 
