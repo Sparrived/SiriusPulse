@@ -1192,6 +1192,7 @@ class NapCatAdapter(BaseAdapter):
     async def _send_group_text_single_locked(
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
+        text = text.rstrip("\n")
         try:
             # 如果有引用且有有效的 msg_id，使用 reply segment
             if reply_refs and reply_refs[0].get("msg_id"):
@@ -1326,6 +1327,7 @@ class NapCatAdapter(BaseAdapter):
             self._end_reply_send(key)
 
     async def _send_private_text_single_locked(self, user_id: str, text: str) -> bool:
+        text = text.rstrip("\n")
         try:
             await self.send_private_msg(user_id, text)
             LOG.info("回复私聊 %s: %s", user_id, text[:120])
