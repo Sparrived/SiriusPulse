@@ -47,7 +47,6 @@ def test_experience_config_when_webui_loads_form_then_all_user_options_are_seria
     assert "engagement_sensitivity" in payload
     assert "enable_skills" in payload
     assert "diary_token_budget" in payload
-    assert "pinned_message_max_carry_count" in payload
 
 
 def test_experience_config_when_webui_posts_partial_payload_then_missing_values_keep_defaults():

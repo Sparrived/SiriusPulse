@@ -261,9 +261,6 @@ class PersonaExperienceConfig:
     # 消息前缀过滤——以这些前缀开头的消息不进入引擎
     message_prefixes: list[str] = field(default_factory=list)
 
-    # 消息钉住最大携带次数（超过后自动取消钉住）
-    pinned_message_max_carry_count: int = 100
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "reply_mode": self.reply_mode,
@@ -291,7 +288,6 @@ class PersonaExperienceConfig:
             "diary_token_budget": self.diary_token_budget,
             "other_ai_names": list(self.other_ai_names),
             "message_prefixes": list(self.message_prefixes),
-            "pinned_message_max_carry_count": self.pinned_message_max_carry_count,
         }
 
     @classmethod
@@ -324,7 +320,6 @@ class PersonaExperienceConfig:
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
             message_prefixes=[str(v) for v in data.get("message_prefixes", [])],
-            pinned_message_max_carry_count=int(data.get("pinned_message_max_carry_count", 100)),
         )
 
     @classmethod

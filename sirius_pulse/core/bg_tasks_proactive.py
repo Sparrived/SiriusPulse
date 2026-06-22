@@ -114,7 +114,6 @@ class ProactiveTasks:
             diary_top_k=diary_top_k,
             diary_token_budget=diary_token_budget,
             include_pending=True,
-            pinned_messages=engine.get_pinned_messages_for_prompt(group_id),
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]
@@ -256,11 +255,6 @@ class ProactiveTasks:
 
         system_prompt = "\n\n".join(sections)
         messages = [{"role": "user", "content": "（你决定主动开口）"}]
-        pinned_ctx = PromptFactory.build_pinned_messages_context(
-            engine.get_pinned_messages_for_prompt(group_id)
-        )
-        if pinned_ctx:
-            messages[0]["content"] = f"{pinned_ctx}\n\n{messages[0]['content']}"
         style = engine.style_adapter.adapt(pace="steady")
 
         raw_reply = await engine.brain.generate_text(

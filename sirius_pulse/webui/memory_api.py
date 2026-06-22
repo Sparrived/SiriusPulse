@@ -985,7 +985,7 @@ async def api_persona_conversation_history_get(
             target_files = sorted(archive_dir.glob("*.jsonl"))
 
     if not target_files and not runtime_messages:
-        return _json_response({"messages": [], "groups": groups, "total": 0, "pinned_messages": []})
+        return _json_response({"messages": [], "groups": groups, "total": 0})
 
     has_filters = bool(search or speaker or start_time or end_time)
 
@@ -1070,31 +1070,6 @@ async def api_persona_conversation_history_get(
         merged_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
         messages = merged_messages[offset : offset + limit]
 
-    # 读取钉住消息
-    pinned_messages: list[dict[str, Any]] = []
-    pinned_file = paths.engine_state / "pinned_messages.json"
-    if pinned_file.exists():
-        try:
-            pinned_data = json.loads(pinned_file.read_text(encoding="utf-8"))
-            pinned_msgs = pinned_data.get("messages", {})
-            for msg_id, msg_data in pinned_msgs.items():
-                if group_id and msg_data.get("group_id") != group_id:
-                    continue
-                pinned_messages.append(
-                    {
-                        "message_id": msg_id,
-                        "content": msg_data.get("content", ""),
-                        "speaker": msg_data.get("speaker", ""),
-                        "group_id": msg_data.get("group_id", "default"),
-                        "reason": msg_data.get("reason", ""),
-                        "pinned_at": msg_data.get("pinned_at", ""),
-                        "current_carry_count": msg_data.get("current_carry_count", 0),
-                        "max_carry_count": msg_data.get("max_carry_count", 100),
-                    }
-                )
-        except (OSError, json.JSONDecodeError):
-            pass
-
     return _json_response(
         {
             "messages": messages,
@@ -1102,6 +1077,5 @@ async def api_persona_conversation_history_get(
             "total": total,
             "offset": offset,
             "limit": limit,
-            "pinned_messages": pinned_messages,
         }
     )

@@ -115,15 +115,15 @@ def test_skill_registry_when_adapter_is_unknown_then_adapter_limited_skills_are_
 
 def test_skill_registry_when_skill_is_not_model_visible_then_tool_is_hidden():
     registry = SkillRegistry()
-    registry.register(_skill("pin_message"))
-    registry.register(_skill("list_pinned_messages", model_visible=False))
+    registry.register(_skill("send_sticker"))
+    registry.register(_skill("list_stickers", model_visible=False))
 
     descriptions = registry.build_tool_descriptions()
     tools = registry.build_tools_list()
 
-    assert "pin_message" in descriptions
-    assert "list_pinned_messages" not in descriptions
-    assert [tool["function"]["name"] for tool in tools] == ["pin_message"]
+    assert "send_sticker" in descriptions
+    assert "list_stickers" not in descriptions
+    assert [tool["function"]["name"] for tool in tools] == ["send_sticker"]
 
 
 def test_skill_registry_when_workspace_hot_reloads_then_removed_skills_disappear():

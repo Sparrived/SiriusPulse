@@ -19,6 +19,7 @@ from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names, defer_send_sticker_tool
 from sirius_pulse.providers.base import ToolCall
+from sirius_pulse.models.response_strategy import BiographyPromptContext
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -623,8 +624,8 @@ class DelayedQueueTasks:
             persona=engine.persona,
         )
 
-        # 读取 pipeline 缓存的传记上下文
-        pending_bio: dict[str, Any] = getattr(engine, "_pending_biography", {}) or {}
+        # 仅使用队列项自带的人物传记快照，避免回读引擎共享状态
+        bio_ctx = self._merge_biography_contexts(items)
 
         bundle = PromptFactory.assemble_chat(
             message_content=message_content,
@@ -636,9 +637,9 @@ class DelayedQueueTasks:
             style_params=style_params,
             other_ai_names=engine._other_ai_names,
             user_profiles=delayed_user_profiles,
-            biography_speaker=pending_bio.get("speaker_card"),
-            biography_mentioned=pending_bio.get("mentioned_cards"),
-            biography_confidence=pending_bio.get("confidence"),
+            biography_speaker=bio_ctx.speaker_card,
+            biography_mentioned=list(bio_ctx.mentioned_cards),
+            biography_confidence=dict(bio_ctx.confidence),
             skill_registry=engine._skill_registry,
             plugin_registry=getattr(engine, "_plugin_registry", None),
             caller_is_developer=caller_is_developer,

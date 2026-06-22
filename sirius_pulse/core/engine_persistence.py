@@ -108,11 +108,6 @@ class EngineStateStore:
         path = self._base / "user_manager.json"
         _atomic_write(path, state)
 
-    def save_pinned_messages(self, state: dict[str, Any]) -> None:
-        """Save pinned messages state."""
-        path = self._base / "pinned_messages.json"
-        _atomic_write(path, state)
-
     def save_all(
         self,
         *,
@@ -124,7 +119,6 @@ class EngineStateStore:
         event_memory: dict[str, Any] | None = None,
         basic_memory: dict[str, Any] | None = None,
         diary_state: dict[str, Any] | None = None,
-        pinned_messages: dict[str, Any] | None = None,
     ) -> None:
         """Convenience: save all state in one call."""
         for group_id, entries in working_memories.items():
@@ -140,8 +134,6 @@ class EngineStateStore:
             self.save_basic_memory(basic_memory)
         if diary_state is not None:
             self.save_diary_state(diary_state)
-        if pinned_messages is not None:
-            self.save_pinned_messages(pinned_messages)
         logger.info(
             "把现在的状态记下来啦，%d 个群的上下文都好好存着呢～",
             len(working_memories),
@@ -236,16 +228,6 @@ class EngineStateStore:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def load_pinned_messages(self) -> dict[str, Any] | None:
-        """Load pinned messages state."""
-        path = self._base / "pinned_messages.json"
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-
     def load_all(self) -> dict[str, Any]:
         """Convenience: load all state in one call.
 
@@ -277,7 +259,6 @@ class EngineStateStore:
             "basic_memory": self.load_basic_memory(),
             "diary_state": self.load_diary_state(),
             "user_manager": self.load_user_manager(),
-            "pinned_messages": self.load_pinned_messages(),
         }
 
     # ------------------------------------------------------------------
@@ -370,7 +351,6 @@ class EnginePersistence:
                     gid: list(sids) for gid, sids in engine.diary_manager._diarized_sources.items()
                 }
             },
-            pinned_messages=engine._pinned_manager.to_dict(),
         )
 
         # Save proactive state
@@ -479,20 +459,6 @@ class EnginePersistence:
 
             # Initialize sticker system
             engine._sticker._init_sticker_system()
-
-            # Load pinned messages
-            pinned_data = state.get("pinned_messages")
-            if pinned_data:
-                try:
-                    from sirius_pulse.core.pinned_message import PinnedMessageManager
-
-                    engine._pinned_manager = PinnedMessageManager.from_dict(pinned_data)
-                    logger.info(
-                        "钉住消息已恢复，共 %d 条",
-                        len(engine._pinned_manager._pinned_messages),
-                    )
-                except Exception as exc:
-                    logger.warning("钉住消息恢复失败，使用空实例: %s", exc)
         except Exception as exc:
             logger.warning("状态恢复部分出错，继续尝试加载 proactive 状态: %s", exc)
         finally:

@@ -37,6 +37,15 @@ class StrategyDecision:
 
 
 @dataclass(slots=True)
+class BiographyPromptContext:
+    """人物传记上下文快照，随延迟回复队列项流转。"""
+
+    speaker_card: Any | None = None
+    mentioned_cards: list[Any] = field(default_factory=list)
+    confidence: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class DelayedResponseItem:
     """Item queued in DelayedResponseQueue."""
 
@@ -60,6 +69,7 @@ class DelayedResponseItem:
     related_user_ids: list[str] = field(
         default_factory=list
     )  # merged messages may involve multiple users
+    biography_context: BiographyPromptContext = field(default_factory=BiographyPromptContext)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,4 +89,9 @@ class DelayedResponseItem:
             "heat_level": self.heat_level,
             "pace": self.pace,
             "related_user_ids": list(self.related_user_ids),
+            "biography_context": {
+                "speaker_card": self.biography_context.speaker_card,
+                "mentioned_cards": self.biography_context.mentioned_cards,
+                "confidence": self.biography_context.confidence,
+            },
         }

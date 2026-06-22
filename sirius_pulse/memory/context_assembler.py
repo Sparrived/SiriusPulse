@@ -233,7 +233,6 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
-        pinned_messages: list[Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
         messages = self.build_messages(
@@ -252,7 +251,6 @@ class ContextAssembler:
             mentioned_user_ids=mentioned_user_ids,
             content_is_tagged=content_is_tagged,
             platform_message_id=platform_message_id,
-            pinned_messages=pinned_messages,
         )
 
         from sirius_pulse.token.utils import estimate_tokens

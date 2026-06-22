@@ -18,7 +18,7 @@ from sirius_pulse.memory.semantic.models import AtmosphereSnapshot
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.models import Message, UnifiedUser
-from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
+from sirius_pulse.models.response_strategy import BiographyPromptContext, ResponseStrategy, StrategyDecision
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -524,7 +524,11 @@ class Pipeline:
         rhythm = engine.rhythm_analyzer.analyze(group_id, recent_msgs)
 
         # 收集人物传记信息（零 LLM，供后续 prompt 组装使用）
-        self._collect_biography_section(group_id, user_id, message.content or "")
+        biography_context = self._collect_biography_section(
+            group_id,
+            user_id,
+            message.content or "",
+        )
 
         # Turn gap suppression: don't interrupt conversation in full flow
         if (
@@ -587,6 +591,7 @@ class Pipeline:
                 group_id=group_id,
                 user_id=user_id,
                 rhythm=rhythm,
+                biography_context=biography_context,
             )
 
         if decision.strategy == ResponseStrategy.DELAYED:
@@ -599,6 +604,7 @@ class Pipeline:
                 group_id=group_id,
                 user_id=user_id,
                 rhythm=rhythm,
+                biography_context=biography_context,
             )
 
         engine._persist_group_state(group_id)
@@ -621,9 +627,11 @@ class Pipeline:
         group_id: str,
         user_id: str,
         rhythm: Any,
+        biography_context: BiographyPromptContext | None = None,
     ) -> dict[str, Any]:
         engine = self._engine
         emotion_state = emotion.to_dict()
+        bio_ctx = biography_context or BiographyPromptContext()
         engine.delayed_queue.enqueue(
             group_id=group_id,
             user_id=user_id,
@@ -639,6 +647,7 @@ class Pipeline:
             pace=rhythm.pace,
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
+            biography_context=bio_ctx,
         )
         engine._persist_group_state(group_id)
         result = {
@@ -657,12 +666,11 @@ class Pipeline:
         group_id: str,
         user_id: str,
         message_content: str,
-    ) -> None:
-        """收集人物传记信息，供 PromptFactory 使用。
+    ) -> BiographyPromptContext:
+        """收集人物传记快照，供延迟回复链路持久化使用。
 
         使用 BiographyView 从演化链派生传记，并从 UnifiedUserManager
         同步已确认别名到传记对象中，使 PromptFactory 能注入别名提示。
-        结果缓存在 engine._pending_biography 字典中。
         """
         engine = self._engine
         bio_view = engine.biography_view
@@ -707,12 +715,11 @@ class Pipeline:
             bio.aliases = sorted(alias_set_mentioned)
             mentioned_bios[uid] = bio
 
-        engine._pending_biography = {
-            "speaker_card": speaker_bio,
-            "mentioned_cards": list(mentioned_bios.values()),
-            "confidence": mentioned,
-            "affinity_score": 0.0,
-        }
+        return BiographyPromptContext(
+            speaker_card=speaker_bio,
+            mentioned_cards=list(mentioned_bios.values()),
+            confidence=dict(mentioned),
+        )
 
     def background_update(
         self,

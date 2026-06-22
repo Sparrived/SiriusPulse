@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sirius_pulse.core.pinned_message import PinnedMessage
 from sirius_pulse.core.prompt_factory import (
     TAG_HISTORY_DIARY,
-    TAG_PINNED_MESSAGES,
     PromptBundle,
     PromptFactory,
     StyleAdapter,
@@ -191,31 +189,6 @@ class _StaticDiaryRetriever:
         return self.entries
 
 
-def test_context_assembler_when_pinned_messages_are_provided_then_injects_current_prompt():
-    assembler = ContextAssembler(
-        BasicMemoryManager(),
-        _NoopDiaryRetriever(),
-    )
-    pinned = PinnedMessage(
-        message_id="pin_1",
-        content="Remember the deployment window.",
-        speaker="Alice",
-        group_id="group_a",
-        reason="ops",
-    )
-
-    messages = assembler.build_messages(
-        group_id="group_a",
-        current_query="What should I do next?",
-        system_prompt="system",
-        pinned_messages=[pinned],
-    )
-
-    assert TAG_PINNED_MESSAGES in messages[-1]["content"]
-    assert "<pinned_message" in messages[-1]["content"]
-    assert "Remember the deployment window." in messages[-1]["content"]
-
-
 def test_context_assembler_when_diary_exists_then_injects_user_message_not_system():
     diary_entry = SimpleNamespace(
         created_at="2026-06-21T10:11:12",
@@ -297,9 +270,3 @@ def test_context_assembler_removes_diarized_sources_from_system_prefix():
     assert "<cacheable_conversation_history>" not in messages[0]["content"]
     assert "first human" not in messages[0]["content"]
     assert "first reply" not in messages[0]["content"]
-
-
-def test_output_spec_does_not_tell_model_to_list_pinned_messages():
-    spec = PromptFactory.build_output_spec()
-
-    assert "list_pinned_messages" not in spec

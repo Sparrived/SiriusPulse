@@ -26,7 +26,6 @@ from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEvent
 from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter
-from sirius_pulse.core.pinned_message import PinnedMessageManager
 from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.proactive_trigger import ProactiveTrigger
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
