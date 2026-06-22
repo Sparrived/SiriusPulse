@@ -33,14 +33,12 @@ class PluginExecutor:
         registry: "PluginRegistry",
         *,
         persona_data_path: Path | None = None,
-        default_execution_timeout: float = 30.0,
         engine: Any = None,
         adapter: Any = None,
         config_manager: Any = None,
     ) -> None:
         self._registry = registry
         self._persona_data_path = persona_data_path or Path(".")
-        self._default_timeout = default_execution_timeout
         self._engine = engine
         self._adapter = adapter
         self._config_manager = config_manager
@@ -220,35 +218,16 @@ class PluginExecutor:
             if message_context is not None:
                 instance._ctx.message = message_context
 
-        # ── 执行（带超时保护，支持命令级超时覆盖）──
-        # 从 @command 装饰器元数据读取命令级 timeout，未设置则使用默认值
-        cmd_timeout = self._default_timeout
-        if hasattr(instance, "get_command_metas"):
-            cmd_metas = instance.get_command_metas()
-            cmd_meta = cmd_metas.get(cmd.command) if isinstance(cmd_metas, dict) else None
-            if cmd_meta is not None and hasattr(cmd_meta, "timeout"):
-                meta_timeout = getattr(cmd_meta, "timeout", 0.0)
-                if meta_timeout > 0:
-                    cmd_timeout = meta_timeout
-
+        # ── 执行 ──
         try:
             # execute_async 总是返回 list[PluginResponse]，此处无需额外类型检查
             if hasattr(instance, "execute_async"):
-                results = await asyncio.wait_for(
-                    instance.execute_async(cmd),
-                    timeout=cmd_timeout,
-                )
+                results = await instance.execute_async(cmd)
             else:
-                raw = await asyncio.wait_for(
-                    asyncio.to_thread(instance.execute, cmd),  # type: ignore[attr-defined]
-                    timeout=cmd_timeout,
-                )
+                raw = await asyncio.to_thread(instance.execute, cmd)  # type: ignore[attr-defined]
                 results = [raw] if raw is not None else [PluginResponse.ok(text="", data=None)]
 
             return results
-        except asyncio.TimeoutError:
-            logger.error("Plugin %s 执行超时 (%.1fs)", plugin_name, cmd_timeout)
-            return [PluginResponse.fail(f"Plugin 执行超时（{cmd_timeout}秒）")]
         except Exception as exc:
             logger.error("Plugin %s 执行异常: %s", plugin_name, exc, exc_info=True)
             return [PluginResponse.fail(f"Plugin 执行异常: {exc}")]
