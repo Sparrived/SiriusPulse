@@ -18,8 +18,8 @@ from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names, defer_send_sticker_tool
-from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.models.response_strategy import BiographyPromptContext
+from sirius_pulse.providers.base import ToolCall
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -654,6 +654,31 @@ class DelayedQueueTasks:
         if glossary:
             bundle.system_prompt = f"{bundle.system_prompt}\n\n{TAG_GLOSSARY}\n{glossary}"
         return bundle
+
+    @staticmethod
+    def _merge_biography_contexts(items: list[Any]) -> BiographyPromptContext:
+        """合并队列项中携带的人物传记快照。"""
+        speaker_card: Any | None = None
+        mentioned_cards: list[Any] = []
+        confidence: dict[str, float] = {}
+
+        for item in items:
+            ctx: BiographyPromptContext | None = getattr(item, "biography_context", None)
+            if ctx is None:
+                continue
+            if ctx.speaker_card is not None:
+                speaker_card = ctx.speaker_card
+            for card in ctx.mentioned_cards or []:
+                if card is not None:
+                    mentioned_cards.append(card)
+            for alias, score in (ctx.confidence or {}).items():
+                confidence[alias] = max(confidence.get(alias, 0.0), float(score))
+
+        return BiographyPromptContext(
+            speaker_card=speaker_card,
+            mentioned_cards=mentioned_cards,
+            confidence=confidence,
+        )
 
     def _inject_group_id_into_latest_reminder(self, group_id: str) -> None:
         """Attach group_id and adapter_type to reminders that lack them."""

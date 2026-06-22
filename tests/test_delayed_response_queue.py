@@ -212,7 +212,7 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
             set_chat_context=lambda **kwargs: None,
             execute_async=AsyncMock(side_effect=execute_skill),
         ),
-        _pending_biography={},
+
         _log_inner_thought=lambda text: None,
         event_bus=SimpleNamespace(emit=AsyncMock()),
     )
@@ -315,7 +315,6 @@ async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed()
             set_chat_context=lambda **kwargs: None,
             execute_async=execute_skill,
         ),
-        _pending_biography={},
         _log_inner_thought=lambda text: None,
         event_bus=SimpleNamespace(emit=AsyncMock()),
     )
@@ -398,7 +397,6 @@ async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_de
             execute_async=execute_skill,
         ),
         _sticker_names=["开心"],
-        _pending_biography={},
         _log_inner_thought=lambda text: None,
         event_bus=SimpleNamespace(emit=AsyncMock()),
     )

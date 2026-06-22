@@ -347,8 +347,6 @@ class _EmotionalGroupChatEngineBase:
         self._active_private_groups: set[str] = set()
 
         self._topic_window: dict[str, list[set[str]]] = {}
-
-        self._pending_biography: dict[str, Any] = {}
         self._topic_window_max_size = 10
 
     def _init_helpers(self) -> None:

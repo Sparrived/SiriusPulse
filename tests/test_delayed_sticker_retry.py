@@ -91,7 +91,6 @@ async def test_delayed_queue_when_only_send_sticker_tool_then_retries_text_witho
             execute_async=execute_skill,
         ),
         _sticker_names=["happy"],
-        _pending_biography={},
         _log_inner_thought=lambda text: None,
         event_bus=SimpleNamespace(emit=AsyncMock()),
     )

@@ -76,6 +76,7 @@ class DelayedResponseQueue:
         pace: str = "steady",
         speaker_name: str = "",
         platform_message_id: str = "",
+        biography_context: BiographyPromptContext | None = None,
     ) -> DelayedResponseItem:
         """Add an item to the delayed queue.
 
@@ -127,6 +128,15 @@ class DelayedResponseQueue:
                 # Track all users whose messages were merged into this item
                 if user_id and user_id not in item.related_user_ids:
                     item.related_user_ids.append(user_id)
+                if biography_context is not None:
+                    if biography_context.speaker_card is not None:
+                        item.biography_context.speaker_card = biography_context.speaker_card
+                    if biography_context.mentioned_cards:
+                        item.biography_context.mentioned_cards.extend(
+                            c for c in biography_context.mentioned_cards if c is not None
+                        )
+                    if biography_context.confidence:
+                        item.biography_context.confidence.update(biography_context.confidence)
                 logger.debug(
                     "Merged %s item %s for group %s (content now %d chars, window %.1fs)",
                     strategy_decision.strategy.value,
@@ -156,6 +166,7 @@ class DelayedResponseQueue:
             heat_level=heat_level,
             pace=pace,
             related_user_ids=[user_id] if user_id else [],
+            biography_context=biography_context or BiographyPromptContext(),
         )
         if group_id not in self._queues:
             self._queues[group_id] = []
