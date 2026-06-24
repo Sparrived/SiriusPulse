@@ -331,7 +331,7 @@ class ContextAssembler:
                 continue
             bio = self._bio_view.get_biography(uid)
             if bio and bio.short_bio:
-                parts.append(f"【被提及】{bio.name}: {bio.short_bio}")
+                parts.append(f"[被提及] {bio.name}: {bio.short_bio}")
 
         return "\n".join(parts)
 
@@ -459,10 +459,10 @@ class ContextAssembler:
         if history_xml:
             history_prefix = "\n".join(
                 [
-                    "<cacheable_conversation_history>",
-                    "Completed raw messages not yet promoted into diary memory.",
+                    "【历史聊天信息】",
+                    "尚未被日记记忆系统收录的近期原始消息。",
                     history_xml,
-                    "</cacheable_conversation_history>",
+                    "【历史聊天信息结束】",
                 ]
             )
             return f"{history_prefix}\n\n{enriched}"

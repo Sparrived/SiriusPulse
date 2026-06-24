@@ -486,8 +486,9 @@ class Helpers:
     def is_pure_image_message(content: str) -> bool:
         """Check if content contains only image/sticker placeholders with no substantive text.
 
-        Matches: 【图片: filename.png】, 【图片描述：...】, [图片: filename.png],
-                 【动画表情：...】, [动画表情："xxx.jpg"]
+        Matches: [图片: filename.png], [图片描述：...],
+                 [动画表情：...], [动画表情："xxx.jpg"]
+        Also matches legacy 【】 format for backward compatibility.
         """
         if not content:
             return False

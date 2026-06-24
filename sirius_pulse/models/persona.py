@@ -37,7 +37,6 @@ class PersonaProfile:
     communication_style: str = ""  # concise/detailed/formal/casual/humorous/...
     speech_rhythm: str = ""  # description of speaking pace/patterns
     emoji_preference: str = ""  # heavy/moderate/light/none
-    humor_style: str = ""  # sarcastic/wholesome/dark/dry/witty/none
     typical_greetings: list[str] = field(default_factory=list)
     typical_signoffs: list[str] = field(default_factory=list)
 
@@ -50,14 +49,12 @@ class PersonaProfile:
     emotional_range: dict[str, float] = field(
         default_factory=lambda: {"min_valence": -0.5, "max_valence": 0.8}
     )
-    empathy_style: str = ""  # warm/practical/distant/playful/mentor
     stress_response: str = ""  # how they react under pressure
 
     # ------------------------------------------------------------------
     # Behavior boundaries
     # ------------------------------------------------------------------
     boundaries: list[str] = field(default_factory=list)
-    taboo_topics: list[str] = field(default_factory=list)
     preferred_topics: list[str] = field(default_factory=list)
     social_role: str = ""  # observer/mediator/leader/jester/caregiver
 
@@ -93,15 +90,12 @@ class PersonaProfile:
             "communication_style": self.communication_style,
             "speech_rhythm": self.speech_rhythm,
             "emoji_preference": self.emoji_preference,
-            "humor_style": self.humor_style,
             "typical_greetings": list(self.typical_greetings),
             "typical_signoffs": list(self.typical_signoffs),
             "emotional_baseline": dict(self.emotional_baseline),
             "emotional_range": dict(self.emotional_range),
-            "empathy_style": self.empathy_style,
             "stress_response": self.stress_response,
             "boundaries": list(self.boundaries),
-            "taboo_topics": list(self.taboo_topics),
             "preferred_topics": list(self.preferred_topics),
             "social_role": self.social_role,
             "max_tokens_preference": self.max_tokens_preference,
@@ -127,7 +121,6 @@ class PersonaProfile:
             communication_style=data.get("communication_style", ""),
             speech_rhythm=data.get("speech_rhythm", ""),
             emoji_preference=data.get("emoji_preference", ""),
-            humor_style=data.get("humor_style", ""),
             typical_greetings=list(data.get("typical_greetings", [])),
             typical_signoffs=list(data.get("typical_signoffs", [])),
             emotional_baseline=dict(
@@ -136,10 +129,8 @@ class PersonaProfile:
             emotional_range=dict(
                 data.get("emotional_range", {"min_valence": -0.5, "max_valence": 0.8})
             ),
-            empathy_style=data.get("empathy_style", ""),
             stress_response=data.get("stress_response", ""),
             boundaries=list(data.get("boundaries", [])),
-            taboo_topics=list(data.get("taboo_topics", [])),
             preferred_topics=list(data.get("preferred_topics", [])),
             social_role=data.get("social_role", ""),
             max_tokens_preference=int(data.get("max_tokens_preference", 128)),
@@ -168,14 +159,11 @@ class PersonaProfile:
             flaws=self.flaws,
             emotional_baseline=self.emotional_baseline,
             stress_response=self.stress_response,
-            empathy_style=self.empathy_style,
             social_role=self.social_role,
             boundaries=self.boundaries,
             communication_style=self.communication_style,
             speech_rhythm=self.speech_rhythm,
-            humor_style=self.humor_style,
             reply_frequency=self.reply_frequency,
-            taboo_topics=self.taboo_topics,
             preferred_topics=self.preferred_topics,
             full_system_prompt=self.full_system_prompt,
         )

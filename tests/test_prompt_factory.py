@@ -75,7 +75,6 @@ def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
         max_tokens_preference = 64
         temperature_preference = 0.2
         communication_style = "formal"
-        humor_style = ""
         emoji_preference = "none"
 
     params = StyleAdapter().adapt(pace="accelerating", persona=Persona())
@@ -86,12 +85,30 @@ def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
     assert params.tone_instruction
 
 
-def test_output_spec_allows_newline_split_with_short_sentences():
+def test_output_spec_no_newline_split_instruction():
+    """换行分割提示已移除，改为 continue/stop 工具控制流程。"""
     spec = PromptFactory.build_output_spec()
 
-    assert "多句话可以用换行符分割" in spec
-    assert "每句话不可超过 15 字" in spec
+    assert "多句话可以用换行符分割" not in spec
+    assert "每句话不可超过 15 字" not in spec
     assert "禁止任何形式的换行符" not in spec
+
+
+def test_output_spec_when_function_call_enabled_then_includes_continue_stop():
+    """启用 function call 时，输出规范包含 continue/stop 工具使用说明。"""
+    spec = PromptFactory.build_output_spec(supports_function_call=True)
+
+    assert "continue" in spec
+    assert "stop" in spec
+    assert "每次回复结束时必须调用工具" in spec
+
+
+def test_output_spec_when_function_call_disabled_then_no_continue_stop():
+    """未启用 function call 时，不包含 continue/stop 说明。"""
+    spec = PromptFactory.build_output_spec(supports_function_call=False)
+
+    assert "continue" not in spec
+    assert "stop" not in spec
 
 
 def test_persona_prompt_drops_length_biased_speech_fields():
@@ -108,7 +125,6 @@ def test_persona_prompt_drops_length_biased_speech_fields():
 
 def test_assemble_chat_does_not_inject_group_style_length_learning():
     group_profile = SimpleNamespace(
-        taboo_topics=[],
         atmosphere_history=[],
         group_norms={
             "avg_message_length": 8,
@@ -134,7 +150,6 @@ def test_assemble_chat_does_not_inject_group_style_length_learning():
 
 def test_assemble_chat_when_atmosphere_history_exists_then_does_not_inject_trend():
     group_profile = SimpleNamespace(
-        taboo_topics=[],
         atmosphere_history=[
             SimpleNamespace(group_valence=-0.4),
             SimpleNamespace(group_valence=0.0),
@@ -156,7 +171,7 @@ def test_assemble_chat_when_atmosphere_history_exists_then_does_not_inject_trend
 
 
 def test_assemble_chat_puts_function_call_and_qq_mentions_in_output_spec():
-    group_profile = SimpleNamespace(taboo_topics=[], atmosphere_history=[])
+    group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
 
     bundle = PromptFactory.assemble_chat(
@@ -232,7 +247,7 @@ def test_context_assembler_keeps_completed_history_in_system_prefix_until_diary_
     )
     system_before = messages[0]["content"]
 
-    assert system_before.startswith("<cacheable_conversation_history>")
+    assert system_before.startswith("【历史聊天信息】")
     assert "first human" in system_before
     assert "first reply" in system_before
     assert "pending human" not in system_before
@@ -267,6 +282,6 @@ def test_context_assembler_removes_diarized_sources_from_system_prefix():
         system_prompt="system",
     )
 
-    assert "<cacheable_conversation_history>" not in messages[0]["content"]
+    assert "【历史聊天信息】" not in messages[0]["content"]
     assert "first human" not in messages[0]["content"]
     assert "first reply" not in messages[0]["content"]

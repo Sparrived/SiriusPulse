@@ -1,4 +1,4 @@
-"""Response strategy models: four-layer decision system."""
+"""Response strategy models: decision system."""
 
 from __future__ import annotations
 
@@ -8,12 +8,11 @@ from typing import Any
 
 
 class ResponseStrategy(Enum):
-    """Four-layer response strategy (paper §2.3 / §6)."""
+    """Response strategy (paper §2.3 / §6)."""
 
     IMMEDIATE = "immediate"
     DELAYED = "delayed"
     SILENT = "silent"
-    PROACTIVE = "proactive"
     PLUGIN = "plugin"  # Plugin 命令快速路径（v1.2+）
 
 

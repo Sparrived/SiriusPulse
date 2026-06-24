@@ -129,41 +129,10 @@ function buildFormHTML() {
                   </select>
                 </div>
               </div>
-              <div class="form-group">
-                <label>幽默风格</label>
-                <div class="select-wrap">
-                  <select id="directHumorStyle">
-                    <option value="">请选择</option>
-                    <option value="none">无</option>
-                    <option value="wholesome">温暖幽默</option>
-                    <option value="dry">冷面笑匠</option>
-                    <option value="sarcastic">讽刺幽默</option>
-                    <option value="witty">机智幽默</option>
-                    <option value="absurdist">荒诞幽默</option>
-                  </select>
-                </div>
-              </div>
-              <div class="form-group">
-                <label>共情风格</label>
-                <div class="select-wrap">
-                  <select id="directEmpathyStyle">
-                    <option value="">请选择</option>
-                    <option value="none">无</option>
-                    <option value="warm">温暖型</option>
-                    <option value="pragmatic">务实型</option>
-                    <option value="mirror">镜像型</option>
-                    <option value="analytical">分析型</option>
-                  </select>
-                </div>
-              </div>
             </div>
             <div class="form-group">
               <label>边界设定（逗号分隔）</label>
               <input type="text" id="directBoundaries" placeholder="不讨论政治、不人身攻击">
-            </div>
-            <div class="form-group">
-              <label>禁忌话题（逗号分隔）</label>
-              <input type="text" id="directTabooTopics" placeholder="政治敏感话题、暴力内容">
             </div>
           </div>
         </div>
@@ -266,10 +235,7 @@ function saveDraft() {
       backstory: $('directBackstory')?.value || '',
       socialRole: $('directSocialRole')?.value || '',
       emojiPref: $('directEmojiPref')?.value || '',
-      humorStyle: $('directHumorStyle')?.value || '',
-      empathyStyle: $('directEmpathyStyle')?.value || '',
       boundaries: $('directBoundaries')?.value || '',
-      tabooTopics: $('directTabooTopics')?.value || '',
     },
   };
   for (let i = 0; i < QUESTIONS.length; i++) {
@@ -312,10 +278,7 @@ function restoreDraft() {
       if (d.backstory && $('directBackstory')) $('directBackstory').value = d.backstory;
       if (d.socialRole && $('directSocialRole')) $('directSocialRole').value = d.socialRole;
       if (d.emojiPref && $('directEmojiPref')) $('directEmojiPref').value = d.emojiPref;
-      if (d.humorStyle && $('directHumorStyle')) $('directHumorStyle').value = d.humorStyle;
-      if (d.empathyStyle && $('directEmpathyStyle')) $('directEmpathyStyle').value = d.empathyStyle;
       if (d.boundaries && $('directBoundaries')) $('directBoundaries').value = d.boundaries;
-      if (d.tabooTopics && $('directTabooTopics')) $('directTabooTopics').value = d.tabooTopics;
     }
   } catch {}
 }
@@ -370,12 +333,12 @@ function bindEvents() {
   }
 
   // 直接填写模式的输入变化时保存草稿
-  const directInputs = ['directSummary', 'directTraits', 'directBackstory', 'directBoundaries', 'directTabooTopics'];
+  const directInputs = ['directSummary', 'directTraits', 'directBackstory', 'directBoundaries'];
   directInputs.forEach(id => {
     const el = $(id);
     if (el) el.addEventListener('input', saveDraft);
   });
-  const directSelects = ['directSocialRole', 'directEmojiPref', 'directHumorStyle', 'directEmpathyStyle'];
+  const directSelects = ['directSocialRole', 'directEmojiPref'];
   directSelects.forEach(id => {
     const el = $(id);
     if (el) el.addEventListener('change', saveDraft);
@@ -403,14 +366,8 @@ function getDirectPersonaData() {
   if (socialRole) data.social_role = socialRole;
   const emojiPref = $('directEmojiPref')?.value || '';
   if (emojiPref) data.emoji_preference = emojiPref;
-  const humorStyle = $('directHumorStyle')?.value || '';
-  if (humorStyle) data.humor_style = humorStyle;
-  const empathyStyle = $('directEmpathyStyle')?.value || '';
-  if (empathyStyle) data.empathy_style = empathyStyle;
   const boundaries = $('directBoundaries')?.value?.trim() || '';
   if (boundaries) data.boundaries = boundaries.split(',').map(s => s.trim()).filter(Boolean);
-  const tabooTopics = $('directTabooTopics')?.value?.trim() || '';
-  if (tabooTopics) data.taboo_topics = tabooTopics.split(',').map(s => s.trim()).filter(Boolean);
   return data;
 }
 

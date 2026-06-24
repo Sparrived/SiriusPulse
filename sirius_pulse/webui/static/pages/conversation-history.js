@@ -46,7 +46,6 @@ const TAG_COLORS = {
   biography:  { bg: '#79554822', color: '#795548', border: '#79554844' },
   memory:     { bg: '#607d8b22', color: '#607d8b', border: '#607d8b44' },
   scene:      { bg: '#9c27b022', color: '#9c27b0', border: '#9c27b044' },
-  taboo:      { bg: '#f4433622', color: '#f44336', border: '#f4433644' },
   atmosphere: { bg: '#4caf5022', color: '#4caf50', border: '#4caf5044' },
   plugin:     { bg: '#2196f322', color: '#2196f3', border: '#2196f344' },
   topic:      { bg: '#ff572222', color: '#ff5722', border: '#ff572244' },
@@ -353,7 +352,7 @@ const SECTION_COLORS = {
   '话题': '#2196f3', '群体兴趣': '#8bc34a',
   '关系': '#00bcd4', '历史日记': '#e8a87c', '其他群近期记录': '#85cdca',
   '近期对话记录': '#d8b4e2', '技能执行结果': '#ff9800', '当前时间': '#9e9e9e',
-  '群规禁忌': '#f44336', '氛围趋势': '#4caf50', '插件能力': '#2196f3',
+  '氛围趋势': '#4caf50', '插件能力': '#2196f3',
   '名词解释': '#00bcd4', '钉住的重要消息': '#e91e63', '最近消息': '#607d8b',
 };
 
@@ -693,6 +692,20 @@ function extractXmlBlock(content, tagName) {
   };
 }
 
+function extractBracketBlock(content, tagName) {
+  if (!content || !tagName) return null;
+  const escaped = escapeRegex(tagName);
+  const pattern = new RegExp(`【${escaped}】[\\s\\S]*?【${escaped}结束】`, 'i');
+  const match = pattern.exec(content);
+  if (!match) return null;
+  const start = match.index;
+  const end = start + match[0].length;
+  return {
+    block: match[0],
+    rest: (content.slice(0, start) + content.slice(end)).trim(),
+  };
+}
+
 function renderInjectedHistorySection(block) {
   const parsed = parseXmlMessages(block) || [];
   const messageCount = parsed.filter(item => item.type === 'message').length;
@@ -796,7 +809,7 @@ function renderChainUserMessage(content, style, idx) {
 }
 
 function renderChainSystemMessage(content, style, idx) {
-  const injectedHistory = extractXmlBlock(content, 'cacheable_conversation_history');
+  const injectedHistory = extractBracketBlock(content, '历史聊天信息');
   const visibleContent = injectedHistory ? injectedHistory.rest : content;
   const sections = parsePromptSections(visibleContent);
   const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');

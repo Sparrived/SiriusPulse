@@ -312,11 +312,6 @@ async function loadExperience(name) {
     if (sensitivitySlider) sensitivitySlider.value = s;
     if (expressivenessSlider) expressivenessSlider.value = e;
 
-    form.proactive_enabled.value = String(data.proactive_enabled ?? true);
-    form.proactive_interval_seconds.value = data.proactive_interval_seconds ?? 3600;
-    form.proactive_active_start_hour.value = data.proactive_active_start_hour ?? 8;
-    form.proactive_active_end_hour.value = data.proactive_active_end_hour ?? 23;
-
     form.delay_reply_enabled.value = String(data.delay_reply_enabled ?? true);
     form.pending_message_threshold.value = data.pending_message_threshold ?? 3;
     form.min_reply_interval_seconds.value = data.min_reply_interval_seconds ?? 2;
@@ -364,10 +359,6 @@ async function saveExperience(name) {
     engagement_sensitivity: parseFloat(form.engagement_sensitivity.value),
     expressiveness: parseFloat(form.expressiveness.value),
     heat_window_seconds: parseInt(form.heat_window_seconds.value, 10),
-    proactive_enabled: form.proactive_enabled.value === 'true',
-    proactive_interval_seconds: parseInt(form.proactive_interval_seconds.value, 10),
-    proactive_active_start_hour: parseInt(form.proactive_active_start_hour.value, 10),
-    proactive_active_end_hour: parseInt(form.proactive_active_end_hour.value, 10),
     delay_reply_enabled: form.delay_reply_enabled.value === 'true',
     pending_message_threshold: parseInt(form.pending_message_threshold.value, 10),
     min_reply_interval_seconds: parseInt(form.min_reply_interval_seconds.value, 10),

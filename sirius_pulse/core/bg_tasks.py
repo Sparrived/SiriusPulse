@@ -44,8 +44,8 @@ class BackgroundTasks:
     # ==================================================================
 
     def start(self) -> None:
-        """Start periodic background tasks for delayed queue, proactive triggers,
-        and memory promotion. Idempotent: safe to call multiple times.
+        """Start periodic background tasks for delayed queue and memory promotion.
+        Idempotent: safe to call multiple times.
         """
         engine = self._engine
         if engine._bg_running:

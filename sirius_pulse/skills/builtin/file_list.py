@@ -236,7 +236,7 @@ def _format_entries(entries: list[dict[str, Any]]) -> str:
         return "（无结果）"
     lines: list[str] = []
     for e in entries:
-        t = "【D】" if e.get("type") == "directory" else "【F】"
+        t = "[D]" if e.get("type") == "directory" else "[F]"
         size = e.get("size_bytes", "-")
         mtime = e.get("modified", "-")
         lines.append(f"{t} {e['path']:<50} {size:>12} {mtime:>16}")

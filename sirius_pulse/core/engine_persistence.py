@@ -353,9 +353,6 @@ class EnginePersistence:
             },
         )
 
-        # Save proactive state
-        self.save_proactive_state()
-
         # Save persona
         from sirius_pulse.core.persona_store import PersonaStore
 
@@ -394,7 +391,7 @@ class EnginePersistence:
             # Group timestamps
             engine._group_last_message_at = dict(state.get("group_timestamps", {}))
 
-            # Reset timestamps to now so the proactive silence timer starts fresh
+            # Reset timestamps to now so the silence timer starts fresh
             # after engine restart; otherwise offline time would be mis-counted as
             # group silence.
             now_iso = datetime.now(timezone.utc).isoformat()

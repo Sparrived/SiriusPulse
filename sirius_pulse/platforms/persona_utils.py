@@ -36,11 +36,8 @@ PERSONA_JSON_SCHEMA = {
     "backstory": "背景故事（可选）",
     "communication_style": "说话风格描述",
     "emoji_preference": "heavy/moderate/light/none",
-    "humor_style": "sarcastic/wholesome/dark/dry/witty/none",
     "emotional_baseline": {"valence": 0.0, "arousal": 0.3},
-    "empathy_style": "warm/practical/distant/playful/mentor",
     "boundaries": ["边界1"],
-    "taboo_topics": ["禁忌话题1"],
     "social_role": "observer/mediator/leader/jester/caregiver",
 }
 
@@ -149,10 +146,7 @@ async def generate_persona_from_interview(
         backstory=parsed.get("backstory", ""),
         communication_style=parsed.get("communication_style", ""),
         emoji_preference=parsed.get("emoji_preference", ""),
-        humor_style=parsed.get("humor_style", ""),
         emotional_baseline=parsed.get("emotional_baseline", {"valence": 0.2, "arousal": 0.3}),
-        empathy_style=parsed.get("empathy_style", ""),
         boundaries=parsed.get("boundaries", []),
-        taboo_topics=parsed.get("taboo_topics", []),
         social_role=parsed.get("social_role", ""),
     )

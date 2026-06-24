@@ -6,8 +6,6 @@ const FIELDS = [
   { key: 'webui_host', label: 'WebUI 监听地址', type: 'text', placeholder: '0.0.0.0', defaultVal: '0.0.0.0' },
   { key: 'webui_port', label: 'WebUI 端口', type: 'number', placeholder: '8080', defaultVal: 8080 },
   { key: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'], defaultVal: 'INFO' },
-  { key: 'napcat_install_dir', label: 'NapCat 安装目录', type: 'text', placeholder: '' },
-  { key: 'napcat_base_port', label: 'NapCat 起始端口', type: 'number', placeholder: '3001', defaultVal: 3001 },
 ];
 
 let currentConfig = {};

@@ -99,40 +99,11 @@ export async function init(container, params) {
               </select>
             </div>
           </div>
-          <div class="form-group">
-            <label>幽默风格</label>
-            <div class="select-wrap">
-              <select name="humor_style">
-                <option value="none">无</option>
-                <option value="wholesome">温暖幽默</option>
-                <option value="dry">冷面笑匠</option>
-                <option value="sarcastic">讽刺幽默</option>
-                <option value="witty">机智幽默</option>
-                <option value="absurdist">荒诞幽默</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-group">
-            <label>共情风格</label>
-            <div class="select-wrap">
-              <select name="empathy_style">
-                <option value="none">无</option>
-                <option value="warm">温暖型</option>
-                <option value="pragmatic">务实型</option>
-                <option value="mirror">镜像型</option>
-                <option value="analytical">分析型</option>
-              </select>
-            </div>
-          </div>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">
             <label>边界设定</label>
             <input type="text" name="boundaries" placeholder="多个边界用逗号分隔">
-          </div>
-          <div class="form-group">
-            <label>禁忌话题</label>
-            <input type="text" name="taboo_topics" placeholder="多个话题，请用英文逗号分隔">
           </div>
         </div>
         <div class="form-group">
@@ -248,10 +219,7 @@ async function loadPersonaData(name) {
     form.personality_traits.value = (data.personality_traits || []).join(', ');
     form.communication_style.value = data.communication_style || '';
     form.emoji_preference.value = data.emoji_preference || 'none';
-    form.humor_style.value = data.humor_style || 'none';
-    form.empathy_style.value = data.empathy_style || 'none';
     form.boundaries.value = (data.boundaries || []).join(', ');
-    form.taboo_topics.value = (data.taboo_topics || []).join(', ');
     form.backstory.value = data.backstory || '';
     // 加载成功后启用保存按钮
     const saveBtn = $('personaSave');
@@ -276,10 +244,7 @@ async function savePersona(name) {
     personality_traits: form.personality_traits.value.split(',').map(s => s.trim()).filter(Boolean),
     communication_style: form.communication_style.value,
     emoji_preference: form.emoji_preference.value,
-    humor_style: form.humor_style.value,
-    empathy_style: form.empathy_style.value,
     boundaries: form.boundaries.value.split(',').map(s => s.trim()).filter(Boolean),
-    taboo_topics: form.taboo_topics.value.split(',').map(s => s.trim()).filter(Boolean),
     backstory: form.backstory.value,
   };
 

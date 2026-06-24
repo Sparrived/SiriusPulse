@@ -560,8 +560,8 @@ def _do_list(data_store: Any | None) -> dict[str, Any]:
     lines = [f"共 {len(reminders)} 个提醒任务："]
     for r in reminders:
         mode_desc = {"once": "一次性", "daily": "每日", "weekly": "每周"}.get(r["mode"], r["mode"])
-        who = f"【{r.get('user_name') or r.get('user_id', '?')}】"
-        detail = f"【{r['id']}】{who}{mode_desc} | {r['content']}"
+        who = f"[{r.get('user_name') or r.get('user_id', '?')}]"
+        detail = f"[{r['id']}] {who}{mode_desc} | {r['content']}"
         if r.get("fire_at"):
             detail += f" | 触发: {r['fire_at']}"
         if r.get("time"):

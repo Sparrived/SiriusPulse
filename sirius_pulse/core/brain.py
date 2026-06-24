@@ -65,6 +65,7 @@ class ChatRequest:
     enable_skills: bool = True
     caller_is_developer: bool = False
     disabled_skill_names: set[str] = field(default_factory=set)
+    extra_tools: list[dict[str, Any]] | None = None
 
     # ── 对话深度 ──
     last_reply_at: float = 0.0
@@ -472,6 +473,10 @@ class Brain:
                     ]
                 if not tools:
                     tools = None
+
+            # 合并调用方传入的额外工具（如 continue/stop）
+            if request.extra_tools:
+                tools = (tools or []) + request.extra_tools
 
             # ── 构建 GenerationRequest ──
             from sirius_pulse.providers.base import GenerationRequest

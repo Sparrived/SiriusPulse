@@ -1,6 +1,6 @@
-"""Response strategy engine: four-layer decision system (paper §2.3 / §6).
+"""Response strategy engine: decision system (paper §2.3 / §6).
 
-IMMEDIATE → DELAYED → SILENT → PROACTIVE
+IMMEDIATE → DELAYED → SILENT
 """
 
 from __future__ import annotations

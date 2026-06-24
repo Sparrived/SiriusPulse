@@ -126,11 +126,8 @@ class PersonaGenerator:
             flaws=data.get("flaws", []),
             communication_style=data.get("communication_style", ""),
             emoji_preference=data.get("emoji_preference", ""),
-            humor_style=data.get("humor_style", ""),
             emotional_baseline=data.get("emotional_baseline", {"valence": 0.2, "arousal": 0.3}),
-            empathy_style=data.get("empathy_style", ""),
             boundaries=data.get("boundaries", []),
-            taboo_topics=data.get("taboo_topics", []),
             social_role=data.get("social_role", ""),
         )
 
@@ -170,10 +167,7 @@ class PersonaGenerator:
 
         # Best-effort extraction from common section headers
         _extract_section(prompt, "说话风格", profile, "communication_style")
-        _extract_section(prompt, "情感", profile, "empathy_style")
-        _extract_section(prompt, "幽默", profile, "humor_style")
         _extract_section(prompt, "边界", profile, "boundaries", list_mode=True)
-        _extract_section(prompt, "禁忌", profile, "taboo_topics", list_mode=True)
 
         # If prompt is short enough, use it as backstory too
         if 50 < len(prompt) < 500:
@@ -192,11 +186,8 @@ _PERSONA_JSON_SCHEMA = {
     "backstory": "背景故事（可选）",
     "communication_style": "说话风格描述",
     "emoji_preference": "heavy/moderate/light/none",
-    "humor_style": "sarcastic/wholesome/dark/dry/witty/none",
     "emotional_baseline": {"valence": 0.0, "arousal": 0.3},
-    "empathy_style": "warm/practical/distant/playful/mentor",
     "boundaries": ["边界1"],
-    "taboo_topics": ["禁忌话题1"],
     "social_role": "observer/mediator/leader/jester/caregiver",
 }
 

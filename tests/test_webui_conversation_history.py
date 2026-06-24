@@ -24,7 +24,7 @@ def test_runtime_basic_memory_messages_are_loaded_for_conversation_history(tmp_p
                         "conversation_chain": [
                             {
                                 "role": "system",
-                                "content": "<cacheable_conversation_history>x</cacheable_conversation_history>",
+                                "content": "【历史聊天信息】x【历史聊天信息结束】",
                             }
                         ],
                     }

@@ -715,8 +715,8 @@ class CognitionAnalyzer:
             display_name = (
                 f"{uid}(AI)" if uid == "assistant" or (ai_name and uid == ai_name) else uid
             )
-            time_str = f"【{ts}】" if ts else ""
-            lines.append(f"{time_str}【{display_name}】{content}")
+            time_str = f"[{ts}] " if ts else ""
+            lines.append(f"{time_str}[{display_name}] {content}")
         context_text = "\n最近对话上下文：\n" + "\n".join(lines) + "\n" if lines else ""
         return context_text, sorted(participants)
 
@@ -731,7 +731,7 @@ class CognitionAnalyzer:
             item.get("type") == "image" and item.get("sub_type") == "1"
             for item in multimodal_inputs
         )
-        prefix = "【动画表情】" if has_sticker else "【图片】"
+        prefix = "[动画表情]" if has_sticker else "[图片]"
         content: list[dict[str, Any]] = [
             {"type": "text", "text": message or prefix},
         ]

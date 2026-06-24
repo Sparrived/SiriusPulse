@@ -6,11 +6,11 @@
 职责边界：
     - section 标签常量定义
     - 人格 prompt 构建（从 PersonaProfile 字段生成）
-    - 响应组装（immediate / delayed / proactive）
+    - 响应组装（immediate / delayed）
     - 消息渲染（表情、图片、聊天记录、摘要）
     - 技能结果格式化
     - 上下文丰富（日记 + 对话历史注入 system prompt）
-    - 开发者聊天 / 提醒等辅助 prompt
+    - 提醒等辅助 prompt
 """
 
 from __future__ import annotations
@@ -55,9 +55,8 @@ TAG_RECENT_CONVERSATION = "【近期对话记录】"
 TAG_RECENT_CONVERSATION_END = "【近期对话记录结束】"
 
 TAG_SKILL_RESULT = "【技能执行结果】"
-TAG_SKILL_TRUNCATED = "【注：技能结果过长，已截断至前 {limit} 字符，原始长度 {orig} 字符】"
+TAG_SKILL_TRUNCATED = "[注：技能结果过长，已截断至前 {limit} 字符，原始长度 {orig} 字符]"
 TAG_CURRENT_TIME = "【当前时间】"
-TAG_GROUP_TABOO = "【群规禁忌】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
 TAG_GLOSSARY = "【名词解释】"
 
@@ -66,7 +65,7 @@ TAG_RECENT_MESSAGES = "【最近消息】"
 
 # 消息渲染标签
 TAG_FACE = "[表情：{name}]"
-TAG_IMAGE = "【图片：{name}】"
+TAG_IMAGE = "[图片：{name}]"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -134,8 +133,6 @@ class StyleAdapter:
                     tone_instruction = "保持轻松随意的语气，可以用表情"
                 elif style == "humorous":
                     tone_instruction = "保持幽默风趣的语气"
-                if persona.humor_style:
-                    tone_instruction += f"，{persona.humor_style}式幽默"
                 if persona.emoji_preference == "heavy":
                     tone_instruction += "，多用表情包和emoji"
                 elif persona.emoji_preference == "none":
@@ -172,14 +169,11 @@ class PromptFactory:
         flaws: list[str] | None = None,
         emotional_baseline: dict[str, float] | None = None,
         stress_response: str = "",
-        empathy_style: str = "",
         social_role: str = "",
         boundaries: list[str] | None = None,
         communication_style: str = "",
         speech_rhythm: str = "",
-        humor_style: str = "",
         reply_frequency: str = "",
-        taboo_topics: list[str] | None = None,
         preferred_topics: list[str] | None = None,
         full_system_prompt: str = "",
     ) -> str:
@@ -229,8 +223,6 @@ class PromptFactory:
             emo_lines.append("遇到什么事都慢半拍，很难被激怒")
         if stress_response:
             emo_lines.append(f"压力大的时候会{stress_response}")
-        if empathy_style:
-            emo_lines.append(f"安慰人的方式是{empathy_style}")
         if emo_lines:
             identity_parts.append("；".join(emo_lines) + "。")
 
@@ -251,22 +243,6 @@ class PromptFactory:
         if rel_lines:
             identity_parts.append("；".join(rel_lines) + "。")
 
-        # 说话方式
-        speech_bits: list[str] = []
-        # communication_style / speech_rhythm 容易把长度偏置写进身份锚定，
-        # 回复长度由输出规范和模型路由控制。
-        if humor_style:
-            humor_map = {
-                "sarcastic": " sarcasm 是常态，不损人不会说话",
-                "wholesome": "开的玩笑都很暖，不会让人难堪",
-                "dark": "偶尔来一句黑色幽默",
-                "dry": "冷面笑匠，自己不笑",
-                "witty": "反应快，接梗高手",
-            }
-            speech_bits.append(humor_map.get(humor_style, f"幽默风格偏{humor_style}"))
-        if speech_bits:
-            identity_parts.append("；".join(speech_bits) + "。")
-
         # 回应习惯
         silence_bits: list[str] = []
         freq_map = {
@@ -276,8 +252,6 @@ class PromptFactory:
             "selective": "只回自己关心的话题，其他的直接忽略",
         }
         silence_bits.append(freq_map.get(reply_frequency, "按自己节奏回应"))
-        if taboo_topics:
-            silence_bits.append(f"聊到{'、'.join(taboo_topics[:3])}会直接跳过")
         if preferred_topics:
             silence_bits.append(f"聊到{'、'.join(preferred_topics[:3])}会特别来劲")
         if silence_bits:
@@ -308,12 +282,17 @@ class PromptFactory:
         """输出规范，防止模型添加多余前缀。"""
         items = [
             "不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。",
-            "多句话可以用换行符分割，但每句话不可超过 15 字，不允许超过三句话，非写文件的情况下不输出Markdown标签。",
+            "非写文件的情况下不输出Markdown标签。",
             "你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。",
         ]
         if supports_function_call:
             items.append(
                 "你有可用工具（tools）时，可以通过 Function Call 主动解决问题；工具调用不要写成正文标记。"
+            )
+            items.append(
+                "每次回复结束时必须调用工具：用 continue 表示当前文字已发送并继续生成下一条消息，用 stop 表示本轮回复结束。"
+                "不要仅输出文字而不调用 continue 或 stop。"
+                "如果本轮只需发送一条消息，直接调用 stop。"
             )
         if supports_qq_mentions:
             items.append(
@@ -511,7 +490,7 @@ class PromptFactory:
         for m in memories[:3]:
             source = m.get("source", "memory")
             content = m.get("content", "")
-            lines.append(f"- 【{source}】{content}")
+            lines.append(f"- [{source}] {content}")
         return "\n".join(lines)
 
     @staticmethod
@@ -658,14 +637,6 @@ class PromptFactory:
     def build_current_time_section(now_str: str) -> str:
         """构建当前时间 section。"""
         return f"{TAG_CURRENT_TIME}{now_str}（北京时间）"
-
-    @staticmethod
-    def build_taboo_section(taboo_topics: list[str]) -> str:
-        """构建群规禁忌 section。"""
-        if not taboo_topics:
-            return ""
-        topics = "、".join(taboo_topics[:5])
-        return f"{TAG_GROUP_TABOO}\n本群不讨论以下话题，请避免主动引入：{topics}"
 
     @staticmethod
     def build_reminder_sections(
@@ -833,12 +804,6 @@ class PromptFactory:
             "output_constraint",
         )
 
-        # ── L1 半稳：数小时级变化 ──
-        if group_profile:
-            taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
-            if taboo:
-                _add(taboo, "group_style")
-
         # ── L2 变动：每条消息级变化 ──
         bio = PromptFactory.build_biography_section(
             speaker_card=biography_speaker,
@@ -924,12 +889,12 @@ class PromptFactory:
     @staticmethod
     def render_multimodal_item(mtype: str, value: str) -> str:
         """渲染多媒体附件标记。"""
-        return f"【{mtype}：{value}】"
+        return f"[{mtype}：{value}]"
 
     @staticmethod
     def render_speaker_line(speaker: str, content: str) -> str:
         """渲染发言人+内容行（用于 Transcript 和 as_chat_history）。"""
-        return f'【"{speaker}" 说】{content}'
+        return f'["{speaker}" 说] {content}'
 
     @staticmethod
     def render_speaker_lines_summary(items: list[str]) -> str:
@@ -946,7 +911,7 @@ class PromptFactory:
             mtype = item.get("type", "unknown")
             mvalue = item.get("value", "")
             if mvalue:
-                parts.append(f"【{mtype}：{mvalue}】")
+                parts.append(f"[{mtype}：{mvalue}]")
         if parts:
             return f"{content}\n附件: {' '.join(parts)}"
         return content
@@ -957,27 +922,27 @@ class PromptFactory:
         text = content.replace("\n", " ").strip()
         if not text:
             return ""
-        return f"【{speaker}】{text[:max_len]}"
+        return f"[{speaker}] {text[:max_len]}"
 
     @staticmethod
     def render_image_reference(name: str) -> str:
         """渲染图片引用标记（用于 engine_core 中表情包记忆）。"""
-        return f"【图片】{name}"
+        return f"[图片] {name}"
 
     @staticmethod
     def render_sticker_reference() -> str:
         """渲染动画表情标记（用于 engine_core 中表情包记忆）。"""
-        return "【动画表情】"
+        return "[动画表情]"
 
     @staticmethod
     def render_image_prefix(has_sticker: bool) -> str:
         """渲染多模态消息中的图片前缀。"""
-        return "【动画表情】" if has_sticker else "【图片】"
+        return "[动画表情]" if has_sticker else "[图片]"
 
     @staticmethod
     def render_file_entry(is_directory: bool, path: str, size: Any, mtime: Any) -> str:
         """渲染文件列表条目。"""
-        t = "【D】" if is_directory else "【F】"
+        t = "[D]" if is_directory else "[F]"
         return f"{t} {path:<50} {size:>12} {mtime:>16}"
 
     @staticmethod
@@ -989,8 +954,8 @@ class PromptFactory:
     def build_skill_status_message(status: str, skill_name: str, detail: str = "") -> str:
         """构建技能状态消息（结果/拒绝/失败/异常）。"""
         if detail:
-            return f"【SKILL '{skill_name}' {status}】{detail}"
-        return f"【{status}】"
+            return f"[SKILL '{skill_name}' {status}] {detail}"
+        return f"[{status}]"
 
     # ──────────────────────────────────────────────────────────────────
     # 上下文丰富（日记 + 对话历史注入）

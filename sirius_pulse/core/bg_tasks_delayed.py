@@ -30,6 +30,54 @@ _AUTONOMOUS_MESSAGE_SKILLS = {
     "send_sticker",
 }
 
+# ── 内置流程控制工具定义 ──────────────────────────────────────────────
+
+CONTINUE_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "continue",
+        "description": (
+            "发送当前回复并继续生成下一条。"
+            "调用后，已输出的文字会发送给用户，然后你可以继续生成新的内容。"
+            "如果你想在同一轮中发送多条消息，就在每条消息后调用 continue。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "固定为 continue",
+                    "enum": ["continue"],
+                }
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+STOP_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "stop",
+        "description": (
+            "结束本轮回复。你的最后一条文字消息会发送给用户，然后本轮回复结束。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "固定为 stop",
+                    "enum": ["stop"],
+                }
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+FLOW_CONTROL_TOOL_NAMES = {"continue", "stop"}
+
 
 class DelayedQueueTasks:
     """延迟队列相关任务组件。"""
@@ -283,6 +331,17 @@ class DelayedQueueTasks:
         sticker_text_retry_used = False
         ended_because_max_rounds = False
 
+        # 追踪已注入的消息内容，用于 continue 时注入新消息
+        _seen_contents: set[str] = set()
+        recent_at_start = engine._helpers.get_recent_messages(group_id, n=5)
+        for m in recent_at_start:
+            content = m.get("content", "")
+            if content:
+                _seen_contents.add(content)
+
+        # 内置流程控制工具
+        _extra_tools = [CONTINUE_TOOL_DEF, STOP_TOOL_DEF]
+
         while True:
             if pending_chat_result is not None:
                 chat_result = pending_chat_result
@@ -305,25 +364,43 @@ class DelayedQueueTasks:
                         enable_skills=True,
                         caller_is_developer=caller_is_developer,
                         post_process=True,
+                        extra_tools=_extra_tools,
                     )
                 )
                 _round += 1
             reply = chat_result.raw_text.strip()
             round_clean = chat_result.clean_text
 
-            # 检查是否有 tool_calls
+            # 分类工具调用：流程控制 vs 普通技能
             tool_calls = chat_result.tool_calls or []
-            if not tool_calls or engine._skill_registry is None or engine._skill_executor is None:
+            flow_control = [tc for tc in tool_calls if tc.function_name in FLOW_CONTROL_TOOL_NAMES]
+            regular_tools = [tc for tc in tool_calls if tc.function_name not in FLOW_CONTROL_TOOL_NAMES]
+
+            # 没调用任何工具 → 隐式 stop，文本作为最终回复
+            if not tool_calls:
                 break
 
-            # Determine if every invoked skill is marked silent.
-            all_silent = all(
-                engine._skill_registry.get(tc.function_name) is not None
+            should_continue = False
+            should_stop = False
+            for tc in flow_control:
+                try:
+                    fc_params = json.loads(tc.function_arguments) if tc.function_arguments else {}
+                except json.JSONDecodeError:
+                    fc_params = {}
+                action = fc_params.get("action", "continue")
+                if action == "stop":
+                    should_stop = True
+                else:
+                    should_continue = True
+
+            # 1. 发送当前轮次的文字（排除 flow control 工具，只看普通技能是否全 silent）
+            all_silent = bool(regular_tools) and all(
+                engine._skill_registry is not None
+                and engine._skill_registry.get(tc.function_name) is not None
                 and engine._skill_registry.get(tc.function_name).silent
-                for tc in tool_calls
+                for tc in regular_tools
             )
 
-            # 使用 chat_result 已由 hooks 处理好的 clean_text
             non_skill_text = round_clean
             last_round_had_partial = False
             if non_skill_text and not all_silent:
@@ -336,153 +413,235 @@ class DelayedQueueTasks:
                 await on_partial_reply(non_skill_text)
                 last_partial_sent_at = time.monotonic()
 
-            # Execute tool_calls and collect results
-            from sirius_pulse.memory.user.unified_models import UnifiedUser
+            # 2. 执行普通工具（continue/stop 以外的技能）
+            skill_multimodal: list[dict[str, Any]] = []
+            if regular_tools and engine._skill_registry is not None and engine._skill_executor is not None:
+                from sirius_pulse.memory.user.unified_models import UnifiedUser
 
-            caller_user_id = item.user_id
-            skill_caller = UnifiedUser(
-                user_id=caller_user_id,
-                name=caller_profile.name if caller_profile else caller_user_id,
-                metadata={"is_developer": caller_is_developer},
-            )
-            developer_profiles: list[UnifiedUser] = []
-            group_entries = engine.user_manager.entries.get(group_id, {})
-            for profile in group_entries.values():
-                if profile.is_developer:
-                    developer_profiles.append(profile)
+                caller_user_id = item.user_id
+                skill_caller = UnifiedUser(
+                    user_id=caller_user_id,
+                    name=caller_profile.name if caller_profile else caller_user_id,
+                    metadata={"is_developer": caller_is_developer},
+                )
+                developer_profiles: list[UnifiedUser] = []
+                group_entries = engine.user_manager.entries.get(group_id, {})
+                for profile in group_entries.values():
+                    if profile.is_developer:
+                        developer_profiles.append(profile)
 
-            if engine._skill_executor is not None:
                 engine._skill_executor.set_chat_context(
                     group_id=group_id, user_id=caller_user_id or ""
                 )
 
-            # 构造 assistant 消息（含 tool_calls）
-            assistant_msg: dict[str, Any] = {
-                "role": "assistant",
-                "content": reply or None,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function_name,
-                            "arguments": tc.function_arguments,
-                        },
-                    }
-                    for tc in tool_calls
-                ],
-            }
-            messages.append(assistant_msg)
+                # 构造 assistant 消息（含普通工具的 tool_calls）
+                assistant_msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": reply or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function_name,
+                                "arguments": tc.function_arguments,
+                            },
+                        }
+                        for tc in regular_tools
+                    ],
+                }
+                messages.append(assistant_msg)
 
-            # 逐个执行 tool_call 并收集结果
-            skill_multimodal: list[dict[str, Any]] = []
-            for idx, tc in enumerate(tool_calls):
-                skill_name = tc.function_name
-                try:
-                    params = json.loads(tc.function_arguments) if tc.function_arguments else {}
-                except json.JSONDecodeError:
-                    params = {}
-                    logger.warning(
-                        "tool_call 参数解析失败: %s, arguments=%s", skill_name, tc.function_arguments
-                    )
+                # 逐个执行 tool_call 并收集结果
+                for idx, tc in enumerate(regular_tools):
+                    skill_name = tc.function_name
+                    try:
+                        params = json.loads(tc.function_arguments) if tc.function_arguments else {}
+                    except json.JSONDecodeError:
+                        params = {}
+                        logger.warning(
+                            "tool_call 参数解析失败: %s, arguments=%s", skill_name, tc.function_arguments
+                        )
 
-                skill = engine._skill_registry.get(skill_name)
-                if skill is None:
-                    err_msg = f"Skill '{skill_name}' not found"
-                    logger.warning(err_msg)
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
-                    continue
+                    skill = engine._skill_registry.get(skill_name)
+                    if skill is None:
+                        err_msg = f"Skill '{skill_name}' not found"
+                        logger.warning(err_msg)
+                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        continue
 
-                if skill_name == "send_sticker":
-                    names, tool_content = defer_send_sticker_tool(
-                        params,
-                        available_names=getattr(engine, "_sticker_names", []) or [],
-                    )
-                    deferred_sticker_names.extend(names)
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
-                    )
-                    continue
+                    if skill_name == "send_sticker":
+                        names, tool_content = defer_send_sticker_tool(
+                            params,
+                            available_names=getattr(engine, "_sticker_names", []) or [],
+                        )
+                        deferred_sticker_names.extend(names)
+                        messages.append(
+                            {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
+                        )
+                        continue
 
-                # Engagement-based permission
-                if (
-                    caller_engagement < 0.1
-                    and not caller_is_developer
-                    and not self._is_autonomous_message_skill(skill)
-                ):
-                    err_msg = f"Skill '{skill_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
-                    logger.warning(err_msg)
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
-                    continue
+                    # Engagement-based permission
+                    if (
+                        caller_engagement < 0.1
+                        and not caller_is_developer
+                        and not self._is_autonomous_message_skill(skill)
+                    ):
+                        err_msg = f"Skill '{skill_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
+                        logger.warning(err_msg)
+                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        continue
 
-                if skill.developer_only and not caller_is_developer:
-                    err_msg = f"Skill '{skill_name}' 被拒绝：caller 不是 developer"
-                    logger.warning(err_msg)
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
-                    continue
+                    if skill.developer_only and not caller_is_developer:
+                        err_msg = f"Skill '{skill_name}' 被拒绝：caller 不是 developer"
+                        logger.warning(err_msg)
+                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        continue
 
-                ctx = SkillInvocationContext(  # type: ignore[assignment]
-                    caller=skill_caller,
-                    developer_profiles=developer_profiles,
-                )
-                logger.info(
-                    "Skill execute: %s(params=%s, caller=%s, group=%s)",
-                    skill_name,
-                    params,
-                    caller_user_id,
-                    group_id,
-                )
-                try:
-                    result = await engine._skill_executor.execute_async(
-                        skill, params, invocation_context=ctx, max_retries=2
+                    ctx = SkillInvocationContext(  # type: ignore[assignment]
+                        caller=skill_caller,
+                        developer_profiles=developer_profiles,
                     )
                     logger.info(
-                        "Skill execute success: %s -> %s",
+                        "Skill execute: %s(params=%s, caller=%s, group=%s)",
                         skill_name,
-                        "success" if result.success else "failed",
+                        params,
+                        caller_user_id,
+                        group_id,
                     )
-                    if result.success:
-                        tool_content = result.to_display_text()
-                        # 收集多模态内容
-                        for block in result.multimodal_blocks:
-                            skill_multimodal.append(
-                                {"type": "image_url", "image_url": {"url": block.value}}
-                            )
-                        # Auto-persist glossary terms from learn_term
-                        if skill_name == "learn_term":
-                            term = params.get("term", "")
-                            definition = params.get("definition", "")
-                            if term and definition:
-                                from sirius_pulse.memory.glossary import GlossaryTerm
-
-                                engine.glossary_manager.add_or_update(
-                                    group_id,
-                                    GlossaryTerm(term=term, definition=definition, source="skill"),
+                    try:
+                        result = await engine._skill_executor.execute_async(
+                            skill, params, invocation_context=ctx, max_retries=2
+                        )
+                        logger.info(
+                            "Skill execute success: %s -> %s",
+                            skill_name,
+                            "success" if result.success else "failed",
+                        )
+                        if result.success:
+                            tool_content = result.to_display_text()
+                            # 收集多模态内容
+                            for block in result.multimodal_blocks:
+                                skill_multimodal.append(
+                                    {"type": "image_url", "image_url": {"url": block.value}}
                                 )
-                        # Inject group_id into newly created reminders
-                        if (
-                            skill_name == "reminder"
-                            and params.get("action", "").strip().lower() == "create"
-                        ):
-                            self._inject_group_id_into_latest_reminder(group_id)
-                    else:
-                        tool_content = result.error or "Unknown error"
-                        logger.warning("SKILL '%s' 执行失败: %s", skill_name, tool_content)
-                except Exception as exc:
-                    tool_content = str(exc)
-                    logger.error("SKILL '%s' 执行异常: %s", skill_name, exc)
+                            # Auto-persist glossary terms from learn_term
+                            if skill_name == "learn_term":
+                                term = params.get("term", "")
+                                definition = params.get("definition", "")
+                                if term and definition:
+                                    from sirius_pulse.memory.glossary import GlossaryTerm
 
-                # 添加 tool 结果消息
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_content})
+                                    engine.glossary_manager.add_or_update(
+                                        group_id,
+                                        GlossaryTerm(term=term, definition=definition, source="skill"),
+                                    )
+                            # Inject group_id into newly created reminders
+                            if (
+                                skill_name == "reminder"
+                                and params.get("action", "").strip().lower() == "create"
+                            ):
+                                self._inject_group_id_into_latest_reminder(group_id)
+                        else:
+                            tool_content = result.error or "Unknown error"
+                            logger.warning("SKILL '%s' 执行失败: %s", skill_name, tool_content)
+                    except Exception as exc:
+                        tool_content = str(exc)
+                        logger.error("SKILL '%s' 执行异常: %s", skill_name, exc)
 
-                # 链式调用中间增加延迟，避免回复过快
-                if idx < len(tool_calls) - 1:
-                    await asyncio.sleep(2)
+                    # 添加 tool 结果消息
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_content})
 
-            # If the model only picked a sticker, give it one text-only retry
-            # without exposing the sticker tool again.
+                    # 链式调用中间增加延迟，避免回复过快
+                    if idx < len(regular_tools) - 1:
+                        await asyncio.sleep(2)
+
+            # 3. 处理 flow control：continue / stop
+            continue_tc = next(
+                (tc for tc in flow_control if tc.function_name == "continue"), None
+            )
+            stop_tc = next(
+                (tc for tc in flow_control if tc.function_name == "stop"), None
+            )
+
+            # 注入 continue 的 assistant + tool 消息
+            if continue_tc:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": continue_tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": "continue",
+                                    "arguments": '{"action":"continue"}',
+                                },
+                            }
+                        ],
+                    }
+                )
+                # 注入期间收到的新消息
+                new_msgs = engine._helpers.get_recent_messages(group_id, n=5)
+                injected_parts: list[str] = []
+                for m in new_msgs:
+                    content = m.get("content", "")
+                    if not content or content in _seen_contents:
+                        continue
+                    _seen_contents.add(content)
+                    tagged = PromptFactory.tag_message(
+                        content,
+                        speaker=m.get("speaker", ""),
+                        user_id=m.get("user_id", ""),
+                        platform_message_id=m.get("platform_message_id", ""),
+                    )
+                    injected_parts.append(tagged)
+
+                if injected_parts:
+                    injection_text = "\n".join(injected_parts)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": continue_tc.id,
+                            "content": f"继续。期间收到的新消息已注入：\n{injection_text}",
+                        }
+                    )
+                    engine._log_inner_thought(
+                        f"continue 时注入 {len(injected_parts)} 条新消息"
+                    )
+                else:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": continue_tc.id,
+                            "content": "继续。期间无新消息。",
+                        }
+                    )
+
+            # 注入 stop 的 assistant 消息并退出
+            if stop_tc:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": reply or None,
+                        "tool_calls": [
+                            {
+                                "id": stop_tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": "stop",
+                                    "arguments": '{"action":"stop"}',
+                                },
+                            }
+                        ],
+                    }
+                )
+                break
+
+            # sticker-only 兜底：给模型一次纯文字重试机会
             if all_silent:
-                only_sticker_calls = all(tc.function_name == "send_sticker" for tc in tool_calls)
+                only_sticker_calls = all(tc.function_name == "send_sticker" for tc in regular_tools)
                 if only_sticker_calls and not non_skill_text and not sticker_text_retry_used:
                     sticker_text_retry_used = True
                     pending_chat_result = await engine.brain.chat(
@@ -500,6 +659,7 @@ class DelayedQueueTasks:
                             disabled_skill_names={"send_sticker"},
                             caller_is_developer=caller_is_developer,
                             post_process=True,
+                            extra_tools=_extra_tools,
                         )
                     )
                     continue

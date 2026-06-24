@@ -3,7 +3,7 @@
 职责：
     - 正向 WebSocket 连接、OneBot v11 API 调用
     - OneBot 事件 → ParsedEvent 解析（表情/图片/@ 转换）
-    - 引擎事件总线监听（proactive/delayed/reminder 投递）
+    - 引擎事件总线监听（delayed/reminder 投递）
     - 消息回复发送（带锁）
 
 继承 BaseAdapter，实现平台无关的消息发送接口。
