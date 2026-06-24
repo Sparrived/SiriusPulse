@@ -43,11 +43,6 @@ class ExpressivenessConfig:
         return self.overrides.get("gap_readiness_threshold", 0.45 - self.expressiveness * 0.4)
 
     @property
-    def proactive_gap_threshold(self) -> float:
-        """0.0→0.7, 0.5→0.4, 1.0→0.15"""
-        return self.overrides.get("proactive_gap_threshold", 0.7 - self.expressiveness * 0.55)
-
-    @property
     def entitlement_threshold(self) -> float:
         """0.0→0.5, 0.5→0.3, 1.0→0.1"""
         return self.overrides.get("entitlement_threshold", 0.5 - self.expressiveness * 0.4)

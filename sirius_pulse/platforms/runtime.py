@@ -444,38 +444,15 @@ class EngineRuntime:
             "cross_group_memory_enabled": bool(
                 self.plugin_config.get("cross_group_memory_enabled", True)
             ),
-            # 主动消息
-            "proactive_enabled": bool(
-                self.plugin_config.get("proactive_enabled", exp.proactive_enabled)
-            ),
             # 后台任务
             "delayed_queue_tick_interval_seconds": int(
                 self.plugin_config.get("delayed_queue_tick_interval_seconds", 3)
-            ),
-            "proactive_check_interval_seconds": int(
-                self.plugin_config.get("proactive_check_interval_seconds", 60)
-            ),
-            "proactive_silence_minutes": int(
-                self.plugin_config.get("proactive_silence_minutes", 60)
-            ),
-            "proactive_active_start_hour": int(
-                self.plugin_config.get("proactive_active_start_hour", 8)
-            ),
-            "proactive_active_end_hour": int(
-                self.plugin_config.get("proactive_active_end_hour", 23)
             ),
             "memory_promote_interval_seconds": int(
                 self.plugin_config.get("memory_promote_interval_seconds", 300)
             ),
             "memory_idle_consolidation_seconds": int(
                 self.plugin_config.get("memory_idle_consolidation_seconds", 3600)
-            ),
-            # Developer proactive private-chat memory conversations
-            "proactive_developer_chat_interval_seconds": int(
-                self.plugin_config.get("proactive_developer_chat_interval_seconds", 1800)
-            ),
-            "proactive_developer_min_silence_seconds": int(
-                self.plugin_config.get("proactive_developer_min_silence_seconds", 120)
             ),
             # 消息前缀过滤
             "message_prefixes": list(self.plugin_config.get("message_prefixes", [])),

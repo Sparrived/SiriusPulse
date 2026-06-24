@@ -150,7 +150,6 @@ const SANKEY_TASK_LABELS = {
   cognition_analyze: '认知分析',
   diary_generate: '日记生成',
   diary_consolidate: '日记合并',
-  proactive_generate: '主动/提醒生成',
   persona_generate: '人格生成',
 };
 

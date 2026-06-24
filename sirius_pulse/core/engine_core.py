@@ -27,7 +27,6 @@ from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter
 from sirius_pulse.core.pipeline import Pipeline
-from sirius_pulse.core.proactive_trigger import ProactiveTrigger
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
 from sirius_pulse.core.response_strategy import ResponseStrategyEngine
 from sirius_pulse.core.rhythm import RhythmAnalyzer
@@ -143,7 +142,6 @@ class _EmotionalGroupChatEngineBase:
             "cognition_analyze": analysis_model,
             "memory_extract": analysis_model,
             "response_generate": chat_model,
-            "proactive_generate": chat_model,
             "passive_skill": chat_model,
             "github_monitor_notify": chat_model,
             "diary_generate": memory_model,
@@ -225,11 +223,6 @@ class _EmotionalGroupChatEngineBase:
         self.threshold_engine = ThresholdEngine()
         self.strategy_engine = ResponseStrategyEngine()
         self.delayed_queue = DelayedResponseQueue()
-        self.proactive_trigger = ProactiveTrigger(
-            silence_threshold_minutes=self.config.get("proactive_silence_minutes", 60),
-            active_start_hour=self.config.get("proactive_active_start_hour", 8),
-            active_end_hour=self.config.get("proactive_active_end_hour", 23),
-        )
         self.rhythm_analyzer = RhythmAnalyzer()
 
     def _init_model_router(self) -> None:
@@ -313,9 +306,6 @@ class _EmotionalGroupChatEngineBase:
         self._transcripts: dict[str, Transcript] = {}
         self._last_reply_at: dict[str, float] = {}
         self._last_reply_depth: dict[str, int] = {}
-        self._proactive_enabled_groups: set[str] = set()
-        self._proactive_disabled_groups: set[str] = set()
-        self._last_proactive_at: dict[str, str] = {}
 
         self._skill_registry: Any | None = None
         self._skill_executor: Any | None = None
@@ -336,10 +326,6 @@ class _EmotionalGroupChatEngineBase:
         self._bg_running = False
 
         self._delayed_event_emitted: dict[str, set[str]] = {}
-
-        self._developer_private_groups: set[str] = set()
-        self._pending_developer_chats: dict[str, list[str]] = {}
-        self._last_developer_chat_at: dict[str, float] = {}
 
         self._pending_reminders: dict[str, list[dict[str, Any]]] = {}
         self._current_adapter_type: str = ""
@@ -526,15 +512,6 @@ class _EmotionalGroupChatEngineBase:
         """Cancel all background tasks."""
         self._bg_tasks_mgr.stop()
 
-    async def proactive_check(
-        self,
-        group_id: str,
-        *,
-        _now: Any | None = None,
-    ) -> dict[str, Any] | None:
-        """Check if proactive trigger should fire for a group."""
-        return await self._bg_tasks_mgr.proactive_check(group_id, _now=_now)
-
     async def tick_delayed_queue(
         self,
         group_id: str,
@@ -542,10 +519,6 @@ class _EmotionalGroupChatEngineBase:
     ) -> list[dict[str, Any]]:
         """Process delayed response queue for a group."""
         return await self._bg_tasks_mgr.tick_delayed_queue(group_id, on_partial_reply)
-
-    def pop_developer_chats(self, group_id: str) -> list[str]:
-        """Pop pending proactive developer chats for a group."""
-        return self._bg_tasks_mgr.pop_developer_chats(group_id)
 
     def pop_reminders(self, group_id: str, adapter_type: str | None = None) -> list[str]:
         """Pop pending reminder messages for a group."""
@@ -642,23 +615,6 @@ class _EmotionalGroupChatEngineBase:
     def load_state(self) -> None:
         """Restore runtime state from disk."""
         self._persistence.load_state()
-
-    def _save_proactive_state(self) -> None:
-        """Persist proactive enabled/disabled groups and last trigger timestamps."""
-        self._persistence.save_proactive_state()
-
-    def _load_proactive_state(self) -> None:
-        """Restore proactive state from disk."""
-        self._persistence.load_proactive_state()
-
-    def set_proactive_enabled(self, group_id: str, enabled: bool) -> None:
-        """Enable or disable proactive triggers for a specific group."""
-        self._persistence.set_proactive_enabled(group_id, enabled)
-
-    def is_proactive_enabled(self, group_id: str) -> bool:
-        """Check if proactive triggers are enabled for a group."""
-        return self._persistence.is_proactive_enabled(group_id)
-
 
     # ==================================================================
     # 向后兼容的委托方法（委托给 Sticker 组件）
@@ -1205,14 +1161,7 @@ class _EmotionalGroupChatEngineBase:
         if group_id.startswith("private_"):
             self._active_private_groups.add(group_id)
 
-        # 6. Track developer private chats for proactive memory conversations
-        if group_id.startswith("private_") and participants:
-            from sirius_pulse.developer_profiles import metadata_declares_developer
-
-            if metadata_declares_developer(participants[0].metadata):
-                self._developer_private_groups.add(group_id)
-
-        # 7. Background memory updates
+        # 6. Background memory updates
         self._background_update(group_id, message, emotion, intent, user_id)
 
         return result

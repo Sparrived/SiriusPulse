@@ -47,14 +47,6 @@ TAG_BIOGRAPHY = "【人物速查】"
 TAG_MY_SKILLS = "【我的能力】"
 TAG_GROUP_MEMBERS = "【群成员区分】"
 TAG_FIRST_INTERACTION = "【首次互动】"
-TAG_TRIGGER_REASON = "【触发原因】"
-TAG_TONE = "【语气】"
-TAG_REMINDER = "【提醒】"
-TAG_TOPIC_SUGGESTION = "【话题建议】"
-TAG_TOPIC = "【话题】"
-TAG_GROUP_INTERESTS = "【群体兴趣】"
-TAG_RELATIONSHIP = "【关系】"
-
 TAG_HISTORY_DIARY = "【历史日记】"
 TAG_HISTORY_DIARY_END = "【历史日记结束】"
 TAG_CROSS_GROUP_RECORD = "【其他群近期记录】"
@@ -676,30 +668,6 @@ class PromptFactory:
         return f"{TAG_GROUP_TABOO}\n本群不讨论以下话题，请避免主动引入：{topics}"
 
     @staticmethod
-    def build_developer_chat_sections(
-        identity: str,
-        topic: str,
-        user_profile: Any | None,
-    ) -> list[str]:
-        """构建开发者主动聊天的 prompt sections。"""
-        sections: list[str] = []
-        if identity:
-            sections.append(identity)
-        sections.extend(
-            [
-                f"{TAG_TONE}亲密、自然、像老朋友一样。不要机械，不要过度热情。",
-                f"{TAG_TOPIC}{topic}",
-            ]
-        )
-        if user_profile and user_profile.first_interaction_at:
-            count = getattr(user_profile, "interaction_count", 0)
-            if count > 30:
-                sections.append(f"{TAG_RELATIONSHIP}你们已经很熟了，可以用更随意的语气。")
-            elif count > 10:
-                sections.append(f"{TAG_RELATIONSHIP}你们关系不错，保持友好自然的语气。")
-        return sections
-
-    @staticmethod
     def build_reminder_sections(
         identity: str,
         content: str,
@@ -929,62 +897,6 @@ class PromptFactory:
             constraint_text = "\n\n".join(constraint_sections)
             user_content = f"{constraint_text}\n\n{user_content}"
 
-        bd.user_message = estimate_tokens(user_content)
-
-        return PromptBundle(
-            system_prompt=system_prompt,
-            user_content=user_content,
-            token_breakdown=bd,
-        )
-
-    @staticmethod
-    def assemble_proactive(
-        *,
-        trigger_reason: str,
-        group_profile: Any | None,
-        suggested_tone: str = "casual",
-        other_ai_names: list[str] | None = None,
-        topic_context: str = "",
-        adapter_type: str | None = None,
-    ) -> Any:
-        """组装主动发起 prompt。返回 PromptBundle。
-
-        人格注入已由 Brain.chat() 默认 pre 步骤处理，此处不再管理。
-        """
-
-        bd = PromptTokenBreakdown()
-        sections: list[str] = []
-
-        def _add(section_text: str, attr: str) -> None:
-            sections.append(section_text)
-            setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
-
-        _add(f"{TAG_TRIGGER_REASON}{trigger_reason}", "emotion")
-        _add(f"{TAG_TONE}{suggested_tone}", "group_style")
-        _add(
-            f"{TAG_REMINDER}不要和之前主动发起过的话题或句式重复，尝试换个角度或新的切入点。",
-            "output_constraint",
-        )
-        other_ai = PromptFactory.build_other_ai_instruction(other_ai_names or [])
-        if other_ai:
-            _add(other_ai, "identity")
-        if topic_context:
-            _add(
-                f"{TAG_TOPIC_SUGGESTION}你可以基于这段群聊记忆自然地开启话题：{topic_context}",
-                "memory",
-            )
-
-        if group_profile and group_profile.interest_topics:
-            topics = ", ".join(group_profile.interest_topics[:3])
-            _add(f"{TAG_GROUP_INTERESTS}{topics}", "interests")
-        if group_profile:
-            taboo = PromptFactory.build_taboo_section(group_profile.taboo_topics or [])
-            if taboo:
-                _add(taboo, "group_style")
-
-        system_prompt = "\n\n".join(sections)
-        bd.system_prompt_total = estimate_tokens(system_prompt)
-        user_content = topic_context or "..."
         bd.user_message = estimate_tokens(user_content)
 
         return PromptBundle(

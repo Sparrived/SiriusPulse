@@ -127,31 +127,6 @@ export async function init(container, params) {
           </div>
         </div>
 
-        <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">主动消息</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
-          <div class="form-group">
-            <label>启用主动消息</label>
-            <div class="select-wrap">
-              <select name="proactive_enabled">
-                <option value="true">true</option>
-                <option value="false">false</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-group">
-            <label>主动消息间隔（秒）</label>
-            ${numberInput('proactive_interval_seconds', 0)}
-          </div>
-          <div class="form-group">
-            <label>活跃开始时间（小时）</label>
-            ${numberInput('proactive_active_start_hour', 0, 23)}
-          </div>
-          <div class="form-group">
-            <label>活跃结束时间（小时）</label>
-            ${numberInput('proactive_active_end_hour', 0, 23)}
-          </div>
-        </div>
-
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">回复频率</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
           <div class="form-group">

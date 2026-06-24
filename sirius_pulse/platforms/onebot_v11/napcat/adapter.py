@@ -1058,17 +1058,7 @@ class NapCatAdapter(BaseAdapter):
         if engine is None:
             return
         try:
-            if event.type == SessionEventType.PROACTIVE_RESPONSE_TRIGGERED:
-                gid = str(event.data.get("group_id", ""))
-                reply = event.data.get("reply", "")
-                sticker_names = event.data.get("sticker_names", [])
-                if gid in self._get_allowed_group_ids():
-                    if not engine.is_proactive_enabled(gid):
-                        return
-                    if reply:
-                        await self._send_group_text(gid, reply)
-                    await self._send_stickers_after_reply(gid, sticker_names)
-            elif event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
+            if event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
 
                 async def _send_partial(text: str) -> None:
@@ -1100,12 +1090,6 @@ class NapCatAdapter(BaseAdapter):
                         if reply:
                             await self._send_group_text(gid, reply, reply_refs)
                         await self._send_stickers_after_reply(gid, sticker_names)
-            elif event.type == SessionEventType.DEVELOPER_CHAT_TRIGGERED:
-                gid = str(event.data.get("group_id", ""))
-                reply = event.data.get("reply", "")
-                if reply and gid.startswith("private_"):
-                    uid = gid.replace("private_", "").replace("qq_", "")
-                    await self._send_private_text(uid, reply)
             elif event.type == SessionEventType.REMINDER_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 reply = event.data.get("reply", "")

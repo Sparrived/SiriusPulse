@@ -47,7 +47,6 @@ const PARAM_GROUPS = [
     title: '对话生成',
     tasks: [
       { key: 'response_generate', label: '回复生成' },
-      { key: 'proactive_generate', label: '主动发言' },
       { key: 'passive_skill', label: '被动技能' },
       { key: 'sidekick_execute', label: '助手执行' },
       { key: 'github_monitor_notify', label: 'GitHub 监控' },

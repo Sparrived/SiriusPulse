@@ -306,11 +306,8 @@ class PersonaWorker:
             "auto_install_skill_deps": experience.auto_install_skill_deps,
             # 后台任务
             "delayed_queue_tick_interval_seconds": 3,
-            "proactive_check_interval_seconds": int(experience.proactive_interval_seconds),
-            "proactive_silence_minutes": max(1, int(experience.proactive_interval_seconds / 60)),
             # 其他体验参数直接透传（Bridge 可能用到）
             "reply_mode": experience.reply_mode,
-            "proactive_enabled": experience.proactive_enabled,
             "delay_reply_enabled": experience.delay_reply_enabled,
             "pending_message_threshold": experience.pending_message_threshold,
             "reply_frequency_max_replies": experience.reply_frequency_max_replies,

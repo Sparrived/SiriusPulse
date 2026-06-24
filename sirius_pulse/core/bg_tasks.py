@@ -1,6 +1,6 @@
 """后台任务管理组件。
 
-重构为组合模式，将主动消息和延迟队列任务拆分到独立文件。
+重构为组合模式，将延迟队列任务拆分到独立文件。
 核心类负责任务调度和生命周期管理。
 """
 
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.memory.cold_detector import ColdState
@@ -23,23 +22,13 @@ class BackgroundTasks:
     """后台任务管理组件。
 
     通过引擎实例访问属性，实现组合模式。
-    子任务委托给 ProactiveTasks 和 DelayedQueueTasks。
+    子任务委托给 DelayedQueueTasks。
     """
 
     def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
         self._engine = engine
         # 延迟初始化子任务组件
-        self._proactive: Any = None
         self._delayed: Any = None
-
-    @property
-    def proactive(self) -> Any:
-        """获取主动消息任务组件（延迟初始化）。"""
-        if self._proactive is None:
-            from sirius_pulse.core.bg_tasks_proactive import ProactiveTasks
-
-            self._proactive = ProactiveTasks(self._engine)
-        return self._proactive
 
     @property
     def delayed(self) -> Any:
@@ -65,11 +54,9 @@ class BackgroundTasks:
 
         tasks = [
             asyncio.create_task(self.delayed.delayed_queue_ticker(), name="delayed_queue"),
-            asyncio.create_task(self.proactive.proactive_checker(), name="proactive_check"),
             asyncio.create_task(self._diary_promoter(), name="diary_promote"),
             asyncio.create_task(self._diary_consolidator(), name="diary_consolidator"),
             asyncio.create_task(self._background_refiner(), name="background_refiner"),
-            asyncio.create_task(self.proactive.proactive_developer_chat_checker(), name="dev_chat"),
             asyncio.create_task(self._sticker_cache_warmup(), name="sticker_cache_warmup"),
         ]
         for t in tasks:
@@ -313,15 +300,6 @@ class BackgroundTasks:
     # 委托方法（向后兼容）
     # ==================================================================
 
-    async def proactive_check(
-        self,
-        group_id: str,
-        *,
-        _now: datetime | None = None,
-    ) -> dict[str, Any] | None:
-        """Check if proactive trigger should fire for a group."""
-        return await self.proactive.proactive_check(group_id, _now=_now)
-
     async def tick_delayed_queue(
         self,
         group_id: str,
@@ -329,11 +307,6 @@ class BackgroundTasks:
     ) -> list[dict[str, Any]]:
         """Process delayed response queue for a group."""
         return await self.delayed.tick_delayed_queue(group_id, on_partial_reply)
-
-    def pop_developer_chats(self, group_id: str) -> list[str]:
-        """Pop pending proactive developer chats for a group."""
-        engine = self._engine
-        return engine._pending_developer_chats.pop(group_id, [])
 
     def pop_reminders(self, group_id: str, adapter_type: str | None = None) -> list[str]:
         """Pop pending reminder messages for a group."""

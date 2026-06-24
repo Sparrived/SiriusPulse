@@ -25,7 +25,7 @@ const INTENT_CN = {
 
 const STRATEGY_CN = {
   immediate:'立即回复',delayed:'延迟回复',silent:'静默',
-  proactive:'主动发言',plugin:'插件触发',unknown:'未知','':'未知',
+  plugin:'插件触发',unknown:'未知','':'未知',
 };
 
 const HEAT_CN = {

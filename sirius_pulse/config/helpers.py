@@ -271,7 +271,6 @@ def configure_orchestration_models(
             - cognition_analyze: 认知分析
             - memory_extract: 记忆提取
             - response_generate: 回复生成
-            - proactive_generate: 主动发言
             - vision: 多模态
 
     Returns:

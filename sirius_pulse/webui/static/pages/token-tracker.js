@@ -13,7 +13,6 @@ const TASK_LABELS = {
   response_generate: '主模型调用',
   cognition_analyze: '认知分析',
   diary_generate: '日记生成',
-  proactive_generate: '主动/提醒生成',
 };
 
 let data = null;

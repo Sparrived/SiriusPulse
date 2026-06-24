@@ -78,7 +78,6 @@ from sirius_pulse.core.identity_resolver import (
     IdentityResolver,
 )
 from sirius_pulse.core.model_router import ModelRouter, TaskConfig
-from sirius_pulse.core.proactive_trigger import ProactiveTrigger
 from sirius_pulse.core.prompt_factory import PromptBundle, PromptFactory, StyleAdapter, StyleParams
 from sirius_pulse.core.response_strategy import ResponseStrategyEngine
 from sirius_pulse.core.rhythm import RhythmAnalysis, RhythmAnalyzer
@@ -247,7 +246,6 @@ __all__ = [
     "IdentityResolution",
     "ModelRouter",
     "TaskConfig",
-    "ProactiveTrigger",
     "PromptFactory",
     "PromptBundle",
     "StyleAdapter",

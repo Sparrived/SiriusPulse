@@ -13,7 +13,6 @@ def test_experience_config_when_new_persona_starts_then_uses_safe_defaults(tmp_p
     assert config.reply_mode == "auto"
     assert config.engagement_sensitivity == 0.5
     assert config.expressiveness == 0.5
-    assert config.proactive_enabled is True
     assert config.max_skill_rounds == 3
 
 

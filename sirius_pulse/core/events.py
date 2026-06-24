@@ -27,8 +27,6 @@ class SessionEventType(enum.Enum):
     DECISION_COMPLETED = "decision_completed"
     EXECUTION_COMPLETED = "execution_completed"
     DELAYED_RESPONSE_TRIGGERED = "delayed_response_triggered"
-    PROACTIVE_RESPONSE_TRIGGERED = "proactive_response_triggered"
-    DEVELOPER_CHAT_TRIGGERED = "developer_chat_triggered"
     REMINDER_TRIGGERED = "reminder_triggered"
     CUSTOM = "custom"
 

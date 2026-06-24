@@ -67,33 +67,3 @@ async def test_napcat_delayed_delivery_sends_text_before_sticker():
     )
 
     assert order == ["text", "sticker"]
-
-
-@pytest.mark.asyncio
-async def test_napcat_proactive_delivery_sends_text_before_sticker():
-    adapter = NapCatAdapter("ws://example.invalid")
-    order: list[str] = []
-
-    async def fake_send_group_msg(group_id, message):
-        order.append("text")
-        return {"ok": True}
-
-    async def fake_send_stickers(group_id, names):
-        order.append("sticker")
-        return {"ok": True}
-
-    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
-    adapter._engine = SimpleNamespace(
-        is_proactive_enabled=lambda group_id: True,
-        _send_stickers_by_names=fake_send_stickers,
-    )
-    adapter._get_allowed_group_ids = lambda: ["100"]  # type: ignore[method-assign]
-
-    await adapter._handle_event(
-        SessionEvent(
-            type=SessionEventType.PROACTIVE_RESPONSE_TRIGGERED,
-            data={"group_id": "100", "reply": "先说正文", "sticker_names": ["开心"]},
-        )
-    )
-
-    assert order == ["text", "sticker"]
