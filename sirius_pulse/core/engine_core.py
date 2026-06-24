@@ -164,6 +164,8 @@ class _EmotionalGroupChatEngineBase:
         self._task_models.update(self.config.get("task_models", {}))
         self._orch_task_temperatures = orch.get("task_temperatures")
         self._orch_task_max_tokens = orch.get("task_max_tokens")
+        self._orch_task_timeout = orch.get("task_timeout")
+        self._orch_task_fallback_model = orch.get("task_fallback_model")
 
     def _init_memory_system(self) -> None:
         # 共享同一个 SQLite 存储（persona.db）
@@ -244,6 +246,14 @@ class _EmotionalGroupChatEngineBase:
                 m = self._orch_task_max_tokens.get(task)
                 if isinstance(m, int):
                     override["max_tokens"] = m
+            if isinstance(self._orch_task_timeout, dict):
+                to = self._orch_task_timeout.get(task)
+                if isinstance(to, (int, float)):
+                    override["timeout"] = float(to)
+            if isinstance(self._orch_task_fallback_model, dict):
+                fb = self._orch_task_fallback_model.get(task)
+                if isinstance(fb, str) and fb.strip():
+                    override["fallback_model"] = fb.strip()
             task_overrides[task] = override
         if self.config.get("task_model_overrides"):
             for task, patch in self.config["task_model_overrides"].items():

@@ -40,6 +40,8 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("POST", "/api/personas/{name}/persona/interview", "api_persona_interview"),
     RouteSpec("GET", "/api/personas/{name}/orchestration", "api_orchestration_get"),
     RouteSpec("POST", "/api/personas/{name}/orchestration", "api_orchestration_post"),
+    RouteSpec("GET", "/api/personas/{name}/task-params", "api_task_params_get"),
+    RouteSpec("POST", "/api/personas/{name}/task-params", "api_task_params_post"),
     RouteSpec("GET", "/api/personas/{name}/experience", "api_experience_get"),
     RouteSpec("POST", "/api/personas/{name}/experience", "api_experience_post"),
     RouteSpec("GET", "/api/personas/{name}/adapters", "api_adapters_get"),

@@ -66,6 +66,8 @@ from sirius_pulse.webui.persona_api import (
     api_experience_post,
     api_orchestration_get,
     api_orchestration_post,
+    api_task_params_get,
+    api_task_params_post,
 )
 from sirius_pulse.webui.persona_api import api_persona_clone as _api_persona_clone
 from sirius_pulse.webui.persona_api import (
@@ -128,6 +130,8 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_interview": api_persona_interview,
     "api_orchestration_get": api_orchestration_get,
     "api_orchestration_post": api_orchestration_post,
+    "api_task_params_get": api_task_params_get,
+    "api_task_params_post": api_task_params_post,
     "api_experience_get": api_experience_get,
     "api_experience_post": api_experience_post,
     "api_adapters_get": api_adapters_get,
