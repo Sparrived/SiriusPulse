@@ -12,7 +12,6 @@ const PAGE_META = {
   'create-persona': { title: '新建人格', breadcrumb: 'Configuration / Create', icon: '＋' },
   'persona': { title: '人格配置', breadcrumb: 'Configuration / Persona', icon: '◎' },
   'orchestration': { title: '模型编排', breadcrumb: 'Configuration / Orchestration', icon: '⧉' },
-  'task-params': { title: '参数调优', breadcrumb: 'Configuration / Params', icon: '◈' },
   'experience': { title: '体验参数', breadcrumb: 'Configuration / Experience', icon: '◇' },
   'adapters': { title: '适配器', breadcrumb: 'Configuration / Adapters', icon: '⟐' },
   'skills': { title: 'Skills', breadcrumb: 'Extensions / Skills', icon: '⏣' },
@@ -40,7 +39,6 @@ const NAV_GROUPS = [
     { page: 'create-persona', icon: '＋', label: '新建人格' },
     { page: 'persona', icon: '◎', label: '人格' },
     { page: 'orchestration', icon: '⧉', label: '模型编排' },
-    { page: 'task-params', icon: '◈', label: '参数调优' },
     { page: 'experience', icon: '◇', label: '体验参数' },
     { page: 'adapters', icon: '⟐', label: 'Adapter' },
   ]},
@@ -66,7 +64,7 @@ const NAV_GROUPS = [
 ];
 
 const PERSONA_PAGES = new Set([
-  'persona', 'orchestration', 'task-params', 'experience', 'adapters', 'skills',
+  'persona', 'orchestration', 'experience', 'adapters', 'skills',
   'token-tracker', 'cognition', 'skills-tracker', 'conversation-history',
   'logs',
   'diary', 'glossary', 'memory-viz', 'create-persona',

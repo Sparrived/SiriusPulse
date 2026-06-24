@@ -16,10 +16,9 @@ _config.group("表情包发送").add(
 
 SKILL_META = {
     "name": "send_sticker",
-    "description": ("发送一张当前人格表情包到当前聊天。适合在回复的同时表达情绪；" "调用后不需要额外汇报发送结果。"),
+    "description": ("发送一张当前人格表情包到当前聊天。必须配合文字回复一起使用（例如边说边发表情包），" "不要单独发送。"),
     "version": "1.0.0",
     "tags": ["sticker", "messaging", "napcat"],
-    "silent": True,
     "adapter_types": ["napcat"],
     "dependencies": [],
     "parameters": _config.build(),
