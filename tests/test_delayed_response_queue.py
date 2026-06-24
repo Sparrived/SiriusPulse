@@ -42,7 +42,6 @@ def test_delayed_queue_when_immediate_messages_share_group_then_merges_into_one_
         "u2",
         "second",
         _decision(ResponseStrategy.IMMEDIATE),
-        emotion_state={"mood": "warm"},
         candidate_memories=["m2"],
         multimodal_inputs=[{"type": "image", "value": "b.png"}],
         channel="qq",

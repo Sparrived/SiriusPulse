@@ -161,7 +161,7 @@ class ContextAssembler:
 
         # 6. 添加当前用户消息（带身份标识）
         # 当 content_is_tagged=True 时，current_query 已由 PromptFactory.assemble_chat()
-        # 包含完整的 XML 标签和前缀段落（传记、情绪、关系、技能等），直接使用
+        # 包含完整的 XML 标签和前缀段落（传记、关系、技能等），直接使用
         if content_is_tagged:
             messages.append({"role": "user", "content": _with_user_context(current_query)})
         else:

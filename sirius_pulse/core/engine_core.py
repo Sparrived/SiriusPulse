@@ -153,7 +153,6 @@ class _EmotionalGroupChatEngineBase:
             "plugin_analyze": plugin_model,
             "plugin_render": plugin_model,
             "plugin_raw": plugin_model,
-            "sidekick_execute": chat_model,
         }
         orch_task_models = orch.get("task_models")
         if isinstance(orch_task_models, dict):
@@ -656,8 +655,8 @@ class _EmotionalGroupChatEngineBase:
         """
         _engine = self
 
-        _TASKS_CHAT = {"response_generate", "sidekick_execute"}
-        _TASKS_CHAT_ALL = {"response_generate", "proactive_generate", "sidekick_execute"}
+        _TASKS_CHAT = {"response_generate"}
+        _TASKS_CHAT_ALL = {"response_generate", "proactive_generate"}
 
         # ── priority 0: 对话深度追踪 ──
         def _hook_depth(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
@@ -903,7 +902,6 @@ class _EmotionalGroupChatEngineBase:
                     user_id=user_id,
                     message_content=content,
                     strategy_decision=decision,
-                    emotion_state={},
                     candidate_memories=[],
                     channel=message.channel,
                     channel_user_id=message.channel_user_id,
@@ -1166,256 +1164,6 @@ class _EmotionalGroupChatEngineBase:
         self._background_update(group_id, message, emotion, intent, user_id)
 
         return result
-
-    async def process_sidekick_task(
-        self,
-        *,
-        host_user_id: str,
-        host_nickname: str,
-        task_text: str,
-        group_id: str,
-        message_type: str = "group",
-        platform_message_id: str = "",
-        at_user_ids: list[str] | None = None,
-        mention_all: bool = False,
-    ) -> dict[str, Any]:
-        """小跟班任务处理入口——跳过社交决策，直接执行任务。
-
-        Args:
-            host_user_id: 宿主的平台用户 ID。
-            host_nickname: 宿主的显示名称。
-            task_text: 去除 @ 后的任务文本。
-            group_id: 群组 ID（或私聊 ID）。
-            message_type: "group" 或 "private"。
-            platform_message_id: 平台消息 ID。
-            at_user_ids: 原始 @ 列表。
-            mention_all: 是否 @ 了全体成员。
-
-        Returns:
-            与 process_message 兼容的 dict: {"reply": str, "partial_replies": list, "message_group": Any}
-        """
-        from sirius_pulse.skills.models import SkillInvocationContext
-
-        sidekick_cfg = self.config.get("sidekick", {})
-        max_skill_rounds = sidekick_cfg.get("max_skill_rounds") or self.config.get(
-            "max_skill_rounds", 3
-        )
-        enable_skills = sidekick_cfg.get("enable_skills", True)
-
-        # 注册宿主用户信息
-        uid = f"qq_{host_user_id}"
-        participant = UnifiedUser(
-            name=host_nickname,
-            user_id=uid,
-            identities={"qq_native_sirius_pulse": host_user_id},
-            metadata={"platform": "qq", "qq_uid": host_user_id, "is_ai": True},
-        )
-        self._perception(
-            group_id,
-            Message(
-                role="user",
-                content=task_text,
-                speaker=host_nickname,
-                channel="qq_native_sirius_pulse",
-                channel_user_id=host_user_id,
-                group_id=group_id,
-                message_id=platform_message_id,
-                sender_type="other_ai",
-            ),
-            [participant],
-        )
-
-        # 构建小跟班任务 prompt
-        system_prompt = PromptFactory.assemble_sidekick_task_prompt(
-            host_name=host_nickname,
-            task_text=task_text,
-            skill_registry=self._skill_registry if enable_skills else None,
-            caller_is_developer=bool(sidekick_cfg.get("trust_host_as_developer", False)),
-            adapter_type="napcat",
-        )
-
-        # 使用 ContextAssembler 构建完整消息
-        msgs, _ = self.context_assembler.build_messages_with_breakdown(
-            group_id=group_id,
-            current_query=task_text,
-            system_prompt=system_prompt,
-            include_pending=False,
-        )
-        system_prompt = msgs[0]["content"]
-        messages = msgs[1:]
-
-        # Brain.chat 调用
-        from sirius_pulse.core.brain import ChatRequest
-
-        chat_result = await self.brain.chat(
-            ChatRequest(
-                group_id=group_id,
-                user_id=uid,
-                system_prompt=system_prompt,
-                messages=messages,
-                task_name="sidekick_execute",
-                enable_skills=enable_skills,
-                caller_is_developer=bool(sidekick_cfg.get("trust_host_as_developer", False)),
-                post_process=False,  # 小跟班不走引擎 post hooks
-                extra_tools=[CONTINUE_TOOL_DEF, STOP_TOOL_DEF] if enable_skills else None,
-            )
-        )
-
-        reply = chat_result.clean_text or ""
-        reply_references = chat_result.reply_references or []
-        deferred_sticker_names: list[str] = []
-
-        # 内置流程控制工具
-        _extra_tools = [CONTINUE_TOOL_DEF, STOP_TOOL_DEF]
-
-        # tool-call 循环（复用 bg_tasks_delayed 的 continue/stop 模式）
-        tool_calls = chat_result.tool_calls or []
-        if tool_calls and self._skill_registry and self._skill_executor:
-            from sirius_pulse.core.sticker_delivery import (
-                dedupe_sticker_names,
-                defer_send_sticker_tool,
-            )
-
-            for _round in range(max_skill_rounds):
-                # 分类工具调用
-                flow_control = [tc for tc in tool_calls if tc.function_name in FLOW_CONTROL_TOOL_NAMES]
-                regular_tools = [tc for tc in tool_calls if tc.function_name not in FLOW_CONTROL_TOOL_NAMES]
-
-                should_stop = False
-                should_continue = False
-                for tc in flow_control:
-                    try:
-                        import json
-
-                        fc_params = json.loads(tc.function_arguments) if tc.function_arguments else {}
-                    except Exception:
-                        fc_params = {}
-                    action = fc_params.get("action", "continue")
-                    if action == "stop":
-                        should_stop = True
-                    else:
-                        should_continue = True
-
-                # 执行普通工具
-                if regular_tools:
-                    # 构建 assistant 消息
-                    assistant_msg = {
-                        "role": "assistant",
-                        "content": reply or None,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.function_name,
-                                    "arguments": tc.function_arguments,
-                                },
-                            }
-                            for tc in regular_tools
-                        ],
-                    }
-                    messages.append(assistant_msg)
-
-                    # 执行 tool calls
-                    for tc in regular_tools:
-                        try:
-                            import json
-
-                            params = json.loads(tc.function_arguments) if tc.function_arguments else {}
-                        except Exception:
-                            params = {}
-
-                        skill = self._skill_registry.get(tc.function_name)
-                        if skill is None:
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "content": f"Skill '{tc.function_name}' not found",
-                                }
-                            )
-                            continue
-
-                        if tc.function_name == "send_sticker":
-                            names, tool_content = defer_send_sticker_tool(
-                                params,
-                                available_names=getattr(self, "_sticker_names", []) or [],
-                            )
-                            deferred_sticker_names.extend(names)
-                            messages.append(
-                                {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
-                            )
-                            continue
-
-                        # 技能权限检查
-                        allowed_skills = sidekick_cfg.get("allowed_skills", [])
-                        denied_skills = sidekick_cfg.get("denied_skills", [])
-                        if denied_skills and tc.function_name in denied_skills:
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "content": f"Skill '{tc.function_name}' is denied",
-                                }
-                            )
-                            continue
-                        if allowed_skills and tc.function_name not in allowed_skills:
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "content": f"Skill '{tc.function_name}' not in allowed list",
-                                }
-                            )
-                            continue
-
-                        ctx = SkillInvocationContext(caller=participant)
-                        try:
-                            result = await self._skill_executor.execute_async(
-                                skill, params, invocation_context=ctx
-                            )
-                            tool_content = (
-                                result.to_display_text()
-                                if result.success
-                                else (result.error or "Unknown error")
-                            )
-                        except Exception as exc:
-                            tool_content = str(exc)
-                        messages.append(
-                            {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
-                        )
-
-                # 处理 stop
-                if should_stop:
-                    break
-
-                # 再次调用 LLM（continue 或隐式 continue 或执行了普通工具后）
-                chat_result = await self.brain.chat(
-                    ChatRequest(
-                        group_id=group_id,
-                        user_id=uid,
-                        system_prompt=system_prompt,
-                        messages=messages,
-                        task_name="sidekick_execute",
-                        enable_skills=enable_skills,
-                        post_process=False,
-                        extra_tools=_extra_tools,
-                    )
-                )
-                reply = chat_result.clean_text or ""
-                tool_calls = chat_result.tool_calls or []
-                if not tool_calls:
-                    # 模型没调用任何工具 → 隐式 stop
-                    break
-        else:
-            from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
-
-        return {
-            "reply": reply,
-            "partial_replies": [],
-            "reply_references": reply_references,
-            "sticker_names": dedupe_sticker_names(deferred_sticker_names),
-        }
 
     # ------------------------------------------------------------------
     # Plugin intent detection (for pipeline short-circuit)

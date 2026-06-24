@@ -130,40 +130,6 @@ class PersonaWorker:
                     cfg.peer_ai_ids.extend(added)
                     LOG.info("自动填充 peer_ai_ids: %s", cfg.peer_ai_ids)
 
-    def _auto_populate_host_qq_ids(self, sidekick: Any) -> None:
-        """当 sidekick.host_persona_names 非空时，扫描同项目其他人格的
-        persona.json 获取人格名，再扫描 adapters.json 获取 qq_number，
-        将匹配人格的 qq_number 自动补入 host_qq_ids。"""
-        host_names = {n.lower() for n in sidekick.host_persona_names if n}
-        if not host_names:
-            return
-        personas_dir = self.persona_dir.parent
-        if not personas_dir.exists():
-            return
-        for subdir in personas_dir.iterdir():
-            if not subdir.is_dir() or subdir.name == self.persona_dir.name:
-                continue
-            from sirius_pulse.core.persona_store import PersonaStore
-
-            other_persona = PersonaStore.load(subdir)
-            if not other_persona:
-                continue
-            if other_persona.name.lower() not in host_names:
-                continue
-            # 找到匹配人格，读取 adapters.json 获取 qq_number
-            other_paths = PersonaConfigPaths(subdir)
-            if not other_paths.adapters.exists():
-                continue
-            try:
-                other_adapters = PersonaAdaptersConfig.load(other_paths.adapters)
-                for a in other_adapters.adapters:
-                    qq = getattr(a, "qq_number", "")
-                    if qq and str(qq) not in [str(v) for v in sidekick.host_qq_ids]:
-                        sidekick.host_qq_ids.append(str(qq))
-                        LOG.info("小跟班: 自动补入宿主 QQ %s (人格: %s)", qq, other_persona.name)
-            except Exception:
-                continue
-
     @staticmethod
     async def _probe_ws_port(host: str, port: int, timeout: float = 3.0) -> bool:
         """快速探测 TCP 端口是否可连接。"""
@@ -275,7 +241,6 @@ class PersonaWorker:
                     "enable_private_chat": adapter_cfg.enable_private_chat,
                     "auto_install_skill_deps": plugin_config.get("auto_install_skill_deps", True),
                     "peer_ai_ids": adapter_cfg.peer_ai_ids,
-                    "sidekick": plugin_config.get("sidekick", {}),
                     "qq_number": adapter_cfg.qq_number,
                 },
             )
@@ -317,12 +282,7 @@ class PersonaWorker:
             "skill_execution_timeout": experience.skill_execution_timeout,
             "memory_depth": experience.memory_depth,
             "message_prefixes": experience.message_prefixes,
-            "sidekick": experience.sidekick.to_dict(),
         }
-        # 小跟班宿主 QQ 自动解析：当 host_persona_names 非空时，
-        # 扫描同项目其他人格的 adapters.json，将匹配人格的 qq_number 自动补入 host_qq_ids。
-        if experience.sidekick.host_persona_names:
-            self._auto_populate_host_qq_ids(experience.sidekick)
 
         # 同项目其他 AI 的名字/别名，用于抑制"人类叫别的 AI 时当前 AI 抢话"
         other_ai_names: list[str] = []

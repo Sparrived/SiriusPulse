@@ -456,8 +456,6 @@ class EngineRuntime:
             ),
             # 消息前缀过滤
             "message_prefixes": list(self.plugin_config.get("message_prefixes", [])),
-            # 小跟班配置
-            "sidekick": self.plugin_config.get("sidekick", {}),
         }
 
         # 创建向量存储（ChromaDB）

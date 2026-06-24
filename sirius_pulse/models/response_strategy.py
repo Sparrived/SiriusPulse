@@ -56,7 +56,6 @@ class DelayedResponseItem:
     message_content: str = ""
     speaker_name: str = ""
     strategy_decision: StrategyDecision = field(default_factory=StrategyDecision)
-    emotion_state: dict[str, Any] = field(default_factory=dict)
     candidate_memories: list[str] = field(default_factory=list)
     enqueue_time: str = ""
     window_seconds: float = 30.0
@@ -79,7 +78,6 @@ class DelayedResponseItem:
             "channel_user_id": self.channel_user_id,
             "message_content": self.message_content,
             "strategy_decision": self.strategy_decision.__dict__,
-            "emotion_state": self.emotion_state,
             "candidate_memories": self.candidate_memories,
             "enqueue_time": self.enqueue_time,
             "window_seconds": self.window_seconds,

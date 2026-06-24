@@ -218,7 +218,6 @@ class DelayedQueueTasks:
                 channel_user_id=item.get("channel_user_id"),
                 message_content=item.get("message_content", ""),
                 strategy_decision=strategy_decision,
-                emotion_state=item.get("emotion_state", {}),
                 candidate_memories=item.get("candidate_memories", []),
                 enqueue_time=item.get("enqueue_time", ""),
                 window_seconds=float(item.get("window_seconds", 30.0)),

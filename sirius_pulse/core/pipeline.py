@@ -576,7 +576,7 @@ class Pipeline:
             return {
                 "strategy": "silent",
                 "reply": None,
-                "emotion": emotion.to_dict(),
+                "emotion": {},
                 "intent": intent.to_dict(),
             }
 
@@ -612,7 +612,7 @@ class Pipeline:
         return {
             "strategy": decision.strategy.value,
             "reply": None,
-            "emotion": emotion.to_dict(),
+            "emotion": {},
             "intent": intent.to_dict(),
         }
 
@@ -630,14 +630,12 @@ class Pipeline:
         biography_context: BiographyPromptContext | None = None,
     ) -> dict[str, Any]:
         engine = self._engine
-        emotion_state = emotion.to_dict()
         bio_ctx = biography_context or BiographyPromptContext()
         engine.delayed_queue.enqueue(
             group_id=group_id,
             user_id=user_id,
             message_content=message.content,
             strategy_decision=decision,
-            emotion_state=emotion_state,
             candidate_memories=[m.get("content", "") for m in memories],
             channel=message.channel,
             channel_user_id=message.channel_user_id,
@@ -653,7 +651,7 @@ class Pipeline:
         result = {
             "strategy": decision.strategy.value,
             "reply": None,
-            "emotion": emotion_state,
+            "emotion": {},
             "intent": intent.to_dict(),
         }
         if decision.strategy == ResponseStrategy.IMMEDIATE:

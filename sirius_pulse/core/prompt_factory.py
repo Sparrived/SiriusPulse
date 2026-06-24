@@ -39,7 +39,6 @@ TAG_IDENTITY_ANCHOR = "【身份锚定】"
 TAG_SCENE_LOCATION = "【场景定位】"
 TAG_IDENTITY_VERIFY = "【身份识别】"
 TAG_OUTPUT_SPEC = "【输出规范】"
-TAG_CURRENT_EMOTION = "【发言者情绪】"
 TAG_RELATIONSHIP_STATUS = "【互动指导】"
 TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_CROSS_GROUP = "【跨群认知】"
@@ -306,33 +305,6 @@ class PromptFactory:
             )
         numbered = "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
         return f"{TAG_OUTPUT_SPEC}\n{numbered}"
-
-    @staticmethod
-    def build_emotion_context(
-        emotion: Any,
-        group_profile: Any | None,
-        speaker_name: str = "",
-    ) -> str:
-        """构建情绪上下文 section。"""
-        lines = [TAG_CURRENT_EMOTION]
-        basic = emotion.basic_emotion.name if emotion.basic_emotion else "平静"
-        who = speaker_name or "对方"
-        lines.append(f"{who}现在大概{basic}")
-
-        group_valence = 0.0
-        active_count = 0
-        if group_profile and group_profile.atmosphere_history:
-            latest = group_profile.atmosphere_history[-1]
-            group_valence = latest.group_valence
-            active_count = getattr(latest, "active_participants", 0)
-        mood_desc = (
-            "挺热络" if group_valence > 0.2 else "有点低沉" if group_valence < -0.2 else "一般"
-        )
-        group_line = f"群里氛围{mood_desc}"
-        if active_count:
-            group_line += f"，当前约{active_count}人在聊"
-        lines.append(group_line)
-        return "\n".join(lines)
 
     @staticmethod
     def build_relationship_context(
@@ -682,48 +654,6 @@ class PromptFactory:
         messages = [{"role": "user", "content": "（提醒时间到了）"}]
         return system_prompt, messages
 
-    @staticmethod
-    def assemble_sidekick_task_prompt(
-        *,
-        host_name: str,
-        task_text: str,
-        skill_registry: Any | None = None,
-        caller_is_developer: bool = False,
-        adapter_type: str | None = None,
-    ) -> str:
-        """构建小跟班任务执行的 system prompt。
-
-        Args:
-            host_name: 宿主（指派人）的显示名称。
-            task_text: 宿主指派的任务文本。
-            skill_registry: 可用的技能注册表（为 None 则不注入技能说明）。
-            caller_is_developer: 宿主是否为 developer。
-            adapter_type: 适配器类型。
-
-        Returns:
-            完整的 system prompt 字符串。
-        """
-        sections: list[str] = [
-            "你现在处于「小跟班」模式。你是一个任务执行 Agent，由宿主通过 @ 提及指派任务。",
-            f"宿主 {host_name} 给你指派了以下任务：",
-            task_text,
-            "请立即执行任务并汇报结果。不要闲聊、不要主动扩展话题、不要试图与宿主或其他 AI 进行多轮对话。",
-            "如果任务描述不清晰或缺少必要信息，请求澄清。",
-            "如果任务超出你的能力范围，明确说明无法完成。",
-        ]
-
-        if skill_registry is not None:
-            tool_desc = skill_registry.build_tool_descriptions(
-                invocation_context=None,
-                compact=True,
-                adapter_type=adapter_type,
-            )
-            if tool_desc:
-                sections.append("你可以使用以下工具来完成任务：\n" + tool_desc)
-                sections.append(PromptFactory.build_output_spec(supports_function_call=True))
-
-        return "\n\n".join(sections)
-
     # ──────────────────────────────────────────────────────────────────
     # 响应组装（返回 PromptBundle）
     # ──────────────────────────────────────────────────────────────────
@@ -735,7 +665,6 @@ class PromptFactory:
         speaker_name: str = "",
         channel_user_id: str = "",
         content_is_tagged: bool = False,
-        emotion: Any = None,
         memories: list[dict[str, Any]] | None = None,
         group_profile: Any | None,
         style_params: Any,
@@ -761,7 +690,6 @@ class PromptFactory:
             content_is_tagged: 若 True 表示 message_content 已经是
                 <message> XML 格式（延迟队列合并后），无需再包装；
                 若 False（默认）则用 speaker_name/channel_user_id 包装。
-            emotion: 当前情绪分析结果（EmotionState 或 None）。
             memories: 相关记忆列表。
             group_profile: 群体画像。
             style_params: 风格适配结果（StyleParams）。
@@ -812,14 +740,6 @@ class PromptFactory:
         )
         if bio:
             _add(bio, "identity")
-        # ── L3 高频：每次 LLM 调用级变化 ──
-        if emotion is not None:
-            _add(
-                PromptFactory.build_emotion_context(
-                    emotion, group_profile, speaker_name=speaker_name
-                ),
-                "emotion",
-            )
 
         rel_ctx = PromptFactory.build_relationship_contexts(
             user_profiles or [],

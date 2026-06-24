@@ -180,7 +180,6 @@ class PromptTokenBreakdown:
     persona: int = 0
     identity: int = 0
     output_constraint: int = 0
-    emotion: int = 0
     empathy: int = 0
     relationship: int = 0
     memory: int = 0
@@ -212,7 +211,6 @@ class PromptTokenBreakdown:
             "persona": self.persona,
             "identity": self.identity,
             "output_constraint": self.output_constraint,
-            "emotion": self.emotion,
             "empathy": self.empathy,
             "relationship": self.relationship,
             "memory": self.memory,

@@ -130,89 +130,6 @@ class PersonaAdaptersConfig:
 
 
 @dataclass(slots=True)
-class SidekickConfig:
-    """小跟班运行配置。"""
-
-    enabled: bool = False
-
-    # 宿主身份。优先使用平台 ID；人格名用于运行时自动解析。
-    host_qq_ids: list[str] = field(default_factory=list)
-    host_persona_names: list[str] = field(default_factory=list)
-    host_aliases: list[str] = field(default_factory=list)
-
-    # 触发策略。
-    require_at_self: bool = True
-    allow_text_alias_trigger: bool = False
-    allow_private_from_host: bool = False
-    strip_self_mention_from_task: bool = True
-
-    # 回复策略。
-    report_to_group: bool = True
-    mention_host_on_report: bool = False
-    reply_to_trigger_message: bool = True
-
-    # Agent / SKILL 策略。
-    enable_skills: bool = True
-    max_skill_rounds: int | None = None
-    task_timeout_seconds: float = 120.0
-    bypass_engagement_for_trusted_host: bool = True
-    trust_host_as_developer: bool = False
-    allowed_skills: list[str] = field(default_factory=list)
-    denied_skills: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "enabled": self.enabled,
-            "host_qq_ids": list(self.host_qq_ids),
-            "host_persona_names": list(self.host_persona_names),
-            "host_aliases": list(self.host_aliases),
-            "require_at_self": self.require_at_self,
-            "allow_text_alias_trigger": self.allow_text_alias_trigger,
-            "allow_private_from_host": self.allow_private_from_host,
-            "strip_self_mention_from_task": self.strip_self_mention_from_task,
-            "report_to_group": self.report_to_group,
-            "mention_host_on_report": self.mention_host_on_report,
-            "reply_to_trigger_message": self.reply_to_trigger_message,
-            "enable_skills": self.enable_skills,
-            "max_skill_rounds": self.max_skill_rounds,
-            "task_timeout_seconds": self.task_timeout_seconds,
-            "bypass_engagement_for_trusted_host": self.bypass_engagement_for_trusted_host,
-            "trust_host_as_developer": self.trust_host_as_developer,
-            "allowed_skills": list(self.allowed_skills),
-            "denied_skills": list(self.denied_skills),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "SidekickConfig":
-        if not isinstance(data, dict):
-            return cls()
-        raw_max_rounds = data.get("max_skill_rounds")
-        max_skill_rounds = None if raw_max_rounds in (None, "") else int(raw_max_rounds)
-        return cls(
-            enabled=bool(data.get("enabled", False)),
-            host_qq_ids=[str(v) for v in data.get("host_qq_ids", [])],
-            host_persona_names=[str(v) for v in data.get("host_persona_names", [])],
-            host_aliases=[str(v) for v in data.get("host_aliases", [])],
-            require_at_self=bool(data.get("require_at_self", True)),
-            allow_text_alias_trigger=bool(data.get("allow_text_alias_trigger", False)),
-            allow_private_from_host=bool(data.get("allow_private_from_host", False)),
-            strip_self_mention_from_task=bool(data.get("strip_self_mention_from_task", True)),
-            report_to_group=bool(data.get("report_to_group", True)),
-            mention_host_on_report=bool(data.get("mention_host_on_report", False)),
-            reply_to_trigger_message=bool(data.get("reply_to_trigger_message", True)),
-            enable_skills=bool(data.get("enable_skills", True)),
-            max_skill_rounds=max_skill_rounds,
-            task_timeout_seconds=float(data.get("task_timeout_seconds", 120.0)),
-            bypass_engagement_for_trusted_host=bool(
-                data.get("bypass_engagement_for_trusted_host", True)
-            ),
-            trust_host_as_developer=bool(data.get("trust_host_as_developer", False)),
-            allowed_skills=[str(v) for v in data.get("allowed_skills", [])],
-            denied_skills=[str(v) for v in data.get("denied_skills", [])],
-        )
-
-
-@dataclass(slots=True)
 class PersonaExperienceConfig:
     """人格体验参数——控制运行时行为风格。"""
 
@@ -238,9 +155,6 @@ class PersonaExperienceConfig:
     max_skill_rounds: int = 3
     skill_execution_timeout: float = 30.0
     auto_install_skill_deps: bool = True
-
-    # 小跟班模式
-    sidekick: SidekickConfig = field(default_factory=SidekickConfig)
 
     # 记忆深度（影响 prompt 注入的日记/记忆数量）
     memory_depth: str = "deep"  # shallow|moderate|deep
@@ -272,7 +186,6 @@ class PersonaExperienceConfig:
             "max_skill_rounds": self.max_skill_rounds,
             "skill_execution_timeout": self.skill_execution_timeout,
             "auto_install_skill_deps": self.auto_install_skill_deps,
-            "sidekick": self.sidekick.to_dict(),
             "memory_depth": self.memory_depth,
             "diary_top_k": self.diary_top_k,
             "diary_token_budget": self.diary_token_budget,
@@ -301,7 +214,6 @@ class PersonaExperienceConfig:
             max_skill_rounds=int(data.get("max_skill_rounds", 3)),
             skill_execution_timeout=float(data.get("skill_execution_timeout", 30.0)),
             auto_install_skill_deps=bool(data.get("auto_install_skill_deps", True)),
-            sidekick=SidekickConfig.from_dict(data.get("sidekick")),
             memory_depth=str(data.get("memory_depth", "deep")),
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
@@ -371,7 +283,6 @@ __all__ = [
     "NapCatAdapterConfig",
     "AdapterConfig",
     "PersonaAdaptersConfig",
-    "SidekickConfig",
     "PersonaExperienceConfig",
     "PersonaConfigPaths",
 ]

@@ -66,7 +66,6 @@ class DelayedResponseQueue:
         user_id: str,
         message_content: str,
         strategy_decision: StrategyDecision,
-        emotion_state: dict[str, Any] | None = None,
         candidate_memories: list[str] | None = None,
         channel: str | None = None,
         channel_user_id: str | None = None,
@@ -114,7 +113,6 @@ class DelayedResponseQueue:
                 # Update heat/pace to the latest state
                 item.heat_level = heat_level
                 item.pace = pace
-                item.emotion_state.update(emotion_state or {})
                 if candidate_memories:
                     item.candidate_memories.extend(candidate_memories)
                 if multimodal_inputs:
@@ -156,7 +154,6 @@ class DelayedResponseQueue:
             message_content=tagged,
             speaker_name=speaker_name,
             strategy_decision=strategy_decision,
-            emotion_state=dict(emotion_state or {}),
             candidate_memories=list(candidate_memories or []),
             enqueue_time=now_iso(),
             window_seconds=self._window_for_item(strategy_decision, heat_level),

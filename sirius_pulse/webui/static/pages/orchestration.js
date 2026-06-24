@@ -48,7 +48,6 @@ const PARAM_GROUPS = [
     tasks: [
       { key: 'response_generate', label: '回复生成' },
       { key: 'passive_skill', label: '被动技能' },
-      { key: 'sidekick_execute', label: '助手执行' },
       { key: 'github_monitor_notify', label: 'GitHub 监控' },
     ],
   },
