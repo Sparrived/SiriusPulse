@@ -43,7 +43,6 @@ class PersonaWorker:
         self.persona_dir = Path(persona_dir).resolve()
         self.paths = PersonaConfigPaths(self.persona_dir)
         self._adapters: list[NapCatAdapter] = []
-        self._napcat_managers: list[Any] = []
         self._runtime: EngineRuntime | None = None
         self._running = False
         self._shutdown_event = asyncio.Event()
@@ -130,105 +129,12 @@ class PersonaWorker:
                     cfg.peer_ai_ids.extend(added)
                     LOG.info("自动填充 peer_ai_ids: %s", cfg.peer_ai_ids)
 
-    @staticmethod
-    async def _probe_ws_port(host: str, port: int, timeout: float = 3.0) -> bool:
-        """快速探测 TCP 端口是否可连接。"""
-        try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, port), timeout=timeout
-            )
-            writer.close()
-            await writer.wait_closed()
-            return True
-        except Exception:
-            return False
-
-    async def _ensure_napcat_running(self, adapter_cfg: "NapCatAdapterConfig") -> bool:
-        """检查 NapCat WS 是否可达，不可达则自动启动实例并等待就绪。
-
-        Returns True if WS is (now) reachable, False on failure.
-        """
-        ws_url = adapter_cfg.ws_url
-        try:
-            host_port = ws_url.replace("ws://", "").replace("wss://", "").split("/")[0]
-            host, port_str = host_port.rsplit(":", 1)
-            port = int(port_str)
-        except (ValueError, IndexError):
-            LOG.warning("无法解析 ws_url: %s，跳过自动管理", ws_url)
-            return True
-
-        if await self._probe_ws_port(host, port):
-            return True
-
-        LOG.info("NapCat WS %s:%s 不可达，尝试自动启动实例...", host, port)
-
-        qq_number = getattr(adapter_cfg, "qq_number", "")
-        if not qq_number:
-            LOG.warning("人格 %s 未配置 qq_number，无法自动启动 NapCat 实例", self.persona_dir.name)
-            return False
-
-        # 查找全局 NapCat 安装目录
-        global_data_path = self.persona_dir.parent.parent
-        config_path = global_data_path / "global_config.json"
-        napcat_install_dir = None
-        if config_path.exists():
-            try:
-                import json as _json
-
-                gcfg = _json.loads(config_path.read_text(encoding="utf-8"))
-                napcat_install_dir = gcfg.get("napcat_install_dir")
-            except Exception:
-                pass
-        if not napcat_install_dir:
-            napcat_install_dir = str(self.persona_dir.parent.parent.parent / "napcat")
-
-        from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
-
-        mgr = NapCatManager.for_persona(
-            global_install_dir=napcat_install_dir,
-            persona_name=self.persona_dir.name,
-        )
-
-        if not mgr.is_installed:
-            LOG.info("NapCat 未安装，尝试自动下载安装...")
-            result = await mgr.install()
-            if not result["success"]:
-                LOG.error("NapCat 自动安装失败: %s", result["message"])
-                return False
-            LOG.info("NapCat 安装完成")
-
-        LOG.info("配置 NapCat 实例 (QQ: %s, 端口: %s)...", qq_number, port)
-        mgr.configure(qq_number=qq_number, ws_port=port)
-
-        result = await mgr.start(qq_number=qq_number)
-        if not result["success"]:
-            LOG.error("NapCat 实例启动失败: %s", result["message"])
-            return False
-
-        LOG.info("NapCat 实例已启动，等待 WS 就绪...")
-        ready_result = await mgr.wait_for_ws(port=port, timeout=180.0)
-        if ready_result.get("ready"):
-            self._napcat_managers.append(mgr)
-            LOG.info("NapCat WS 已就绪 (QQ=%s)", ready_result.get("self_id", "unknown"))
-            return True
-        else:
-            LOG.error("NapCat WS 等待超时: %s", ready_result.get("error", "unknown"))
-            return False
-
     async def _start_adapter(
         self,
         adapter_cfg: Any,
         plugin_config: dict[str, Any],
     ) -> None:
         if isinstance(adapter_cfg, NapCatAdapterConfig):
-            ok = await self._ensure_napcat_running(adapter_cfg)
-            if not ok:
-                LOG.error(
-                    "NapCat 不可用 (%s)，跳过该 adapter",
-                    adapter_cfg.ws_url,
-                )
-                return
-
             adapter = NapCatAdapter(
                 ws_url=adapter_cfg.ws_url,
                 token=adapter_cfg.token or None,
@@ -500,20 +406,6 @@ class PersonaWorker:
                 await adapter.close()
             except Exception as exc:
                 LOG.warning("Adapter 关闭失败: %s", exc)
-
-        for mgr in self._napcat_managers:
-            try:
-                if mgr.is_running:
-                    # Windows 下默认保留 NapCat/QQ 进程，避免杀死已登录会话导致下次需重新扫码。
-                    # 仅断开管理器引用，让 QQ 进程继续运行以实现快速登录复用。
-                    # 如需强制终止，可通过配置或手动调用 mgr.stop(force=True)。
-                    if sys.platform == "win32":
-                        LOG.info("Windows 下保留 NapCat/QQ 进程运行，以维持登录状态供下次复用")
-                        await mgr.stop(force=False, preserve_session=True)
-                    else:
-                        await mgr.stop()
-            except Exception as exc:
-                LOG.warning("NapCat 实例停止失败: %s", exc)
 
         if self._runtime is not None:
             try:

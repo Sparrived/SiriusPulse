@@ -701,8 +701,7 @@ def _cmd_persona_migrate(args: argparse.Namespace) -> None:
 
 
 async def _cmd_persona_start(args: argparse.Namespace) -> None:
-    """前台启动单个人格（含 NapCat 自动管理）。"""
-    from sirius_pulse.persona_config import NapCatAdapterConfig, PersonaAdaptersConfig
+    """前台启动单个人格。"""
     from sirius_pulse.persona_worker import PersonaWorker
 
     pdir = DATA_DIR / "personas" / args.name
@@ -712,39 +711,6 @@ async def _cmd_persona_start(args: argparse.Namespace) -> None:
 
     configure_logging(level="INFO", format_type="console")
     LOG = logging.getLogger("sirius.main")
-
-    # ── NapCat 自动管理（默认启用）─────────────────────────
-    napcat_mgr = None
-    config = _load_global_config()
-    adapters = PersonaAdaptersConfig.load(pdir / "adapters.json")
-    for a in adapters.adapters:
-        if isinstance(a, NapCatAdapterConfig) and a.enabled and a.qq_number:
-            from sirius_pulse.platforms.onebot_v11.napcat.manager import NapCatManager
-
-            napcat_install_dir = str(config.get("napcat_install_dir", str(REPO_ROOT / "napcat")))
-            napcat_mgr = NapCatManager.for_persona(
-                global_install_dir=napcat_install_dir,
-                persona_name=args.name,
-            )
-            if not napcat_mgr.is_installed:
-                LOG.info("NapCat 未安装，尝试自动安装...")
-                result = await napcat_mgr.install()
-                if not result["success"]:
-                    LOG.warning("NapCat 安装失败: %s", result["message"])
-                    break
-            port = int(a.ws_url.rsplit(":", 1)[-1]) if ":" in a.ws_url else 3001
-            napcat_mgr.configure(qq_number=a.qq_number, ws_port=port)
-            result = await napcat_mgr.start(qq_number=a.qq_number)
-            if result["success"]:
-                LOG.info("NapCat 已启动，等待 WS 就绪...")
-                ready = await napcat_mgr.wait_for_ws(port=port, timeout=120.0)
-                if ready:
-                    LOG.info("NapCat WS 已就绪")
-                else:
-                    LOG.warning("NapCat WS 未就绪，请检查 QQ 是否已扫码登录")
-            else:
-                LOG.warning("NapCat 启动失败: %s", result["message"])
-            break
 
     worker = PersonaWorker(pdir)
 
@@ -767,12 +733,6 @@ async def _cmd_persona_start(args: argparse.Namespace) -> None:
     except Exception:
         LOG.exception("人格工作进程异常退出")
         raise
-    finally:
-        if napcat_mgr:
-            # 保留 NapCat 进程运行，仅断开管理器引用
-            # 这样下次启动人格时可以复用已登录的会话，避免重复扫码
-            await napcat_mgr.stop(preserve_session=True)
-            LOG.info("已断开 NapCat 管理器引用（QQ 进程保持运行）")
 
 
 def _cmd_persona_stop(args: argparse.Namespace) -> None:

@@ -188,7 +188,7 @@ class WebUIServer(_WebUIServer):
     """WebUIServer with all API endpoints bound via mix-in overrides.
 
     Each handler delegates to the corresponding module-level async function,
-    passing ``self.persona_manager`` (and ``self.napcat_manager`` where needed).
+    passing ``self.persona_manager``.
     """
 
     def __getattr__(self, name: str) -> Any:

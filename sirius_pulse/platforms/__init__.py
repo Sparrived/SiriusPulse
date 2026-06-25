@@ -21,11 +21,10 @@
 
 from __future__ import annotations
 
-from .onebot_v11.napcat import NapCatAdapter, NapCatManager
+from .onebot_v11.napcat import NapCatAdapter
 from .runtime import EngineRuntime
 
 __all__ = [
     "NapCatAdapter",
     "EngineRuntime",
-    "NapCatManager",
 ]

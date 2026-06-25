@@ -217,7 +217,6 @@ class WebUIServer:
             {
                 "webui_host": self.host,
                 "webui_port": self.port,
-                "auto_manage_napcat": True,
                 "log_level": "INFO",
             }
         )
@@ -237,7 +236,7 @@ class WebUIServer:
                 LOG.warning("读取全局配置失败", exc_info=True)
                 pass
 
-        for key in ("webui_host", "webui_port", "auto_manage_napcat", "log_level"):
+        for key in ("webui_host", "webui_port", "log_level"):
             if key in body:
                 data[key] = body[key]
 
