@@ -1,7 +1,7 @@
-"""WebUI Skill 管理 API — 每人格独立的 Skill 配置与启停。
+"""WebUI Skill 管理 API — Skill 配置与启停。
 
 所有 skill 的配置和启停状态统一存储在各自的 data_store 文件中：
-  {persona_dir}/skill_data/{skill_name}.json
+  {data_dir}/skill_data/{skill_name}.json
 其中 _enabled 字段表示启停状态，其余为 skill 配置参数。
 """
 
@@ -15,8 +15,9 @@ from typing import Any
 
 from aiohttp import web
 
+from sirius_pulse.persona_config import PersonaConfigPaths
 from sirius_pulse.skills.registry import SkillRegistry
-from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
+from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -79,13 +80,9 @@ def _extract_config(data: dict[str, Any], skill: Any) -> dict[str, Any]:
 
 
 @handle_api_errors
-async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/skills — 列出所有人格级 skill。"""
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
-
+async def api_persona_skills_get(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/skills — 列出所有人格级 skill。"""
+    paths = PersonaConfigPaths(data_dir)
     registry = _load_skill_registry(paths.dir)
 
     skills: list[dict[str, Any]] = []
@@ -119,16 +116,13 @@ async def api_persona_skills_get(request: web.Request, persona_manager: Any) -> 
 
 
 @handle_api_errors
-async def api_persona_skill_toggle(request: web.Request, persona_manager: Any) -> web.Response:
-    """POST /api/personas/{name}/skills/{skill_name}/toggle — 启停 skill。"""
-    name = _get_name(request)
+async def api_persona_skill_toggle(request: web.Request, data_dir: Path) -> web.Response:
+    """POST /api/persona/skills/{skill_name}/toggle — 启停 skill。"""
     skill_name = str(request.match_info.get("skill_name", "")).strip()
     if not skill_name:
         return _json_response({"error": "缺少 skill_name"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     try:
         body = await request.json()
@@ -141,21 +135,18 @@ async def api_persona_skill_toggle(request: web.Request, persona_manager: Any) -
     data["_enabled"] = enabled
     _save_skill_data_store(paths.dir, skill_name, data)
 
-    LOG.info("Skill %s/%s enabled=%s", name, skill_name, enabled)
+    LOG.info("Skill %s enabled=%s", skill_name, enabled)
     return _json_response({"success": True, "skill": skill_name, "enabled": enabled})
 
 
 @handle_api_errors
-async def api_persona_skill_config_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/skills/{skill_name}/config — 获取 skill 配置。"""
-    name = _get_name(request)
+async def api_persona_skill_config_get(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/skills/{skill_name}/config — 获取 skill 配置。"""
     skill_name = str(request.match_info.get("skill_name", "")).strip()
     if not skill_name:
         return _json_response({"error": "缺少 skill_name"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     registry = _load_skill_registry(paths.dir)
     skill = registry.get(skill_name)
@@ -182,11 +173,10 @@ async def api_persona_skill_config_get(request: web.Request, persona_manager: An
 
 
 @handle_api_errors
-async def api_persona_skill_history_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/skill-history — 返回 SKILL 执行历史详情（分页，支持筛选）。"""
+async def api_persona_skill_history_get(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/skill-history — 返回 SKILL 执行历史详情（分页，支持筛选）。"""
     from sirius_pulse.skills.telemetry import SkillTelemetry
 
-    name = _get_name(request)
     skill_name = request.query.get("skill_name", "").strip() or None
     success_str = request.query.get("success", "").strip().lower()
     caller = request.query.get("caller", "").strip()
@@ -199,9 +189,7 @@ async def api_persona_skill_history_get(request: web.Request, persona_manager: A
     elif success_str == "false":
         success_filter = False
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     telemetry_path = paths.dir / "skill_data" / ".telemetry.jsonl"
     if not telemetry_path.exists():
@@ -240,16 +228,13 @@ async def api_persona_skill_history_get(request: web.Request, persona_manager: A
 
 
 @handle_api_errors
-async def api_persona_skill_config_post(request: web.Request, persona_manager: Any) -> web.Response:
-    """POST /api/personas/{name}/skills/{skill_name}/config — 保存 skill 配置。"""
-    name = _get_name(request)
+async def api_persona_skill_config_post(request: web.Request, data_dir: Path) -> web.Response:
+    """POST /api/persona/skills/{skill_name}/config — 保存 skill 配置。"""
     skill_name = str(request.match_info.get("skill_name", "")).strip()
     if not skill_name:
         return _json_response({"error": "缺少 skill_name"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     try:
         body = await request.json()
@@ -269,5 +254,5 @@ async def api_persona_skill_config_post(request: web.Request, persona_manager: A
 
     _save_skill_data_store(paths.dir, skill_name, data)
 
-    LOG.info("Skill 配置已保存 %s/%s", name, skill_name)
+    LOG.info("Skill 配置已保存 %s", skill_name)
     return _json_response({"success": True, "skill": skill_name})

@@ -1,13 +1,15 @@
-"""WebUI API endpoints for the biography system — user persona cards and alias management."""
+"""WebUI API endpoints for the biography system -- user persona cards and alias management."""
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.webui.server_utils import _get_name, _json_response
+from sirius_pulse.persona_config import PersonaConfigPaths
+from sirius_pulse.webui.server_utils import _json_response
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -27,17 +29,14 @@ def _get_storage(paths: Any):
     return MemoryStorage(db_path)
 
 
-async def api_persona_biography_list(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_persona_biography_list(request: web.Request, data_dir: Path) -> web.Response:
     """获取人格的所有用户传记卡列表（分页）。"""
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     limit = min(int(request.query.get("limit", "50")), 200)
     offset = max(int(request.query.get("offset", "0")), 0)
 
-    mgr = _create_manager(paths, name)
+    mgr = _create_manager(paths, data_dir.name)
     storage = _get_storage(paths)
     users = mgr.list_global_users()
     alias_index_data = storage.get_all_aliases()
@@ -61,18 +60,15 @@ async def api_persona_biography_list(request: web.Request, persona_manager: Any)
     )
 
 
-async def api_persona_biography_get(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_persona_biography_get(request: web.Request, data_dir: Path) -> web.Response:
     """获取单个用户的传记卡详情。"""
-    name = _get_name(request)
     user_id = str(request.match_info.get("user_id", "")).strip()
     if not user_id:
         return _json_response({"error": "缺少用户ID"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
-    mgr = _create_manager(paths, name)
+    mgr = _create_manager(paths, data_dir.name)
     user = mgr.get_global_user(user_id)
     mgr.close()
 
@@ -82,14 +78,9 @@ async def api_persona_biography_get(request: web.Request, persona_manager: Any) 
     return _json_response(user.to_dict())
 
 
-async def api_persona_biography_alias_index(
-    request: web.Request, persona_manager: Any
-) -> web.Response:
+async def api_persona_biography_alias_index(request: web.Request, data_dir: Path) -> web.Response:
     """获取别名索引。"""
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     storage = _get_storage(paths)
     alias_index_data = storage.get_all_aliases()
@@ -99,13 +90,10 @@ async def api_persona_biography_alias_index(
 
 
 async def api_persona_biography_alias_index_update(
-    request: web.Request, persona_manager: Any
+    request: web.Request, data_dir: Path
 ) -> web.Response:
     """更新别名索引（新增或删除别名映射）。"""
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     try:
         body = await request.json()

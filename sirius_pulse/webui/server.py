@@ -30,8 +30,6 @@ from sirius_pulse.webui.biography_api import (
 from sirius_pulse.webui.evolution_api import (
     api_biography_list_all,
     api_biography_view,
-)
-from sirius_pulse.webui.evolution_api import (
     api_evolution_history,
     api_evolution_records,
     api_evolution_uncertain,
@@ -66,25 +64,16 @@ from sirius_pulse.webui.persona_api import (
     api_experience_post,
     api_orchestration_get,
     api_orchestration_post,
-    api_task_params_get,
-    api_task_params_post,
-)
-from sirius_pulse.webui.persona_api import api_persona_clone as _api_persona_clone
-from sirius_pulse.webui.persona_api import (
     api_persona_get,
     api_persona_get_single,
     api_persona_interview,
     api_persona_interview_get,
     api_persona_logs_get,
     api_persona_post,
-    api_persona_restart,
-    api_persona_start,
     api_persona_status_get,
-    api_persona_stop,
-    api_personas_delete,
-    api_personas_get,
-    api_personas_post,
     api_system_logs_get,
+    api_task_params_get,
+    api_task_params_post,
 )
 from sirius_pulse.webui.server_core import WebUIServer as _WebUIServer
 from sirius_pulse.webui.server_plugin_api import (
@@ -109,19 +98,12 @@ from sirius_pulse.webui.server_skill_api import (
 )
 from sirius_pulse.webui.server_utils import _json_response
 
-
 DelegatedHandler = Callable[[web.Request, Any], Awaitable[web.Response]]
 
 
 DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
-    "api_personas_get": api_personas_get,
-    "api_personas_post": api_personas_post,
-    "api_personas_delete": api_personas_delete,
     "api_persona_get_single": api_persona_get_single,
     "api_persona_status_get": api_persona_status_get,
-    "api_persona_start": api_persona_start,
-    "api_persona_stop": api_persona_stop,
-    "api_persona_restart": api_persona_restart,
     "api_system_logs_get": api_system_logs_get,
     "api_persona_logs_get": api_persona_logs_get,
     "api_persona_get": api_persona_get,
@@ -180,7 +162,6 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_monitoring_overview": _api_monitoring_overview,
     "api_monitoring_persona_metrics": _api_monitoring_persona_metrics,
     "api_monitoring_health": _api_monitoring_health,
-    "api_persona_clone": _api_persona_clone,
 }
 
 
@@ -188,7 +169,7 @@ class WebUIServer(_WebUIServer):
     """WebUIServer with all API endpoints bound via mix-in overrides.
 
     Each handler delegates to the corresponding module-level async function,
-    passing ``self.persona_manager``.
+    passing ``self.data_dir``.
     """
 
     def __getattr__(self, name: str) -> Any:
@@ -197,7 +178,7 @@ class WebUIServer(_WebUIServer):
             raise AttributeError(name)
 
         async def delegated(request: web.Request) -> web.Response:
-            return await handler(request, self.persona_manager)
+            return await handler(request, self.data_dir)
 
         delegated.__name__ = name
         return delegated

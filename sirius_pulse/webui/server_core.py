@@ -49,15 +49,17 @@ class WebUIServer:
 
     def __init__(
         self,
-        persona_manager: Any,
+        data_dir: Path,
         host: str = "0.0.0.0",
         port: int = 8080,
+        persona_manager: Any = None,
     ) -> None:
+        self.data_dir = Path(data_dir).resolve()
         self.persona_manager = persona_manager
         self.host = host
         self.port = port
         self.ws_manager = WebSocketManager()
-        self.auth_manager = AuthManager(Path(persona_manager.data_path))
+        self.auth_manager = AuthManager(self.data_dir)
         self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
         self.app["auth_manager"] = self.auth_manager
         self.app["ws_manager"] = self.ws_manager
@@ -66,10 +68,22 @@ class WebUIServer:
         self._embedding_thread: threading.Thread | None = None
         self._embedding_ready: bool = False
         self._embedding_error: str = ""
-        self._embedding_port: int = int(persona_manager.global_config.get("embedding_port", 18900))
+        self._embedding_port: int = 18900
+        self._load_global_config()
         self.auth_manager.get_or_create_admin_password()
         self._setup_routes()
         setup_ws_routes(self.app, self.ws_manager)
+
+    def _load_global_config(self) -> None:
+        """从 global_config.json 读取全局配置。"""
+        path = self._global_config_path()
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._embedding_port = int(data.get("embedding_port", 18900))
+            except Exception:
+                LOG.warning("读取全局配置失败", exc_info=True)
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
@@ -202,7 +216,7 @@ class WebUIServer:
     # ─── 全局 API: 全局配置 ───────────────────────────────
 
     def _global_config_path(self) -> Path:
-        return Path(self.persona_manager.data_path) / "global_config.json"
+        return self.data_dir / "global_config.json"
 
     async def api_global_config_get(self, request: web.Request) -> web.Response:
         path = self._global_config_path()
@@ -277,23 +291,17 @@ class WebUIServer:
     # ─── 全局 API: Provider 配置 ──────────────────────────
 
     def _provider_keys_path(self) -> Path:
-        return Path(self.persona_manager.data_path) / "providers" / "provider_keys.json"
+        return self.data_dir / "providers" / "provider_keys.json"
 
     def _notify_provider_reload(self) -> None:
-        """向所有运行中的人格写入 provider 重载标志。"""
-        for info in self.persona_manager.list_personas():
-            if not info.get("running"):
-                continue
-            paths = self.persona_manager.get_persona_paths(info["name"])
-            if paths is None:
-                continue
-            try:
-                flag = paths.engine_state / "reload_requested"
-                flag.parent.mkdir(parents=True, exist_ok=True)
-                flag.write_text("provider", encoding="utf-8")
-                LOG.debug("已向人格 %s 写入 provider 重载标志", info["name"])
-            except Exception as exc:
-                LOG.debug("向人格 %s 写入 provider 重载标志失败: %s", info["name"], exc)
+        """向当前人格写入 provider 重载标志。"""
+        try:
+            flag = self.data_dir / "engine_state" / "reload_requested"
+            flag.parent.mkdir(parents=True, exist_ok=True)
+            flag.write_text("provider", encoding="utf-8")
+            LOG.debug("已写入 provider 重载标志")
+        except Exception as exc:
+            LOG.debug("写入 provider 重载标志失败: %s", exc)
 
     async def api_providers_get(self, request: web.Request) -> web.Response:
         return _json_response({"providers": self._load_providers_raw()})
@@ -435,7 +443,7 @@ class WebUIServer:
                 # 只刷新 models.dev 缓存，不修改 provider 配置
                 from sirius_pulse.providers.models_dev import ModelsDevCache
 
-                cache = ModelsDevCache(Path(self.persona_manager.data_path))
+                cache = ModelsDevCache(self.data_dir)
                 cache.get(force_refresh=True)
                 providers_data = self._load_providers_raw()
                 return _json_response(
@@ -446,7 +454,7 @@ class WebUIServer:
                     }
                 )
 
-            provider_mgr = WorkspaceProviderManager(self.persona_manager.data_path)
+            provider_mgr = WorkspaceProviderManager(self.data_dir)
             changed = provider_mgr.refresh_models_from_dev(force=force)
             if changed:
                 self._notify_provider_reload()
@@ -474,7 +482,7 @@ class WebUIServer:
             list_provider_model_details,
         )
 
-        cache = ModelsDevCache(Path(self.persona_manager.data_path))
+        cache = ModelsDevCache(self.data_dir)
         data = cache.get()
         if not data:
             return _json_response({"error": "无法获取 models.dev 数据"}, 502)
@@ -505,4 +513,4 @@ class WebUIServer:
 
     async def api_available_models_get(self, request: web.Request) -> web.Response:
         """返回全局可用模型列表（含 provider 前缀显示名）。"""
-        return _json_response(build_model_catalog(self.persona_manager.data_path))
+        return _json_response(build_model_catalog(self.data_dir))

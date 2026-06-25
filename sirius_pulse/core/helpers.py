@@ -431,15 +431,6 @@ class Helpers:
             return base_score
         boost = 0.0
 
-        # Group-level topic signals
-        group_profile = engine.semantic_memory.get_group_profile(group_id)
-        if group_profile:
-            if group_profile.dominant_topic and group_profile.dominant_topic.lower() in text_lower:
-                boost += 0.15
-            for topic in (group_profile.interest_topics or [])[:5]:
-                if topic and topic.lower() in text_lower:
-                    boost += 0.08
-
         # v1.3+: 短期话题窗口增强 —— 跨轮次话题跟踪
         try:
             msg_kw = extract_keywords(message)

@@ -46,20 +46,6 @@ def test_alias_manager_keeps_one_owner_per_alias(tmp_path: Path):
     assert aliases["小梨"]["user_id"] == "u2"
 
 
-def test_feed_messages_does_not_register_discovered_aliases(tmp_path: Path):
-    mgr = _manager(tmp_path)
-
-    mgr.feed_messages(
-        user_id="u1",
-        name="Alice",
-        group_id="g1",
-        messages=["Alice 说她也叫阿梨"],
-        discovered_aliases=["阿梨"],
-    )
-
-    assert mgr.resolve_alias("阿梨", group_id="g1") == (None, 0.0, [])
-
-
 def test_profile_aliases_do_not_bypass_confirmed_alias_index(tmp_path: Path):
     mgr = UnifiedUserManager(db_path=tmp_path / "memory.db")
     mgr.register_user(

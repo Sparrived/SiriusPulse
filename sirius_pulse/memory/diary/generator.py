@@ -31,15 +31,9 @@ _DIARY_SYSTEM_PROMPT = (
     "- 口吻自然，像AI本人在回顾群聊经历\n"
     "- 正文不超过300字\n"
     "\n"
-    "【话题分析要求】\n"
-    "- dominant_topic: 本次对话最核心的一个话题（不超过10字）\n"
-    "- interest_topics: 本次对话涉及的2-5个兴趣话题，按重要性排序\n"
-    "\n"
     "严格输出 JSON，包含以下字段：\n"
     '{"content": "日记正文", "keywords": ["关键词1", "关键词2"], '
-    '"summary": "一句话摘要（不超过50字）", '
-    '"dominant_topic": "主导话题", '
-    '"interest_topics": ["话题1", "话题2"]}'
+    '"summary": "一句话摘要（不超过50字）"}'
 )
 
 
@@ -153,14 +147,8 @@ class DiaryGenerator:
             ],
             summary=(parsed.get("summary") or "")[:50],
         )
-        dominant_topic = str(parsed.get("dominant_topic") or "").strip()[:20]
-        interest_topics = [
-            str(t).strip() for t in (parsed.get("interest_topics") or []) if str(t).strip()
-        ][:10]
         return DiaryGenerationResult(
             entry=entry,
-            dominant_topic=dominant_topic,
-            interest_topics=interest_topics,
         )
 
     # ── 内部工具 ──

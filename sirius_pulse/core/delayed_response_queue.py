@@ -76,6 +76,7 @@ class DelayedResponseQueue:
         speaker_name: str = "",
         platform_message_id: str = "",
         biography_context: BiographyPromptContext | None = None,
+        signal_prompt: str = "",
     ) -> DelayedResponseItem:
         """Add an item to the delayed queue.
 
@@ -135,6 +136,8 @@ class DelayedResponseQueue:
                         )
                     if biography_context.confidence:
                         item.biography_context.confidence.update(biography_context.confidence)
+                if signal_prompt:
+                    item.signal_prompt = signal_prompt
                 logger.debug(
                     "Merged %s item %s for group %s (content now %d chars, window %.1fs)",
                     strategy_decision.strategy.value,
@@ -164,6 +167,7 @@ class DelayedResponseQueue:
             pace=pace,
             related_user_ids=[user_id] if user_id else [],
             biography_context=biography_context or BiographyPromptContext(),
+            signal_prompt=signal_prompt,
         )
         if group_id not in self._queues:
             self._queues[group_id] = []

@@ -12,11 +12,8 @@ from sirius_pulse.memory.diary import (
     DiaryRetriever,
 )
 from sirius_pulse.memory.evolution import (
-    EvolutionAction,
     EvolutionChain,
     EvolutionRecord,
-    Triple,
-    ValidationResult,
 )
 from sirius_pulse.memory.glossary import GlossaryManager, GlossaryTerm
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
@@ -38,9 +35,6 @@ __all__ = [
     "GlossaryTerm",
     "EvolutionChain",
     "EvolutionRecord",
-    "EvolutionAction",
-    "Triple",
-    "ValidationResult",
     "ColdDetector",
     "ColdState",
 ]

@@ -45,42 +45,15 @@ class ResponseRecord:
 
 
 @dataclass
-class AtmosphereSnapshot:
-    timestamp: str = ""
-    group_valence: float = 0.0
-    group_arousal: float = 0.0
-    active_participants: int = 0
-
-
-@dataclass
 class GroupSemanticProfile:
     group_id: str = ""
     group_name: str = ""
-    interest_topics: list[str] = field(default_factory=list)
-    atmosphere_history: list[Any] = field(default_factory=list)
-    group_norms: dict[str, Any] = field(default_factory=dict)
-    taboo_topics: list[str] = field(default_factory=list)
-    dominant_topic: str = ""
     pending_ai_responses: list[ResponseRecord] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "group_id": self.group_id,
             "group_name": self.group_name,
-            "interest_topics": list(self.interest_topics),
-            "atmosphere_history": [
-                {
-                    "timestamp": s.timestamp,
-                    "group_valence": s.group_valence,
-                    "group_arousal": s.group_arousal,
-                    "active_participants": s.active_participants,
-                }
-                for s in self.atmosphere_history
-                if isinstance(s, AtmosphereSnapshot)
-            ],
-            "group_norms": dict(self.group_norms),
-            "taboo_topics": list(self.taboo_topics),
-            "dominant_topic": self.dominant_topic,
             "pending_ai_responses": [
                 r.to_dict() for r in self.pending_ai_responses if isinstance(r, ResponseRecord)
             ],
@@ -88,13 +61,6 @@ class GroupSemanticProfile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GroupSemanticProfile:
-        raw_history = data.get("atmosphere_history", [])
-        history: list[AtmosphereSnapshot] = []
-        for item in raw_history:
-            if isinstance(item, dict):
-                history.append(AtmosphereSnapshot(**item))
-            elif isinstance(item, AtmosphereSnapshot):
-                history.append(item)
         raw_pending = data.get("pending_ai_responses", [])
         pending: list[ResponseRecord] = []
         for item in raw_pending:
@@ -105,11 +71,6 @@ class GroupSemanticProfile:
         return cls(
             group_id=data.get("group_id", ""),
             group_name=data.get("group_name", ""),
-            interest_topics=list(data.get("interest_topics", [])),
-            atmosphere_history=history,
-            group_norms=dict(data.get("group_norms", {})),
-            taboo_topics=list(data.get("taboo_topics", [])),
-            dominant_topic=data.get("dominant_topic", ""),
             pending_ai_responses=pending,
         )
 
@@ -124,7 +85,6 @@ class UserSemanticProfile:
     interaction_count: int = 0
     first_interaction_at: str = ""
     last_interaction_at: str = ""
-    pending_responses: list[ResponseRecord] = field(default_factory=list)
 
     def compute_familiarity(self) -> float:
         """基于真实交互次数的熟悉度（对数曲线，50次≈0.96）。"""
@@ -144,20 +104,10 @@ class UserSemanticProfile:
             "interaction_count": self.interaction_count,
             "first_interaction_at": self.first_interaction_at,
             "last_interaction_at": self.last_interaction_at,
-            "pending_responses": [
-                r.to_dict() for r in self.pending_responses if isinstance(r, ResponseRecord)
-            ],
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> UserSemanticProfile:
-        raw_pending = data.get("pending_responses", [])
-        pending: list[ResponseRecord] = []
-        for item in raw_pending:
-            if isinstance(item, dict):
-                pending.append(ResponseRecord.from_dict(item))
-            elif isinstance(item, ResponseRecord):
-                pending.append(item)
         return cls(
             user_id=data.get("user_id", ""),
             name=data.get("name", ""),
@@ -165,7 +115,6 @@ class UserSemanticProfile:
             interaction_count=data.get("interaction_count", 0),
             first_interaction_at=data.get("first_interaction_at", ""),
             last_interaction_at=data.get("last_interaction_at", ""),
-            pending_responses=pending,
         )
 
 
@@ -173,5 +122,4 @@ __all__ = [
     "ResponseRecord",
     "GroupSemanticProfile",
     "UserSemanticProfile",
-    "AtmosphereSnapshot",
 ]

@@ -79,9 +79,7 @@ from sirius_pulse.core.identity_resolver import (
 )
 from sirius_pulse.core.model_router import ModelRouter, TaskConfig
 from sirius_pulse.core.prompt_factory import PromptBundle, PromptFactory, StyleAdapter, StyleParams
-from sirius_pulse.core.response_strategy import ResponseStrategyEngine
 from sirius_pulse.core.rhythm import RhythmAnalysis, RhythmAnalyzer
-from sirius_pulse.core.threshold_engine import ThresholdEngine
 
 # ── Exceptions ──
 from sirius_pulse.exceptions import (
@@ -122,7 +120,7 @@ from sirius_pulse.models.emotion import (
     EmotionState,
     EmpathyStrategy,
 )
-from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
+from sirius_pulse.models.intent_v3 import SocialIntent
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 
 # ── Plugin system（v1.2+）──
@@ -250,11 +248,9 @@ __all__ = [
     "PromptBundle",
     "StyleAdapter",
     "StyleParams",
-    "ResponseStrategyEngine",
     "DelayedResponseQueue",
     "RhythmAnalysis",
     "RhythmAnalyzer",
-    "ThresholdEngine",
     # Config
     "Agent",
     "AgentPreset",
@@ -282,7 +278,6 @@ __all__ = [
     "EmotionState",
     "AssistantEmotionState",
     "EmpathyStrategy",
-    "IntentAnalysisV3",
     "SocialIntent",
     "ResponseStrategy",
     "StrategyDecision",

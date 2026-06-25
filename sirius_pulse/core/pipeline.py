@@ -1,9 +1,8 @@
 """Pipeline stages for EmotionalGroupChatEngine.
 
-Perception → Cognition → Decision → Execution → BackgroundUpdate
+Perception → Signal → PreFilter → Generate → BackgroundUpdate
 
-重构为组合模式：Pipeline 类通过引擎实例访问属性，
-基类通过委托方法保持 API 兼容。
+规则计算层产生信号，粗筛决定是否调用主模型，主模型用 stop 工具决定回不回。
 """
 
 from __future__ import annotations
@@ -14,11 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.cognition import extract_keywords
-from sirius_pulse.memory.semantic.models import AtmosphereSnapshot
 from sirius_pulse.models.emotion import EmotionState
-from sirius_pulse.models.intent_v3 import IntentAnalysisV3, SocialIntent
 from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.models.response_strategy import BiographyPromptContext, ResponseStrategy, StrategyDecision
+from sirius_pulse.models.signal import SignalAnalysis
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -149,471 +147,293 @@ class Pipeline:
         engine._persist_group_state(group_id)
         return resolved_user_id
 
-    async def cognition(
+    # ------------------------------------------------------------------
+    # 信号计算（纯规则，无 LLM）
+    # ------------------------------------------------------------------
+
+    def compute_signal(
         self,
         content: str,
         user_id: str,
         group_id: str,
         *,
         sender_type: str = "human",
-        multimodal_inputs: list[dict[str, str]] | None = None,
         caller_is_developer: bool = False,
-    ) -> tuple[IntentAnalysisV3, EmotionState, list[dict[str, Any]], Any]:
-        """Cognitive layer: unified emotion + intent + empathy + memory retrieval."""
+    ) -> SignalAnalysis:
+        """纯规则信号计算。替代原 cognition() + decision()。
+
+        Returns:
+            SignalAnalysis 包含所有规则计算结果。
+        """
         engine = self._engine
-        # Build context from recent working memory (exclude current message)
+
+        # 上下文消息
         recent = engine._helpers.get_recent_messages(group_id, n=6)
         if recent and recent[-1].get("content") == content:
             context_messages = recent[:-1]
         else:
             context_messages = recent
 
-        # Joint cognition (emotion + intent + empathy in one pass)
+        # 节奏分析
+        recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
+        rhythm = engine.rhythm_analyzer.analyze(group_id, recent_msgs)
 
-        # 获取别名信息，帮助 LLM 区分 AI 和其他用户的别称
+        # 别名信息
         group_aliases: dict[str, str] | None = None
         try:
             group_aliases = engine.user_manager.get_aliases_for_group(group_id) or None
         except Exception:
             pass
 
-        emotion, intent, empathy = await engine.cognition_analyzer.analyze(
+        # 纯规则信号计算
+        signal = engine.cognition_analyzer.compute_signal(
             content,
             user_id,
             group_id,
             context_messages,
             sender_type=sender_type,
-            multimodal_inputs=multimodal_inputs,
             caller_is_developer=caller_is_developer,
             group_aliases=group_aliases,
+            rhythm=rhythm,
         )
 
-        # Rhythm context for persistence
-        try:
-            rhythm = engine.rhythm_analyzer.analyze(group_id or "", recent)
-            turn_gap_readiness = getattr(rhythm, "turn_gap_readiness", 0.5)
-        except Exception:
-            logger.warning("计算 turn_gap_readiness 失败，使用默认值 0.5", exc_info=True)
-            turn_gap_readiness = 0.5
-
-        # Build directed_signals JSON from 12-dimension scores
-        directed_signals = {
-            "mention_score": getattr(intent, "mention_score", 0.0),
-            "reference_score": getattr(intent, "reference_score", 0.0),
-            "name_match_score": getattr(intent, "name_match_score", 0.0),
-            "second_person_score": getattr(intent, "second_person_score", 0.0),
-            "question_score": getattr(intent, "question_score", 0.0),
-            "imperative_score": getattr(intent, "imperative_score", 0.0),
-            "topic_relevance_score": getattr(intent, "topic_relevance_score", 0.0),
-            "emotional_disclosure_score": getattr(intent, "emotional_disclosure_score", 0.0),
-            "attention_seeking_score": getattr(intent, "attention_seeking_score", 0.0),
-            "recency_score": getattr(intent, "recency_score", 0.0),
-            "turn_taking_score": getattr(intent, "turn_taking_score", 0.0),
-        }
-
-        # Persist cognition event for emotional timeline analysis
-        try:
-            engine.cognition_store.add(
-                group_id=group_id or "",
-                user_id=user_id or "",
-                valence=getattr(emotion, "valence", 0.0),
-                arousal=getattr(emotion, "arousal", 0.3),
-                basic_emotion=getattr(getattr(emotion, "basic_emotion", None), "name", "")
-                if getattr(emotion, "basic_emotion", None)
-                else "",
-                intensity=getattr(emotion, "intensity", 0.5),
-                social_intent=getattr(getattr(intent, "social_intent", None), "value", "")
-                if getattr(intent, "social_intent", None)
-                else getattr(intent, "intent_type", ""),
-                urgency_score=getattr(intent, "urgency_score", 0.0),
-                relevance_score=getattr(intent, "relevance_score", 0.5),
-                confidence=getattr(intent, "confidence", 0.8),
-                directed_score=getattr(intent, "directed_score", 0.0),
-                sarcasm_score=getattr(intent, "sarcasm_score", 0.0),
-                entitlement_score=getattr(intent, "entitlement_score", 0.0),
-                turn_gap_readiness=turn_gap_readiness,
-                directed_signals=directed_signals,
-            )
-        except Exception:
-            pass
-
-        # Enhance topic relevance with semantic memory
-        intent.topic_relevance_score = engine._helpers.enhance_topic_relevance(
-            intent.topic_relevance_score, content, group_id, user_id
-        )
-
-        # v1.3+: 维护短期话题窗口（滑动窗口，保留最近 N 条消息的关键词快照）
+        # 话题窗口维护
         try:
             msg_kw = extract_keywords(content)
             window = engine._topic_window.setdefault(group_id or "", [])
             window.append(msg_kw)
-            # 只保留最近的 max_size 条
             max_size = getattr(engine, "_topic_window_max_size", 10)
             if len(window) > max_size:
                 window[:] = window[-max_size:]
         except Exception:
             logger.warning("裁剪话题窗口失败", exc_info=True)
+
+        # 持久化认知事件
+        try:
+            emotion = signal.emotion
+            engine.cognition_store.add(
+                group_id=group_id or "",
+                user_id=user_id or "",
+                valence=getattr(emotion, "valence", 0.0) if emotion else 0.0,
+                arousal=getattr(emotion, "arousal", 0.3) if emotion else 0.3,
+                basic_emotion=getattr(getattr(emotion, "basic_emotion", None), "name", "")
+                if emotion and getattr(emotion, "basic_emotion", None)
+                else "",
+                intensity=getattr(emotion, "intensity", 0.5) if emotion else 0.5,
+                social_intent=signal.social_intent,
+                urgency_score=signal.urgency_score,
+                relevance_score=signal.relevance_score,
+                confidence=0.8,
+                directed_score=signal.directed_score,
+                sarcasm_score=signal.sarcasm_score,
+                entitlement_score=signal.entitlement_score,
+                turn_gap_readiness=signal.turn_gap_readiness,
+                directed_signals={},
+            )
+        except Exception:
             pass
 
-        # Memory retrieval now happens in execution via ContextAssembler
-        memories: list[dict[str, Any]] = []
+        return signal
 
-        return intent, emotion, memories, empathy
+    # ------------------------------------------------------------------
+    # 粗筛（硬性守卫 + 阈值）
+    # ------------------------------------------------------------------
 
-    def decision(
+    def pre_filter(
         self,
-        intent: IntentAnalysisV3,
-        emotion: EmotionState,
-        group_id: str,
+        signal: SignalAnalysis,
+        content: str,
         user_id: str,
+        group_id: str,
         sender_type: str = "human",
-        content: str = "",
-    ) -> StrategyDecision:
-        """Decision layer: strategy selection with threshold and rhythm."""
+    ) -> str:
+        """粗筛：决定是否调用主模型。
+
+        Returns:
+            "pass" — 进入主模型生成
+            "reject" — 跳过，不调用 LLM
+        """
         engine = self._engine
 
-        # === 消息前缀过滤 ===
+        # 1. 消息前缀过滤
         prefixes = engine.config.get("message_prefixes", [])
         if prefixes and content:
             text_stripped = content.lstrip()
             if any(text_stripped.startswith(p) for p in prefixes if p):
                 logger.debug("消息以配置前缀开头，跳过回复流程: %s", text_stripped[:50])
-                return StrategyDecision(
-                    strategy=ResponseStrategy.SILENT,
-                    score=0.0,
-                    threshold=1.0,
-                    urgency=0.0,
-                    relevance=0.0,
-                    reason="message_prefix_filtered",
-                )
+                return "reject"
 
-        # Rhythm context
-        recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
-        rhythm = engine.rhythm_analyzer.analyze(group_id, recent_msgs)
+        # 2. 极短消息过滤
+        if len(content or "") <= 2 and not __import__("re").search(r"[一-鿿]", content or ""):
+            if not signal.is_mentioned:
+                return "reject"
 
-        # Compute dynamic threshold via ThresholdEngine
-        user_profile = engine.semantic_memory.get_user_profile(group_id, user_id)
+        # 3. 过热 + 爆发 + 未指向 → 跳过
+        if (
+            signal.heat_level == "overheated"
+            and signal.burst_detected
+            and not signal.is_mentioned
+        ):
+            engine._log_inner_thought("群聊太热闹了，我先不插话了...")
+            return "reject"
 
-        # Message rate (per minute) from recent messages
-        msg_rate = engine._helpers.message_rate_per_minute(recent_msgs)
+        # 4. @了别人且没@自己 → 跳过（由 compute_signal 的 other_mention 保护）
+        # directed_score 已经处理了这个逻辑（other_mention >= 0.5 时 directed_score 被压低）
 
-        threshold = engine.threshold_engine.compute(
-            sensitivity=engine.config.get("sensitivity", 0.5),
-            heat_level=rhythm.heat_level,
-            messages_per_minute=msg_rate,
-            user_profile=user_profile,
-            sender_type=sender_type,
-        )
-
-        # Persona reply frequency bias
-        freq = engine.persona.reply_frequency
-        if freq == "high":
-            threshold *= 0.8
-        elif freq == "low":
-            threshold *= 1.3
-        elif freq == "selective":
-            # Only reply when strongly directed (>=threshold) or high urgency
-            if (
-                intent.directed_score < engine.expressiveness.directed_threshold
-                and intent.urgency_score < 70
-            ):
-                threshold *= 2.0
-
-        # Entitlement suppression: if AI is not qualified for this topic, raise threshold
-        if intent.entitlement_score < engine.expressiveness.entitlement_threshold:
-            threshold *= 1.5
-            engine._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
-
-        # 传记亲和力调节：仅当 LLM 曾输出过传记（last_updated_at 非空）时才生效
-        biography_card = None
-        affinity = 0.0
-        # 使用 UnifiedUserManager 获取用户信息（包含亲和力分数）
-        user_info = engine.user_manager.get_user(user_id)
-        if user_info is not None and user_info.last_updated_at:
-            # 用 EMA 平滑后的 affinity_score，不完全信任单次 LLM 输出
-            affinity = user_info.affinity_score
-            if affinity > 0.3:
-                factor = 1.0 - min(0.25, affinity * 0.15)
-                threshold *= factor
-            elif affinity < -0.3:
-                factor = 1.0 + min(0.40, abs(affinity) * 0.25)
-                threshold *= factor
-            if abs(affinity) > 0.3:
-                engine._log_inner_thought(f"对ta的认知是affinity={affinity:.2f}，响应门槛调整了")
-
-        intent.threshold = threshold
-        intent.activity_factor = engine.threshold_engine._activity_factor(
-            rhythm.heat_level, msg_rate
-        )
-        intent.time_factor = engine.threshold_engine._time_factor(None)
-        if user_profile:
-            intent.engagement_factor = engine.threshold_engine._engagement_factor(user_profile)
-
-        sensitivity = engine.config.get("sensitivity", 0.5)
-        directed_gate = engine.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
-        is_mentioned = intent.directed_score >= directed_gate
-
-        decision_result = engine.strategy_engine.decide(
-            intent,
-            is_mentioned=is_mentioned,
-            weak_directed_threshold=engine.expressiveness.weak_directed_threshold,
-            heat_level=rhythm.heat_level,
-            sender_type=sender_type,
-        )
-
-        # Reply cooldown suppression: delayed responses are throttled,
-        # but immediate responses (e.g. direct mentions) bypass cooldown.
+        # 5. cooldown 检查
         now = datetime.now(timezone.utc).timestamp()
         last_reply = engine._last_reply_at.get(group_id, 0)
         seconds_since_reply = now - last_reply
         cooldown = engine.config.get(
             "reply_cooldown_seconds", engine.expressiveness.cooldown_seconds
         )
-        if seconds_since_reply < cooldown and decision_result.strategy == ResponseStrategy.DELAYED:
-            decision_result = StrategyDecision(
-                strategy=ResponseStrategy.SILENT,
-                score=0.0,
-                threshold=decision_result.threshold,
-                urgency=decision_result.urgency,
-                relevance=decision_result.relevance,
-                reason=f"cooldown_{int(seconds_since_reply)}s",
-            )
-            engine._log_inner_thought("群里正聊得火热呢，我刚回完不久，先闭嘴看看...")
+        if seconds_since_reply < cooldown and not signal.is_mentioned:
+            return "reject"
 
-        # Private-chat floor: never stay completely silent in 1-on-1
-        if group_id.startswith("private_") and decision_result.strategy == ResponseStrategy.SILENT:
-            decision_result = StrategyDecision(
-                strategy=ResponseStrategy.DELAYED,
-                score=decision_result.score,
-                threshold=decision_result.threshold,
-                urgency=max(decision_result.urgency, 25.0),
-                relevance=max(decision_result.relevance, 0.5),
-                reason=f"private_chat_floor:{decision_result.reason}",
-            )
+        # 6. 阈值判断
+        sensitivity = engine.config.get("sensitivity", 0.5)
+        directed_gate = engine.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
 
-        # 内心活动：决策后的思考
-        engine._log_decision_thought(intent, decision_result)
+        # 亲和度调节
+        user_profile = engine.semantic_memory.get_user_profile(group_id, user_id)
+        affinity = 0.0
+        if user_profile:
+            affinity = getattr(user_profile, "affinity_score", 0.0)
 
-        # 结构化日志：记录关键决策参数到后台
+        # 基础阈值
+        threshold = directed_gate
+
+        # persona reply_frequency 偏置
+        freq = engine.persona.reply_frequency
+        if freq == "high":
+            threshold *= 0.8
+        elif freq == "low":
+            threshold *= 1.3
+        elif freq == "selective":
+            if signal.directed_score < directed_gate and signal.urgency_score < 70:
+                threshold *= 2.0
+
+        # entitlement 抑制
+        if signal.entitlement_score < engine.expressiveness.entitlement_threshold:
+            threshold *= 1.5
+            engine._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
+
+        # 私聊兜底：1v1 不完全沉默
+        is_private = group_id.startswith("private_")
+
+        # 核心判断：directed_score 或 urgency 是否达标
+        passed = (
+            signal.is_mentioned
+            or signal.directed_score >= threshold
+            or signal.urgency_score >= 70
+            or is_private
+        )
+
+        if not passed:
+            return "reject"
+
+        # 结构化日志
         logger.info(
-            "[决策参数] group=%s user=%s strategy=%s score=%.3f threshold=%.3f "
-            "directed_score=%.3f directed_gate=%.3f directed=%s urgency=%.1f "
-            "entitlement=%.3f sarcasm=%.3f affinity=%.2f "
-            "heat_level=%s msg_rate=%.2f cooldown=%.1fs since_reply=%.1fs "
-            "expressiveness=%.2f sensitivity=%.2f reason=%s",
+            "[信号] group=%s user=%s directed=%.3f gate=%.3f mentioned=%s "
+            "urgency=%.1f entitlement=%.3f heat=%s",
             group_id,
             user_id,
-            decision_result.strategy.value
-            if hasattr(decision_result.strategy, "value")
-            else str(decision_result.strategy),
-            decision_result.score,
-            decision_result.threshold,
-            intent.directed_score,
+            signal.directed_score,
             directed_gate,
-            intent.directed_at_current_ai,
-            intent.urgency_score,
-            intent.entitlement_score,
-            intent.sarcasm_score,
-            affinity,
-            rhythm.heat_level,
-            msg_rate,
-            cooldown,
-            seconds_since_reply,
-            engine.expressiveness.expressiveness if engine.expressiveness else 0.5,
-            engine.config.get("sensitivity", 0.5),
-            getattr(decision_result, "reason", ""),
+            signal.is_mentioned,
+            signal.urgency_score,
+            signal.entitlement_score,
+            signal.heat_level,
         )
 
-        # 持久化决策事件到 cognition_events.db（供 WebUI 分析）
-        try:
-            strategy_val = (
-                decision_result.strategy.value
-                if hasattr(decision_result.strategy, "value")
-                else str(decision_result.strategy)
-            )
-            engine.cognition_store.add_decision(
-                group_id=group_id or "",
-                user_id=user_id or "",
-                strategy=strategy_val,
-                score=decision_result.score,
-                threshold=decision_result.threshold,
-                reason=getattr(decision_result, "reason", ""),
-                directed_score=getattr(intent, "directed_score", 0.0),
-                urgency=getattr(intent, "urgency_score", 0.0),
-                entitlement=getattr(intent, "entitlement_score", 0.0),
-                sarcasm=getattr(intent, "sarcasm_score", 0.0),
-                heat_level=rhythm.heat_level,
-                msg_rate=msg_rate,
-                cooldown=cooldown,
-                since_reply=seconds_since_reply,
-                expressiveness=engine.expressiveness.expressiveness
-                if engine.expressiveness
-                else 0.5,
-                sensitivity=engine.config.get("sensitivity", 0.5),
-                affinity=affinity,
-            )
-        except Exception:
-            pass
+        return "pass"
 
-        # Update assistant emotion
-        engine.assistant_emotion.update_from_interaction(emotion, user_id)
+    # ------------------------------------------------------------------
+    # 统一生成（所有通过粗筛的消息走这条路）
+    # ------------------------------------------------------------------
 
-        # Semantic: record atmosphere snapshot, resolve feedback, record interaction
-        recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
-        now_iso = datetime.now(timezone.utc).isoformat()
-        snapshot = AtmosphereSnapshot(
-            timestamp=now_iso,
-            group_valence=emotion.valence,
-            group_arousal=emotion.arousal,
-            active_participants=len({m.get("user_id") for m in recent_msgs}),
+    async def generate(
+        self,
+        signal: SignalAnalysis,
+        message: Message,
+        group_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        """统一生成路径：将消息入队延迟队列，由主模型决定回复或 stop。
+
+        所有通过 pre_filter 的消息都走这条路。
+        """
+        engine = self._engine
+
+        # 收集人物传记
+        biography_context = self._collect_biography_section(
+            group_id, user_id, message.content or "",
         )
-        engine.semantic_memory.record_atmosphere(
+
+        # 构造 StrategyDecision 供 delayed_queue 使用
+        # urgency 高 → 短延迟，urgency 低 → 长延迟
+        if signal.is_mentioned or signal.urgency_score >= 80:
+            delay_seconds = 0.0
+            strategy = ResponseStrategy.IMMEDIATE
+        elif signal.urgency_score >= 50:
+            delay_seconds = 15.0
+            strategy = ResponseStrategy.DELAYED
+        else:
+            delay_seconds = 30.0
+            strategy = ResponseStrategy.DELAYED
+
+        decision = StrategyDecision(
+            strategy=strategy,
+            score=signal.urgency_score / 100.0,
+            threshold=0.5,
+            urgency=signal.urgency_score,
+            relevance=signal.relevance_score,
+            reason="signal_passed",
+        )
+        decision.estimated_delay_seconds = delay_seconds
+
+        # 入队延迟队列
+        engine.delayed_queue.enqueue(
             group_id=group_id,
-            snapshot=snapshot,
+            user_id=user_id,
+            message_content=message.content,
+            strategy_decision=decision,
+            candidate_memories=[],
+            channel=message.channel,
+            channel_user_id=message.channel_user_id,
+            multimodal_inputs=message.multimodal_inputs,
+            adapter_type=message.adapter_type,
+            heat_level=signal.heat_level,
+            pace=signal.pace,
+            speaker_name=message.speaker or "",
+            platform_message_id=message.message_id or "",
+            biography_context=biography_context,
+            signal_prompt=signal.to_prompt_text(),
         )
+        engine._persist_group_state(group_id)
+
+        # 更新 assistant emotion 和语义记忆
+        emotion = signal.emotion
+        if emotion:
+            engine.assistant_emotion.update_from_interaction(emotion, user_id)
+
+        now_iso = datetime.now(timezone.utc).isoformat()
         if user_id:
             engine.semantic_memory.settle_engagement(
                 group_id=group_id,
                 user_id=user_id,
-                directed_score=getattr(intent, "directed_score", 0.0),
+                directed_score=signal.directed_score,
                 timestamp=now_iso,
             )
             engine.semantic_memory.record_interaction(
-                group_id=group_id, user_id=user_id, timestamp=now_iso
+                group_id=group_id, user_id=user_id, timestamp=now_iso,
             )
-
-        return decision_result
-
-    async def execution(
-        self,
-        decision: StrategyDecision,
-        message: Message,
-        intent: IntentAnalysisV3,
-        emotion: EmotionState,
-        memories: list[dict[str, Any]],
-        group_id: str,
-        empathy: Any,
-        user_id: str,
-    ) -> dict[str, Any]:
-        """Execution layer: generate or queue reply."""
-        engine = self._engine
-
-        # === ✅ Plugin 命令执行路径（v1.2+）===
-        if decision.strategy == ResponseStrategy.PLUGIN and decision.plugin_intent:
-            if hasattr(engine, "_execute_plugin_command"):
-                plugin_result = await engine._execute_plugin_command(
-                    decision=decision,
-                    message=message,
-                    group_id=group_id,
-                    user_id=user_id,
-                )
-                # 插件成功返回了有效回复 → 直接返回
-                if plugin_result.get("reply") and not plugin_result.get("error"):
-                    return plugin_result
-                # 插件执行失败 → 回退到普通意图流程
-                logger.info(
-                    "插件 %s 执行失败（error=%s），降级为普通意图流程",
-                    decision.plugin_intent,
-                    plugin_result.get("error", "未知"),
-                )
-            # 不强制覆盖策略，让 decision 自然流过后续的 rhythm/gap 检查
-            # 消息本身有高 directed_score，如果阈值条件满足会自然入队延迟队列
-
-        # Rhythm context for style adaptation
-        recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
-        rhythm = engine.rhythm_analyzer.analyze(group_id, recent_msgs)
-
-        # 收集人物传记信息（零 LLM，供后续 prompt 组装使用）
-        biography_context = self._collect_biography_section(
-            group_id,
-            user_id,
-            message.content or "",
-        )
-
-        # Turn gap suppression: don't interrupt conversation in full flow
-        if (
-            rhythm.turn_gap_readiness < engine.expressiveness.gap_readiness_threshold
-            and intent.directed_score < engine.expressiveness.directed_threshold + 0.2
-            and decision.strategy == ResponseStrategy.IMMEDIATE
-        ):
-            decision = StrategyDecision(
-                strategy=ResponseStrategy.DELAYED,
-                score=decision.score * 0.8,
-                threshold=decision.threshold,
-                urgency=decision.urgency,
-                relevance=decision.relevance,
-                reason=f"gap_not_ready:{decision.reason}",
-            )
-            engine._log_inner_thought("大家正聊得起劲呢，我先不插话了，等个合适的时机...")
-
-        # Short filler suppression: pure punctuation / ultra-short messages
-        # should not trigger immediate replies even if LLM overestimates directedness
-        if (
-            len(message.content or "") <= 2
-            and not __import__("re").search(r"[\u4e00-\u9fff]", message.content or "")
-            and decision.strategy == ResponseStrategy.IMMEDIATE
-        ):
-            decision = StrategyDecision(
-                strategy=ResponseStrategy.DELAYED,
-                score=decision.score * 0.5,
-                threshold=decision.threshold,
-                urgency=decision.urgency * 0.3,
-                relevance=decision.relevance,
-                reason=f"short_filler:{decision.reason}",
-            )
-            engine._log_inner_thought("就发个标点符号...先等等看有没有下文吧")
-
-        # overheated + burst + not directed → downgrade to SILENT
-        is_directed = intent.directed_score >= engine.expressiveness.directed_threshold
-        if (
-            rhythm.heat_level == "overheated"
-            and rhythm.burst_detected
-            and not is_directed
-            and decision.strategy in (ResponseStrategy.IMMEDIATE, ResponseStrategy.DELAYED)
-        ):
-            engine._log_inner_thought("群聊太热闹了，我先不插话了...")
-            engine._persist_group_state(group_id)
-            return {
-                "strategy": "silent",
-                "reply": None,
-                "emotion": {},
-                "intent": intent.to_dict(),
-            }
-
-        if decision.strategy == ResponseStrategy.IMMEDIATE:
-            engine._log_inner_thought("让我先稍等片刻，看看有没有后续消息...")
-            return self._queue_response(
-                decision=decision,
-                message=message,
-                intent=intent,
-                emotion=emotion,
-                memories=memories,
-                group_id=group_id,
-                user_id=user_id,
-                rhythm=rhythm,
-                biography_context=biography_context,
-            )
-
-        if decision.strategy == ResponseStrategy.DELAYED:
-            return self._queue_response(
-                decision=decision,
-                message=message,
-                intent=intent,
-                emotion=emotion,
-                memories=memories,
-                group_id=group_id,
-                user_id=user_id,
-                rhythm=rhythm,
-                biography_context=biography_context,
-            )
-
-        engine._persist_group_state(group_id)
 
         return {
-            "strategy": decision.strategy.value,
+            "strategy": strategy.value,
             "reply": None,
             "emotion": {},
-            "intent": intent.to_dict(),
+            "signal": signal.to_dict(),
         }
 
     def _queue_response(
@@ -621,7 +441,7 @@ class Pipeline:
         *,
         decision: StrategyDecision,
         message: Message,
-        intent: IntentAnalysisV3,
+        intent: Any,
         emotion: EmotionState,
         memories: list[dict[str, Any]],
         group_id: str,
@@ -652,7 +472,7 @@ class Pipeline:
             "strategy": decision.strategy.value,
             "reply": None,
             "emotion": {},
-            "intent": intent.to_dict(),
+            "intent": {},
         }
         if decision.strategy == ResponseStrategy.IMMEDIATE:
             result["thought"] = ""
@@ -724,12 +544,12 @@ class Pipeline:
         group_id: str,
         message: Message,
         emotion: EmotionState | None,
-        intent: IntentAnalysisV3 | None,
+        intent: Any | None,
         user_id: str,
     ) -> None:
         """Background updates after main pipeline.
 
-        emotion / intent 可为 None（管线短路合并场景），
+        emotion / signal 可为 None（管线短路合并场景），
         此时跳过情感相关更新，仅处理用户信息持久化。
         """
         engine = self._engine

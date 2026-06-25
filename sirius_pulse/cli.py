@@ -1,18 +1,14 @@
-"""SiriusChat 多进程人格管理 CLI。
+"""Sirius Pulse 独立单人格 CLI。
 
-启动与管理多个人格实例，每个人格在独立子进程中运行。
+启动与管理单个人格实例，引擎在主进程内直接运行。
 
 使用方法::
 
     python main.py                               # 进入交互式 CLI
-    python main.py run                           # 启动所有已启用人格 + WebUI
+    python main.py run                           # 启动人格引擎 + WebUI
+    python main.py init                          # 在 data/ 目录初始化人格配置
     python main.py webui                         # 仅启动 WebUI（管理模式）
-    python main.py persona list                  # 列出所有人格
-    python main.py persona create <name>         # 创建人格
-    python main.py persona remove <name>         # 删除人格
-    python main.py persona start <name>          # 前台启动单个人格
-    python main.py persona stop <name>           # 停止单个人格
-    python main.py persona status <name>         # 查看人格状态
+    python main.py assistant --butler ws://...    # 以助手模式连接管家端
 """
 
 from __future__ import annotations
@@ -33,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from sirius_pulse.logging_config import configure_logging
+from sirius_pulse.logging_config import configure_logging, setup_log_archival
 
 REPO_ROOT = Path(os.environ.get("SIRIUS_PULSE_HOME", Path.cwd())).expanduser().resolve()
 DATA_DIR = REPO_ROOT / "data"
@@ -219,7 +215,9 @@ def _select_menu(
             extra = _capture_render(render_extra)
             if extra:
                 parts.append(extra.rstrip("\n") + "\n\n")
-            parts.append(_paint("使用 ↑/↓ 选择，Enter 确认，Esc 返回，Ctrl+C 退出", _Ansi.DIM) + "\n\n")
+            parts.append(
+                _paint("使用 ↑/↓ 选择，Enter 确认，Esc 返回，Ctrl+C 退出", _Ansi.DIM) + "\n\n"
+            )
             for idx, (key, label, detail) in enumerate(items):
                 active = idx == selected
                 marker = ">" if active else " "
@@ -248,75 +246,6 @@ def _select_menu(
         if sys.stdout.isatty():
             sys.stdout.write("\033[?25h")
             sys.stdout.flush()
-
-
-def _status_badge(running: bool) -> str:
-    if running:
-        return _paint("● 运行中", _Ansi.GREEN, _Ansi.BOLD)
-    return _paint("○ 已停止", _Ansi.DIM)
-
-
-def _manager():
-    from sirius_pulse.persona_manager import PersonaManager
-
-    config = _load_global_config()
-    return PersonaManager(DATA_DIR, global_config=config)
-
-
-def _print_persona_table() -> list[dict[str, Any]]:
-    manager = _manager()
-    personas = manager.list_personas()
-    if not personas:
-        print(_paint("还没有人格。可以在「人格管理」中创建第一个人格。", _Ansi.YELLOW))
-        return []
-
-    print(
-        _paint(
-            f"{_pad('序号', 6)}{_pad('人格', 18)}{_pad('角色名', 18)}{_pad('状态', 16)}{_pad('PID', 10)}{_pad('端口', 8)}",
-            _Ansi.BOLD,
-        )
-    )
-    print(_paint("─" * 76, _Ansi.DIM))
-    for idx, persona in enumerate(personas, 1):
-        name = str(persona.get("name") or "-")[:16]
-        persona_name = str(persona.get("persona_name") or "-")[:16]
-        pid = str(persona.get("pid") or "-")
-        port = str(manager.get_port(persona["name"]) or "-")
-        print(
-            f"{_pad(str(idx), 6)}{_pad(name, 18)}{_pad(persona_name, 18)}"
-            f"{_pad(_status_badge(bool(persona.get('running'))), 24)}{_pad(pid, 10)}{_pad(port, 8)}"
-        )
-    return personas
-
-
-def _select_persona(prompt_text: str = "选择人格序号或名称: ") -> str | None:
-    personas = _print_persona_table()
-    if not personas:
-        return None
-    if sys.stdin.isatty():
-        items = [
-            (str(idx), str(persona["name"]), str(persona.get("persona_name") or "—"))
-            for idx, persona in enumerate(personas, 1)
-        ]
-        items.append(("b", "返回", "取消选择"))
-        choice = _select_menu("选择人格", "使用方向键选择目标人格", items)
-        if choice in {"b", "back", "q"}:
-            return None
-        index = int(choice) - 1
-        return str(personas[index]["name"])
-    value = _prompt(f"\n{prompt_text}")
-    if not value:
-        return None
-    if value.isdigit():
-        index = int(value) - 1
-        if 0 <= index < len(personas):
-            return str(personas[index]["name"])
-    names = {str(p["name"]) for p in personas}
-    if value in names:
-        return value
-    print(_paint("未找到对应人格。", _Ansi.RED))
-    _pause()
-    return None
 
 
 def _run_cli_action(action: Callable[[], None]) -> None:
@@ -451,12 +380,6 @@ def _shutdown_services() -> None:
             print(_paint("已停止 WebUI 与其托管的 Embedding 微服务", _Ansi.GREEN))
     except Exception as exc:
         print(_paint(f"停止 WebUI 失败: {exc}", _Ansi.RED))
-    try:
-        manager = _manager()
-        manager.stop_all()
-        print(_paint("已停止所有人格子进程", _Ansi.GREEN))
-    except Exception as exc:
-        print(_paint(f"停止人格进程失败: {exc}", _Ansi.RED))
 
 
 def _default_global_config() -> dict:
@@ -490,7 +413,7 @@ def _load_global_config() -> dict:
 
 
 async def _cmd_run(args: argparse.Namespace) -> None:
-    """启动所有已启用的人格 + WebUI。NapCat 由人格子进程自动管理。"""
+    """启动人格引擎 + WebUI。引擎在主进程内直接运行。"""
     config = _load_global_config()
     webui_log_file = DATA_DIR / "logs" / "webui.log"
     configure_logging(
@@ -500,14 +423,11 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     )
     LOG = logging.getLogger("sirius.main")
 
-    from sirius_pulse.persona_manager import PersonaManager
     from sirius_pulse.webui import WebUIServer
 
-    persona_manager = PersonaManager(DATA_DIR, global_config=config)
-
-    # ── 先启动 WebUI（含 Embedding 服务），确保子进程能连上 ──
+    # ── 先启动 WebUI（含 Embedding 服务）──
     webui = WebUIServer(
-        persona_manager=persona_manager,
+        data_dir=DATA_DIR,
         host=str(config.get("webui_host", "0.0.0.0")),
         port=int(config.get("webui_port", 8080)),
     )
@@ -536,31 +456,57 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         LOG.error("Embedding 服务在 60 秒内未就绪，无法启动人格")
         await webui.stop()
         raise RuntimeError(
-            f"Embedding 服务不可用 ({emb_url})。" "请检查日志或手动启动: python -m sirius_pulse.embedding.server"
+            f"Embedding 服务不可用 ({emb_url})。"
+            "请检查日志或手动启动: python -m sirius_pulse.embedding.server"
         )
 
-    # ── 启动所有已启用人格（worker 子进程会自动管理 NapCat 实例）──
-    LOG.info("正在启动已启用人格...")
-    results = persona_manager.start_all()
-    for name, ok in results.items():
-        LOG.info("  %s %s", "✓" if ok else "✗", name)
+    # ── 直接在主进程启动 PersonaWorker ──
+    from sirius_pulse.persona_worker import PersonaWorker
+
+    worker = PersonaWorker(DATA_DIR)
+
+    # 可选：启动 ButlerServer
+    butler_port = getattr(args, "butler_port", 0)
+    butler_server = None
+    if butler_port > 0:
+        from sirius_pulse.network.butler_server import ButlerServer
+
+        butler_server = ButlerServer(
+            host="0.0.0.0",
+            port=butler_port,
+            data_dir=DATA_DIR,
+            token=getattr(args, "butler_token", None),
+        )
+        await butler_server.start()
+        LOG.info("ButlerServer 已启动: ws://0.0.0.0:%d", butler_port)
+
+    # 信号处理
+    if sys.platform == "win32":
+        import signal as _signal
+
+        def _sig_handler(_s, _f):
+            worker.shutdown()
+
+        _signal.signal(_signal.SIGINT, _sig_handler)
+        _signal.signal(_signal.SIGTERM, _sig_handler)
+    else:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, worker.shutdown)
 
     LOG.info("按 Ctrl+C 停止所有服务")
 
     try:
-        while True:
-            await asyncio.sleep(3600)
-    except asyncio.CancelledError:
-        pass
+        await worker.run()
     finally:
-        LOG.info("正在停止所有人格...")
-        persona_manager.stop_all()
+        if butler_server:
+            await butler_server.stop()
         await webui.stop()
         LOG.info("所有服务已停止")
 
 
 async def _cmd_webui(args: argparse.Namespace) -> None:
-    """仅启动 WebUI（不启动任何人格）。"""
+    """仅启动 WebUI（不启动人格引擎）。"""
     if not getattr(args, "foreground", False):
         result = _start_webui_background()
         state = "已在后台运行" if not result["started"] else "已后台启动"
@@ -571,18 +517,16 @@ async def _cmd_webui(args: argparse.Namespace) -> None:
     configure_logging(level=config.get("log_level", "INFO"), format_type="console")
     LOG = logging.getLogger("sirius.main")
 
-    from sirius_pulse.persona_manager import PersonaManager
     from sirius_pulse.webui import WebUIServer
 
-    persona_manager = PersonaManager(DATA_DIR, global_config=config)
     webui = WebUIServer(
-        persona_manager=persona_manager,
+        data_dir=DATA_DIR,
         host=str(config.get("webui_host", "0.0.0.0")),
         port=int(config.get("webui_port", 8080)),
     )
     await webui.start()
     _write_webui_status(os.getpid(), config)
-    LOG.info("WebUI: http://localhost:%s（仅管理模式，无人格运行）", webui.port)
+    LOG.info("WebUI: http://localhost:%s（仅管理模式，无引擎运行）", webui.port)
 
     try:
         while True:
@@ -612,188 +556,134 @@ def _cmd_webui_stop(args: argparse.Namespace) -> None:
         print("WebUI 未在后台运行")
 
 
-def _cmd_persona_list(args: argparse.Namespace) -> None:
-    """列出所有人格（含进程存活检测）。"""
-    configure_logging(level="WARNING", format_type="console")
-    from sirius_pulse.persona_manager import PersonaManager
+def _cmd_init(args: argparse.Namespace) -> None:
+    """在 DATA_DIR 目录初始化人格配置（如果不存在则创建默认配置）。"""
+    if not DATA_DIR.exists():
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        print(_paint(f"已创建数据目录: {DATA_DIR}", _Ansi.GREEN))
+    else:
+        print(_paint(f"数据目录已存在: {DATA_DIR}", _Ansi.DIM))
 
-    config = _load_global_config()
-    manager = PersonaManager(DATA_DIR, global_config=config)
-    personas = manager.list_personas()
-    if not personas:
-        print("暂无任何人格。使用 `python main.py persona create <name>` 创建。")
-        return
+    created: list[str] = []
 
-    print(f"{'人格名':<12} {'角色名':<12} {'状态':<8} {'PID':<8} {'端口':<8} {'Adapter'}")
-    print("-" * 70)
-    for p in personas:
-        status = "运行中" if p.get("running") else "已停止"
-        pid = str(p.get("pid") or "-")
-        port = str(manager.get_port(p["name"]) or "-")
-        adapters = p.get("adapters_count", 0)
-        print(
-            f"{p['name']:<12} {p.get('persona_name') or '-':<12} {status:<8} {pid:<8} {port:<8} {adapters}"
+    # 创建子目录
+    for subdir in ("engine_state", "logs", "plugins", "image_cache"):
+        d = DATA_DIR / subdir
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            created.append(subdir)
+
+    # 创建默认 persona.json
+    persona_path = DATA_DIR / "persona.json"
+    if not persona_path.exists():
+        persona_path.write_text(
+            json.dumps(
+                _default_persona_config(),
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
         )
+        created.append("persona.json")
 
-
-def _cmd_persona_create(args: argparse.Namespace) -> None:
-    """创建新人格。"""
-    configure_logging(level="WARNING", format_type="console")
-    from sirius_pulse.persona_manager import PersonaManager
-
-    config = _load_global_config()
-    manager = PersonaManager(DATA_DIR, global_config=config)
-    try:
-        pdir = manager.create_persona(
-            args.name,
-            persona_name=args.name,
+    # 创建默认 adapters.json
+    adapters_path = DATA_DIR / "adapters.json"
+    if not adapters_path.exists():
+        adapters_path.write_text(
+            json.dumps(
+                _default_adapters_config(),
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
         )
-        print(f"人格已创建: {args.name}")
-        print(f"  目录: {pdir}")
-        print(f"  请编辑 {pdir / 'adapters.json'} 配置连接，然后运行:")
-        print(f"    python main.py run")
-    except FileExistsError:
-        print(f"人格已存在: {args.name}")
-        sys.exit(1)
+        created.append("adapters.json")
 
+    # 创建默认 experience.json
+    experience_path = DATA_DIR / "experience.json"
+    if not experience_path.exists():
+        experience_path.write_text(
+            json.dumps(
+                _default_experience_config(),
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        created.append("experience.json")
 
-def _cmd_persona_remove(args: argparse.Namespace) -> None:
-    """删除人格。"""
-    configure_logging(level="WARNING", format_type="console")
-    from sirius_pulse.persona_manager import PersonaManager
+    # 创建默认全局配置
+    _load_global_config()
 
-    config = _load_global_config()
-    manager = PersonaManager(DATA_DIR, global_config=config)
-    ok = manager.remove_persona(args.name)
-    if ok:
-        print(f"人格已删除: {args.name}")
+    if created:
+        print(_paint(f"已创建: {', '.join(created)}", _Ansi.GREEN))
+        print()
+        print("接下来请编辑以下文件配置你的人格:")
+        print(f"  {persona_path}")
+        print(f"  {adapters_path}")
+        print(f"  {experience_path}")
+        print()
+        print("然后运行:")
+        print("  python main.py run")
     else:
-        print(f"人格不存在: {args.name}")
-        sys.exit(1)
+        print(_paint("所有配置文件已存在，无需初始化。", _Ansi.DIM))
 
 
-def _cmd_persona_migrate(args: argparse.Namespace) -> None:
-    """从旧目录迁移人格。"""
-    configure_logging(level="INFO", format_type="console")
-    from sirius_pulse.persona_manager import PersonaManager
-
-    config = _load_global_config()
-    manager = PersonaManager(DATA_DIR, global_config=config)
-    source = Path(args.source).resolve()
-    if not source.exists():
-        print(f"源目录不存在: {source}")
-        sys.exit(1)
-
-    try:
-        pdir = manager.migrate_persona(source, args.name)
-        print(f"人格已迁移: {args.name}")
-        print(f"  目录: {pdir}")
-        port = manager.get_port(args.name)
-        if port:
-            print(f"  分配端口: {port}")
-            print(f"  请为该人格配置 NapCat (QQ) 并监听端口 {port}")
-    except FileExistsError as exc:
-        print(f"迁移失败: {exc}")
-        sys.exit(1)
-    except FileNotFoundError as exc:
-        print(f"迁移失败: {exc}")
-        sys.exit(1)
+def _default_persona_config() -> dict:
+    """返回默认 persona.json 内容。"""
+    return {
+        "persona_name": "默认人格",
+        "personality": "",
+        "speaking_style": "",
+        "ai": {
+            "model": "auto",
+            "prompt": "",
+        },
+    }
 
 
-async def _cmd_persona_start(args: argparse.Namespace) -> None:
-    """前台启动单个人格。"""
-    from sirius_pulse.persona_worker import PersonaWorker
-
-    pdir = DATA_DIR / "personas" / args.name
-    if not pdir.exists():
-        print(f"人格不存在: {args.name}")
-        sys.exit(1)
-
-    configure_logging(level="INFO", format_type="console")
-    LOG = logging.getLogger("sirius.main")
-
-    worker = PersonaWorker(pdir)
-
-    # 信号处理（Windows 兼容）
-    if sys.platform == "win32":
-        import signal as _signal
-
-        def _sig_handler(_s, _f):
-            worker.shutdown()
-
-        _signal.signal(_signal.SIGINT, _sig_handler)
-        _signal.signal(_signal.SIGTERM, _sig_handler)
-    else:
-        loop = asyncio.get_running_loop()
-        for sig in (__import__("signal").SIGTERM, __import__("signal").SIGINT):
-            loop.add_signal_handler(sig, worker.shutdown)
-
-    try:
-        await worker.run()
-    except Exception:
-        LOG.exception("人格工作进程异常退出")
-        raise
+def _default_adapters_config() -> dict:
+    """返回默认 adapters.json 内容。"""
+    return {
+        "adapters": [
+            {
+                "type": "napcat",
+                "enabled": False,
+                "ws_url": "ws://localhost:3001",
+                "token": "",
+                "groups": [],
+            }
+        ]
+    }
 
 
-def _cmd_persona_stop(args: argparse.Namespace) -> None:
-    """停止单个人格。"""
-    configure_logging(level="WARNING", format_type="console")
-    from sirius_pulse.persona_manager import PersonaManager
-
-    config = _load_global_config()
-    manager = PersonaManager(DATA_DIR, global_config=config)
-    ok = manager.stop_persona(args.name)
-    if ok:
-        print(f"人格已停止: {args.name}")
-    else:
-        print(f"人格未在运行或不存在: {args.name}")
+def _default_experience_config() -> dict:
+    """返回默认 experience.json 内容。"""
+    return {
+        "memory_depth": "standard",
+        "plugins": {},
+    }
 
 
-def _cmd_persona_status(args: argparse.Namespace) -> None:
-    """查看人格状态。"""
-    configure_logging(level="WARNING", format_type="console")
-    from sirius_pulse.persona_manager import PersonaManager
-
-    config = _load_global_config()
-    manager = PersonaManager(DATA_DIR, global_config=config)
-    info = manager.get_persona_status(args.name)
-    if info is None:
-        print(f"人格不存在: {args.name}")
-        sys.exit(1)
-
-    # 简洁格式输出
-    print(f"人格: {info['name']}")
-    print(f"角色名: {info.get('persona_name') or '—'}")
-    print(f"状态: {'运行中' if info.get('running') else '已停止'}")
-    print(f"PID: {info.get('pid') or '—'}")
-    print(f"端口: {manager.get_port(args.name) or '—'}")
-    print(f"Adapter: {info.get('adapters_count', 0)} 个")
-    print(f"心跳: {info.get('heartbeat_at') or '—'}")
-    print(f"目录: {info['work_path']}")
-
-
-def _cmd_persona_logs(args: argparse.Namespace) -> None:
-    """查看人格日志。"""
-    configure_logging(level="WARNING", format_type="console")
-    from sirius_pulse.persona_manager import PersonaManager
-
-    config = _load_global_config()
-    manager = PersonaManager(DATA_DIR, global_config=config)
-    logs = manager.get_logs(args.name, lines=args.lines)
-    if not logs:
-        print("暂无日志")
-        return
-    for line in logs:
-        print(line)
+def _load_persona_name() -> str:
+    """从 persona.json 加载人格名称。"""
+    persona_path = DATA_DIR / "persona.json"
+    if persona_path.exists():
+        try:
+            data = json.loads(persona_path.read_text(encoding="utf-8"))
+            return data.get("persona_name", "default")
+        except Exception:
+            pass
+    return "default"
 
 
 def _cli_start_all() -> None:
-    _header("启动运行模式", "WebUI 与所有已启用人格会一起启动")
+    _header("启动运行模式", "WebUI 与人格引擎会一起启动")
     print(_paint("即将进入长期运行模式，按 Ctrl+C 可停止所有服务。", _Ansi.YELLOW))
     choice = _prompt("继续启动？[Y/n] ").lower()
     if choice in {"n", "no", "否"}:
         return
-    asyncio.run(_cmd_run(argparse.Namespace()))
+    asyncio.run(_cmd_run(argparse.Namespace(butler_port=0, butler_token=None)))
 
 
 def _cli_open_webui() -> None:
@@ -831,63 +721,6 @@ def _cli_open_webui() -> None:
         _pause()
 
 
-def _cli_personas() -> None:
-    while True:
-        choice = _select_menu(
-            "人格管理",
-            "查看状态、创建人格、启停单个人格",
-            [
-                ("1", "创建人格", "生成独立配置目录与默认适配器"),
-                ("2", "启动人格", "后台启动单个人格"),
-                ("3", "停止人格", "停止后台运行的人格"),
-                ("4", "查看详情", "显示心跳、端口与目录"),
-                ("b", "返回首页", "回到主菜单"),
-            ],
-            _print_persona_table,
-        ).lower()
-        if choice in {"b", "back", "q"}:
-            return
-        if choice == "1":
-            name = _prompt("人格标识名: ")
-            if name:
-                _run_cli_action(lambda: _cmd_persona_create(argparse.Namespace(name=name)))
-                _pause()
-        elif choice == "2":
-            name = _select_persona()
-            if name:
-                _header(f"启动人格 {name}", "人格会作为后台子进程运行")
-                print(_paint("启动后可在 WebUI 实时日志页面查看运行日志。", _Ansi.YELLOW))
-                if _prompt("继续启动？[Y/n] ").lower() not in {"n", "no", "否"}:
-                    asyncio.run(_cmd_persona_start(argparse.Namespace(name=name)))
-        elif choice == "3":
-            name = _select_persona()
-            if name:
-                _run_cli_action(lambda: _cmd_persona_stop(argparse.Namespace(name=name)))
-                _pause()
-        elif choice == "4":
-            name = _select_persona()
-            if name:
-                _header(f"人格详情 {name}")
-                _run_cli_action(lambda: _cmd_persona_status(argparse.Namespace(name=name)))
-                _pause()
-
-
-def _cli_logs() -> None:
-    while True:
-        _header("日志查看", "日志作为 CLI 中的可选界面")
-        name = _select_persona("选择要查看日志的人格序号或名称，留空返回: ")
-        if not name:
-            return
-        raw_lines = _prompt("显示行数 [80]: ") or "80"
-        try:
-            lines = max(1, int(raw_lines))
-        except ValueError:
-            lines = 80
-        _header(f"{name} 日志", f"最近 {lines} 行")
-        _run_cli_action(lambda: _cmd_persona_logs(argparse.Namespace(name=name, lines=lines)))
-        _pause()
-
-
 def _cli_config() -> None:
     config = _load_global_config()
     _header("运行配置", "当前 CLI、WebUI 与数据目录")
@@ -900,7 +733,9 @@ def _cli_config() -> None:
         ("日志级别", str(config.get("log_level", "INFO"))),
     ]
     running, status = _webui_status()
-    rows.append(("WebUI 状态", f"运行中 pid={status.get('pid')}" if running and status else "未运行"))
+    rows.append(
+        ("WebUI 状态", f"运行中 pid={status.get('pid')}" if running and status else "未运行")
+    )
     for key, value in rows:
         print(f"{_paint(key + ':', _Ansi.BOLD):<18} {value}")
     _pause()
@@ -915,7 +750,7 @@ def _cmd_cli(args: argparse.Namespace) -> None:
 
     result = run_textual_cli()
     if result.action == "run":
-        asyncio.run(_cmd_run(argparse.Namespace()))
+        asyncio.run(_cmd_run(argparse.Namespace(butler_port=0, butler_token=None)))
 
 
 def _cmd_legacy_cli(args: argparse.Namespace) -> None:
@@ -928,14 +763,11 @@ def _cmd_legacy_cli(args: argparse.Namespace) -> None:
                 "交互式控制台",
                 f"data: {DATA_DIR} · webui: http://localhost:{config.get('webui_port', 8080)}",
                 [
-                    ("1", "启动运行模式", "所有已启用人格 + WebUI"),
+                    ("1", "启动运行模式", "人格引擎 + WebUI"),
                     ("2", "WebUI 面板", "后台服务，不占用 CLI 终端"),
-                    ("3", "人格管理", "创建、查看、启停单个人格"),
-                    ("4", "日志界面", "查看人格 worker 日志"),
-                    ("5", "运行配置", "查看路径、端口与日志级别"),
+                    ("3", "运行配置", "查看路径、端口与日志级别"),
                     ("q", "退出", "关闭 CLI"),
                 ],
-                _print_persona_table,
             ).lower()
             if choice in {"q", "quit", "exit", "退出"}:
                 _shutdown_services()
@@ -946,10 +778,6 @@ def _cmd_legacy_cli(args: argparse.Namespace) -> None:
             elif choice == "2":
                 _run_cli_action(_cli_open_webui)
             elif choice == "3":
-                _cli_personas()
-            elif choice == "4":
-                _cli_logs()
-            elif choice == "5":
                 _cli_config()
     except KeyboardInterrupt:
         _shutdown_services()
@@ -959,53 +787,133 @@ def _cmd_legacy_cli(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 助手模式
+# ---------------------------------------------------------------------------
+
+
+async def _cmd_assistant(args: argparse.Namespace) -> None:
+    """以助手模式启动人格：连接管家端，接管消息处理。"""
+    persona_name = _load_persona_name()
+    butler_url = args.butler
+    token = getattr(args, "token", None)
+    log_level = getattr(args, "log_level", "INFO")
+
+    if not DATA_DIR.is_dir():
+        print(f"数据目录不存在: {DATA_DIR}")
+        print("请先运行: python main.py init")
+        raise SystemExit(1)
+
+    log_file = DATA_DIR / "logs" / "assistant.log"
+    setup_log_archival(log_file)
+    configure_logging(
+        level=log_level.upper(),
+        format_type="console",
+        log_file=str(log_file),
+    )
+    LOG = logging.getLogger("sirius.assistant")
+
+    from sirius_pulse.network.assistant_client import AssistantClient
+    from sirius_pulse.persona_worker import PersonaWorker
+
+    # 1. 连接管家端
+    client = AssistantClient(
+        butler_url=butler_url,
+        persona_name=persona_name,
+        token=token,
+    )
+    try:
+        success = await client.connect_and_takeover()
+    except ConnectionError as exc:
+        print(f"连接管家端失败: {exc}")
+        raise SystemExit(1)
+
+    if not success:
+        print("接管请求被拒绝")
+        raise SystemExit(1)
+
+    LOG.info("已接管人格「%s」，正在启动本地引擎...", persona_name)
+    print(f"已接管人格「{persona_name}」，助手模式运行中")
+    print(f"  管家端: {butler_url}")
+    print("  按 Ctrl+C 释放控制权并退出")
+
+    # 2. 启动 PersonaWorker（助手模式）
+    worker = PersonaWorker(DATA_DIR)
+
+    # 注册信号处理
+    if sys.platform == "win32":
+        import signal as _signal
+
+        def _sig_handler(_signum, _frame):
+            worker.shutdown()
+
+        _signal.signal(_signal.SIGINT, _sig_handler)
+        _signal.signal(_signal.SIGTERM, _sig_handler)
+    else:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, worker.shutdown)
+
+    try:
+        # worker.run() 会阻塞直到 shutdown
+        # 在后台监听管家端断开
+        async def _watch_butler():
+            await client.wait_disconnect()
+            LOG.warning("与管家端的连接已断开，正在停止...")
+            worker.shutdown()
+
+        watch_task = asyncio.create_task(_watch_butler())
+        await worker.run()
+        watch_task.cancel()
+    finally:
+        await client.release()
+        LOG.info("助手模式已退出，控制权已归还管家端")
+
+
+# ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="SiriusChat 多进程人格管理 CLI")
+    parser = argparse.ArgumentParser(description="Sirius Pulse 独立单人格 CLI")
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 
     subparsers.add_parser("cli", help="进入交互式 CLI")
 
+    # init
+    subparsers.add_parser("init", help="在 data/ 目录初始化人格配置")
+
     # run
-    subparsers.add_parser("run", help="启动所有已启用人格 + WebUI")
+    run_parser = subparsers.add_parser("run", help="启动人格引擎 + WebUI")
+    run_parser.add_argument(
+        "--butler-port",
+        type=int,
+        default=0,
+        help="启用管家端 WebSocket 服务（指定端口号，如 9500）",
+    )
+    run_parser.add_argument(
+        "--butler-token",
+        default=None,
+        help="管家端认证令牌（可选）",
+    )
+
+    # assistant
+    assistant_parser = subparsers.add_parser("assistant", help="以助手模式连接管家端")
+    assistant_parser.add_argument(
+        "--butler",
+        required=True,
+        help="管家端 WebSocket 地址（如 ws://server:9500）",
+    )
+    assistant_parser.add_argument("--token", default=None, help="管家端认证令牌")
+    assistant_parser.add_argument("--log-level", default="INFO", help="日志级别")
 
     # webui
     webui_parser = subparsers.add_parser("webui", help="后台启动 WebUI 管理服务")
-    webui_parser.add_argument("--foreground", action="store_true", help="前台运行 WebUI，用于调试或后台子进程")
+    webui_parser.add_argument(
+        "--foreground", action="store_true", help="前台运行 WebUI，用于调试或后台子进程"
+    )
     webui_parser.add_argument("--status", action="store_true", help="查看后台 WebUI 状态")
     webui_parser.add_argument("--stop", action="store_true", help="停止后台 WebUI")
-
-    # persona
-    persona_parser = subparsers.add_parser("persona", help="人格管理")
-    persona_sub = persona_parser.add_subparsers(dest="persona_cmd", help="人格子命令")
-
-    persona_sub.add_parser("list", help="列出所有人格")
-
-    create_parser = persona_sub.add_parser("create", help="创建人格")
-    create_parser.add_argument("name", help="人格标识名（目录名）")
-
-    remove_parser = persona_sub.add_parser("remove", help="删除人格")
-    remove_parser.add_argument("name", help="人格标识名")
-
-    migrate_parser = persona_sub.add_parser("migrate", help="从旧目录迁移人格")
-    migrate_parser.add_argument("--source", required=True, help="源目录路径（如 data/bot）")
-    migrate_parser.add_argument("--name", required=True, help="目标人格标识名")
-
-    start_parser = persona_sub.add_parser("start", help="后台启动单个人格")
-    start_parser.add_argument("name", help="人格标识名")
-
-    stop_parser = persona_sub.add_parser("stop", help="停止单个人格")
-    stop_parser.add_argument("name", help="人格标识名")
-
-    status_parser = persona_sub.add_parser("status", help="查看人格状态")
-    status_parser.add_argument("name", help="人格标识名")
-
-    logs_parser = persona_sub.add_parser("logs", help="查看人格日志")
-    logs_parser.add_argument("name", help="人格标识名")
-    logs_parser.add_argument("--lines", type=int, default=50, help="显示行数")
 
     args = parser.parse_args()
 
@@ -1014,8 +922,12 @@ def main() -> int:
             _cmd_cli(args)
         elif args.command == "cli":
             _cmd_cli(args)
+        elif args.command == "init":
+            _cmd_init(args)
         elif args.command == "run":
             asyncio.run(_cmd_run(args))
+        elif args.command == "assistant":
+            asyncio.run(_cmd_assistant(args))
         elif args.command == "webui":
             if args.status:
                 _cmd_webui_status(args)
@@ -1023,26 +935,6 @@ def main() -> int:
                 _cmd_webui_stop(args)
             else:
                 asyncio.run(_cmd_webui(args))
-        elif args.command == "persona":
-            if args.persona_cmd == "list":
-                _cmd_persona_list(args)
-            elif args.persona_cmd == "create":
-                _cmd_persona_create(args)
-            elif args.persona_cmd == "remove":
-                _cmd_persona_remove(args)
-            elif args.persona_cmd == "migrate":
-                _cmd_persona_migrate(args)
-            elif args.persona_cmd == "start":
-                asyncio.run(_cmd_persona_start(args))
-            elif args.persona_cmd == "stop":
-                _cmd_persona_stop(args)
-            elif args.persona_cmd == "status":
-                _cmd_persona_status(args)
-            elif args.persona_cmd == "logs":
-                _cmd_persona_logs(args)
-            else:
-                persona_parser.print_help()
-                return 1
         else:
             parser.print_help()
             return 1

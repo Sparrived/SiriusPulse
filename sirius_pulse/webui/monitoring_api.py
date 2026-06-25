@@ -1,7 +1,7 @@
-"""WebUI 监控 API — 跨人格聚合监控数据。
+"""WebUI monitoring API -- single-persona monitoring data.
 
-提供全局概览、单人格详细指标、健康检查三类端点。
-所有数据均以只读方式从磁盘文件/数据库中采集，不修改任何运行时状态。
+Provides overview, detailed metrics, and health check endpoints.
+All data is collected from disk files/databases in read-only mode.
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
+from sirius_pulse.persona_config import PersonaConfigPaths
+from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui.monitoring")
 
@@ -61,13 +62,11 @@ def _read_token_usage(persona_dir: Path) -> dict[str, int]:
     try:
         conn = sqlite3.connect(str(db_path), timeout=5)
         conn.execute("PRAGMA journal_mode=WAL;")
-        row = conn.execute(
-            """SELECT
+        row = conn.execute("""SELECT
                 COALESCE(SUM(prompt_tokens), 0)  AS total_input,
                 COALESCE(SUM(completion_tokens), 0) AS total_output,
                 COUNT(*) AS call_count
-            FROM token_usage"""
-        ).fetchone()
+            FROM token_usage""").fetchone()
         conn.close()
         if row:
             return {
@@ -165,42 +164,30 @@ def _check_memory_system(persona_dir: Path) -> str:
 @handle_api_errors
 async def api_monitoring_overview(
     request: web.Request,
-    persona_manager: Any,
+    data_dir: Path,
 ) -> web.Response:
-    """GET /api/monitoring/overview — 全局概览。
+    """GET /api/monitoring/overview -- 全局概览。
 
-    返回所有人格的运行状态汇总，用于监控面板首页。
+    返回当前人格的运行状态，用于监控面板首页。
     """
-    personas_info: list[dict[str, Any]] = []
-    running_count = 0
-
-    for info in persona_manager.list_personas():
-        name = info["name"]
-        running = persona_manager.is_running(name)
-        status_data = _read_worker_status(persona_manager.get_persona_dir(name))
-
-        pid = status_data.get("pid") if status_data else None
-        if not running:
-            pid = None
-
-        if running:
-            running_count += 1
-
-        personas_info.append(
-            {
-                "name": name,
-                "running": running,
-                "pid": pid,
-                "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
-            }
-        )
+    persona_dir = data_dir
+    status_data = _read_worker_status(persona_dir)
+    running = status_data.get("running", False) if status_data else False
+    pid = status_data.get("pid") if status_data else None
 
     return _json_response(
         {
-            "total_personas": len(personas_info),
-            "running_personas": running_count,
-            "personas": personas_info,
-            "total_connections": 0,  # 占位，未来由 WS manager 填充
+            "total_personas": 1,
+            "running_personas": 1 if running else 0,
+            "personas": [
+                {
+                    "name": data_dir.name,
+                    "running": running,
+                    "pid": pid,
+                    "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
+                }
+            ],
+            "total_connections": 0,
         }
     )
 
@@ -208,24 +195,15 @@ async def api_monitoring_overview(
 @handle_api_errors
 async def api_monitoring_persona_metrics(
     request: web.Request,
-    persona_manager: Any,
+    data_dir: Path,
 ) -> web.Response:
-    """GET /api/monitoring/{name}/metrics — 单人格详细指标。
-
-    从磁盘采集 token 使用、记忆系统、认知事件等数据，
-    供监控面板的单人格详情页展示。
-    """
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
-
+    """GET /api/monitoring/metrics -- 当前人格详细指标。"""
+    paths = PersonaConfigPaths(data_dir)
     persona_dir = paths.dir
-    running = persona_manager.is_running(name)
+
     status_data = _read_worker_status(persona_dir)
+    running = status_data.get("running", False) if status_data else False
     pid = status_data.get("pid") if status_data else None
-    if not running:
-        pid = None
 
     token_usage = _read_token_usage(persona_dir)
     diary_count = _count_diary_entries(persona_dir)
@@ -235,7 +213,7 @@ async def api_monitoring_persona_metrics(
 
     return _json_response(
         {
-            "persona": name,
+            "persona": data_dir.name,
             "running": running,
             "pid": pid,
             "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
@@ -255,24 +233,15 @@ async def api_monitoring_persona_metrics(
 @handle_api_errors
 async def api_monitoring_health(
     request: web.Request,
-    persona_manager: Any,
+    data_dir: Path,
 ) -> web.Response:
-    """GET /api/monitoring/{name}/health — 健康检查。
-
-    检查人格进程存活、配置文件完整性、记忆系统可访问性。
-    用于运维监控和自动化告警。
-    """
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
-
+    """GET /api/monitoring/health -- 健康检查。"""
+    paths = PersonaConfigPaths(data_dir)
     persona_dir = paths.dir
-    running = persona_manager.is_running(name)
+
     status_data = _read_worker_status(persona_dir)
+    running = status_data.get("running", False) if status_data else False
     pid = status_data.get("pid") if status_data else None
-    if not running:
-        pid = None
 
     # 进程检查
     process_status = "ok" if running else "down"
@@ -287,7 +256,7 @@ async def api_monitoring_health(
 
     return _json_response(
         {
-            "persona": name,
+            "persona": data_dir.name,
             "healthy": healthy,
             "checks": {
                 "process": {

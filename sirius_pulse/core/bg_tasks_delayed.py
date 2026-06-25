@@ -812,6 +812,18 @@ class DelayedQueueTasks:
         )
         if glossary:
             bundle.system_prompt = f"{bundle.system_prompt}\n\n{TAG_GLOSSARY}\n{glossary}"
+
+        # 注入规则计算信号（来自 pipeline.compute_signal）
+        signal_prompts = [item.signal_prompt for item in items if getattr(item, "signal_prompt", "")]
+        if signal_prompts:
+            # 合并多条消息的信号（取最新的）
+            latest_signal = signal_prompts[-1]
+            bundle.system_prompt = (
+                f"{bundle.system_prompt}\n\n"
+                f"【消息信号分析】\n{latest_signal}\n\n"
+                f"这些是预计算的信号，仅供参考。你可以回复这条消息，或者调用 stop 工具跳过。"
+            )
+
         return bundle
 
     @staticmethod

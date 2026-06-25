@@ -63,7 +63,9 @@ def enrich_model_choices(
         data = ModelsDevCache(Path(data_path)).get()
         if not data:
             return
-        provider_types = list(provider_models) if provider_models is not None else _provider_types(model_choices)
+        provider_types = (
+            list(provider_models) if provider_models is not None else _provider_types(model_choices)
+        )
         tag_index = _build_capability_tag_index(data, provider_types)
         for choice in model_choices:
             parsed = parse_model_choice_value(choice["value"])

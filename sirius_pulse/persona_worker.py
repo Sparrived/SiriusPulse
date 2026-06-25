@@ -6,9 +6,9 @@
 - 运行事件循环，定期写入心跳
 - 响应 SIGTERM 优雅退出
 
-启动方式（由 PersonaManager 调用）::
+启动方式::
 
-    python -m sirius_pulse.persona_worker --config data/personas/akane
+    python -m sirius_pulse.persona_worker --config data
 """
 
 from __future__ import annotations
@@ -58,18 +58,15 @@ class PersonaWorker:
         # 1. 加载配置
         adapters_cfg = PersonaAdaptersConfig.load(self.paths.adapters)
         experience = PersonaExperienceConfig.load(self.paths.experience)
-        LOG.info("加载 %d 个 adapter，体验模式: %s", len(adapters_cfg.adapters), experience.memory_depth)
-
-        # 1.5 自动发现同项目其他 AI 的 QQ 号
-        self._auto_populate_peer_ai_ids(adapters_cfg)
+        LOG.info(
+            "加载 %d 个 adapter，体验模式: %s", len(adapters_cfg.adapters), experience.memory_depth
+        )
 
         # 2. 创建 EngineRuntime（experience 参数注入 plugin_config）
         plugin_config = self._build_plugin_config(experience)
-        global_data_path = self.persona_dir.parent.parent
         self._runtime = EngineRuntime(
             self.persona_dir,
             plugin_config=plugin_config,
-            global_data_path=global_data_path,
         )
 
         # 3. 启动引擎
@@ -98,36 +95,6 @@ class PersonaWorker:
     # ------------------------------------------------------------------
     # Adapter 启动
     # ------------------------------------------------------------------
-
-    def _auto_populate_peer_ai_ids(self, adapters_cfg: PersonaAdaptersConfig) -> None:
-        """自动扫描同项目其他人格的 QQ 号，填充到 peer_ai_ids 中。"""
-        personas_dir = self.persona_dir.parent
-        if not personas_dir.exists():
-            return
-        other_qqs: list[str] = []
-        for subdir in personas_dir.iterdir():
-            if not subdir.is_dir() or subdir.name == self.persona_dir.name:
-                continue
-            other_paths = PersonaConfigPaths(subdir)
-            if not other_paths.adapters.exists():
-                continue
-            try:
-                other_adapters = PersonaAdaptersConfig.load(other_paths.adapters)
-                for a in other_adapters.adapters:
-                    qq = getattr(a, "qq_number", "")
-                    if qq:
-                        other_qqs.append(str(qq))
-            except Exception:
-                continue
-        if not other_qqs:
-            return
-        for cfg in adapters_cfg.adapters:
-            if isinstance(cfg, NapCatAdapterConfig):
-                existing = set(str(x) for x in cfg.peer_ai_ids)
-                added = [qq for qq in other_qqs if qq not in existing]
-                if added:
-                    cfg.peer_ai_ids.extend(added)
-                    LOG.info("自动填充 peer_ai_ids: %s", cfg.peer_ai_ids)
 
     async def _start_adapter(
         self,
@@ -190,23 +157,8 @@ class PersonaWorker:
             "message_prefixes": experience.message_prefixes,
         }
 
-        # 同项目其他 AI 的名字/别名，用于抑制"人类叫别的 AI 时当前 AI 抢话"
-        other_ai_names: list[str] = []
-        personas_dir = self.persona_dir.parent
-        if personas_dir.exists():
-            for subdir in personas_dir.iterdir():
-                if not subdir.is_dir() or subdir.name == self.persona_dir.name:
-                    continue
-                from sirius_pulse.core.persona_store import PersonaStore
-
-                other_persona = PersonaStore.load(subdir)
-                if other_persona:
-                    other_ai_names.append(other_persona.name)
-                    other_ai_names.extend(other_persona.aliases)
-        # 合并手动配置的其他 AI 名字
-        manual_names = experience.other_ai_names
-        if manual_names:
-            other_ai_names.extend(manual_names)
+        # 其他 AI 的名字/别名，用于抑制"人类叫别的 AI 时当前 AI 抢话"
+        other_ai_names: list[str] = list(experience.other_ai_names or [])
         if other_ai_names:
             config["other_ai_names"] = list(dict.fromkeys(other_ai_names))
         return config
@@ -227,6 +179,16 @@ class PersonaWorker:
             self._check_enabled_flag()
             self._check_config_reload()
             await asyncio.sleep(10)
+
+    def set_adapter_enabled(self, enabled: bool) -> None:
+        """程序化控制所有 adapter 的消息处理开关。
+
+        供 ButlerServer 在助手端接管/释放时调用。
+        """
+        for adapter in self._adapters:
+            if hasattr(adapter, "_enabled"):
+                adapter._enabled = enabled
+        LOG.info("所有 adapter 已%s", "启用" if enabled else "禁用")
 
     def _check_enabled_flag(self) -> None:
         """读取 engine_state/enabled 标志，同步到各 Bridge。"""

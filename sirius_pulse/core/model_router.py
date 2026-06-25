@@ -124,20 +124,6 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=30.0,
         fallback_model="deepseek-chat",
     ),
-    "biography_distill": TaskConfig(
-        model_name="gpt-4o-mini",
-        temperature=0.3,
-        max_tokens=1024,
-        timeout=20.0,
-        fallback_model="deepseek-chat",
-    ),
-    "biography_update": TaskConfig(
-        model_name="gpt-4o-mini",
-        temperature=0.4,
-        max_tokens=1024,
-        timeout=20.0,
-        fallback_model="deepseek-chat",
-    ),
 }
 # Urgency thresholds for escalation
 _URGENCY_ESCALATE = 80  # urgency > 80 鈫?use stronger model

@@ -29,9 +29,7 @@ from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter
 from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
-from sirius_pulse.core.response_strategy import ResponseStrategyEngine
 from sirius_pulse.core.rhythm import RhythmAnalyzer
-from sirius_pulse.core.threshold_engine import ThresholdEngine
 
 # New v2 memory system (refactor)
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager
@@ -45,7 +43,6 @@ from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
-from sirius_pulse.models.intent_v3 import IntentAnalysisV3
 from sirius_pulse.models.models import Message, Transcript, UnifiedUser
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 
@@ -147,8 +144,6 @@ class _EmotionalGroupChatEngineBase:
             "github_monitor_notify": chat_model,
             "diary_generate": memory_model,
             "diary_consolidate": memory_model,
-            "biography_distill": memory_model,
-            "biography_update": memory_model,
             "plugin_generate": plugin_model,
             "plugin_analyze": plugin_model,
             "plugin_render": plugin_model,
@@ -220,8 +215,6 @@ class _EmotionalGroupChatEngineBase:
         )
 
     def _init_decision_layer(self) -> None:
-        self.threshold_engine = ThresholdEngine()
-        self.strategy_engine = ResponseStrategyEngine()
         self.delayed_queue = DelayedResponseQueue()
         self.rhythm_analyzer = RhythmAnalyzer()
 
@@ -537,53 +530,44 @@ class _EmotionalGroupChatEngineBase:
         """Perception layer: normalize, register participants, update transcript."""
         return self._pipeline.perception(group_id, message, participants)
 
-    async def _cognition(
+    def _compute_signal(
         self,
         content: str,
         user_id: str,
         group_id: str,
         *,
         sender_type: str = "human",
-        multimodal_inputs: list[dict[str, str]] | None = None,
         caller_is_developer: bool = False,
-    ) -> tuple[Any, Any, list[Any], Any]:
-        """Cognitive layer: unified emotion + intent + empathy + memory retrieval."""
-        return await self._pipeline.cognition(
+    ) -> Any:
+        """Signal computation layer: pure rule-based analysis."""
+        return self._pipeline.compute_signal(
             content,
             user_id,
             group_id,
             sender_type=sender_type,
-            multimodal_inputs=multimodal_inputs,
             caller_is_developer=caller_is_developer,
         )
 
-    def _decision(
+    def _pre_filter(
         self,
-        intent: Any,
-        emotion: Any,
-        group_id: str,
+        signal: Any,
+        content: str,
         user_id: str,
-        sender_type: str = "human",
-        content: str = "",
-    ) -> Any:
-        """Decision layer: strategy selection with threshold and rhythm."""
-        return self._pipeline.decision(intent, emotion, group_id, user_id, sender_type, content)
-
-    async def _execution(
-        self,
-        decision: Any,
-        message: Any,
-        intent: Any,
-        emotion: Any,
-        memories: list[Any],
         group_id: str,
-        empathy: Any,
+        sender_type: str = "human",
+    ) -> str:
+        """Pre-filter layer: hard guards + threshold check."""
+        return self._pipeline.pre_filter(signal, content, user_id, group_id, sender_type)
+
+    async def _generate(
+        self,
+        signal: Any,
+        message: Any,
+        group_id: str,
         user_id: str,
     ) -> dict[str, Any]:
-        """Execution layer: generate or queue reply."""
-        return await self._pipeline.execution(
-            decision, message, intent, emotion, memories, group_id, empathy, user_id
-        )
+        """Generation layer: unified generation through delayed queue."""
+        return await self._pipeline.generate(signal, message, group_id, user_id)
 
     def _background_update(
         self,
@@ -1058,93 +1042,58 @@ class _EmotionalGroupChatEngineBase:
             self._background_update(group_id, message, None, None, user_id)
             return plugin_exec_result
 
-        # 2. Cognition (unified emotion + intent)
-        intent, emotion, memories, empathy = await self._cognition(
+        # 2. Signal computation (pure rules, zero LLM)
+        signal = self._compute_signal(
             content,
             user_id,
             group_id,
             sender_type=message.sender_type,
-            multimodal_inputs=message.multimodal_inputs,
             caller_is_developer=caller_is_developer,
         )
 
-        # 如果 cognition 生成了图片描述，回写到 basic_memory 最后一条 entry
-        # 优先使用 sticker_caption（动画表情缓存），否则使用 image_caption
-        caption = intent.image_caption or getattr(intent, "sticker_caption", "")
-        if caption:
-            recent = self.basic_memory.get_context(group_id, n=1)
-            if recent:
-                last_entry = recent[0]
-                original_content = last_entry.content or ""
-
-                # 判断是否是动画表情（sub_type=1）
-                # 动画表情的 [动画表情：xxx.jpg] 文件哈希对模型无意义，
-                # 有缓存 caption 后应替换为描述文字
-                is_sticker = False
-                if last_entry.multimodal_inputs:
-                    for m in last_entry.multimodal_inputs:
-                        if m.get("type") == "image" and m.get("sub_type") == "1":
-                            is_sticker = True
-                            break
-
-                if is_sticker:
-                    # 去掉无意义的文件哈希，替换为有意义的描述
-                    # 兼容适配器的半角方括号 [动画表情："xxx"] 和旧版全角方括号 【动画表情：xxx】
-                    stripped = re.sub(
-                        r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)", "", original_content
-                    ).strip()
-                    sticker_tag = f"[动画表情：{caption}]"
-                    last_entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
-                    # 也存入 multimodal_inputs 供 sticker learning 管道使用
-                    for m in last_entry.multimodal_inputs:
-                        if m.get("type") == "image":
-                            m["caption"] = caption
-                else:
-                    if self._is_pure_image_message(original_content):
-                        last_entry.content = f"[图片] [图片描述：{caption}]"
-                    else:
-                        last_entry.content = f"{original_content} [图片描述：{caption}]"
-                    if last_entry.multimodal_inputs:
-                        for m in last_entry.multimodal_inputs:
-                            if m.get("type") == "image":
-                                m["caption"] = caption
         # 内心活动：理解消息后的感受
-        self._log_cognition_thought(speaker, intent, emotion)
+        self._log_cognition_thought(speaker, signal, signal.emotion)
         await self.event_bus.emit(
             SessionEvent(
                 type=SessionEventType.COGNITION_COMPLETED,
                 data={
                     "group_id": group_id,
                     "user_id": user_id,
-                    "intent": intent.to_dict(),
-                    "emotion": emotion.to_dict(),
+                    "signal": signal.to_dict(),
+                    "emotion": signal.emotion.to_dict() if signal.emotion else {},
                 },
             )
         )
 
-        # 3. Decision
-        decision = self._decision(
-            intent, emotion, group_id, user_id, message.sender_type or "human", content
+        # 3. Pre-filter (hard guards + threshold)
+        filter_result = self._pre_filter(
+            signal, content, user_id, group_id, message.sender_type or "human"
         )
+
+        if filter_result == "reject":
+            self._persist_group_state(group_id)
+            self._background_update(group_id, message, signal.emotion, None, user_id)
+            return {
+                "strategy": "silent",
+                "reply": None,
+                "emotion": signal.emotion.to_dict() if signal.emotion else {},
+                "signal": signal.to_dict(),
+            }
+
         await self.event_bus.emit(
             SessionEvent(
                 type=SessionEventType.DECISION_COMPLETED,
                 data={
                     "group_id": group_id,
-                    "strategy": decision.strategy.value,
-                    "priority": getattr(decision, "priority", None),
+                    "strategy": "pass",
+                    "directed_score": signal.directed_score,
                 },
             )
         )
 
-        # 4. Execution
-        # Warm up diary index for this group (lazy-loads from disk on first call)
+        # 4. Generate (unified path through delayed queue, model decides reply/stop)
         self.diary_manager.ensure_group_loaded(group_id)
-        result = await self._execution(
-            decision, message, intent, emotion, memories, group_id, empathy, user_id
-        )
-        # 内心活动：执行后的反馈
-        self._log_execution_thought(speaker, decision, result)
+        result = await self._generate(signal, message, group_id, user_id)
         await self.event_bus.emit(
             SessionEvent(
                 type=SessionEventType.EXECUTION_COMPLETED,
@@ -1161,7 +1110,7 @@ class _EmotionalGroupChatEngineBase:
             self._active_private_groups.add(group_id)
 
         # 6. Background memory updates
-        self._background_update(group_id, message, emotion, intent, user_id)
+        self._background_update(group_id, message, signal.emotion, None, user_id)
 
         return result
 
@@ -1448,43 +1397,18 @@ class _EmotionalGroupChatEngineBase:
         logger.info("[内心] %s", thought)
 
     def _log_cognition_thought(
-        self, speaker: str, intent: IntentAnalysisV3, emotion: EmotionState
+        self, speaker: str, signal: Any, emotion: EmotionState | None
     ) -> None:
         """Log cognition-phase inner thought."""
-        intent_type = getattr(getattr(intent, "social_intent", None), "value", "")
-        basic_emotion = getattr(getattr(emotion, "basic_emotion", None), "name", "")
+        intent_type = getattr(signal, "social_intent", "")
+        basic_emotion = getattr(getattr(emotion, "basic_emotion", None), "name", "") if emotion else ""
         thought = (
             f"{speaker} 的消息让我感觉 {basic_emotion or '平静'}，"
             f"意图是 {intent_type or '未知'}，"
-            f" directed_score={getattr(intent, 'directed_score', 0):.2f}"
+            f" directed_score={getattr(signal, 'directed_score', 0):.2f}"
         )
         self._log_inner_thought(thought)
 
-    def _log_decision_thought(self, intent: IntentAnalysisV3, decision: StrategyDecision) -> None:
-        """Log decision-phase inner thought."""
-        strategy = (
-            decision.strategy.value
-            if hasattr(decision.strategy, "value")
-            else str(decision.strategy)
-        )
-        thought = (
-            f"决策结果: {strategy}，"
-            f"score={getattr(decision, 'score', 0):.2f}，"
-            f"threshold={getattr(decision, 'threshold', 0):.2f}"
-        )
-        self._log_inner_thought(thought)
-
-    def _log_execution_thought(
-        self, speaker: str, decision: StrategyDecision, result: dict[str, Any]
-    ) -> None:
-        """Log execution-phase inner thought."""
-        reply = result.get("reply")
-        strategy = result.get("strategy", "unknown")
-        if reply:
-            thought = f"回复了 {speaker}: {reply[:40]}..."
-        else:
-            thought = f"对 {speaker} 选择 {strategy}，没有回复"
-        self._log_inner_thought(thought)
 
     def _emotion_desc(self, emotion: EmotionState) -> str:
         """Return a short Chinese description of an emotion state."""

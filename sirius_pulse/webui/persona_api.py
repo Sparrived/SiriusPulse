@@ -1,11 +1,10 @@
-"""WebUI API endpoints for persona management."""
+"""WebUI API endpoints for persona management (single-persona architecture)."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import shutil
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -16,95 +15,39 @@ from sirius_pulse.models.persona import PersonaProfile
 from sirius_pulse.persona_config import (
     AdapterConfig,
     PersonaAdaptersConfig,
+    PersonaConfigPaths,
     PersonaExperienceConfig,
 )
 from sirius_pulse.platforms.persona_utils import generate_persona_from_interview
 from sirius_pulse.providers.routing import WorkspaceProviderManager
 from sirius_pulse.webui.model_catalog import build_model_catalog
-from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
+from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
 
 
-def _request_config_reload(persona_name: str, reload_type: str, persona_manager: Any) -> None:
+def _request_config_reload(reload_type: str, data_dir: Path) -> None:
     """写入配置重载标志文件，触发 PersonaWorker 热重载。
 
     Args:
-        persona_name: 人格名称
         reload_type: 重载类型 (persona / orchestration / experience / provider / all)
-        persona_manager: PersonaManager 实例
+        data_dir: 当前人格数据目录
     """
-    paths = persona_manager.get_persona_paths(persona_name)
-    if paths is None:
-        return
     try:
-        reload_flag = paths.engine_state / "reload_requested"
+        reload_flag = data_dir / "engine_state" / "reload_requested"
         reload_flag.parent.mkdir(parents=True, exist_ok=True)
         reload_flag.write_text(reload_type, encoding="utf-8")
-        LOG.debug("已写入配置重载标志: %s -> %s", persona_name, reload_type)
+        LOG.debug("已写入配置重载标志: %s", reload_type)
     except Exception as exc:
         LOG.warning("写入配置重载标志失败: %s", exc)
 
 
-async def api_personas_get(request: web.Request, persona_manager: Any) -> web.Response:
-    personas = persona_manager.list_personas()
-    result = []
-    for p in personas:
-        paths = persona_manager.get_persona_paths(p["name"])
-        status = {"running": False, "pid": None}
-        if paths is not None:
-            status_path = paths.engine_state / "worker_status.json"
-            if status_path.exists():
-                try:
-                    st = json.loads(status_path.read_text(encoding="utf-8"))
-                    status = {
-                        "running": st.get("running", False),
-                        "pid": st.get("pid"),
-                        "started_at": st.get("started_at"),
-                    }
-                except Exception:
-                    LOG.warning("读取人格状态失败", exc_info=True)
-                    pass
-        result.append({**p, "status": status})
-    return _json_response({"personas": result})
-
-
-@handle_api_errors
-async def api_personas_post(request: web.Request, persona_manager: Any) -> web.Response:
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "Invalid JSON"}, 400)
-
-    name = str(body.get("name", "")).strip()
-    if not name:
-        return _json_response({"error": "缺少 name"}, 400)
-
-    # 禁止特殊字符
-    if not name.replace("_", "").replace("-", "").isalnum():
-        return _json_response({"error": "name 只能包含字母、数字、下划线和连字符"}, 400)
-
-    persona_name = str(body.get("persona_name", "")).strip() or None
-    persona_manager.create_persona(name, persona_name=persona_name)
-    return _json_response({"success": True, "name": name})
-
-
-@handle_api_errors
-async def api_personas_delete(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    persona_manager.delete_persona(name)
-    return _json_response({"success": True})
-
-
-async def api_persona_get_single(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_get_single(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     profile = PersonaStore.load(paths.dir)
     if profile is None:
-        profile = PersonaProfile(name=name)
+        profile = PersonaProfile(name=data_dir.name)
 
     status = {"running": False, "pid": None}
     status_path = paths.engine_state / "worker_status.json"
@@ -122,18 +65,15 @@ async def api_persona_get_single(request: web.Request, persona_manager: Any) -> 
             pass
     return _json_response(
         {
-            "name": name,
+            "name": data_dir.name,
             "persona_name": profile.name,
             "status": status,
         }
     )
 
 
-async def api_persona_status_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_status_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     status = {"running": False, "pid": None}
     status_path = paths.engine_state / "worker_status.json"
@@ -149,7 +89,7 @@ async def api_persona_status_get(request: web.Request, persona_manager: Any) -> 
         except Exception:
             LOG.warning("读取人格状态失败", exc_info=True)
             pass
-    return _json_response({"name": name, "status": status})
+    return _json_response({"name": data_dir.name, "status": status})
 
 
 def _read_log_delta(log_file: Any, offset: int, lines: int) -> dict[str, Any]:
@@ -173,7 +113,7 @@ def _read_log_delta(log_file: Any, offset: int, lines: int) -> dict[str, Any]:
     return {"lines": text.splitlines(), "offset": size, "size": size, "exists": True}
 
 
-async def api_system_logs_get(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_system_logs_get(request: web.Request, data_dir: Path) -> web.Response:
     raw_lines = request.query.get("lines", "300")
     raw_offset = request.query.get("offset", "0")
     try:
@@ -184,17 +124,13 @@ async def api_system_logs_get(request: web.Request, persona_manager: Any) -> web
         offset = max(0, int(raw_offset))
     except ValueError:
         offset = 0
-    log_file = persona_manager.data_path / "logs" / "webui.log"
+    log_file = data_dir / "logs" / "webui.log"
     payload = _read_log_delta(log_file, offset, lines)
     payload.update({"target": "webui", "name": "WebUI", "path": str(log_file)})
     return _json_response(payload)
 
 
-async def api_persona_logs_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_logs_get(request: web.Request, data_dir: Path) -> web.Response:
     raw_lines = request.query.get("lines", "300")
     raw_offset = request.query.get("offset", "0")
     try:
@@ -205,44 +141,18 @@ async def api_persona_logs_get(request: web.Request, persona_manager: Any) -> we
         offset = max(0, int(raw_offset))
     except ValueError:
         offset = 0
-    log_file = persona_manager.get_log_file(name)
+    log_file = data_dir / "logs" / "worker.log"
     payload = _read_log_delta(log_file, offset, lines)
-    payload.update({"target": "persona", "name": name, "path": str(log_file)})
+    payload.update({"target": "persona", "name": data_dir.name, "path": str(log_file)})
     return _json_response(payload)
 
 
-@handle_api_errors
-async def api_persona_start(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    persona_manager.start_persona(name)
-    return _json_response({"success": True, "message": f"{name} 已启动"})
-
-
-@handle_api_errors
-async def api_persona_stop(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    persona_manager.stop_persona(name)
-    return _json_response({"success": True, "message": f"{name} 已停止"})
-
-
-@handle_api_errors
-async def api_persona_restart(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    persona_manager.stop_persona(name)
-    await asyncio.sleep(1)
-    persona_manager.start_persona(name)
-    return _json_response({"success": True, "message": f"{name} 已重启"})
-
-
-async def api_persona_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     profile = PersonaStore.load(paths.dir)
     if profile is None:
-        profile = PersonaProfile(name=name)
+        profile = PersonaProfile(name=data_dir.name)
     return _json_response(
         {
             "name": profile.name,
@@ -275,20 +185,17 @@ async def api_persona_get(request: web.Request, persona_manager: Any) -> web.Res
     )
 
 
-async def api_persona_post(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
+async def api_persona_post(request: web.Request, data_dir: Path) -> web.Response:
     try:
         body = await request.json()
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     profile = PersonaStore.load(paths.dir)
     if profile is None:
-        profile = PersonaProfile(name=name)
+        profile = PersonaProfile(name=data_dir.name)
 
     persona_data = body.get("persona", body)
     for key in (
@@ -323,16 +230,13 @@ async def api_persona_post(request: web.Request, persona_manager: Any) -> web.Re
             setattr(profile, key, persona_data[key])
 
     PersonaStore.save(paths.dir, profile)
-    _request_config_reload(name, "persona", persona_manager)
+    _request_config_reload("persona", data_dir)
     return _json_response({"success": True})
 
 
-async def api_persona_interview_get(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_persona_interview_get(request: web.Request, data_dir: Path) -> web.Response:
     """读取已保存的 interview 问卷答案。"""
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
     record_path = paths.dir / "engine_state" / "persona_interview_record.json"
     pending_path = paths.dir / "engine_state" / "pending_persona_interview.json"
     try:
@@ -361,9 +265,8 @@ async def api_persona_interview_get(request: web.Request, persona_manager: Any) 
 
 
 @handle_api_errors
-async def api_persona_interview(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_persona_interview(request: web.Request, data_dir: Path) -> web.Response:
     """根据问卷答案生成人格。"""
-    name = _get_name(request)
     try:
         body = await request.json()
     except Exception:
@@ -372,13 +275,11 @@ async def api_persona_interview(request: web.Request, persona_manager: Any) -> w
     answers = body.get("answers", {})
     aliases = [a.strip() for a in body.get("aliases", []) if isinstance(a, str) and a.strip()]
     model = str(body.get("model", "gpt-4o-mini")).strip()
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     from sirius_pulse.providers.routing import AutoRoutingProvider
 
-    provider_mgr = WorkspaceProviderManager(persona_manager.data_path)
+    provider_mgr = WorkspaceProviderManager(data_dir)
     providers = provider_mgr.load()
     provider = None
     if providers:
@@ -392,31 +293,24 @@ async def api_persona_interview(request: web.Request, persona_manager: Any) -> w
         model=model,
     )
     PersonaStore.save(paths.dir, persona)
-    persona_manager.reload_persona(name)
     return _json_response({"success": True, "persona": persona.to_dict()})
 
 
-async def api_orchestration_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_orchestration_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     data = OrchestrationStore.load(paths.dir)
-    data["model_choices"] = build_model_catalog(persona_manager.data_path)["model_choices"]
+    data["model_choices"] = build_model_catalog(data_dir)["model_choices"]
     return _json_response(data)
 
 
-async def api_orchestration_post(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
+async def api_orchestration_post(request: web.Request, data_dir: Path) -> web.Response:
     try:
         body = await request.json()
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     cfg = OrchestrationStore.load(paths.dir)
 
@@ -424,21 +318,25 @@ async def api_orchestration_post(request: web.Request, persona_manager: Any) -> 
         if key in body:
             cfg[key] = body[key]
 
-    for key in ("task_models", "task_temperatures", "task_max_tokens", "task_enabled", "task_timeout", "task_fallback_model"):
+    for key in (
+        "task_models",
+        "task_temperatures",
+        "task_max_tokens",
+        "task_enabled",
+        "task_timeout",
+        "task_fallback_model",
+    ):
         if key in body and isinstance(body[key], dict):
             cfg[key] = body[key]
 
     OrchestrationStore.save(paths.dir, cfg)
-    _request_config_reload(name, "orchestration", persona_manager)
+    _request_config_reload("orchestration", data_dir)
     return _json_response({"success": True})
 
 
-async def api_task_params_get(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_task_params_get(request: web.Request, data_dir: Path) -> web.Response:
     """获取所有任务的参数调优配置（temperature/max_tokens/timeout/fallback_model）。"""
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     cfg = OrchestrationStore.load(paths.dir)
 
@@ -467,23 +365,22 @@ async def api_task_params_get(request: web.Request, persona_manager: Any) -> web
             "fallback_model": task_fallback_model.get(task_name, ""),
         }
 
-    return _json_response({
-        "task_params": task_params,
-        "defaults": defaults,
-    })
+    return _json_response(
+        {
+            "task_params": task_params,
+            "defaults": defaults,
+        }
+    )
 
 
-async def api_task_params_post(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_task_params_post(request: web.Request, data_dir: Path) -> web.Response:
     """保存任务参数调优配置。"""
-    name = _get_name(request)
     try:
         body = await request.json()
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     cfg = OrchestrationStore.load(paths.dir)
 
@@ -496,15 +393,12 @@ async def api_task_params_post(request: web.Request, persona_manager: Any) -> we
             cfg[key] = cleaned
 
     OrchestrationStore.save(paths.dir, cfg)
-    _request_config_reload(name, "orchestration", persona_manager)
+    _request_config_reload("orchestration", data_dir)
     return _json_response({"success": True})
 
 
-async def api_experience_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_experience_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     exp = PersonaExperienceConfig.load(paths.experience)
     return _json_response(
@@ -533,16 +427,13 @@ async def api_experience_get(request: web.Request, persona_manager: Any) -> web.
     )
 
 
-async def api_experience_post(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
+async def api_experience_post(request: web.Request, data_dir: Path) -> web.Response:
     try:
         body = await request.json()
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     exp = PersonaExperienceConfig.load(paths.experience)
     experience_data = body.get("experience", body)
@@ -573,30 +464,24 @@ async def api_experience_post(request: web.Request, persona_manager: Any) -> web
             setattr(exp, key, experience_data[key])
 
     exp.save(paths.experience)
-    _request_config_reload(name, "experience", persona_manager)
+    _request_config_reload("experience", data_dir)
     return _json_response({"success": True})
 
 
-async def api_adapters_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_adapters_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     adapters = PersonaAdaptersConfig.load(paths.adapters)
     return _json_response({"adapters": [a.to_dict() for a in adapters.adapters]})
 
 
-async def api_adapters_post(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
+async def api_adapters_post(request: web.Request, data_dir: Path) -> web.Response:
     try:
         body = await request.json()
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     adapters = PersonaAdaptersConfig.load(paths.adapters)
     if "adapters" in body and isinstance(body["adapters"], list):
@@ -606,11 +491,8 @@ async def api_adapters_post(request: web.Request, persona_manager: Any) -> web.R
     return _json_response({"success": True})
 
 
-async def api_engine_reload(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_engine_reload(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     # 向 worker 发送重载信号（通过 engine_state/reload.flag）
     flag_path = paths.engine_state / "reload.flag"
@@ -619,16 +501,13 @@ async def api_engine_reload(request: web.Request, persona_manager: Any) -> web.R
     return _json_response({"success": True, "message": "重载信号已发送"})
 
 
-async def api_config_post(request: web.Request, persona_manager: Any) -> web.Response:
+async def api_config_post(request: web.Request, data_dir: Path) -> web.Response:
     """更新 adapter 配置（群白名单等），直接写入 adapters.json。"""
-    name = _get_name(request)
     try:
         body = await request.json()
     except Exception:
         return _json_response({"error": "Invalid JSON"}, 400)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     adapters = PersonaAdaptersConfig.load(paths.adapters)
     if not adapters.adapters:
@@ -646,47 +525,5 @@ async def api_config_post(request: web.Request, persona_manager: Any) -> web.Res
             setattr(adapters.adapters[0], key, body[key])
 
     adapters.save(paths.adapters)
-    LOG.info("配置已更新 %s: %s", name, {k: body.get(k) for k in body})
+    LOG.info("配置已更新: %s", {k: body.get(k) for k in body})
     return _json_response({"success": True, "message": "配置已保存"})
-
-
-@handle_api_errors
-async def api_persona_clone(request: web.Request, persona_manager: Any) -> web.Response:
-    """克隆人格：复制源人格目录到新人格，分配新端口。"""
-    source_name = _get_name(request)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    target_name = str(body.get("target_name", "")).strip()
-    if not target_name:
-        target_name = f"{source_name}_copy"
-
-    # 校验目标名称合法性
-    if not target_name.replace("_", "").replace("-", "").isalnum():
-        return _json_response({"error": "target_name 只能包含字母、数字、下划线和连字符"}, 400)
-
-    # 检查源人格存在
-    source_paths = persona_manager.get_persona_paths(source_name)
-    if source_paths is None:
-        return _json_response({"error": f"源人格 '{source_name}' 不存在"}, 404)
-
-    # 检查目标人格不存在
-    existing = persona_manager.get_persona_paths(target_name)
-    if existing is not None:
-        return _json_response({"error": f"目标人格 '{target_name}' 已存在"}, 409)
-
-    # 复制目录
-    target_dir = persona_manager.personas_dir / target_name
-    shutil.copytree(str(source_paths.dir), str(target_dir))
-
-    # 删除引擎运行状态（不应继承源人格的 PID 等）
-    engine_state_dir = target_dir / "engine_state"
-    if engine_state_dir.exists():
-        for f in engine_state_dir.iterdir():
-            if f.name.startswith("worker_status"):
-                f.unlink(missing_ok=True)
-
-    LOG.info("人格已克隆: %s → %s", source_name, target_name)
-    return _json_response({"success": True, "source": source_name, "name": target_name})

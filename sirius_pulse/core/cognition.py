@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 from sirius_pulse.models.intent_v3 import (
     EmotionalSubtype,
     HelpSubtype,
-    IntentAnalysisV3,
     SilentSubtype,
     SocialIntent,
     SocialSubtype,
@@ -321,62 +320,11 @@ _CONTEXT_DEPENDENT_PATTERNS: tuple[str, ...] = (
     "行吧",
 )
 
-_LLM_COGNITION_PROMPT = """分析以下消息的【情感状态】、【社交意图】和【指向性】。
-
-{ai_identity}{conversation_context}消息：{message}
-
-要求输出 JSON：
-{{
-  "valence": -1.0 到 1.0（愉悦度，负值负面，正值正面）,
-  "arousal": 0.0 到 1.0（唤醒度，0平静，1激动）,
-  "intensity": 0.0 到 1.0（情感强度）,
-  "basic_emotion": "joy|anger|sadness|anxiety|loneliness|neutral",
-  "social_intent": "help_seeking|emotional|social|silent",
-  "intent_subtype": "tech_help|info_query|venting|seeking_empathy|topic_discussion|filler",
-  "urgency_score": 0-100,
-  "relevance_score": 0.0-1.0,
-  "directed_score": 0.0-1.0,
-  "directed_reason": "一句话解释指向性判断原因",
-  "sarcasm_score": 0.0-1.0,
-  "confidence": 0.0-1.0,
-  "search_query": "用于检索记忆的一句话查询，概括用户核心需求（不是标签，是自然语言）。如果查询内容中包含双引号，请用单引号替代",
-  "image_caption": "如果消息包含图片，请用1-2句话描述图片内容，并说明图片与消息意图的关系。如果是表情包/动画表情，请着重描述角色的神态、动作、表情细节、肢体语言、以及它传达的情绪和氛围（如'得意洋洋的挑眉'、'委屈巴巴地缩成一团'、'疯狂拍桌大笑'）。如果没有图片，留空。"
-}}
-
-定义：
-- help_seeking: 求助、提问、报错
-- emotional: 表达情绪、寻求安慰
-- social: 闲聊、讨论、分享
-- silent: 无意义 filler（哈哈、确实、+1）
-
-【评分标准】
-urgency_score（紧急程度，参考）：
-- 80-100：紧急求助、情绪崩溃、明确要求立刻回复的提问
-- 60-79：被点名询问看法、有明确问题需要回答
-- 30-59：普通闲聊、话题讨论、分享日常（大部分群聊属于此类）
-- 0-29：无意义附和、filler、表情包
-
-relevance_score（相关程度，参考）：
-- 0.7-1.0：与 AI 角色直接相关、被点名、需要 AI 参与决策
-- 0.4-0.69：一般群聊话题，AI 可参与但不是必须
-- 0.0-0.39：与 AI 无关、私人话题、纯发泄
-
-directed_score（消息指向 AI 的程度，最关键）：
-- 1.0：明确@AI、回复AI消息、直呼名字提问（最强指向）
-- 0.7-0.9：没叫名字但语义明显在问AI（如"你觉得呢"且AI是最近发言者）
-- 0.4-0.6：话题与AI人设/兴趣相关，或群聊中泛泛提及AI
-- 0.0-0.3：与AI无关、纯群友闲聊、提到AI名字但只是举例/引用
-注意：要综合考虑消息内容、对话上下文和当前发言者身份。如果群聊里只有AI和当前发言者活跃，"你"大概率指向AI。
-{ai_identity_note}
-{user_alias_note}
-只输出 JSON，不要其他内容。"""
-
-
 class CognitionAnalyzer:
-    """Joint emotion + intent analyzer with unified rule engine and single LLM fallback.
+    """纯规则认知分析器。
 
-    Replaces the sequential EmotionAnalyzer → IntentAnalyzerV3 pipeline with:
-        1. Parallel rule-based emotion + intent scoring (zero cost)
+    所有分析方法均为纯规则计算，不涉及 LLM 调用。
+    包含情绪分析、意图分类、指向性评分、社交信号检测。
         2. Single joint LLM fallback when either score is low-confidence
         3. Shared context fusion (trajectory + group sentiment)
         4. Unified empathy strategy selection
@@ -414,14 +362,11 @@ class CognitionAnalyzer:
         self.group_activity_history: dict[str, list[tuple[float, float]]] = {}
         self.user_response_prefs: dict[str, dict[str, Any]] = {}
 
-        # Image caption cache: url/path -> caption, avoids repeated vision calls
-        self._image_caption_cache: dict[str, str] = {}
-
     # ------------------------------------------------------------------
-    # Public API
+    # 纯规则计算（无 LLM 调用）
     # ------------------------------------------------------------------
 
-    async def analyze(
+    def compute_signal(
         self,
         message: str,
         user_id: str,
@@ -429,123 +374,64 @@ class CognitionAnalyzer:
         context_messages: list[dict[str, Any]] | None = None,
         *,
         sender_type: str = "human",
-        multimodal_inputs: list[dict[str, str]] | None = None,
         caller_is_developer: bool = False,
         group_aliases: dict[str, str] | None = None,
-    ) -> tuple[EmotionState, IntentAnalysisV3, EmpathyStrategy]:
-        """Joint analysis: emotion, intent, directedness, and empathy in one pass.
+        rhythm: Any | None = None,
+    ) -> "SignalAnalysis":
+        """纯规则计算信号分析，不调用 LLM。
+
+        Args:
+            message: 消息文本
+            user_id: 发言者 user_id
+            group_id: 群组 ID
+            context_messages: 最近消息上下文
+            sender_type: "human" 或 "other_ai"
+            caller_is_developer: 是否为开发者
+            group_aliases: 群组别名映射
+            rhythm: RhythmAnalyzer.analyze() 的结果（可选，外部传入避免重复计算）
 
         Returns:
-            (emotion_state, intent_analysis, empathy_strategy)
+            SignalAnalysis 实例
         """
-        # 1. Rule-based emotion analysis
+        from sirius_pulse.models.signal import SignalAnalysis
+
+        # 1. 规则情绪分析
         text_emotion = self._text_analysis(message)
-
-        # 2. Rule-based intent classification (fallback only)
-        social_intent, subtype, intent_confidence = self._classify_intent(
-            message, context_messages, caller_is_developer=caller_is_developer
-        )
-        search_query = message  # fallback when no LLM or LLM fails
-
-        # 3. Compute 12-dimensional directedness scores (rule-based, zero cost)
-        directed_scores = self._compute_directed_scores(message, user_id, context_messages)
-
-        # 4. Intent analysis via LLM when provider is available.
-        #    LLM failure → rule-based scores remain (safe degradation).
-        llm_result: dict[str, Any] | None = None
-        llm_urgency: float | None = None
-        llm_relevance: float | None = None
-        llm_directed_score: float | None = None
-        if self.provider_async is not None:
-            try:
-                llm_result = await self._llm_cognition(
-                    message,
-                    context_messages,
-                    current_user_id=user_id,
-                    sender_type=sender_type,
-                    multimodal_inputs=multimodal_inputs,
-                    caller_is_developer=caller_is_developer,
-                    group_aliases=group_aliases,
-                )
-                if llm_result is not None:
-                    social_intent = llm_result["social_intent"]
-                    subtype = llm_result["subtype"]
-                    intent_confidence = llm_result.get("confidence", 0.85)
-                    llm_urgency = llm_result.get("urgency_score")
-                    llm_relevance = llm_result.get("relevance_score")
-                    llm_directed_score = llm_result.get("directed_score")
-                    search_query = llm_result.get("search_query", message)
-                    if text_emotion.confidence < 0.6:
-                        text_emotion = llm_result["emotion"]
-                else:
-                    # LLM parse failure → safe SILENT
-                    social_intent = SocialIntent.SILENT
-                    subtype = SilentSubtype.IRRELEVANT
-                    intent_confidence = 0.3
-            except Exception as exc:
-                logger.warning("LLM cognition failed: %s", exc)
-                social_intent = SocialIntent.SILENT
-                subtype = SilentSubtype.IRRELEVANT
-                intent_confidence = 0.3
-
-        # 5. Emotion context fusion
         context_emotion = self._context_inference(user_id)
         group_emotion = self.group_cache.get(group_id) if group_id else None
         emotion = self._fuse_emotion(text_emotion, context_emotion, group_emotion)
         self._update_trajectory(user_id, emotion)
 
-        # 规范化 subtype
-        if hasattr(subtype, "value"):
-            subtype_str = subtype.value
-        else:
-            subtype_str = str(subtype)
-
-        # 6. Intent scoring
-        urgency = self._calculate_urgency(message, user_id, group_id, emotion, context_messages)
-        relevance = self._calculate_relevance(message, social_intent, user_id, group_id)
-        # Prefer LLM's urgency/relevance when available
-        if llm_urgency is not None and llm_urgency > 0:
-            urgency = llm_urgency
-        if llm_relevance is not None and llm_relevance > 0:
-            relevance = llm_relevance
-        threshold = 0.45
-        priority = 4
-        response_time = 45.0
-
-        # 7. Social signal decoding
-        sarcasm_score = self._detect_sarcasm_score(message)
-        # Blend with LLM sarcasm score if available
-        if llm_result is not None:
-            llm_sarcasm = llm_result.get("sarcasm_score", 0.0)
-            if llm_sarcasm > 0.0:
-                sarcasm_score = max(sarcasm_score, llm_sarcasm)
-        entitlement_score = self._compute_entitlement_score(message, social_intent)
-
-        # 8. Synthesize directed score (rule-based 12-dim + LLM semantic)
-        llm_confidence = intent_confidence if llm_result is not None else 0.5
-        directed_score = self._synthesize_directed_score(
-            directed_scores, llm_directed_score, llm_confidence
+        # 2. 规则意图分类
+        social_intent, subtype, _ = self._classify_intent(
+            message, context_messages, caller_is_developer=caller_is_developer
         )
-        # Boost directed_score if sarcasm is detected (sarcasm often targets someone)
+        social_intent_str = social_intent.value if hasattr(social_intent, "value") else str(social_intent)
+
+        # 3. 12 维指向性评分
+        directed_scores = self._compute_directed_scores(message, user_id, context_messages)
+
+        # 4. 合成 directed_score（纯规则，无 LLM 混合）
+        directed_score = self._synthesize_directed_score(directed_scores, None, 0.0)
+        sarcasm_score = self._detect_sarcasm_score(message)
         if sarcasm_score >= 0.4:
             directed_score = min(1.0, directed_score + sarcasm_score * 0.15)
-
-        # Discount directedness when message is from another AI
         if sender_type == "other_ai":
             directed_score = min(directed_score, directed_score * 0.5 + 0.1)
-        directed = directed_score >= 0.6
+        is_mentioned = directed_score >= 0.6
 
-        if directed:
-            # If explicitly addressed, never treat as silent filler
+        # 5. 指向时提升意图
+        if is_mentioned:
             if social_intent == SocialIntent.SILENT:
                 social_intent = SocialIntent.SOCIAL
-                subtype = (
-                    SocialSubtype.TOPIC_DISCUSSION if subtype == SilentSubtype.FILLER else subtype
-                )
+                social_intent_str = "social"
 
+        # 6. 紧迫度和相关性
+        urgency = self._calculate_urgency(message, user_id, group_id, emotion, context_messages)
+        relevance = self._calculate_relevance(message, social_intent, user_id, group_id)
+        if is_mentioned:
             is_question = "?" in message or "？" in message
             is_subjective = any(kw in message for kw in _SUBJECTIVE_KEYWORDS)
-
             if is_question or is_subjective:
                 urgency = max(urgency, 80.0)
                 relevance = max(relevance, 0.75)
@@ -553,42 +439,42 @@ class CognitionAnalyzer:
                 urgency = max(urgency, 70.0)
                 relevance = max(relevance, 0.65)
 
-        intent = IntentAnalysisV3(
-            intent_type=self._intent_type_from_social(social_intent, message),
-            social_intent=social_intent,
-            intent_subtype=subtype_str,
-            urgency_score=urgency,
-            relevance_score=relevance,
-            confidence=intent_confidence,
-            response_priority=priority,
-            estimated_response_time=response_time,
-            search_query=search_query,
-            threshold=threshold,
-            directed_at_current_ai=directed,
-            # 12-dimensional directedness scores
-            mention_score=directed_scores["mention_score"],
-            reference_score=directed_scores["reference_score"],
-            at_all_score=directed_scores["at_all_score"],
-            name_match_score=directed_scores["name_match_score"],
-            second_person_score=directed_scores["second_person_score"],
-            question_score=directed_scores["question_score"],
-            imperative_score=directed_scores["imperative_score"],
-            topic_relevance_score=directed_scores["topic_relevance_score"],
-            emotional_disclosure_score=directed_scores["emotional_disclosure_score"],
-            attention_seeking_score=directed_scores["attention_seeking_score"],
-            recency_score=directed_scores["recency_score"],
-            turn_taking_score=directed_scores["turn_taking_score"],
-            directed_score=directed_score,
-            sarcasm_score=sarcasm_score,
-            entitlement_score=entitlement_score,
-            image_caption=llm_result.get("image_caption", "") if llm_result else "",
-            sticker_caption=llm_result.get("sticker_caption", "") if llm_result else "",
-        )
+        # 7. 社交信号
+        entitlement_score = self._compute_entitlement_score(message, social_intent)
 
-        # 8. Empathy strategy
+        # 8. 共情策略
         empathy = self.select_empathy_strategy(emotion, user_id)
 
-        return emotion, intent, empathy
+        # 9. 节奏（外部传入或默认值）
+        if rhythm is not None:
+            heat_level = rhythm.heat_level
+            pace = rhythm.pace
+            burst_detected = rhythm.burst_detected
+            turn_gap_readiness = rhythm.turn_gap_readiness
+        else:
+            heat_level = "warm"
+            pace = "steady"
+            burst_detected = False
+            turn_gap_readiness = 0.0
+
+        return SignalAnalysis(
+            emotion=emotion,
+            directed_score=directed_score,
+            is_mentioned=is_mentioned,
+            is_question="?" in message or "？" in message,
+            is_imperative=directed_scores.get("imperative_score", 0.0) >= 0.5,
+            urgency_score=urgency,
+            relevance_score=relevance,
+            social_intent=social_intent_str,
+            sarcasm_score=sarcasm_score,
+            entitlement_score=entitlement_score,
+            heat_level=heat_level,
+            pace=pace,
+            burst_detected=burst_detected,
+            turn_gap_readiness=turn_gap_readiness,
+            search_query=message,
+            empathy=empathy,
+        )
 
     def select_empathy_strategy(
         self,
@@ -653,449 +539,6 @@ class CognitionAnalyzer:
             )
 
     # ------------------------------------------------------------------
-    # LLM fallback
-    # ------------------------------------------------------------------
-
-    def _build_persona_identity(self) -> str:
-        """Build a concise persona description for the LLM cognition prompt."""
-        if not self.persona and not self.ai_name:
-            return ""
-
-        parts: list[str] = []
-        name = self.ai_name
-        if self.persona:
-            name = self.persona.name or name
-        if name:
-            parts.append(f"你是{name}。")
-
-        if self.persona:
-            p = self.persona
-            if p.persona_summary:
-                parts.append(p.persona_summary)
-            elif p.backstory:
-                # First sentence only, max 40 chars
-                first = p.backstory.split("。")[0] + "。" if "。" in p.backstory else p.backstory
-                parts.append(first[:60])
-            if p.personality_traits:
-                parts.append(f"你的性格是{'、'.join(p.personality_traits[:3])}。")
-            communication_style = _drop_length_biased_text(p.communication_style)
-            if communication_style:
-                parts.append(f"说话风格：{communication_style}。")
-            if p.social_role:
-                parts.append(f"在群里通常是{p.social_role}角色。")
-
-        if not parts:
-            return ""
-        return "\n【角色身份】" + "".join(parts) + "\n"
-
-    @staticmethod
-    def _format_context_for_prompt(
-        context_messages: list[dict[str, Any]] | None,
-        max_turns: int = 4,
-        ai_name: str = "",
-        current_user_id: str = "",
-    ) -> tuple[str, list[str]]:
-        """Format recent conversation context for LLM prompt.
-
-        Returns (context_text, active_participants).
-        """
-        if not context_messages:
-            return "", []
-        participants: set[str] = set()
-        lines: list[str] = []
-        for msg in context_messages[-max_turns:]:
-            uid = msg.get("user_id", "unknown")
-            content = msg.get("content", "")
-            ts = msg.get("timestamp", "")
-            if uid:
-                participants.add(uid)
-            if not content:
-                continue
-            # Mark AI messages explicitly
-            display_name = (
-                f"{uid}(AI)" if uid == "assistant" or (ai_name and uid == ai_name) else uid
-            )
-            time_str = f"[{ts}] " if ts else ""
-            lines.append(f"{time_str}[{display_name}] {content}")
-        context_text = "\n最近对话上下文：\n" + "\n".join(lines) + "\n" if lines else ""
-        return context_text, sorted(participants)
-
-    @staticmethod
-    def _build_multimodal_messages(
-        message: str,
-        multimodal_inputs: list[dict[str, str]],
-    ) -> list[dict[str, Any]]:
-        """Build OpenAI-compatible multimodal messages for vision cognition."""
-        # Detect if any item is a sticker so we can tell the model explicitly.
-        has_sticker = any(
-            item.get("type") == "image" and item.get("sub_type") == "1"
-            for item in multimodal_inputs
-        )
-        prefix = "[动画表情]" if has_sticker else "[图片]"
-        content: list[dict[str, Any]] = [
-            {"type": "text", "text": message or prefix},
-        ]
-        for item in multimodal_inputs:
-            if item.get("type") == "image":
-                content.append({"type": "image_url", "image_url": {"url": str(item["value"])}})
-        return [{"role": "user", "content": content}]
-
-    async def _llm_cognition(
-        self,
-        message: str,
-        context_messages: list[dict[str, Any]] | None = None,
-        *,
-        current_user_id: str = "",
-        sender_type: str = "human",
-        multimodal_inputs: list[dict[str, str]] | None = None,
-        caller_is_developer: bool = False,
-        group_aliases: dict[str, str] | None = None,
-    ) -> dict[str, Any] | None:
-        """Single LLM call for joint emotion + intent + directedness analysis."""
-        from sirius_pulse.providers.base import GenerationRequest, LLMProvider
-
-        persona_identity = self._build_persona_identity()
-        if self.ai_name:
-            ai_id = f"{persona_identity}当前 AI 名字：{self.ai_name}"
-            if self.ai_aliases:
-                ai_id += f"，别名：{', '.join(self.ai_aliases)}"
-            ai_id += "\n"
-            ai_note = (
-                "注意：如果消息中提到了当前 AI 的名字或别名，"
-                "social_intent 必须是 social（不是 silent），"
-                "且如果消息是提问或询问看法，urgency_score 至少为 80，relevance_score 至少为 0.75。\n"
-            )
-        else:
-            ai_id = persona_identity
-            ai_note = ""
-
-        context_text, _ = self._format_context_for_prompt(
-            context_messages, ai_name=self.ai_name or ""
-        )
-        # Build conversation context block with participant info
-        conv_ctx = ""
-        if context_messages:
-            participants = sorted(
-                {m.get("user_id", "") for m in context_messages if m.get("user_id")}
-            )
-            if participants:
-                conv_ctx += f"\n【对话参与者】{', '.join(participants)}\n"
-            if current_user_id:
-                conv_ctx += f"【当前发言者】{current_user_id}\n"
-        if sender_type == "other_ai":
-            conv_ctx += "【注意：当前消息来自群里的另一个 AI，不是人类用户】\n"
-
-        # 从传记系统获取群内用户别名映射，帮助 LLM 区分 AI 和其他用户的别称
-        user_alias_note = ""
-        if group_aliases:
-            alias_lines = []
-            for alias, user_name in group_aliases.items():
-                if alias and user_name:
-                    alias_lines.append(f'"{alias}" → {user_name}')
-            if alias_lines:
-                user_alias_note = (
-                    "【本群用户别称】\n"
-                    + "\n".join(alias_lines[:15])
-                    + "\n注意：上述别称属于其他用户。"
-                    "如果消息中只提到这些别称（而没有 @AI 或直呼 AI 名字），"
-                    "说明消息不是指向当前 AI 的，directed_score 应该较低。\n"
-                )
-
-        prompt = _LLM_COGNITION_PROMPT.format(
-            ai_identity=ai_id,
-            conversation_context=conv_ctx,
-            message=context_text + f"【当前消息】[{current_user_id}] {message}",
-            ai_identity_note=ai_note,
-            user_alias_note=user_alias_note,
-        )
-
-        # Check image caption cache before calling LLM.
-        # Use content hash extracted from local cache path as key, so the same
-        # image (same MD5) hits cache even if the original QQ URL changes.
-        # Stickers (sub_type=1) are also cached on first sight; subsequent
-        # occurrences reuse the caption without another vision call.
-        cached_caption = ""
-        sticker_caption = ""
-        if multimodal_inputs:
-            for item in multimodal_inputs:
-                if item.get("type") != "image":
-                    continue
-                path = str(item.get("value", ""))
-                cache_key = self._image_cache_key(path)
-                if cache_key and cache_key in self._image_caption_cache:
-                    hit = self._image_caption_cache[cache_key]
-                    if item.get("sub_type") == "1":
-                        sticker_caption = hit
-                        logger.debug("Sticker caption cache hit for %s", cache_key)
-                    else:
-                        cached_caption = hit
-                        logger.debug("Image caption cache hit for %s", cache_key)
-                        break
-
-        # Build the list of images to actually send to the vision model.
-        # Normal images are always sent unless cached.
-        # Stickers are sent only on first sight (not yet cached).
-        filtered_mm: list[dict[str, str]] = []
-        if multimodal_inputs:
-            for item in multimodal_inputs:
-                if item.get("type") != "image":
-                    continue
-                is_sticker = item.get("sub_type") == "1"
-                if is_sticker and sticker_caption:
-                    # Already cached: skip vision
-                    continue
-                filtered_mm.append(item)
-
-        _COGNITION_RESPONSE_FORMAT: dict[str, object] = {"type": "json_object"}
-
-        # 多模态消息：如果存在图片，使用 vision model 并通过 messages 传递图片
-        if filtered_mm:
-            mm_messages = self._build_multimodal_messages(message, filtered_mm)
-            request = GenerationRequest(
-                model=self.model_name,
-                system_prompt=prompt,
-                messages=mm_messages,
-                temperature=0.2,
-                max_tokens=1024,
-                purpose="cognition_analyze",
-                response_format=_COGNITION_RESPONSE_FORMAT,
-            )
-        else:
-            request = GenerationRequest(
-                model=self.model_name,
-                system_prompt=prompt,
-                messages=[],
-                temperature=0.2,
-                max_tokens=1024,
-                purpose="cognition_analyze",
-                response_format=_COGNITION_RESPONSE_FORMAT,
-            )
-        self._last_request = request
-
-        # If all images (including cached stickers) are resolved and no
-        # items need first-analysis, skip the LLM call entirely.
-        if (cached_caption or sticker_caption) and not filtered_mm:
-            # Use rule-based emotion since we skip LLM
-            text_emotion = self._text_analysis(message)
-            context_emotion = self._context_inference(current_user_id)
-            group_emotion = self.group_cache.get(current_user_id)
-            emotion = self._fuse_emotion(text_emotion, context_emotion, group_emotion)
-            return {
-                "emotion": emotion,
-                "social_intent": SocialIntent.SOCIAL,
-                "subtype": SocialSubtype.TOPIC_DISCUSSION,
-                "confidence": 0.7,
-                "urgency_score": 30.0,
-                "relevance_score": 0.5,
-                "directed_score": 0.3,
-                "directed_reason": "cached_image_caption",
-                "sarcasm_score": 0.0,
-                "search_query": message or "",
-                "image_caption": cached_caption,
-                "sticker_caption": sticker_caption,
-            }
-
-        if self.provider_async is None and self.brain is None:
-            return None
-
-        # 优先通过 Brain 统一调用（v1.2+），回退到直接 provider 调用
-        if self.brain is not None:
-            from sirius_pulse.core.brain import RawRequest
-
-            raw = await self.brain.raw_call(
-                RawRequest(
-                    model=self.model_name,
-                    system_prompt=prompt,
-                    messages=request.messages,
-                    temperature=request.temperature,
-                    max_tokens=request.max_tokens,
-                    timeout_seconds=request.timeout_seconds or 30.0,
-                    purpose="cognition_analyze",
-                    response_format=_COGNITION_RESPONSE_FORMAT,
-                )
-            )
-        elif self.provider_async is not None and hasattr(self.provider_async, "generate_async"):
-            raw = await self.provider_async.generate_async(request)
-        elif isinstance(self.provider_async, LLMProvider):
-            import asyncio
-
-            raw = await asyncio.to_thread(self.provider_async.generate, request)
-        else:
-            return None
-
-        try:
-            if "```json" in raw:
-                raw = raw.split("```json")[1].split("```")[0]
-            elif "```" in raw:
-                raw = raw.split("```")[1].split("```")[0]
-            data = json.loads(raw.strip())
-        except (json.JSONDecodeError, ValueError) as exc:
-            logger.warning("Failed to parse LLM cognition JSON: %s | raw=%r", exc, raw)
-            # Fallback: try regex extraction for critical fields
-            data = self._extract_json_fields(raw)
-            if not data:
-                return None
-
-        try:
-            # Parse emotion
-            be_raw = data.get("basic_emotion", "neutral")
-            basic_emotion = self._parse_basic_emotion(be_raw)
-
-            emotion = EmotionState(
-                valence=max(-1.0, min(1.0, float(data.get("valence", 0)))),
-                arousal=max(0.0, min(1.0, float(data.get("arousal", 0.3)))),
-                intensity=max(0.0, min(1.0, float(data.get("intensity", 0.5)))),
-                confidence=0.85,
-                basic_emotion=basic_emotion,
-            )
-
-            # Parse intent
-            si_raw = data.get("social_intent", "social")
-            social_intent = self._parse_social_intent(si_raw)
-
-            subtype_str = data.get("intent_subtype", "topic_discussion")
-            subtype = self._parse_subtype(subtype_str, social_intent)
-
-            caption = data.get("image_caption", "")
-            # Cache the caption for future reuse (keyed by content hash).
-            # Cache ALL images that were sent to vision model, including stickers.
-            if caption and filtered_mm:
-                for item in filtered_mm:
-                    if item.get("type") == "image":
-                        path = str(item.get("value", ""))
-                        cache_key = self._image_cache_key(path)
-                        if cache_key:
-                            self._image_caption_cache[cache_key] = caption
-                            logger.debug("Cached image caption for %s", cache_key)
-
-            return {
-                "emotion": emotion,
-                "social_intent": social_intent,
-                "subtype": subtype,
-                "confidence": float(data.get("confidence", 0.85)),
-                "urgency_score": float(data.get("urgency_score", 0)),
-                "relevance_score": float(data.get("relevance_score", 0.5)),
-                "directed_score": float(data.get("directed_score", 0.0)),
-                "directed_reason": data.get("directed_reason", ""),
-                "sarcasm_score": float(data.get("sarcasm_score", 0.0)),
-                "search_query": data.get("search_query", ""),
-                "image_caption": caption,
-                "sticker_caption": sticker_caption,
-            }
-        except (ValueError, KeyError) as exc:
-            logger.warning("Failed to extract cognition fields: %s | raw=%r", exc, raw)
-            return None
-
-    @staticmethod
-    def _extract_json_fields(raw: str) -> dict[str, Any] | None:
-        """Best-effort field extraction from malformed JSON using regex.
-
-        Handles common LLM output issues like unescaped quotes inside string
-        values (e.g. search_query containing Chinese quotation marks).
-        """
-        import re
-
-        fields: dict[str, Any] = {}
-
-        # Extract string fields: "key": "value"
-        for key in (
-            "basic_emotion",
-            "social_intent",
-            "intent_subtype",
-            "search_query",
-        ):
-            pattern = rf'"{key}"\s*:\s*"([^"]*)"'
-            m = re.search(pattern, raw)
-            if m:
-                fields[key] = m.group(1)
-
-        # Extract numeric fields
-        for key in (
-            "valence",
-            "arousal",
-            "intensity",
-            "confidence",
-            "urgency_score",
-            "relevance_score",
-            "directed_score",
-        ):
-            pattern = rf'"{key}"\s*:\s*([-\d.]+)'
-            m = re.search(pattern, raw)
-            if m:
-                try:
-                    fields[key] = float(m.group(1))
-                except ValueError:
-                    logger.warning("解析情感数值字段失败", exc_info=True)
-                    pass
-
-        return fields if fields else None
-
-    @staticmethod
-    def _image_cache_key(path: str) -> str:
-        """Extract content hash from local image cache path for stable cache keys.
-
-        NapCatAdapter caches images as ``{md5_hash}{ext}`` under ``image_cache/``
-        or ``sticker_cache/``. The same image always gets the same hash, so we
-        use the hash as the cache key regardless of the original (possibly
-        transient) QQ URL.
-        """
-        from pathlib import Path
-
-        p = Path(path)
-        # filename like "a1b2c3d4.jpg" -> stem "a1b2c3d4"
-        stem = p.stem
-        # Simple heuristic: 32-char hex string is likely an MD5 hash
-        if len(stem) == 32 and all(c in "0123456789abcdef" for c in stem.lower()):
-            return stem.lower()
-        # Fallback: use the full path (for non-cached images or direct URLs)
-        return path
-
-    @staticmethod
-    def _parse_basic_emotion(emotion_str: str) -> BasicEmotion | None:
-        mapping = {
-            "joy": BasicEmotion.JOY,
-            "anger": BasicEmotion.ANGER,
-            "sadness": BasicEmotion.SADNESS,
-            "anxiety": BasicEmotion.ANXIETY,
-            "loneliness": BasicEmotion.LONELINESS,
-            "neutral": None,
-        }
-        return mapping.get(emotion_str.lower())
-
-    @staticmethod
-    def _parse_social_intent(intent_str: str) -> SocialIntent:
-        mapping = {
-            "help_seeking": SocialIntent.HELP_SEEKING,
-            "emotional": SocialIntent.EMOTIONAL,
-            "social": SocialIntent.SOCIAL,
-            "silent": SocialIntent.SILENT,
-        }
-        return mapping.get(intent_str.lower(), SocialIntent.SOCIAL)
-
-    @staticmethod
-    def _parse_subtype(subtype_str: str, social_intent: SocialIntent) -> Any:
-        """Parse subtype string into the correct Enum based on social_intent."""
-        mapping: dict[str, Any] = {
-            "tech_help": HelpSubtype.TECH_HELP,
-            "info_query": HelpSubtype.INFO_QUERY,
-            "venting": EmotionalSubtype.VENTING,
-            "seeking_empathy": EmotionalSubtype.SEEKING_EMPATHY,
-            "topic_discussion": SocialSubtype.TOPIC_DISCUSSION,
-            "filler": SilentSubtype.FILLER,
-        }
-        subtype = mapping.get(subtype_str)
-        if subtype is None:
-            # Fallback based on social_intent
-            if social_intent == SocialIntent.HELP_SEEKING:
-                subtype = HelpSubtype.INFO_QUERY
-            elif social_intent == SocialIntent.EMOTIONAL:
-                subtype = EmotionalSubtype.SEEKING_EMPATHY
-            elif social_intent == SocialIntent.SILENT:
-                subtype = SilentSubtype.FILLER
-            else:
-                subtype = SocialSubtype.TOPIC_DISCUSSION
-        return subtype
-
     # ------------------------------------------------------------------
     # Emotion text analysis (rule-based)
     # ------------------------------------------------------------------

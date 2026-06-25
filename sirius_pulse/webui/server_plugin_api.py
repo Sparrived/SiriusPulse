@@ -245,9 +245,9 @@ async def api_plugin_detail_get(request: web.Request, manager: Any) -> web.Respo
                 }
                 for p in definition.parameters
             ],
-            "nl_examples": definition.natural_language.examples
-            if definition.natural_language
-            else [],
+            "nl_examples": (
+                definition.natural_language.examples if definition.natural_language else []
+            ),
             "nl_slots": definition.natural_language.slots if definition.natural_language else {},
             "source_file": source_file,
             "source_content": source_content,

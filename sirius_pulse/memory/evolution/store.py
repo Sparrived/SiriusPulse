@@ -13,7 +13,6 @@ from typing import Any
 from sirius_pulse.memory.evolution.models import (
     EvolutionRecord,
     RecordStatus,
-    Triple,
 )
 from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 
@@ -114,11 +113,6 @@ class EvolutionStore(BaseSqliteStore):
             ),
         )
 
-    def save_records(self, records: list[EvolutionRecord]) -> None:
-        """批量保存演化链记录。"""
-        for record in records:
-            self.save_record(record)
-
     # ── 查询 ──
 
     def get_record(self, record_id: str) -> EvolutionRecord | None:
@@ -145,53 +139,11 @@ class EvolutionStore(BaseSqliteStore):
         )
         return [self._row_to_record(r) for r in rows]
 
-    def get_by_group(self, group_id: str, status: str | None = None) -> list[EvolutionRecord]:
-        """获取某群组的所有记录。"""
-        if status:
-            rows = self.fetchall(
-                "SELECT * FROM evolution_records WHERE source_group_id = ? AND status = ?",
-                (group_id, status),
-            )
-        else:
-            rows = self.fetchall(
-                "SELECT * FROM evolution_records WHERE source_group_id = ?",
-                (group_id,),
-            )
-        return [self._row_to_record(r) for r in rows]
-
     def get_uncertain_records(self, limit: int = 50) -> list[EvolutionRecord]:
         """获取所有待验证的记录。"""
         rows = self.fetchall(
             "SELECT * FROM evolution_records WHERE status = ? LIMIT ?",
             (RecordStatus.UNCERTAIN, limit),
-        )
-        return [self._row_to_record(r) for r in rows]
-
-    def find_by_content(
-        self,
-        subject: str,
-        predicate: str = "",
-        obj: str = "",
-        status: str | None = None,
-    ) -> list[EvolutionRecord]:
-        """按内容查找记录（用于矛盾检测）。"""
-        conditions = ["subject = ?"]
-        params: list[Any] = [subject]
-
-        if predicate:
-            conditions.append("predicate = ?")
-            params.append(predicate)
-        if obj:
-            conditions.append("obj = ?")
-            params.append(obj)
-        if status:
-            conditions.append("status = ?")
-            params.append(status)
-
-        where = " AND ".join(conditions)
-        rows = self.fetchall(
-            f"SELECT * FROM evolution_records WHERE {where}",
-            tuple(params),
         )
         return [self._row_to_record(r) for r in rows]
 
@@ -216,22 +168,6 @@ class EvolutionStore(BaseSqliteStore):
         )
         return [self._row_to_record(r) for r in rows]
 
-    def get_by_predicate_and_obj(
-        self, predicate: str, obj: str, status: str | None = None
-    ) -> list[EvolutionRecord]:
-        """按谓语和宾语查找记录（用于别称反向查找）。"""
-        if status:
-            rows = self.fetchall(
-                "SELECT * FROM evolution_records WHERE predicate = ? AND obj = ? AND status = ?",
-                (predicate, obj, status),
-            )
-        else:
-            rows = self.fetchall(
-                "SELECT * FROM evolution_records WHERE predicate = ? AND obj = ?",
-                (predicate, obj),
-            )
-        return [self._row_to_record(r) for r in rows]
-
     def get_by_predicate_and_user_id(
         self, predicate: str, user_id: str, status: str | None = None
     ) -> list[EvolutionRecord]:
@@ -245,22 +181,6 @@ class EvolutionStore(BaseSqliteStore):
             rows = self.fetchall(
                 "SELECT * FROM evolution_records WHERE predicate = ? AND subject_user_id = ?",
                 (predicate, user_id),
-            )
-        return [self._row_to_record(r) for r in rows]
-
-    def get_by_predicate_and_group(
-        self, predicate: str, group_id: str, status: str | None = None
-    ) -> list[EvolutionRecord]:
-        """按谓语和群组查找记录（用于获取群组的所有别称）。"""
-        if status:
-            rows = self.fetchall(
-                "SELECT * FROM evolution_records WHERE predicate = ? AND source_group_id = ? AND status = ?",
-                (predicate, group_id, status),
-            )
-        else:
-            rows = self.fetchall(
-                "SELECT * FROM evolution_records WHERE predicate = ? AND source_group_id = ?",
-                (predicate, group_id),
             )
         return [self._row_to_record(r) for r in rows]
 

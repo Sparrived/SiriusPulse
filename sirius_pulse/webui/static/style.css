@@ -65,6 +65,13 @@
 
   /* 过渡 */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Mode 默认值 (管家) */
+  --mode-accent: #6888f5;
+  --mode-accent-rgb: 104, 136, 245;
+  --mode-accent-dim: rgba(104, 136, 245, 0.12);
+  --mode-accent-glow: rgba(104, 136, 245, 0.25);
+  --mode-surface-tint: rgba(104, 136, 245, 0.025);
 }
 
 /* ==========================================================================
@@ -111,6 +118,131 @@
   --danger-dim: rgba(255, 77, 106, 0.12);
   --info: #7b6bff;
   --info-dim: rgba(123, 107, 255, 0.12);
+}
+
+/* ── Mode Variants: 管家 / 助手 ────────────────────────────── */
+
+[data-mode="butler"] {
+  --mode-accent: #6888f5;
+  --mode-accent-rgb: 104, 136, 245;
+  --mode-accent-dim: rgba(104, 136, 245, 0.12);
+  --mode-accent-glow: rgba(104, 136, 245, 0.25);
+  --mode-surface-tint: rgba(104, 136, 245, 0.025);
+}
+
+[data-mode="assistant"] {
+  --mode-accent: #e07088;
+  --mode-accent-rgb: 224, 112, 136;
+  --mode-accent-dim: rgba(224, 112, 136, 0.12);
+  --mode-accent-glow: rgba(224, 112, 136, 0.25);
+  --mode-surface-tint: rgba(224, 112, 136, 0.025);
+}
+
+/* Mode-aware accents on key elements */
+/* ── Mode Toggle Component ─────────────────────────────────── */
+
+.mode-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px;
+  gap: 0;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.mode-toggle-slider {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  border-radius: 17px;
+  background: linear-gradient(
+    135deg,
+    rgba(var(--mode-accent-rgb), 0.2),
+    rgba(var(--mode-accent-rgb), 0.08)
+  );
+  border: 1px solid rgba(var(--mode-accent-rgb), 0.35);
+  backdrop-filter: blur(8px);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+              background 0.4s var(--ease),
+              border-color 0.4s var(--ease);
+  pointer-events: none;
+  box-shadow: 0 0 12px rgba(var(--mode-accent-rgb), 0.15);
+}
+
+.mode-toggle-slider.right {
+  transform: translateX(100%);
+}
+
+.mode-option {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: var(--font-body);
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-radius: 17px;
+  cursor: pointer;
+  transition: color 0.3s var(--ease);
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.mode-option:hover {
+  color: var(--text-2);
+}
+
+.mode-option.active {
+  color: var(--text-1);
+}
+
+/* ── Mode Transition Overlay ───────────────────────────────── */
+
+#mode-transition-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 99999;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    circle at var(--cx, 50%) var(--cy, 0%),
+    rgba(var(--mode-accent-rgb), 0.1) 0%,
+    transparent 70%
+  );
+  transition: opacity 0.3s var(--ease);
+}
+
+#mode-transition-overlay.active {
+  animation: modeRipple 0.55s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes modeRipple {
+  0% {
+    opacity: 0;
+    clip-path: circle(0% at var(--cx, 50%) var(--cy, 0%));
+  }
+  40% {
+    opacity: 1;
+    clip-path: circle(60% at var(--cx, 50%) var(--cy, 0%));
+  }
+  100% {
+    opacity: 0;
+    clip-path: circle(120% at var(--cx, 50%) var(--cy, 0%));
+  }
 }
 
 /* ==========================================================================
@@ -188,12 +320,16 @@ body {
   top: 0;
   width: var(--sidebar-w);
   height: 100vh;
-  background: var(--bg-1);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-1) 96%, var(--mode-accent) 4%) 0%,
+    var(--bg-1) 100%
+  );
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   z-index: 100;
-  transition: width 0.3s var(--ease);
+  transition: width 0.3s var(--ease), background 0.6s var(--ease);
 }
 
 .sidebar.collapsed {
@@ -471,9 +607,14 @@ body {
 }
 
 .nav-item.active {
-  background: var(--accent-dim);
-  color: var(--accent);
+  background: var(--mode-accent-dim);
+  color: var(--mode-accent);
+  border-left-color: var(--mode-accent);
   font-weight: 500;
+}
+
+.nav-item.active .nav-icon {
+  color: var(--mode-accent);
 }
 
 .nav-item .nav-icon {
@@ -496,7 +637,7 @@ body {
 }
 
 .card:hover {
-  border-color: var(--border-accent);
+  border-color: rgba(var(--mode-accent-rgb), 0.18);
 }
 
 .card-header {

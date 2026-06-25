@@ -10,7 +10,8 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
+from sirius_pulse.persona_config import PersonaConfigPaths
+from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -139,47 +140,29 @@ def _conversation_message_matches_filters(
     return True
 
 
-async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """Return aggregated token usage across all personas."""
+async def api_tokens_get(request: web.Request, data_dir: Path) -> web.Response:
+    """Return token usage for the current persona."""
     from sirius_pulse.token import analytics as token_analytics
     from sirius_pulse.token.token_store import TokenUsageStore
 
+    db_path = data_dir / "persona.db"
     total_summary = {
         "total_calls": 0,
         "total_prompt_tokens": 0,
         "total_completion_tokens": 0,
         "total_tokens": 0,
     }
-    persona_breakdown: list[dict[str, Any]] = []
 
-    for persona_info in persona_manager.list_personas():
-        name = persona_info.get("name")
-        if not name:
-            continue
-        paths = persona_manager.get_persona_paths(name)
-        if paths is None:
-            continue
-        db_path = paths.dir / "persona.db"
-        if not db_path.exists():
-            continue
+    if db_path.exists():
         try:
             store = TokenUsageStore(str(db_path), read_only=True)
             baseline = token_analytics.compute_baseline(store)
-            total_summary["total_calls"] += baseline.get("total_calls", 0)
-            total_summary["total_prompt_tokens"] += baseline.get("total_prompt_tokens", 0)
-            total_summary["total_completion_tokens"] += baseline.get("total_completion_tokens", 0)
-            total_summary["total_tokens"] += baseline.get("total_tokens", 0)
-            persona_breakdown.append(
-                {
-                    "name": name,
-                    "calls": baseline.get("total_calls", 0),
-                    "prompt_tokens": baseline.get("total_prompt_tokens", 0),
-                    "completion_tokens": baseline.get("total_completion_tokens", 0),
-                    "total_tokens": baseline.get("total_tokens", 0),
-                }
-            )
+            total_summary["total_calls"] = baseline.get("total_calls", 0)
+            total_summary["total_prompt_tokens"] = baseline.get("total_prompt_tokens", 0)
+            total_summary["total_completion_tokens"] = baseline.get("total_completion_tokens", 0)
+            total_summary["total_tokens"] = baseline.get("total_tokens", 0)
         except Exception as exc:
-            LOG.warning("读取 Token 统计失败 %s: %s", name, exc)
+            LOG.warning("读取 Token 统计失败: %s", exc)
 
     response_avg: dict[str, Any] = {
         "total_calls": 0,
@@ -205,26 +188,17 @@ async def api_tokens_get(request: web.Request, persona_manager: Any) -> web.Resp
         {
             "summary": total_summary,
             "response_avg": response_avg,
-            "personas": persona_breakdown,
         }
     )
 
 
-async def api_telemetry_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """Return global skill usage telemetry aggregated across all personas."""
+async def api_telemetry_get(request: web.Request, data_dir: Path) -> web.Response:
+    """Return skill usage telemetry for the current persona."""
     all_summaries: dict[str, dict[str, Any]] = {}
     total_calls = 0
 
-    for persona_info in persona_manager.list_personas():
-        name = persona_info.get("name")
-        if not name:
-            continue
-        paths = persona_manager.get_persona_paths(name)
-        if paths is None:
-            continue
-        telemetry_path = paths.dir / "skill_data" / ".telemetry.jsonl"
-        if not telemetry_path.exists():
-            continue
+    telemetry_path = data_dir / "skill_data" / ".telemetry.jsonl"
+    if telemetry_path.exists():
         try:
             with open(telemetry_path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -249,7 +223,7 @@ async def api_telemetry_get(request: web.Request, persona_manager: Any) -> web.R
                         agg["failures"] += 1
                     agg["total_ms"] += record.get("duration_ms", 0)
         except Exception as exc:
-            LOG.warning("读取 Telemetry 失败 %s: %s", name, exc)
+            LOG.warning("读取 Telemetry 失败: %s", exc)
 
     skills: dict[str, Any] = {}
     for skill_name, stats in all_summaries.items():
@@ -269,11 +243,8 @@ async def api_telemetry_get(request: web.Request, persona_manager: Any) -> web.R
 
 
 @handle_api_errors
-async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_tokens_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     from sirius_pulse.token import analytics as token_analytics
     from sirius_pulse.token.token_store import TokenUsageStore
@@ -409,11 +380,8 @@ async def api_persona_tokens_get(request: web.Request, persona_manager: Any) -> 
 
 
 @handle_api_errors
-async def api_persona_cognition_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_cognition_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     db_path = paths.dir / "persona.db"
     if not db_path.exists():
@@ -431,14 +399,9 @@ async def api_persona_cognition_get(request: web.Request, persona_manager: Any) 
 
 
 @handle_api_errors
-async def api_persona_cognition_analysis_get(
-    request: web.Request, persona_manager: Any
-) -> web.Response:
+async def api_persona_cognition_analysis_get(request: web.Request, data_dir: Path) -> web.Response:
     """Return rich cognition analysis: intent/user/hourly/score distributions + decision stats."""
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     db_path = paths.dir / "persona.db"
     if not db_path.exists():
@@ -494,11 +457,8 @@ def _build_histogram(
 
 
 @handle_api_errors
-async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_diary_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     diary_dir = paths.dir / "diary"
     if not diary_dir.exists():
@@ -562,13 +522,8 @@ async def api_persona_diary_get(request: web.Request, persona_manager: Any) -> w
     )
 
 
-async def api_persona_vector_store_status_get(
-    request: web.Request, persona_manager: Any
-) -> web.Response:
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+async def api_persona_vector_store_status_get(request: web.Request, data_dir: Path) -> web.Response:
+    paths = PersonaConfigPaths(data_dir)
 
     from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 
@@ -578,7 +533,7 @@ async def api_persona_vector_store_status_get(
         stats = vs.get_stats()
         return _json_response(stats)
     except Exception as exc:
-        LOG.warning("读取向量存储状态失败 %s: %s", name, exc)
+        LOG.warning("读取向量存储状态失败: %s", exc)
         return _json_response(
             {
                 "available": False,
@@ -591,14 +546,11 @@ async def api_persona_vector_store_status_get(
 
 
 @handle_api_errors
-async def api_persona_users_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """Return user semantic profiles for a single persona (paginated)."""
+async def api_persona_users_get(request: web.Request, data_dir: Path) -> web.Response:
+    """Return user semantic profiles for the current persona (paginated)."""
     from sirius_pulse.memory.semantic.store import SemanticProfileStore
 
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     semantic_base = paths.dir / "memory" / "semantic"
     if not semantic_base.exists():
@@ -652,18 +604,15 @@ async def api_persona_users_get(request: web.Request, persona_manager: Any) -> w
 
 
 @handle_api_errors
-async def api_persona_user_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """Return a single user semantic profile for a persona."""
+async def api_persona_user_get(request: web.Request, data_dir: Path) -> web.Response:
+    """Return a single user semantic profile for the current persona."""
     from sirius_pulse.memory.semantic.store import SemanticProfileStore
 
-    name = _get_name(request)
     user_id = str(request.match_info.get("user_id", "")).strip()
     if not user_id:
         return _json_response({"error": "缺少用户ID"}, 400)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     # SemanticProfileStore expects persona_dir and appends memory/semantic itself
     semantic_base = paths.dir / "memory" / "semantic"
@@ -694,8 +643,8 @@ async def api_persona_user_get(request: web.Request, persona_manager: Any) -> we
 
 
 @handle_api_errors
-async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -> web.Response:
-    """Return glossary terms for a persona (paginated).
+async def api_persona_glossary_get(request: web.Request, data_dir: Path) -> web.Response:
+    """Return glossary terms for the current persona (paginated).
 
     Query params:
       - search: text search (optional)
@@ -704,10 +653,7 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
     """
     from sirius_pulse.memory.glossary.manager import GlossaryManager
 
-    name = _get_name(request)
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     glossary_dir = paths.dir / "glossary"
     if not glossary_dir.exists():
@@ -718,7 +664,7 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
     limit = min(int(request.query.get("limit", "50")), 200)
     offset = max(int(request.query.get("offset", "0")), 0)
 
-    manager = GlossaryManager(paths.dir, persona_name=name)
+    manager = GlossaryManager(paths.dir, persona_name=data_dir.name)
 
     terms: list[dict[str, Any]] = []
     all_terms = manager._load()
@@ -752,22 +698,19 @@ async def api_persona_glossary_get(request: web.Request, persona_manager: Any) -
 
 
 @handle_api_errors
-async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory-viz — 记忆可视化数据聚合接口。
+async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory-viz — 记忆可视化数据聚合接口。
 
     Query params:
         group_id     : 按群过滤（为空则全部）
         basic_limit  : 基础记忆条数上限（默认 500，最大 2000）
         diary_limit  : 日记条数上限（默认 200，最大 500）
     """
-    name = _get_name(request)
     group_filter = request.query.get("group_id", "").strip()
     limit_basic = min(int(request.query.get("basic_limit", "500")), 2000)
     limit_diary = min(int(request.query.get("diary_limit", "200")), 500)
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     # ── 1. 基础记忆：按群+天聚合为柱状图数据 ──
     archive_dir = paths.dir / "archive"
@@ -943,10 +886,9 @@ async def api_persona_memory_viz(request: web.Request, persona_manager: Any) -> 
 
 @handle_api_errors
 async def api_persona_conversation_history_get(
-    request: web.Request, persona_manager: Any
+    request: web.Request, data_dir: Path
 ) -> web.Response:
-    """GET /api/personas/{name}/conversations — 返回对话历史（分页，支持搜索筛选）。"""
-    name = _get_name(request)
+    """GET /api/persona/conversations — 返回对话历史（分页，支持搜索筛选）。"""
     group_id = request.query.get("group_id", "").strip()
     limit = min(int(request.query.get("limit", "50")), 200)
     offset = max(int(request.query.get("offset", "0")), 0)
@@ -955,9 +897,7 @@ async def api_persona_conversation_history_get(
     start_time = request.query.get("start", "").strip()
     end_time = request.query.get("end", "").strip()
 
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return _json_response({"error": "人格不存在"}, 404)
+    paths = PersonaConfigPaths(data_dir)
 
     archive_dir = paths.dir / "archive"
 

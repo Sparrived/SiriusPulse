@@ -1,26 +1,23 @@
-"""WebUI API endpoints for the new unified memory system.
-
-暴露演化链、传记、知识缺口、行为模式等接口。
-"""
+"""WebUI API endpoints for the evolution chain, biography, and knowledge gaps."""
 
 from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.webui.server_utils import _get_name, _json_response, handle_api_errors
+from sirius_pulse.persona_config import PersonaConfigPaths
+from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
 
 
-def _open_db(persona_manager: Any, name: str) -> tuple[Any, Any]:
-    """获取人格的 db_path 和 paths，失败返回 (None, None)。"""
-    paths = persona_manager.get_persona_paths(name)
-    if paths is None:
-        return None, None
+def _open_db(data_dir: Path) -> tuple[Any, Any]:
+    """获取当前人格的 db_path 和 paths，失败返回 (None, None)。"""
+    paths = PersonaConfigPaths(data_dir)
     db_path = paths.dir / "persona.db"
     if not db_path.exists():
         return None, paths
@@ -31,10 +28,9 @@ def _open_db(persona_manager: Any, name: str) -> tuple[Any, Any]:
 
 
 @handle_api_errors
-async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/dashboard — 记忆系统综合仪表盘。"""
-    name = _get_name(request)
-    db_path, paths = _open_db(persona_manager, name)
+async def api_memory_dashboard(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory/dashboard -- 记忆系统综合仪表盘。"""
+    db_path, paths = _open_db(data_dir)
     if paths is None:
         return _json_response({"error": "人格不存在"}, 404)
 
@@ -157,10 +153,9 @@ async def api_memory_dashboard(request: web.Request, persona_manager: Any) -> we
 
 
 @handle_api_errors
-async def api_evolution_records(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/evolution — 演化链记录列表。"""
-    name = _get_name(request)
-    db_path, paths = _open_db(persona_manager, name)
+async def api_evolution_records(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory/evolution -- 演化链记录列表。"""
+    db_path, paths = _open_db(data_dir)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
@@ -227,14 +222,13 @@ async def api_evolution_records(request: web.Request, persona_manager: Any) -> w
 
 
 @handle_api_errors
-async def api_evolution_history(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/evolution/{record_id}/history — 单条记录的演化历史。"""
-    name = _get_name(request)
+async def api_evolution_history(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory/evolution/{record_id}/history -- 单条记录的演化历史。"""
     record_id = str(request.match_info.get("record_id", "")).strip()
     if not record_id:
         return _json_response({"error": "缺少 record_id"}, 400)
 
-    db_path, _ = _open_db(persona_manager, name)
+    db_path, _ = _open_db(data_dir)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
@@ -250,10 +244,9 @@ async def api_evolution_history(request: web.Request, persona_manager: Any) -> w
 
 
 @handle_api_errors
-async def api_evolution_uncertain(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/evolution/uncertain — 待验证记录。"""
-    name = _get_name(request)
-    db_path, _ = _open_db(persona_manager, name)
+async def api_evolution_uncertain(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory/evolution/uncertain -- 待验证记录。"""
+    db_path, _ = _open_db(data_dir)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
@@ -307,14 +300,13 @@ def _record_to_dict(
 
 
 @handle_api_errors
-async def api_biography_view(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/biography/{user_id} — 传记视图。"""
-    name = _get_name(request)
+async def api_biography_view(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory/biography/{user_id} -- 传记视图。"""
     user_id = str(request.match_info.get("user_id", "")).strip()
     if not user_id:
         return _json_response({"error": "缺少 user_id"}, 400)
 
-    db_path, _ = _open_db(persona_manager, name)
+    db_path, _ = _open_db(data_dir)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
@@ -344,10 +336,9 @@ async def api_biography_view(request: web.Request, persona_manager: Any) -> web.
 
 
 @handle_api_errors
-async def api_biography_list_all(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/biographies — 所有用户传记列表。"""
-    name = _get_name(request)
-    db_path, paths = _open_db(persona_manager, name)
+async def api_biography_list_all(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory/biographies -- 所有用户传记列表。"""
+    db_path, paths = _open_db(data_dir)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
@@ -403,14 +394,13 @@ async def api_biography_list_all(request: web.Request, persona_manager: Any) -> 
 
 
 @handle_api_errors
-async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.Response:
-    """GET /api/personas/{name}/memory/gaps/{user_id} — 知识缺口检测。"""
-    name = _get_name(request)
+async def api_knowledge_gaps(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/memory/gaps/{user_id} -- 知识缺口检测。"""
     user_id = str(request.match_info.get("user_id", "")).strip()
     if not user_id:
         return _json_response({"error": "缺少 user_id"}, 400)
 
-    db_path, _ = _open_db(persona_manager, name)
+    db_path, _ = _open_db(data_dir)
     if not db_path:
         return _json_response({"error": "人格不存在或数据库不存在"}, 404)
 
@@ -461,5 +451,3 @@ async def api_knowledge_gaps(request: web.Request, persona_manager: Any) -> web.
         )
 
     return _json_response({"gaps": gaps, "total": len(gaps)})
-
-

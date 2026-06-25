@@ -100,9 +100,8 @@ class EngineRuntime:
     ) -> None:
         self.work_path = Path(work_path).resolve()
         self.work_path.mkdir(parents=True, exist_ok=True)
-        self.global_data_path = (
-            Path(global_data_path).resolve() if global_data_path else self.work_path
-        )
+        # 独立人格模式：global_data_path 等于 work_path
+        self.global_data_path = self.work_path
         self.plugin_config = dict(plugin_config or {})
         self._engine: EmotionalGroupChatEngine | None = None
         self._running = False
@@ -166,18 +165,7 @@ class EngineRuntime:
             return False
 
     def _build_provider(self) -> AutoRoutingProvider | None:
-        # 1) 优先从全局 ProviderRegistry 持久化加载（多人格架构）
-        try:
-            from sirius_pulse.providers.routing import ProviderRegistry
-
-            registry = ProviderRegistry(self.global_data_path)
-            loaded = registry.load()
-            if loaded:
-                return AutoRoutingProvider(loaded)
-        except Exception as exc:
-            LOG.debug("全局 ProviderRegistry 加载失败: %s", exc)
-
-        # 2) 回退到人格目录（兼容旧版单人格架构）
+        # 1) 从 ProviderRegistry 加载
         try:
             from sirius_pulse.providers.routing import ProviderRegistry
 
@@ -186,21 +174,21 @@ class EngineRuntime:
             if loaded:
                 return AutoRoutingProvider(loaded)
         except Exception as exc:
-            LOG.debug("人格级 ProviderRegistry 加载失败: %s", exc)
+            LOG.debug("ProviderRegistry 加载失败: %s", exc)
 
-        # 3) 从插件配置读取（覆盖/补充）
+        # 2) 从插件配置读取（覆盖/补充）
         provider = _build_provider_from_config(self.plugin_config)
         if provider is not None:
             return provider
 
-        # 4) fallback 到环境变量
+        # 3) fallback 到环境变量
         return _build_provider_from_env()
 
     def _merge_plugin_config(self, definition: Any) -> None:
         """将 plugins/_config.json 中的运行时配置合并到 definition.permissions。"""
         import json
 
-        config_path = self.global_data_path.parent / "plugins" / "_config.json"
+        config_path = self.work_path / "plugins" / "_config.json"
         if not config_path.exists():
             return
         try:
@@ -270,7 +258,9 @@ class EngineRuntime:
         executor = getattr(self._engine, "_skill_executor", None)
         if executor is not None:
             executor.set_bridge(adapter_type, bridge)
-            LOG.info("平台 bridge 已注入 skill executor: %s → %s", adapter_type, type(bridge).__name__)
+            LOG.info(
+                "平台 bridge 已注入 skill executor: %s → %s", adapter_type, type(bridge).__name__
+            )
         # 同时直接存储在引擎上，方便 plugin 直接取用
         self._engine._adapter = bridge
 
@@ -292,7 +282,7 @@ class EngineRuntime:
 
         Plugin 目录位于项目根：plugins/
         """
-        plugins_dir = self.global_data_path.parent / "plugins"
+        plugins_dir = self.work_path / "plugins"
         if not plugins_dir.exists():
             LOG.info("插件目录不存在，跳过 Plugin 初始化: %s", plugins_dir)
             return
@@ -490,7 +480,9 @@ class EngineRuntime:
             self._embedding_last_fail_at = time.monotonic()
             self._embedding_fail_count = min(self._embedding_fail_count + 1, 4)
             LOG.error(
-                "共享 Embedding 服务不可用: %s (连续失败 %d 次)", embedding_url, self._embedding_fail_count
+                "共享 Embedding 服务不可用: %s (连续失败 %d 次)",
+                embedding_url,
+                self._embedding_fail_count,
             )
             raise RuntimeError(
                 f"Embedding 服务不可用 ({embedding_url})。"

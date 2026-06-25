@@ -5,6 +5,7 @@ const state = {
   providers: [],
   globalConfig: {},
   theme: localStorage.getItem('sirius-theme') || 'dark',
+  mode: localStorage.getItem('sirius-mode') || 'butler',
   sidebarCollapsed: false,
   authToken: localStorage.getItem('sirius_token') || '',
 };

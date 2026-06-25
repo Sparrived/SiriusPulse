@@ -9,7 +9,6 @@ from sirius_pulse.models.emotion import (
 from sirius_pulse.models.intent_v3 import (
     EmotionalSubtype,
     HelpSubtype,
-    IntentAnalysisV3,
     SilentSubtype,
     SocialIntent,
     SocialSubtype,
@@ -20,6 +19,7 @@ from sirius_pulse.models.response_strategy import (
     ResponseStrategy,
     StrategyDecision,
 )
+from sirius_pulse.models.signal import SignalAnalysis
 
 __all__ = [
     # Core models
@@ -30,13 +30,14 @@ __all__ = [
     "EmotionState",
     "EmpathyStrategy",
     "AssistantEmotionState",
-    # Intent v3 models
+    # Intent enums
     "SocialIntent",
     "HelpSubtype",
     "EmotionalSubtype",
     "SocialSubtype",
     "SilentSubtype",
-    "IntentAnalysisV3",
+    # Signal analysis
+    "SignalAnalysis",
     # Response strategy models
     "ResponseStrategy",
     "StrategyDecision",

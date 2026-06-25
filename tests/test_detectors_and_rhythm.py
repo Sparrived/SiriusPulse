@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from sirius_pulse.core.rhythm import RhythmAnalyzer
-from sirius_pulse.memory.biography.models import UserBiography
 from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
-from sirius_pulse.memory.gap_detector import GapDetector, GapType, KnowledgeGap
 from sirius_pulse.models.emotion import AssistantEmotionState, BasicEmotion, EmotionState
 
 
@@ -25,39 +23,6 @@ def test_cold_detector_when_candidate_counts_are_low_then_diary_trigger_is_suppr
     assert ColdDetector.should_generate_diary(0.0, 3600, candidate_count=12) is True
     assert ColdDetector.should_generate_diary(0.0, 3600, candidate_count=11) is False
     assert ColdDetector.should_generate_diary(0.0, 300, candidate_count=12) is False
-
-
-def test_gap_detector_when_biography_is_sparse_then_reports_profile_gaps_and_hint():
-    bio = UserBiography(
-        user_id="u1", short_bio="tiny", uncertain_fact_count=2, superseded_fact_count=4
-    )
-
-    gaps = GapDetector.detect(bio)
-    hint = GapDetector.build_prompt_hint(gaps)
-
-    assert {gap.domain for gap in gaps} == {"basic_info", "relationships", "identity", "fact"}
-    assert any(gap.gap_type == GapType.INFERRED_UNVERIFIED for gap in gaps)
-    assert any(gap.gap_type == GapType.UNRESOLVED_CONFLICT for gap in gaps)
-    assert hint
-
-
-def test_gap_detector_when_biography_is_complete_then_no_gap_hint_is_rendered():
-    bio = UserBiography(
-        short_bio="This biography contains enough detail for profile completeness.",
-        relationships=[{"target": "u2", "relation": "friend"}],
-        identity_anchors=["developer"],
-    )
-
-    gaps = GapDetector.detect(bio)
-
-    assert gaps == []
-    assert GapDetector.build_prompt_hint(gaps) == ""
-    assert KnowledgeGap("x", "domain", "desc", "low").to_dict() == {
-        "gap_type": "x",
-        "domain": "domain",
-        "description": "desc",
-        "importance": "low",
-    }
 
 
 def test_rhythm_analyzer_when_no_messages_then_returns_silent_cold_result():

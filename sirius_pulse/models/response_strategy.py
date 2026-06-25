@@ -68,6 +68,7 @@ class DelayedResponseItem:
         default_factory=list
     )  # merged messages may involve multiple users
     biography_context: BiographyPromptContext = field(default_factory=BiographyPromptContext)
+    signal_prompt: str = ""  # 规则计算信号摘要，注入主模型 prompt
 
     def to_dict(self) -> dict[str, Any]:
         return {

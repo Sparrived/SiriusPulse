@@ -604,33 +604,6 @@ class UnifiedUserManager:
             user.name = name
         return user
 
-    def feed_messages(
-        self,
-        user_id: str,
-        name: str,
-        group_id: str,
-        messages: list[str],
-        discovered_aliases: list[str] | None = None,
-    ) -> None:
-        """追加原始消息到蒸馏队列。"""
-        user = self.get_or_create_user(user_id, name)
-
-        user.pending_messages.extend(messages)
-        total_chars = sum(len(m) for m in user.pending_messages)
-        while total_chars > 2000 and len(user.pending_messages) > 1:
-            user.pending_messages.pop(0)
-            total_chars = sum(len(m) for m in user.pending_messages)
-
-        user.pending_message_count += len(messages)
-
-        # 写穿到 SQLite
-        self._save_user_to_storage(user)
-
-    def get_pending_users(self) -> list[UnifiedUser]:
-        """获取有待蒸馏消息的用户。"""
-        self._ensure_users_loaded()
-        return [u for u in self._global_users.values() if u.pending_messages]
-
     def save_user(self, user: UnifiedUser) -> None:
         """保存用户数据。"""
         self._global_users[user.user_id] = user

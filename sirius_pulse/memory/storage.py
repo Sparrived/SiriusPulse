@@ -44,14 +44,6 @@ class MemoryStorage(BaseSqliteStore):
                 metadata TEXT DEFAULT '{}',
                 identity_anchors TEXT DEFAULT '[]',
                 relationships TEXT DEFAULT '[]',
-                short_bio TEXT DEFAULT '',
-                affinity_score REAL DEFAULT 0.0,
-                pending_messages TEXT DEFAULT '[]',
-                pending_message_count INTEGER DEFAULT 0,
-                distilled_points TEXT DEFAULT '[]',
-                last_distill_at TEXT DEFAULT '',
-                bio_token_estimate INTEGER DEFAULT 0,
-                bio_token_budget INTEGER DEFAULT 500,
                 created_at TEXT DEFAULT '',
                 updated_at TEXT DEFAULT ''
             );
@@ -136,25 +128,8 @@ class MemoryStorage(BaseSqliteStore):
             CREATE TABLE IF NOT EXISTS group_semantic_profiles (
                 group_id TEXT PRIMARY KEY,
                 group_name TEXT DEFAULT '',
-                interest_topics TEXT DEFAULT '[]',
-                group_norms TEXT DEFAULT '{}',
-                taboo_topics TEXT DEFAULT '[]',
-                dominant_topic TEXT DEFAULT '',
                 updated_at TEXT DEFAULT ''
             );
-
-            CREATE TABLE IF NOT EXISTS atmosphere_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id TEXT NOT NULL,
-                timestamp TEXT DEFAULT '',
-                group_valence REAL DEFAULT 0.0,
-                group_arousal REAL DEFAULT 0.0,
-                active_participants INTEGER DEFAULT 0,
-                FOREIGN KEY (group_id) REFERENCES group_semantic_profiles(group_id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_atmosphere_history_group
-                ON atmosphere_history(group_id);
 
             CREATE TABLE IF NOT EXISTS group_pending_ai_responses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -202,10 +177,8 @@ class MemoryStorage(BaseSqliteStore):
             INSERT INTO users (
                 user_id, name, persona, identities, aliases, traits,
                 group_memberships, metadata, identity_anchors, relationships,
-                short_bio, affinity_score, pending_messages, pending_message_count,
-                distilled_points, last_distill_at, bio_token_estimate, bio_token_budget,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 name=excluded.name,
                 persona=excluded.persona,
@@ -216,14 +189,6 @@ class MemoryStorage(BaseSqliteStore):
                 metadata=excluded.metadata,
                 identity_anchors=excluded.identity_anchors,
                 relationships=excluded.relationships,
-                short_bio=excluded.short_bio,
-                affinity_score=excluded.affinity_score,
-                pending_messages=excluded.pending_messages,
-                pending_message_count=excluded.pending_message_count,
-                distilled_points=excluded.distilled_points,
-                last_distill_at=excluded.last_distill_at,
-                bio_token_estimate=excluded.bio_token_estimate,
-                bio_token_budget=excluded.bio_token_budget,
                 updated_at=excluded.updated_at
             """,
             (
@@ -237,14 +202,6 @@ class MemoryStorage(BaseSqliteStore):
                 json.dumps(user.get("metadata", {}), ensure_ascii=False),
                 json.dumps(user.get("identity_anchors", []), ensure_ascii=False),
                 json.dumps(user.get("relationships", []), ensure_ascii=False),
-                user.get("short_bio", ""),
-                float(user.get("affinity_score", 0.0)),
-                json.dumps(user.get("pending_messages", []), ensure_ascii=False),
-                int(user.get("pending_message_count", 0)),
-                json.dumps(user.get("distilled_points", []), ensure_ascii=False),
-                user.get("last_distill_at", ""),
-                int(user.get("bio_token_estimate", 0)),
-                int(user.get("bio_token_budget", 500)),
                 user.get("created_at", now),
                 now,
             ),
@@ -274,14 +231,6 @@ class MemoryStorage(BaseSqliteStore):
             "metadata": json.loads(row["metadata"]),
             "identity_anchors": json.loads(row["identity_anchors"]),
             "relationships": json.loads(row["relationships"]),
-            "short_bio": row["short_bio"],
-            "affinity_score": row["affinity_score"],
-            "pending_messages": json.loads(row["pending_messages"]),
-            "pending_message_count": row["pending_message_count"],
-            "distilled_points": json.loads(row["distilled_points"]),
-            "last_distill_at": row["last_distill_at"],
-            "bio_token_estimate": row["bio_token_estimate"],
-            "bio_token_budget": row["bio_token_budget"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -547,30 +496,6 @@ class MemoryStorage(BaseSqliteStore):
                 _now_iso(),
             ),
         )
-        # 保存 response_records
-        self.execute(
-            "DELETE FROM response_records WHERE group_id = ? AND user_id = ?",
-            (group_id, user_id),
-        )
-        for record in profile.get("pending_responses", []):
-            self.execute(
-                """
-                INSERT INTO response_records (
-                    group_id, user_id, sent_at, target_user_id, topic_hint,
-                    response_length, was_engaged, engagement_latency_s
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    group_id,
-                    user_id,
-                    record.get("sent_at", ""),
-                    record.get("target_user_id", ""),
-                    record.get("topic_hint", ""),
-                    int(record.get("response_length", 0)),
-                    1 if record.get("was_engaged") else 0,
-                    float(record.get("engagement_latency_s", 0.0)),
-                ),
-            )
         self.commit()
 
     def list_semantic_profiles(self, group_id: str) -> list[dict[str, Any]]:
@@ -583,35 +508,14 @@ class MemoryStorage(BaseSqliteStore):
 
     def _row_to_semantic_profile(self, row: sqlite3.Row) -> dict[str, Any]:
         """将数据库行转换为语义画名字典。"""
-        group_id = row["group_id"]
-        user_id = row["user_id"]
-
-        # 加载 response_records
-        records = self.execute(
-            "SELECT * FROM response_records WHERE group_id = ? AND user_id = ?",
-            (group_id, user_id),
-        ).fetchall()
-        pending_responses = [
-            {
-                "sent_at": r["sent_at"],
-                "target_user_id": r["target_user_id"],
-                "topic_hint": r["topic_hint"],
-                "response_length": r["response_length"],
-                "was_engaged": bool(r["was_engaged"]),
-                "engagement_latency_s": r["engagement_latency_s"],
-            }
-            for r in records
-        ]
-
         return {
-            "group_id": group_id,
-            "user_id": user_id,
+            "group_id": row["group_id"],
+            "user_id": row["user_id"],
             "name": row["name"],
             "engagement_rate": row["engagement_rate"],
             "interaction_count": row["interaction_count"],
             "first_interaction_at": row["first_interaction_at"],
             "last_interaction_at": row["last_interaction_at"],
-            "pending_responses": pending_responses,
         }
 
     def get_group_semantic_profile(self, group_id: str) -> dict[str, Any] | None:
@@ -629,47 +533,18 @@ class MemoryStorage(BaseSqliteStore):
         self.execute(
             """
             INSERT INTO group_semantic_profiles (
-                group_id, group_name, interest_topics, group_norms,
-                taboo_topics, dominant_topic, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                group_id, group_name, updated_at
+            ) VALUES (?, ?, ?)
             ON CONFLICT(group_id) DO UPDATE SET
                 group_name=excluded.group_name,
-                interest_topics=excluded.interest_topics,
-                group_norms=excluded.group_norms,
-                taboo_topics=excluded.taboo_topics,
-                dominant_topic=excluded.dominant_topic,
                 updated_at=excluded.updated_at
             """,
             (
                 group_id,
                 profile.get("group_name", ""),
-                json.dumps(profile.get("interest_topics", []), ensure_ascii=False),
-                json.dumps(profile.get("group_norms", {}), ensure_ascii=False),
-                json.dumps(profile.get("taboo_topics", []), ensure_ascii=False),
-                profile.get("dominant_topic", ""),
                 _now_iso(),
             ),
         )
-        # 保存 atmosphere_history
-        self.execute(
-            "DELETE FROM atmosphere_history WHERE group_id = ?",
-            (group_id,),
-        )
-        for snapshot in profile.get("atmosphere_history", []):
-            self.execute(
-                """
-                INSERT INTO atmosphere_history (
-                    group_id, timestamp, group_valence, group_arousal, active_participants
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    group_id,
-                    snapshot.get("timestamp", ""),
-                    float(snapshot.get("group_valence", 0.0)),
-                    float(snapshot.get("group_arousal", 0.0)),
-                    int(snapshot.get("active_participants", 0)),
-                ),
-            )
         # 保存 pending_ai_responses
         self.execute(
             "DELETE FROM group_pending_ai_responses WHERE group_id = ?",
@@ -699,21 +574,6 @@ class MemoryStorage(BaseSqliteStore):
         """将数据库行转换为群组语义画名字典。"""
         group_id = row["group_id"]
 
-        # 加载 atmosphere_history
-        history_rows = self.execute(
-            "SELECT * FROM atmosphere_history WHERE group_id = ?",
-            (group_id,),
-        ).fetchall()
-        atmosphere_history = [
-            {
-                "timestamp": r["timestamp"],
-                "group_valence": r["group_valence"],
-                "group_arousal": r["group_arousal"],
-                "active_participants": r["active_participants"],
-            }
-            for r in history_rows
-        ]
-
         # 加载 pending_ai_responses
         pending_rows = self.execute(
             "SELECT * FROM group_pending_ai_responses WHERE group_id = ?",
@@ -734,11 +594,6 @@ class MemoryStorage(BaseSqliteStore):
         return {
             "group_id": group_id,
             "group_name": row["group_name"],
-            "interest_topics": json.loads(row["interest_topics"]),
-            "atmosphere_history": atmosphere_history,
-            "group_norms": json.loads(row["group_norms"]),
-            "taboo_topics": json.loads(row["taboo_topics"]),
-            "dominant_topic": row["dominant_topic"],
             "pending_ai_responses": pending_ai_responses,
         }
 

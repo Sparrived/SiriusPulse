@@ -38,8 +38,6 @@ class DiaryEntry(JsonSerializable):
 
 @dataclass(slots=True)
 class DiaryGenerationResult(JsonSerializable):
-    """Result of diary generation, including extracted semantic topics."""
+    """Result of diary generation."""
 
     entry: DiaryEntry
-    dominant_topic: str = ""
-    interest_topics: list[str] = field(default_factory=list)

@@ -1,7 +1,7 @@
-import { store, setState } from './store.js';
+import { store, setState, subscribe } from './store.js';
 import { get, post, put, del, setToken, clearToken, getToken } from './api.js';
 export { get, post, put, del, setToken, clearToken, getToken };
-import { initTheme, applyTheme, getThemes } from './theme.js';
+import { initTheme, applyTheme, getThemes, getModes, applyMode } from './theme.js';
 import { wsConnect } from './ws.js';
 import { toast, formatHeartbeat, $ } from './components.js';
 
@@ -153,6 +153,10 @@ export async function navTo(page, name) {
       <span class="header-breadcrumb">${meta.breadcrumb || ''}</span>
     </div>
     <div class="header-right">
+      <div class="mode-toggle" id="modeToggle">
+        <div class="mode-toggle-slider${(store.mode || 'butler') === 'assistant' ? ' right' : ''}" id="modeSlider"></div>
+        ${getModes().map(m => `<button class="mode-option${m.id === (store.mode || 'butler') ? ' active' : ''}" data-mode="${m.id}">${m.icon} ${m.label}</button>`).join('')}
+      </div>
       <div class="theme-dropdown">
         <button class="theme-btn" id="themeBtn">${ti?.icon || '🌙'} ${ti?.label || '暗色'}</button>
         <div class="theme-dropdown-list" id="themeList">
@@ -161,6 +165,7 @@ export async function navTo(page, name) {
       </div>
     </div>
   `;
+  setupModeToggle();
   setupThemeDropdown();
   setupPersonaHeaderDropdown();
 
@@ -203,6 +208,23 @@ function setupThemeDropdown() {
     };
   });
   document.addEventListener('click', () => list.classList.remove('open'));
+}
+
+function setupModeToggle() {
+  const toggle = document.getElementById('modeToggle');
+  const slider = document.getElementById('modeSlider');
+  if (!toggle) return;
+  toggle.querySelectorAll('.mode-option').forEach(opt => {
+    opt.onclick = () => {
+      const newMode = opt.dataset.mode;
+      if (newMode === store.mode) return;
+      // Update toggle UI immediately
+      toggle.querySelectorAll('.mode-option').forEach(o => o.classList.toggle('active', o.dataset.mode === newMode));
+      if (slider) slider.classList.toggle('right', newMode === 'assistant');
+      // Apply mode with transition
+      applyMode(newMode, toggle);
+    };
+  });
 }
 
 function setupPersonaHeaderDropdown() {
@@ -334,7 +356,10 @@ function renderSidebarFooter() {
   const footer = document.getElementById('sidebarFooter');
   const personas = store.personas || [];
   const running = personas.filter(p => p.running).length;
+  const mode = store.mode || 'butler';
+  const modeInfo = (getModes().find(m => m.id === mode)) || { icon: '◈', label: '管家' };
   footer.innerHTML = `
+    <div class="footer-row"><span>${modeInfo.icon} ${modeInfo.label}模式</span></div>
     <div class="footer-row"><span>人格</span><span class="text-mono">${personas.length}</span></div>
     <div class="footer-row"><span><span class="status-dot${running > 0 ? ' running' : ''}"></span> 运行中</span><span class="text-mono">${running}</span></div>
     <div class="footer-row"><span><span class="status-dot" id="wsDot"></span> WS</span><span id="wsStatus">—</span></div>
@@ -431,6 +456,8 @@ async function init() {
     navTo(startPage);
     wsConnect();
   }
+
+  subscribe('mode', () => renderSidebarFooter());
 
   window.addEventListener('hashchange', () => {
     const hashPage = window.location.hash.slice(1);

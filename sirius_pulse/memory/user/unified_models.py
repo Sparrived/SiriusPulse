@@ -135,19 +135,6 @@ class UnifiedUser:
     # ── 传记画像 ──
     identity_anchors: list[str] = field(default_factory=list)
     relationships: list[RelationshipAnchor] = field(default_factory=list)
-    short_bio: str = ""
-    affinity_score: float = 0.0
-
-    # ── 蒸馏队列 ──
-    pending_messages: list[str] = field(default_factory=list)
-    pending_message_count: int = 0
-    distilled_points: list[str] = field(default_factory=list)
-    last_distill_at: str = ""
-
-    # ── 内部追踪 ──
-    last_updated_at: str = ""
-    bio_token_estimate: int = 0
-    bio_token_budget: int = 500
 
     @property
     def is_developer(self) -> bool:
@@ -165,15 +152,6 @@ class UnifiedUser:
             "metadata": dict(self.metadata),
             "identity_anchors": list(self.identity_anchors),
             "relationships": [r.to_dict() for r in self.relationships],
-            "short_bio": self.short_bio,
-            "affinity_score": self.affinity_score,
-            "pending_messages": list(self.pending_messages),
-            "pending_message_count": self.pending_message_count,
-            "distilled_points": list(self.distilled_points),
-            "last_distill_at": self.last_distill_at,
-            "last_updated_at": self.last_updated_at,
-            "bio_token_estimate": self.bio_token_estimate,
-            "bio_token_budget": self.bio_token_budget,
         }
 
     @classmethod
@@ -195,15 +173,6 @@ class UnifiedUser:
             metadata=dict(data.get("metadata", {})),
             identity_anchors=list(data.get("identity_anchors", [])),
             relationships=rels,
-            short_bio=data.get("short_bio", ""),
-            affinity_score=float(data.get("affinity_score", 0.0)),
-            pending_messages=list(data.get("pending_messages", [])),
-            pending_message_count=int(data.get("pending_message_count", 0)),
-            distilled_points=list(data.get("distilled_points", [])),
-            last_distill_at=data.get("last_distill_at", ""),
-            last_updated_at=data.get("last_updated_at", ""),
-            bio_token_estimate=int(data.get("bio_token_estimate", 0)),
-            bio_token_budget=int(data.get("bio_token_budget", 500)),
         )
 
 
