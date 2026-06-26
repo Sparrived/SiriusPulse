@@ -341,7 +341,46 @@ class WebUIServer:
     # ─── 全局 API: Provider 配置 ──────────────────────────
 
     def _provider_keys_path(self) -> Path:
-        return self.data_dir / "providers" / "provider_keys.json"
+        return WorkspaceProviderManager(self.data_dir).path
+
+    @staticmethod
+    def _mask_api_key(api_key: Any) -> str:
+        key = str(api_key or "").strip()
+        if not key:
+            return ""
+        return key[:4] + "****" if len(key) > 4 else "****"
+
+    @staticmethod
+    def _provider_mapping_from_payload(payload: Any) -> dict[str, dict[str, Any]]:
+        if isinstance(payload, dict) and "providers" in payload:
+            payload = payload["providers"]
+
+        if isinstance(payload, dict):
+            providers: dict[str, dict[str, Any]] = {}
+            for name, cfg in payload.items():
+                if isinstance(cfg, dict):
+                    providers[str(name)] = dict(cfg)
+            return providers
+
+        if isinstance(payload, list):
+            providers = {}
+            for idx, cfg in enumerate(payload):
+                if not isinstance(cfg, dict):
+                    continue
+                name = str(
+                    cfg.get("name")
+                    or cfg.get("type")
+                    or cfg.get("platform_type")
+                    or f"provider-{idx}"
+                ).strip()
+                if not name:
+                    name = f"provider-{idx}"
+                if name in providers:
+                    name = f"{name}-{idx}"
+                providers[name] = {k: v for k, v in cfg.items() if k != "name"}
+            return providers
+
+        return {}
 
     def _notify_provider_reload(self) -> None:
         """向当前人格写入 provider 重载标志。"""
@@ -371,40 +410,40 @@ class WebUIServer:
                 LOG.warning("读取全局配置失败", exc_info=True)
                 pass
 
-        providers_data = body.get("providers", {})
-        if isinstance(providers_data, list):
-            # 前端传的是数组格式，转换为 name -> config 的字典
-            new_providers: dict[str, Any] = {}
-            for cfg in providers_data:
-                if isinstance(cfg, dict):
-                    if "name" in cfg:
-                        name = cfg["name"]
-                    else:
-                        name = cfg.get("type", "unnamed")
-                        if name in new_providers:
-                            name = f"{name}-{len(new_providers)}"
-                    new_providers[name] = {k: v for k, v in cfg.items() if k != "name"}
-            providers_data = new_providers
-        if isinstance(providers_data, dict):
-            if "providers" not in data:
-                data["providers"] = {}
-            for provider, cfg in providers_data.items():
-                if isinstance(cfg, dict):
-                    if provider not in data["providers"]:
-                        data["providers"][provider] = {}
-                    for k, v in cfg.items():
-                        if k == "api_key" and isinstance(v, str) and "****" in v:
-                            continue
-                        data["providers"][provider][k] = v
-            saved_names = set(providers_data.keys())
-            for old_name in list(data["providers"].keys()):
-                if old_name not in saved_names:
-                    del data["providers"][old_name]
+        existing_providers = self._provider_mapping_from_payload(data)
+        incoming_providers = self._provider_mapping_from_payload(body.get("providers", {}))
+        saved_providers: dict[str, dict[str, Any]] = {}
+        for provider, cfg in incoming_providers.items():
+            existing = existing_providers.get(provider, {})
+            saved = dict(existing)
+            provider_type = str(
+                cfg.get("type")
+                or cfg.get("platform_type")
+                or existing.get("type")
+                or existing.get("platform_type")
+                or provider
+            ).strip()
+            if provider_type:
+                saved["type"] = provider_type
+            saved.pop("platform_type", None)
+            for key, value in cfg.items():
+                if key in {"name", "platform_type"}:
+                    continue
+                if key == "api_key":
+                    api_key = str(value or "").strip()
+                    if "****" in api_key:
+                        continue
+                    saved["api_key"] = api_key
+                    continue
+                saved[key] = value
+            saved_providers[provider] = saved
+        data["providers"] = saved_providers
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
+        self._notify_provider_reload()
         return _json_response({"success": True})
 
     # ─── 全局 API: Provider 健康检查 ───────────────────────
@@ -548,12 +587,19 @@ class WebUIServer:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             providers: list[dict[str, Any]] = []
-            raw_providers = data.get("providers", {}) if isinstance(data, dict) else {}
+            raw_providers = self._provider_mapping_from_payload(data)
             for k, v in raw_providers.items():
                 if isinstance(v, dict):
-                    key = str(v.get("api_key", "")).strip()
-                    masked = key[:4] + "****" if len(key) > 4 else ("****" if key else "")
-                    providers.append({**v, "name": k, "api_key": masked})
+                    provider_type = str(v.get("type") or v.get("platform_type") or k).strip()
+                    providers.append(
+                        {
+                            **v,
+                            "name": k,
+                            "type": provider_type,
+                            "platform_type": provider_type,
+                            "api_key": self._mask_api_key(v.get("api_key", "")),
+                        }
+                    )
             return providers
         except Exception:
             LOG.warning("读取 provider_keys 失败", exc_info=True)

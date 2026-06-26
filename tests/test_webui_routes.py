@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 from aiohttp import web
 
+from sirius_pulse.utils.json_io import atomic_write_json
 from sirius_pulse.webui.routes import WEBUI_ROUTES
 from sirius_pulse.webui.server import DELEGATED_HANDLERS, WebUIServer
 
@@ -55,3 +57,131 @@ async def test_webui_delegated_handler_when_called_then_injects_data_dir(tmp_pat
 
     assert response.status == 200
     assert calls == [(request, server.data_dir)]
+
+
+@pytest.mark.asyncio
+async def test_webui_providers_get_when_registry_exists_then_returns_masked_providers(tmp_path):
+    atomic_write_json(
+        tmp_path / "providers" / "provider_keys.json",
+        {
+            "providers": {
+                "aliyun-bailian": {
+                    "type": "aliyun-bailian",
+                    "api_key": "sk-secret",
+                    "base_url": "https://dashscope.example",
+                    "enabled": True,
+                    "models": ["qwen-plus"],
+                    "healthcheck_model": "qwen-plus",
+                }
+            }
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_providers_get(SimpleNamespace())
+    payload = json.loads(response.text)
+
+    assert payload["providers"] == [
+        {
+            "name": "aliyun-bailian",
+            "type": "aliyun-bailian",
+            "platform_type": "aliyun-bailian",
+            "api_key": "sk-s****",
+            "base_url": "https://dashscope.example",
+            "enabled": True,
+            "models": ["qwen-plus"],
+            "healthcheck_model": "qwen-plus",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_webui_providers_get_when_registry_uses_legacy_list_then_returns_providers(tmp_path):
+    atomic_write_json(
+        tmp_path / "providers" / "provider_keys.json",
+        {
+            "providers": [
+                {
+                    "name": "deepseek-main",
+                    "platform_type": "deepseek",
+                    "api_key": "sk-deepseek",
+                    "enabled": True,
+                }
+            ]
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_providers_get(SimpleNamespace())
+    payload = json.loads(response.text)
+
+    assert payload["providers"] == [
+        {
+            "name": "deepseek-main",
+            "type": "deepseek",
+            "platform_type": "deepseek",
+            "api_key": "sk-d****",
+            "enabled": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_webui_providers_post_when_key_is_masked_then_preserves_secret_and_reloads(
+    tmp_path,
+):
+    atomic_write_json(
+        tmp_path / "providers" / "provider_keys.json",
+        {
+            "providers": {
+                "aliyun-bailian": {
+                    "type": "aliyun-bailian",
+                    "api_key": "sk-original",
+                    "base_url": "https://old.example",
+                    "models_url": "https://models.example",
+                    "enabled": True,
+                    "models": ["old-model"],
+                    "healthcheck_model": "old-model",
+                },
+                "deepseek": {
+                    "type": "deepseek",
+                    "api_key": "sk-deleted",
+                },
+            }
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    async def json_body():
+        return {
+            "providers": [
+                {
+                    "name": "aliyun-bailian",
+                    "platform_type": "aliyun-bailian",
+                    "api_key": "sk-o****",
+                    "base_url": "https://new.example",
+                    "enabled": False,
+                    "models": ["qwen-plus"],
+                    "healthcheck_model": "qwen-plus",
+                }
+            ]
+        }
+
+    response = await server.api_providers_post(SimpleNamespace(json=json_body))
+    saved = json.loads((tmp_path / "providers" / "provider_keys.json").read_text(encoding="utf-8"))
+
+    assert response.status == 200
+    assert saved == {
+        "providers": {
+            "aliyun-bailian": {
+                "type": "aliyun-bailian",
+                "api_key": "sk-original",
+                "base_url": "https://new.example",
+                "models_url": "https://models.example",
+                "enabled": False,
+                "models": ["qwen-plus"],
+                "healthcheck_model": "qwen-plus",
+            }
+        }
+    }
+    assert (tmp_path / "engine_state" / "reload_requested").read_text(encoding="utf-8") == "provider"
