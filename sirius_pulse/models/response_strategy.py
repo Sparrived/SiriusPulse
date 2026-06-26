@@ -68,6 +68,8 @@ class DelayedResponseItem:
         default_factory=list
     )  # merged messages may involve multiple users
     biography_context: BiographyPromptContext = field(default_factory=BiographyPromptContext)
+    lane: str = "chat"  # chat | plan
+    plan_id: str = ""
     signal_prompt: str = ""  # 规则计算信号摘要，注入主模型 prompt
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,4 +94,6 @@ class DelayedResponseItem:
                 "mentioned_cards": self.biography_context.mentioned_cards,
                 "confidence": self.biography_context.confidence,
             },
+            "lane": self.lane,
+            "plan_id": self.plan_id,
         }

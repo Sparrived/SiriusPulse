@@ -139,6 +139,13 @@ def build_orchestration_policy_from_dict(
         "max_skill_rounds": (int, 3),
         "skill_execution_timeout": (float, 30.0),
         "auto_install_skill_deps": (bool, True),
+        "plan_mode_enabled": (bool, False),
+        "plan_mode_limit_normal_tools": (bool, False),
+        "plan_mode_allow_light_chat": (bool, True),
+        "plan_mode_presence_enabled": (bool, False),
+        "plan_mode_presence_min_interval_seconds": (float, 45.0),
+        "plan_mode_presence_enter_message": (str, "我看到了，这个得稍微捋一下。"),
+        "plan_mode_presence_update_message": (str, "补充我看到了，我会按新的前提来。"),
     }
     for field_name, (caster, _) in scalar_fields.items():
         if field_name not in raw:

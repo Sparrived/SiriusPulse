@@ -27,6 +27,12 @@ from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEvent
 from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import ModelRouter
+from sirius_pulse.core.plan_runtime import (
+    append_plan_event,
+    finish_plan_session,
+    get_active_plan_session,
+    route_message_for_active_plan,
+)
 from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
 from sirius_pulse.core.rhythm import RhythmAnalyzer
@@ -314,6 +320,7 @@ class _EmotionalGroupChatEngineBase:
         self._plugin_intent_matcher: Any | None = None
         self._plugin_intent_verifier: Any | None = None
 
+        self._active_plan_sessions: dict[str, Any] = {}
         self._sticker_names: list[str] = []
         self._sticker_oppositions: dict[str, list[str]] = {}
 
@@ -872,6 +879,75 @@ class _EmotionalGroupChatEngineBase:
 
         # Bot 正在发送多段回复时到达的新消息：不打断当前发送。
         # 只有明确点名当前 bot 的消息才进入 delayed queue，避免立刻抢话。
+        if self.config.get("plan_mode_enabled", False):
+            active_plan = get_active_plan_session(self, group_id)
+            if active_plan is not None:
+                mentions_bot = self._message_explicitly_mentions_current_bot(message)
+                route = route_message_for_active_plan(
+                    active_plan,
+                    user_id=user_id,
+                    content=content,
+                    mentions_current_bot=mentions_bot,
+                )
+                if route.action == "cancel_plan":
+                    append_plan_event(
+                        active_plan,
+                        user_id=user_id,
+                        speaker_name=message.speaker or "",
+                        content=content,
+                        event_type=route.event_type,
+                        platform_message_id=message.message_id or "",
+                    )
+                    finish_plan_session(self, group_id, status="cancelled")
+                    self._background_update(group_id, message, None, None, user_id)
+                    self._log_inner_thought(f"{speaker} 取消了当前计划模式任务")
+                    return {
+                        "strategy": "plan_cancelled",
+                        "reply": None,
+                        "emotion": {},
+                        "intent": {},
+                    }
+                if route.action == "plan_event":
+                    append_plan_event(
+                        active_plan,
+                        user_id=user_id,
+                        speaker_name=message.speaker or "",
+                        content=content,
+                        event_type=route.event_type,
+                        platform_message_id=message.message_id or "",
+                    )
+                    self._background_update(group_id, message, None, None, user_id)
+                    self._log_inner_thought(f"{speaker} 的新消息并入计划模式事件: {route.event_type}")
+                    return {
+                        "strategy": "plan_event",
+                        "reply": None,
+                        "emotion": {},
+                        "intent": {},
+                    }
+                if (
+                    route.action == "light_chat"
+                    and self.config.get("plan_mode_allow_light_chat", True)
+                ):
+                    self._log_inner_thought(
+                        f"{speaker} 的消息不影响当前计划，继续走普通聊天管线"
+                    )
+                elif route.action == "ignore":
+                    self._background_update(group_id, message, None, None, user_id)
+                    return {
+                        "strategy": "plan_ignored",
+                        "reply": None,
+                        "emotion": {},
+                        "intent": {},
+                    }
+                else:
+                    self._background_update(group_id, message, None, None, user_id)
+                    return {
+                        "strategy": "active_plan_silent",
+                        "reply": None,
+                        "emotion": {},
+                        "intent": {},
+                    }
+
         if getattr(message, "received_during_bot_send", False):
             self._background_update(group_id, message, None, None, user_id)
             if self._message_explicitly_mentions_current_bot(message):

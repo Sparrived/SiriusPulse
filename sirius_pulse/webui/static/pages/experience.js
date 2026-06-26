@@ -184,6 +184,54 @@ export async function init(container, params) {
             <label>技能执行超时（秒）</label>
             ${numberInput('skill_execution_timeout', 0)}
           </div>
+          <div class="form-group">
+            <label>计划模式</label>
+            <div class="select-wrap">
+              <select name="plan_mode_enabled">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>普通聊天限制工具</label>
+            <div class="select-wrap">
+              <select name="plan_mode_limit_normal_tools">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>计划中允许轻量闲聊</label>
+            <div class="select-wrap">
+              <select name="plan_mode_allow_light_chat">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>计划状态消息</label>
+            <div class="select-wrap">
+              <select name="plan_mode_presence_enabled">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>状态消息间隔（秒）</label>
+            ${numberInput('plan_mode_presence_min_interval_seconds', 0)}
+          </div>
+          <div class="form-group">
+            <label>进入计划状态文案</label>
+            <input type="text" name="plan_mode_presence_enter_message">
+          </div>
+          <div class="form-group">
+            <label>计划更新状态文案</label>
+            <input type="text" name="plan_mode_presence_update_message">
+          </div>
         </div>
 
         <div style="font-size:15px;font-weight:600;color:var(--text-1);border-bottom:1px solid var(--border);padding-bottom:8px">记忆系统</div>
@@ -322,6 +370,13 @@ async function loadExperience(name) {
     form.enable_skills.value = String(data.enable_skills ?? true);
     form.max_skill_rounds.value = data.max_skill_rounds ?? 3;
     form.skill_execution_timeout.value = data.skill_execution_timeout ?? 30;
+    form.plan_mode_enabled.value = String(data.plan_mode_enabled ?? false);
+    form.plan_mode_limit_normal_tools.value = String(data.plan_mode_limit_normal_tools ?? false);
+    form.plan_mode_allow_light_chat.value = String(data.plan_mode_allow_light_chat ?? true);
+    form.plan_mode_presence_enabled.value = String(data.plan_mode_presence_enabled ?? false);
+    form.plan_mode_presence_min_interval_seconds.value = data.plan_mode_presence_min_interval_seconds ?? 45;
+    form.plan_mode_presence_enter_message.value = data.plan_mode_presence_enter_message || '我看到了，这个得稍微捋一下。';
+    form.plan_mode_presence_update_message.value = data.plan_mode_presence_update_message || '补充我看到了，我会按新的前提来。';
 
     form.memory_depth.value = data.memory_depth || 'medium';
     form.diary_top_k.value = data.diary_top_k ?? 5;
@@ -368,6 +423,16 @@ async function saveExperience(name) {
     enable_skills: form.enable_skills.value === 'true',
     max_skill_rounds: parseInt(form.max_skill_rounds.value, 10),
     skill_execution_timeout: parseInt(form.skill_execution_timeout.value, 10),
+    plan_mode_enabled: form.plan_mode_enabled.value === 'true',
+    plan_mode_limit_normal_tools: form.plan_mode_limit_normal_tools.value === 'true',
+    plan_mode_allow_light_chat: form.plan_mode_allow_light_chat.value === 'true',
+    plan_mode_presence_enabled: form.plan_mode_presence_enabled.value === 'true',
+    plan_mode_presence_min_interval_seconds: parseInt(
+      form.plan_mode_presence_min_interval_seconds.value,
+      10
+    ),
+    plan_mode_presence_enter_message: form.plan_mode_presence_enter_message.value,
+    plan_mode_presence_update_message: form.plan_mode_presence_update_message.value,
     memory_depth: form.memory_depth.value,
     diary_top_k: parseInt(form.diary_top_k.value, 10),
     diary_token_budget: parseInt(form.diary_token_budget.value, 10),

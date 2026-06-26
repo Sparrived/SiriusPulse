@@ -77,6 +77,8 @@ class DelayedResponseQueue:
         platform_message_id: str = "",
         biography_context: BiographyPromptContext | None = None,
         signal_prompt: str = "",
+        lane: str = "chat",
+        plan_id: str = "",
     ) -> DelayedResponseItem:
         """Add an item to the delayed queue.
 
@@ -100,7 +102,7 @@ class DelayedResponseQueue:
         # consolidated into one prompt.
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if item.status == "pending":
+            if item.status == "pending" and getattr(item, "lane", "chat") == lane:
                 item.message_content += f"\n{tagged}"
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
                     if item.strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
@@ -138,6 +140,9 @@ class DelayedResponseQueue:
                         item.biography_context.confidence.update(biography_context.confidence)
                 if signal_prompt:
                     item.signal_prompt = signal_prompt
+                item.lane = lane
+                if plan_id:
+                    item.plan_id = plan_id
                 logger.debug(
                     "Merged %s item %s for group %s (content now %d chars, window %.1fs)",
                     strategy_decision.strategy.value,
@@ -168,6 +173,8 @@ class DelayedResponseQueue:
             related_user_ids=[user_id] if user_id else [],
             biography_context=biography_context or BiographyPromptContext(),
             signal_prompt=signal_prompt,
+            lane=lane,
+            plan_id=plan_id,
         )
         if group_id not in self._queues:
             self._queues[group_id] = []
@@ -257,6 +264,7 @@ class DelayedResponseQueue:
         multimodal_inputs: list[dict[str, str]] | None = None,
         platform_message_id: str = "",
         biography_context: BiographyPromptContext | None = None,
+        lane: str = "chat",
     ) -> bool:
         """轻量合并：将新消息合并进已有 pending 项，跳过完整管线。
 
@@ -268,7 +276,7 @@ class DelayedResponseQueue:
         """
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if item.status != "pending":
+            if item.status != "pending" or getattr(item, "lane", "chat") != lane:
                 continue
             # 使用统一的 tag_message 生成 <message> 标签
             tagged = PromptFactory.tag_message(

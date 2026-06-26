@@ -76,6 +76,25 @@ _SESSION_CONFIG_COMMENTS = {
     "orchestration.max_skill_rounds": "单轮回复最多允许多少轮连续 SKILL 调用。",
     "orchestration.skill_execution_timeout": "单次 SKILL 执行超时时间（秒）。0 表示不限制。",
     "orchestration.auto_install_skill_deps": "加载 SKILL 时是否自动安装缺失依赖。",
+    "orchestration.plan_mode_enabled": "Enable hidden planning sessions.",
+    "orchestration.plan_mode_limit_normal_tools": (
+        "Limit normal chat to lightweight runtime tools when plan mode is enabled."
+    ),
+    "orchestration.plan_mode_allow_light_chat": (
+        "Allow unrelated light chat in the same group while a plan is active."
+    ),
+    "orchestration.plan_mode_presence_enabled": (
+        "Send a short persona-style status message when hidden planning starts."
+    ),
+    "orchestration.plan_mode_presence_min_interval_seconds": (
+        "Minimum seconds between planning status messages."
+    ),
+    "orchestration.plan_mode_presence_enter_message": (
+        "Visible status text sent when entering hidden planning mode."
+    ),
+    "orchestration.plan_mode_presence_update_message": (
+        "Visible status text sent when accepted plan events arrive."
+    ),
 }
 
 
@@ -127,6 +146,15 @@ def build_default_orchestration_payload() -> dict[str, Any]:
         "max_skill_rounds": defaults.max_skill_rounds,
         "skill_execution_timeout": defaults.skill_execution_timeout,
         "auto_install_skill_deps": defaults.auto_install_skill_deps,
+        "plan_mode_enabled": defaults.plan_mode_enabled,
+        "plan_mode_limit_normal_tools": defaults.plan_mode_limit_normal_tools,
+        "plan_mode_allow_light_chat": defaults.plan_mode_allow_light_chat,
+        "plan_mode_presence_enabled": defaults.plan_mode_presence_enabled,
+        "plan_mode_presence_min_interval_seconds": (
+            defaults.plan_mode_presence_min_interval_seconds
+        ),
+        "plan_mode_presence_enter_message": defaults.plan_mode_presence_enter_message,
+        "plan_mode_presence_update_message": defaults.plan_mode_presence_update_message,
     }
 
 

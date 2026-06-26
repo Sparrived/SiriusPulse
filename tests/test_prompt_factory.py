@@ -191,6 +191,24 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_output_spec():
     assert "【QQ @提及】" not in bundle.system_prompt
 
 
+def test_assemble_chat_when_plan_flow_then_uses_plan_finish_tools():
+    group_profile = SimpleNamespace(atmosphere_history=[])
+    style_params = StyleAdapter().adapt(pace="steady", persona=None)
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+        skill_registry=object(),
+        tool_flow_mode="plan",
+    )
+
+    assert "exit_plan" in bundle.system_prompt
+    assert "abort_plan" in bundle.system_prompt
+    assert "continue 表示" not in bundle.system_prompt
+
+
 class _NoopDiaryRetriever:
     def retrieve(self, **kwargs):
         return []

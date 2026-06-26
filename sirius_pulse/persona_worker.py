@@ -182,6 +182,15 @@ class PersonaWorker:
             "max_concurrent_llm_calls": experience.max_concurrent_llm_calls,
             "enable_skills": experience.enable_skills,
             "skill_execution_timeout": experience.skill_execution_timeout,
+            "plan_mode_enabled": experience.plan_mode_enabled,
+            "plan_mode_limit_normal_tools": experience.plan_mode_limit_normal_tools,
+            "plan_mode_allow_light_chat": experience.plan_mode_allow_light_chat,
+            "plan_mode_presence_enabled": experience.plan_mode_presence_enabled,
+            "plan_mode_presence_min_interval_seconds": (
+                experience.plan_mode_presence_min_interval_seconds
+            ),
+            "plan_mode_presence_enter_message": experience.plan_mode_presence_enter_message,
+            "plan_mode_presence_update_message": experience.plan_mode_presence_update_message,
             "memory_depth": experience.memory_depth,
             "message_prefixes": experience.message_prefixes,
         }

@@ -334,6 +334,305 @@ async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed()
 
 
 @pytest.mark.asyncio
+async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "design a complex plan",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    enter_plan = ToolCall(
+        id="call-enter-plan",
+        function_name="enter_plan",
+        function_arguments='{"goal": "design a complex plan", "reason": "needs tools"}',
+    )
+    exit_plan = ToolCall(
+        id="call-exit-plan",
+        function_name="exit_plan",
+        function_arguments='{"final_message": "Here is the final plan.", "send_to_group": true}',
+    )
+    chat_results = [
+        SimpleNamespace(
+            raw_text="I need to work this out.",
+            clean_text="I need to work this out.",
+            tool_calls=[enter_plan],
+            reply_references=[],
+        ),
+        SimpleNamespace(
+            raw_text="",
+            clean_text="",
+            tool_calls=[exit_plan],
+            reply_references=[],
+        ),
+    ]
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    engine = SimpleNamespace(
+        config={
+            "max_skill_rounds": 3,
+            "enable_skills": True,
+            "plan_mode_enabled": True,
+            "plan_mode_limit_normal_tools": True,
+        },
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(user_id="u1")
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "design a complex plan"},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(chat=AsyncMock(side_effect=chat_results)),
+        _skill_registry=None,
+        _skill_executor=None,
+        _active_plan_sessions={},
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="design a complex plan",
+        token_breakdown=None,
+    )
+    partials: list[str] = []
+
+    async def capture_partial(text: str) -> None:
+        partials.append(text)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
+
+    assert partials == []
+    assert results[0]["reply"] == "Here is the final plan."
+    assert engine._active_plan_sessions == {}
+    first_request = engine.brain.chat.await_args_list[0].args[0]
+    second_request = engine.brain.chat.await_args_list[1].args[0]
+    assert first_request.enable_skills is False
+    assert second_request.enable_skills is True
+    assert "enter_plan" in {
+        tool["function"]["name"] for tool in (first_request.extra_tools or [])
+    }
+    assert "exit_plan" in {
+        tool["function"]["name"] for tool in (second_request.extra_tools or [])
+    }
+    assert "abort_plan" in {
+        tool["function"]["name"] for tool in (second_request.extra_tools or [])
+    }
+    assert "continue" not in {
+        tool["function"]["name"] for tool in (second_request.extra_tools or [])
+    }
+    assert "隐藏计划模式" in second_request.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_plan_aborts_then_session_is_cleared_without_reply():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "dangerous request",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    enter_plan = ToolCall(
+        id="call-enter-plan",
+        function_name="enter_plan",
+        function_arguments='{"goal": "dangerous request"}',
+    )
+    abort_plan = ToolCall(
+        id="call-abort-plan",
+        function_name="abort_plan",
+        function_arguments='{"reason": "cancelled", "send_to_group": false}',
+    )
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    engine = SimpleNamespace(
+        config={
+            "max_skill_rounds": 3,
+            "enable_skills": True,
+            "plan_mode_enabled": True,
+            "plan_mode_limit_normal_tools": True,
+        },
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(user_id="u1")
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "dangerous request"},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(
+            chat=AsyncMock(
+                side_effect=[
+                    SimpleNamespace(
+                        raw_text="",
+                        clean_text="",
+                        tool_calls=[enter_plan],
+                        reply_references=[],
+                    ),
+                    SimpleNamespace(
+                        raw_text="",
+                        clean_text="",
+                        tool_calls=[abort_plan],
+                        reply_references=[],
+                    ),
+                ]
+            )
+        ),
+        _skill_registry=None,
+        _skill_executor=None,
+        _active_plan_sessions={},
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="dangerous request",
+        token_breakdown=None,
+    )
+
+    results = await tasks.tick_delayed_queue("group-1")
+
+    assert results[0]["reply"] == ""
+    assert engine._active_plan_sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "design a complex plan",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    enter_plan = ToolCall(
+        id="call-enter-plan",
+        function_name="enter_plan",
+        function_arguments='{"goal": "design a complex plan"}',
+    )
+    exit_plan = ToolCall(
+        id="call-exit-plan",
+        function_name="exit_plan",
+        function_arguments='{"final_message": "done", "send_to_group": true}',
+    )
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    engine = SimpleNamespace(
+        config={
+            "max_skill_rounds": 3,
+            "enable_skills": True,
+            "plan_mode_enabled": True,
+            "plan_mode_limit_normal_tools": True,
+            "plan_mode_presence_enabled": True,
+            "plan_mode_presence_enter_message": "我看到了，这个得稍微捋一下。",
+            "plan_mode_presence_min_interval_seconds": 45,
+        },
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(user_id="u1")
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "design a complex plan"},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(
+            chat=AsyncMock(
+                side_effect=[
+                    SimpleNamespace(
+                        raw_text="hidden text",
+                        clean_text="hidden text",
+                        tool_calls=[enter_plan],
+                        reply_references=[],
+                    ),
+                    SimpleNamespace(
+                        raw_text="",
+                        clean_text="",
+                        tool_calls=[exit_plan],
+                        reply_references=[],
+                    ),
+                ]
+            )
+        ),
+        _skill_registry=None,
+        _skill_executor=None,
+        _active_plan_sessions={},
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="design a complex plan",
+        token_breakdown=None,
+    )
+    partials: list[str] = []
+
+    async def capture_partial(text: str) -> None:
+        partials.append(text)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
+
+    assert partials == ["我看到了，这个得稍微捋一下。"]
+    assert results[0]["reply"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_deferred():
     queue = DelayedResponseQueue()
     item = queue.enqueue(

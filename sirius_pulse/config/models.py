@@ -254,6 +254,15 @@ class OrchestrationPolicy:
     skill_execution_timeout: float = 30.0  # max seconds per SKILL execution, 0 = no limit
     auto_install_skill_deps: bool = True  # auto-install missing SKILL dependencies via uv/pip
 
+    # Hidden planning mode: normal chat can stay lightweight while plan runs privately.
+    plan_mode_enabled: bool = False
+    plan_mode_limit_normal_tools: bool = False
+    plan_mode_allow_light_chat: bool = True
+    plan_mode_presence_enabled: bool = False
+    plan_mode_presence_min_interval_seconds: float = 45.0
+    plan_mode_presence_enter_message: str = "我看到了，这个得稍微捋一下。"
+    plan_mode_presence_update_message: str = "补充我看到了，我会按新的前提来。"
+
     def __post_init__(self) -> None:
         if "cognition_analyze" not in self.task_enabled:
             self.task_enabled = dict(self.task_enabled)

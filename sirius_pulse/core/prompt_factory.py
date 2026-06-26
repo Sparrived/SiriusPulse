@@ -277,6 +277,7 @@ class PromptFactory:
         *,
         supports_function_call: bool = False,
         supports_qq_mentions: bool = False,
+        tool_flow_mode: str = "chat",
     ) -> str:
         """输出规范，防止模型添加多余前缀。"""
         items = [
@@ -288,11 +289,18 @@ class PromptFactory:
             items.append(
                 "你有可用工具（tools）时，可以通过 Function Call 主动解决问题；工具调用不要写成正文标记。"
             )
-            items.append(
-                "每次回复结束时必须调用工具：用 continue 表示当前文字已发送并继续生成下一条消息，用 stop 表示本轮回复结束。"
-                "不要仅输出文字而不调用 continue 或 stop。"
-                "如果本轮只需发送一条消息，直接调用 stop。"
-            )
+            if tool_flow_mode == "plan":
+                items.append(
+                    "当前是隐藏计划模式：中间文本不会发送到群里。"
+                    "需要继续处理时直接调用可用工具；完成后必须调用 exit_plan 给出最终可见消息。"
+                    "如果不能完成或应当放弃，调用 abort_plan。"
+                )
+            else:
+                items.append(
+                    "每次回复结束时必须调用工具：用 continue 表示当前文字已发送并继续生成下一条消息，用 stop 表示本轮回复结束。"
+                    "不要仅输出文字而不调用 continue 或 stop。"
+                    "如果本轮只需发送一条消息，直接调用 stop。"
+                )
         if supports_qq_mentions:
             items.append(
                 "在 QQ 群回复正文中插入 @{QQ号} 可以 @ 某个群成员；只使用上下文消息里真实出现的 QQ 号，不要编造。"
@@ -680,6 +688,7 @@ class PromptFactory:
         sticker_names: list[str] | None = None,
         qq_mention_members: list[dict[str, Any]] | None = None,
         platform_message_id: str = "",
+        tool_flow_mode: str = "chat",
     ) -> PromptBundle:
         """统一组装聊天响应 prompt。返回 PromptBundle。
 
@@ -728,6 +737,7 @@ class PromptFactory:
                 sticker_names=sticker_names,
                 supports_function_call=skill_registry is not None,
                 supports_qq_mentions=adapter_type == "napcat" and bool(qq_mention_members),
+                tool_flow_mode=tool_flow_mode,
             ),
             "output_constraint",
         )

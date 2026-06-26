@@ -155,6 +155,13 @@ class PersonaExperienceConfig:
     max_skill_rounds: int = 3
     skill_execution_timeout: float = 30.0
     auto_install_skill_deps: bool = True
+    plan_mode_enabled: bool = False
+    plan_mode_limit_normal_tools: bool = False
+    plan_mode_allow_light_chat: bool = True
+    plan_mode_presence_enabled: bool = False
+    plan_mode_presence_min_interval_seconds: float = 45.0
+    plan_mode_presence_enter_message: str = "我看到了，这个得稍微捋一下。"
+    plan_mode_presence_update_message: str = "补充我看到了，我会按新的前提来。"
 
     # 记忆深度（影响 prompt 注入的日记/记忆数量）
     memory_depth: str = "deep"  # shallow|moderate|deep
@@ -186,6 +193,15 @@ class PersonaExperienceConfig:
             "max_skill_rounds": self.max_skill_rounds,
             "skill_execution_timeout": self.skill_execution_timeout,
             "auto_install_skill_deps": self.auto_install_skill_deps,
+            "plan_mode_enabled": self.plan_mode_enabled,
+            "plan_mode_limit_normal_tools": self.plan_mode_limit_normal_tools,
+            "plan_mode_allow_light_chat": self.plan_mode_allow_light_chat,
+            "plan_mode_presence_enabled": self.plan_mode_presence_enabled,
+            "plan_mode_presence_min_interval_seconds": (
+                self.plan_mode_presence_min_interval_seconds
+            ),
+            "plan_mode_presence_enter_message": self.plan_mode_presence_enter_message,
+            "plan_mode_presence_update_message": self.plan_mode_presence_update_message,
             "memory_depth": self.memory_depth,
             "diary_top_k": self.diary_top_k,
             "diary_token_budget": self.diary_token_budget,
@@ -219,6 +235,21 @@ class PersonaExperienceConfig:
             max_skill_rounds=int(data.get("max_skill_rounds", 3)),
             skill_execution_timeout=float(data.get("skill_execution_timeout", 30.0)),
             auto_install_skill_deps=bool(data.get("auto_install_skill_deps", True)),
+            plan_mode_enabled=bool(data.get("plan_mode_enabled", False)),
+            plan_mode_limit_normal_tools=bool(
+                data.get("plan_mode_limit_normal_tools", False)
+            ),
+            plan_mode_allow_light_chat=bool(data.get("plan_mode_allow_light_chat", True)),
+            plan_mode_presence_enabled=bool(data.get("plan_mode_presence_enabled", False)),
+            plan_mode_presence_min_interval_seconds=float(
+                data.get("plan_mode_presence_min_interval_seconds", 45.0)
+            ),
+            plan_mode_presence_enter_message=str(
+                data.get("plan_mode_presence_enter_message", "我看到了，这个得稍微捋一下。")
+            ),
+            plan_mode_presence_update_message=str(
+                data.get("plan_mode_presence_update_message", "补充我看到了，我会按新的前提来。")
+            ),
             memory_depth=str(data.get("memory_depth", "deep")),
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),

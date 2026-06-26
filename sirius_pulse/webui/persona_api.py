@@ -428,6 +428,15 @@ async def api_experience_get(request: web.Request, data_dir: Path) -> web.Respon
             "max_skill_rounds": exp.max_skill_rounds,
             "skill_execution_timeout": exp.skill_execution_timeout,
             "auto_install_skill_deps": exp.auto_install_skill_deps,
+            "plan_mode_enabled": exp.plan_mode_enabled,
+            "plan_mode_limit_normal_tools": exp.plan_mode_limit_normal_tools,
+            "plan_mode_allow_light_chat": exp.plan_mode_allow_light_chat,
+            "plan_mode_presence_enabled": exp.plan_mode_presence_enabled,
+            "plan_mode_presence_min_interval_seconds": (
+                exp.plan_mode_presence_min_interval_seconds
+            ),
+            "plan_mode_presence_enter_message": exp.plan_mode_presence_enter_message,
+            "plan_mode_presence_update_message": exp.plan_mode_presence_update_message,
             "other_ai_names": exp.other_ai_names,
             "message_prefixes": exp.message_prefixes,
         }
@@ -464,6 +473,13 @@ async def api_experience_post(request: web.Request, data_dir: Path) -> web.Respo
         "max_skill_rounds",
         "skill_execution_timeout",
         "auto_install_skill_deps",
+        "plan_mode_enabled",
+        "plan_mode_limit_normal_tools",
+        "plan_mode_allow_light_chat",
+        "plan_mode_presence_enabled",
+        "plan_mode_presence_min_interval_seconds",
+        "plan_mode_presence_enter_message",
+        "plan_mode_presence_update_message",
         "other_ai_names",
         "message_prefixes",
     ):
