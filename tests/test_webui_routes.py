@@ -60,6 +60,56 @@ async def test_webui_delegated_handler_when_called_then_injects_data_dir(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_webui_persona_stop_when_worker_is_injected_then_shutdown_is_requested(tmp_path):
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    atomic_write_json(tmp_path / "global_config.json", {"active_persona": "sirius"})
+
+    class Worker:
+        def __init__(self) -> None:
+            self.persona_dir = persona_dir
+            self.shutdown_called = False
+
+        def shutdown(self) -> None:
+            self.shutdown_called = True
+
+    worker = Worker()
+    server = WebUIServer(data_dir=tmp_path, persona_manager=worker)
+
+    response = await server.api_persona_stop(SimpleNamespace())
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+
+    assert response.status == 200
+    assert saved["active_persona"] == ""
+    assert worker.shutdown_called is True
+
+
+@pytest.mark.asyncio
+async def test_webui_persona_stop_when_worker_targets_other_persona_then_shutdown_is_skipped(tmp_path):
+    active_dir = tmp_path / "personas" / "sirius"
+    other_dir = tmp_path / "personas" / "other"
+    active_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    atomic_write_json(tmp_path / "global_config.json", {"active_persona": "sirius"})
+
+    class Worker:
+        def __init__(self) -> None:
+            self.persona_dir = other_dir
+            self.shutdown_called = False
+
+        def shutdown(self) -> None:
+            self.shutdown_called = True
+
+    worker = Worker()
+    server = WebUIServer(data_dir=tmp_path, persona_manager=worker)
+
+    response = await server.api_persona_stop(SimpleNamespace())
+
+    assert response.status == 200
+    assert worker.shutdown_called is False
+
+
+@pytest.mark.asyncio
 async def test_webui_providers_get_when_registry_exists_then_returns_masked_providers(tmp_path):
     atomic_write_json(
         tmp_path / "providers" / "provider_keys.json",

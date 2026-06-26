@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import logging
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -115,6 +117,8 @@ from sirius_pulse.webui.server_skill_api import (
     api_persona_skills_get,
 )
 from sirius_pulse.webui.server_utils import _json_response
+
+LOG = logging.getLogger("sirius.webui")
 
 DelegatedHandler = Callable[[web.Request, Any], Awaitable[web.Response]]
 
@@ -271,6 +275,37 @@ class WebUIServer(_WebUIServer):
     async def api_auth_status(self, request):
         has_admin = bool(self.auth_manager._config.get("admin_password_hash"))
         return _json_response({"auth_enabled": has_admin})
+
+    def _shutdown_persona_manager(self, persona_dir: Path) -> bool:
+        manager = self.persona_manager
+        if manager is None:
+            return False
+
+        manager_dir = getattr(manager, "persona_dir", None)
+        if manager_dir is not None:
+            try:
+                if Path(manager_dir).resolve() != Path(persona_dir).resolve():
+                    LOG.warning(
+                        "跳过人格停止请求：manager=%s target=%s",
+                        manager_dir,
+                        persona_dir,
+                    )
+                    return False
+            except Exception:
+                return False
+
+        shutdown = getattr(manager, "shutdown", None)
+        if not callable(shutdown):
+            return False
+        shutdown()
+        return True
+
+    async def api_persona_stop(self, request):
+        target_dir = self.persona_dir
+        response = await api_persona_stop(request, target_dir)
+        if response.status < 400 and self._shutdown_persona_manager(target_dir):
+            LOG.info("已请求停止人格 worker: %s", target_dir.name)
+        return response
 
     async def api_shutdown(self, request):
         """关闭整个程序（WebUI + 引擎 + 所有服务）。"""

@@ -337,6 +337,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     from sirius_pulse.persona_worker import PersonaWorker
 
     worker = PersonaWorker(persona_dir)
+    webui.persona_manager = worker
     LOG.info("活跃人格: %s (%s)", config.get("active_persona", "default"), persona_dir)
 
     # 可选：启动 ButlerServer
