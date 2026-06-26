@@ -100,8 +100,7 @@ class EngineRuntime:
     ) -> None:
         self.work_path = Path(work_path).resolve()
         self.work_path.mkdir(parents=True, exist_ok=True)
-        # 独立人格模式：global_data_path 等于 work_path
-        self.global_data_path = self.work_path
+        self.global_data_path = self._resolve_global_data_path(global_data_path)
         self.plugin_config = dict(plugin_config or {})
         self._engine: EmotionalGroupChatEngine | None = None
         self._running = False
@@ -116,6 +115,13 @@ class EngineRuntime:
             session_id="default",
             conn=self.persona_db.conn,
         )
+
+    def _resolve_global_data_path(self, global_data_path: str | Path | None) -> Path:
+        if global_data_path is not None:
+            return Path(global_data_path).resolve()
+        if self.work_path.parent.name == "personas":
+            return self.work_path.parent.parent.resolve()
+        return self.work_path
 
     def set_remote_bridge(self, bridge: Any) -> None:
         """设置远程存储桥接（助手模式）。
@@ -182,7 +188,7 @@ class EngineRuntime:
         try:
             from sirius_pulse.providers.routing import ProviderRegistry
 
-            registry = ProviderRegistry(self.work_path)
+            registry = ProviderRegistry(self.global_data_path)
             loaded = registry.load()
             if loaded:
                 return AutoRoutingProvider(loaded)
