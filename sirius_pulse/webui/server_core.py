@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
-import threading
+import multiprocessing
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -65,7 +65,7 @@ class WebUIServer:
         self.app["ws_manager"] = self.ws_manager
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
-        self._embedding_thread: threading.Thread | None = None
+        self._embedding_process: multiprocessing.Process | None = None
         self._embedding_ready: bool = False
         self._embedding_error: str = ""
         self._embedding_port: int = 18900
@@ -172,10 +172,10 @@ class WebUIServer:
     def get_embedding_status(self) -> dict[str, Any]:
         """返回 embedding 服务的真实健康状态。"""
         # 线程不存在 → 未启动
-        if self._embedding_thread is None:
+        if self._embedding_process is None:
             return {"running": False, "ready": False, "error": self._embedding_error or "未启动"}
         # 线程已死亡（启动失败）→ 检查是否还在运行
-        if not self._embedding_thread.is_alive():
+        if not self._embedding_process.is_alive():
             return {
                 "running": False,
                 "ready": False,
@@ -187,7 +187,7 @@ class WebUIServer:
         return {"running": True, "ready": True, "error": ""}
 
     def _start_embedding_service(self) -> None:
-        if self._embedding_thread is not None:
+        if self._embedding_process is not None:
             LOG.warning("Embedding 服务已在运行")
             return
 
@@ -243,16 +243,16 @@ class WebUIServer:
                     if attempt < max_retries - 1:
                         _time.sleep(5)
 
-        self._embedding_thread = threading.Thread(
+        self._embedding_process = multiprocessing.Process(
             target=_run_server, daemon=True, name="embedding-server"
         )
-        self._embedding_thread.start()
+        self._embedding_process.start()
         LOG.info("Embedding 服务后台线程已启动 (host=127.0.0.1 port=%d)", self._embedding_port)
 
     def _stop_embedding_service(self) -> None:
-        if self._embedding_thread is not None:
+        if self._embedding_process is not None:
             LOG.info("Embedding 服务线程将随主进程退出")
-            self._embedding_thread = None
+            self._embedding_process = None
 
     # ─── 静态页面 ─────────────────────────────────────────
 
