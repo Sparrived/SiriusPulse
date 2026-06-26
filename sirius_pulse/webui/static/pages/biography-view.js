@@ -33,7 +33,7 @@ async function loadBiographies(highlightUserId) {
   const name = store.currentPersona;
   if (!name) return;
   try {
-    const data = await get(`/personas/${name}/memory/biographies`);
+    const data = await get(`/persona/memory/biographies`);
     allBios = data.biographies || [];
     filterAndRender(highlightUserId);
   } catch (e) {
@@ -161,7 +161,7 @@ async function shadowAlias(alias, userId) {
   if (!confirm(`确定要将别名 "${alias}" 标记为 shadow 吗？\n\nShadow 状态的别名将不再参与召回，但保留可追溯性。`)) return;
 
   try {
-    await post(`/personas/${name}/biography/aliases`, {
+    await post(`/persona/biography/aliases`, {
       action: 'shadow',
       alias,
       user_id: userId,
@@ -185,7 +185,7 @@ async function toggleGaps(card) {
 
   const name = store.currentPersona;
   try {
-    const data = await get(`/personas/${name}/memory/gaps/${uid}`);
+    const data = await get(`/persona/memory/gaps/${uid}`);
     const gaps = data.gaps || [];
     if (!gaps.length) {
       gapsEl.innerHTML = '<div style="font-size:12px;color:var(--text-3)">无知识缺口</div>';

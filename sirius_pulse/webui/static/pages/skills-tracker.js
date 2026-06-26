@@ -91,7 +91,7 @@ async function loadHistory() {
   if (successFilter) params.set('success', successFilter);
 
   try {
-    const data = await get(`/personas/${name}/skill-history?${params}`);
+    const data = await get(`/persona/skill-history?${params}`);
     historyData = data.history || [];
     totalRecords = data.total || 0;
     renderStats(data.stats || {});

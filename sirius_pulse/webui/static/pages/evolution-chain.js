@@ -46,7 +46,7 @@ async function loadRecords() {
     const status = $('evoStatusFilter')?.value || '';
     const params = new URLSearchParams({ limit: '300' });
     if (status) params.set('status', status);
-    const data = await get(`/personas/${name}/memory/evolution?${params}`);
+    const data = await get(`/persona/memory/evolution?${params}`);
     allRecords = data.records || [];
     filterAndRender();
   } catch (e) {
@@ -151,7 +151,7 @@ async function toggleHistory(el) {
 
   const name = store.currentPersona;
   try {
-    const data = await get(`/personas/${name}/memory/evolution/${id}/history`);
+    const data = await get(`/persona/memory/evolution/${id}/history`);
     const history = data.history || [];
     if (!history.length) {
       histEl.innerHTML = '<div style="color:var(--text-3);font-size:12px">无演化历史</div>';

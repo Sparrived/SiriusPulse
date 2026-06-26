@@ -5,19 +5,12 @@ import { toast, $ } from '../components.js';
 let timer = null;
 let offset = 0;
 let paused = false;
-let target = 'webui';
 
 export async function init() {
-  const selector = $('logsTarget');
   const refresh = $('logsRefresh');
   const pause = $('logsPause');
   const clear = $('logsClear');
 
-  selector.value = target;
-  selector.onchange = () => {
-    target = selector.value;
-    resetAndLoad();
-  };
   refresh.onclick = () => resetAndLoad();
   pause.onclick = () => {
     paused = !paused;
@@ -45,25 +38,14 @@ function startPolling() {
   }, 1500);
 }
 
-function buildPath(initial) {
-  const lines = initial ? 300 : 2000;
-  if (target === 'webui') return `/system/logs?lines=${lines}&offset=${offset}`;
-  const name = store.currentPersona;
-  if (!name) return null;
-  return `/personas/${encodeURIComponent(name)}/logs?lines=${lines}&offset=${offset}`;
-}
-
 async function loadLogs(initial) {
   if (!$('logsConsole')) {
     if (timer) clearInterval(timer);
     timer = null;
     return;
   }
-  const path = buildPath(initial);
-  if (!path) {
-    setStatus('请先选择人格');
-    return;
-  }
+  const lines = initial ? 300 : 2000;
+  const path = `/persona/logs?lines=${lines}&offset=${offset}`;
   try {
     const data = await get(path);
     offset = data.offset || offset;
@@ -73,7 +55,7 @@ async function loadLogs(initial) {
       return;
     }
     appendLines(data.lines || []);
-    setStatus(`实时刷新中 · ${data.name || target}`);
+    setStatus(`实时刷新中 · ${store.currentPersona || '当前人格'}`);
   } catch (e) {
     setStatus('日志加载失败');
     toast('日志加载失败', 'error');

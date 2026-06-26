@@ -115,7 +115,7 @@ async function loadData() {
   }
   try {
     const params = buildRangeParams();
-    data = await get(`/personas/${name}/tokens${params}`);
+    data = await get(`/persona/tokens${params}`);
     renderStats();
     renderTabContent();
   } catch (e) {

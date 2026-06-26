@@ -133,6 +133,69 @@ async def api_persona_activate(
 
 
 @handle_api_errors
+async def api_persona_start(
+    request: web.Request,
+    data_dir: Path,
+) -> web.Response:
+    """激活当前人格。
+
+    data_dir 是 persona_dir (data/personas/{name}/)。
+    需要找到根目录来写 global_config.json。
+    前端调用 POST /api/persona/start。
+    """
+    root_dir = _find_root_dir(data_dir)
+    _set_active_persona_name(root_dir, data_dir.name)
+    LOG.info("人格已激活: %s", data_dir.name)
+    return _json_response({"success": True, "active": data_dir.name})
+
+
+@handle_api_errors
+async def api_persona_stop(
+    request: web.Request,
+    data_dir: Path,
+) -> web.Response:
+    """停用当前人格。
+
+    前端调用 POST /api/persona/stop。
+    """
+    root_dir = _find_root_dir(data_dir)
+    active = _get_active_persona_name(root_dir)
+    if active == data_dir.name:
+        _set_active_persona_name(root_dir, "")
+        LOG.info("人格已停用: %s", data_dir.name)
+    return _json_response({"success": True})
+
+
+@handle_api_errors
+async def api_persona_status(
+    request: web.Request,
+    data_dir: Path,
+) -> web.Response:
+    """获取当前人格的运行状态。
+
+    前端调用 GET /api/persona/status。
+    """
+    root_dir = _find_root_dir(data_dir)
+    active = _get_active_persona_name(root_dir)
+    worker_status_path = data_dir / "engine_state" / "worker_status.json"
+    worker_status: dict = {}
+    if worker_status_path.exists():
+        try:
+            worker_status = json.loads(worker_status_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    return _json_response({
+        "name": data_dir.name,
+        "active": data_dir.name == active,
+        "running": worker_status.get("status") == "running",
+        "pid": worker_status.get("pid"),
+        "heartbeat_at": worker_status.get("heartbeat_at"),
+        "started_at": worker_status.get("started_at"),
+    })
+
+
+@handle_api_errors
 async def api_persona_delete(
     request: web.Request,
     data_dir: Path,
@@ -158,6 +221,19 @@ async def api_persona_delete(
 # ------------------------------------------------------------------
 # 辅助函数
 # ------------------------------------------------------------------
+
+
+def _find_root_dir(persona_dir: Path) -> Path:
+    """从人格目录推导根数据目录。
+
+    persona_dir = data/personas/{name}/
+    root = data/
+    """
+    # personas/{name} → 上两级就是 root
+    if persona_dir.parent.name == "personas":
+        return persona_dir.parent.parent
+    # 兼容旧格式（persona_dir == root）
+    return persona_dir
 
 
 def _get_active_persona_name(data_dir: Path) -> str:

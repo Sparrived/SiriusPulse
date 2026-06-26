@@ -66,7 +66,7 @@ export async function init(container) {
 async function loadViz() {
   const name = store.currentPersona;
   try {
-    const data = await get(`/personas/${name}/memory-viz`);
+    const data = await get(`/persona/memory-viz`);
     cachedData = data;
 
     // 填充群聊选择器

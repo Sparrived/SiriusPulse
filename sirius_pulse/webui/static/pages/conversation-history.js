@@ -175,7 +175,7 @@ async function loadMessages(silent = false) {
   if (activeSpeaker) params.set('speaker', activeSpeaker);
 
   try {
-    const data = await get(`/personas/${name}/conversations?${params}`);
+    const data = await get(`/persona/conversations?${params}`);
     messages = data.messages || [];
     pinnedMessages = data.pinned_messages || [];
     groups = data.groups || [];

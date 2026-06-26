@@ -293,7 +293,7 @@ function setupQuadrant() {
 
 async function loadExperience(name) {
   try {
-    const data = await get(`/personas/${name}/experience`);
+    const data = await get(`/persona/experience`);
     const form = $('expForm');
     if (!form) return;
 
@@ -374,7 +374,7 @@ async function saveExperience(name) {
   };
 
   try {
-    await post(`/personas/${name}/experience`, { experience });
+    await post(`/persona/experience`, { experience });
     flashSuccess($('expSave'));
     toast('体验参数已保存', 'success');
   } catch (e) {

@@ -4,6 +4,7 @@
 
 使用方法::
 
+    start.pyw                                    # 无窗口启动（双击运行）
     python main.py run                           # 启动活跃人格引擎 + WebUI
     python main.py webui                         # 仅启动 WebUI（管理模式）
     python main.py assistant --butler ws://...   # 以助手模式连接管家端
@@ -186,7 +187,10 @@ def _start_webui_background() -> dict[str, Any]:
             "url": _webui_url(config),
         }
 
-    cmd = [sys.executable, "-m", "sirius_pulse.cli", "webui", "--foreground"]
+    # 使用 pythonw.exe 启动后台进程，避免弹出 CMD 窗口
+    pythonw = Path(sys.executable).parent / "pythonw.exe"
+    python_exe = str(pythonw) if pythonw.exists() else sys.executable
+    cmd = [python_exe, "-m", "sirius_pulse.cli", "webui", "--foreground"]
     kwargs: dict[str, Any] = {
         "cwd": str(REPO_ROOT),
         "stdin": subprocess.DEVNULL,
@@ -194,6 +198,10 @@ def _start_webui_background() -> dict[str, Any]:
         "stderr": subprocess.DEVNULL,
     }
     if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0  # SW_HIDE
+        kwargs["startupinfo"] = si
         kwargs["creationflags"] = (
             subprocess.DETACHED_PROCESS
             | subprocess.CREATE_NEW_PROCESS_GROUP

@@ -161,7 +161,7 @@ function setupStatusButtons(name) {
     try {
       startBtn.disabled = true;
       startBtn.textContent = '启动中...';
-      const res = await post(`/personas/${name}/start`, {});
+      const res = await post(`/persona/start`, {});
       if (res.success) {
         toast(`${name} 已启动`, 'success');
         await loadPersonaStatus(name);
@@ -185,7 +185,7 @@ function setupStatusButtons(name) {
     try {
       stopBtn.disabled = true;
       stopBtn.textContent = '停止中...';
-      const res = await post(`/personas/${name}/stop`, {});
+      const res = await post(`/persona/stop`, {});
       if (res.success) {
         toast(`${name} 已停止`, 'success');
         await loadPersonaStatus(name);
@@ -208,7 +208,7 @@ function setupStatusButtons(name) {
 
 async function loadPersonaData(name) {
   try {
-    const data = await get(`/personas/${name}/persona`);
+    const data = await get(`/persona/persona`);
     const form = $('personaForm');
     if (!form) return;
 
@@ -249,7 +249,7 @@ async function savePersona(name) {
   };
 
   try {
-    await post(`/personas/${name}/persona/save`, { persona });
+    await post(`/persona/persona/save`, { persona });
     flashSuccess($('personaSave'));
     toast('人格配置已保存', 'success');
   } catch (e) {

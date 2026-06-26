@@ -144,8 +144,8 @@ export async function init(container, params) {
 async function loadOrchestration(name) {
   try {
     const [orchData, paramsData] = await Promise.all([
-      get(`/personas/${name}/orchestration`),
-      get(`/personas/${name}/task-params`),
+      get(`/persona/orchestration`),
+      get(`/persona/task-params`),
     ]);
     orchestrationData = orchData;
     modelChoices = orchData.model_choices || [];
@@ -500,7 +500,7 @@ async function saveOrchestration(name) {
   }
 
   try {
-    await post(`/personas/${name}/orchestration`, {
+    await post(`/persona/orchestration`, {
       analysis_model: _stripProviderPrefix(modelSelects.analysis_model?.value || ''),
       chat_model: _stripProviderPrefix(modelSelects.chat_model?.value || ''),
       memory_model: _stripProviderPrefix(modelSelects.memory_model?.value || ''),
@@ -509,7 +509,7 @@ async function saveOrchestration(name) {
       task_enabled: taskEnabled,
     });
 
-    await post(`/personas/${name}/task-params`, {
+    await post(`/persona/task-params`, {
       task_temperatures: taskTemperatures,
       task_max_tokens: taskMaxTokens,
       task_timeout: taskTimeout,
@@ -526,7 +526,7 @@ async function saveOrchestration(name) {
 async function resetTaskParams(name) {
   if (!confirm('确定要重置所有任务参数为默认值吗？')) return;
   try {
-    await post(`/personas/${name}/task-params`, {
+    await post(`/persona/task-params`, {
       task_temperatures: {},
       task_max_tokens: {},
       task_timeout: {},

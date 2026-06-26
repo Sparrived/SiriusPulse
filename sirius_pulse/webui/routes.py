@@ -30,12 +30,16 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/api/monitoring/overview", "api_monitoring_overview"),
     RouteSpec("GET", "/api/monitoring/metrics", "api_monitoring_persona_metrics"),
     RouteSpec("GET", "/api/monitoring/health", "api_monitoring_health"),
+    RouteSpec("POST", "/api/shutdown", "api_shutdown"),
     # ── 人格管理 API ──
     RouteSpec("GET", "/api/personas", "api_personas_list"),
     RouteSpec("POST", "/api/personas", "api_persona_create"),
     RouteSpec("GET", "/api/personas/active", "api_persona_active_get"),
     RouteSpec("POST", "/api/personas/{name}/activate", "api_persona_activate"),
     RouteSpec("DELETE", "/api/personas/{name}", "api_persona_delete"),
+    RouteSpec("POST", "/api/persona/start", "api_persona_start"),
+    RouteSpec("POST", "/api/persona/stop", "api_persona_stop"),
+    RouteSpec("GET", "/api/persona/status", "api_persona_status"),
     # ── 数据同步 API（供助手端调用） ──
     RouteSpec("GET", "/api/data/snapshot", "api_data_snapshot_get"),
     RouteSpec("POST", "/api/data/snapshot", "api_data_snapshot_post"),

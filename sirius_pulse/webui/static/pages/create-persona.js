@@ -411,7 +411,7 @@ async function createPersona() {
         if (hint) hint.textContent = '人格目录已创建，正在生成人格定义...';
         if (btn) btn.textContent = '生成中...';
 
-        const res = await post(`/personas/${personaId}/persona/interview`, {
+        const res = await post(`/persona/persona/interview`, {
           name: personaName || personaId,
           aliases: personaAliases ? personaAliases.split(/\s+/) : [],
           answers,
@@ -439,7 +439,7 @@ async function createPersona() {
           directData.aliases = personaAliases.split(/\s+/).filter(Boolean);
         }
 
-        await post(`/personas/${personaId}/persona/save`, { persona: directData });
+        await post(`/persona/persona/save`, { persona: directData });
 
         const previewContent = $('previewContent');
         const previewArea = $('previewArea');

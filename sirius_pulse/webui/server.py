@@ -68,6 +68,9 @@ from sirius_pulse.webui.persona_manager_api import (
     api_persona_active_get,
     api_persona_create,
     api_persona_delete,
+    api_persona_start,
+    api_persona_status,
+    api_persona_stop,
     api_personas_list,
 )
 from sirius_pulse.webui.persona_api import (
@@ -188,6 +191,9 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_active_get": api_persona_active_get,
     "api_persona_activate": api_persona_activate,
     "api_persona_delete": api_persona_delete,
+    "api_persona_start": api_persona_start,
+    "api_persona_stop": api_persona_stop,
+    "api_persona_status": api_persona_status,
 }
 
 # 人格作用域的 handler 前缀 — 这些 handler 的 data_dir 参数应传 persona_dir
@@ -265,6 +271,16 @@ class WebUIServer(_WebUIServer):
     async def api_auth_status(self, request):
         has_admin = bool(self.auth_manager._config.get("admin_password_hash"))
         return _json_response({"auth_enabled": has_admin})
+
+    async def api_shutdown(self, request):
+        """关闭整个程序（WebUI + 引擎 + 所有服务）。"""
+        import asyncio
+        import os
+
+        LOG.warning("收到关闭请求，正在停止所有服务...")
+        # 延迟一小段时间让响应先发出
+        asyncio.get_event_loop().call_later(0.5, lambda: os._exit(0))
+        return _json_response({"success": True, "message": "正在关闭..."})
 
 
 __all__ = ["WebUIServer"]

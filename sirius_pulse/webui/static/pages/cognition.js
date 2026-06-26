@@ -163,7 +163,7 @@ async function loadData() {
     return;
   }
   try {
-    const res = await get(`/personas/${name}/cognition?limit=100`);
+    const res = await get(`/persona/cognition?limit=100`);
     renderStats(res.events || [], res.emotion_distribution || {});
     renderEmotionDistribution(res.emotion_distribution || {});
     renderTimeline(res.events || []);
@@ -178,7 +178,7 @@ async function loadAnalysis() {
   const name = store.currentPersona;
   if (!name) return;
   try {
-    const res = await get(`/personas/${name}/cognition/analysis`);
+    const res = await get(`/persona/cognition/analysis`);
     if (!res.has_data) return;
     renderAnalysisStats(res);
     renderIntentDistribution(res.intent_distribution || {});

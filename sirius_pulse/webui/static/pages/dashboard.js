@@ -483,6 +483,27 @@ function bindEvents() {
     addBtn.addEventListener('click', () => navTo('create-persona'));
   }
 
+  // 关闭程序按钮
+  const shutdownBtn = $('shutdownBtn');
+  if (shutdownBtn) {
+    shutdownBtn.addEventListener('click', async () => {
+      if (!confirm('确定要关闭整个程序吗？所有服务将停止。')) return;
+      try {
+        await post('/shutdown', {});
+        toast('正在关闭程序...', 'info');
+        // 等待服务停止后显示提示
+        setTimeout(() => {
+          document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-2);font-size:18px;">程序已关闭，可以关闭此页面</div>';
+        }, 2000);
+      } catch (e) {
+        // 请求可能因服务关闭而失败，这是正常的
+        setTimeout(() => {
+          document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-2);font-size:18px;">程序已关闭，可以关闭此页面</div>';
+        }, 1500);
+      }
+    });
+  }
+
   // 配置按钮
   const configBtn = $('panelConfigBtn');
   if (configBtn) {
@@ -501,7 +522,7 @@ function bindEvents() {
     startBtn.addEventListener('click', async () => {
       if (!currentPersona) return;
       try {
-        const res = await post(`/personas/${currentPersona.name}/start`, {});
+        const res = await post(`/persona/start`, {});
         if (res.success) {
           toast(`${currentPersona.name} 已启动`, 'success');
           await loadPersonas();
@@ -520,7 +541,7 @@ function bindEvents() {
     stopBtn.addEventListener('click', async () => {
       if (!currentPersona) return;
       try {
-        const res = await post(`/personas/${currentPersona.name}/stop`, {});
+        const res = await post(`/persona/stop`, {});
         if (res.success) {
           toast(`${currentPersona.name} 已停止`, 'success');
           await loadPersonas();
@@ -746,8 +767,8 @@ async function loadPersonaMonitoring(name) {
 
   try {
     const [metricsRes, healthRes] = await Promise.all([
-      get(`/monitoring/${name}/metrics`).catch(() => null),
-      get(`/monitoring/${name}/health`).catch(() => null),
+      get(`/monitoring/metrics`).catch(() => null),
+      get(`/monitoring/health`).catch(() => null),
     ]);
 
     // 填充运行指标

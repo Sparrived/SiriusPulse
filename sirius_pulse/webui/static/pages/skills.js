@@ -39,7 +39,7 @@ async function loadSkills() {
   const name = store.currentPersona;
   const el = $('skillList');
   try {
-    const data = await get(`/personas/${name}/skills`);
+    const data = await get(`/persona/skills`);
     const skills = data.skills || [];
     if (!skills.length) {
       el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-3)">暂无技能</div>';
@@ -93,7 +93,7 @@ function renderSkillCard(s) {
 async function toggleSkill(skillName, enabled, tagEl) {
   const name = store.currentPersona;
   try {
-    await post(`/personas/${name}/skills/${skillName}/toggle`, { enabled });
+    await post(`/persona/skills/${skillName}/toggle`, { enabled });
     toast(`${skillName} 已${enabled ? '启用' : '禁用'}`, 'success');
   } catch (e) {
     toast('操作失败: ' + e.message, 'error');
@@ -132,7 +132,7 @@ async function openConfigModal(skillName) {
   $('modalCancel').addEventListener('click', closeModal);
 
   try {
-    const data = await get(`/personas/${name}/skills/${skillName}/config`);
+    const data = await get(`/persona/skills/${skillName}/config`);
     renderConfigModal(data, skillName);
   } catch (e) {
     const body = $('modalBody');
@@ -218,7 +218,7 @@ async function saveConfig(payload, skillName) {
   }
 
   try {
-    await post(`/personas/${name}/skills/${skillName}/config`, payload);
+    await post(`/persona/skills/${skillName}/config`, payload);
     flashSuccess(btn);
     toast('配置已保存');
     setTimeout(closeModal, 800);

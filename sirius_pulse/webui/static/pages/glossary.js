@@ -68,7 +68,7 @@ async function loadGlossary() {
   const name = store.currentPersona;
   try {
     const offset = currentPage * PAGE_SIZE;
-    let url = `/personas/${name}/glossary?limit=${PAGE_SIZE}&offset=${offset}`;
+    let url = `/persona/glossary?limit=${PAGE_SIZE}&offset=${offset}`;
     if (activeSearch) {
       url += `&search=${encodeURIComponent(activeSearch)}`;
     }

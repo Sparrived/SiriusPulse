@@ -87,8 +87,7 @@ window.navTo = navTo;
 window.selectPersona = selectPersona;
 
 export function pApi(path) {
-  const name = store.currentPersona;
-  return name ? `/personas/${name}${path}` : path;
+  return `/persona${path}`;
 }
 
 async function loadPageModule(page) {
@@ -368,7 +367,7 @@ function renderSidebarFooter() {
 
 export async function selectPersona(name) {
   store.currentPersona = name;
-  try { store.personaState = await get(`/personas/${name}/status`); } catch {}
+  try { store.personaState = await get(`/persona/status`); } catch {}
   window.dispatchEvent(new CustomEvent('persona:focus', { detail: name }));
 }
 

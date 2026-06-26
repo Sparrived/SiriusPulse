@@ -96,7 +96,7 @@ async function loadData() {
   if (activeKeyword) params.set('keyword', activeKeyword);
 
   try {
-    diaryData = await get(`/personas/${name}/diary?${params}`);
+    diaryData = await get(`/persona/diary?${params}`);
     currentEntries = diaryData.entries || [];
     totalRecords = diaryData.total || 0;
     renderStats();

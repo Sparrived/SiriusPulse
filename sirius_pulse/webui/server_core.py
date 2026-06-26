@@ -345,7 +345,7 @@ class WebUIServer:
     def _notify_provider_reload(self) -> None:
         """向当前人格写入 provider 重载标志。"""
         try:
-            flag = self.data_dir / "engine_state" / "reload_requested"
+            flag = self.persona_dir / "engine_state" / "reload_requested"
             flag.parent.mkdir(parents=True, exist_ok=True)
             flag.write_text("provider", encoding="utf-8")
             LOG.debug("已写入 provider 重载标志")

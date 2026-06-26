@@ -23,7 +23,7 @@ async function loadDashboard() {
   const name = store.currentPersona;
   if (!name) return;
   try {
-    const data = await get(`/personas/${name}/memory/dashboard`);
+    const data = await get(`/persona/memory/dashboard`);
     cachedData = data;
     if (!data.has_data) {
       const bioStats = $('bioStats');

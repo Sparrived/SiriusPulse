@@ -44,7 +44,7 @@ export async function init(container, params) {
 
 async function loadAdapters(name) {
   try {
-    const data = await get(`/personas/${name}/adapters`);
+    const data = await get(`/persona/adapters`);
     adapterData = data;
     renderAdapter(data.adapters?.[0] || {});
     // 加载成功后启用保存按钮
@@ -222,7 +222,7 @@ async function saveAdapters(name) {
   };
 
   try {
-    await post(`/personas/${name}/adapters`, { adapters: [adapter] });
+    await post(`/persona/adapters`, { adapters: [adapter] });
     flashSuccess($('adapterSave'));
     toast('适配器配置已保存', 'success');
   } catch (e) {

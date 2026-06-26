@@ -3132,6 +3132,37 @@ tr:hover td {
   line-height: 1;
 }
 
+/* 关闭程序按钮 */
+.shutdown-btn {
+  position: absolute;
+  bottom: 20px;
+  right: 88px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  border: 2px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger);
+  font-size: 22px;
+  cursor: pointer;
+  transition: all 0.3s var(--ease);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shutdown-btn:hover {
+  background: color-mix(in srgb, var(--danger) 30%, transparent);
+  border-color: var(--danger);
+  transform: scale(1.1);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+.shutdown-btn span {
+  line-height: 1;
+}
+
 /* 统计数据点容器 */
 .stats-orbit-container {
   position: absolute;
