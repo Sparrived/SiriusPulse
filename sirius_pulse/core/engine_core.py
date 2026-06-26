@@ -196,7 +196,6 @@ class _EmotionalGroupChatEngineBase:
         # ── 新记忆体系组件（共享 persona.db 连接）──
         self.evolution_chain = EvolutionChain(
             conn=self._persona_db_conn,
-            embedding_client=self._embedding_client,
         )
         self.biography_view = BiographyView(
             self.evolution_chain,
