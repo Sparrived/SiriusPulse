@@ -366,8 +366,14 @@ function renderSidebarFooter() {
 }
 
 export async function selectPersona(name) {
+  if (!name) return;
   store.currentPersona = name;
+  try {
+    await post(`/personas/${encodeURIComponent(name)}/activate`, {});
+  } catch {}
   try { store.personaState = await get(`/persona/status`); } catch {}
+  store.personas = (store.personas || []).map(p => ({ ...p, active: p.name === name }));
+  renderSidebarFooter();
   window.dispatchEvent(new CustomEvent('persona:focus', { detail: name }));
 }
 
@@ -392,8 +398,14 @@ async function loadPersonas() {
 
     store.personas = personas;
     renderSidebarFooter();
-    if (!store.currentPersona && store.personas.length > 0) {
-      await selectPersona(store.personas[0].name);
+    if (store.personas.length > 0) {
+      const activePersona = store.personas.find(p => p.name === res.active);
+      const currentPersona = store.personas.find(p => p.name === store.currentPersona);
+      const siriusPersona = store.personas.find(p => p.name === 'sirius');
+      const target = (activePersona || currentPersona || siriusPersona || store.personas[0]).name;
+      if (target !== store.currentPersona || !activePersona) {
+        await selectPersona(target);
+      }
     }
   } catch {}
 }

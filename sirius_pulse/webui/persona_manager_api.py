@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import signal
 import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,20 +52,16 @@ async def api_personas_list(
                 display_name = data.get("name", d.name)
             except Exception:
                 pass
-        # 读取 worker 状态以判断是否运行中
-        running = False
-        worker_status_path = d / "engine_state" / "worker_status.json"
-        if worker_status_path.exists():
-            try:
-                ws = json.loads(worker_status_path.read_text(encoding="utf-8"))
-                running = ws.get("status") == "running"
-            except Exception:
-                pass
+        worker_status = _read_worker_status(d)
+        running = _is_persona_running(d, worker_status)
 
         result.append({
             "name": d.name,
             "persona_name": display_name,
             "running": running,
+            "pid": worker_status.get("pid"),
+            "heartbeat_at": worker_status.get("heartbeat_at"),
+            "started_at": worker_status.get("started_at"),
             "active": d.name == active,
             "has_config": has_config,
         })
@@ -155,9 +156,12 @@ async def api_persona_start(
     前端调用 POST /api/persona/start。
     """
     root_dir = _find_root_dir(data_dir)
+    if not (data_dir / "persona.json").exists():
+        return _json_response({"error": f"无效的人格目录: {data_dir.name}"}, 400)
     _set_active_persona_name(root_dir, data_dir.name)
-    LOG.info("人格已激活: %s", data_dir.name)
-    return _json_response({"success": True, "active": data_dir.name})
+    start_result = _start_persona_process(root_dir, data_dir)
+    LOG.info("人格已启动: %s pid=%s", data_dir.name, start_result.get("pid"))
+    return _json_response({"success": True, "active": data_dir.name, **start_result})
 
 
 @handle_api_errors
@@ -171,10 +175,11 @@ async def api_persona_stop(
     """
     root_dir = _find_root_dir(data_dir)
     active = _get_active_persona_name(root_dir)
+    stop_result = _stop_persona_process(data_dir)
     if active == data_dir.name:
         _set_active_persona_name(root_dir, "")
         LOG.info("人格已停用: %s", data_dir.name)
-    return _json_response({"success": True})
+    return _json_response({"success": True, **stop_result})
 
 
 @handle_api_errors
@@ -188,18 +193,13 @@ async def api_persona_status(
     """
     root_dir = _find_root_dir(data_dir)
     active = _get_active_persona_name(root_dir)
-    worker_status_path = data_dir / "engine_state" / "worker_status.json"
-    worker_status: dict = {}
-    if worker_status_path.exists():
-        try:
-            worker_status = json.loads(worker_status_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+    worker_status = _read_worker_status(data_dir)
+    running = _is_persona_running(data_dir, worker_status)
 
     return _json_response({
         "name": data_dir.name,
         "active": data_dir.name == active,
-        "running": worker_status.get("status") == "running",
+        "running": running,
         "pid": worker_status.get("pid"),
         "heartbeat_at": worker_status.get("heartbeat_at"),
         "started_at": worker_status.get("started_at"),
@@ -245,6 +245,115 @@ def _find_root_dir(persona_dir: Path) -> Path:
         return persona_dir.parent.parent
     # 兼容旧格式（persona_dir == root）
     return persona_dir
+
+
+def _read_worker_status(persona_dir: Path) -> dict[str, Any]:
+    status_path = persona_dir / "engine_state" / "worker_status.json"
+    if not status_path.exists():
+        return {}
+    try:
+        data = json.loads(status_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_worker_status(persona_dir: Path, status: dict[str, Any]) -> None:
+    status_path = persona_dir / "engine_state" / "worker_status.json"
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = status_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(status_path)
+
+
+def _pid_exists(pid: Any) -> bool:
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid_int <= 0:
+        return False
+    try:
+        os.kill(pid_int, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _is_persona_running(persona_dir: Path, worker_status: dict[str, Any] | None = None) -> bool:
+    status = worker_status if worker_status is not None else _read_worker_status(persona_dir)
+    return status.get("status") == "running" and _pid_exists(status.get("pid"))
+
+
+def _start_persona_process(root_dir: Path, persona_dir: Path) -> dict[str, Any]:
+    worker_status = _read_worker_status(persona_dir)
+    if _is_persona_running(persona_dir, worker_status):
+        return {"started": False, "already_running": True, "pid": worker_status.get("pid")}
+
+    log_level = "INFO"
+    try:
+        config = json.loads((root_dir / "global_config.json").read_text(encoding="utf-8"))
+        log_level = str(config.get("log_level") or log_level).upper()
+    except Exception:
+        pass
+
+    log_path = persona_dir / "logs" / "worker.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        "-m",
+        "sirius_pulse.persona_worker",
+        "--config",
+        str(persona_dir),
+        "--log-level",
+        log_level,
+    ]
+    kwargs: dict[str, Any] = {
+        "cwd": str(root_dir.parent),
+        "stdin": subprocess.DEVNULL,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT, **kwargs)
+    return {"started": True, "already_running": False, "pid": process.pid}
+
+
+def _stop_persona_process(persona_dir: Path) -> dict[str, Any]:
+    worker_status = _read_worker_status(persona_dir)
+    pid = worker_status.get("pid")
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        pid_int = 0
+
+    if pid_int <= 0 or not _pid_exists(pid_int):
+        _write_worker_status(persona_dir, {"status": "stopped", "pid": pid, "stopped_at": _now_iso()})
+        return {"stopped": False, "pid": pid, "reason": "not_running"}
+
+    if pid_int == os.getpid():
+        return {"stopped": False, "pid": pid_int, "reason": "in_process"}
+
+    os.kill(pid_int, signal.SIGTERM)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if not _pid_exists(pid_int):
+            return {"stopped": True, "pid": pid_int}
+        time.sleep(0.1)
+
+    if hasattr(signal, "SIGKILL"):
+        os.kill(pid_int, signal.SIGKILL)
+        return {"stopped": True, "pid": pid_int, "forced": True}
+    return {"stopped": False, "pid": pid_int, "reason": "still_running"}
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _get_active_persona_name(data_dir: Path) -> str:

@@ -336,11 +336,11 @@ function updatePersonaCards() {
       </div>
     `;
     // 点击卡片 = 选中人格 + 更新右侧面板（与点击图斑效果一致）
-    card.addEventListener('click', () => {
+    card.addEventListener('click', async () => {
       const idx = Array.from(container.children).indexOf(card);
       const persona = personasData[idx];
       if (persona) {
-        selectPersona(persona.name);
+        await selectPersona(persona.name);
         updatePersonaPanel(idx);
         globe.selectedSpot = idx;
       }
@@ -459,11 +459,11 @@ function bindEvents() {
   });
 
   // 点击事件
-  canvas.addEventListener('click', (e) => {
+  canvas.addEventListener('click', async (e) => {
     if (globe.hasHoveredSpot()) {
       const persona = personasData[globe.hoveredSpot];
       if (persona) {
-        selectPersona(persona.name);
+        await selectPersona(persona.name);
         updatePersonaPanel(globe.hoveredSpot);
         globe.selectedSpot = globe.hoveredSpot;
       }

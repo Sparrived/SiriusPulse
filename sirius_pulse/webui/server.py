@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -263,6 +264,23 @@ class WebUIServer(_WebUIServer):
         delegated.__name__ = name
         return delegated
 
+    async def api_persona_activate(self, request):
+        response = await api_persona_activate(request, self.data_dir)
+        if response.status < 400:
+            try:
+                payload = json.loads(response.text)
+                self._active_persona_name = str(payload.get("active") or "")
+            except Exception:
+                self._active_persona_name = str(request.match_info.get("name", ""))
+        return response
+
+    async def api_persona_start(self, request):
+        target_dir = self.persona_dir
+        response = await api_persona_start(request, target_dir)
+        if response.status < 400:
+            self._active_persona_name = target_dir.name
+        return response
+
     async def api_auth_login(self, request):
         body = await request.json()
         username = str(body.get("username", ""))
@@ -303,6 +321,8 @@ class WebUIServer(_WebUIServer):
     async def api_persona_stop(self, request):
         target_dir = self.persona_dir
         response = await api_persona_stop(request, target_dir)
+        if response.status < 400 and target_dir.name == getattr(self, "_active_persona_name", ""):
+            self._active_persona_name = ""
         if response.status < 400 and self._shutdown_persona_manager(target_dir):
             LOG.info("已请求停止人格 worker: %s", target_dir.name)
         return response
