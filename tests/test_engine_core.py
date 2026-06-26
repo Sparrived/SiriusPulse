@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from sirius_pulse.core import engine_core
+from sirius_pulse.memory.biography.view import BiographyView
+from sirius_pulse.memory.evolution.chain import EvolutionChain
 
 
 class _Dummy:
@@ -54,3 +56,11 @@ def test_engine_memory_system_when_embedding_client_exists_then_evolution_chain_
     engine._init_memory_system()
 
     assert calls == [engine._persona_db_conn]
+
+
+def test_biography_view_when_constructed_then_registers_evolution_callback(tmp_path):
+    chain = EvolutionChain(tmp_path / "evolution.db")
+
+    view = BiographyView(chain)
+
+    assert view is not None

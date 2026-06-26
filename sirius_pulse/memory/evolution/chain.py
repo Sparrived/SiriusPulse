@@ -47,6 +47,7 @@ class EvolutionChain:
         self._record_cache: dict[str, EvolutionRecord] = {}
         # 别称缓存：alias_lower → list[EvolutionRecord]（仅 active 别称记录）
         self._alias_cache: dict[str, list[EvolutionRecord]] = {}
+        self._correction_callbacks: list[Any] = []
 
         # 启动时加载索引
         self._rebuild_index()
@@ -54,6 +55,18 @@ class EvolutionChain:
     def close(self) -> None:
         """关闭存储连接。"""
         self._store.close()
+
+    def register_correction_callback(self, callback: Any) -> None:
+        """Register a callback fired when an active record is corrected."""
+        if callable(callback) and callback not in self._correction_callbacks:
+            self._correction_callbacks.append(callback)
+
+    def _notify_correction(self, record: EvolutionRecord, new_record_id: str = "") -> None:
+        for callback in list(self._correction_callbacks):
+            try:
+                callback(record, new_record_id)
+            except Exception:
+                logger.debug("Evolution correction callback failed", exc_info=True)
 
     # ── 公开 API：查询 ──
 
