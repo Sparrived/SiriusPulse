@@ -39,7 +39,12 @@ LOG = logging.getLogger("sirius.persona_worker")
 class PersonaWorker:
     """单个人格的运行时封装。"""
 
-    def __init__(self, persona_dir: Path | str) -> None:
+    def __init__(
+        self,
+        persona_dir: Path | str,
+        butler_url: str = "",
+        butler_token: str | None = None,
+    ) -> None:
         self.persona_dir = Path(persona_dir).resolve()
         self.paths = PersonaConfigPaths(self.persona_dir)
         self._adapters: list[NapCatAdapter] = []
@@ -47,6 +52,9 @@ class PersonaWorker:
         self._running = False
         self._shutdown_event = asyncio.Event()
         self._heartbeat_task: asyncio.Task | None = None
+        self._butler_url = butler_url
+        self._butler_token = butler_token
+        self._remote_bridge: Any | None = None
 
     # ------------------------------------------------------------------
     # 主循环
@@ -69,8 +77,29 @@ class PersonaWorker:
             plugin_config=plugin_config,
         )
 
+        # 2.5 助手模式：创建远程存储桥接
+        if self._butler_url:
+            from sirius_pulse.network.remote_bridge import RemoteStorageBridge
+
+            self._remote_bridge = RemoteStorageBridge(
+                self._butler_url,
+                token=self._butler_token,
+            )
+            LOG.info("助手模式：从管家端加载运行时快照...")
+            snapshot = await self._remote_bridge.load_snapshot()
+            if snapshot:
+                LOG.info("快照加载成功，数据项: %d", len(snapshot))
+            else:
+                LOG.warning("快照为空或加载失败，将以空状态启动")
+            self._runtime.set_remote_bridge(self._remote_bridge)
+
         # 3. 启动引擎
         await self._runtime.start()
+
+        # 3.5 助手模式：启动写缓冲
+        if self._remote_bridge is not None:
+            await self._remote_bridge.start()
+            LOG.info("远程写缓冲已启动")
 
         # 4. 创建并启动各平台 Adapter
         for adapter_cfg in adapters_cfg.adapters:
@@ -356,6 +385,13 @@ class PersonaWorker:
     async def _cleanup(self) -> None:
         LOG.info("开始清理资源...")
 
+        # 停止远程写缓冲（在 runtime.stop 之前，确保最后一次 flush 完成）
+        if self._remote_bridge is not None:
+            try:
+                await self._remote_bridge.stop()
+            except Exception as exc:
+                LOG.warning("远程写缓冲停止失败: %s", exc)
+
         if self._heartbeat_task and not self._heartbeat_task.done():
             self._heartbeat_task.cancel()
             try:
@@ -400,6 +436,8 @@ async def _main() -> None:
     parser = argparse.ArgumentParser(description="SiriusChat 人格工作进程")
     parser.add_argument("--config", required=True, help="人格配置目录路径")
     parser.add_argument("--log-level", default="INFO", help="日志级别")
+    parser.add_argument("--butler-url", default="", help="管家端数据 API 地址（助手模式）")
+    parser.add_argument("--butler-token", default=None, help="管家端认证 token")
     args = parser.parse_args()
 
     pdir = Path(args.config).resolve()
@@ -411,7 +449,11 @@ async def _main() -> None:
         log_file=str(log_file),
     )
 
-    worker = PersonaWorker(args.config)
+    worker = PersonaWorker(
+        args.config,
+        butler_url=args.butler_url,
+        butler_token=args.butler_token,
+    )
 
     # 信号处理（Windows 不支持 loop.add_signal_handler）
     if sys.platform == "win32":

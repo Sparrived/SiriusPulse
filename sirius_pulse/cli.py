@@ -385,6 +385,7 @@ def _shutdown_services() -> None:
 def _default_global_config() -> dict:
     """返回默认全局配置。"""
     return {
+        "active_persona": "default",
         "webui_host": "0.0.0.0",
         "webui_port": 8080,
         "napcat_install_dir": str(REPO_ROOT / "napcat"),
@@ -414,8 +415,18 @@ def _load_global_config() -> dict:
 
 async def _cmd_run(args: argparse.Namespace) -> None:
     """启动人格引擎 + WebUI。引擎在主进程内直接运行。"""
+    # 数据迁移（旧格式 → 多人格目录）
+    _migrate_flat_to_personas()
+
     config = _load_global_config()
-    webui_log_file = DATA_DIR / "logs" / "webui.log"
+    persona_dir = _get_active_persona_dir()
+
+    if not persona_dir.exists():
+        print(_paint(f"活跃人格目录不存在: {persona_dir}", _Ansi.RED))
+        print("请运行 `python main.py persona list` 查看可用人格")
+        raise SystemExit(1)
+
+    webui_log_file = persona_dir / "logs" / "webui.log"
     configure_logging(
         level=config.get("log_level", "INFO"),
         format_type="console",
@@ -463,7 +474,8 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     # ── 直接在主进程启动 PersonaWorker ──
     from sirius_pulse.persona_worker import PersonaWorker
 
-    worker = PersonaWorker(DATA_DIR)
+    worker = PersonaWorker(persona_dir)
+    LOG.info("活跃人格: %s (%s)", config.get("active_persona", "default"), persona_dir)
 
     # 可选：启动 ButlerServer
     butler_port = getattr(args, "butler_port", 0)
@@ -474,7 +486,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         butler_server = ButlerServer(
             host="0.0.0.0",
             port=butler_port,
-            data_dir=DATA_DIR,
+            data_dir=persona_dir,
             token=getattr(args, "butler_token", None),
         )
         await butler_server.start()
@@ -666,12 +678,13 @@ def _default_experience_config() -> dict:
 
 
 def _load_persona_name() -> str:
-    """从 persona.json 加载人格名称。"""
-    persona_path = DATA_DIR / "persona.json"
+    """从活跃人格的 persona.json 加载人格名称。"""
+    persona_dir = _get_active_persona_dir()
+    persona_path = persona_dir / "persona.json"
     if persona_path.exists():
         try:
             data = json.loads(persona_path.read_text(encoding="utf-8"))
-            return data.get("persona_name", "default")
+            return data.get("name", data.get("persona_name", "default"))
         except Exception:
             pass
     return "default"
@@ -793,17 +806,22 @@ def _cmd_legacy_cli(args: argparse.Namespace) -> None:
 
 async def _cmd_assistant(args: argparse.Namespace) -> None:
     """以助手模式启动人格：连接管家端，接管消息处理。"""
-    persona_name = _load_persona_name()
+    # 数据迁移
+    _migrate_flat_to_personas()
+
+    config = _load_global_config()
+    persona_dir = _get_active_persona_dir()
+    persona_name = config.get("active_persona", "default")
     butler_url = args.butler
     token = getattr(args, "token", None)
     log_level = getattr(args, "log_level", "INFO")
 
-    if not DATA_DIR.is_dir():
-        print(f"数据目录不存在: {DATA_DIR}")
-        print("请先运行: python main.py init")
+    if not persona_dir.is_dir():
+        print(f"人格目录不存在: {persona_dir}")
+        print("请先运行: python main.py persona create <名称>")
         raise SystemExit(1)
 
-    log_file = DATA_DIR / "logs" / "assistant.log"
+    log_file = persona_dir / "logs" / "assistant.log"
     setup_log_archival(log_file)
     configure_logging(
         level=log_level.upper(),
@@ -837,7 +855,7 @@ async def _cmd_assistant(args: argparse.Namespace) -> None:
     print("  按 Ctrl+C 释放控制权并退出")
 
     # 2. 启动 PersonaWorker（助手模式）
-    worker = PersonaWorker(DATA_DIR)
+    worker = PersonaWorker(persona_dir)
 
     # 注册信号处理
     if sys.platform == "win32":
@@ -870,6 +888,196 @@ async def _cmd_assistant(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 人格管理命令
+# ---------------------------------------------------------------------------
+
+
+def _cmd_persona_list(args: argparse.Namespace) -> None:
+    """列出所有人格。"""
+    config = _load_global_config()
+    active = config.get("active_persona", "")
+    personas_dir = DATA_DIR / "personas"
+
+    if not personas_dir.exists():
+        print("暂无人格。运行 `python main.py persona create <名称>` 创建。")
+        return
+
+    print(_header_text("人格列表", f"当前活跃: {active or '无'}"))
+    found = False
+    for d in sorted(personas_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        found = True
+        marker = _paint(" ● ", _Ansi.GREEN) if d.name == active else "   "
+        persona_file = d / "persona.json"
+        display = d.name
+        if persona_file.exists():
+            try:
+                data = json.loads(persona_file.read_text(encoding="utf-8"))
+                display = data.get("name", d.name)
+            except Exception:
+                pass
+        print(f"{marker}{_paint(d.name, _Ansi.BOLD)}  {display}")
+
+    if not found:
+        print("暂无人格。运行 `python main.py persona create <名称>` 创建。")
+
+
+def _cmd_persona_create(args: argparse.Namespace) -> None:
+    """创建新人格。"""
+    name = args.name
+    import re
+
+    if not re.match(r"^[a-zA-Z0-9_\-一-鿿]+$", name):
+        print(_paint("人格名称只能包含字母、数字、中文、下划线和连字符", _Ansi.RED))
+        return
+
+    persona_dir = DATA_DIR / "personas" / name
+    if persona_dir.exists():
+        print(_paint(f"人格「{name}」已存在", _Ansi.RED))
+        return
+
+    persona_dir.mkdir(parents=True)
+    for subdir in ("engine_state", "archive", "plugins", "skills", "logs", "image_cache"):
+        (persona_dir / subdir).mkdir(exist_ok=True)
+
+    (persona_dir / "persona.json").write_text(
+        json.dumps({"name": name, "aliases": []}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (persona_dir / "experience.json").write_text(
+        json.dumps({}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (persona_dir / "adapters.json").write_text(
+        json.dumps({"adapters": [{"type": "napcat", "enabled": False}]}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    print(_paint(f"已创建人格「{name}」", _Ansi.GREEN))
+    print(f"  目录: {persona_dir}")
+    print(f"  激活: python main.py persona activate {name}")
+
+
+def _cmd_persona_activate(args: argparse.Namespace) -> None:
+    """切换活跃人格。"""
+    name = args.name
+    persona_dir = DATA_DIR / "personas" / name
+    if not persona_dir.exists():
+        print(_paint(f"人格「{name}」不存在", _Ansi.RED))
+        return
+
+    config = _load_global_config()
+    config["active_persona"] = name
+    GLOBAL_CONFIG_PATH.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(_paint(f"已切换活跃人格: {name}", _Ansi.GREEN))
+
+
+def _cmd_persona_delete(args: argparse.Namespace) -> None:
+    """删除人格。"""
+    name = args.name
+    config = _load_global_config()
+    active = config.get("active_persona", "")
+
+    if name == active:
+        print(_paint("不能删除当前活跃的人格。请先切换到其他人格。", _Ansi.RED))
+        return
+
+    persona_dir = DATA_DIR / "personas" / name
+    if not persona_dir.exists():
+        print(_paint(f"人格「{name}」不存在", _Ansi.RED))
+        return
+
+    import shutil
+
+    if not args.force:
+        choice = _prompt(f"确定删除人格「{name}」？此操作不可恢复。[y/N] ").lower()
+        if choice not in {"y", "yes", "是"}:
+            print("已取消")
+            return
+
+    shutil.rmtree(persona_dir)
+    print(_paint(f"已删除人格「{name}」", _Ansi.GREEN))
+
+
+# ---------------------------------------------------------------------------
+# 数据迁移
+# ---------------------------------------------------------------------------
+
+
+def _migrate_flat_to_personas() -> None:
+    """将旧的扁平 data/ 目录迁移到 data/personas/default/ 结构。
+
+    检测条件：data/persona.json 存在但 data/personas/ 不存在。
+    """
+    if not (DATA_DIR / "persona.json").exists():
+        return
+    if (DATA_DIR / "personas").exists():
+        return
+
+    LOG = logging.getLogger("sirius.migrate")
+    LOG.info("检测到旧格式数据目录，正在迁移到多人格结构...")
+
+    default_dir = DATA_DIR / "personas" / "default"
+    default_dir.mkdir(parents=True)
+
+    # 需要迁移的人格相关文件和目录
+    persona_items = [
+        "persona.json",
+        "experience.json",
+        "orchestration.json",
+        "adapters.json",
+        "engine_state",
+        "archive",
+        "glossary",
+        "diary",
+        "plugins",
+        "skills",
+        "logs",
+        "image_cache",
+        "plugin_data",
+        "persona.db",
+    ]
+
+    import shutil
+
+    migrated = []
+    for item_name in persona_items:
+        src = DATA_DIR / item_name
+        if not src.exists():
+            continue
+        dst = default_dir / item_name
+        try:
+            shutil.move(str(src), str(dst))
+            migrated.append(item_name)
+        except Exception as exc:
+            LOG.warning("迁移 %s 失败: %s", item_name, exc)
+
+    if migrated:
+        # 更新 global_config
+        config = _load_global_config()
+        config["active_persona"] = "default"
+        GLOBAL_CONFIG_PATH.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(_paint(f"数据迁移完成: {', '.join(migrated)} → personas/default/", _Ansi.GREEN))
+    else:
+        # 迁移失败，删除创建的目录
+        import shutil
+
+        shutil.rmtree(default_dir, ignore_errors=True)
+
+
+def _get_active_persona_dir() -> Path:
+    """获取当前活跃人格的目录路径。"""
+    config = _load_global_config()
+    name = config.get("active_persona", "default")
+    return DATA_DIR / "personas" / name
+
+
+# ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
 
@@ -882,6 +1090,18 @@ def main() -> int:
 
     # init
     subparsers.add_parser("init", help="在 data/ 目录初始化人格配置")
+
+    # persona
+    persona_parser = subparsers.add_parser("persona", help="人格管理")
+    persona_sub = persona_parser.add_subparsers(dest="persona_action")
+    persona_sub.add_parser("list", help="列出所有人格")
+    p_create = persona_sub.add_parser("create", help="创建新人格")
+    p_create.add_argument("name", help="人格名称")
+    p_activate = persona_sub.add_parser("activate", help="切换活跃人格")
+    p_activate.add_argument("name", help="人格名称")
+    p_delete = persona_sub.add_parser("delete", help="删除人格")
+    p_delete.add_argument("name", help="人格名称")
+    p_delete.add_argument("--force", action="store_true", help="跳过确认")
 
     # run
     run_parser = subparsers.add_parser("run", help="启动人格引擎 + WebUI")
@@ -924,6 +1144,17 @@ def main() -> int:
             _cmd_cli(args)
         elif args.command == "init":
             _cmd_init(args)
+        elif args.command == "persona":
+            if args.persona_action == "list":
+                _cmd_persona_list(args)
+            elif args.persona_action == "create":
+                _cmd_persona_create(args)
+            elif args.persona_action == "activate":
+                _cmd_persona_activate(args)
+            elif args.persona_action == "delete":
+                _cmd_persona_delete(args)
+            else:
+                persona_parser.print_help()
         elif args.command == "run":
             asyncio.run(_cmd_run(args))
         elif args.command == "assistant":

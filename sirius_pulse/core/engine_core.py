@@ -62,6 +62,7 @@ class _EmotionalGroupChatEngineBase:
         vector_store: Any | None = None,
         embedding_client: Any | None = None,
         persona_db_conn: Any | None = None,
+        remote_bridge: Any | None = None,
     ) -> None:
         self.config = dict(config or {})
         self.provider_async = provider_async
@@ -70,6 +71,7 @@ class _EmotionalGroupChatEngineBase:
         self._embedding_client = embedding_client
         self._adapter: Any = None  # 由 add_skill_bridge() 注入，plugin 直接取用
         self._persona_db_conn = persona_db_conn
+        self._remote_bridge = remote_bridge
 
         self._init_expressiveness()
         self._init_persona(persona)
@@ -170,7 +172,7 @@ class _EmotionalGroupChatEngineBase:
         self.semantic_memory = SemanticMemoryManager(self.work_path, storage=self._memory_storage)
 
         self.basic_memory = BasicMemoryManager()
-        self.basic_store = BasicMemoryFileStore(self.work_path)
+        self.basic_store = BasicMemoryFileStore(self.work_path, remote_bridge=self._remote_bridge)
         self.diary_manager = DiaryManager(
             self.work_path,
             vector_store=self._vector_store,

@@ -46,11 +46,13 @@ class ButlerServer:
         port: int,
         data_dir: Path,
         token: str | None = None,
+        data_api_url: str = "",
     ) -> None:
         self._host = host
         self._port = port
         self._data_dir = data_dir
         self._token = token
+        self._data_api_url = data_api_url
         self._server: asyncio.AbstractServer | None = None
         self._session: _AssistantSession | None = None
         self._heartbeat_task: asyncio.Task | None = None
@@ -168,7 +170,7 @@ class ButlerServer:
             last_heartbeat=time.time(),
         )
         LOG.info("助手端已接管人格，管家端暂停消息处理")
-        return make_takeover_ack()
+        return make_takeover_ack(data_api_url=self._data_api_url)
 
     def _release_persona(self) -> None:
         """释放人格控制权，恢复管家端消息处理。"""

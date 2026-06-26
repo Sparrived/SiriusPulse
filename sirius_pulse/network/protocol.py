@@ -91,10 +91,23 @@ def make_heartbeat() -> ButlerMessage:
     return ButlerMessage(type=MessageType.HEARTBEAT)
 
 
-def make_takeover_ack(*, success: bool = True) -> ButlerMessage:
-    """构建 takeover 响应。"""
+def make_takeover_ack(
+    *,
+    success: bool = True,
+    data_api_url: str = "",
+) -> ButlerMessage:
+    """构建 takeover 响应。
+
+    Args:
+        success: 是否成功。
+        data_api_url: 管家端数据同步 API 的地址，供助手端读写运行时数据。
+    """
+    payload: dict[str, Any] = {}
+    if data_api_url:
+        payload["data_api_url"] = data_api_url
     return ButlerMessage(
         type=MessageType.TAKEOVER_ACK if success else MessageType.TAKEOVER_NACK,
+        payload=payload,
     )
 
 

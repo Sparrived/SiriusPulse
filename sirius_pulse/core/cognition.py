@@ -1009,15 +1009,14 @@ class CognitionAnalyzer:
         other_mention = rule_scores.get("other_mention_score", 0.0)
 
         # @others guard: message explicitly addresses someone other than AI
-        # → force low directed_score regardless of LLM prediction
+        # → reduce directed_score, but allow topic/emotional signals to contribute
+        # so the main model can still decide to reply when context warrants it
         if other_mention >= 0.5 and mention_score < 0.5:
-            return min(
-                0.3,
-                max(
-                    0.0,
-                    rule_scores.get("recency_score", 0.0) * 0.15,
-                ),
-            )
+            base = rule_scores.get("recency_score", 0.0) * 0.15
+            # topic relevance and emotional signals can still raise the score
+            topic = rule_scores.get("topic_relevance_score", 0.0) * 0.3
+            emotional = rule_scores.get("emotional_disclosure_score", 0.0) * 0.2
+            return min(0.55, max(0.0, base + topic + emotional))
 
         name_match = rule_scores.get("name_match_score", 0.0)
         second_person = rule_scores.get("second_person_score", 0.0)

@@ -329,6 +329,9 @@ async def api_orchestration_post(request: web.Request, data_dir: Path) -> web.Re
         if key in body and isinstance(body[key], dict):
             cfg[key] = body[key]
 
+    from datetime import datetime, timezone
+
+    cfg["_updated_at"] = datetime.now(timezone.utc).isoformat()
     OrchestrationStore.save(paths.dir, cfg)
     _request_config_reload("orchestration", data_dir)
     return _json_response({"success": True})
@@ -392,6 +395,9 @@ async def api_task_params_post(request: web.Request, data_dir: Path) -> web.Resp
                     cleaned[k] = v
             cfg[key] = cleaned
 
+    from datetime import datetime, timezone
+
+    cfg["_updated_at"] = datetime.now(timezone.utc).isoformat()
     OrchestrationStore.save(paths.dir, cfg)
     _request_config_reload("orchestration", data_dir)
     return _json_response({"success": True})

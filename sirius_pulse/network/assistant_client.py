@@ -52,6 +52,7 @@ class AssistantClient:
         self._connected = False
         self._takeover_confirmed = False
         self._disconnect_event = asyncio.Event()
+        self._data_api_url: str = ""
 
     @property
     def connected(self) -> bool:
@@ -67,6 +68,11 @@ class AssistantClient:
     def disconnect_event(self) -> asyncio.Event:
         """断开事件，可用于外部等待断开。"""
         return self._disconnect_event
+
+    @property
+    def data_api_url(self) -> str:
+        """管家端数据同步 API 的地址。在 takeover ACK 后可用。"""
+        return self._data_api_url
 
     async def connect_and_takeover(self) -> bool:
         """连接管家端并请求接管。返回是否成功。
@@ -171,6 +177,7 @@ class AssistantClient:
 
                 if msg.type == MessageType.TAKEOVER_ACK:
                     self._takeover_confirmed = True
+                    self._data_api_url = msg.payload.get("data_api_url", "")
 
                 elif msg.type == MessageType.TAKEOVER_NACK:
                     LOG.error("接管被拒绝")

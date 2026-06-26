@@ -55,6 +55,21 @@ from sirius_pulse.webui.monitoring_api import api_monitoring_overview as _api_mo
 from sirius_pulse.webui.monitoring_api import (
     api_monitoring_persona_metrics as _api_monitoring_persona_metrics,
 )
+from sirius_pulse.network.data_sync_api import (
+    api_data_batch_post,
+    api_data_glossary_post,
+    api_data_messages_post,
+    api_data_snapshot_get,
+    api_data_snapshot_post,
+    api_data_users_post,
+)
+from sirius_pulse.webui.persona_manager_api import (
+    api_persona_activate,
+    api_persona_active_get,
+    api_persona_create,
+    api_persona_delete,
+    api_personas_list,
+)
 from sirius_pulse.webui.persona_api import (
     api_adapters_get,
     api_adapters_post,
@@ -162,14 +177,62 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_monitoring_overview": _api_monitoring_overview,
     "api_monitoring_persona_metrics": _api_monitoring_persona_metrics,
     "api_monitoring_health": _api_monitoring_health,
+    "api_data_snapshot_get": api_data_snapshot_get,
+    "api_data_snapshot_post": api_data_snapshot_post,
+    "api_data_messages_post": api_data_messages_post,
+    "api_data_users_post": api_data_users_post,
+    "api_data_glossary_post": api_data_glossary_post,
+    "api_data_batch_post": api_data_batch_post,
+    "api_personas_list": api_personas_list,
+    "api_persona_create": api_persona_create,
+    "api_persona_active_get": api_persona_active_get,
+    "api_persona_activate": api_persona_activate,
+    "api_persona_delete": api_persona_delete,
+}
+
+# 人格作用域的 handler 前缀 — 这些 handler 的 data_dir 参数应传 persona_dir
+_PERSONA_SCOPED_PREFIXES = (
+    "api_persona_",
+    "api_monitoring_",
+    "api_data_",
+    "api_memory_",
+    "api_evolution_",
+    "api_biography_",
+    "api_config_",
+    "api_engine_",
+    "api_orchestration_",
+    "api_experience_",
+    "api_adapters_",
+    "api_task_",
+    "api_tokens_",
+    "api_telemetry_",
+    "api_cognition_",
+    "api_diary_",
+    "api_vector_",
+    "api_users_",
+    "api_user_",
+    "api_glossary_",
+    "api_skill_",
+    "api_conversations_",
+    "api_knowledge_",
+)
+
+# 这些 handler 虽然以 api_persona_ 开头，但操作的是根目录（多人格管理），不传 persona_dir
+_GLOBAL_PERSONA_HANDLERS = {
+    "api_personas_list",
+    "api_persona_create",
+    "api_persona_active_get",
+    "api_persona_activate",
+    "api_persona_delete",
 }
 
 
 class WebUIServer(_WebUIServer):
     """WebUIServer with all API endpoints bound via mix-in overrides.
 
-    Each handler delegates to the corresponding module-level async function,
-    passing ``self.data_dir``.
+    Each handler delegates to the corresponding module-level async function.
+    Persona-scoped handlers receive ``self.persona_dir`` (active persona's directory),
+    global handlers receive ``self.data_dir`` (root data directory).
     """
 
     def __getattr__(self, name: str) -> Any:
@@ -177,8 +240,15 @@ class WebUIServer(_WebUIServer):
         if handler is None:
             raise AttributeError(name)
 
+        # 判断是人格作用域还是全局作用域
+        is_persona_scoped = (
+            name not in _GLOBAL_PERSONA_HANDLERS
+            and any(name.startswith(p) for p in _PERSONA_SCOPED_PREFIXES)
+        )
+
         async def delegated(request: web.Request) -> web.Response:
-            return await handler(request, self.data_dir)
+            target_dir = self.persona_dir if is_persona_scoped else self.data_dir
+            return await handler(request, target_dir)
 
         delegated.__name__ = name
         return delegated

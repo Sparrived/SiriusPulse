@@ -22,12 +22,19 @@ class BasicMemoryFileStore:
 
     Layout:
         {work_path}/archive/{group_id}.jsonl
+
+    支持可选的 remote_bridge：助手模式下，新消息同时推送到管家端。
     """
 
-    def __init__(self, work_path: Path | WorkspaceLayout) -> None:
+    def __init__(
+        self,
+        work_path: Path | WorkspaceLayout,
+        remote_bridge: Any = None,
+    ) -> None:
         layout = work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
         self._base_dir = layout.work_path / "archive"
         self._base_dir.mkdir(parents=True, exist_ok=True)
+        self._remote_bridge = remote_bridge
 
     def _atomic_replace(self, tmp: Path, target: Path) -> None:
         """原子替换文件，Windows下添加重试机制。"""
@@ -56,6 +63,9 @@ class BasicMemoryFileStore:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
         tmp.write_text(existing + line, encoding="utf-8")
         self._atomic_replace(tmp, path)
+        # 助手模式：实时推送到管家端
+        if self._remote_bridge is not None:
+            self._remote_bridge.push_message(entry.group_id, entry.to_dict())
 
     def append_batch(self, group_id: str, entries: list[BasicMemoryEntry]) -> None:
         """Atomically append multiple entries."""
@@ -92,6 +102,15 @@ class BasicMemoryFileStore:
     def _path(self, group_id: str) -> Path:
         safe = self._safe_name(group_id)
         return self._base_dir / f"{safe}.jsonl"
+
+    def restore_archive(self, group_id: str, entries: list[dict[str, Any]]) -> None:
+        """从远程快照恢复归档消息（覆盖写入）。"""
+        if not entries:
+            return
+        path = self._path(group_id)
+        lines = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(lines, encoding="utf-8")
 
     @staticmethod
     def _safe_name(name: str) -> str:

@@ -108,6 +108,7 @@ class EngineRuntime:
         self._embedding_build_failed: bool = False
         self._embedding_last_fail_at: float = 0.0
         self._embedding_fail_count: int = 0
+        self._remote_bridge: Any | None = None
 
         # 统一人格数据库：所有存储层共享同一连接
         self.persona_db = PersonaDatabase(self.work_path / "persona.db")
@@ -115,6 +116,18 @@ class EngineRuntime:
             session_id="default",
             conn=self.persona_db.conn,
         )
+
+    def set_remote_bridge(self, bridge: Any) -> None:
+        """设置远程存储桥接（助手模式）。
+
+        必须在 start() 之前调用。设置后引擎将使用管家端数据 API 进行持久化。
+        """
+        self._remote_bridge = bridge
+
+    @property
+    def is_remote_mode(self) -> bool:
+        """是否处于远程（助手）模式。"""
+        return self._remote_bridge is not None
 
     def has_provider_config(self) -> bool:
         """检查是否已配置有效的 Provider。"""
@@ -497,14 +510,20 @@ class EngineRuntime:
             vector_store=vector_store,
             embedding_client=embedding_client,
             persona_db_conn=self.persona_db.conn,
+            remote_bridge=self._remote_bridge,
         )
 
         # 尝试恢复状态
-        try:
-            engine.load_state()
-            LOG.info("引擎状态已恢复")
-        except Exception as exc:
-            LOG.warning("引擎状态恢复失败（首次运行可忽略）: %s", exc)
+        if self._remote_bridge is not None:
+            # 助手模式：从远程快照恢复状态
+            self._restore_from_snapshot(engine)
+        else:
+            # 本地模式：从磁盘文件恢复
+            try:
+                engine.load_state()
+                LOG.info("引擎状态已恢复")
+            except Exception as exc:
+                LOG.warning("引擎状态恢复失败（首次运行可忽略）: %s", exc)
 
         # 注入 TokenUsageStore
         engine.token_store = self.token_store
@@ -583,10 +602,38 @@ class EngineRuntime:
                 self._engine.stop_background_tasks()
             except Exception as exc:
                 LOG.warning("停止后台任务失败: %s", exc)
-            try:
-                self._engine.save_state()
-            except Exception as exc:
-                LOG.warning("引擎状态保存失败: %s", exc)
+            if self._remote_bridge is not None:
+                # 助手模式：将状态快照推送到管家端
+                try:
+                    state = self._serialize_engine_state()
+                    import asyncio
+
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 在已有事件循环中创建任务
+                        asyncio.ensure_future(self._remote_bridge.save_snapshot(state))
+                    else:
+                        loop.run_until_complete(self._remote_bridge.save_snapshot(state))
+                    LOG.info("引擎状态已推送到管家端")
+                except Exception as exc:
+                    LOG.warning("引擎状态推送到管家端失败: %s", exc)
+                # 停止远程写缓冲
+                try:
+                    import asyncio
+
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.ensure_future(self._remote_bridge.stop())
+                    else:
+                        loop.run_until_complete(self._remote_bridge.stop())
+                except Exception as exc:
+                    LOG.warning("远程写缓冲停止失败: %s", exc)
+            else:
+                # 本地模式：保存到磁盘
+                try:
+                    self._engine.save_state()
+                except Exception as exc:
+                    LOG.warning("引擎状态保存失败: %s", exc)
             self._engine = None
 
         # 关闭统一人格数据库连接
@@ -609,3 +656,248 @@ class EngineRuntime:
                 LOG.warning("PersonaDatabase 关闭失败: %s", exc)
 
         LOG.info("EmotionalGroupChatEngine 已停止")
+
+    # ------------------------------------------------------------------
+    # 远程模式：快照加载/保存
+    # ------------------------------------------------------------------
+
+    def _restore_from_snapshot(self, engine: EmotionalGroupChatEngine) -> None:
+        """助手模式：从远程快照恢复引擎状态。"""
+        bridge = self._remote_bridge
+        if bridge is None or bridge.snapshot is None:
+            LOG.warning("远程快照为空，使用空状态启动")
+            return
+
+        try:
+            # 1. 恢复 persona
+            persona_data = bridge.get_persona()
+            if persona_data:
+                from sirius_pulse.models.persona import PersonaProfile
+
+                engine.persona = PersonaProfile.from_dict(persona_data)
+                LOG.info("从快照恢复 persona: %s", engine.persona.name)
+
+            # 2. 恢复基础记忆
+            basic_mem_data = bridge.get_basic_memory_state()
+            if basic_mem_data:
+                from sirius_pulse.memory.basic import BasicMemoryManager
+
+                engine.basic_memory = BasicMemoryManager.from_dict(basic_mem_data)
+
+            # 3. 恢复工作记忆
+            for group_id, entries in bridge.get_working_memories().items():
+                if entries:
+                    engine.basic_memory.restore_from_snapshot(group_id, entries)
+
+            # 4. 恢复助手情绪
+            emotion_data = bridge.get_assistant_emotion()
+            if emotion_data:
+                for key, value in emotion_data.items():
+                    if hasattr(engine.assistant_emotion, key):
+                        setattr(engine.assistant_emotion, key, value)
+
+            # 5. 恢复时间戳
+            engine._group_last_message_at = dict(bridge.get_group_timestamps())
+
+            # 6. 恢复日记状态
+            diary_state = bridge.get_diary_state()
+            if diary_state:
+                sources = diary_state.get("diarized_sources", {})
+                engine.diary_manager._diarized_sources = {
+                    gid: set(sids) for gid, sids in sources.items()
+                }
+
+            # 7. 恢复归档消息
+            for group_id, entries in bridge.get_archives().items():
+                if entries:
+                    engine.basic_store.restore_archive(group_id, entries)
+
+            # 8. 重新绑定 context_assembler
+            from sirius_pulse.memory.context_assembler import ContextAssembler
+
+            engine.context_assembler = ContextAssembler(
+                engine.basic_memory,
+                engine.diary_manager._retriever,
+                biography_view=getattr(engine, "biography_view", None),
+                is_source_diarized=engine.diary_manager.is_source_diarized,
+            )
+
+            LOG.info(
+                "从远程快照恢复完成，%d 个群的上下文已加载",
+                len(engine.basic_memory.list_groups()),
+            )
+        except Exception as exc:
+            LOG.warning("远程快照恢复部分出错: %s", exc)
+
+        # 9. 同步 experience 和 task_params（取两者中最新的）
+        self._sync_configs_from_snapshot(bridge)
+
+    def _sync_configs_from_snapshot(self, bridge: Any) -> None:
+        """同步 experience 和 task_params 配置，取两者中最新的。
+
+        管家端和助手端都可能修改这些配置（管家通过 WebUI，助手可能本地改），
+        通过 _updated_at 时间戳判断哪个更新，更新的一方覆盖另一方。
+        """
+        import json
+        from datetime import datetime
+
+        def _parse_ts(ts_str: str) -> datetime:
+            """解析 ISO 时间戳，缺失时返回 epoch。"""
+            if not ts_str:
+                return datetime.min
+            try:
+                return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except (ValueError, TypeError):
+                return datetime.min
+
+        # --- Experience 同步 ---
+        remote_exp = bridge.get_experience()
+        if remote_exp:
+            local_exp_path = self.work_path / "experience.json"
+            local_exp: dict = {}
+            if local_exp_path.exists():
+                try:
+                    local_exp = json.loads(local_exp_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+
+            remote_ts = _parse_ts(remote_exp.get("_updated_at", ""))
+            local_ts = _parse_ts(local_exp.get("_updated_at", ""))
+
+            if remote_ts >= local_ts:
+                # 远程更新，写入本地
+                from sirius_pulse.persona_config import PersonaExperienceConfig
+
+                exp = PersonaExperienceConfig.from_dict(remote_exp)
+                exp.save(local_exp_path)
+                # 同步到引擎运行时
+                if self._engine is not None:
+                    self._engine.config.update(exp.to_dict())
+                LOG.info("Experience 配置已从管家端同步（远程更新）")
+            else:
+                # 本地更新，推送到管家端
+                self._push_config_to_butler("experience", local_exp)
+                LOG.info("Experience 配置已推送到管家端（本地更新）")
+
+        # --- Task Params 同步 ---
+        remote_tp = bridge.get_task_params()
+        if remote_tp:
+            local_orch_path = self.work_path / "engine_state" / "orchestration.json"
+            local_orch: dict = {}
+            if local_orch_path.exists():
+                try:
+                    local_orch = json.loads(local_orch_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+
+            remote_tp_ts = _parse_ts(remote_tp.get("_updated_at", ""))
+            local_tp_ts = _parse_ts(local_orch.get("_updated_at", ""))
+
+            if remote_tp_ts >= local_tp_ts:
+                # 远程更新，合并 task_params 字段到本地 orchestration
+                for key in (
+                    "task_temperatures",
+                    "task_max_tokens",
+                    "task_timeout",
+                    "task_fallback_model",
+                ):
+                    if key in remote_tp:
+                        local_orch[key] = remote_tp[key]
+                local_orch_path.parent.mkdir(parents=True, exist_ok=True)
+                from sirius_pulse.utils.json_io import atomic_write_json
+                atomic_write_json(local_orch_path, local_orch)
+                LOG.info("TaskParams 已从管家端同步（远程更新）")
+            else:
+                # 本地更新，推送 task_params 到管家端
+                tp_to_push = {
+                    k: local_orch[k]
+                    for k in (
+                        "task_temperatures",
+                        "task_max_tokens",
+                        "task_timeout",
+                        "task_fallback_model",
+                        "_updated_at",
+                    )
+                    if k in local_orch
+                }
+                if tp_to_push:
+                    self._push_config_to_butler("task_params", tp_to_push)
+                    LOG.info("TaskParams 已推送到管家端（本地更新）")
+
+    def _push_config_to_butler(self, config_type: str, data: dict) -> None:
+        """将配置推送到管家端（非阻塞）。"""
+        bridge = self._remote_bridge
+        if bridge is None:
+            return
+        bridge.write_buffer.add_critical(f"config_{config_type}", data)
+        """序列化引擎完整状态，用于推送到管家端。"""
+        import dataclasses
+
+        engine = self._engine
+        if engine is None:
+            return {}
+
+        working_memories: dict[str, list[dict[str, Any]]] = {}
+        for group_id in engine.basic_memory.list_groups():
+            entries = engine.basic_memory.get_all(group_id)[-100:]
+            working_memories[group_id] = [
+                {
+                    "user_id": e.user_id,
+                    "role": e.role,
+                    "content": e.content,
+                    "timestamp": e.timestamp,
+                }
+                for e in entries
+            ]
+
+        state: dict[str, Any] = {
+            "working_memories": working_memories,
+            "assistant_emotion": dataclasses.asdict(engine.assistant_emotion),
+            "group_timestamps": dict(engine._group_last_message_at),
+            "basic_memory": engine.basic_memory.to_dict(),
+            "diary_state": {
+                "diarized_sources": {
+                    gid: list(sids)
+                    for gid, sids in engine.diary_manager._diarized_sources.items()
+                }
+            },
+        }
+
+        # Persona
+        if hasattr(engine, "persona") and engine.persona:
+            state["persona"] = engine.persona.to_dict()
+
+        # 术语表
+        glossary_path = self.work_path / "glossary" / "terms.json"
+        if glossary_path.exists():
+            try:
+                import json
+
+                state["glossary"] = json.loads(glossary_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # 归档消息
+        archives: dict[str, list[dict[str, Any]]] = {}
+        archive_dir = self.work_path / "archive"
+        if archive_dir.exists():
+            import json
+
+            for path in archive_dir.glob("*.jsonl"):
+                group_id = path.stem
+                entries: list[dict[str, Any]] = []
+                try:
+                    with path.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    entries.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    continue
+                    archives[group_id] = entries[-100:]
+                except OSError:
+                    continue
+        state["archives"] = archives
+
+        return state

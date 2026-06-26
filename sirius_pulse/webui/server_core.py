@@ -82,8 +82,57 @@ class WebUIServer:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     self._embedding_port = int(data.get("embedding_port", 18900))
+                    self._active_persona_name = data.get("active_persona", "")
             except Exception:
                 LOG.warning("读取全局配置失败", exc_info=True)
+
+    # ─── 人格目录解析 ─────────────────────────────────────
+
+    @property
+    def persona_dir(self) -> Path:
+        """当前活跃人格的目录路径。"""
+        name = getattr(self, "_active_persona_name", "")
+        if not name:
+            # 兼容旧格式：如果没有 active_persona，直接用 data_dir
+            if (self.data_dir / "persona.json").exists():
+                return self.data_dir
+            # 尝试取第一个 persona
+            personas_dir = self.data_dir / "personas"
+            if personas_dir.exists():
+                for d in sorted(personas_dir.iterdir()):
+                    if d.is_dir() and (d / "persona.json").exists():
+                        return d
+            return self.data_dir
+        return self.data_dir / "personas" / name
+
+    def get_persona_dir(self, name: str) -> Path:
+        """获取指定人格的目录路径。"""
+        return self.data_dir / "personas" / name
+
+    def list_personas(self) -> list[dict[str, str]]:
+        """列出所有人格。"""
+        personas_dir = self.data_dir / "personas"
+        if not personas_dir.exists():
+            return []
+        result = []
+        active = getattr(self, "_active_persona_name", "")
+        for d in sorted(personas_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            persona_file = d / "persona.json"
+            display_name = d.name
+            if persona_file.exists():
+                try:
+                    data = json.loads(persona_file.read_text(encoding="utf-8"))
+                    display_name = data.get("name", d.name)
+                except Exception:
+                    pass
+            result.append({
+                "name": d.name,
+                "display_name": display_name,
+                "active": d.name == active,
+            })
+        return result
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)

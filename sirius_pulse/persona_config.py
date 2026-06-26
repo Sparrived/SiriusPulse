@@ -169,8 +169,8 @@ class PersonaExperienceConfig:
     # 消息前缀过滤——以这些前缀开头的消息不进入引擎
     message_prefixes: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
+    def to_dict(self, *, include_updated_at: bool = False) -> dict[str, Any]:
+        d: dict[str, Any] = {
             "reply_mode": self.reply_mode,
             "engagement_sensitivity": self.engagement_sensitivity,
             "expressiveness": self.expressiveness,
@@ -192,6 +192,11 @@ class PersonaExperienceConfig:
             "other_ai_names": list(self.other_ai_names),
             "message_prefixes": list(self.message_prefixes),
         }
+        if include_updated_at:
+            from datetime import datetime, timezone
+
+            d["_updated_at"] = datetime.now(timezone.utc).isoformat()
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PersonaExperienceConfig":
@@ -237,7 +242,7 @@ class PersonaExperienceConfig:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(p.suffix + ".tmp")
         tmp.write_text(
-            json.dumps(self.to_dict(), ensure_ascii=False, indent=2),
+            json.dumps(self.to_dict(include_updated_at=True), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         tmp.replace(p)
