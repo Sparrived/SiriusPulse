@@ -355,21 +355,30 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         await butler_server.start()
         LOG.info("ButlerServer 已启动: ws://0.0.0.0:%d", butler_port)
 
+    stop_all_event = asyncio.Event()
+
+    def _request_shutdown() -> None:
+        stop_all_event.set()
+        worker.shutdown()
+
     if sys.platform == "win32":
         import signal as _signal
         def _sig_handler(_s, _f):
-            worker.shutdown()
+            _request_shutdown()
         _signal.signal(_signal.SIGINT, _sig_handler)
         _signal.signal(_signal.SIGTERM, _sig_handler)
     else:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, worker.shutdown)
+            loop.add_signal_handler(sig, _request_shutdown)
 
     LOG.info("按 Ctrl+C 停止所有服务")
 
     try:
         await worker.run()
+        if not stop_all_event.is_set():
+            LOG.info("Persona worker stopped; WebUI remains running")
+            await stop_all_event.wait()
     finally:
         if butler_server:
             await butler_server.stop()
