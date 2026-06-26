@@ -49,7 +49,6 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("POST", "/api/data/batch", "api_data_batch_post"),
     # ── 单人格 API（/api/persona/*） ──
     RouteSpec("GET", "/api/persona", "api_persona_get_single"),
-    RouteSpec("GET", "/api/persona/status", "api_persona_status_get"),
     RouteSpec("GET", "/api/persona/logs", "api_persona_logs_get"),
     RouteSpec("GET", "/api/persona/persona", "api_persona_get"),
     RouteSpec("POST", "/api/persona/persona", "api_persona_post"),

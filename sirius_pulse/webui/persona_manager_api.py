@@ -47,9 +47,20 @@ async def api_personas_list(
                 display_name = data.get("name", d.name)
             except Exception:
                 pass
+        # 读取 worker 状态以判断是否运行中
+        running = False
+        worker_status_path = d / "engine_state" / "worker_status.json"
+        if worker_status_path.exists():
+            try:
+                ws = json.loads(worker_status_path.read_text(encoding="utf-8"))
+                running = ws.get("status") == "running"
+            except Exception:
+                pass
+
         result.append({
             "name": d.name,
-            "display_name": display_name,
+            "persona_name": display_name,
+            "running": running,
             "active": d.name == active,
             "has_config": has_config,
         })
