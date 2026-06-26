@@ -61,6 +61,7 @@ class WebUIServer:
         self.ws_manager = WebSocketManager()
         self.auth_manager = AuthManager(self.data_dir)
         self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
+        self.app["data_dir"] = self.data_dir
         self.app["auth_manager"] = self.auth_manager
         self.app["ws_manager"] = self.ws_manager
         self.runner: web.AppRunner | None = None

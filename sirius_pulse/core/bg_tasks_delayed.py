@@ -329,6 +329,7 @@ class DelayedQueueTasks:
         pending_chat_result: Any = None
         sticker_text_retry_used = False
         ended_because_max_rounds = False
+        _continue_count = 0
 
         # 追踪已注入的消息内容，用于 continue 时注入新消息
         _seen_contents: set[str] = set()
@@ -565,6 +566,7 @@ class DelayedQueueTasks:
 
             # 注入 continue 的 assistant + tool 消息
             if continue_tc:
+                _continue_count += 1
                 messages.append(
                     {
                         "role": "assistant",
@@ -597,13 +599,21 @@ class DelayedQueueTasks:
                     )
                     injected_parts.append(tagged)
 
+                # 超过 2 次 continue 时提醒模型收敛
+                _overflow_hint = ""
+                if _continue_count > 2:
+                    _overflow_hint = (
+                        f"\n\n⚠️ 你已经连续调用了 {_continue_count} 次 continue，"
+                        "说的内容有点多了。请精简后续回复，并考虑调用 stop 结束本轮。"
+                    )
+
                 if injected_parts:
                     injection_text = "\n".join(injected_parts)
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": continue_tc.id,
-                            "content": f"继续。期间收到的新消息已注入：\n{injection_text}",
+                            "content": f"继续。期间收到的新消息已注入：\n{injection_text}{_overflow_hint}",
                         }
                     )
                     engine._log_inner_thought(
@@ -614,7 +624,7 @@ class DelayedQueueTasks:
                         {
                             "role": "tool",
                             "tool_call_id": continue_tc.id,
-                            "content": "继续。期间无新消息。",
+                            "content": f"继续。期间无新消息。{_overflow_hint}",
                         }
                     )
 

@@ -154,8 +154,10 @@ async function loadOrchestration(name) {
     renderOrchestration(orchData);
     $('orchSave').disabled = false;
   } catch (e) {
-    $('orchContent').innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
-    $('orchSave').disabled = true;
+    const el = $('orchContent');
+    if (el) el.innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
+    const btn = $('orchSave');
+    if (btn) btn.disabled = true;
   }
 }
 
@@ -163,6 +165,7 @@ async function loadOrchestration(name) {
 
 function renderOrchestration(data) {
   const el = $('orchContent');
+  if (!el) return;
   const taskModels = data.task_models || {};
   const taskEnabled = data.task_enabled || {};
   const opts = _mselOptions();
