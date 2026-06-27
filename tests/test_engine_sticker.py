@@ -42,19 +42,24 @@ class DummyEngine:
 
 
 class RecordingAdapter:
-    def __init__(self) -> None:
+    def __init__(self, *, send_result: dict[str, Any] | None = None) -> None:
         self.sent: list[tuple[str, str, list[dict[str, Any]]]] = []
         self.deleted: list[str] = []
         self._next_message_id = 100
+        self.send_result = send_result
 
     async def send_group_msg(self, group_id: str, message: list[dict[str, Any]]) -> dict[str, Any]:
         self.sent.append(("group", group_id, message))
         self._next_message_id += 1
+        if self.send_result is not None:
+            return self.send_result
         return {"status": "ok", "data": {"message_id": self._next_message_id}}
 
     async def send_private_msg(self, user_id: str, message: list[dict[str, Any]]) -> dict[str, Any]:
         self.sent.append(("private", user_id, message))
         self._next_message_id += 1
+        if self.send_result is not None:
+            return self.send_result
         return {"status": "ok", "data": {"message_id": self._next_message_id}}
 
     async def delete_message(self, message_id: str) -> dict[str, Any]:
@@ -93,6 +98,26 @@ async def test_sticker_when_normal_send_succeeds_then_group_receives_selected_im
     assert adapter.sent[0][0] == "group"
     assert adapter.sent[0][1] == "group_a"
     assert adapter.sent[0][2][0]["data"]["file"].endswith("喜欢.png")
+
+
+@pytest.mark.asyncio
+async def test_sticker_when_adapter_send_fails_then_result_is_failure(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _prepare_stickers(tmp_path)
+    adapter = RecordingAdapter(send_result={"status": "failed", "retcode": 1200})
+    engine = DummyEngine(tmp_path, adapter)
+    sticker = EngineSticker(engine)
+    sticker._init_sticker_system()
+    _force_first_random_choice(monkeypatch)
+    monkeypatch.setattr("sirius_pulse.core.engine_sticker.random.random", lambda: 0.99)
+
+    result = await sticker._send_stickers_by_names("group_a", ["喜欢"])
+
+    assert result["success"] is False
+    assert result["error"] == "adapter_send_failed"
+    assert adapter.sent
 
 
 @pytest.mark.asyncio

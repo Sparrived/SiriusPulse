@@ -134,7 +134,7 @@ class ContextAssembler:
                 pending_entries = recent[last_assistant_idx + 1 :]
                 recent = recent[: last_assistant_idx + 1]
 
-        history_xml = self._entries_to_xml(recent) if recent else ""
+        history_xml = self._entries_to_xml(recent, include_wrapper=False) if recent else ""
         enriched_system = self._enrich_system_prompt(
             system_prompt,
             biography_sections=bio_sections,
@@ -393,9 +393,10 @@ class ContextAssembler:
         *,
         tag: str = "conversation_history",
         include_group: bool = False,
+        include_wrapper: bool = True,
     ) -> str:
         _tz_cn = timezone(timedelta(hours=8))
-        lines: list[str] = [f"<{tag}>"]
+        lines: list[str] = [f"<{tag}>"] if include_wrapper else []
         for entry in entries:
             # 解析时间
             ts_str = ""
@@ -441,7 +442,8 @@ class ContextAssembler:
                         f'  <image src="{url}" caption="{caption}" '
                         f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
                     )
-        lines.append(f"</{tag}>")
+        if include_wrapper:
+            lines.append(f"</{tag}>")
         return "\n".join(lines)
 
     def _enrich_system_prompt(
@@ -460,7 +462,6 @@ class ContextAssembler:
             history_prefix = "\n".join(
                 [
                     "【历史聊天信息】",
-                    "尚未被日记记忆系统收录的近期原始消息。",
                     history_xml,
                     "【历史聊天信息结束】",
                 ]

@@ -266,6 +266,18 @@ class EngineSticker:
             return await adapter.send_private_msg(group_id.replace("private_", ""), msg)
         return await adapter.send_group_msg(group_id, msg)
 
+    @staticmethod
+    def _send_result_ok(result: dict[str, Any]) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("status") is not None:
+            return result.get("status") == "ok"
+        if "ok" in result:
+            return bool(result.get("ok"))
+        if "success" in result:
+            return bool(result.get("success"))
+        return True
+
     async def _recall_message(self, adapter: Any, result: dict[str, Any]) -> None:
         """根据发送接口返回的 message_id 调用适配器撤回接口。"""
         data = result.get("data", {}) if isinstance(result, dict) else {}
@@ -296,7 +308,20 @@ class EngineSticker:
                 wrong = self._pick_wrong_sticker_choice(intended.name)
 
             if wrong is None:
-                await self._send_sticker_message(adapter, group_id, intended)
+                send_result = await self._send_sticker_message(adapter, group_id, intended)
+                if not self._send_result_ok(send_result):
+                    logger.warning(
+                        "表情包发送接口返回失败: name=%s group=%s result=%s",
+                        intended.name,
+                        group_id,
+                        send_result,
+                    )
+                    return {
+                        "success": False,
+                        "error": "adapter_send_failed",
+                        "sticker_name": intended.name,
+                        "result": send_result,
+                    }
                 logger.info("表情包已发送: %s -> %s", intended.file_path.name, group_id)
                 return {
                     "success": True,
@@ -305,9 +330,36 @@ class EngineSticker:
                 }
 
             wrong_result = await self._send_sticker_message(adapter, group_id, wrong)
+            if not self._send_result_ok(wrong_result):
+                logger.warning(
+                    "错发表情包发送接口返回失败: name=%s group=%s result=%s",
+                    wrong.name,
+                    group_id,
+                    wrong_result,
+                )
+                return {
+                    "success": False,
+                    "error": "adapter_send_failed",
+                    "sticker_name": wrong.name,
+                    "result": wrong_result,
+                }
             await asyncio.sleep(STICKER_MISSEND_RECALL_DELAY_SECONDS)
             await self._recall_message(adapter, wrong_result)
-            await self._send_sticker_message(adapter, group_id, intended)
+            send_result = await self._send_sticker_message(adapter, group_id, intended)
+            if not self._send_result_ok(send_result):
+                logger.warning(
+                    "纠正表情包发送接口返回失败: name=%s group=%s result=%s",
+                    intended.name,
+                    group_id,
+                    send_result,
+                )
+                return {
+                    "success": False,
+                    "error": "adapter_send_failed",
+                    "sticker_name": intended.name,
+                    "wrong_sticker_name": wrong.name,
+                    "result": send_result,
+                }
             logger.info(
                 "触发表情包错发: wrong=%s intended=%s group=%s",
                 wrong.file_path.name,

@@ -1244,7 +1244,14 @@ class NapCatAdapter(BaseAdapter):
         if not sticker_names:
             return
         try:
-            await self._engine._send_stickers_by_names(group_id, sticker_names)
+            result = await self._engine._send_stickers_by_names(group_id, sticker_names)
+            if isinstance(result, dict) and result.get("success") is False:
+                LOG.warning(
+                    "发送回复后的表情包失败: group=%s names=%s result=%s",
+                    group_id,
+                    sticker_names,
+                    result,
+                )
         except Exception as exc:
             LOG.warning("发送回复后的表情包失败: %s", exc)
 

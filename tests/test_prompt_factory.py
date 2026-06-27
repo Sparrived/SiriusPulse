@@ -269,6 +269,10 @@ def test_context_assembler_keeps_completed_history_in_system_prefix_until_diary_
     assert "first human" in system_before
     assert "first reply" in system_before
     assert "pending human" not in system_before
+    assert "尚未被日记记忆系统收录的近期原始消息" not in system_before
+    assert "<conversation_history>" not in system_before
+    assert "</conversation_history>" not in system_before
+    assert '<message speaker="Alice"' in system_before
     assert [message["role"] for message in messages[1:]] == ["user"]
 
     basic.add_entry("group_a", "charlie", "human", "another pending", speaker_name="Charlie")

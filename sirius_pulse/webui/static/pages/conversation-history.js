@@ -809,9 +809,7 @@ function renderChainUserMessage(content, style, idx) {
 }
 
 function renderChainSystemMessage(content, style, idx) {
-  const injectedHistory = extractBracketBlock(content, '历史聊天信息');
-  const visibleContent = injectedHistory ? injectedHistory.rest : content;
-  const sections = parsePromptSections(visibleContent);
+  const sections = parsePromptSections(content);
   const hasSections = sections.length > 1 || (sections.length === 1 && sections[0].type === 'section');
   const sectionIdPrefix = `chain-sys-${msgIdCounter}-${idx}`;
 
@@ -832,11 +830,10 @@ function renderChainSystemMessage(content, style, idx) {
     }
     return `<div style="padding:6px 12px;font-size:10px;color:var(--text-2);line-height:1.4;white-space:pre-wrap;max-height:150px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(truncate(section.content, 300))}</div>`;
   }).join('') : (
-    visibleContent
-      ? `<div style="padding:6px 12px;font-size:10px;color:var(--text-2);line-height:1.4;white-space:pre-wrap;max-height:150px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(truncate(visibleContent, 500))}</div>`
+    content
+      ? `<div style="padding:6px 12px;font-size:10px;color:var(--text-2);line-height:1.4;white-space:pre-wrap;max-height:150px;overflow-y:auto;font-family:monospace;border-bottom:1px solid var(--border)">${escapeHtml(truncate(content, 500))}</div>`
       : ''
   );
-  const injectedHistoryHtml = injectedHistory ? renderInjectedHistorySection(injectedHistory.block) : '';
 
   return `
     <div style="border-bottom:1px solid var(--border);background:${style.bg}">
@@ -844,7 +841,6 @@ function renderChainSystemMessage(content, style, idx) {
         <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
         <span style="font-size:10px;color:var(--text-3);margin-left:auto">${estimateTokens(content)} tokens · ${content.length} chars</span>
       </div>
-      ${injectedHistoryHtml}
       ${promptHtml}
     </div>
   `;
