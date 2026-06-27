@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
-from sirius_pulse.memory.basic import BasicMemoryManager
+from sirius_pulse.memory.basic import BasicMemoryEntry, BasicMemoryFileStore, BasicMemoryManager
 
 
 def _old_timestamp(minutes_ago: int) -> str:
@@ -85,6 +86,42 @@ def test_memory_snapshot_when_engine_restarts_then_restores_dialogue_and_heat_st
     context = restored.get_context("group_a")
     assert [entry.content for entry in context] == ["第一句", "第二句"]
     assert restored.get_heat_state("group_a") is not None
+
+
+def test_basic_memory_entry_when_intent_scores_are_missing_then_defaults_to_empty_dict():
+    entry = BasicMemoryEntry.from_dict(
+        {
+            "entry_id": "entry_1",
+            "group_id": "group_a",
+            "user_id": "alice",
+            "role": "human",
+            "content": "hello",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        }
+    )
+
+    assert entry.intent_scores == {}
+
+
+def test_basic_memory_store_when_entry_is_updated_then_archive_keeps_intent_scores(tmp_path):
+    store = BasicMemoryFileStore(tmp_path)
+    entry = BasicMemoryEntry(
+        entry_id="entry_1",
+        group_id="group_a",
+        user_id="alice",
+        role="human",
+        content="hello",
+        timestamp="2026-01-01T00:00:00+00:00",
+    )
+    store.append(entry)
+
+    entry.intent_scores = {"social_intent": "social", "directed_score": 0.75}
+
+    assert store.update_entry(entry) is True
+
+    archive_path = tmp_path / "archive" / "group_a.jsonl"
+    payload = json.loads(archive_path.read_text(encoding="utf-8").strip())
+    assert payload["intent_scores"] == {"social_intent": "social", "directed_score": 0.75}
 
 
 def test_group_heat_when_recent_people_are_chatting_then_group_is_not_cold():

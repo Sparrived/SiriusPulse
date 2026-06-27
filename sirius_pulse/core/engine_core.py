@@ -588,6 +588,43 @@ class _EmotionalGroupChatEngineBase:
         """Background updates after main pipeline."""
         self._pipeline.background_update(group_id, message, emotion, intent, user_id)
 
+    def _record_intent_scores_for_latest_message(
+        self,
+        group_id: str,
+        message: Any,
+        user_id: str,
+        signal: Any,
+    ) -> None:
+        """Attach computed intent/signal scores to the just-recorded user message."""
+        recent = self.basic_memory.get_context(group_id, n=1)
+        if not recent:
+            return
+
+        entry = recent[-1]
+        if getattr(entry, "role", "") != "human":
+            return
+
+        message_id = getattr(message, "message_id", "") or ""
+        entry_message_id = getattr(entry, "platform_message_id", "") or ""
+        if message_id and entry_message_id and message_id != entry_message_id:
+            return
+        if user_id and getattr(entry, "user_id", "") != user_id:
+            return
+
+        entry.intent_scores = {
+            "social_intent": getattr(signal, "social_intent", ""),
+            "directed_score": round(float(getattr(signal, "directed_score", 0.0)), 4),
+            "urgency_score": round(float(getattr(signal, "urgency_score", 0.0)), 4),
+            "relevance_score": round(float(getattr(signal, "relevance_score", 0.0)), 4),
+            "sarcasm_score": round(float(getattr(signal, "sarcasm_score", 0.0)), 4),
+            "entitlement_score": round(float(getattr(signal, "entitlement_score", 0.0)), 4),
+            "turn_gap_readiness": round(float(getattr(signal, "turn_gap_readiness", 0.0)), 4),
+        }
+        try:
+            self.basic_store.update_entry(entry)
+        except Exception:
+            logger.debug("Failed to update archived intent scores", exc_info=True)
+
     # ==================================================================
     # 向后兼容的委托方法（委托给 Persistence 组件）
     # ==================================================================
@@ -1122,6 +1159,7 @@ class _EmotionalGroupChatEngineBase:
             sender_type=message.sender_type,
             caller_is_developer=caller_is_developer,
         )
+        self._record_intent_scores_for_latest_message(group_id, message, user_id, signal)
 
         # 内心活动：理解消息后的感受
         self._log_cognition_thought(speaker, signal, signal.emotion)

@@ -113,7 +113,9 @@ def _merge_conversation_messages(
             key = _conversation_entry_key(message)
             if key not in merged:
                 order.append(key)
-            merged[key] = message
+                merged[key] = message
+            else:
+                merged[key] = {**merged[key], **message}
 
     return [merged[key] for key in order]
 

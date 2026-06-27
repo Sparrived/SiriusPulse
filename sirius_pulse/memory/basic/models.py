@@ -29,6 +29,7 @@ class BasicMemoryEntry(JsonSerializable):
     multimodal_inputs: list[dict[str, str]] = field(default_factory=list)
     tags: list[dict[str, str]] = field(default_factory=list)  # 内容标签（表情包、钉住等）
     conversation_chain: list[dict[str, Any]] = field(default_factory=list)  # LLM 消息链
+    intent_scores: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

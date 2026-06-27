@@ -72,3 +72,27 @@ def test_conversation_merge_prefers_runtime_chain_for_same_entry_id():
 
     assert len(merged) == 1
     assert merged[0]["conversation_chain"] == [{"role": "system", "content": "full prompt"}]
+
+
+def test_conversation_merge_keeps_archive_intent_scores_when_runtime_lacks_them():
+    archive = [
+        {
+            "entry_id": "human_1",
+            "role": "human",
+            "content": "hello",
+            "intent_scores": {"social_intent": "social", "directed_score": 0.75},
+        }
+    ]
+    runtime = [
+        {
+            "entry_id": "human_1",
+            "role": "human",
+            "content": "hello",
+            "conversation_chain": [],
+        }
+    ]
+
+    merged = _merge_conversation_messages(archive, runtime)
+
+    assert len(merged) == 1
+    assert merged[0]["intent_scores"] == {"social_intent": "social", "directed_score": 0.75}

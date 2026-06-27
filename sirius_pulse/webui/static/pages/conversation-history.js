@@ -486,6 +486,43 @@ function renderMessageTags(tags) {
   return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${badges}</div>`;
 }
 
+function renderIntentScores(intentScores) {
+  if (!intentScores || typeof intentScores !== 'object') return '';
+
+  const intentLabel = {
+    help_seeking: '求助',
+    emotional: '情感',
+    social: '社交',
+    silent: '静默',
+  };
+  const chips = [];
+  const socialIntent = intentScores.social_intent || '';
+  if (socialIntent) {
+    chips.push(`意图 ${escapeHtml(intentLabel[socialIntent] || socialIntent)}`);
+  }
+
+  const scoreItems = [
+    ['directed_score', '指向'],
+    ['urgency_score', '紧急'],
+    ['relevance_score', '相关'],
+    ['sarcasm_score', '讽刺'],
+    ['entitlement_score', '资格'],
+    ['turn_gap_readiness', '间隙'],
+  ];
+  scoreItems.forEach(([key, label]) => {
+    const value = Number(intentScores[key]);
+    if (Number.isFinite(value)) {
+      chips.push(`${label} ${value.toFixed(2)}`);
+    }
+  });
+
+  if (!chips.length) return '';
+  const rendered = chips
+    .map(text => `<span class="tag" style="font-size:10px;padding:1px 6px;background:#22c55e14;color:#86efac;border:1px solid #22c55e33">${text}</span>`)
+    .join('');
+  return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${rendered}</div>`;
+}
+
 function renderMessages() {
   const el = $('messageList');
   if (!el) return;
@@ -543,6 +580,7 @@ function renderMessages() {
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
+        ${renderIntentScores(m.intent_scores)}
         ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, openChainEntryIds.has(entryId)) : ''}
       </div>
     `;

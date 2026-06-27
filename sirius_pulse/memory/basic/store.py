@@ -78,6 +78,48 @@ class BasicMemoryFileStore:
         tmp.write_text(existing + lines, encoding="utf-8")
         self._atomic_replace(tmp, path)
 
+    def update_entry(self, entry: BasicMemoryEntry) -> bool:
+        """Rewrite an archived entry in place by entry_id."""
+        if not entry.entry_id:
+            return False
+
+        path = self._path(entry.group_id)
+        if not path.exists():
+            return False
+
+        replacement = json.dumps(entry.to_dict(), ensure_ascii=False) + "\n"
+        updated = False
+        lines: list[str] = []
+
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for raw_line in f:
+                    stripped = raw_line.strip()
+                    if not stripped:
+                        lines.append(raw_line)
+                        continue
+                    try:
+                        data = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        lines.append(raw_line)
+                        continue
+
+                    if data.get("entry_id") == entry.entry_id:
+                        lines.append(replacement)
+                        updated = True
+                    else:
+                        lines.append(raw_line)
+        except OSError:
+            return False
+
+        if not updated:
+            return False
+
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text("".join(lines), encoding="utf-8")
+        self._atomic_replace(tmp, path)
+        return True
+
     def read_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Read all archived entries for a group."""
         path = self._path(group_id)
