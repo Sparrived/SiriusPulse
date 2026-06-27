@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.cognition import extract_keywords
+from sirius_pulse.core.participation import ParticipationPolicy
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.models.response_strategy import BiographyPromptContext, ResponseStrategy, StrategyDecision
@@ -32,6 +33,7 @@ class Pipeline:
 
     def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
         self._engine = engine
+        self._participation_policy = ParticipationPolicy()
 
     def _get_recent_speakers(self, group_id: str, n: int = 6) -> list[str]:
         """获取最近发言的用户 ID 列表（用于身份解析的上下文推断）。
@@ -280,17 +282,14 @@ class Pipeline:
         # 4. @了别人且没@自己 → 跳过（由 compute_signal 的 other_mention 保护）
         # directed_score 已经处理了这个逻辑（other_mention >= 0.5 时 directed_score 被压低）
 
-        # 5. cooldown 检查
+        # 5. 规则参与评分
         now = datetime.now(timezone.utc).timestamp()
         last_reply = engine._last_reply_at.get(group_id, 0)
         seconds_since_reply = now - last_reply
         cooldown = engine.config.get(
             "reply_cooldown_seconds", engine.expressiveness.cooldown_seconds
         )
-        if seconds_since_reply < cooldown and not signal.is_mentioned:
-            return "reject"
 
-        # 6. 阈值判断
         sensitivity = engine.config.get("sensitivity", 0.5)
         directed_gate = engine.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
 
@@ -300,50 +299,72 @@ class Pipeline:
         if user_profile:
             affinity = getattr(user_profile, "affinity_score", 0.0)
 
-        # 基础阈值
-        threshold = directed_gate
-
-        # persona reply_frequency 偏置
-        freq = engine.persona.reply_frequency
-        if freq == "high":
-            threshold *= 0.8
-        elif freq == "low":
-            threshold *= 1.3
-        elif freq == "selective":
-            if signal.directed_score < directed_gate and signal.urgency_score < 70:
-                threshold *= 2.0
-
-        # entitlement 抑制
-        if signal.entitlement_score < engine.expressiveness.entitlement_threshold:
-            threshold *= 1.5
-            engine._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
-
         # 私聊兜底：1v1 不完全沉默
         is_private = group_id.startswith("private_")
-
-        # 核心判断：directed_score 或 urgency 是否达标
-        passed = (
-            signal.is_mentioned
-            or signal.directed_score >= threshold
-            or signal.urgency_score >= 70
-            or is_private
+        decision = self._participation_policy.evaluate(
+            signal=signal,
+            content=content,
+            is_private=is_private,
+            sender_type=sender_type,
+            seconds_since_reply=seconds_since_reply,
+            cooldown_seconds=cooldown,
+            directed_gate=directed_gate,
+            entitlement_threshold=engine.expressiveness.entitlement_threshold,
+            reply_frequency=engine.persona.reply_frequency,
+            affinity_score=affinity,
         )
+        signal.participation = decision.to_dict()
 
-        if not passed:
+        if signal.entitlement_score < engine.expressiveness.entitlement_threshold:
+            engine._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")
+
+        if not decision.should_reply:
+            logger.info(
+                "[参与] reject group=%s user=%s reason=%s score=%.3f threshold=%.3f "
+                "address=%.3f need=%.3f social=%.3f fit=%.3f suppress=%.3f "
+                "directed=%.3f gate=%.3f urgency=%.1f heat=%s pace=%s",
+                group_id,
+                user_id,
+                decision.reason,
+                decision.score,
+                decision.threshold,
+                decision.addressing_score,
+                decision.reply_need_score,
+                decision.social_opportunity_score,
+                decision.conversation_fit_score,
+                decision.suppression_score,
+                signal.directed_score,
+                directed_gate,
+                signal.urgency_score,
+                signal.heat_level,
+                signal.pace,
+            )
             return "reject"
 
         # 结构化日志
         logger.info(
-            "[信号] group=%s user=%s directed=%.3f gate=%.3f mentioned=%s "
-            "urgency=%.1f entitlement=%.3f heat=%s",
+            "[参与] pass group=%s user=%s strategy=%s reason=%s score=%.3f threshold=%.3f "
+            "delay=%.1f address=%.3f need=%.3f social=%.3f fit=%.3f suppress=%.3f "
+            "directed=%.3f gate=%.3f mentioned=%s urgency=%.1f entitlement=%.3f heat=%s pace=%s",
             group_id,
             user_id,
+            decision.strategy.value,
+            decision.reason,
+            decision.score,
+            decision.threshold,
+            decision.delay_seconds,
+            decision.addressing_score,
+            decision.reply_need_score,
+            decision.social_opportunity_score,
+            decision.conversation_fit_score,
+            decision.suppression_score,
             signal.directed_score,
             directed_gate,
             signal.is_mentioned,
             signal.urgency_score,
             signal.entitlement_score,
             signal.heat_level,
+            signal.pace,
         )
 
         return "pass"
@@ -371,24 +392,33 @@ class Pipeline:
         )
 
         # 构造 StrategyDecision 供 delayed_queue 使用
-        # urgency 高 → 短延迟，urgency 低 → 长延迟
-        if signal.is_mentioned or signal.urgency_score >= 80:
-            delay_seconds = 0.0
-            strategy = ResponseStrategy.IMMEDIATE
-        elif signal.urgency_score >= 50:
-            delay_seconds = 15.0
-            strategy = ResponseStrategy.DELAYED
+        participation = signal.participation or {}
+        strategy_value = participation.get("strategy")
+        try:
+            strategy = ResponseStrategy(strategy_value) if strategy_value else ResponseStrategy.SILENT
+        except ValueError:
+            strategy = ResponseStrategy.SILENT
+        if strategy == ResponseStrategy.SILENT:
+            if signal.is_mentioned or signal.urgency_score >= 80:
+                delay_seconds = 0.0
+                strategy = ResponseStrategy.IMMEDIATE
+            elif signal.urgency_score >= 50:
+                delay_seconds = 15.0
+                strategy = ResponseStrategy.DELAYED
+            else:
+                delay_seconds = 30.0
+                strategy = ResponseStrategy.DELAYED
         else:
-            delay_seconds = 30.0
-            strategy = ResponseStrategy.DELAYED
+            delay_seconds = float(participation.get("delay_seconds", 30.0))
 
         decision = StrategyDecision(
             strategy=strategy,
-            score=signal.urgency_score / 100.0,
-            threshold=0.5,
+            score=float(participation.get("score", signal.urgency_score / 100.0)),
+            threshold=float(participation.get("threshold", 0.5)),
             urgency=signal.urgency_score,
             relevance=signal.relevance_score,
-            reason="signal_passed",
+            reason=str(participation.get("reason") or "signal_passed"),
+            context={"participation": participation},
         )
         decision.estimated_delay_seconds = delay_seconds
 

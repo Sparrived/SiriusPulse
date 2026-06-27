@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sirius_pulse.models.emotion import EmotionState
@@ -49,6 +49,9 @@ class SignalAnalysis:
 
     # ── 共情策略 ──
     empathy: Any = None  # EmpathyStrategy
+
+    # ── 参与决策 ──
+    participation: dict[str, Any] = field(default_factory=dict)
 
     def to_prompt_text(self) -> str:
         """生成注入主模型 system prompt 的信号摘要。"""
@@ -106,6 +109,7 @@ class SignalAnalysis:
             "turn_gap_readiness": self.turn_gap_readiness,
             "image_caption": self.image_caption,
             "search_query": self.search_query,
+            "participation": dict(self.participation),
         }
 
 
