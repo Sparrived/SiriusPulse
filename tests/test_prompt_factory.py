@@ -111,16 +111,15 @@ def test_output_spec_when_function_call_disabled_then_no_continue_stop():
     assert "stop" not in spec
 
 
-def test_persona_prompt_drops_length_biased_speech_fields():
+def test_persona_prompt_includes_expression_style_fields():
     prompt = PromptFactory.build_persona_prompt(
         name="Bot",
-        communication_style="简短随意",
-        speech_rhythm="短句慢慢说",
+        communication_style="casual-style-marker",
+        speech_rhythm="rhythm-marker",
     )
 
-    assert "简短" not in prompt
-    assert "短句" not in prompt
-    assert "说话随意" not in prompt
+    assert "casual-style-marker" in prompt
+    assert "rhythm-marker" in prompt
 
 
 def test_assemble_chat_does_not_inject_group_style_length_learning():

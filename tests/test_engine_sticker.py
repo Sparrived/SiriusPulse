@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import pytest
 
@@ -78,6 +79,11 @@ def _force_first_random_choice(monkeypatch) -> None:
     monkeypatch.setattr("sirius_pulse.core.engine_sticker.random.choice", lambda items: items[0])
 
 
+def _assert_sent_sticker_file(file_value: str, filename: str) -> None:
+    assert file_value.startswith("file://")
+    assert unquote(file_value).endswith(filename)
+
+
 @pytest.mark.asyncio
 async def test_sticker_when_normal_send_succeeds_then_group_receives_selected_image(
     tmp_path: Path,
@@ -97,7 +103,7 @@ async def test_sticker_when_normal_send_succeeds_then_group_receives_selected_im
     assert adapter.deleted == []
     assert adapter.sent[0][0] == "group"
     assert adapter.sent[0][1] == "group_a"
-    assert adapter.sent[0][2][0]["data"]["file"].endswith("喜欢.png")
+    _assert_sent_sticker_file(adapter.sent[0][2][0]["data"]["file"], "喜欢.png")
 
 
 @pytest.mark.asyncio
@@ -147,8 +153,8 @@ async def test_sticker_when_wrong_image_is_missent_then_it_is_recalled_and_corre
     assert result["wrong_sticker_name"] == "讨厌"
     assert adapter.deleted == ["101"]
     assert len(adapter.sent) == 2
-    assert adapter.sent[0][2][0]["data"]["file"].endswith("讨厌.png")
-    assert adapter.sent[1][2][0]["data"]["file"].endswith("喜欢.png")
+    _assert_sent_sticker_file(adapter.sent[0][2][0]["data"]["file"], "讨厌.png")
+    _assert_sent_sticker_file(adapter.sent[1][2][0]["data"]["file"], "喜欢.png")
     assert engine.brain.requests == []
 
 

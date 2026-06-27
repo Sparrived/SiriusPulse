@@ -261,7 +261,10 @@ class EngineSticker:
         msg: list[dict[str, Any]] = []
         if text:
             msg.append({"type": "text", "data": {"text": text}})
-        msg.append({"type": "image", "data": {"file": str(choice.file_path), "sub_type": "1"}})
+        msg.append({
+            "type": "image",
+            "data": {"file": choice.file_path.as_uri(), "sub_type": "1"},
+        })
         if group_id.startswith("private_"):
             return await adapter.send_private_msg(group_id.replace("private_", ""), msg)
         return await adapter.send_group_msg(group_id, msg)

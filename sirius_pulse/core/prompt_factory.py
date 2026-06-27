@@ -247,6 +247,14 @@ class PromptFactory:
         if rel_lines:
             identity_parts.append("；".join(rel_lines) + "。")
 
+        expression_lines: list[str] = []
+        if communication_style:
+            expression_lines.append(f"说话方式：{communication_style.strip()}")
+        if speech_rhythm:
+            expression_lines.append(f"说话节奏：{speech_rhythm.strip()}")
+        if expression_lines:
+            identity_parts.append("；".join(expression_lines) + "。")
+
         # 回应习惯
         silence_bits: list[str] = []
         freq_map = {
