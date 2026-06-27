@@ -12,10 +12,12 @@ Philosophy alignment (v0.28+):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sirius_pulse.models.emotion import BasicEmotion, EmotionState, EmpathyStrategy
@@ -361,6 +363,26 @@ class CognitionAnalyzer:
         # Intent state tracking
         self.group_activity_history: dict[str, list[tuple[float, float]]] = {}
         self.user_response_prefs: dict[str, dict[str, Any]] = {}
+        self._image_caption_cache: dict[str, str] = {}
+
+    def _image_cache_key(self, path: str) -> str:
+        """Return a stable cache key for an image path or URL."""
+        value = str(path or "").strip()
+        if not value:
+            return ""
+        if value.startswith(("http://", "https://", "file://", "data:")):
+            return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
+        file_path = Path(value)
+        try:
+            if file_path.exists() and file_path.is_file():
+                digest = hashlib.sha256()
+                with file_path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                return digest.hexdigest()
+        except OSError:
+            pass
+        return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
 
     # ------------------------------------------------------------------
     # 纯规则计算（无 LLM 调用）
