@@ -190,6 +190,33 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_output_spec():
     assert "【QQ @提及】" not in bundle.system_prompt
 
 
+def test_assemble_chat_output_spec_is_injected_once_after_context_assembly():
+    group_profile = SimpleNamespace(atmosphere_history=[])
+    style_params = StyleAdapter().adapt(pace="steady", persona=None)
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+        skill_registry=object(),
+    )
+    marker = PromptFactory.build_output_spec(supports_function_call=True).splitlines()[0]
+
+    assert bundle.system_prompt.count(marker) == 1
+
+    assembler = ContextAssembler(BasicMemoryManager(), _NoopDiaryRetriever())
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query=bundle.user_content,
+        system_prompt=bundle.system_prompt,
+        content_is_tagged=True,
+        dynamic_context=bundle.dynamic_context,
+    )
+
+    assert messages[0]["content"].count(marker) == 1
+
+
 def test_assemble_chat_when_plan_flow_then_uses_plan_finish_tools():
     group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)

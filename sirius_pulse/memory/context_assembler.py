@@ -66,13 +66,12 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
-        output_spec: str = "",
         dynamic_context: str = "",
     ) -> list[dict[str, Any]]:
         """构建消息链（user/assistant 交替）。
 
         返回消息结构：
-        1. system   -- 稳定系统指令（output_spec + base_prompt）
+        1. system   -- 稳定系统指令（已由 PromptFactory 组装完成）
         2. user/assistant 交替 -- 历史对话
         3. user     -- 当前用户消息（日记 + 动态上下文 + 消息内容）
 
@@ -104,8 +103,8 @@ class ContextAssembler:
 
         diary_context = self._build_diary_context(diary_entries)
 
-        # 2. 构建稳定的 system prompt（只含 output_spec + base_prompt）
-        enriched_system = self._build_stable_system(system_prompt, output_spec)
+        # 2. 构建稳定的 system prompt（PromptFactory 已完成静态注入）
+        enriched_system = self._build_stable_system(system_prompt)
         messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
 
         # 3. 构建 user/assistant 交替的历史消息
@@ -220,7 +219,6 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
-        output_spec: str = "",
         dynamic_context: str = "",
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
@@ -240,7 +238,6 @@ class ContextAssembler:
             mentioned_user_ids=mentioned_user_ids,
             content_is_tagged=content_is_tagged,
             platform_message_id=platform_message_id,
-            output_spec=output_spec,
             dynamic_context=dynamic_context,
         )
 
@@ -413,21 +410,15 @@ class ContextAssembler:
         return "\n".join(lines)
 
     @staticmethod
-    def _build_stable_system(
-        base_prompt: str,
-        output_spec: str = "",
-    ) -> str:
-        """构建稳定的 system prompt（output_spec + base_prompt）。
+    def _build_stable_system(base_prompt: str) -> str:
+        """返回已组装完成的稳定 system prompt。
 
         只包含不随消息变化的静态内容，利于 prompt caching。
+        输出规范、人格和风格文本由 PromptFactory.assemble_chat 统一注入。
         动态内容（传记、关系、记忆等）由 PromptFactory.assemble_chat
         产出为 dynamic_context，注入到 user 消息中。
         """
-        parts: list[str] = []
-        if output_spec:
-            parts.append(output_spec)
-        parts.append(base_prompt)
-        return "\n\n".join(parts)
+        return base_prompt
 
     def _enrich_search_query(
         self,

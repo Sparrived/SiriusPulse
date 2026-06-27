@@ -443,7 +443,6 @@ class DelayedQueueTasks:
             speaker_user_id=speaker_uid,
             speaker_name=speaker_display,
             content_is_tagged=True,
-            output_spec=getattr(bundle, "output_spec", ""),
             dynamic_context=bundle.dynamic_context,
         )
         system_prompt = msgs[0]["content"]

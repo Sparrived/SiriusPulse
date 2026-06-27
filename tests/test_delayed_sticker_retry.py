@@ -99,7 +99,6 @@ async def test_delayed_queue_when_only_send_sticker_tool_then_retries_text_witho
         system_prompt="system",
         user_content="send sticker",
         token_breakdown=None,
-        output_spec="",
         dynamic_context="",
     )
 
