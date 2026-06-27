@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _AUTONOMOUS_MESSAGE_SKILLS = {
-    "notify_developer",
+    "chat_with_developer",
     "send_sticker",
 }
 

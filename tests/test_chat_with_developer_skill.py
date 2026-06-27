@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sirius_pulse.skills.builtin import notify_developer
+from sirius_pulse.skills.builtin import chat_with_developer
 
 
 class _FakeNapCatAdapter:
@@ -16,14 +16,12 @@ class _FakeNapCatAdapter:
 
 
 @pytest.mark.asyncio
-async def test_notify_developer_when_root_is_configured_then_sends_private_message():
+async def test_chat_with_developer_when_root_is_configured_then_sends_raw_private_message():
     adapter = _FakeNapCatAdapter(root="10001")
 
-    result = await notify_developer.run(
-        message="刚刚发生了一件很有趣的事，想告诉你。",
-        emotion="开心",
-        reason="这件事明显触发了强烈情绪",
-        urgency="high",
+    message = "刚刚发生了一件很有趣的事，想跟你讲一下。"
+    result = await chat_with_developer.run(
+        message=message,
         bridge=adapter,
         chat_context={
             "chat_type": "group",
@@ -37,19 +35,16 @@ async def test_notify_developer_when_root_is_configured_then_sends_private_messa
     assert adapter.private_messages
     target, body = adapter.private_messages[0]
     assert target == "10001"
-    assert "【人格主动通知】" in body
-    assert "情绪：开心" in body
-    assert "紧急度：high" in body
-    assert "来源：group 20002" in body
-    assert "触发用户：30003" in body
-    assert "刚刚发生了一件很有趣的事" in body
+    assert body == message
+    assert "通知" not in body
+    assert "紧急度" not in body
 
 
 @pytest.mark.asyncio
-async def test_notify_developer_when_root_is_missing_then_returns_clear_failure():
+async def test_chat_with_developer_when_root_is_missing_then_returns_clear_failure():
     adapter = _FakeNapCatAdapter(root="")
 
-    result = await notify_developer.run(message="hello", bridge=adapter)
+    result = await chat_with_developer.run(message="hello", bridge=adapter)
 
     assert result["success"] is False
     assert "root QQ" in result["error"]
