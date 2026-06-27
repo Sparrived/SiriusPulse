@@ -60,10 +60,6 @@ def _is_ws_closed(ws: Any) -> bool:
             return getattr(ws, "close_code", None) is not None
 
 
-class _ReplySequenceInterrupted(RuntimeError):
-    """Internal signal used to stop sending stale reply parts."""
-
-
 class NapCatAdapter(BaseAdapter):
     """NapCat OneBot v11 正向 WebSocket 客户端 + 平台集成。
 
@@ -111,7 +107,6 @@ class NapCatAdapter(BaseAdapter):
         self._last_not_ready_log: float = 0.0
         self._reply_locks: dict[str, asyncio.Lock] = {}
         self._reply_send_active_counts: dict[str, int] = {}
-        self._reply_interruption_counts: dict[str, int] = {}
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._group_member_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._bot_admin_cache: dict[str, tuple[float, bool]] = {}
@@ -925,45 +920,24 @@ class NapCatAdapter(BaseAdapter):
                 group_id=group_id,
             )
             partial_sent_count = 0
-            reply_sequence_interrupted = False
             for partial in result.get("partial_replies", []):
                 if partial:
-                    send_key = (
-                        group_id
-                        if parsed.message_type == "group"
-                        else f"private_{parsed.user_id}"
-                    )
                     if parsed.message_type == "group":
                         if partial_sent_count > 0:
                             await self._sleep_before_reply_sequence_part(
                                 group_id, partial
                             )
-                            if self._consume_reply_interruption(send_key):
-                                LOG.info(
-                                    "群 %s 多段回复被新消息打断，跳过剩余段落", group_id
-                                )
-                                reply_sequence_interrupted = True
-                                break
                         await self._send_group_text(group_id, partial)
                     else:
                         if partial_sent_count > 0:
                             await self._sleep_before_reply_sequence_part(
                                 f"private_{parsed.user_id}", partial
                             )
-                            if self._consume_reply_interruption(send_key):
-                                LOG.info(
-                                    "私聊 %s 多段回复被新消息打断，跳过剩余段落",
-                                    parsed.user_id,
-                                )
-                                reply_sequence_interrupted = True
-                                break
                         await self._send_private_text(parsed.user_id, partial)
                     partial_sent_count += 1
 
-            reply = None if reply_sequence_interrupted else result.get("reply")
-            message_group = (
-                None if reply_sequence_interrupted else result.get("message_group")
-            )
+            reply = result.get("reply")
+            message_group = result.get("message_group")
             if message_group is not None:
                 # 多模态消息：通过 MessageGroup 发送（图片/语音/文件等）
                 if parsed.message_type == "group":
@@ -978,9 +952,6 @@ class NapCatAdapter(BaseAdapter):
                             await self._sleep_before_reply_sequence_part(
                                 group_id, clean_reply
                             )
-                            if self._consume_reply_interruption(group_id):
-                                LOG.info("群 %s 最终回复被新消息打断，跳过", group_id)
-                                clean_reply = ""
                         if clean_reply:
                             await self._send_group_text(group_id, clean_reply)
                     else:
@@ -988,19 +959,11 @@ class NapCatAdapter(BaseAdapter):
                             await self._sleep_before_reply_sequence_part(
                                 f"private_{parsed.user_id}", clean_reply
                             )
-                            if self._consume_reply_interruption(
-                                f"private_{parsed.user_id}"
-                            ):
-                                LOG.info(
-                                    "私聊 %s 最终回复被新消息打断，跳过", parsed.user_id
-                                )
-                                clean_reply = ""
                         if clean_reply:
                             await self._send_private_text(parsed.user_id, clean_reply)
-            if not reply_sequence_interrupted:
-                await self._send_stickers_after_reply(
-                    group_id, result.get("sticker_names", [])
-                )
+            await self._send_stickers_after_reply(
+                group_id, result.get("sticker_names", [])
+            )
         except asyncio.CancelledError:
             raise
         except RuntimeError as exc:
@@ -1032,20 +995,14 @@ class NapCatAdapter(BaseAdapter):
             if event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 partial_sent_count = 0
-                reply_sequence_interrupted = False
-
                 async def _send_partial(text: str) -> None:
-                    nonlocal partial_sent_count, reply_sequence_interrupted
+                    nonlocal partial_sent_count
                     send_key = gid
                     if gid.startswith("private_"):
                         uid = gid.replace("private_", "").replace("qq_", "")
                         send_key = f"private_{uid}"
                     if partial_sent_count > 0:
                         await self._sleep_before_reply_sequence_part(send_key, text)
-                        if self._consume_reply_interruption(send_key):
-                            LOG.info("%s 多段回复被新消息打断，跳过剩余段落", send_key)
-                            reply_sequence_interrupted = True
-                            raise _ReplySequenceInterrupted(send_key)
                     if gid.startswith("private_"):
                         sent = await self._send_private_text(uid, text)
                     elif gid in self._get_allowed_group_ids():
@@ -1062,14 +1019,10 @@ class NapCatAdapter(BaseAdapter):
                     results = await engine.tick_delayed_queue(
                         gid, on_partial_reply=_send_partial
                     )
-                except _ReplySequenceInterrupted:
-                    results = []
                 except Exception as exc:
                     LOG.warning("Delayed queue tick 失败 (%s): %s", gid, exc)
                     results = []
                 for result in results:
-                    if reply_sequence_interrupted:
-                        break
                     reply = result.get("reply", "")
                     reply_refs = result.get("reply_references", [])
                     sticker_names = result.get("sticker_names", [])
@@ -1080,9 +1033,6 @@ class NapCatAdapter(BaseAdapter):
                                 await self._sleep_before_reply_sequence_part(
                                     f"private_{uid}", reply
                                 )
-                                if self._consume_reply_interruption(f"private_{uid}"):
-                                    LOG.info("私聊 %s 最终回复被新消息打断，跳过", uid)
-                                    reply = ""
                             if reply:
                                 await self._send_private_text(uid, reply, reply_refs)
                         await self._send_stickers_after_reply(gid, sticker_names)
@@ -1090,9 +1040,6 @@ class NapCatAdapter(BaseAdapter):
                         if reply:
                             if partial_sent_count > 0:
                                 await self._sleep_before_reply_sequence_part(gid, reply)
-                                if self._consume_reply_interruption(gid):
-                                    LOG.info("群 %s 最终回复被新消息打断，跳过", gid)
-                                    reply = ""
                             if reply:
                                 await self._send_group_text(gid, reply, reply_refs)
                         await self._send_stickers_after_reply(gid, sticker_names)
@@ -1158,13 +1105,6 @@ class NapCatAdapter(BaseAdapter):
                     for idx, line in enumerate(lines):
                         if not first:
                             await self._sleep_before_reply_part(line)
-                            if self._consume_reply_interruption(key):
-                                LOG.info(
-                                    "群 %s 多行回复被新消息打断，跳过剩余 %d 段",
-                                    group_id,
-                                    len(lines) - idx,
-                                )
-                                return True
                         refs = reply_refs if first else None
                         ok = await self._send_group_text_single_locked(
                             group_id, line, refs
@@ -1315,13 +1255,6 @@ class NapCatAdapter(BaseAdapter):
                     for idx, line in enumerate(lines):
                         if not first:
                             await self._sleep_before_reply_part(line)
-                            if self._consume_reply_interruption(key):
-                                LOG.info(
-                                    "私聊 %s 多行回复被新消息打断，跳过剩余 %d 段",
-                                    user_id,
-                                    len(lines) - idx,
-                                )
-                                return True
                         ok = await self._send_private_text_single_locked(user_id, line)
                         if not ok:
                             return False
@@ -1407,15 +1340,6 @@ class NapCatAdapter(BaseAdapter):
     ) -> None:
         if send_key and self._is_reply_send_active(send_key):
             event["_sirius_received_during_reply_send"] = True
-            self._reply_interruption_counts[send_key] = (
-                self._reply_interruption_counts.get(send_key, 0) + 1
-            )
-
-    def _consume_reply_interruption(self, send_key: str) -> bool:
-        if not send_key:
-            return False
-        count = self._reply_interruption_counts.pop(send_key, 0)
-        return count > 0
 
     def _begin_reply_send(self, send_key: str) -> None:
         if not send_key:

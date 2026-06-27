@@ -51,41 +51,6 @@ async def test_napcat_multiline_reply_waits_between_parts_and_marks_active(monke
 
 
 @pytest.mark.asyncio
-async def test_napcat_multiline_reply_stops_remaining_parts_when_new_message_arrives(
-    monkeypatch,
-):
-    adapter = NapCatAdapter(
-        "ws://example.invalid",
-        config={
-            "human_reply_chars_per_second": 10,
-            "human_reply_min_delay_seconds": 0.5,
-            "human_reply_max_delay_seconds": 2.0,
-        },
-    )
-    sent: list[object] = []
-
-    async def fake_send_group_msg(group_id, message):
-        sent.append(message)
-        return {"ok": True}
-
-    async def fake_sleep(seconds):
-        adapter._mark_event_if_received_during_reply_send({}, "100")
-
-    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
-    monkeypatch.setattr(
-        "sirius_pulse.platforms.onebot_v11.napcat.adapter.asyncio.sleep",
-        fake_sleep,
-    )
-
-    ok = await adapter._send_group_text("100", "第一段\n第二段\n第三段")
-
-    assert ok is True
-    assert len(sent) == 1
-    assert sent[0] == [{"type": "text", "data": {"text": "第一段"}}]
-    assert adapter._is_reply_send_active("100") is False
-
-
-@pytest.mark.asyncio
 async def test_napcat_delayed_partials_wait_between_each_sent_message(monkeypatch):
     adapter = NapCatAdapter(
         "ws://example.invalid",
@@ -163,7 +128,6 @@ async def test_napcat_marks_group_message_when_received_during_reply_send():
         adapter._end_reply_send("100")
 
     assert seen_events[0]["_sirius_received_during_reply_send"] is True
-    assert adapter._consume_reply_interruption("100") is True
 
 
 def _engine_for_sending_window() -> tuple[
