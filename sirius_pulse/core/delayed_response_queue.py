@@ -52,27 +52,6 @@ _PACE_GAP_MULT = {
     "silent": 0.0,  # handled separately: trigger if window half-expired
 }
 
-_PENDING_CLOSE_ACKS = {
-    "好",
-    "好的",
-    "好吧",
-    "行",
-    "可以",
-    "可以了",
-    "嗯",
-    "嗯嗯",
-    "没事",
-    "没事了",
-    "不用了",
-    "算了",
-    "知道了",
-    "了解",
-    "收到",
-    "ok",
-    "okay",
-}
-
-
 class DelayedResponseQueue:
     """Queue for DELAYED and IMMEDIATE strategy responses."""
 
@@ -281,34 +260,6 @@ class DelayedResponseQueue:
         """检查指定 group 是否有等待中的队列项。"""
         return any(i.status == "pending" for i in self._queues.get(group_id, []))
 
-    def close_pending_if_acknowledged(
-        self,
-        group_id: str,
-        user_id: str,
-        message_content: str,
-        *,
-        lane: str = "chat",
-    ) -> bool:
-        """Cancel a pending item when the same user sends a short closing acknowledgement."""
-        if not _is_short_closing_ack(message_content):
-            return False
-
-        queue = self._queues.get(group_id, [])
-        for item in list(queue):
-            if item.status != "pending" or getattr(item, "lane", "chat") != lane:
-                continue
-            related_ids = set(getattr(item, "related_user_ids", []) or [])
-            if user_id and (item.user_id == user_id or user_id in related_ids):
-                item.status = "cancelled"
-                self._queues[group_id] = [i for i in queue if i is not item]
-                logger.debug(
-                    "Cancelled pending item %s for group %s after short acknowledgement",
-                    item.item_id,
-                    group_id,
-                )
-                return True
-        return False
-
     def merge_incoming(
         self,
         group_id: str,
@@ -491,11 +442,3 @@ def _parse_iso(ts: str) -> datetime | None:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
-
-
-def _is_short_closing_ack(text: str) -> bool:
-    normalized = "".join(ch for ch in (text or "").strip().lower() if not ch.isspace())
-    normalized = normalized.strip("，。！？!?.,;；~～…")
-    if len(normalized) > 12:
-        return False
-    return normalized in _PENDING_CLOSE_ACKS

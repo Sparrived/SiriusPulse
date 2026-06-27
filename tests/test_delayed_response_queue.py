@@ -120,32 +120,6 @@ def test_delayed_queue_when_merging_incoming_then_appends_to_existing_pending_it
     assert queue.merge_incoming("missing", "u3", "third") is False
 
 
-def test_delayed_queue_when_same_user_sends_short_ack_then_pending_item_is_cancelled():
-    queue = DelayedResponseQueue()
-    item = queue.enqueue(
-        "group-1", "u1", "需要回复的问题", _decision(ResponseStrategy.DELAYED)
-    )
-
-    closed = queue.close_pending_if_acknowledged("group-1", "u1", "好的")
-
-    assert closed is True
-    assert item.status == "cancelled"
-    assert queue.get_pending("group-1") == []
-
-
-def test_delayed_queue_when_other_user_sends_short_ack_then_pending_item_remains():
-    queue = DelayedResponseQueue()
-    item = queue.enqueue(
-        "group-1", "u1", "需要回复的问题", _decision(ResponseStrategy.DELAYED)
-    )
-
-    closed = queue.close_pending_if_acknowledged("group-1", "u2", "好的")
-
-    assert closed is False
-    assert item.status == "pending"
-    assert queue.get_pending("group-1") == [item]
-
-
 def test_delayed_queue_when_cancelled_or_cleared_then_pending_items_disappear():
     queue = DelayedResponseQueue()
     first = queue.enqueue("group-1", "u1", "first", _decision(ResponseStrategy.DELAYED))

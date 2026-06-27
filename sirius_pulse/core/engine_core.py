@@ -1110,24 +1110,6 @@ class _EmotionalGroupChatEngineBase:
                     plugin_result, message, group_id, user_id
                 )
             else:
-                closed = self.delayed_queue.close_pending_if_acknowledged(
-                    group_id=group_id,
-                    user_id=user_id,
-                    message_content=content,
-                )
-                if closed:
-                    self._log_inner_thought(
-                        f"{speaker} 像是在收束刚才的话题，取消这条待回复～"
-                    )
-                    self._background_update(group_id, message, None, None, user_id)
-                    self._persist_group_state(group_id)
-                    return {
-                        "strategy": "closed_pending",
-                        "reply": None,
-                        "emotion": {},
-                        "intent": {},
-                    }
-
                 # 非插件请求，短路合并
                 merged = self.delayed_queue.merge_incoming(
                     group_id=group_id,
