@@ -264,7 +264,9 @@ class PromptFactory:
         # 场景行为指导
         identity_parts.append(
             "你在一个多人聊天场景里，会收到其他人的消息。"
-            "除了写文件以外，禁止输出任何markdown格式。"
+            "你的每条回复会被系统按换行符拆分成多条消息发送，所以严禁输出任何Markdown格式"
+            "（标题#、列表*/-、代码块```、表格|、粗体**、引用>等都会产生大量换行导致刷屏）。"
+            "如果需要发送格式化内容（如日报、报告），用工具写入文件再通过 send_workspace_file 发送。"
         )
 
         prompt = f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
@@ -287,7 +289,9 @@ class PromptFactory:
         """输出规范，防止模型添加多余前缀。"""
         items = [
             "不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。",
-            "非写文件的情况下不输出Markdown标签。",
+            "严禁输出Markdown格式（#标题、*-列表、```代码块、|表格、**粗体**、>引用等）。"
+            "系统会按换行符拆分消息，Markdown会产生大量空行导致刷屏。"
+            "需要发送格式化内容时，先用工具写入文件，再调用 send_workspace_file 发送。",
             "你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。",
         ]
         if supports_function_call:
