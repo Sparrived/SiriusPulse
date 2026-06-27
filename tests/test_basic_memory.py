@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-from sirius_pulse.memory.basic import BasicMemoryEntry, BasicMemoryFileStore, BasicMemoryManager
+from sirius_pulse.memory.basic import (
+    BasicMemoryEntry,
+    BasicMemoryFileStore,
+    BasicMemoryManager,
+)
 
 
 def _old_timestamp(minutes_ago: int) -> str:
@@ -16,11 +21,17 @@ def test_group_context_when_messages_exceed_window_then_keeps_recent_dialogue():
     mgr = BasicMemoryManager(context_window=3)
 
     for index in range(5):
-        mgr.add_entry("group_a", "alice", "user", f"message-{index}", speaker_name="Alice")
+        mgr.add_entry(
+            "group_a", "alice", "user", f"message-{index}", speaker_name="Alice"
+        )
 
     context = mgr.get_context("group_a")
 
-    assert [entry.content for entry in context] == ["message-2", "message-3", "message-4"]
+    assert [entry.content for entry in context] == [
+        "message-2",
+        "message-3",
+        "message-4",
+    ]
     assert all(entry.group_id == "group_a" for entry in context)
 
 
@@ -103,7 +114,9 @@ def test_basic_memory_entry_when_intent_scores_are_missing_then_defaults_to_empt
     assert entry.intent_scores == {}
 
 
-def test_basic_memory_store_when_entry_is_updated_then_archive_keeps_intent_scores(tmp_path):
+def test_basic_memory_store_when_entry_is_updated_then_archive_keeps_intent_scores(
+    tmp_path,
+):
     store = BasicMemoryFileStore(tmp_path)
     entry = BasicMemoryEntry(
         entry_id="entry_1",
@@ -121,7 +134,36 @@ def test_basic_memory_store_when_entry_is_updated_then_archive_keeps_intent_scor
 
     archive_path = tmp_path / "archive" / "group_a.jsonl"
     payload = json.loads(archive_path.read_text(encoding="utf-8").strip())
-    assert payload["intent_scores"] == {"social_intent": "social", "directed_score": 0.75}
+    assert payload["intent_scores"] == {
+        "social_intent": "social",
+        "directed_score": 0.75,
+    }
+
+
+def test_basic_memory_store_when_appends_are_concurrent_then_all_entries_are_archived(
+    tmp_path,
+):
+    store = BasicMemoryFileStore(tmp_path)
+    entries = [
+        BasicMemoryEntry(
+            entry_id=f"entry_{index}",
+            group_id="group_a",
+            user_id=f"user_{index % 8}",
+            role="human",
+            content=f"message-{index}",
+            timestamp=f"2026-01-01T00:00:{index % 60:02d}+00:00",
+        )
+        for index in range(200)
+    ]
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(store.append, entries))
+
+    archived = store.read_all("group_a")
+    assert sorted(entry.entry_id for entry in archived) == sorted(
+        entry.entry_id for entry in entries
+    )
+    assert not list((tmp_path / "archive").glob("*.tmp"))
 
 
 def test_group_heat_when_recent_people_are_chatting_then_group_is_not_cold():

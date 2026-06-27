@@ -52,6 +52,26 @@ _PACE_GAP_MULT = {
     "silent": 0.0,  # handled separately: trigger if window half-expired
 }
 
+_PENDING_CLOSE_ACKS = {
+    "好",
+    "好的",
+    "好吧",
+    "行",
+    "可以",
+    "可以了",
+    "嗯",
+    "嗯嗯",
+    "没事",
+    "没事了",
+    "不用了",
+    "算了",
+    "知道了",
+    "了解",
+    "收到",
+    "ok",
+    "okay",
+}
+
 
 class DelayedResponseQueue:
     """Queue for DELAYED and IMMEDIATE strategy responses."""
@@ -106,7 +126,9 @@ class DelayedResponseQueue:
                 item.message_content += f"\n{tagged}"
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
                     if item.strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
-                        item.window_seconds = min(item.window_seconds + 1.0, _IMMEDIATE_WINDOW_MAX)
+                        item.window_seconds = min(
+                            item.window_seconds + 1.0, _IMMEDIATE_WINDOW_MAX
+                        )
                     else:
                         item.window_seconds = _IMMEDIATE_DEBOUNCE_SECONDS
                     item.strategy_decision = strategy_decision
@@ -131,13 +153,19 @@ class DelayedResponseQueue:
                     item.related_user_ids.append(user_id)
                 if biography_context is not None:
                     if biography_context.speaker_card is not None:
-                        item.biography_context.speaker_card = biography_context.speaker_card
+                        item.biography_context.speaker_card = (
+                            biography_context.speaker_card
+                        )
                     if biography_context.mentioned_cards:
                         item.biography_context.mentioned_cards.extend(
-                            c for c in biography_context.mentioned_cards if c is not None
+                            c
+                            for c in biography_context.mentioned_cards
+                            if c is not None
                         )
                     if biography_context.confidence:
-                        item.biography_context.confidence.update(biography_context.confidence)
+                        item.biography_context.confidence.update(
+                            biography_context.confidence
+                        )
                 if signal_prompt:
                     item.signal_prompt = signal_prompt
                 item.lane = lane
@@ -253,6 +281,34 @@ class DelayedResponseQueue:
         """检查指定 group 是否有等待中的队列项。"""
         return any(i.status == "pending" for i in self._queues.get(group_id, []))
 
+    def close_pending_if_acknowledged(
+        self,
+        group_id: str,
+        user_id: str,
+        message_content: str,
+        *,
+        lane: str = "chat",
+    ) -> bool:
+        """Cancel a pending item when the same user sends a short closing acknowledgement."""
+        if not _is_short_closing_ack(message_content):
+            return False
+
+        queue = self._queues.get(group_id, [])
+        for item in list(queue):
+            if item.status != "pending" or getattr(item, "lane", "chat") != lane:
+                continue
+            related_ids = set(getattr(item, "related_user_ids", []) or [])
+            if user_id and (item.user_id == user_id or user_id in related_ids):
+                item.status = "cancelled"
+                self._queues[group_id] = [i for i in queue if i is not item]
+                logger.debug(
+                    "Cancelled pending item %s for group %s after short acknowledgement",
+                    item.item_id,
+                    group_id,
+                )
+                return True
+        return False
+
     def merge_incoming(
         self,
         group_id: str,
@@ -298,7 +354,9 @@ class DelayedResponseQueue:
                         c for c in biography_context.mentioned_cards if c is not None
                     )
                 if biography_context.confidence:
-                    item.biography_context.confidence.update(biography_context.confidence)
+                    item.biography_context.confidence.update(
+                        biography_context.confidence
+                    )
             logger.debug(
                 "管线短路合并: group=%s item=%s content=%d chars",
                 group_id,
@@ -386,7 +444,9 @@ class DelayedResponseQueue:
         return "wait"
 
     @staticmethod
-    def _window_for_item(strategy_decision: StrategyDecision, heat_level: str = "warm") -> float:
+    def _window_for_item(
+        strategy_decision: StrategyDecision, heat_level: str = "warm"
+    ) -> float:
         """Return debounce/wait window based on strategy, urgency, and heat."""
         if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
             return _IMMEDIATE_DEBOUNCE_SECONDS
@@ -400,7 +460,9 @@ class DelayedResponseQueue:
         return base * mult
 
     @staticmethod
-    def _gap_for_item(item: DelayedResponseItem, rhythm: RhythmAnalysis | None = None) -> float:
+    def _gap_for_item(
+        item: DelayedResponseItem, rhythm: RhythmAnalysis | None = None
+    ) -> float:
         """Compute dynamic topic-gap threshold for a queued item.
 
         Considers both the heat level at enqueue time and the current pace.
@@ -429,3 +491,11 @@ def _parse_iso(ts: str) -> datetime | None:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+
+
+def _is_short_closing_ack(text: str) -> bool:
+    normalized = "".join(ch for ch in (text or "").strip().lower() if not ch.isspace())
+    normalized = normalized.strip("，。！？!?.,;；~～…")
+    if len(normalized) > 12:
+        return False
+    return normalized in _PENDING_CLOSE_ACKS

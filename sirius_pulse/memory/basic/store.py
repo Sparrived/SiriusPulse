@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+import uuid
 from pathlib import Path
+from typing import Any
 
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.utils.layout import WorkspaceLayout
@@ -31,10 +34,29 @@ class BasicMemoryFileStore:
         work_path: Path | WorkspaceLayout,
         remote_bridge: Any = None,
     ) -> None:
-        layout = work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
+        layout = (
+            work_path
+            if isinstance(work_path, WorkspaceLayout)
+            else WorkspaceLayout(work_path)
+        )
         self._base_dir = layout.work_path / "archive"
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._remote_bridge = remote_bridge
+        self._locks_guard = threading.Lock()
+        self._locks: dict[Path, threading.RLock] = {}
+
+    def _lock_for(self, path: Path) -> threading.RLock:
+        key = path.resolve()
+        with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                self._locks[key] = lock
+            return lock
+
+    @staticmethod
+    def _tmp_path(target: Path) -> Path:
+        return target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
 
     def _atomic_replace(self, tmp: Path, target: Path) -> None:
         """原子替换文件，Windows下添加重试机制。"""
@@ -58,11 +80,10 @@ class BasicMemoryFileStore:
         """Atomically append a single entry to the group's archive file."""
         path = self._path(entry.group_id)
         line = json.dumps(entry.to_dict(), ensure_ascii=False) + "\n"
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        # Read existing if any, append, then atomic replace
-        existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        tmp.write_text(existing + line, encoding="utf-8")
-        self._atomic_replace(tmp, path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock_for(path):
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line)
         # 助手模式：实时推送到管家端
         if self._remote_bridge is not None:
             self._remote_bridge.push_message(entry.group_id, entry.to_dict())
@@ -72,11 +93,14 @@ class BasicMemoryFileStore:
         if not entries:
             return
         path = self._path(group_id)
-        lines = "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in entries) + "\n"
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        tmp.write_text(existing + lines, encoding="utf-8")
-        self._atomic_replace(tmp, path)
+        lines = (
+            "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in entries)
+            + "\n"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock_for(path):
+            with path.open("a", encoding="utf-8") as f:
+                f.write(lines)
 
     def update_entry(self, entry: BasicMemoryEntry) -> bool:
         """Rewrite an archived entry in place by entry_id."""
@@ -84,41 +108,48 @@ class BasicMemoryFileStore:
             return False
 
         path = self._path(entry.group_id)
-        if not path.exists():
-            return False
+        with self._lock_for(path):
+            if not path.exists():
+                return False
 
-        replacement = json.dumps(entry.to_dict(), ensure_ascii=False) + "\n"
-        updated = False
-        lines: list[str] = []
+            replacement = json.dumps(entry.to_dict(), ensure_ascii=False) + "\n"
+            updated = False
+            lines: list[str] = []
 
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                for raw_line in f:
-                    stripped = raw_line.strip()
-                    if not stripped:
-                        lines.append(raw_line)
-                        continue
-                    try:
-                        data = json.loads(stripped)
-                    except json.JSONDecodeError:
-                        lines.append(raw_line)
-                        continue
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    for raw_line in f:
+                        stripped = raw_line.strip()
+                        if not stripped:
+                            lines.append(raw_line)
+                            continue
+                        try:
+                            data = json.loads(stripped)
+                        except json.JSONDecodeError:
+                            lines.append(raw_line)
+                            continue
 
-                    if data.get("entry_id") == entry.entry_id:
-                        lines.append(replacement)
-                        updated = True
-                    else:
-                        lines.append(raw_line)
-        except OSError:
-            return False
+                        if data.get("entry_id") == entry.entry_id:
+                            lines.append(replacement)
+                            updated = True
+                        else:
+                            lines.append(raw_line)
+            except OSError:
+                return False
 
-        if not updated:
-            return False
+            if not updated:
+                return False
 
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text("".join(lines), encoding="utf-8")
-        self._atomic_replace(tmp, path)
-        return True
+            tmp = self._tmp_path(path)
+            try:
+                tmp.write_text("".join(lines), encoding="utf-8")
+                self._atomic_replace(tmp, path)
+                return True
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def read_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Read all archived entries for a group."""
@@ -152,7 +183,16 @@ class BasicMemoryFileStore:
         path = self._path(group_id)
         lines = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(lines, encoding="utf-8")
+        with self._lock_for(path):
+            tmp = self._tmp_path(path)
+            try:
+                tmp.write_text(lines, encoding="utf-8")
+                self._atomic_replace(tmp, path)
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     @staticmethod
     def _safe_name(name: str) -> str:

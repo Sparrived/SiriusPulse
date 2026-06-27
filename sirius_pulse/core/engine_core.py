@@ -16,10 +16,17 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.core.bg_tasks import BackgroundTasks
-from sirius_pulse.core.bg_tasks_delayed import CONTINUE_TOOL_DEF, FLOW_CONTROL_TOOL_NAMES, STOP_TOOL_DEF
+from sirius_pulse.core.bg_tasks_delayed import (
+    CONTINUE_TOOL_DEF,
+    FLOW_CONTROL_TOOL_NAMES,
+    STOP_TOOL_DEF,
+)
 from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.cognition import CognitionAnalyzer
-from sirius_pulse.core.constants import HEARTBEAT_TIMEOUT_SECONDS, REPLY_DEDUP_WINDOW_SECONDS
+from sirius_pulse.core.constants import (
+    HEARTBEAT_TIMEOUT_SECONDS,
+    REPLY_DEDUP_WINDOW_SECONDS,
+)
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.engine_persistence import EnginePersistence
 from sirius_pulse.core.engine_sticker import EngineSticker
@@ -160,7 +167,11 @@ class _EmotionalGroupChatEngineBase:
         orch_task_models = orch.get("task_models")
         if isinstance(orch_task_models, dict):
             for task, model in orch_task_models.items():
-                if isinstance(model, str) and model.strip() and model.strip() != "__inherit__":
+                if (
+                    isinstance(model, str)
+                    and model.strip()
+                    and model.strip() != "__inherit__"
+                ):
                     self._task_models[task] = model.strip()
         self._task_models.update(self.config.get("task_models", {}))
         self._orch_task_temperatures = orch.get("task_temperatures")
@@ -175,10 +186,14 @@ class _EmotionalGroupChatEngineBase:
             conn=self._persona_db_conn,
         )
 
-        self.semantic_memory = SemanticMemoryManager(self.work_path, storage=self._memory_storage)
+        self.semantic_memory = SemanticMemoryManager(
+            self.work_path, storage=self._memory_storage
+        )
 
         self.basic_memory = BasicMemoryManager()
-        self.basic_store = BasicMemoryFileStore(self.work_path, remote_bridge=self._remote_bridge)
+        self.basic_store = BasicMemoryFileStore(
+            self.work_path, remote_bridge=self._remote_bridge
+        )
         self.diary_manager = DiaryManager(
             self.work_path,
             vector_store=self._vector_store,
@@ -209,7 +224,9 @@ class _EmotionalGroupChatEngineBase:
             biography_view=self.biography_view,
             is_source_diarized=self.diary_manager.is_source_diarized,
         )
-        self.glossary_manager = GlossaryManager(self.work_path, persona_name=self.persona.name)
+        self.glossary_manager = GlossaryManager(
+            self.work_path, persona_name=self.persona.name
+        )
 
     def _init_cognitive_layer(self) -> None:
         self.cognition_analyzer = CognitionAnalyzer(
@@ -367,7 +384,6 @@ class _EmotionalGroupChatEngineBase:
         """初始化 Sticker 组件（组合模式）。"""
         self._sticker = EngineSticker(self)
 
-
     # ==================================================================
     # 向后兼容的委托方法（委托给 Helpers 组件）
     # ==================================================================
@@ -384,15 +400,24 @@ class _EmotionalGroupChatEngineBase:
             skill_executor=skill_executor,
         )
 
-    def update_qq_group_members(self, group_id: str, members: list[dict[str, Any]]) -> None:
+    def update_qq_group_members(
+        self, group_id: str, members: list[dict[str, Any]]
+    ) -> None:
         """Cache QQ group members for prompt-time @ mention hints."""
         from sirius_pulse.core.qq_mentions import normalize_qq_member
 
         gid = str(group_id or "").strip()
         if not gid:
             return
-        normalized = [normalize_qq_member(member) for member in members if isinstance(member, dict)]
-        self._qq_group_members[gid] = (time.monotonic(), [m for m in normalized if m["user_id"]])
+        normalized = [
+            normalize_qq_member(member)
+            for member in members
+            if isinstance(member, dict)
+        ]
+        self._qq_group_members[gid] = (
+            time.monotonic(),
+            [m for m in normalized if m["user_id"]],
+        )
 
     def get_qq_group_members_for_prompt(
         self,
@@ -414,7 +439,9 @@ class _EmotionalGroupChatEngineBase:
         if gid:
             self._qq_bot_group_admin[gid] = (bool(is_admin), time.monotonic())
 
-    def is_qq_bot_group_admin(self, group_id: str, *, max_age_seconds: float = 300.0) -> bool:
+    def is_qq_bot_group_admin(
+        self, group_id: str, *, max_age_seconds: float = 300.0
+    ) -> bool:
         gid = str(group_id or "").strip()
         cached = self._qq_bot_group_admin.get(gid)
         if not cached:
@@ -446,7 +473,9 @@ class _EmotionalGroupChatEngineBase:
         user_id: str,
     ) -> dict[str, Any]:
         """Execute a Plugin command and produce the reply."""
-        return await self._helpers.execute_plugin_command(decision, message, group_id, user_id)
+        return await self._helpers.execute_plugin_command(
+            decision, message, group_id, user_id
+        )
 
     def _register_passive_skills(self) -> None:
         """Discover passive SKILLs and instantiate their background tasks / triggers."""
@@ -500,7 +529,9 @@ class _EmotionalGroupChatEngineBase:
         self, base_score: float, message: str, group_id: str, user_id: str
     ) -> float:
         """Enhance topic relevance using semantic memory (group + user) + topic window."""
-        return self._helpers.enhance_topic_relevance(base_score, message, group_id, user_id)
+        return self._helpers.enhance_topic_relevance(
+            base_score, message, group_id, user_id
+        )
 
     # ==================================================================
     # 向后兼容的委托方法（委托给 BackgroundTasks 组件）
@@ -522,7 +553,9 @@ class _EmotionalGroupChatEngineBase:
         """Process delayed response queue for a group."""
         return await self._bg_tasks_mgr.tick_delayed_queue(group_id, on_partial_reply)
 
-    def pop_reminders(self, group_id: str, adapter_type: str | None = None) -> list[str]:
+    def pop_reminders(
+        self, group_id: str, adapter_type: str | None = None
+    ) -> list[str]:
         """Pop pending reminder messages for a group."""
         return self._bg_tasks_mgr.pop_reminders(group_id, adapter_type)
 
@@ -566,7 +599,9 @@ class _EmotionalGroupChatEngineBase:
         sender_type: str = "human",
     ) -> str:
         """Pre-filter layer: hard guards + threshold check."""
-        return self._pipeline.pre_filter(signal, content, user_id, group_id, sender_type)
+        return self._pipeline.pre_filter(
+            signal, content, user_id, group_id, sender_type
+        )
 
     async def _generate(
         self,
@@ -618,8 +653,12 @@ class _EmotionalGroupChatEngineBase:
             "urgency_score": round(float(getattr(signal, "urgency_score", 0.0)), 4),
             "relevance_score": round(float(getattr(signal, "relevance_score", 0.0)), 4),
             "sarcasm_score": round(float(getattr(signal, "sarcasm_score", 0.0)), 4),
-            "entitlement_score": round(float(getattr(signal, "entitlement_score", 0.0)), 4),
-            "turn_gap_readiness": round(float(getattr(signal, "turn_gap_readiness", 0.0)), 4),
+            "entitlement_score": round(
+                float(getattr(signal, "entitlement_score", 0.0)), 4
+            ),
+            "turn_gap_readiness": round(
+                float(getattr(signal, "turn_gap_readiness", 0.0)), 4
+            ),
         }
         try:
             self.basic_store.update_entry(entry)
@@ -689,7 +728,9 @@ class _EmotionalGroupChatEngineBase:
         _TASKS_CHAT_ALL = {"response_generate", "proactive_generate"}
 
         # ── priority 0: 对话深度追踪 ──
-        def _hook_depth(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
+        def _hook_depth(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
             gid = _req.group_id
             now_ts = time.time()
             last_ts = _engine._last_reply_at.get(gid, 0)
@@ -700,7 +741,9 @@ class _EmotionalGroupChatEngineBase:
             )
 
         # ── priority 30: 回复去重（仅常规对话）──
-        def _hook_dedup(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
+        def _hook_dedup(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
             if not _result.clean_text:
                 return
             gid = _req.group_id
@@ -709,7 +752,10 @@ class _EmotionalGroupChatEngineBase:
             window = _engine._reply_dedup_window
             threshold = _engine._reply_dedup_threshold
             recent = [(t, r) for t, r in recent if now_ts - t < window]
-            if any(_engine._text_similarity(_result.clean_text, r) > threshold for _, r in recent):
+            if any(
+                _engine._text_similarity(_result.clean_text, r) > threshold
+                for _, r in recent
+            ):
                 logger.debug(
                     "去重抑制: %s (window=%ds, threshold=%.2f): %s...",
                     gid,
@@ -723,7 +769,9 @@ class _EmotionalGroupChatEngineBase:
             _engine._recent_sent_replies[gid] = recent
 
         # ── priority 40: 记忆记录 ──
-        def _hook_memory(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
+        def _hook_memory(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
             # 确定要记录的内容：只记录实际文本回复。
             record_content = _result.clean_text
             if not record_content:
@@ -762,8 +810,12 @@ class _EmotionalGroupChatEngineBase:
                 pass
 
         # ── priority 50: 回复时间戳+持久化 ──
-        def _hook_timestamp(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
-            _engine._last_reply_at[_req.group_id] = datetime.now(timezone.utc).timestamp()
+        def _hook_timestamp(
+            _brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]
+        ) -> None:
+            _engine._last_reply_at[_req.group_id] = datetime.now(
+                timezone.utc
+            ).timestamp()
             _engine._persist_group_state(_req.group_id)
 
         # ── priority 10: [REPLY:xxx] 引用回复解析 ──
@@ -776,9 +828,12 @@ class _EmotionalGroupChatEngineBase:
                 return
 
             # 匹配 [REPLY:xxx] / [REPLY:msg_id="xxx"] 指令（支持多个）
-            reply_pattern = re.compile(r'\[REPLY:\s*(?:msg_id\s*=\s*"([^"]+)"|([^\]\s]+))\s*\]')
+            reply_pattern = re.compile(
+                r'\[REPLY:\s*(?:msg_id\s*=\s*"([^"]+)"|([^\]\s]+))\s*\]'
+            )
             reply_matches = [
-                msg_id or plain_id for msg_id, plain_id in reply_pattern.findall(raw_text)
+                msg_id or plain_id
+                for msg_id, plain_id in reply_pattern.findall(raw_text)
             ]
             if not reply_matches:
                 return
@@ -791,7 +846,9 @@ class _EmotionalGroupChatEngineBase:
             gid = _req.group_id
             all_entries = _engine.basic_memory.get_all(gid)
             all_user_entries = [
-                entry for entry in all_entries if getattr(entry, "role", "") != "assistant"
+                entry
+                for entry in all_entries
+                if getattr(entry, "role", "") != "assistant"
             ]
             if not all_user_entries:
                 logger.info("[REPLY] 没有找到用户消息")
@@ -817,7 +874,9 @@ class _EmotionalGroupChatEngineBase:
                     msg_id_map[msg_id] = msg_data
 
             logger.info(
-                "[REPLY] 共 %d 条用户消息, %d 条有msg_id", len(all_user_entries), len(msg_id_map)
+                "[REPLY] 共 %d 条用户消息, %d 条有msg_id",
+                len(all_user_entries),
+                len(msg_id_map),
             )
 
             # 处理每个 [REPLY:xxx] 指令，直接存储引用信息
@@ -844,7 +903,9 @@ class _EmotionalGroupChatEngineBase:
                         }
                     )
                     logger.info(
-                        "[REPLY] 找到引用消息: msg_id=%s, speaker=%s", msg_id, ref_msg["speaker"]
+                        "[REPLY] 找到引用消息: msg_id=%s, speaker=%s",
+                        msg_id,
+                        ref_msg["speaker"],
                     )
                 else:
                     logger.info("[REPLY] 未找到 id=%s 对应的消息", ref_id)
@@ -856,7 +917,9 @@ class _EmotionalGroupChatEngineBase:
         _CHAT = _TASKS_CHAT
         _ALL = _TASKS_CHAT_ALL
         self.brain.register_post_hook(_hook_depth, priority=0, task_filter=_ALL)
-        self.brain.register_post_hook(_hook_reply_reference, priority=10, task_filter=_ALL)
+        self.brain.register_post_hook(
+            _hook_reply_reference, priority=10, task_filter=_ALL
+        )
         self.brain.register_post_hook(_hook_dedup, priority=30, task_filter=_CHAT)
         self.brain.register_post_hook(_hook_memory, priority=40, task_filter=_ALL)
         self.brain.register_post_hook(_hook_timestamp, priority=50, task_filter=_ALL)
@@ -891,20 +954,26 @@ class _EmotionalGroupChatEngineBase:
 
         # 多 AI 互动抑制：其他 AI 发言且未 @ 自己时
         if message.sender_type == "other_ai":
-            names = [self.persona.name.lower()] + [a.lower() for a in self.persona.aliases]
+            names = [self.persona.name.lower()] + [
+                a.lower() for a in self.persona.aliases
+            ]
             text = (message.content or "").lower()
             is_mentioned = any(name in text for name in names if name)
             if not is_mentioned:
                 # 混合方案：短消息直接静默（省 LLM 调用），长消息走完整 pipeline
                 if len(message.content or "") < 30:
-                    self._log_inner_thought(f"{speaker} 是另一个 AI，说得很短，我先默默听着～")
+                    self._log_inner_thought(
+                        f"{speaker} 是另一个 AI，说得很短，我先默默听着～"
+                    )
                     return {
                         "strategy": "silent",
                         "reply": None,
                         "emotion": {},
                         "intent": {},
                     }
-                self._log_inner_thought(f"{speaker} 是另一个 AI，但说得挺长，让我认真想想...")
+                self._log_inner_thought(
+                    f"{speaker} 是另一个 AI，但说得挺长，让我认真想想..."
+                )
 
         self._log_inner_thought(f"{speaker} 在群里说话了，让我仔细听听看～")
         await self.event_bus.emit(
@@ -954,16 +1023,17 @@ class _EmotionalGroupChatEngineBase:
                         platform_message_id=message.message_id or "",
                     )
                     self._background_update(group_id, message, None, None, user_id)
-                    self._log_inner_thought(f"{speaker} 的新消息并入计划模式事件: {route.event_type}")
+                    self._log_inner_thought(
+                        f"{speaker} 的新消息并入计划模式事件: {route.event_type}"
+                    )
                     return {
                         "strategy": "plan_event",
                         "reply": None,
                         "emotion": {},
                         "intent": {},
                     }
-                if (
-                    route.action == "light_chat"
-                    and self.config.get("plan_mode_allow_light_chat", True)
+                if route.action == "light_chat" and self.config.get(
+                    "plan_mode_allow_light_chat", True
                 ):
                     self._log_inner_thought(
                         f"{speaker} 的消息不影响当前计划，继续走普通聊天管线"
@@ -1031,13 +1101,33 @@ class _EmotionalGroupChatEngineBase:
         # ── 管线短路：已有 pending 队列项时，直接合并消息，跳过认知/决策 ──
         # 插件命令需要走完整管线，不参与短路合并
         if self.delayed_queue.has_pending(group_id):
-            is_plugin_cmd, plugin_result = await self._check_plugin_intent(content, group_id)
+            is_plugin_cmd, plugin_result = await self._check_plugin_intent(
+                content, group_id
+            )
             if is_plugin_cmd:
                 # 向量匹配 + LLM 验证通过，直接执行插件（跳过完整管线）
                 return await self._execute_verified_plugin(
                     plugin_result, message, group_id, user_id
                 )
             else:
+                closed = self.delayed_queue.close_pending_if_acknowledged(
+                    group_id=group_id,
+                    user_id=user_id,
+                    message_content=content,
+                )
+                if closed:
+                    self._log_inner_thought(
+                        f"{speaker} 像是在收束刚才的话题，取消这条待回复～"
+                    )
+                    self._background_update(group_id, message, None, None, user_id)
+                    self._persist_group_state(group_id)
+                    return {
+                        "strategy": "closed_pending",
+                        "reply": None,
+                        "emotion": {},
+                        "intent": {},
+                    }
+
                 # 非插件请求，短路合并
                 merged = self.delayed_queue.merge_incoming(
                     group_id=group_id,
@@ -1050,7 +1140,9 @@ class _EmotionalGroupChatEngineBase:
                     platform_message_id=getattr(message, "message_id", "") or "",
                 )
                 if merged:
-                    self._log_inner_thought(f"已有待回复的消息，把 {speaker} 的话也合进去～")
+                    self._log_inner_thought(
+                        f"已有待回复的消息，把 {speaker} 的话也合进去～"
+                    )
                     self._background_update(group_id, message, None, None, user_id)
                     return {
                         "strategy": "merged",
@@ -1063,7 +1155,9 @@ class _EmotionalGroupChatEngineBase:
         # save to context, but skip decision/execution. The later text message will
         # pull the caption from basic memory via XML history.
         if message.multimodal_inputs and self._is_pure_image_message(message.content):
-            has_sticker = any(m.get("sub_type") == "1" for m in (message.multimodal_inputs or []))
+            has_sticker = any(
+                m.get("sub_type") == "1" for m in (message.multimodal_inputs or [])
+            )
             label = "动画表情" if has_sticker else "图片"
 
             # 优化：对于纯动画表情消息，如果已有缓存，直接使用缓存的caption，
@@ -1081,7 +1175,9 @@ class _EmotionalGroupChatEngineBase:
 
             if cached_sticker_caption:
                 # 缓存命中：直接使用缓存的caption，跳过_cognition()
-                self._log_inner_thought(f"{speaker} 发了一张{label}，缓存命中，直接记录～")
+                self._log_inner_thought(
+                    f"{speaker} 发了一张{label}，缓存命中，直接记录～"
+                )
                 caption = cached_sticker_caption
                 recent = self.basic_memory.get_context(group_id, n=1)
                 if recent:
@@ -1093,7 +1189,9 @@ class _EmotionalGroupChatEngineBase:
                         last_entry.content or "",
                     ).strip()
                     sticker_tag = f"[动画表情：{caption}]"
-                    last_entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
+                    last_entry.content = (
+                        f"{stripped} {sticker_tag}" if stripped else sticker_tag
+                    )
                     if last_entry.multimodal_inputs:
                         for m in last_entry.multimodal_inputs:
                             if m.get("type") == "image":
@@ -1143,7 +1241,9 @@ class _EmotionalGroupChatEngineBase:
         # ── 插件命令快速拦截（规则匹配，零 LLM 成本） ──
         # 精确命令（如 /ca analyse）应在进入意图识别之前被拦截，
         # 避免被 LLM 当作自然语言处理。
-        is_plugin_cmd, plugin_result = await self._check_plugin_intent(content, group_id)
+        is_plugin_cmd, plugin_result = await self._check_plugin_intent(
+            content, group_id
+        )
         if is_plugin_cmd:
             plugin_exec_result = await self._execute_verified_plugin(
                 plugin_result, message, group_id, user_id
@@ -1160,7 +1260,9 @@ class _EmotionalGroupChatEngineBase:
             sender_type=message.sender_type,
             caller_is_developer=caller_is_developer,
         )
-        self._record_intent_scores_for_latest_message(group_id, message, user_id, signal)
+        self._record_intent_scores_for_latest_message(
+            group_id, message, user_id, signal
+        )
 
         # 内心活动：理解消息后的感受
         self._log_cognition_thought(speaker, signal, signal.emotion)
@@ -1229,7 +1331,9 @@ class _EmotionalGroupChatEngineBase:
     # Plugin intent detection (for pipeline short-circuit)
     # ------------------------------------------------------------------
 
-    async def _check_plugin_intent(self, content: str, group_id: str) -> tuple[bool, Any | None]:
+    async def _check_plugin_intent(
+        self, content: str, group_id: str
+    ) -> tuple[bool, Any | None]:
         """检测消息是否可能是插件请求。
 
         三层检测（逐步升级）：
@@ -1253,7 +1357,9 @@ class _EmotionalGroupChatEngineBase:
                 match_result = plugin_reg.match_message(content)
                 if match_result is not None:
                     # 规则匹配直接命中，构造结果
-                    from sirius_pulse.core.plugin_intent_verifier import PluginIntentResult
+                    from sirius_pulse.core.plugin_intent_verifier import (
+                        PluginIntentResult,
+                    )
 
                     return True, PluginIntentResult(
                         is_plugin=True,
@@ -1459,7 +1565,9 @@ class _EmotionalGroupChatEngineBase:
         other_names = self.config.get("other_ai_names", [])
         if not other_names:
             return False
-        my_names = [self.persona.name.lower()] + [a.lower() for a in self.persona.aliases]
+        my_names = [self.persona.name.lower()] + [
+            a.lower() for a in self.persona.aliases
+        ]
         text = (content or "").lower()
         mentions_me = any(name in text for name in my_names if name)
         mentions_other = any(name.lower() in text for name in other_names if name)
@@ -1512,14 +1620,17 @@ class _EmotionalGroupChatEngineBase:
     ) -> None:
         """Log cognition-phase inner thought."""
         intent_type = getattr(signal, "social_intent", "")
-        basic_emotion = getattr(getattr(emotion, "basic_emotion", None), "name", "") if emotion else ""
+        basic_emotion = (
+            getattr(getattr(emotion, "basic_emotion", None), "name", "")
+            if emotion
+            else ""
+        )
         thought = (
             f"{speaker} 的消息让我感觉 {basic_emotion or '平静'}，"
             f"意图是 {intent_type or '未知'}，"
             f" directed_score={getattr(signal, 'directed_score', 0):.2f}"
         )
         self._log_inner_thought(thought)
-
 
     def _emotion_desc(self, emotion: EmotionState) -> str:
         """Return a short Chinese description of an emotion state."""
