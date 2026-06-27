@@ -1068,17 +1068,12 @@ class _EmotionalGroupChatEngineBase:
                 }
 
             self._log_inner_thought(f"{speaker} 发了一张{label}，我先默默记下来～")
-            intent, emotion, memories, empathy = await self._cognition(
-                content,
-                user_id,
-                group_id,
-                sender_type=message.sender_type,
-                multimodal_inputs=message.multimodal_inputs,
-                caller_is_developer=caller_is_developer,
+            caption = await self.cognition_analyzer.describe_image(
+                message.multimodal_inputs,
+                is_sticker=has_sticker,
             )
             # 回写图片/表情描述到 basic_memory
             # 优先使用 sticker_caption（动画表情缓存），否则使用 image_caption
-            caption = intent.image_caption or getattr(intent, "sticker_caption", "")
             if caption:
                 recent = self.basic_memory.get_context(group_id, n=1)
                 if recent:
@@ -1103,8 +1098,8 @@ class _EmotionalGroupChatEngineBase:
             return {
                 "strategy": "silent",
                 "reply": None,
-                "emotion": emotion.to_dict() if emotion else {},
-                "intent": intent.to_dict() if intent else {},
+                "emotion": {},
+                "intent": {"image_caption": caption} if caption else {},
             }
 
         # ── 插件命令快速拦截（规则匹配，零 LLM 成本） ──

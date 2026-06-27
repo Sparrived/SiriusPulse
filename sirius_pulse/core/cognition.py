@@ -384,6 +384,63 @@ class CognitionAnalyzer:
             pass
         return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
 
+    async def describe_image(
+        self,
+        multimodal_inputs: list[dict[str, str]] | None,
+        *,
+        is_sticker: bool = False,
+    ) -> str:
+        """Describe images with the configured multimodal LLM and cache captions."""
+        images = [
+            item
+            for item in (multimodal_inputs or [])
+            if item.get("type") == "image" and str(item.get("value", "")).strip()
+        ]
+        if not images or self.provider_async is None:
+            return ""
+
+        for item in images:
+            cache_key = self._image_cache_key(str(item.get("value", "")))
+            if cache_key and cache_key in self._image_caption_cache:
+                return self._image_caption_cache[cache_key]
+
+        from sirius_pulse.providers.base import GenerationRequest
+
+        label = "动画表情/贴纸" if is_sticker else "图片"
+        text_prompt = (
+            f"请识别这条聊天消息里的{label}，用中文给出简短描述。"
+            "重点描述画面内容、人物动作、情绪和可能的聊天含义。"
+            "不要编造看不到的信息，不要使用 Markdown，控制在 80 字以内。"
+        )
+        content: list[dict[str, Any]] = [{"type": "text", "text": text_prompt}]
+        for item in images:
+            content.append({"type": "image_url", "image_url": {"url": str(item["value"])}})
+
+        request = GenerationRequest(
+            model=self.model_name,
+            system_prompt="你是聊天机器人里的图像理解模块，只输出图片描述。",
+            messages=[{"role": "user", "content": content}],
+            temperature=0.2,
+            max_tokens=160,
+            timeout_seconds=45,
+            purpose="image_caption",
+        )
+        self._last_request = request
+        try:
+            result = await self.provider_async.generate_async(request)
+        except Exception:
+            logger.warning("图片识别 LLM 调用失败", exc_info=True)
+            return ""
+
+        caption = (result.content or "").strip()
+        if not caption:
+            return ""
+        for item in images:
+            cache_key = self._image_cache_key(str(item.get("value", "")))
+            if cache_key:
+                self._image_caption_cache[cache_key] = caption
+        return caption
+
     # ------------------------------------------------------------------
     # 纯规则计算（无 LLM 调用）
     # ------------------------------------------------------------------
