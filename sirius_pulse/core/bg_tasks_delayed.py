@@ -1310,18 +1310,24 @@ class DelayedQueueTasks:
             ),
             tool_flow_mode=tool_flow_mode,
         )
+        dynamic_parts: list[str] = []
         if glossary:
-            bundle.system_prompt = f"{bundle.system_prompt}\n\n{TAG_GLOSSARY}\n{glossary}"
+            dynamic_parts.append(f"{TAG_GLOSSARY}\n{glossary}")
 
         # 注入规则计算信号（来自 pipeline.compute_signal）
         signal_prompts = [item.signal_prompt for item in items if getattr(item, "signal_prompt", "")]
         if signal_prompts:
-            # 合并多条消息的信号（取最新的）
             latest_signal = signal_prompts[-1]
-            bundle.system_prompt = (
-                f"{bundle.system_prompt}\n\n"
+            dynamic_parts.append(
                 f"【消息信号分析】\n{latest_signal}\n\n"
                 f"这些是预计算的信号，仅供参考。你可以回复这条消息，或者调用 stop 工具跳过。"
+            )
+
+        if dynamic_parts:
+            bundle.dynamic_context = (
+                f"{bundle.dynamic_context}\n\n" + "\n\n".join(dynamic_parts)
+                if bundle.dynamic_context
+                else "\n\n".join(dynamic_parts)
             )
 
         return bundle
