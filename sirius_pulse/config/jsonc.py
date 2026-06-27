@@ -83,6 +83,9 @@ _SESSION_CONFIG_COMMENTS = {
     "orchestration.plan_mode_allow_light_chat": (
         "Allow unrelated light chat in the same group while a plan is active."
     ),
+    "orchestration.plan_mode_chat_awareness_enabled": (
+        "Inject the active plan's public progress snapshot into normal chat prompts."
+    ),
     "orchestration.plan_mode_presence_enabled": (
         "Send a short persona-style status message when hidden planning starts."
     ),
@@ -149,6 +152,7 @@ def build_default_orchestration_payload() -> dict[str, Any]:
         "plan_mode_enabled": defaults.plan_mode_enabled,
         "plan_mode_limit_normal_tools": defaults.plan_mode_limit_normal_tools,
         "plan_mode_allow_light_chat": defaults.plan_mode_allow_light_chat,
+        "plan_mode_chat_awareness_enabled": defaults.plan_mode_chat_awareness_enabled,
         "plan_mode_presence_enabled": defaults.plan_mode_presence_enabled,
         "plan_mode_presence_min_interval_seconds": (
             defaults.plan_mode_presence_min_interval_seconds

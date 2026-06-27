@@ -158,6 +158,7 @@ class PersonaExperienceConfig:
     plan_mode_enabled: bool = False
     plan_mode_limit_normal_tools: bool = False
     plan_mode_allow_light_chat: bool = True
+    plan_mode_chat_awareness_enabled: bool = False
     plan_mode_presence_enabled: bool = False
     plan_mode_presence_min_interval_seconds: float = 45.0
     plan_mode_presence_enter_message: str = "我看到了，这个得稍微捋一下。"
@@ -196,6 +197,7 @@ class PersonaExperienceConfig:
             "plan_mode_enabled": self.plan_mode_enabled,
             "plan_mode_limit_normal_tools": self.plan_mode_limit_normal_tools,
             "plan_mode_allow_light_chat": self.plan_mode_allow_light_chat,
+            "plan_mode_chat_awareness_enabled": self.plan_mode_chat_awareness_enabled,
             "plan_mode_presence_enabled": self.plan_mode_presence_enabled,
             "plan_mode_presence_min_interval_seconds": (
                 self.plan_mode_presence_min_interval_seconds
@@ -240,6 +242,9 @@ class PersonaExperienceConfig:
                 data.get("plan_mode_limit_normal_tools", False)
             ),
             plan_mode_allow_light_chat=bool(data.get("plan_mode_allow_light_chat", True)),
+            plan_mode_chat_awareness_enabled=bool(
+                data.get("plan_mode_chat_awareness_enabled", False)
+            ),
             plan_mode_presence_enabled=bool(data.get("plan_mode_presence_enabled", False)),
             plan_mode_presence_min_interval_seconds=float(
                 data.get("plan_mode_presence_min_interval_seconds", 45.0)

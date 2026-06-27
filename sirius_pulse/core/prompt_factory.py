@@ -311,6 +311,8 @@ class PromptFactory:
                     "当前是隐藏计划模式：中间文本不会发送到群里。"
                     "需要继续处理时直接调用可用工具；完成后必须调用 exit_plan 给出最终可见消息。"
                     "如果不能完成或应当放弃，调用 abort_plan。"
+                    "可以调用 update_plan_progress 更新普通聊天可见的公开进度摘要，"
+                    "但不要写入私有思考、工具结果、密钥或未确认的新消息原文。"
                 )
             else:
                 items.append(

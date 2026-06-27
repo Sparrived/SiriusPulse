@@ -9,6 +9,7 @@ import pytest
 
 from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
+from sirius_pulse.core.plan_runtime import start_plan_session, update_plan_progress
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.skills.models import SkillResult
@@ -447,6 +448,14 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
         function_name="enter_plan",
         function_arguments='{"goal": "design a complex plan", "reason": "needs tools"}',
     )
+    update_progress = ToolCall(
+        id="call-update-progress",
+        function_name="update_plan_progress",
+        function_arguments=(
+            '{"phase": "verifying", "summary": "Checking the public API", '
+            '"confidence": "high"}'
+        ),
+    )
     exit_plan = ToolCall(
         id="call-exit-plan",
         function_name="exit_plan",
@@ -457,6 +466,12 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
             raw_text="I need to work this out.",
             clean_text="I need to work this out.",
             tool_calls=[enter_plan],
+            reply_references=[],
+        ),
+        SimpleNamespace(
+            raw_text="",
+            clean_text="",
+            tool_calls=[update_progress],
             reply_references=[],
         ),
         SimpleNamespace(
@@ -536,10 +551,20 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
     assert "abort_plan" in {
         tool["function"]["name"] for tool in (second_request.extra_tools or [])
     }
+    assert "update_plan_progress" in {
+        tool["function"]["name"] for tool in (second_request.extra_tools or [])
+    }
     assert "continue" not in {
         tool["function"]["name"] for tool in (second_request.extra_tools or [])
     }
     assert "隐藏计划模式" in second_request.system_prompt
+
+
+    third_request = engine.brain.chat.await_args_list[2].args[0]
+    assert any(
+        msg.get("role") == "tool" and msg.get("content") == "Public planning progress updated."
+        for msg in third_request.messages
+    )
 
 
 @pytest.mark.asyncio
@@ -731,6 +756,123 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
 
     assert partials == ["我看到了，这个得稍微捋一下。"]
     assert results[0]["reply"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_normal_chat_requests_plan_status_then_reads_public_snapshot():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u2",
+        "how is the plan going?",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    get_status = ToolCall(
+        id="call-get-plan-status",
+        function_name="get_plan_status",
+        function_arguments="{}",
+    )
+    profile = SimpleNamespace(name="Bob", is_developer=False)
+    engine = SimpleNamespace(
+        config={
+            "max_skill_rounds": 3,
+            "enable_skills": True,
+            "plan_mode_enabled": True,
+            "plan_mode_limit_normal_tools": True,
+            "plan_mode_chat_awareness_enabled": True,
+        },
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(user_id="u2")
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u2": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0),
+            get_group_profile=lambda group_id: None,
+        ),
+        glossary_manager=SimpleNamespace(build_prompt_section=lambda *args, **kwargs: ""),
+        style_adapter=SimpleNamespace(adapt=lambda **kwargs: SimpleNamespace()),
+        persona=SimpleNamespace(),
+        _other_ai_names=[],
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": kwargs["system_prompt"]},
+                    {"role": "user", "content": kwargs["current_query"]},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(
+            chat=AsyncMock(
+                side_effect=[
+                    SimpleNamespace(
+                        raw_text="",
+                        clean_text="",
+                        tool_calls=[get_status],
+                        reply_references=[],
+                    ),
+                    SimpleNamespace(
+                        raw_text="I am checking config and tests.",
+                        clean_text="I am checking config and tests.",
+                        tool_calls=[],
+                        reply_references=[],
+                    ),
+                ]
+            )
+        ),
+        _skill_registry=None,
+        _skill_executor=None,
+        _active_plan_sessions={},
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    session = start_plan_session(
+        engine,
+        group_id="group-1",
+        owner_user_id="u1",
+        goal="design plan mode",
+    )
+    update_plan_progress(
+        session,
+        phase="verifying",
+        summary="Checking config and tests",
+        confidence="high",
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="how is the plan going?",
+        token_breakdown=None,
+        dynamic_context="",
+    )
+
+    results = await tasks.tick_delayed_queue("group-1")
+
+    assert results[0]["reply"] == "I am checking config and tests."
+    first_request = engine.brain.chat.await_args_list[0].args[0]
+    second_request = engine.brain.chat.await_args_list[1].args[0]
+    assert first_request.enable_skills is False
+    assert "get_plan_status" in {
+        tool["function"]["name"] for tool in (first_request.extra_tools or [])
+    }
+    assert "Public planning status:" in first_request.system_prompt
+    assert "Checking config and tests" in first_request.system_prompt
+    assert any(
+        msg.get("role") == "tool" and "Checking config and tests" in msg.get("content", "")
+        for msg in second_request.messages
+    )
+    assert "hidden tool calls" in second_request.messages[-1]["content"]
 
 
 @pytest.mark.asyncio

@@ -431,6 +431,7 @@ async def api_experience_get(request: web.Request, data_dir: Path) -> web.Respon
             "plan_mode_enabled": exp.plan_mode_enabled,
             "plan_mode_limit_normal_tools": exp.plan_mode_limit_normal_tools,
             "plan_mode_allow_light_chat": exp.plan_mode_allow_light_chat,
+            "plan_mode_chat_awareness_enabled": exp.plan_mode_chat_awareness_enabled,
             "plan_mode_presence_enabled": exp.plan_mode_presence_enabled,
             "plan_mode_presence_min_interval_seconds": (
                 exp.plan_mode_presence_min_interval_seconds
@@ -476,6 +477,7 @@ async def api_experience_post(request: web.Request, data_dir: Path) -> web.Respo
         "plan_mode_enabled",
         "plan_mode_limit_normal_tools",
         "plan_mode_allow_light_chat",
+        "plan_mode_chat_awareness_enabled",
         "plan_mode_presence_enabled",
         "plan_mode_presence_min_interval_seconds",
         "plan_mode_presence_enter_message",

@@ -8,9 +8,11 @@ import pytest
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.plan_runtime import (
+    format_public_plan_status,
     get_active_plan_session,
     route_message_for_active_plan,
     start_plan_session,
+    update_plan_progress,
 )
 from sirius_pulse.models.models import Message
 
@@ -70,6 +72,31 @@ def test_plan_router_when_message_looks_like_injection_then_ignores():
 
     assert route.action == "ignore"
     assert route.event_type == "hostile_inject"
+
+
+def test_plan_progress_status_is_public_snapshot_only():
+    engine = SimpleNamespace()
+    session = start_plan_session(
+        engine,
+        group_id="group-1",
+        owner_user_id="u1",
+        goal="design plan mode",
+    )
+
+    update_plan_progress(
+        session,
+        phase="verifying",
+        summary="Checking config and tests",
+        confidence="high",
+    )
+
+    status = format_public_plan_status(session)
+
+    assert "Public planning status:" in status
+    assert "design plan mode" in status
+    assert "verifying" in status
+    assert "Checking config and tests" in status
+    assert "hidden tool calls" in status
 
 
 def _engine_with_active_plan():

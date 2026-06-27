@@ -212,6 +212,15 @@ export async function init(container, params) {
             </div>
           </div>
           <div class="form-group">
+            <label>Plan public status in chat prompt</label>
+            <div class="select-wrap">
+              <select name="plan_mode_chat_awareness_enabled">
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
             <label>计划状态消息</label>
             <div class="select-wrap">
               <select name="plan_mode_presence_enabled">
@@ -373,6 +382,7 @@ async function loadExperience(name) {
     form.plan_mode_enabled.value = String(data.plan_mode_enabled ?? false);
     form.plan_mode_limit_normal_tools.value = String(data.plan_mode_limit_normal_tools ?? false);
     form.plan_mode_allow_light_chat.value = String(data.plan_mode_allow_light_chat ?? true);
+    form.plan_mode_chat_awareness_enabled.value = String(data.plan_mode_chat_awareness_enabled ?? false);
     form.plan_mode_presence_enabled.value = String(data.plan_mode_presence_enabled ?? false);
     form.plan_mode_presence_min_interval_seconds.value = data.plan_mode_presence_min_interval_seconds ?? 45;
     form.plan_mode_presence_enter_message.value = data.plan_mode_presence_enter_message || '我看到了，这个得稍微捋一下。';
@@ -426,6 +436,7 @@ async function saveExperience(name) {
     plan_mode_enabled: form.plan_mode_enabled.value === 'true',
     plan_mode_limit_normal_tools: form.plan_mode_limit_normal_tools.value === 'true',
     plan_mode_allow_light_chat: form.plan_mode_allow_light_chat.value === 'true',
+    plan_mode_chat_awareness_enabled: form.plan_mode_chat_awareness_enabled.value === 'true',
     plan_mode_presence_enabled: form.plan_mode_presence_enabled.value === 'true',
     plan_mode_presence_min_interval_seconds: parseInt(
       form.plan_mode_presence_min_interval_seconds.value,

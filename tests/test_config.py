@@ -48,6 +48,7 @@ def test_experience_config_when_webui_loads_form_then_all_user_options_are_seria
     assert "plan_mode_enabled" in payload
     assert "plan_mode_limit_normal_tools" in payload
     assert "plan_mode_allow_light_chat" in payload
+    assert "plan_mode_chat_awareness_enabled" in payload
     assert "plan_mode_presence_enabled" in payload
     assert "plan_mode_presence_enter_message" in payload
     assert "diary_token_budget" in payload
@@ -67,6 +68,7 @@ def test_experience_config_when_webui_posts_partial_payload_then_missing_values_
     assert config.enable_skills is False
     assert config.plan_mode_enabled is False
     assert config.plan_mode_allow_light_chat is True
+    assert config.plan_mode_chat_awareness_enabled is False
     assert config.plan_mode_presence_enabled is False
     assert config.plan_mode_presence_enter_message
     assert config.expressiveness == 0.5

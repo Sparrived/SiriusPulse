@@ -185,6 +185,7 @@ class PersonaWorker:
             "plan_mode_enabled": experience.plan_mode_enabled,
             "plan_mode_limit_normal_tools": experience.plan_mode_limit_normal_tools,
             "plan_mode_allow_light_chat": experience.plan_mode_allow_light_chat,
+            "plan_mode_chat_awareness_enabled": experience.plan_mode_chat_awareness_enabled,
             "plan_mode_presence_enabled": experience.plan_mode_presence_enabled,
             "plan_mode_presence_min_interval_seconds": (
                 experience.plan_mode_presence_min_interval_seconds

@@ -37,6 +37,11 @@ class PlanSession:
     created_at: str = ""
     pending_events: list[PlanEvent] = field(default_factory=list)
     accepted_event_count: int = 0
+    public_phase: str = "planning"
+    public_summary: str = ""
+    public_confidence: str = "medium"
+    public_updated_at: str = ""
+    public_visible: bool = True
 
 
 @dataclass(slots=True)
@@ -107,6 +112,7 @@ def start_plan_session(
         goal=(goal or "").strip(),
         reason=(reason or "").strip(),
         created_at=_now_iso(),
+        public_summary=(reason or "").strip(),
     )
     sessions[group_id] = session
     return session
@@ -149,6 +155,66 @@ def append_plan_event(
     session.pending_events.append(event)
     session.accepted_event_count += 1
     return event
+
+
+def update_plan_progress(
+    session: PlanSession,
+    *,
+    phase: str = "",
+    summary: str = "",
+    confidence: str = "",
+    visible: bool | None = None,
+) -> None:
+    if phase:
+        session.public_phase = _safe_progress_value(phase, max_len=32)
+    if summary:
+        session.public_summary = _safe_progress_value(summary, max_len=160)
+    if confidence:
+        normalized = confidence.strip().lower()
+        session.public_confidence = (
+            normalized if normalized in {"low", "medium", "high"} else "medium"
+        )
+    if visible is not None:
+        session.public_visible = bool(visible)
+    session.public_updated_at = _now_iso()
+
+
+def plan_status_payload(session: PlanSession) -> dict[str, Any]:
+    return {
+        "active": session.status == "active",
+        "plan_id": session.plan_id,
+        "group_id": session.group_id,
+        "owner_user_id": session.owner_user_id,
+        "goal": _safe_progress_value(session.goal, max_len=160),
+        "phase": session.public_phase or "planning",
+        "summary": session.public_summary,
+        "confidence": session.public_confidence or "medium",
+        "updated_at": session.public_updated_at or session.created_at,
+        "visible": bool(session.public_visible),
+    }
+
+
+def format_public_plan_status(session: PlanSession) -> str:
+    payload = plan_status_payload(session)
+    if not payload["visible"]:
+        return "A hidden planning session is active, but no public progress is available."
+    lines = [
+        "Public planning status:",
+        f"- active: {payload['active']}",
+        f"- owner_user_id: {payload['owner_user_id']}",
+        f"- goal: {payload['goal']}",
+        f"- phase: {payload['phase']}",
+        f"- confidence: {payload['confidence']}",
+    ]
+    if payload["summary"]:
+        lines.append(f"- summary: {payload['summary']}")
+    if payload["updated_at"]:
+        lines.append(f"- updated_at: {payload['updated_at']}")
+    lines.append(
+        "Only use this public status. Do not infer or reveal hidden tool calls, "
+        "private reasoning, or pending planning events."
+    )
+    return "\n".join(lines)
 
 
 def consume_plan_events(session: PlanSession) -> list[PlanEvent]:
@@ -232,3 +298,10 @@ def _terms(text: str) -> set[str]:
 def _looks_like_injection(text: str) -> bool:
     lower = text.lower()
     return any(pattern.lower() in lower for pattern in _INJECTION_PATTERNS)
+
+
+def _safe_progress_value(text: str, *, max_len: int) -> str:
+    compact = re.sub(r"\s+", " ", (text or "").strip())
+    if len(compact) <= max_len:
+        return compact
+    return compact[: max_len - 3].rstrip() + "..."

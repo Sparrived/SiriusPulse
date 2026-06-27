@@ -19,8 +19,11 @@ from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.plan_runtime import (
     consume_plan_events,
     finish_plan_session,
+    format_public_plan_status,
     format_plan_events_for_model,
+    get_active_plan_session,
     start_plan_session,
+    update_plan_progress,
 )
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names, defer_send_sticker_tool
@@ -167,8 +170,64 @@ ABORT_PLAN_TOOL_DEF: dict[str, Any] = {
     },
 }
 
+UPDATE_PLAN_PROGRESS_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "update_plan_progress",
+        "description": (
+            "Update the public, sanitized progress snapshot for the active hidden plan. "
+            "This does not send a chat message and must not include private reasoning, "
+            "tool results, secrets, or pending message text."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "phase": {
+                    "type": "string",
+                    "description": "Short public phase label, e.g. searching/analyzing/verifying.",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Brief public progress summary safe for normal chat awareness.",
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Public confidence in current progress.",
+                },
+                "visible": {
+                    "type": "boolean",
+                    "description": "Whether the public snapshot may be shown to normal chat.",
+                    "default": True,
+                },
+            },
+        },
+    },
+}
+
+GET_PLAN_STATUS_TOOL_DEF: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "get_plan_status",
+        "description": (
+            "Read the public status snapshot for the active hidden plan in this group. "
+            "Only public progress is returned; private reasoning and tool details are never exposed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}
+
 FLOW_CONTROL_TOOL_NAMES = {"continue", "stop"}
-PLAN_CONTROL_TOOL_NAMES = {"enter_plan", "exit_plan", "abort_plan"}
+PLAN_CONTROL_TOOL_NAMES = {
+    "enter_plan",
+    "exit_plan",
+    "abort_plan",
+    "update_plan_progress",
+    "get_plan_status",
+}
 
 
 class DelayedQueueTasks:
@@ -408,6 +467,19 @@ class DelayedQueueTasks:
             expose_skills=expose_skills_in_prompt,
             tool_flow_mode="plan" if initial_lane == "plan" else "chat",
         )
+        active_plan_for_chat = (
+            get_active_plan_session(engine, group_id)
+            if plan_mode_enabled and initial_lane != "plan"
+            else None
+        )
+        if (
+            active_plan_for_chat is not None
+            and bool(engine.config.get("plan_mode_chat_awareness_enabled", False))
+        ):
+            bundle.system_prompt = (
+                f"{bundle.system_prompt}\n\n"
+                f"{format_public_plan_status(active_plan_for_chat)}"
+            )
         if (
             plan_mode_enabled
             and limit_normal_tools
@@ -501,6 +573,8 @@ class DelayedQueueTasks:
                 _seen_contents.add(content)
 
         while True:
+            if plan_mode and plan_session is None:
+                plan_session = get_active_plan_session(engine, group_id)
             if plan_mode and plan_session is not None:
                 if getattr(plan_session, "status", "active") != "active":
                     plan_final_reply = ""
@@ -520,9 +594,15 @@ class DelayedQueueTasks:
             _extra_tools = [CONTINUE_TOOL_DEF, STOP_TOOL_DEF]
             if plan_mode_enabled:
                 if plan_mode:
-                    _extra_tools = [EXIT_PLAN_TOOL_DEF, ABORT_PLAN_TOOL_DEF]
+                    _extra_tools = [
+                        UPDATE_PLAN_PROGRESS_TOOL_DEF,
+                        EXIT_PLAN_TOOL_DEF,
+                        ABORT_PLAN_TOOL_DEF,
+                    ]
                 elif not getattr(engine, "_active_plan_sessions", {}).get(group_id):
                     _extra_tools.append(ENTER_PLAN_TOOL_DEF)
+                else:
+                    _extra_tools.append(GET_PLAN_STATUS_TOOL_DEF)
             enable_skills_for_round = bool(engine.config.get("enable_skills", True))
             if plan_mode_enabled and limit_normal_tools and not plan_mode:
                 enable_skills_for_round = False
@@ -632,7 +712,8 @@ class DelayedQueueTasks:
                         "tool_call_id": enter_plan_tc.id,
                         "content": (
                             "Planning mode is now active. Do not send intermediate text. "
-                            "Use available tools privately, then call exit_plan or abort_plan."
+                            "Use available tools privately. Optionally call update_plan_progress "
+                            "with a public-safe status snapshot, then call exit_plan or abort_plan."
                         ),
                     }
                 )
@@ -648,6 +729,45 @@ class DelayedQueueTasks:
                     on_partial_reply,
                     group_id,
                     "enter",
+                )
+                continue
+
+            get_plan_status_tc = next(
+                (tc for tc in plan_control if tc.function_name == "get_plan_status"), None
+            )
+            if get_plan_status_tc and plan_mode_enabled and not plan_mode:
+                active_session = get_active_plan_session(engine, group_id)
+                status_text = (
+                    format_public_plan_status(active_session)
+                    if active_session is not None
+                    else "No active hidden planning session in this group."
+                )
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": reply or None,
+                        "tool_calls": [
+                            {
+                                "id": get_plan_status_tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": "get_plan_status",
+                                    "arguments": get_plan_status_tc.function_arguments or "{}",
+                                },
+                            }
+                        ],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": get_plan_status_tc.id,
+                        "content": (
+                            f"{status_text}\n"
+                            "Answer naturally if the user asked about progress. "
+                            "Do not call get_plan_status again unless new status is needed."
+                        ),
+                    }
                 )
                 continue
 
@@ -695,6 +815,60 @@ class DelayedQueueTasks:
                 break
 
             # 1. 发送当前轮次的文字（排除 flow control 工具，只看普通技能是否全 silent）
+            update_progress_tc = next(
+                (tc for tc in plan_control if tc.function_name == "update_plan_progress"), None
+            )
+            if update_progress_tc and plan_mode:
+                if plan_session is None:
+                    plan_session = get_active_plan_session(engine, group_id)
+                try:
+                    progress_params = (
+                        json.loads(update_progress_tc.function_arguments)
+                        if update_progress_tc.function_arguments
+                        else {}
+                    )
+                except json.JSONDecodeError:
+                    progress_params = {}
+                if plan_session is not None:
+                    update_plan_progress(
+                        plan_session,
+                        phase=str(progress_params.get("phase") or ""),
+                        summary=str(progress_params.get("summary") or ""),
+                        confidence=str(progress_params.get("confidence") or ""),
+                        visible=(
+                            bool(progress_params["visible"])
+                            if "visible" in progress_params
+                            else None
+                        ),
+                    )
+                    tool_content = "Public planning progress updated."
+                else:
+                    tool_content = "No active hidden planning session to update."
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": reply or None,
+                        "tool_calls": [
+                            {
+                                "id": update_progress_tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": "update_plan_progress",
+                                    "arguments": update_progress_tc.function_arguments or "{}",
+                                },
+                            }
+                        ],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": update_progress_tc.id,
+                        "content": tool_content,
+                    }
+                )
+                continue
+
             all_silent = bool(regular_tools) and all(
                 engine._skill_registry is not None
                 and engine._skill_registry.get(tc.function_name) is not None
@@ -992,16 +1166,17 @@ class DelayedQueueTasks:
             )
             reply = ""
 
-        if plan_mode and plan_session is not None and plan_final_reply is None:
-            finish_plan_session(engine, group_id, status="aborted")
-            plan_final_reply = clean_reply if clean_reply else ""
-            plan_send_to_group = bool(plan_final_reply)
 
         # 最终回复：hooks 已处理 pin/dedup/memory/timestamp
         if ended_because_max_rounds and last_round_had_partial:
             clean_reply = ""
         else:
             clean_reply = chat_result.clean_text if chat_result else ""
+
+        if plan_mode and plan_session is not None and plan_final_reply is None:
+            finish_plan_session(engine, group_id, status="aborted")
+            plan_final_reply = clean_reply if clean_reply else ""
+            plan_send_to_group = bool(plan_final_reply)
 
         # Determine return strategy
         from sirius_pulse.models.response_strategy import ResponseStrategy

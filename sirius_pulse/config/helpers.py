@@ -142,6 +142,7 @@ def build_orchestration_policy_from_dict(
         "plan_mode_enabled": (bool, False),
         "plan_mode_limit_normal_tools": (bool, False),
         "plan_mode_allow_light_chat": (bool, True),
+        "plan_mode_chat_awareness_enabled": (bool, False),
         "plan_mode_presence_enabled": (bool, False),
         "plan_mode_presence_min_interval_seconds": (float, 45.0),
         "plan_mode_presence_enter_message": (str, "我看到了，这个得稍微捋一下。"),

@@ -232,6 +232,7 @@ def test_assemble_chat_when_plan_flow_then_uses_plan_finish_tools():
 
     assert "exit_plan" in bundle.system_prompt
     assert "abort_plan" in bundle.system_prompt
+    assert "update_plan_progress" in bundle.system_prompt
     assert "continue 表示" not in bundle.system_prompt
 
 
