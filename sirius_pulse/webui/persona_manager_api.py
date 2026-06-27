@@ -297,7 +297,7 @@ def _start_persona_process(root_dir: Path, persona_dir: Path) -> dict[str, Any]:
     except Exception:
         pass
 
-    log_path = persona_dir / "logs" / "worker.log"
+    log_path = persona_dir / "logs" / "persona_stdout.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         sys.executable,

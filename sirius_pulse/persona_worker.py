@@ -451,7 +451,7 @@ async def _main() -> None:
     args = parser.parse_args()
 
     pdir = Path(args.config).resolve()
-    log_file = pdir / "logs" / "worker.log"
+    log_file = pdir / "logs" / "persona.log"
     setup_log_archival(log_file)
     configure_logging(
         level=args.log_level.upper(),

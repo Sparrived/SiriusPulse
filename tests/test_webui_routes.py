@@ -52,19 +52,19 @@ def test_persona_logs_when_source_is_omitted_then_reads_persona_log(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_persona_logs_when_worker_source_is_requested_then_reads_worker_log(tmp_path):
+async def test_persona_logs_when_unknown_source_is_requested_then_reads_persona_log(tmp_path):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()
-    worker_log = logs_dir / "worker.log"
-    worker_log.write_text("worker line", encoding="utf-8")
+    persona_log = logs_dir / "persona.log"
+    persona_log.write_text("persona line", encoding="utf-8")
     request = SimpleNamespace(query={"source": "worker", "lines": "10", "offset": "0"})
 
     response = await api_persona_logs_get(request, tmp_path)
     payload = json.loads(response.text)
 
-    assert payload["source"] == "worker"
-    assert payload["path"] == str(worker_log)
-    assert payload["lines"] == ["worker line"]
+    assert payload["source"] == "persona"
+    assert payload["path"] == str(persona_log)
+    assert payload["lines"] == ["persona line"]
 
 
 @pytest.mark.asyncio

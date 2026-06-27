@@ -11,12 +11,7 @@ const SOURCES = {
   persona: {
     label: '人格',
     path: () => '/persona/logs?source=persona',
-    empty: '人格运行日志文件尚未创建',
-  },
-  worker: {
-    label: 'Worker',
-    path: () => '/persona/logs?source=worker',
-    empty: '独立 worker 日志文件尚未创建',
+    empty: '人格日志文件尚未创建',
   },
 };
 

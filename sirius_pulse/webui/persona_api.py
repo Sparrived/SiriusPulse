@@ -115,7 +115,6 @@ def _read_log_delta(log_file: Any, offset: int, lines: int) -> dict[str, Any]:
 
 _PERSONA_LOG_SOURCES = {
     "persona": "persona.log",
-    "worker": "worker.log",
     "assistant": "assistant.log",
 }
 
