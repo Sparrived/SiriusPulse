@@ -220,6 +220,8 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
         system_prompt="system",
         user_content="check status",
         token_breakdown=None,
+        output_spec="",
+        dynamic_context="",
     )
     partials: list[str] = []
     partial_started = asyncio.Event()
@@ -328,6 +330,8 @@ async def test_delayed_queue_when_continue_then_next_round_sees_previous_text():
         system_prompt="system",
         user_content="say more",
         token_breakdown=None,
+        output_spec="",
+        dynamic_context="",
     )
     partials: list[str] = []
 
@@ -417,6 +421,8 @@ async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed()
         system_prompt="system",
         user_content="check status",
         token_breakdown=None,
+        output_spec="",
+        dynamic_context="",
     )
 
     async def fail_partial_send(text: str) -> None:
@@ -508,6 +514,8 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
         system_prompt="system",
         user_content="design a complex plan",
         token_breakdown=None,
+        output_spec="",
+        dynamic_context="",
     )
     partials: list[str] = []
 
@@ -621,6 +629,8 @@ async def test_delayed_queue_when_plan_aborts_then_session_is_cleared_without_re
         system_prompt="system",
         user_content="dangerous request",
         token_breakdown=None,
+        output_spec="",
+        dynamic_context="",
     )
 
     results = await tasks.tick_delayed_queue("group-1")
@@ -715,6 +725,8 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
         system_prompt="system",
         user_content="design a complex plan",
         token_breakdown=None,
+        output_spec="",
+        dynamic_context="",
     )
     partials: list[str] = []
 
@@ -798,6 +810,8 @@ async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_de
         system_prompt="system",
         user_content="send sticker",
         token_breakdown=None,
+        output_spec="",
+        dynamic_context="",
     )
 
     results = await tasks.tick_delayed_queue("group-1")

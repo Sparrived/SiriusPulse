@@ -77,11 +77,16 @@ class PromptBundle:
     """结构化 prompt 结果：system 指令 + 当前用户内容。
 
     历史消息由引擎单独管理，通过标准 OpenAI messages 列表传给 _generate()。
+
+    system_prompt: 稳定的系统指令（其他AI、输出规范）。
+    dynamic_context: 每轮变化的上下文（传记、关系、记忆、插件），注入到 user 消息中。
     """
 
     system_prompt: str
     user_content: str
     token_breakdown: PromptTokenBreakdown = None  # type: ignore[assignment]
+    output_spec: str = ""
+    dynamic_context: str = ""
 
     def __post_init__(self) -> None:
         if self.token_breakdown is None:
@@ -712,7 +717,8 @@ class PromptFactory:
         人格注入已由 Brain.chat() 默认 pre 步骤处理，此处不再管理。
         """
 
-        sections: list[str] = []
+        stable_sections: list[str] = []
+        dynamic_sections: list[str] = []
         constraint_sections: list[str] = []
         bd = PromptTokenBreakdown()
 
@@ -720,36 +726,37 @@ class PromptFactory:
             section_text: str,
             attr: str,
             *,
+            target: str = "stable",
             is_constraint: bool = False,
         ) -> None:
             if is_constraint:
                 constraint_sections.append(section_text)
+            elif target == "dynamic":
+                dynamic_sections.append(section_text)
             else:
-                sections.append(section_text)
+                stable_sections.append(section_text)
             setattr(bd, attr, getattr(bd, attr) + estimate_tokens(section_text))
 
-        # ── L0 极稳：几乎不变，缓存前缀基石 ──
+        # ── L0 极稳：几乎不变，放 system prompt（缓存前缀基石）──
         other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
         if other_ai:
             _add(other_ai, "identity")
-        _add(
-            PromptFactory.build_output_spec(
-                sticker_names=sticker_names,
-                supports_function_call=skill_registry is not None,
-                supports_qq_mentions=adapter_type == "napcat" and bool(qq_mention_members),
-                tool_flow_mode=tool_flow_mode,
-            ),
-            "output_constraint",
+        output_spec_text = PromptFactory.build_output_spec(
+            sticker_names=sticker_names,
+            supports_function_call=skill_registry is not None,
+            supports_qq_mentions=adapter_type == "napcat" and bool(qq_mention_members),
+            tool_flow_mode=tool_flow_mode,
         )
+        _add(output_spec_text, "output_constraint")
 
-        # ── L2 变动：每条消息级变化 ──
+        # ── L2 变动：每条消息级变化，放 dynamic_context（注入 user 消息）──
         bio = PromptFactory.build_biography_section(
             speaker_card=biography_speaker,
             mentioned_cards=biography_mentioned,
             confidence=biography_confidence,
         )
         if bio:
-            _add(bio, "identity")
+            _add(bio, "identity", target="dynamic")
 
         rel_ctx = PromptFactory.build_relationship_contexts(
             user_profiles or [],
@@ -757,10 +764,10 @@ class PromptFactory:
             speaker_name=speaker_name,
         )
         if rel_ctx:
-            _add(rel_ctx, "relationship")
+            _add(rel_ctx, "relationship", target="dynamic")
 
         if memories:
-            _add(PromptFactory.build_memory_context(memories), "memory")
+            _add(PromptFactory.build_memory_context(memories), "memory", target="dynamic")
 
         if plugin_registry is not None:
             plugin_awareness = PromptFactory.build_plugin_awareness_section(
@@ -768,9 +775,10 @@ class PromptFactory:
                 caller_is_developer=caller_is_developer,
             )
             if plugin_awareness:
-                _add(plugin_awareness, "skills")
+                _add(plugin_awareness, "skills", target="dynamic")
 
-        system_prompt = "\n\n".join(sections)
+        system_prompt = "\n\n".join(stable_sections)
+        dynamic_context = "\n\n".join(dynamic_sections)
         bd.system_prompt_total = estimate_tokens(system_prompt)
 
         if content_is_tagged:
@@ -798,6 +806,8 @@ class PromptFactory:
             system_prompt=system_prompt,
             user_content=user_content,
             token_breakdown=bd,
+            output_spec=output_spec_text,
+            dynamic_context=dynamic_context,
         )
 
     # ──────────────────────────────────────────────────────────────────

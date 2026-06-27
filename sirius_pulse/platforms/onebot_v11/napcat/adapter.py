@@ -376,6 +376,14 @@ class NapCatAdapter(BaseAdapter):
             "send_private_msg", {"user_id": int(user_id), "message": segments}
         )
 
+    @staticmethod
+    def _to_file_uri(file_path: str) -> str:
+        """将本地路径转换为 file:// URI，解决中文路径被 NapCat URI 解析器拒绝的问题。"""
+        from urllib.request import pathname2url
+
+        p = Path(file_path).resolve()
+        return "file://" + pathname2url(str(p))
+
     async def upload_group_file(
         self, group_id: str | int, file_path: str, name: str = ""
     ) -> dict[str, Any]:
@@ -384,7 +392,7 @@ class NapCatAdapter(BaseAdapter):
             "upload_group_file",
             {
                 "group_id": int(group_id),
-                "file": file_path,
+                "file": self._to_file_uri(file_path),
                 "name": name or Path(file_path).name,
             },
         )
@@ -397,7 +405,7 @@ class NapCatAdapter(BaseAdapter):
             "upload_private_file",
             {
                 "user_id": int(user_id),
-                "file": file_path,
+                "file": self._to_file_uri(file_path),
                 "name": name or Path(file_path).name,
             },
         )

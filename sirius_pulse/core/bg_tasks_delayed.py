@@ -443,6 +443,8 @@ class DelayedQueueTasks:
             speaker_user_id=speaker_uid,
             speaker_name=speaker_display,
             content_is_tagged=True,
+            output_spec=getattr(bundle, "output_spec", ""),
+            dynamic_context=bundle.dynamic_context,
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]
@@ -704,7 +706,7 @@ class DelayedQueueTasks:
             last_round_had_partial = False
             if plan_mode and non_skill_text:
                 engine._log_inner_thought(f"计划模式中间文本已隐藏: {non_skill_text[:40]}...")
-            elif non_skill_text and not all_silent:
+            elif non_skill_text and not all_silent and not should_stop:
                 engine._log_inner_thought(f"先跟用户回一声：{non_skill_text[:40]}...")
                 last_round_had_partial = True
                 if on_partial_reply is None:

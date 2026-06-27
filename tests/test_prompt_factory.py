@@ -245,7 +245,8 @@ def test_context_assembler_when_diary_exists_then_injects_user_message_not_syste
     assert "What should I do next?" in messages[-1]["content"]
 
 
-def test_context_assembler_keeps_completed_history_in_system_prefix_until_diary_promotion():
+def test_context_assembler_builds_user_assistant_alternation():
+    """历史对话以 user/assistant 交替形式构建，不再嵌入 system prompt。"""
     basic = BasicMemoryManager()
     basic.add_entry("group_a", "alice", "human", "first human", speaker_name="Alice")
     basic.add_entry("group_a", "assistant", "assistant", "first reply", speaker_name="Bot")
@@ -263,20 +264,26 @@ def test_context_assembler_keeps_completed_history_in_system_prefix_until_diary_
         speaker_user_id="bob",
         speaker_name="Bob",
     )
-    system_before = messages[0]["content"]
 
-    assert system_before.startswith("【历史聊天信息】")
-    assert "first human" in system_before
-    assert "first reply" in system_before
-    assert "pending human" not in system_before
-    assert "尚未被日记记忆系统收录的近期原始消息" not in system_before
-    assert "<conversation_history>" not in system_before
-    assert "</conversation_history>" not in system_before
-    assert '<message speaker="Alice"' in system_before
-    assert [message["role"] for message in messages[1:]] == ["user"]
+    # system prompt 应保持稳定，不含历史
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == "system"
+
+    # 历史以 user/assistant 交替构建
+    roles = [m["role"] for m in messages[1:]]
+    assert roles == ["user", "assistant", "user"]
+
+    # 第一条 user 消息含已完成的历史
+    assert "first human" in messages[1]["content"]
+
+    # assistant 消息含回复
+    assert messages[2]["content"] == "first reply"
+
+    # 最后一条 user 消息含当前问题（pending 消息已排除，通过 speaker_user_id 匹配）
+    assert "current question" in messages[3]["content"]
 
     basic.add_entry("group_a", "charlie", "human", "another pending", speaker_name="Charlie")
-    messages_after_pending = assembler.build_messages(
+    messages_after = assembler.build_messages(
         group_id="group_a",
         current_query="current question",
         system_prompt="system",
@@ -284,7 +291,8 @@ def test_context_assembler_keeps_completed_history_in_system_prefix_until_diary_
         speaker_name="Bob",
     )
 
-    assert messages_after_pending[0]["content"] == system_before
+    # system prompt 保持不变
+    assert messages_after[0]["content"] == "system"
 
 
 def test_context_assembler_removes_diarized_sources_from_system_prefix():

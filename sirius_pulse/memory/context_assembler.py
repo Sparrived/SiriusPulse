@@ -66,18 +66,22 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
+        output_spec: str = "",
+        dynamic_context: str = "",
     ) -> list[dict[str, Any]]:
-        """构建消息链（方案 C：以 assistant 消息切分）。
+        """构建消息链（user/assistant 交替）。
 
-        返回多条消息：
-        1. system  -- 富化后的系统提示词（含传记）
-        2. user/assistant 交替 -- 历史对话（按 assistant 切分）
-        3. user   -- 当前用户消息（含日记上下文）
+        返回消息结构：
+        1. system   -- 稳定系统指令（output_spec + base_prompt）
+        2. user/assistant 交替 -- 历史对话
+        3. user     -- 当前用户消息（日记 + 动态上下文 + 消息内容）
 
         Args:
             content_is_tagged: 若 True 表示 current_query 已包含 <message> XML
                 标签及前缀段落（来自延迟队列合并 + PromptFactory.assemble_chat），
                 无需再用 html.escape 包装，直接作为 user 消息内容。
+            dynamic_context: 每轮变化的上下文（传记、关系、记忆等），
+                由 PromptFactory.assemble_chat 产出，注入到当前 user 消息中。
         """
         # 1. 检索相关日记
         enriched_query = self._enrich_search_query(
@@ -98,26 +102,13 @@ class ContextAssembler:
             search_query or current_query,
         )
 
-        # 2. 获取传记信息（从演化链派生）
-        bio_sections = self._build_biography_sections(speaker_user_id, mentioned_user_ids or [])
-
-        # 3. 构建富化后的系统提示词
-        enriched_system = self._enrich_system_prompt(
-            system_prompt,
-            biography_sections=bio_sections,
-        )
-
-        # 4. 构建消息链（方案 C）
-        messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
-
         diary_context = self._build_diary_context(diary_entries)
 
-        def _with_user_context(content: str) -> str:
-            if not diary_context:
-                return content
-            return f"{diary_context}\n\n{content}" if content else diary_context
+        # 2. 构建稳定的 system prompt（只含 output_spec + base_prompt）
+        enriched_system = self._build_stable_system(system_prompt, output_spec)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
 
-        # 获取历史条目并按 assistant 切分（recent_n<=0 时取全部未压缩消息，上限 50 条）
+        # 3. 构建 user/assistant 交替的历史消息
         recent = self._cacheable_history_entries(group_id)
         pending_entries: list[Any] = []
 
@@ -134,34 +125,33 @@ class ContextAssembler:
                 pending_entries = recent[last_assistant_idx + 1 :]
                 recent = recent[: last_assistant_idx + 1]
 
-        history_xml = self._entries_to_xml(recent, include_wrapper=False) if recent else ""
-        enriched_system = self._enrich_system_prompt(
-            system_prompt,
-            biography_sections=bio_sections,
-            history_xml=history_xml,
-        )
-        messages = [{"role": "system", "content": enriched_system}]
-        recent = []
+        current_user_entries: list[Any] = []
+        for entry in recent:
+            if entry.role == "assistant":
+                if current_user_entries:
+                    xml_content = self._entries_to_xml(current_user_entries)
+                    messages.append({"role": "user", "content": xml_content})
+                    current_user_entries = []
+                messages.append({"role": "assistant", "content": entry.content or ""})
+            else:
+                current_user_entries.append(entry)
 
-        if recent:
-            current_user_entries: list[Any] = []
-            for entry in recent:
-                if entry.role == "assistant":
-                    if current_user_entries:
-                        xml_content = self._entries_to_xml(current_user_entries)
-                        messages.append({"role": "user", "content": xml_content})
-                        current_user_entries = []
-                    messages.append({"role": "assistant", "content": entry.content or ""})
-                else:
-                    current_user_entries.append(entry)
+        if current_user_entries:
+            xml_content = self._entries_to_xml(current_user_entries)
+            messages.append({"role": "user", "content": xml_content})
 
-            if current_user_entries:
-                xml_content = self._entries_to_xml(current_user_entries)
-                messages.append({"role": "user", "content": xml_content})
+        # 4. 构建当前用户消息：日记 + 动态上下文 + 消息内容
+        def _with_user_context(content: str) -> str:
+            """将日记和动态上下文前缀到用户消息。"""
+            parts: list[str] = []
+            if diary_context:
+                parts.append(diary_context)
+            if dynamic_context:
+                parts.append(dynamic_context)
+            if content:
+                parts.append(content)
+            return "\n\n".join(parts) if parts else ""
 
-        # 6. 添加当前用户消息（带身份标识）
-        # 当 content_is_tagged=True 时，current_query 已由 PromptFactory.assemble_chat()
-        # 包含完整的 XML 标签和前缀段落（传记、关系、技能等），直接使用
         if content_is_tagged:
             messages.append({"role": "user", "content": _with_user_context(current_query)})
         else:
@@ -175,7 +165,6 @@ class ContextAssembler:
                         break
             all_current = filtered_pending
             if speaker_name or speaker_user_id:
-                # 使用统一的 tag_message 生成 <message> 标签
                 from sirius_pulse.core.prompt_factory import PromptFactory
 
                 current_xml = PromptFactory.tag_message(
@@ -184,10 +173,8 @@ class ContextAssembler:
                     user_id=speaker_user_id,
                     platform_message_id=platform_message_id,
                 )
-                # 把 pending 消息和当前消息合并
                 if all_current:
                     pending_xml = self._entries_to_xml(all_current, tag="pending_messages")
-                    # 去掉外层标签，只保留 message 标签
                     pending_lines = [
                         line
                         for line in pending_xml.split("\n")
@@ -233,6 +220,8 @@ class ContextAssembler:
         mentioned_user_ids: list[str] | None = None,
         content_is_tagged: bool = False,
         platform_message_id: str = "",
+        output_spec: str = "",
+        dynamic_context: str = "",
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
         messages = self.build_messages(
@@ -251,6 +240,8 @@ class ContextAssembler:
             mentioned_user_ids=mentioned_user_ids,
             content_is_tagged=content_is_tagged,
             platform_message_id=platform_message_id,
+            output_spec=output_spec,
+            dynamic_context=dynamic_context,
         )
 
         from sirius_pulse.token.utils import estimate_tokens
@@ -309,31 +300,6 @@ class ContextAssembler:
             if not diarized:
                 result.append(entry)
         return result
-
-    # ------------------------------------------------------------------
-    # Biography 传记
-    # ------------------------------------------------------------------
-
-    def _build_biography_sections(
-        self,
-        speaker_user_id: str,
-        mentioned_user_ids: list[str],
-    ) -> str:
-        """构建传记信息段落（从演化链派生）。"""
-        if not self._bio_view:
-            return ""
-
-        parts: list[str] = []
-
-        # 被提及者传记
-        for uid in mentioned_user_ids:
-            if uid == speaker_user_id:
-                continue
-            bio = self._bio_view.get_biography(uid)
-            if bio and bio.short_bio:
-                parts.append(f"[被提及] {bio.name}: {bio.short_bio}")
-
-        return "\n".join(parts)
 
     @staticmethod
     def _build_diary_context(diary_entries: list[Any]) -> str:
@@ -446,28 +412,22 @@ class ContextAssembler:
             lines.append(f"</{tag}>")
         return "\n".join(lines)
 
-    def _enrich_system_prompt(
-        self,
+    @staticmethod
+    def _build_stable_system(
         base_prompt: str,
-        biography_sections: str = "",
-        history_xml: str = "",
+        output_spec: str = "",
     ) -> str:
-        """富化系统提示词：注入传记和可缓存历史。"""
-        # 注入传记信息（较稳定，放最前面以最大化缓存前缀匹配）
-        enriched = base_prompt
-        if biography_sections:
-            enriched += f"\n\n<biography>\n{biography_sections}\n</biography>"
+        """构建稳定的 system prompt（output_spec + base_prompt）。
 
-        if history_xml:
-            history_prefix = "\n".join(
-                [
-                    "【历史聊天信息】",
-                    history_xml,
-                    "【历史聊天信息结束】",
-                ]
-            )
-            return f"{history_prefix}\n\n{enriched}"
-        return enriched
+        只包含不随消息变化的静态内容，利于 prompt caching。
+        动态内容（传记、关系、记忆等）由 PromptFactory.assemble_chat
+        产出为 dynamic_context，注入到 user 消息中。
+        """
+        parts: list[str] = []
+        if output_spec:
+            parts.append(output_spec)
+        parts.append(base_prompt)
+        return "\n\n".join(parts)
 
     def _enrich_search_query(
         self,
