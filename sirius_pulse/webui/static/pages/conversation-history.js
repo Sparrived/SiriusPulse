@@ -14,6 +14,10 @@ const PAGE_SIZE = 100;
 let pollTimer = null;
 let isLive = true;
 
+export function dispose() {
+  stopPolling();
+}
+
 const TAG_COLORS = {
   sticker:    { bg: '#f5a62322', color: '#f5a623', border: '#f5a62344' },
   image:      { bg: '#4caf5022', color: '#4caf50', border: '#4caf5044' },

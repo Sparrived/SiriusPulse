@@ -6,6 +6,11 @@ let timer = null;
 let offset = 0;
 let paused = false;
 
+export function dispose() {
+  if (timer) clearInterval(timer);
+  timer = null;
+}
+
 export async function init() {
   const refresh = $('logsRefresh');
   const pause = $('logsPause');

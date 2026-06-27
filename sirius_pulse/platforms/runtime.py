@@ -114,6 +114,7 @@ class EngineRuntime:
         self.token_store = TokenUsageStore(
             session_id="default",
             conn=self.persona_db.conn,
+            batch_size=1,
         )
 
     def _resolve_global_data_path(self, global_data_path: str | Path | None) -> Path:

@@ -8,6 +8,7 @@ from aiohttp import web
 
 from sirius_pulse.utils.json_io import atomic_write_json
 from sirius_pulse.webui import persona_manager_api as persona_manager
+from sirius_pulse.webui.persona_api import _select_current_persona_log
 from sirius_pulse.webui.routes import WEBUI_ROUTES
 from sirius_pulse.webui.server import DELEGATED_HANDLERS, WebUIServer
 
@@ -32,6 +33,25 @@ def test_webui_routes_when_server_is_created_then_all_declared_routes_are_regist
         assert (spec.method, spec.path) in registered
     assert ("GET", "/") in registered
     assert ("GET", "/ws/events") in registered
+
+
+def test_persona_logs_when_webui_log_is_newer_then_selects_current_runtime_log(tmp_path):
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    worker_log = logs_dir / "worker.log"
+    webui_log = logs_dir / "webui.log"
+    worker_log.write_text("old worker", encoding="utf-8")
+    webui_log.write_text("current runtime", encoding="utf-8")
+
+    import os
+
+    os.utime(worker_log, (1000, 1000))
+    os.utime(webui_log, (2000, 2000))
+
+    selected, source = _select_current_persona_log(tmp_path)
+
+    assert selected == webui_log
+    assert source == "webui"
 
 
 def test_webui_routes_when_declared_then_handler_names_are_available(tmp_path):

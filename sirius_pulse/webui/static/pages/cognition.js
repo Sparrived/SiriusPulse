@@ -8,6 +8,7 @@ import {
   renderRadarChart,
   disposeChart,
 } from '../charts.js';
+import { createRealtimePoller } from './realtime.js';
 
 const EMOTION_CN = {
   JOY:'喜悦',CONTENTMENT:'满足',RELIEF:'释然',EXCITEMENT:'兴奋',
@@ -46,6 +47,11 @@ const RADAR_LABELS = [
 
 const STRATEGY_COLORS = ['#52c41a','#faad14','#8c8c8c','#1890ff','#722ed1'];
 const HEAT_COLORS = ['#d9d9d9','#95de64','#ffc53d','#ff4d4f'];
+const poller = createRealtimePoller(() => refreshRealtime(true), 3000);
+
+export function dispose() {
+  poller.stop();
+}
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -153,10 +159,15 @@ export async function init(container) {
     </div>
   `;
 
-  await Promise.all([loadData(), loadAnalysis()]);
+  await refreshRealtime(false);
+  poller.start();
 }
 
-async function loadData() {
+async function refreshRealtime(silent = true) {
+  await Promise.all([loadData(silent), loadAnalysis(silent)]);
+}
+
+async function loadData(silent = false) {
   const name = store.currentPersona;
   if (!name) {
     toast('请先选择一个人格', 'error');
@@ -170,11 +181,12 @@ async function loadData() {
     renderRadarChart_(res.events || []);
     renderEventsTable(res.events || []);
   } catch (e) {
-    toast('加载认知数据失败', 'error');
+    if (!silent) toast('加载认知数据失败', 'error');
+    else console.warn('cognition realtime refresh failed:', e);
   }
 }
 
-async function loadAnalysis() {
+async function loadAnalysis(silent = false) {
   const name = store.currentPersona;
   if (!name) return;
   try {

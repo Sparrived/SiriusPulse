@@ -8,6 +8,7 @@ import {
   renderSankeyChart,
   disposeChart,
 } from '../charts.js';
+import { createRealtimePoller } from './realtime.js';
 
 const TASK_LABELS = {
   response_generate: '主模型调用',
@@ -20,6 +21,11 @@ let activeRange = 'all';
 let activeTab = 'overview';
 let currentPage = 1;
 const PAGE_SIZE = 10;
+const poller = createRealtimePoller(() => loadData(true), 3000);
+
+export function dispose() {
+  poller.stop();
+}
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -66,6 +72,7 @@ export async function init(container) {
   bindRangeEvents();
   bindTabEvents();
   await loadData();
+  poller.start();
 }
 
 function bindRangeEvents() {
@@ -76,7 +83,7 @@ function bindRangeEvents() {
       btn.classList.add('active');
       activeRange = btn.dataset.range;
       currentPage = 1;
-      loadData();
+      loadData(false);
     });
   });
   el.querySelector('[data-range="all"]').classList.add('active');
@@ -107,7 +114,7 @@ function buildRangeParams() {
   return '';
 }
 
-async function loadData() {
+async function loadData(silent = false) {
   const name = store.currentPersona;
   if (!name) {
     toast('请先选择一个人格', 'error');
@@ -119,7 +126,8 @@ async function loadData() {
     renderStats();
     renderTabContent();
   } catch (e) {
-    toast('加载 Token 数据失败', 'error');
+    if (!silent) toast('加载 Token 数据失败', 'error');
+    else console.warn('token realtime refresh failed:', e);
   }
 }
 

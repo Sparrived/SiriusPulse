@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
 import { toast, $ } from '../components.js';
+import { createRealtimePoller } from './realtime.js';
 
 let historyData = [];
 let skillFilter = '';
@@ -8,6 +9,14 @@ let successFilter = '';
 let currentPage = 0;
 let totalRecords = 0;
 const PAGE_SIZE = 50;
+const poller = createRealtimePoller(() => {
+  if (currentPage === 0) return loadHistory(true);
+  return Promise.resolve();
+}, 3000);
+
+export function dispose() {
+  poller.stop();
+}
 
 export async function init(container) {
   const name = store.currentPersona;
@@ -79,9 +88,10 @@ export async function init(container) {
   }
 
   await loadHistory();
+  poller.start();
 }
 
-async function loadHistory() {
+async function loadHistory(silent = false) {
   const name = store.currentPersona;
   const params = new URLSearchParams({
     limit: String(PAGE_SIZE),
@@ -99,6 +109,10 @@ async function loadHistory() {
     renderHistory();
     renderPagination();
   } catch (e) {
+    if (silent) {
+      console.warn('skill history realtime refresh failed:', e);
+      return;
+    }
     toast('加载历史失败: ' + e.message, 'error');
     const historyList = $('historyList');
     if (historyList) {

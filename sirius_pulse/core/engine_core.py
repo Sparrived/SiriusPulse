@@ -299,6 +299,7 @@ class _EmotionalGroupChatEngineBase:
         self.cognition_store = CognitionEventStore(
             Path(work_path) / "cognition_events.db",
             conn=self._persona_db_conn,
+            batch_size=1,
         )
 
     def _init_skill_plugin_and_runtime(self) -> None:

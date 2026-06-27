@@ -75,6 +75,7 @@ const PERSONA_PAGES = new Set([
 let currentPage = '';
 let pageModules = {};
 let sidebarCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+let activePageModule = null;
 
 // 从localStorage加载分组折叠状态
 let collapsedGroups = {};
@@ -102,6 +103,15 @@ async function loadPageModule(page) {
 }
 
 export async function navTo(page, name) {
+  if (activePageModule && typeof activePageModule.dispose === 'function') {
+    try {
+      activePageModule.dispose();
+    } catch (e) {
+      console.warn('page dispose failed:', e);
+    }
+  }
+  activePageModule = null;
+
   if (name) store.currentPersona = name;
 
   currentPage = page;
@@ -187,6 +197,7 @@ export async function navTo(page, name) {
 
   const mod = await loadPageModule(page);
   if (mod) {
+    activePageModule = mod;
     const initFn = mod.default || mod.init;
     if (initFn) await initFn(main);
   }
