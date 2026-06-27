@@ -2,13 +2,18 @@
   <div class="card-header">
     <div>
       <div class="card-title">实时日志</div>
-      <div class="card-subtitle">当前人格 worker 日志，子进程后台运行且不弹出控制台窗口</div>
+      <div class="card-subtitle">WebUI、内置人格运行、独立 worker 分开查看</div>
     </div>
     <div class="logs-toolbar">
       <button class="btn btn-sm" id="logsRefresh">刷新</button>
       <button class="btn btn-sm" id="logsPause">暂停</button>
       <button class="btn btn-sm" id="logsClear">清屏</button>
     </div>
+  </div>
+  <div class="tabs logs-tabs" id="logsTabs">
+    <button class="tab-btn active" data-source="webui">WebUI</button>
+    <button class="tab-btn" data-source="persona">人格</button>
+    <button class="tab-btn" data-source="worker">Worker</button>
   </div>
   <div class="logs-status-row">
     <span id="logsStatus" class="logs-status">准备连接</span>

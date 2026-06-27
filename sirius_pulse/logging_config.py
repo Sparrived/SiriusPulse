@@ -15,6 +15,7 @@ import logging
 import logging.handlers
 import shutil
 import sys
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -314,6 +315,17 @@ class PlainFormatter(logging.Formatter):
         return result
 
 
+class LoggerNamePrefixFilter(logging.Filter):
+    """Allow only records whose logger name starts with one of the prefixes."""
+
+    def __init__(self, prefixes: Sequence[str]) -> None:
+        super().__init__()
+        self.prefixes = tuple(prefixes)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return any(record.name == prefix or record.name.startswith(prefix) for prefix in self.prefixes)
+
+
 # 默认需要上调到 WARNING 的第三方库 logger 名称
 _DEFAULT_THIRD_PARTY_LOGGERS = [
     "websockets",
@@ -441,6 +453,29 @@ def configure_logging(
         model_logger.setLevel(getattr(logging, "INFO"))
 
 
+def add_filtered_file_handler(
+    log_file: Path | str,
+    *,
+    logger_prefixes: Sequence[str],
+    level: LogLevel = "INFO",
+    format_type: LogFormat = "console",
+) -> logging.Handler:
+    """Attach a flushing file handler that only writes selected logger prefixes."""
+    log_path = Path(log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    handler = FlushingFileHandler(log_path, encoding="utf-8")
+    handler.setLevel(getattr(logging, level))
+    handler.addFilter(LoggerNamePrefixFilter(logger_prefixes))
+    if format_type == "json":
+        handler.setFormatter(JSONFormatter())
+    else:
+        handler.setFormatter(PlainFormatter())
+
+    logging.getLogger().addHandler(handler)
+    return handler
+
+
 def get_logger(name: str) -> logging.Logger:
     """获取指定名称的logger实例"""
     return logging.getLogger(name)
@@ -449,11 +484,13 @@ def get_logger(name: str) -> logging.Logger:
 # 便捷导出
 __all__ = [
     "configure_logging",
+    "add_filtered_file_handler",
     "setup_log_archival",
     "get_logger",
     "JSONFormatter",
     "PlainFormatter",
     "ColoredFormatter",
+    "LoggerNamePrefixFilter",
     "LogLevel",
     "LogFormat",
 ]

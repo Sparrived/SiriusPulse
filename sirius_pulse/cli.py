@@ -30,12 +30,42 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.logging_config import configure_logging, setup_log_archival
+from sirius_pulse.logging_config import (
+    add_filtered_file_handler,
+    configure_logging,
+    setup_log_archival,
+)
 
 REPO_ROOT = Path(os.environ.get("SIRIUS_PULSE_HOME", Path.cwd())).expanduser().resolve()
 DATA_DIR = REPO_ROOT / "data"
 GLOBAL_CONFIG_PATH = DATA_DIR / "global_config.json"
 WEBUI_STATUS_PATH = DATA_DIR / "webui_status.json"
+
+WEBUI_LOGGER_PREFIXES = (
+    "sirius.main",
+    "sirius.webui",
+    "sirius.persona_manager",
+    "sirius.butler_server",
+    "sirius.data_sync",
+    "embedding.",
+    "sirius_pulse.embedding.",
+)
+
+PERSONA_LOGGER_PREFIXES = (
+    "sirius.persona_worker",
+    "sirius.platforms.",
+    "platforms.",
+    "core.",
+    "engine_",
+    "plugin.",
+    "sirius_pulse.core.",
+    "sirius_pulse.memory.",
+    "sirius_pulse.platforms.",
+    "sirius_pulse.plugins.",
+    "sirius_pulse.providers.",
+    "sirius_pulse.skills.",
+    "sirius_pulse.token.",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -292,11 +322,24 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         print("请运行 `python main.py persona list` 查看可用人格")
         raise SystemExit(1)
 
-    webui_log_file = persona_dir / "logs" / "webui.log"
+    log_level = str(config.get("log_level", "INFO")).upper()
+    webui_log_file = DATA_DIR / "logs" / "webui.log"
+    persona_log_file = persona_dir / "logs" / "persona.log"
     configure_logging(
-        level=config.get("log_level", "INFO"),
+        level=log_level,
         format_type="console",
-        log_file=webui_log_file,
+    )
+    add_filtered_file_handler(
+        webui_log_file,
+        logger_prefixes=WEBUI_LOGGER_PREFIXES,
+        level=log_level,
+        format_type="console",
+    )
+    add_filtered_file_handler(
+        persona_log_file,
+        logger_prefixes=PERSONA_LOGGER_PREFIXES,
+        level=log_level,
+        format_type="console",
     )
     LOG = logging.getLogger("sirius.main")
 

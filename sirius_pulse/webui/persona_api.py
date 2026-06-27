@@ -113,24 +113,17 @@ def _read_log_delta(log_file: Any, offset: int, lines: int) -> dict[str, Any]:
     return {"lines": text.splitlines(), "offset": size, "size": size, "exists": True}
 
 
-def _select_current_persona_log(data_dir: Path) -> tuple[Path, str]:
-    """Pick the freshest runtime log for the current deployment mode."""
-    candidates: list[tuple[Path, str]] = [
-        (data_dir / "logs" / "worker.log", "worker"),
-        (data_dir / "logs" / "assistant.log", "assistant"),
-        (data_dir / "logs" / "webui.log", "webui"),
-    ]
-    existing: list[tuple[float, Path, str]] = []
-    for path, source in candidates:
-        try:
-            if path.exists():
-                existing.append((path.stat().st_mtime, path, source))
-        except OSError:
-            continue
-    if not existing:
-        return data_dir / "logs" / "worker.log", "worker"
-    _mtime, path, source = max(existing, key=lambda item: item[0])
-    return path, source
+_PERSONA_LOG_SOURCES = {
+    "persona": "persona.log",
+    "worker": "worker.log",
+    "assistant": "assistant.log",
+}
+
+
+def _resolve_persona_log_file(data_dir: Path, source: str = "persona") -> tuple[Path, str]:
+    """Resolve a specific persona-scoped log source without guessing by mtime."""
+    normalized = source if source in _PERSONA_LOG_SOURCES else "persona"
+    return data_dir / "logs" / _PERSONA_LOG_SOURCES[normalized], normalized
 
 
 async def api_system_logs_get(request: web.Request, data_dir: Path) -> web.Response:
@@ -161,7 +154,8 @@ async def api_persona_logs_get(request: web.Request, data_dir: Path) -> web.Resp
         offset = max(0, int(raw_offset))
     except ValueError:
         offset = 0
-    log_file, source = _select_current_persona_log(data_dir)
+    source_query = request.query.get("source", "persona")
+    log_file, source = _resolve_persona_log_file(data_dir, source_query)
     payload = _read_log_delta(log_file, offset, lines)
     payload.update(
         {

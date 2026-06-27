@@ -7,7 +7,12 @@ import logging
 
 import pytest
 
-from sirius_pulse.logging_config import JSONFormatter, configure_logging, setup_log_archival
+from sirius_pulse.logging_config import (
+    JSONFormatter,
+    add_filtered_file_handler,
+    configure_logging,
+    setup_log_archival,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +65,35 @@ def test_configure_logging_when_json_file_is_enabled_then_writes_structured_line
     payload = json.loads(log_file.read_text(encoding="utf-8").splitlines()[0])
     assert payload["message"] == "stored event"
     assert payload["user_id"] == "u1"
+
+
+def test_add_filtered_file_handler_when_prefixes_are_configured_then_splits_records(tmp_path):
+    configure_logging(level="INFO", format_type="console")
+    persona_log = tmp_path / "persona.log"
+    webui_log = tmp_path / "webui.log"
+
+    add_filtered_file_handler(
+        persona_log,
+        logger_prefixes=("sirius.persona_worker", "core."),
+        level="INFO",
+    )
+    add_filtered_file_handler(
+        webui_log,
+        logger_prefixes=("sirius.webui",),
+        level="INFO",
+    )
+
+    logging.getLogger("sirius.persona_worker").info("persona ready")
+    logging.getLogger("core.engine").info("engine ready")
+    logging.getLogger("sirius.webui").info("webui ready")
+
+    persona_text = persona_log.read_text(encoding="utf-8")
+    webui_text = webui_log.read_text(encoding="utf-8")
+    assert "persona ready" in persona_text
+    assert "engine ready" in persona_text
+    assert "webui ready" not in persona_text
+    assert "webui ready" in webui_text
+    assert "persona ready" not in webui_text
 
 
 def test_setup_log_archival_when_log_exists_then_moves_old_content_to_archive(tmp_path):

@@ -2,9 +2,35 @@ import { store } from '../store.js';
 import { get } from '../app.js';
 import { toast, $ } from '../components.js';
 
+const SOURCES = {
+  webui: {
+    label: 'WebUI',
+    path: () => '/system/logs',
+    empty: 'WebUI 日志文件尚未创建',
+  },
+  persona: {
+    label: '人格',
+    path: () => '/persona/logs?source=persona',
+    empty: '人格运行日志文件尚未创建',
+  },
+  worker: {
+    label: 'Worker',
+    path: () => '/persona/logs?source=worker',
+    empty: '独立 worker 日志文件尚未创建',
+  },
+};
+
 let timer = null;
-let offset = 0;
 let paused = false;
+let activeSource = 'webui';
+const stateBySource = new Map();
+
+function stateFor(source) {
+  if (!stateBySource.has(source)) {
+    stateBySource.set(source, { offset: 0, text: '', path: '' });
+  }
+  return stateBySource.get(source);
+}
 
 export function dispose() {
   if (timer) clearInterval(timer);
@@ -20,19 +46,36 @@ export async function init() {
   pause.onclick = () => {
     paused = !paused;
     pause.textContent = paused ? '继续' : '暂停';
-    setStatus(paused ? '已暂停' : '实时刷新中');
+    setStatus(paused ? '已暂停' : statusText());
   };
   clear.onclick = () => {
+    const current = stateFor(activeSource);
+    current.text = '';
     $('logsConsole').textContent = '';
   };
+
+  document.querySelectorAll('[data-source]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const source = btn.dataset.source;
+      if (!source || source === activeSource) return;
+      activeSource = source;
+      document.querySelectorAll('[data-source]').forEach((el) => el.classList.toggle('active', el === btn));
+      renderCachedSource();
+      if (!stateFor(activeSource).offset) await resetAndLoad();
+      else if (!paused) await loadLogs(false);
+    });
+  });
 
   await resetAndLoad();
   startPolling();
 }
 
 async function resetAndLoad() {
-  offset = 0;
-  $('logsConsole').textContent = '';
+  const current = stateFor(activeSource);
+  current.offset = 0;
+  current.text = '';
+  current.path = '';
+  renderCachedSource();
   await loadLogs(true);
 }
 
@@ -45,36 +88,62 @@ function startPolling() {
 
 async function loadLogs(initial) {
   if (!$('logsConsole')) {
-    if (timer) clearInterval(timer);
-    timer = null;
+    dispose();
     return;
   }
+  const source = activeSource;
+  const current = stateFor(source);
+  const config = SOURCES[source] || SOURCES.webui;
   const lines = initial ? 300 : 2000;
-  const path = `/persona/logs?lines=${lines}&offset=${offset}`;
+  const separator = config.path().includes('?') ? '&' : '?';
+  const path = `${config.path()}${separator}lines=${lines}&offset=${current.offset}`;
   try {
     const data = await get(path);
-    offset = data.offset || offset;
-    $('logsPath').textContent = data.path || '';
+    if (source !== activeSource) return;
+    current.offset = data.offset || current.offset;
+    current.path = data.path || '';
+    $('logsPath').textContent = current.path;
     if (!data.exists) {
-      setStatus('日志文件尚未创建');
+      setStatus(config.empty);
       return;
     }
-    appendLines(data.lines || []);
-    setStatus(`实时刷新中 · ${store.currentPersona || '当前人格'}`);
+    appendLines(source, data.lines || []);
+    setStatus(statusText());
   } catch (e) {
     setStatus('日志加载失败');
     toast('日志加载失败', 'error');
   }
 }
 
-function appendLines(lines) {
+function renderCachedSource() {
+  const current = stateFor(activeSource);
+  const consoleEl = $('logsConsole');
+  if (consoleEl) consoleEl.textContent = current.text;
+  const pathEl = $('logsPath');
+  if (pathEl) pathEl.textContent = current.path || '';
+  setStatus(paused ? '已暂停' : statusText());
+}
+
+function appendLines(source, lines) {
   if (!lines.length) return;
+  const current = stateFor(source);
   const consoleEl = $('logsConsole');
   const shouldStick = consoleEl.scrollTop + consoleEl.clientHeight >= consoleEl.scrollHeight - 24;
-  consoleEl.textContent += `${lines.join('\n')}\n`;
-  const all = consoleEl.textContent.split('\n');
-  if (all.length > 3000) consoleEl.textContent = all.slice(-3000).join('\n');
-  if (shouldStick) consoleEl.scrollTop = consoleEl.scrollHeight;
+  current.text += `${lines.join('\n')}\n`;
+  const all = current.text.split('\n');
+  if (all.length > 3000) current.text = all.slice(-3000).join('\n');
+  if (source === activeSource) {
+    consoleEl.textContent = current.text;
+    if (shouldStick) consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+}
+
+function statusText() {
+  const config = SOURCES[activeSource] || SOURCES.webui;
+  if (activeSource === 'persona') {
+    return `实时刷新中 · ${store.currentPersona || '当前人格'} · ${config.label}`;
+  }
+  return `实时刷新中 · ${config.label}`;
 }
 
 function setStatus(text) {
