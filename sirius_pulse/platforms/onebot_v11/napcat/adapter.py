@@ -872,7 +872,6 @@ class NapCatAdapter(BaseAdapter):
             name=parsed.nickname or f"qq_{parsed.user_id}",
             user_id=uid,
             identities={"qq_native_sirius_pulse": parsed.user_id},
-            aliases=[parsed.card] if parsed.card else [],
             metadata={
                 "platform": "qq",
                 "qq_uid": parsed.user_id,

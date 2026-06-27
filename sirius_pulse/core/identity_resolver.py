@@ -121,6 +121,7 @@ class IdentityResolver:
         user_manager: UnifiedUserManager,
         group_id: str,
         recent_speakers: list[str] | None = None,
+        profile_manager: Any | None = None,
     ) -> IdentityResolution:
         """增强版解析，整合 UnifiedUserManager 的能力。
 
@@ -168,8 +169,8 @@ class IdentityResolver:
             )
 
         # L2: 已确认别名精确匹配
-        if speaker:
-            alias_result = user_manager.resolve_alias(
+        if speaker and profile_manager is not None:
+            alias_result = profile_manager.resolve_alias(
                 speaker,
                 group_id=group_id,
                 recent_speakers=recent_speakers,
@@ -184,7 +185,7 @@ class IdentityResolver:
 
         # L3: 模糊匹配
         if speaker:
-            fuzzy_result = self._fuzzy_match(speaker, group_id, user_manager)
+            fuzzy_result = self._fuzzy_match(speaker, group_id, user_manager, profile_manager)
             if fuzzy_result:
                 return fuzzy_result
 
@@ -229,6 +230,7 @@ class IdentityResolver:
         speaker: str,
         group_id: str,
         user_manager: UnifiedUserManager,
+        profile_manager: Any | None = None,
     ) -> IdentityResolution | None:
         """模糊匹配：基于编辑距离或包含关系。"""
         speaker_lower = speaker.strip().lower()
@@ -249,14 +251,16 @@ class IdentityResolver:
                     best_score = score
                     best_match = user_id
 
-        # 检查别名索引
-        for alias_key in user_manager._alias_index.keys():
+        alias_entries = (
+            profile_manager.list_alias_entries(group_id)
+            if profile_manager is not None
+            else {}
+        )
+        for alias_key, entry in alias_entries.items():
             score = self._compute_similarity(speaker_lower, alias_key)
             if score > best_score:
-                entries = user_manager._alias_index[alias_key]
-                if entries:
-                    best_score = score
-                    best_match = entries[0].user_id
+                best_score = score
+                best_match = str(entry.get("user_id", ""))
 
         if best_match and best_score > 0.7:
             confidence = min(0.9, best_score * 0.8)

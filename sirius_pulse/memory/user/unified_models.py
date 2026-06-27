@@ -3,14 +3,12 @@
 包含：
 - 基础身份信息
 - 传记画像信息
-- 别名索引支持
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
 
 from sirius_pulse.developer_profiles import metadata_declares_developer
 
@@ -48,78 +46,11 @@ class RelationshipAnchor:
         )
 
 
-@dataclass(slots=True)
-class AliasEntry:
-    """别名条目 — 一个别名只能指向一个用户。
-
-    置信度由 mentioned_count + source 通过 compute_confidence 计算，
-    再经时间衰减（apply_time_decay）得到最终值。
-    """
-
-    user_id: str = ""
-    user_name: str = ""
-    weight: float = 1.0
-    groups: list[str] = field(default_factory=list)
-    mentioned_count: int = 1
-    confidence: float = -1.0
-    first_seen_at: str = ""
-    last_seen_at: str = ""
-    source: str = "napcat"
-
-    @staticmethod
-    def compute_confidence(mentioned_count: int, source: str = "model_skill") -> float:
-        """根据提及次数和来源计算基础置信度（对数增长）。"""
-        if mentioned_count <= 0:
-            return 0.0
-        initial = 0.50 if source == "napcat" else 0.30
-        base = min(0.95, initial + 0.20 * math.log2(mentioned_count))
-        return round(base, 4)
-
-    @staticmethod
-    def apply_time_decay(confidence: float, days_since_last_seen: float) -> float:
-        """时间衰减：每过去一天，置信度衰减 5%。"""
-        if days_since_last_seen <= 0:
-            return confidence
-        return round(max(0.0, confidence * (0.95**days_since_last_seen)), 4)
-
-    DECAY_THRESHOLD: ClassVar[float] = 0.10
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "user_id": self.user_id,
-            "user_name": self.user_name,
-            "weight": self.weight,
-            "groups": list(self.groups),
-            "mentioned_count": self.mentioned_count,
-            "confidence": self.confidence,
-            "first_seen_at": self.first_seen_at,
-            "last_seen_at": self.last_seen_at,
-            "source": self.source,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AliasEntry:
-        entry = cls(
-            user_id=data.get("user_id", ""),
-            user_name=data.get("user_name", ""),
-            weight=float(data.get("weight", 1.0)),
-            groups=list(data.get("groups", [])),
-            mentioned_count=max(1, int(data.get("mentioned_count", 1))),
-            confidence=float(data.get("confidence", -1.0)),
-            first_seen_at=data.get("first_seen_at", ""),
-            last_seen_at=data.get("last_seen_at", ""),
-            source=data.get("source", "napcat"),
-        )
-        if entry.confidence <= 0.0:
-            entry.confidence = cls.compute_confidence(entry.mentioned_count, entry.source)
-        return entry
-
-
 @dataclass
 class UnifiedUser:
     """统一用户模型。
 
-    包含基础身份、传记画像、别名索引等所有用户相关信息。
+    包含基础身份、传记画像等用户相关信息。
     """
 
     # ── 基础身份 ──
@@ -127,7 +58,6 @@ class UnifiedUser:
     name: str = ""
     persona: str = ""
     identities: dict[str, str] = field(default_factory=dict)  # platform → uid
-    aliases: list[str] = field(default_factory=list)
     traits: list[str] = field(default_factory=list)
     group_memberships: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -146,7 +76,6 @@ class UnifiedUser:
             "name": self.name,
             "persona": self.persona,
             "identities": dict(self.identities),
-            "aliases": list(self.aliases),
             "traits": list(self.traits),
             "group_memberships": dict(self.group_memberships),
             "metadata": dict(self.metadata),
@@ -167,7 +96,6 @@ class UnifiedUser:
             name=data.get("name", ""),
             persona=data.get("persona", ""),
             identities=dict(data.get("identities", {})),
-            aliases=list(data.get("aliases", [])),
             traits=list(data.get("traits", [])),
             group_memberships=dict(data.get("group_memberships", {})),
             metadata=dict(data.get("metadata", {})),
@@ -179,5 +107,4 @@ class UnifiedUser:
 __all__ = [
     "UnifiedUser",
     "RelationshipAnchor",
-    "AliasEntry",
 ]

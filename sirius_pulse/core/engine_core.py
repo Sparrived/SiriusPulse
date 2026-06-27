@@ -16,11 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.core.bg_tasks import BackgroundTasks
-from sirius_pulse.core.bg_tasks_delayed import (
-    CONTINUE_TOOL_DEF,
-    FLOW_CONTROL_TOOL_NAMES,
-    STOP_TOOL_DEF,
-)
 from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.cognition import CognitionAnalyzer
 from sirius_pulse.core.constants import (
@@ -46,12 +41,11 @@ from sirius_pulse.core.rhythm import RhythmAnalyzer
 
 # New v2 memory system (refactor)
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager
-from sirius_pulse.memory.biography.view import BiographyView
 from sirius_pulse.memory.cold_detector import ColdDetector
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.diary import DiaryManager
-from sirius_pulse.memory.evolution.chain import EvolutionChain
 from sirius_pulse.memory.glossary import GlossaryManager
+from sirius_pulse.memory.profile import UserPersonaProfileManager, UserPersonaProfileStore
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
@@ -208,20 +202,21 @@ class _EmotionalGroupChatEngineBase:
         )
         self.identity_resolver = IdentityResolver()
 
-        # ── 新记忆体系组件（共享 persona.db 连接）──
-        self.evolution_chain = EvolutionChain(
-            conn=self._persona_db_conn,
-        )
-        self.biography_view = BiographyView(
-            self.evolution_chain,
+        # ── 记忆体系组件（共享 persona.db 连接）──
+        self.profile_store = UserPersonaProfileStore(conn=self._persona_db_conn)
+        self.profile_manager = UserPersonaProfileManager(
+            self.profile_store,
+            persona_name=self.persona.name,
             user_manager=self.user_manager,
+            semantic_memory=self.semantic_memory,
         )
+        self.biography_view = None
         self.cold_detector = ColdDetector()
 
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,
-            biography_view=self.biography_view,
+            profile_manager=self.profile_manager,
             is_source_diarized=self.diary_manager.is_source_diarized,
         )
         self.glossary_manager = GlossaryManager(

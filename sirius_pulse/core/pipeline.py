@@ -16,7 +16,7 @@ from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.core.participation import ParticipationPolicy
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.models import Message, UnifiedUser
-from sirius_pulse.models.response_strategy import BiographyPromptContext, ResponseStrategy, StrategyDecision
+from sirius_pulse.models.response_strategy import PersonaProfilePromptContext, ResponseStrategy, StrategyDecision
 from sirius_pulse.models.signal import SignalAnalysis
 
 if TYPE_CHECKING:
@@ -98,6 +98,7 @@ class Pipeline:
             engine.user_manager,
             group_id,
             recent_speakers=recent_speakers,
+            profile_manager=getattr(engine, "profile_manager", None),
         )
 
         # 记录解析结果（低置信度时发出警告）
@@ -183,7 +184,7 @@ class Pipeline:
         # 别名信息
         group_aliases: dict[str, str] | None = None
         try:
-            group_aliases = engine.user_manager.get_aliases_for_group(group_id) or None
+            group_aliases = engine.profile_manager.get_aliases_for_group(group_id) or None
         except Exception:
             pass
 
@@ -387,7 +388,7 @@ class Pipeline:
         engine = self._engine
 
         # 收集人物传记
-        biography_context = self._collect_biography_section(
+        persona_profile_context = self._collect_persona_profile_section(
             group_id, user_id, message.content or "",
         )
 
@@ -437,7 +438,7 @@ class Pipeline:
             pace=signal.pace,
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
-            biography_context=biography_context,
+            persona_profile_context=persona_profile_context,
             signal_prompt=signal.to_prompt_text(),
         )
         engine._persist_group_state(group_id)
@@ -477,10 +478,10 @@ class Pipeline:
         group_id: str,
         user_id: str,
         rhythm: Any,
-        biography_context: BiographyPromptContext | None = None,
+        persona_profile_context: PersonaProfilePromptContext | None = None,
     ) -> dict[str, Any]:
         engine = self._engine
-        bio_ctx = biography_context or BiographyPromptContext()
+        bio_ctx = persona_profile_context or PersonaProfilePromptContext()
         engine.delayed_queue.enqueue(
             group_id=group_id,
             user_id=user_id,
@@ -495,7 +496,7 @@ class Pipeline:
             pace=rhythm.pace,
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
-            biography_context=bio_ctx,
+            persona_profile_context=bio_ctx,
         )
         engine._persist_group_state(group_id)
         result = {
@@ -509,63 +510,41 @@ class Pipeline:
             result["partial_replies"] = []
         return result
 
-    def _collect_biography_section(
+    def _collect_persona_profile_section(
         self,
         group_id: str,
         user_id: str,
         message_content: str,
-    ) -> BiographyPromptContext:
-        """收集人物传记快照，供延迟回复链路持久化使用。
-
-        使用 BiographyView 从演化链派生传记，并从 UnifiedUserManager
-        同步已确认别名到传记对象中，使 PromptFactory 能注入别名提示。
-        """
+    ) -> PersonaProfilePromptContext:
+        """收集人物画像快照，供延迟回复链路持久化使用。"""
         engine = self._engine
-        bio_view = engine.biography_view
-        mgr = engine.user_manager
+        profile_manager = getattr(engine, "profile_manager", None)
+        if profile_manager is None:
+            return PersonaProfilePromptContext()
 
-        # 当前发言者传记（从演化链派生）
-        speaker_bio = bio_view.get_biography(user_id) if user_id else None
-        # 同步已确认别名（仅来自 _alias_index）
-        if speaker_bio and user_id:
-            alias_set: set[str] = set()
-            # 也从 _alias_index 中收集该用户的所有别称
-            for alias_key, entries in mgr._alias_index.items():
-                for e in entries:
-                    if e.user_id == user_id:
-                        alias_set.add(alias_key)
-                        break
-            speaker_bio.aliases = sorted(alias_set)
+        speaker_profile = (
+            profile_manager.get_profile(group_id, user_id, create=False) if user_id else None
+        )
 
-        # 被提及者：从文本别名中收集
         mentioned: dict[str, float] = {}
+        aliases = profile_manager.list_alias_entries(group_id)
         if message_content:
-            for alias, entries in mgr._alias_index.items():
-                if len(alias) < 2 or alias not in message_content:
+            for alias in aliases.keys():
+                if len(alias) < 2 or alias not in message_content.lower():
                     continue
-                uid, conf, _ = mgr.resolve_alias(
-                    alias,
-                    group_id=group_id,
-                )
+                uid, conf, _ = profile_manager.resolve_alias(alias, group_id=group_id)
                 if uid and uid != user_id:
-                    mentioned[uid] = max(mentioned.get(uid, 0), conf)
+                    mentioned[uid] = max(mentioned.get(uid, 0.0), conf)
 
-        # 获取被提及者的传记并同步别名
-        mentioned_bios: dict[str, Any] = {}
-        for uid in mentioned.keys():
-            bio = bio_view.get_biography(uid)
-            alias_set_mentioned: set[str] = set()
-            for alias_key, entries in mgr._alias_index.items():
-                for e in entries:
-                    if e.user_id == uid:
-                        alias_set_mentioned.add(alias_key)
-                        break
-            bio.aliases = sorted(alias_set_mentioned)
-            mentioned_bios[uid] = bio
+        mentioned_profiles = [
+            profile
+            for uid in mentioned.keys()
+            if (profile := profile_manager.get_profile(group_id, uid, create=False)) is not None
+        ]
 
-        return BiographyPromptContext(
-            speaker_card=speaker_bio,
-            mentioned_cards=list(mentioned_bios.values()),
+        return PersonaProfilePromptContext(
+            speaker_card=speaker_profile,
+            mentioned_cards=mentioned_profiles,
             confidence=dict(mentioned),
         )
 

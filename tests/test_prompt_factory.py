@@ -86,7 +86,7 @@ def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
 
 
 def test_output_spec_no_newline_split_instruction():
-    """换行分割提示已移除，改为 continue/stop 工具控制流程。"""
+    """换行分割提示已移除，改为 stop 工具控制流程。"""
     spec = PromptFactory.build_output_spec()
 
     assert "多句话可以用换行符分割" not in spec
@@ -94,17 +94,16 @@ def test_output_spec_no_newline_split_instruction():
     assert "禁止任何形式的换行符" not in spec
 
 
-def test_output_spec_when_function_call_enabled_then_includes_continue_stop():
-    """启用 function call 时，输出规范包含 continue/stop 工具使用说明。"""
+def test_output_spec_when_function_call_enabled_then_includes_stop_only():
+    """启用 function call 时，输出规范包含 stop 工具使用说明。"""
     spec = PromptFactory.build_output_spec(supports_function_call=True)
 
-    assert "continue" in spec
+    assert "continue" not in spec
     assert "stop" in spec
-    assert "每次回复结束时必须调用工具" in spec
 
 
 def test_output_spec_when_function_call_disabled_then_no_continue_stop():
-    """未启用 function call 时，不包含 continue/stop 说明。"""
+    """未启用 function call 时，不包含 stop 说明。"""
     spec = PromptFactory.build_output_spec(supports_function_call=False)
 
     assert "continue" not in spec

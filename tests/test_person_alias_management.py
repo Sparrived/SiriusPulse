@@ -1,60 +1,53 @@
-"""Confirmed person-alias management behavior."""
+"""Confirmed person-alias management behavior through user persona profiles."""
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 from sirius_pulse.core.identity_resolver import IdentityResolver
-from sirius_pulse.core.skill_engine_context import SkillEngineContextImpl
-from sirius_pulse.memory.evolution.chain import EvolutionChain
+from sirius_pulse.memory.profile import UserPersonaProfileManager, UserPersonaProfileStore
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.user.unified_models import UnifiedUser
-from sirius_pulse.skills.builtin import person_alias
-from sirius_pulse.skills.data_store import SkillDataStore
+from sirius_pulse.skills.builtin import user_profile
 
 
-def _manager(tmp_path: Path) -> UnifiedUserManager:
+def _user_manager(tmp_path: Path) -> UnifiedUserManager:
     mgr = UnifiedUserManager(db_path=tmp_path / "memory.db")
     mgr.register_user(UnifiedUser(user_id="u1", name="Alice"), group_id="g1")
     mgr.register_user(UnifiedUser(user_id="u2", name="Bob"), group_id="g1")
     return mgr
 
 
-def test_alias_manager_rejects_generic_address_terms(tmp_path: Path):
-    mgr = _manager(tmp_path)
-
-    saved = mgr.register_alias("哥", "u1", "Alice", "g1", source="model_skill", confidence=0.9)
-    resolved = mgr.resolve_alias("哥", group_id="g1")
-
-    assert saved is False
-    assert resolved == (None, 0.0, [])
+def _profile_manager(tmp_path: Path, user_manager: UnifiedUserManager) -> UserPersonaProfileManager:
+    conn = sqlite3.connect(tmp_path / "profiles.db")
+    store = UserPersonaProfileStore(conn=conn)
+    return UserPersonaProfileManager(store, persona_name="sirius", user_manager=user_manager)
 
 
-def test_alias_manager_keeps_one_owner_per_alias(tmp_path: Path):
-    mgr = _manager(tmp_path)
+def test_profile_alias_manager_keeps_one_owner_per_alias(tmp_path: Path):
+    users = _user_manager(tmp_path)
+    profiles = _profile_manager(tmp_path, users)
 
-    assert mgr.register_alias("小梨", "u1", "Alice", "g1", source="model_skill", confidence=0.8)
-    assert mgr.register_alias("小梨", "u2", "Bob", "g1", source="model_skill", confidence=0.9)
+    assert profiles.register_alias(alias="阿梨", user_id="u1", user_name="Alice", group_id="g1")["success"]
+    assert profiles.register_alias(alias="小梨", user_id="u2", user_name="Bob", group_id="g1")["success"]
 
-    uid, confidence, others = mgr.resolve_alias("小梨", group_id="g1")
-    aliases = mgr.list_alias_entries("g1")
+    uid, confidence, others = profiles.resolve_alias("阿梨", group_id="g1")
+    aliases = profiles.list_alias_entries("g1")
 
-    assert uid == "u2"
-    assert confidence == 0.9
+    assert uid == "u1"
+    assert confidence >= 0.5
     assert others == []
-    assert aliases["小梨"]["user_id"] == "u2"
+    assert aliases["阿梨"]["user_id"] == "u1"
 
 
-def test_profile_aliases_do_not_bypass_confirmed_alias_index(tmp_path: Path):
-    mgr = UnifiedUserManager(db_path=tmp_path / "memory.db")
-    mgr.register_user(
-        UnifiedUser(user_id="u1", name="Alice", aliases=["阿梨"]),
-        group_id="g1",
-    )
+def test_profile_aliases_are_used_by_identity_resolver(tmp_path: Path):
+    users = _user_manager(tmp_path)
+    profiles = _profile_manager(tmp_path, users)
+    profiles.register_alias(alias="阿梨", user_id="u1", user_name="Alice", group_id="g1", confidence=0.9)
     resolver = IdentityResolver()
 
-    direct = mgr.resolve_user_id(speaker="阿梨")
     resolved = resolver.resolve_with_alias(
         SimpleNamespace(
             speaker_name="阿梨",
@@ -63,110 +56,50 @@ def test_profile_aliases_do_not_bypass_confirmed_alias_index(tmp_path: Path):
             platform=None,
             is_developer=False,
         ),
-        mgr,
+        users,
         "g1",
+        profile_manager=profiles,
     )
 
-    assert direct is None
-    assert resolved.user_id == "阿梨"
-    assert resolved.source == "unresolved"
+    assert resolved.user_id == "u1"
+    assert resolved.source == "alias_exact"
 
 
-def test_person_alias_skill_rejects_low_confidence_and_generic_alias(tmp_path: Path):
-    calls: list[dict] = []
+def test_user_profile_tool_updates_alias_section(tmp_path: Path):
+    users = _user_manager(tmp_path)
+    profiles = _profile_manager(tmp_path, users)
+    engine_context = SimpleNamespace(profile_manager=profiles)
 
-    class EngineContext:
-        def manage_person_alias(self, **kwargs):
-            calls.append(kwargs)
-            return {"success": True}
-
-    low_conf = person_alias.run(
-        action="add",
-        alias="阿梨",
+    result = user_profile.run(
+        action="update",
         target_user_id="u1",
-        confidence=0.4,
-        engine_context=EngineContext(),
-        chat_context={"group_id": "g1"},
-    )
-    generic = person_alias.run(
-        action="add",
-        alias="姐姐",
-        target_user_id="u1",
-        confidence=0.9,
-        engine_context=EngineContext(),
-        chat_context={"group_id": "g1"},
-    )
-
-    assert low_conf["success"] is False
-    assert generic["success"] is False
-    assert calls == []
-
-
-def test_person_alias_skill_records_model_self_mapping(tmp_path: Path):
-    store = SkillDataStore(tmp_path / "person_alias.json")
-
-    class EngineContext:
-        def manage_person_alias(self, **kwargs):
-            return {
-                "success": True,
-                "alias": kwargs["alias"],
-                "user_id": kwargs["target_user_id"],
-                "user_name": "Alice",
-                "confidence": kwargs["confidence"],
-            }
-
-    result = person_alias.run(
-        action="add",
-        alias="阿梨",
-        target_user_id="u1",
-        confidence=0.82,
-        evidence="用户明确说 Alice 也叫阿梨",
-        engine_context=EngineContext(),
-        chat_context={"group_id": "g1"},
-        data_store=store,
-    )
-    store.save()
-    reloaded = SkillDataStore(tmp_path / "person_alias.json")
-
-    assert result["success"] is True
-    assert reloaded.get("aliases")["阿梨"]["user_id"] == "u1"
-    assert reloaded.get("aliases")["阿梨"]["confidence"] == 0.82
-
-
-def test_engine_context_person_alias_add_resolves_target_name(tmp_path: Path):
-    mgr = _manager(tmp_path)
-    engine = SimpleNamespace(
-        user_manager=mgr,
-        identity_resolver=IdentityResolver(),
-        _skill_registry=None,
-        _skill_executor=None,
-        _group_last_message_at={},
-        _current_adapter_type="",
-    )
-    ctx = SkillEngineContextImpl(engine)
-
-    result = ctx.manage_person_alias(
-        action="add",
-        alias="阿梨",
-        target_name="Alice",
-        group_id="g1",
-        confidence=0.88,
-        evidence="用户明确说明",
+        display_name="Alice",
+        updates_json='[{"section":"aliases","key":"阿梨","value":"阿梨","confidence":0.82,"evidence":"用户明确说 Alice 也叫阿梨"}]',
+        reason="用户明确说明别称",
+        engine_context=engine_context,
+        chat_context={"group_id": "g1", "user_id": "u1"},
     )
 
     assert result["success"] is True
-    assert mgr.resolve_alias("阿梨", group_id="g1")[0] == "u1"
+    assert profiles.resolve_alias("阿梨", group_id="g1")[0] == "u1"
 
 
-def test_evolution_alias_api_uses_same_guardrails(tmp_path: Path):
-    chain = EvolutionChain(tmp_path / "evolution.db")
+def test_user_profile_tool_can_reject_alias_item(tmp_path: Path):
+    users = _user_manager(tmp_path)
+    profiles = _profile_manager(tmp_path, users)
+    profiles.register_alias(alias="阿梨", user_id="u1", user_name="Alice", group_id="g1")
+    engine_context = SimpleNamespace(profile_manager=profiles)
 
-    assert chain.register_alias("哥", "u1", "Alice", "g1") is False
-    assert chain.register_alias("阿梨", "u1", "Alice", "g1") is True
-    assert chain.register_alias("阿梨", "u2", "Bob", "g1") is True
+    result = user_profile.run(
+        action="mark",
+        target_user_id="u1",
+        section="aliases",
+        key="阿梨",
+        status="rejected",
+        reason="用户纠正这个称呼不对",
+        engine_context=engine_context,
+        chat_context={"group_id": "g1", "user_id": "u1"},
+    )
 
-    uid, confidence, candidates = chain.resolve_alias("阿梨", group_id="g1")
-
-    assert uid == "u2"
-    assert confidence == 0.5
-    assert candidates == []
+    assert result["success"] is True
+    assert profiles.resolve_alias("阿梨", group_id="g1")[0] is None

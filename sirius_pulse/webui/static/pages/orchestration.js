@@ -17,8 +17,6 @@ const TASK_GROUPS = [
     tasks: [
       { key: 'diary_generate', label: '日记生成' },
       { key: 'diary_consolidate', label: '日记合并' },
-      { key: 'biography_distill', label: '传记蒸馏' },
-      { key: 'biography_update', label: '传记更新' },
     ],
   },
   {
@@ -58,8 +56,6 @@ const PARAM_GROUPS = [
       { key: 'diary_generate', label: '日记生成' },
       { key: 'diary_consolidate', label: '日记整合' },
       { key: 'topic_cluster', label: '主题聚类' },
-      { key: 'biography_distill', label: '传记提炼' },
-      { key: 'biography_update', label: '传记更新' },
     ],
   },
   {

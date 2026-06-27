@@ -41,20 +41,13 @@ async function loadDashboard() {
 }
 
 function renderStats(data) {
-  const evo = data.evolution_stats || {};
   const diary = data.diary_stats || {};
-
-  animateNumber($('statEvolution'), evo.active_records || 0);
-  const evoSub = $('statEvolutionSub');
-  if (evoSub) evoSub.textContent = `${evo.active_records || 0} 活跃 / ${evo.total_records || 0} 总计`;
 
   animateNumber($('statDiary'), diary.total_entries || 0);
   animateNumber($('statUsers'), data.user_count || 0);
 
   const statCards = document.querySelectorAll('.bio-stat-card');
-  if (statCards[0]) makeClickableStat(statCards[0], 'evolution-chain');
   if (statCards[1]) makeClickableStat(statCards[1], 'diary');
-  if (statCards[2]) makeClickableStat(statCards[2], 'biography-view');
 }
 
 function renderConfidenceChart(dist) {
@@ -164,15 +157,14 @@ function renderTopics(topics) {
 }
 
 function renderLayers(data) {
-  const evo = data.evolution_stats || {};
   const diary = data.diary_stats || {};
 
   const layers = [
-    { name: 'Layer 0', label: '感知层', status: evo.total_records > 0 ? 'ok' : 'idle' },
+    { name: 'Layer 0', label: '人物画像', status: (data.user_count || 0) > 0 ? 'ok' : 'idle' },
     { name: 'Layer 1', label: '回复层', status: diary.total_entries > 0 ? 'ok' : 'idle' },
     { name: 'Layer 2', label: '旧日记索引', status: diary.total_entries > 0 ? 'ok' : 'idle' },
     { name: 'Layer 3', label: '冷寂日记', status: diary.total_entries > 0 ? 'ok' : 'idle' },
-    { name: 'Layer 4', label: '后台精炼', status: evo.superseded_records > 0 ? 'ok' : 'idle' },
+    { name: 'Layer 4', label: '模型工具维护', status: 'idle' },
   ];
 
   const bioLayers = $('bioLayers');

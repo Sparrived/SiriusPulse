@@ -24,8 +24,6 @@ const PAGE_META = {
   'glossary': { title: '名词解释', breadcrumb: 'Memory / Glossary', icon: '◱' },
   'memory-viz': { title: '记忆可视化', breadcrumb: 'Memory / Visualization', icon: '◲' },
   'memory-dashboard': { title: '记忆神经中枢', breadcrumb: 'Memory / Neural Hub', icon: '🧬' },
-  'evolution-chain': { title: '演化链', breadcrumb: 'Memory / Evolution Chain', icon: '🧫' },
-  'biography-view': { title: '基因图谱', breadcrumb: 'Memory / Genome', icon: '🧮' },
   'plugins': { title: '插件', breadcrumb: 'Extensions / Plugins', icon: '⬡' },
 };
 
@@ -51,8 +49,6 @@ const NAV_GROUPS = [
   ]},
   { id: 'memory', label: '记忆', items: [
     { page: 'memory-dashboard', icon: '🧬', label: '神经中枢' },
-    { page: 'evolution-chain', icon: '🧫', label: '演化链' },
-    { page: 'biography-view', icon: '🧮', label: '基因图谱' },
     { page: 'diary', icon: '◫', label: '日记' },
     { page: 'glossary', icon: '◱', label: '名词解释' },
     { page: 'memory-viz', icon: '◲', label: '记忆可视化' },
@@ -68,8 +64,7 @@ const PERSONA_PAGES = new Set([
   'token-tracker', 'cognition', 'skills-tracker', 'conversation-history',
   'logs',
   'diary', 'glossary', 'memory-viz', 'create-persona',
-  'memory-dashboard', 'evolution-chain',
-  'biography-view',
+  'memory-dashboard',
 ]);
 
 let currentPage = '';

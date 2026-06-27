@@ -5,7 +5,7 @@
 assistant 回复单独作为一条消息。
 
 新架构增强：
-- 注入 BiographyView 传记（演化链派生）
+- 注入 UserPersonaProfile 画像（模型工具维护）
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
-from sirius_pulse.memory.biography.view import BiographyView
 from sirius_pulse.memory.diary.indexer import DiaryRetriever
 
 logger = logging.getLogger(__name__)
@@ -29,19 +28,19 @@ class ContextAssembler:
     Combines:
     - Basic memory (immediate context, XML format)
     - Diary entries (historical RAG)
-    - BiographyView (user profiles from evolution chain)
+    - UserPersonaProfile cards (model-maintained people profiles)
     """
 
     def __init__(
         self,
         basic_mgr: BasicMemoryManager,
         diary_retriever: DiaryRetriever,
-        biography_view: BiographyView | None = None,
+        profile_manager: Any | None = None,
         is_source_diarized: Callable[[str, str], bool] | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._diary = diary_retriever
-        self._bio_view = biography_view
+        self._profile_manager = profile_manager
         self._is_source_diarized = is_source_diarized
 
     # ------------------------------------------------------------------
@@ -426,30 +425,26 @@ class ContextAssembler:
         speaker_user_id: str = "",
         mentioned_user_ids: list[str] | None = None,
     ) -> str:
-        """用传记信息丰富日记检索 query。"""
-        if not self._bio_view:
+        """用人物画像信息丰富日记检索 query。"""
+        if not self._profile_manager:
             return base_query
 
         bio_parts: list[str] = []
 
-        # 发言者传记
         if speaker_user_id:
-            bio = self._bio_view.get_biography(speaker_user_id)
-            if bio:
-                if bio.name:
-                    bio_parts.append(bio.name)
-                if bio.identity_anchors:
-                    bio_parts.extend(bio.identity_anchors[:3])
-                if bio.short_bio:
-                    bio_parts.append(bio.short_bio[:100])
+            profile = self._profile_manager.get_profile("default", speaker_user_id, create=False)
+            if profile:
+                if profile.display_name:
+                    bio_parts.append(profile.display_name)
+                if profile.short_impression:
+                    bio_parts.append(profile.short_impression[:100])
 
-        # 被提及者传记
         for uid in mentioned_user_ids or []:
             if uid == speaker_user_id:
                 continue
-            bio = self._bio_view.get_biography(uid)
-            if bio and bio.name:
-                bio_parts.append(bio.name)
+            profile = self._profile_manager.get_profile("default", uid, create=False)
+            if profile and profile.display_name:
+                bio_parts.append(profile.display_name)
 
         if not bio_parts:
             return base_query

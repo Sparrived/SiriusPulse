@@ -27,7 +27,7 @@ from sirius_pulse.core.plan_runtime import (
 )
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names, defer_send_sticker_tool
-from sirius_pulse.models.response_strategy import BiographyPromptContext
+from sirius_pulse.models.response_strategy import PersonaProfilePromptContext
 from sirius_pulse.providers.base import ToolCall
 
 if TYPE_CHECKING:
@@ -41,29 +41,6 @@ _AUTONOMOUS_MESSAGE_SKILLS = {
 }
 
 # ── 内置流程控制工具定义 ──────────────────────────────────────────────
-
-CONTINUE_TOOL_DEF: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "continue",
-        "description": (
-            "发送当前回复并继续生成下一条。"
-            "调用后，已输出的文字会发送给用户，然后你可以继续生成新的内容。"
-            "如果你想在同一轮中发送多条消息，就在每条消息后调用 continue。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "description": "固定为 continue",
-                    "enum": ["continue"],
-                }
-            },
-            "required": ["action"],
-        },
-    },
-}
 
 STOP_TOOL_DEF: dict[str, Any] = {
     "type": "function",
@@ -220,7 +197,7 @@ GET_PLAN_STATUS_TOOL_DEF: dict[str, Any] = {
     },
 }
 
-FLOW_CONTROL_TOOL_NAMES = {"continue", "stop"}
+FLOW_CONTROL_TOOL_NAMES = {"stop"}
 PLAN_CONTROL_TOOL_NAMES = {
     "enter_plan",
     "exit_plan",
@@ -426,7 +403,10 @@ class DelayedQueueTasks:
                 platform=item.channel,
             )
             resolution = engine.identity_resolver.resolve_with_alias(
-                ctx, engine.user_manager, group_id
+                ctx,
+                engine.user_manager,
+                group_id,
+                profile_manager=getattr(engine, "profile_manager", None),
             )
             if resolution.user_id:
                 resolved_uid = resolution.user_id
@@ -435,7 +415,10 @@ class DelayedQueueTasks:
             # Fallback: search by user_id (nickname) across all groups
             ctx = IdentityContext(speaker_name=item.user_id or "")
             resolution = engine.identity_resolver.resolve_with_alias(
-                ctx, engine.user_manager, group_id
+                ctx,
+                engine.user_manager,
+                group_id,
+                profile_manager=getattr(engine, "profile_manager", None),
             )
             if resolution.user_id:
                 resolved_uid = resolution.user_id
@@ -556,21 +539,12 @@ class DelayedQueueTasks:
         pending_chat_result: Any = None
         sticker_text_retry_used = False
         ended_because_max_rounds = False
-        _continue_count = 0
         plan_mode_enabled = bool(engine.config.get("plan_mode_enabled", False))
         limit_normal_tools = bool(engine.config.get("plan_mode_limit_normal_tools", False))
         plan_mode = getattr(item, "lane", "chat") == "plan"
         plan_session: Any | None = None
         plan_final_reply: str | None = None
         plan_send_to_group = True
-
-        # 追踪已注入的消息内容，用于 continue 时注入新消息
-        _seen_contents: set[str] = set()
-        recent_at_start = engine._helpers.get_recent_messages(group_id, n=5)
-        for m in recent_at_start:
-            content = m.get("content", "")
-            if content:
-                _seen_contents.add(content)
 
         while True:
             if plan_mode and plan_session is None:
@@ -591,7 +565,7 @@ class DelayedQueueTasks:
                     )
 
             # 内置流程控制工具
-            _extra_tools = [CONTINUE_TOOL_DEF, STOP_TOOL_DEF]
+            _extra_tools = [STOP_TOOL_DEF]
             if plan_mode_enabled:
                 if plan_mode:
                     _extra_tools = [
@@ -655,18 +629,15 @@ class DelayedQueueTasks:
                         finish_plan_session(engine, group_id)
                 break
 
-            should_continue = False
             should_stop = False
             for tc in flow_control:
                 try:
                     fc_params = json.loads(tc.function_arguments) if tc.function_arguments else {}
                 except json.JSONDecodeError:
                     fc_params = {}
-                action = fc_params.get("action", "continue")
+                action = fc_params.get("action", "stop")
                 if action == "stop":
                     should_stop = True
-                else:
-                    should_continue = True
 
             enter_plan_tc = next(
                 (tc for tc in plan_control if tc.function_name == "enter_plan"), None
@@ -890,7 +861,7 @@ class DelayedQueueTasks:
                 await on_partial_reply(non_skill_text)
                 last_partial_sent_at = time.monotonic()
 
-            # 2. 执行普通工具（continue/stop 以外的技能）
+            # 2. 执行普通工具（stop 以外的技能）
             skill_multimodal: list[dict[str, Any]] = []
             if regular_tools and engine._skill_registry is not None and engine._skill_executor is not None:
                 from sirius_pulse.memory.user.unified_models import UnifiedUser
@@ -1033,78 +1004,10 @@ class DelayedQueueTasks:
                     if idx < len(regular_tools) - 1:
                         await asyncio.sleep(2)
 
-            # 3. 处理 flow control：continue / stop
-            continue_tc = next(
-                (tc for tc in flow_control if tc.function_name == "continue"), None
-            )
+            # 3. 处理 flow control：stop
             stop_tc = next(
                 (tc for tc in flow_control if tc.function_name == "stop"), None
             )
-
-            # 注入 continue 的 assistant + tool 消息
-            if continue_tc:
-                _continue_count += 1
-                continue_content = None if regular_tools else (non_skill_text or None)
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": continue_content,
-                        "tool_calls": [
-                            {
-                                "id": continue_tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": "continue",
-                                    "arguments": '{"action":"continue"}',
-                                },
-                            }
-                        ],
-                    }
-                )
-                # 注入期间收到的新消息
-                new_msgs = engine._helpers.get_recent_messages(group_id, n=5)
-                injected_parts: list[str] = []
-                for m in new_msgs:
-                    content = m.get("content", "")
-                    if not content or content in _seen_contents:
-                        continue
-                    _seen_contents.add(content)
-                    tagged = PromptFactory.tag_message(
-                        content,
-                        speaker=m.get("speaker", ""),
-                        user_id=m.get("user_id", ""),
-                        platform_message_id=m.get("platform_message_id", ""),
-                    )
-                    injected_parts.append(tagged)
-
-                # 超过 2 次 continue 时提醒模型收敛
-                _overflow_hint = ""
-                if _continue_count > 2:
-                    _overflow_hint = (
-                        f"\n\n⚠️ 你已经连续调用了 {_continue_count} 次 continue，"
-                        "说的内容有点多了。请精简后续回复，并考虑调用 stop 结束本轮。"
-                    )
-
-                if injected_parts:
-                    injection_text = "\n".join(injected_parts)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": continue_tc.id,
-                            "content": f"继续。期间收到的新消息已注入：\n{injection_text}{_overflow_hint}",
-                        }
-                    )
-                    engine._log_inner_thought(
-                        f"continue 时注入 {len(injected_parts)} 条新消息"
-                    )
-                else:
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": continue_tc.id,
-                            "content": f"继续。期间无新消息。{_overflow_hint}",
-                        }
-                    )
 
             # 注入 stop 的 assistant 消息并退出
             if stop_tc:
@@ -1283,7 +1186,7 @@ class DelayedQueueTasks:
         )
 
         # 仅使用队列项自带的人物传记快照，避免回读引擎共享状态
-        bio_ctx = self._merge_biography_contexts(items)
+        bio_ctx = self._merge_persona_profile_contexts(items)
 
         bundle = PromptFactory.assemble_chat(
             message_content=message_content,
@@ -1295,9 +1198,9 @@ class DelayedQueueTasks:
             style_params=style_params,
             other_ai_names=engine._other_ai_names,
             user_profiles=delayed_user_profiles,
-            biography_speaker=bio_ctx.speaker_card,
-            biography_mentioned=list(bio_ctx.mentioned_cards),
-            biography_confidence=dict(bio_ctx.confidence),
+            persona_profile_speaker=bio_ctx.speaker_card,
+            persona_profile_mentioned=list(bio_ctx.mentioned_cards),
+            persona_profile_confidence=dict(bio_ctx.confidence),
             skill_registry=engine._skill_registry if expose_skills else None,
             plugin_registry=getattr(engine, "_plugin_registry", None),
             caller_is_developer=caller_is_developer,
@@ -1333,14 +1236,14 @@ class DelayedQueueTasks:
         return bundle
 
     @staticmethod
-    def _merge_biography_contexts(items: list[Any]) -> BiographyPromptContext:
+    def _merge_persona_profile_contexts(items: list[Any]) -> PersonaProfilePromptContext:
         """合并队列项中携带的人物传记快照。"""
         speaker_card: Any | None = None
         mentioned_cards: list[Any] = []
         confidence: dict[str, float] = {}
 
         for item in items:
-            ctx: BiographyPromptContext | None = getattr(item, "biography_context", None)
+            ctx: PersonaProfilePromptContext | None = getattr(item, "persona_profile_context", None)
             if ctx is None:
                 continue
             if ctx.speaker_card is not None:
@@ -1351,7 +1254,7 @@ class DelayedQueueTasks:
             for alias, score in (ctx.confidence or {}).items():
                 confidence[alias] = max(confidence.get(alias, 0.0), float(score))
 
-        return BiographyPromptContext(
+        return PersonaProfilePromptContext(
             speaker_card=speaker_card,
             mentioned_cards=mentioned_cards,
             confidence=confidence,

@@ -447,21 +447,6 @@ class SkillEngineContext(Protocol):
         """将私聊群组标记为活跃（以便延迟队列轮询）。"""
         ...
 
-    def manage_person_alias(
-        self,
-        *,
-        action: str,
-        alias: str = "",
-        target_user_id: str = "",
-        target_name: str = "",
-        group_id: str = "",
-        confidence: float = 0.0,
-        evidence: str = "",
-    ) -> dict[str, Any]:
-        """管理已确认的人物别称映射。"""
-        ...
-
-
 @dataclass(slots=True)
 class SkillInvocationContext:
     """Per-call context injected into skills for authorization and auditing."""

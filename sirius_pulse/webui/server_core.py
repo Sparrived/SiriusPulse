@@ -20,6 +20,7 @@ from sirius_pulse.providers.routing import (
     ensure_provider_platform_supported,
     probe_provider_availability,
 )
+from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY, DATA_DIR_KEY, WS_MANAGER_KEY
 from sirius_pulse.webui.auth import AuthManager
 from sirius_pulse.webui.middleware import auth_middleware
 from sirius_pulse.webui.model_catalog import build_model_catalog
@@ -61,9 +62,9 @@ class WebUIServer:
         self.ws_manager = WebSocketManager()
         self.auth_manager = AuthManager(self.data_dir)
         self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
-        self.app["data_dir"] = self.data_dir
-        self.app["auth_manager"] = self.auth_manager
-        self.app["ws_manager"] = self.ws_manager
+        self.app[DATA_DIR_KEY] = self.data_dir
+        self.app[AUTH_MANAGER_KEY] = self.auth_manager
+        self.app[WS_MANAGER_KEY] = self.ws_manager
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
         self._embedding_process: multiprocessing.Process | None = None

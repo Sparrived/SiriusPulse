@@ -427,7 +427,7 @@ class EnginePersistence:
             engine.context_assembler = ContextAssembler(
                 engine.basic_memory,
                 engine.diary_manager._retriever,
-                biography_view=getattr(engine, "biography_view", None),
+                profile_manager=getattr(engine, "profile_manager", None),
                 is_source_diarized=engine.diary_manager.is_source_diarized,
             )
 
@@ -458,4 +458,3 @@ class EnginePersistence:
             engine._sticker._init_sticker_system()
         except Exception as exc:
             logger.warning("状态恢复部分出错: %s", exc)
-

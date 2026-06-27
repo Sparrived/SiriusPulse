@@ -324,16 +324,15 @@ async def api_data_users_post(
                 continue
             conn.execute(
                 """INSERT OR REPLACE INTO users
-                   (user_id, name, persona, identities, aliases, traits,
+                   (user_id, name, persona, identities, traits,
                     group_memberships, metadata, identity_anchors, relationships,
                     created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     user_id,
                     user.get("name", ""),
                     user.get("persona", ""),
                     user.get("identities", "{}"),
-                    user.get("aliases", "[]"),
                     user.get("traits", "[]"),
                     user.get("group_memberships", "{}"),
                     user.get("metadata", "{}"),

@@ -16,7 +16,7 @@ class FakeResolver:
         self.fail = fail
         self.calls: list[tuple[object, str]] = []
 
-    def resolve_with_alias(self, ctx, user_manager, group_id: str):
+    def resolve_with_alias(self, ctx, user_manager, group_id: str, **kwargs):
         self.calls.append((ctx, group_id))
         if self.fail:
             raise RuntimeError("resolver failed")
@@ -29,14 +29,12 @@ class FakeUserManager:
             ("default", "u1"): SimpleNamespace(
                 user_id="u1",
                 name="Alice",
-                aliases=["A"],
                 identities={"qq": "1001"},
                 is_developer=True,
             ),
             ("group-2", "u2"): SimpleNamespace(
                 user_id="u2",
                 name="Bob",
-                aliases=[],
                 identities={},
                 is_developer=False,
             ),
@@ -111,7 +109,7 @@ def test_user_lookup_when_manager_lists_and_reads_users_then_shapes_public_dicts
     assert service.get_info("u1") == {
         "user_id": "u1",
         "name": "Alice",
-        "aliases": ["A"],
+        "aliases": [],
         "identities": {"qq": "1001"},
         "is_developer": True,
     }

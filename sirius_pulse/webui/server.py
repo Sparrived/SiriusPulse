@@ -24,21 +24,6 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.webui.biography_api import (
-    api_persona_biography_alias_index,
-    api_persona_biography_alias_index_update,
-    api_persona_biography_get,
-    api_persona_biography_list,
-)
-from sirius_pulse.webui.evolution_api import (
-    api_biography_list_all,
-    api_biography_view,
-    api_evolution_history,
-    api_evolution_records,
-    api_evolution_uncertain,
-    api_knowledge_gaps,
-    api_memory_dashboard,
-)
 from sirius_pulse.webui.memory_api import (
     api_persona_cognition_analysis_get,
     api_persona_cognition_get,
@@ -154,13 +139,6 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_glossary_get": api_persona_glossary_get,
     "api_persona_memory_viz": api_persona_memory_viz,
     "api_persona_conversation_history_get": api_persona_conversation_history_get,
-    "api_memory_dashboard": api_memory_dashboard,
-    "api_evolution_records": api_evolution_records,
-    "api_evolution_history": api_evolution_history,
-    "api_evolution_uncertain": api_evolution_uncertain,
-    "api_biography_list_all": api_biography_list_all,
-    "api_biography_view": api_biography_view,
-    "api_knowledge_gaps": api_knowledge_gaps,
     "api_config_post": api_config_post,
     "api_plugins_get": api_plugins_get,
     "api_plugin_detail_get": api_plugin_detail_get,
@@ -178,10 +156,6 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_skill_config_get": api_persona_skill_config_get,
     "api_persona_skill_config_post": api_persona_skill_config_post,
     "api_persona_skill_history_get": api_persona_skill_history_get,
-    "api_persona_biography_list": api_persona_biography_list,
-    "api_persona_biography_get": api_persona_biography_get,
-    "api_persona_biography_alias_index": api_persona_biography_alias_index,
-    "api_persona_biography_alias_index_update": api_persona_biography_alias_index_update,
     "api_monitoring_overview": _api_monitoring_overview,
     "api_monitoring_persona_metrics": _api_monitoring_persona_metrics,
     "api_monitoring_health": _api_monitoring_health,
@@ -207,8 +181,6 @@ _PERSONA_SCOPED_PREFIXES = (
     "api_monitoring_",
     "api_data_",
     "api_memory_",
-    "api_evolution_",
-    "api_biography_",
     "api_config_",
     "api_engine_",
     "api_orchestration_",

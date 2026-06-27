@@ -306,6 +306,9 @@ class PromptFactory:
             items.append(
                 "你有可用工具（tools）时，可以通过 Function Call 主动解决问题；工具调用不要写成正文标记。"
             )
+            items.append(
+                "人物画像工具只在需要长期记住或修正用户信息时调用：明确身份、偏好、称呼/别称、沟通方式、边界、稳定关系，或用户要求记住/忘记。不要记录临时任务、玩笑、角色扮演、一次性情绪或你的猜测。"
+            )
             if tool_flow_mode == "plan":
                 items.append(
                     "当前是隐藏计划模式：中间文本不会发送到群里。"
@@ -316,8 +319,8 @@ class PromptFactory:
                 )
             else:
                 items.append(
-                    "每次回复结束时必须调用工具：用 continue 表示当前文字已发送并继续生成下一条消息，用 stop 表示本轮回复结束。"
-                    "不要仅输出文字而不调用 continue 或 stop。"
+                    "每次回复结束时必须调用 stop 工具表示本轮回复结束。"
+                    "不要仅输出文字而不调用 stop。"
                     "如果本轮只需发送一条消息，直接调用 stop。"
                 )
         if supports_qq_mentions:
@@ -422,7 +425,7 @@ class PromptFactory:
         return f"{TAG_RELATIONSHIP_STATUS}\n" + "\n".join(parts)
 
     @staticmethod
-    def build_biography_section(
+    def build_persona_profile_section(
         *,
         speaker_card: Any | None = None,
         mentioned_cards: list[Any] | None = None,
@@ -438,7 +441,7 @@ class PromptFactory:
 
         def _write_card(card: Any, conf: float = 1.0) -> None:
             uid = getattr(card, "user_id", "")
-            name = getattr(card, "name", uid)
+            name = getattr(card, "display_name", "") or getattr(card, "name", uid) or uid
             if uid and uid in written:
                 return
             if uid:
@@ -447,17 +450,30 @@ class PromptFactory:
             if conf <= 0.0:
                 low_confidence_names.append(name)
 
-            aliases = getattr(card, "aliases", [])
-            alias_hint = ""
-            if aliases:
-                alias_hint = f"（别称：{'、'.join(aliases[:4])}）"
+            aliases: list[str] = []
+            if hasattr(card, "section"):
+                try:
+                    aliases = [item.value for item in card.section("aliases").active_items()]
+                except Exception:
+                    aliases = []
+            else:
+                aliases = list(getattr(card, "aliases", []) or [])
+
+            alias_hint = f"（别称：{'、'.join(aliases[:4])}）" if aliases else ""
             uid_hint = f"（{uid}）" if uid else ""
             lines.append(f"关于{name}{uid_hint}{alias_hint}：")
 
-            # 写入浓缩传记全文（short_bio 是人物介绍的核心内容）
-            short_bio = getattr(card, "short_bio", "")
-            if short_bio:
-                lines.append(f"  {short_bio}")
+            impression = getattr(card, "short_impression", "") or getattr(card, "short_bio", "")
+            if impression:
+                lines.append(f"  {impression}")
+
+            if hasattr(card, "section"):
+                for section_name in ("identity", "interests", "preferences", "communication_style", "relationship", "boundaries"):
+                    section = card.section(section_name)
+                    values = [item.value for item in section.active_items()[:3]]
+                    if values:
+                        lines.append(f"  {'；'.join(values)}")
+                return
 
             relationships = getattr(card, "relationships", [])
             for rel in relationships[:3]:
@@ -697,9 +713,9 @@ class PromptFactory:
         style_params: Any,
         other_ai_names: list[str],
         user_profiles: list[Any] | None = None,
-        biography_speaker: Any | None = None,
-        biography_mentioned: list[Any] | None = None,
-        biography_confidence: dict[str, float] | None = None,
+        persona_profile_speaker: Any | None = None,
+        persona_profile_mentioned: list[Any] | None = None,
+        persona_profile_confidence: dict[str, float] | None = None,
         skill_registry: Any | None = None,
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
@@ -764,10 +780,10 @@ class PromptFactory:
         _add(output_spec_text, "output_constraint")
 
         # ── L2 变动：每条消息级变化，放 dynamic_context（注入 user 消息）──
-        bio = PromptFactory.build_biography_section(
-            speaker_card=biography_speaker,
-            mentioned_cards=biography_mentioned,
-            confidence=biography_confidence,
+        bio = PromptFactory.build_persona_profile_section(
+            speaker_card=persona_profile_speaker,
+            mentioned_cards=persona_profile_mentioned,
+            confidence=persona_profile_confidence,
         )
         if bio:
             _add(bio, "identity", target="dynamic")

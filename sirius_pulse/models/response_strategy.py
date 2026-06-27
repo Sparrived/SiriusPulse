@@ -36,8 +36,8 @@ class StrategyDecision:
 
 
 @dataclass(slots=True)
-class BiographyPromptContext:
-    """人物传记上下文快照，随延迟回复队列项流转。"""
+class PersonaProfilePromptContext:
+    """人物画像上下文快照，随延迟回复队列项流转。"""
 
     speaker_card: Any | None = None
     mentioned_cards: list[Any] = field(default_factory=list)
@@ -67,7 +67,7 @@ class DelayedResponseItem:
     related_user_ids: list[str] = field(
         default_factory=list
     )  # merged messages may involve multiple users
-    biography_context: BiographyPromptContext = field(default_factory=BiographyPromptContext)
+    persona_profile_context: PersonaProfilePromptContext = field(default_factory=PersonaProfilePromptContext)
     lane: str = "chat"  # chat | plan
     plan_id: str = ""
     signal_prompt: str = ""  # 规则计算信号摘要，注入主模型 prompt
@@ -89,10 +89,10 @@ class DelayedResponseItem:
             "heat_level": self.heat_level,
             "pace": self.pace,
             "related_user_ids": list(self.related_user_ids),
-            "biography_context": {
-                "speaker_card": self.biography_context.speaker_card,
-                "mentioned_cards": self.biography_context.mentioned_cards,
-                "confidence": self.biography_context.confidence,
+            "persona_profile_context": {
+                "speaker_card": self.persona_profile_context.speaker_card,
+                "mentioned_cards": self.persona_profile_context.mentioned_cards,
+                "confidence": self.persona_profile_context.confidence,
             },
             "lane": self.lane,
             "plan_id": self.plan_id,

@@ -10,7 +10,6 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from sirius_pulse.memory.alias_policy import validate_person_alias
 from sirius_pulse.utils.sqlite_base import BaseSqliteStore
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,6 @@ class MemoryStorage(BaseSqliteStore):
                 name TEXT NOT NULL DEFAULT '',
                 persona TEXT DEFAULT '',
                 identities TEXT DEFAULT '{}',
-                aliases TEXT DEFAULT '[]',
                 traits TEXT DEFAULT '[]',
                 group_memberships TEXT DEFAULT '{}',
                 metadata TEXT DEFAULT '{}',
@@ -72,27 +70,6 @@ class MemoryStorage(BaseSqliteStore):
             CREATE INDEX IF NOT EXISTS idx_group_members_user
                 ON group_members(user_id);
 
-            CREATE TABLE IF NOT EXISTS aliases (
-                alias TEXT NOT NULL,
-                user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-                user_name TEXT NOT NULL DEFAULT '',
-                weight REAL DEFAULT 1.0,
-                groups TEXT DEFAULT '[]',
-                mentioned_count INTEGER DEFAULT 1,
-                confidence REAL DEFAULT 0.5,
-                first_seen_at TEXT DEFAULT '',
-                last_seen_at TEXT DEFAULT '',
-                source TEXT DEFAULT 'napcat',
-                status TEXT DEFAULT 'active',
-                created_at TEXT DEFAULT '',
-                PRIMARY KEY (alias, user_id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_aliases_user
-                ON aliases(user_id);
-
-            CREATE INDEX IF NOT EXISTS idx_aliases_alias
-                ON aliases(alias);
 
             CREATE TABLE IF NOT EXISTS semantic_profiles (
                 group_id TEXT NOT NULL,
@@ -153,12 +130,6 @@ class MemoryStorage(BaseSqliteStore):
             );
         """
         )
-        self._ensure_columns(
-            "aliases",
-            {
-                "status": "TEXT DEFAULT 'active'",
-            },
-        )
 
     # ── 用户 CRUD ─────────────────────────────────────────
 
@@ -175,15 +146,14 @@ class MemoryStorage(BaseSqliteStore):
         self.execute(
             """
             INSERT INTO users (
-                user_id, name, persona, identities, aliases, traits,
+                user_id, name, persona, identities, traits,
                 group_memberships, metadata, identity_anchors, relationships,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 name=excluded.name,
                 persona=excluded.persona,
                 identities=excluded.identities,
-                aliases=excluded.aliases,
                 traits=excluded.traits,
                 group_memberships=excluded.group_memberships,
                 metadata=excluded.metadata,
@@ -196,7 +166,6 @@ class MemoryStorage(BaseSqliteStore):
                 user.get("name", ""),
                 user.get("persona", ""),
                 json.dumps(user.get("identities", {}), ensure_ascii=False),
-                json.dumps(user.get("aliases", []), ensure_ascii=False),
                 json.dumps(user.get("traits", []), ensure_ascii=False),
                 json.dumps(user.get("group_memberships", {}), ensure_ascii=False),
                 json.dumps(user.get("metadata", {}), ensure_ascii=False),
@@ -225,7 +194,6 @@ class MemoryStorage(BaseSqliteStore):
             "name": row["name"],
             "persona": row["persona"],
             "identities": json.loads(row["identities"]),
-            "aliases": json.loads(row["aliases"]),
             "traits": json.loads(row["traits"]),
             "group_memberships": json.loads(row["group_memberships"]),
             "metadata": json.loads(row["metadata"]),
@@ -303,159 +271,6 @@ class MemoryStorage(BaseSqliteStore):
         )
         self.commit()
 
-    # ── 别名 CRUD ─────────────────────────────────────────
-
-    def get_alias_entries(self, alias: str, status: str = "active") -> list[dict[str, Any]]:
-        """获取别名的所有条目。"""
-        if status:
-            rows = self.execute(
-                "SELECT * FROM aliases WHERE alias = ? AND status = ?",
-                (alias, status),
-            ).fetchall()
-        else:
-            rows = self.execute("SELECT * FROM aliases WHERE alias = ?", (alias,)).fetchall()
-        return [self._row_to_alias(row) for row in rows]
-
-    def save_alias_entry(self, entry: dict[str, Any]) -> None:
-        """保存别名条目。"""
-        ok, alias, reason = validate_person_alias(str(entry.get("alias", "")))
-        user_id = str(entry.get("user_id", "")).strip()
-        if not ok:
-            logger.info("拒绝保存别名: %s (%s)", entry.get("alias", ""), reason)
-            return
-        if not user_id:
-            return
-        self.execute(
-            "DELETE FROM aliases WHERE alias = ? AND user_id != ?",
-            (alias, user_id),
-        )
-        self.execute(
-            """
-            INSERT INTO aliases (
-                alias, user_id, user_name, weight, groups, mentioned_count,
-                confidence, first_seen_at, last_seen_at, source, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(alias, user_id) DO UPDATE SET
-                user_name=excluded.user_name,
-                weight=excluded.weight,
-                groups=excluded.groups,
-                mentioned_count=excluded.mentioned_count,
-                confidence=excluded.confidence,
-                last_seen_at=excluded.last_seen_at,
-                source=excluded.source,
-                status=excluded.status
-            """,
-            (
-                alias,
-                user_id,
-                entry.get("user_name", ""),
-                float(entry.get("weight", 1.0)),
-                json.dumps(entry.get("groups", []), ensure_ascii=False),
-                int(entry.get("mentioned_count", 1)),
-                float(entry.get("confidence", 0.5)),
-                entry.get("first_seen_at", ""),
-                entry.get("last_seen_at", ""),
-                entry.get("source", "napcat"),
-                entry.get("status", "active"),
-                entry.get("created_at", _now_iso()),
-            ),
-        )
-        self.commit()
-
-    def delete_alias(self, alias: str) -> int:
-        """删除一个别名下的所有映射。"""
-        cursor = self.execute("DELETE FROM aliases WHERE alias = ?", (alias,))
-        self.commit()
-        return cursor.rowcount
-
-    def delete_alias_entry(self, alias: str, user_id: str) -> None:
-        """删除别名条目。"""
-        self.execute(
-            "DELETE FROM aliases WHERE alias = ? AND user_id = ?",
-            (alias, user_id),
-        )
-        self.commit()
-
-    def shadow_alias_entry(self, alias: str, user_id: str) -> bool:
-        """将别名条目标记为 shadow 状态。
-
-        Shadow 状态的别名不参与召回，但保留可追溯性。
-
-        Returns:
-            是否找到并标记了条目
-        """
-        cursor = self.execute(
-            "UPDATE aliases SET status = 'shadow' WHERE alias = ? AND user_id = ? AND status = 'active'",
-            (alias, user_id),
-        )
-        self.commit()
-        return cursor.rowcount > 0
-
-    def get_aliases_by_user(self, user_id: str, status: str = "active") -> list[dict[str, Any]]:
-        """获取用户的所有别名。"""
-        if status:
-            rows = self.execute(
-                "SELECT * FROM aliases WHERE user_id = ? AND status = ?",
-                (user_id, status),
-            ).fetchall()
-        else:
-            rows = self.execute(
-                "SELECT * FROM aliases WHERE user_id = ?",
-                (user_id,),
-            ).fetchall()
-        return [self._row_to_alias(row) for row in rows]
-
-    def get_aliases_for_group(self, group_id: str) -> dict[str, str]:
-        """获取群组相关的别名速查表。"""
-        rows = self.execute(
-            """
-            SELECT DISTINCT alias, user_name FROM aliases
-            WHERE groups LIKE ? AND status = 'active'
-            """,
-            (f'%"{group_id}"%',),
-        ).fetchall()
-        return {r["alias"]: r["user_name"] for r in rows}
-
-    def get_alias_to_user_id_for_group(self, group_id: str) -> dict[str, str]:
-        """获取群组相关的别名到 user_id 的映射。"""
-        rows = self.execute(
-            """
-            SELECT DISTINCT alias, user_id FROM aliases
-            WHERE groups LIKE ? AND status = 'active'
-            """,
-            (f'%"{group_id}"%',),
-        ).fetchall()
-        return {r["alias"]: r["user_id"] for r in rows}
-
-    def get_all_aliases(self, status: str = "active") -> dict[str, list[dict[str, Any]]]:
-        """获取所有别名索引。"""
-        if status:
-            rows = self.execute("SELECT * FROM aliases WHERE status = ?", (status,)).fetchall()
-        else:
-            rows = self.execute("SELECT * FROM aliases").fetchall()
-        result: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            alias = row["alias"]
-            if alias not in result:
-                result[alias] = []
-            result[alias].append(self._row_to_alias(row))
-        return result
-
-    def _row_to_alias(self, row: sqlite3.Row) -> dict[str, Any]:
-        """将数据库行转换为别名字典。"""
-        return {
-            "alias": row["alias"],
-            "user_id": row["user_id"],
-            "user_name": row["user_name"],
-            "weight": row["weight"],
-            "groups": json.loads(row["groups"]),
-            "mentioned_count": row["mentioned_count"],
-            "confidence": row["confidence"],
-            "first_seen_at": row["first_seen_at"],
-            "last_seen_at": row["last_seen_at"],
-            "source": row["source"],
-            "status": row["status"],
-        }
 
     # ── 语义画像 CRUD ─────────────────────────────────────
 

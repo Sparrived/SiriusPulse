@@ -196,7 +196,7 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
             )
         ),
@@ -269,40 +269,28 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_continue_then_next_round_sees_previous_text():
+async def test_delayed_queue_when_chat_round_uses_stop_only_flow_control():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
         "group-1",
         "u1",
-        "say more",
+        "say once",
         _decision(ResponseStrategy.IMMEDIATE),
     )
     item.enqueue_time = _past(item.window_seconds + 1)
 
-    continue_call = ToolCall(
-        id="continue-1",
-        function_name="continue",
-        function_arguments='{"action": "continue"}',
-    )
-    chat_results = [
-        SimpleNamespace(
-            raw_text="First part.",
-            clean_text="First part.",
-            tool_calls=[continue_call],
-            reply_references=[],
-        ),
-        SimpleNamespace(
-            raw_text="Second part.",
-            clean_text="Second part.",
-            tool_calls=[],
-            reply_references=[],
-        ),
-    ]
-    seen_messages: list[list[dict]] = []
+    seen_extra_tools: list[set[str]] = []
 
     async def capture_chat(request):
-        seen_messages.append([dict(m) for m in request.messages])
-        return chat_results[len(seen_messages) - 1]
+        seen_extra_tools.append(
+            {tool["function"]["name"] for tool in (request.extra_tools or [])}
+        )
+        return SimpleNamespace(
+            raw_text="One reply.",
+            clean_text="One reply.",
+            tool_calls=[],
+            reply_references=[],
+        )
 
     profile = SimpleNamespace(name="Alice", is_developer=False)
     engine = SimpleNamespace(
@@ -316,7 +304,7 @@ async def test_delayed_queue_when_continue_then_next_round_sees_previous_text():
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
             )
         ),
@@ -333,7 +321,7 @@ async def test_delayed_queue_when_continue_then_next_round_sees_previous_text():
             build_messages_with_breakdown=lambda **kwargs: (
                 [
                     {"role": "system", "content": "system"},
-                    {"role": "user", "content": "say more"},
+                    {"role": "user", "content": "say once"},
                 ],
                 {},
             )
@@ -347,29 +335,15 @@ async def test_delayed_queue_when_continue_then_next_round_sees_previous_text():
     tasks = DelayedQueueTasks(engine)
     tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
         system_prompt="system",
-        user_content="say more",
+        user_content="say once",
         token_breakdown=None,
         dynamic_context="",
     )
-    partials: list[str] = []
 
-    async def capture_partial(text: str) -> None:
-        partials.append(text)
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
 
-    results = await tasks.tick_delayed_queue(
-        "group-1", on_partial_reply=capture_partial
-    )
-
-    assert partials == ["First part."]
-    assert results[0]["reply"] == "Second part."
-    assistant_continue = next(
-        m
-        for m in seen_messages[1]
-        if m["role"] == "assistant"
-        and m.get("tool_calls")
-        and m["tool_calls"][0]["function"]["name"] == "continue"
-    )
-    assert assistant_continue["content"] == "First part."
+    assert results[0]["reply"] == "One reply."
+    assert seen_extra_tools == [{"stop"}]
 
 
 @pytest.mark.asyncio
@@ -402,7 +376,7 @@ async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed()
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
             )
         ),
@@ -525,7 +499,7 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
             )
         ),
@@ -640,7 +614,7 @@ async def test_delayed_queue_when_plan_aborts_then_session_is_cleared_without_re
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
             )
         ),
@@ -741,7 +715,7 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
             )
         ),
@@ -841,7 +815,7 @@ async def test_delayed_queue_when_normal_chat_requests_plan_status_then_reads_pu
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u2"
             )
         ),
@@ -965,7 +939,7 @@ async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_de
             analyze=lambda group_id, recent: SimpleNamespace()
         ),
         identity_resolver=SimpleNamespace(
-            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
             )
         ),

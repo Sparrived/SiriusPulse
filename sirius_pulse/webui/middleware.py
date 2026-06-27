@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY
 from sirius_pulse.webui.server_utils import _json_response
 
 LOG = logging.getLogger("sirius.webui.middleware")
@@ -83,7 +84,7 @@ async def auth_middleware(
         return _json_response({"error": "未提供认证令牌，请先登录"}, status=401)
 
     # 从应用获取 AuthManager 实例
-    auth_manager = request.app.get("auth_manager")
+    auth_manager = request.app.get(AUTH_MANAGER_KEY)
     if not auth_manager:
         LOG.error("AuthManager 未注册到应用中")
         return _json_response({"error": "服务端认证配置错误"}, status=500)

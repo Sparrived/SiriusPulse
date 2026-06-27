@@ -11,11 +11,8 @@ from sirius_pulse.memory.diary import (
     DiaryManager,
     DiaryRetriever,
 )
-from sirius_pulse.memory.evolution import (
-    EvolutionChain,
-    EvolutionRecord,
-)
 from sirius_pulse.memory.glossary import GlossaryManager, GlossaryTerm
+from sirius_pulse.memory.profile import UserPersonaProfileManager, UserPersonaProfileStore
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 
@@ -33,8 +30,8 @@ __all__ = [
     "UnifiedUserManager",
     "GlossaryManager",
     "GlossaryTerm",
-    "EvolutionChain",
-    "EvolutionRecord",
+    "UserPersonaProfileManager",
+    "UserPersonaProfileStore",
     "ColdDetector",
     "ColdState",
 ]

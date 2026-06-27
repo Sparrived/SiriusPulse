@@ -444,7 +444,7 @@ class SqliteSessionStore:
                         profile.name,
                         profile.persona,
                         self._json_dumps(profile.identities),
-                        self._json_dumps(profile.aliases),
+                        self._json_dumps([]),
                         self._json_dumps(profile.traits),
                         self._json_dumps(profile.metadata),
                     ),

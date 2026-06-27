@@ -58,7 +58,10 @@ class UserLookupService:
                 platform=platform,
             )
             resolution = self._identity_resolver.resolve_with_alias(
-                ctx, self._user_manager, group_id or "default"
+                ctx,
+                self._user_manager,
+                group_id or "default",
+                profile_manager=getattr(self._engine, "profile_manager", None),
             )
             if not resolution.user_id or resolution.source == "unresolved":
                 return None
@@ -101,6 +104,7 @@ class UserLookupService:
                 ctx,
                 self._user_manager,
                 group_id or "default",
+                profile_manager=getattr(self._engine, "profile_manager", None),
             )
             if not resolution.user_id or resolution.source == "unresolved":
                 return None
@@ -114,6 +118,20 @@ class UserLookupService:
         except Exception:
             logger.warning("find_by_name 失败", exc_info=True)
             return None
+
+
+    def _profile_aliases(self, user_id: str, group_id: str) -> list[str]:
+        profile_manager = getattr(self._engine, "profile_manager", None)
+        if profile_manager is None:
+            return []
+        try:
+            profile = profile_manager.get_profile(group_id or "default", user_id, create=False)
+            if profile is None:
+                return []
+            return [item.value for item in profile.section("aliases").active_items()]
+        except Exception:
+            logger.debug("读取画像别名失败", exc_info=True)
+            return []
 
     def get_info(self, user_id: str, group_id: str = "") -> dict[str, Any] | None:
         """获取用户详细信息。
@@ -132,7 +150,7 @@ class UserLookupService:
             return {
                 "user_id": profile.user_id,
                 "name": profile.name,
-                "aliases": profile.aliases,
+                "aliases": self._profile_aliases(profile.user_id, group_id or "default"),
                 "identities": profile.identities,
                 "is_developer": profile.is_developer,
             }
@@ -155,7 +173,7 @@ class UserLookupService:
                 {
                     "user_id": u.user_id,
                     "name": u.name,
-                    "aliases": u.aliases,
+                    "aliases": self._profile_aliases(u.user_id, group_id or "default"),
                     "is_developer": u.is_developer,
                 }
                 for u in users
