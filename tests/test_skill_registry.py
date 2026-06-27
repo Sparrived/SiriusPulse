@@ -155,3 +155,22 @@ def test_skill_registry_when_skill_requires_admin_then_visible_only_for_admin_gr
     )
 
     assert [tool["function"]["name"] for tool in tools] == ["mute_member"]
+
+
+def test_skill_registry_when_builtin_skills_load_then_notify_developer_is_napcat_tool(
+    tmp_path: Path,
+):
+    registry = SkillRegistry()
+
+    registry.load_from_directory(
+        tmp_path / "skills",
+        auto_install_deps=False,
+        include_builtin=True,
+    )
+    skill = registry.get("notify_developer")
+    tools = registry.build_tools_list(adapter_type="napcat")
+
+    assert skill is not None
+    assert skill.silent is True
+    assert skill.adapter_types == ["napcat"]
+    assert any(tool["function"]["name"] == "notify_developer" for tool in tools)
