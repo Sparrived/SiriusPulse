@@ -868,10 +868,11 @@ class DelayedQueueTasks:
             # 注入 continue 的 assistant + tool 消息
             if continue_tc:
                 _continue_count += 1
+                continue_content = None if regular_tools else (non_skill_text or None)
                 messages.append(
                     {
                         "role": "assistant",
-                        "content": None,
+                        "content": continue_content,
                         "tool_calls": [
                             {
                                 "id": continue_tc.id,

@@ -895,12 +895,20 @@ class NapCatAdapter(BaseAdapter):
                 participants=[participant],
                 group_id=group_id,
             )
+            partial_sent_count = 0
             for partial in result.get("partial_replies", []):
                 if partial:
                     if parsed.message_type == "group":
+                        if partial_sent_count > 0:
+                            await self._sleep_before_reply_sequence_part(group_id, partial)
                         await self._send_group_text(group_id, partial)
                     else:
+                        if partial_sent_count > 0:
+                            await self._sleep_before_reply_sequence_part(
+                                f"private_{parsed.user_id}", partial
+                            )
                         await self._send_private_text(parsed.user_id, partial)
+                    partial_sent_count += 1
 
             reply = result.get("reply")
             message_group = result.get("message_group")  # Plugin 多模态输出
@@ -914,8 +922,14 @@ class NapCatAdapter(BaseAdapter):
                 clean_reply = reply.strip()
                 if clean_reply:
                     if parsed.message_type == "group":
+                        if partial_sent_count > 0:
+                            await self._sleep_before_reply_sequence_part(group_id, clean_reply)
                         await self._send_group_text(group_id, clean_reply)
                     else:
+                        if partial_sent_count > 0:
+                            await self._sleep_before_reply_sequence_part(
+                                f"private_{parsed.user_id}", clean_reply
+                            )
                         await self._send_private_text(parsed.user_id, clean_reply)
             await self._send_stickers_after_reply(group_id, result.get("sticker_names", []))
         except asyncio.CancelledError:
@@ -948,10 +962,17 @@ class NapCatAdapter(BaseAdapter):
         try:
             if event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
+                partial_sent_count = 0
 
                 async def _send_partial(text: str) -> None:
+                    nonlocal partial_sent_count
+                    send_key = gid
                     if gid.startswith("private_"):
                         uid = gid.replace("private_", "").replace("qq_", "")
+                        send_key = f"private_{uid}"
+                    if partial_sent_count > 0:
+                        await self._sleep_before_reply_sequence_part(send_key, text)
+                    if gid.startswith("private_"):
                         sent = await self._send_private_text(uid, text)
                     elif gid in self._get_allowed_group_ids():
                         sent = await self._send_group_text(gid, text)
@@ -959,6 +980,7 @@ class NapCatAdapter(BaseAdapter):
                         raise RuntimeError(f"Partial reply target is not allowed: {gid}")
                     if not sent:
                         raise RuntimeError(f"Failed to send partial reply: {gid}")
+                    partial_sent_count += 1
 
                 try:
                     results = await engine.tick_delayed_queue(gid, on_partial_reply=_send_partial)
@@ -972,10 +994,14 @@ class NapCatAdapter(BaseAdapter):
                     if gid.startswith("private_"):
                         uid = gid.replace("private_", "").replace("qq_", "")
                         if reply:
+                            if partial_sent_count > 0:
+                                await self._sleep_before_reply_sequence_part(f"private_{uid}", reply)
                             await self._send_private_text(uid, reply, reply_refs)
                         await self._send_stickers_after_reply(gid, sticker_names)
                     elif gid in self._get_allowed_group_ids():
                         if reply:
+                            if partial_sent_count > 0:
+                                await self._sleep_before_reply_sequence_part(gid, reply)
                             await self._send_group_text(gid, reply, reply_refs)
                         await self._send_stickers_after_reply(gid, sticker_names)
             elif event.type == SessionEventType.REMINDER_TRIGGERED:
@@ -1279,6 +1305,13 @@ class NapCatAdapter(BaseAdapter):
         if delay > 0:
             await asyncio.sleep(delay)
 
+    async def _sleep_before_reply_sequence_part(self, send_key: str, line: str) -> None:
+        self._begin_reply_send(send_key)
+        try:
+            await self._sleep_before_reply_part(line)
+        finally:
+            self._end_reply_send(send_key)
+
     def _reply_part_delay_seconds(self, line: str) -> float:
         if self.plugin_config.get("human_reply_delay_enabled", True) is False:
             return 0.0
@@ -1287,10 +1320,10 @@ class NapCatAdapter(BaseAdapter):
             return 0.0
         chars_per_second = max(
             1.0,
-            self._config_float("human_reply_chars_per_second", 8.0),
+            self._config_float("human_reply_chars_per_second", 5.0),
         )
-        min_delay = max(0.0, self._config_float("human_reply_min_delay_seconds", 0.8))
-        max_delay = max(min_delay, self._config_float("human_reply_max_delay_seconds", 4.0))
+        min_delay = max(0.0, self._config_float("human_reply_min_delay_seconds", 1.5))
+        max_delay = max(min_delay, self._config_float("human_reply_max_delay_seconds", 7.0))
         return min(max(chars / chars_per_second, min_delay), max_delay)
 
     def _config_float(self, key: str, default: float) -> float:

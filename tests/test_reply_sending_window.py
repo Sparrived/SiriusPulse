@@ -7,6 +7,7 @@ import pytest
 
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
+from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.models.models import Message
 from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
 
@@ -45,6 +46,58 @@ async def test_napcat_multiline_reply_waits_between_parts_and_marks_active(monke
     assert ok is True
     assert len(sent) == 2
     assert slept == [pytest.approx(1.0)]
+    assert active_snapshots and all(active_snapshots)
+    assert adapter._is_reply_send_active("100") is False
+
+
+@pytest.mark.asyncio
+async def test_napcat_delayed_partials_wait_between_each_sent_message(monkeypatch):
+    adapter = NapCatAdapter(
+        "ws://example.invalid",
+        config={
+            "allowed_group_ids": ["100"],
+            "human_reply_chars_per_second": 10,
+            "human_reply_min_delay_seconds": 0.5,
+            "human_reply_max_delay_seconds": 2.0,
+        },
+    )
+    sent: list[object] = []
+    slept: list[float] = []
+    active_snapshots: list[bool] = []
+
+    async def fake_send_group_msg(group_id, message):
+        active_snapshots.append(adapter._is_reply_send_active("100"))
+        sent.append(message)
+        return {"ok": True}
+
+    async def fake_sleep(seconds):
+        active_snapshots.append(adapter._is_reply_send_active("100"))
+        slept.append(seconds)
+
+    async def fake_tick_delayed_queue(group_id, on_partial_reply):
+        await on_partial_reply("first")
+        await on_partial_reply("second")
+        return [{"reply": "final reply", "reply_references": [], "sticker_names": []}]
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+    adapter._engine = SimpleNamespace(
+        tick_delayed_queue=fake_tick_delayed_queue,
+        _send_stickers_by_names=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "sirius_pulse.platforms.onebot_v11.napcat.adapter.asyncio.sleep",
+        fake_sleep,
+    )
+
+    await adapter._handle_event(
+        SessionEvent(
+            type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
+            data={"group_id": "100"},
+        )
+    )
+
+    assert len(sent) == 3
+    assert slept == [pytest.approx(0.6), pytest.approx(1.1)]
     assert active_snapshots and all(active_snapshots)
     assert adapter._is_reply_send_active("100") is False
 

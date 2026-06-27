@@ -254,6 +254,101 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
 
 
 @pytest.mark.asyncio
+async def test_delayed_queue_when_continue_then_next_round_sees_previous_text():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "say more",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    continue_call = ToolCall(
+        id="continue-1",
+        function_name="continue",
+        function_arguments='{"action": "continue"}',
+    )
+    chat_results = [
+        SimpleNamespace(
+            raw_text="First part.",
+            clean_text="First part.",
+            tool_calls=[continue_call],
+            reply_references=[],
+        ),
+        SimpleNamespace(
+            raw_text="Second part.",
+            clean_text="Second part.",
+            tool_calls=[],
+            reply_references=[],
+        ),
+    ]
+    seen_messages: list[list[dict]] = []
+
+    async def capture_chat(request):
+        seen_messages.append([dict(m) for m in request.messages])
+        return chat_results[len(seen_messages) - 1]
+
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    engine = SimpleNamespace(
+        config={"max_skill_rounds": 3},
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id: SimpleNamespace(user_id="u1")
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "say more"},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(chat=AsyncMock(side_effect=capture_chat)),
+        _skill_registry=None,
+        _skill_executor=None,
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="say more",
+        token_breakdown=None,
+    )
+    partials: list[str] = []
+
+    async def capture_partial(text: str) -> None:
+        partials.append(text)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
+
+    assert partials == ["First part."]
+    assert results[0]["reply"] == "Second part."
+    assistant_continue = next(
+        m
+        for m in seen_messages[1]
+        if m["role"] == "assistant"
+        and m.get("tool_calls")
+        and m["tool_calls"][0]["function"]["name"] == "continue"
+    )
+    assert assistant_continue["content"] == "First part."
+
+
+@pytest.mark.asyncio
 async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
