@@ -118,7 +118,7 @@ def test_memory_snapshot_when_engine_restarts_then_restores_dialogue_and_heat_st
     assert restored.get_heat_state("group_a") is not None
 
 
-def test_memory_snapshot_when_legacy_state_is_too_large_then_restores_tail_only():
+def test_memory_snapshot_when_legacy_state_is_large_then_restores_all_by_default():
     payload: dict[str, list[dict[str, str]]] = {"group_a": []}
     for index in range(35):
         payload["group_a"].append(
@@ -135,8 +135,19 @@ def test_memory_snapshot_when_legacy_state_is_too_large_then_restores_tail_only(
     restored = BasicMemoryManager.from_dict(payload)
 
     assert [entry.content for entry in restored.get_all("group_a")] == [
-        f"legacy-{index}" for index in range(5, 35)
+        f"legacy-{index}" for index in range(35)
     ]
+
+
+def test_remove_entries_by_ids_when_units_cover_sources_then_prunes_active_window():
+    mgr = BasicMemoryManager()
+    first = mgr.add_entry("group_a", "alice", "human", "covered", speaker_name="Alice")
+    second = mgr.add_entry("group_a", "bob", "human", "kept", speaker_name="Bob")
+
+    removed = mgr.remove_entries_by_ids("group_a", {first.entry_id})
+
+    assert removed == 1
+    assert [entry.content for entry in mgr.get_all("group_a")] == [second.content]
 
 
 def test_basic_memory_entry_when_intent_scores_are_missing_then_defaults_to_empty_dict():

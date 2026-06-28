@@ -12,14 +12,13 @@ from typing import Any
 from sirius_pulse.core.constants import (
     COLD_HEAT_THRESHOLD,
     DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW,
-    DEFAULT_BASIC_MEMORY_HARD_LIMIT,
     SILENCE_THRESHOLD_SECONDS,
 )
 from sirius_pulse.memory.basic.models import BasicMemoryEntry, HeatState
 
 logger = logging.getLogger(__name__)
 
-HARD_LIMIT = DEFAULT_BASIC_MEMORY_HARD_LIMIT
+HARD_LIMIT = 0
 CONTEXT_WINDOW = DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW
 COLD_THRESHOLD = COLD_HEAT_THRESHOLD
 SILENCE_THRESHOLD_SEC = SILENCE_THRESHOLD_SECONDS
@@ -74,13 +73,13 @@ class BasicMemoryManager:
     """Manages per-group basic memory windows.
 
     - Retains raw messages in memory for later append-only archival.
-    - Always keeps the most recent CONTEXT_WINDOW messages active.
-    - Older messages are "archive candidates" for diary promotion.
+    - Keeps uncheckpointed raw messages active until memory units cover them.
+    - Older messages are checkpoint candidates for memory unit extraction.
     - Tracks heat per group for cold-detection.
     """
 
     def __init__(self, hard_limit: int = HARD_LIMIT, context_window: int = CONTEXT_WINDOW) -> None:
-        self.hard_limit = hard_limit
+        self.hard_limit = max(0, int(hard_limit))
         self.context_window = context_window
         self._windows: dict[str, deque[BasicMemoryEntry]] = {}
         self._heat_state: dict[str, HeatState] = {}
@@ -170,6 +169,24 @@ class BasicMemoryManager:
     def get_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Get all entries in a group's window."""
         return list(self._windows.get(group_id or "default", deque()))
+
+    def remove_entries_by_ids(self, group_id: str, entry_ids: set[str]) -> int:
+        """Remove entries covered by checkpoint memory units from the active window."""
+        if not entry_ids:
+            return 0
+        gid = group_id or "default"
+        window = self._windows.get(gid)
+        if not window:
+            return 0
+        kept = deque(entry for entry in window if entry.entry_id not in entry_ids)
+        removed = len(window) - len(kept)
+        if removed:
+            self._windows[gid] = kept
+            if kept:
+                self._update_heat(gid)
+            else:
+                self._heat_state.pop(gid, None)
+        return removed
 
     def clear_group(self, group_id: str) -> None:
         """Clear basic memory for a specific group."""
@@ -262,6 +279,8 @@ class BasicMemoryManager:
         window = self._windows.get(group_id)
         if window is None:
             return
+        if self.hard_limit <= 0:
+            return
         while len(window) > self.hard_limit:
             window.popleft()
 
@@ -299,7 +318,10 @@ class BasicMemoryManager:
     def from_dict(cls, data: dict[str, Any]) -> "BasicMemoryManager":
         mgr = cls()
         for gid, entries in data.items():
-            for e in list(entries)[-mgr.hard_limit:]:
+            source_entries = list(entries)
+            if mgr.hard_limit > 0:
+                source_entries = source_entries[-mgr.hard_limit :]
+            for e in source_entries:
                 if isinstance(e, dict):
                     mgr._windows.setdefault(gid, deque()).append(BasicMemoryEntry.from_dict(e))
             mgr._trim_window(gid)
@@ -316,7 +338,10 @@ class BasicMemoryManager:
         if not entries:
             return
         window: deque[BasicMemoryEntry] = deque()
-        for e in list(entries)[-self.hard_limit:]:
+        source_entries = list(entries)
+        if self.hard_limit > 0:
+            source_entries = source_entries[-self.hard_limit :]
+        for e in source_entries:
             if isinstance(e, dict):
                 window.append(BasicMemoryEntry.from_dict(e))
         self._windows[group_id] = window

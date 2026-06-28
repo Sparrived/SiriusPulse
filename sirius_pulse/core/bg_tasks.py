@@ -154,6 +154,18 @@ class BackgroundTasks:
                         )
                         if result:
                             promoted_total += len(result.units)
+                            covered_source_ids: set[str] = set()
+                            for unit in result.units:
+                                covered_source_ids.update(unit.source_ids)
+                            removed = engine.basic_memory.remove_entries_by_ids(
+                                group_id, covered_source_ids
+                            )
+                            if removed:
+                                logger.info(
+                                    "Pruned %d checkpointed raw memory entries for group %s",
+                                    removed,
+                                    group_id,
+                                )
 
                 if promoted_total > 0:
                     engine._log_inner_thought(f"整理了 {promoted_total} 条结构化记忆单元。")
