@@ -1,7 +1,7 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, flashSuccess, $, ModelSelect } from '../components.js';
-import { buildModelChoice, buildModelChoicesByType, loadModelsDevForTypes } from './model-dev.js';
+import { buildModelChoicesByType, loadModelsDevForTypes } from './model-dev.js';
 
 const TASK_GROUPS = [
   {
@@ -77,6 +77,11 @@ const NUMERIC_PARAMS = [
   { key: 'timeout', label: '超时(s)', step: '1', min: '1', max: '300' },
 ];
 
+function buildLegacyModelChoice(model) {
+  if (typeof model === 'object') return model;
+  return { value: model, label: model, tags: [] };
+}
+
 function _stripProviderPrefix(value) {
   if (!value) return '';
   const idx = value.indexOf('/');
@@ -145,7 +150,8 @@ async function loadOrchestration(name) {
       get(`/persona/task-params`),
     ]);
     orchestrationData = orchData;
-    modelChoices = orchData.model_choices || [];
+    const providerChoices = await loadProviderModelChoices();
+    modelChoices = [...(orchData.model_choices || []).map(buildLegacyModelChoice), ...providerChoices];
     taskParamDefaults = paramsData.defaults || {};
     taskParamOverrides = paramsData.task_params || {};
     renderOrchestration(orchData);
@@ -271,7 +277,7 @@ async function loadProviderModelChoices() {
 
   if (!providerTypes.size) return [];
 
-  const modelsByType = await loadModelsDevForTypes(providerTypes);
+  const modelsByType = await loadModelsDevForTypes([...providerTypes]);
   return buildModelChoicesByType(modelsByType);
 }
 

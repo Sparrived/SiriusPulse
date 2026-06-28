@@ -1,7 +1,7 @@
-﻿import { store } from '../store.js';
+import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, animateNumber, flashSuccess, $, ModelSelect } from '../components.js';
-import { getModelDevCache, loadModelsDevForType } from './model-dev.js';
+import { buildDevModelCard, getModelDevCache, loadModelsDevForType } from './model-dev.js';
 
 const BUILTIN_TYPES = [
   'deepseek', 'aliyun-bailian', 'bigmodel', 'mimo', 'mimo-tokenplan', 'siliconflow',
@@ -12,11 +12,11 @@ const TYPE_OPTIONS = [
   { value: 'openai-compatible', label: 'OpenAI Compatible' },
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'aliyun-bailian', label: '阿里云百炼' },
-  { value: 'bigmodel', label: '鏅鸿氨 BigModel' },
-  { value: 'mimo', label: '灏忕背 MiMo' },
-  { value: 'mimo-tokenplan', label: '灏忕背 MiMo Token Plan' },
+  { value: 'bigmodel', label: '智谱 BigModel' },
+  { value: 'mimo', label: '小米 MiMo' },
+  { value: 'mimo-tokenplan', label: '小米 MiMo Token Plan' },
   { value: 'siliconflow', label: 'SiliconFlow' },
-  { value: 'volcengine-ark', label: '鐏北鏂硅垷' },
+  { value: 'volcengine-ark', label: '火山方舟' },
   { value: 'ytea', label: 'YTea' },
 ];
 
@@ -97,12 +97,12 @@ export async function init(container) {
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">Provider 绠＄悊</div>
+          <div class="card-title">Provider 管理</div>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm" id="refreshModelsBtn" title="从 models.dev 自动获取模型列表">鍒锋柊妯″瀷</button>
+          <button class="btn btn-sm" id="refreshModelsBtn" title="从 models.dev 自动获取模型列表">刷新模型</button>
           <button class="btn btn-sm" id="probeAllBtn">全部检测</button>
-          <button class="btn btn-primary btn-sm" id="addProviderBtn">+ 娣诲姞 Provider</button>
+          <button class="btn btn-primary btn-sm" id="addProviderBtn">+ 添加 Provider</button>
         </div>
       </div>
       <div id="providerList" style="display:flex;flex-direction:column;gap:16px"></div>
@@ -127,14 +127,14 @@ async function loadProviders() {
     }));
     editingIdx = null;
     
-    // 棰勫姞杞芥墍鏈?Provider 绫诲瀷鐨?models.dev 鏁版嵁
+    // 预加载所有 Provider 类型的 models.dev 数据
     const providerTypes = [...new Set(providers.map(p => p.platform_type))];
     await Promise.all(providerTypes.map(type => loadModelsDevForType(type)));
     
     renderList();
   } catch (e) {
-    console.error('[providers] loadProviders 澶辫触:', e);
-    toast('鍔犺浇 Provider 鍒楄〃澶辫触', 'error');
+    console.error('[providers] loadProviders 失败:', e);
+    toast('加载 Provider 列表失败', 'error');
   }
 }
 
@@ -142,7 +142,7 @@ function renderList() {
   const el = _root.querySelector('#providerList');
   if (!el) return;
   if (!providers.length) {
-    el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">鏆傛棤 Provider銆傜偣鍑讳笂鏂规寜閽坊鍔犮€?/div>';
+    el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无 Provider。点击上方按钮添加。</div>';
     return;
   }
   el.innerHTML = providers.map((p, i) => {
@@ -175,9 +175,9 @@ function renderReadonlyCard(p, i) {
   const cacheValid = _isProbeCacheValid(name);
   const probeHtml = ps && cacheValid
     ? ps.ok
-      ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--success)"><span class="status-dot running"></span>鍙敤 ${ps.latency}ms</span>`
-      : `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--danger)"><span class="status-dot error"></span>涓嶅彲鐢?/span>`
-    : `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-3)"><span class="status-dot"></span>鏈娴?/span>`;
+      ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--success)"><span class="status-dot running"></span>可用 ${ps.latency}ms</span>`
+      : `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--danger)"><span class="status-dot error"></span>不可用</span>`
+    : `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-3)"><span class="status-dot"></span>未检测</span>`;
 
   return `
     <div class="stat-card" data-idx="${i}" style="text-align:left">
@@ -188,17 +188,17 @@ function renderReadonlyCard(p, i) {
           ${probeHtml}
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm" data-action="probe" data-idx="${i}" data-name="${name}"${!hasKey ? ' disabled title="璇峰厛閰嶇疆 API Key"' : ''}>鍙敤鎬ф鏌?/button>
-          <button class="btn btn-sm" data-action="edit" data-idx="${i}">缂栬緫</button>
-          <button class="btn btn-sm btn-danger" data-action="delete" data-idx="${i}">鍒犻櫎</button>
+          <button class="btn btn-sm" data-action="probe" data-idx="${i}" data-name="${name}"${!hasKey ? ' disabled title="请先配置 API Key"' : ''}>可用性检查</button>
+          <button class="btn btn-sm" data-action="edit" data-idx="${i}">编辑</button>
+          <button class="btn btn-sm btn-danger" data-action="delete" data-idx="${i}">删除</button>
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
-        ${models.length ? models.map(m => _renderModelTag(m)).join('') : '<span style="color:var(--text-3);font-size:12px">鏃犳ā鍨?/span>'}
+        ${models.length ? models.map(m => _renderModelTag(m)).join('') : '<span style="color:var(--text-3);font-size:12px">无模型</span>'}
       </div>
       <div style="display:flex;gap:24px;font-size:12px;color:var(--text-2)">
-        <div><span style="color:var(--text-3)">API Key:</span> ${hasKey ? masked : '<span style="color:var(--warn)">鏈厤缃?/span>'}</div>
-        <div><span style="color:var(--text-3)">Base URL:</span> ${p.base_url || '-'}</div>
+        <div><span style="color:var(--text-3)">API Key:</span> ${hasKey ? masked : '<span style="color:var(--warn)">未配置</span>'}</div>
+        <div><span style="color:var(--text-3)">Base URL:</span> ${p.base_url || '—'}</div>
       </div>
     </div>
   `;
@@ -213,72 +213,58 @@ function renderEditCard(p, i) {
     <div class="stat-card" data-idx="${i}" style="text-align:left;border:1px solid var(--accent)">
       <div style="display:flex;flex-direction:column;gap:14px">
         <div class="form-group" style="margin:0">
-          <label>骞冲彴绫诲瀷</label>
+          <label>平台类型</label>
           <select id="pv_type_${i}" ${readonly ? 'disabled' : ''}>
             ${TYPE_OPTIONS.map(o => `<option value="${o.value}" ${o.value === p.platform_type ? 'selected' : ''}>${o.label}</option>`).join('')}
           </select>
         </div>
         <div class="form-group" style="margin:0">
           <label>Base URL</label>
-          <input type="text" id="pv_url_${i}" value="${p.base_url || ''}" placeholder="鑷姩濉厖" ${readonly ? 'disabled' : ''}>
+          <input type="text" id="pv_url_${i}" value="${p.base_url || ''}" placeholder="自动填充" ${readonly ? 'disabled' : ''}>
         </div>
         <div class="form-group" style="margin:0">
           <label>API Key</label>
           <input type="password" id="pv_key_${i}" value="${p.api_key || ''}" placeholder="sk-...">
         </div>
         <div class="form-group" style="margin:0">
-          <label>妯″瀷鍒楄〃</label>
+          <label>模型列表</label>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="pv_models_${i}">
             ${(p.models || []).map((m, mi) => _renderModelTag(m, `<span data-remove-model="${mi}" style="cursor:pointer;margin-left:4px;color:var(--danger)">&times;</span>`)).join('')}
           </div>
           <div style="display:flex;gap:8px;margin-bottom:8px">
-            <input type="text" id="pv_newModel_${i}" placeholder="杈撳叆妯″瀷鍚嶅悗鍥炶溅娣诲姞" style="flex:1">
-            <button type="button" class="btn btn-sm" data-action="addModel" data-idx="${i}">娣诲姞</button>
+            <input type="text" id="pv_newModel_${i}" placeholder="输入模型名后回车添加" style="flex:1">
+            <button type="button" class="btn btn-sm" data-action="addModel" data-idx="${i}">添加</button>
           </div>
           ${devModels.length ? `
           <div style="border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg-1)">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <span style="font-size:12px;color:var(--text-2);font-weight:600">models.dev 鍙敤妯″瀷 (${devModels.length})</span>
-              <input type="text" id="pv_devSearch_${i}" placeholder="搜索模型名..." style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg-0)">
+              <span style="font-size:12px;color:var(--text-2);font-weight:600">models.dev 可用模型 (${devModels.length})</span>
+              <input type="text" id="pv_devSearch_${i}" placeholder="搜索模型名…" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg-0)">
             </div>
             <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px" id="pv_devFilters_${i}">
-              <span class="cap-filter cap-tool" data-filter-cap="tool_call" data-idx="${i}">鍑芥暟璋冪敤</span>
-              <span class="cap-filter cap-reason" data-filter-cap="reasoning" data-idx="${i}">鎺ㄧ悊</span>
-              <span class="cap-filter cap-vision" data-filter-cap="vision" data-idx="${i}">瑙嗚</span>
-              <span class="cap-filter cap-audio" data-filter-cap="audio" data-idx="${i}">闊抽</span>
+              <span class="cap-filter cap-tool" data-filter-cap="tool_call" data-idx="${i}">函数调用</span>
+              <span class="cap-filter cap-reason" data-filter-cap="reasoning" data-idx="${i}">推理</span>
+              <span class="cap-filter cap-vision" data-filter-cap="vision" data-idx="${i}">视觉</span>
+              <span class="cap-filter cap-audio" data-filter-cap="audio" data-idx="${i}">音频</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;max-height:320px;overflow-y:auto" id="pv_devModels_${i}">
               ${devModels.map(m => {
                 const added = currentModels.has(m.id);
-                const badges = [];
-                if (m.tool_call) badges.push('<span class="cap-tag cap-tool">鍑芥暟璋冪敤</span>');
-                if (m.reasoning) badges.push('<span class="cap-tag cap-reason">鎺ㄧ悊</span>');
-                if (m.vision) badges.push('<span class="cap-tag cap-vision">瑙嗚</span>');
-                if (m.audio) badges.push('<span class="cap-tag cap-audio">闊抽</span>');
-                const ctxLabel = m.context > 0 ? (m.context >= 1000000 ? `${(m.context/1000000).toFixed(0)}M tokens` : `${Math.round(m.context/1000)}K tokens`) : '';
-                const costLabel = m.input_cost > 0 ? `楼${(m.input_cost * 7.25).toFixed(1)}/楼${(m.output_cost * 7.25).toFixed(1)}` : '';
-                return `<div class="model-card${added ? ' model-card-added' : ''}" data-dev-model="${m.id}" data-idx="${i}" data-cap-tool_call="${m.tool_call}" data-cap-reasoning="${m.reasoning}" data-cap-vision="${m.vision}" data-cap-audio="${m.audio}" style="cursor:${added ? 'default' : 'pointer'};opacity:${added ? '0.55' : '1'}">
-                  <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:6px" title="${m.name}">${m.id}</div>
-                  <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-bottom:4px">${badges.join('') || '<span style="font-size:10px;color:var(--text-3)">鈥?/span>'}</div>
-                  <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3)">
-                    <span>${ctxLabel}</span><span>${costLabel}</span>
-                  </div>
-                  ${added ? '<div style="position:absolute;top:4px;right:6px;font-size:10px;color:var(--success)">鉁?宸叉坊鍔?/div>' : ''}
-                </div>`;
+                return buildDevModelCard(m, added);
               }).join('')}
             </div>
           </div>
-          ` : '<div id="pv_devModelsWrap_${i}" style="font-size:11px;color:var(--text-3)">姝ｅ湪鍔犺浇 models.dev 妯″瀷鍒楄〃鈥?/div>'}
+          ` : '<div id="pv_devModelsWrap_${i}" style="font-size:11px;color:var(--text-3)">正在加载 models.dev 模型列表…</div>'}
         </div>
         <div class="form-group" style="margin:0">
           <label>Healthcheck Model</label>
           <div id="msel_health_${i}" data-health-idx="${i}"></div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:4px">璇峰厛鍦ㄤ笂鏂规ā鍨嬪垪琛ㄤ腑娣诲姞妯″瀷锛屽啀閫夋嫨鐢ㄤ簬杩為€氭€ф娴嬬殑妯″瀷</div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:4px">请先在上方模型列表中添加模型，再选择用于连通性检测的模型</div>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-          <button class="btn btn-sm btn-danger" data-action="delete" data-idx="${i}">鍒犻櫎</button>
-          <button class="btn btn-sm" data-action="cancel" data-idx="${i}">鍙栨秷</button>
-          <button class="btn btn-sm btn-primary" data-action="save" data-idx="${i}">淇濆瓨</button>
+          <button class="btn btn-sm btn-danger" data-action="delete" data-idx="${i}">删除</button>
+          <button class="btn btn-sm" data-action="cancel" data-idx="${i}">取消</button>
+          <button class="btn btn-sm btn-primary" data-action="save" data-idx="${i}">保存</button>
         </div>
       </div>
     </div>
@@ -459,20 +445,20 @@ function openAddModal() {
   overlay.innerHTML = `
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
-        <span style="font-size:16px;font-weight:600">娣诲姞 Provider</span>
-        <button class="btn btn-sm" id="modalClose">鉁?/button>
+        <span style="font-size:16px;font-weight:600">添加 Provider</span>
+        <button class="btn btn-sm" id="modalClose">✕</button>
       </div>
       <div class="modal-body">
         <div style="display:flex;flex-direction:column;gap:14px">
           <div class="form-group" style="margin:0">
-            <label>骞冲彴绫诲瀷</label>
+            <label>平台类型</label>
             <select id="modal_type">
               ${TYPE_OPTIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
             </select>
           </div>
           <div class="form-group" style="margin:0">
             <label>Base URL</label>
-            <input type="text" id="modal_url" value="${DEFAULT_URLS['openai-compatible']}" placeholder="鑷姩濉厖">
+            <input type="text" id="modal_url" value="${DEFAULT_URLS['openai-compatible']}" placeholder="自动填充">
           </div>
           <div class="form-group" style="margin:0">
             <label>API Key</label>
@@ -483,22 +469,22 @@ function openAddModal() {
             <input type="text" id="modal_health" placeholder="用于健康检查的模型名">
           </div>
           <div class="form-group" style="margin:0">
-            <label>妯″瀷鍒楄〃</label>
+            <label>模型列表</label>
             <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="modal_models_container"></div>
             <div style="display:flex;gap:8px">
-              <input type="text" id="modal_newModel" placeholder="杈撳叆妯″瀷鍚嶅悗鍥炶溅娣诲姞" style="flex:1">
-              <button type="button" class="btn btn-sm" id="modalAddModelBtn">娣诲姞</button>
+              <input type="text" id="modal_newModel" placeholder="输入模型名后回车添加" style="flex:1">
+              <button type="button" class="btn btn-sm" id="modalAddModelBtn">添加</button>
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="modal_enabled" checked>
-            <label for="modal_enabled" style="margin:0;cursor:pointer">鍚敤</label>
+            <label for="modal_enabled" style="margin:0;cursor:pointer">启用</label>
           </div>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-sm" id="modalCancelBtn">鍙栨秷</button>
-        <button class="btn btn-sm btn-primary" id="modalSaveBtn">淇濆瓨</button>
+        <button class="btn btn-sm" id="modalCancelBtn">取消</button>
+        <button class="btn btn-sm btn-primary" id="modalSaveBtn">保存</button>
       </div>
     </div>
   `;
@@ -533,7 +519,7 @@ function renderModalModels() {
   const container = $('modal_models_container');
   if (!container) return;
   if (!modalModels.length) {
-    container.innerHTML = '<span style="color:var(--text-3);font-size:12px">鏃犳ā鍨?/span>';
+    container.innerHTML = '<span style="color:var(--text-3);font-size:12px">无模型</span>';
     return;
   }
   container.innerHTML = modalModels.map((m, mi) =>
@@ -577,7 +563,7 @@ async function saveFromModal() {
   const enabled = $('modal_enabled')?.checked || false;
 
   if (!apiKey) {
-    toast('璇峰～鍐?API Key', 'warning');
+    toast('请填写 API Key', 'warning');
     return;
   }
 
@@ -643,11 +629,11 @@ async function saveAll() {
   }));
   try {
     const res = await post('/providers', { providers: clean });
-    toast(res.message || '淇濆瓨鎴愬姛', 'success');
+    toast(res.message || '保存成功', 'success');
     flashSuccess(_root.querySelector('#addProviderBtn'));
     await loadProviders();
   } catch (e) {
-    console.error('[providers] saveAll 澶辫触:', e);
+    console.error('[providers] saveAll 失败:', e);
     toast('保存失败', 'error');
   }
 }
@@ -669,20 +655,20 @@ async function probeProvider(btn) {
   }
 
   btn.disabled = true;
-  btn.textContent = '检查中...';
+  btn.textContent = '检查中…';
 
   try {
     const res = await post('/providers/probe', { name });
     if (res.success) {
       probeStatus[name] = { ok: true, latency: res.latency_ms || 0, timestamp: Date.now() };
-      toast(`${name} 鍙敤 (${res.latency_ms}ms)`, 'success');
+      toast(`${name} 可用 (${res.latency_ms}ms)`, 'success');
     } else {
       probeStatus[name] = { ok: false, latency: 0, timestamp: Date.now() };
-      toast(`${name} 涓嶅彲鐢? ${res.error || '鏈煡閿欒'}`, 'error');
+      toast(`${name} 不可用: ${res.error || '未知错误'}`, 'error');
     }
   } catch (e) {
     probeStatus[name] = { ok: false, latency: 0, timestamp: Date.now() };
-    toast(`妫€鏌ュけ璐? ${e.message}`, 'error');
+    toast(`检查失败: ${e.message}`, 'error');
   }
 
   renderList();
@@ -698,7 +684,7 @@ async function probeAll(options = {}) {
 
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '检测中...';
+    btn.textContent = '检测中…';
   }
 
   const tasks = providers
@@ -751,13 +737,14 @@ async function autoProbeAll() {
 async function refreshModels() {
   const btn = _root.querySelector('#refreshModelsBtn');
   btn.disabled = true;
-  btn.textContent = '刷新中...';
+  btn.textContent = '刷新中…';
 
   try {
-    // 鍙埛鏂?models.dev 缂撳瓨锛屼笉鑷姩鍚堝苟妯″瀷鍒?provider
+    // 只刷新 models.dev 缓存，不自动合并模型到 provider
     const res = await post('/providers/refresh-models', { force: true, cache_only: true });
     if (res.success) {
-      // 閲嶆柊鍔犺浇 provider 鍒楄〃锛堜笉淇敼妯″瀷閰嶇疆锛?
+      // 清除前端缓存，让后续编辑 UI 加载最新数据
+      // 重新加载 provider 列表（不修改模型配置）
       const raw = Array.isArray(res.providers) ? res.providers : [];
       providers = raw.map(p => ({
         ...p,
@@ -769,11 +756,11 @@ async function refreshModels() {
       renderList();
       toast('models.dev 缓存已刷新，编辑 Provider 时可选择添加新模型', 'success');
     } else {
-      toast(`鍒锋柊澶辫触: ${res.error || '鏈煡閿欒'}`, 'error');
+      toast(`刷新失败: ${res.error || '未知错误'}`, 'error');
     }
   } catch (e) {
-    console.error('[providers] refreshModels 澶辫触:', e);
-    toast(`鍒锋柊澶辫触: ${e.message}`, 'error');
+    console.error('[providers] refreshModels 失败:', e);
+    toast(`刷新失败: ${e.message}`, 'error');
   }
 
   btn.disabled = false;

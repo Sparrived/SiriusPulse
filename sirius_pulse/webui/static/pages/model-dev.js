@@ -2,11 +2,19 @@ import { get } from "../app.js";
 
 const modelDevCache = {};
 const CAPABILITY_LABELS = {
-  tool_call: '????',
-  reasoning: '??',
-  structured_output: '???',
-  vision: '??',
-  audio: '??',
+  tool_call: '函数调用',
+  reasoning: '推理',
+  structured_output: '结构化',
+  vision: '视觉',
+  audio: '音频',
+};
+
+const CAPABILITY_CLASSES = {
+  函数调用: 'tool',
+  推理: 'reason',
+  结构化: 'tag',
+  视觉: 'vision',
+  音频: 'audio',
 };
 
 export async function loadModelsDevForType(providerType, { refresh = false } = {}) {
@@ -17,7 +25,7 @@ export async function loadModelsDevForType(providerType, { refresh = false } = {
     modelDevCache[providerType] = models;
     return models;
   } catch (error) {
-    console.warn('[models-dev] ????:', providerType, error);
+    console.warn('[models-dev] 加载失败:', providerType, error);
     modelDevCache[providerType] = [];
     return [];
   }
@@ -42,12 +50,7 @@ export function getCapabilityTags(model) {
 }
 
 export function getCapabilityClass(label) {
-  if (label === '????') return 'tool';
-  if (label === '??') return 'reason';
-  if (label === '???') return 'vision';
-  if (label === '??') return 'vision';
-  if (label === '??') return 'audio';
-  return 'tag';
+  return CAPABILITY_CLASSES[label] || 'tag';
 }
 
 export function buildModelChoice(providerType, model) {
@@ -81,15 +84,15 @@ export function buildDevModelCard(model, added = false) {
     ? (model.context >= 1000000 ? `${(model.context / 1000000).toFixed(0)}M tokens` : `${Math.round(model.context / 1000)}K tokens`)
     : '';
   const costLabel = model.input_cost > 0
-    ? `?${(model.input_cost * 7.25).toFixed(1)}/?${(model.output_cost * 7.25).toFixed(1)}`
+    ? `¥${(model.input_cost * 7.25).toFixed(1)}/¥${(model.output_cost * 7.25).toFixed(1)}`
     : '';
 
   return `<div class="model-card${added ? ' model-card-added' : ''}" data-dev-model="${model.id}" data-cap-tool_call="${!!model.tool_call}" data-cap-reasoning="${!!model.reasoning}" data-cap-vision="${!!model.vision}" data-cap-audio="${!!model.audio}" style="cursor:${added ? 'default' : 'pointer'};opacity:${added ? '0.55' : '1'}">
     <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:6px" title="${model.name || model.id}">${model.id}</div>
-    <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-bottom:4px">${badges || '<span style="font-size:10px;color:var(--text-3)">????</span>'}</div>
+    <div style="display:flex;align-items:center;gap:3px;flex-wrap:wrap;margin-bottom:4px">${badges || '<span style="font-size:10px;color:var(--text-3)">—</span>'}</div>
     <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-3)">
       <span>${ctxLabel}</span><span>${costLabel}</span>
     </div>
-    ${added ? '<div style="position:absolute;top:4px;right:6px;font-size:10px;color:var(--success)">???</div>' : ''}
+    ${added ? '<div style="position:absolute;top:4px;right:6px;font-size:10px;color:var(--success)">✓ 已添加</div>' : ''}
   </div>`;
 }
