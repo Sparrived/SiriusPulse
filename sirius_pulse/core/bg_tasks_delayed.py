@@ -213,6 +213,26 @@ class DelayedQueueTasks:
     def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
         self._engine = engine
 
+    @staticmethod
+    def _resolve_identity_with_optional_profile_manager(
+        engine: Any,
+        ctx: IdentityContext,
+        group_id: str,
+    ) -> Any:
+        try:
+            return engine.identity_resolver.resolve_with_alias(
+                ctx,
+                engine.user_manager,
+                group_id,
+                profile_manager=getattr(engine, "profile_manager", None),
+            )
+        except TypeError:
+            return engine.identity_resolver.resolve_with_alias(
+                ctx,
+                engine.user_manager,
+                group_id,
+            )
+
     async def delayed_queue_ticker(self) -> None:
         """Smart-sleep ticker for the delayed queue.
 
@@ -402,11 +422,8 @@ class DelayedQueueTasks:
                 platform_uid=item.channel_user_id,
                 platform=item.channel,
             )
-            resolution = engine.identity_resolver.resolve_with_alias(
-                ctx,
-                engine.user_manager,
-                group_id,
-                profile_manager=getattr(engine, "profile_manager", None),
+            resolution = self._resolve_identity_with_optional_profile_manager(
+                engine, ctx, group_id
             )
             if resolution.user_id:
                 resolved_uid = resolution.user_id
@@ -414,11 +431,8 @@ class DelayedQueueTasks:
         if caller_profile is None:
             # Fallback: search by user_id (nickname) across all groups
             ctx = IdentityContext(speaker_name=item.user_id or "")
-            resolution = engine.identity_resolver.resolve_with_alias(
-                ctx,
-                engine.user_manager,
-                group_id,
-                profile_manager=getattr(engine, "profile_manager", None),
+            resolution = self._resolve_identity_with_optional_profile_manager(
+                engine, ctx, group_id
             )
             if resolution.user_id:
                 resolved_uid = resolution.user_id

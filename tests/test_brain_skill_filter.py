@@ -99,3 +99,40 @@ async def test_brain_chat_injects_current_time_into_user_message_not_system_prom
     assert provider.last_request.messages[0]["role"] == "user"
     assert "【当前时间】" in provider.last_request.messages[0]["content"]
     assert "hello" in provider.last_request.messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_brain_chat_injects_current_time_into_latest_user_message():
+    provider = _Provider()
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="model",
+                max_tokens=100,
+                temperature=0.1,
+                timeout=30,
+            )
+        ),
+        persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
+    )
+
+    await brain.chat(
+        ChatRequest(
+            group_id="group-1",
+            user_id="u1",
+            system_prompt="system",
+            messages=[
+                {"role": "user", "content": "older user"},
+                {"role": "assistant", "content": "older assistant"},
+                {"role": "user", "content": "latest user"},
+            ],
+        )
+    )
+
+    assert provider.last_request is not None
+    current_time_tag = "\u3010\u5f53\u524d\u65f6\u95f4\u3011"
+    assert current_time_tag not in provider.last_request.system_prompt
+    assert current_time_tag not in provider.last_request.messages[0]["content"]
+    assert current_time_tag in provider.last_request.messages[2]["content"]
+    assert "latest user" in provider.last_request.messages[2]["content"]

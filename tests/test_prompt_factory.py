@@ -248,6 +248,14 @@ class _StaticDiaryRetriever:
         return self.entries
 
 
+class _StaticMemoryUnitRetriever:
+    def __init__(self, units):
+        self.units = units
+
+    def retrieve(self, **kwargs):
+        return self.units
+
+
 def test_context_assembler_when_diary_exists_then_injects_user_message_not_system():
     diary_entry = SimpleNamespace(
         created_at="2026-06-21T10:11:12",
@@ -268,7 +276,65 @@ def test_context_assembler_when_diary_exists_then_injects_user_message_not_syste
     assert TAG_HISTORY_DIARY not in messages[0]["content"]
     assert TAG_HISTORY_DIARY in messages[-1]["content"]
     assert "Alice promised to deploy after lunch." in messages[-1]["content"]
+    assert "背景记忆" in messages[-1]["content"]
+    assert "不要主动说明" in messages[-1]["content"]
     assert "What should I do next?" in messages[-1]["content"]
+
+
+def test_context_assembler_prefers_memory_units_over_diary_context():
+    diary_entry = SimpleNamespace(
+        created_at="2026-06-21T10:11:12",
+        content="Old diary text should not be injected.",
+        summary="old diary",
+    )
+    memory_unit = SimpleNamespace(
+        created_at="2026-06-28T10:11:12",
+        unit_type="event",
+        summary="Alice asked Sirius to use checkpoint memory units.",
+        keywords=["checkpoint", "memory"],
+    )
+    assembler = ContextAssembler(
+        BasicMemoryManager(),
+        _StaticDiaryRetriever([diary_entry]),
+        memory_unit_retriever=_StaticMemoryUnitRetriever([memory_unit]),
+    )
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="What should I do next?",
+        system_prompt="system",
+    )
+
+    assert TAG_HISTORY_DIARY not in messages[-1]["content"]
+    assert "<memory_units>" in messages[-1]["content"]
+    assert "Alice asked Sirius to use checkpoint memory units." in messages[-1]["content"]
+    assert "Old diary text should not be injected." not in messages[-1]["content"]
+
+
+def test_context_assembler_uses_recent_window_not_full_basic_memory():
+    basic = BasicMemoryManager(hard_limit=20, context_window=5)
+    for index in range(12):
+        basic.add_entry(
+            "group_a",
+            "alice",
+            "human",
+            f"old message {index}",
+            speaker_name="Alice",
+        )
+    assembler = ContextAssembler(basic, _NoopDiaryRetriever())
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="current question",
+        system_prompt="system",
+    )
+    joined = "\n".join(str(message.get("content", "")) for message in messages)
+
+    assert "old message 0" not in joined
+    assert "old message 6" not in joined
+    assert "old message 7" in joined
+    assert "old message 11" in joined
+    assert "current question" in joined
 
 
 def test_context_assembler_builds_user_assistant_alternation():
@@ -341,3 +407,26 @@ def test_context_assembler_removes_diarized_sources_from_system_prefix():
     assert "【历史聊天信息】" not in messages[0]["content"]
     assert "first human" not in messages[0]["content"]
     assert "first reply" not in messages[0]["content"]
+
+
+def test_context_assembler_removes_checkpointed_sources_from_recent_history():
+    basic = BasicMemoryManager()
+    first = basic.add_entry("group_a", "alice", "human", "checkpointed human", speaker_name="Alice")
+    basic.add_entry("group_a", "assistant", "assistant", "fresh reply", speaker_name="Bot")
+
+    assembler = ContextAssembler(
+        basic,
+        _NoopDiaryRetriever(),
+        memory_unit_retriever=_StaticMemoryUnitRetriever([]),
+        is_source_checkpointed=lambda _group_id, entry_id: entry_id == first.entry_id,
+    )
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="current question",
+        system_prompt="system",
+    )
+    joined = "\n".join(str(message.get("content", "")) for message in messages)
+
+    assert "checkpointed human" not in joined
+    assert "fresh reply" in joined

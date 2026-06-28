@@ -35,6 +35,25 @@ def test_group_context_when_messages_exceed_window_then_keeps_recent_dialogue():
     assert all(entry.group_id == "group_a" for entry in context)
 
 
+def test_group_memory_when_messages_exceed_hard_limit_then_discards_old_entries():
+    mgr = BasicMemoryManager(hard_limit=4, context_window=3)
+
+    for index in range(7):
+        mgr.add_entry("group_a", "alice", "user", f"message-{index}", speaker_name="Alice")
+
+    assert [entry.content for entry in mgr.get_all("group_a")] == [
+        "message-3",
+        "message-4",
+        "message-5",
+        "message-6",
+    ]
+    assert [entry.content for entry in mgr.get_context("group_a")] == [
+        "message-4",
+        "message-5",
+        "message-6",
+    ]
+
+
 def test_diary_candidates_when_dialogue_outgrows_context_then_returns_older_turns_only():
     mgr = BasicMemoryManager(context_window=2)
 
@@ -97,6 +116,27 @@ def test_memory_snapshot_when_engine_restarts_then_restores_dialogue_and_heat_st
     context = restored.get_context("group_a")
     assert [entry.content for entry in context] == ["第一句", "第二句"]
     assert restored.get_heat_state("group_a") is not None
+
+
+def test_memory_snapshot_when_legacy_state_is_too_large_then_restores_tail_only():
+    payload: dict[str, list[dict[str, str]]] = {"group_a": []}
+    for index in range(35):
+        payload["group_a"].append(
+            {
+                "entry_id": f"entry_{index}",
+                "group_id": "group_a",
+                "user_id": "alice",
+                "role": "human",
+                "content": f"legacy-{index}",
+                "timestamp": f"2026-01-01T00:00:{index:02d}+00:00",
+            }
+        )
+
+    restored = BasicMemoryManager.from_dict(payload)
+
+    assert [entry.content for entry in restored.get_all("group_a")] == [
+        f"legacy-{index}" for index in range(5, 35)
+    ]
 
 
 def test_basic_memory_entry_when_intent_scores_are_missing_then_defaults_to_empty_dict():

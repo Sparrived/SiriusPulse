@@ -130,6 +130,7 @@ class BasicMemoryManager:
 
         window = self._windows.setdefault(gid, deque())
         window.append(entry)
+        self._trim_window(gid)
 
         # Update heat state
         self._update_heat(gid)
@@ -257,6 +258,13 @@ class BasicMemoryManager:
             avg_interval_sec=(300.0 / len(recent)) if recent else 0.0,
         )
 
+    def _trim_window(self, group_id: str) -> None:
+        window = self._windows.get(group_id)
+        if window is None:
+            return
+        while len(window) > self.hard_limit:
+            window.popleft()
+
     def get_heat_state(self, group_id: str) -> HeatState | None:
         return self._heat_state.get(group_id)
 
@@ -291,9 +299,10 @@ class BasicMemoryManager:
     def from_dict(cls, data: dict[str, Any]) -> "BasicMemoryManager":
         mgr = cls()
         for gid, entries in data.items():
-            for e in entries:
+            for e in list(entries)[-mgr.hard_limit:]:
                 if isinstance(e, dict):
                     mgr._windows.setdefault(gid, deque()).append(BasicMemoryEntry.from_dict(e))
+            mgr._trim_window(gid)
             mgr._update_heat(gid)
         return mgr
 
@@ -306,8 +315,9 @@ class BasicMemoryManager:
         """
         if not entries:
             return
-        window = self._windows.setdefault(group_id, deque())
-        for e in entries:
+        window: deque[BasicMemoryEntry] = deque()
+        for e in list(entries)[-self.hard_limit:]:
             if isinstance(e, dict):
                 window.append(BasicMemoryEntry.from_dict(e))
+        self._windows[group_id] = window
         self._update_heat(group_id)

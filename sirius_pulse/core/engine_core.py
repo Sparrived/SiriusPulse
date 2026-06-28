@@ -48,6 +48,7 @@ from sirius_pulse.memory.glossary import GlossaryManager
 from sirius_pulse.memory.profile import UserPersonaProfileManager, UserPersonaProfileStore
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.storage import MemoryStorage
+from sirius_pulse.memory.units import MemoryUnitManager
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.models import Message, Transcript, UnifiedUser
@@ -194,6 +195,10 @@ class _EmotionalGroupChatEngineBase:
             embedding_client=self._embedding_client,
             memory_storage=self._memory_storage,
         )
+        self.memory_unit_manager = MemoryUnitManager(
+            self.work_path,
+            embedding_client=self._embedding_client,
+        )
         self.user_manager = UnifiedUserManager(
             self.work_path,
             persona_name=self.persona.name,
@@ -218,6 +223,8 @@ class _EmotionalGroupChatEngineBase:
             self.diary_manager._retriever,
             profile_manager=self.profile_manager,
             is_source_diarized=self.diary_manager.is_source_diarized,
+            memory_unit_retriever=self.memory_unit_manager,
+            is_source_checkpointed=self.memory_unit_manager.is_source_checkpointed,
         )
         self.glossary_manager = GlossaryManager(
             self.work_path, persona_name=self.persona.name
@@ -782,7 +789,16 @@ class _EmotionalGroupChatEngineBase:
             chain_msgs: list[dict[str, Any]] = []
             if _result.system_prompt:
                 chain_msgs.append({"role": "system", "content": _result.system_prompt})
-            chain_msgs.extend(_req.messages)
+            # 规范化多模态 content 数组为纯文本，避免前端 [object Object]
+            for _m in _req.messages:
+                _c = _m.get("content")
+                if isinstance(_c, list):
+                    _text = "".join(
+                        p.get("text", "") for p in _c if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                    chain_msgs.append({**_m, "content": _text})
+                else:
+                    chain_msgs.append(_m)
             _entry = _engine.basic_memory.add_entry(
                 group_id=gid,
                 user_id="assistant",

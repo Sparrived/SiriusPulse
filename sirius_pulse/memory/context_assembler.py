@@ -34,14 +34,18 @@ class ContextAssembler:
     def __init__(
         self,
         basic_mgr: BasicMemoryManager,
-        diary_retriever: DiaryRetriever,
+        diary_retriever: DiaryRetriever | None = None,
         profile_manager: Any | None = None,
         is_source_diarized: Callable[[str, str], bool] | None = None,
+        memory_unit_retriever: Any | None = None,
+        is_source_checkpointed: Callable[[str, str], bool] | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._diary = diary_retriever
         self._profile_manager = profile_manager
         self._is_source_diarized = is_source_diarized
+        self._memory_units = memory_unit_retriever
+        self._is_source_checkpointed = is_source_checkpointed
 
     # ------------------------------------------------------------------
     # Public API
@@ -81,33 +85,45 @@ class ContextAssembler:
             dynamic_context: 每轮变化的上下文（传记、关系、记忆等），
                 由 PromptFactory.assemble_chat 产出，注入到当前 user 消息中。
         """
-        # 1. 检索相关日记
+        # 1. Retrieve relevant long-term memory.
         enriched_query = self._enrich_search_query(
             search_query or current_query, speaker_user_id, mentioned_user_ids
         )
 
-        diary_entries = self._diary.retrieve(
-            query=enriched_query,
-            group_id=group_id,
-            top_k=diary_top_k,
-            max_tokens_budget=diary_token_budget,
-        )
+        memory_context = ""
+        memory_count = 0
+        if self._memory_units is not None:
+            memory_units = self._memory_units.retrieve(
+                query=enriched_query,
+                group_id=group_id,
+                top_k=diary_top_k,
+                max_tokens_budget=diary_token_budget,
+            )
+            memory_count = len(memory_units)
+            memory_context = self._build_memory_unit_context(memory_units)
+        elif self._diary is not None:
+            diary_entries = self._diary.retrieve(
+                query=enriched_query,
+                group_id=group_id,
+                top_k=diary_top_k,
+                max_tokens_budget=diary_token_budget,
+            )
+            memory_count = len(diary_entries)
+            memory_context = self._build_diary_context(diary_entries)
 
         logger.info(
-            "ContextAssembler: group=%s | %d 条日记 | query=%.30s...",
+            "ContextAssembler: group=%s | %d memory items | query=%.30s...",
             group_id,
-            len(diary_entries),
+            memory_count,
             search_query or current_query,
         )
-
-        diary_context = self._build_diary_context(diary_entries)
 
         # 2. 构建稳定的 system prompt（PromptFactory 已完成静态注入）
         enriched_system = self._build_stable_system(system_prompt)
         messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
 
         # 3. 构建 user/assistant 交替的历史消息
-        recent = self._cacheable_history_entries(group_id)
+        recent = self._cacheable_history_entries(group_id, recent_n=recent_n)
         pending_entries: list[Any] = []
 
         if recent and not include_pending:
@@ -140,10 +156,10 @@ class ContextAssembler:
 
         # 4. 构建当前用户消息：日记 + 动态上下文 + 消息内容
         def _with_user_context(content: str) -> str:
-            """将日记和动态上下文前缀到用户消息。"""
+            """Prefix long-term memory and dynamic context to the user message."""
             parts: list[str] = []
-            if diary_context:
-                parts.append(diary_context)
+            if memory_context:
+                parts.append(memory_context)
             if dynamic_context:
                 parts.append(dynamic_context)
             if content:
@@ -247,22 +263,35 @@ class ContextAssembler:
             enriched_query = self._enrich_search_query(
                 search_query or current_query, speaker_user_id, mentioned_user_ids
             )
-            diary_entries = self._diary.retrieve(
-                query=enriched_query,
-                group_id=group_id,
-                top_k=diary_top_k,
-                max_tokens_budget=diary_token_budget,
-            )
-            if diary_entries:
+            memory_text = ""
+            if self._memory_units is not None:
+                memory_units = self._memory_units.retrieve(
+                    query=enriched_query,
+                    group_id=group_id,
+                    top_k=diary_top_k,
+                    max_tokens_budget=diary_token_budget,
+                )
+                memory_text = "\n".join(
+                    f"{i}. {getattr(unit, 'summary', '')}"
+                    for i, unit in enumerate(memory_units[:12], 1)
+                )
+            elif self._diary is not None:
+                diary_entries = self._diary.retrieve(
+                    query=enriched_query,
+                    group_id=group_id,
+                    top_k=diary_top_k,
+                    max_tokens_budget=diary_token_budget,
+                )
                 full_count = min(5, len(diary_entries))
-                diary_text = "\n".join(
+                memory_text = "\n".join(
                     f"{i}. [{(e.created_at or '')[:16].replace('T', ' ')}] "
                     f"{e.content if (i <= full_count and e.content) else e.summary}"
                     if e.created_at
                     else f"{i}. {e.content if (i <= full_count and e.content) else e.summary}"
                     for i, e in enumerate(diary_entries[:12], 1)
                 )
-                breakdown["diary"] = estimate_tokens(diary_text)
+            if memory_text:
+                breakdown["diary"] = estimate_tokens(memory_text)
 
             history_tokens = 0
             for msg in messages:
@@ -278,9 +307,11 @@ class ContextAssembler:
         """Build XML representation of recent conversation history."""
         return self._build_history_xml(group_id, n=n, include_pending=include_pending)
 
-    def _cacheable_history_entries(self, group_id: str) -> list[Any]:
-        entries = self._basic.get_all(group_id)
-        if not entries or self._is_source_diarized is None:
+    def _cacheable_history_entries(self, group_id: str, *, recent_n: int = 0) -> list[Any]:
+        limit = recent_n if recent_n and recent_n > 0 else getattr(self._basic, "context_window", 5)
+        entries = self._basic.get_context(group_id, n=limit)
+        source_filter = self._is_source_checkpointed or self._is_source_diarized
+        if not entries or source_filter is None:
             return list(entries)
 
         result: list[Any] = []
@@ -290,12 +321,33 @@ class ContextAssembler:
                 result.append(entry)
                 continue
             try:
-                diarized = self._is_source_diarized(group_id, entry_id)
+                diarized = source_filter(group_id, entry_id)
             except Exception:
                 diarized = False
             if not diarized:
                 result.append(entry)
         return result
+
+    @staticmethod
+    def _build_memory_unit_context(memory_units: list[Any]) -> str:
+        """Build compact memory-unit context for the current user message."""
+        if not memory_units:
+            return ""
+
+        lines = [
+            "<memory_units>",
+            "The following are compact background memory facts, not current chat messages. Use them only when directly helpful. Do not mention checking memory, reading logs, or remembering these facts.",
+        ]
+        for i, unit in enumerate(memory_units[:12], 1):
+            ts = (getattr(unit, "created_at", "") or "")[:16].replace("T", " ")
+            unit_type = getattr(unit, "unit_type", "") or "event"
+            summary = getattr(unit, "summary", "") or ""
+            keywords = getattr(unit, "keywords", []) or []
+            keyword_text = f" keywords={','.join(keywords[:5])}" if keywords else ""
+            prefix = f"{i}. [{ts}] ({unit_type})" if ts else f"{i}. ({unit_type})"
+            lines.append(f"{prefix} {summary}{keyword_text}")
+        lines.append("</memory_units>")
+        return "\n".join(lines)
 
     @staticmethod
     def _build_diary_context(diary_entries: list[Any]) -> str:
@@ -307,7 +359,10 @@ class ContextAssembler:
 
         entries = diary_entries[:12]
         full_text_count = min(5, len(entries))
-        lines = [TAG_HISTORY_DIARY]
+        lines = [
+            TAG_HISTORY_DIARY,
+            "以下是可能相关的背景记忆，不是当前聊天消息。只在确实有助于回答时自然利用事实；不要主动说明你查看、翻阅或记得这些日记，也不要复述与当前问题无关的旧事。",
+        ]
         for i, entry in enumerate(entries, 1):
             ts = (getattr(entry, "created_at", "") or "")[:16].replace("T", " ")
             content = getattr(entry, "content", "")

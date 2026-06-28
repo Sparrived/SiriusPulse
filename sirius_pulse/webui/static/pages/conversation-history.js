@@ -324,6 +324,17 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+/** 将 conversation_chain 中可能的多模态 content 数组规范化为字符串 */
+function normalizeChainContent(content) {
+  if (Array.isArray(content)) {
+    return content
+      .filter(part => part && part.type === 'text')
+      .map(part => part.text || '')
+      .join('');
+  }
+  return content || '';
+}
+
 function truncate(str, max = 500) {
   if (!str) return '';
   return str.length > max ? str.slice(0, max) + '...' : str;
@@ -650,7 +661,7 @@ function renderChainMessages(chain) {
   return chain.map((msg, idx) => {
     const role = msg.role || 'unknown';
     const style = CHAIN_ROLE_STYLES[role] || CHAIN_ROLE_STYLES.system;
-    const content = msg.content || '';
+    const content = normalizeChainContent(msg.content);
     const isSystem = role === 'system';
     const isUser = role === 'user';
 

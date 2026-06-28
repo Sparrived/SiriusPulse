@@ -429,6 +429,12 @@ class EnginePersistence:
                 engine.diary_manager._retriever,
                 profile_manager=getattr(engine, "profile_manager", None),
                 is_source_diarized=engine.diary_manager.is_source_diarized,
+                memory_unit_retriever=getattr(engine, "memory_unit_manager", None),
+                is_source_checkpointed=(
+                    engine.memory_unit_manager.is_source_checkpointed
+                    if hasattr(engine, "memory_unit_manager")
+                    else None
+                ),
             )
 
             # Token usage records

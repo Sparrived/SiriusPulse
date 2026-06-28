@@ -265,24 +265,24 @@ class Brain:
         messages: list[dict[str, Any]],
         context: str,
     ) -> list[dict[str, Any]]:
-        """Prefix context to the first user message without mutating caller data."""
-        copied: list[dict[str, Any]] = []
-        injected = False
+        """Prefix volatile context to the latest user message without mutating caller data."""
+        last_user_idx = -1
+        for idx, message in enumerate(messages):
+            if message.get("role") == "user":
+                last_user_idx = idx
 
-        for message in messages:
-            item = dict(message)
-            if not injected and item.get("role") == "user":
-                content = item.get("content", "")
-                if isinstance(content, list):
-                    item["content"] = [{"type": "text", "text": context}, *content]
-                else:
-                    text = "" if content is None else str(content)
-                    item["content"] = f"{context}\n\n{text}" if text else context
-                injected = True
-            copied.append(item)
+        copied = [dict(message) for message in messages]
 
-        if not injected:
+        if last_user_idx < 0:
             return [{"role": "user", "content": context}, *copied]
+
+        item = copied[last_user_idx]
+        content = item.get("content", "")
+        if isinstance(content, list):
+            item["content"] = [{"type": "text", "text": context}, *content]
+        else:
+            text = "" if content is None else str(content)
+            item["content"] = f"{context}\n\n{text}" if text else context
         return copied
 
     # ═══════════════════════════════════════════════════════════════════

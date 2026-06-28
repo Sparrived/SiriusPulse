@@ -54,8 +54,7 @@ class BackgroundTasks:
 
         tasks = [
             asyncio.create_task(self.delayed.delayed_queue_ticker(), name="delayed_queue"),
-            asyncio.create_task(self._diary_promoter(), name="diary_promote"),
-            asyncio.create_task(self._diary_consolidator(), name="diary_consolidator"),
+            asyncio.create_task(self._memory_unit_checkpointer(), name="memory_checkpoint"),
             asyncio.create_task(self._sticker_cache_warmup(), name="sticker_cache_warmup"),
         ]
         for t in tasks:
@@ -95,19 +94,22 @@ class BackgroundTasks:
             logger.warning("表情包缓存预热失败: %s", exc)
 
     # ==================================================================
-    # 日记相关任务
+    # Memory checkpoint tasks
     # ==================================================================
 
-    async def _diary_promoter(self) -> None:
-        """Periodically promote basic memory entries to diary summaries.
+    async def _memory_unit_checkpointer(self) -> None:
+        """Periodically checkpoint basic memory entries into memory units.
 
         Trigger conditions:
         1. Group is cold (heat < threshold AND silence >= threshold).
-        2. The group has enough undiarized archive candidates.
+        2. The group has enough uncheckpointed archive candidates.
         """
         engine = self._engine
         interval = engine.config.get("memory_promote_interval_seconds", 180)
-        volume_threshold = engine.config.get("diary_volume_threshold", 8)
+        volume_threshold = engine.config.get(
+            "memory_unit_volume_threshold",
+            engine.config.get("diary_volume_threshold", 8),
+        )
         idle_consolidation_seconds = engine.config.get("memory_idle_consolidation_seconds", 3600)
         while engine._bg_running:
             await asyncio.sleep(interval)
@@ -120,7 +122,7 @@ class BackgroundTasks:
                     heat, seconds_since_last = engine.basic_memory.get_cold_params(group_id)
                     cold_state = engine.cold_detector.check(heat, seconds_since_last)
 
-                    # ── Layer 3: 冷寂 → 日记生成 ──
+                    # Layer 3: cold group -> memory checkpoint
                     if cold_state == ColdState.COLD:
                         candidates = engine.basic_memory.get_consolidation_candidates(
                             group_id,
@@ -131,101 +133,36 @@ class BackgroundTasks:
                         candidates = [
                             c
                             for c in candidates
-                            if not engine.diary_manager.is_source_diarized(group_id, c.entry_id)
+                            if not engine.memory_unit_manager.is_source_checkpointed(
+                                group_id, c.entry_id
+                            )
                         ]
                         if not candidates:
                             continue
 
                         cfg = engine.model_router.resolve("memory_extract")
-                        # Use topic clustering when there are many candidates
-                        # to avoid information loss from a single diary call.
-                        if len(candidates) > volume_threshold * 2:
-                            cluster_cfg = engine.model_router.resolve("topic_cluster")
-                            results = await engine.diary_manager.generate_topic_clustered(
-                                group_id=group_id,
-                                candidates=candidates,
-                                persona_name=engine.persona.name,
-                                persona_description=(
-                                    engine.persona.persona_summary or engine.persona.backstory or ""
-                                ),
-                                brain=engine.brain,
-                                model_name=cfg.model_name,
-                                min_candidate_count=volume_threshold,
-                                topic_cluster_model=cluster_cfg.model_name,
-                            )
-                            promoted_total += len(results)
-                        else:
-                            result = await engine.diary_manager.generate_from_candidates(
-                                group_id=group_id,
-                                candidates=candidates,
-                                persona_name=engine.persona.name,
-                                persona_description=(
-                                    engine.persona.persona_summary or engine.persona.backstory or ""
-                                ),
-                                brain=engine.brain,
-                                model_name=cfg.model_name,
-                                min_candidate_count=volume_threshold,
-                            )
-                            if result:
-                                promoted_total += 1
+                        result = await engine.memory_unit_manager.generate_from_candidates(
+                            group_id=group_id,
+                            candidates=candidates,
+                            persona_name=engine.persona.name,
+                            persona_description=(
+                                engine.persona.persona_summary or engine.persona.backstory or ""
+                            ),
+                            brain=engine.brain,
+                            model_name=cfg.model_name,
+                            min_candidate_count=volume_threshold,
+                        )
+                        if result:
+                            promoted_total += len(result.units)
 
                 if promoted_total > 0:
-                    engine._log_inner_thought(f"整理了 {promoted_total} 个群的对话日记，过去的回忆又清晰了一点～")
+                    engine._log_inner_thought(f"整理了 {promoted_total} 条结构化记忆单元。")
             except Exception as exc:
-                logger.warning("Diary promotion failed: %s", exc)
+                logger.warning("Memory checkpoint failed: %s", exc)
 
-    async def _diary_consolidator(self) -> None:
-        """Periodically consolidate diary entries via LLM merging."""
-        engine = self._engine
-        interval = engine.config.get("consolidation_interval_seconds", 600)
-        while engine._bg_running:
-            await asyncio.sleep(interval)
-            try:
-                await self._run_diary_consolidation()
-            except Exception as exc:
-                logger.warning("Diary consolidation failed: %s", exc)
-
-    async def _run_diary_consolidation(self) -> None:
-        """Find similar diary entries and merge them via LLM."""
-        from sirius_pulse.core.brain import RawRequest
-        from sirius_pulse.memory.diary.consolidator import DiaryConsolidator
-
-        engine = self._engine
-        consolidator = DiaryConsolidator(engine.diary_manager, engine.config)
-        cfg = engine.model_router.resolve("memory_extract")
-
-        for group_id in list(engine._group_last_message_at.keys()):
-            try:
-                clusters = await asyncio.to_thread(consolidator.find_clusters, group_id)
-                if not clusters:
-                    continue
-
-                merged_entries: list[Any] = []
-                for cluster in clusters:
-                    system_prompt, user_content = consolidator.build_merge_prompt(cluster)
-                    raw_request = RawRequest(
-                        model=cfg.model_name,
-                        system_prompt=system_prompt,
-                        messages=[{"role": "user", "content": user_content}],
-                        temperature=0.4,
-                        max_tokens=2048,
-                        purpose="diary_consolidate",
-                        response_format={"type": "json_object"},
-                    )
-                    raw = await engine.brain.raw_call(raw_request)
-                    entry = consolidator.parse_merge_result(raw, cluster)
-                    if entry:
-                        merged_entries.append(entry)
-
-                if merged_entries:
-                    await asyncio.to_thread(
-                        consolidator.append_merged_entries, group_id, clusters, merged_entries
-                    )
-                    engine._log_inner_thought(
-                        f"整理了 {len(clusters)} 组相似日记，合并成 {len(merged_entries)} 条喵~"
-                    )
-            except Exception as exc:
-                logger.warning("Diary consolidation failed for %s: %s", group_id, exc)
+    async def _diary_promoter(self) -> None:
+        """Backward-compatible alias for the old diary promotion task."""
+        await self._memory_unit_checkpointer()
 
     # ==================================================================
     # 委托方法（向后兼容）

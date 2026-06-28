@@ -13,6 +13,14 @@ from sirius_pulse.memory.diary import (
 )
 from sirius_pulse.memory.glossary import GlossaryManager, GlossaryTerm
 from sirius_pulse.memory.profile import UserPersonaProfileManager, UserPersonaProfileStore
+from sirius_pulse.memory.units import (
+    MemoryUnit,
+    MemoryUnitFileStore,
+    MemoryUnitGenerator,
+    MemoryUnitIndexer,
+    MemoryUnitManager,
+    MemoryUnitRetriever,
+)
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 
@@ -25,6 +33,12 @@ __all__ = [
     "DiaryIndexer",
     "DiaryRetriever",
     "DiaryEntry",
+    "MemoryUnit",
+    "MemoryUnitManager",
+    "MemoryUnitGenerator",
+    "MemoryUnitIndexer",
+    "MemoryUnitRetriever",
+    "MemoryUnitFileStore",
     "ContextAssembler",
     "UnifiedUser",
     "UnifiedUserManager",
