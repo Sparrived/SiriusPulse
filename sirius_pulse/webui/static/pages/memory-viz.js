@@ -1,7 +1,7 @@
 import { store } from '../store.js';
-import { get } from '../app.js';
-import { toast, $ } from '../components.js';
-import { setChartOption, getChart, disposeChart } from '../charts.js';
+import { get, post, put, del } from '../app.js';
+import { toast, $, statCard } from '../components.js';
+import { setChartOption, getChart } from '../charts.js';
 
 const ROLE_COLORS = {
   human: '#58a6ff',
@@ -9,12 +9,23 @@ const ROLE_COLORS = {
   system: '#a371f7',
 };
 
-let charts = [];
-let cachedData = null;
+const TABS = [
+  { id: 'diary', label: '日记记忆', hint: '长期总结', canCreate: true },
+  { id: 'glossary', label: '名词解释', hint: '概念词典', canCreate: true },
+  { id: 'users', label: '用户画像', hint: '语义档案', canCreate: true },
+  { id: 'conversations', label: '基础记忆', hint: '近期对话', canCreate: false },
+];
+
+let state = {
+  tab: 'diary',
+  search: '',
+  group: '',
+  data: null,
+  viz: null,
+};
 
 export async function init(container) {
-  const name = store.currentPersona;
-  if (!name) {
+  if (!store.currentPersona) {
     container.innerHTML = `
       <div class="card">
         <div style="padding:60px;text-align:center;color:var(--text-3)">请先选择人格</div>
@@ -24,119 +35,642 @@ export async function init(container) {
   }
 
   container.innerHTML = `
-    <div class="card" style="margin-bottom:20px">
-      <div class="card-header">
-        <div class="card-title">基础记忆时间线</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select id="timelineGroup" class="btn btn-sm" style="display:none;padding:2px 8px"></select>
-          <select id="timelineRange" class="btn btn-sm" style="padding:2px 8px">
+    <style>
+      .memory-hero {
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        gap:16px;
+        align-items:end;
+        margin-bottom:18px;
+      }
+      .memory-title {
+        font-size:24px;
+        font-weight:700;
+        letter-spacing:0;
+        color:var(--text-1);
+      }
+      .memory-subtitle {
+        margin-top:4px;
+        color:var(--text-3);
+        font-size:13px;
+      }
+      .memory-toolbar {
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
+        align-items:center;
+        justify-content:flex-end;
+      }
+      .memory-tabs {
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:8px;
+        margin:18px 0;
+      }
+      .memory-tab {
+        border:1px solid var(--border);
+        background:var(--bg-2);
+        color:var(--text-2);
+        border-radius:8px;
+        padding:12px;
+        cursor:pointer;
+        text-align:left;
+        min-width:0;
+      }
+      .memory-tab.active {
+        border-color:var(--accent);
+        background:var(--accent-dim);
+        color:var(--text-1);
+      }
+      .memory-tab-name {
+        display:block;
+        font-weight:600;
+        font-size:13px;
+      }
+      .memory-tab-hint {
+        display:block;
+        color:var(--text-3);
+        font-size:11px;
+        margin-top:2px;
+      }
+      .memory-workspace {
+        display:grid;
+        grid-template-columns:minmax(0,1fr) 340px;
+        gap:16px;
+        align-items:start;
+      }
+      .memory-list {
+        display:flex;
+        flex-direction:column;
+        gap:10px;
+      }
+      .memory-item {
+        border:1px solid var(--border);
+        border-radius:8px;
+        background:color-mix(in srgb, var(--bg-2) 92%, var(--accent) 8%);
+        padding:14px;
+      }
+      .memory-item-head {
+        display:flex;
+        justify-content:space-between;
+        gap:12px;
+        align-items:flex-start;
+        margin-bottom:8px;
+      }
+      .memory-item-title {
+        color:var(--text-1);
+        font-weight:600;
+        word-break:break-word;
+      }
+      .memory-item-meta {
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+        color:var(--text-3);
+        font-size:11px;
+        margin-top:4px;
+      }
+      .memory-pill {
+        display:inline-flex;
+        align-items:center;
+        max-width:180px;
+        border:1px solid var(--border);
+        border-radius:999px;
+        padding:2px 8px;
+        color:var(--text-2);
+        background:var(--bg-1);
+        font-size:11px;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .memory-content {
+        color:var(--text-2);
+        line-height:1.7;
+        white-space:pre-wrap;
+        word-break:break-word;
+      }
+      .memory-actions {
+        display:flex;
+        gap:6px;
+        flex-shrink:0;
+      }
+      .memory-side {
+        position:sticky;
+        top:76px;
+      }
+      .memory-form-grid {
+        display:grid;
+        gap:10px;
+      }
+      .memory-form-grid label {
+        font-size:12px;
+        color:var(--text-3);
+        margin-bottom:4px;
+      }
+      .memory-empty {
+        padding:52px 16px;
+        color:var(--text-3);
+        text-align:center;
+        border:1px dashed var(--border);
+        border-radius:8px;
+        background:var(--bg-2);
+      }
+      .memory-chart-grid {
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:16px;
+        margin-top:16px;
+      }
+      @media (max-width: 1100px) {
+        .memory-workspace,
+        .memory-chart-grid,
+        .memory-hero {
+          grid-template-columns:1fr;
+        }
+        .memory-side {
+          position:static;
+        }
+      }
+      @media (max-width: 760px) {
+        .memory-tabs {
+          grid-template-columns:repeat(2,minmax(0,1fr));
+        }
+      }
+    </style>
+
+    <div class="memory-hero">
+      <div>
+        <div class="memory-title">记忆管理工作台</div>
+        <div class="memory-subtitle">统一查看基础记忆、日记、术语和用户画像，并维护可编辑的长期记忆。</div>
+      </div>
+      <div class="memory-toolbar">
+        <select id="memoryGroupFilter" style="width:160px"></select>
+        <input id="memorySearch" type="search" placeholder="搜索记忆内容..." style="width:220px">
+        <button class="btn btn-primary" id="memoryCreateBtn">新增</button>
+        <button class="btn" id="memoryRefreshBtn">刷新</button>
+      </div>
+    </div>
+
+    <div class="stat-grid" id="memoryStats"></div>
+    <div class="memory-tabs" id="memoryTabs"></div>
+
+    <div class="memory-workspace">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title" id="memoryListTitle">记忆列表</div>
+            <div class="card-subtitle" id="memoryListSubtitle">按当前筛选展示</div>
+          </div>
+        </div>
+        <div id="memoryList" class="memory-list"></div>
+      </div>
+      <div class="memory-side">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title" id="memoryFormTitle">选择一条记忆</div>
+              <div class="card-subtitle" id="memoryFormSubtitle">可编辑的记忆会在这里打开</div>
+            </div>
+          </div>
+          <div id="memoryForm"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="memory-chart-grid">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">基础记忆时间线</div>
+            <div class="card-subtitle">按天统计用户、AI 与系统消息</div>
+          </div>
+          <select id="timelineRange" class="btn btn-sm" style="width:120px">
             <option value="7">近 7 天</option>
             <option value="30" selected>近 30 天</option>
             <option value="90">近 90 天</option>
             <option value="0">全部</option>
           </select>
-          <button class="btn btn-sm" id="refreshViz">刷新</button>
         </div>
+        <div id="timelineChart" class="chart-container" style="min-height:320px"></div>
       </div>
-      <div id="timelineChart" class="chart-container" style="min-height:360px;padding:16px"></div>
-    </div>
-    <div class="card" style="margin-bottom:20px">
-      <div class="card-header">
-        <div class="card-title">日记语义聚类</div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">日记语义聚类</div>
+            <div class="card-subtitle">基于 embedding 的主题分布</div>
+          </div>
+        </div>
+        <div id="clusterChart" class="chart-container" style="min-height:320px"></div>
       </div>
-      <div id="clusterChart" class="chart-container" style="min-height:400px;padding:16px"></div>
     </div>
   `;
 
-  $('refreshViz').addEventListener('click', () => loadViz());
-  $('timelineRange').addEventListener('change', () => {
-    if (cachedData) {
-      renderTimeline(cachedData.basic_timeline || {});
-    }
-  });
-  $('timelineGroup').addEventListener('change', () => {
-    if (cachedData) {
-      renderTimeline(cachedData.basic_timeline || {});
-    }
-  });
-  charts = [];
-  await loadViz();
+  bindEvents();
+  renderTabs();
+  closeEditor();
+  await loadAll();
 }
 
-async function loadViz() {
-  const name = store.currentPersona;
+function bindEvents() {
+  $('memoryRefreshBtn')?.addEventListener('click', loadAll);
+  $('memoryCreateBtn')?.addEventListener('click', () => openEditor(state.tab, null));
+  $('memorySearch')?.addEventListener('input', (event) => {
+    state.search = event.target.value.trim().toLowerCase();
+    renderAll();
+  });
+  $('memoryGroupFilter')?.addEventListener('change', (event) => {
+    state.group = event.target.value;
+    renderAll();
+    renderTimeline(state.viz?.basic_timeline || {});
+  });
+  $('timelineRange')?.addEventListener('change', () => renderTimeline(state.viz?.basic_timeline || {}));
+}
+
+async function loadAll() {
   try {
-    const data = await get(`/persona/memory-viz`);
-    cachedData = data;
+    const [diary, glossary, users, conversations, viz] = await Promise.all([
+      get('/persona/diary?limit=200'),
+      get('/persona/glossary?limit=200'),
+      get('/persona/users?limit=200'),
+      get('/persona/conversations?limit=200'),
+      get('/persona/memory-viz'),
+    ]);
+    state.data = { diary, glossary, users, conversations };
+    state.viz = viz;
+    renderAll();
+    renderTimeline(viz.basic_timeline || {});
+    renderCluster(viz.diary_entries || []);
+  } catch (error) {
+    toast('加载记忆数据失败: ' + error.message, 'error');
+  }
+}
 
-    // 填充群聊选择器
-    const groups = data.groups || [];
-    const groupSelect = $('timelineGroup');
-    if (groupSelect) {
-      if (groups.length > 1) {
-        groupSelect.style.display = '';
-        const prev = groupSelect.value;
-        groupSelect.innerHTML = '<option value="">全部群聊</option>' +
-          groups.map(g => `<option value="${g}">${g}</option>`).join('');
-        if (prev && groups.includes(prev)) groupSelect.value = prev;
-      } else {
-        groupSelect.style.display = 'none';
-        groupSelect.innerHTML = '';
+function renderAll() {
+  renderTabs();
+  renderStats();
+  renderGroupFilter();
+  renderList();
+  updateCreateButton();
+}
+
+function renderTabs() {
+  const el = $('memoryTabs');
+  if (!el) return;
+  el.innerHTML = TABS.map((tab) => `
+    <button class="memory-tab ${state.tab === tab.id ? 'active' : ''}" data-tab="${tab.id}">
+      <span class="memory-tab-name">${tab.label}</span>
+      <span class="memory-tab-hint">${tab.hint}</span>
+    </button>
+  `).join('');
+  el.querySelectorAll('[data-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.tab = btn.dataset.tab;
+      closeEditor();
+      renderAll();
+    });
+  });
+}
+
+function renderStats() {
+  const data = state.data;
+  if (!data) return;
+  const el = $('memoryStats');
+  if (!el) return;
+  el.innerHTML = [
+    statCard('日记条目', data.diary?.total || 0, '可新增、编辑、删除', '◫'),
+    statCard('术语数量', data.glossary?.total || 0, '人格级词典', '◱'),
+    statCard('用户画像', data.users?.total || 0, '按群组维护', '◎'),
+    statCard('基础消息', data.conversations?.total || 0, '运行窗口与归档', '◲'),
+  ].join('');
+}
+
+function renderGroupFilter() {
+  const select = $('memoryGroupFilter');
+  if (!select || !state.data) return;
+  const groups = new Set();
+  (state.data.diary?.groups || []).forEach((g) => groups.add(g));
+  (state.data.users?.groups || []).forEach((g) => groups.add(g));
+  (state.data.conversations?.groups || []).forEach((g) => groups.add(g));
+  const current = state.group;
+  select.innerHTML = '<option value="">全部群组</option>' +
+    [...groups].sort().map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+  select.value = [...groups].includes(current) ? current : '';
+  state.group = select.value;
+}
+
+function updateCreateButton() {
+  const btn = $('memoryCreateBtn');
+  const tab = TABS.find((item) => item.id === state.tab);
+  if (!btn || !tab) return;
+  btn.style.display = tab.canCreate ? '' : 'none';
+  btn.textContent = state.tab === 'users' ? '新增画像' : '新增记忆';
+}
+
+function getActiveItems() {
+  if (!state.data) return [];
+  if (state.tab === 'diary') return state.data.diary?.entries || [];
+  if (state.tab === 'glossary') return state.data.glossary?.terms || [];
+  if (state.tab === 'users') return state.data.users?.users || [];
+  return state.data.conversations?.messages || [];
+}
+
+function renderList() {
+  const list = $('memoryList');
+  const title = $('memoryListTitle');
+  const subtitle = $('memoryListSubtitle');
+  if (!list || !title || !subtitle) return;
+
+  const tab = TABS.find((item) => item.id === state.tab);
+  title.textContent = tab?.label || '记忆列表';
+
+  const filtered = getActiveItems().filter(matchesFilters);
+  subtitle.textContent = `当前显示 ${filtered.length} 条`;
+  if (!filtered.length) {
+    list.innerHTML = '<div class="memory-empty">当前筛选下没有记忆数据</div>';
+    return;
+  }
+  list.innerHTML = filtered.map((item, index) => renderItem(item, index)).join('');
+  list.querySelectorAll('[data-edit]').forEach((btn) => {
+    btn.addEventListener('click', () => openEditor(state.tab, filtered[Number(btn.dataset.edit)]));
+  });
+  list.querySelectorAll('[data-delete]').forEach((btn) => {
+    btn.addEventListener('click', () => deleteItem(state.tab, filtered[Number(btn.dataset.delete)]));
+  });
+}
+
+function matchesFilters(item) {
+  const group = String(item.group_id || item.group || '');
+  if (state.group && group !== state.group) return false;
+  if (!state.search) return true;
+  const haystack = JSON.stringify(item).toLowerCase();
+  return haystack.includes(state.search);
+}
+
+function renderItem(item, index) {
+  if (state.tab === 'diary') {
+    const title = item.summary || item.content?.slice(0, 80) || '未命名日记';
+    return renderItemShell({
+      title,
+      meta: [item.group_id, formatDate(item.created_at), ...(item.keywords || []).slice(0, 5)],
+      content: item.content || '',
+      index,
+      editable: true,
+    });
+  }
+  if (state.tab === 'glossary') {
+    return renderItemShell({
+      title: item.term || '未命名术语',
+      meta: [item.domain, `置信度 ${formatPercent(item.confidence)}`, `使用 ${item.usage_count || 0} 次`],
+      content: item.definition || '',
+      index,
+      editable: true,
+    });
+  }
+  if (state.tab === 'users') {
+    return renderItemShell({
+      title: item.name || item.user_id || '未知用户',
+      meta: [item.user_id, `互动 ${item.interaction_count || 0} 次`, `参与度 ${formatPercent(item.engagement_rate)}`],
+      content: `首次互动: ${formatDate(item.first_interaction_at)}\n最近互动: ${formatDate(item.last_interaction_at)}`,
+      index,
+      editable: true,
+    });
+  }
+  return renderItemShell({
+    title: item.speaker_name || item.user_id || item.role || '消息',
+    meta: [item.group_id, item.role, formatDate(item.timestamp)],
+    content: item.content || '',
+    index,
+    editable: false,
+  });
+}
+
+function renderItemShell({ title, meta, content, index, editable }) {
+  const actions = editable
+    ? `<div class="memory-actions">
+        <button class="btn btn-sm" data-edit="${index}">编辑</button>
+        <button class="btn btn-sm btn-danger" data-delete="${index}">删除</button>
+      </div>`
+    : '';
+  return `
+    <div class="memory-item">
+      <div class="memory-item-head">
+        <div>
+          <div class="memory-item-title">${escapeHtml(title)}</div>
+          <div class="memory-item-meta">${meta.filter(Boolean).map((m) => `<span class="memory-pill">${escapeHtml(m)}</span>`).join('')}</div>
+        </div>
+        ${actions}
+      </div>
+      <div class="memory-content">${escapeHtml(content || '暂无内容')}</div>
+    </div>
+  `;
+}
+
+function openEditor(tab, item) {
+  const form = $('memoryForm');
+  const title = $('memoryFormTitle');
+  const subtitle = $('memoryFormSubtitle');
+  if (!form || !title || !subtitle) return;
+  const isNew = !item;
+  title.textContent = isNew ? '新增记忆' : '编辑记忆';
+  subtitle.textContent = TABS.find((t) => t.id === tab)?.label || '';
+  if (tab === 'diary') {
+    form.innerHTML = diaryForm(item);
+  } else if (tab === 'glossary') {
+    form.innerHTML = glossaryForm(item);
+  } else if (tab === 'users') {
+    form.innerHTML = userForm(item);
+  } else {
+    form.innerHTML = '<div class="memory-empty">基础记忆来自运行窗口和归档，仅支持浏览检索。</div>';
+    return;
+  }
+  $('memorySaveBtn')?.addEventListener('click', () => saveEditor(tab, item));
+  $('memoryCancelBtn')?.addEventListener('click', closeEditor);
+}
+
+function closeEditor() {
+  const form = $('memoryForm');
+  const title = $('memoryFormTitle');
+  const subtitle = $('memoryFormSubtitle');
+  if (title) title.textContent = '选择一条记忆';
+  if (subtitle) subtitle.textContent = '可编辑的记忆会在这里打开';
+  if (form) form.innerHTML = '<div class="memory-empty">从左侧选择条目，或点击新增创建长期记忆。</div>';
+}
+
+function diaryForm(item = {}) {
+  return `
+    <div class="memory-form-grid">
+      ${field('群组 ID', 'editGroupId', item.group_id || state.group || 'default')}
+      ${field('摘要', 'editSummary', item.summary || '')}
+      ${field('关键词', 'editKeywords', (item.keywords || []).join(', '), '逗号分隔')}
+      ${textarea('内容', 'editContent', item.content || '', 8)}
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" id="memorySaveBtn">保存</button>
+        <button class="btn" id="memoryCancelBtn">取消</button>
+      </div>
+    </div>
+  `;
+}
+
+function glossaryForm(item = {}) {
+  return `
+    <div class="memory-form-grid">
+      ${field('术语', 'editTerm', item.term || '')}
+      ${textarea('定义', 'editDefinition', item.definition || '', 5)}
+      ${field('领域', 'editDomain', item.domain || 'custom')}
+      ${field('置信度', 'editConfidence', item.confidence ?? 0.8, '', 'number', '0', '1', '0.05')}
+      ${field('使用次数', 'editUsageCount', item.usage_count || 1, '', 'number', '0', '', '1')}
+      ${field('相关术语', 'editRelatedTerms', (item.related_terms || []).join(', '), '逗号分隔')}
+      ${textarea('上下文例句', 'editExamples', (item.context_examples || []).join('\n'), 4)}
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" id="memorySaveBtn">保存</button>
+        <button class="btn" id="memoryCancelBtn">取消</button>
+      </div>
+    </div>
+  `;
+}
+
+function userForm(item = {}) {
+  return `
+    <div class="memory-form-grid">
+      ${field('群组 ID', 'editGroupId', item.group_id || state.group || '', '必填')}
+      ${field('用户 ID', 'editUserId', item.user_id || '', '', 'text', '', '', '', Boolean(item.user_id))}
+      ${field('名称', 'editUserName', item.name || '')}
+      ${field('参与度', 'editEngagement', item.engagement_rate ?? 0, '', 'number', '0', '1', '0.01')}
+      ${field('互动次数', 'editInteractionCount', item.interaction_count || 0, '', 'number', '0', '', '1')}
+      ${field('首次互动', 'editFirstAt', item.first_interaction_at || '')}
+      ${field('最近互动', 'editLastAt', item.last_interaction_at || '')}
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" id="memorySaveBtn">保存</button>
+        <button class="btn" id="memoryCancelBtn">取消</button>
+      </div>
+    </div>
+  `;
+}
+
+function field(label, id, value, hint = '', type = 'text', min = '', max = '', step = '', disabled = false) {
+  return `
+    <div>
+      <label for="${id}">${label}${hint ? ` <span style="color:var(--text-3)">(${hint})</span>` : ''}</label>
+      <input id="${id}" type="${type}" value="${escapeAttr(value)}"${min !== '' ? ` min="${min}"` : ''}${max !== '' ? ` max="${max}"` : ''}${step !== '' ? ` step="${step}"` : ''}${disabled ? ' disabled' : ''}>
+    </div>
+  `;
+}
+
+function textarea(label, id, value, rows) {
+  return `
+    <div>
+      <label for="${id}">${label}</label>
+      <textarea id="${id}" rows="${rows}">${escapeHtml(value)}</textarea>
+    </div>
+  `;
+}
+
+async function saveEditor(tab, item) {
+  try {
+    if (tab === 'diary') {
+      const payload = {
+        group_id: $('editGroupId').value.trim() || 'default',
+        summary: $('editSummary').value.trim(),
+        keywords: splitList($('editKeywords').value),
+        content: $('editContent').value.trim(),
+      };
+      if (item?.entry_id) await put(`/persona/diary/${encodeURIComponent(item.entry_id)}`, payload);
+      else await post('/persona/diary', payload);
+    } else if (tab === 'glossary') {
+      const payload = {
+        term: $('editTerm').value.trim(),
+        definition: $('editDefinition').value.trim(),
+        domain: $('editDomain').value.trim() || 'custom',
+        confidence: Number($('editConfidence').value || 0),
+        usage_count: Number($('editUsageCount').value || 0),
+        related_terms: splitList($('editRelatedTerms').value),
+        context_examples: $('editExamples').value.split('\n').map((v) => v.trim()).filter(Boolean),
+      };
+      if (item?.term) await put(`/persona/glossary/${encodeURIComponent(item.term)}`, payload);
+      else await post('/persona/glossary', payload);
+    } else if (tab === 'users') {
+      const userId = (item?.user_id || $('editUserId').value).trim();
+      const payload = {
+        group_id: $('editGroupId').value.trim(),
+        name: $('editUserName').value.trim(),
+        engagement_rate: Number($('editEngagement').value || 0),
+        interaction_count: Number($('editInteractionCount').value || 0),
+        first_interaction_at: $('editFirstAt').value.trim(),
+        last_interaction_at: $('editLastAt').value.trim(),
+      };
+      if (!userId || !payload.group_id) {
+        toast('用户 ID 和群组 ID 不能为空', 'error');
+        return;
       }
+      await put(`/persona/users/${encodeURIComponent(userId)}`, payload);
     }
+    toast('记忆已保存');
+    closeEditor();
+    await loadAll();
+  } catch (error) {
+    toast('保存失败: ' + error.message, 'error');
+  }
+}
 
-    renderTimeline(data.basic_timeline || {});
-    renderCluster(data.diary_entries || []);
-  } catch (e) {
-    toast('加载可视化数据失败: ' + e.message, 'error');
+async function deleteItem(tab, item) {
+  const label = tab === 'diary' ? (item.summary || item.entry_id) : tab === 'glossary' ? item.term : (item.name || item.user_id);
+  if (!confirm(`确定删除「${label}」吗？此操作不可撤销。`)) return;
+  try {
+    if (tab === 'diary') {
+      await del(`/persona/diary/${encodeURIComponent(item.entry_id)}`);
+    } else if (tab === 'glossary') {
+      await del(`/persona/glossary/${encodeURIComponent(item.term)}`);
+    } else if (tab === 'users') {
+      const group = item.group_id || state.group || '';
+      const suffix = group ? `?group_id=${encodeURIComponent(group)}` : '';
+      await del(`/persona/users/${encodeURIComponent(item.user_id)}${suffix}`);
+    }
+    toast('记忆已删除');
+    closeEditor();
+    await loadAll();
+  } catch (error) {
+    toast('删除失败: ' + error.message, 'error');
   }
 }
 
 function renderTimeline(timeline) {
   const container = $('timelineChart');
   if (!container) return;
-  
   const buckets = timeline.buckets || {};
   const allDays = timeline.days || [];
   const recent = timeline.recent || [];
 
   if (!allDays.length && !recent.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:80px 0">暂无记忆时间线数据</div>';
+    container.innerHTML = '<div class="memory-empty">暂无基础记忆时间线数据</div>';
     return;
   }
 
-  // 读取筛选条件
-  const daysRange = parseInt($('timelineRange')?.value || '30', 10);
-  const groupSel = $('timelineGroup')?.value || '';
-
-  // 根据时间范围过滤天数
+  const daysRange = Number($('timelineRange')?.value || '30');
   let filteredDays = allDays;
   if (daysRange > 0) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - daysRange);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
-    filteredDays = allDays.filter(d => d >= cutoffStr);
+    filteredDays = allDays.filter((day) => day >= cutoffStr);
   }
 
-  // 按天聚合：{human: N, assistant: N, system: N}
   const dailyData = {};
   for (const day of filteredDays) {
     const dayGroups = buckets[day] || {};
     const agg = { human: 0, assistant: 0, system: 0 };
     for (const [gid, counts] of Object.entries(dayGroups)) {
-      if (groupSel && gid !== groupSel) continue;
+      if (state.group && gid !== state.group) continue;
       for (const role of ['human', 'assistant', 'system']) {
         agg[role] += counts[role] || 0;
       }
     }
-    if (agg.human + agg.assistant + agg.system > 0) {
-      dailyData[day] = agg;
-    }
+    if (agg.human + agg.assistant + agg.system > 0) dailyData[day] = agg;
   }
 
   const days = Object.keys(dailyData).sort();
   if (!days.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:80px 0">当前筛选条件下暂无数据</div>';
+    container.innerHTML = '<div class="memory-empty">当前筛选下暂无时间线数据</div>';
     return;
   }
 
@@ -146,19 +680,7 @@ function renderTimeline(timeline) {
     { key: 'system', name: '系统消息', color: ROLE_COLORS.system },
   ];
 
-  const series = roles.map(r => ({
-    name: r.name,
-    type: 'bar',
-    stack: 'total',
-    barMaxWidth: 28,
-    itemStyle: { color: r.color, borderRadius: r.key === 'system' ? [3, 3, 0, 0] : 0 },
-    emphasis: { focus: 'series' },
-    data: days.map(d => dailyData[d][r.key] || 0),
-  }));
-
-  const chart = getChart(container);
-  if (chart) charts.push(chart);
-
+  getChart(container);
   setChartOption(container, {
     backgroundColor: 'transparent',
     tooltip: {
@@ -167,43 +689,23 @@ function renderTimeline(timeline) {
       formatter: (params) => {
         const day = params[0]?.axisValue || '';
         const lines = params
-          .filter(p => p.value > 0)
-          .map(p => `${p.marker} ${p.seriesName}: <b>${p.value}</b>`)
+          .filter((p) => p.value > 0)
+          .map((p) => `${p.marker} ${p.seriesName}: <b>${p.value}</b>`)
           .join('<br/>');
-        if (!lines) return '';
-        // 查找当天的最近消息用于预览
-        const dayBuckets = buckets[day];
-        let preview = '';
-        if (dayBuckets) {
-          const dayMsgs = recent
-            .filter(r => r.timestamp?.startsWith(day) && (!groupSel || r.group_id === groupSel))
-            .slice(0, 3);
-          if (dayMsgs.length) {
-            preview = '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;font-size:11px;color:#8b949e">';
-            preview += dayMsgs
-              .map(m => `${m.speaker_name || m.role}: ${(m.content || '').slice(0, 40)}`)
-              .join('<br/>');
-            preview += '</div>';
-          }
-        }
-        return `<b style="font-size:13px">${day}</b><br/>${lines}${preview}`;
+        const preview = recent
+          .filter((row) => row.timestamp?.startsWith(day) && (!state.group || row.group_id === state.group))
+          .slice(0, 3)
+          .map((row) => `${escapeHtml(row.speaker_name || row.role)}: ${escapeHtml((row.content || '').slice(0, 42))}`)
+          .join('<br/>');
+        return `<b>${day}</b><br/>${lines}${preview ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #30363d;color:#8b949e">${preview}</div>` : ''}`;
       },
     },
-    legend: {
-      data: roles.map(r => r.name),
-      textStyle: { color: '#8b949e', fontSize: 11 },
-      top: 0,
-    },
-    grid: { left: 10, right: 10, bottom: 10, top: 36, containLabel: true },
+    legend: { data: roles.map((role) => role.name), textStyle: { color: '#8b949e', fontSize: 11 }, top: 0 },
+    grid: { left: 8, right: 8, bottom: 8, top: 36, containLabel: true },
     xAxis: {
       type: 'category',
       data: days,
-      axisLabel: {
-        fontSize: 10,
-        color: '#8b949e',
-        rotate: days.length > 20 ? 45 : 0,
-        formatter: (v) => v.slice(5),
-      },
+      axisLabel: { fontSize: 10, color: '#8b949e', rotate: days.length > 20 ? 45 : 0, formatter: (value) => value.slice(5) },
       axisLine: { lineStyle: { color: '#30363d' } },
     },
     yAxis: {
@@ -212,115 +714,85 @@ function renderTimeline(timeline) {
       axisLabel: { fontSize: 10, color: '#8b949e' },
       splitLine: { lineStyle: { color: '#21262d' } },
     },
-    series,
+    series: roles.map((role) => ({
+      name: role.name,
+      type: 'bar',
+      stack: 'total',
+      barMaxWidth: 26,
+      itemStyle: { color: role.color },
+      emphasis: { focus: 'series' },
+      data: days.map((day) => dailyData[day][role.key] || 0),
+    })),
   });
 }
 
 function renderCluster(entries) {
   const container = $('clusterChart');
   if (!container) return;
-  
-  const withEmbedding = entries.filter(e => e.embedding && e.embedding.length >= 3);
-
+  const withEmbedding = entries.filter((entry) => entry.embedding && entry.embedding.length >= 2);
   if (!withEmbedding.length) {
-    container.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:80px 0">暂无日记嵌入数据，无法渲染语义聚类图</div>';
+    container.innerHTML = '<div class="memory-empty">暂无日记 embedding 数据</div>';
     return;
   }
 
-  const hasGL = typeof echarts !== 'undefined' && echarts.graphic && container.style;
-
-  if (!hasGL || !window.echartsGLLoaded) {
-    renderCluster2D(container, withEmbedding);
-    return;
-  }
-
-  const keywords = [...new Set(withEmbedding.flatMap(e => e.keywords || []).slice(0, 10))];
-  const keywordColorMap = {};
+  const keywords = [...new Set(withEmbedding.flatMap((entry) => entry.keywords || []))].slice(0, 10);
   const palette = ['#58a6ff', '#3fb950', '#a371f7', '#e3b341', '#f78166', '#d2a8ff', '#79c0ff', '#ffa657', '#ff7b72', '#56d4dd'];
-  keywords.forEach((k, i) => { keywordColorMap[k] = palette[i % palette.length]; });
+  const colorMap = Object.fromEntries(keywords.map((kw, idx) => [kw, palette[idx % palette.length]]));
 
-  const seriesData = withEmbedding.map(e => {
-    const kw = (e.keywords || []).find(k => keywordColorMap[k]) || '';
-    return {
-      value: [e.embedding[0], e.embedding[1], e.embedding[2]],
-      itemStyle: { color: keywordColorMap[kw] || '#8b949e' },
-      raw: e,
-    };
-  });
-
-  const chart = getChart(container);
-  if (chart) charts.push(chart);
-
+  getChart(container);
   setChartOption(container, {
     backgroundColor: 'transparent',
     tooltip: {
-      formatter: (p) => {
-        const raw = p.data.raw;
-        if (!raw) return '';
-        return `<b>${raw.summary || ''}</b><br/>${(raw.content || '').slice(0, 120)}`;
+      formatter: (params) => {
+        const raw = params.data.raw;
+        return `<b>${escapeHtml(raw.summary || '')}</b><br/>${escapeHtml((raw.content || '').slice(0, 120))}`;
       },
     },
-    xAxis3D: { type: 'value', axisLine: { lineStyle: { color: '#30363d' } } },
-    yAxis3D: { type: 'value', axisLine: { lineStyle: { color: '#30363d' } } },
-    zAxis3D: { type: 'value', axisLine: { lineStyle: { color: '#30363d' } } },
-    grid3D: {
-      boxWidth: 200,
-      boxHeight: 150,
-      boxDepth: 150,
-      viewControl: { autoRotate: true, autoRotateSpeed: 6 },
-    },
-    series: [{
-      type: 'scatter3D',
-      data: seriesData,
-      symbolSize: 8,
-    }],
-  });
-}
-
-function renderCluster2D(container, entries) {
-  const keywords = [...new Set(entries.flatMap(e => e.keywords || []).slice(0, 10))];
-  const keywordColorMap = {};
-  const palette = ['#58a6ff', '#3fb950', '#a371f7', '#e3b341', '#f78166', '#d2a8ff', '#79c0ff', '#ffa657', '#ff7b72', '#56d4dd'];
-  keywords.forEach((k, i) => { keywordColorMap[k] = palette[i % palette.length]; });
-
-  const chart = getChart(container);
-  if (chart) charts.push(chart);
-
-  setChartOption(container, {
-    backgroundColor: 'transparent',
-    tooltip: {
-      formatter: (p) => {
-        const raw = p.data.raw;
-        if (!raw) return '';
-        return `<b>${raw.summary || ''}</b><br/>${(raw.content || '').slice(0, 120)}`;
-      },
-    },
-    legend: {
-      data: keywords,
-      textStyle: { color: '#8b949e', fontSize: 11 },
-      top: 0,
-      type: 'scroll',
-    },
-    grid: { left: 10, right: 10, bottom: 10, top: 36, containLabel: true },
-    xAxis: {
-      type: 'value',
-      axisLabel: { fontSize: 10, color: '#8b949e' },
-      splitLine: { lineStyle: { color: '#21262d' } },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { fontSize: 10, color: '#8b949e' },
-      splitLine: { lineStyle: { color: '#21262d' } },
-    },
-    series: keywords.map(kw => ({
+    legend: { data: keywords, textStyle: { color: '#8b949e', fontSize: 11 }, top: 0, type: 'scroll' },
+    grid: { left: 8, right: 8, bottom: 8, top: 36, containLabel: true },
+    xAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+    yAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
+    series: keywords.map((kw) => ({
       name: kw,
       type: 'scatter',
       symbolSize: 10,
-      itemStyle: { color: keywordColorMap[kw] },
-      data: entries.filter(e => (e.keywords || []).includes(kw)).map(e => ({
-        value: [e.embedding[0], e.embedding[1]],
-        raw: e,
-      })),
+      itemStyle: { color: colorMap[kw] },
+      data: withEmbedding
+        .filter((entry) => (entry.keywords || []).includes(kw))
+        .map((entry) => ({ value: [entry.embedding[0], entry.embedding[1]], raw: entry })),
     })),
   });
+}
+
+function splitList(value) {
+  return String(value || '')
+    .replace(/，/g, ',')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function formatPercent(value) {
+  const num = Number(value || 0);
+  return `${Math.round(num * 100)}%`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/\n/g, '&#10;');
 }

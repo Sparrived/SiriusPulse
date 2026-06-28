@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from aiohttp import web
 
@@ -14,6 +15,54 @@ from sirius_pulse.persona_config import PersonaConfigPaths
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_memory_name(name: str) -> str:
+    import re
+
+    base = re.sub(r"[^a-zA-Z0-9_\-\u4e00-\u9fff]+", "_", name.strip())
+    base = re.sub(r"_+", "_", base).strip("_")
+    return base or "default"
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _diary_file(paths: PersonaConfigPaths, group_id: str) -> Path:
+    return paths.dir / "diary" / f"{_safe_memory_name(group_id)}.json"
+
+
+def _load_diary_payload(path: Path, group_id: str = "") -> dict[str, Any]:
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                entries = data.get("entries", [])
+                if isinstance(entries, list):
+                    return {"group_id": str(data.get("group_id") or group_id), "entries": entries}
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    return {"group_id": group_id, "entries": []}
+
+
+def _find_diary_entry(paths: PersonaConfigPaths, entry_id: str) -> tuple[Path, dict[str, Any], dict[str, Any], int] | None:
+    diary_dir = paths.dir / "diary"
+    if not diary_dir.exists():
+        return None
+    for path in diary_dir.glob("*.json"):
+        payload = _load_diary_payload(path)
+        for idx, item in enumerate(payload.get("entries", [])):
+            if isinstance(item, dict) and str(item.get("entry_id") or "") == entry_id:
+                return path, payload, item, idx
+    return None
 
 
 def _read_tail_lines(path: Path, n: int) -> list[str]:
@@ -524,6 +573,122 @@ async def api_persona_diary_get(request: web.Request, data_dir: Path) -> web.Res
     )
 
 
+@handle_api_errors
+async def api_persona_diary_post(request: web.Request, data_dir: Path) -> web.Response:
+    """Create a diary memory entry."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+
+    group_id = str(body.get("group_id") or body.get("group") or "default").strip() or "default"
+    content = str(body.get("content") or "").strip()
+    summary = str(body.get("summary") or "").strip()
+    if not content and not summary:
+        return _json_response({"error": "日记内容不能为空"}, 400)
+
+    raw_keywords = body.get("keywords", [])
+    if isinstance(raw_keywords, str):
+        keywords = [kw.strip() for kw in raw_keywords.replace("，", ",").split(",") if kw.strip()]
+    elif isinstance(raw_keywords, list):
+        keywords = [str(kw).strip() for kw in raw_keywords if str(kw).strip()]
+    else:
+        keywords = []
+
+    entry = {
+        "entry_id": str(body.get("entry_id") or f"diary_{uuid4().hex}"),
+        "group_id": group_id,
+        "created_at": str(body.get("created_at") or _now_iso()),
+        "source_ids": body.get("source_ids") if isinstance(body.get("source_ids"), list) else [],
+        "content": content,
+        "keywords": keywords,
+        "summary": summary or content[:80],
+        "embedding": body.get("embedding") if isinstance(body.get("embedding"), list) else None,
+        "merge_count": int(body.get("merge_count") or 0),
+        "source_diary_ids": (
+            body.get("source_diary_ids") if isinstance(body.get("source_diary_ids"), list) else []
+        ),
+    }
+
+    paths = PersonaConfigPaths(data_dir)
+    path = _diary_file(paths, group_id)
+    payload = _load_diary_payload(path, group_id)
+    payload["group_id"] = group_id
+    payload.setdefault("entries", []).append(entry)
+    _atomic_write_json(path, payload)
+    return _json_response({"success": True, "entry": entry}, 201)
+
+
+@handle_api_errors
+async def api_persona_diary_put(request: web.Request, data_dir: Path) -> web.Response:
+    """Update a diary memory entry."""
+    entry_id = str(request.match_info.get("entry_id", "")).strip()
+    if not entry_id:
+        return _json_response({"error": "缺少日记 ID"}, 400)
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+
+    paths = PersonaConfigPaths(data_dir)
+    found = _find_diary_entry(paths, entry_id)
+    if found is None:
+        return _json_response({"error": "日记不存在"}, 404)
+    path, payload, entry, idx = found
+
+    old_group_id = str(entry.get("group_id") or payload.get("group_id") or "default")
+    new_group_id = str(body.get("group_id") or body.get("group") or old_group_id).strip() or "default"
+    for key in ("content", "summary", "created_at"):
+        if key in body:
+            entry[key] = str(body.get(key) or "")
+    if "keywords" in body:
+        raw_keywords = body.get("keywords", [])
+        if isinstance(raw_keywords, str):
+            entry["keywords"] = [
+                kw.strip() for kw in raw_keywords.replace("，", ",").split(",") if kw.strip()
+            ]
+        elif isinstance(raw_keywords, list):
+            entry["keywords"] = [str(kw).strip() for kw in raw_keywords if str(kw).strip()]
+    if "source_ids" in body and isinstance(body.get("source_ids"), list):
+        entry["source_ids"] = body["source_ids"]
+    if "source_diary_ids" in body and isinstance(body.get("source_diary_ids"), list):
+        entry["source_diary_ids"] = body["source_diary_ids"]
+    if "merge_count" in body:
+        entry["merge_count"] = int(body.get("merge_count") or 0)
+    entry["group_id"] = new_group_id
+
+    if new_group_id != old_group_id:
+        payload["entries"].pop(idx)
+        _atomic_write_json(path, payload)
+        target_path = _diary_file(paths, new_group_id)
+        target_payload = _load_diary_payload(target_path, new_group_id)
+        target_payload["group_id"] = new_group_id
+        target_payload.setdefault("entries", []).append(entry)
+        _atomic_write_json(target_path, target_payload)
+    else:
+        payload["entries"][idx] = entry
+        _atomic_write_json(path, payload)
+
+    return _json_response({"success": True, "entry": entry})
+
+
+@handle_api_errors
+async def api_persona_diary_delete(request: web.Request, data_dir: Path) -> web.Response:
+    """Delete a diary memory entry."""
+    entry_id = str(request.match_info.get("entry_id", "")).strip()
+    if not entry_id:
+        return _json_response({"error": "缺少日记 ID"}, 400)
+
+    paths = PersonaConfigPaths(data_dir)
+    found = _find_diary_entry(paths, entry_id)
+    if found is None:
+        return _json_response({"error": "日记不存在"}, 404)
+    path, payload, _entry, idx = found
+    payload["entries"].pop(idx)
+    _atomic_write_json(path, payload)
+    return _json_response({"success": True})
+
+
 async def api_persona_vector_store_status_get(request: web.Request, data_dir: Path) -> web.Response:
     paths = PersonaConfigPaths(data_dir)
 
@@ -566,8 +731,6 @@ async def api_persona_users_get(request: web.Request, data_dir: Path) -> web.Res
 
     users: list[dict[str, Any]] = []
     groups: set[str] = set()
-    seen_user_ids: set[str] = set()
-
     users_dir = semantic_base / "users"
     if users_dir.exists():
         for g_dir in users_dir.iterdir():
@@ -576,15 +739,17 @@ async def api_persona_users_get(request: web.Request, data_dir: Path) -> web.Res
 
     if group_id:
         for profile in store.list_group_user_profiles(group_id):
-            if profile.user_id and profile.user_id not in seen_user_ids:
-                seen_user_ids.add(profile.user_id)
-                users.append(profile.to_dict())
+            if profile.user_id:
+                item = profile.to_dict()
+                item["group_id"] = group_id
+                users.append(item)
     else:
         for g in groups:
             for profile in store.list_group_user_profiles(g):
-                if profile.user_id and profile.user_id not in seen_user_ids:
-                    seen_user_ids.add(profile.user_id)
-                    users.append(profile.to_dict())
+                if profile.user_id:
+                    item = profile.to_dict()
+                    item["group_id"] = g
+                    users.append(item)
 
     # 后端搜索：按名称或 user_id 模糊匹配
     if search:
@@ -641,7 +806,78 @@ async def api_persona_user_get(request: web.Request, data_dir: Path) -> web.Resp
     if profile is None:
         return _json_response({"error": "用户不存在"}, 404)
 
-    return _json_response({"user": profile.to_dict()})
+    item = profile.to_dict()
+    if group_id:
+        item["group_id"] = group_id
+    return _json_response({"user": item})
+
+
+@handle_api_errors
+async def api_persona_user_put(request: web.Request, data_dir: Path) -> web.Response:
+    """Update a semantic user profile."""
+    from sirius_pulse.memory.semantic.models import UserSemanticProfile
+    from sirius_pulse.memory.semantic.store import SemanticProfileStore
+
+    user_id = str(request.match_info.get("user_id", "")).strip()
+    if not user_id:
+        return _json_response({"error": "缺少用户 ID"}, 400)
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+
+    group_id = str(body.get("group_id") or request.query.get("group_id", "")).strip()
+    if not group_id:
+        return _json_response({"error": "缺少 group_id"}, 400)
+
+    paths = PersonaConfigPaths(data_dir)
+    store = SemanticProfileStore(paths.dir)
+    profile = store.load_user_profile(group_id, user_id) or UserSemanticProfile(
+        user_id=user_id,
+        name=str(body.get("name") or user_id),
+    )
+
+    if "name" in body:
+        profile.name = str(body.get("name") or "")
+    if "engagement_rate" in body:
+        profile.engagement_rate = max(0.0, min(1.0, float(body.get("engagement_rate") or 0)))
+    if "interaction_count" in body:
+        profile.interaction_count = max(0, int(body.get("interaction_count") or 0))
+    if "first_interaction_at" in body:
+        profile.first_interaction_at = str(body.get("first_interaction_at") or "")
+    if "last_interaction_at" in body:
+        profile.last_interaction_at = str(body.get("last_interaction_at") or "")
+
+    store.save_user_profile(group_id, user_id, profile)
+    item = profile.to_dict()
+    item["group_id"] = group_id
+    return _json_response({"success": True, "user": item})
+
+
+@handle_api_errors
+async def api_persona_user_delete(request: web.Request, data_dir: Path) -> web.Response:
+    """Delete a semantic user profile from one group or all groups."""
+    user_id = str(request.match_info.get("user_id", "")).strip()
+    if not user_id:
+        return _json_response({"error": "缺少用户 ID"}, 400)
+
+    paths = PersonaConfigPaths(data_dir)
+    users_dir = paths.dir / "memory" / "semantic" / "users"
+    if not users_dir.exists():
+        return _json_response({"success": True, "deleted": 0})
+
+    group_id = str(request.query.get("group_id", "")).strip()
+    deleted = 0
+    groups = [users_dir / _safe_memory_name(group_id)] if group_id else [
+        path for path in users_dir.iterdir() if path.is_dir()
+    ]
+    safe_user_id = _safe_memory_name(user_id)
+    for group_dir in groups:
+        path = group_dir / f"{safe_user_id}.json"
+        if path.exists():
+            path.unlink()
+            deleted += 1
+    return _json_response({"success": True, "deleted": deleted})
 
 
 @handle_api_errors
@@ -697,6 +933,120 @@ async def api_persona_glossary_get(request: web.Request, data_dir: Path) -> web.
     stats = {"total": total}
 
     return _json_response({"terms": terms, "stats": stats, "total": total})
+
+
+@handle_api_errors
+async def api_persona_glossary_post(request: web.Request, data_dir: Path) -> web.Response:
+    """Create a glossary term."""
+    from sirius_pulse.memory.glossary.manager import GlossaryManager
+    from sirius_pulse.memory.glossary.models import GlossaryTerm
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+    term_text = str(body.get("term") or "").strip()
+    if not term_text:
+        return _json_response({"error": "术语不能为空"}, 400)
+
+    manager = GlossaryManager(data_dir, persona_name=data_dir.name)
+    existing = manager.get_term("", term_text)
+    if existing is not None:
+        return _json_response({"error": "术语已存在"}, 409)
+
+    term = GlossaryTerm(
+        term=term_text,
+        definition=str(body.get("definition") or "").strip(),
+        source=str(body.get("source") or "manual").strip() or "manual",
+        confidence=float(body.get("confidence") if body.get("confidence") is not None else 0.8),
+        usage_count=max(1, int(body.get("usage_count") or 1)),
+        context_examples=(
+            [str(v).strip() for v in body.get("context_examples", []) if str(v).strip()]
+            if isinstance(body.get("context_examples"), list)
+            else []
+        ),
+        related_terms=(
+            [str(v).strip() for v in body.get("related_terms", []) if str(v).strip()]
+            if isinstance(body.get("related_terms"), list)
+            else []
+        ),
+        domain=str(body.get("domain") or "custom").strip() or "custom",
+    )
+    manager._load()[term.term.lower().strip()] = term
+    manager._save()
+    return _json_response({"success": True, "term": term.to_dict()}, 201)
+
+
+@handle_api_errors
+async def api_persona_glossary_put(request: web.Request, data_dir: Path) -> web.Response:
+    """Update a glossary term."""
+    from urllib.parse import unquote
+
+    from sirius_pulse.memory.glossary.manager import GlossaryManager
+    from sirius_pulse.memory.glossary.models import GlossaryTerm
+
+    old_term = unquote(str(request.match_info.get("term", ""))).strip()
+    if not old_term:
+        return _json_response({"error": "缺少术语"}, 400)
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+
+    manager = GlossaryManager(data_dir, persona_name=data_dir.name)
+    terms = manager._load()
+    old_key = old_term.lower().strip()
+    existing = terms.get(old_key)
+    if existing is None:
+        return _json_response({"error": "术语不存在"}, 404)
+
+    data = existing.to_dict()
+    for key in (
+        "term",
+        "definition",
+        "source",
+        "first_seen_at",
+        "last_updated_at",
+        "confidence",
+        "usage_count",
+        "context_examples",
+        "related_terms",
+        "domain",
+    ):
+        if key in body:
+            data[key] = body[key]
+    data["last_updated_at"] = str(body.get("last_updated_at") or _now_iso())
+    updated = GlossaryTerm.from_dict(data)
+    new_key = updated.term.lower().strip()
+    if not new_key:
+        return _json_response({"error": "术语不能为空"}, 400)
+    if new_key != old_key and new_key in terms:
+        return _json_response({"error": "目标术语已存在"}, 409)
+    if new_key != old_key:
+        terms.pop(old_key, None)
+    terms[new_key] = updated
+    manager._save()
+    return _json_response({"success": True, "term": updated.to_dict()})
+
+
+@handle_api_errors
+async def api_persona_glossary_delete(request: web.Request, data_dir: Path) -> web.Response:
+    """Delete a glossary term."""
+    from urllib.parse import unquote
+
+    from sirius_pulse.memory.glossary.manager import GlossaryManager
+
+    term = unquote(str(request.match_info.get("term", ""))).strip()
+    if not term:
+        return _json_response({"error": "缺少术语"}, 400)
+
+    manager = GlossaryManager(data_dir, persona_name=data_dir.name)
+    terms = manager._load()
+    removed = terms.pop(term.lower().strip(), None)
+    if removed is None:
+        return _json_response({"error": "术语不存在"}, 404)
+    manager._save()
+    return _json_response({"success": True})
 
 
 @handle_api_errors

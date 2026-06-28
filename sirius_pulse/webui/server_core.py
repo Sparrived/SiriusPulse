@@ -31,6 +31,28 @@ from sirius_pulse.webui.ws_server import WebSocketManager, setup_ws_routes
 LOG = logging.getLogger("sirius.webui")
 
 
+def _run_embedding_server_process(port: int) -> None:
+    """Run the embedding HTTP server in a child process."""
+    import time as _time
+
+    from sirius_pulse.embedding.server import create_app
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            app = create_app()
+            if attempt == 0:
+                LOG.info("Embedding model loaded; starting HTTP service")
+            else:
+                LOG.info("Restarting embedding service (attempt %d)", attempt)
+            web.run_app(app, host="127.0.0.1", port=port, print=None)
+            break
+        except Exception as exc:
+            LOG.error("Embedding service failed (attempt %d/%d): %s", attempt + 1, max_retries, exc)
+            if attempt < max_retries - 1:
+                _time.sleep(5)
+
+
 @web.middleware
 async def _no_cache_middleware(
     request: web.Request,
@@ -221,32 +243,11 @@ class WebUIServer:
             self._embedding_error = f"端口 {self._embedding_port} 已被占用且不可用"
             return
 
-        def _run_server() -> None:
-            import time as _time
-
-            from sirius_pulse.embedding.server import create_app
-
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    app = create_app()
-                    self._embedding_ready = True
-                    if attempt == 0:
-                        LOG.info("Embedding 模型加载完成，启动 HTTP 服务...")
-                    else:
-                        LOG.info("Embedding 服务重启 (第 %d 次)", attempt)
-                    # 显式绑定 127.0.0.1，确保子进程通过 localhost/127.0.0.1 可访问
-                    web.run_app(app, host="127.0.0.1", port=self._embedding_port, print=None)
-                    break  # 正常退出（不应发生）
-                except Exception as exc:
-                    self._embedding_error = str(exc)
-                    self._embedding_ready = False
-                    LOG.error("Embedding 服务异常 (第 %d/%d 次): %s", attempt + 1, max_retries, exc)
-                    if attempt < max_retries - 1:
-                        _time.sleep(5)
-
         self._embedding_process = multiprocessing.Process(
-            target=_run_server, daemon=True, name="embedding-server"
+            target=_run_embedding_server_process,
+            args=(self._embedding_port,),
+            daemon=True,
+            name="embedding-server",
         )
         self._embedding_process.start()
         LOG.info("Embedding 服务后台线程已启动 (host=127.0.0.1 port=%d)", self._embedding_port)
