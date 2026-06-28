@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -261,9 +262,10 @@ class EngineSticker:
         msg: list[dict[str, Any]] = []
         if text:
             msg.append({"type": "text", "data": {"text": text}})
+        image_data = base64.b64encode(choice.file_path.read_bytes()).decode("ascii")
         msg.append({
             "type": "image",
-            "data": {"file": choice.file_path.as_uri(), "sub_type": "1"},
+            "data": {"file": f"base64://{image_data}", "sub_type": "1"},
         })
         if group_id.startswith("private_"):
             return await adapter.send_private_msg(group_id.replace("private_", ""), msg)

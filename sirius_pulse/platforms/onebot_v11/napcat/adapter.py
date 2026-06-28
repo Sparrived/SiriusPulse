@@ -108,6 +108,8 @@ class NapCatAdapter(BaseAdapter):
         self._reply_locks: dict[str, asyncio.Lock] = {}
         self._reply_send_active_counts: dict[str, int] = {}
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._seen_message_ids: dict[str, float] = {}
+        self._seen_message_ttl = 300.0
         self._group_member_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
         self._bot_admin_cache: dict[str, tuple[float, bool]] = {}
         self._group_metadata_ttl = 300.0
@@ -129,7 +131,8 @@ class NapCatAdapter(BaseAdapter):
         此方法注册 _on_event 处理器并开始监听引擎事件总线。
         """
         self._engine = engine
-        self._event_bus_task = asyncio.create_task(self._event_bus_listener())
+        if self._event_bus_task is None or self._event_bus_task.done():
+            self._event_bus_task = asyncio.create_task(self._event_bus_listener())
         self.on_event(self._on_event)
         LOG.info("NapCatAdapter 平台集成已启动")
 
@@ -235,7 +238,35 @@ class NapCatAdapter(BaseAdapter):
 
     def on_event(self, handler: EventHandler) -> None:
         """注册事件处理器。"""
+        if handler in self._event_handlers:
+            return
         self._event_handlers.append(handler)
+
+    def _message_dedup_key(self, event: dict[str, Any]) -> str:
+        msg_id = str(event.get("message_id", "") or "")
+        if not msg_id:
+            return ""
+        msg_type = str(event.get("message_type", "") or "")
+        if msg_type == "group":
+            scope = f"group:{event.get('group_id', '')}"
+        else:
+            scope = f"private:{event.get('user_id', '')}"
+        return f"{event.get('self_id', '')}:{msg_type}:{scope}:{msg_id}"
+
+    def _is_duplicate_message_event(self, event: dict[str, Any]) -> bool:
+        key = self._message_dedup_key(event)
+        if not key:
+            return False
+        now = time.monotonic()
+        cutoff = now - self._seen_message_ttl
+        for seen_key, seen_at in list(self._seen_message_ids.items()):
+            if seen_at < cutoff:
+                self._seen_message_ids.pop(seen_key, None)
+        if key in self._seen_message_ids:
+            LOG.info("Skip duplicate NapCat message event: %s", key)
+            return True
+        self._seen_message_ids[key] = now
+        return False
 
     async def _listen_loop(self) -> None:
         """WebSocket 消息监听与分发。"""
@@ -799,6 +830,8 @@ class NapCatAdapter(BaseAdapter):
     async def _on_event(self, event: dict[str, Any]) -> None:
         post_type = event.get("post_type")
         if post_type != "message":
+            return
+        if self._is_duplicate_message_event(event):
             return
         self._event_queue.put_nowait(event)
 
