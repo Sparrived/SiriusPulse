@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sirius_pulse.utils.json_io import atomic_write_json
 from sirius_pulse.webui.model_catalog import build_model_catalog, enrich_model_choices
@@ -122,4 +122,69 @@ def test_webui_model_catalog_when_enriching_legacy_values_then_ignores_unscoped_
     assert choices == [
         {"label": "deepseek/deepseek-chat", "value": "deepseek/deepseek-chat", "tags": ["函数调用"]},
         {"label": "legacy", "value": "legacy"},
+    ]
+
+
+def test_webui_model_catalog_when_provider_models_change_then_catalog_tracks_provider_list(tmp_path):
+    atomic_write_json(
+        tmp_path / "providers" / "provider_keys.json",
+        {
+            "providers": {
+                "bigmodel": {
+                    "type": "bigmodel",
+                    "api_key": "sk-bigmodel",
+                    "enabled": True,
+                    "models": ["glm-4.5", "glm-4.5-air"],
+                }
+            }
+        },
+    )
+    atomic_write_json(
+        tmp_path / "models_dev_cache.json",
+        {
+            "bigmodel": {
+                "models": {
+                    "glm-4.5": {"tool_call": True},
+                    "glm-4.5-air": {"reasoning": True},
+                }
+            }
+        },
+    )
+
+    catalog = build_model_catalog(tmp_path)
+
+    assert catalog["available_models"] == ["glm-4.5", "glm-4.5-air"]
+    assert catalog["model_choices"][0]["value"] == "bigmodel/glm-4.5"
+    assert catalog["model_choices"][0]["tags"] == ["函数调用"]
+
+
+def test_webui_model_catalog_when_same_type_providers_exist_then_keeps_all_configured_models(
+    tmp_path,
+):
+    atomic_write_json(
+        tmp_path / "providers" / "provider_keys.json",
+        {
+            "providers": {
+                "openai-primary": {
+                    "type": "openai-compatible",
+                    "api_key": "sk-primary",
+                    "enabled": True,
+                    "models": ["gpt-primary"],
+                },
+                "openai-secondary": {
+                    "type": "openai",
+                    "api_key": "sk-secondary",
+                    "enabled": True,
+                    "models": ["gpt-secondary"],
+                },
+            }
+        },
+    )
+
+    catalog = build_model_catalog(tmp_path)
+
+    assert catalog["available_models"] == ["gpt-primary", "gpt-secondary"]
+    assert catalog["model_choices"] == [
+        {"label": "openai-compatible/gpt-primary", "value": "openai-compatible/gpt-primary"},
+        {"label": "openai-compatible/gpt-secondary", "value": "openai-compatible/gpt-secondary"},
     ]

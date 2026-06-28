@@ -80,6 +80,57 @@ def test_delayed_queue_when_immediate_window_expires_then_triggers_item():
     assert queue.has_pending("group-1") is False
 
 
+def test_delayed_queue_when_hard_immediate_then_uses_short_window():
+    queue = DelayedResponseQueue()
+    decision = _decision(ResponseStrategy.IMMEDIATE)
+    decision.context["hard_immediate"] = True
+
+    item = queue.enqueue("group-1", "u1", "hello", decision)
+
+    assert item.window_seconds == 1.0
+
+
+def test_delayed_queue_when_estimated_delay_is_set_then_limits_window():
+    queue = DelayedResponseQueue()
+    decision = _decision(ResponseStrategy.DELAYED, urgency=50)
+    decision.estimated_delay_seconds = 12.0
+
+    item = queue.enqueue("group-1", "u1", "hello", decision, heat_level="hot")
+
+    assert item.window_seconds == 12.0
+
+
+def test_delayed_queue_when_freshness_ttl_expires_then_cancels_item():
+    queue = DelayedResponseQueue()
+    decision = _decision(ResponseStrategy.DELAYED, urgency=20)
+    decision.context["freshness_ttl_seconds"] = 6.0
+    item = queue.enqueue("group-1", "u1", "hello", decision)
+    item.enqueue_time = _past(7)
+
+    triggered = queue.tick("group-1", [])
+
+    assert triggered == []
+    assert item.status == "cancelled"
+    assert queue.has_pending("group-1") is False
+
+
+def test_delayed_queue_when_pending_is_promoted_then_becomes_immediate():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue("group-1", "u1", "hello", _decision(ResponseStrategy.DELAYED))
+
+    promoted = queue.promote_pending(
+        "group-1",
+        max_window_seconds=0.0,
+        reason="explicit_mention",
+    )
+
+    assert promoted is item
+    assert item.window_seconds == 0.0
+    assert item.strategy_decision.strategy == ResponseStrategy.IMMEDIATE
+    assert item.strategy_decision.reason == "explicit_mention"
+    assert item.strategy_decision.context["hard_immediate"] is True
+
+
 def test_delayed_queue_when_topic_gap_exceeds_threshold_then_delayed_item_triggers_early():
     queue = DelayedResponseQueue()
     item = queue.enqueue(

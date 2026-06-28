@@ -1120,6 +1120,51 @@ class _EmotionalGroupChatEngineBase:
                 return await self._execute_verified_plugin(
                     plugin_result, message, group_id, user_id
                 )
+            if self._message_explicitly_mentions_current_bot(message):
+                merged = self.delayed_queue.merge_incoming(
+                    group_id=group_id,
+                    user_id=user_id,
+                    message_content=content,
+                    speaker_name=message.speaker or "",
+                    channel=message.channel,
+                    channel_user_id=message.channel_user_id,
+                    multimodal_inputs=message.multimodal_inputs,
+                    platform_message_id=getattr(message, "message_id", "") or "",
+                )
+                promoted = self.delayed_queue.promote_pending(
+                    group_id,
+                    max_window_seconds=0.0,
+                    reason="pending_promoted_by_explicit_mention",
+                )
+                if merged and promoted is not None:
+                    emitted = self._delayed_event_emitted.setdefault(group_id, set())
+                    if promoted.item_id not in emitted:
+                        emitted.add(promoted.item_id)
+                        await self.event_bus.emit(
+                            SessionEvent(
+                                type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
+                                data={
+                                    "group_id": group_id,
+                                    "item_id": promoted.item_id,
+                                    "reason": "pending_promoted_by_explicit_mention",
+                                },
+                            )
+                        )
+                    self._background_update(group_id, message, None, None, user_id)
+                    return {
+                        "strategy": "promoted",
+                        "reply": None,
+                        "emotion": {},
+                        "intent": {},
+                    }
+            if self._is_low_information_pending_message(content):
+                self._background_update(group_id, message, None, None, user_id)
+                return {
+                    "strategy": "dropped",
+                    "reply": None,
+                    "emotion": {},
+                    "intent": {},
+                }
             else:
                 # 非插件请求，短路合并
                 merged = self.delayed_queue.merge_incoming(
@@ -1592,6 +1637,24 @@ class _EmotionalGroupChatEngineBase:
             return False
         names = [self.persona.name, *getattr(self.persona, "aliases", [])]
         return any(self._text_mentions_name(text, name) for name in names if name)
+
+    @staticmethod
+    def _is_low_information_pending_message(content: str) -> bool:
+        """Return True for filler that should not extend a pending reply."""
+        text = (content or "").strip().lower()
+        if not text:
+            return True
+        if "?" in text or "\uff1f" in text:
+            return False
+        if len(text) <= 2:
+            return True
+        return (
+            re.fullmatch(
+                r"(?:[~.。…!！]+|哈+|哈哈+|草+|笑死+|233+|666+|\+1|ok|嗯+|哦+|啊+)",
+                text,
+            )
+            is not None
+        )
 
     @staticmethod
     def _text_mentions_name(text: str, name: str) -> bool:

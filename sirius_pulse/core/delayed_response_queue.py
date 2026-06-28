@@ -26,6 +26,7 @@ from sirius_pulse.models.response_strategy import (
 logger = logging.getLogger(__name__)
 
 _IMMEDIATE_DEBOUNCE_SECONDS = 5.0
+_HARD_IMMEDIATE_DEBOUNCE_SECONDS = 1.0
 _IMMEDIATE_WINDOW_MAX = 12.0
 
 # Heat-based window multipliers: hotter groups = longer wait
@@ -236,6 +237,8 @@ class DelayedResponseQueue:
             if action == "trigger":
                 item.status = "triggered"
                 triggered.append(item)
+            elif action == "cancel":
+                item.status = "cancelled"
             else:
                 remaining.append(item)
 
@@ -259,6 +262,34 @@ class DelayedResponseQueue:
     def has_pending(self, group_id: str) -> bool:
         """检查指定 group 是否有等待中的队列项。"""
         return any(i.status == "pending" for i in self._queues.get(group_id, []))
+
+    def promote_pending(
+        self,
+        group_id: str,
+        *,
+        max_window_seconds: float = _HARD_IMMEDIATE_DEBOUNCE_SECONDS,
+        reason: str = "pending_promoted",
+        lane: str = "chat",
+    ) -> DelayedResponseItem | None:
+        """Shorten the wait window for an existing pending item."""
+        queue = self._queues.get(group_id, [])
+        for item in queue:
+            if item.status != "pending" or getattr(item, "lane", "chat") != lane:
+                continue
+            item.window_seconds = min(item.window_seconds, max(0.0, max_window_seconds))
+            item.strategy_decision.strategy = ResponseStrategy.IMMEDIATE
+            item.strategy_decision.reason = reason
+            item.strategy_decision.context = dict(item.strategy_decision.context or {})
+            item.strategy_decision.context["hard_immediate"] = True
+            item.strategy_decision.context["promoted_reason"] = reason
+            logger.debug(
+                "Promoted pending item %s for group %s (window %.1fs)",
+                item.item_id,
+                group_id,
+                item.window_seconds,
+            )
+            return item
+        return None
 
     def merge_incoming(
         self,
@@ -338,6 +369,15 @@ class DelayedResponseQueue:
         enqueue_dt = _parse_iso(item.enqueue_time)
         if enqueue_dt:
             elapsed = (now - enqueue_dt).total_seconds()
+            ttl = self._freshness_ttl_for_item(item)
+            if ttl is not None and elapsed >= ttl:
+                logger.debug(
+                    "Item %s cancelled (freshness ttl expired: %.1fs >= %.1fs)",
+                    item.item_id,
+                    elapsed,
+                    ttl,
+                )
+                return "cancel"
             if elapsed >= item.window_seconds:
                 logger.debug(
                     "Item %s triggered (window expired: %.1fs >= %.1fs)",
@@ -400,6 +440,11 @@ class DelayedResponseQueue:
     ) -> float:
         """Return debounce/wait window based on strategy, urgency, and heat."""
         if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
+            if strategy_decision.context.get("hard_immediate"):
+                return _HARD_IMMEDIATE_DEBOUNCE_SECONDS
+            delay = float(strategy_decision.estimated_delay_seconds or 0.0)
+            if delay > 0:
+                return min(_IMMEDIATE_DEBOUNCE_SECONDS, delay)
             return _IMMEDIATE_DEBOUNCE_SECONDS
         if strategy_decision.urgency >= 70:
             base = 15.0
@@ -408,7 +453,24 @@ class DelayedResponseQueue:
         else:
             base = 60.0
         mult = _HEAT_WINDOW_MULT.get(heat_level, 1.0)
-        return base * mult
+        window = base * mult
+        delay = float(strategy_decision.estimated_delay_seconds or 0.0)
+        if delay > 0:
+            window = min(window, delay)
+        return window
+
+    @staticmethod
+    def _freshness_ttl_for_decision(strategy_decision: StrategyDecision) -> float | None:
+        raw = (strategy_decision.context or {}).get("freshness_ttl_seconds")
+        try:
+            ttl = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return ttl if ttl > 0 else None
+
+    @staticmethod
+    def _freshness_ttl_for_item(item: DelayedResponseItem) -> float | None:
+        return DelayedResponseQueue._freshness_ttl_for_decision(item.strategy_decision)
 
     @staticmethod
     def _gap_for_item(

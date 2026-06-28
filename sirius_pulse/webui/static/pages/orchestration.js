@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, flashSuccess, $, ModelSelect } from '../components.js';
+import { buildModelChoice, buildModelChoicesByType, loadModelsDevForTypes } from './model-dev.js';
 
 const TASK_GROUPS = [
   {
@@ -246,6 +247,32 @@ function _mselOptions() {
     const tags = (typeof m === 'object' && Array.isArray(m.tags)) ? m.tags : [];
     return { value: val, label, tags };
   });
+}
+
+async function loadProviderModelChoices() {
+  const providerTypes = new Set();
+  const tasks = orchestrationData?.task_models || {};
+
+  for (const value of Object.values(tasks)) {
+    const providerType = value?.includes('/') ? value.split('/')[0] : '';
+    if (providerType) providerTypes.add(providerType);
+  }
+
+  try {
+    const providersData = await get('/providers');
+    const providers = Array.isArray(providersData.providers) ? providersData.providers : [];
+    providers.forEach(provider => {
+      const providerType = provider.platform_type || provider.type || '';
+      if (providerType) providerTypes.add(providerType);
+    });
+  } catch (e) {
+    console.warn('[orchestration] ?? providers ??:', e);
+  }
+
+  if (!providerTypes.size) return [];
+
+  const modelsByType = await loadModelsDevForTypes(providerTypes);
+  return buildModelChoicesByType(modelsByType);
 }
 
 function _mountModelSelects(data) {

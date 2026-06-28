@@ -412,14 +412,30 @@ class Pipeline:
         else:
             delay_seconds = float(participation.get("delay_seconds", 30.0))
 
+        is_private = group_id.startswith("private_")
+        reason = str(participation.get("reason") or "signal_passed")
+        hard_immediate = bool(
+            strategy == ResponseStrategy.IMMEDIATE
+            and (signal.is_mentioned or is_private or signal.urgency_score >= 85)
+        )
+        freshness_ttl = self._freshness_ttl_for_signal(
+            signal,
+            reason,
+            is_private=is_private,
+        )
+
         decision = StrategyDecision(
             strategy=strategy,
             score=float(participation.get("score", signal.urgency_score / 100.0)),
             threshold=float(participation.get("threshold", 0.5)),
             urgency=signal.urgency_score,
             relevance=signal.relevance_score,
-            reason=str(participation.get("reason") or "signal_passed"),
-            context={"participation": participation},
+            reason=reason,
+            context={
+                "participation": participation,
+                "hard_immediate": hard_immediate,
+                "freshness_ttl_seconds": freshness_ttl,
+            },
         )
         decision.estimated_delay_seconds = delay_seconds
 
@@ -466,6 +482,25 @@ class Pipeline:
             "emotion": {},
             "signal": signal.to_dict(),
         }
+
+    @staticmethod
+    def _freshness_ttl_for_signal(
+        signal: SignalAnalysis,
+        reason: str,
+        *,
+        is_private: bool,
+    ) -> float:
+        if is_private or signal.is_mentioned:
+            return 60.0
+        if signal.social_intent == "help_seeking":
+            return 40.0
+        if reason == "reply_needed":
+            return 30.0
+        if reason == "natural_join":
+            return 14.0
+        if signal.social_intent == "emotional":
+            return 24.0
+        return 18.0
 
     def _queue_response(
         self,

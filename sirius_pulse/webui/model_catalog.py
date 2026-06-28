@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, TypedDict
 
 from sirius_pulse.providers.models_dev import ModelsDevCache, list_provider_model_details
-from sirius_pulse.providers.routing import WorkspaceProviderManager
+from sirius_pulse.providers.routing import WorkspaceProviderManager, normalize_provider_type
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -28,19 +29,22 @@ def build_model_catalog(data_path: Any) -> ModelCatalog:
     available_models: list[str] = []
     model_choices: list[ModelChoice] = []
     seen_models: set[str] = set()
+    seen_choices: set[str] = set()
     provider_models: dict[str, list[str]] = {}
 
     try:
-        provider_mgr = WorkspaceProviderManager(Path(data_path))
-        for cfg in provider_mgr.load().values():
-            if not cfg.enabled:
-                continue
-            provider_models[cfg.provider_type] = list(cfg.models)
-            for model in cfg.models:
+        for provider_type, models in _configured_provider_models(Path(data_path)):
+            if provider_type not in provider_models:
+                provider_models[provider_type] = []
+            provider_models[provider_type].extend(models)
+            for model in models:
                 if model not in seen_models:
                     seen_models.add(model)
                     available_models.append(model)
-                composite = format_model_choice_value(cfg.provider_type, model)
+                composite = format_model_choice_value(provider_type, model)
+                if composite in seen_choices:
+                    continue
+                seen_choices.add(composite)
                 model_choices.append({"label": composite, "value": composite})
     except Exception:
         LOG.warning("获取模型列表失败", exc_info=True)
@@ -51,6 +55,39 @@ def build_model_catalog(data_path: Any) -> ModelCatalog:
 
 def format_model_choice_value(provider_type: str, model_id: str) -> str:
     return f"{provider_type}/{model_id}"
+
+
+def _configured_provider_models(data_path: Path) -> list[tuple[str, list[str]]]:
+    path = WorkspaceProviderManager(data_path).path
+    if not path.exists():
+        return []
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    providers = raw.get("providers", {}) if isinstance(raw, dict) else {}
+    entries: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(providers, dict):
+        entries = [(str(name), cfg) for name, cfg in providers.items() if isinstance(cfg, dict)]
+    elif isinstance(providers, list):
+        entries = [
+            (str(cfg.get("name") or cfg.get("type") or cfg.get("platform_type") or idx), cfg)
+            for idx, cfg in enumerate(providers)
+            if isinstance(cfg, dict)
+        ]
+
+    result: list[tuple[str, list[str]]] = []
+    for name, cfg in entries:
+        if not bool(cfg.get("enabled", True)):
+            continue
+        if not str(cfg.get("api_key", "")).strip():
+            continue
+        provider_type = normalize_provider_type(str(cfg.get("type") or cfg.get("platform_type") or name))
+        models_raw = cfg.get("models", [])
+        if not isinstance(models_raw, list):
+            continue
+        models = [str(model).strip() for model in models_raw if str(model).strip()]
+        if models:
+            result.append((provider_type, models))
+    return result
 
 
 def enrich_model_choices(

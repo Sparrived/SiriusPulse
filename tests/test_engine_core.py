@@ -3,6 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from sirius_pulse.core import engine_core
+from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
+
+
+def test_engine_when_pending_message_is_low_information_then_detects_filler():
+    assert _EmotionalGroupChatEngineBase._is_low_information_pending_message("哈哈") is True
+    assert _EmotionalGroupChatEngineBase._is_low_information_pending_message("ok") is True
+    assert _EmotionalGroupChatEngineBase._is_low_information_pending_message("怎么了？") is False
 
 
 class _Dummy:
