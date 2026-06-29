@@ -1,10 +1,15 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, $ } from '../components.js';
+import { toast, flashSuccess } from '../components.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 let currentModal = null;
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `
@@ -164,11 +169,11 @@ async function renderConfigModal(config, skillName) {
     });
     await form.init();
     html += `<div id="skillConfigForm"></div>`;
-    
+
     const body = $('modalBody');
     if (body) body.innerHTML = html;
     form.render();
-    
+
     // 保存时使用表单收集的值，包装在 config 键下以匹配 API 期望的结构
     $('modalSave')?.addEventListener('click', async () => {
       const values = form.collectValues();
@@ -187,10 +192,10 @@ async function renderConfigModal(config, skillName) {
         </div>
       `;
     }
-    
+
     const body = $('modalBody');
     if (body) body.innerHTML = html;
-    
+
     $('modalSave')?.addEventListener('click', async () => {
       const enabledEl = $('cfgEnabled');
       const payload = { enabled: enabledEl ? enabledEl.checked : true };
@@ -221,7 +226,7 @@ async function saveConfig(payload, skillName) {
     await post(`/persona/skills/${skillName}/config`, payload);
     flashSuccess(btn);
     toast('配置已保存');
-    setTimeout(closeModal, 800);
+    scopedPage.timeout(closeModal, 800);
   } catch (e) {
     toast('保存失败: ' + e.message, 'error');
     if (btn) {

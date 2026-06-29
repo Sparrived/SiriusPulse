@@ -1,6 +1,10 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, $, ModelSelect } from '../components.js';
+import { toast, flashSuccess, ModelSelect } from '../components.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 function _stripProviderPrefix(value) {
   if (!value) return '';
@@ -33,7 +37,8 @@ let models = [];
 let modelSelect = null;
 let currentTab = 'interview'; // 'interview' | 'direct'
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const root = container.querySelector('#createPersonaRoot') || container;
   root.innerHTML = buildFormHTML();
 

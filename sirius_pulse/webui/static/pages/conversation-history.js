@@ -1,6 +1,10 @@
 import { store } from '../store.js';
 import { get, del } from '../app.js';
-import { toast, $ } from '../components.js';
+import { toast } from '../components.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 let messages = [];
 let pinnedMessages = [];
@@ -56,7 +60,8 @@ const TAG_COLORS = {
   reminder:   { bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
 };
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `
@@ -116,7 +121,7 @@ export async function init(container) {
     let debounceTimer;
     msgSearchEl.addEventListener('input', (e) => {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+      debounceTimer = scopedPage.timeout(() => {
         activeSearch = e.target.value.trim();
         currentOffset = 0;
         loadMessages();
@@ -128,7 +133,7 @@ export async function init(container) {
     let debounceTimer;
     speakerFilterEl.addEventListener('input', (e) => {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+      debounceTimer = scopedPage.timeout(() => {
         activeSpeaker = e.target.value.trim();
         currentOffset = 0;
         loadMessages();
@@ -935,7 +940,7 @@ async function deleteConversationMessage(message) {
 }
 
 function bindDeleteButtons() {
-  document.querySelectorAll('.conversation-delete').forEach(btn => {
+  scopedPage.$('.conversation-delete').forEach(btn => {
     btn.addEventListener('click', (event) => {
       event.stopPropagation();
       const idx = Number(btn.dataset.deleteIndex);
@@ -946,9 +951,9 @@ function bindDeleteButtons() {
 }
 
 function bindChainToggles() {
-  document.querySelectorAll('.chain-toggle').forEach(btn => {
+  scopedPage.$('.chain-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
-      const target = document.getElementById(btn.dataset.target);
+      const target = $(btn.dataset.target);
       if (!target) return;
       const isOpen = target.style.display !== 'none';
       target.style.display = isOpen ? 'none' : 'block';
@@ -957,7 +962,7 @@ function bindChainToggles() {
     });
   });
 
-  document.querySelectorAll('.chain-detail').forEach(detail => {
+  scopedPage.$('.chain-detail').forEach(detail => {
     detail.addEventListener('wheel', (e) => {
       const { scrollTop, scrollHeight, clientHeight } = detail;
       const atTop = e.deltaY < 0 && scrollTop === 0;
@@ -968,9 +973,9 @@ function bindChainToggles() {
     }, { passive: true });
   });
 
-  document.querySelectorAll('.chain-section-header').forEach(header => {
+  scopedPage.$('.chain-section-header').forEach(header => {
     header.addEventListener('click', () => {
-      const target = document.getElementById(header.dataset.target);
+      const target = $(header.dataset.target);
       if (!target) return;
       const isOpen = target.style.display !== 'none';
       target.style.display = isOpen ? 'none' : 'block';
@@ -1021,7 +1026,7 @@ function renderPagination(total) {
 function startPolling() {
   stopPolling();
   if (!isLive) return;
-  pollTimer = setInterval(() => {
+  pollTimer = scopedPage.interval(() => {
     if (currentOffset === 0) loadMessages(true);
   }, 5000);
 }

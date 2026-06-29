@@ -1,10 +1,11 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, $ } from '../components.js';
+import { toast, flashSuccess } from '../components.js';
 
 let adapterData = null;
 
 export async function init(container, params) {
+  const ctx = params?.ctx || fallbackContext(container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `
@@ -37,30 +38,45 @@ export async function init(container, params) {
     </div>
   `;
 
-  await loadAdapters(name);
+  await loadAdapters(name, ctx);
 
-  $('adapterSave').addEventListener('click', () => saveAdapters(name));
+  ctx.on(ctx.$('adapterSave'), 'click', () => saveAdapters(name, ctx));
 }
 
-async function loadAdapters(name) {
+function fallbackContext(container) {
+  return {
+    isActive: () => Boolean(container),
+    $: (id) => container.querySelector(id.startsWith('#') ? id : `#${id}`),
+    $$: (selector) => Array.from(container.querySelectorAll(selector)),
+    on: (target, type, handler, options) => {
+      if (!target) return () => {};
+      target.addEventListener(type, handler, options);
+      return () => target.removeEventListener(type, handler, options);
+    },
+  };
+}
+
+async function loadAdapters(name, ctx) {
   try {
     const data = await get(`/persona/adapters`);
+    if (!ctx.$('adapterContent')) return;
     adapterData = data;
-    renderAdapter(data.adapters?.[0] || {});
+    renderAdapter(data.adapters?.[0] || {}, ctx);
     // 加载成功后启用保存按钮
-    const saveBtn = $('adapterSave');
+    const saveBtn = ctx.$('adapterSave');
     if (saveBtn) saveBtn.disabled = false;
   } catch (e) {
-    const contentEl = $('adapterContent');
+    const contentEl = ctx.$('adapterContent');
     if (contentEl) contentEl.innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
     // 加载失败时保持保存按钮禁用
-    const saveBtn = $('adapterSave');
+    const saveBtn = ctx.$('adapterSave');
     if (saveBtn) saveBtn.disabled = true;
   }
 }
 
-function renderAdapter(adapter) {
-  const el = $('adapterContent');
+function renderAdapter(adapter, ctx) {
+  const el = ctx.$('adapterContent');
+  if (!el) return;
   const allowedGroups = adapter.allowed_group_ids || [];
   const allowedUsers = adapter.allowed_private_user_ids || [];
 
@@ -133,7 +149,7 @@ function renderAdapter(adapter) {
     </form>
   `;
 
-  const form = $('adapterForm');
+  const form = ctx.$('adapterForm');
   form.enabled.value = String(adapter.enabled ?? true);
   form.qq_number.value = adapter.qq_number || '';
   form.ws_url.value = adapter.ws_url || 'ws://localhost:3001';
@@ -142,15 +158,16 @@ function renderAdapter(adapter) {
   form.enable_group_chat.value = String(adapter.enable_group_chat ?? true);
   form.enable_private_chat.value = String(adapter.enable_private_chat ?? true);
 
-  renderTags('groupTags', allowedGroups);
-  renderTags('userTags', allowedUsers);
+  renderTags(ctx, 'groupTags', allowedGroups);
+  renderTags(ctx, 'userTags', allowedUsers);
 
-  setupTagListeners('addGroupInput', 'addGroupBtn', 'groupTags');
-  setupTagListeners('addUserInput', 'addUserBtn', 'userTags');
+  setupTagListeners(ctx, 'addGroupInput', 'addGroupBtn', 'groupTags');
+  setupTagListeners(ctx, 'addUserInput', 'addUserBtn', 'userTags');
 }
 
-function renderTags(containerId, items) {
-  const el = $(containerId);
+function renderTags(ctx, containerId, items) {
+  const el = ctx.$(containerId);
+  if (!el) return;
   el.innerHTML = items.map(item => `
     <span class="tag tag-accent" data-value="${item}">
       ${item}
@@ -159,16 +176,17 @@ function renderTags(containerId, items) {
   `).join('');
 
   el.querySelectorAll('.tag-remove').forEach(btn => {
-    btn.addEventListener('click', () => {
+    ctx.on(btn, 'click', () => {
       btn.parentElement.remove();
     });
   });
 }
 
-function setupTagListeners(inputId, btnId, containerId) {
-  const input = $(inputId);
-  const btn = $(btnId);
-  const container = $(containerId);
+function setupTagListeners(ctx, inputId, btnId, containerId) {
+  const input = ctx.$(inputId);
+  const btn = ctx.$(btnId);
+  const container = ctx.$(containerId);
+  if (!input || !btn || !container) return;
 
   function addTag() {
     const value = input.value.trim();
@@ -186,13 +204,13 @@ function setupTagListeners(inputId, btnId, containerId) {
     tag.className = 'tag tag-accent';
     tag.dataset.value = value;
     tag.innerHTML = `${value}<span class="tag-remove" style="cursor:pointer;margin-left:4px" data-value="${value}">×</span>`;
-    tag.querySelector('.tag-remove').addEventListener('click', () => tag.remove());
+    ctx.on(tag.querySelector('.tag-remove'), 'click', () => tag.remove());
     container.appendChild(tag);
     input.value = '';
   }
 
-  btn.addEventListener('click', addTag);
-  input.addEventListener('keydown', (e) => {
+  ctx.on(btn, 'click', addTag);
+  ctx.on(input, 'keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       addTag();
@@ -200,12 +218,12 @@ function setupTagListeners(inputId, btnId, containerId) {
   });
 }
 
-function getTagValues(containerId) {
-  return Array.from($(containerId).querySelectorAll('.tag')).map(tag => tag.dataset.value);
+function getTagValues(ctx, containerId) {
+  return Array.from(ctx.$(containerId)?.querySelectorAll('.tag') || []).map(tag => tag.dataset.value);
 }
 
-async function saveAdapters(name) {
-  const form = $('adapterForm');
+async function saveAdapters(name, ctx) {
+  const form = ctx.$('adapterForm');
   if (!form) return;
 
   const adapter = {
@@ -217,13 +235,13 @@ async function saveAdapters(name) {
     root: form.root.value,
     enable_group_chat: form.enable_group_chat.value === 'true',
     enable_private_chat: form.enable_private_chat.value === 'true',
-    allowed_group_ids: getTagValues('groupTags'),
-    allowed_private_user_ids: getTagValues('userTags'),
+    allowed_group_ids: getTagValues(ctx, 'groupTags'),
+    allowed_private_user_ids: getTagValues(ctx, 'userTags'),
   };
 
   try {
     await post(`/persona/adapters`, { adapters: [adapter] });
-    flashSuccess($('adapterSave'));
+    flashSuccess(ctx.$('adapterSave'));
     toast('适配器配置已保存', 'success');
   } catch (e) {
     toast('保存失败: ' + e.message, 'error');

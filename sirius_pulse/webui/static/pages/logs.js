@@ -1,6 +1,11 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
-import { toast, $ } from '../components.js';
+import { toast } from '../components.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
+const $$ = scopedPage.$$;
 
 const SOURCES = {
   webui: {
@@ -32,7 +37,8 @@ export function dispose() {
   timer = null;
 }
 
-export async function init() {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const refresh = $('logsRefresh');
   const pause = $('logsPause');
   const clear = $('logsClear');
@@ -49,12 +55,12 @@ export async function init() {
     $('logsConsole').textContent = '';
   };
 
-  document.querySelectorAll('[data-source]').forEach((btn) => {
+  $$('[data-source]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const source = btn.dataset.source;
       if (!source || source === activeSource) return;
       activeSource = source;
-      document.querySelectorAll('[data-source]').forEach((el) => el.classList.toggle('active', el === btn));
+      $$('[data-source]').forEach((el) => el.classList.toggle('active', el === btn));
       renderCachedSource();
       if (!stateFor(activeSource).offset) await resetAndLoad();
       else if (!paused) await loadLogs(false);
@@ -76,7 +82,7 @@ async function resetAndLoad() {
 
 function startPolling() {
   if (timer) clearInterval(timer);
-  timer = setInterval(() => {
+  timer = scopedPage.interval(() => {
     if (!paused) loadLogs(false);
   }, 1500);
 }

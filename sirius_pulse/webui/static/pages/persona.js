@@ -1,8 +1,13 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, $ } from '../components.js';
+import { toast, flashSuccess } from '../components.js';
+import { createScopedPage } from '../page-context.js';
 
-export async function init(container, params) {
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
+
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `
@@ -131,18 +136,18 @@ async function loadPersonaStatus(name) {
     const personas = store.personas || [];
     const persona = personas.find(p => p.name === name);
     const isRunning = persona?.running || false;
-    
+
     const statusDot = $('statusDot');
     const statusText = $('statusText');
     const startBtn = $('personaStartBtn');
     const stopBtn = $('personaStopBtn');
-    
+
     if (!statusDot || !statusText || !startBtn || !stopBtn) return;
 
     statusDot.className = `status-dot ${isRunning ? 'running' : ''}`;
     statusText.textContent = isRunning ? '运行中' : '已停止';
     statusText.style.color = isRunning ? 'var(--success)' : 'var(--text-3)';
-    
+
     startBtn.style.display = isRunning ? 'none' : 'inline-flex';
     stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
   } catch (e) {
@@ -154,7 +159,7 @@ async function loadPersonaStatus(name) {
 function setupStatusButtons(name) {
   const startBtn = $('personaStartBtn');
   const stopBtn = $('personaStopBtn');
-  
+
   if (!startBtn || !stopBtn) return;
 
   startBtn.addEventListener('click', async () => {
@@ -180,7 +185,7 @@ function setupStatusButtons(name) {
       startBtn.innerHTML = '<span style="font-size:12px">▶</span> 启动';
     }
   });
-  
+
   stopBtn.addEventListener('click', async () => {
     try {
       stopBtn.disabled = true;

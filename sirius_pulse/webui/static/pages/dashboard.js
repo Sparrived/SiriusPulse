@@ -1,7 +1,11 @@
 import { store } from '../store.js';
 import { get, post, navTo, selectPersona } from '../app.js';
-import { toast, animateNumber, formatHeartbeat, $ } from '../components.js';
+import { toast, animateNumber, formatHeartbeat } from '../components.js';
 import { GlobeRenderer } from './globe-renderer.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 // ==================== 动态星空渲染器 ====================
 
@@ -21,7 +25,7 @@ class StarfieldRenderer {
       this.resize();
       this.init();
     };
-    window.addEventListener('resize', this._onResize);
+    scopedPage.on(window, 'resize', this._onResize);
   }
 
   resize() {
@@ -265,7 +269,8 @@ const PERSONA_COLORS = [
 
 // ==================== 初始化 ====================
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   initStarfield();
   initGlobe();
   await Promise.all([loadStats(), loadPersonas()]);
@@ -275,14 +280,14 @@ export async function init(container) {
 
 // 初始化星空背景
 function initStarfield() {
-  const canvas = document.getElementById('starfieldCanvas');
+  const canvas = $('starfieldCanvas');
   if (!canvas) return;
   starfield = new StarfieldRenderer(canvas);
 }
 
 // 初始化球体
 function initGlobe() {
-  const canvas = document.getElementById('planetGlobe');
+  const canvas = $('planetGlobe');
   if (!canvas) return;
 
   // 增大 canvas 尺寸，为大气层效果留出空间
@@ -317,7 +322,7 @@ function updatePersonaCards() {
   const container = $('personaCardsContainer');
   if (!container) return;
 
-  const hero = document.querySelector('.planet-hero');
+  const hero = scopedPage.query('.planet-hero');
   if (!hero) return;
 
   const heroRect = hero.getBoundingClientRect();
@@ -409,7 +414,7 @@ function updatePersonaCards() {
 // ==================== 事件绑定 ====================
 
 function bindEvents() {
-  const canvas = document.getElementById('planetGlobe');
+  const canvas = $('planetGlobe');
   if (!canvas || !globe) return;
 
   // 顶栏下拉框选择人格时，联动球体旋转
@@ -421,7 +426,7 @@ function bindEvents() {
       updatePersonaPanel(idx);
     }
   };
-  window.addEventListener('persona:focus', onPersonaFocus);
+  scopedPage.on(window, 'persona:focus', onPersonaFocus);
 
   // 鼠标事件
   canvas.addEventListener('mousedown', (e) => {
@@ -492,12 +497,12 @@ function bindEvents() {
         await post('/shutdown', {});
         toast('正在关闭程序...', 'info');
         // 等待服务停止后显示提示
-        setTimeout(() => {
+        scopedPage.timeout(() => {
           document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-2);font-size:18px;">程序已关闭，可以关闭此页面</div>';
         }, 2000);
       } catch (e) {
         // 请求可能因服务关闭而失败，这是正常的
-        setTimeout(() => {
+        scopedPage.timeout(() => {
           document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-2);font-size:18px;">程序已关闭，可以关闭此页面</div>';
         }, 1500);
       }
@@ -557,7 +562,7 @@ function bindEvents() {
   }
 
   // 统计项点击涟漪效果 + 可导航项跳转
-  document.querySelectorAll('.stat-item').forEach(item => {
+  scopedPage.$('.stat-item').forEach(item => {
     item.addEventListener('click', (e) => {
       const ripple = document.createElement('span');
       ripple.className = 'stat-ripple';
@@ -567,7 +572,7 @@ function bindEvents() {
       ripple.style.left = `${e.clientX - rect.left - size / 2}px`;
       ripple.style.top = `${e.clientY - rect.top - size / 2}px`;
       item.appendChild(ripple);
-      setTimeout(() => ripple.remove(), 500);
+      scopedPage.timeout(() => ripple.remove(), 500);
 
       // 带 data-nav-page 属性的统计项点击后跳转对应页面
       const targetPage = item.dataset.navPage;
@@ -587,23 +592,23 @@ function bindEvents() {
 // ==================== Embedding 气泡弹窗 ====================
 
 function closeEmbedPopover() {
-  const pop = document.getElementById('embedPopover');
+  const pop = $('embedPopover');
   if (pop) {
     pop.style.animation = 'popover-pop-in 0.15s ease reverse forwards';
-    setTimeout(() => pop.remove(), 150);
+    scopedPage.timeout(() => pop.remove(), 150);
   }
   document.removeEventListener('click', onEmbedOutsideClick);
 }
 
 function onEmbedOutsideClick(e) {
-  const pop = document.getElementById('embedPopover');
+  const pop = $('embedPopover');
   if (pop && !pop.contains(e.target)) {
     closeEmbedPopover();
   }
 }
 
 async function showEmbeddingModal() {
-  const existing = document.getElementById('embedPopover');
+  const existing = $('embedPopover');
   if (existing) { closeEmbedPopover(); return; }
 
   let status = { running: false, ready: false, error: '加载中...' };
@@ -680,7 +685,7 @@ async function showEmbeddingModal() {
   renderPopover(status);
   parent.appendChild(pop);
 
-  setTimeout(() => document.addEventListener('click', onEmbedOutsideClick), 0);
+  scopedPage.timeout(() => scopedPage.on(document, 'click', onEmbedOutsideClick), 0);
 }
 
 function updateEmbeddingPanel(s) {

@@ -1,7 +1,11 @@
 import { store } from '../store.js';
 import { get, post, put, del } from '../app.js';
-import { toast, $, statCard } from '../components.js';
+import { toast, statCard } from '../components.js';
 import { setChartOption, getChart } from '../charts.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 const ROLE_COLORS = {
   human: '#58a6ff',
@@ -24,7 +28,8 @@ let state = {
   viz: null,
 };
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   if (!store.currentPersona) {
     container.innerHTML = `
       <div class="card">
@@ -42,10 +47,30 @@ export async function init(container) {
         gap:16px;
         align-items:end;
         margin-bottom:18px;
+        padding:22px;
+        border:1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+        border-radius:18px;
+        background:
+          radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--accent) 24%, transparent) 0, transparent 32%),
+          linear-gradient(135deg, color-mix(in srgb, var(--bg-2) 86%, var(--accent) 14%), var(--bg-1));
+        box-shadow:0 18px 48px rgba(0,0,0,0.22);
+      }
+      .memory-kicker {
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        margin-bottom:8px;
+        padding:4px 10px;
+        border:1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+        border-radius:999px;
+        color:var(--accent);
+        background:color-mix(in srgb, var(--accent) 10%, transparent);
+        font-size:12px;
+        font-weight:600;
       }
       .memory-title {
-        font-size:24px;
-        font-weight:700;
+        font-size:30px;
+        font-weight:800;
         letter-spacing:0;
         color:var(--text-1);
       }
@@ -60,6 +85,11 @@ export async function init(container) {
         flex-wrap:wrap;
         align-items:center;
         justify-content:flex-end;
+        padding:10px;
+        border:1px solid rgba(255,255,255,0.08);
+        border-radius:14px;
+        background:rgba(0,0,0,0.16);
+        backdrop-filter:blur(10px);
       }
       .memory-tabs {
         display:grid;
@@ -69,18 +99,24 @@ export async function init(container) {
       }
       .memory-tab {
         border:1px solid var(--border);
-        background:var(--bg-2);
+        background:linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 94%, var(--accent) 6%), var(--bg-2));
         color:var(--text-2);
-        border-radius:8px;
+        border-radius:14px;
         padding:12px;
         cursor:pointer;
         text-align:left;
         min-width:0;
+        transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+      }
+      .memory-tab:hover {
+        transform:translateY(-1px);
+        border-color:color-mix(in srgb, var(--accent) 44%, var(--border));
       }
       .memory-tab.active {
         border-color:var(--accent);
         background:var(--accent-dim);
         color:var(--text-1);
+        box-shadow:0 10px 28px color-mix(in srgb, var(--accent) 18%, transparent);
       }
       .memory-tab-name {
         display:block;
@@ -106,9 +142,15 @@ export async function init(container) {
       }
       .memory-item {
         border:1px solid var(--border);
-        border-radius:8px;
+        border-radius:14px;
         background:color-mix(in srgb, var(--bg-2) 92%, var(--accent) 8%);
         padding:14px;
+        transition:transform .16s ease, border-color .16s ease, background .16s ease;
+      }
+      .memory-item:hover {
+        transform:translateY(-1px);
+        border-color:color-mix(in srgb, var(--accent) 38%, var(--border));
+        background:color-mix(in srgb, var(--bg-2) 86%, var(--accent) 14%);
       }
       .memory-item-head {
         display:flex;
@@ -159,6 +201,11 @@ export async function init(container) {
         position:sticky;
         top:76px;
       }
+      .memory-side .card,
+      .memory-workspace > .card,
+      .memory-chart-grid > .card {
+        border-radius:16px;
+      }
       .memory-form-grid {
         display:grid;
         gap:10px;
@@ -201,8 +248,9 @@ export async function init(container) {
 
     <div class="memory-hero">
       <div>
+        <div class="memory-kicker">新记忆模块 · CRUD</div>
         <div class="memory-title">记忆管理工作台</div>
-        <div class="memory-subtitle">统一查看基础记忆、日记、术语和用户画像，并维护可编辑的长期记忆。</div>
+        <div class="memory-subtitle">面向当前运行中的记忆系统：统一检索基础记忆、日记、术语和用户画像，并直接新增、编辑、删除可维护条目。</div>
       </div>
       <div class="memory-toolbar">
         <select id="memoryGroupFilter" style="width:160px"></select>

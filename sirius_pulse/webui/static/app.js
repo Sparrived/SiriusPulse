@@ -4,6 +4,7 @@ export { get, post, put, del, setToken, clearToken, getToken };
 import { initTheme, applyTheme, getThemes, getModes, applyMode } from './theme.js';
 import { wsConnect } from './ws.js';
 import { toast, formatHeartbeat, $ } from './components.js';
+import { createPageContext } from './page-context.js';
 
 const PAGE_META = {
   'dashboard': { title: '概览', breadcrumb: 'Dashboard', icon: '◈' },
@@ -20,10 +21,7 @@ const PAGE_META = {
   'skills-tracker': { title: 'Skill 追踪', breadcrumb: 'Analytics / Skills', icon: '⟠' },
   'conversation-history': { title: '对话分析', breadcrumb: 'Analytics / Conversations', icon: '◧' },
   'logs': { title: '实时日志', breadcrumb: 'Operations / Logs', icon: '▣' },
-  'diary': { title: '日记', breadcrumb: 'Memory / Diary', icon: '◫' },
-  'glossary': { title: '名词解释', breadcrumb: 'Memory / Glossary', icon: '◱' },
-  'memory-viz': { title: '记忆可视化', breadcrumb: 'Memory / Visualization', icon: '◲' },
-  'memory-dashboard': { title: '记忆神经中枢', breadcrumb: 'Memory / Neural Hub', icon: '🧬' },
+  'memory-viz': { title: '记忆管理', breadcrumb: 'Memory / Workbench', icon: '◲' },
   'plugins': { title: '插件', breadcrumb: 'Extensions / Plugins', icon: '⬡' },
 };
 
@@ -48,10 +46,7 @@ const NAV_GROUPS = [
     { page: 'logs', icon: '▣', label: '实时日志' },
   ]},
   { id: 'memory', label: '记忆', items: [
-    { page: 'memory-dashboard', icon: '🧬', label: '神经中枢' },
-    { page: 'diary', icon: '◫', label: '日记' },
-    { page: 'glossary', icon: '◱', label: '名词解释' },
-    { page: 'memory-viz', icon: '◲', label: '记忆可视化' },
+    { page: 'memory-viz', icon: '◲', label: '记忆管理' },
   ]},
   { id: 'extensions', label: '扩展', items: [
     { page: 'skills', icon: '⏣', label: 'Skills' },
@@ -63,14 +58,15 @@ const PERSONA_PAGES = new Set([
   'persona', 'orchestration', 'experience', 'adapters', 'skills',
   'token-tracker', 'cognition', 'skills-tracker', 'conversation-history',
   'logs',
-  'diary', 'glossary', 'memory-viz', 'create-persona',
-  'memory-dashboard',
+  'memory-viz', 'create-persona',
 ]);
 
 let currentPage = '';
 let pageModules = {};
 let sidebarCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
 let activePageModule = null;
+let activePageAbortController = null;
+let navVersion = 0;
 
 // 从localStorage加载分组折叠状态
 let collapsedGroups = {};
@@ -98,9 +94,13 @@ async function loadPageModule(page) {
 }
 
 export async function navTo(page, name) {
-  if (activePageModule && typeof activePageModule.dispose === 'function') {
+  const myNavVersion = ++navVersion;
+  activePageAbortController?.abort();
+  activePageAbortController = new AbortController();
+  const cleanup = activePageModule?.dispose || activePageModule?.destroy;
+  if (typeof cleanup === 'function') {
     try {
-      activePageModule.dispose();
+      cleanup();
     } catch (e) {
       console.warn('page dispose failed:', e);
     }
@@ -180,21 +180,28 @@ export async function navTo(page, name) {
   main.classList.add('page-enter');
 
   try {
-    const res = await fetch(`/static/pages/${page}.html`);
+    const res = await fetch(`/static/pages/${page}.html`, { signal: activePageAbortController.signal });
+    if (myNavVersion !== navVersion) return;
     if (res.ok) {
-      main.innerHTML = await res.text();
+      const html = await res.text();
+      if (myNavVersion !== navVersion) return;
+      main.innerHTML = html;
     } else {
       main.innerHTML = '<div class="card" id="pageContent"></div>';
     }
   } catch {
+    if (myNavVersion !== navVersion) return;
     main.innerHTML = '<div class="card" id="pageContent"></div>';
   }
+  if (myNavVersion !== navVersion) return;
 
   const mod = await loadPageModule(page);
+  if (myNavVersion !== navVersion) return;
   if (mod) {
     activePageModule = mod;
     const initFn = mod.default || mod.init;
-    if (initFn) await initFn(main);
+    const pageContext = createPageContext({ container: main, signal: activePageAbortController.signal });
+    if (initFn) await initFn(main, { page, name, ctx: pageContext, signal: pageContext.signal });
   }
 }
 

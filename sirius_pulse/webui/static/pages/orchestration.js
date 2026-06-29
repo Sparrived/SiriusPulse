@@ -1,7 +1,17 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, $, ModelSelect } from '../components.js';
+import { toast, flashSuccess, ModelSelect } from '../components.js';
 import { buildModelChoicesByType, loadModelsDevForTypes } from './model-dev.js';
+import {
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
+  buildLegacyModelChoice,
+  resolveCompositeModelValue,
+  stripProviderPrefix,
+  toModelSelectOptions,
+} from './orchestration-model-options.js';
 
 const TASK_GROUPS = [
   {
@@ -9,15 +19,13 @@ const TASK_GROUPS = [
     generalKey: 'analysis_model',
     tasks: [
       { key: 'cognition_analyze', label: '认知分析（情绪+意图）' },
-      { key: 'memory_extract', label: '记忆提取' },
     ],
   },
   {
     title: '记忆维护',
     generalKey: 'memory_model',
     tasks: [
-      { key: 'diary_generate', label: '日记生成' },
-      { key: 'diary_consolidate', label: '日记合并' },
+      { key: 'memory_extract', label: '记忆提取' },
     ],
   },
   {
@@ -38,7 +46,6 @@ const PARAM_GROUPS = [
     title: '认知分析',
     tasks: [
       { key: 'cognition_analyze', label: '认知分析' },
-      { key: 'memory_extract', label: '记忆提取' },
     ],
   },
   {
@@ -54,9 +61,7 @@ const PARAM_GROUPS = [
     id: 'memory',
     title: '记忆维护',
     tasks: [
-      { key: 'diary_generate', label: '日记生成' },
-      { key: 'diary_consolidate', label: '日记整合' },
-      { key: 'topic_cluster', label: '主题聚类' },
+      { key: 'memory_extract', label: '记忆提取' },
     ],
   },
   {
@@ -77,32 +82,15 @@ const NUMERIC_PARAMS = [
   { key: 'timeout', label: '超时(s)', step: '1', min: '1', max: '300' },
 ];
 
-function buildLegacyModelChoice(model) {
-  if (typeof model === 'object') return model;
-  return { value: model, label: model, tags: [] };
-}
-
-function _stripProviderPrefix(value) {
-  if (!value) return '';
-  const idx = value.indexOf('/');
-  return idx >= 0 ? value.substring(idx + 1) : value;
-}
-
-function _resolveCompositeValue(bareName, options) {
-  if (!bareName) return '';
-  const exact = options.find(o => o.value === bareName);
-  if (exact) return exact.value;
-  const suffix = options.find(o => o.value.endsWith('/' + bareName));
-  return suffix ? suffix.value : bareName;
-}
-
 let orchestrationData = null;
 let taskParamDefaults = {};
 let taskParamOverrides = {};
 let modelChoices = [];
+let configuredModelChoices = [];
 const modelSelects = {};
 
-export async function init(container, params) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `
@@ -151,7 +139,8 @@ async function loadOrchestration(name) {
     ]);
     orchestrationData = orchData;
     const providerChoices = await loadProviderModelChoices();
-    modelChoices = [...(orchData.model_choices || []).map(buildLegacyModelChoice), ...providerChoices];
+    configuredModelChoices = (orchData.model_choices || []).map(buildLegacyModelChoice);
+    modelChoices = [...configuredModelChoices, ...providerChoices];
     taskParamDefaults = paramsData.defaults || {};
     taskParamOverrides = paramsData.task_params || {};
     renderOrchestration(orchData);
@@ -247,12 +236,11 @@ function renderOrchestration(data) {
 }
 
 function _mselOptions() {
-  return modelChoices.map(m => {
-    const val = typeof m === 'object' ? m.value : m;
-    const label = typeof m === 'object' ? m.label : m;
-    const tags = (typeof m === 'object' && Array.isArray(m.tags)) ? m.tags : [];
-    return { value: val, label, tags };
-  });
+  return toModelSelectOptions(modelChoices);
+}
+
+function _configuredOptions() {
+  return toModelSelectOptions(configuredModelChoices);
 }
 
 async function loadProviderModelChoices() {
@@ -284,13 +272,14 @@ async function loadProviderModelChoices() {
 function _mountModelSelects(data) {
   const fields = ['analysis', 'chat', 'memory', 'plugin'];
   const baseOpts = _mselOptions();
+  const configuredOpts = _configuredOptions();
 
   for (const field of fields) {
     const container = $(`msel_${field}`);
     if (!container) continue;
     const key = `${field}_model`;
     const bareValue = data[key] || '';
-    const value = _resolveCompositeValue(bareValue, baseOpts);
+    const value = resolveCompositeModelValue(bareValue, baseOpts, configuredOpts);
 
     const valueInChoices = baseOpts.some(o => o.value === value);
     const opts = [...baseOpts];
@@ -307,10 +296,12 @@ function _mountModelSelects(data) {
     { value: '__inherit__', label: '继承通用', tags: [] },
     ...baseOpts,
   ];
-  document.querySelectorAll('.task-model-select').forEach(container => {
+  scopedPage.$('.task-model-select').forEach(container => {
     const task = container.dataset.task;
     const bareValue = container.dataset.value || '__inherit__';
-    const value = bareValue === '__inherit__' ? bareValue : _resolveCompositeValue(bareValue, taskOpts);
+    const value = bareValue === '__inherit__'
+      ? bareValue
+      : resolveCompositeModelValue(bareValue, taskOpts, configuredOpts);
     const key = `task_${task}`;
 
     const valueInChoices = taskOpts.some(o => o.value === value);
@@ -326,10 +317,10 @@ function _mountModelSelects(data) {
 }
 
 function setupOverrideListeners() {
-  document.querySelectorAll('.task-override').forEach(cb => {
+  scopedPage.$('.task-override').forEach(cb => {
     cb.addEventListener('change', () => {
       const task = cb.dataset.task;
-      const container = document.querySelector(`.task-model-select[data-task="${task}"]`);
+      const container = scopedPage.query(`.task-model-select[data-task="${task}"]`);
       if (!container) return;
 
       if (cb.checked) {
@@ -371,11 +362,11 @@ function renderParamTuning() {
     { value: '', label: '无 fallback', tags: [] },
     ..._mselOptions(),
   ];
-  document.querySelectorAll('.fb-model-select').forEach(container => {
+  scopedPage.$('.fb-model-select').forEach(container => {
     const task = container.dataset.task;
     const overrides = taskParamOverrides[task] || {};
     const saved = overrides.fallback_model || '';
-    const value = saved ? _resolveCompositeValue(saved, fbOpts) : '';
+    const value = saved ? resolveCompositeModelValue(saved, fbOpts, configuredOpts) : '';
 
     const valueInChoices = fbOpts.some(o => o.value === value);
     const opts = [...fbOpts];
@@ -477,7 +468,7 @@ function bindParamEvents() {
     if (!clr) return;
     const task = clr.dataset.task;
     const field = clr.dataset.field;
-    const input = document.querySelector(`.tp-num[data-task="${task}"][data-field="${field}"]`);
+    const input = scopedPage.query(`.tp-num[data-task="${task}"][data-field="${field}"]`);
     if (!input) return;
     const cell = input.closest('div');
     if (!cell) return;
@@ -495,14 +486,14 @@ async function saveOrchestration(name) {
   // 1) 模型编排
   const taskModels = {};
   const taskEnabled = {};
-  document.querySelectorAll('.task-model-select').forEach(container => {
+  scopedPage.$('.task-model-select').forEach(container => {
     const task = container.dataset.task;
-    const enabled = document.querySelector(`.task-enabled[data-task="${task}"]`)?.checked ?? true;
-    const isOverridden = document.querySelector(`.task-override[data-task="${task}"]`)?.checked ?? false;
+    const enabled = scopedPage.query(`.task-enabled[data-task="${task}"]`)?.checked ?? true;
+    const isOverridden = scopedPage.query(`.task-override[data-task="${task}"]`)?.checked ?? false;
     const key = `task_${task}`;
     const sel = modelSelects[key];
     const rawVal = isOverridden && sel ? sel.value : '__inherit__';
-    taskModels[task] = rawVal === '__inherit__' ? rawVal : _stripProviderPrefix(rawVal);
+    taskModels[task] = rawVal === '__inherit__' ? rawVal : stripProviderPrefix(rawVal);
     taskEnabled[task] = enabled;
   });
 
@@ -512,7 +503,7 @@ async function saveOrchestration(name) {
   const taskTimeout = {};
   const taskFallbackModel = {};
 
-  document.querySelectorAll('.tp-num').forEach(input => {
+  scopedPage.$('.tp-num').forEach(input => {
     const task = input.dataset.task;
     const field = input.dataset.field;
     const raw = input.value.trim();
@@ -528,15 +519,15 @@ async function saveOrchestration(name) {
     if (!key.startsWith('fb_')) continue;
     const task = key.substring(3);
     const raw = sel.value?.trim();
-    if (raw) taskFallbackModel[task] = _stripProviderPrefix(raw);
+    if (raw) taskFallbackModel[task] = stripProviderPrefix(raw);
   }
 
   try {
     await post(`/persona/orchestration`, {
-      analysis_model: _stripProviderPrefix(modelSelects.analysis_model?.value || ''),
-      chat_model: _stripProviderPrefix(modelSelects.chat_model?.value || ''),
-      memory_model: _stripProviderPrefix(modelSelects.memory_model?.value || ''),
-      plugin_model: _stripProviderPrefix(modelSelects.plugin_model?.value || ''),
+      analysis_model: stripProviderPrefix(modelSelects.analysis_model?.value || ''),
+      chat_model: stripProviderPrefix(modelSelects.chat_model?.value || ''),
+      memory_model: stripProviderPrefix(modelSelects.memory_model?.value || ''),
+      plugin_model: stripProviderPrefix(modelSelects.plugin_model?.value || ''),
       task_models: taskModels,
       task_enabled: taskEnabled,
     });

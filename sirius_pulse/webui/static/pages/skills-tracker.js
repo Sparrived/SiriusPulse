@@ -1,7 +1,11 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
-import { toast, $ } from '../components.js';
+import { toast } from '../components.js';
 import { createRealtimePoller } from './realtime.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 let historyData = [];
 let skillFilter = '';
@@ -18,7 +22,8 @@ export function dispose() {
   poller.stop();
 }
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `

@@ -1,7 +1,11 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, animateNumber, flashSuccess, $, ModelSelect } from '../components.js';
+import { toast, animateNumber, flashSuccess, ModelSelect } from '../components.js';
 import { buildDevModelCard, getModelDevCache, loadModelsDevForType } from './model-dev.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 const BUILTIN_TYPES = [
   'deepseek', 'aliyun-bailian', 'bigmodel', 'mimo', 'mimo-tokenplan', 'siliconflow',
@@ -91,7 +95,8 @@ function _mountHealthSelects() {
   });
 }
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   _root = container;
   container.innerHTML = `
     <div class="card">
@@ -109,9 +114,9 @@ export async function init(container) {
     </div>
   `;
 
-  container.querySelector('#addProviderBtn').addEventListener('click', addProvider);
-  container.querySelector('#probeAllBtn').addEventListener('click', () => probeAll({ force: true }));
-  container.querySelector('#refreshModelsBtn').addEventListener('click', refreshModels);
+  scopedPage.on($('addProviderBtn'), 'click', addProvider);
+  scopedPage.on($('probeAllBtn'), 'click', () => probeAll({ force: true }));
+  scopedPage.on($('refreshModelsBtn'), 'click', refreshModels);
 
   await loadProviders();
   await autoProbeAll();
@@ -126,11 +131,11 @@ async function loadProviders() {
       platform_type: p.platform_type || p.type || 'openai-compatible',
     }));
     editingIdx = null;
-    
+
     // 预加载所有 Provider 类型的 models.dev 数据
     const providerTypes = [...new Set(providers.map(p => p.platform_type))];
     await Promise.all(providerTypes.map(type => loadModelsDevForType(type)));
-    
+
     renderList();
   } catch (e) {
     console.error('[providers] loadProviders 失败:', e);

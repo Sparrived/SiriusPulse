@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
-import { toast, $ } from '../components.js';
+import { toast } from '../components.js';
 import {
   renderLineChart,
   renderBarChart,
@@ -9,6 +9,10 @@ import {
   disposeChart,
 } from '../charts.js';
 import { createRealtimePoller } from './realtime.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 const TASK_LABELS = {
   response_generate: '主模型调用',
@@ -27,7 +31,8 @@ export function dispose() {
   poller.stop();
 }
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `

@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
-import { toast, $ } from '../components.js';
+import { toast } from '../components.js';
 import {
   renderBarChart,
   renderLineChart,
@@ -9,6 +9,10 @@ import {
   disposeChart,
 } from '../charts.js';
 import { createRealtimePoller } from './realtime.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 const EMOTION_CN = {
   JOY:'喜悦',CONTENTMENT:'满足',RELIEF:'释然',EXCITEMENT:'兴奋',
@@ -53,7 +57,8 @@ export function dispose() {
   poller.stop();
 }
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `
@@ -275,7 +280,7 @@ function translateEmotion(em) {
 }
 
 function renderEmotionDistribution(dist) {
-  const el = document.querySelector('[data-chart="emotion-dist"]');
+  const el = scopedPage.query('[data-chart="emotion-dist"]');
   const entries = Object.entries(dist);
   if (!entries.length) return;
   renderBarChart(el, {
@@ -287,7 +292,7 @@ function renderEmotionDistribution(dist) {
 }
 
 function renderTimeline(events) {
-  const el = document.querySelector('[data-chart="timeline"]');
+  const el = scopedPage.query('[data-chart="timeline"]');
   if (!events.length) return;
   const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
   const labels = sorted.map(e => {
@@ -306,7 +311,7 @@ function renderTimeline(events) {
 }
 
 function renderRadarChart_(events) {
-  const el = document.querySelector('[data-chart="radar"]');
+  const el = scopedPage.query('[data-chart="radar"]');
   if (!events.length) return;
 
   const sums = RADAR_KEYS.map(() => 0);
@@ -373,7 +378,7 @@ function renderEventsTable(events) {
 // ── 深度分析：意图分布饼图 ──────────────────────────────────────
 
 function renderIntentDistribution(dist) {
-  const el = document.querySelector('[data-chart="intent-dist"]');
+  const el = scopedPage.query('[data-chart="intent-dist"]');
   const entries = Object.entries(dist);
   if (!entries.length) return;
   renderPieChart(el, {
@@ -387,7 +392,7 @@ function renderIntentDistribution(dist) {
 // ── 深度分析：策略分布饼图 ──────────────────────────────────────
 
 function renderStrategyDistribution(dist) {
-  const el = document.querySelector('[data-chart="strategy-dist"]');
+  const el = scopedPage.query('[data-chart="strategy-dist"]');
   if (!el) return;
   const entries = Object.entries(dist);
   if (!entries.length) {
@@ -405,7 +410,7 @@ function renderStrategyDistribution(dist) {
 // ── 深度分析：时段分布 ──────────────────────────────────────────
 
 function renderHourlyDistribution(dist) {
-  const el = document.querySelector('[data-chart="hourly-dist"]');
+  const el = scopedPage.query('[data-chart="hourly-dist"]');
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const labels = hours.map(h => `${String(h).padStart(2, '0')}:00`);
   const values = hours.map(h => dist[h] || 0);
@@ -420,7 +425,7 @@ function renderHourlyDistribution(dist) {
 // ── 深度分析：热度分布 ──────────────────────────────────────────
 
 function renderHeatDistribution(dist) {
-  const el = document.querySelector('[data-chart="heat-dist"]');
+  const el = scopedPage.query('[data-chart="heat-dist"]');
   if (!el) return;
   const entries = Object.entries(dist);
   if (!entries.length) {
@@ -440,7 +445,7 @@ function renderHeatDistribution(dist) {
 // ── 深度分析：分数直方图 ────────────────────────────────────────
 
 function renderScoreHistogram(chartId, label, histogram) {
-  const el = document.querySelector(`[data-chart="${chartId}"]`);
+  const el = scopedPage.query(`[data-chart="${chartId}"]`);
   if (!histogram || !histogram.labels || !histogram.labels.length) return;
   renderBarChart(el, {
     labels: histogram.labels,
@@ -452,7 +457,7 @@ function renderScoreHistogram(chartId, label, histogram) {
 // ── 深度分析：决策时间线 ────────────────────────────────────────
 
 function renderDecisionTimeline(timeline) {
-  const el = document.querySelector('[data-chart="decision-timeline"]');
+  const el = scopedPage.query('[data-chart="decision-timeline"]');
   if (!timeline.length) return;
   const sorted = [...timeline].sort((a, b) => a.timestamp - b.timestamp);
   const labels = sorted.map(e => {

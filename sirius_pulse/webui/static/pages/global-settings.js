@@ -1,17 +1,21 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, animateNumber, flashSuccess, $ } from '../components.js';
+import { toast, animateNumber, flashSuccess } from '../components.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 const FIELDS = [
   { key: 'webui_host', label: 'WebUI 监听地址', type: 'text', placeholder: '0.0.0.0', defaultVal: '0.0.0.0' },
   { key: 'webui_port', label: 'WebUI 端口', type: 'number', placeholder: '8080', defaultVal: 8080 },
   { key: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'], defaultVal: 'INFO' },
-  { key: 'max_sentence_chars', label: '单句话最大长度（字）', type: 'number', placeholder: '20', defaultVal: 20, min: 5, max: 50 },
 ];
 
 let currentConfig = {};
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   container.innerHTML = `
     <div class="card">
       <div class="card-header">
@@ -36,9 +40,9 @@ export async function init(container) {
   $('gsResetBtn').addEventListener('click', () => fillForm(currentConfig));
 
   // 数字调节按钮事件
-  document.querySelectorAll('[data-spin-target]').forEach(btn => {
+  scopedPage.$('[data-spin-target]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const target = document.getElementById(btn.dataset.spinTarget);
+      const target = $(btn.dataset.spinTarget);
       if (!target) return;
       const dir = parseInt(btn.dataset.spinDir, 10);
       const step = parseFloat(target.step) || 1;

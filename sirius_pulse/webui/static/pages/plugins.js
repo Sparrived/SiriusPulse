@@ -1,11 +1,16 @@
 import { store } from '../store.js';
 import { get, post, put } from '../app.js';
-import { toast, flashSuccess, $, DynamicConfigForm } from '../components.js';
+import { toast, flashSuccess, DynamicConfigForm } from '../components.js';
+import { createScopedPage } from '../page-context.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 let currentModal = null;
 let configForm = null;
 
-export async function init(container) {
+export async function init(container, params = {}) {
+  scopedPage.use(params?.ctx, container);
   container.innerHTML = `
     <div class="card">
       <div class="card-header">
@@ -231,7 +236,7 @@ function renderModalContent(d) {
   `;
 
   // 使用 DynamicConfigForm 组件渲染参数配置（复用参数列表）
-  const section = document.getElementById('pluginParamsSection');
+  const section = $('pluginParamsSection');
   if (parameters.length || Object.keys(settings).length) {
     configForm = new DynamicConfigForm({
       containerId: 'pluginParamsSection',
@@ -242,7 +247,7 @@ function renderModalContent(d) {
     configForm.init().then(() => {
       configForm.render();
       // 如果没有参数，隐藏标题
-      const form = document.getElementById('paramsForm');
+      const form = $('paramsForm');
       if (form && !form.children.length) {
         section.style.display = 'none';
       }
@@ -263,9 +268,9 @@ function renderModalContent(d) {
   $('modalSave')?.addEventListener('click', () => savePluginConfig(d.name));
 
   // 数字调节按钮事件
-  document.querySelectorAll('[data-spin-target]').forEach(btn => {
+  scopedPage.$('[data-spin-target]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const target = document.getElementById(btn.dataset.spinTarget);
+      const target = $(btn.dataset.spinTarget);
       if (!target) return;
       const dir = parseInt(btn.dataset.spinDir, 10);
       const step = parseFloat(target.step) || 1;
@@ -307,7 +312,7 @@ async function savePluginConfig(name) {
 
     flashSuccess(saveBtn);
     toast('配置已保存', 'success');
-    setTimeout(closeModal, 1200);
+    scopedPage.timeout(closeModal, 1200);
   } catch (e) {
     toast('保存失败: ' + e.message, 'error');
     if (saveBtn) {
