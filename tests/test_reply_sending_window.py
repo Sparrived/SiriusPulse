@@ -75,6 +75,7 @@ async def test_napcat_delayed_partials_wait_between_each_sent_message(monkeypatc
         slept.append(seconds)
 
     async def fake_tick_delayed_queue(group_id, on_partial_reply):
+        active_snapshots.append(adapter._is_reply_send_active("100"))
         await on_partial_reply("first")
         await on_partial_reply("second")
         return [{"reply": "final reply", "reply_references": [], "sticker_names": []}]

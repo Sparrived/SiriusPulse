@@ -1026,16 +1026,17 @@ class NapCatAdapter(BaseAdapter):
         try:
             if event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
+                send_key = gid
+                if gid.startswith("private_"):
+                    uid = gid.replace("private_", "").replace("qq_", "")
+                    send_key = f"private_{uid}"
                 partial_sent_count = 0
                 async def _send_partial(text: str) -> None:
                     nonlocal partial_sent_count
-                    send_key = gid
-                    if gid.startswith("private_"):
-                        uid = gid.replace("private_", "").replace("qq_", "")
-                        send_key = f"private_{uid}"
                     if partial_sent_count > 0:
                         await self._sleep_before_reply_sequence_part(send_key, text)
                     if gid.startswith("private_"):
+                        uid = gid.replace("private_", "").replace("qq_", "")
                         sent = await self._send_private_text(uid, text)
                     elif gid in self._get_allowed_group_ids():
                         sent = await self._send_group_text(gid, text)
@@ -1047,34 +1048,38 @@ class NapCatAdapter(BaseAdapter):
                         raise RuntimeError(f"Failed to send partial reply: {gid}")
                     partial_sent_count += 1
 
+                self._begin_reply_send(send_key)
                 try:
-                    results = await engine.tick_delayed_queue(
-                        gid, on_partial_reply=_send_partial
-                    )
-                except Exception as exc:
-                    LOG.warning("Delayed queue tick 失败 (%s): %s", gid, exc)
-                    results = []
-                for result in results:
-                    reply = result.get("reply", "")
-                    reply_refs = result.get("reply_references", [])
-                    sticker_names = result.get("sticker_names", [])
-                    if gid.startswith("private_"):
-                        uid = gid.replace("private_", "").replace("qq_", "")
-                        if reply:
-                            if partial_sent_count > 0:
-                                await self._sleep_before_reply_sequence_part(
-                                    f"private_{uid}", reply
-                                )
+                    try:
+                        results = await engine.tick_delayed_queue(
+                            gid, on_partial_reply=_send_partial
+                        )
+                    except Exception as exc:
+                        LOG.warning("Delayed queue tick failed (%s): %s", gid, exc)
+                        results = []
+                    for result in results:
+                        reply = result.get("reply", "")
+                        reply_refs = result.get("reply_references", [])
+                        sticker_names = result.get("sticker_names", [])
+                        if gid.startswith("private_"):
+                            uid = gid.replace("private_", "").replace("qq_", "")
                             if reply:
-                                await self._send_private_text(uid, reply, reply_refs)
-                        await self._send_stickers_after_reply(gid, sticker_names)
-                    elif gid in self._get_allowed_group_ids():
-                        if reply:
-                            if partial_sent_count > 0:
-                                await self._sleep_before_reply_sequence_part(gid, reply)
+                                if partial_sent_count > 0:
+                                    await self._sleep_before_reply_sequence_part(
+                                        f"private_{uid}", reply
+                                    )
+                                if reply:
+                                    await self._send_private_text(uid, reply, reply_refs)
+                            await self._send_stickers_after_reply(gid, sticker_names)
+                        elif gid in self._get_allowed_group_ids():
                             if reply:
-                                await self._send_group_text(gid, reply, reply_refs)
-                        await self._send_stickers_after_reply(gid, sticker_names)
+                                if partial_sent_count > 0:
+                                    await self._sleep_before_reply_sequence_part(gid, reply)
+                                if reply:
+                                    await self._send_group_text(gid, reply, reply_refs)
+                            await self._send_stickers_after_reply(gid, sticker_names)
+                finally:
+                    self._end_reply_send(send_key)
             elif event.type == SessionEventType.REMINDER_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 reply = event.data.get("reply", "")
