@@ -430,23 +430,14 @@ async def api_experience_get(request: web.Request, data_dir: Path) -> web.Respon
     exp = PersonaExperienceConfig.load(paths.experience)
     return _json_response(
         {
-            "reply_mode": exp.reply_mode,
             "engagement_sensitivity": exp.engagement_sensitivity,
             "expressiveness": exp.expressiveness,
-            "heat_window_seconds": exp.heat_window_seconds,
-            "delay_reply_enabled": exp.delay_reply_enabled,
-            "pending_message_threshold": exp.pending_message_threshold,
             "min_reply_interval_seconds": exp.min_reply_interval_seconds,
-            "reply_frequency_window_seconds": exp.reply_frequency_window_seconds,
-            "reply_frequency_max_replies": exp.reply_frequency_max_replies,
-            "reply_frequency_exempt_on_mention": exp.reply_frequency_exempt_on_mention,
-            "max_concurrent_llm_calls": exp.max_concurrent_llm_calls,
-            "memory_depth": exp.memory_depth,
+            "max_sentence_chars": exp.max_sentence_chars,
             "diary_top_k": exp.diary_top_k,
             "diary_token_budget": exp.diary_token_budget,
             "enable_skills": exp.enable_skills,
             "max_skill_rounds": exp.max_skill_rounds,
-            "skill_execution_timeout": exp.skill_execution_timeout,
             "auto_install_skill_deps": exp.auto_install_skill_deps,
             "plan_mode_enabled": exp.plan_mode_enabled,
             "plan_mode_limit_normal_tools": exp.plan_mode_limit_normal_tools,
@@ -456,8 +447,6 @@ async def api_experience_get(request: web.Request, data_dir: Path) -> web.Respon
             "plan_mode_presence_min_interval_seconds": (
                 exp.plan_mode_presence_min_interval_seconds
             ),
-            "plan_mode_presence_enter_message": exp.plan_mode_presence_enter_message,
-            "plan_mode_presence_update_message": exp.plan_mode_presence_update_message,
             "other_ai_names": exp.other_ai_names,
             "message_prefixes": exp.message_prefixes,
         }
@@ -476,23 +465,14 @@ async def api_experience_post(request: web.Request, data_dir: Path) -> web.Respo
     experience_data = body.get("experience", body)
 
     for key in (
-        "reply_mode",
         "engagement_sensitivity",
         "expressiveness",
-        "heat_window_seconds",
-        "delay_reply_enabled",
-        "pending_message_threshold",
         "min_reply_interval_seconds",
-        "reply_frequency_window_seconds",
-        "reply_frequency_max_replies",
-        "reply_frequency_exempt_on_mention",
-        "max_concurrent_llm_calls",
-        "memory_depth",
+        "max_sentence_chars",
         "diary_top_k",
         "diary_token_budget",
         "enable_skills",
         "max_skill_rounds",
-        "skill_execution_timeout",
         "auto_install_skill_deps",
         "plan_mode_enabled",
         "plan_mode_limit_normal_tools",
@@ -500,14 +480,13 @@ async def api_experience_post(request: web.Request, data_dir: Path) -> web.Respo
         "plan_mode_chat_awareness_enabled",
         "plan_mode_presence_enabled",
         "plan_mode_presence_min_interval_seconds",
-        "plan_mode_presence_enter_message",
-        "plan_mode_presence_update_message",
         "other_ai_names",
         "message_prefixes",
     ):
         if key in experience_data:
             setattr(exp, key, experience_data[key])
 
+    exp = PersonaExperienceConfig.from_dict(exp.to_dict())
     exp.save(paths.experience)
     _request_config_reload("experience", data_dir)
     return _json_response({"success": True})

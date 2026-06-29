@@ -67,12 +67,11 @@ class PersonaWorker:
         adapters_cfg = PersonaAdaptersConfig.load(self.paths.adapters)
         experience = PersonaExperienceConfig.load(self.paths.experience)
         LOG.info(
-            "加载 %d 个 adapter，体验模式: %s", len(adapters_cfg.adapters), experience.memory_depth
+            "加载 %d 个 adapter", len(adapters_cfg.adapters)
         )
 
-        # 2. 创建 EngineRuntime（experience + global 参数注入 plugin_config）
+        # 2. Create EngineRuntime with experience parameters in plugin_config
         plugin_config = self._build_plugin_config(experience)
-        plugin_config.update(self._build_global_runtime_config())
         self._runtime = EngineRuntime(
             self.persona_dir,
             plugin_config=plugin_config,
@@ -172,17 +171,8 @@ class PersonaWorker:
             # 技能
             "max_skill_rounds": experience.max_skill_rounds,
             "auto_install_skill_deps": experience.auto_install_skill_deps,
-            # 后台任务
-            "delayed_queue_tick_interval_seconds": 3,
-            # 其他体验参数直接透传（Bridge 可能用到）
-            "reply_mode": experience.reply_mode,
-            "delay_reply_enabled": experience.delay_reply_enabled,
-            "pending_message_threshold": experience.pending_message_threshold,
-            "reply_frequency_max_replies": experience.reply_frequency_max_replies,
-            "reply_frequency_exempt_on_mention": experience.reply_frequency_exempt_on_mention,
-            "max_concurrent_llm_calls": experience.max_concurrent_llm_calls,
+            "max_sentence_chars": experience.max_sentence_chars,
             "enable_skills": experience.enable_skills,
-            "skill_execution_timeout": experience.skill_execution_timeout,
             "plan_mode_enabled": experience.plan_mode_enabled,
             "plan_mode_limit_normal_tools": experience.plan_mode_limit_normal_tools,
             "plan_mode_allow_light_chat": experience.plan_mode_allow_light_chat,
@@ -191,9 +181,6 @@ class PersonaWorker:
             "plan_mode_presence_min_interval_seconds": (
                 experience.plan_mode_presence_min_interval_seconds
             ),
-            "plan_mode_presence_enter_message": experience.plan_mode_presence_enter_message,
-            "plan_mode_presence_update_message": experience.plan_mode_presence_update_message,
-            "memory_depth": experience.memory_depth,
             "message_prefixes": experience.message_prefixes,
         }
 
@@ -202,30 +189,6 @@ class PersonaWorker:
         if other_ai_names:
             config["other_ai_names"] = list(dict.fromkeys(other_ai_names))
         return config
-
-    def _build_global_runtime_config(self) -> dict[str, Any]:
-        """读取全局配置中会影响运行时 prompt 的字段。"""
-        config_path = self._global_config_path()
-        data: dict[str, Any] = {}
-        if config_path.exists():
-            try:
-                payload = json.loads(config_path.read_text(encoding="utf-8"))
-                if isinstance(payload, dict):
-                    data = payload
-            except Exception:
-                LOG.warning("读取全局配置失败: %s", config_path, exc_info=True)
-
-        try:
-            max_sentence_chars = int(data.get("max_sentence_chars", 20))
-        except (TypeError, ValueError):
-            max_sentence_chars = 20
-        return {"max_sentence_chars": max(5, min(50, max_sentence_chars))}
-
-    def _global_config_path(self) -> Path:
-        """返回 data/global_config.json，兼容旧单人格 data 目录。"""
-        if self.persona_dir.parent.name == "personas":
-            return self.persona_dir.parent.parent / "global_config.json"
-        return self.persona_dir / "global_config.json"
 
     # ------------------------------------------------------------------
     # 心跳与状态
@@ -376,12 +339,8 @@ class PersonaWorker:
         LOG.info("Experience 配置已热重载")
 
     def _reload_global_config(self, engine: Any) -> None:
-        """热重载全局运行时配置（global_config.json）。"""
-        global_config = self._build_global_runtime_config()
-        engine.config.update(global_config)
-        if hasattr(engine, "brain") and engine.brain:
-            engine.brain.config.update(global_config)
-        LOG.info("全局运行时配置已热重载")
+        """Reload global config; runtime output limits live in experience now."""
+        LOG.info("Global config reloaded")
 
     def _reload_provider(self, engine: Any) -> None:
         """热重载 Provider 配置（provider_keys.json）。

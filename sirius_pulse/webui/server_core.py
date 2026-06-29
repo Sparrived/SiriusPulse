@@ -284,7 +284,6 @@ class WebUIServer:
                 "webui_host": self.host,
                 "webui_port": self.port,
                 "log_level": "INFO",
-                "max_sentence_chars": 20,
             }
         )
 
@@ -306,11 +305,6 @@ class WebUIServer:
         for key in ("webui_host", "webui_port", "log_level"):
             if key in body:
                 data[key] = body[key]
-        if "max_sentence_chars" in body:
-            try:
-                data["max_sentence_chars"] = max(5, min(50, int(body["max_sentence_chars"])))
-            except (TypeError, ValueError):
-                data["max_sentence_chars"] = 20
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")

@@ -134,27 +134,17 @@ class PersonaExperienceConfig:
     """人格体验参数——控制运行时行为风格。"""
 
     # 参与决策
-    reply_mode: str = "auto"  # auto|always|never
     engagement_sensitivity: float = 0.5  # 0.0~1.0
     expressiveness: float = 0.5  # 0.0~1.0 单旋钮活泼度
-    heat_window_seconds: float = 60.0
-
-    # 延迟回复
-    delay_reply_enabled: bool = True
-    pending_message_threshold: float = 4.0
 
     # 回复频率限制
     min_reply_interval_seconds: float = 0.0
     main_model_reply_cooldown_seconds: float = 0.0
-    reply_frequency_window_seconds: float = 60.0
-    reply_frequency_max_replies: int = 8
-    reply_frequency_exempt_on_mention: bool = True
+    max_sentence_chars: int = 20
 
     # 并发与技能
-    max_concurrent_llm_calls: int = 1
     enable_skills: bool = True
     max_skill_rounds: int = 3
-    skill_execution_timeout: float = 30.0
     auto_install_skill_deps: bool = True
     plan_mode_enabled: bool = False
     plan_mode_limit_normal_tools: bool = False
@@ -162,11 +152,6 @@ class PersonaExperienceConfig:
     plan_mode_chat_awareness_enabled: bool = False
     plan_mode_presence_enabled: bool = False
     plan_mode_presence_min_interval_seconds: float = 45.0
-    plan_mode_presence_enter_message: str = "我看到了，这个得稍微捋一下。"
-    plan_mode_presence_update_message: str = "补充我看到了，我会按新的前提来。"
-
-    # 记忆深度（影响 prompt 注入的日记/记忆数量）
-    memory_depth: str = "deep"  # shallow|moderate|deep
 
     # 日记检索参数
     diary_top_k: int = 5
@@ -180,21 +165,13 @@ class PersonaExperienceConfig:
 
     def to_dict(self, *, include_updated_at: bool = False) -> dict[str, Any]:
         d: dict[str, Any] = {
-            "reply_mode": self.reply_mode,
             "engagement_sensitivity": self.engagement_sensitivity,
             "expressiveness": self.expressiveness,
-            "heat_window_seconds": self.heat_window_seconds,
-            "delay_reply_enabled": self.delay_reply_enabled,
-            "pending_message_threshold": self.pending_message_threshold,
             "min_reply_interval_seconds": self.min_reply_interval_seconds,
             "main_model_reply_cooldown_seconds": self.main_model_reply_cooldown_seconds,
-            "reply_frequency_window_seconds": self.reply_frequency_window_seconds,
-            "reply_frequency_max_replies": self.reply_frequency_max_replies,
-            "reply_frequency_exempt_on_mention": self.reply_frequency_exempt_on_mention,
-            "max_concurrent_llm_calls": self.max_concurrent_llm_calls,
+            "max_sentence_chars": self.max_sentence_chars,
             "enable_skills": self.enable_skills,
             "max_skill_rounds": self.max_skill_rounds,
-            "skill_execution_timeout": self.skill_execution_timeout,
             "auto_install_skill_deps": self.auto_install_skill_deps,
             "plan_mode_enabled": self.plan_mode_enabled,
             "plan_mode_limit_normal_tools": self.plan_mode_limit_normal_tools,
@@ -204,9 +181,6 @@ class PersonaExperienceConfig:
             "plan_mode_presence_min_interval_seconds": (
                 self.plan_mode_presence_min_interval_seconds
             ),
-            "plan_mode_presence_enter_message": self.plan_mode_presence_enter_message,
-            "plan_mode_presence_update_message": self.plan_mode_presence_update_message,
-            "memory_depth": self.memory_depth,
             "diary_top_k": self.diary_top_k,
             "diary_token_budget": self.diary_token_budget,
             "other_ai_names": list(self.other_ai_names),
@@ -221,26 +195,16 @@ class PersonaExperienceConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PersonaExperienceConfig":
         return cls(
-            reply_mode=str(data.get("reply_mode", "auto")),
             engagement_sensitivity=float(data.get("engagement_sensitivity", 0.5)),
             expressiveness=float(data.get("expressiveness", 0.5)),
-            heat_window_seconds=float(data.get("heat_window_seconds", 60.0)),
-            delay_reply_enabled=bool(data.get("delay_reply_enabled", True)),
-            pending_message_threshold=float(data.get("pending_message_threshold", 4.0)),
             min_reply_interval_seconds=float(data.get("min_reply_interval_seconds", 0.0)),
             main_model_reply_cooldown_seconds=float(
                 data.get("main_model_reply_cooldown_seconds", 0.0)
             ),
-            reply_frequency_window_seconds=float(data.get("reply_frequency_window_seconds", 60.0)),
-            reply_frequency_max_replies=int(data.get("reply_frequency_max_replies", 8)),
-            reply_frequency_exempt_on_mention=bool(
-                data.get("reply_frequency_exempt_on_mention", True)
-            ),
-            max_concurrent_llm_calls=int(data.get("max_concurrent_llm_calls", 1)),
+            max_sentence_chars=max(5, min(50, int(data.get("max_sentence_chars", 20)))),
             enable_skills=bool(data.get("enable_skills", True)),
             other_ai_names=[str(v) for v in data.get("other_ai_names", [])],
             max_skill_rounds=int(data.get("max_skill_rounds", 3)),
-            skill_execution_timeout=float(data.get("skill_execution_timeout", 30.0)),
             auto_install_skill_deps=bool(data.get("auto_install_skill_deps", True)),
             plan_mode_enabled=bool(data.get("plan_mode_enabled", False)),
             plan_mode_limit_normal_tools=bool(
@@ -254,13 +218,6 @@ class PersonaExperienceConfig:
             plan_mode_presence_min_interval_seconds=float(
                 data.get("plan_mode_presence_min_interval_seconds", 45.0)
             ),
-            plan_mode_presence_enter_message=str(
-                data.get("plan_mode_presence_enter_message", "我看到了，这个得稍微捋一下。")
-            ),
-            plan_mode_presence_update_message=str(
-                data.get("plan_mode_presence_update_message", "补充我看到了，我会按新的前提来。")
-            ),
-            memory_depth=str(data.get("memory_depth", "deep")),
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
             message_prefixes=[str(v) for v in data.get("message_prefixes", [])],

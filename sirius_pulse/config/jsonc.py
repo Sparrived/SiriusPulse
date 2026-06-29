@@ -50,7 +50,6 @@ _SESSION_CONFIG_COMMENTS = {
     "orchestration.consolidation_min_entries": "事件条目达到多少条后才触发归纳。",
     "orchestration.consolidation_min_notes": "摘要条目达到多少条后才触发归纳。",
     "orchestration.consolidation_min_facts": "事实条目达到多少条后才触发归纳。",
-    "orchestration.session_reply_mode": "会话级回复模式：always / never / auto。",
     "orchestration.engagement_sensitivity": "参与敏感度，范围 0 到 1。越大越主动。",
     "orchestration.heat_window_seconds": "热度分析的滑动时间窗口（秒）。",
     "orchestration.pending_message_threshold": "单会话待处理消息积压超过该阈值后，runtime 会进入静默批处理并合并同一说话人的连续消息。设为 0 表示关闭。",
@@ -92,12 +91,6 @@ _SESSION_CONFIG_COMMENTS = {
     "orchestration.plan_mode_presence_min_interval_seconds": (
         "Minimum seconds between planning status messages."
     ),
-    "orchestration.plan_mode_presence_enter_message": (
-        "Visible status text sent when entering hidden planning mode."
-    ),
-    "orchestration.plan_mode_presence_update_message": (
-        "Visible status text sent when accepted plan events arrive."
-    ),
 }
 
 
@@ -122,7 +115,6 @@ def build_default_orchestration_payload() -> dict[str, Any]:
         "consolidation_min_entries": defaults.consolidation_min_entries,
         "consolidation_min_notes": defaults.consolidation_min_notes,
         "consolidation_min_facts": defaults.consolidation_min_facts,
-        "session_reply_mode": defaults.session_reply_mode,
         "engagement_sensitivity": defaults.engagement_sensitivity,
         "heat_window_seconds": defaults.heat_window_seconds,
         "pending_message_threshold": defaults.pending_message_threshold,
@@ -157,8 +149,6 @@ def build_default_orchestration_payload() -> dict[str, Any]:
         "plan_mode_presence_min_interval_seconds": (
             defaults.plan_mode_presence_min_interval_seconds
         ),
-        "plan_mode_presence_enter_message": defaults.plan_mode_presence_enter_message,
-        "plan_mode_presence_update_message": defaults.plan_mode_presence_update_message,
     }
 
 

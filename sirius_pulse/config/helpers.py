@@ -47,7 +47,6 @@ def build_orchestration_policy_from_dict(
         "consolidation_min_entries",
         "consolidation_min_notes",
         "consolidation_min_facts",
-        "session_reply_mode",
         "engagement_sensitivity",
         "heat_window_seconds",
         "pending_message_threshold",
@@ -121,7 +120,6 @@ def build_orchestration_policy_from_dict(
         "consolidation_min_entries": (int, 6),
         "consolidation_min_notes": (int, 4),
         "consolidation_min_facts": (int, 15),
-        "session_reply_mode": (str, "always"),
         "engagement_sensitivity": (float, 0.5),
         "heat_window_seconds": (float, 60.0),
         "pending_message_threshold": (int, 4),
@@ -145,8 +143,6 @@ def build_orchestration_policy_from_dict(
         "plan_mode_chat_awareness_enabled": (bool, False),
         "plan_mode_presence_enabled": (bool, False),
         "plan_mode_presence_min_interval_seconds": (float, 45.0),
-        "plan_mode_presence_enter_message": (str, "我看到了，这个得稍微捋一下。"),
-        "plan_mode_presence_update_message": (str, "补充我看到了，我会按新的前提来。"),
     }
     for field_name, (caster, _) in scalar_fields.items():
         if field_name not in raw:

@@ -54,7 +54,6 @@ CREATE TABLE IF NOT EXISTS session_messages (
     channel TEXT,
     channel_user_id TEXT,
     multimodal_inputs TEXT NOT NULL DEFAULT '[]',
-    reply_mode TEXT NOT NULL DEFAULT 'always',
     PRIMARY KEY (session_id, message_index)
 )
 """
@@ -381,8 +380,8 @@ class SqliteSessionStore:
             """
             INSERT INTO session_messages(
                 session_id, message_index, role, content, speaker, channel, channel_user_id,
-                multimodal_inputs, reply_mode
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                multimodal_inputs
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -394,7 +393,6 @@ class SqliteSessionStore:
                     message.channel,
                     message.channel_user_id,
                     self._json_dumps(message.multimodal_inputs),
-                    message.reply_mode,
                 )
                 for index, message in enumerate(transcript.messages)
             ],
@@ -549,7 +547,6 @@ class SqliteSessionStore:
                     "channel": row["channel"],
                     "channel_user_id": row["channel_user_id"],
                     "multimodal_inputs": self._json_loads_list(str(row["multimodal_inputs"])),
-                    "reply_mode": str(row["reply_mode"]),
                 }
                 for row in conn.execute(
                     "SELECT * FROM session_messages WHERE session_id = ? ORDER BY message_index",

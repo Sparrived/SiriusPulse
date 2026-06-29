@@ -212,7 +212,6 @@ class OrchestrationPolicy:
     consolidation_min_facts: int = 15  # 事实最少条数
 
     # Engagement decision system (参与决策系统, v0.14.0 重写)
-    session_reply_mode: str = "always"  # auto|always|never
     engagement_sensitivity: float = 0.5  # 0.0(极度克制) - 1.0(积极参与)
     heat_window_seconds: float = 60.0  # 热度分析滑动窗口（秒）
 
@@ -264,8 +263,6 @@ class OrchestrationPolicy:
     plan_mode_chat_awareness_enabled: bool = False
     plan_mode_presence_enabled: bool = False
     plan_mode_presence_min_interval_seconds: float = 45.0
-    plan_mode_presence_enter_message: str = "我看到了，这个得稍微捋一下。"
-    plan_mode_presence_update_message: str = "补充我看到了，我会按新的前提来。"
 
     def __post_init__(self) -> None:
         if "cognition_analyze" not in self.task_enabled:
@@ -309,18 +306,6 @@ class OrchestrationPolicy:
             raise ValueError("self_memory_extract_batch_size 必须大于 0。")
         if self.self_memory_min_chars < 0:
             raise ValueError("self_memory_min_chars 不能小于 0。")
-
-        normalized_reply_mode = self.session_reply_mode.strip().lower()
-        if normalized_reply_mode not in {
-            "auto",
-            "smart",
-            "always",
-            "never",
-            "silent",
-            "none",
-            "no_reply",
-        }:
-            raise ValueError("session_reply_mode 仅支持 auto/smart/always/never/silent/none/no_reply。")
 
         if not 0.0 <= self.engagement_sensitivity <= 1.0:
             raise ValueError("engagement_sensitivity 必须在 [0,1] 范围内。")
