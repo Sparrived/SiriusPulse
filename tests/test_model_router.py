@@ -27,7 +27,7 @@ def test_model_router_when_task_is_unknown_then_falls_back_to_reply_generation_c
     assert config.max_tokens == 4096
 
 
-def test_model_router_when_operator_overrides_reply_model_then_override_is_respected():
+def test_model_router_when_operator_overrides_final_response_model_then_override_is_respected():
     router = ModelRouter(overrides={"response_generate": {"model_name": "custom-reply-model"}})
 
     config = router.resolve("response_generate")

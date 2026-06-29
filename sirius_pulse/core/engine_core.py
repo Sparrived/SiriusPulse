@@ -148,12 +148,10 @@ class _EmotionalGroupChatEngineBase:
         self._default_model = analysis_model
         self._task_models = {
             "cognition_analyze": analysis_model,
-            "memory_extract": analysis_model,
+            "memory_extract": memory_model,
             "response_generate": chat_model,
             "passive_skill": chat_model,
             "github_monitor_notify": chat_model,
-            "diary_generate": memory_model,
-            "diary_consolidate": memory_model,
             "plugin_generate": plugin_model,
             "plugin_analyze": plugin_model,
             "plugin_render": plugin_model,
