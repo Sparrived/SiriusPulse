@@ -1,5 +1,5 @@
 import { store } from '../store.js';
-import { get } from '../app.js';
+import { get, del } from '../app.js';
 import { toast, $ } from '../components.js';
 
 let messages = [];
@@ -591,7 +591,10 @@ function renderMessages() {
             <span class="tag" style="font-size:10px;padding:2px 6px">${roleStyle.label}</span>
             ${groupId ? `<span class="tag" style="font-size:10px;padding:2px 6px">${escapeHtml(groupId)}</span>` : ''}
           </div>
-          <span style="font-size:11px;color:var(--text-3)">${formatTime(m.timestamp)}</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:var(--text-3)">${formatTime(m.timestamp)}</span>
+            <button class="btn btn-sm btn-danger conversation-delete" data-delete-index="${idx}" style="font-size:11px;padding:3px 8px">删除</button>
+          </div>
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
@@ -602,6 +605,7 @@ function renderMessages() {
   }).join('');
 
   bindChainToggles();
+  bindDeleteButtons();
 
   // 恢复chain-detail内部滚动位置
   if (chainScrollPositions.size > 0) {
@@ -897,6 +901,48 @@ function renderChainSystemMessage(content, style, idx) {
       ${promptHtml}
     </div>
   `;
+}
+
+
+function conversationEntryKey(message) {
+  const entryId = String(message.entry_id || '').trim();
+  if (entryId) return `id:${entryId}`;
+  const timestamp = message.timestamp || '';
+  const role = message.role || '';
+  const userId = message.user_id || '';
+  const content = String(message.content || '').slice(0, 120);
+  return `fallback:${timestamp}:${role}:${userId}:${content}`;
+}
+
+function buildConversationDeletePath(message) {
+  const params = new URLSearchParams();
+  const key = conversationEntryKey(message);
+  if (key) params.set('key', key);
+  if (message.group_id) params.set('group_id', message.group_id);
+  return `/persona/conversations?${params.toString()}`;
+}
+
+async function deleteConversationMessage(message) {
+  const label = String(message.content || message.entry_id || message.timestamp || '\u8be5\u6d88\u606f').slice(0, 40);
+  if (!confirm(`\u786e\u5b9a\u5220\u9664\u300c${label}\u300d\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002`)) return;
+  try {
+    await del(buildConversationDeletePath(message));
+    toast('\u5bf9\u8bdd\u5185\u5bb9\u5df2\u5220\u9664', 'success');
+    await loadMessages(true);
+  } catch (error) {
+    toast('\u5220\u9664\u5931\u8d25: ' + error.message, 'error');
+  }
+}
+
+function bindDeleteButtons() {
+  document.querySelectorAll('.conversation-delete').forEach(btn => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const idx = Number(btn.dataset.deleteIndex);
+      const message = messages[idx];
+      if (message) deleteConversationMessage(message);
+    });
+  });
 }
 
 function bindChainToggles() {

@@ -105,6 +105,7 @@ def _default_global_config() -> dict:
         "webui_port": 8080,
         "napcat_install_dir": str(REPO_ROOT / "napcat"),
         "log_level": "INFO",
+        "max_sentence_chars": 20,
     }
 
 

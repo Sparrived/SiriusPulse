@@ -20,7 +20,7 @@ _config.add(
 
 SKILL_META = {
     "name": "system_info",
-    "description": "获取主机的系统信息",
+    "description": "开发者或群友让你查看当前主机 CPU、内存、磁盘、网络或系统状态，用来排查运行环境问题时使用。",
     "version": "1.0.0",
     "tags": ["system", "info"],
     "dependencies": ["psutil"],

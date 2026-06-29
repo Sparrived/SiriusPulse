@@ -442,14 +442,15 @@ function renderItem(item, index) {
     content: item.content || '',
     index,
     editable: false,
+    deletable: true,
   });
 }
 
-function renderItemShell({ title, meta, content, index, editable }) {
-  const actions = editable
+function renderItemShell({ title, meta, content, index, editable, deletable = editable }) {
+  const actions = (editable || deletable)
     ? `<div class="memory-actions">
-        <button class="btn btn-sm" data-edit="${index}">编辑</button>
-        <button class="btn btn-sm btn-danger" data-delete="${index}">删除</button>
+        ${editable ? `<button class="btn btn-sm" data-edit="${index}">编辑</button>` : ''}
+        ${deletable ? `<button class="btn btn-sm btn-danger" data-delete="${index}">删除</button>` : ''}
       </div>`
     : '';
   return `
@@ -613,8 +614,33 @@ async function saveEditor(tab, item) {
   }
 }
 
+
+function buildConversationDeletePath(item) {
+  const params = new URLSearchParams();
+  const key = conversationEntryKey(item);
+  if (key) params.set('key', key);
+  if (item.group_id) params.set('group_id', item.group_id);
+  return `/persona/conversations?${params.toString()}`;
+}
+
+function conversationEntryKey(item) {
+  const entryId = String(item.entry_id || '').trim();
+  if (entryId) return `id:${entryId}`;
+  const timestamp = item.timestamp || '';
+  const role = item.role || '';
+  const userId = item.user_id || '';
+  const content = String(item.content || '').slice(0, 120);
+  return `fallback:${timestamp}:${role}:${userId}:${content}`;
+}
+
 async function deleteItem(tab, item) {
-  const label = tab === 'diary' ? (item.summary || item.entry_id) : tab === 'glossary' ? item.term : (item.name || item.user_id);
+  const label = tab === 'diary'
+    ? (item.summary || item.entry_id)
+    : tab === 'glossary'
+      ? item.term
+      : tab === 'conversations'
+        ? (item.content || item.entry_id || item.timestamp || '\u8be5\u6d88\u606f').slice(0, 40)
+        : (item.name || item.user_id);
   if (!confirm(`确定删除「${label}」吗？此操作不可撤销。`)) return;
   try {
     if (tab === 'diary') {
@@ -625,6 +651,8 @@ async function deleteItem(tab, item) {
       const group = item.group_id || state.group || '';
       const suffix = group ? `?group_id=${encodeURIComponent(group)}` : '';
       await del(`/persona/users/${encodeURIComponent(item.user_id)}${suffix}`);
+    } else if (tab === 'conversations') {
+      await del(buildConversationDeletePath(item));
     }
     toast('记忆已删除');
     closeEditor();

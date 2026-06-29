@@ -24,7 +24,7 @@ _config.group("QQ 操作").add(
 
 SKILL_META = {
     "name": "poke",
-    "description": "在当前 QQ 群聊里戳一戳指定成员。应配合聊天内容一起使用（例如边说边戳），不要单独调用。",
+    "description": "群聊里适合轻轻提醒、打招呼、撒娇、催一下或回应“戳他/戳我”时使用；要配合文字一起用，别无缘无故单独戳。",
     "version": "1.0.0",
     "tags": ["napcat", "qq", "messaging"],
     "adapter_types": ["napcat"],

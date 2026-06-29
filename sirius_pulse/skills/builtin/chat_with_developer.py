@@ -26,8 +26,8 @@ _config.group("开发者私聊").add(
 SKILL_META = {
     "name": "chat_with_developer",
     "description": (
-        "通过 QQ 私聊和开发者说话。想闲聊、分享有趣的事、吐槽、撒娇、开心、难过、委屈、"
-        "困惑或想让开发者看看什么情况时都可以调用；内容要像自然私聊。"
+        "群聊外想私下和开发者说一声时使用；适合反馈异常、求助、吐槽、分享有趣情况、"
+        "撒娇或表达委屈，内容要像自然 QQ 私聊。"
     ),
     "version": "1.0.0",
     "tags": ["napcat", "qq", "developer", "chat", "messaging"],

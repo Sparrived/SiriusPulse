@@ -6,6 +6,7 @@ const FIELDS = [
   { key: 'webui_host', label: 'WebUI 监听地址', type: 'text', placeholder: '0.0.0.0', defaultVal: '0.0.0.0' },
   { key: 'webui_port', label: 'WebUI 端口', type: 'number', placeholder: '8080', defaultVal: 8080 },
   { key: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'], defaultVal: 'INFO' },
+  { key: 'max_sentence_chars', label: '单句话最大长度（字）', type: 'number', placeholder: '20', defaultVal: 20, min: 5, max: 50 },
 ];
 
 let currentConfig = {};
@@ -69,7 +70,7 @@ function renderField(f) {
         <label for="gs_${f.key}">${f.label}</label>
         <div class="number-input-group">
           <button type="button" class="number-spin-btn" data-spin-target="gs_${f.key}" data-spin-dir="-1">−</button>
-          <input id="gs_${f.key}" name="${f.key}" type="number" placeholder="${f.placeholder || ''}">
+          <input id="gs_${f.key}" name="${f.key}" type="number" placeholder="${f.placeholder || ''}"${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}>
           <button type="button" class="number-spin-btn" data-spin-target="gs_${f.key}" data-spin-dir="1">+</button>
         </div>
       </div>
@@ -107,7 +108,10 @@ function collectFormData() {
     const el = $(`gs_${f.key}`);
     if (!el) continue;
     if (f.type === 'number') {
-      result[f.key] = parseInt(el.value, 10) || f.defaultVal || 0;
+      let value = parseInt(el.value, 10) || f.defaultVal || 0;
+      if (f.min !== undefined) value = Math.max(f.min, value);
+      if (f.max !== undefined) value = Math.min(f.max, value);
+      result[f.key] = value;
     } else {
       result[f.key] = el.value || f.defaultVal || '';
     }

@@ -22,7 +22,7 @@ _config.group("文件上传").add(
 
 SKILL_META = {
     "name": "upload_file",
-    "description": ("上传本地文件到当前对话"),
+    "description": ("群聊里需要把指定本地文件上传到当前对话时使用；适合发送不在工作区内但路径已明确的文件。"),
     "version": "1.0.0",
     "tags": ["napcat", "file", "messaging"],
     "adapter_types": ["napcat"],

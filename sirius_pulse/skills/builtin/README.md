@@ -1,28 +1,7 @@
-# skills 目录说明
+# 内置 Skills
 
-此目录用于存放 Sirius Chat 在当前 work_path 下可自动发现的外部 SKILL 文件。
+本目录保存随框架发布的 Skill。它们会被 Skill 注册器扫描，并可在 WebUI 中按人格启停。
 
-- 每个 SKILL 使用单独的 Python 文件。
-- 文件需导出 SKILL_META 字典和 run() 函数。
-- 文件名建议使用英文、数字、下划线，避免以下划线开头。
-- 当会话启用 SKILL 系统时，框架会自动扫描此目录。
+当前文件包括：`chat_with_developer.py`、`desktop_screenshot.py`、`github_monitor.py`、`learn_term.py`、`reminder.py`、`send_image.py`、`send_sticker.py`、`upload_file.py`、`workspace_file.py`、`web_lookup.py`、`system_info.py`、`user_profile.py`、`qq_member_info.py` 以及 QQ 群管理相关 Skill。
 
-最小示例：
-
-```python
-SKILL_META = {
-    "name": "hello_skill",
-    "description": "返回简单问候语",
-    "parameters": {
-        "name": {
-            "type": "str",
-            "description": "要问候的名字",
-            "required": True,
-        }
-    },
-}
-
-
-def run(name: str, **kwargs):
-    return {"message": f"你好，{name}"}
-```
+新增、删除或重命名 Skill 后同步 `docs/extensions/skill-builtin.md`。高风险能力必须设置权限限制。

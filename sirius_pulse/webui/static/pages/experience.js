@@ -147,6 +147,10 @@ export async function init(container, params) {
             ${numberInput('min_reply_interval_seconds', 0)}
           </div>
           <div class="form-group">
+            <label>Main model reply cooldown (seconds)</label>
+            ${numberInput('main_model_reply_cooldown_seconds', 0)}
+          </div>
+          <div class="form-group">
             <label>频率窗口（秒）</label>
             ${numberInput('reply_frequency_window_seconds', 0)}
           </div>
@@ -372,6 +376,7 @@ async function loadExperience(name) {
     form.delay_reply_enabled.value = String(data.delay_reply_enabled ?? true);
     form.pending_message_threshold.value = data.pending_message_threshold ?? 3;
     form.min_reply_interval_seconds.value = data.min_reply_interval_seconds ?? 2;
+    form.main_model_reply_cooldown_seconds.value = data.main_model_reply_cooldown_seconds ?? 0;
     form.reply_frequency_window_seconds.value = data.reply_frequency_window_seconds ?? 60;
     form.reply_frequency_max_replies.value = data.reply_frequency_max_replies ?? 5;
     form.reply_frequency_exempt_on_mention.value = String(data.reply_frequency_exempt_on_mention ?? true);
@@ -427,6 +432,7 @@ async function saveExperience(name) {
     delay_reply_enabled: form.delay_reply_enabled.value === 'true',
     pending_message_threshold: parseInt(form.pending_message_threshold.value, 10),
     min_reply_interval_seconds: parseInt(form.min_reply_interval_seconds.value, 10),
+    main_model_reply_cooldown_seconds: parseFloat(form.main_model_reply_cooldown_seconds.value),
     reply_frequency_window_seconds: parseInt(form.reply_frequency_window_seconds.value, 10),
     reply_frequency_max_replies: parseInt(form.reply_frequency_max_replies.value, 10),
     reply_frequency_exempt_on_mention: form.reply_frequency_exempt_on_mention.value === 'true',

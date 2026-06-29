@@ -136,3 +136,80 @@ async def test_brain_chat_injects_current_time_into_latest_user_message():
     assert current_time_tag not in provider.last_request.messages[0]["content"]
     assert current_time_tag in provider.last_request.messages[2]["content"]
     assert "latest user" in provider.last_request.messages[2]["content"]
+
+
+@pytest.mark.asyncio
+async def test_brain_chat_waits_for_configured_main_reply_cooldown(monkeypatch):
+    provider = _Provider()
+    now = {"value": 100.0}
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now["value"] += seconds
+
+    monkeypatch.setattr("sirius_pulse.core.brain.time.monotonic", lambda: now["value"])
+    monkeypatch.setattr("sirius_pulse.core.brain.asyncio.sleep", fake_sleep)
+
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="model",
+                max_tokens=100,
+                temperature=0.1,
+                timeout=30,
+            )
+        ),
+        persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
+        config={"main_model_reply_cooldown_seconds": 5},
+    )
+
+    request = ChatRequest(
+        group_id="group-1",
+        user_id="u1",
+        system_prompt="system",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+    await brain.chat(request)
+    now["value"] += 2
+    await brain.chat(request)
+
+    assert sleeps == [3.0]
+
+
+@pytest.mark.asyncio
+async def test_brain_chat_cooldown_does_not_apply_to_non_main_reply_task(monkeypatch):
+    provider = _Provider()
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("sirius_pulse.core.brain.asyncio.sleep", fake_sleep)
+
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="model",
+                max_tokens=100,
+                temperature=0.1,
+                timeout=30,
+            )
+        ),
+        persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
+        config={"main_model_reply_cooldown_seconds": 5},
+    )
+
+    request = ChatRequest(
+        group_id="group-1",
+        user_id="u1",
+        system_prompt="system",
+        messages=[{"role": "user", "content": "hello"}],
+        task_name="plugin_generate",
+    )
+    await brain.chat(request)
+    await brain.chat(request)
+
+    assert sleeps == []

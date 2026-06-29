@@ -27,6 +27,7 @@ from aiohttp import web
 from sirius_pulse.webui.memory_api import (
     api_persona_cognition_analysis_get,
     api_persona_cognition_get,
+    api_persona_conversation_history_delete,
     api_persona_conversation_history_get,
     api_persona_diary_delete,
     api_persona_diary_get,
@@ -154,6 +155,7 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_glossary_put": api_persona_glossary_put,
     "api_persona_glossary_delete": api_persona_glossary_delete,
     "api_persona_memory_viz": api_persona_memory_viz,
+    "api_persona_conversation_history_delete": api_persona_conversation_history_delete,
     "api_persona_conversation_history_get": api_persona_conversation_history_get,
     "api_config_post": api_config_post,
     "api_plugins_get": api_plugins_get,

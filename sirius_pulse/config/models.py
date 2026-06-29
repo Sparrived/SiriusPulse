@@ -239,6 +239,9 @@ class OrchestrationPolicy:
     min_reply_interval_seconds: float = (
         0.0  # Minimum gap between two assistant replies; 0 = disabled
     )
+    main_model_reply_cooldown_seconds: float = (
+        0.0  # Minimum gap between completed main-model reply calls; 0 = disabled
+    )
     reply_frequency_window_seconds: float = 60.0  # Sliding window
     reply_frequency_max_replies: int = 8  # Max replies within the window
     reply_frequency_exempt_on_mention: bool = True  # Bypass limit when AI is directly mentioned
@@ -329,6 +332,8 @@ class OrchestrationPolicy:
             raise ValueError("memory_idle_consolidation_seconds must be greater than 0.")
         if self.min_reply_interval_seconds < 0:
             raise ValueError("min_reply_interval_seconds 不能小于 0。")
+        if self.main_model_reply_cooldown_seconds < 0:
+            raise ValueError("main_model_reply_cooldown_seconds cannot be negative.")
 
 
 @dataclass(slots=True)

@@ -24,7 +24,7 @@ _config.group("QQ 群管理").add(
 
 SKILL_META = {
     "name": "mute_all",
-    "description": "开启或关闭当前 QQ 群全员禁言。需要 Bot 是当前群管理员或群主。",
+    "description": "群聊里有人明确要求开启或解除全员禁言，且场景确实需要控场时使用；高风险管理操作，需要 Bot 是当前群管理员或群主。",
     "version": "1.0.0",
     "tags": ["napcat", "qq", "group_admin"],
     "admin_required": True,

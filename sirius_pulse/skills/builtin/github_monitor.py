@@ -86,10 +86,8 @@ _config.group("监控仓库").add(
 SKILL_META = {
     "name": "github_monitor",
     "description": (
-        "监控指定 GitHub 仓库的活动（Issues/PR/Release/Comment/Push），"
-        "支持 poll 轮询和 webhook 推送两种模式，"
-        "检测到新事件时自动截取页面截图并生成人格风格的通知消息。"
-        "配置通过 WebUI 管理，无需 AI 主动调用。"
+        "群聊里大家想盯 GitHub 仓库动态时使用；可添加、查看或移除 Issues/PR/Release/Comment/Push 通知，"
+        "让仓库更新自动发到当前聊天。"
     ),
     "version": "1.1.0",
     "tags": ["github", "monitor", "notification"],

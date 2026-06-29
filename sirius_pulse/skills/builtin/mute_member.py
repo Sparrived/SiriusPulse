@@ -25,7 +25,7 @@ _config.group("QQ 群管理").add(
 
 SKILL_META = {
     "name": "mute_member",
-    "description": "禁言或解除禁言当前 QQ 群成员。需要 Bot 是当前群管理员或群主。",
+    "description": "群聊里有人明确要求禁言/解禁某个成员，且已确认对象和时长时使用；高风险管理操作，需要 Bot 是当前群管理员或群主。",
     "version": "1.0.0",
     "tags": ["napcat", "qq", "group_admin"],
     "admin_required": True,

@@ -226,6 +226,7 @@ class Brain:
 
         # ── chat() 串行化锁 ──
         self._chat_lock = asyncio.Lock()
+        self._main_reply_last_finished_at: float = 0.0
 
     # ═══════════════════════════════════════════════════════════════════
     # 上下文函数注入
@@ -536,14 +537,18 @@ class Brain:
             duration_ms = 0.0
             real_usage: dict | None = None
             try:
+                await self._wait_main_reply_cooldown(request)
                 t0 = time.perf_counter()
-                gen_result, gen_request, real_usage = await self._call_with_retry(
-                    gen_request,
-                    retry_max=request.retry_max,
-                    retry_delay=request.retry_delay,
-                    purpose_desc=f"chat({request.task_name})",
-                    rebuild_fn=_rebuild_gen_request,
-                )
+                try:
+                    gen_result, gen_request, real_usage = await self._call_with_retry(
+                        gen_request,
+                        retry_max=request.retry_max,
+                        retry_delay=request.retry_delay,
+                        purpose_desc=f"chat({request.task_name})",
+                        rebuild_fn=_rebuild_gen_request,
+                    )
+                finally:
+                    self._mark_main_reply_cooldown(request)
                 duration_ms = round((time.perf_counter() - t0) * 1000, 2)
                 # gen_request 可能在重试时被刷新，重新估算输入 token
                 estimated_input_tokens = estimate_generation_request_input_tokens(gen_request)
@@ -645,6 +650,42 @@ class Brain:
     # ═══════════════════════════════════════════════════════════════════
     # 内部方法
     # ═══════════════════════════════════════════════════════════════════
+
+    def _main_reply_cooldown_seconds(self) -> float:
+        """Return the configured cooldown between main reply model calls."""
+        raw = self.config.get("main_model_reply_cooldown_seconds", 0.0)
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _is_main_reply_task(self, request: ChatRequest) -> bool:
+        return request.task_name == "response_generate"
+
+    async def _wait_main_reply_cooldown(self, request: ChatRequest) -> None:
+        """Wait before generating another main-model reply, if configured."""
+        if not self._is_main_reply_task(request):
+            return
+        cooldown = self._main_reply_cooldown_seconds()
+        if cooldown <= 0:
+            return
+        last_finished = self._main_reply_last_finished_at
+        if last_finished <= 0:
+            return
+        elapsed = time.monotonic() - last_finished
+        wait_seconds = cooldown - elapsed
+        if wait_seconds <= 0:
+            return
+        logger.debug(
+            "main reply cooldown: waiting %.2fs before %s",
+            wait_seconds,
+            request.task_name,
+        )
+        await asyncio.sleep(wait_seconds)
+
+    def _mark_main_reply_cooldown(self, request: ChatRequest) -> None:
+        if self._is_main_reply_task(request) and self._main_reply_cooldown_seconds() > 0:
+            self._main_reply_last_finished_at = time.monotonic()
 
     async def _call_with_retry(
         self,

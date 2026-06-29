@@ -70,8 +70,9 @@ class PersonaWorker:
             "加载 %d 个 adapter，体验模式: %s", len(adapters_cfg.adapters), experience.memory_depth
         )
 
-        # 2. 创建 EngineRuntime（experience 参数注入 plugin_config）
+        # 2. 创建 EngineRuntime（experience + global 参数注入 plugin_config）
         plugin_config = self._build_plugin_config(experience)
+        plugin_config.update(self._build_global_runtime_config())
         self._runtime = EngineRuntime(
             self.persona_dir,
             plugin_config=plugin_config,
@@ -202,6 +203,30 @@ class PersonaWorker:
             config["other_ai_names"] = list(dict.fromkeys(other_ai_names))
         return config
 
+    def _build_global_runtime_config(self) -> dict[str, Any]:
+        """读取全局配置中会影响运行时 prompt 的字段。"""
+        config_path = self._global_config_path()
+        data: dict[str, Any] = {}
+        if config_path.exists():
+            try:
+                payload = json.loads(config_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    data = payload
+            except Exception:
+                LOG.warning("读取全局配置失败: %s", config_path, exc_info=True)
+
+        try:
+            max_sentence_chars = int(data.get("max_sentence_chars", 20))
+        except (TypeError, ValueError):
+            max_sentence_chars = 20
+        return {"max_sentence_chars": max(5, min(50, max_sentence_chars))}
+
+    def _global_config_path(self) -> Path:
+        """返回 data/global_config.json，兼容旧单人格 data 目录。"""
+        if self.persona_dir.parent.name == "personas":
+            return self.persona_dir.parent.parent / "global_config.json"
+        return self.persona_dir / "global_config.json"
+
     # ------------------------------------------------------------------
     # 心跳与状态
     # ------------------------------------------------------------------
@@ -248,7 +273,7 @@ class PersonaWorker:
         """检查配置文件变更，热重载到引擎。
 
         通过读取 engine_state/reload_requested 标志文件触发重载。
-        标志文件内容为重载类型：persona / orchestration / experience / provider / all
+        标志文件内容为重载类型：persona / orchestration / experience / provider / global / all
         """
         reload_flag = self.paths.engine_state / "reload_requested"
         if not reload_flag.exists():
@@ -279,6 +304,9 @@ class PersonaWorker:
 
             if reload_type in ("provider", "all"):
                 self._reload_provider(engine)
+
+            if reload_type in ("global", "all"):
+                self._reload_global_config(engine)
 
             LOG.info("配置热重载完成: type=%s", reload_type)
         except Exception as exc:
@@ -346,6 +374,14 @@ class PersonaWorker:
             engine.brain.config.update(exp_dict)
 
         LOG.info("Experience 配置已热重载")
+
+    def _reload_global_config(self, engine: Any) -> None:
+        """热重载全局运行时配置（global_config.json）。"""
+        global_config = self._build_global_runtime_config()
+        engine.config.update(global_config)
+        if hasattr(engine, "brain") and engine.brain:
+            engine.brain.config.update(global_config)
+        LOG.info("全局运行时配置已热重载")
 
     def _reload_provider(self, engine: Any) -> None:
         """热重载 Provider 配置（provider_keys.json）。

@@ -466,6 +466,8 @@ class EngineRuntime:
             ),
             # 消息前缀过滤
             "message_prefixes": list(self.plugin_config.get("message_prefixes", [])),
+            # 输出长度约束
+            "max_sentence_chars": int(self.plugin_config.get("max_sentence_chars", 20)),
         }
 
         # 创建向量存储（ChromaDB）

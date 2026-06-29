@@ -284,6 +284,7 @@ class WebUIServer:
                 "webui_host": self.host,
                 "webui_port": self.port,
                 "log_level": "INFO",
+                "max_sentence_chars": 20,
             }
         )
 
@@ -305,14 +306,19 @@ class WebUIServer:
         for key in ("webui_host", "webui_port", "log_level"):
             if key in body:
                 data[key] = body[key]
+        if "max_sentence_chars" in body:
+            try:
+                data["max_sentence_chars"] = max(5, min(50, int(body["max_sentence_chars"])))
+            except (TypeError, ValueError):
+                data["max_sentence_chars"] = 20
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
 
-        # 通知所有运行中的人格热重载 provider 配置
-        self._notify_provider_reload()
+        # 通知当前运行中的人格热重载全局运行时配置
+        self._notify_config_reload("global")
 
         return _json_response({"success": True})
 
@@ -386,13 +392,17 @@ class WebUIServer:
 
     def _notify_provider_reload(self) -> None:
         """向当前人格写入 provider 重载标志。"""
+        self._notify_config_reload("provider")
+
+    def _notify_config_reload(self, reload_type: str) -> None:
+        """向当前人格写入配置重载标志。"""
         try:
             flag = self.persona_dir / "engine_state" / "reload_requested"
             flag.parent.mkdir(parents=True, exist_ok=True)
-            flag.write_text("provider", encoding="utf-8")
-            LOG.debug("已写入 provider 重载标志")
+            flag.write_text(reload_type, encoding="utf-8")
+            LOG.debug("已写入配置重载标志: %s", reload_type)
         except Exception as exc:
-            LOG.debug("写入 provider 重载标志失败: %s", exc)
+            LOG.debug("写入配置重载标志失败: %s", exc)
 
     async def api_providers_get(self, request: web.Request) -> web.Response:
         return _json_response({"providers": self._load_providers_raw()})

@@ -5,12 +5,11 @@ from typing import Any
 import pytest
 
 from sirius_pulse.skills.builtin import (
-    get_group_members,
-    get_member_info,
     kick_member,
     mute_all,
     mute_member,
     poke,
+    qq_member_info,
     recall_message,
     set_group_card,
 )
@@ -65,8 +64,8 @@ async def test_qq_builtin_skills_call_expected_adapter_methods():
 
     assert (await poke.run(1001, bridge=adapter, chat_context=ctx))["success"] is True
     assert (await recall_message.run(42, bridge=adapter))["success"] is True
-    members = await get_group_members.run(bridge=adapter, chat_context=ctx)
-    member_info = await get_member_info.run(1002, bridge=adapter, chat_context=ctx)
+    members = await qq_member_info.run("list", bridge=adapter, chat_context=ctx)
+    member_info = await qq_member_info.run("get", 1002, bridge=adapter, chat_context=ctx)
     assert (await kick_member.run(1001, bridge=adapter, chat_context=ctx))["success"] is True
     assert (await mute_member.run(1001, duration=60, bridge=adapter, chat_context=ctx))[
         "success"

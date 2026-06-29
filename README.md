@@ -1,4 +1,4 @@
-<h1 align="center"> Sirius Pulse —— 灵动月白</h1>
+﻿<h1 align="center"> Sirius Pulse —— 灵动月白</h1>
 
 <div align="center">
 
@@ -83,7 +83,7 @@ Perception → Cognition → Decision → Execution → Background
 - 自动路由与健康检查
 
 ### 🎯 **双重扩展机制**
-- **技能系统**（Skills）：AI 通过 `[SKILL_CALL: ...]` 自主调用工具，13 个内置技能
+- **技能系统**（Skills）：AI 通过 `[SKILL_CALL: ...]` 自主调用工具，提供多个内置技能
 - **插件系统**（Plugins）：用户通过 `/` `#` `!` 前缀显式命令触发
 - 详见 [扩展开发](#-扩展开发)
 
@@ -228,9 +228,10 @@ sirius_pulse/
 │   ├── data_store.py        # 技能数据持久化
 │   ├── dependency_resolver.py
 │   ├── telemetry.py         # 技能遥测
-│   └── builtin/             # 13 个内置技能
-│       ├── bing_search.py
-│       ├── file_read.py / file_write.py / file_list.py
+│   └── builtin/             # 内置技能
+│       ├── web_lookup.py
+│       ├── workspace_file.py
+│       ├── qq_member_info.py
 │       ├── reminder.py（混合：主动 + 后台）
 │       ├── github_monitor.py（纯被动）
 │       └── ...
@@ -333,7 +334,7 @@ def run(query: str = "", data_store=None, **kwargs) -> dict:
     return {"success": True, "text": result}
 ```
 
-13 个内置技能：`bing_search`、`file_read/write/list`、`reminder`、`github_monitor`、`system_info`、`desktop_screenshot` 等。
+内置技能包括：`web_lookup`、`workspace_file`、`qq_member_info`、`reminder`、`github_monitor`、`system_info`、`desktop_screenshot` 等。
 
 支持**被动技能**：后台任务、事件触发器、生命周期回调。
 

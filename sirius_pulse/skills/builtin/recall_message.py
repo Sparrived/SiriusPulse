@@ -17,7 +17,7 @@ _config.group("QQ 操作").add(
 
 SKILL_META = {
     "name": "recall_message",
-    "description": "撤回指定 QQ 消息。只能在平台允许撤回的时间窗口内成功。",
+    "description": "群聊里需要撤回刚发错、误发或不该继续展示的指定消息时使用；只能撤回最近真实存在且平台仍允许撤回的消息。",
     "version": "1.0.0",
     "tags": ["napcat", "qq", "message_admin"],
     "adapter_types": ["napcat"],

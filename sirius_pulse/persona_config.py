@@ -145,6 +145,7 @@ class PersonaExperienceConfig:
 
     # 回复频率限制
     min_reply_interval_seconds: float = 0.0
+    main_model_reply_cooldown_seconds: float = 0.0
     reply_frequency_window_seconds: float = 60.0
     reply_frequency_max_replies: int = 8
     reply_frequency_exempt_on_mention: bool = True
@@ -186,6 +187,7 @@ class PersonaExperienceConfig:
             "delay_reply_enabled": self.delay_reply_enabled,
             "pending_message_threshold": self.pending_message_threshold,
             "min_reply_interval_seconds": self.min_reply_interval_seconds,
+            "main_model_reply_cooldown_seconds": self.main_model_reply_cooldown_seconds,
             "reply_frequency_window_seconds": self.reply_frequency_window_seconds,
             "reply_frequency_max_replies": self.reply_frequency_max_replies,
             "reply_frequency_exempt_on_mention": self.reply_frequency_exempt_on_mention,
@@ -226,6 +228,9 @@ class PersonaExperienceConfig:
             delay_reply_enabled=bool(data.get("delay_reply_enabled", True)),
             pending_message_threshold=float(data.get("pending_message_threshold", 4.0)),
             min_reply_interval_seconds=float(data.get("min_reply_interval_seconds", 0.0)),
+            main_model_reply_cooldown_seconds=float(
+                data.get("main_model_reply_cooldown_seconds", 0.0)
+            ),
             reply_frequency_window_seconds=float(data.get("reply_frequency_window_seconds", 60.0)),
             reply_frequency_max_replies=int(data.get("reply_frequency_max_replies", 8)),
             reply_frequency_exempt_on_mention=bool(

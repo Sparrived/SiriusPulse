@@ -191,6 +191,109 @@ def _conversation_message_matches_filters(
     return True
 
 
+def _conversation_key_from_query(request: web.Request) -> str:
+    key = request.query.get("key", "").strip()
+    if key:
+        return key
+
+    entry_id = request.query.get("entry_id", "").strip()
+    if entry_id:
+        return f"id:{entry_id}"
+
+    timestamp = request.query.get("timestamp", "")
+    role = request.query.get("role", "")
+    user_id = request.query.get("user_id", "")
+    content = request.query.get("content", "")[:120]
+    if timestamp or role or user_id or content:
+        return f"fallback:{timestamp}:{role}:{user_id}:{content}"
+    return ""
+
+
+def _rewrite_jsonl_without_conversation_key(path: Path, group_id: str, key: str) -> int:
+    if not path.exists():
+        return 0
+
+    deleted = 0
+    lines: list[str] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for raw_line in f:
+                stripped = raw_line.strip()
+                if not stripped:
+                    lines.append(raw_line)
+                    continue
+                try:
+                    entry = json.loads(stripped)
+                except json.JSONDecodeError:
+                    lines.append(raw_line)
+                    continue
+                if not isinstance(entry, dict):
+                    lines.append(raw_line)
+                    continue
+                entry_with_group = dict(entry)
+                entry_with_group["group_id"] = entry_with_group.get("group_id") or group_id
+                if _conversation_entry_key(entry_with_group) == key:
+                    deleted += 1
+                    continue
+                lines.append(raw_line)
+    except OSError:
+        return 0
+
+    if deleted <= 0:
+        return 0
+
+    tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+    try:
+        tmp.write_text("".join(lines), encoding="utf-8")
+        tmp.replace(path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return deleted
+
+
+def _delete_runtime_basic_memory_message(paths: Any, key: str, group_id: str = "") -> int:
+    state_path = paths.engine_state / "basic_memory.json"
+    if not state_path.exists():
+        return 0
+
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return 0
+
+    if not isinstance(raw, dict):
+        return 0
+
+    deleted = 0
+    changed = False
+    for gid, entries in list(raw.items()):
+        gid_text = str(gid)
+        if group_id and gid_text != group_id:
+            continue
+        if not isinstance(entries, list):
+            continue
+        kept: list[Any] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                kept.append(entry)
+                continue
+            item = dict(entry)
+            item["group_id"] = item.get("group_id") or gid_text
+            if _conversation_entry_key(item) == key:
+                deleted += 1
+                changed = True
+                continue
+            kept.append(entry)
+        raw[gid] = kept
+
+    if changed:
+        _atomic_write_json(state_path, raw)
+    return deleted
+
+
 async def api_tokens_get(request: web.Request, data_dir: Path) -> web.Response:
     """Return token usage for the current persona."""
     from sirius_pulse.token import analytics as token_analytics
@@ -1369,5 +1472,40 @@ async def api_persona_conversation_history_get(
             "total": total,
             "offset": offset,
             "limit": limit,
+        }
+    )
+
+
+@handle_api_errors
+async def api_persona_conversation_history_delete(
+    request: web.Request, data_dir: Path
+) -> web.Response:
+    """DELETE /api/persona/conversations — delete one archived/runtime message."""
+    group_id = request.query.get("group_id", "").strip()
+    key = _conversation_key_from_query(request)
+    if not key:
+        raise web.HTTPBadRequest(text="missing conversation message identifier")
+
+    paths = PersonaConfigPaths(data_dir)
+    archive_dir = paths.dir / "archive"
+
+    deleted_archive = 0
+    if archive_dir.exists():
+        target_files: list[Path]
+        if group_id:
+            target_files = [archive_dir / f"{_safe_memory_name(group_id)}.jsonl"]
+        else:
+            target_files = sorted(archive_dir.glob("*.jsonl"))
+        for path in target_files:
+            deleted_archive += _rewrite_jsonl_without_conversation_key(path, path.stem, key)
+
+    deleted_runtime = _delete_runtime_basic_memory_message(paths, key, group_id)
+    deleted = deleted_archive + deleted_runtime
+    return _json_response(
+        {
+            "success": True,
+            "deleted": deleted,
+            "deleted_archive": deleted_archive,
+            "deleted_runtime": deleted_runtime,
         }
     )
