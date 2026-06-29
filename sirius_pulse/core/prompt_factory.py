@@ -9,7 +9,6 @@
     - 响应组装（immediate / delayed）
     - 消息渲染（表情、图片、聊天记录、摘要）
     - 技能结果格式化
-    - 上下文丰富（日记 + 对话历史注入 system prompt）
     - 提醒等辅助 prompt
 """
 
@@ -17,7 +16,6 @@ from __future__ import annotations
 
 import html as _html
 import json
-import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -25,9 +23,6 @@ from typing import Any
 
 from sirius_pulse.core.constants import RESPONSE_MAX_TOKENS
 from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
-
-logger = logging.getLogger(__name__)
-
 
 # ═══════════════════════════════════════════════════════════════════════
 # Section 标签常量
@@ -43,18 +38,10 @@ TAG_RELATIONSHIP_STATUS = "【互动指导】"
 TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_CROSS_GROUP = "【跨群认知】"
 TAG_BIOGRAPHY = "【人物速查】"
-TAG_MY_SKILLS = "【我的能力】"
 TAG_GROUP_MEMBERS = "【群成员区分】"
-TAG_FIRST_INTERACTION = "【首次互动】"
 TAG_HISTORY_DIARY = "【历史日记】"
 TAG_HISTORY_DIARY_END = "【历史日记结束】"
-TAG_CROSS_GROUP_RECORD = "【其他群近期记录】"
-TAG_CROSS_GROUP_RECORD_END = "【其他群记录结束】"
-TAG_RECENT_CONVERSATION = "【近期对话记录】"
-TAG_RECENT_CONVERSATION_END = "【近期对话记录结束】"
 
-TAG_SKILL_RESULT = "【技能执行结果】"
-TAG_SKILL_TRUNCATED = "[注：技能结果过长，已截断至前 {limit} 字符，原始长度 {orig} 字符]"
 TAG_CURRENT_TIME = "【当前时间】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"
 TAG_GLOSSARY = "【名词解释】"
@@ -64,7 +51,6 @@ TAG_RECENT_MESSAGES = "【最近消息】"
 
 # 消息渲染标签
 TAG_FACE = "[表情：{name}]"
-TAG_IMAGE = "[图片：{name}]"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -297,14 +283,13 @@ class PromptFactory:
         """输出规范，防止模型添加多余前缀。"""
         items = [
             "不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。",
-            "严禁输出Markdown格式（#标题、*-列表、```代码块、|表格、**粗体**、>引用等）。"
-            "系统会按换行符拆分消息，Markdown会产生大量空行导致刷屏。"
-            "需要发送格式化内容时，先调用 workspace_file 写入文件，再调用 workspace_file 发送。",
+            "严禁使用换行符。",
+            "需要发送格式化内容时，调用 workspace_file 进行写入文件和发送。",
             "你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。",
         ]
         if supports_function_call:
             items.append(
-                "你有可用工具（tools）时，可以通过 Function Call 主动解决问题；工具调用不要写成正文标记。"
+                "主动使用 Function Call 来增强你的群聊交互感；工具调用不要写成正文标记。"
             )
             items.append(
                 "人物画像工具只在需要长期记住或修正用户信息时调用：明确身份、偏好、称呼/别称、沟通方式、边界、稳定关系，或用户要求记住/忘记。不要记录临时任务、玩笑、角色扮演、一次性情绪或你的猜测。"
@@ -605,7 +590,6 @@ class PromptFactory:
         )
 
     @staticmethod
-    @staticmethod
     def build_plugin_awareness_section(
         plugin_registry: Any,
         caller_is_developer: bool = False,
@@ -857,11 +841,6 @@ class PromptFactory:
         return f'[{label_prefix}："{display_name}"]'
 
     @staticmethod
-    def render_multimodal_item(mtype: str, value: str) -> str:
-        """渲染多媒体附件标记。"""
-        return f"[{mtype}：{value}]"
-
-    @staticmethod
     def render_speaker_line(speaker: str, content: str) -> str:
         """渲染发言人+内容行（用于 Transcript 和 as_chat_history）。"""
         return f'["{speaker}" 说] {content}'
@@ -885,92 +864,3 @@ class PromptFactory:
         if parts:
             return f"{content}\n附件: {' '.join(parts)}"
         return content
-
-    @staticmethod
-    def render_summary(speaker: str, content: str, max_len: int = 60) -> str:
-        """渲染消息摘要（用于 Transcript.to_summary）。"""
-        text = content.replace("\n", " ").strip()
-        if not text:
-            return ""
-        return f"[{speaker}] {text[:max_len]}"
-
-    @staticmethod
-    def render_image_reference(name: str) -> str:
-        """渲染图片引用标记（用于 engine_core 中表情包记忆）。"""
-        return f"[图片] {name}"
-
-    @staticmethod
-    def render_sticker_reference() -> str:
-        """渲染动画表情标记（用于 engine_core 中表情包记忆）。"""
-        return "[动画表情]"
-
-    @staticmethod
-    def render_image_prefix(has_sticker: bool) -> str:
-        """渲染多模态消息中的图片前缀。"""
-        return "[动画表情]" if has_sticker else "[图片]"
-
-    @staticmethod
-    def render_file_entry(is_directory: bool, path: str, size: Any, mtime: Any) -> str:
-        """渲染文件列表条目。"""
-        t = "[D]" if is_directory else "[F]"
-        return f"{t} {path:<50} {size:>12} {mtime:>16}"
-
-    @staticmethod
-    def build_memory_skill_truncation(char_limit: int, orig_len: int) -> str:
-        """构建技能结果截断提示。"""
-        return f"\n\n{TAG_SKILL_TRUNCATED.format(limit=char_limit, orig=orig_len)}"
-
-    @staticmethod
-    def build_skill_status_message(status: str, skill_name: str, detail: str = "") -> str:
-        """构建技能状态消息（结果/拒绝/失败/异常）。"""
-        if detail:
-            return f"[SKILL '{skill_name}' {status}] {detail}"
-        return f"[{status}]"
-
-    # ──────────────────────────────────────────────────────────────────
-    # 上下文丰富（日记 + 对话历史注入）
-    # ──────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def enrich_system_prompt(
-        base_prompt: str,
-        diary_entries: list[Any],
-        history_xml: str = "",
-        cross_group_xml: str = "",
-    ) -> str:
-        """将日记和对话历史注入 system prompt。"""
-        parts: list[str] = [base_prompt]
-
-        if diary_entries:
-            entries = diary_entries[:12]
-            full_text_count = min(5, len(entries))
-            parts.extend(["", TAG_HISTORY_DIARY])
-            for i, entry in enumerate(entries, 1):
-                ts = (entry.created_at or "")[:16].replace("T", " ")
-                text = entry.content if (i <= full_text_count and entry.content) else entry.summary
-                parts.append(f"{i}. [{ts}] {text}" if ts else f"{i}. {text}")
-            parts.append(TAG_HISTORY_DIARY_END)
-
-        if cross_group_xml:
-            parts.extend(
-                [
-                    "",
-                    TAG_CROSS_GROUP_RECORD,
-                    "以下是你和这位用户在其它群中的近期互动（供参考，不要向当前群成员提及其它群的存在）：",
-                    cross_group_xml,
-                    TAG_CROSS_GROUP_RECORD_END,
-                ]
-            )
-
-        if history_xml:
-            parts.extend(
-                [
-                    "",
-                    TAG_RECENT_CONVERSATION,
-                    "以下是最新的几条消息，按时间顺序排列：",
-                    history_xml,
-                    TAG_RECENT_CONVERSATION_END,
-                ]
-            )
-
-        return "\n".join(parts)

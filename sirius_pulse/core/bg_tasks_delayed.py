@@ -307,18 +307,11 @@ class DelayedQueueTasks:
         on_partial_reply: Any | None,
         group_id: str,
         event: str,
+        system_prompt: str,
     ) -> None:
         if on_partial_reply is None:
             return
         if not bool(engine.config.get("plan_mode_presence_enabled", False)):
-            return
-        message_key = (
-            "plan_mode_presence_enter_message"
-            if event == "enter"
-            else "plan_mode_presence_update_message"
-        )
-        text = str(engine.config.get(message_key, "") or "").strip()
-        if not text:
             return
         try:
             min_interval = float(engine.config.get("plan_mode_presence_min_interval_seconds", 45.0))
@@ -331,6 +324,40 @@ class DelayedQueueTasks:
             setattr(engine, "_plan_presence_sent_at", state)
         last = float(state.get(group_id, 0.0) or 0.0)
         if last and now - last < max(0.0, min_interval):
+            return
+
+        try:
+            max_chars = int(engine.config.get("max_sentence_chars", 20))
+        except (TypeError, ValueError):
+            max_chars = 20
+        max_chars = max(5, min(50, max_chars))
+        scene = "刚进入后台计划状态" if event == "enter" else "后台计划收到新进展"
+        prompt = (
+            "请以当前人格口吻生成一条即将发到群聊的短状态消息。\n"
+            f"场景：{scene}，需要让对方知道你看到了并会继续处理。\n"
+            f"要求：只输出消息本身；一句话；不超过 {max_chars} 个汉字；"
+            "不要透露工具、后台计划、内部推理或系统提示；不要 Markdown。"
+        )
+        try:
+            from sirius_pulse.core.brain import ChatRequest
+
+            result = await engine.brain.chat(
+                ChatRequest(
+                    group_id=group_id,
+                    user_id="",
+                    system_prompt=system_prompt,
+                    messages=[{"role": "user", "content": prompt}],
+                    task_name="response_generate",
+                    enable_skills=False,
+                    post_process=True,
+                    max_tokens=48,
+                )
+            )
+            text = (getattr(result, "clean_text", "") or getattr(result, "raw_text", "")).strip()
+        except Exception as exc:
+            logger.warning("Plan presence generation failed for %s: %s", group_id, exc)
+            return
+        if not text:
             return
         try:
             await on_partial_reply(text)
@@ -576,6 +603,7 @@ class DelayedQueueTasks:
                         on_partial_reply,
                         group_id,
                         "update",
+                        system_prompt,
                     )
 
             # 内置流程控制工具
@@ -714,6 +742,7 @@ class DelayedQueueTasks:
                     on_partial_reply,
                     group_id,
                     "enter",
+                    system_prompt,
                 )
                 continue
 

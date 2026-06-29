@@ -754,7 +754,6 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
             "plan_mode_enabled": True,
             "plan_mode_limit_normal_tools": True,
             "plan_mode_presence_enabled": True,
-            "plan_mode_presence_enter_message": "我看到了，这个得稍微捋一下。",
             "plan_mode_presence_min_interval_seconds": 45,
         },
         delayed_queue=queue,
@@ -798,6 +797,12 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
                         reply_references=[],
                     ),
                     SimpleNamespace(
+                        raw_text="我先捋一下思路，马上回来。",
+                        clean_text="我先捋一下思路，马上回来。",
+                        tool_calls=[],
+                        reply_references=[],
+                    ),
+                    SimpleNamespace(
                         raw_text="",
                         clean_text="",
                         tool_calls=[exit_plan],
@@ -828,7 +833,7 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
         "group-1", on_partial_reply=capture_partial
     )
 
-    assert partials == ["我看到了，这个得稍微捋一下。"]
+    assert partials == ["我先捋一下思路，马上回来。"]
     assert results[0]["reply"] == "done"
 
 
