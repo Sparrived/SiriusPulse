@@ -14,6 +14,7 @@ let activeGroup = '';
 let activeSearch = '';
 let activeSpeaker = '';
 let currentOffset = 0;
+let compressedMessageLookup = new Set();
 const PAGE_SIZE = 100;
 
 let isLive = true;
@@ -60,6 +61,7 @@ const TAG_COLORS = {
   glossary:   { bg: '#00bcd422', color: '#00bcd4', border: '#00bcd444' },
   biography:  { bg: '#79554822', color: '#795548', border: '#79554844' },
   memory:     { bg: '#607d8b22', color: '#607d8b', border: '#607d8b44' },
+  compressed: { bg: '#cddc3922', color: '#cddc39', border: '#cddc3944' },
   scene:      { bg: '#9c27b022', color: '#9c27b0', border: '#9c27b044' },
   atmosphere: { bg: '#4caf5022', color: '#4caf50', border: '#4caf5044' },
   plugin:     { bg: '#2196f322', color: '#2196f3', border: '#2196f344' },
@@ -200,6 +202,7 @@ async function loadMessages(silent = false) {
     messages = data.messages || [];
     pinnedMessages = data.pinned_messages || [];
     groups = data.groups || [];
+    rebuildCompressedMessageLookup();
     const total = data.total || 0;
 
     updateGroupFilter();
@@ -241,6 +244,7 @@ function renderStats(total) {
   const assistantCount = messages.filter(m => m.role === 'assistant').length;
   const systemCount = messages.filter(m => m.role === 'system').length;
   const uniqueUsers = new Set(messages.filter(m => m.user_id).map(m => m.user_id)).size;
+  const compressedCount = messages.filter(m => m.memory_compressed).length;
 
   const statsGrid = $('statsGrid');
   if (!statsGrid) return;
@@ -268,6 +272,10 @@ function renderStats(total) {
     <div class="stat-card">
       <div class="stat-label">群组数</div>
       <div class="stat-value">${groups.length}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">本页已压缩</div>
+      <div class="stat-value">${compressedCount}</div>
     </div>
   `;
 }
@@ -347,6 +355,10 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, '&quot;');
+}
+
 /** 将 conversation_chain 中可能的多模态 content 数组规范化为字符串 */
 function normalizeChainContent(content) {
   if (Array.isArray(content)) {
@@ -381,8 +393,8 @@ function buildConversationChain(message) {
 
 const SECTION_COLORS = {
   '角色': '#e91e63', '身份锚定': '#9c27b0', '背景故事': '#673ab7',
-  '场景定位': '#cddc39', '身份识别': '#ffc107', '输出规范': '#ff9800',
-  '发言者情绪': '#ff5722', '互动指导': '#795548', '相关记忆': '#607d8b',
+  '场景定位': '#cddc39', '身份识别': '#ffc107', '回复规范': '#ff9800',
+  '发言者情绪': '#ff5722', '相关记忆': '#607d8b',
   '群体风格': '#e8a87c', '回复风格': '#85cdca', '跨群认知': '#d8b4e2',
   '人物速查': '#795548', '我的能力': '#00bcd4', '群成员区分': '#9e9e9e',
   '首次互动': '#ff5722', '触发原因': '#f44336',
@@ -524,6 +536,57 @@ function renderMessageTags(tags) {
   return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${badges}</div>`;
 }
 
+function messageCompressionKeys(message) {
+  const groupId = message.group_id || activeGroup || '';
+  const keys = [];
+  if (message.entry_id) keys.push(`entry:${groupId}:${message.entry_id}`);
+  if (message.platform_message_id) keys.push(`msg:${groupId}:${message.platform_message_id}`);
+  const content = String(message.content || '').trim();
+  if (message.user_id && content) keys.push(`content:${groupId}:${message.user_id}:${content.slice(0, 240)}`);
+  return keys;
+}
+
+function historyItemCompressionKeys(item, defaultGroupId = '') {
+  const groupId = item.group || defaultGroupId || activeGroup || '';
+  const keys = [];
+  if (item.msgId) keys.push(`msg:${groupId}:${item.msgId}`);
+  const content = String(item.content || '').trim();
+  if (item.userId && content) keys.push(`content:${groupId}:${item.userId}:${content.slice(0, 240)}`);
+  return keys;
+}
+
+function rebuildCompressedMessageLookup() {
+  compressedMessageLookup = new Set();
+  messages.forEach(message => {
+    if (!message?.memory_compressed) return;
+    messageCompressionKeys(message).forEach(key => compressedMessageLookup.add(key));
+  });
+}
+
+function isHistoryItemCompressed(item, defaultGroupId = '') {
+  return historyItemCompressionKeys(item, defaultGroupId)
+    .some(key => compressedMessageLookup.has(key));
+}
+
+function renderMemoryCompressionTags(message) {
+  if (!message?.memory_compressed) return '';
+  const refs = Array.isArray(message.memory_refs) ? message.memory_refs : [];
+  const unitCount = refs.filter(ref => ref.kind === 'memory_unit').length;
+  const diaryCount = refs.filter(ref => ref.kind === 'diary').length;
+  const pieces = [
+    unitCount ? `${unitCount} 记忆单元` : '',
+    diaryCount ? `${diaryCount} 日记` : '',
+  ].filter(Boolean);
+  const title = refs.map(ref => ref.summary).filter(Boolean).join('\n');
+  const suffix = pieces.length ? ` · ${pieces.join(' · ')}` : '';
+  const c = TAG_COLORS.compressed;
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
+      <span class="tag" title="${escapeAttr(title)}" style="font-size:10px;padding:1px 6px;background:${c.bg};color:${c.color};border:1px solid ${c.border}">已压缩进记忆${suffix}</span>
+    </div>
+  `;
+}
+
 function renderInjectedToolTags(toolNames) {
   if (!Array.isArray(toolNames) || !toolNames.length) return '';
   const badges = toolNames
@@ -631,9 +694,10 @@ function renderMessages() {
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
+        ${renderMemoryCompressionTags(m)}
         ${m.role === 'assistant' ? renderInjectedToolTags(injectedToolNames) : ''}
         ${renderIntentScores(m.intent_scores)}
-        ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, idx, openChainEntryIds.has(entryId)) : ''}
+        ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, idx, openChainEntryIds.has(entryId), m) : ''}
       </div>
     `;
   }).join('');
@@ -663,7 +727,7 @@ const CHAIN_ROLE_STYLES = {
   assistant: { color: 'var(--success)', label: 'ASSISTANT', bg: 'var(--success)08' },
 };
 
-function renderConversationChainToggle(chainMsgId, chain, entryId = '', messageIndex = 0, isOpen = false) {
+function renderConversationChainToggle(chainMsgId, chain, entryId = '', messageIndex = 0, isOpen = false, parentMessage = null) {
   const msgCount = chain.length;
   const totalChars = chain.reduce((sum, m) => sum + (m.content || '').length, 0);
   const totalTokens = Math.ceil(totalChars / 2);
@@ -671,7 +735,7 @@ function renderConversationChainToggle(chainMsgId, chain, entryId = '', messageI
   const displayStyle = isOpen ? 'display:block' : 'display:none';
   const arrowTransform = isOpen ? 'transform:rotate(90deg)' : '';
   const chainHtml = isOpen
-    ? renderChainMessages(chain)
+    ? renderChainMessages(chain, parentMessage)
     : '<div style="padding:12px;color:var(--text-3);font-size:12px">点击后加载消息链详情</div>';
 
   // 统计各角色消息数
@@ -698,7 +762,7 @@ function renderConversationChainToggle(chainMsgId, chain, entryId = '', messageI
   `;
 }
 
-function renderChainMessages(chain) {
+function renderChainMessages(chain, parentMessage = null) {
   return chain.map((msg, idx) => {
     const role = msg.role || 'unknown';
     const style = CHAIN_ROLE_STYLES[role] || CHAIN_ROLE_STYLES.system;
@@ -713,7 +777,7 @@ function renderChainMessages(chain) {
 
     // user 消息：解析 XML 格式的多条消息
     if (isUser) {
-      return renderChainUserMessage(content, style, idx);
+      return renderChainUserMessage(content, style, idx, parentMessage);
     }
 
     // assistant 消息：直接展示
@@ -757,6 +821,8 @@ function parseXmlMessages(content) {
       speaker: el.getAttribute('speaker') || '',
       userId: el.getAttribute('user_id') || '',
       time: el.getAttribute('time') || '',
+      group: el.getAttribute('group') || '',
+      msgId: el.getAttribute('msg_id') || '',
       content: el.textContent || '',
     });
   });
@@ -786,6 +852,26 @@ function extractXmlBlock(content, tagName) {
   };
 }
 
+function extractXmlBlocks(content, tagNames) {
+  let rest = content || '';
+  const blocks = [];
+  while (rest) {
+    let best = null;
+    for (const tagName of tagNames) {
+      const extracted = extractXmlBlock(rest, tagName);
+      if (!extracted) continue;
+      const index = rest.indexOf(extracted.block);
+      if (!best || index < best.index) {
+        best = { ...extracted, tagName, index };
+      }
+    }
+    if (!best) break;
+    blocks.push({ tagName: best.tagName, block: best.block });
+    rest = best.rest;
+  }
+  return { blocks, rest };
+}
+
 function extractBracketBlock(content, tagName) {
   if (!content || !tagName) return null;
   const escaped = escapeRegex(tagName);
@@ -800,12 +886,15 @@ function extractBracketBlock(content, tagName) {
   };
 }
 
-function renderInjectedHistorySection(block) {
+function renderInjectedHistorySection(block, parentMessage = null, label = 'Injected conversation history') {
   const parsed = parseXmlMessages(block) || [];
   const messageCount = parsed.filter(item => item.type === 'message').length;
   const imageCount = parsed.filter(item => item.type === 'image').length;
+  const defaultGroupId = parentMessage?.group_id || '';
+  const compressedCount = parsed.filter(item => item.type === 'message' && isHistoryItemCompressed(item, defaultGroupId)).length;
   const summary = [
     `${messageCount} messages`,
+    compressedCount ? `${compressedCount} compressed` : '',
     imageCount ? `${imageCount} images` : '',
     `${estimateTokens(block)} tokens`,
   ].filter(Boolean).join(' · ');
@@ -819,12 +908,14 @@ function renderInjectedHistorySection(block) {
         </div>
       `;
     }
+    const compressed = isHistoryItemCompressed(item, defaultGroupId);
     const speakerColor = getSpeakerColor(item.speaker || 'unknown');
     return `
       <div style="padding:6px 12px;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span style="font-size:10px;font-weight:600;color:${speakerColor}">${escapeHtml(item.speaker || 'unknown')}</span>
           ${item.userId ? `<span style="font-size:9px;color:var(--text-3)">${escapeHtml(item.userId)}</span>` : ''}
+          ${compressed ? `<span class="tag" style="font-size:9px;padding:1px 5px;background:${TAG_COLORS.compressed.bg};color:${TAG_COLORS.compressed.color};border:1px solid ${TAG_COLORS.compressed.border}">已压缩</span>` : ''}
           ${item.time ? `<span style="font-size:9px;color:var(--text-3);margin-left:auto">${escapeHtml(item.time)}</span>` : ''}
         </div>
         <div style="font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap">${escapeHtml(item.content)}</div>
@@ -837,7 +928,7 @@ function renderInjectedHistorySection(block) {
   return `
     <div style="border-bottom:1px solid var(--border);background:var(--accent)06">
       <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:var(--accent)12">
-        <span style="font-size:11px;font-weight:600;color:var(--accent)">Injected conversation history</span>
+        <span style="font-size:11px;font-weight:600;color:var(--accent)">${escapeHtml(label)}</span>
         <span style="font-size:10px;color:var(--text-3);margin-left:auto">${summary}</span>
       </div>
       <div style="max-height:260px;overflow-y:auto">${body}</div>
@@ -845,7 +936,32 @@ function renderInjectedHistorySection(block) {
   `;
 }
 
-function renderChainUserMessage(content, style, idx) {
+function renderChainUserMessage(content, style, idx, parentMessage = null) {
+  const extractedHistory = extractXmlBlocks(content, ['conversation_history', 'cross_group_history']);
+  if (extractedHistory.blocks.length) {
+    const historyHtml = extractedHistory.blocks.map(({ tagName, block }) => (
+      renderInjectedHistorySection(
+        block,
+        parentMessage,
+        tagName === 'cross_group_history' ? 'Cross-group history evidence' : 'Conversation history evidence',
+      )
+    )).join('');
+    const rest = extractedHistory.rest.trim();
+    const restHtml = rest
+      ? `<div style="padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;max-height:220px;overflow-y:auto;font-family:monospace">${escapeHtml(rest)}</div>`
+      : '';
+    return `
+      <div style="border-bottom:1px solid var(--border);background:${style.bg}">
+        <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
+          <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${style.label}</span>
+          <span style="font-size:10px;color:var(--text-3);margin-left:auto">${estimateTokens(content)} tokens</span>
+        </div>
+        ${historyHtml}
+        ${restHtml}
+      </div>
+    `;
+  }
+
   const parsed = parseXmlMessages(content);
 
   // 非 XML 格式：直接按纯文本展示
@@ -879,11 +995,13 @@ function renderChainUserMessage(content, style, idx) {
       `;
     }
     const speakerColor = getSpeakerColor(item.speaker);
+    const compressed = isHistoryItemCompressed(item, parentMessage?.group_id || '');
     return `
       <div style="padding:6px 12px;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span style="font-size:10px;font-weight:600;color:${speakerColor}">${escapeHtml(item.speaker)}</span>
           ${item.userId ? `<span style="font-size:9px;color:var(--text-3)">${escapeHtml(item.userId)}</span>` : ''}
+          ${compressed ? `<span class="tag" style="font-size:9px;padding:1px 5px;background:${TAG_COLORS.compressed.bg};color:${TAG_COLORS.compressed.color};border:1px solid ${TAG_COLORS.compressed.border}">已压缩</span>` : ''}
           ${item.time ? `<span style="font-size:9px;color:var(--text-3);margin-left:auto">${escapeHtml(item.time)}</span>` : ''}
         </div>
         <div style="font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap">${escapeHtml(item.content)}</div>
@@ -987,7 +1105,7 @@ function renderChainDetailForButton(btn, target) {
   const idx = Number(btn.dataset.chainIndex);
   const message = messages[idx];
   const chain = buildConversationChain(message);
-  target.innerHTML = renderChainMessages(chain);
+  target.innerHTML = renderChainMessages(chain, message);
   target.dataset.loaded = 'true';
   bindChainSectionToggles(target);
 }

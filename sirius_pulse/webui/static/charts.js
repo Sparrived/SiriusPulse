@@ -126,7 +126,7 @@ export function renderRadarChart(container, { indicators, data, color = '#4c9aff
 // 模块名称映射（英文 key → 中文标签）
 const SECTION_LABELS = {
   persona: '人格设定', identity: '身份识别', output_constraint: '输出约束',
-  emotion: '情感上下文', empathy: '共情策略', relationship: '互动指导',
+  emotion: '情感上下文', empathy: '共情策略',
   memory: '记忆引用', interests: '用户兴趣', group_style: '群体风格',
   participants: '近期参与者', cross_group: '跨群认知', skills: '可用技能',
   glossary: '名词解释', output_format: '输出格式', diary: '日记记忆',
@@ -137,7 +137,7 @@ const SECTION_LABELS = {
 // 桑基图大类分组
 const SECTION_GROUPS = [
   { name: '人格与身份', keys: ['persona', 'identity'], color: '#58a6ff' },
-  { name: '情感与关系', keys: ['emotion', 'empathy', 'relationship'], color: '#3fb950' },
+  { name: '情感上下文', keys: ['emotion', 'empathy'], color: '#3fb950' },
   { name: '记忆与历史', keys: ['memory', 'diary', 'history_xml', 'cross_group_xml'], color: '#d29922' },
   { name: '环境与风格', keys: ['group_style', 'participants', 'cross_group', 'interests'], color: '#f85149' },
   { name: '功能与格式', keys: ['skills', 'glossary', 'output_format', 'output_constraint'], color: '#a371f7' },

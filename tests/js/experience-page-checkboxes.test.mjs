@@ -11,7 +11,7 @@ for (const field of [
   'plan_mode_chat_awareness_enabled',
   'plan_mode_presence_enabled',
 ]) {
-  assert.match(source, new RegExp(`type="checkbox" name="\\$\\{name\\}"`));
+  assert.match(source, new RegExp(`data-boolean-field="\\$\\{name\\}"`));
   assert.equal(
     source.includes(`select name="${field}"`),
     false,
@@ -20,15 +20,18 @@ for (const field of [
   assert.equal(
     source.includes(`form.${field}.value === 'true'`),
     false,
-    `${field} should be saved from checkbox checked state`,
+    `${field} should not be saved from select values`,
   );
 }
 
-assert.match(source, /BOOLEAN_FIELDS\.forEach\(name => \{\n\s+experience\[name\] = Boolean\(form\[name\]\?\.checked\);/);
+assert.equal(source.includes('type="checkbox"'), false);
+assert.match(source, /BOOLEAN_FIELDS\.forEach\(name => \{\n\s+experience\[name\] = Boolean\(booleanState\[name\]\);/);
+assert.match(source, /function setupBooleanCards\(\)/);
 assert.match(source, /行为画像/);
 assert.match(source, /回复控制/);
-assert.match(source, /reply_time_curve_enabled/);
+assert.equal(source.includes('reply_time_curve_enabled'), false);
 assert.match(source, /reply_time_curve_points: normalizeCurvePoints\(replyTimeCurvePoints\)/);
 assert.match(source, /最终参与分数 = 原始 score × 当前时间系数/);
+assert.match(source, /始终启用/);
 assert.match(source, /工具与计划/);
 assert.match(source, /记忆检索/);

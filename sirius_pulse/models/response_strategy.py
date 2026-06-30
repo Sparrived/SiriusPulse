@@ -70,7 +70,6 @@ class DelayedResponseItem:
     persona_profile_context: PersonaProfilePromptContext = field(default_factory=PersonaProfilePromptContext)
     lane: str = "chat"  # chat | plan
     plan_id: str = ""
-    signal_prompt: str = ""  # 规则计算信号摘要，注入主模型 prompt
 
     def to_dict(self) -> dict[str, Any]:
         return {

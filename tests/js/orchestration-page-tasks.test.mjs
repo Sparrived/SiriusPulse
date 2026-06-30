@@ -12,3 +12,17 @@ for (const removedTask of ['diary_generate', 'diary_consolidate', 'topic_cluster
 }
 
 assert.equal(source.includes("key: 'memory_extract'"), true);
+
+for (const discoveredCatalogHook of ['loadModelsDevForTypes', 'buildModelChoicesByType']) {
+  assert.equal(
+    source.includes(discoveredCatalogHook),
+    false,
+    `orchestration model dropdowns should only use configured provider models, not ${discoveredCatalogHook}`,
+  );
+}
+
+assert.equal(
+  source.includes('stripProviderPrefix'),
+  false,
+  'orchestration saves should preserve provider/model values to avoid same-model-name ambiguity',
+);

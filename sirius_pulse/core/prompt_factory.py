@@ -33,8 +33,7 @@ TAG_IDENTITY_ANCHOR = "【身份锚定】"
 
 TAG_SCENE_LOCATION = "【场景定位】"
 TAG_IDENTITY_VERIFY = "【身份识别】"
-TAG_OUTPUT_SPEC = "【输出规范】"
-TAG_RELATIONSHIP_STATUS = "【互动指导】"
+TAG_REPLY_SPEC = "【回复规范】"
 TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_CROSS_GROUP = "【跨群认知】"
 TAG_BIOGRAPHY = "【人物速查】"
@@ -64,7 +63,7 @@ class PromptBundle:
 
     历史消息由引擎单独管理，通过标准 OpenAI messages 列表传给 _generate()。
 
-    system_prompt: 稳定的系统指令（其他AI、输出规范）。
+    system_prompt: 稳定的系统指令（其他AI、回复规范）。
     dynamic_context: 每轮变化的上下文（传记、关系、记忆、插件），注入到 user 消息中。
     """
 
@@ -273,20 +272,24 @@ class PromptFactory:
     # ──────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def build_output_spec(
+    def build_reply_spec(
         sticker_names: list[str] | None = None,
         *,
+        length_instruction: str = "",
         supports_function_call: bool = False,
         supports_qq_mentions: bool = False,
         tool_flow_mode: str = "chat",
     ) -> str:
-        """输出规范，防止模型添加多余前缀。"""
+        """回复规范，防止模型添加多余前缀。"""
         items = [
             "不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。",
             "严禁使用换行符。",
             "需要发送格式化内容时，调用 workspace_file 进行写入文件和发送。",
             "你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。",
         ]
+        length_instruction = length_instruction.strip()
+        if length_instruction:
+            items.append(length_instruction)
         if supports_function_call:
             items.append(
                 "主动使用 Function Call 来增强你的群聊交互感；工具调用不要写成正文标记。"
@@ -319,95 +322,25 @@ class PromptFactory:
                 f"可选表情包：{names_str}"
             )
         numbered = "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
-        return f"{TAG_OUTPUT_SPEC}\n{numbered}"
+        return f"{TAG_REPLY_SPEC}\n{numbered}"
 
     @staticmethod
-    def build_relationship_context(
-        user_profile: Any | None,
-        caller_is_developer: bool = False,
-        speaker_name: str = "",
-    ) -> str | None:
-        """构建单用户互动指导（仅极端档位，中间档位由传记 short_bio 覆盖）。"""
-        who = speaker_name or "该用户"
-        if caller_is_developer:
-            return f"{TAG_RELATIONSHIP_STATUS}{who}是你的开发者，你们关系很亲密，可以畅所欲言。"
-
-        if user_profile is None:
-            return None
-
-        rate = getattr(user_profile, "engagement_rate", 0.0)
-        count = getattr(user_profile, "interaction_count", 0)
-
-        if rate >= 0.6:
-            return f"{TAG_RELATIONSHIP_STATUS}{who}经常回应你的消息，你们互动很好，可以自然放松。"
-        if count >= 10 and rate < 0.15:
-            return f"{TAG_RELATIONSHIP_STATUS}{who}很少回应你的消息，不要强行搭话。"
-
-        return None
-
-    @staticmethod
-    def build_relationship_contexts(
-        user_profiles: list[Any],
-        caller_is_developer: bool = False,
-        speaker_name: str = "",
-    ) -> str | None:
-        """构建多用户关系描述（合并消息场景）。
-
-        多个用户时将互动指导合并为单个描述，避免标签重复插入。
-        """
-        if not user_profiles:
-            return None
-
-        # 单用户场景：直接返回单用户描述
-        if len(user_profiles) == 1:
-            return PromptFactory.build_relationship_context(
-                user_profiles[0],
-                caller_is_developer,
-                speaker_name=speaker_name,
-            )
-
-        # 多用户场景：收集各用户描述并合并
-        positive_users: list[str] = []
-        negative_users: list[str] = []
-        seen: set[str] = set()
-
-        for profile in user_profiles:
-            uid = getattr(profile, "user_id", "")
-            if uid in seen:
-                continue
-            seen.add(uid)
-
-            if caller_is_developer:
-                positive_users.append(uid)
-                continue
-
-            rate = getattr(profile, "engagement_rate", 0.0)
-            count = getattr(profile, "interaction_count", 0)
-
-            if rate >= 0.6:
-                positive_users.append(uid)
-            elif count >= 10 and rate < 0.15:
-                negative_users.append(uid)
-
-        # 构建合并描述
-        parts: list[str] = []
-        if caller_is_developer:
-            parts.append("他们是你的开发者，关系亲密，可以畅所欲言。")
-        else:
-            if positive_users:
-                names = "、".join(positive_users[:3])
-                if len(positive_users) > 3:
-                    names += f"等{len(positive_users)}人"
-                parts.append(f"{names}经常回应你的消息，互动良好，可以自然放松。")
-            if negative_users:
-                names = "、".join(negative_users[:3])
-                if len(negative_users) > 3:
-                    names += f"等{len(negative_users)}人"
-                parts.append(f"{names}很少回应你的消息，不要强行搭话。")
-
-        if not parts:
-            return None
-        return f"{TAG_RELATIONSHIP_STATUS}\n" + "\n".join(parts)
+    def build_output_spec(
+        sticker_names: list[str] | None = None,
+        *,
+        length_instruction: str = "",
+        supports_function_call: bool = False,
+        supports_qq_mentions: bool = False,
+        tool_flow_mode: str = "chat",
+    ) -> str:
+        """Backward-compatible alias for build_reply_spec()."""
+        return PromptFactory.build_reply_spec(
+            sticker_names=sticker_names,
+            length_instruction=length_instruction,
+            supports_function_call=supports_function_call,
+            supports_qq_mentions=supports_qq_mentions,
+            tool_flow_mode=tool_flow_mode,
+        )
 
     @staticmethod
     def build_persona_profile_section(
@@ -498,7 +431,7 @@ class PromptFactory:
         """从复合 prompt 中提取最后一条 <message> 的纯内容。
 
         适用于从当前 user prompt 中抽取真实用户发言，避免把整段 prompt
-        （含输出规范、最近消息等）误处理。
+        （含回复规范、最近消息等）误处理。
         """
         if not content:
             return ""
@@ -755,8 +688,10 @@ class PromptFactory:
         other_ai = PromptFactory.build_other_ai_instruction(other_ai_names)
         if other_ai:
             _add(other_ai, "identity")
-        output_spec_text = PromptFactory.build_output_spec(
+        length_instruction = str(getattr(style_params, "length_instruction", "") or "").strip()
+        output_spec_text = PromptFactory.build_reply_spec(
             sticker_names=sticker_names,
+            length_instruction=length_instruction,
             supports_function_call=skill_registry is not None,
             supports_qq_mentions=adapter_type == "napcat" and bool(qq_mention_members),
             tool_flow_mode=tool_flow_mode,
@@ -771,14 +706,6 @@ class PromptFactory:
         )
         if bio:
             _add(bio, "identity", target="dynamic")
-
-        rel_ctx = PromptFactory.build_relationship_contexts(
-            user_profiles or [],
-            caller_is_developer,
-            speaker_name=speaker_name,
-        )
-        if rel_ctx:
-            _add(rel_ctx, "relationship", target="dynamic")
 
         if memories:
             _add(PromptFactory.build_memory_context(memories), "memory", target="dynamic")

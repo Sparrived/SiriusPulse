@@ -76,7 +76,6 @@ class DelayedResponseQueue:
         speaker_name: str = "",
         platform_message_id: str = "",
         persona_profile_context: PersonaProfilePromptContext | None = None,
-        signal_prompt: str = "",
         lane: str = "chat",
         plan_id: str = "",
     ) -> DelayedResponseItem:
@@ -146,8 +145,6 @@ class DelayedResponseQueue:
                         item.persona_profile_context.confidence.update(
                             persona_profile_context.confidence
                         )
-                if signal_prompt:
-                    item.signal_prompt = signal_prompt
                 item.lane = lane
                 if plan_id:
                     item.plan_id = plan_id
@@ -180,7 +177,6 @@ class DelayedResponseQueue:
             pace=pace,
             related_user_ids=[user_id] if user_id else [],
             persona_profile_context=persona_profile_context or PersonaProfilePromptContext(),
-            signal_prompt=signal_prompt,
             lane=lane,
             plan_id=plan_id,
         )

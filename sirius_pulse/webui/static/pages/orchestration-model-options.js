@@ -24,6 +24,9 @@ export function resolveCompositeModelValue(value, options, configuredOptions = o
   const exact = options.find(option => option.value === value);
   if (exact) return exact.value;
 
-  const configuredSuffix = configuredOptions.find(option => option.value.endsWith('/' + value));
-  return configuredSuffix ? configuredSuffix.value : value;
+  if (value.includes('/')) return value;
+
+  const bareValue = stripProviderPrefix(value);
+  const configuredMatches = configuredOptions.filter(option => option.value.endsWith('/' + bareValue));
+  return configuredMatches.length === 1 ? configuredMatches[0].value : value;
 }

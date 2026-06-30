@@ -148,14 +148,9 @@ export class DynamicConfigForm {
     if (!bareName || !this.modelChoices) return bareName || '';
     const exact = this.modelChoices.find(o => o.value === bareName);
     if (exact) return exact.value;
-    const suffix = this.modelChoices.find(o => o.value.endsWith('/' + bareName));
-    return suffix ? suffix.value : bareName;
-  }
-
-  _stripProviderPrefix(value) {
-    if (!value) return '';
-    const idx = value.indexOf('/');
-    return idx >= 0 ? value.substring(idx + 1) : value;
+    if (bareName.includes('/')) return bareName;
+    const matches = this.modelChoices.filter(o => o.value.endsWith('/' + bareName));
+    return matches.length === 1 ? matches[0].value : bareName;
   }
 
   /**
@@ -798,7 +793,7 @@ export class DynamicConfigForm {
         options: allOptions,
         value: value,
         onChange: (val) => {
-          this.settings[key] = this._stripProviderPrefix(val);
+          this.settings[key] = val;
         },
       });
       ms.mount(el);
@@ -873,14 +868,14 @@ export class DynamicConfigForm {
       values[key] = checked;
     });
 
-    // 收集 ModelSelect 值（剥离 provider 前缀，只保留裸模型名）
+    // 收集 ModelSelect 值（保留 provider 前缀，避免同名模型歧义）
     if (this._modelSelects) {
       this._modelSelects.forEach(ms => {
         const el = ms._el;
         if (el) {
           const key = el.dataset.modelSelect;
           if (key && ms.value) {
-            values[key] = this._stripProviderPrefix(ms.value);
+            values[key] = ms.value;
           }
         }
       });

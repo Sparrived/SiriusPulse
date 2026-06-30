@@ -85,26 +85,26 @@ def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
     assert params.tone_instruction
 
 
-def test_output_spec_no_newline_split_instruction():
+def test_reply_spec_no_newline_split_instruction():
     """换行分割提示已移除，改为 stop 工具控制流程。"""
-    spec = PromptFactory.build_output_spec()
+    spec = PromptFactory.build_reply_spec()
 
     assert "多句话可以用换行符分割" not in spec
     assert "每句话不可超过 15 字" not in spec
     assert "禁止任何形式的换行符" not in spec
 
 
-def test_output_spec_when_function_call_enabled_then_includes_stop_only():
-    """启用 function call 时，输出规范包含 stop 工具使用说明。"""
-    spec = PromptFactory.build_output_spec(supports_function_call=True)
+def test_reply_spec_when_function_call_enabled_then_includes_stop_only():
+    """启用 function call 时，回复规范包含 stop 工具使用说明。"""
+    spec = PromptFactory.build_reply_spec(supports_function_call=True)
 
     assert "continue" not in spec
     assert "stop" in spec
 
 
-def test_output_spec_when_function_call_disabled_then_no_continue_stop():
+def test_reply_spec_when_function_call_disabled_then_no_continue_stop():
     """未启用 function call 时，不包含 stop 说明。"""
-    spec = PromptFactory.build_output_spec(supports_function_call=False)
+    spec = PromptFactory.build_reply_spec(supports_function_call=False)
 
     assert "continue" not in spec
     assert "stop" not in spec
@@ -168,7 +168,7 @@ def test_assemble_chat_when_atmosphere_history_exists_then_does_not_inject_trend
     assert "群聊氛围正在" not in bundle.system_prompt
 
 
-def test_assemble_chat_puts_function_call_and_qq_mentions_in_output_spec():
+def test_assemble_chat_puts_function_call_and_qq_mentions_in_reply_spec():
     group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
 
@@ -182,14 +182,51 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_output_spec():
         qq_mention_members=[{"user_id": "123456", "nickname": "Alice"}],
     )
 
-    assert "【输出规范】" in bundle.system_prompt
+    assert "【回复规范】" in bundle.system_prompt
     assert "Function Call" in bundle.system_prompt
     assert "@{QQ号}" in bundle.system_prompt
     assert "【Function Call】" not in bundle.system_prompt
     assert "【QQ @提及】" not in bundle.system_prompt
 
 
-def test_assemble_chat_output_spec_is_injected_once_after_context_assembly():
+def test_assemble_chat_injects_length_instruction_into_reply_spec_when_present():
+    group_profile = SimpleNamespace(atmosphere_history=[])
+    style_params = StyleAdapter().adapt(pace="steady", persona=None)
+    style_params.length_instruction = "每句话尽量不超过 12 个汉字。"
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+    )
+
+    assert "【回复规范】" in bundle.system_prompt
+    assert "【回复长度】" not in bundle.system_prompt
+    assert "每句话尽量不超过 12 个汉字。" in bundle.system_prompt
+
+
+def test_assemble_chat_does_not_inject_interaction_guidance():
+    group_profile = SimpleNamespace(atmosphere_history=[])
+    style_params = StyleAdapter().adapt(pace="steady", persona=None)
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+        user_profiles=[SimpleNamespace(user_id="u1", engagement_rate=1.0, interaction_count=99)],
+        caller_is_developer=True,
+        speaker_name="Alice",
+    )
+
+    assert "【互动指导】" not in bundle.system_prompt
+    assert "【互动指导】" not in bundle.dynamic_context
+    assert "经常回应你的消息" not in bundle.dynamic_context
+    assert "开发者" not in bundle.dynamic_context
+
+
+def test_assemble_chat_reply_spec_is_injected_once_after_context_assembly():
     group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
 
@@ -200,7 +237,7 @@ def test_assemble_chat_output_spec_is_injected_once_after_context_assembly():
         other_ai_names=[],
         skill_registry=object(),
     )
-    marker = PromptFactory.build_output_spec(supports_function_call=True).splitlines()[0]
+    marker = PromptFactory.build_reply_spec(supports_function_call=True).splitlines()[0]
 
     assert bundle.system_prompt.count(marker) == 1
 
@@ -308,6 +345,9 @@ def test_context_assembler_prefers_memory_units_over_diary_context():
     assert TAG_HISTORY_DIARY not in messages[-1]["content"]
     assert "<memory_units>" in messages[-1]["content"]
     assert "Alice asked Sirius to use checkpoint memory units." in messages[-1]["content"]
+    assert "1. " not in messages[-1]["content"]
+    assert "keywords=" not in messages[-1]["content"]
+    assert "checkpoint,memory" not in messages[-1]["content"]
     assert "Old diary text should not be injected." not in messages[-1]["content"]
 
 

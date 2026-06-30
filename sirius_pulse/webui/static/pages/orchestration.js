@@ -1,12 +1,10 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, flashSuccess, ModelSelect } from '../components.js';
-import { buildModelChoicesByType, loadModelsDevForTypes } from './model-dev.js';
 import { createScopedPage } from '../page-context.js';
 import {
   buildLegacyModelChoice,
   resolveCompositeModelValue,
-  stripProviderPrefix,
   toModelSelectOptions,
 } from './orchestration-model-options.js';
 
@@ -82,7 +80,6 @@ const NUMERIC_PARAMS = [
   { key: 'timeout', label: '超时(s)', step: '1', min: '1', max: '300' },
 ];
 
-let orchestrationData = null;
 let taskParamDefaults = {};
 let taskParamOverrides = {};
 let modelChoices = [];
@@ -137,10 +134,8 @@ async function loadOrchestration(name) {
       get(`/persona/orchestration`),
       get(`/persona/task-params`),
     ]);
-    orchestrationData = orchData;
-    const providerChoices = await loadProviderModelChoices();
     configuredModelChoices = (orchData.model_choices || []).map(buildLegacyModelChoice);
-    modelChoices = [...configuredModelChoices, ...providerChoices];
+    modelChoices = configuredModelChoices;
     taskParamDefaults = paramsData.defaults || {};
     taskParamOverrides = paramsData.task_params || {};
     renderOrchestration(orchData);
@@ -241,32 +236,6 @@ function _mselOptions() {
 
 function _configuredOptions() {
   return toModelSelectOptions(configuredModelChoices);
-}
-
-async function loadProviderModelChoices() {
-  const providerTypes = new Set();
-  const tasks = orchestrationData?.task_models || {};
-
-  for (const value of Object.values(tasks)) {
-    const providerType = value?.includes('/') ? value.split('/')[0] : '';
-    if (providerType) providerTypes.add(providerType);
-  }
-
-  try {
-    const providersData = await get('/providers');
-    const providers = Array.isArray(providersData.providers) ? providersData.providers : [];
-    providers.forEach(provider => {
-      const providerType = provider.platform_type || provider.type || '';
-      if (providerType) providerTypes.add(providerType);
-    });
-  } catch (e) {
-    console.warn('[orchestration] ?? providers ??:', e);
-  }
-
-  if (!providerTypes.size) return [];
-
-  const modelsByType = await loadModelsDevForTypes([...providerTypes]);
-  return buildModelChoicesByType(modelsByType);
 }
 
 function _mountModelSelects(data) {
@@ -483,7 +452,37 @@ function bindParamEvents() {
 
 // ── 保存 ──
 
+function _isAmbiguousBareModel(value) {
+  if (!value || value === '__inherit__' || value.includes('/')) return false;
+  return _configuredOptions().filter(option => option.value.endsWith('/' + value)).length > 1;
+}
+
+function _validateProviderScopedSelections() {
+  const ambiguous = [];
+  for (const key of ['analysis_model', 'chat_model', 'memory_model', 'plugin_model']) {
+    const value = modelSelects[key]?.value || '';
+    if (_isAmbiguousBareModel(value)) ambiguous.push(value);
+  }
+  scopedPage.$$('.task-model-select').forEach(container => {
+    const task = container.dataset.task;
+    const isOverridden = scopedPage.query(`.task-override[data-task="${task}"]`)?.checked ?? false;
+    if (!isOverridden) return;
+    const value = modelSelects[`task_${task}`]?.value || '';
+    if (_isAmbiguousBareModel(value)) ambiguous.push(value);
+  });
+  for (const [key, sel] of Object.entries(modelSelects)) {
+    if (!key.startsWith('fb_')) continue;
+    if (_isAmbiguousBareModel(sel.value || '')) ambiguous.push(sel.value);
+  }
+  if (!ambiguous.length) return true;
+  const models = [...new Set(ambiguous)].join(', ');
+  toast(`模型 ${models} 存在于多个 Provider，请选择带 Provider 前缀的模型`, 'error');
+  return false;
+}
+
 async function saveOrchestration(name) {
+  if (!_validateProviderScopedSelections()) return;
+
   // 1) 模型编排
   const taskModels = {};
   const taskEnabled = {};
@@ -494,7 +493,7 @@ async function saveOrchestration(name) {
     const key = `task_${task}`;
     const sel = modelSelects[key];
     const rawVal = isOverridden && sel ? sel.value : '__inherit__';
-    taskModels[task] = rawVal === '__inherit__' ? rawVal : stripProviderPrefix(rawVal);
+    taskModels[task] = rawVal;
     taskEnabled[task] = enabled;
   });
 
@@ -520,15 +519,15 @@ async function saveOrchestration(name) {
     if (!key.startsWith('fb_')) continue;
     const task = key.substring(3);
     const raw = sel.value?.trim();
-    if (raw) taskFallbackModel[task] = stripProviderPrefix(raw);
+    if (raw) taskFallbackModel[task] = raw;
   }
 
   try {
     await post(`/persona/orchestration`, {
-      analysis_model: stripProviderPrefix(modelSelects.analysis_model?.value || ''),
-      chat_model: stripProviderPrefix(modelSelects.chat_model?.value || ''),
-      memory_model: stripProviderPrefix(modelSelects.memory_model?.value || ''),
-      plugin_model: stripProviderPrefix(modelSelects.plugin_model?.value || ''),
+      analysis_model: modelSelects.analysis_model?.value || '',
+      chat_model: modelSelects.chat_model?.value || '',
+      memory_model: modelSelects.memory_model?.value || '',
+      plugin_model: modelSelects.plugin_model?.value || '',
       task_models: taskModels,
       task_enabled: taskEnabled,
     });

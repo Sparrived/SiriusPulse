@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -458,44 +458,88 @@ class AutoRoutingProvider(AsyncLLMProvider):
     """Choose a configured provider automatically on each generation request."""
 
     def __init__(self, providers: dict[str, ProviderConfig]) -> None:
-        self._providers = {key: value for key, value in providers.items() if value.enabled}
+        self._providers = {
+            normalize_provider_type(value.provider_type or key): value
+            for key, value in providers.items()
+            if value.enabled
+        }
         self._last_provider_name = "unknown"
 
-    def _provider_matches_model(self, provider: ProviderConfig, model: str) -> bool:
+    @staticmethod
+    def _split_scoped_model(model: str) -> tuple[str, str] | None:
+        provider_type, sep, model_name = model.strip().partition("/")
+        if not sep or not provider_type.strip() or not model_name.strip():
+            return None
+        return normalize_provider_type(provider_type), model_name.strip()
+
+    @staticmethod
+    def _model_match_source(provider: ProviderConfig, model: str) -> str:
         model_stripped = model.strip()
-        # Check explicit models list first
         if provider.models and model_stripped in provider.models:
-            return True
-        # Fallback to healthcheck_model exact match
+            return "models"
         expected = provider.healthcheck_model.strip()
-        return bool(expected) and model_stripped == expected
+        if expected and model_stripped == expected:
+            return "healthcheck_model"
+        return ""
+
+    def _provider_matches_model(self, provider: ProviderConfig, model: str) -> bool:
+        return bool(self._model_match_source(provider, model))
 
     def _create_provider(self, config: ProviderConfig) -> LLMProvider:
         return _create_provider_instance(config)
 
-    def _pick_provider(self, model: str) -> tuple[ProviderConfig, str]:
+    def _pick_provider(self, model: str) -> tuple[ProviderConfig, str, str]:
         if not self._providers:
             raise RuntimeError("未配置任何提供商，请先添加至少一个提供商 API Key。")
 
+        scoped = self._split_scoped_model(model)
+        if scoped is not None:
+            provider_type, model_name = scoped
+            provider = self._providers.get(provider_type)
+            if provider is None:
+                raise RuntimeError(
+                    f"无法为模型 '{model}' 找到 provider '{provider_type}'。"
+                    "请检查该 provider 是否已启用并配置 API Key。"
+                )
+            matched_by = self._model_match_source(provider, model_name)
+            if not matched_by:
+                raise RuntimeError(
+                    f"模型 '{model_name}' 未配置在 provider '{provider_type}' "
+                    "的 models 或 healthcheck_model 中。"
+                )
+            return provider, matched_by, model_name
+
+        matches: list[tuple[ProviderConfig, str]] = []
+        model_stripped = model.strip()
         for provider in self._providers.values():
-            model_stripped = model.strip()
-            if provider.models and model_stripped in provider.models:
-                return provider, "models"
-            expected = provider.healthcheck_model.strip()
-            if expected and model_stripped == expected:
-                return provider, "healthcheck_model"
+            matched_by = self._model_match_source(provider, model_stripped)
+            if matched_by:
+                matches.append((provider, matched_by))
+
+        if len(matches) == 1:
+            provider, matched_by = matches[0]
+            return provider, matched_by, model_stripped
+
+        if len(matches) > 1:
+            providers = ", ".join(provider.provider_type for provider, _ in matches)
+            raise RuntimeError(
+                f"模型 '{model}' 同时存在于多个 provider: {providers}。"
+                "请在配置中使用 'provider/model' 形式明确指定。"
+            )
 
         raise RuntimeError(
-            f"无法为模型 '{model}' 找到合适的提供商。请确保在 provider_keys.json 或配置中的 'models' 列表中包含了该模型。"
+            f"无法为模型 '{model}' 找到合适的提供商。"
+            "请确保在 provider_keys.json 或配置中的 'models' 列表中包含了该模型。"
         )
 
     async def generate_async(
         self, request: GenerationRequest, return_reasoning: bool = False
     ) -> GenerationResult | tuple[str, GenerationResult]:
-        selected, matched_by = self._pick_provider(request.model)
+        selected, matched_by, routed_model = self._pick_provider(request.model)
         logger.debug(
-            "[Provider路由] model=%s | purpose=%s | provider_type=%s | matched_by=%s | base_url=%s | healthcheck_model=%s | models=%s",
+            "[Provider路由] model=%s | routed_model=%s | purpose=%s | provider_type=%s | matched_by=%s | base_url=%s | healthcheck_model=%s | models=%s",
             request.model,
+            routed_model,
             request.purpose,
             selected.provider_type,
             matched_by,
@@ -505,7 +549,11 @@ class AutoRoutingProvider(AsyncLLMProvider):
         )
         provider = self._create_provider(selected)
         self._last_provider_name = getattr(provider, "_provider_name", selected.provider_type)
-        return await provider.generate_async(request, return_reasoning=return_reasoning)  # type: ignore[attr-defined]
+        routed_request = replace(request, model=routed_model)
+        return await provider.generate_async(  # type: ignore[attr-defined]
+            routed_request,
+            return_reasoning=return_reasoning,
+        )
 
 
 async def probe_provider_availability(

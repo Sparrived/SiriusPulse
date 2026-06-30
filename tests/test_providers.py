@@ -16,6 +16,7 @@ from sirius_pulse.providers.base import (
     set_last_generation_usage,
 )
 from sirius_pulse.providers.response_utils import extract_assistant_text
+from sirius_pulse.providers.routing import AutoRoutingProvider, ProviderConfig
 
 
 def test_generation_result_when_tool_calls_are_present_then_reports_tool_call_state():
@@ -154,3 +155,79 @@ def test_extract_assistant_text_when_provider_uses_nested_content_then_returns_f
     )
     assert extract_assistant_text({"reasoning_content": {"text": "thought"}}) == "thought"
     assert extract_assistant_text({"refusal": "blocked"}) == "blocked"
+
+
+class _CapturingAsyncProvider:
+    def __init__(self) -> None:
+        self.request: GenerationRequest | None = None
+
+    async def generate_async(
+        self, request: GenerationRequest, return_reasoning: bool = False
+    ) -> GenerationResult:
+        self.request = request
+        return GenerationResult(content="ok")
+
+
+class _CapturingRoutingProvider(AutoRoutingProvider):
+    def __init__(self, providers: dict[str, ProviderConfig]) -> None:
+        super().__init__(providers)
+        self.created: dict[str, _CapturingAsyncProvider] = {}
+
+    def _create_provider(self, config: ProviderConfig) -> _CapturingAsyncProvider:
+        provider = _CapturingAsyncProvider()
+        self.created[config.provider_type] = provider
+        return provider
+
+
+@pytest.mark.asyncio
+async def test_auto_routing_provider_when_model_is_provider_scoped_then_uses_that_provider():
+    router = _CapturingRoutingProvider(
+        {
+            "deepseek": ProviderConfig(
+                provider_type="deepseek",
+                api_key="sk-deepseek",
+                base_url="",
+                models=["shared-model"],
+            ),
+            "aliyun-bailian": ProviderConfig(
+                provider_type="aliyun-bailian",
+                api_key="sk-bailian",
+                base_url="",
+                models=["shared-model"],
+            ),
+        }
+    )
+
+    await router.generate_async(
+        GenerationRequest(
+            model="aliyun-bailian/shared-model",
+            system_prompt="",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    )
+
+    assert set(router.created) == {"aliyun-bailian"}
+    assert router.created["aliyun-bailian"].request is not None
+    assert router.created["aliyun-bailian"].request.model == "shared-model"
+
+
+def test_auto_routing_provider_when_bare_model_matches_multiple_providers_then_errors():
+    router = AutoRoutingProvider(
+        {
+            "deepseek": ProviderConfig(
+                provider_type="deepseek",
+                api_key="sk-deepseek",
+                base_url="",
+                models=["shared-model"],
+            ),
+            "aliyun-bailian": ProviderConfig(
+                provider_type="aliyun-bailian",
+                api_key="sk-bailian",
+                base_url="",
+                models=["shared-model"],
+            ),
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="同时存在于多个 provider"):
+        router._pick_provider("shared-model")

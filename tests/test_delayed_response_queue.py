@@ -10,6 +10,7 @@ import pytest
 from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.plan_runtime import start_plan_session, update_plan_progress
+from sirius_pulse.core.prompt_factory import StyleAdapter
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.skills.models import SkillResult
@@ -147,6 +148,41 @@ def test_delayed_queue_when_topic_gap_exceeds_threshold_then_delayed_item_trigge
 
     assert triggered == [item]
     assert item.status == "triggered"
+
+
+def test_build_delayed_prompt_injects_configured_length_limit():
+    engine = SimpleNamespace(
+        config={"max_sentence_chars": 12},
+        glossary_manager=SimpleNamespace(build_prompt_section=lambda *args, **kwargs: ""),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda *args, **kwargs: None,
+            get_group_profile=lambda *args, **kwargs: SimpleNamespace(atmosphere_history=[]),
+        ),
+        style_adapter=StyleAdapter(),
+        persona=SimpleNamespace(
+            max_tokens_preference=None,
+            temperature_preference=None,
+            communication_style="",
+            emoji_preference="",
+        ),
+        _other_ai_names=[],
+        _skill_registry=None,
+        _plugin_registry=None,
+    )
+    item = SimpleNamespace(
+        message_content="hello",
+        speaker_name="Alice",
+        channel_user_id="u1",
+        related_user_ids=[],
+        candidate_memories=[],
+        persona_profile_context=None,
+    )
+
+    bundle = DelayedQueueTasks(engine)._build_delayed_prompt(item, "group-1")
+
+    assert "【回复规范】" in bundle.system_prompt
+    assert "【回复长度】" not in bundle.system_prompt
+    assert "不超过 12 个汉字" in bundle.system_prompt
 
 
 def test_delayed_queue_when_merging_incoming_then_appends_to_existing_pending_item():

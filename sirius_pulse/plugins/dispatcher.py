@@ -114,7 +114,7 @@ class OutputDispatcher:
         """构建 Plugin 结果的人格化 system prompt。
 
         人格 profile 已由 Brain.chat() 默认 pre 步骤自动注入，
-        此处只负责 Plugin 特有的业务指令（输出规范 + 表达要求）。
+        此处只负责 Plugin 特有的业务指令（回复规范 + 表达要求）。
         """
         import json
 
@@ -123,10 +123,10 @@ class OutputDispatcher:
 
         sections: list[str] = []
 
-        # ── 1. 输出规范（人格已由 Brain 注入）──
+        # ── 1. 回复规范（人格已由 Brain 注入）──
         from sirius_pulse.core.prompt_factory import PromptFactory
 
-        sections.append(PromptFactory.build_output_spec())
+        sections.append(PromptFactory.build_reply_spec())
 
         # ── 2. 插件执行结果 ──
         sections.append("\n【指令执行结果】")

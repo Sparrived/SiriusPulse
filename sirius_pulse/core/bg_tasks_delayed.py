@@ -1227,6 +1227,15 @@ class DelayedQueueTasks:
             pace="decelerating",
             persona=engine.persona,
         )
+        try:
+            max_sentence_chars = int(engine.config.get("max_sentence_chars", 20))
+        except (TypeError, ValueError):
+            max_sentence_chars = 20
+        max_sentence_chars = max(5, min(50, max_sentence_chars))
+        style_params.length_instruction = (
+            f"每句话尽量不超过 {max_sentence_chars} 个汉字；"
+            "需要表达多件事时，压缩成自然短句，不要使用 Markdown 或换行排版。"
+        )
 
         # 仅使用队列项自带的人物传记快照，避免回读引擎共享状态
         bio_ctx = self._merge_persona_profile_contexts(items)
@@ -1259,15 +1268,6 @@ class DelayedQueueTasks:
         dynamic_parts: list[str] = []
         if glossary:
             dynamic_parts.append(f"{TAG_GLOSSARY}\n{glossary}")
-
-        # 注入规则计算信号（来自 pipeline.compute_signal）
-        signal_prompts = [item.signal_prompt for item in items if getattr(item, "signal_prompt", "")]
-        if signal_prompts:
-            latest_signal = signal_prompts[-1]
-            dynamic_parts.append(
-                f"【消息信号分析】\n{latest_signal}\n\n"
-                f"这些是预计算的信号，仅供参考。你可以回复这条消息，或者调用 stop 工具跳过。"
-            )
 
         if dynamic_parts:
             bundle.dynamic_context = (

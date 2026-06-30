@@ -51,7 +51,7 @@ def test_experience_config_when_webui_loads_form_then_all_user_options_are_seria
     assert "plan_mode_chat_awareness_enabled" in payload
     assert "plan_mode_presence_enabled" in payload
     assert "diary_token_budget" in payload
-    assert "reply_time_curve_enabled" in payload
+    assert "reply_time_curve_enabled" not in payload
     assert "reply_time_curve_points" in payload
     assert "memory_depth" not in payload
 
@@ -83,7 +83,6 @@ def test_experience_config_when_sentence_limit_is_out_of_range_then_clamps():
 def test_experience_config_when_time_curve_is_loaded_then_points_are_normalized():
     config = PersonaExperienceConfig.from_dict(
         {
-            "reply_time_curve_enabled": True,
             "reply_time_curve_points": [
                 {"time": "08:30", "coefficient": 1.5},
                 {"time": "24:00", "coefficient": 3.0},
@@ -93,7 +92,6 @@ def test_experience_config_when_time_curve_is_loaded_then_points_are_normalized(
         }
     )
 
-    assert config.reply_time_curve_enabled is True
     assert config.reply_time_curve_points == [
         {"time": "02:00", "coefficient": 0.0},
         {"time": "08:30", "coefficient": 1.5},

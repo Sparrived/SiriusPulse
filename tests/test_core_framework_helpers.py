@@ -32,8 +32,8 @@ def test_core_utils_when_history_xml_is_present_then_only_conversation_history_b
     assert "T" in now_iso()
 
 
-def test_prompt_factory_when_stickers_are_available_then_output_spec_uses_tool_call_only():
-    spec = PromptFactory.build_output_spec(sticker_names=["开心"])
+def test_prompt_factory_when_stickers_are_available_then_reply_spec_uses_tool_call_only():
+    spec = PromptFactory.build_reply_spec(sticker_names=["开心"])
 
     assert "send_sticker" in spec
     assert "任何发送标记" in spec

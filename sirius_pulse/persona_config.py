@@ -142,7 +142,6 @@ class PersonaExperienceConfig:
     # 回复频率限制
     min_reply_interval_seconds: float = 0.0
     main_model_reply_cooldown_seconds: float = 0.0
-    reply_time_curve_enabled: bool = False
     reply_time_curve_points: list[dict[str, float | str]] = field(default_factory=list)
     max_sentence_chars: int = 20
 
@@ -173,7 +172,6 @@ class PersonaExperienceConfig:
             "expressiveness": self.expressiveness,
             "min_reply_interval_seconds": self.min_reply_interval_seconds,
             "main_model_reply_cooldown_seconds": self.main_model_reply_cooldown_seconds,
-            "reply_time_curve_enabled": self.reply_time_curve_enabled,
             "reply_time_curve_points": normalize_reply_time_curve_points(
                 self.reply_time_curve_points
             ),
@@ -209,7 +207,6 @@ class PersonaExperienceConfig:
             main_model_reply_cooldown_seconds=float(
                 data.get("main_model_reply_cooldown_seconds", 0.0)
             ),
-            reply_time_curve_enabled=bool(data.get("reply_time_curve_enabled", False)),
             reply_time_curve_points=normalize_reply_time_curve_points(
                 data.get("reply_time_curve_points", [])
             ),

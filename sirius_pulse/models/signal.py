@@ -16,7 +16,7 @@ class SignalAnalysis:
     """规则计算层的输出信号。
 
     所有字段由纯规则计算得出，不涉及 LLM 调用。
-    用于粗筛阈值判断和注入主模型 prompt。
+    用于粗筛阈值判断和参与决策。
     """
 
     # ── 情绪 ──
@@ -52,44 +52,6 @@ class SignalAnalysis:
 
     # ── 参与决策 ──
     participation: dict[str, Any] = field(default_factory=dict)
-
-    def to_prompt_text(self) -> str:
-        """生成注入主模型 system prompt 的信号摘要。"""
-        lines: list[str] = []
-
-        # 指向性
-        if self.is_mentioned:
-            lines.append("- 指向你: 是（被@或明确提及）")
-        elif self.directed_score >= 0.5:
-            lines.append(f"- 指向你: 可能 (directed_score={self.directed_score:.2f})")
-        else:
-            lines.append(f"- 指向你: 否 (directed_score={self.directed_score:.2f})")
-
-        # 情绪
-        if self.emotion:
-            valence_label = "positive" if self.emotion.valence > 0.1 else "negative" if self.emotion.valence < -0.1 else "neutral"
-            lines.append(
-                f"- 情绪: {valence_label} "
-                f"(valence={self.emotion.valence:.1f}, arousal={self.emotion.arousal:.1f})"
-            )
-
-        # 类型标签
-        tags: list[str] = []
-        if self.is_question:
-            tags.append("问句")
-        if self.is_imperative:
-            tags.append("请求")
-        if self.social_intent == "help_seeking":
-            tags.append("求助")
-        elif self.social_intent == "emotional":
-            tags.append("情感表达")
-        if tags:
-            lines.append(f"- 类型: {', '.join(tags)}")
-
-        # 节奏
-        lines.append(f"- 群聊热度: {self.heat_level}, 节奏: {self.pace}")
-
-        return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为字典（用于 cognition_store 持久化）。"""

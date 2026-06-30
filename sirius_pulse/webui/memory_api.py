@@ -169,6 +169,99 @@ def _merge_conversation_messages(
     return [merged[key] for key in order]
 
 
+def _load_compressed_memory_source_index(
+    paths: PersonaConfigPaths,
+    group_id: str = "",
+) -> dict[str, list[dict[str, Any]]]:
+    """Return basic-memory source_id -> compact memory references."""
+    refs_by_source: dict[str, list[dict[str, Any]]] = {}
+
+    def add_ref(source_ids: Any, ref: dict[str, Any]) -> None:
+        if not isinstance(source_ids, list):
+            return
+        for source_id in source_ids:
+            key = str(source_id or "").strip()
+            if key:
+                refs_by_source.setdefault(key, []).append(ref)
+
+    units_dir = paths.dir / "memory_units"
+    if units_dir.exists():
+        unit_files = (
+            [units_dir / f"{_safe_memory_name(group_id)}.json"]
+            if group_id
+            else sorted(units_dir.glob("*.json"))
+        )
+        for path in unit_files:
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError):
+                continue
+            units = data.get("units", []) if isinstance(data, dict) else []
+            if not isinstance(units, list):
+                continue
+            for unit in units:
+                if not isinstance(unit, dict):
+                    continue
+                add_ref(
+                    unit.get("source_ids"),
+                    {
+                        "kind": "memory_unit",
+                        "id": str(unit.get("unit_id") or ""),
+                        "summary": str(unit.get("summary") or "")[:180],
+                        "created_at": str(unit.get("created_at") or ""),
+                        "unit_type": str(unit.get("unit_type") or ""),
+                    },
+                )
+
+    diary_dir = paths.dir / "diary"
+    if diary_dir.exists():
+        diary_files = (
+            [diary_dir / f"{_safe_memory_name(group_id)}.json"]
+            if group_id
+            else sorted(diary_dir.glob("*.json"))
+        )
+        for path in diary_files:
+            payload = _load_diary_payload(path, path.stem)
+            entries = payload.get("entries", [])
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                add_ref(
+                    entry.get("source_ids"),
+                    {
+                        "kind": "diary",
+                        "id": str(entry.get("entry_id") or ""),
+                        "summary": str(entry.get("summary") or entry.get("content") or "")[:180],
+                        "created_at": str(entry.get("created_at") or ""),
+                        "unit_type": "diary",
+                    },
+                )
+
+    return refs_by_source
+
+
+def _annotate_memory_compression(
+    messages: list[dict[str, Any]],
+    source_index: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    if not source_index:
+        for message in messages:
+            message["memory_compressed"] = False
+            message["memory_refs"] = []
+        return messages
+
+    for message in messages:
+        entry_id = str(message.get("entry_id") or "").strip()
+        refs = list(source_index.get(entry_id, [])) if entry_id else []
+        message["memory_compressed"] = bool(refs)
+        message["memory_refs"] = refs
+    return messages
+
+
 def _conversation_message_matches_filters(
     message: dict[str, Any],
     *,
@@ -1152,6 +1245,184 @@ async def api_persona_glossary_delete(request: web.Request, data_dir: Path) -> w
     return _json_response({"success": True})
 
 
+
+def _memory_units_dir(data_dir: Path) -> Path:
+    return data_dir / "memory_units"
+
+
+def _memory_unit_file(data_dir: Path, group_id: str) -> Path:
+    return _memory_units_dir(data_dir) / f"{_safe_memory_name(group_id)}.json"
+
+
+def _load_memory_units_file(path: Path) -> tuple[str, list[dict[str, Any]]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return path.stem, []
+    if not isinstance(data, dict):
+        return path.stem, []
+    group_id = str(data.get("group_id") or path.stem)
+    units = [item for item in data.get("units", []) if isinstance(item, dict)]
+    return group_id, units
+
+
+def _save_memory_units_file(data_dir: Path, group_id: str, units: list[dict[str, Any]]) -> None:
+    _atomic_write_json(_memory_unit_file(data_dir, group_id), {"group_id": group_id, "units": units})
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return []
+
+
+def _normalize_memory_unit(data: dict[str, Any], group_id: str = "") -> dict[str, Any]:
+    normalized = dict(data)
+    normalized["unit_id"] = str(normalized.get("unit_id") or f"unit_{uuid4().hex}")
+    normalized["group_id"] = str(normalized.get("group_id") or group_id or "default")
+    normalized["created_at"] = str(normalized.get("created_at") or _now_iso())
+    normalized["unit_type"] = str(normalized.get("unit_type") or "event")
+    normalized["scope"] = str(normalized.get("scope") or "group")
+    normalized["scope_id"] = str(normalized.get("scope_id") or "")
+    normalized["summary"] = str(normalized.get("summary") or "").strip()
+    normalized["lifespan"] = str(normalized.get("lifespan") or "medium")
+    normalized["participants"] = _string_list(normalized.get("participants"))
+    normalized["topics"] = _string_list(normalized.get("topics"))
+    normalized["keywords"] = _string_list(normalized.get("keywords"))
+    normalized["source_ids"] = _string_list(normalized.get("source_ids"))
+    normalized["salience"] = max(0.0, min(1.0, float(normalized.get("salience") or 0)))
+    normalized["confidence"] = max(0.0, min(1.0, float(normalized.get("confidence") or 0)))
+    normalized["should_prompt"] = bool(normalized.get("should_prompt", True))
+    if not isinstance(normalized.get("metadata"), dict):
+        normalized["metadata"] = {}
+    if normalized.get("embedding") is not None and not isinstance(normalized.get("embedding"), list):
+        normalized["embedding"] = None
+    return normalized
+
+
+@handle_api_errors
+async def api_persona_memory_units_get(request: web.Request, data_dir: Path) -> web.Response:
+    """Return checkpoint MemoryUnit records for the current persona."""
+    group_filter = request.query.get("group_id", "").strip()
+    search = request.query.get("search", "").strip().lower()
+    limit = min(int(request.query.get("limit", "200")), 1000)
+    offset = max(int(request.query.get("offset", "0")), 0)
+
+    base_dir = _memory_units_dir(data_dir)
+    units: list[dict[str, Any]] = []
+    groups: set[str] = set()
+    if base_dir.exists():
+        for path in base_dir.glob("*.json"):
+            group_id, file_units = _load_memory_units_file(path)
+            groups.add(group_id)
+            if group_filter and group_id != group_filter:
+                continue
+            for unit in file_units:
+                normalized = _normalize_memory_unit(unit, group_id)
+                if search and search not in json.dumps(normalized, ensure_ascii=False).lower():
+                    continue
+                units.append(normalized)
+
+    units.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    total = len(units)
+    return _json_response({
+        "units": units[offset:offset + limit],
+        "groups": sorted(groups),
+        "total": total,
+    })
+
+
+@handle_api_errors
+async def api_persona_memory_units_post(request: web.Request, data_dir: Path) -> web.Response:
+    """Create a MemoryUnit record."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+    if not isinstance(body, dict):
+        return _json_response({"error": "Invalid JSON"}, 400)
+
+    unit = _normalize_memory_unit(body)
+    if not unit["summary"]:
+        return _json_response({"error": "摘要不能为空"}, 400)
+    group_id = unit["group_id"]
+    _, units = _load_memory_units_file(_memory_unit_file(data_dir, group_id))
+    if any(item.get("unit_id") == unit["unit_id"] for item in units):
+        return _json_response({"error": "记忆单元已存在"}, 409)
+    units.append(unit)
+    _save_memory_units_file(data_dir, group_id, units)
+    return _json_response({"success": True, "unit": unit}, 201)
+
+
+@handle_api_errors
+async def api_persona_memory_unit_put(request: web.Request, data_dir: Path) -> web.Response:
+    """Update a MemoryUnit record."""
+    from urllib.parse import unquote
+
+    unit_id = unquote(str(request.match_info.get("unit_id", ""))).strip()
+    if not unit_id:
+        return _json_response({"error": "缺少记忆单元 ID"}, 400)
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+    if not isinstance(body, dict):
+        return _json_response({"error": "Invalid JSON"}, 400)
+
+    base_dir = _memory_units_dir(data_dir)
+    old_group = ""
+    old_units: list[dict[str, Any]] = []
+    old_index = -1
+    found = False
+    if base_dir.exists():
+        for path in base_dir.glob("*.json"):
+            group_id, units = _load_memory_units_file(path)
+            for index, unit in enumerate(units):
+                if str(unit.get("unit_id")) == unit_id:
+                    old_group, old_units, old_index, found = group_id, units, index, True
+                    break
+            if found:
+                break
+    if not found:
+        return _json_response({"error": "记忆单元不存在"}, 404)
+
+    updated = _normalize_memory_unit({**old_units[old_index], **body, "unit_id": unit_id}, old_group)
+    if not updated["summary"]:
+        return _json_response({"error": "摘要不能为空"}, 400)
+
+    old_units.pop(old_index)
+    _save_memory_units_file(data_dir, old_group, old_units)
+    new_group = updated["group_id"]
+    _, new_units = _load_memory_units_file(_memory_unit_file(data_dir, new_group))
+    new_units = [unit for unit in new_units if str(unit.get("unit_id")) != unit_id]
+    new_units.append(updated)
+    _save_memory_units_file(data_dir, new_group, new_units)
+    return _json_response({"success": True, "unit": updated})
+
+
+@handle_api_errors
+async def api_persona_memory_unit_delete(request: web.Request, data_dir: Path) -> web.Response:
+    """Delete a MemoryUnit record."""
+    from urllib.parse import unquote
+
+    unit_id = unquote(str(request.match_info.get("unit_id", ""))).strip()
+    if not unit_id:
+        return _json_response({"error": "缺少记忆单元 ID"}, 400)
+
+    base_dir = _memory_units_dir(data_dir)
+    if not base_dir.exists():
+        return _json_response({"error": "记忆单元不存在"}, 404)
+    for path in base_dir.glob("*.json"):
+        group_id, units = _load_memory_units_file(path)
+        kept = [unit for unit in units if str(unit.get("unit_id")) != unit_id]
+        if len(kept) != len(units):
+            _save_memory_units_file(data_dir, group_id, kept)
+            return _json_response({"success": True})
+    return _json_response({"error": "记忆单元不存在"}, 404)
+
+
 @handle_api_errors
 async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Response:
     """GET /api/persona/memory-viz — 记忆可视化数据聚合接口。
@@ -1355,6 +1626,7 @@ async def api_persona_conversation_history_get(
     paths = PersonaConfigPaths(data_dir)
 
     archive_dir = paths.dir / "archive"
+    compressed_source_index = _load_compressed_memory_source_index(paths, group_id)
 
     # 获取所有群组
     groups = []
@@ -1424,6 +1696,7 @@ async def api_persona_conversation_history_get(
         all_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
         total = len(all_messages)
         messages = all_messages[offset : offset + limit]
+        _annotate_memory_compression(messages, compressed_source_index)
     else:
         # 无筛选条件时：使用倒序读取优化
         # 统计总行数
@@ -1464,6 +1737,7 @@ async def api_persona_conversation_history_get(
 
         merged_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
         messages = merged_messages[offset : offset + limit]
+        _annotate_memory_compression(messages, compressed_source_index)
 
     return _json_response(
         {

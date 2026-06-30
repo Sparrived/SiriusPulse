@@ -6,18 +6,13 @@ import { createScopedPage } from '../page-context.js';
 const scopedPage = createScopedPage();
 const $ = scopedPage.$;
 
-function _stripProviderPrefix(value) {
-  if (!value) return '';
-  const idx = value.indexOf('/');
-  return idx >= 0 ? value.substring(idx + 1) : value;
-}
-
 function _resolveCompositeValue(bareName, options) {
   if (!bareName) return '';
   const exact = options.find(o => o.value === bareName);
   if (exact) return exact.value;
-  const suffix = options.find(o => o.value.endsWith('/' + bareName));
-  return suffix ? suffix.value : bareName;
+  if (bareName.includes('/')) return bareName;
+  const matches = options.filter(o => o.value.endsWith('/' + bareName));
+  return matches.length === 1 ? matches[0].value : bareName;
 }
 
 const CACHE_KEY = 'sirius-create-persona-draft';
@@ -231,7 +226,7 @@ function saveDraft() {
     personaId: $('personaId')?.value || '',
     personaName: $('personaName')?.value || '',
     personaAliases: $('personaAliases')?.value || '',
-    model: _stripProviderPrefix(modelSelect?.value || ''),
+    model: modelSelect?.value || '',
     tab: currentTab,
     answers: {},
     direct: {
@@ -380,7 +375,7 @@ async function createPersona() {
   const personaId = $('personaId')?.value?.trim() || '';
   const personaName = $('personaName')?.value?.trim() || '';
   const personaAliases = $('personaAliases')?.value?.trim() || '';
-  const model = _stripProviderPrefix(modelSelect?.value || '');
+  const model = modelSelect?.value || '';
 
   if (!personaId) {
     toast('请填写标识名称', 'error');

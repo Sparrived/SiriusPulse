@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 
 from sirius_pulse.webui.memory_api import (
+    _annotate_memory_compression,
+    _load_compressed_memory_source_index,
     _load_runtime_basic_memory_messages,
     _merge_conversation_messages,
 )
@@ -96,3 +98,46 @@ def test_conversation_merge_keeps_archive_intent_scores_when_runtime_lacks_them(
 
     assert len(merged) == 1
     assert merged[0]["intent_scores"] == {"social_intent": "social", "directed_score": 0.75}
+
+
+def test_conversation_history_marks_memory_compressed_sources(tmp_path):
+    memory_units = tmp_path / "memory_units"
+    memory_units.mkdir()
+    (memory_units / "group_a.json").write_text(
+        json.dumps(
+            {
+                "group_id": "group_a",
+                "units": [
+                    {
+                        "unit_id": "mem_1",
+                        "created_at": "2026-06-28T00:00:00+00:00",
+                        "unit_type": "event",
+                        "summary": "Alice agreed to redeploy.",
+                        "source_ids": ["human_1"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    paths = SimpleNamespace(dir=tmp_path)
+    messages = [
+        {"entry_id": "human_1", "content": "run deploy"},
+        {"entry_id": "human_2", "content": "still active"},
+    ]
+
+    source_index = _load_compressed_memory_source_index(paths, "group_a")
+    _annotate_memory_compression(messages, source_index)
+
+    assert messages[0]["memory_compressed"] is True
+    assert messages[0]["memory_refs"] == [
+        {
+            "kind": "memory_unit",
+            "id": "mem_1",
+            "summary": "Alice agreed to redeploy.",
+            "created_at": "2026-06-28T00:00:00+00:00",
+            "unit_type": "event",
+        }
+    ]
+    assert messages[1]["memory_compressed"] is False
+    assert messages[1]["memory_refs"] == []

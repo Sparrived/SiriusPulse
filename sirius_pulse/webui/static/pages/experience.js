@@ -16,6 +16,7 @@ const BOOLEAN_FIELDS = [
 ];
 
 let replyTimeCurvePoints = [];
+const booleanState = {};
 
 function numberInput(name, min, max, step) {
   const id = `exp_${name}`;
@@ -28,21 +29,21 @@ function numberInput(name, min, max, step) {
   `;
 }
 
-function toggleInput(name, title, desc) {
+function toggleInput(name, title, desc, size = '') {
   return `
-    <label class="exp-toggle">
-      <span>
+    <button type="button" class="exp-toggle ${size}" data-boolean-field="${name}" aria-pressed="false">
+      <span class="exp-toggle-body">
         <strong>${title}</strong>
         <small>${desc}</small>
       </span>
-      <input type="checkbox" name="${name}">
-    </label>
+      <span class="exp-toggle-state">关闭</span>
+    </button>
   `;
 }
 
-function fieldCard(title, desc, control) {
+function fieldCard(title, desc, control, size = '') {
   return `
-    <div class="exp-field-card">
+    <div class="exp-field-card ${size}">
       <label>${title}</label>
       <p>${desc}</p>
       ${control}
@@ -53,13 +54,13 @@ function fieldCard(title, desc, control) {
 function replyTimeCurveEditor() {
   return `
     <div class="exp-curve-card">
-      <label class="exp-toggle exp-curve-toggle">
-        <span>
-          <strong>启用 24 小时回复系数曲线</strong>
+      <div class="exp-curve-head">
+        <div>
+          <strong>24 小时回复系数曲线</strong>
           <small>最终参与分数 = 原始 score × 当前时间系数，再与回复阈值比较。</small>
-        </span>
-        <input type="checkbox" name="reply_time_curve_enabled">
-      </label>
+        </div>
+        <span class="exp-always-on">始终启用</span>
+      </div>
       <div class="exp-curve-toolbar">
         <span id="replyCurveNow">当前系数：1.00</span>
         <button class="btn btn-sm" type="button" id="replyCurveReset">重置为全天 1.0</button>
@@ -185,7 +186,9 @@ function pageStyles() {
       .exp-section-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
       .exp-section h3 { margin:0; font-size:16px; color:var(--text-1); }
       .exp-section p { margin:4px 0 0; color:var(--text-2); font-size:12px; line-height:1.55; }
-      .exp-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; }
+      .exp-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); grid-auto-flow:dense; gap:14px; align-items:stretch; }
+      .exp-card-wide { grid-column:span 2; }
+      .exp-card-tall { grid-row:span 2; }
       .exp-style-grid { display:grid; grid-template-columns:minmax(260px,1fr) minmax(280px,1fr); gap:18px; align-items:stretch; }
       .exp-field-card { display:grid; gap:9px; padding:14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-1,var(--bg-2)); }
       .exp-field-card label { font-size:13px; font-weight:700; color:var(--text-1); }
@@ -197,18 +200,25 @@ function pageStyles() {
       .exp-style-preview strong { color:var(--text-1); font-size:15px; }
       .exp-style-preview p { margin-top:6px; }
       .exp-style-dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:8px; background:var(--accent); }
-      .exp-toggle { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-1,var(--bg-2)); cursor:pointer; transition:border-color .15s, background .15s; }
+      .exp-toggle { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; min-height:104px; text-align:left; padding:14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-1,var(--bg-2)); color:inherit; cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s; }
       .exp-toggle:hover { border-color:var(--accent); }
+      .exp-toggle.is-enabled { border-color:color-mix(in srgb, var(--success) 70%, var(--border)); background:linear-gradient(135deg, color-mix(in srgb, var(--success) 18%, transparent), var(--surface-1,var(--bg-2))); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--success) 35%, transparent); }
+      .exp-toggle.is-disabled { opacity:.78; }
+      .exp-toggle-body { min-width:0; }
       .exp-toggle strong { display:block; color:var(--text-1); font-size:13px; margin-bottom:4px; }
       .exp-toggle small { display:block; color:var(--text-2); font-size:12px; line-height:1.45; }
-      .exp-toggle input { width:18px; height:18px; accent-color:var(--accent); flex:0 0 auto; }
-      .exp-curve-card { margin-top:14px; padding:14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-1,var(--bg-2)); }
-      .exp-curve-toggle { padding:0; border:0; background:transparent; }
+      .exp-toggle-state { flex:0 0 auto; border-radius:999px; padding:3px 8px; font-size:11px; font-weight:700; color:var(--text-3); background:var(--bg-2); border:1px solid var(--border); }
+      .exp-toggle.is-enabled .exp-toggle-state { color:var(--success); border-color:color-mix(in srgb, var(--success) 55%, var(--border)); background:color-mix(in srgb, var(--success) 14%, var(--bg-2)); }
+      .exp-curve-card { margin-top:14px; padding:14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-1,var(--bg-2)); user-select:none; }
+      .exp-curve-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+      .exp-curve-head strong { display:block; color:var(--text-1); font-size:13px; margin-bottom:4px; }
+      .exp-curve-head small { display:block; color:var(--text-2); font-size:12px; line-height:1.45; }
+      .exp-always-on { flex:0 0 auto; border-radius:999px; padding:3px 8px; font-size:11px; font-weight:700; color:var(--success); background:color-mix(in srgb, var(--success) 14%, var(--bg-2)); border:1px solid color-mix(in srgb, var(--success) 55%, var(--border)); }
       .exp-curve-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:14px 0 8px; color:var(--text-2); font-size:12px; }
-      .reply-time-curve { width:100%; height:180px; display:block; border:1px solid var(--border); border-radius:var(--radius-md); background:linear-gradient(to bottom, rgba(255,255,255,.04), transparent); touch-action:none; }
+      .reply-time-curve { width:100%; height:180px; display:block; border:1px solid var(--border); border-radius:var(--radius-md); background:linear-gradient(to bottom, rgba(255,255,255,.04), transparent); touch-action:none; user-select:none; }
       .reply-time-curve path { fill:none; stroke:var(--accent); stroke-width:3; }
       .reply-time-curve circle { fill:var(--accent); stroke:var(--bg-1); stroke-width:3; cursor:grab; }
-      .reply-time-curve circle:active { cursor:grabbing; }
+      .reply-time-curve.is-dragging, .reply-time-curve.is-dragging circle, .reply-time-curve circle:active { cursor:grabbing; }
       .reply-time-curve text { fill:var(--text-3); font-size:10px; }
       .reply-time-curve line { stroke:var(--border); stroke-width:1; opacity:.65; }
       .exp-curve-axis { display:flex; justify-content:space-between; color:var(--text-3); font-size:11px; margin-top:6px; }
@@ -217,6 +227,7 @@ function pageStyles() {
       .exp-curve-point input { width:100%; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-size:12px; }
       .exp-quadrant { min-height:260px; }
       @media (max-width: 900px) { .exp-style-grid { grid-template-columns:1fr; } .exp-hero { flex-direction:column; } }
+      @media (max-width: 620px) { .exp-grid { grid-template-columns:1fr; } .exp-card-wide, .exp-card-tall { grid-column:span 1; grid-row:span 1; } .exp-toggle { min-height:auto; } }
     </style>
   `;
 }
@@ -278,20 +289,20 @@ export async function init(container, params = {}) {
 
         ${section('回复控制', '控制实际发言节奏和外显长度，避免刷屏或连续抢答。', `
           <div class="exp-grid">
-            ${fieldCard('最小回复间隔（秒）', '两次实际发言之间至少等待多久。0 表示不限制。', numberInput('min_reply_interval_seconds', 0))}
+            ${fieldCard('最小回复间隔（秒）', '两次实际发言之间至少等待多久。0 表示不限制。', numberInput('min_reply_interval_seconds', 0), 'exp-card-wide')}
             ${fieldCard('主模型调用冷却（秒）', '主回复模型之间的冷却时间，用于降低连续 LLM 调用。', numberInput('main_model_reply_cooldown_seconds', 0, null, 0.5))}
             ${fieldCard('单句最大长度（字）', '限制拆分后每句话的长度，越小越像短句聊天。', numberInput('max_sentence_chars', 5, 50))}
           </div>
           ${replyTimeCurveEditor()}
         `)}
 
-        ${section('工具与计划', '布尔配置改为复选框；勾选代表启用，取消勾选代表关闭。', `
+        ${section('工具与计划', '集中管理工具能力、计划流程和计划状态表现。', `
           <div class="exp-grid">
-            ${toggleInput('enable_skills', '启用技能', '允许模型在需要时调用已启用技能。')}
+            ${toggleInput('enable_skills', '启用技能', '允许模型在需要时调用已启用技能。', 'exp-card-wide')}
             ${fieldCard('最大技能轮数', '限制单次回复中工具调用和模型续写的循环次数。', numberInput('max_skill_rounds', 0))}
-            ${toggleInput('plan_mode_enabled', '启用计划模式', '允许模型进入多步骤计划流程。')}
+            ${toggleInput('plan_mode_enabled', '启用计划模式', '允许模型进入多步骤计划流程。', 'exp-card-tall')}
             ${toggleInput('plan_mode_limit_normal_tools', '普通聊天限制工具', '计划模式开启时，普通聊天不主动使用常规工具。')}
-            ${toggleInput('plan_mode_allow_light_chat', '计划中允许轻量闲聊', '计划执行期间允许少量自然聊天，不完全静默。')}
+            ${toggleInput('plan_mode_allow_light_chat', '计划中允许轻量闲聊', '计划执行期间允许少量自然聊天，不完全静默。', 'exp-card-wide')}
             ${toggleInput('plan_mode_chat_awareness_enabled', '在聊天中暴露计划状态', '把公开计划状态注入聊天提示词，便于上下文衔接。')}
             ${toggleInput('plan_mode_presence_enabled', '发送计划状态消息', '计划处理较久时，向群里发送“正在处理”的存在感消息。')}
             ${fieldCard('状态消息间隔（秒）', '计划状态消息的最小发送间隔。', numberInput('plan_mode_presence_min_interval_seconds', 0))}
@@ -379,6 +390,7 @@ function setupReplyTimeCurve() {
   const padding = 14;
   const plotHeight = height - padding * 2;
   let dragIndex = null;
+  let previousBodyUserSelect = '';
 
   function pointToSvg(point) {
     const minutes = parseCurveTime(point.time) ?? 0;
@@ -388,14 +400,41 @@ function setupReplyTimeCurve() {
     };
   }
 
-  function eventToPoint(event) {
+  function eventToPoint(event, index = null) {
     const rect = svg.getBoundingClientRect();
     const x = Math.max(0, Math.min(width, ((event.clientX - rect.left) / rect.width) * width));
     const y = Math.max(padding, Math.min(height - padding, ((event.clientY - rect.top) / rect.height) * height));
+    let minutes = Math.round((x / width) * 1440);
+    if (index !== null) {
+      const previous = index > 0 ? parseCurveTime(replyTimeCurvePoints[index - 1]?.time) : null;
+      const next = index < replyTimeCurvePoints.length - 1 ? parseCurveTime(replyTimeCurvePoints[index + 1]?.time) : null;
+      const min = previous === null ? 0 : previous + 1;
+      const max = next === null ? 1440 : next - 1;
+      minutes = Math.max(min, Math.min(max, minutes));
+    }
     return {
-      time: formatCurveTime((x / width) * 1440),
+      time: formatCurveTime(minutes),
       coefficient: Number((2 - ((y - padding) / plotHeight) * 2).toFixed(2)),
     };
+  }
+
+  function startDrag(event, index) {
+    event.preventDefault();
+    dragIndex = index;
+    previousBodyUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = 'none';
+    svg.classList.add('is-dragging');
+    svg.setPointerCapture?.(event.pointerId);
+  }
+
+  function endDrag(event) {
+    if (dragIndex === null) return;
+    dragIndex = null;
+    document.body.style.userSelect = previousBodyUserSelect;
+    svg.classList.remove('is-dragging');
+    if (event?.pointerId !== undefined && svg.hasPointerCapture?.(event.pointerId)) {
+      svg.releasePointerCapture?.(event.pointerId);
+    }
   }
 
   function render() {
@@ -453,22 +492,24 @@ function setupReplyTimeCurve() {
   svg.addEventListener('pointerdown', event => {
     const circle = event.target.closest?.('[data-curve-index]');
     if (circle) {
-      dragIndex = parseInt(circle.dataset.curveIndex, 10);
-      svg.setPointerCapture?.(event.pointerId);
+      startDrag(event, parseInt(circle.dataset.curveIndex, 10));
       return;
     }
+    event.preventDefault();
     replyTimeCurvePoints.push(eventToPoint(event));
     render();
   });
 
   svg.addEventListener('pointermove', event => {
     if (dragIndex === null) return;
-    replyTimeCurvePoints[dragIndex] = eventToPoint(event);
+    event.preventDefault();
+    replyTimeCurvePoints[dragIndex] = eventToPoint(event, dragIndex);
     render();
   });
 
-  svg.addEventListener('pointerup', () => { dragIndex = null; });
-  svg.addEventListener('pointerleave', () => { dragIndex = null; });
+  svg.addEventListener('pointerup', endDrag);
+  svg.addEventListener('pointercancel', endDrag);
+  svg.addEventListener('lostpointercapture', endDrag);
 
   reset?.addEventListener('click', () => {
     replyTimeCurvePoints = [{ time: '00:00', coefficient: 1 }, { time: '24:00', coefficient: 1 }];
@@ -478,8 +519,24 @@ function setupReplyTimeCurve() {
   render();
 }
 
-function setCheckbox(form, name, value) {
-  if (form[name]) form[name].checked = Boolean(value);
+function setBooleanField(name, value) {
+  booleanState[name] = Boolean(value);
+  const card = scopedPage.query(`[data-boolean-field="${name}"]`);
+  if (!card) return;
+  card.classList.toggle('is-enabled', booleanState[name]);
+  card.classList.toggle('is-disabled', !booleanState[name]);
+  card.setAttribute('aria-pressed', String(booleanState[name]));
+  const state = card.querySelector('.exp-toggle-state');
+  if (state) state.textContent = booleanState[name] ? '启用' : '关闭';
+}
+
+function setupBooleanCards() {
+  scopedPage.$$('[data-boolean-field]').forEach(card => {
+    card.addEventListener('click', () => {
+      const name = card.dataset.booleanField;
+      setBooleanField(name, !booleanState[name]);
+    });
+  });
 }
 
 async function loadExperience(name) {
@@ -497,7 +554,6 @@ async function loadExperience(name) {
 
     form.min_reply_interval_seconds.value = data.min_reply_interval_seconds ?? 2;
     form.main_model_reply_cooldown_seconds.value = data.main_model_reply_cooldown_seconds ?? 0;
-    form.reply_time_curve_enabled.checked = Boolean(data.reply_time_curve_enabled ?? false);
     replyTimeCurvePoints = normalizeCurvePoints(data.reply_time_curve_points || []);
     if (!replyTimeCurvePoints.length) {
       replyTimeCurvePoints = [{ time: '00:00', coefficient: 1 }, { time: '24:00', coefficient: 1 }];
@@ -508,15 +564,16 @@ async function loadExperience(name) {
     form.diary_top_k.value = data.diary_top_k ?? 5;
     form.diary_token_budget.value = data.diary_token_budget ?? 2000;
 
-    setCheckbox(form, 'enable_skills', data.enable_skills ?? true);
-    setCheckbox(form, 'plan_mode_enabled', data.plan_mode_enabled ?? false);
-    setCheckbox(form, 'plan_mode_limit_normal_tools', data.plan_mode_limit_normal_tools ?? false);
-    setCheckbox(form, 'plan_mode_allow_light_chat', data.plan_mode_allow_light_chat ?? true);
-    setCheckbox(form, 'plan_mode_chat_awareness_enabled', data.plan_mode_chat_awareness_enabled ?? false);
-    setCheckbox(form, 'plan_mode_presence_enabled', data.plan_mode_presence_enabled ?? false);
+    setBooleanField('enable_skills', data.enable_skills ?? true);
+    setBooleanField('plan_mode_enabled', data.plan_mode_enabled ?? false);
+    setBooleanField('plan_mode_limit_normal_tools', data.plan_mode_limit_normal_tools ?? false);
+    setBooleanField('plan_mode_allow_light_chat', data.plan_mode_allow_light_chat ?? true);
+    setBooleanField('plan_mode_chat_awareness_enabled', data.plan_mode_chat_awareness_enabled ?? false);
+    setBooleanField('plan_mode_presence_enabled', data.plan_mode_presence_enabled ?? false);
 
     setupQuadrant();
     setupReplyTimeCurve();
+    setupBooleanCards();
 
     $('expSave').addEventListener('click', () => saveExperience(name));
 
@@ -547,7 +604,6 @@ async function saveExperience(name) {
     expressiveness: parseFloat(form.expressiveness.value),
     min_reply_interval_seconds: parseInt(form.min_reply_interval_seconds.value, 10),
     main_model_reply_cooldown_seconds: parseFloat(form.main_model_reply_cooldown_seconds.value),
-    reply_time_curve_enabled: Boolean(form.reply_time_curve_enabled?.checked),
     reply_time_curve_points: normalizeCurvePoints(replyTimeCurvePoints),
     max_sentence_chars: parseInt(form.max_sentence_chars.value, 10),
     max_skill_rounds: parseInt(form.max_skill_rounds.value, 10),
@@ -560,7 +616,7 @@ async function saveExperience(name) {
   };
 
   BOOLEAN_FIELDS.forEach(name => {
-    experience[name] = Boolean(form[name]?.checked);
+    experience[name] = Boolean(booleanState[name]);
   });
 
   try {

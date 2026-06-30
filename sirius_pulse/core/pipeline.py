@@ -293,12 +293,10 @@ class Pipeline:
 
         sensitivity = engine.config.get("sensitivity", 0.5)
         directed_gate = engine.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
-        reply_time_coefficient = 1.0
-        if engine.config.get("reply_time_curve_enabled", False):
-            reply_time_coefficient = get_reply_time_coefficient(
-                engine.config.get("reply_time_curve_points", []),
-                datetime.now().time(),
-            )
+        reply_time_coefficient = get_reply_time_coefficient(
+            engine.config.get("reply_time_curve_points", []),
+            datetime.now().time(),
+        )
 
         # 亲和度调节
         user_profile = engine.semantic_memory.get_user_profile(group_id, user_id)
@@ -462,7 +460,6 @@ class Pipeline:
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
             persona_profile_context=persona_profile_context,
-            signal_prompt=signal.to_prompt_text(),
         )
         engine._persist_group_state(group_id)
 

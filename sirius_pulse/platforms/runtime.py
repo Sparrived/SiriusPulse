@@ -442,7 +442,6 @@ class EngineRuntime:
                     exp.main_model_reply_cooldown_seconds,
                 )
             ),
-            "reply_time_curve_enabled": exp.reply_time_curve_enabled,
             "reply_time_curve_points": exp.reply_time_curve_points,
             "max_skill_rounds": int(self.plugin_config.get("max_skill_rounds", 3)),
             "partial_reply_lead_seconds": float(

@@ -272,8 +272,7 @@ class ContextAssembler:
                     max_tokens_budget=diary_token_budget,
                 )
                 memory_text = "\n".join(
-                    f"{i}. {getattr(unit, 'summary', '')}"
-                    for i, unit in enumerate(memory_units[:12], 1)
+                    getattr(unit, "summary", "") for unit in memory_units[:12]
                 )
             elif self._diary is not None:
                 diary_entries = self._diary.retrieve(
@@ -341,14 +340,12 @@ class ContextAssembler:
             "<memory_units>",
             "The following are compact background memory facts, not current chat messages. Use them only when directly helpful. Do not mention checking memory, reading logs, or remembering these facts.",
         ]
-        for i, unit in enumerate(memory_units[:12], 1):
+        for unit in memory_units[:12]:
             ts = (getattr(unit, "created_at", "") or "")[:16].replace("T", " ")
             unit_type = getattr(unit, "unit_type", "") or "event"
             summary = getattr(unit, "summary", "") or ""
-            keywords = getattr(unit, "keywords", []) or []
-            keyword_text = f" keywords={','.join(keywords[:5])}" if keywords else ""
-            prefix = f"{i}. [{ts}] ({unit_type})" if ts else f"{i}. ({unit_type})"
-            lines.append(f"{prefix} {summary}{keyword_text}")
+            prefix = f"[{ts}] ({unit_type})" if ts else f"({unit_type})"
+            lines.append(f"{prefix} {summary}")
         lines.append("</memory_units>")
         return "\n".join(lines)
 
@@ -471,7 +468,7 @@ class ContextAssembler:
         """返回已组装完成的稳定 system prompt。
 
         只包含不随消息变化的静态内容，利于 prompt caching。
-        输出规范、人格和风格文本由 PromptFactory.assemble_chat 统一注入。
+        回复规范、人格和风格文本由 PromptFactory.assemble_chat 统一注入。
         动态内容（传记、关系、记忆等）由 PromptFactory.assemble_chat
         产出为 dynamic_context，注入到 user 消息中。
         """
