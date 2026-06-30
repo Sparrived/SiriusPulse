@@ -21,6 +21,9 @@ for (const file of readdirSync(pagesDir).filter((name) => name.endsWith('.js')).
   if (/(window|document)\.addEventListener\s*\(/.test(source)) {
     offenders.push(`${file}: uses unmanaged global listener`);
   }
+  if (/scopedPage\.\$\([^)]*\)\.forEach\s*\(/.test(source)) {
+    offenders.push(`${file}: uses scopedPage.$ for multiple elements`);
+  }
   const nakedListeners = [...source.matchAll(/(?<!ctx\.on\([^\n]*)\.addEventListener\(/g)].length;
   if (nakedListeners > 0 && !/params\?\.ctx|\{\s*ctx\s*\}/.test(source)) {
     offenders.push(`${file}: has naked addEventListener without ctx`);

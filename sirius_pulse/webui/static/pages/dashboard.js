@@ -2,6 +2,7 @@ import { store } from '../store.js';
 import { get, post, navTo, selectPersona } from '../app.js';
 import { toast, animateNumber, formatHeartbeat } from '../components.js';
 import { GlobeRenderer } from './globe-renderer.js';
+import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
@@ -253,6 +254,11 @@ class StarfieldRenderer {
 let globe = null;
 let starfield = null;
 let currentPersona = null;
+const realtime = createRealtimeRefresh(refreshDashboardRealtime, {
+  resources: ['dashboard', 'monitoring', 'personas', 'tokens', 'cognition', 'skill-history', 'conversations'],
+  debounceMs: 700,
+  personaScoped: false,
+});
 let personasData = [];
 let onPersonaFocus = null;
 let panelPersonaIndex = -1;
@@ -273,9 +279,20 @@ export async function init(container, params = {}) {
   scopedPage.use(params?.ctx, container);
   initStarfield();
   initGlobe();
-  await Promise.all([loadStats(), loadPersonas()]);
+  await loadPersonas();
+  await loadStats();
   startAnimationLoop();
   bindEvents();
+  realtime.start();
+}
+
+async function refreshDashboardRealtime() {
+  await loadPersonas();
+  await loadStats();
+  if (currentPersona) {
+    const index = personasData.findIndex(p => p.name === currentPersona.name);
+    if (index >= 0) updatePersonaPanel(index);
+  }
 }
 
 // 初始化星空背景
@@ -562,7 +579,7 @@ function bindEvents() {
   }
 
   // 统计项点击涟漪效果 + 可导航项跳转
-  scopedPage.$('.stat-item').forEach(item => {
+  scopedPage.$$('.stat-item').forEach(item => {
     item.addEventListener('click', (e) => {
       const ripple = document.createElement('span');
       ripple.className = 'stat-ripple';
@@ -922,6 +939,7 @@ function initPersonaSpots() {
 // ==================== 清理 ====================
 
 export function destroy() {
+  realtime.stop();
   if (onPersonaFocus) {
     window.removeEventListener('persona:focus', onPersonaFocus);
     onPersonaFocus = null;

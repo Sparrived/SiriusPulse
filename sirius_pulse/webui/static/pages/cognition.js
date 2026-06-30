@@ -8,7 +8,7 @@ import {
   renderRadarChart,
   disposeChart,
 } from '../charts.js';
-import { createRealtimePoller } from './realtime.js';
+import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
@@ -51,10 +51,13 @@ const RADAR_LABELS = [
 
 const STRATEGY_COLORS = ['#52c41a','#faad14','#8c8c8c','#1890ff','#722ed1'];
 const HEAT_COLORS = ['#d9d9d9','#95de64','#ffc53d','#ff4d4f'];
-const poller = createRealtimePoller(() => refreshRealtime(true), 3000);
+const realtime = createRealtimeRefresh(() => refreshRealtime(true), {
+  resources: ['cognition'],
+  debounceMs: 600,
+});
 
 export function dispose() {
-  poller.stop();
+  realtime.stop();
 }
 
 export async function init(container, params = {}) {
@@ -165,7 +168,7 @@ export async function init(container, params = {}) {
   `;
 
   await refreshRealtime(false);
-  poller.start();
+  realtime.start();
 }
 
 async function refreshRealtime(silent = true) {

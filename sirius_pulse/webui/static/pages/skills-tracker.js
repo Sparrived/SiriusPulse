@@ -1,7 +1,7 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
 import { toast } from '../components.js';
-import { createRealtimePoller } from './realtime.js';
+import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
@@ -13,13 +13,14 @@ let successFilter = '';
 let currentPage = 0;
 let totalRecords = 0;
 const PAGE_SIZE = 50;
-const poller = createRealtimePoller(() => {
-  if (currentPage === 0) return loadHistory(true);
-  return Promise.resolve();
-}, 3000);
+const realtime = createRealtimeRefresh(() => loadHistory(true), {
+  resources: ['skill-history'],
+  debounceMs: 500,
+  shouldRefresh: () => currentPage === 0,
+});
 
 export function dispose() {
-  poller.stop();
+  realtime.stop();
 }
 
 export async function init(container, params = {}) {
@@ -93,7 +94,7 @@ export async function init(container, params = {}) {
   }
 
   await loadHistory();
-  poller.start();
+  realtime.start();
 }
 
 async function loadHistory(silent = false) {

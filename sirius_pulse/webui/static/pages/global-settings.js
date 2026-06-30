@@ -40,7 +40,7 @@ export async function init(container, params = {}) {
   $('gsResetBtn').addEventListener('click', () => fillForm(currentConfig));
 
   // 数字调节按钮事件
-  scopedPage.$('[data-spin-target]').forEach(btn => {
+  scopedPage.$$('[data-spin-target]').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = $(btn.dataset.spinTarget);
       if (!target) return;

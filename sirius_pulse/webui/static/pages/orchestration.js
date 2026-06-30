@@ -2,16 +2,16 @@ import { store } from '../store.js';
 import { get, post } from '../app.js';
 import { toast, flashSuccess, ModelSelect } from '../components.js';
 import { buildModelChoicesByType, loadModelsDevForTypes } from './model-dev.js';
-import {
 import { createScopedPage } from '../page-context.js';
-
-const scopedPage = createScopedPage();
-const $ = scopedPage.$;
+import {
   buildLegacyModelChoice,
   resolveCompositeModelValue,
   stripProviderPrefix,
   toModelSelectOptions,
 } from './orchestration-model-options.js';
+
+const scopedPage = createScopedPage();
+const $ = scopedPage.$;
 
 const TASK_GROUPS = [
   {
@@ -296,7 +296,7 @@ function _mountModelSelects(data) {
     { value: '__inherit__', label: '继承通用', tags: [] },
     ...baseOpts,
   ];
-  scopedPage.$('.task-model-select').forEach(container => {
+  scopedPage.$$('.task-model-select').forEach(container => {
     const task = container.dataset.task;
     const bareValue = container.dataset.value || '__inherit__';
     const value = bareValue === '__inherit__'
@@ -317,7 +317,7 @@ function _mountModelSelects(data) {
 }
 
 function setupOverrideListeners() {
-  scopedPage.$('.task-override').forEach(cb => {
+  scopedPage.$$('.task-override').forEach(cb => {
     cb.addEventListener('change', () => {
       const task = cb.dataset.task;
       const container = scopedPage.query(`.task-model-select[data-task="${task}"]`);
@@ -362,7 +362,8 @@ function renderParamTuning() {
     { value: '', label: '无 fallback', tags: [] },
     ..._mselOptions(),
   ];
-  scopedPage.$('.fb-model-select').forEach(container => {
+  const configuredOpts = _configuredOptions();
+  scopedPage.$$('.fb-model-select').forEach(container => {
     const task = container.dataset.task;
     const overrides = taskParamOverrides[task] || {};
     const saved = overrides.fallback_model || '';
@@ -486,7 +487,7 @@ async function saveOrchestration(name) {
   // 1) 模型编排
   const taskModels = {};
   const taskEnabled = {};
-  scopedPage.$('.task-model-select').forEach(container => {
+  scopedPage.$$('.task-model-select').forEach(container => {
     const task = container.dataset.task;
     const enabled = scopedPage.query(`.task-enabled[data-task="${task}"]`)?.checked ?? true;
     const isOverridden = scopedPage.query(`.task-override[data-task="${task}"]`)?.checked ?? false;
@@ -503,7 +504,7 @@ async function saveOrchestration(name) {
   const taskTimeout = {};
   const taskFallbackModel = {};
 
-  scopedPage.$('.tp-num').forEach(input => {
+  scopedPage.$$('.tp-num').forEach(input => {
     const task = input.dataset.task;
     const field = input.dataset.field;
     const raw = input.value.trim();

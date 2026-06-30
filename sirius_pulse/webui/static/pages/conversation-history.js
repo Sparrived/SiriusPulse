@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { get, del } from '../app.js';
 import { toast } from '../components.js';
+import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
@@ -15,11 +16,17 @@ let activeSpeaker = '';
 let currentOffset = 0;
 const PAGE_SIZE = 100;
 
-let pollTimer = null;
 let isLive = true;
+let isLoadingMessages = false;
+let needsReloadAfterLoad = false;
+const realtime = createRealtimeRefresh(() => loadMessages(true), {
+  resources: ['conversations'],
+  debounceMs: 500,
+  shouldRefresh: () => isLive && currentOffset === 0,
+});
 
 export function dispose() {
-  stopPolling();
+  realtime.stop();
 }
 
 const TAG_COLORS = {
@@ -161,19 +168,24 @@ export async function init(container, params = {}) {
     liveToggleEl.addEventListener('click', () => {
       isLive = !isLive;
       updateLiveIndicator();
-      if (isLive) startPolling();
-      else stopPolling();
+      if (isLive && currentOffset === 0) loadMessages(true);
     });
   }
 
   await loadMessages();
   updateLiveIndicator();
-  startPolling();
+  realtime.start();
 }
 
 async function loadMessages(silent = false) {
   const name = store.currentPersona;
   if (!name) return;
+
+  if (isLoadingMessages) {
+    needsReloadAfterLoad = true;
+    return;
+  }
+  isLoadingMessages = true;
 
   const params = new URLSearchParams({
     limit: String(PAGE_SIZE),
@@ -206,6 +218,12 @@ async function loadMessages(silent = false) {
           </div>
         `;
       }
+    }
+  } finally {
+    isLoadingMessages = false;
+    if (needsReloadAfterLoad && scopedPage.isActive()) {
+      needsReloadAfterLoad = false;
+      await loadMessages(true);
     }
   }
 }
@@ -615,7 +633,7 @@ function renderMessages() {
         ${renderMessageTags(tags)}
         ${m.role === 'assistant' ? renderInjectedToolTags(injectedToolNames) : ''}
         ${renderIntentScores(m.intent_scores)}
-        ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, openChainEntryIds.has(entryId)) : ''}
+        ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, idx, openChainEntryIds.has(entryId)) : ''}
       </div>
     `;
   }).join('');
@@ -645,13 +663,16 @@ const CHAIN_ROLE_STYLES = {
   assistant: { color: 'var(--success)', label: 'ASSISTANT', bg: 'var(--success)08' },
 };
 
-function renderConversationChainToggle(chainMsgId, chain, entryId = '', isOpen = false) {
+function renderConversationChainToggle(chainMsgId, chain, entryId = '', messageIndex = 0, isOpen = false) {
   const msgCount = chain.length;
   const totalChars = chain.reduce((sum, m) => sum + (m.content || '').length, 0);
-  const totalTokens = estimateTokens(chain.map(m => m.content || '').join(''));
+  const totalTokens = Math.ceil(totalChars / 2);
 
   const displayStyle = isOpen ? 'display:block' : 'display:none';
   const arrowTransform = isOpen ? 'transform:rotate(90deg)' : '';
+  const chainHtml = isOpen
+    ? renderChainMessages(chain)
+    : '<div style="padding:12px;color:var(--text-3);font-size:12px">点击后加载消息链详情</div>';
 
   // 统计各角色消息数
   const roleCounts = {};
@@ -665,13 +686,13 @@ function renderConversationChainToggle(chainMsgId, chain, entryId = '', isOpen =
 
   return `
     <div style="margin-top:10px">
-      <button class="btn btn-sm chain-toggle" data-target="${chainMsgId}" style="font-size:11px;padding:4px 10px;display:flex;align-items:center;gap:6px;background:var(--accent)11;border:1px solid var(--accent)33">
+      <button class="btn btn-sm chain-toggle" data-target="${chainMsgId}" data-chain-index="${messageIndex}" style="font-size:11px;padding:4px 10px;display:flex;align-items:center;gap:6px;background:var(--accent)11;border:1px solid var(--accent)33">
         <span class="toggle-arrow" style="display:inline-block;transition:transform 0.2s;${arrowTransform}">▸</span>
         <span>查看 LLM 消息链</span>
         <span style="color:var(--text-3);font-size:10px">${msgCount} 条消息 · ${totalTokens} tokens · ${roleSummary}</span>
       </button>
-      <div id="${chainMsgId}" class="chain-detail" data-entry-id="${entryId}" style="${displayStyle};margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:600px;overflow-y:auto">
-        ${renderChainMessages(chain)}
+      <div id="${chainMsgId}" class="chain-detail" data-entry-id="${entryId}" data-loaded="${isOpen ? 'true' : 'false'}" style="${displayStyle};margin-top:8px;border:1px solid var(--border);border-radius:6px;max-height:600px;overflow-y:auto">
+        ${chainHtml}
       </div>
     </div>
   `;
@@ -961,30 +982,29 @@ function bindDeleteButtons() {
   });
 }
 
-function bindChainToggles() {
-  scopedPage.$$('.chain-toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = $(btn.dataset.target);
-      if (!target) return;
-      const isOpen = target.style.display !== 'none';
-      target.style.display = isOpen ? 'none' : 'block';
-      const arrow = btn.querySelector('.toggle-arrow');
-      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
-    });
-  });
+function renderChainDetailForButton(btn, target) {
+  if (target.dataset.loaded === 'true') return;
+  const idx = Number(btn.dataset.chainIndex);
+  const message = messages[idx];
+  const chain = buildConversationChain(message);
+  target.innerHTML = renderChainMessages(chain);
+  target.dataset.loaded = 'true';
+  bindChainSectionToggles(target);
+}
 
-  scopedPage.$$('.chain-detail').forEach(detail => {
-    detail.addEventListener('wheel', (e) => {
-      const { scrollTop, scrollHeight, clientHeight } = detail;
-      const atTop = e.deltaY < 0 && scrollTop === 0;
-      const atBottom = e.deltaY > 0 && scrollTop + clientHeight >= scrollHeight;
-      if (!atTop && !atBottom) {
-        e.stopPropagation();
-      }
-    }, { passive: true });
-  });
+function bindChainDetailScroll(detail) {
+  detail.addEventListener('wheel', (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = detail;
+    const atTop = e.deltaY < 0 && scrollTop === 0;
+    const atBottom = e.deltaY > 0 && scrollTop + clientHeight >= scrollHeight;
+    if (!atTop && !atBottom) {
+      e.stopPropagation();
+    }
+  }, { passive: true });
+}
 
-  scopedPage.$$('.chain-section-header').forEach(header => {
+function bindChainSectionToggles(root) {
+  root.querySelectorAll('.chain-section-header').forEach(header => {
     header.addEventListener('click', () => {
       const target = $(header.dataset.target);
       if (!target) return;
@@ -993,6 +1013,25 @@ function bindChainToggles() {
       const arrow = header.querySelector('.chain-section-arrow');
       if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
     });
+  });
+}
+
+function bindChainToggles() {
+  scopedPage.$$('.chain-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = $(btn.dataset.target);
+      if (!target) return;
+      const isOpen = target.style.display !== 'none';
+      if (!isOpen) renderChainDetailForButton(btn, target);
+      target.style.display = isOpen ? 'none' : 'block';
+      const arrow = btn.querySelector('.toggle-arrow');
+      if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+    });
+  });
+
+  scopedPage.$$('.chain-detail').forEach(detail => {
+    bindChainDetailScroll(detail);
+    bindChainSectionToggles(detail);
   });
 }
 
@@ -1034,24 +1073,9 @@ function renderPagination(total) {
   }
 }
 
-function startPolling() {
-  stopPolling();
-  if (!isLive) return;
-  pollTimer = scopedPage.interval(() => {
-    if (currentOffset === 0) loadMessages(true);
-  }, 5000);
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-}
-
 function updateLiveIndicator() {
   const dot = $('liveDot');
   const label = $('liveLabel');
   if (dot) dot.style.background = isLive ? 'var(--success)' : 'var(--text-3)';
-  if (label) label.textContent = isLive ? '实时' : '已暂停';
+  if (label) label.textContent = isLive ? '事件实时' : '已暂停';
 }

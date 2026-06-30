@@ -6,6 +6,7 @@ import json
 import logging
 import socket
 import multiprocessing
+import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -26,7 +27,7 @@ from sirius_pulse.webui.middleware import auth_middleware
 from sirius_pulse.webui.model_catalog import build_model_catalog
 from sirius_pulse.webui.routes import WEBUI_ROUTES
 from sirius_pulse.webui.server_utils import _json_response
-from sirius_pulse.webui.ws_server import WebSocketManager, setup_ws_routes
+from sirius_pulse.webui.ws_server import WebSocketManager, WebUIFileEventBridge, setup_ws_routes
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -82,6 +83,7 @@ class WebUIServer:
         self.host = host
         self.port = port
         self.ws_manager = WebSocketManager()
+        self.file_event_bridge = WebUIFileEventBridge(self.data_dir, self.ws_manager)
         self.auth_manager = AuthManager(self.data_dir)
         self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
         self.app[DATA_DIR_KEY] = self.data_dir
@@ -172,9 +174,12 @@ class WebUIServer:
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.host, self.port)
         await self.site.start()
+        self.file_event_bridge.start(asyncio.get_running_loop())
         LOG.info("WebUI running on http://%s:%s", self.host, self.port)
 
     async def stop(self) -> None:
+        self.file_event_bridge.stop()
+        await self.ws_manager.close_all()
         if self.site:
             await self.site.stop()
         if self.runner:

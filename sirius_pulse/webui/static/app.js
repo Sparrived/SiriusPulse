@@ -5,6 +5,7 @@ import { initTheme, applyTheme, getThemes, getModes, applyMode } from './theme.j
 import { wsConnect } from './ws.js';
 import { toast, formatHeartbeat, $ } from './components.js';
 import { createPageContext } from './page-context.js';
+import { createRealtimeRefresh } from './pages/realtime.js';
 
 const PAGE_META = {
   'dashboard': { title: '概览', breadcrumb: 'Dashboard', icon: '◈' },
@@ -67,6 +68,12 @@ let sidebarCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
 let activePageModule = null;
 let activePageAbortController = null;
 let navVersion = 0;
+const personasRealtime = createRealtimeRefresh(
+  async () => {
+    if (getToken()) await loadPersonas();
+  },
+  { resources: ['personas'], debounceMs: 500, personaScoped: false }
+);
 
 // 从localStorage加载分组折叠状态
 let collapsedGroups = {};
@@ -454,6 +461,8 @@ async function init() {
     const hashPage = window.location.hash.slice(1);
     const startPage = PAGE_META[hashPage] ? hashPage : 'dashboard';
     navTo(startPage);
+    wsConnect();
+    personasRealtime.start();
   });
 
   window.addEventListener('ws:connected', () => {
@@ -479,6 +488,7 @@ async function init() {
     const startPage = PAGE_META[hashPage] ? hashPage : 'dashboard';
     navTo(startPage);
     wsConnect();
+    personasRealtime.start();
   }
 
   subscribe('mode', () => renderSidebarFooter());
@@ -490,7 +500,6 @@ async function init() {
     }
   });
 
-  setInterval(async () => { if (getToken()) await loadPersonas(); }, 8000);
 }
 
 init();

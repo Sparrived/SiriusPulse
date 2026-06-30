@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -17,6 +18,51 @@ LOG = logging.getLogger("sirius.webui.ws")
 
 # 心跳间隔（秒）
 _PING_INTERVAL = 30
+
+
+def _path_event_payload(data_dir: Path, path: Path) -> dict[str, Any] | None:
+    """Map a changed file under data_dir to coarse WebUI resource events."""
+    try:
+        rel = path.resolve().relative_to(data_dir.resolve())
+    except Exception:
+        return None
+
+    parts = rel.parts
+    name = path.name.lower()
+    resources: set[str] = set()
+    persona = ""
+
+    if "personas" in parts:
+        idx = parts.index("personas")
+        if idx + 1 < len(parts):
+            persona = parts[idx + 1]
+
+    if name in {"global_config.json", "webui_status.json", "worker_status.json"}:
+        resources.update({"personas", "monitoring", "dashboard"})
+    if name.endswith((".log", ".txt")) or "logs" in parts:
+        resources.add("logs")
+    if "token_usage.db" in name or name == "token_usage_records.json":
+        resources.update({"tokens", "monitoring", "dashboard"})
+    if "cognition_events.db" in name:
+        resources.update({"cognition", "monitoring", "dashboard"})
+    if name.endswith(".jsonl") and "archive" in parts:
+        resources.update({"conversations", "monitoring", "dashboard"})
+    if name == "basic_memory.json":
+        resources.update({"conversations", "memory", "monitoring", "dashboard"})
+    if name == ".telemetry.jsonl":
+        resources.update({"skill-history", "monitoring", "dashboard"})
+    if "diary" in parts or "memory" in parts:
+        resources.update({"memory", "dashboard"})
+
+    if not resources:
+        return None
+
+    return {
+        "type": "data_changed",
+        "resources": sorted(resources),
+        "persona": persona,
+        "path": str(rel).replace("\\", "/"),
+    }
 
 
 class WebSocketManager:
@@ -165,6 +211,73 @@ class WebSocketManager:
             return True
         except (ConnectionResetError, asyncio.CancelledError, RuntimeError):
             return False
+
+
+class WebUIFileEventBridge:
+    """Watch data files and publish coarse change events to WebSocket clients."""
+
+    def __init__(self, data_dir: Path, ws_manager: WebSocketManager) -> None:
+        self.data_dir = Path(data_dir).resolve()
+        self.ws_manager = ws_manager
+        self._observer: Any = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._last_emit: dict[tuple[str, str], float] = {}
+
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        if self._observer is not None:
+            return
+        try:
+            from watchdog.events import FileSystemEventHandler
+            from watchdog.observers import Observer
+        except Exception:
+            LOG.warning("watchdog 不可用，WebUI 文件事件推送已禁用")
+            return
+
+        bridge = self
+
+        class Handler(FileSystemEventHandler):
+            def on_modified(self, event: Any) -> None:
+                bridge._handle_path(event.src_path, event.is_directory)
+
+            def on_created(self, event: Any) -> None:
+                bridge._handle_path(event.src_path, event.is_directory)
+
+            def on_moved(self, event: Any) -> None:
+                bridge._handle_path(getattr(event, "dest_path", event.src_path), event.is_directory)
+
+        self._loop = loop
+        observer = Observer()
+        observer.schedule(Handler(), str(self.data_dir), recursive=True)
+        observer.daemon = True
+        observer.start()
+        self._observer = observer
+        LOG.info("WebUI 文件事件桥已启动: %s", self.data_dir)
+
+    def stop(self) -> None:
+        observer = self._observer
+        self._observer = None
+        if observer is None:
+            return
+        observer.stop()
+        observer.join(timeout=2)
+        LOG.info("WebUI 文件事件桥已停止")
+
+    def _handle_path(self, raw_path: str, is_directory: bool) -> None:
+        if is_directory or self._loop is None:
+            return
+        payload = _path_event_payload(self.data_dir, Path(raw_path))
+        if payload is None:
+            return
+
+        now = time.monotonic()
+        key = (str(payload.get("persona", "")), ",".join(payload.get("resources", [])))
+        if now - self._last_emit.get(key, 0) < 0.35:
+            return
+        self._last_emit[key] = now
+
+        self._loop.call_soon_threadsafe(
+            lambda: asyncio.create_task(self.ws_manager.broadcast_all(payload))
+        )
 
 
 def setup_ws_routes(app: web.Application, ws_manager: WebSocketManager) -> None:

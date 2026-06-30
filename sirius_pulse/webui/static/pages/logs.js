@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { get } from '../app.js';
 import { toast } from '../components.js';
+import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
@@ -20,10 +21,15 @@ const SOURCES = {
   },
 };
 
-let timer = null;
 let paused = false;
 let activeSource = 'webui';
 const stateBySource = new Map();
+const realtime = createRealtimeRefresh(() => loadLogs(false), {
+  resources: ['logs'],
+  debounceMs: 250,
+  personaScoped: false,
+  shouldRefresh: () => !paused,
+});
 
 function stateFor(source) {
   if (!stateBySource.has(source)) {
@@ -33,8 +39,7 @@ function stateFor(source) {
 }
 
 export function dispose() {
-  if (timer) clearInterval(timer);
-  timer = null;
+  realtime.stop();
 }
 
 export async function init(container, params = {}) {
@@ -68,7 +73,7 @@ export async function init(container, params = {}) {
   });
 
   await resetAndLoad();
-  startPolling();
+  realtime.start();
 }
 
 async function resetAndLoad() {
@@ -78,13 +83,6 @@ async function resetAndLoad() {
   current.path = '';
   renderCachedSource();
   await loadLogs(true);
-}
-
-function startPolling() {
-  if (timer) clearInterval(timer);
-  timer = scopedPage.interval(() => {
-    if (!paused) loadLogs(false);
-  }, 1500);
 }
 
 async function loadLogs(initial) {
@@ -142,9 +140,9 @@ function appendLines(source, lines) {
 function statusText() {
   const config = SOURCES[activeSource] || SOURCES.webui;
   if (activeSource === 'persona') {
-    return `实时刷新中 · ${store.currentPersona || '当前人格'} · ${config.label}`;
+    return `事件实时 · ${store.currentPersona || '当前人格'} · ${config.label}`;
   }
-  return `实时刷新中 · ${config.label}`;
+  return `事件实时 · ${config.label}`;
 }
 
 function setStatus(text) {

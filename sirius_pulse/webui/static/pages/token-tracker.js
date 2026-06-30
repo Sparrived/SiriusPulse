@@ -8,7 +8,7 @@ import {
   renderSankeyChart,
   disposeChart,
 } from '../charts.js';
-import { createRealtimePoller } from './realtime.js';
+import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
@@ -25,10 +25,10 @@ let activeRange = 'all';
 let activeTab = 'overview';
 let currentPage = 1;
 const PAGE_SIZE = 10;
-const poller = createRealtimePoller(() => loadData(true), 3000);
+const realtime = createRealtimeRefresh(() => loadData(true), { resources: ['tokens'], debounceMs: 500 });
 
 export function dispose() {
-  poller.stop();
+  realtime.stop();
 }
 
 export async function init(container, params = {}) {
@@ -77,7 +77,7 @@ export async function init(container, params = {}) {
   bindRangeEvents();
   bindTabEvents();
   await loadData();
-  poller.start();
+  realtime.start();
 }
 
 function bindRangeEvents() {

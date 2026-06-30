@@ -520,7 +520,7 @@ async function loadExperience(name) {
 
     $('expSave').addEventListener('click', () => saveExperience(name));
 
-    scopedPage.$('[data-spin-target]').forEach(btn => {
+    scopedPage.$$('[data-spin-target]').forEach(btn => {
       btn.addEventListener('click', () => {
         const target = $(btn.dataset.spinTarget);
         if (!target) return;

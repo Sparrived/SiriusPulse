@@ -268,7 +268,7 @@ function renderModalContent(d) {
   $('modalSave')?.addEventListener('click', () => savePluginConfig(d.name));
 
   // 数字调节按钮事件
-  scopedPage.$('[data-spin-target]').forEach(btn => {
+  scopedPage.$$('[data-spin-target]').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = $(btn.dataset.spinTarget);
       if (!target) return;

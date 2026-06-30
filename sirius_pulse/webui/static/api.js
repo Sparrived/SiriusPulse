@@ -35,6 +35,40 @@ function logAndThrow(method, path, err) {
   throw err;
 }
 
+function mutationResources(path) {
+  const resources = new Set(['dashboard']);
+  if (/^\/personas|^\/persona\/(start|stop|status)/.test(path)) {
+    resources.add('personas');
+    resources.add('monitoring');
+  }
+  if (/^\/persona\/tokens/.test(path)) resources.add('tokens');
+  if (/^\/persona\/cognition/.test(path)) resources.add('cognition');
+  if (/^\/persona\/conversations/.test(path)) resources.add('conversations');
+  if (/^\/persona\/skill-history|^\/persona\/skills/.test(path)) {
+    resources.add('skills');
+    resources.add('skill-history');
+  }
+  if (/^\/persona\/(diary|users|glossary|memory-viz)/.test(path)) resources.add('memory');
+  if (/^\/plugins/.test(path)) resources.add('plugins');
+  if (/^\/providers|^\/global-config|^\/persona\/(persona|orchestration|task-params|experience|adapters)/.test(path)) {
+    resources.add('config');
+  }
+  return [...resources];
+}
+
+function emitLocalChange(method, path) {
+  if (typeof window === 'undefined' || !window.dispatchEvent) return;
+  window.dispatchEvent(new CustomEvent('sirius:event', {
+    detail: {
+      type: 'local_change',
+      method,
+      path,
+      resources: mutationResources(path),
+      timestamp: Date.now() / 1000,
+    },
+  }));
+}
+
 function getLoadingIndicator() {
   if (loadingIndicator) return loadingIndicator;
   loadingIndicator = document.getElementById('globalLoadingIndicator');
@@ -105,7 +139,9 @@ export async function post(path, body) {
     try { r = await fetch(API + path, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('POST', path, e); }
     handleAuthError(r);
     if (!r.ok) { throw new Error(await readError(r, 'POST', path)); }
-    return r.json();
+    const data = await r.json();
+    emitLocalChange('POST', path);
+    return data;
   });
 }
 
@@ -115,7 +151,9 @@ export async function del(path) {
     try { r = await fetch(API + path, { method: 'DELETE', headers: authHeaders() }); } catch (e) { logAndThrow('DELETE', path, e); }
     handleAuthError(r);
     if (!r.ok) { throw new Error(await readError(r, 'DELETE', path)); }
-    return r.json();
+    const data = await r.json();
+    emitLocalChange('DELETE', path);
+    return data;
   });
 }
 
@@ -125,6 +163,8 @@ export async function put(path, body) {
     try { r = await fetch(API + path, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('PUT', path, e); }
     handleAuthError(r);
     if (!r.ok) { throw new Error(await readError(r, 'PUT', path)); }
-    return r.json();
+    const data = await r.json();
+    emitLocalChange('PUT', path);
+    return data;
   });
 }
