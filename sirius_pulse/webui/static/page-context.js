@@ -1,3 +1,14 @@
+function toElementSelector(value) {
+  const text = String(value || '');
+  if (/^[#.[:]/.test(text)) return text;
+  return `#${text}`;
+}
+
+function emitLoadingEvent(type) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(type));
+}
+
 export function createPageContext({ container, signal, fetchImpl = globalThis.fetch } = {}) {
   const cleanups = new Set();
 
@@ -30,8 +41,7 @@ export function createPageContext({ container, signal, fetchImpl = globalThis.fe
 
     $(id) {
       if (!isActive()) return null;
-      const selector = id.startsWith('#') ? id : `#${id}`;
-      return container.querySelector(selector);
+      return container.querySelector(toElementSelector(id));
     },
 
     $$(selector) {
@@ -75,7 +85,12 @@ export function createPageContext({ container, signal, fetchImpl = globalThis.fe
 
     async fetch(url, options = {}) {
       if (!isActive()) return null;
-      return fetchImpl(url, { ...options, signal: options.signal || signal });
+      emitLoadingEvent('sirius:loading-begin');
+      try {
+        return await fetchImpl(url, { ...options, signal: options.signal || signal });
+      } finally {
+        emitLoadingEvent('sirius:loading-end');
+      }
     },
 
     cleanup,
@@ -127,8 +142,7 @@ export function createScopedPage() {
         return ctx.$(id);
       }
       if (!container) return null;
-      const selector = id.startsWith('#') ? id : `#${id}`;
-      return container.querySelector(selector);
+      return container.querySelector(toElementSelector(id));
     },
 
     $$(selector) {

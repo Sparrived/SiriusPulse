@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from datetime import time
+
+import pytest
+
+from sirius_pulse.core.participation import get_reply_time_coefficient
 from sirius_pulse.core.participation import ParticipationPolicy
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.response_strategy import ResponseStrategy
@@ -126,3 +131,74 @@ def test_participation_when_overheated_burst_then_silent():
     )
 
     assert decision.strategy == ResponseStrategy.SILENT
+
+
+def test_reply_time_coefficient_when_between_points_then_interpolates():
+    coefficient = get_reply_time_coefficient(
+        [
+            {"time": "00:00", "coefficient": 0.5},
+            {"time": "12:00", "coefficient": 1.5},
+        ],
+        time(6, 0),
+    )
+
+    assert coefficient == 1.0
+
+
+def test_reply_time_coefficient_when_after_last_point_then_wraps_midnight():
+    coefficient = get_reply_time_coefficient(
+        [
+            {"time": "08:00", "coefficient": 2.0},
+            {"time": "20:00", "coefficient": 0.0},
+        ],
+        time(2, 0),
+    )
+
+    assert coefficient == 1.0
+
+
+def test_participation_when_time_curve_zeroes_score_then_stays_silent():
+    signal = SignalAnalysis(
+        directed_score=0.9,
+        is_mentioned=True,
+        is_question=True,
+        urgency_score=80,
+        relevance_score=0.8,
+        social_intent="help_seeking",
+    )
+
+    decision = _policy().evaluate(
+        signal=signal,
+        content="sirius 这个怎么修？",
+        is_private=False,
+        directed_gate=0.55,
+        reply_time_coefficient=0.0,
+    )
+
+    assert decision.strategy == ResponseStrategy.SILENT
+    assert decision.context["raw_score"] > 0.0
+    assert decision.context["reply_time_coefficient"] == 0.0
+    assert decision.score == 0.0
+
+
+def test_participation_when_time_curve_boosts_score_then_can_reply():
+    signal = SignalAnalysis(
+        directed_score=0.4,
+        is_question=True,
+        urgency_score=30,
+        relevance_score=0.4,
+        social_intent="neutral",
+    )
+
+    decision = _policy().evaluate(
+        signal=signal,
+        content="sirius 你怎么看？",
+        is_private=False,
+        directed_gate=0.55,
+        reply_time_coefficient=2.0,
+    )
+
+    assert decision.strategy == ResponseStrategy.DELAYED
+    assert decision.reason == "addressed"
+    assert decision.context["reply_time_coefficient"] == 2.0
+    assert decision.score == pytest.approx(decision.context["raw_score"] * 2.0)

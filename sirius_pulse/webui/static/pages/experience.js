@@ -15,6 +15,8 @@ const BOOLEAN_FIELDS = [
   'plan_mode_presence_enabled',
 ];
 
+let replyTimeCurvePoints = [];
+
 function numberInput(name, min, max, step) {
   const id = `exp_${name}`;
   return `
@@ -46,6 +48,83 @@ function fieldCard(title, desc, control) {
       ${control}
     </div>
   `;
+}
+
+function replyTimeCurveEditor() {
+  return `
+    <div class="exp-curve-card">
+      <label class="exp-toggle exp-curve-toggle">
+        <span>
+          <strong>启用 24 小时回复系数曲线</strong>
+          <small>最终参与分数 = 原始 score × 当前时间系数，再与回复阈值比较。</small>
+        </span>
+        <input type="checkbox" name="reply_time_curve_enabled">
+      </label>
+      <div class="exp-curve-toolbar">
+        <span id="replyCurveNow">当前系数：1.00</span>
+        <button class="btn btn-sm" type="button" id="replyCurveReset">重置为全天 1.0</button>
+      </div>
+      <svg id="replyTimeCurve" class="reply-time-curve" viewBox="0 0 720 180" role="img" aria-label="24小时回复系数曲线"></svg>
+      <div class="exp-curve-axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+      <div id="replyCurvePoints" class="exp-curve-points"></div>
+    </div>
+  `;
+}
+
+function parseCurveTime(value) {
+  const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = parseInt(match[1], 10);
+  const minute = parseInt(match[2], 10);
+  if (hour === 24 && minute === 0) return 1440;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function formatCurveTime(minutes) {
+  const clamped = Math.max(0, Math.min(1440, Math.round(minutes)));
+  if (clamped === 1440) return '24:00';
+  const hour = Math.floor(clamped / 60);
+  const minute = clamped % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function normalizeCurvePoints(points) {
+  const map = new Map();
+  (Array.isArray(points) ? points : []).forEach(point => {
+    const minutes = parseCurveTime(point?.time);
+    if (minutes === null) return;
+    const coefficient = Math.max(0, Math.min(2, Number(point.coefficient ?? 1)));
+    map.set(minutes, Number(coefficient.toFixed(2)));
+  });
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([minutes, coefficient]) => ({ time: formatCurveTime(minutes), coefficient }));
+}
+
+function coefficientAt(points, date = new Date()) {
+  const normalized = normalizeCurvePoints(points);
+  if (!normalized.length) return 1;
+  if (normalized.length === 1) return normalized[0].coefficient;
+  const anchors = normalized.map(point => [parseCurveTime(point.time), point.coefficient]);
+  let current = date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
+  for (let i = 0; i < anchors.length - 1; i += 1) {
+    const [leftMinute, leftValue] = anchors[i];
+    const [rightMinute, rightValue] = anchors[i + 1];
+    if (current >= leftMinute && current <= rightMinute) {
+      return interpolate(leftMinute, leftValue, rightMinute, rightValue, current);
+    }
+  }
+  const [leftMinute, leftValue] = anchors[anchors.length - 1];
+  const [rightMinute, rightValue] = anchors[0];
+  if (current < rightMinute) current += 1440;
+  return interpolate(leftMinute, leftValue, rightMinute + 1440, rightValue, current);
+}
+
+function interpolate(leftMinute, leftValue, rightMinute, rightValue, currentMinute) {
+  if (rightMinute <= leftMinute) return leftValue;
+  const ratio = (currentMinute - leftMinute) / (rightMinute - leftMinute);
+  return Math.max(0, Math.min(2, leftValue + (rightValue - leftValue) * ratio));
 }
 
 function section(title, subtitle, body) {
@@ -123,6 +202,19 @@ function pageStyles() {
       .exp-toggle strong { display:block; color:var(--text-1); font-size:13px; margin-bottom:4px; }
       .exp-toggle small { display:block; color:var(--text-2); font-size:12px; line-height:1.45; }
       .exp-toggle input { width:18px; height:18px; accent-color:var(--accent); flex:0 0 auto; }
+      .exp-curve-card { margin-top:14px; padding:14px; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface-1,var(--bg-2)); }
+      .exp-curve-toggle { padding:0; border:0; background:transparent; }
+      .exp-curve-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:14px 0 8px; color:var(--text-2); font-size:12px; }
+      .reply-time-curve { width:100%; height:180px; display:block; border:1px solid var(--border); border-radius:var(--radius-md); background:linear-gradient(to bottom, rgba(255,255,255,.04), transparent); touch-action:none; }
+      .reply-time-curve path { fill:none; stroke:var(--accent); stroke-width:3; }
+      .reply-time-curve circle { fill:var(--accent); stroke:var(--bg-1); stroke-width:3; cursor:grab; }
+      .reply-time-curve circle:active { cursor:grabbing; }
+      .reply-time-curve text { fill:var(--text-3); font-size:10px; }
+      .reply-time-curve line { stroke:var(--border); stroke-width:1; opacity:.65; }
+      .exp-curve-axis { display:flex; justify-content:space-between; color:var(--text-3); font-size:11px; margin-top:6px; }
+      .exp-curve-points { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; margin-top:12px; }
+      .exp-curve-point { display:flex; gap:6px; align-items:center; }
+      .exp-curve-point input { width:100%; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-size:12px; }
       .exp-quadrant { min-height:260px; }
       @media (max-width: 900px) { .exp-style-grid { grid-template-columns:1fr; } .exp-hero { flex-direction:column; } }
     </style>
@@ -190,6 +282,7 @@ export async function init(container, params = {}) {
             ${fieldCard('主模型调用冷却（秒）', '主回复模型之间的冷却时间，用于降低连续 LLM 调用。', numberInput('main_model_reply_cooldown_seconds', 0, null, 0.5))}
             ${fieldCard('单句最大长度（字）', '限制拆分后每句话的长度，越小越像短句聊天。', numberInput('max_sentence_chars', 5, 50))}
           </div>
+          ${replyTimeCurveEditor()}
         `)}
 
         ${section('工具与计划', '布尔配置改为复选框；勾选代表启用，取消勾选代表关闭。', `
@@ -275,6 +368,116 @@ function setupQuadrant() {
   syncAll(parseFloat(sensitivityInput.value) || 0.5, parseFloat(expressivenessInput.value) || 0.5);
 }
 
+function setupReplyTimeCurve() {
+  const svg = $('replyTimeCurve');
+  const list = $('replyCurvePoints');
+  const reset = $('replyCurveReset');
+  if (!svg || !list) return;
+
+  const width = 720;
+  const height = 180;
+  const padding = 14;
+  const plotHeight = height - padding * 2;
+  let dragIndex = null;
+
+  function pointToSvg(point) {
+    const minutes = parseCurveTime(point.time) ?? 0;
+    return {
+      x: (minutes / 1440) * width,
+      y: padding + ((2 - point.coefficient) / 2) * plotHeight,
+    };
+  }
+
+  function eventToPoint(event) {
+    const rect = svg.getBoundingClientRect();
+    const x = Math.max(0, Math.min(width, ((event.clientX - rect.left) / rect.width) * width));
+    const y = Math.max(padding, Math.min(height - padding, ((event.clientY - rect.top) / rect.height) * height));
+    return {
+      time: formatCurveTime((x / width) * 1440),
+      coefficient: Number((2 - ((y - padding) / plotHeight) * 2).toFixed(2)),
+    };
+  }
+
+  function render() {
+    replyTimeCurvePoints = normalizeCurvePoints(replyTimeCurvePoints);
+    if (!replyTimeCurvePoints.length) {
+      replyTimeCurvePoints = [{ time: '00:00', coefficient: 1 }, { time: '24:00', coefficient: 1 }];
+    }
+
+    const points = replyTimeCurvePoints.map(pointToSvg);
+    const path = points.map((point, index) => `${index ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
+    const grid = [0, 0.5, 1, 1.5, 2].map(value => {
+      const y = padding + ((2 - value) / 2) * plotHeight;
+      return `<line x1="0" y1="${y}" x2="${width}" y2="${y}"></line><text x="4" y="${y - 4}">${value.toFixed(1)}</text>`;
+    }).join('');
+    const circles = points.map((point, index) => `
+      <circle data-curve-index="${index}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="7"></circle>
+    `).join('');
+    svg.innerHTML = `${grid}<path d="${path}"></path>${circles}`;
+
+    const current = coefficientAt(replyTimeCurvePoints);
+    const nowLabel = $('replyCurveNow');
+    if (nowLabel) nowLabel.textContent = `当前系数：${current.toFixed(2)}（最终 score × ${current.toFixed(2)}）`;
+
+    list.innerHTML = replyTimeCurvePoints.map((point, index) => `
+      <div class="exp-curve-point">
+        <input type="time" data-curve-time="${index}" value="${point.time === '24:00' ? '23:59' : point.time}">
+        <input type="number" data-curve-coefficient="${index}" min="0" max="2" step="0.05" value="${point.coefficient}">
+        <button class="btn btn-sm" type="button" data-curve-remove="${index}" ${replyTimeCurvePoints.length <= 1 ? 'disabled' : ''}>删除</button>
+      </div>
+    `).join('');
+    bindPointList();
+  }
+
+  function bindPointList() {
+    list.querySelectorAll('[data-curve-time]').forEach(input => {
+      input.addEventListener('change', () => {
+        replyTimeCurvePoints[parseInt(input.dataset.curveTime, 10)].time = input.value;
+        render();
+      });
+    });
+    list.querySelectorAll('[data-curve-coefficient]').forEach(input => {
+      input.addEventListener('input', () => {
+        replyTimeCurvePoints[parseInt(input.dataset.curveCoefficient, 10)].coefficient = Number(input.value);
+        render();
+      });
+    });
+    list.querySelectorAll('[data-curve-remove]').forEach(button => {
+      button.addEventListener('click', () => {
+        replyTimeCurvePoints.splice(parseInt(button.dataset.curveRemove, 10), 1);
+        render();
+      });
+    });
+  }
+
+  svg.addEventListener('pointerdown', event => {
+    const circle = event.target.closest?.('[data-curve-index]');
+    if (circle) {
+      dragIndex = parseInt(circle.dataset.curveIndex, 10);
+      svg.setPointerCapture?.(event.pointerId);
+      return;
+    }
+    replyTimeCurvePoints.push(eventToPoint(event));
+    render();
+  });
+
+  svg.addEventListener('pointermove', event => {
+    if (dragIndex === null) return;
+    replyTimeCurvePoints[dragIndex] = eventToPoint(event);
+    render();
+  });
+
+  svg.addEventListener('pointerup', () => { dragIndex = null; });
+  svg.addEventListener('pointerleave', () => { dragIndex = null; });
+
+  reset?.addEventListener('click', () => {
+    replyTimeCurvePoints = [{ time: '00:00', coefficient: 1 }, { time: '24:00', coefficient: 1 }];
+    render();
+  });
+
+  render();
+}
+
 function setCheckbox(form, name, value) {
   if (form[name]) form[name].checked = Boolean(value);
 }
@@ -294,6 +497,11 @@ async function loadExperience(name) {
 
     form.min_reply_interval_seconds.value = data.min_reply_interval_seconds ?? 2;
     form.main_model_reply_cooldown_seconds.value = data.main_model_reply_cooldown_seconds ?? 0;
+    form.reply_time_curve_enabled.checked = Boolean(data.reply_time_curve_enabled ?? false);
+    replyTimeCurvePoints = normalizeCurvePoints(data.reply_time_curve_points || []);
+    if (!replyTimeCurvePoints.length) {
+      replyTimeCurvePoints = [{ time: '00:00', coefficient: 1 }, { time: '24:00', coefficient: 1 }];
+    }
     form.max_sentence_chars.value = data.max_sentence_chars ?? 20;
     form.max_skill_rounds.value = data.max_skill_rounds ?? 3;
     form.plan_mode_presence_min_interval_seconds.value = data.plan_mode_presence_min_interval_seconds ?? 45;
@@ -308,6 +516,7 @@ async function loadExperience(name) {
     setCheckbox(form, 'plan_mode_presence_enabled', data.plan_mode_presence_enabled ?? false);
 
     setupQuadrant();
+    setupReplyTimeCurve();
 
     $('expSave').addEventListener('click', () => saveExperience(name));
 
@@ -338,6 +547,8 @@ async function saveExperience(name) {
     expressiveness: parseFloat(form.expressiveness.value),
     min_reply_interval_seconds: parseInt(form.min_reply_interval_seconds.value, 10),
     main_model_reply_cooldown_seconds: parseFloat(form.main_model_reply_cooldown_seconds.value),
+    reply_time_curve_enabled: Boolean(form.reply_time_curve_enabled?.checked),
+    reply_time_curve_points: normalizeCurvePoints(replyTimeCurvePoints),
     max_sentence_chars: parseInt(form.max_sentence_chars.value, 10),
     max_skill_rounds: parseInt(form.max_skill_rounds.value, 10),
     plan_mode_presence_min_interval_seconds: parseInt(

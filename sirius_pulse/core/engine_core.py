@@ -806,6 +806,7 @@ class _EmotionalGroupChatEngineBase:
                 system_prompt=_result.system_prompt,
                 tags=entry_tags,
                 conversation_chain=chain_msgs,
+                injected_tool_names=_result.injected_tool_names,
             )
             _engine.basic_store.append(_entry)
             try:

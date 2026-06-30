@@ -1,5 +1,8 @@
 const API = '/api';
 let authToken = localStorage.getItem('sirius_token') || '';
+let activeRequests = 0;
+let loadingIndicator = null;
+let loadingEventsBound = false;
 
 export function setToken(t) { authToken = t; localStorage.setItem('sirius_token', t); }
 export function clearToken() { authToken = ''; localStorage.removeItem('sirius_token'); }
@@ -32,35 +35,96 @@ function logAndThrow(method, path, err) {
   throw err;
 }
 
+function getLoadingIndicator() {
+  if (loadingIndicator) return loadingIndicator;
+  loadingIndicator = document.getElementById('globalLoadingIndicator');
+  if (!loadingIndicator) {
+    loadingIndicator = document.createElement('div');
+    loadingIndicator.id = 'globalLoadingIndicator';
+    loadingIndicator.className = 'global-loading-indicator';
+    loadingIndicator.setAttribute('role', 'status');
+    loadingIndicator.setAttribute('aria-live', 'polite');
+    loadingIndicator.setAttribute('aria-busy', 'false');
+    document.body.appendChild(loadingIndicator);
+  }
+  return loadingIndicator;
+}
+
+function renderLoadingIndicator() {
+  const indicator = getLoadingIndicator();
+  const loading = activeRequests > 0;
+  indicator.textContent = loading
+    ? `正在加载数据${activeRequests > 1 ? `（${activeRequests} 个请求）` : ''}…`
+    : '';
+  indicator.setAttribute('aria-busy', String(loading));
+  indicator.classList.toggle('show', loading);
+}
+
+function beginLoading() {
+  activeRequests += 1;
+  renderLoadingIndicator();
+}
+
+function endLoading() {
+  activeRequests = Math.max(0, activeRequests - 1);
+  renderLoadingIndicator();
+}
+
+async function withLoading(work) {
+  beginLoading();
+  try {
+    return await work();
+  } finally {
+    endLoading();
+  }
+}
+
+function bindLoadingEvents() {
+  if (loadingEventsBound || typeof window === 'undefined' || !window.addEventListener) return;
+  loadingEventsBound = true;
+  window.addEventListener('sirius:loading-begin', beginLoading);
+  window.addEventListener('sirius:loading-end', endLoading);
+}
+
+bindLoadingEvents();
+
 export async function get(path, signal) {
-  const opts = signal ? { signal, headers: authHeaders() } : { headers: authHeaders() };
-  let r;
-  try { r = await fetch(API + path, opts); } catch (e) { logAndThrow('GET', path, e); }
-  handleAuthError(r);
-  if (!r.ok) { throw new Error(await readError(r, 'GET', path)); }
-  return r.json();
+  return withLoading(async () => {
+    const opts = signal ? { signal, headers: authHeaders() } : { headers: authHeaders() };
+    let r;
+    try { r = await fetch(API + path, opts); } catch (e) { logAndThrow('GET', path, e); }
+    handleAuthError(r);
+    if (!r.ok) { throw new Error(await readError(r, 'GET', path)); }
+    return r.json();
+  });
 }
 
 export async function post(path, body) {
-  let r;
-  try { r = await fetch(API + path, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('POST', path, e); }
-  handleAuthError(r);
-  if (!r.ok) { throw new Error(await readError(r, 'POST', path)); }
-  return r.json();
+  return withLoading(async () => {
+    let r;
+    try { r = await fetch(API + path, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('POST', path, e); }
+    handleAuthError(r);
+    if (!r.ok) { throw new Error(await readError(r, 'POST', path)); }
+    return r.json();
+  });
 }
 
 export async function del(path) {
-  let r;
-  try { r = await fetch(API + path, { method: 'DELETE', headers: authHeaders() }); } catch (e) { logAndThrow('DELETE', path, e); }
-  handleAuthError(r);
-  if (!r.ok) { throw new Error(await readError(r, 'DELETE', path)); }
-  return r.json();
+  return withLoading(async () => {
+    let r;
+    try { r = await fetch(API + path, { method: 'DELETE', headers: authHeaders() }); } catch (e) { logAndThrow('DELETE', path, e); }
+    handleAuthError(r);
+    if (!r.ok) { throw new Error(await readError(r, 'DELETE', path)); }
+    return r.json();
+  });
 }
 
 export async function put(path, body) {
-  let r;
-  try { r = await fetch(API + path, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('PUT', path, e); }
-  handleAuthError(r);
-  if (!r.ok) { throw new Error(await readError(r, 'PUT', path)); }
-  return r.json();
+  return withLoading(async () => {
+    let r;
+    try { r = await fetch(API + path, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('PUT', path, e); }
+    handleAuthError(r);
+    if (!r.ok) { throw new Error(await readError(r, 'PUT', path)); }
+    return r.json();
+  });
 }

@@ -13,6 +13,7 @@ from typing import Any
 
 from sirius_pulse.models.response_strategy import ResponseStrategy
 from sirius_pulse.models.signal import SignalAnalysis
+from sirius_pulse.reply_time_curve import get_reply_time_coefficient
 
 
 _HELP_RE = re.compile(
@@ -83,9 +84,11 @@ class ParticipationPolicy:
         entitlement_threshold: float = 0.4,
         reply_frequency: str = "moderate",
         affinity_score: float = 0.0,
+        reply_time_coefficient: float = 1.0,
     ) -> ParticipationDecision:
         text = content or ""
         text_len = len(text.strip())
+        coefficient = _clamp_coefficient(reply_time_coefficient)
         addressing = self._addressing_score(signal, directed_gate)
         reply_need = self._reply_need_score(signal, text)
         social = self._social_opportunity_score(signal, text, seconds_since_reply, affinity_score)
@@ -101,19 +104,38 @@ class ParticipationPolicy:
 
         if is_private:
             threshold = 0.2
-            score = max(addressing, reply_need, fit)
+            raw_score = max(addressing, reply_need, fit)
+            final_score = _scale_reply_score(raw_score, coefficient)
+            if final_score >= threshold:
+                return self._decision(
+                    signal,
+                    ResponseStrategy.IMMEDIATE if signal.urgency_score >= 70 else ResponseStrategy.DELAYED,
+                    "private_chat",
+                    final_score,
+                    threshold,
+                    0.0 if signal.urgency_score >= 70 else 8.0,
+                    addressing,
+                    reply_need,
+                    social,
+                    fit,
+                    suppression,
+                    raw_score=raw_score,
+                    reply_time_coefficient=coefficient,
+                )
             return self._decision(
                 signal,
-                ResponseStrategy.IMMEDIATE if signal.urgency_score >= 70 else ResponseStrategy.DELAYED,
-                "private_chat",
-                max(score, threshold),
+                ResponseStrategy.SILENT,
+                "below_participation_threshold",
+                final_score,
                 threshold,
-                0.0 if signal.urgency_score >= 70 else 8.0,
+                0.0,
                 addressing,
                 reply_need,
                 social,
                 fit,
                 suppression,
+                raw_score=raw_score,
+                reply_time_coefficient=coefficient,
             )
 
         direct_threshold, need_threshold, join_threshold = self._thresholds(
@@ -127,7 +149,8 @@ class ParticipationPolicy:
             need_threshold += 0.05
             join_threshold += 0.05
 
-        if addressing >= direct_threshold and suppression < 0.9:
+        addressed_score = _scale_reply_score(addressing, coefficient)
+        if addressed_score >= direct_threshold and suppression < 0.9:
             strategy = (
                 ResponseStrategy.IMMEDIATE
                 if signal.is_mentioned or signal.urgency_score >= 80
@@ -138,7 +161,7 @@ class ParticipationPolicy:
                 signal,
                 strategy,
                 "addressed",
-                addressing,
+                addressed_score,
                 direct_threshold,
                 delay,
                 addressing,
@@ -146,17 +169,21 @@ class ParticipationPolicy:
                 social,
                 fit,
                 suppression,
-            )
+                raw_score=addressing,
+                reply_time_coefficient=coefficient,
+        )
 
         need_score = reply_need * 0.75 + fit * 0.25 - suppression * 0.25
-        if reply_need >= need_threshold and need_score >= need_threshold and suppression < 0.78:
+        final_reply_need = _scale_reply_score(reply_need, coefficient)
+        final_need_score = _scale_reply_score(need_score, coefficient)
+        if final_reply_need >= need_threshold and final_need_score >= need_threshold and suppression < 0.78:
             strategy = ResponseStrategy.IMMEDIATE if signal.urgency_score >= 80 else ResponseStrategy.DELAYED
             delay = 0.0 if strategy == ResponseStrategy.IMMEDIATE else self._delay_for(signal, base=18.0)
             return self._decision(
                 signal,
                 strategy,
                 "reply_needed",
-                need_score,
+                final_need_score,
                 need_threshold,
                 delay,
                 addressing,
@@ -164,22 +191,25 @@ class ParticipationPolicy:
                 social,
                 fit,
                 suppression,
+                raw_score=need_score,
+                reply_time_coefficient=coefficient,
             )
 
         join_score = social * 0.45 + fit * 0.35 + reply_need * 0.20 - suppression * 0.35
+        final_join_score = _scale_reply_score(join_score, coefficient)
         can_join = (
             text_len >= 4
             and social >= 0.42
             and fit >= 0.35
             and suppression < 0.52
-            and join_score >= join_threshold
+            and final_join_score >= join_threshold
         )
         if can_join:
             return self._decision(
                 signal,
                 ResponseStrategy.DELAYED,
                 "natural_join",
-                join_score,
+                final_join_score,
                 join_threshold,
                 self._delay_for(signal, base=28.0),
                 addressing,
@@ -187,14 +217,17 @@ class ParticipationPolicy:
                 social,
                 fit,
                 suppression,
+                raw_score=join_score,
+                reply_time_coefficient=coefficient,
             )
 
         score = max(addressing, need_score, join_score)
+        final_score = _scale_reply_score(score, coefficient)
         return self._decision(
             signal,
             ResponseStrategy.SILENT,
             "below_participation_threshold",
-            score,
+            final_score,
             min(direct_threshold, need_threshold, join_threshold),
             0.0,
             addressing,
@@ -202,6 +235,8 @@ class ParticipationPolicy:
             social,
             fit,
             suppression,
+            raw_score=score,
+            reply_time_coefficient=coefficient,
         )
 
     def _decision(
@@ -217,11 +252,13 @@ class ParticipationPolicy:
         social: float,
         fit: float,
         suppression: float,
+        raw_score: float | None = None,
+        reply_time_coefficient: float = 1.0,
     ) -> ParticipationDecision:
         return ParticipationDecision(
             strategy=strategy,
             reason=reason,
-            score=_clamp(score),
+            score=_clamp_reply_score(score),
             threshold=max(0.0, threshold),
             delay_seconds=delay_seconds,
             addressing_score=addressing,
@@ -230,6 +267,9 @@ class ParticipationPolicy:
             conversation_fit_score=fit,
             suppression_score=suppression,
             context={
+                "raw_score": round(_clamp(raw_score if raw_score is not None else score), 4),
+                "reply_time_coefficient": round(_clamp_coefficient(reply_time_coefficient), 4),
+                "final_score": round(_clamp_reply_score(score), 4),
                 "urgency_score": signal.urgency_score,
                 "directed_score": signal.directed_score,
                 "heat_level": signal.heat_level,
@@ -389,4 +429,16 @@ def _clamp(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
 
 
-__all__ = ["ParticipationDecision", "ParticipationPolicy"]
+def _clamp_coefficient(value: float) -> float:
+    return max(0.0, min(2.0, float(value)))
+
+
+def _clamp_reply_score(value: float) -> float:
+    return max(0.0, min(2.0, float(value)))
+
+
+def _scale_reply_score(raw_score: float, coefficient: float) -> float:
+    return _clamp_reply_score(_clamp(raw_score) * _clamp_coefficient(coefficient))
+
+
+__all__ = ["ParticipationDecision", "ParticipationPolicy", "get_reply_time_coefficient"]

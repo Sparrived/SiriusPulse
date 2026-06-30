@@ -165,6 +165,21 @@ def test_basic_memory_entry_when_intent_scores_are_missing_then_defaults_to_empt
     assert entry.intent_scores == {}
 
 
+def test_basic_memory_entry_records_injected_tool_names():
+    mgr = BasicMemoryManager()
+
+    entry = mgr.add_entry(
+        "group_a",
+        "assistant",
+        "assistant",
+        "reply",
+        injected_tool_names=["lookup", "stop"],
+    )
+
+    assert entry.injected_tool_names == ["lookup", "stop"]
+    assert entry.to_dict()["injected_tool_names"] == ["lookup", "stop"]
+
+
 def test_basic_memory_store_when_entry_is_updated_then_archive_keeps_intent_scores(
     tmp_path,
 ):

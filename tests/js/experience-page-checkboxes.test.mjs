@@ -27,5 +27,8 @@ for (const field of [
 assert.match(source, /BOOLEAN_FIELDS\.forEach\(name => \{\n\s+experience\[name\] = Boolean\(form\[name\]\?\.checked\);/);
 assert.match(source, /行为画像/);
 assert.match(source, /回复控制/);
+assert.match(source, /reply_time_curve_enabled/);
+assert.match(source, /reply_time_curve_points: normalizeCurvePoints\(replyTimeCurvePoints\)/);
+assert.match(source, /最终参与分数 = 原始 score × 当前时间系数/);
 assert.match(source, /工具与计划/);
 assert.match(source, /记忆检索/);

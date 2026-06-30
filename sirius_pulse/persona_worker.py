@@ -168,6 +168,7 @@ class PersonaWorker:
             # 参与决策
             "sensitivity": experience.engagement_sensitivity,
             "reply_cooldown_seconds": int(experience.min_reply_interval_seconds),
+            "main_model_reply_cooldown_seconds": experience.main_model_reply_cooldown_seconds,
             # 技能
             "max_skill_rounds": experience.max_skill_rounds,
             "auto_install_skill_deps": experience.auto_install_skill_deps,

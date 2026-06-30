@@ -90,6 +90,7 @@ class ChatResult:
     token_record: Any
     system_prompt: str = ""  # 存储本次对话使用的完整 system prompt
     sticker_names: list[str] = field(default_factory=list)
+    injected_tool_names: list[str] = field(default_factory=list)
     has_tool_call: bool = False
     tool_calls: list[ToolCall] = field(default_factory=list)
     # 兼容旧接口
@@ -97,6 +98,17 @@ class ChatResult:
     skill_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     # 引用回复信息（由 _hook_reply_reference 填充）
     reply_references: list[dict[str, str]] = field(default_factory=list)
+
+
+def _tool_names_from_schemas(tools: list[dict[str, Any]] | None) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for tool in tools or []:
+        name = str(tool.get("function", {}).get("name", "")).strip()
+        if name and name not in seen:
+            names.append(name)
+            seen.add(name)
+    return names
 
 
 @dataclass(slots=True)
@@ -602,6 +614,7 @@ class Brain:
                 token_record=token_record,
                 system_prompt=gen_request.system_prompt,
                 sticker_names=[],
+                injected_tool_names=_tool_names_from_schemas(gen_request.tools),
                 has_tool_call=bool(tool_calls),
                 tool_calls=tool_calls,
             )

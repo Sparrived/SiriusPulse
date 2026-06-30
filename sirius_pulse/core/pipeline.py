@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.cognition import extract_keywords
-from sirius_pulse.core.participation import ParticipationPolicy
+from sirius_pulse.core.participation import ParticipationPolicy, get_reply_time_coefficient
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.models.response_strategy import PersonaProfilePromptContext, ResponseStrategy, StrategyDecision
@@ -293,6 +293,12 @@ class Pipeline:
 
         sensitivity = engine.config.get("sensitivity", 0.5)
         directed_gate = engine.expressiveness.directed_threshold + (1.0 - sensitivity) * 0.15
+        reply_time_coefficient = 1.0
+        if engine.config.get("reply_time_curve_enabled", False):
+            reply_time_coefficient = get_reply_time_coefficient(
+                engine.config.get("reply_time_curve_points", []),
+                datetime.now().time(),
+            )
 
         # 亲和度调节
         user_profile = engine.semantic_memory.get_user_profile(group_id, user_id)
@@ -313,6 +319,7 @@ class Pipeline:
             entitlement_threshold=engine.expressiveness.entitlement_threshold,
             reply_frequency=engine.persona.reply_frequency,
             affinity_score=affinity,
+            reply_time_coefficient=reply_time_coefficient,
         )
         signal.participation = decision.to_dict()
 

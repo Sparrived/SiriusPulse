@@ -506,6 +506,15 @@ function renderMessageTags(tags) {
   return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${badges}</div>`;
 }
 
+function renderInjectedToolTags(toolNames) {
+  if (!Array.isArray(toolNames) || !toolNames.length) return '';
+  const badges = toolNames
+    .filter(name => typeof name === 'string' && name.trim())
+    .map(name => `<span class="tag" style="font-size:10px;padding:1px 6px;background:#2196f322;color:#2196f3;border:1px solid #2196f344">tool: ${escapeHtml(name.trim())}</span>`)
+    .join('');
+  return badges ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${badges}</div>` : '';
+}
+
 function renderIntentScores(intentScores) {
   if (!intentScores || typeof intentScores !== 'object') return '';
 
@@ -587,6 +596,7 @@ function renderMessages() {
     const chainMsgId = `chain-${msgIdCounter++}`;
     const entryId = m.entry_id || m.timestamp || `idx-${idx}`;
     const tags = m.tags || [];
+    const injectedToolNames = m.injected_tool_names || [];
 
     return `
       <div style="padding:12px 16px;background:var(--bg-2);border-radius:8px;border-left:3px solid ${roleStyle.color}">
@@ -603,6 +613,7 @@ function renderMessages() {
         </div>
         <div style="font-size:13px;color:var(--text-1);line-height:1.6;white-space:pre-wrap">${escapeHtml(truncate(content))}</div>
         ${renderMessageTags(tags)}
+        ${m.role === 'assistant' ? renderInjectedToolTags(injectedToolNames) : ''}
         ${renderIntentScores(m.intent_scores)}
         ${hasChain ? renderConversationChainToggle(chainMsgId, conversationChain, entryId, openChainEntryIds.has(entryId)) : ''}
       </div>
@@ -940,7 +951,7 @@ async function deleteConversationMessage(message) {
 }
 
 function bindDeleteButtons() {
-  scopedPage.$('.conversation-delete').forEach(btn => {
+  scopedPage.$$('.conversation-delete').forEach(btn => {
     btn.addEventListener('click', (event) => {
       event.stopPropagation();
       const idx = Number(btn.dataset.deleteIndex);
@@ -951,7 +962,7 @@ function bindDeleteButtons() {
 }
 
 function bindChainToggles() {
-  scopedPage.$('.chain-toggle').forEach(btn => {
+  scopedPage.$$('.chain-toggle').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = $(btn.dataset.target);
       if (!target) return;
@@ -962,7 +973,7 @@ function bindChainToggles() {
     });
   });
 
-  scopedPage.$('.chain-detail').forEach(detail => {
+  scopedPage.$$('.chain-detail').forEach(detail => {
     detail.addEventListener('wheel', (e) => {
       const { scrollTop, scrollHeight, clientHeight } = detail;
       const atTop = e.deltaY < 0 && scrollTop === 0;
@@ -973,7 +984,7 @@ function bindChainToggles() {
     }, { passive: true });
   });
 
-  scopedPage.$('.chain-section-header').forEach(header => {
+  scopedPage.$$('.chain-section-header').forEach(header => {
     header.addEventListener('click', () => {
       const target = $(header.dataset.target);
       if (!target) return;

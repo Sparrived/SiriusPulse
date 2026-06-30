@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.reply_time_curve import normalize_reply_time_curve_points
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,6 +142,8 @@ class PersonaExperienceConfig:
     # 回复频率限制
     min_reply_interval_seconds: float = 0.0
     main_model_reply_cooldown_seconds: float = 0.0
+    reply_time_curve_enabled: bool = False
+    reply_time_curve_points: list[dict[str, float | str]] = field(default_factory=list)
     max_sentence_chars: int = 20
 
     # 并发与技能
@@ -169,6 +173,10 @@ class PersonaExperienceConfig:
             "expressiveness": self.expressiveness,
             "min_reply_interval_seconds": self.min_reply_interval_seconds,
             "main_model_reply_cooldown_seconds": self.main_model_reply_cooldown_seconds,
+            "reply_time_curve_enabled": self.reply_time_curve_enabled,
+            "reply_time_curve_points": normalize_reply_time_curve_points(
+                self.reply_time_curve_points
+            ),
             "max_sentence_chars": self.max_sentence_chars,
             "enable_skills": self.enable_skills,
             "max_skill_rounds": self.max_skill_rounds,
@@ -200,6 +208,10 @@ class PersonaExperienceConfig:
             min_reply_interval_seconds=float(data.get("min_reply_interval_seconds", 0.0)),
             main_model_reply_cooldown_seconds=float(
                 data.get("main_model_reply_cooldown_seconds", 0.0)
+            ),
+            reply_time_curve_enabled=bool(data.get("reply_time_curve_enabled", False)),
+            reply_time_curve_points=normalize_reply_time_curve_points(
+                data.get("reply_time_curve_points", [])
             ),
             max_sentence_chars=max(5, min(50, int(data.get("max_sentence_chars", 20)))),
             enable_skills=bool(data.get("enable_skills", True)),

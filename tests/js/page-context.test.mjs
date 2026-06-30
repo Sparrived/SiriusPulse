@@ -36,6 +36,9 @@ class FakeElement {
   }
 
   querySelector(selector) {
+    if (selector.startsWith('.')) {
+      return Object.values(this.children).find((child) => child.className === selector.slice(1)) || null;
+    }
     if (!selector.startsWith('#')) return null;
     return this.children[selector.slice(1)] || null;
   }
@@ -70,6 +73,8 @@ globalThis.document = {
 const ctx = createPageContext({ container, signal });
 
 assert.equal(ctx.$('save'), button, 'ctx.$ must query inside the current page container');
+assert.equal(ctx.$('#save'), button, 'ctx.$ should accept an explicit id selector');
+assert.equal(ctx.$('.item'), item, 'ctx.$ should accept CSS selectors without prefixing #');
 assert.deepEqual(ctx.$$('.item'), [item], 'ctx.$$ must query inside the current page container');
 assert.equal(ctx.isActive(), true);
 
@@ -86,3 +91,18 @@ assert.equal(button.removed.length, 1, 'abort must remove event listeners for ol
 ctx.on(ctx.$('save'), 'click', () => { clicked += 1; });
 assert.equal(button.events.length, 1, 'aborted contexts must not bind new listeners');
 assert.equal(ctx.$('save'), null, 'aborted contexts must stop returning stale DOM');
+
+const fetchSignal = new FakeSignal();
+const loadingEvents = [];
+globalThis.CustomEvent = class CustomEvent { constructor(type) { this.type = type; } };
+globalThis.window = {
+  dispatchEvent(event) { loadingEvents.push(event.type); },
+};
+const fetchCtx = createPageContext({
+  container,
+  signal: fetchSignal,
+  fetchImpl: async () => ({ ok: true }),
+});
+
+assert.deepEqual(await fetchCtx.fetch('/data'), { ok: true });
+assert.deepEqual(loadingEvents, ['sirius:loading-begin', 'sirius:loading-end']);

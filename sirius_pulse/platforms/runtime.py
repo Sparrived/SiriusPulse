@@ -425,19 +425,8 @@ class EngineRuntime:
             LOG.debug("加载 experience 配置失败，使用默认值: %s", exc)
             return PersonaExperienceConfig()
 
-    async def _build_engine(self) -> "EmotionalGroupChatEngine":
-        provider = self._build_provider()
-        if provider is None:
-            raise RuntimeError(
-                "未配置 Provider。请通过以下任一方式配置：\n"
-                "1) 环境变量: SIRIUS_PROVIDER_TYPE, SIRIUS_API_KEY, SIRIUS_BASE_URL, SIRIUS_MODEL\n"
-                "2) 配置项 providers（列表格式）"
-            )
-
-        # 优先从 experience.json 读取记忆配置，回退到 plugin_config
-        exp = self._load_experience_config()
-
-        config = {
+    def _build_engine_runtime_config(self, exp: PersonaExperienceConfig) -> dict[str, Any]:
+        return {
             # v1.0 日记记忆配置
             "diary_top_k": int(self.plugin_config.get("diary_top_k", exp.diary_top_k)),
             "diary_token_budget": int(
@@ -447,6 +436,14 @@ class EngineRuntime:
             "sensitivity": float(self.plugin_config.get("sensitivity", 0.5)),
             "expressiveness": {"expressiveness": exp.expressiveness},
             "reply_cooldown_seconds": int(self.plugin_config.get("reply_cooldown_seconds", 12)),
+            "main_model_reply_cooldown_seconds": float(
+                self.plugin_config.get(
+                    "main_model_reply_cooldown_seconds",
+                    exp.main_model_reply_cooldown_seconds,
+                )
+            ),
+            "reply_time_curve_enabled": exp.reply_time_curve_enabled,
+            "reply_time_curve_points": exp.reply_time_curve_points,
             "max_skill_rounds": int(self.plugin_config.get("max_skill_rounds", 3)),
             "partial_reply_lead_seconds": float(
                 self.plugin_config.get("partial_reply_lead_seconds", 1.5)
@@ -469,6 +466,19 @@ class EngineRuntime:
             # 输出长度约束
             "max_sentence_chars": int(self.plugin_config.get("max_sentence_chars", 20)),
         }
+
+    async def _build_engine(self) -> "EmotionalGroupChatEngine":
+        provider = self._build_provider()
+        if provider is None:
+            raise RuntimeError(
+                "未配置 Provider。请通过以下任一方式配置：\n"
+                "1) 环境变量: SIRIUS_PROVIDER_TYPE, SIRIUS_API_KEY, SIRIUS_BASE_URL, SIRIUS_MODEL\n"
+                "2) 配置项 providers（列表格式）"
+            )
+
+        # 优先从 experience.json 读取记忆配置，回退到 plugin_config
+        exp = self._load_experience_config()
+        config = self._build_engine_runtime_config(exp)
 
         # 创建向量存储（ChromaDB）
         vector_store = DiaryVectorStore(self.work_path / "diary" / "vector_db")
