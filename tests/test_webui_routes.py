@@ -10,9 +10,11 @@ from sirius_pulse.utils.json_io import atomic_write_json
 from sirius_pulse.webui import persona_manager_api as persona_manager
 from sirius_pulse.webui.persona_api import (
     _resolve_persona_log_file,
+    api_orchestration_get,
     api_persona_logs_get,
     api_system_logs_get,
 )
+from sirius_pulse.webui.app_keys import DATA_DIR_KEY
 from sirius_pulse.webui.routes import WEBUI_ROUTES
 from sirius_pulse.webui.server import DELEGATED_HANDLERS, WebUIServer
 
@@ -317,6 +319,35 @@ async def test_webui_providers_get_when_registry_uses_legacy_list_then_returns_p
             "api_key": "sk-d****",
             "enabled": True,
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestration_get_when_persona_scoped_then_uses_global_provider_models(tmp_path):
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    atomic_write_json(
+        tmp_path / "providers" / "provider_keys.json",
+        {
+            "providers": {
+                "deepseek": {
+                    "type": "deepseek",
+                    "api_key": "sk-deepseek",
+                    "enabled": True,
+                    "models": ["deepseek-chat"],
+                }
+            }
+        },
+    )
+
+    response = await api_orchestration_get(
+        SimpleNamespace(app={DATA_DIR_KEY: tmp_path}),
+        persona_dir,
+    )
+    payload = json.loads(response.text)
+
+    assert [choice["value"] for choice in payload["model_choices"]] == [
+        "deepseek/deepseek-chat"
     ]
 
 

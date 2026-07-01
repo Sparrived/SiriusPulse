@@ -20,6 +20,7 @@ from sirius_pulse.persona_config import (
 )
 from sirius_pulse.platforms.persona_utils import generate_persona_from_interview
 from sirius_pulse.providers.routing import WorkspaceProviderManager
+from sirius_pulse.webui.app_keys import DATA_DIR_KEY
 from sirius_pulse.webui.model_catalog import build_model_catalog
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
@@ -299,7 +300,7 @@ async def api_persona_interview(request: web.Request, data_dir: Path) -> web.Res
 
     from sirius_pulse.providers.routing import AutoRoutingProvider
 
-    provider_mgr = WorkspaceProviderManager(request.app.get("data_dir", data_dir))
+    provider_mgr = WorkspaceProviderManager(request.app.get(DATA_DIR_KEY, data_dir))
     providers = provider_mgr.load()
     provider = None
     if providers:
@@ -320,7 +321,7 @@ async def api_orchestration_get(request: web.Request, data_dir: Path) -> web.Res
     paths = PersonaConfigPaths(data_dir)
 
     data = OrchestrationStore.load(paths.dir)
-    global_data_dir: Path = request.app.get("data_dir", data_dir)
+    global_data_dir: Path = request.app.get(DATA_DIR_KEY, data_dir)
     data["model_choices"] = build_model_catalog(global_data_dir)["model_choices"]
     return _json_response(data)
 
