@@ -171,14 +171,27 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
     return;
   }
 
-  const nodes = [{ name: '总输入', itemStyle: { color: '#ffffff' } }];
+  const nodeLabel = (nodeId) => nodeMap.get(nodeId)?.displayName || nodeId;
+  const rootId = 'root:total';
+  const nodes = [{ name: rootId, displayName: '总输入', itemStyle: { color: '#ffffff' } }];
   const links = [];
+  const nodeMap = new Map();
   const hasTaskBreakdown = breakdownByTask && Object.keys(breakdownByTask).length > 1;
+
+  const addNode = (node) => {
+    if (!nodeMap.has(node.name)) nodeMap.set(node.name, node);
+  };
+  addNode(nodes[0]);
+
+  const groupId = (groupName) => `group:${groupName}`;
+  const sectionId = (key) => `section:${key}`;
+  const taskId = (taskName) => `task:${taskName}`;
 
   if (hasTaskBreakdown) {
     // 4层桑基图：总输入 → 任务 → 大类 → 子模块
     Object.keys(breakdownByTask).forEach((taskName, ti) => {
       const taskLabel = SANKEY_TASK_LABELS[taskName] || taskName;
+      const currentTaskId = taskId(taskName);
       const taskColor = TASK_COLORS[ti % TASK_COLORS.length];
       const taskData = breakdownByTask[taskName];
       let taskSum = 0;
@@ -188,21 +201,21 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
         g.keys.forEach((key) => {
           const val = taskData[key] || 0;
           if (val) {
-            nodes.push({ name: SECTION_LABELS[key] || key, itemStyle: { color: g.color } });
-            links.push({ source: g.name, target: SECTION_LABELS[key] || key, value: val });
+            addNode({ name: sectionId(key), displayName: SECTION_LABELS[key] || key, itemStyle: { color: g.color } });
+            links.push({ source: groupId(g.name), target: sectionId(key), value: val });
             groupSum += val;
           }
         });
         if (groupSum) {
-          nodes.push({ name: g.name, itemStyle: { color: g.color } });
-          links.push({ source: taskLabel, target: g.name, value: groupSum });
+          addNode({ name: groupId(g.name), displayName: g.name, itemStyle: { color: g.color } });
+          links.push({ source: currentTaskId, target: groupId(g.name), value: groupSum });
           taskSum += groupSum;
         }
       });
 
       if (taskSum) {
-        nodes.push({ name: taskLabel, itemStyle: { color: taskColor } });
-        links.push({ source: '总输入', target: taskLabel, value: taskSum });
+        addNode({ name: currentTaskId, displayName: taskLabel, itemStyle: { color: taskColor } });
+        links.push({ source: rootId, target: currentTaskId, value: taskSum });
       }
     });
   } else {
@@ -212,14 +225,14 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
       g.keys.forEach((key) => {
         const val = breakdown[key] || 0;
         if (val) {
-          nodes.push({ name: SECTION_LABELS[key] || key, itemStyle: { color: g.color } });
-          links.push({ source: g.name, target: SECTION_LABELS[key] || key, value: val });
+          addNode({ name: sectionId(key), displayName: SECTION_LABELS[key] || key, itemStyle: { color: g.color } });
+          links.push({ source: groupId(g.name), target: sectionId(key), value: val });
           groupSum += val;
         }
       });
       if (groupSum) {
-        nodes.push({ name: g.name, itemStyle: { color: g.color } });
-        links.push({ source: '总输入', target: g.name, value: groupSum });
+        addNode({ name: groupId(g.name), displayName: g.name, itemStyle: { color: g.color } });
+        links.push({ source: rootId, target: groupId(g.name), value: groupSum });
       }
     });
   }
@@ -230,9 +243,7 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
     return;
   }
 
-  // 去重节点：同名节点只保留一个（ECharts 按 name 聚合）
-  const nodeMap = new Map();
-  nodes.forEach((n) => { if (!nodeMap.has(n.name)) nodeMap.set(n.name, n); });
+  // ECharts 按 name 匹配节点；使用带类型前缀的内部 ID，避免同名展示标签被合并成环。
   const uniqueNodes = Array.from(nodeMap.values());
 
   // 桑基图数据结构变化大，每次都重建实例避免增量更新内部状态错乱
@@ -251,10 +262,10 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
       trigger: 'item',
       formatter: (params) => {
         if (params.dataType === 'edge') {
-          return `${params.data.source} → ${params.data.target}<br/><b>${params.data.value.toLocaleString()} tokens</b>`;
+          return `${nodeLabel(params.data.source)} → ${nodeLabel(params.data.target)}<br/><b>${params.data.value.toLocaleString()} tokens</b>`;
         }
         const nodeValue = params.value ?? 0;
-        return `<b>${params.name}</b><br/>总计: ${nodeValue.toLocaleString()} tokens`;
+        return `<b>${nodeLabel(params.name)}</b><br/>总计: ${nodeValue.toLocaleString()} tokens`;
       },
     },
     series: [{
@@ -271,7 +282,7 @@ export function renderSankeyChart(container, breakdown, breakdownByTask) {
       label: {
         color: '#e8eaf0',
         fontSize: 11,
-        formatter: (p) => p.name,
+        formatter: (p) => nodeLabel(p.name),
       },
       itemStyle: { borderWidth: 1, borderColor: '#0d1117' },
     }],
