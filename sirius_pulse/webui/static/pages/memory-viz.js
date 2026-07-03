@@ -2,7 +2,7 @@ import { store } from '../store.js';
 import { get, post, put, del } from '../app.js';
 import { toast, statCard } from '../components.js';
 import { setChartOption, getChart } from '../charts.js';
-import { createScopedPage } from '../page-context.js';
+import { createPageContext, createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
 const $ = scopedPage.$;
@@ -28,6 +28,14 @@ let state = {
   data: null,
   viz: null,
 };
+
+let conversationAnalysisModule = null;
+let conversationAnalysisContext = null;
+let conversationAnalysisMounted = false;
+
+export function dispose() {
+  disposeConversationAnalysis();
+}
 
 export async function init(container, params = {}) {
   scopedPage.use(params?.ctx, container);
@@ -264,30 +272,44 @@ export async function init(container, params = {}) {
     <div class="stat-grid" id="memoryStats"></div>
     <div class="memory-tabs" id="memoryTabs"></div>
 
-    <div class="memory-workspace">
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title" id="memoryListTitle">记忆列表</div>
-            <div class="card-subtitle" id="memoryListSubtitle">按当前筛选展示</div>
-          </div>
-        </div>
-        <div id="memoryList" class="memory-list"></div>
-      </div>
-      <div class="memory-side">
+    <div id="memoryCrudView">
+      <div class="memory-workspace">
         <div class="card">
           <div class="card-header">
             <div>
-              <div class="card-title" id="memoryFormTitle">选择一条记忆</div>
-              <div class="card-subtitle" id="memoryFormSubtitle">可编辑的记忆会在这里打开</div>
+              <div class="card-title" id="memoryListTitle">记忆列表</div>
+              <div class="card-subtitle" id="memoryListSubtitle">按当前筛选展示</div>
             </div>
           </div>
-          <div id="memoryForm"></div>
+          <div id="memoryList" class="memory-list"></div>
+        </div>
+        <div class="memory-side">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title" id="memoryFormTitle">选择一条记忆</div>
+                <div class="card-subtitle" id="memoryFormSubtitle">可编辑的记忆会在这里打开</div>
+              </div>
+            </div>
+            <div id="memoryForm"></div>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="memory-chart-grid">
+    <div id="basicMemoryAnalysisView" style="display:none">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div>
+            <div class="card-title">基础记忆 · 对话分析</div>
+            <div class="card-subtitle">完整历史对话分析、检索、群组/发言人筛选、钉住消息、链路展开与删除能力。</div>
+          </div>
+        </div>
+      </div>
+      <div id="basicMemoryConversationAnalysis"></div>
+    </div>
+
+    <div class="memory-chart-grid" id="memoryChartsView">
       <div class="card">
         <div class="card-header">
           <div>
@@ -362,6 +384,7 @@ function renderAll() {
   renderGroupFilter();
   renderList();
   updateCreateButton();
+  updateConversationAnalysisView();
 }
 
 function renderTabs() {
@@ -417,6 +440,49 @@ function updateCreateButton() {
   if (!btn || !tab) return;
   btn.style.display = tab.canCreate ? '' : 'none';
   btn.textContent = state.tab === 'users' ? '新增画像' : state.tab === 'units' ? '新增单元' : '新增记忆';
+}
+
+function updateConversationAnalysisView() {
+  const isConversationsTab = state.tab === 'conversations';
+  const crudView = $('memoryCrudView');
+  const analysisView = $('basicMemoryAnalysisView');
+  const chartsView = $('memoryChartsView');
+  const groupFilter = $('memoryGroupFilter');
+  const searchInput = $('memorySearch');
+
+  if (crudView) crudView.style.display = isConversationsTab ? 'none' : '';
+  if (analysisView) analysisView.style.display = isConversationsTab ? '' : 'none';
+  if (chartsView) chartsView.style.display = isConversationsTab ? 'none' : '';
+  if (groupFilter) groupFilter.style.display = isConversationsTab ? 'none' : '';
+  if (searchInput) searchInput.style.display = isConversationsTab ? 'none' : '';
+
+  if (isConversationsTab) {
+    mountConversationAnalysis();
+  } else {
+    disposeConversationAnalysis();
+  }
+}
+
+async function mountConversationAnalysis() {
+  const container = $('basicMemoryConversationAnalysis');
+  if (!container || conversationAnalysisMounted) return;
+  conversationAnalysisMounted = true;
+  try {
+    conversationAnalysisModule = conversationAnalysisModule || await import('./conversation-history.js');
+    conversationAnalysisContext = createPageContext({ container });
+    const initFn = conversationAnalysisModule.default || conversationAnalysisModule.init;
+    await initFn?.(container, { ctx: conversationAnalysisContext, embedded: true });
+  } catch (error) {
+    conversationAnalysisMounted = false;
+    container.innerHTML = `<div class="memory-empty">加载对话分析失败：${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function disposeConversationAnalysis() {
+  conversationAnalysisModule?.dispose?.();
+  conversationAnalysisContext?.cleanup?.();
+  conversationAnalysisContext = null;
+  conversationAnalysisMounted = false;
 }
 
 function getActiveItems() {

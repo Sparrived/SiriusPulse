@@ -43,7 +43,6 @@ const NAV_GROUPS = [
     { page: 'token-tracker', icon: '△', label: 'Token 追踪' },
     { page: 'cognition', icon: '◎', label: '认知分析' },
     { page: 'skills-tracker', icon: '⟠', label: 'Skill 追踪' },
-    { page: 'conversation-history', icon: '◧', label: '对话分析' },
     { page: 'logs', icon: '▣', label: '实时日志' },
   ]},
   { id: 'memory', label: '记忆', items: [
