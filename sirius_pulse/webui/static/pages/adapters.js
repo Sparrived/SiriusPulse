@@ -67,6 +67,8 @@ async function loadAdapters(name, ctx) {
       save: () => saveAdapters(name, ctx),
       onError: (error) => toast('保存失败: ' + error.message, 'error'),
     });
+    setupTagListeners(ctx, 'addGroupInput', 'addGroupBtn', 'groupTags', autoSave);
+    setupTagListeners(ctx, 'addUserInput', 'addUserBtn', 'userTags', autoSave);
     attachAdapterTagAutoSave(ctx, autoSave);
     autoSave.markReady();
   } catch (e) {
@@ -162,9 +164,6 @@ function renderAdapter(adapter, ctx) {
 
   renderTags(ctx, 'groupTags', allowedGroups);
   renderTags(ctx, 'userTags', allowedUsers);
-
-  setupTagListeners(ctx, 'addGroupInput', 'addGroupBtn', 'groupTags', autoSave);
-  setupTagListeners(ctx, 'addUserInput', 'addUserBtn', 'userTags', autoSave);
 }
 
 function renderTags(ctx, containerId, items) {
