@@ -1,10 +1,19 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, animateNumber, flashSuccess, ModelSelect } from '../components.js';
+import { confirmDanger, toast, animateNumber, ModelSelect } from '../components.js';
 import { buildDevModelCard, getModelDevCache, loadModelsDevForType } from './model-dev.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  Object.values(_healthSelects).forEach(sel => sel?.destroy?.());
+  _healthSelects = {};
+  closeModal();
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 const BUILTIN_TYPES = [
@@ -47,6 +56,9 @@ let modalModels = [];
 let probeStatus = {};
 let _root = null;
 let _healthSelects = {};
+let saveTimer = null;
+let isSavingProviders = false;
+let queuedProviderSave = false;
 
 function _getModelTags(modelId, providerType = '') {
   const modelSets = providerType
@@ -89,6 +101,10 @@ function _mountHealthSelects() {
       options: opts,
       value: p.healthcheck_model || '',
       placeholder: '— 请选择 —',
+      onChange: () => {
+        saveProviderDraft(idx);
+        scheduleSaveAll();
+      },
     });
     sel.mount(container);
     _healthSelects[idx] = sel;
@@ -106,6 +122,7 @@ export async function init(container, params = {}) {
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-sm" id="refreshModelsBtn" title="从 models.dev 自动获取模型列表">刷新模型</button>
+          <span id="providersAutoSaveStatus" style="color:var(--text-3);font-size:12px;align-self:center"></span>
           <button class="btn btn-sm" id="probeAllBtn">全部检测</button>
           <button class="btn btn-primary btn-sm" id="addProviderBtn">+ 添加 Provider</button>
         </div>
@@ -138,6 +155,7 @@ async function loadProviders() {
 
     renderList();
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     console.error('[providers] loadProviders 失败:', e);
     toast('加载 Provider 列表失败', 'error');
   }
@@ -268,8 +286,8 @@ function renderEditCard(p, i) {
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
           <button class="btn btn-sm btn-danger" data-action="delete" data-idx="${i}">删除</button>
-          <button class="btn btn-sm" data-action="cancel" data-idx="${i}">取消</button>
-          <button class="btn btn-sm btn-primary" data-action="save" data-idx="${i}">保存</button>
+          <span style="color:var(--text-3);font-size:12px;align-self:center">修改后自动保存</span>
+          <button class="btn btn-sm" data-action="cancel" data-idx="${i}">关闭</button>
         </div>
       </div>
     </div>
@@ -285,7 +303,6 @@ function bindCardEvents() {
       const idx = parseInt(btn.dataset.idx, 10);
       if (action === 'edit') startEdit(idx);
       else if (action === 'cancel') cancelEdit(idx);
-      else if (action === 'save') saveProvider(idx);
       else if (action === 'delete') deleteProvider(idx);
       else if (action === 'addModel') addModelToProvider(idx);
       else if (action === 'probe') probeProvider(btn);
@@ -299,8 +316,10 @@ function bindCardEvents() {
       const mi = parseInt(span.dataset.removeModel, 10);
       const card = span.closest('[data-idx]');
       const idx = parseInt(card.dataset.idx, 10);
+      if (!confirmDanger()) return;
       providers[idx].models.splice(mi, 1);
       renderList();
+      scheduleSaveAll();
     });
   });
 
@@ -312,7 +331,17 @@ function bindCardEvents() {
       if (BUILTIN_TYPES.includes(newType) && urlInput) {
         urlInput.value = DEFAULT_URLS[newType] || '';
       }
+      saveProviderDraft(idx);
       loadModelsDevForEdit(idx);
+      scheduleSaveAll();
+    });
+  });
+
+  el.querySelectorAll('[id^="pv_url_"], [id^="pv_key_"]').forEach(input => {
+    input.addEventListener('input', () => {
+      const idx = parseInt(input.id.replace(/^pv_(url|key)_/, ''), 10);
+      saveProviderDraft(idx);
+      scheduleSaveAll();
     });
   });
 
@@ -334,10 +363,12 @@ function bindCardEvents() {
       if (!providers[idx].models) providers[idx].models = [];
       const pos = providers[idx].models.indexOf(model);
       if (pos !== -1) {
+        if (!confirmDanger()) return;
         providers[idx].models.splice(pos, 1);
       } else {
         providers[idx].models.push(model);
       }
+      scheduleSaveAll();
       const scrollContainer = el.querySelector(`#pv_devModels_${idx}`);
       const scrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
       const searchInput = el.querySelector(`#pv_devSearch_${idx}`);
@@ -435,7 +466,7 @@ function cancelEdit(idx) {
 
 function addProvider() {
   if (editingIdx !== null) {
-    toast('请先保存或取消当前编辑', 'warning');
+    toast('请先关闭当前编辑卡片', 'warning');
     return;
   }
   openAddModal();
@@ -489,7 +520,7 @@ function openAddModal() {
       </div>
       <div class="modal-footer">
         <button class="btn btn-sm" id="modalCancelBtn">取消</button>
-        <button class="btn btn-sm btn-primary" id="modalSaveBtn">保存</button>
+        <button class="btn btn-sm btn-primary" id="modalSaveBtn">添加</button>
       </div>
     </div>
   `;
@@ -533,6 +564,7 @@ function renderModalModels() {
   container.querySelectorAll('[data-remove-modal-model]').forEach(span => {
     span.addEventListener('click', () => {
       const mi = parseInt(span.dataset.removeModalModel, 10);
+      if (!confirmDanger()) return;
       modalModels.splice(mi, 1);
       renderModalModels();
     });
@@ -583,20 +615,31 @@ async function saveFromModal() {
 
   closeModal();
   await saveAll();
+  await loadProviders();
+}
+
+function saveProviderDraft(idx) {
+  const p = providers[idx];
+  if (!p) return;
+  const typeInput = _root.querySelector(`#pv_type_${idx}`);
+  const urlInput = _root.querySelector(`#pv_url_${idx}`);
+  const keyInput = _root.querySelector(`#pv_key_${idx}`);
+  if (typeInput) p.platform_type = typeInput.value;
+  if (urlInput) p.base_url = urlInput.value.trim();
+  if (keyInput) p.api_key = keyInput.value.trim();
+  p.healthcheck_model = _healthSelects[idx]?.value || p.healthcheck_model || '';
+  delete p._new;
 }
 
 async function saveProvider(idx) {
-  const p = providers[idx];
-  p.platform_type = _root.querySelector(`#pv_type_${idx}`).value;
-  p.base_url = _root.querySelector(`#pv_url_${idx}`).value.trim();
-  p.api_key = _root.querySelector(`#pv_key_${idx}`).value.trim();
-  p.healthcheck_model = _healthSelects[idx]?.value || '';
-  delete p._new;
+  saveProviderDraft(idx);
   editingIdx = null;
   await saveAll();
 }
 
 async function deleteProvider(idx) {
+  const name = providers[idx]?.name || providers[idx]?.platform_type || '该 Provider';
+  if (!confirmDanger(`确定删除「${name}」吗？此操作不可撤销。`)) return;
   providers.splice(idx, 1);
   editingIdx = null;
   await saveAll();
@@ -620,9 +663,29 @@ function addModelToProvider(idx) {
   providers[idx].models.push(name);
   input.value = '';
   renderList();
+  scheduleSaveAll();
+}
+
+function setProviderSaveStatus(text) {
+  const el = _root?.querySelector('#providersAutoSaveStatus');
+  if (el) el.textContent = text || '';
+}
+
+function scheduleSaveAll() {
+  if (saveTimer) clearTimeout(saveTimer);
+  setProviderSaveStatus('等待自动保存…');
+  saveTimer = setTimeout(saveAll, 800);
 }
 
 async function saveAll() {
+  if (isSavingProviders) {
+    queuedProviderSave = true;
+    return;
+  }
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  isSavingProviders = true;
+  setProviderSaveStatus('保存中…');
   const clean = providers.map(p => ({
     name: p.name || undefined,
     type: p.platform_type,
@@ -633,13 +696,19 @@ async function saveAll() {
     healthcheck_model: p.healthcheck_model || '',
   }));
   try {
-    const res = await post('/providers', { providers: clean });
-    toast(res.message || '保存成功', 'success');
-    flashSuccess(_root.querySelector('#addProviderBtn'));
-    await loadProviders();
+    await post('/providers', { providers: clean });
+    setProviderSaveStatus('已自动保存');
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     console.error('[providers] saveAll 失败:', e);
+    setProviderSaveStatus('自动保存失败');
     toast('保存失败', 'error');
+  } finally {
+    isSavingProviders = false;
+    if (queuedProviderSave) {
+      queuedProviderSave = false;
+      scheduleSaveAll();
+    }
   }
 }
 
@@ -649,11 +718,12 @@ function maskKey(key) {
   return key.slice(0, 4) + '****' + key.slice(-4);
 }
 
-async function probeProvider(btn) {
+async function probeProvider(btn, options = {}) {
+  const { force = true } = options;
   const name = btn.dataset.name;
   if (!name) return;
 
-  if (_isProbeCacheValid(name)) {
+  if (!force && _isProbeCacheValid(name)) {
     const remaining = Math.ceil(_getProbeCacheRemaining(name) / 1000);
     toast(`${name} 检测结果已缓存 (${remaining}s 后过期)`, 'info');
     return;
@@ -663,7 +733,7 @@ async function probeProvider(btn) {
   btn.textContent = '检查中…';
 
   try {
-    const res = await post('/providers/probe', { name });
+    const res = await post('/providers/probe', { name, force });
     if (res.success) {
       probeStatus[name] = { ok: true, latency: res.latency_ms || 0, timestamp: Date.now() };
       toast(`${name} 可用 (${res.latency_ms}ms)`, 'success');
@@ -672,6 +742,7 @@ async function probeProvider(btn) {
       toast(`${name} 不可用: ${res.error || '未知错误'}`, 'error');
     }
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     probeStatus[name] = { ok: false, latency: 0, timestamp: Date.now() };
     toast(`检查失败: ${e.message}`, 'error');
   }
@@ -711,7 +782,7 @@ async function probeAll(options = {}) {
 
   for (const name of tasks) {
     try {
-      const res = await post('/providers/probe', { name });
+      const res = await post('/providers/probe', { name, force });
       if (res.success) {
         probeStatus[name] = { ok: true, latency: res.latency_ms || 0, timestamp: Date.now() };
         okCount++;
@@ -764,6 +835,7 @@ async function refreshModels() {
       toast(`刷新失败: ${res.error || '未知错误'}`, 'error');
     }
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     console.error('[providers] refreshModels 失败:', e);
     toast(`刷新失败: ${e.message}`, 'error');
   }

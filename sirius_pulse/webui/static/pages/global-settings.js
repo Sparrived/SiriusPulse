@@ -1,9 +1,14 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, animateNumber, flashSuccess } from '../components.js';
+import { toast, animateNumber } from '../components.js';
 import { createScopedPage } from '../page-context.js';
+import { createAutoSave } from '../autosave.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 const FIELDS = [
@@ -29,15 +34,25 @@ export async function init(container, params = {}) {
           ${FIELDS.map(f => renderField(f)).join('')}
         </div>
         <div style="margin-top:24px;display:flex;justify-content:flex-end;gap:12px">
+          <span id="gsAutoSaveStatus" style="color:var(--text-3);font-size:12px;align-self:center"></span>
           <button type="button" class="btn" id="gsResetBtn">重置</button>
-          <button type="submit" class="btn btn-primary" id="gsSaveBtn">保存设置</button>
         </div>
       </form>
     </div>
   `;
 
-  $('globalSettingsForm').addEventListener('submit', handleSave);
-  $('gsResetBtn').addEventListener('click', () => fillForm(currentConfig));
+  const form = $('globalSettingsForm');
+  form.addEventListener('submit', (event) => event.preventDefault());
+  const autoSave = createAutoSave({
+    root: form,
+    statusEl: $('gsAutoSaveStatus'),
+    save: () => handleSave(),
+    onError: () => toast('保存失败', 'error'),
+  });
+  $('gsResetBtn').addEventListener('click', () => {
+    fillForm(currentConfig);
+    autoSave.schedule();
+  });
 
   // 数字调节按钮事件
   scopedPage.$$('[data-spin-target]').forEach(btn => {
@@ -55,6 +70,7 @@ export async function init(container, params = {}) {
   });
 
   await loadConfig();
+  autoSave.markReady();
 }
 
 function renderField(f) {
@@ -123,16 +139,14 @@ function collectFormData() {
   return result;
 }
 
-async function handleSave(e) {
-  e.preventDefault();
-  const btn = $('gsSaveBtn');
+async function handleSave() {
   const data = collectFormData();
   try {
     const res = await post('/global-config', data);
     currentConfig = data;
-    toast(res.message || '保存成功', 'success');
-    flashSuccess(btn);
-  } catch {
-    toast('保存失败', 'error');
+    return res;
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    throw error;
   }
 }

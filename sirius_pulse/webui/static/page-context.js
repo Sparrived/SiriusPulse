@@ -1,3 +1,5 @@
+import { get, post, put, del } from './api.js';
+
 function toElementSelector(value) {
   const text = String(value || '');
   if (/^[#.[:]/.test(text)) return text;
@@ -13,7 +15,7 @@ export function createPageContext({ container, signal, fetchImpl = globalThis.fe
   const cleanups = new Set();
 
   function isActive() {
-    return Boolean(container) && !signal?.aborted;
+    return Boolean(container) && container.isConnected !== false && !signal?.aborted;
   }
 
   function addCleanup(fn) {
@@ -93,36 +95,18 @@ export function createPageContext({ container, signal, fetchImpl = globalThis.fe
       }
     },
 
+    get: (path) => isActive() ? get(path, signal) : Promise.reject(new DOMException('Page inactive', 'AbortError')),
+    post: (path, body) => isActive() ? post(path, body, signal) : Promise.reject(new DOMException('Page inactive', 'AbortError')),
+    put: (path, body) => isActive() ? put(path, body, signal) : Promise.reject(new DOMException('Page inactive', 'AbortError')),
+    del: (path) => isActive() ? del(path, signal) : Promise.reject(new DOMException('Page inactive', 'AbortError')),
+
     cleanup,
   };
-}
-
-function createInertElement() {
-  const noop = () => {};
-  const element = {
-    addEventListener: noop,
-    removeEventListener: noop,
-    appendChild: noop,
-    remove: noop,
-    focus: noop,
-    querySelector: () => element,
-    querySelectorAll: () => [],
-    classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
-    style: {},
-    dataset: {},
-    value: '',
-    checked: false,
-    disabled: false,
-    innerHTML: '',
-    textContent: '',
-  };
-  return element;
 }
 
 export function createScopedPage() {
   let ctx = null;
   let container = null;
-  const inertElement = createInertElement();
 
   function isActive() {
     return Boolean(ctx?.isActive?.());
@@ -138,7 +122,7 @@ export function createScopedPage() {
 
     $(id) {
       if (ctx) {
-        if (!isActive()) return inertElement;
+        if (!isActive()) return null;
         return ctx.$(id);
       }
       if (!container) return null;
@@ -155,7 +139,7 @@ export function createScopedPage() {
 
     query(selector) {
       if (ctx) {
-        if (!isActive()) return inertElement;
+        if (!isActive()) return null;
         return ctx.query ? ctx.query(selector) : ctx.$$(selector)[0] || null;
       }
       return container ? container.querySelector(selector) : null;

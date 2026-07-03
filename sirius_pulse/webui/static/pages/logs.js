@@ -39,6 +39,7 @@ function stateFor(source) {
 }
 
 export function dispose() {
+  scopedPage.use(null, null);
   realtime.stop();
 }
 
@@ -109,6 +110,7 @@ async function loadLogs(initial) {
     appendLines(source, data.lines || []);
     setStatus(statusText());
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     setStatus('日志加载失败');
     toast('日志加载失败', 'error');
   }

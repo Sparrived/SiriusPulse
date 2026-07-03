@@ -1,7 +1,8 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess, ModelSelect } from '../components.js';
+import { toast, ModelSelect } from '../components.js';
 import { createScopedPage } from '../page-context.js';
+import { createAutoSave } from '../autosave.js';
 import {
   buildLegacyModelChoice,
   resolveCompositeModelValue,
@@ -9,6 +10,12 @@ import {
 } from './orchestration-model-options.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  Object.values(modelSelects).forEach(sel => sel?.destroy?.());
+  Object.keys(modelSelects).forEach(key => delete modelSelects[key]);
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 const TASK_GROUPS = [
@@ -112,9 +119,9 @@ export async function init(container, params = {}) {
           <div class="card-title">模型编排</div>
           <div class="card-subtitle">配置 ${name} 的模型分配与任务参数</div>
         </div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="orchAutoSaveStatus" style="color:var(--text-3);font-size:12px"></span>
           <button class="btn btn-ghost" id="orchReset">重置参数</button>
-          <button class="btn btn-primary" id="orchSave" disabled>保存</button>
         </div>
       </div>
       <div id="orchContent">
@@ -123,9 +130,15 @@ export async function init(container, params = {}) {
     </div>
   `;
 
-  $('orchSave')?.addEventListener('click', () => saveOrchestration(name));
+  autoSave = createAutoSave({
+    root: $('orchContent'),
+    statusEl: $('orchAutoSaveStatus'),
+    save: () => saveOrchestration(name),
+    onError: (error) => toast('保存失败: ' + error.message, 'error'),
+  });
   $('orchReset')?.addEventListener('click', () => resetTaskParams(name));
   await loadOrchestration(name);
+  autoSave.markReady();
 }
 
 async function loadOrchestration(name) {
@@ -139,12 +152,10 @@ async function loadOrchestration(name) {
     taskParamDefaults = paramsData.defaults || {};
     taskParamOverrides = paramsData.task_params || {};
     renderOrchestration(orchData);
-    $('orchSave').disabled = false;
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     const el = $('orchContent');
     if (el) el.innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
-    const btn = $('orchSave');
-    if (btn) btn.disabled = true;
   }
 }
 
@@ -256,7 +267,7 @@ function _mountModelSelects(data) {
       opts.unshift({ value: value, label: `${value} (当前配置)`, tags: [] });
     }
 
-    const sel = new ModelSelect({ options: opts, value });
+    const sel = new ModelSelect({ options: opts, value, onChange: () => autoSave?.schedule() });
     sel.mount(container);
     modelSelects[key] = sel;
   }
@@ -279,13 +290,17 @@ function _mountModelSelects(data) {
       opts.splice(1, 0, { value: value, label: `${value} (当前配置)`, tags: [] });
     }
 
-    const sel = new ModelSelect({ options: opts, value, placeholder: '继承通用' });
+    const sel = new ModelSelect({ options: opts, value, placeholder: '继承通用', onChange: () => autoSave?.schedule() });
     sel.mount(container);
     modelSelects[key] = sel;
   });
 }
 
 function setupOverrideListeners() {
+  scopedPage.$$('.task-enabled').forEach(cb => {
+    cb.addEventListener('change', () => autoSave?.schedule());
+  });
+
   scopedPage.$$('.task-override').forEach(cb => {
     cb.addEventListener('change', () => {
       const task = cb.dataset.task;
@@ -303,6 +318,7 @@ function setupOverrideListeners() {
           modelSelects[key].setValue('__inherit__');
         }
       }
+      autoSave?.schedule();
     });
   });
 }
@@ -344,7 +360,7 @@ function renderParamTuning() {
       opts.splice(1, 0, { value, label: `${value} (当前配置)`, tags: [] });
     }
 
-    const sel = new ModelSelect({ options: opts, value, placeholder: '无 fallback' });
+    const sel = new ModelSelect({ options: opts, value, placeholder: '无 fallback', onChange: () => autoSave?.schedule() });
     sel.mount(container);
     modelSelects[`fb_${task}`] = sel;
   });
@@ -431,6 +447,7 @@ function bindParamEvents() {
     input.style.borderColor = has ? 'var(--accent)' : 'var(--border)';
     if (dot) dot.style.display = has ? 'inline' : 'none';
     if (clr) clr.style.visibility = has ? 'visible' : 'hidden';
+    autoSave?.schedule();
   });
 
   content.addEventListener('click', (e) => {
@@ -447,6 +464,7 @@ function bindParamEvents() {
     const dot = cell.querySelector('.tp-dot');
     if (dot) dot.style.display = 'none';
     clr.style.visibility = 'hidden';
+    autoSave?.schedule();
   });
 }
 
@@ -539,10 +557,9 @@ async function saveOrchestration(name) {
       task_fallback_model: taskFallbackModel,
     });
 
-    flashSuccess($('orchSave'));
-    toast('模型编排与参数已保存', 'success');
   } catch (e) {
-    toast('保存失败: ' + e.message, 'error');
+    if (e?.name === 'AbortError') return;
+    throw e;
   }
 }
 
@@ -558,6 +575,7 @@ async function resetTaskParams(name) {
     toast('任务参数已重置为默认值', 'success');
     await loadOrchestration(name);
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('重置失败: ' + e.message, 'error');
   }
 }

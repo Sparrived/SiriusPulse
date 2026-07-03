@@ -28,6 +28,7 @@ const PAGE_SIZE = 10;
 const realtime = createRealtimeRefresh(() => loadData(true), { resources: ['tokens'], debounceMs: 500 });
 
 export function dispose() {
+  scopedPage.use(null, null);
   realtime.stop();
 }
 
@@ -131,6 +132,7 @@ async function loadData(silent = false) {
     renderStats();
     renderTabContent();
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     if (!silent) toast('加载 Token 数据失败', 'error');
     else console.warn('token realtime refresh failed:', e);
   }

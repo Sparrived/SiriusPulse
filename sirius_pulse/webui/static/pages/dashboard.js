@@ -6,6 +6,11 @@ import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  destroy();
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 // ==================== 动态星空渲染器 ====================
@@ -518,6 +523,7 @@ function bindEvents() {
           document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-2);font-size:18px;">程序已关闭，可以关闭此页面</div>';
         }, 2000);
       } catch (e) {
+    if (e?.name === 'AbortError') return;
         // 请求可能因服务关闭而失败，这是正常的
         scopedPage.timeout(() => {
           document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-2);font-size:18px;">程序已关闭，可以关闭此页面</div>';
@@ -554,6 +560,7 @@ function bindEvents() {
           toast(res.error || '启动失败', 'error');
         }
       } catch (e) {
+    if (e?.name === 'AbortError') return;
         toast('启动失败', 'error');
       }
     });
@@ -573,6 +580,7 @@ function bindEvents() {
           toast(res.error || '停止失败', 'error');
         }
       } catch (e) {
+    if (e?.name === 'AbortError') return;
         toast('停止失败', 'error');
       }
     });
@@ -896,6 +904,7 @@ async function loadStats() {
       }
     }
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     console.error('统计数据加载失败:', e);
   }
 }
@@ -909,6 +918,7 @@ async function loadPersonas() {
     // 初始化人格图斑
     initPersonaSpots();
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     console.error('人格数据加载失败:', e);
   }
 }

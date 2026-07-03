@@ -1,6 +1,6 @@
 import { store, setState, subscribe } from './store.js';
-import { get, post, put, del, setToken, clearToken, getToken } from './api.js';
-export { get, post, put, del, setToken, clearToken, getToken };
+import { get as apiGet, post as apiPost, put as apiPut, del as apiDel, setToken, clearToken, getToken } from './api.js';
+export { setToken, clearToken, getToken };
 import { initTheme, applyTheme, getThemes, getModes, applyMode } from './theme.js';
 import { wsConnect } from './ws.js';
 import { toast, formatHeartbeat, $ } from './components.js';
@@ -67,6 +67,26 @@ let sidebarCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
 let activePageModule = null;
 let activePageAbortController = null;
 let navVersion = 0;
+
+function activeSignal(signal) {
+  return signal || activePageAbortController?.signal;
+}
+
+export function get(path, signal) {
+  return apiGet(path, activeSignal(signal));
+}
+
+export function post(path, body, signal) {
+  return apiPost(path, body, activeSignal(signal));
+}
+
+export function put(path, body, signal) {
+  return apiPut(path, body, activeSignal(signal));
+}
+
+export function del(path, signal) {
+  return apiDel(path, activeSignal(signal));
+}
 const personasRealtime = createRealtimeRefresh(
   async () => {
     if (getToken()) await loadPersonas();
@@ -207,7 +227,15 @@ export async function navTo(page, name) {
     activePageModule = mod;
     const initFn = mod.default || mod.init;
     const pageContext = createPageContext({ container: main, signal: activePageAbortController.signal });
-    if (initFn) await initFn(main, { page, name, ctx: pageContext, signal: pageContext.signal });
+    try {
+      if (initFn) await initFn(main, { page, name, ctx: pageContext, signal: pageContext.signal });
+    } catch (e) {
+      if (myNavVersion !== navVersion || e?.name === 'AbortError') return;
+      console.error('page init failed:', e);
+      main.innerHTML = `<div class="card"><div style="padding:20px;color:var(--danger)">页面加载失败: ${e.message}</div></div>`;
+    } finally {
+      if (myNavVersion !== navVersion) pageContext.cleanup();
+    }
   }
 }
 
@@ -388,9 +416,9 @@ export async function selectPersona(name) {
   if (!name) return;
   store.currentPersona = name;
   try {
-    await post(`/personas/${encodeURIComponent(name)}/activate`, {});
+    await apiPost(`/personas/${encodeURIComponent(name)}/activate`, {});
   } catch {}
-  try { store.personaState = await get(`/persona/status`); } catch {}
+  try { store.personaState = await apiGet(`/persona/status`); } catch {}
   store.personas = (store.personas || []).map(p => ({ ...p, active: p.name === name }));
   renderSidebarFooter();
   window.dispatchEvent(new CustomEvent('persona:focus', { detail: name }));
@@ -398,7 +426,7 @@ export async function selectPersona(name) {
 
 async function loadPersonas() {
   try {
-    const res = await get('/personas');
+    const res = await apiGet('/personas');
     let personas = res.personas || [];
 
     // 应用保存的排序

@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { get, del } from '../app.js';
-import { toast } from '../components.js';
+import { confirmDanger, toast } from '../components.js';
 import { createRealtimeRefresh } from './realtime.js';
 import { createScopedPage } from '../page-context.js';
 
@@ -27,6 +27,7 @@ const realtime = createRealtimeRefresh(() => loadMessages(true), {
 });
 
 export function dispose() {
+  scopedPage.use(null, null);
   realtime.stop();
 }
 
@@ -211,6 +212,7 @@ async function loadMessages(silent = false) {
     renderMessages();
     renderPagination(total);
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     if (!silent) {
       toast('加载对话历史失败: ' + e.message, 'error');
       const msgList = $('messageList');
@@ -1079,12 +1081,13 @@ function buildConversationDeletePath(message) {
 
 async function deleteConversationMessage(message) {
   const label = String(message.content || message.entry_id || message.timestamp || '\u8be5\u6d88\u606f').slice(0, 40);
-  if (!confirm(`\u786e\u5b9a\u5220\u9664\u300c${label}\u300d\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002`)) return;
+  if (!confirmDanger(`确定删除「${label}」吗？此操作不可撤销。`)) return;
   try {
     await del(buildConversationDeletePath(message));
     toast('\u5bf9\u8bdd\u5185\u5bb9\u5df2\u5220\u9664', 'success');
     await loadMessages(true);
   } catch (error) {
+    if (error?.name === 'AbortError') return;
     toast('\u5220\u9664\u5931\u8d25: ' + error.message, 'error');
   }
 }

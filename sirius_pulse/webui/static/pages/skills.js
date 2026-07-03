@@ -4,6 +4,11 @@ import { toast, flashSuccess } from '../components.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  closeModal();
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 let currentModal = null;
@@ -65,6 +70,7 @@ async function loadSkills() {
       btn.addEventListener('click', () => openConfigModal(btn.dataset.name));
     });
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     el.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
   }
 }
@@ -101,6 +107,7 @@ async function toggleSkill(skillName, enabled, tagEl) {
     await post(`/persona/skills/${skillName}/toggle`, { enabled });
     toast(`${skillName} 已${enabled ? '启用' : '禁用'}`, 'success');
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('操作失败: ' + e.message, 'error');
     if (tagEl) {
       tagEl.textContent = enabled ? '已禁用' : '已启用';
@@ -140,6 +147,7 @@ async function openConfigModal(skillName) {
     const data = await get(`/persona/skills/${skillName}/config`);
     renderConfigModal(data, skillName);
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     const body = $('modalBody');
     if (body) body.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
   }
@@ -228,6 +236,7 @@ async function saveConfig(payload, skillName) {
     toast('配置已保存');
     scopedPage.timeout(closeModal, 800);
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('保存失败: ' + e.message, 'error');
     if (btn) {
       btn.disabled = false;

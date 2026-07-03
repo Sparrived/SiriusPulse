@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess } from '../components.js';
+import { confirmDanger, toast } from '../components.js';
+import { createAutoSave } from '../autosave.js';
 
 let adapterData = null;
 
@@ -30,7 +31,7 @@ export async function init(container, params) {
           <div class="card-title">适配器配置</div>
           <div class="card-subtitle">配置 ${name} 的平台适配器</div>
         </div>
-        <button class="btn btn-primary" id="adapterSave" disabled>保存</button>
+        <span id="adapterAutoSaveStatus" style="color:var(--text-3);font-size:12px"></span>
       </div>
       <div id="adapterContent">
         <div style="padding:20px;color:var(--text-3)">加载中...</div>
@@ -39,8 +40,6 @@ export async function init(container, params) {
   `;
 
   await loadAdapters(name, ctx);
-
-  ctx.on(ctx.$('adapterSave'), 'click', () => saveAdapters(name, ctx));
 }
 
 function fallbackContext(container) {
@@ -62,15 +61,18 @@ async function loadAdapters(name, ctx) {
     if (!ctx.$('adapterContent')) return;
     adapterData = data;
     renderAdapter(data.adapters?.[0] || {}, ctx);
-    // 加载成功后启用保存按钮
-    const saveBtn = ctx.$('adapterSave');
-    if (saveBtn) saveBtn.disabled = false;
+    const autoSave = createAutoSave({
+      root: ctx.$('adapterForm'),
+      statusEl: ctx.$('adapterAutoSaveStatus'),
+      save: () => saveAdapters(name, ctx),
+      onError: (error) => toast('保存失败: ' + error.message, 'error'),
+    });
+    attachAdapterTagAutoSave(ctx, autoSave);
+    autoSave.markReady();
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     const contentEl = ctx.$('adapterContent');
     if (contentEl) contentEl.innerHTML = `<div style="padding:20px;color:var(--danger)">加载失败: ${e.message}</div>`;
-    // 加载失败时保持保存按钮禁用
-    const saveBtn = ctx.$('adapterSave');
-    if (saveBtn) saveBtn.disabled = true;
   }
 }
 
@@ -161,8 +163,8 @@ function renderAdapter(adapter, ctx) {
   renderTags(ctx, 'groupTags', allowedGroups);
   renderTags(ctx, 'userTags', allowedUsers);
 
-  setupTagListeners(ctx, 'addGroupInput', 'addGroupBtn', 'groupTags');
-  setupTagListeners(ctx, 'addUserInput', 'addUserBtn', 'userTags');
+  setupTagListeners(ctx, 'addGroupInput', 'addGroupBtn', 'groupTags', autoSave);
+  setupTagListeners(ctx, 'addUserInput', 'addUserBtn', 'userTags', autoSave);
 }
 
 function renderTags(ctx, containerId, items) {
@@ -177,12 +179,12 @@ function renderTags(ctx, containerId, items) {
 
   el.querySelectorAll('.tag-remove').forEach(btn => {
     ctx.on(btn, 'click', () => {
-      btn.parentElement.remove();
+      if (confirmDanger()) btn.parentElement.remove();
     });
   });
 }
 
-function setupTagListeners(ctx, inputId, btnId, containerId) {
+function setupTagListeners(ctx, inputId, btnId, containerId, autoSave) {
   const input = ctx.$(inputId);
   const btn = ctx.$(btnId);
   const container = ctx.$(containerId);
@@ -204,9 +206,14 @@ function setupTagListeners(ctx, inputId, btnId, containerId) {
     tag.className = 'tag tag-accent';
     tag.dataset.value = value;
     tag.innerHTML = `${value}<span class="tag-remove" style="cursor:pointer;margin-left:4px" data-value="${value}">×</span>`;
-    ctx.on(tag.querySelector('.tag-remove'), 'click', () => tag.remove());
+    ctx.on(tag.querySelector('.tag-remove'), 'click', () => {
+      if (!confirmDanger()) return;
+      tag.remove();
+      autoSave?.schedule();
+    });
     container.appendChild(tag);
     input.value = '';
+    autoSave?.schedule();
   }
 
   ctx.on(btn, 'click', addTag);
@@ -216,6 +223,21 @@ function setupTagListeners(ctx, inputId, btnId, containerId) {
       addTag();
     }
   });
+}
+
+
+function attachAdapterTagAutoSave(ctx, autoSave) {
+  for (const id of ['groupTags', 'userTags']) {
+    const container = ctx.$(id);
+    if (!container) continue;
+    ctx.on(container, 'click', (event) => {
+      if (!event.target.closest('.tag-remove')) return;
+      autoSave.schedule();
+    });
+  }
+  for (const id of ['addGroupBtn', 'addUserBtn']) {
+    ctx.on(ctx.$(id), 'click', () => autoSave.schedule());
+  }
 }
 
 function getTagValues(ctx, containerId) {
@@ -241,9 +263,8 @@ async function saveAdapters(name, ctx) {
 
   try {
     await post(`/persona/adapters`, { adapters: [adapter] });
-    flashSuccess(ctx.$('adapterSave'));
-    toast('适配器配置已保存', 'success');
   } catch (e) {
-    toast('保存失败: ' + e.message, 'error');
+    if (e?.name === 'AbortError') return;
+    throw e;
   }
 }

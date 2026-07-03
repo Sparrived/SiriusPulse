@@ -4,6 +4,11 @@ import { toast, flashSuccess, DynamicConfigForm } from '../components.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  closeModal();
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 let currentModal = null;
@@ -93,6 +98,7 @@ async function togglePlugin(name, enabled, tagEl) {
       }
     }
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('操作失败: ' + e.message, 'error');
     if (tagEl) {
       tagEl.textContent = enabled ? '已禁用' : '已启用';
@@ -314,6 +320,7 @@ async function savePluginConfig(name) {
     toast('配置已保存', 'success');
     scopedPage.timeout(closeModal, 1200);
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('保存失败: ' + e.message, 'error');
     if (saveBtn) {
       saveBtn.disabled = false;

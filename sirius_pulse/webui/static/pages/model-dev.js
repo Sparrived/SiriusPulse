@@ -25,6 +25,7 @@ export async function loadModelsDevForType(providerType, { refresh = false } = {
     modelDevCache[providerType] = models;
     return models;
   } catch (error) {
+    if (error?.name === 'AbortError') return;
     console.warn('[models-dev] 加载失败:', providerType, error);
     modelDevCache[providerType] = [];
     return [];

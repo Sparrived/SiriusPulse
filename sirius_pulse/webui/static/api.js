@@ -31,6 +31,7 @@ async function readError(r, method, path) {
 }
 
 function logAndThrow(method, path, err) {
+  if (err?.name === 'AbortError') throw err;
   console.error(`[API ${method}] ${path} → 网络错误:`, err);
   throw err;
 }
@@ -133,10 +134,12 @@ export async function get(path, signal) {
   });
 }
 
-export async function post(path, body) {
+export async function post(path, body, signal) {
   return withLoading(async () => {
+    const opts = { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) };
+    if (signal) opts.signal = signal;
     let r;
-    try { r = await fetch(API + path, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('POST', path, e); }
+    try { r = await fetch(API + path, opts); } catch (e) { logAndThrow('POST', path, e); }
     handleAuthError(r);
     if (!r.ok) { throw new Error(await readError(r, 'POST', path)); }
     const data = await r.json();
@@ -145,10 +148,12 @@ export async function post(path, body) {
   });
 }
 
-export async function del(path) {
+export async function del(path, signal) {
   return withLoading(async () => {
+    const opts = { method: 'DELETE', headers: authHeaders() };
+    if (signal) opts.signal = signal;
     let r;
-    try { r = await fetch(API + path, { method: 'DELETE', headers: authHeaders() }); } catch (e) { logAndThrow('DELETE', path, e); }
+    try { r = await fetch(API + path, opts); } catch (e) { logAndThrow('DELETE', path, e); }
     handleAuthError(r);
     if (!r.ok) { throw new Error(await readError(r, 'DELETE', path)); }
     const data = await r.json();
@@ -157,10 +162,12 @@ export async function del(path) {
   });
 }
 
-export async function put(path, body) {
+export async function put(path, body, signal) {
   return withLoading(async () => {
+    const opts = { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) };
+    if (signal) opts.signal = signal;
     let r;
-    try { r = await fetch(API + path, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) }); } catch (e) { logAndThrow('PUT', path, e); }
+    try { r = await fetch(API + path, opts); } catch (e) { logAndThrow('PUT', path, e); }
     handleAuthError(r);
     if (!r.ok) { throw new Error(await readError(r, 'PUT', path)); }
     const data = await r.json();

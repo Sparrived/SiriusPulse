@@ -1,7 +1,7 @@
 const instances = new Map();
 
 export function getChart(container) {
-  if (!container || typeof echarts === 'undefined') return null;
+  if (!container?.nodeType || typeof echarts === 'undefined') return null;
   let chart = instances.get(container);
   if (!chart) {
     chart = echarts.init(container, null, { renderer: 'canvas' });

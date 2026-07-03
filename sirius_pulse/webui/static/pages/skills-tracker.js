@@ -20,6 +20,7 @@ const realtime = createRealtimeRefresh(() => loadHistory(true), {
 });
 
 export function dispose() {
+  scopedPage.use(null, null);
   realtime.stop();
 }
 
@@ -115,6 +116,7 @@ async function loadHistory(silent = false) {
     renderHistory();
     renderPagination();
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     if (silent) {
       console.warn('skill history realtime refresh failed:', e);
       return;

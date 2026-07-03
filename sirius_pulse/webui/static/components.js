@@ -1,3 +1,8 @@
+
+export function confirmDanger(message = '确定删除吗？此操作不可撤销。') {
+  return window.confirm(message);
+}
+
 export function toast(msg, type = 'success') {
   const container = document.getElementById('toastContainer');
   const el = document.createElement('div');
@@ -591,12 +596,16 @@ export class DynamicConfigForm {
           <button class="btn btn-sm" data-list-remove="${key}" style="padding:2px 8px">✕</button>
         `;
         listContainer.appendChild(div);
-        div.querySelector('[data-list-remove]').addEventListener('click', () => div.remove());
+        div.querySelector('[data-list-remove]').addEventListener('click', () => {
+          if (confirmDanger()) div.remove();
+        });
       });
     });
 
     container.querySelectorAll('[data-list-remove]').forEach(btn => {
-      btn.addEventListener('click', () => btn.parentElement.remove());
+      btn.addEventListener('click', () => {
+        if (confirmDanger()) btn.parentElement.remove();
+      });
     });
 
     container.querySelectorAll('[data-schedule-add]').forEach(btn => {
@@ -612,7 +621,7 @@ export class DynamicConfigForm {
       btn.addEventListener('click', () => {
         const key = btn.dataset.scheduleRemoveKey;
         const idx = parseInt(btn.dataset.scheduleRemove, 10);
-        if (this._scheduleData[key]) {
+        if (this._scheduleData[key] && confirmDanger()) {
           this._scheduleData[key].splice(idx, 1);
           this.render();
         }
@@ -661,7 +670,7 @@ export class DynamicConfigForm {
       btn.addEventListener('click', () => {
         const key = btn.dataset.objArrayRemove;
         const idx = parseInt(btn.dataset.objIdx, 10);
-        if (this.settings[key]) {
+        if (this.settings[key] && confirmDanger()) {
           this.settings[key].splice(idx, 1);
           this.render();
         }
@@ -734,7 +743,7 @@ export class DynamicConfigForm {
         
         if (!this.settings[key]?.[idx]) return;
         const arr = this.settings[key][idx][field];
-        if (Array.isArray(arr)) {
+        if (Array.isArray(arr) && confirmDanger()) {
           arr.splice(listIdx, 1);
           this.render();
         }
@@ -909,7 +918,7 @@ export class ModelSelect {
   }
 
   mount(container) {
-    this._el = container;
+    this._el = typeof container === 'string' ? document.getElementById(container) : container;
     this.render();
     ModelSelect._instances.add(this);
     document.addEventListener('click', this._onDocClick);
@@ -926,7 +935,7 @@ export class ModelSelect {
   }
 
   _onDocClick(e) {
-    if (this._el && !this._el.contains(e.target)) {
+    if (this._el?.contains && !this._el.contains(e.target)) {
       this._open = false;
       this._renderDropdown();
       this._syncTriggerText();

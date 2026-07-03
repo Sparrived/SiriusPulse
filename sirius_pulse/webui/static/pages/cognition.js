@@ -57,6 +57,7 @@ const realtime = createRealtimeRefresh(() => refreshRealtime(true), {
 });
 
 export function dispose() {
+  scopedPage.use(null, null);
   realtime.stop();
 }
 
@@ -189,6 +190,7 @@ async function loadData(silent = false) {
     renderRadarChart_(res.events || []);
     renderEventsTable(res.events || []);
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     if (!silent) toast('加载认知数据失败', 'error');
     else console.warn('cognition realtime refresh failed:', e);
   }
@@ -214,6 +216,7 @@ async function loadAnalysis(silent = false) {
     renderGroupSummaryTable(res.group_summary || []);
     renderDecisionTable(res.decision_timeline || []);
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     console.warn('加载深度分析数据失败:', e);
   }
 }

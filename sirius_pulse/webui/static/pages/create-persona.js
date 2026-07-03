@@ -4,6 +4,12 @@ import { toast, flashSuccess, ModelSelect } from '../components.js';
 import { createScopedPage } from '../page-context.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  modelSelect?.destroy?.();
+  modelSelect = null;
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 function _resolveCompositeValue(bareName, options) {
@@ -458,6 +464,7 @@ async function createPersona() {
       store.personas = list.personas || [];
     } catch {}
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('创建失败: ' + e.message, 'error');
   } finally {
     if (btn) {

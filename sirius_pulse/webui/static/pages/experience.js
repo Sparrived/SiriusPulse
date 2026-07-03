@@ -1,9 +1,14 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess } from '../components.js';
+import { confirmDanger, toast } from '../components.js';
 import { createScopedPage } from '../page-context.js';
+import { createAutoSave } from '../autosave.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 const BOOLEAN_FIELDS = [
@@ -249,6 +254,8 @@ export async function init(container, params = {}) {
     return;
   }
 
+  for (const field of BOOLEAN_FIELDS) delete booleanState[field];
+
   container.innerHTML = `
     ${pageStyles()}
     <div class="experience-page">
@@ -263,7 +270,7 @@ export async function init(container, params = {}) {
             <span class="exp-pill">记忆检索</span>
           </div>
         </div>
-        <button class="btn btn-primary" id="expSave">保存体验参数</button>
+        <span id="expAutoSaveStatus" style="color:var(--text-3);font-size:12px"></span>
       </div>
 
       <form id="expForm" style="display:grid;gap:18px">
@@ -319,10 +326,18 @@ export async function init(container, params = {}) {
     </div>
   `;
 
+  const autoSave = createAutoSave({
+    root: $('expForm'),
+    statusEl: $('expAutoSaveStatus'),
+    save: () => saveExperience(name),
+    onError: (error) => toast('保存失败: ' + error.message, 'error'),
+  });
+  setupBooleanCards(container, autoSave);
   await loadExperience(name);
+  autoSave.markReady();
 }
 
-function setupQuadrant() {
+function setupQuadrant(autoSave) {
   const grid = $('quadrantGrid');
   const dot = $('quadrantDot');
   if (!grid || !dot) return;
@@ -360,6 +375,7 @@ function setupQuadrant() {
     cell.addEventListener('click', () => {
       const map = { low: 0.2, mid: 0.5, high: 0.8 };
       syncAll(map[cell.dataset.s] ?? 0.5, map[cell.dataset.e] ?? 0.5);
+      autoSave?.schedule();
     });
   });
 
@@ -367,19 +383,22 @@ function setupQuadrant() {
     if (e.target.closest('[data-s]')) return;
     const rect = grid.getBoundingClientRect();
     syncAll((e.clientX - rect.left) / rect.width, 1 - (e.clientY - rect.top) / rect.height);
+    autoSave?.schedule();
   });
 
   sensitivitySlider?.addEventListener('input', () => {
     syncAll(parseFloat(sensitivitySlider.value), parseFloat(expressivenessInput.value));
+    autoSave?.schedule();
   });
   expressivenessSlider?.addEventListener('input', () => {
     syncAll(parseFloat(sensitivityInput.value), parseFloat(expressivenessSlider.value));
+    autoSave?.schedule();
   });
 
   syncAll(parseFloat(sensitivityInput.value) || 0.5, parseFloat(expressivenessInput.value) || 0.5);
 }
 
-function setupReplyTimeCurve() {
+function setupReplyTimeCurve(autoSave) {
   const svg = $('replyTimeCurve');
   const list = $('replyCurvePoints');
   const reset = $('replyCurveReset');
@@ -473,18 +492,22 @@ function setupReplyTimeCurve() {
       input.addEventListener('change', () => {
         replyTimeCurvePoints[parseInt(input.dataset.curveTime, 10)].time = input.value;
         render();
+        autoSave?.schedule();
       });
     });
     list.querySelectorAll('[data-curve-coefficient]').forEach(input => {
       input.addEventListener('input', () => {
         replyTimeCurvePoints[parseInt(input.dataset.curveCoefficient, 10)].coefficient = Number(input.value);
         render();
+        autoSave?.schedule();
       });
     });
     list.querySelectorAll('[data-curve-remove]').forEach(button => {
       button.addEventListener('click', () => {
+        if (!confirmDanger()) return;
         replyTimeCurvePoints.splice(parseInt(button.dataset.curveRemove, 10), 1);
         render();
+        autoSave?.schedule();
       });
     });
   }
@@ -498,6 +521,7 @@ function setupReplyTimeCurve() {
     event.preventDefault();
     replyTimeCurvePoints.push(eventToPoint(event));
     render();
+    autoSave?.schedule();
   });
 
   svg.addEventListener('pointermove', event => {
@@ -505,6 +529,7 @@ function setupReplyTimeCurve() {
     event.preventDefault();
     replyTimeCurvePoints[dragIndex] = eventToPoint(event, dragIndex);
     render();
+    autoSave?.schedule();
   });
 
   svg.addEventListener('pointerup', endDrag);
@@ -514,6 +539,7 @@ function setupReplyTimeCurve() {
   reset?.addEventListener('click', () => {
     replyTimeCurvePoints = [{ time: '00:00', coefficient: 1 }, { time: '24:00', coefficient: 1 }];
     render();
+    autoSave?.schedule();
   });
 
   render();
@@ -530,12 +556,14 @@ function setBooleanField(name, value) {
   if (state) state.textContent = booleanState[name] ? '启用' : '关闭';
 }
 
-function setupBooleanCards() {
-  scopedPage.$$('[data-boolean-field]').forEach(card => {
-    card.addEventListener('click', () => {
-      const name = card.dataset.booleanField;
-      setBooleanField(name, !booleanState[name]);
-    });
+function setupBooleanCards(root, autoSave) {
+  scopedPage.on(root, 'click', (event) => {
+    const card = event.target.closest?.('[data-boolean-field]');
+    if (!card || !root.contains(card)) return;
+    event.preventDefault();
+    const name = card.dataset.booleanField;
+    setBooleanField(name, !booleanState[name]);
+    autoSave?.schedule();
   });
 }
 
@@ -571,11 +599,8 @@ async function loadExperience(name) {
     setBooleanField('plan_mode_chat_awareness_enabled', data.plan_mode_chat_awareness_enabled ?? false);
     setBooleanField('plan_mode_presence_enabled', data.plan_mode_presence_enabled ?? false);
 
-    setupQuadrant();
-    setupReplyTimeCurve();
-    setupBooleanCards();
-
-    $('expSave').addEventListener('click', () => saveExperience(name));
+    setupQuadrant(autoSave);
+    setupReplyTimeCurve(autoSave);
 
     scopedPage.$$('[data-spin-target]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -591,6 +616,7 @@ async function loadExperience(name) {
       });
     });
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('加载体验参数失败: ' + e.message, 'error');
   }
 }
@@ -621,9 +647,8 @@ async function saveExperience(name) {
 
   try {
     await post(`/persona/experience`, { experience });
-    flashSuccess($('expSave'));
-    toast('体验参数已保存', 'success');
   } catch (e) {
-    toast('保存失败: ' + e.message, 'error');
+    if (e?.name === 'AbortError') return;
+    throw e;
   }
 }

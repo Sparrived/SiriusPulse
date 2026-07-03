@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { get, post, put, del } from '../app.js';
-import { toast, statCard } from '../components.js';
+import { confirmDanger, toast, statCard } from '../components.js';
 import { setChartOption, getChart } from '../charts.js';
 import { createPageContext, createScopedPage } from '../page-context.js';
 
@@ -14,19 +14,30 @@ const ROLE_COLORS = {
 };
 
 const TABS = [
+  { id: 'conversations', label: '基础记忆', hint: '近期对话', canCreate: false },
   { id: 'diary', label: '日记记忆', hint: '长期总结', canCreate: true },
   { id: 'units', label: '记忆单元', hint: 'MemoryUnit', canCreate: true },
   { id: 'glossary', label: '名词解释', hint: '概念词典', canCreate: true },
   { id: 'users', label: '用户画像', hint: '语义档案', canCreate: true },
-  { id: 'conversations', label: '基础记忆', hint: '近期对话', canCreate: false },
 ];
 
+const TAB_ENDPOINTS = {
+  diary: '/persona/diary?limit=200',
+  units: '/persona/memory-units?limit=200',
+  glossary: '/persona/glossary?limit=200',
+  users: '/persona/users?limit=200',
+};
+
 let state = {
-  tab: 'diary',
+  tab: 'conversations',
   search: '',
   group: '',
-  data: null,
+  data: { diary: null, units: null, glossary: null, users: null },
   viz: null,
+  loadedTabs: new Set(),
+  loadingTabs: new Set(),
+  vizLoaded: false,
+  vizLoading: false,
 };
 
 let conversationAnalysisModule = null;
@@ -35,6 +46,7 @@ let conversationAnalysisMounted = false;
 
 export function dispose() {
   disposeConversationAnalysis();
+  scopedPage.use(null, null);
 }
 
 export async function init(container, params = {}) {
@@ -340,11 +352,12 @@ export async function init(container, params = {}) {
   bindEvents();
   renderTabs();
   closeEditor();
-  await loadAll();
+  renderAll();
+  await loadActiveTab();
 }
 
 function bindEvents() {
-  $('memoryRefreshBtn')?.addEventListener('click', loadAll);
+  $('memoryRefreshBtn')?.addEventListener('click', refreshActiveTab);
   $('memoryCreateBtn')?.addEventListener('click', () => openEditor(state.tab, null));
   $('memorySearch')?.addEventListener('input', (event) => {
     state.search = event.target.value.trim().toLowerCase();
@@ -353,28 +366,77 @@ function bindEvents() {
   $('memoryGroupFilter')?.addEventListener('change', (event) => {
     state.group = event.target.value;
     renderAll();
-    renderTimeline(state.viz?.basic_timeline || {});
+    if (state.vizLoaded) renderTimeline(state.viz?.basic_timeline || {});
   });
   $('timelineRange')?.addEventListener('change', () => renderTimeline(state.viz?.basic_timeline || {}));
 }
 
-async function loadAll() {
-  try {
-    const [diary, units, glossary, users, conversations, viz] = await Promise.all([
-      get('/persona/diary?limit=200'),
-      get('/persona/memory-units?limit=200'),
-      get('/persona/glossary?limit=200'),
-      get('/persona/users?limit=200'),
-      get('/persona/conversations?limit=200'),
-      get('/persona/memory-viz'),
-    ]);
-    state.data = { diary, units, glossary, users, conversations };
-    state.viz = viz;
+async function refreshActiveTab() {
+  if (state.tab === 'conversations') {
+    disposeConversationAnalysis();
     renderAll();
-    renderTimeline(viz.basic_timeline || {});
-    renderCluster(viz.diary_entries || []);
+    await mountConversationAnalysis();
+    return;
+  }
+  await loadActiveTab({ force: true });
+}
+
+async function loadActiveTab({ force = false } = {}) {
+  const tab = state.tab;
+  if (!scopedPage.isActive()) return;
+  if (tab === 'conversations') {
+    renderAll();
+    await mountConversationAnalysis();
+    return;
+  }
+
+  const endpoint = TAB_ENDPOINTS[tab];
+  if (!endpoint) return;
+  if (!force && state.loadedTabs.has(tab)) {
+    renderAll();
+    await loadChartsForActiveTab(tab);
+    return;
+  }
+
+  state.loadingTabs.add(tab);
+  renderAll();
+  try {
+    state.data[tab] = await get(endpoint);
+    if (!scopedPage.isActive() || state.tab !== tab) return;
+    state.loadedTabs.add(tab);
+    await loadChartsForActiveTab(tab, { force });
   } catch (error) {
+    if (error?.name === 'AbortError') return;
+    if (!scopedPage.isActive()) return;
     toast('加载记忆数据失败: ' + error.message, 'error');
+  } finally {
+    state.loadingTabs.delete(tab);
+    if (scopedPage.isActive() && state.tab === tab) renderAll();
+  }
+}
+
+async function loadChartsForActiveTab(tab = state.tab, { force = false } = {}) {
+  if (!scopedPage.isActive() || state.tab !== tab) return;
+  if (tab !== 'diary') return;
+  if (!force && state.vizLoaded) {
+    renderTimeline(state.viz?.basic_timeline || {});
+    renderCluster(state.viz?.diary_entries || []);
+    return;
+  }
+  if (state.vizLoading) return;
+  state.vizLoading = true;
+  try {
+    state.viz = await get('/persona/memory-viz');
+    if (!scopedPage.isActive() || state.tab !== tab) return;
+    state.vizLoaded = true;
+    renderTimeline(state.viz.basic_timeline || {});
+    renderCluster(state.viz.diary_entries || []);
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    if (!scopedPage.isActive()) return;
+    toast('加载记忆图表失败: ' + error.message, 'error');
+  } finally {
+    state.vizLoading = false;
   }
 }
 
@@ -401,37 +463,38 @@ function renderTabs() {
       state.tab = btn.dataset.tab;
       closeEditor();
       renderAll();
+      loadActiveTab();
     });
   });
 }
 
 function renderStats() {
   const data = state.data;
-  if (!data) return;
   const el = $('memoryStats');
   if (!el) return;
+  const count = (tab, value) => state.loadingTabs.has(tab) ? '加载中' : state.loadedTabs.has(tab) ? (value || 0) : '未加载';
   el.innerHTML = [
-    statCard('日记条目', data.diary?.total || 0, '可新增、编辑、删除', '◫'),
-    statCard('记忆单元', data.units?.total || 0, '检查点提炼', '▣'),
-    statCard('术语数量', data.glossary?.total || 0, '人格级词典', '◱'),
-    statCard('用户画像', data.users?.total || 0, '按群组维护', '◎'),
-    statCard('基础消息', data.conversations?.total || 0, '运行窗口与归档', '◲'),
+    statCard('基础记忆', '按需', '打开后加载完整对话分析', '◲'),
+    statCard('日记条目', count('diary', data.diary?.total), '可新增、编辑、删除', '◫'),
+    statCard('记忆单元', count('units', data.units?.total), '检查点提炼', '▣'),
+    statCard('术语数量', count('glossary', data.glossary?.total), '人格级词典', '◱'),
+    statCard('用户画像', count('users', data.users?.total), '按群组维护', '◎'),
   ].join('');
 }
 
 function renderGroupFilter() {
   const select = $('memoryGroupFilter');
-  if (!select || !state.data) return;
+  if (!select) return;
   const groups = new Set();
-  (state.data.diary?.groups || []).forEach((g) => groups.add(g));
-  (state.data.units?.groups || []).forEach((g) => groups.add(g));
-  (state.data.users?.groups || []).forEach((g) => groups.add(g));
-  (state.data.conversations?.groups || []).forEach((g) => groups.add(g));
+  if (state.tab === 'diary') (state.data.diary?.groups || []).forEach((g) => groups.add(g));
+  if (state.tab === 'units') (state.data.units?.groups || []).forEach((g) => groups.add(g));
+  if (state.tab === 'users') (state.data.users?.groups || []).forEach((g) => groups.add(g));
   const current = state.group;
   select.innerHTML = '<option value="">全部群组</option>' +
     [...groups].sort().map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
   select.value = [...groups].includes(current) ? current : '';
   state.group = select.value;
+  select.disabled = !groups.size;
 }
 
 function updateCreateButton() {
@@ -444,6 +507,7 @@ function updateCreateButton() {
 
 function updateConversationAnalysisView() {
   const isConversationsTab = state.tab === 'conversations';
+  const isDiaryTab = state.tab === 'diary';
   const crudView = $('memoryCrudView');
   const analysisView = $('basicMemoryAnalysisView');
   const chartsView = $('memoryChartsView');
@@ -452,9 +516,10 @@ function updateConversationAnalysisView() {
 
   if (crudView) crudView.style.display = isConversationsTab ? 'none' : '';
   if (analysisView) analysisView.style.display = isConversationsTab ? '' : 'none';
-  if (chartsView) chartsView.style.display = isConversationsTab ? 'none' : '';
+  if (chartsView) chartsView.style.display = isDiaryTab ? '' : 'none';
   if (groupFilter) groupFilter.style.display = isConversationsTab ? 'none' : '';
   if (searchInput) searchInput.style.display = isConversationsTab ? 'none' : '';
+  if (searchInput) searchInput.placeholder = state.tab === 'users' ? '搜索用户画像...' : '搜索记忆内容...';
 
   if (isConversationsTab) {
     mountConversationAnalysis();
@@ -469,11 +534,18 @@ async function mountConversationAnalysis() {
   conversationAnalysisMounted = true;
   try {
     conversationAnalysisModule = conversationAnalysisModule || await import('./conversation-history.js');
+    if (!scopedPage.isActive() || state.tab !== 'conversations') {
+      conversationAnalysisMounted = false;
+      return;
+    }
     conversationAnalysisContext = createPageContext({ container });
     const initFn = conversationAnalysisModule.default || conversationAnalysisModule.init;
     await initFn?.(container, { ctx: conversationAnalysisContext, embedded: true });
+    if (!scopedPage.isActive() || state.tab !== 'conversations') disposeConversationAnalysis();
   } catch (error) {
+    if (error?.name === 'AbortError') return;
     conversationAnalysisMounted = false;
+    if (!scopedPage.isActive()) return;
     container.innerHTML = `<div class="memory-empty">加载对话分析失败：${escapeHtml(error.message)}</div>`;
   }
 }
@@ -486,12 +558,11 @@ function disposeConversationAnalysis() {
 }
 
 function getActiveItems() {
-  if (!state.data) return [];
   if (state.tab === 'diary') return state.data.diary?.entries || [];
   if (state.tab === 'units') return state.data.units?.units || [];
   if (state.tab === 'glossary') return state.data.glossary?.terms || [];
   if (state.tab === 'users') return state.data.users?.users || [];
-  return state.data.conversations?.messages || [];
+  return [];
 }
 
 function renderList() {
@@ -502,6 +573,17 @@ function renderList() {
 
   const tab = TABS.find((item) => item.id === state.tab);
   title.textContent = tab?.label || '记忆列表';
+
+  if (state.loadingTabs.has(state.tab)) {
+    subtitle.textContent = '正在加载当前模块';
+    list.innerHTML = '<div class="memory-empty">加载中…</div>';
+    return;
+  }
+  if (!state.loadedTabs.has(state.tab)) {
+    subtitle.textContent = '切换到该模块后加载';
+    list.innerHTML = '<div class="memory-empty">该记忆模块尚未加载</div>';
+    return;
+  }
 
   const filtered = getActiveItems().filter(matchesFilters);
   subtitle.textContent = `当前显示 ${filtered.length} 条`;
@@ -791,8 +873,9 @@ async function saveEditor(tab, item) {
     }
     toast('记忆已保存');
     closeEditor();
-    await loadAll();
+    await loadActiveTab({ force: true });
   } catch (error) {
+    if (error?.name === 'AbortError') return;
     toast('保存失败: ' + error.message, 'error');
   }
 }
@@ -826,7 +909,7 @@ async function deleteItem(tab, item) {
       : tab === 'conversations'
         ? (item.content || item.entry_id || item.timestamp || '\u8be5\u6d88\u606f').slice(0, 40)
         : (item.name || item.user_id);
-  if (!confirm(`确定删除「${label}」吗？此操作不可撤销。`)) return;
+  if (!confirmDanger(`确定删除「${label}」吗？此操作不可撤销。`)) return;
   try {
     if (tab === 'diary') {
       await del(`/persona/diary/${encodeURIComponent(item.entry_id)}`);
@@ -843,8 +926,9 @@ async function deleteItem(tab, item) {
     }
     toast('记忆已删除');
     closeEditor();
-    await loadAll();
+    await loadActiveTab({ force: true });
   } catch (error) {
+    if (error?.name === 'AbortError') return;
     toast('删除失败: ' + error.message, 'error');
   }
 }

@@ -1,9 +1,14 @@
 import { store } from '../store.js';
 import { get, post } from '../app.js';
-import { toast, flashSuccess } from '../components.js';
+import { toast } from '../components.js';
 import { createScopedPage } from '../page-context.js';
+import { createAutoSave } from '../autosave.js';
 
 const scopedPage = createScopedPage();
+
+export function dispose() {
+  scopedPage.use(null, null);
+}
 const $ = scopedPage.$;
 
 export async function init(container, params = {}) {
@@ -52,7 +57,7 @@ export async function init(container, params = {}) {
           <div class="card-title">人格配置</div>
           <div class="card-subtitle">编辑 ${name} 的基础人格设定</div>
         </div>
-        <button class="btn btn-primary" id="personaSave" disabled>保存</button>
+        <span id="personaAutoSaveStatus" style="color:var(--text-3);font-size:12px"></span>
       </div>
       <form id="personaForm" style="display:grid;gap:16px">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px">
@@ -119,15 +124,18 @@ export async function init(container, params = {}) {
     </div>
   `;
 
+  const autoSave = createAutoSave({
+    root: $('personaForm'),
+    statusEl: $('personaAutoSaveStatus'),
+    save: () => savePersona(name),
+    onError: (error) => toast('保存失败: ' + error.message, 'error'),
+  });
+
   await Promise.all([
     loadPersonaData(name),
     loadPersonaStatus(name)
   ]);
-
-  const saveBtn = $('personaSave');
-  if (saveBtn) {
-    saveBtn.addEventListener('click', () => savePersona(name));
-  }
+  autoSave.markReady();
   setupStatusButtons(name);
 }
 
@@ -151,6 +159,7 @@ async function loadPersonaStatus(name) {
     startBtn.style.display = isRunning ? 'none' : 'inline-flex';
     stopBtn.style.display = isRunning ? 'inline-flex' : 'none';
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     const statusText = $('statusText');
     if (statusText) statusText.textContent = '状态未知';
   }
@@ -179,6 +188,7 @@ function setupStatusButtons(name) {
         toast(res.error || '启动失败', 'error');
       }
     } catch (e) {
+    if (e?.name === 'AbortError') return;
       toast('启动失败', 'error');
     } finally {
       startBtn.disabled = false;
@@ -203,6 +213,7 @@ function setupStatusButtons(name) {
         toast(res.error || '停止失败', 'error');
       }
     } catch (e) {
+    if (e?.name === 'AbortError') return;
       toast('停止失败', 'error');
     } finally {
       stopBtn.disabled = false;
@@ -226,14 +237,9 @@ async function loadPersonaData(name) {
     form.emoji_preference.value = data.emoji_preference || 'none';
     form.boundaries.value = (data.boundaries || []).join(', ');
     form.backstory.value = data.backstory || '';
-    // 加载成功后启用保存按钮
-    const saveBtn = $('personaSave');
-    if (saveBtn) saveBtn.disabled = false;
   } catch (e) {
+    if (e?.name === 'AbortError') return;
     toast('加载人格数据失败: ' + e.message, 'error');
-    // 加载失败时保持保存按钮禁用
-    const saveBtn = $('personaSave');
-    if (saveBtn) saveBtn.disabled = true;
   }
 }
 
@@ -255,9 +261,8 @@ async function savePersona(name) {
 
   try {
     await post(`/persona/persona/save`, { persona });
-    flashSuccess($('personaSave'));
-    toast('人格配置已保存', 'success');
   } catch (e) {
-    toast('保存失败: ' + e.message, 'error');
+    if (e?.name === 'AbortError') return;
+    throw e;
   }
 }
