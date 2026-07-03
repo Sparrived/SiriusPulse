@@ -244,10 +244,28 @@ class PersonaWorker:
             return
 
         try:
-            reload_type = reload_flag.read_text(encoding="utf-8").strip()
+            # 自动保存会在短时间内连续写配置；等待 2 秒静默期后再热重载，避免重复初始化。
+            if time.time() - reload_flag.stat().st_mtime < 2.0:
+                return
+            raw = reload_flag.read_text(encoding="utf-8").strip()
+            try:
+                payload = json.loads(raw)
+                if isinstance(payload, dict):
+                    reload_types = {str(item) for item in payload.get("types", []) if str(item)}
+                elif isinstance(payload, list):
+                    reload_types = {str(item) for item in payload if str(item)}
+                else:
+                    reload_types = {raw} if raw else set()
+            except Exception:
+                reload_types = {raw} if raw else set()
+            if "all" in reload_types:
+                reload_types = {"all"}
             # 原子删除标志文件（消费请求）
             reload_flag.unlink(missing_ok=True)
         except Exception:
+            return
+
+        if not reload_types:
             return
 
         if not self._runtime or not self._runtime.engine:
@@ -257,22 +275,22 @@ class PersonaWorker:
         engine = self._runtime.engine
 
         try:
-            if reload_type in ("persona", "all"):
+            if reload_types & {"persona", "all"}:
                 self._reload_persona(engine)
 
-            if reload_type in ("orchestration", "all"):
+            if reload_types & {"orchestration", "all"}:
                 self._reload_orchestration(engine)
 
-            if reload_type in ("experience", "all"):
+            if reload_types & {"experience", "all"}:
                 self._reload_experience(engine)
 
-            if reload_type in ("provider", "all"):
+            if reload_types & {"provider", "all"}:
                 self._reload_provider(engine)
 
-            if reload_type in ("global", "all"):
+            if reload_types & {"global", "all"}:
                 self._reload_global_config(engine)
 
-            LOG.info("配置热重载完成: type=%s", reload_type)
+            LOG.info("配置热重载完成: types=%s", sorted(reload_types))
         except Exception as exc:
             LOG.warning("配置热重载失败: %s", exc)
 

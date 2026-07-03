@@ -30,15 +30,31 @@ LOG = logging.getLogger("sirius.webui")
 def _request_config_reload(reload_type: str, data_dir: Path) -> None:
     """写入配置重载标志文件，触发 PersonaWorker 热重载。
 
-    Args:
-        reload_type: 重载类型 (persona / orchestration / experience / provider / all)
-        data_dir: 当前人格数据目录
+    快速连续保存时合并重载类型，由 worker 等待短暂静默期后一次性执行。
     """
     try:
         reload_flag = data_dir / "engine_state" / "reload_requested"
         reload_flag.parent.mkdir(parents=True, exist_ok=True)
-        reload_flag.write_text(reload_type, encoding="utf-8")
-        LOG.debug("已写入配置重载标志: %s", reload_type)
+        types: set[str] = set()
+        if reload_flag.exists():
+            raw = reload_flag.read_text(encoding="utf-8").strip()
+            try:
+                existing = json.loads(raw)
+                if isinstance(existing, dict):
+                    types.update(str(item) for item in existing.get("types", []))
+                elif isinstance(existing, list):
+                    types.update(str(item) for item in existing)
+                elif raw:
+                    types.add(raw)
+            except Exception:
+                if raw:
+                    types.add(raw)
+        types.add(reload_type)
+        reload_flag.write_text(
+            json.dumps({"types": sorted(types)}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        LOG.debug("已写入配置重载标志: %s", sorted(types))
     except Exception as exc:
         LOG.warning("写入配置重载标志失败: %s", exc)
 

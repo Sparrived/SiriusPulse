@@ -394,12 +394,30 @@ class WebUIServer:
         self._notify_config_reload("provider")
 
     def _notify_config_reload(self, reload_type: str) -> None:
-        """向当前人格写入配置重载标志。"""
+        """向当前人格写入配置重载标志，并合并快速连续请求。"""
         try:
             flag = self.persona_dir / "engine_state" / "reload_requested"
             flag.parent.mkdir(parents=True, exist_ok=True)
-            flag.write_text(reload_type, encoding="utf-8")
-            LOG.debug("已写入配置重载标志: %s", reload_type)
+            types: set[str] = set()
+            if flag.exists():
+                raw = flag.read_text(encoding="utf-8").strip()
+                try:
+                    existing = json.loads(raw)
+                    if isinstance(existing, dict):
+                        types.update(str(item) for item in existing.get("types", []))
+                    elif isinstance(existing, list):
+                        types.update(str(item) for item in existing)
+                    elif raw:
+                        types.add(raw)
+                except Exception:
+                    if raw:
+                        types.add(raw)
+            types.add(reload_type)
+            flag.write_text(
+                json.dumps({"types": sorted(types)}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            LOG.debug("已写入配置重载标志: %s", sorted(types))
         except Exception as exc:
             LOG.debug("写入配置重载标志失败: %s", exc)
 

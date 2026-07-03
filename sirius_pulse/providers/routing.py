@@ -75,8 +75,7 @@ _SUPPORTED_PROVIDER_PLATFORMS: dict[str, dict[str, str]] = {
     },
 }
 
-_PROVIDER_HEALTHCHECK_SYSTEM_PROMPT = "你是可用性检查助手，请简短回复 ok。"
-_PROVIDER_HEALTHCHECK_USER_MESSAGE = "ping"
+_PROVIDER_HEALTHCHECK_USER_MESSAGE = "?"
 
 logger = logging.getLogger(__name__)
 
@@ -566,10 +565,10 @@ async def probe_provider_availability(
     result = await provider.generate_async(
         GenerationRequest(
             model=model_name,
-            system_prompt=_PROVIDER_HEALTHCHECK_SYSTEM_PROMPT,
+            system_prompt="",
             messages=[{"role": "user", "content": _PROVIDER_HEALTHCHECK_USER_MESSAGE}],
             temperature=0.0,
-            max_tokens=8,
+            max_tokens=1,
             purpose="provider_healthcheck",
         )
     )
