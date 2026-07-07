@@ -266,7 +266,9 @@ class SkillExecutor:
             chain_context.store(skill.name, skill_result)
 
         return (
-            skill_result if skill_result is not None else SkillResult(success=False, error="未知错误")
+            skill_result
+            if skill_result is not None
+            else SkillResult(success=False, error="未知错误")
         )
 
     async def execute_async(
@@ -355,7 +357,9 @@ class SkillExecutor:
         try:
             if skill._run_func is None:
                 logger.warning("Skill async execute failed: %s -> no run() function", skill.name)
-                return SkillResult(success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数")
+                return SkillResult(
+                    success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数"
+                )
 
             # Resolve chain-context template placeholders before validation
             if chain_context is not None:

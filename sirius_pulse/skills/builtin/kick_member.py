@@ -15,7 +15,9 @@ from sirius_pulse.skills.builtin._qq_ops import (
 )
 
 _config = ConfigBuilder()
-_config.group("QQ 群管理").add("user_id", type="int", description="要踢出的成员 QQ 号。", required=True)
+_config.group("QQ 群管理").add(
+    "user_id", type="int", description="要踢出的成员 QQ 号。", required=True
+)
 _config.group("QQ 群管理").add("reason", type="str", description="操作原因，仅用于内部记录。")
 _config.group("QQ 群管理").add(
     "reject_add_request",

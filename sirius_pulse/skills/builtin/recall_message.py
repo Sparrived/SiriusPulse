@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
-from sirius_pulse.skills.builtin._qq_ops import bridge_error, failure_from_exception, get_adapter, success_result
+from sirius_pulse.skills.builtin._qq_ops import (
+    bridge_error,
+    failure_from_exception,
+    get_adapter,
+    success_result,
+)
 
 _config = ConfigBuilder()
 _config.group("QQ 操作").add(

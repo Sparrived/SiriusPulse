@@ -1,4 +1,5 @@
 """Token usage store schema and constants."""
+
 from __future__ import annotations
 
 _SCHEMA_VERSION = 5

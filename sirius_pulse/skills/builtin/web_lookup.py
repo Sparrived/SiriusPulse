@@ -108,7 +108,11 @@ def _search_web(query: str, count: int = 3) -> dict[str, Any]:
             if title and result_url:
                 results.append({"title": title, "url": result_url, "snippet": snippet})
         if not results:
-            return {"success": False, "error": "未找到相关网页", "summary": "必应搜索未返回有效结果"}
+            return {
+                "success": False,
+                "error": "未找到相关网页",
+                "summary": "必应搜索未返回有效结果",
+            }
 
         lines = [f"必应搜索「{text}」结果："]
         for i, result in enumerate(results, 1):
@@ -149,7 +153,9 @@ def _read_url(
         )
     }
     try:
-        response = requests.get(normalized_url, headers=headers, timeout=timeout, allow_redirects=True)
+        response = requests.get(
+            normalized_url, headers=headers, timeout=timeout, allow_redirects=True
+        )
         response.raise_for_status()
     except Exception as exc:
         return {"success": False, "error": f"请求失败: {exc}"}

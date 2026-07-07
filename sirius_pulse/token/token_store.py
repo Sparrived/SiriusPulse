@@ -4,6 +4,7 @@ Provides :class:`TokenUsageStore` which writes every
 :class:`~sirius_pulse.config.TokenUsageRecord` into a local SQLite database
 so that cross-session and multi-dimensional analytics become possible.
 """
+
 from __future__ import annotations
 
 import json
@@ -400,16 +401,14 @@ class TokenUsageStore(BaseSqliteStore):
 
     def get_summary(self) -> dict[str, Any]:
         """Return aggregated token usage summary."""
-        row = self.execute(
-            """SELECT
+        row = self.execute("""SELECT
                 COUNT(*) as total_calls,
                 COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
                 COALESCE(SUM(total_tokens), 0) as total_tokens,
                 COALESCE(SUM(input_chars), 0) as total_input_chars,
                 COALESCE(SUM(output_chars), 0) as total_output_chars
-            FROM token_usage"""
-        ).fetchone()
+            FROM token_usage""").fetchone()
         return dict(row) if row else {}
 
     def get_breakdown_by(
@@ -558,9 +557,11 @@ class TokenUsageStore(BaseSqliteStore):
         ).fetchone()
         return {
             "by_task": [dict(row) for row in rows],
-            "overall": dict(overall)
-            if overall
-            else {"calls": 0, "avg_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0},
+            "overall": (
+                dict(overall)
+                if overall
+                else {"calls": 0, "avg_ms": 0.0, "min_ms": 0.0, "max_ms": 0.0}
+            ),
         }
 
     def get_efficiency_stats(
@@ -642,15 +643,13 @@ class TokenUsageStore(BaseSqliteStore):
 
     def get_hourly_distribution(self) -> list[dict[str, Any]]:
         """Return token usage distribution by hour-of-day (0-23)."""
-        rows = self.execute(
-            """SELECT
+        rows = self.execute("""SELECT
                 CAST(strftime('%H', datetime(timestamp, 'unixepoch')) AS INTEGER) as hour,
                 COUNT(*) as calls,
                 COALESCE(SUM(total_tokens), 0) as total_tokens
             FROM token_usage
             GROUP BY hour
-            ORDER BY hour"""
-        ).fetchall()
+            ORDER BY hour""").fetchall()
         return [dict(row) for row in rows]
 
     def get_failure_stats(
@@ -692,9 +691,9 @@ class TokenUsageStore(BaseSqliteStore):
         return {
             "total_calls": overall[0] if overall else 0,
             "failure_calls": overall[1] if overall else 0,
-            "failure_rate_pct": round(overall[1] * 100.0 / overall[0], 2)
-            if overall and overall[0]
-            else 0.0,
+            "failure_rate_pct": (
+                round(overall[1] * 100.0 / overall[0], 2) if overall and overall[0] else 0.0
+            ),
             "by_type": [dict(row) for row in by_type],
         }
 

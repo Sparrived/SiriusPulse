@@ -20,7 +20,9 @@ _config.group("图片发送").add(
 
 SKILL_META = {
     "name": "send_image",
-    "description": ("群聊里需要把现成图片、本地图片路径或网络图片直接发出来时使用；适合补充视觉内容，不要用来发送纯文字。"),
+    "description": (
+        "群聊里需要把现成图片、本地图片路径或网络图片直接发出来时使用；适合补充视觉内容，不要用来发送纯文字。"
+    ),
     "version": "1.0.0",
     "tags": ["napcat", "image", "messaging"],
     "silent": True,

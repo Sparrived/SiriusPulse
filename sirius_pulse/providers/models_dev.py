@@ -8,6 +8,7 @@
 
 数据源: https://models.dev/api.json （社区维护，无需认证）
 """
+
 from __future__ import annotations
 
 import logging

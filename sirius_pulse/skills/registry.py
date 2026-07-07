@@ -205,7 +205,9 @@ class SkillRegistry:
                 skill = self._load_skill_file(py_file)
                 if skill is not None:
                     loaded_skills.append(skill)
-                    logger.info("技能 %s v%s 刷新完毕（来源：%s）", skill.name, skill.version, py_file.name)
+                    logger.info(
+                        "技能 %s v%s 刷新完毕（来源：%s）", skill.name, skill.version, py_file.name
+                    )
             except Exception as exc:
                 logger.warning("重载SKILL文件失败 (%s): %s", py_file.name, exc)
 
@@ -425,7 +427,9 @@ class SkillRegistry:
                     for p in skill.parameters:
                         required_tag = "必填" if p.required else "可选"
                         default_tag = (
-                            f", 默认={p.default}" if not p.required and p.default is not None else ""
+                            f", 默认={p.default}"
+                            if not p.required and p.default is not None
+                            else ""
                         )
                         param_parts.append(
                             f"    - {p.name} ({p.type}, {required_tag}{default_tag}): {p.description}"

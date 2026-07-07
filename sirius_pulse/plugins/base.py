@@ -60,15 +60,15 @@ class PluginBase:
     _plugin_version: str = "1.0.0"
     _plugin_author: str = ""
     _plugin_events: list[dict[str, Any]] = []
-    _plugin_schedule: list[
-        dict[str, Any]
-    ] = []  # [{"time": "HH:MM", "duration": 1440}, ...] 声明式定时，由 from_class() 自动转为 PluginEventDef
+    _plugin_schedule: list[dict[str, Any]] = (
+        []
+    )  # [{"time": "HH:MM", "duration": 1440}, ...] 声明式定时，由 from_class() 自动转为 PluginEventDef
     _plugin_permissions: dict[str, Any] | None = None
     _plugin_nl_examples: list[str] = []
     _plugin_nl_slots: dict[str, dict[str, Any]] = {}
-    _plugin_parameters: list[
-        dict[str, Any]
-    ] = []  # 参数定义列表（v1.3+），由 from_class() 自动解析为 PluginParameterDef
+    _plugin_parameters: list[dict[str, Any]] = (
+        []
+    )  # 参数定义列表（v1.3+），由 from_class() 自动解析为 PluginParameterDef
     _plugin_dependencies: list[str] = []
     _plugin_prompt_inject: str = ""  # 注入到人格 prompt 的额外提示词（v1.3+）
 
@@ -155,7 +155,8 @@ class PluginBase:
             # 有装饰器命令但 execute 未被覆写 → 返回未调度错误
             # （装饰器命令应通过 execute_async 异步调度）
             return PluginResponse.fail(
-                f"Plugin '{self._name}' 使用了 @command 装饰器但未通过异步调度。" f" 请使用 execute_async() 方法。"
+                f"Plugin '{self._name}' 使用了 @command 装饰器但未通过异步调度。"
+                f" 请使用 execute_async() 方法。"
             )
 
         return PluginResponse.fail(f"Plugin '{self._name}' 未实现 execute() 方法")

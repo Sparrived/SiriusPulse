@@ -166,7 +166,9 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             finish_reason=finish_reason,
         )
 
-        logger.info(f"{self._provider_name} 的 {request.model} 回复我了，写了 {len(content or '')} 个字～")
+        logger.info(
+            f"{self._provider_name} 的 {request.model} 回复我了，写了 {len(content or '')} 个字～"
+        )
         logger.debug(
             f"[模型输出] {request.model} | Provider: {self._provider_name} | URL: {url} | 响应内容:\n{content}"
         )

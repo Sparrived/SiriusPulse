@@ -10,13 +10,18 @@ _config = ConfigBuilder()
 _config.group("表情包发送").add(
     "names",
     type="list",
-    description=("候选表情包名称列表。请只填写可选表情包名称中的原始名称，" "系统会从前 3 个候选中随机选择 1 个发送。"),
+    description=(
+        "候选表情包名称列表。请只填写可选表情包名称中的原始名称，"
+        "系统会从前 3 个候选中随机选择 1 个发送。"
+    ),
     required=True,
 )
 
 SKILL_META = {
     "name": "send_sticker",
-    "description": ("群聊气氛适合卖萌、吐槽、安慰、庆祝、撒娇或接梗时使用；必须配合文字回复一起发，不要单独发送。"),
+    "description": (
+        "群聊气氛适合卖萌、吐槽、安慰、庆祝、撒娇或接梗时使用；必须配合文字回复一起发，不要单独发送。"
+    ),
     "version": "1.0.0",
     "tags": ["sticker", "messaging", "napcat"],
     "adapter_types": ["napcat"],

@@ -3,6 +3,7 @@
 提供统一的连接管理、PRAGMA 配置和基础 CRUD 操作。
 所有 SQLite 存储类应继承此基类以消除重复代码。
 """
+
 from __future__ import annotations
 
 import logging

@@ -336,18 +336,14 @@ class NapCatAdapter(BaseAdapter):
                 return resp
         return await self._call_api_inner(action, params)
 
-    async def _call_api_inner(
-        self, action: str, params: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _call_api_inner(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
         """发送 API 请求核心逻辑（不含限流）。"""
         if not self.ws or _is_ws_closed(self.ws) or not self._running:
             raise RuntimeError("WebSocket not connected")
 
         self._echo_counter += 1
         echo = f"req_{self._echo_counter}_{action}"
-        future: asyncio.Future[dict[str, Any]] = (
-            asyncio.get_event_loop().create_future()
-        )
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
         self._pending[echo] = future
 
         payload = {"action": action, "params": params, "echo": echo}
@@ -596,9 +592,7 @@ class NapCatAdapter(BaseAdapter):
             mention_all=mention_all,
         )
 
-    async def _render_group_prompt(
-        self, event: dict[str, Any], self_id: str, group_id: str
-    ) -> str:
+    async def _render_group_prompt(self, event: dict[str, Any], self_id: str, group_id: str) -> str:
         """将群聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
         from ..protocol import _face_to_text, build_image_label
 
@@ -628,9 +622,7 @@ class NapCatAdapter(BaseAdapter):
                     else:
                         display = f"qq_{target_uid}"
                         try:
-                            info = await self.get_group_member_info(
-                                group_id, target_uid
-                            )
+                            info = await self.get_group_member_info(group_id, target_uid)
                             card = str(info.get("card", "") or "").strip()
                             nickname = str(info.get("nickname", "") or "").strip()
                             if nickname and card and nickname != card:
@@ -813,9 +805,7 @@ class NapCatAdapter(BaseAdapter):
             except (json.JSONDecodeError, ValueError):
                 pass
             if "," in gids:
-                return [
-                    g.strip().strip("'\"[]()") for g in gids.split(",") if g.strip()
-                ]
+                return [g.strip().strip("'\"[]()") for g in gids.split(",") if g.strip()]
             return [gids.strip()] if gids.strip() else []
         return [str(g).strip() for g in gids if g]
 
@@ -848,9 +838,7 @@ class NapCatAdapter(BaseAdapter):
             return
         if not self._enabled:
             return
-        self._mark_event_if_received_during_reply_send(
-            event, str(event.get("group_id", ""))
-        )
+        self._mark_event_if_received_during_reply_send(event, str(event.get("group_id", "")))
         if self._engine is None or not self._engine_ready():
             self._log_not_ready()
             return
@@ -927,18 +915,14 @@ class NapCatAdapter(BaseAdapter):
             multimodal_inputs=parsed.multimodal_inputs,
             adapter_type="napcat",
             sender_type="other_ai" if is_peer_ai else "human",
-            received_during_bot_send=bool(
-                event.get("_sirius_received_during_reply_send")
-            ),
+            received_during_bot_send=bool(event.get("_sirius_received_during_reply_send")),
             mentions_current_bot=mentions_current_bot,
         )
 
         msg_preview = (parsed.prompt or "")[:200].replace("\n", " ")
         LOG.info(
             "[收到消息] %s | sender=%s(%s) uid=%s | content=%s",
-            f"group={group_id}"
-            if parsed.message_type == "group"
-            else f"private={parsed.user_id}",
+            f"group={group_id}" if parsed.message_type == "group" else f"private={parsed.user_id}",
             parsed.nickname or "",
             parsed.card or "",
             parsed.user_id,
@@ -956,9 +940,7 @@ class NapCatAdapter(BaseAdapter):
                 if partial:
                     if parsed.message_type == "group":
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_sequence_part(
-                                group_id, partial
-                            )
+                            await self._sleep_before_reply_sequence_part(group_id, partial)
                         await self._send_group_text(group_id, partial)
                     else:
                         if partial_sent_count > 0:
@@ -981,9 +963,7 @@ class NapCatAdapter(BaseAdapter):
                 if clean_reply:
                     if parsed.message_type == "group":
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_sequence_part(
-                                group_id, clean_reply
-                            )
+                            await self._sleep_before_reply_sequence_part(group_id, clean_reply)
                         if clean_reply:
                             await self._send_group_text(group_id, clean_reply)
                     else:
@@ -993,9 +973,7 @@ class NapCatAdapter(BaseAdapter):
                             )
                         if clean_reply:
                             await self._send_private_text(parsed.user_id, clean_reply)
-            await self._send_stickers_after_reply(
-                group_id, result.get("sticker_names", [])
-            )
+            await self._send_stickers_after_reply(group_id, result.get("sticker_names", []))
         except asyncio.CancelledError:
             raise
         except RuntimeError as exc:
@@ -1031,6 +1009,7 @@ class NapCatAdapter(BaseAdapter):
                     uid = gid.replace("private_", "").replace("qq_", "")
                     send_key = f"private_{uid}"
                 partial_sent_count = 0
+
                 async def _send_partial(text: str) -> None:
                     nonlocal partial_sent_count
                     if partial_sent_count > 0:
@@ -1041,9 +1020,7 @@ class NapCatAdapter(BaseAdapter):
                     elif gid in self._get_allowed_group_ids():
                         sent = await self._send_group_text(gid, text)
                     else:
-                        raise RuntimeError(
-                            f"Partial reply target is not allowed: {gid}"
-                        )
+                        raise RuntimeError(f"Partial reply target is not allowed: {gid}")
                     if not sent:
                         raise RuntimeError(f"Failed to send partial reply: {gid}")
                     partial_sent_count += 1
@@ -1143,16 +1120,12 @@ class NapCatAdapter(BaseAdapter):
                         if not first:
                             await self._sleep_before_reply_part(line)
                         refs = reply_refs if first else None
-                        ok = await self._send_group_text_single_locked(
-                            group_id, line, refs
-                        )
+                        ok = await self._send_group_text_single_locked(group_id, line, refs)
                         if not ok:
                             return False
                         first = False
                     return True
-                return await self._send_group_text_single_locked(
-                    group_id, text, reply_refs
-                )
+                return await self._send_group_text_single_locked(group_id, text, reply_refs)
         finally:
             self._end_reply_send(key)
 
@@ -1163,9 +1136,7 @@ class NapCatAdapter(BaseAdapter):
         self._begin_reply_send(key)
         try:
             async with self._get_reply_lock(key):
-                return await self._send_group_text_single_locked(
-                    group_id, text, reply_refs
-                )
+                return await self._send_group_text_single_locked(group_id, text, reply_refs)
         finally:
             self._end_reply_send(key)
 
@@ -1201,13 +1172,9 @@ class NapCatAdapter(BaseAdapter):
                 await self.send_group_msg(
                     group_id, self._group_text_to_segments(group_id, formatted_reply)
                 )
-                LOG.info(
-                    "回复群 %s (引用但无msg_id): %s", group_id, formatted_reply[:120]
-                )
+                LOG.info("回复群 %s (引用但无msg_id): %s", group_id, formatted_reply[:120])
             else:
-                await self.send_group_msg(
-                    group_id, self._group_text_to_segments(group_id, text)
-                )
+                await self.send_group_msg(group_id, self._group_text_to_segments(group_id, text))
                 LOG.info("回复群 %s: %s", group_id, text[:120])
             return True
         except Exception as exc:
@@ -1343,9 +1310,7 @@ class NapCatAdapter(BaseAdapter):
 
     async def _send_group_image(self, group_id: str, image_path: str) -> None:
         """发送群聊图片。"""
-        segment: list[dict[str, Any]] = [
-            {"type": "image", "data": {"file": image_path}}
-        ]
+        segment: list[dict[str, Any]] = [{"type": "image", "data": {"file": image_path}}]
         async with self._get_reply_lock(group_id):
             try:
                 await self.send_group_msg(group_id, segment)
@@ -1355,9 +1320,7 @@ class NapCatAdapter(BaseAdapter):
 
     async def _send_private_image(self, user_id: str, image_path: str) -> None:
         """发送私聊图片。"""
-        segment: list[dict[str, Any]] = [
-            {"type": "image", "data": {"file": image_path}}
-        ]
+        segment: list[dict[str, Any]] = [{"type": "image", "data": {"file": image_path}}]
         async with self._get_reply_lock(user_id):
             try:
                 await self.send_private_msg(user_id, segment)
@@ -1420,9 +1383,7 @@ class NapCatAdapter(BaseAdapter):
             self._config_float("human_reply_chars_per_second", 5.0),
         )
         min_delay = max(0.0, self._config_float("human_reply_min_delay_seconds", 1.5))
-        max_delay = max(
-            min_delay, self._config_float("human_reply_max_delay_seconds", 7.0)
-        )
+        max_delay = max(min_delay, self._config_float("human_reply_max_delay_seconds", 7.0))
         return min(max(chars / chars_per_second, min_delay), max_delay)
 
     def _config_float(self, key: str, default: float) -> float:
@@ -1461,9 +1422,7 @@ class NapCatAdapter(BaseAdapter):
             if remaining <= 0:
                 raise asyncio.TimeoutError()
             try:
-                event = await asyncio.wait_for(
-                    self._event_queue.get(), timeout=remaining
-                )
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=remaining)
                 if predicate(event):
                     return event
             except asyncio.TimeoutError:

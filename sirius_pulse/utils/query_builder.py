@@ -2,6 +2,7 @@
 
 提供流式 API 构建 WHERE 子句，消除重复的条件拼接代码。
 """
+
 from __future__ import annotations
 
 from typing import Any

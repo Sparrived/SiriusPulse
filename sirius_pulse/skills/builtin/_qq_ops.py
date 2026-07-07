@@ -11,7 +11,9 @@ def get_adapter(bridge: Any) -> Any | None:
     return getattr(bridge, "adapter", None) or bridge
 
 
-def current_group_id(chat_context: dict[str, Any] | None, explicit_group_id: int | str | None = None) -> str:
+def current_group_id(
+    chat_context: dict[str, Any] | None, explicit_group_id: int | str | None = None
+) -> str:
     if explicit_group_id not in (None, ""):
         return str(explicit_group_id).strip()
     ctx = chat_context or {}

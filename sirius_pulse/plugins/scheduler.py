@@ -52,7 +52,10 @@ class PluginScheduler:
         """添加一个定时任务。"""
         self._tasks.append(task)
         logger.info(
-            "注册定时任务: %s（cron=%s, interval=%.1fs）", task.name, task.cron, task.interval_seconds
+            "注册定时任务: %s（cron=%s, interval=%.1fs）",
+            task.name,
+            task.cron,
+            task.interval_seconds,
         )
 
     def remove_task(self, name: str) -> None:

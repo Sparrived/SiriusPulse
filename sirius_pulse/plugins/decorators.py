@@ -634,8 +634,9 @@ async def dispatch_command_stream(
     instance: object,
     cmd: "CommandAST",
     command_handlers: dict[str, "PluginCommandMeta"],
-    command_groups: dict[str, tuple["PluginCommandGroupMeta", dict[str, "GroupCommandMeta"]]]
-    | None = None,
+    command_groups: (
+        dict[str, tuple["PluginCommandGroupMeta", dict[str, "GroupCommandMeta"]]] | None
+    ) = None,
 ) -> list["PluginResponse"]:
     """根据 CommandAST.command 路由到对应的 @command 方法并调用。
 

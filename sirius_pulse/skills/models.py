@@ -447,6 +447,7 @@ class SkillEngineContext(Protocol):
         """将私聊群组标记为活跃（以便延迟队列轮询）。"""
         ...
 
+
 @dataclass(slots=True)
 class SkillInvocationContext:
     """Per-call context injected into skills for authorization and auditing."""

@@ -6,6 +6,7 @@
     - extract_sender_names / sanitize_image_name / extract_image_name: 辅助函数
     - build_image_label: 图片标签生成
 """
+
 from sirius_pulse.platforms.onebot_v11.protocol import (
     _QQ_FACE_NAMES,
     _face_to_text,

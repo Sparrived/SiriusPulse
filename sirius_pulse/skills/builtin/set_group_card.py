@@ -15,7 +15,9 @@ from sirius_pulse.skills.builtin._qq_ops import (
 )
 
 _config = ConfigBuilder()
-_config.group("QQ 群管理").add("user_id", type="int", description="要修改名片的成员 QQ 号。", required=True)
+_config.group("QQ 群管理").add(
+    "user_id", type="int", description="要修改名片的成员 QQ 号。", required=True
+)
 _config.group("QQ 群管理").add("card", type="str", description="新的群名片。", required=True)
 
 SKILL_META = {

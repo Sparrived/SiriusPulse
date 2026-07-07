@@ -473,7 +473,9 @@ class PluginMatcher:
                                 confidence=0.95,
                             )
                     except re.error as exc:
-                        logger.warning("Plugin %s 的正则表达式无效: %s → %s", plugin_name, pattern, exc)
+                        logger.warning(
+                            "Plugin %s 的正则表达式无效: %s → %s", plugin_name, pattern, exc
+                        )
 
         return None
 

@@ -451,7 +451,9 @@ async def _poll_github_events(ctx: Any) -> None:
                     ):
                         if repo_key in get_issue_repos():
                             logger.debug(
-                                "github_monitor: %s 跳过标签事件 %s", repo_key, merged_info.get("action")
+                                "github_monitor: %s 跳过标签事件 %s",
+                                repo_key,
+                                merged_info.get("action"),
                             )
                             continue
 
@@ -715,7 +717,9 @@ def _merge_event_group(events: list[dict[str, Any]]) -> dict[str, Any]:
     merged_body = "\n---\n".join(bodies) if bodies else primary.get("body", "")
 
     primary["actor"] = (
-        "、".join(actors) if len(actors) > 1 else (actors[0] if actors else primary.get("actor", ""))
+        "、".join(actors)
+        if len(actors) > 1
+        else (actors[0] if actors else primary.get("actor", ""))
     )
     primary["merged_actions"] = merged_actions
     primary["merged_count"] = len(events)
@@ -1111,7 +1115,9 @@ async def _handle_webhook_event(event_type: str, body: dict[str, Any]) -> None:
     # coding_agent 覆盖的仓库：跳过标签添加/删除事件，AI会自动管理标签
     if event_type == "issues" and body.get("action", "") in ("labeled", "unlabeled"):
         if repo_name in get_issue_repos():
-            logger.debug("github_monitor (webhook): %s 跳过标签事件 %s", repo_name, body.get("action"))
+            logger.debug(
+                "github_monitor (webhook): %s 跳过标签事件 %s", repo_name, body.get("action")
+            )
             return
 
     # coding 接管仓库：仅当评论作者是 AI bot 时才推送评论通知
@@ -1120,7 +1126,9 @@ async def _handle_webhook_event(event_type: str, body: dict[str, Any]) -> None:
         if repo_name in get_issue_repos():
             comment_login = (body.get("sender", {}) or {}).get("login", "")
             if bot_login and comment_login != bot_login:
-                logger.debug("github_monitor (webhook): %s 跳过非AI评论 @%s", repo_name, comment_login)
+                logger.debug(
+                    "github_monitor (webhook): %s 跳过非AI评论 @%s", repo_name, comment_login
+                )
                 return
 
     # 截图

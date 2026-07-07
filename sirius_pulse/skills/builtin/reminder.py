@@ -520,7 +520,9 @@ def _do_create(
 
     _save_reminder(reminder, data_store)
 
-    mode_desc = {"once": "一次性", "interval": "间隔", "daily": "每日", "weekly": "每周"}.get(mode, mode)
+    mode_desc = {"once": "一次性", "interval": "间隔", "daily": "每日", "weekly": "每周"}.get(
+        mode, mode
+    )
     fire_desc = ""
     if mode == "once" and reminder.get("fire_at"):
         fire_desc = f"，将在 {reminder['fire_at']} 触发"

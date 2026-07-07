@@ -4,6 +4,7 @@ Provides functions that query the SQLite database directly so that
 analysis can span multiple sessions without loading all records into
 memory.
 """
+
 from __future__ import annotations
 
 from typing import TypedDict

@@ -53,7 +53,9 @@ class OutputDispatcher:
 
         if render_mode.value == "llm":
             if engine is None:
-                logger.warning("Plugin %s: llm 模式但 engine 未绑定，回退到 direct 模式", definition.name)
+                logger.warning(
+                    "Plugin %s: llm 模式但 engine 未绑定，回退到 direct 模式", definition.name
+                )
                 return self._handle_direct(result, definition)
             return await self._handle_llm(
                 result,
@@ -130,7 +132,9 @@ class OutputDispatcher:
 
         # ── 2. 插件执行结果 ──
         sections.append("\n【指令执行结果】")
-        sections.append(f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据：")
+        sections.append(
+            f"你刚刚执行了用户的 '{definition.display_name or definition.name}' 指令，获得以下数据："
+        )
         sections.append(data_json)
 
         # ── 3. 表达要求 ──

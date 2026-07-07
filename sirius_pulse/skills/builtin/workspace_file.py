@@ -111,7 +111,11 @@ def _list_files(path: str = ".", recursive: bool = False, pattern: str = "") -> 
     if not base.exists():
         return {"success": False, "error": f"路径不存在: {path}"}
     if base.is_file():
-        return {"success": True, "summary": f"找到文件: {path}", "text_blocks": [_format_entry(base)]}
+        return {
+            "success": True,
+            "summary": f"找到文件: {path}",
+            "text_blocks": [_format_entry(base)],
+        }
 
     glob_pattern = pattern.strip() if pattern else "*"
     iterator = base.rglob(glob_pattern) if recursive else base.glob(glob_pattern)
@@ -125,7 +129,11 @@ def _list_files(path: str = ".", recursive: bool = False, pattern: str = "") -> 
         if len(lines) < _MAX_RESULTS:
             lines.append(_format_entry(entry))
     if not lines:
-        return {"success": True, "summary": "没有找到匹配的文件", "text_blocks": ["没有找到匹配的文件"]}
+        return {
+            "success": True,
+            "summary": "没有找到匹配的文件",
+            "text_blocks": ["没有找到匹配的文件"],
+        }
     if total > len(lines):
         lines.append(f"...还有 {total - len(lines)} 项未显示")
     return {
@@ -198,7 +206,11 @@ async def _send_file(
 ) -> dict[str, Any]:
     adapter = getattr(bridge, "adapter", None) or bridge
     if adapter is None:
-        return {"success": False, "error": "adapter 未就绪", "summary": "发送失败：NapCat 适配器未连接"}
+        return {
+            "success": False,
+            "error": "adapter 未就绪",
+            "summary": "发送失败：NapCat 适配器未连接",
+        }
     chat_context = chat_context or {}
     target_type = chat_context.get("chat_type", "")
     target_id = chat_context.get("chat_id", "")
