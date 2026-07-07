@@ -5,6 +5,7 @@
 
 存储：SQLite（懒加载 + 写穿缓存）
 """
+
 from __future__ import annotations
 
 import logging
@@ -68,7 +69,6 @@ class UnifiedUserManager:
 
         # 懒加载标记
         self._users_loaded = False
-
 
     # ── 懒加载 ─────────────────────────────────────────
 

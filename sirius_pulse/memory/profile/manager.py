@@ -31,7 +31,9 @@ class UserPersonaProfileManager:
         self._semantic_memory = semantic_memory
         self._renderer = ProfilePromptRenderer()
 
-    def get_profile(self, group_id: str, user_id: str, *, create: bool = True) -> UserPersonaProfile | None:
+    def get_profile(
+        self, group_id: str, user_id: str, *, create: bool = True
+    ) -> UserPersonaProfile | None:
         group_key = group_id or "default"
         profile = self._store.get_profile(self._persona_name, group_key, user_id)
         if profile is None and create:
@@ -182,7 +184,9 @@ class UserPersonaProfileManager:
         return self._renderer.render_section(profiles)
 
     def list_events(self, group_id: str, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        return self._store.list_events(self._persona_name, group_id or "default", user_id, limit=limit)
+        return self._store.list_events(
+            self._persona_name, group_id or "default", user_id, limit=limit
+        )
 
     def _hydrate_runtime_fields(self, profile: UserPersonaProfile) -> None:
         if self._user_manager is not None:
@@ -194,8 +198,9 @@ class UserPersonaProfileManager:
         if self._semantic_memory is not None:
             semantic = self._semantic_memory.get_user_profile(profile.group_id, profile.user_id)
             profile.familiarity_score = semantic.compute_familiarity()
-            profile.affinity_score = clamp_confidence(getattr(semantic, "engagement_rate", 0.0), 0.0)
-
+            profile.affinity_score = clamp_confidence(
+                getattr(semantic, "engagement_rate", 0.0), 0.0
+            )
 
     def register_alias(
         self,
@@ -321,6 +326,8 @@ class UserPersonaProfileManager:
             )
             changed = changed or bool(result.get("success"))
         return changed
+
+
 def update_to_dict(update: ProfileUpdate) -> dict[str, Any]:
     return {
         "section": update.section,
@@ -339,7 +346,6 @@ def _merge_ids(existing: list[str], new_values: list[str]) -> list[str]:
         if value and value not in merged:
             merged.append(value)
     return merged[-20:]
-
 
 
 def _normalize_alias(value: str) -> str:

@@ -50,7 +50,9 @@ class MemoryUnitIndexer:
         semantic_scores: dict[str, float] = {}
         if self.semantic_available:
             try:
-                query_vec = self._embedding_client.encode_single(query) if self._embedding_client else []
+                query_vec = (
+                    self._embedding_client.encode_single(query) if self._embedding_client else []
+                )
             except Exception as exc:
                 logger.warning("Memory unit semantic search failed: %s", exc)
                 query_vec = []

@@ -3,6 +3,7 @@
 Tracks emotional and intent state over time for group atmosphere monitoring.
 Also persists decision events (strategy, threshold, reason) for WebUI analysis.
 """
+
 from __future__ import annotations
 
 import json

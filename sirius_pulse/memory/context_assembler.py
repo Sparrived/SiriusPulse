@@ -60,6 +60,7 @@ class ContextAssembler:
         search_query: str = "",
         recent_n: int = 0,
         diary_top_k: int = 12,
+        memory_unit_top_k: int | None = None,
         diary_token_budget: int = 800,
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
@@ -92,11 +93,12 @@ class ContextAssembler:
 
         memory_context = ""
         memory_count = 0
+        effective_memory_unit_top_k = diary_top_k if memory_unit_top_k is None else memory_unit_top_k
         if self._memory_units is not None:
             memory_units = self._memory_units.retrieve(
                 query=enriched_query,
                 group_id=group_id,
-                top_k=diary_top_k,
+                top_k=effective_memory_unit_top_k,
                 max_tokens_budget=diary_token_budget,
             )
             memory_count = len(memory_units)
@@ -210,9 +212,7 @@ class ContextAssembler:
                         }
                     )
                 else:
-                    messages.append(
-                        {"role": "user", "content": _with_user_context(current_query)}
-                    )
+                    messages.append({"role": "user", "content": _with_user_context(current_query)})
 
         return messages
 
@@ -225,6 +225,7 @@ class ContextAssembler:
         search_query: str = "",
         recent_n: int = 0,
         diary_top_k: int = 12,
+        memory_unit_top_k: int | None = None,
         diary_token_budget: int = 800,
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
@@ -244,6 +245,7 @@ class ContextAssembler:
             search_query=search_query,
             recent_n=recent_n,
             diary_top_k=diary_top_k,
+            memory_unit_top_k=memory_unit_top_k,
             diary_token_budget=diary_token_budget,
             cross_group_user_id=cross_group_user_id,
             cross_group_enabled=cross_group_enabled,
@@ -264,16 +266,17 @@ class ContextAssembler:
                 search_query or current_query, speaker_user_id, mentioned_user_ids
             )
             memory_text = ""
+            effective_memory_unit_top_k = (
+                diary_top_k if memory_unit_top_k is None else memory_unit_top_k
+            )
             if self._memory_units is not None:
                 memory_units = self._memory_units.retrieve(
                     query=enriched_query,
                     group_id=group_id,
-                    top_k=diary_top_k,
+                    top_k=effective_memory_unit_top_k,
                     max_tokens_budget=diary_token_budget,
                 )
-                memory_text = "\n".join(
-                    getattr(unit, "summary", "") for unit in memory_units[:12]
-                )
+                memory_text = "\n".join(getattr(unit, "summary", "") for unit in memory_units[:12])
             elif self._diary is not None:
                 diary_entries = self._diary.retrieve(
                     query=enriched_query,
@@ -283,10 +286,12 @@ class ContextAssembler:
                 )
                 full_count = min(5, len(diary_entries))
                 memory_text = "\n".join(
-                    f"{i}. [{(e.created_at or '')[:16].replace('T', ' ')}] "
-                    f"{e.content if (i <= full_count and e.content) else e.summary}"
-                    if e.created_at
-                    else f"{i}. {e.content if (i <= full_count and e.content) else e.summary}"
+                    (
+                        f"{i}. [{(e.created_at or '')[:16].replace('T', ' ')}] "
+                        f"{e.content if (i <= full_count and e.content) else e.summary}"
+                        if e.created_at
+                        else f"{i}. {e.content if (i <= full_count and e.content) else e.summary}"
+                    )
                     for i, e in enumerate(diary_entries[:12], 1)
                 )
             if memory_text:
@@ -338,7 +343,7 @@ class ContextAssembler:
 
         lines = [
             "<memory_units>",
-            "The following are compact background memory facts, not current chat messages. Use them only when directly helpful. Do not mention checking memory, reading logs, or remembering these facts.",
+            "The following are candidate background memory facts, not current chat messages. Use only directly relevant facts explicitly; indirect facts may only affect tone, and irrelevant facts must be ignored. Do not mention checking memory, reading logs, or remembering these facts. Do not repeat the same old event, preference, or time detail if it was already mentioned recently unless the user asks.",
         ]
         for unit in memory_units[:12]:
             ts = (getattr(unit, "created_at", "") or "")[:16].replace("T", " ")
@@ -361,7 +366,7 @@ class ContextAssembler:
         full_text_count = min(5, len(entries))
         lines = [
             TAG_HISTORY_DIARY,
-            "以下是可能相关的背景记忆，不是当前聊天消息。只在确实有助于回答时自然利用事实；不要主动说明你查看、翻阅或记得这些日记，也不要复述与当前问题无关的旧事。",
+            "以下是候选背景记忆，不是当前聊天消息。先判断相关性：直接相关才可显式使用，间接相关只影响语气，无关则忽略；不要主动说明你查看、翻阅或记得这些日记。不要复述与当前问题无关的旧事；同一事件、偏好或时间信息近期已经提过时，默认不要再次提及，除非用户主动问。",
         ]
         for i, entry in enumerate(entries, 1):
             ts = (getattr(entry, "created_at", "") or "")[:16].replace("T", " ")

@@ -34,11 +34,7 @@ class BasicMemoryFileStore:
         work_path: Path | WorkspaceLayout,
         remote_bridge: Any = None,
     ) -> None:
-        layout = (
-            work_path
-            if isinstance(work_path, WorkspaceLayout)
-            else WorkspaceLayout(work_path)
-        )
+        layout = work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
         self._base_dir = layout.work_path / "archive"
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._remote_bridge = remote_bridge
@@ -93,10 +89,7 @@ class BasicMemoryFileStore:
         if not entries:
             return
         path = self._path(group_id)
-        lines = (
-            "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in entries)
-            + "\n"
-        )
+        lines = "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in entries) + "\n"
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock_for(path):
             with path.open("a", encoding="utf-8") as f:

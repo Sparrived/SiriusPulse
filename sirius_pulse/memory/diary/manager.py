@@ -219,7 +219,6 @@ class DiaryManager:
 
         return results
 
-
     def ensure_group_loaded(self, group_id: str) -> None:
         """Lazy-load persisted entries for a group if not already loaded.
 

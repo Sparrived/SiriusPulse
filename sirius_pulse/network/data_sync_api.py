@@ -214,10 +214,13 @@ async def api_data_snapshot_post(
     groups_dir = state_dir / "groups"
     groups_dir.mkdir(parents=True, exist_ok=True)
     for group_id, entries in working_memories.items():
-        _write_json(groups_dir / f"{_safe_name(group_id)}.json", {
-            "group_id": group_id,
-            "entries": entries,
-        })
+        _write_json(
+            groups_dir / f"{_safe_name(group_id)}.json",
+            {
+                "group_id": group_id,
+                "entries": entries,
+            },
+        )
 
     # 保存 persona
     persona = state.get("persona")
@@ -627,10 +630,13 @@ def _write_working_memory(data_dir: Path, data: dict) -> None:
         return
     state_dir = data_dir / "engine_state" / "groups"
     state_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(state_dir / f"{_safe_name(group_id)}.json", {
-        "group_id": group_id,
-        "entries": entries,
-    })
+    _write_json(
+        state_dir / f"{_safe_name(group_id)}.json",
+        {
+            "group_id": group_id,
+            "entries": entries,
+        },
+    )
 
 
 def _write_timestamps(data_dir: Path, data: dict) -> None:

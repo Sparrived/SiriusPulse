@@ -196,6 +196,3 @@ class UserPersonaProfile:
             raw = data.get(section_name, {})
             kwargs[section_name] = ProfileSection.from_dict(raw if isinstance(raw, dict) else {})
         return cls(**kwargs)
-
-
-

@@ -11,7 +11,9 @@ from sirius_pulse.memory.profile.models import UserPersonaProfile, now_iso
 class UserPersonaProfileStore:
     """SQLite-backed store for model-maintained user persona profiles."""
 
-    def __init__(self, db_path: Path | str | None = None, *, conn: sqlite3.Connection | None = None) -> None:
+    def __init__(
+        self, db_path: Path | str | None = None, *, conn: sqlite3.Connection | None = None
+    ) -> None:
         self._owns_conn = conn is None
         if conn is not None:
             self.conn = conn
@@ -28,8 +30,7 @@ class UserPersonaProfileStore:
             self.conn.close()
 
     def _init_schema(self) -> None:
-        self.conn.execute(
-            """
+        self.conn.execute("""
             CREATE TABLE IF NOT EXISTS user_persona_profiles (
                 persona_name TEXT NOT NULL,
                 group_id TEXT NOT NULL,
@@ -40,10 +41,8 @@ class UserPersonaProfileStore:
                 version INTEGER DEFAULT 1,
                 PRIMARY KEY (persona_name, group_id, user_id)
             )
-            """
-        )
-        self.conn.execute(
-            """
+            """)
+        self.conn.execute("""
             CREATE TABLE IF NOT EXISTS user_profile_events (
                 event_id TEXT PRIMARY KEY,
                 persona_name TEXT NOT NULL,
@@ -55,23 +54,20 @@ class UserPersonaProfileStore:
                 created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
-            """
-        )
-        self.conn.execute(
-            """
+            """)
+        self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_user_persona_profiles_user
                 ON user_persona_profiles(persona_name, user_id)
-            """
-        )
-        self.conn.execute(
-            """
+            """)
+        self.conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_user_profile_events_user
                 ON user_profile_events(persona_name, group_id, user_id, created_at)
-            """
-        )
+            """)
         self.conn.commit()
 
-    def get_profile(self, persona_name: str, group_id: str, user_id: str) -> UserPersonaProfile | None:
+    def get_profile(
+        self, persona_name: str, group_id: str, user_id: str
+    ) -> UserPersonaProfile | None:
         row = self.conn.execute(
             """
             SELECT profile_json FROM user_persona_profiles
@@ -124,7 +120,9 @@ class UserPersonaProfileStore:
         profiles: list[UserPersonaProfile] = []
         for row in rows:
             try:
-                profiles.append(UserPersonaProfile.from_dict(json.loads(row["profile_json"] or "{}")))
+                profiles.append(
+                    UserPersonaProfile.from_dict(json.loads(row["profile_json"] or "{}"))
+                )
             except json.JSONDecodeError:
                 continue
         return profiles

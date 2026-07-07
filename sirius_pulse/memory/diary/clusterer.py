@@ -110,8 +110,7 @@ class TopicClusterer:
                     max_retries + 1,
                 )
                 system_prompt = (
-                    _CLUSTER_SYSTEM_PROMPT
-                    + "\n\n【重要提醒】上一次输出不是合法 JSON，"
+                    _CLUSTER_SYSTEM_PROMPT + "\n\n【重要提醒】上一次输出不是合法 JSON，"
                     "请确保本次输出是严格合法的 JSON 对象，不要包含任何其他文字。"
                 )
 
@@ -119,9 +118,7 @@ class TopicClusterer:
         logger.info("话题聚类重试耗尽，回退为单组处理 (%d 条消息)", len(candidates))
         return [TopicCluster(label="对话记录", entries=list(candidates))]
 
-    def _time_based_split(
-        self, candidates: list[Any], batch_size: int = 15
-    ) -> list[TopicCluster]:
+    def _time_based_split(self, candidates: list[Any], batch_size: int = 15) -> list[TopicCluster]:
         """Split candidates into fixed-size batches by time order as a fallback.
 
         Each batch gets a generic label based on position (e.g. "对话片段 1").
@@ -169,9 +166,7 @@ class TopicClusterer:
         )
         return await brain.raw_call(raw_request)
 
-    def _parse_response(
-        self, raw: str, candidates: list[Any]
-    ) -> list[TopicCluster] | None:
+    def _parse_response(self, raw: str, candidates: list[Any]) -> list[TopicCluster] | None:
         """Parse LLM JSON response into TopicCluster list."""
         data = self._extract_json(raw)
         if not data or "clusters" not in data:
@@ -220,9 +215,7 @@ class TopicClusterer:
 
         return clusters if len(clusters) > 1 else None
 
-    def _merge_small_clusters(
-        self, clusters: list[TopicCluster]
-    ) -> list[TopicCluster]:
+    def _merge_small_clusters(self, clusters: list[TopicCluster]) -> list[TopicCluster]:
         """Merge clusters smaller than min_cluster_size into neighbors."""
         if len(clusters) <= 1:
             return clusters

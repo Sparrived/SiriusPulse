@@ -75,5 +75,3 @@ def _item_rank(item: ProfileItem) -> tuple[float, int, str]:
 
 def _escape_attr(value: str) -> str:
     return value.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
-
-

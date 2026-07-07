@@ -1,4 +1,5 @@
 """Memory management module."""
+
 from __future__ import annotations
 
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager, HeatCalculator

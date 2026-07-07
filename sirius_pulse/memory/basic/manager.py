@@ -220,9 +220,11 @@ class BasicMemoryManager:
                     all_entries.append(entry)
         # Sort by timestamp descending, take most recent n
         all_entries.sort(
-            key=lambda e: datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
-            if e.timestamp
-            else 0.0,
+            key=lambda e: (
+                datetime.fromisoformat(e.timestamp.replace("Z", "+00:00")).timestamp()
+                if e.timestamp
+                else 0.0
+            ),
             reverse=True,
         )
         return all_entries[:n]
