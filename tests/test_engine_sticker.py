@@ -16,7 +16,9 @@ class DummyPersona:
 
 
 class DummyBrain:
-    def __init__(self, response: str = '{"pairs": [{"base": "喜欢", "opposites": ["讨厌"]}]}') -> None:
+    def __init__(
+        self, response: str = '{"pairs": [{"base": "喜欢", "opposites": ["讨厌"]}]}'
+    ) -> None:
         self.sticker_names: list[str] = []
         self.response = response
         self.requests: list[Any] = []

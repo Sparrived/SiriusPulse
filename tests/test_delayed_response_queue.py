@@ -69,9 +69,7 @@ def test_delayed_queue_when_immediate_messages_share_group_then_merges_into_one_
 
 def test_delayed_queue_when_immediate_window_expires_then_triggers_item():
     queue = DelayedResponseQueue()
-    item = queue.enqueue(
-        "group-1", "u1", "hello", _decision(ResponseStrategy.IMMEDIATE)
-    )
+    item = queue.enqueue("group-1", "u1", "hello", _decision(ResponseStrategy.IMMEDIATE))
     item.enqueue_time = _past(item.window_seconds + 1)
 
     triggered = queue.tick("group-1", [])
@@ -183,6 +181,8 @@ def test_build_delayed_prompt_injects_configured_length_limit():
     assert "【回复规范】" in bundle.system_prompt
     assert "【回复长度】" not in bundle.system_prompt
     assert "不超过 12 个汉字" in bundle.system_prompt
+    assert "少于 40 字保持单段" in bundle.system_prompt
+    assert "不要用换行制造停顿" in bundle.system_prompt
 
 
 def test_delayed_queue_when_merging_incoming_then_appends_to_existing_pending_item():
@@ -210,9 +210,7 @@ def test_delayed_queue_when_merging_incoming_then_appends_to_existing_pending_it
 def test_delayed_queue_when_cancelled_or_cleared_then_pending_items_disappear():
     queue = DelayedResponseQueue()
     first = queue.enqueue("group-1", "u1", "first", _decision(ResponseStrategy.DELAYED))
-    second = queue.enqueue(
-        "group-2", "u2", "second", _decision(ResponseStrategy.DELAYED)
-    )
+    second = queue.enqueue("group-2", "u2", "second", _decision(ResponseStrategy.DELAYED))
 
     assert queue.cancel_all_for_user("group-1", "u1") == 1
     assert first.status == "cancelled"
@@ -279,9 +277,7 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
@@ -292,9 +288,7 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
             entries={"group-1": {"u1": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            )
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
         ),
         context_assembler=SimpleNamespace(
             build_messages_with_breakdown=lambda **kwargs: (
@@ -337,9 +331,7 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
         order.append("lead_wait")
         slept.append(seconds)
 
-    monkeypatch.setattr(
-        "sirius_pulse.core.bg_tasks_delayed.asyncio.sleep", capture_sleep
-    )
+    monkeypatch.setattr("sirius_pulse.core.bg_tasks_delayed.asyncio.sleep", capture_sleep)
 
     tick_task = asyncio.create_task(
         tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
@@ -369,9 +361,7 @@ async def test_delayed_queue_when_chat_round_uses_stop_only_flow_control():
     seen_extra_tools: list[set[str]] = []
 
     async def capture_chat(request):
-        seen_extra_tools.append(
-            {tool["function"]["name"] for tool in (request.extra_tools or [])}
-        )
+        seen_extra_tools.append({tool["function"]["name"] for tool in (request.extra_tools or [])})
         return SimpleNamespace(
             raw_text="One reply.",
             clean_text="One reply.",
@@ -387,9 +377,7 @@ async def test_delayed_queue_when_chat_round_uses_stop_only_flow_control():
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
@@ -400,9 +388,7 @@ async def test_delayed_queue_when_chat_round_uses_stop_only_flow_control():
             entries={"group-1": {"u1": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            )
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
         ),
         context_assembler=SimpleNamespace(
             build_messages_with_breakdown=lambda **kwargs: (
@@ -459,9 +445,7 @@ async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed()
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
@@ -472,9 +456,7 @@ async def test_delayed_queue_when_partial_send_fails_then_tool_is_not_executed()
             entries={"group-1": {"u1": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            )
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
         ),
         context_assembler=SimpleNamespace(
             build_messages_with_breakdown=lambda **kwargs: (
@@ -540,8 +522,7 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
         id="call-update-progress",
         function_name="update_plan_progress",
         function_arguments=(
-            '{"phase": "verifying", "summary": "Checking the public API", '
-            '"confidence": "high"}'
+            '{"phase": "verifying", "summary": "Checking the public API", ' '"confidence": "high"}'
         ),
     )
     exit_plan = ToolCall(
@@ -582,9 +563,7 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
@@ -595,9 +574,7 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
             entries={"group-1": {"u1": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            )
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
         ),
         context_assembler=SimpleNamespace(
             build_messages_with_breakdown=lambda **kwargs: (
@@ -627,9 +604,7 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
     async def capture_partial(text: str) -> None:
         partials.append(text)
 
-    results = await tasks.tick_delayed_queue(
-        "group-1", on_partial_reply=capture_partial
-    )
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
     assert partials == []
     assert results[0]["reply"] == "Here is the final plan."
@@ -638,15 +613,9 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
     second_request = engine.brain.chat.await_args_list[1].args[0]
     assert first_request.enable_skills is False
     assert second_request.enable_skills is True
-    assert "enter_plan" in {
-        tool["function"]["name"] for tool in (first_request.extra_tools or [])
-    }
-    assert "exit_plan" in {
-        tool["function"]["name"] for tool in (second_request.extra_tools or [])
-    }
-    assert "abort_plan" in {
-        tool["function"]["name"] for tool in (second_request.extra_tools or [])
-    }
+    assert "enter_plan" in {tool["function"]["name"] for tool in (first_request.extra_tools or [])}
+    assert "exit_plan" in {tool["function"]["name"] for tool in (second_request.extra_tools or [])}
+    assert "abort_plan" in {tool["function"]["name"] for tool in (second_request.extra_tools or [])}
     assert "update_plan_progress" in {
         tool["function"]["name"] for tool in (second_request.extra_tools or [])
     }
@@ -657,8 +626,7 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
 
     third_request = engine.brain.chat.await_args_list[2].args[0]
     assert any(
-        msg.get("role") == "tool"
-        and msg.get("content") == "Public planning progress updated."
+        msg.get("role") == "tool" and msg.get("content") == "Public planning progress updated."
         for msg in third_request.messages
     )
 
@@ -697,9 +665,7 @@ async def test_delayed_queue_when_plan_aborts_then_session_is_cleared_without_re
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
@@ -710,9 +676,7 @@ async def test_delayed_queue_when_plan_aborts_then_session_is_cleared_without_re
             entries={"group-1": {"u1": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            )
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
         ),
         context_assembler=SimpleNamespace(
             build_messages_with_breakdown=lambda **kwargs: (
@@ -797,9 +761,7 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
@@ -810,9 +772,7 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
             entries={"group-1": {"u1": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            )
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
         ),
         context_assembler=SimpleNamespace(
             build_messages_with_breakdown=lambda **kwargs: (
@@ -865,9 +825,7 @@ async def test_delayed_queue_when_plan_presence_enabled_then_sends_status_once()
     async def capture_partial(text: str) -> None:
         partials.append(text)
 
-    results = await tasks.tick_delayed_queue(
-        "group-1", on_partial_reply=capture_partial
-    )
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
     assert partials == ["我先捋一下思路，马上回来。"]
     assert results[0]["reply"] == "done"
@@ -903,9 +861,7 @@ async def test_delayed_queue_when_normal_chat_requests_plan_status_then_reads_pu
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u2"
@@ -916,14 +872,10 @@ async def test_delayed_queue_when_normal_chat_requests_plan_status_then_reads_pu
             entries={"group-1": {"u2": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            ),
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0),
             get_group_profile=lambda group_id: None,
         ),
-        glossary_manager=SimpleNamespace(
-            build_prompt_section=lambda *args, **kwargs: ""
-        ),
+        glossary_manager=SimpleNamespace(build_prompt_section=lambda *args, **kwargs: ""),
         style_adapter=SimpleNamespace(adapt=lambda **kwargs: SimpleNamespace()),
         persona=SimpleNamespace(),
         _other_ai_names=[],
@@ -992,8 +944,7 @@ async def test_delayed_queue_when_normal_chat_requests_plan_status_then_reads_pu
     assert "Public planning status:" in first_request.system_prompt
     assert "Checking config and tests" in first_request.system_prompt
     assert any(
-        msg.get("role") == "tool"
-        and "Checking config and tests" in msg.get("content", "")
+        msg.get("role") == "tool" and "Checking config and tests" in msg.get("content", "")
         for msg in second_request.messages
     )
     assert "hidden tool calls" in second_request.messages[-1]["content"]
@@ -1017,9 +968,7 @@ async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_de
     )
     skill = SimpleNamespace(name="send_sticker", silent=True, developer_only=False)
     profile = SimpleNamespace(name="Alice", is_developer=False)
-    execute_skill = AsyncMock(
-        return_value=SkillResult(success=True, data={"sent": True})
-    )
+    execute_skill = AsyncMock(return_value=SkillResult(success=True, data={"sent": True}))
     engine = SimpleNamespace(
         config={"max_skill_rounds": 2},
         delayed_queue=queue,
@@ -1027,9 +976,7 @@ async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_de
             get_recent_messages=lambda group_id, n: [],
             inject_multimodal_into_user_message=lambda messages, inputs: messages,
         ),
-        rhythm_analyzer=SimpleNamespace(
-            analyze=lambda group_id, recent: SimpleNamespace()
-        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
         identity_resolver=SimpleNamespace(
             resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
                 user_id="u1"
@@ -1040,9 +987,7 @@ async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_de
             entries={"group-1": {"u1": profile}},
         ),
         semantic_memory=SimpleNamespace(
-            get_user_profile=lambda group_id, user_id: SimpleNamespace(
-                engagement_rate=1.0
-            )
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
         ),
         context_assembler=SimpleNamespace(
             build_messages_with_breakdown=lambda **kwargs: (

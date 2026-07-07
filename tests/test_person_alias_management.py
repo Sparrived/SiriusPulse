@@ -30,8 +30,12 @@ def test_profile_alias_manager_keeps_one_owner_per_alias(tmp_path: Path):
     users = _user_manager(tmp_path)
     profiles = _profile_manager(tmp_path, users)
 
-    assert profiles.register_alias(alias="阿梨", user_id="u1", user_name="Alice", group_id="g1")["success"]
-    assert profiles.register_alias(alias="小梨", user_id="u2", user_name="Bob", group_id="g1")["success"]
+    assert profiles.register_alias(alias="阿梨", user_id="u1", user_name="Alice", group_id="g1")[
+        "success"
+    ]
+    assert profiles.register_alias(alias="小梨", user_id="u2", user_name="Bob", group_id="g1")[
+        "success"
+    ]
 
     uid, confidence, others = profiles.resolve_alias("阿梨", group_id="g1")
     aliases = profiles.list_alias_entries("g1")
@@ -45,7 +49,9 @@ def test_profile_alias_manager_keeps_one_owner_per_alias(tmp_path: Path):
 def test_profile_aliases_are_used_by_identity_resolver(tmp_path: Path):
     users = _user_manager(tmp_path)
     profiles = _profile_manager(tmp_path, users)
-    profiles.register_alias(alias="阿梨", user_id="u1", user_name="Alice", group_id="g1", confidence=0.9)
+    profiles.register_alias(
+        alias="阿梨", user_id="u1", user_name="Alice", group_id="g1", confidence=0.9
+    )
     resolver = IdentityResolver()
 
     resolved = resolver.resolve_with_alias(

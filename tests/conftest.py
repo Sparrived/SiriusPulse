@@ -1,4 +1,5 @@
 """业务场景测试共享夹具。"""
+
 from __future__ import annotations
 
 import sys

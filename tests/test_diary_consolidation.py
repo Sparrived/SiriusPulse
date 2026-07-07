@@ -98,6 +98,4 @@ def test_diary_consolidation_when_old_entries_are_covered_then_clusters_higher_l
 
     clusters = consolidator.find_clusters("group_a")
 
-    assert [[entry.entry_id for entry in cluster] for cluster in clusters] == [
-        ["merged_old", "d3"]
-    ]
+    assert [[entry.entry_id for entry in cluster] for cluster in clusters] == [["merged_old", "d3"]]

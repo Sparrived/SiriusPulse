@@ -142,11 +142,14 @@ def test_skill_registry_when_skill_requires_admin_then_visible_only_for_admin_gr
     registry.register(_skill("mute_member", admin_required=True, adapter_types=["napcat"]))
 
     assert registry.build_tools_list(adapter_type="napcat", chat_type="group") == []
-    assert registry.build_tools_list(
-        adapter_type="napcat",
-        chat_type="private",
-        admin_allowed=True,
-    ) == []
+    assert (
+        registry.build_tools_list(
+            adapter_type="napcat",
+            chat_type="private",
+            admin_allowed=True,
+        )
+        == []
+    )
 
     tools = registry.build_tools_list(
         adapter_type="napcat",

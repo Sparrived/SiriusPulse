@@ -120,12 +120,18 @@ def test_webui_model_catalog_when_enriching_legacy_values_then_ignores_unscoped_
     enrich_model_choices(tmp_path, choices)
 
     assert choices == [
-        {"label": "deepseek/deepseek-chat", "value": "deepseek/deepseek-chat", "tags": ["函数调用"]},
+        {
+            "label": "deepseek/deepseek-chat",
+            "value": "deepseek/deepseek-chat",
+            "tags": ["函数调用"],
+        },
         {"label": "legacy", "value": "legacy"},
     ]
 
 
-def test_webui_model_catalog_when_provider_models_change_then_catalog_tracks_provider_list(tmp_path):
+def test_webui_model_catalog_when_provider_models_change_then_catalog_tracks_provider_list(
+    tmp_path,
+):
     atomic_write_json(
         tmp_path / "providers" / "provider_keys.json",
         {

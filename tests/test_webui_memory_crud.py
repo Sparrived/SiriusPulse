@@ -87,7 +87,9 @@ async def test_persona_glossary_crud_roundtrip(tmp_path):
     )
     assert _payload(response)["term"]["term"] == "月白酱"
 
-    response = await api_persona_glossary_get(_request(query={"limit": "20", "offset": "0"}), tmp_path)
+    response = await api_persona_glossary_get(
+        _request(query={"limit": "20", "offset": "0"}), tmp_path
+    )
     payload = _payload(response)
     assert payload["total"] == 1
     assert payload["terms"][0]["definition"] == "更亲昵的人格称呼"

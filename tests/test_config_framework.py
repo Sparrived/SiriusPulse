@@ -56,16 +56,14 @@ from sirius_pulse.utils.layout import WorkspaceLayout
 
 
 def test_jsonc_when_comments_are_present_then_document_is_loaded():
-    payload = loads_json_document(
-        """
+    payload = loads_json_document("""
         {
           // Outside comments are ignored.
           "url": "https://example.test/path//inside-string",
           /* block comments are ignored too */
           "nested": {"value": 3}
         }
-        """
-    )
+        """)
 
     assert payload == {
         "url": "https://example.test/path//inside-string",

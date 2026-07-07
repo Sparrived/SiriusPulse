@@ -85,6 +85,22 @@ def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
     assert params.tone_instruction
 
 
+def test_style_adapter_when_sentence_limit_present_then_builds_group_chat_guidance():
+    params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
+
+    assert "每句话尽量不超过 12 个汉字" in params.length_instruction
+    assert "少于 40 字保持单段" in params.length_instruction
+    assert "不要用换行制造停顿" in params.length_instruction
+
+
+def test_style_adapter_clamps_sentence_limit_for_guidance():
+    low = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=2)
+    high = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=99)
+
+    assert "不超过 5 个汉字" in low.length_instruction
+    assert "不超过 50 个汉字" in high.length_instruction
+
+
 def test_reply_spec_no_newline_split_instruction():
     """换行分割提示已移除，改为 stop 工具控制流程。"""
     spec = PromptFactory.build_reply_spec()
@@ -92,6 +108,26 @@ def test_reply_spec_no_newline_split_instruction():
     assert "多句话可以用换行符分割" not in spec
     assert "每句话不可超过 15 字" not in spec
     assert "禁止任何形式的换行符" not in spec
+
+
+def test_reply_spec_includes_memory_and_time_restraints():
+    spec = PromptFactory.build_reply_spec()
+
+    assert "记忆只是私有背景" in spec
+    assert "不要为了表现“记得”" in spec
+    assert "当前时间只用于时效判断" in spec
+    assert "普通聊天不要反复强调" in spec
+
+
+def test_memory_context_marks_memories_as_candidates():
+    context = PromptFactory.build_memory_context(
+        [{"source": "profile", "content": "Alice dislikes repeated reminders."}]
+    )
+
+    assert "候选背景记忆" in context
+    assert "直接相关才可显式使用" in context
+    assert "无关则忽略" in context
+    assert "Alice dislikes repeated reminders." in context
 
 
 def test_reply_spec_when_function_call_enabled_then_includes_stop_only():
@@ -183,7 +219,7 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_reply_spec():
     )
 
     assert "【回复规范】" in bundle.system_prompt
-    assert "Function Call" in bundle.system_prompt
+    assert "Tool Call" in bundle.system_prompt
     assert "@{QQ号}" in bundle.system_prompt
     assert "【Function Call】" not in bundle.system_prompt
     assert "【QQ @提及】" not in bundle.system_prompt
@@ -204,6 +240,22 @@ def test_assemble_chat_injects_length_instruction_into_reply_spec_when_present()
     assert "【回复规范】" in bundle.system_prompt
     assert "【回复长度】" not in bundle.system_prompt
     assert "每句话尽量不超过 12 个汉字。" in bundle.system_prompt
+
+
+def test_assemble_chat_injects_configured_group_chat_length_guidance():
+    group_profile = SimpleNamespace(atmosphere_history=[])
+    style_params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
+
+    bundle = PromptFactory.assemble_chat(
+        message_content="hello",
+        group_profile=group_profile,
+        style_params=style_params,
+        other_ai_names=[],
+    )
+
+    assert "每句话尽量不超过 12 个汉字" in bundle.system_prompt
+    assert "少于 40 字保持单段" in bundle.system_prompt
+    assert "不要用换行制造停顿" in bundle.system_prompt
 
 
 def test_assemble_chat_does_not_inject_interaction_guidance():
@@ -288,8 +340,10 @@ class _StaticDiaryRetriever:
 class _StaticMemoryUnitRetriever:
     def __init__(self, units):
         self.units = units
+        self.last_kwargs = None
 
     def retrieve(self, **kwargs):
+        self.last_kwargs = kwargs
         return self.units
 
 
@@ -313,8 +367,10 @@ def test_context_assembler_when_diary_exists_then_injects_user_message_not_syste
     assert TAG_HISTORY_DIARY not in messages[0]["content"]
     assert TAG_HISTORY_DIARY in messages[-1]["content"]
     assert "Alice promised to deploy after lunch." in messages[-1]["content"]
-    assert "背景记忆" in messages[-1]["content"]
+    assert "候选背景记忆" in messages[-1]["content"]
+    assert "直接相关才可显式使用" in messages[-1]["content"]
     assert "不要主动说明" in messages[-1]["content"]
+    assert "近期已经提过" in messages[-1]["content"]
     assert "What should I do next?" in messages[-1]["content"]
 
 
@@ -344,11 +400,40 @@ def test_context_assembler_prefers_memory_units_over_diary_context():
 
     assert TAG_HISTORY_DIARY not in messages[-1]["content"]
     assert "<memory_units>" in messages[-1]["content"]
+    assert "candidate background memory facts" in messages[-1]["content"]
+    assert "already mentioned recently" in messages[-1]["content"]
     assert "Alice asked Sirius to use checkpoint memory units." in messages[-1]["content"]
     assert "1. " not in messages[-1]["content"]
     assert "keywords=" not in messages[-1]["content"]
     assert "checkpoint,memory" not in messages[-1]["content"]
     assert "Old diary text should not be injected." not in messages[-1]["content"]
+
+
+def test_context_assembler_uses_memory_unit_top_k_when_present():
+    retriever = _StaticMemoryUnitRetriever(
+        [
+            SimpleNamespace(
+                created_at="2026-06-28T10:11:12",
+                unit_type="event",
+                summary="Alice asked Sirius to use checkpoint memory units.",
+            )
+        ]
+    )
+    assembler = ContextAssembler(
+        BasicMemoryManager(),
+        None,
+        memory_unit_retriever=retriever,
+    )
+
+    assembler.build_messages(
+        group_id="group_a",
+        current_query="What should I do next?",
+        system_prompt="system",
+        diary_top_k=9,
+        memory_unit_top_k=3,
+    )
+
+    assert retriever.last_kwargs["top_k"] == 3
 
 
 def test_context_assembler_keeps_all_uncheckpointed_basic_memory():

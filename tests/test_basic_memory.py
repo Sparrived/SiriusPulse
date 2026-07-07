@@ -21,9 +21,7 @@ def test_group_context_when_messages_exceed_window_then_keeps_recent_dialogue():
     mgr = BasicMemoryManager(context_window=3)
 
     for index in range(5):
-        mgr.add_entry(
-            "group_a", "alice", "user", f"message-{index}", speaker_name="Alice"
-        )
+        mgr.add_entry("group_a", "alice", "user", f"message-{index}", speaker_name="Alice")
 
     context = mgr.get_context("group_a")
 

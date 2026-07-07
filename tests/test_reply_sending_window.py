@@ -131,9 +131,9 @@ async def test_napcat_marks_group_message_when_received_during_reply_send():
     assert seen_events[0]["_sirius_received_during_reply_send"] is True
 
 
-def _engine_for_sending_window() -> tuple[
-    _EmotionalGroupChatEngineBase, list[tuple[str, Message, str]], list[str]
-]:
+def _engine_for_sending_window() -> (
+    tuple[_EmotionalGroupChatEngineBase, list[tuple[str, Message, str]], list[str]]
+):
     engine = object.__new__(_EmotionalGroupChatEngineBase)
     background_updates: list[tuple[str, Message, str]] = []
     persisted: list[str] = []

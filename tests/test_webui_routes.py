@@ -231,6 +231,35 @@ async def test_persona_start_when_not_running_then_spawns_worker_process(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_persona_start_when_previous_spawn_is_starting_then_does_not_spawn_again(
+    tmp_path, monkeypatch
+):
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    atomic_write_json(persona_dir / "persona.json", {"name": "sirius"})
+    atomic_write_json(tmp_path / "global_config.json", {"active_persona": "sirius"})
+    atomic_write_json(
+        persona_dir / "engine_state" / "worker_status.json",
+        {"status": "starting", "pid": 24680, "started_at": "2026-07-07T00:00:00+00:00"},
+    )
+    monkeypatch.setattr(persona_manager, "_pid_exists", lambda pid: True)
+
+    def fake_popen(*args, **kwargs):
+        raise AssertionError("should not spawn another worker")
+
+    monkeypatch.setattr(persona_manager.subprocess, "Popen", fake_popen)
+
+    response = await persona_manager.api_persona_start(SimpleNamespace(), persona_dir)
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["started"] is False
+    assert payload["already_running"] is True
+    assert payload["pid"] == 24680
+
+
+@pytest.mark.asyncio
 async def test_persona_stop_when_external_worker_is_running_then_sends_sigterm(tmp_path, monkeypatch):
     persona_dir = tmp_path / "personas" / "sirius"
     persona_dir.mkdir(parents=True)
@@ -410,3 +439,14 @@ async def test_webui_providers_post_when_key_is_masked_then_preserves_secret_and
         }
     }
     assert (tmp_path / "engine_state" / "reload_requested").read_text(encoding="utf-8") == "provider"
+
+
+@pytest.mark.asyncio
+async def test_engine_reload_writes_worker_reload_requested_flag(tmp_path):
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_engine_reload(SimpleNamespace())
+
+    assert response.status == 200
+    assert (tmp_path / "engine_state" / "reload_requested").read_text(encoding="utf-8") == "all"
+    assert not (tmp_path / "engine_state" / "reload.flag").exists()

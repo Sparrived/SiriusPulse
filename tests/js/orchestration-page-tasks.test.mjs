@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync('sirius_pulse/webui/static/pages/orchestration.js', 'utf8');
 
+assert.match(
+  source,
+  /let\s+autoSave\s*[;=]/,
+  'orchestration page should declare module-scoped autoSave before init assigns it',
+);
+
 for (const removedTask of ['diary_generate', 'diary_consolidate', 'topic_cluster']) {
   assert.equal(
     source.includes(`key: '${removedTask}'`),

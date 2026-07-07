@@ -62,10 +62,7 @@ async def test_brain_chat_when_skill_is_disabled_then_tool_schema_is_not_sent_to
     )
 
     assert provider.last_request is not None
-    tool_names = [
-        tool["function"]["name"]
-        for tool in (provider.last_request.tools or [])
-    ]
+    tool_names = [tool["function"]["name"] for tool in (provider.last_request.tools or [])]
     assert tool_names == ["lookup"]
 
 

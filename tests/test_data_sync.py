@@ -115,9 +115,7 @@ class TestSnapshotPost:
             "persona": {"name": "新名字"},
             "assistant_emotion": {"valence": 0.5},
             "group_timestamps": {"group_2": "2024-06-01T00:00:00"},
-            "working_memories": {
-                "group_2": [{"user_id": "u2", "role": "user", "content": "测试"}]
-            },
+            "working_memories": {"group_2": [{"user_id": "u2", "role": "user", "content": "测试"}]},
         }
 
         req = _make_request("POST", {"state": state})
@@ -153,7 +151,9 @@ class TestMessagesPost:
         assert body["count"] == 2
 
         # 验证追加
-        lines = (data_dir / "archive" / "group_1.jsonl").read_text(encoding="utf-8").strip().split("\n")
+        lines = (
+            (data_dir / "archive" / "group_1.jsonl").read_text(encoding="utf-8").strip().split("\n")
+        )
         assert len(lines) == 3  # 原有1条 + 新增2条
 
 
@@ -214,8 +214,6 @@ class TestGlossaryPost:
         body = json.loads(resp.body)
         assert body["count"] == 2  # 原有1个 + 新增1个
 
-        terms = json.loads(
-            (data_dir / "glossary" / "terms.json").read_text(encoding="utf-8")
-        )
+        terms = json.loads((data_dir / "glossary" / "terms.json").read_text(encoding="utf-8"))
         assert "小星" in terms
         assert "新术语" in terms

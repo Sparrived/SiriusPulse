@@ -32,11 +32,52 @@ def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_provider
 
 def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_path):
     worker = PersonaWorker("sirius", tmp_path)
-    experience = PersonaExperienceConfig(main_model_reply_cooldown_seconds=7.5)
+    experience = PersonaExperienceConfig(
+        main_model_reply_cooldown_seconds=7.5,
+        diary_top_k=7,
+        diary_token_budget=900,
+        memory_unit_top_k=4,
+    )
 
     plugin_config = worker._build_plugin_config(experience)
 
     assert plugin_config["main_model_reply_cooldown_seconds"] == 7.5
+    assert plugin_config["diary_top_k"] == 7
+    assert plugin_config["diary_token_budget"] == 900
+    assert plugin_config["memory_unit_top_k"] == 4
+
+
+def test_persona_worker_experience_reload_updates_runtime_config_keys(tmp_path):
+    worker = PersonaWorker(tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+    PersonaExperienceConfig(
+        engagement_sensitivity=0.8,
+        min_reply_interval_seconds=13,
+        max_sentence_chars=31,
+        diary_top_k=6,
+        diary_token_budget=700,
+        memory_unit_top_k=2,
+    ).save(tmp_path / "experience.json")
+
+    class Brain:
+        config = {}
+
+    class Engine:
+        config = {}
+        brain = Brain()
+
+    engine = Engine()
+
+    worker._reload_experience(engine)
+
+    assert engine.config["sensitivity"] == 0.8
+    assert engine.config["reply_cooldown_seconds"] == 13
+    assert engine.config["max_sentence_chars"] == 31
+    assert engine.config["diary_top_k"] == 6
+    assert engine.config["diary_token_budget"] == 700
+    assert engine.config["memory_unit_top_k"] == 2
+    assert "engagement_sensitivity" not in engine.config
+    assert engine.brain.config["memory_unit_top_k"] == 2
 
 
 def test_engine_runtime_includes_main_model_reply_cooldown_in_engine_config(tmp_path):
