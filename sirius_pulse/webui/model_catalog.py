@@ -80,7 +80,9 @@ def _configured_provider_models(data_path: Path) -> list[tuple[str, list[str]]]:
             continue
         if not str(cfg.get("api_key", "")).strip():
             continue
-        provider_type = normalize_provider_type(str(cfg.get("type") or cfg.get("platform_type") or name))
+        provider_type = normalize_provider_type(
+            str(cfg.get("type") or cfg.get("platform_type") or name)
+        )
         models_raw = cfg.get("models", [])
         if not isinstance(models_raw, list):
             continue

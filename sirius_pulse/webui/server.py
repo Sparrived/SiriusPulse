@@ -250,9 +250,8 @@ class WebUIServer(_WebUIServer):
             raise AttributeError(name)
 
         # 判断是人格作用域还是全局作用域
-        is_persona_scoped = (
-            name not in _GLOBAL_PERSONA_HANDLERS
-            and any(name.startswith(p) for p in _PERSONA_SCOPED_PREFIXES)
+        is_persona_scoped = name not in _GLOBAL_PERSONA_HANDLERS and any(
+            name.startswith(p) for p in _PERSONA_SCOPED_PREFIXES
         )
 
         async def delegated(request: web.Request) -> web.Response:

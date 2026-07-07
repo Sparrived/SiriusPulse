@@ -153,11 +153,13 @@ class WebUIServer:
                     display_name = data.get("name", d.name)
                 except Exception:
                     pass
-            result.append({
-                "name": d.name,
-                "display_name": display_name,
-                "active": d.name == active,
-            })
+            result.append(
+                {
+                    "name": d.name,
+                    "display_name": display_name,
+                    "active": d.name == active,
+                }
+            )
         return result
 
     def _setup_routes(self) -> None:
@@ -413,10 +415,12 @@ class WebUIServer:
                     if raw:
                         types.add(raw)
             types.add(reload_type)
-            flag.write_text(
-                json.dumps({"types": sorted(types)}, ensure_ascii=False),
-                encoding="utf-8",
+            payload = (
+                next(iter(types))
+                if len(types) == 1
+                else json.dumps({"types": sorted(types)}, ensure_ascii=False)
             )
+            flag.write_text(payload, encoding="utf-8")
             LOG.debug("已写入配置重载标志: %s", sorted(types))
         except Exception as exc:
             LOG.debug("写入配置重载标志失败: %s", exc)

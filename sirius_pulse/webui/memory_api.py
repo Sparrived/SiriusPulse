@@ -53,7 +53,9 @@ def _load_diary_payload(path: Path, group_id: str = "") -> dict[str, Any]:
     return {"group_id": group_id, "entries": []}
 
 
-def _find_diary_entry(paths: PersonaConfigPaths, entry_id: str) -> tuple[Path, dict[str, Any], dict[str, Any], int] | None:
+def _find_diary_entry(
+    paths: PersonaConfigPaths, entry_id: str
+) -> tuple[Path, dict[str, Any], dict[str, Any], int] | None:
     diary_dir = paths.dir / "diary"
     if not diary_dir.exists():
         return None
@@ -833,7 +835,9 @@ async def api_persona_diary_put(request: web.Request, data_dir: Path) -> web.Res
     path, payload, entry, idx = found
 
     old_group_id = str(entry.get("group_id") or payload.get("group_id") or "default")
-    new_group_id = str(body.get("group_id") or body.get("group") or old_group_id).strip() or "default"
+    new_group_id = (
+        str(body.get("group_id") or body.get("group") or old_group_id).strip() or "default"
+    )
     for key in ("content", "summary", "created_at"):
         if key in body:
             entry[key] = str(body.get(key) or "")
@@ -1064,9 +1068,11 @@ async def api_persona_user_delete(request: web.Request, data_dir: Path) -> web.R
 
     group_id = str(request.query.get("group_id", "")).strip()
     deleted = 0
-    groups = [users_dir / _safe_memory_name(group_id)] if group_id else [
-        path for path in users_dir.iterdir() if path.is_dir()
-    ]
+    groups = (
+        [users_dir / _safe_memory_name(group_id)]
+        if group_id
+        else [path for path in users_dir.iterdir() if path.is_dir()]
+    )
     safe_user_id = _safe_memory_name(user_id)
     for group_dir in groups:
         path = group_dir / f"{safe_user_id}.json"
@@ -1245,7 +1251,6 @@ async def api_persona_glossary_delete(request: web.Request, data_dir: Path) -> w
     return _json_response({"success": True})
 
 
-
 def _memory_units_dir(data_dir: Path) -> Path:
     return data_dir / "memory_units"
 
@@ -1267,7 +1272,9 @@ def _load_memory_units_file(path: Path) -> tuple[str, list[dict[str, Any]]]:
 
 
 def _save_memory_units_file(data_dir: Path, group_id: str, units: list[dict[str, Any]]) -> None:
-    _atomic_write_json(_memory_unit_file(data_dir, group_id), {"group_id": group_id, "units": units})
+    _atomic_write_json(
+        _memory_unit_file(data_dir, group_id), {"group_id": group_id, "units": units}
+    )
 
 
 def _string_list(value: Any) -> list[str]:
@@ -1297,7 +1304,9 @@ def _normalize_memory_unit(data: dict[str, Any], group_id: str = "") -> dict[str
     normalized["should_prompt"] = bool(normalized.get("should_prompt", True))
     if not isinstance(normalized.get("metadata"), dict):
         normalized["metadata"] = {}
-    if normalized.get("embedding") is not None and not isinstance(normalized.get("embedding"), list):
+    if normalized.get("embedding") is not None and not isinstance(
+        normalized.get("embedding"), list
+    ):
         normalized["embedding"] = None
     return normalized
 
@@ -1327,11 +1336,13 @@ async def api_persona_memory_units_get(request: web.Request, data_dir: Path) -> 
 
     units.sort(key=lambda item: item.get("created_at", ""), reverse=True)
     total = len(units)
-    return _json_response({
-        "units": units[offset:offset + limit],
-        "groups": sorted(groups),
-        "total": total,
-    })
+    return _json_response(
+        {
+            "units": units[offset : offset + limit],
+            "groups": sorted(groups),
+            "total": total,
+        }
+    )
 
 
 @handle_api_errors
@@ -1388,7 +1399,9 @@ async def api_persona_memory_unit_put(request: web.Request, data_dir: Path) -> w
     if not found:
         return _json_response({"error": "记忆单元不存在"}, 404)
 
-    updated = _normalize_memory_unit({**old_units[old_index], **body, "unit_id": unit_id}, old_group)
+    updated = _normalize_memory_unit(
+        {**old_units[old_index], **body, "unit_id": unit_id}, old_group
+    )
     if not updated["summary"]:
         return _json_response({"error": "摘要不能为空"}, 400)
 

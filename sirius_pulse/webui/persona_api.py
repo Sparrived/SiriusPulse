@@ -50,10 +50,12 @@ def _request_config_reload(reload_type: str, data_dir: Path) -> None:
                 if raw:
                     types.add(raw)
         types.add(reload_type)
-        reload_flag.write_text(
-            json.dumps({"types": sorted(types)}, ensure_ascii=False),
-            encoding="utf-8",
+        payload = (
+            next(iter(types))
+            if len(types) == 1
+            else json.dumps({"types": sorted(types)}, ensure_ascii=False)
         )
+        reload_flag.write_text(payload, encoding="utf-8")
         LOG.debug("已写入配置重载标志: %s", sorted(types))
     except Exception as exc:
         LOG.warning("写入配置重载标志失败: %s", exc)
@@ -455,6 +457,7 @@ async def api_experience_get(request: web.Request, data_dir: Path) -> web.Respon
             "max_sentence_chars": exp.max_sentence_chars,
             "diary_top_k": exp.diary_top_k,
             "diary_token_budget": exp.diary_token_budget,
+            "memory_unit_top_k": exp.memory_unit_top_k,
             "enable_skills": exp.enable_skills,
             "max_skill_rounds": exp.max_skill_rounds,
             "auto_install_skill_deps": exp.auto_install_skill_deps,
@@ -492,6 +495,7 @@ async def api_experience_post(request: web.Request, data_dir: Path) -> web.Respo
         "max_sentence_chars",
         "diary_top_k",
         "diary_token_budget",
+        "memory_unit_top_k",
         "enable_skills",
         "max_skill_rounds",
         "auto_install_skill_deps",
@@ -537,12 +541,8 @@ async def api_adapters_post(request: web.Request, data_dir: Path) -> web.Respons
 
 
 async def api_engine_reload(request: web.Request, data_dir: Path) -> web.Response:
-    paths = PersonaConfigPaths(data_dir)
-
-    # 向 worker 发送重载信号（通过 engine_state/reload.flag）
-    flag_path = paths.engine_state / "reload.flag"
-    flag_path.parent.mkdir(parents=True, exist_ok=True)
-    flag_path.write_text("1", encoding="utf-8")
+    # 向 worker 发送重载信号（通过 engine_state/reload_requested）
+    _request_config_reload("all", data_dir)
     return _json_response({"success": True, "message": "重载信号已发送"})
 
 

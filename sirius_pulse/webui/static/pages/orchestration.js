@@ -91,6 +91,7 @@ let taskParamDefaults = {};
 let taskParamOverrides = {};
 let modelChoices = [];
 let configuredModelChoices = [];
+let autoSave;
 const modelSelects = {};
 
 export async function init(container, params = {}) {

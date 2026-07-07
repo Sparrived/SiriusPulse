@@ -282,7 +282,7 @@ def _pid_exists(pid: Any) -> bool:
 
 def _is_persona_running(persona_dir: Path, worker_status: dict[str, Any] | None = None) -> bool:
     status = worker_status if worker_status is not None else _read_worker_status(persona_dir)
-    return status.get("status") == "running" and _pid_exists(status.get("pid"))
+    return status.get("status") in {"starting", "running"} and _pid_exists(status.get("pid"))
 
 
 def _start_persona_process(root_dir: Path, persona_dir: Path) -> dict[str, Any]:
@@ -319,6 +319,10 @@ def _start_persona_process(root_dir: Path, persona_dir: Path) -> dict[str, Any]:
 
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT, **kwargs)
+    _write_worker_status(
+        persona_dir,
+        {"status": "starting", "pid": process.pid, "started_at": _now_iso()},
+    )
     return {"started": True, "already_running": False, "pid": process.pid}
 
 
