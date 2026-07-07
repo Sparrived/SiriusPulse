@@ -69,7 +69,9 @@ class GitHubWebhookServer:
         site = web.TCPSite(self._runner, self._host, self._port)
         await site.start()
         actual_port = site._server.sockets[0].getsockname()[1] if self._port == 0 else self._port  # type: ignore[union-attr]
-        logger.info("GitHub Webhook 服务已启动: http://%s:%s/webhook/github", self._host, actual_port)
+        logger.info(
+            "GitHub Webhook 服务已启动: http://%s:%s/webhook/github", self._host, actual_port
+        )
         return actual_port
 
     async def stop(self) -> None:

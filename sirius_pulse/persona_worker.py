@@ -66,9 +66,7 @@ class PersonaWorker:
         # 1. 加载配置
         adapters_cfg = PersonaAdaptersConfig.load(self.paths.adapters)
         experience = PersonaExperienceConfig.load(self.paths.experience)
-        LOG.info(
-            "加载 %d 个 adapter", len(adapters_cfg.adapters)
-        )
+        LOG.info("加载 %d 个 adapter", len(adapters_cfg.adapters))
 
         # 2. Create EngineRuntime with experience parameters in plugin_config
         plugin_config = self._build_plugin_config(experience)
@@ -169,6 +167,9 @@ class PersonaWorker:
             "sensitivity": experience.engagement_sensitivity,
             "reply_cooldown_seconds": int(experience.min_reply_interval_seconds),
             "main_model_reply_cooldown_seconds": experience.main_model_reply_cooldown_seconds,
+            "diary_top_k": experience.diary_top_k,
+            "diary_token_budget": experience.diary_token_budget,
+            "memory_unit_top_k": experience.memory_unit_top_k,
             # 技能
             "max_skill_rounds": experience.max_skill_rounds,
             "auto_install_skill_deps": experience.auto_install_skill_deps,
@@ -348,12 +349,12 @@ class PersonaWorker:
         exp = PersonaExperienceConfig.load(self.paths.experience)
 
         # 更新 engine.config 中的 experience 相关字段
-        exp_dict = exp.to_dict()
-        engine.config.update(exp_dict)
+        runtime_config = self._build_plugin_config(exp)
+        engine.config.update(runtime_config)
 
         # 同步更新 brain 的 config
         if hasattr(engine, "brain") and engine.brain:
-            engine.brain.config.update(exp_dict)
+            engine.brain.config.update(runtime_config)
 
         LOG.info("Experience 配置已热重载")
 

@@ -67,7 +67,9 @@ class DelayedResponseItem:
     related_user_ids: list[str] = field(
         default_factory=list
     )  # merged messages may involve multiple users
-    persona_profile_context: PersonaProfilePromptContext = field(default_factory=PersonaProfilePromptContext)
+    persona_profile_context: PersonaProfilePromptContext = field(
+        default_factory=PersonaProfilePromptContext
+    )
     lane: str = "chat"  # chat | plan
     plan_id: str = ""
 

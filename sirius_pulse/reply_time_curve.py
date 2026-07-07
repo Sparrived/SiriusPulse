@@ -68,8 +68,7 @@ def get_reply_time_coefficient(points: Any, now: time | None = None) -> float:
     current = now or datetime.now().time()
     current_minutes = current.hour * 60 + current.minute + current.second / 60
     parsed = [
-        (_parse_time_minutes(point["time"]), float(point["coefficient"]))
-        for point in normalized
+        (_parse_time_minutes(point["time"]), float(point["coefficient"])) for point in normalized
     ]
     anchors = [(minutes, coefficient) for minutes, coefficient in parsed if minutes is not None]
     if not anchors:

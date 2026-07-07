@@ -281,9 +281,20 @@ def _migrate_flat_to_personas() -> None:
     default_dir.mkdir(parents=True)
 
     persona_items = [
-        "persona.json", "experience.json", "orchestration.json", "adapters.json",
-        "engine_state", "archive", "glossary", "diary", "plugins", "skills",
-        "logs", "image_cache", "plugin_data", "persona.db",
+        "persona.json",
+        "experience.json",
+        "orchestration.json",
+        "adapters.json",
+        "engine_state",
+        "archive",
+        "glossary",
+        "diary",
+        "plugins",
+        "skills",
+        "logs",
+        "image_cache",
+        "plugin_data",
+        "persona.db",
     ]
 
     migrated = []
@@ -406,8 +417,10 @@ async def _cmd_run(args: argparse.Namespace) -> None:
 
     if sys.platform == "win32":
         import signal as _signal
+
         def _sig_handler(_s, _f):
             _request_shutdown()
+
         _signal.signal(_signal.SIGINT, _sig_handler)
         _signal.signal(_signal.SIGTERM, _sig_handler)
     else:
@@ -473,8 +486,10 @@ async def _cmd_assistant(args: argparse.Namespace) -> None:
 
     if sys.platform == "win32":
         import signal as _signal
+
         def _sig_handler(_signum, _frame):
             worker.shutdown()
+
         _signal.signal(_signal.SIGINT, _sig_handler)
         _signal.signal(_signal.SIGTERM, _sig_handler)
     else:
@@ -483,6 +498,7 @@ async def _cmd_assistant(args: argparse.Namespace) -> None:
             loop.add_signal_handler(sig, worker.shutdown)
 
     try:
+
         async def _watch_butler():
             await client.wait_disconnect()
             LOG.warning("与管家端的连接已断开，正在停止...")
@@ -606,7 +622,9 @@ def _cmd_persona_create(args: argparse.Namespace) -> None:
         json.dumps({}, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (persona_dir / "adapters.json").write_text(
-        json.dumps({"adapters": [{"type": "napcat", "enabled": False}]}, ensure_ascii=False, indent=2),
+        json.dumps(
+            {"adapters": [{"type": "napcat", "enabled": False}]}, ensure_ascii=False, indent=2
+        ),
         encoding="utf-8",
     )
 

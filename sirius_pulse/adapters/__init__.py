@@ -4,6 +4,7 @@
     - MessageSegment / MessageGroup：跨平台统一消息类型
     - BaseAdapter：适配器抽象基类
 """
+
 from sirius_pulse.adapters.base import BaseAdapter
 from sirius_pulse.adapters.models import (
     AtSegment,

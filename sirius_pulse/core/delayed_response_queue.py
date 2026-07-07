@@ -53,6 +53,7 @@ _PACE_GAP_MULT = {
     "silent": 0.0,  # handled separately: trigger if window half-expired
 }
 
+
 class DelayedResponseQueue:
     """Queue for DELAYED and IMMEDIATE strategy responses."""
 
@@ -105,9 +106,7 @@ class DelayedResponseQueue:
                 item.message_content += f"\n{tagged}"
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
                     if item.strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
-                        item.window_seconds = min(
-                            item.window_seconds + 1.0, _IMMEDIATE_WINDOW_MAX
-                        )
+                        item.window_seconds = min(item.window_seconds + 1.0, _IMMEDIATE_WINDOW_MAX)
                     else:
                         item.window_seconds = _IMMEDIATE_DEBOUNCE_SECONDS
                     item.strategy_decision = strategy_decision
@@ -137,9 +136,7 @@ class DelayedResponseQueue:
                         )
                     if persona_profile_context.mentioned_cards:
                         item.persona_profile_context.mentioned_cards.extend(
-                            c
-                            for c in persona_profile_context.mentioned_cards
-                            if c is not None
+                            c for c in persona_profile_context.mentioned_cards if c is not None
                         )
                     if persona_profile_context.confidence:
                         item.persona_profile_context.confidence.update(
@@ -431,9 +428,7 @@ class DelayedResponseQueue:
         return "wait"
 
     @staticmethod
-    def _window_for_item(
-        strategy_decision: StrategyDecision, heat_level: str = "warm"
-    ) -> float:
+    def _window_for_item(strategy_decision: StrategyDecision, heat_level: str = "warm") -> float:
         """Return debounce/wait window based on strategy, urgency, and heat."""
         if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
             if strategy_decision.context.get("hard_immediate"):
@@ -469,9 +464,7 @@ class DelayedResponseQueue:
         return DelayedResponseQueue._freshness_ttl_for_decision(item.strategy_decision)
 
     @staticmethod
-    def _gap_for_item(
-        item: DelayedResponseItem, rhythm: RhythmAnalysis | None = None
-    ) -> float:
+    def _gap_for_item(item: DelayedResponseItem, rhythm: RhythmAnalysis | None = None) -> float:
         """Compute dynamic topic-gap threshold for a queued item.
 
         Considers both the heat level at enqueue time and the current pace.

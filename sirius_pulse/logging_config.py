@@ -323,7 +323,9 @@ class LoggerNamePrefixFilter(logging.Filter):
         self.prefixes = tuple(prefixes)
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return any(record.name == prefix or record.name.startswith(prefix) for prefix in self.prefixes)
+        return any(
+            record.name == prefix or record.name.startswith(prefix) for prefix in self.prefixes
+        )
 
 
 # 默认需要上调到 WARNING 的第三方库 logger 名称

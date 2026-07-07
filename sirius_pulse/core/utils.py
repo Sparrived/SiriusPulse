@@ -26,5 +26,3 @@ def strip_conversation_history_xml(text: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
     return cleaned.strip()
-
-

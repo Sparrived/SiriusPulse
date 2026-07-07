@@ -16,7 +16,11 @@ from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.core.participation import ParticipationPolicy, get_reply_time_coefficient
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.models import Message, UnifiedUser
-from sirius_pulse.models.response_strategy import PersonaProfilePromptContext, ResponseStrategy, StrategyDecision
+from sirius_pulse.models.response_strategy import (
+    PersonaProfilePromptContext,
+    ResponseStrategy,
+    StrategyDecision,
+)
 from sirius_pulse.models.signal import SignalAnalysis
 
 if TYPE_CHECKING:
@@ -219,9 +223,11 @@ class Pipeline:
                 user_id=user_id or "",
                 valence=getattr(emotion, "valence", 0.0) if emotion else 0.0,
                 arousal=getattr(emotion, "arousal", 0.3) if emotion else 0.3,
-                basic_emotion=getattr(getattr(emotion, "basic_emotion", None), "name", "")
-                if emotion and getattr(emotion, "basic_emotion", None)
-                else "",
+                basic_emotion=(
+                    getattr(getattr(emotion, "basic_emotion", None), "name", "")
+                    if emotion and getattr(emotion, "basic_emotion", None)
+                    else ""
+                ),
                 intensity=getattr(emotion, "intensity", 0.5) if emotion else 0.5,
                 social_intent=signal.social_intent,
                 urgency_score=signal.urgency_score,
@@ -272,11 +278,7 @@ class Pipeline:
                 return "reject"
 
         # 3. 过热 + 爆发 + 未指向 → 跳过
-        if (
-            signal.heat_level == "overheated"
-            and signal.burst_detected
-            and not signal.is_mentioned
-        ):
+        if signal.heat_level == "overheated" and signal.burst_detected and not signal.is_mentioned:
             engine._log_inner_thought("群聊太热闹了，我先不插话了...")
             return "reject"
 
@@ -394,14 +396,18 @@ class Pipeline:
 
         # 收集人物传记
         persona_profile_context = self._collect_persona_profile_section(
-            group_id, user_id, message.content or "",
+            group_id,
+            user_id,
+            message.content or "",
         )
 
         # 构造 StrategyDecision 供 delayed_queue 使用
         participation = signal.participation or {}
         strategy_value = participation.get("strategy")
         try:
-            strategy = ResponseStrategy(strategy_value) if strategy_value else ResponseStrategy.SILENT
+            strategy = (
+                ResponseStrategy(strategy_value) if strategy_value else ResponseStrategy.SILENT
+            )
         except ValueError:
             strategy = ResponseStrategy.SILENT
         if strategy == ResponseStrategy.SILENT:
@@ -477,7 +483,9 @@ class Pipeline:
                 timestamp=now_iso,
             )
             engine.semantic_memory.record_interaction(
-                group_id=group_id, user_id=user_id, timestamp=now_iso,
+                group_id=group_id,
+                user_id=user_id,
+                timestamp=now_iso,
             )
 
         return {

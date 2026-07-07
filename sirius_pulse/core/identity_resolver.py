@@ -252,9 +252,7 @@ class IdentityResolver:
                     best_match = user_id
 
         alias_entries = (
-            profile_manager.list_alias_entries(group_id)
-            if profile_manager is not None
-            else {}
+            profile_manager.list_alias_entries(group_id) if profile_manager is not None else {}
         )
         for alias_key, entry in alias_entries.items():
             score = self._compute_similarity(speaker_lower, alias_key)

@@ -20,6 +20,7 @@ code changes.
 ``__slots__ = ()`` on the mixin ensures the derived class can remain purely
 slot-based (no ``__dict__`` overhead).
 """
+
 from __future__ import annotations
 
 from dataclasses import MISSING, asdict, fields

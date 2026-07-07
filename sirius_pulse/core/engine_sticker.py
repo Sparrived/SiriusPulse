@@ -263,10 +263,12 @@ class EngineSticker:
         if text:
             msg.append({"type": "text", "data": {"text": text}})
         image_data = base64.b64encode(choice.file_path.read_bytes()).decode("ascii")
-        msg.append({
-            "type": "image",
-            "data": {"file": f"base64://{image_data}", "sub_type": "1"},
-        })
+        msg.append(
+            {
+                "type": "image",
+                "data": {"file": f"base64://{image_data}", "sub_type": "1"},
+            }
+        )
         if group_id.startswith("private_"):
             return await adapter.send_private_msg(group_id.replace("private_", ""), msg)
         return await adapter.send_group_msg(group_id, msg)

@@ -3,6 +3,7 @@
 所有人格共用一个 persona.db 文件，由 PersonaDatabase 统一管理连接。
 各存储层（MemoryStorage、TokenUsageStore 等）通过传入共享连接使用同一数据库。
 """
+
 from __future__ import annotations
 
 import logging

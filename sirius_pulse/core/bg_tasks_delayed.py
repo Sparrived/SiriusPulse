@@ -46,9 +46,7 @@ STOP_TOOL_DEF: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "stop",
-        "description": (
-            "结束本轮回复。你的最后一条文字消息会发送给用户，然后本轮回复结束。"
-        ),
+        "description": ("结束本轮回复。你的最后一条文字消息会发送给用户，然后本轮回复结束。"),
         "parameters": {
             "type": "object",
             "properties": {
@@ -449,18 +447,14 @@ class DelayedQueueTasks:
                 platform_uid=item.channel_user_id,
                 platform=item.channel,
             )
-            resolution = self._resolve_identity_with_optional_profile_manager(
-                engine, ctx, group_id
-            )
+            resolution = self._resolve_identity_with_optional_profile_manager(engine, ctx, group_id)
             if resolution.user_id:
                 resolved_uid = resolution.user_id
                 caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
         if caller_profile is None:
             # Fallback: search by user_id (nickname) across all groups
             ctx = IdentityContext(speaker_name=item.user_id or "")
-            resolution = self._resolve_identity_with_optional_profile_manager(
-                engine, ctx, group_id
-            )
+            resolution = self._resolve_identity_with_optional_profile_manager(engine, ctx, group_id)
             if resolution.user_id:
                 resolved_uid = resolution.user_id
                 caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
@@ -479,9 +473,7 @@ class DelayedQueueTasks:
         limit_normal_tools = bool(engine.config.get("plan_mode_limit_normal_tools", False))
         initial_lane = getattr(triggered[0], "lane", "chat") if triggered else "chat"
         expose_skills_in_prompt = not (
-            plan_mode_enabled
-            and limit_normal_tools
-            and initial_lane != "plan"
+            plan_mode_enabled and limit_normal_tools and initial_lane != "plan"
         )
         bundle = self._build_delayed_prompt(
             triggered,
@@ -496,13 +488,11 @@ class DelayedQueueTasks:
             if plan_mode_enabled and initial_lane != "plan"
             else None
         )
-        if (
-            active_plan_for_chat is not None
-            and bool(engine.config.get("plan_mode_chat_awareness_enabled", False))
+        if active_plan_for_chat is not None and bool(
+            engine.config.get("plan_mode_chat_awareness_enabled", False)
         ):
             bundle.system_prompt = (
-                f"{bundle.system_prompt}\n\n"
-                f"{format_public_plan_status(active_plan_for_chat)}"
+                f"{bundle.system_prompt}\n\n" f"{format_public_plan_status(active_plan_for_chat)}"
             )
         if (
             plan_mode_enabled
@@ -519,6 +509,7 @@ class DelayedQueueTasks:
 
         # Use ContextAssembler to build full messages with diary RAG + XML history
         diary_top_k = engine.config.get("diary_top_k", 5)
+        memory_unit_top_k = engine.config.get("memory_unit_top_k", diary_top_k)
         diary_token_budget = engine.config.get("diary_token_budget", 800)
 
         # 获取当前发言者信息
@@ -535,6 +526,7 @@ class DelayedQueueTasks:
             system_prompt=bundle.system_prompt,
             search_query=raw_chat_content,
             diary_top_k=diary_top_k,
+            memory_unit_top_k=memory_unit_top_k,
             diary_token_budget=diary_token_budget,
             include_pending=False,
             speaker_user_id=speaker_uid,
@@ -906,7 +898,11 @@ class DelayedQueueTasks:
 
             # 2. 执行普通工具（stop 以外的技能）
             skill_multimodal: list[dict[str, Any]] = []
-            if regular_tools and engine._skill_registry is not None and engine._skill_executor is not None:
+            if (
+                regular_tools
+                and engine._skill_registry is not None
+                and engine._skill_executor is not None
+            ):
                 from sirius_pulse.memory.user.unified_models import UnifiedUser
 
                 caller_user_id = item.user_id
@@ -951,7 +947,9 @@ class DelayedQueueTasks:
                     except json.JSONDecodeError:
                         params = {}
                         logger.warning(
-                            "tool_call 参数解析失败: %s, arguments=%s", skill_name, tc.function_arguments
+                            "tool_call 参数解析失败: %s, arguments=%s",
+                            skill_name,
+                            tc.function_arguments,
                         )
 
                     skill = engine._skill_registry.get(skill_name)
@@ -1025,7 +1023,9 @@ class DelayedQueueTasks:
 
                                     engine.glossary_manager.add_or_update(
                                         group_id,
-                                        GlossaryTerm(term=term, definition=definition, source="skill"),
+                                        GlossaryTerm(
+                                            term=term, definition=definition, source="skill"
+                                        ),
                                     )
                             # Inject group_id into newly created reminders
                             if (
@@ -1041,16 +1041,16 @@ class DelayedQueueTasks:
                         logger.error("SKILL '%s' 执行异常: %s", skill_name, exc)
 
                     # 添加 tool 结果消息
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_content})
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
+                    )
 
                     # 链式调用中间增加延迟，避免回复过快
                     if idx < len(regular_tools) - 1:
                         await asyncio.sleep(2)
 
             # 3. 处理 flow control：stop
-            stop_tc = next(
-                (tc for tc in flow_control if tc.function_name == "stop"), None
-            )
+            stop_tc = next((tc for tc in flow_control if tc.function_name == "stop"), None)
 
             # 注入 stop 的 assistant 消息并退出
             if stop_tc:
@@ -1082,8 +1082,7 @@ class DelayedQueueTasks:
                             group_id=group_id,
                             user_id=item.user_id or "",
                             system_prompt=(
-                                system_prompt
-                                + "\n\nYou already selected a sticker for this turn. "
+                                system_prompt + "\n\nYou already selected a sticker for this turn. "
                                 "Now write the text reply only. Do not call send_sticker again."
                             ),
                             messages=messages,
@@ -1111,7 +1110,6 @@ class DelayedQueueTasks:
                 max_skill_rounds,
             )
             reply = ""
-
 
         # 最终回复：hooks 已处理 pin/dedup/memory/timestamp
         if ended_because_max_rounds and last_round_had_partial:
@@ -1223,18 +1221,14 @@ class DelayedQueueTasks:
                 if cm:
                     candidate_memories.append({"source": "working_memory", "content": cm})
 
-        style_params = engine.style_adapter.adapt(
-            pace="decelerating",
-            persona=engine.persona,
-        )
         try:
             max_sentence_chars = int(engine.config.get("max_sentence_chars", 20))
         except (TypeError, ValueError):
             max_sentence_chars = 20
-        max_sentence_chars = max(5, min(50, max_sentence_chars))
-        style_params.length_instruction = (
-            f"每句话尽量不超过 {max_sentence_chars} 个汉字；"
-            "需要表达多件事时，压缩成自然短句，不要使用 Markdown 或换行排版。"
+        style_params = engine.style_adapter.adapt(
+            pace="decelerating",
+            persona=engine.persona,
+            max_sentence_chars=max_sentence_chars,
         )
 
         # 仅使用队列项自带的人物传记快照，避免回读引擎共享状态

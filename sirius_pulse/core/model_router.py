@@ -182,7 +182,7 @@ class ModelRouter:
             - urgency > 80: upgrade to stronger model, lower temperature
             - urgency > 95: strongest model, more tokens
 
-        heat_level 涓嶅啀褰卞搷 max_tokens锛岄伩鍏嶅湪 SKILL 璋冪敤鍦烘櫙涓?        鍥?token 棰勭畻涓嶈冻瀵艰嚧鎶€鑳芥爣璁拌鎴柇銆?        """
+        heat_level 涓嶅啀褰卞搷 max_tokens锛岄伩鍏嶅湪 SKILL 璋冪敤鍦烘櫙涓?        鍥?token 棰勭畻涓嶈冻瀵艰嚧鎶€鑳芥爣璁拌鎴柇銆?"""
         base = self._registry.get(task_name)
         if base is None:
             base = self._registry.get(
@@ -251,4 +251,3 @@ class ModelRouter:
             "claude-3-sonnet": "claude-3-opus",
         }
         return tiers.get(current, current)
-

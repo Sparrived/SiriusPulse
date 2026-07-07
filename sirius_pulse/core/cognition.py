@@ -322,6 +322,7 @@ _CONTEXT_DEPENDENT_PATTERNS: tuple[str, ...] = (
     "行吧",
 )
 
+
 class CognitionAnalyzer:
     """纯规则认知分析器。
 
@@ -485,7 +486,9 @@ class CognitionAnalyzer:
         social_intent, subtype, _ = self._classify_intent(
             message, context_messages, caller_is_developer=caller_is_developer
         )
-        social_intent_str = social_intent.value if hasattr(social_intent, "value") else str(social_intent)
+        social_intent_str = (
+            social_intent.value if hasattr(social_intent, "value") else str(social_intent)
+        )
 
         # 3. 12 维指向性评分
         directed_scores = self._compute_directed_scores(message, user_id, context_messages)

@@ -432,6 +432,9 @@ class EngineRuntime:
             "diary_token_budget": int(
                 self.plugin_config.get("diary_token_budget", exp.diary_token_budget)
             ),
+            "memory_unit_top_k": int(
+                self.plugin_config.get("memory_unit_top_k", exp.memory_unit_top_k)
+            ),
             # 行为控制
             "sensitivity": float(self.plugin_config.get("sensitivity", 0.5)),
             "expressiveness": {"expressiveness": exp.expressiveness},
@@ -796,7 +799,7 @@ class EngineRuntime:
                 exp.save(local_exp_path)
                 # 同步到引擎运行时
                 if self._engine is not None:
-                    self._engine.config.update(exp.to_dict())
+                    self._engine.config.update(self._build_engine_runtime_config(exp))
                 LOG.info("Experience 配置已从管家端同步（远程更新）")
             else:
                 # 本地更新，推送到管家端
@@ -829,6 +832,7 @@ class EngineRuntime:
                         local_orch[key] = remote_tp[key]
                 local_orch_path.parent.mkdir(parents=True, exist_ok=True)
                 from sirius_pulse.utils.json_io import atomic_write_json
+
                 atomic_write_json(local_orch_path, local_orch)
                 LOG.info("TaskParams 已从管家端同步（远程更新）")
             else:
@@ -881,8 +885,7 @@ class EngineRuntime:
             "basic_memory": engine.basic_memory.to_dict(),
             "diary_state": {
                 "diarized_sources": {
-                    gid: list(sids)
-                    for gid, sids in engine.diary_manager._diarized_sources.items()
+                    gid: list(sids) for gid, sids in engine.diary_manager._diarized_sources.items()
                 }
             },
         }

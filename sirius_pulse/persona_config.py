@@ -159,6 +159,7 @@ class PersonaExperienceConfig:
     # 日记检索参数
     diary_top_k: int = 5
     diary_token_budget: int = 800
+    memory_unit_top_k: int = 5
 
     # 群里其他 AI/Bot 的名字（手动指定，防止抢话和身份混淆）
     other_ai_names: list[str] = field(default_factory=list)
@@ -189,6 +190,7 @@ class PersonaExperienceConfig:
             ),
             "diary_top_k": self.diary_top_k,
             "diary_token_budget": self.diary_token_budget,
+            "memory_unit_top_k": self.memory_unit_top_k,
             "other_ai_names": list(self.other_ai_names),
             "message_prefixes": list(self.message_prefixes),
         }
@@ -216,9 +218,7 @@ class PersonaExperienceConfig:
             max_skill_rounds=int(data.get("max_skill_rounds", 3)),
             auto_install_skill_deps=bool(data.get("auto_install_skill_deps", True)),
             plan_mode_enabled=bool(data.get("plan_mode_enabled", False)),
-            plan_mode_limit_normal_tools=bool(
-                data.get("plan_mode_limit_normal_tools", False)
-            ),
+            plan_mode_limit_normal_tools=bool(data.get("plan_mode_limit_normal_tools", False)),
             plan_mode_allow_light_chat=bool(data.get("plan_mode_allow_light_chat", True)),
             plan_mode_chat_awareness_enabled=bool(
                 data.get("plan_mode_chat_awareness_enabled", False)
@@ -229,6 +229,7 @@ class PersonaExperienceConfig:
             ),
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
+            memory_unit_top_k=int(data.get("memory_unit_top_k", data.get("diary_top_k", 5))),
             message_prefixes=[str(v) for v in data.get("message_prefixes", [])],
         )
 

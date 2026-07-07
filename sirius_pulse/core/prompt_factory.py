@@ -97,11 +97,22 @@ class StyleAdapter:
 
     _DEFAULT_MAX_TOKENS: int = RESPONSE_MAX_TOKENS
 
+    @staticmethod
+    def build_length_instruction(max_sentence_chars: int) -> str:
+        """Build concise group-chat length guidance from configured sentence limit."""
+        max_sentence_chars = max(5, min(50, int(max_sentence_chars)))
+        return (
+            f"每句话尽量不超过 {max_sentence_chars} 个汉字；"
+            "可以短，但不要一句一行。少于 40 字保持单段；"
+            "有 3 个以上短句时合并成 1–2 句，不要用换行制造停顿。"
+        )
+
     def adapt(
         self,
         *,
         pace: str,
         persona: Any | None = None,
+        max_sentence_chars: int | None = None,
     ) -> StyleParams:
         """根据当前上下文计算风格参数。"""
         max_tokens = self._DEFAULT_MAX_TOKENS
@@ -127,11 +138,15 @@ class StyleAdapter:
                 elif persona.emoji_preference == "none":
                     tone_instruction += "，不用表情包"
 
+        length_instruction = ""
+        if max_sentence_chars is not None:
+            length_instruction = self.build_length_instruction(max_sentence_chars)
+
         return StyleParams(
             max_tokens=max_tokens,
             temperature=temperature,
             tone_instruction=tone_instruction,
-            length_instruction="",
+            length_instruction=length_instruction,
         )
 
 
@@ -285,15 +300,15 @@ class PromptFactory:
             "不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。",
             "严禁使用换行符。",
             "需要发送格式化内容时，调用 workspace_file 进行写入文件和发送。",
+            "记忆只是私有背景：只在和当前话题直接相关时自然使用，不要为了表现“记得”而主动提旧事；同一事件、偏好或时间信息近期已经提过时，默认不要再次显式提及，除非用户主动问。",
+            "当前时间只用于时效判断、日程、问候和时间敏感任务；普通聊天不要反复强调现在几点、今天晚上或日期。",
             "你可以通过在开头插入 [REPLY:msg_id]（例如 [REPLY:1]）来引用回复某条特定消息，当你的回复很针对于某条消息时请使用该格式引用该消息；只能使用最近消息中真实出现的 msg_id。",
         ]
         length_instruction = length_instruction.strip()
         if length_instruction:
             items.append(length_instruction)
         if supports_function_call:
-            items.append(
-                "主动使用 Function Call 来增强你的群聊交互感；工具调用不要写成正文标记。"
-            )
+            items.append("主动使用 Tool Call 来增强你的群聊交互感；工具调用不要写成正文标记。")
             items.append(
                 "人物画像工具只在需要长期记住或修正用户信息时调用：明确身份、偏好、称呼/别称、沟通方式、边界、稳定关系，或用户要求记住/忘记。不要记录临时任务、玩笑、角色扮演、一次性情绪或你的猜测。"
             )
@@ -386,7 +401,14 @@ class PromptFactory:
                 lines.append(f"  {impression}")
 
             if hasattr(card, "section"):
-                for section_name in ("identity", "interests", "preferences", "communication_style", "relationship", "boundaries"):
+                for section_name in (
+                    "identity",
+                    "interests",
+                    "preferences",
+                    "communication_style",
+                    "relationship",
+                    "boundaries",
+                ):
                     section = card.section(section_name)
                     values = [item.value for item in section.active_items()[:3]]
                     if values:
@@ -419,7 +441,10 @@ class PromptFactory:
     @staticmethod
     def build_memory_context(memories: list[dict[str, Any]]) -> str:
         """构建相关记忆 section。"""
-        lines = [TAG_RELATED_MEMORY]
+        lines = [
+            TAG_RELATED_MEMORY,
+            "以下是候选背景记忆，不是当前聊天消息。先判断相关性：直接相关才可显式使用，间接相关只影响语气，无关则忽略；不要主动说明你记得或查看过这些内容。",
+        ]
         for m in memories[:3]:
             source = m.get("source", "memory")
             content = m.get("content", "")
@@ -554,8 +579,7 @@ class PromptFactory:
                 return ""
             lines = [
                 f"{TAG_PLUGIN_AWARENESS}",
-                "群友可能会使用以下插件功能。"
-                "如果群友问起，你可以介绍或引导：",
+                "群友可能会使用以下插件功能。" "如果群友问起，你可以介绍或引导：",
             ]
             for inject in injects:
                 for line in inject.strip().split("\n"):

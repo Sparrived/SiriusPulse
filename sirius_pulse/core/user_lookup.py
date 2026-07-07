@@ -119,7 +119,6 @@ class UserLookupService:
             logger.warning("find_by_name 失败", exc_info=True)
             return None
 
-
     def _profile_aliases(self, user_id: str, group_id: str) -> list[str]:
         profile_manager = getattr(self._engine, "profile_manager", None)
         if profile_manager is None:

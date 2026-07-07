@@ -15,7 +15,6 @@ from sirius_pulse.models.response_strategy import ResponseStrategy
 from sirius_pulse.models.signal import SignalAnalysis
 from sirius_pulse.reply_time_curve import get_reply_time_coefficient
 
-
 _HELP_RE = re.compile(
     r"(怎么|咋|如何|为什么|为啥|哪[个里]|帮|救|求|有没有|谁能|报错|异常|失败|不行|不能|坏了|崩|卡住|"
     r"error|exception|failed|fail|bug|fix|help)",
@@ -109,7 +108,11 @@ class ParticipationPolicy:
             if final_score >= threshold:
                 return self._decision(
                     signal,
-                    ResponseStrategy.IMMEDIATE if signal.urgency_score >= 70 else ResponseStrategy.DELAYED,
+                    (
+                        ResponseStrategy.IMMEDIATE
+                        if signal.urgency_score >= 70
+                        else ResponseStrategy.DELAYED
+                    ),
                     "private_chat",
                     final_score,
                     threshold,
@@ -171,14 +174,26 @@ class ParticipationPolicy:
                 suppression,
                 raw_score=addressing,
                 reply_time_coefficient=coefficient,
-        )
+            )
 
         need_score = reply_need * 0.75 + fit * 0.25 - suppression * 0.25
         final_reply_need = _scale_reply_score(reply_need, coefficient)
         final_need_score = _scale_reply_score(need_score, coefficient)
-        if final_reply_need >= need_threshold and final_need_score >= need_threshold and suppression < 0.78:
-            strategy = ResponseStrategy.IMMEDIATE if signal.urgency_score >= 80 else ResponseStrategy.DELAYED
-            delay = 0.0 if strategy == ResponseStrategy.IMMEDIATE else self._delay_for(signal, base=18.0)
+        if (
+            final_reply_need >= need_threshold
+            and final_need_score >= need_threshold
+            and suppression < 0.78
+        ):
+            strategy = (
+                ResponseStrategy.IMMEDIATE
+                if signal.urgency_score >= 80
+                else ResponseStrategy.DELAYED
+            )
+            delay = (
+                0.0
+                if strategy == ResponseStrategy.IMMEDIATE
+                else self._delay_for(signal, base=18.0)
+            )
             return self._decision(
                 signal,
                 strategy,
@@ -339,14 +354,20 @@ class ParticipationPolicy:
             score += 0.10
         if _SOCIAL_JOIN_RE.search(text):
             score += 0.12
-        if signal.emotion and abs(signal.emotion.valence) >= 0.45 and signal.emotion.arousal >= 0.45:
+        if (
+            signal.emotion
+            and abs(signal.emotion.valence) >= 0.45
+            and signal.emotion.arousal >= 0.45
+        ):
             score += 0.08
         if seconds_since_reply >= 90:
             score += 0.08
         score += max(-0.08, min(0.08, affinity_score * 0.08))
         return _clamp(score)
 
-    def _conversation_fit_score(self, signal: SignalAnalysis, text: str, affinity_score: float) -> float:
+    def _conversation_fit_score(
+        self, signal: SignalAnalysis, text: str, affinity_score: float
+    ) -> float:
         score = signal.relevance_score * 0.60
         if signal.social_intent == "help_seeking":
             score += 0.18
@@ -382,7 +403,11 @@ class ParticipationPolicy:
         elif signal.heat_level == "hot" and signal.burst_detected:
             score += 0.18
 
-        if cooldown_seconds > 0 and seconds_since_reply < cooldown_seconds and not signal.is_mentioned:
+        if (
+            cooldown_seconds > 0
+            and seconds_since_reply < cooldown_seconds
+            and not signal.is_mentioned
+        ):
             remaining_ratio = (cooldown_seconds - seconds_since_reply) / cooldown_seconds
             score += 0.25 + remaining_ratio * 0.35
 

@@ -1,4 +1,5 @@
 """Configuration helper functions for ConfigManager."""
+
 from __future__ import annotations
 
 import os
@@ -187,9 +188,11 @@ def _build_workspace_config_from_payload(
         ),
         provider_policy=ProviderPolicy(
             prefer_workspace_registry=_coerce_bool(
-                provider_policy_payload.get("prefer_workspace_registry")
-                if isinstance(provider_policy_payload, dict)
-                else None,
+                (
+                    provider_policy_payload.get("prefer_workspace_registry")
+                    if isinstance(provider_policy_payload, dict)
+                    else None
+                ),
                 provider_policy_default,
             )
         ),
