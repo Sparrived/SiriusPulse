@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
@@ -16,6 +16,7 @@ from sirius_pulse.memory.units.deduplicator import (
 from sirius_pulse.memory.units.generator import MemoryUnitGenerator
 from sirius_pulse.memory.units.indexer import MemoryUnitIndexer, MemoryUnitRetriever
 from sirius_pulse.memory.units.models import MemoryUnit, MemoryUnitGenerationResult
+from sirius_pulse.memory.units.maintenance import MemoryUnitDedupeMaintenance
 from sirius_pulse.memory.units.store import MemoryUnitFileStore
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ class MemoryUnitManager:
         self._retriever = MemoryUnitRetriever(self._indexer)
         self._generator = MemoryUnitGenerator()
         self._deduplicator = MemoryUnitDeduplicator()
+        self._maintenance = MemoryUnitDedupeMaintenance(
+            self, self._store, embedding_client, self._deduplicator
+        )
         self._mutation_lock = asyncio.Lock()
         self._checkpointed_sources: dict[str, set[str]] = {}
         self._loaded_groups: set[str] = set()
@@ -147,6 +151,19 @@ class MemoryUnitManager:
                     self._indexer.replace_group(group_id, working)
                 self._store.save(group_id, working)
                 self._replace_loaded_group(group_id, working)
+
+    async def scan_duplicates(
+        self,
+        *,
+        brain: Any,
+        model_name: str,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]:
+        return await self._maintenance.scan(brain=brain, model_name=model_name, progress=progress)
+
+    async def apply_duplicate_report(self, report: dict[str, Any]) -> dict[str, Any]:
+        async with self._mutation_lock:
+            return await self._maintenance.apply(report)
 
     def add_units(self, group_id: str, units: list[MemoryUnit]) -> None:
         if not units:

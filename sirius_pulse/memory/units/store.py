@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
+import uuid
 from pathlib import Path
 
 from sirius_pulse.memory.units.models import MemoryUnit
@@ -30,6 +32,37 @@ class MemoryUnitFileStore:
         path = self._path(group_id)
         data = {"group_id": group_id, "units": [u.to_dict() for u in units]}
         atomic_write_json(path, data)
+
+    @property
+    def base_dir(self) -> Path:
+        return self._base_dir
+
+    def list_group_ids(self) -> list[str]:
+        result: set[str] = set()
+        for path in self._base_dir.glob("*.json"):
+            units = self.load(path.stem)
+            if units:
+                result.add(units[0].group_id)
+        return sorted(result)
+
+    def save_many_atomically(self, groups: dict[str, list[MemoryUnit]]) -> None:
+        stage_dir = self._base_dir.parent / f".memory_units_stage_{uuid.uuid4().hex}"
+        stage_dir.mkdir(parents=True)
+        try:
+            staged: dict[str, Path] = {}
+            for group_id, units in groups.items():
+                path = stage_dir / f"{self._safe_name(group_id)}.json"
+                atomic_write_json(path, {"group_id": group_id, "units": [u.to_dict() for u in units]})
+                staged[group_id] = path
+            self._base_dir.mkdir(parents=True, exist_ok=True)
+            for group_id, path in staged.items():
+                self._replace_staged(path, self._path(group_id))
+        finally:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+
+    @staticmethod
+    def _replace_staged(staged: Path, destination: Path) -> None:
+        staged.replace(destination)
 
     def load(self, group_id: str) -> list[MemoryUnit]:
         path = self._path(group_id)
