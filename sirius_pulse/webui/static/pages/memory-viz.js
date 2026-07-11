@@ -45,6 +45,7 @@ let conversationAnalysisContext = null;
 let conversationAnalysisMounted = false;
 
 export function dispose() {
+  closeDedupeModal();
   disposeConversationAnalysis();
   scopedPage.use(null, null);
 }
@@ -278,6 +279,7 @@ export async function init(container, params = {}) {
         <input id="memorySearch" type="search" placeholder="搜索记忆内容..." style="width:220px">
         <button class="btn btn-primary" id="memoryCreateBtn">新增</button>
         <button class="btn" id="memoryRefreshBtn">刷新</button>
+        <button class="btn" id="memoryDedupeBtn" style="display:none">清理重复</button>
       </div>
     </div>
 
@@ -358,6 +360,7 @@ export async function init(container, params = {}) {
 
 function bindEvents() {
   $('memoryRefreshBtn')?.addEventListener('click', refreshActiveTab);
+  $('memoryDedupeBtn')?.addEventListener('click', openDedupeModal);
   $('memoryCreateBtn')?.addEventListener('click', () => openEditor(state.tab, null));
   $('memorySearch')?.addEventListener('input', (event) => {
     state.search = event.target.value.trim().toLowerCase();
@@ -503,6 +506,28 @@ function updateCreateButton() {
   if (!btn || !tab) return;
   btn.style.display = tab.canCreate ? '' : 'none';
   btn.textContent = state.tab === 'users' ? '新增画像' : state.tab === 'units' ? '新增单元' : '新增记忆';
+  const dedupeBtn = $('memoryDedupeBtn');
+  if (dedupeBtn) dedupeBtn.style.display = state.tab === 'units' ? '' : 'none';
+}
+
+let dedupePollTimer = null;
+let dedupeStatus = { status: 'idle' };
+
+function closeDedupeModal() { if (dedupePollTimer) clearInterval(dedupePollTimer); dedupePollTimer = null; document.getElementById('memoryDedupeModal')?.remove(); }
+async function openDedupeModal() {
+  closeDedupeModal(); const overlay = document.createElement('div'); overlay.id = 'memoryDedupeModal'; overlay.className = 'modal-overlay';
+  overlay.innerHTML = '<div class="modal"><div class="modal-header">重复记忆扫描</div><div class="modal-body" id="memoryDedupeBody"></div><div class="modal-footer" id="memoryDedupeFooter"></div></div>'; document.body.appendChild(overlay);
+  dedupeStatus = await get('/persona/memory-units/dedupe/status'); renderDedupeStatus(); if (['queued', 'scanning', 'applying'].includes(dedupeStatus.status)) startDedupePolling();
+}
+function startDedupePolling() { if (dedupePollTimer) clearInterval(dedupePollTimer); dedupePollTimer = setInterval(pollDedupeStatus, 1000); }
+async function pollDedupeStatus() { dedupeStatus = await get('/persona/memory-units/dedupe/status'); if (['ready', 'completed', 'stale', 'failed'].includes(dedupeStatus.status)) { clearInterval(dedupePollTimer); dedupePollTimer = null; } renderDedupeStatus(); if (dedupeStatus.status === 'completed') await loadActiveTab({ force: true }); }
+function renderDedupeStatus() {
+  const body = $('memoryDedupeBody'); const footer = $('memoryDedupeFooter'); if (!body || !footer) return;
+  const labels = { idle: '尚未扫描', queued: '等待执行', scanning: '正在扫描', ready: '扫描完成', applying: '正在应用', completed: '清理完成', stale: '记忆数据已变化，请重新扫描', failed: '任务失败' };
+  body.textContent = labels[dedupeStatus.status] || dedupeStatus.status;
+  footer.innerHTML = `<button class="btn" id="memoryDedupeScan">扫描重复</button>${dedupeStatus.status === 'ready' ? '<button class="btn btn-danger" id="memoryDedupeApply">应用清理</button>' : ''}`;
+  $('memoryDedupeScan')?.addEventListener('click', async () => { dedupeStatus = await post('/persona/memory-units/dedupe/scan', {}); renderDedupeStatus(); startDedupePolling(); });
+  $('memoryDedupeApply')?.addEventListener('click', async () => { if (confirmDanger('确定应用本次重复记忆清理吗？系统会先创建完整备份。')) { await post('/persona/memory-units/dedupe/apply', { job_id: dedupeStatus.job_id }); dedupeStatus.status = 'applying'; renderDedupeStatus(); startDedupePolling(); } });
 }
 
 function updateConversationAnalysisView() {
