@@ -84,3 +84,35 @@ def test_conflict_keeps_both_units_and_links_them():
     assert linked_old.metadata["conflicts_with"] == ["mem-new"]
     assert linked_new.metadata["conflicts_with"] == ["mem-old"]
     assert linked_old.metadata["conflict_reason"] == "偏好发生变化"
+
+
+class _Embedding:
+    available = True
+
+    def encode_single(self, text: str) -> list[float]:
+        return [1.0, 0.0] if "concise" in text.lower() else [0.0, 1.0]
+
+
+def test_indexer_returns_only_same_boundary_semantic_candidates():
+    from sirius_pulse.memory.units import MemoryUnitIndexer
+
+    indexer = MemoryUnitIndexer(_Embedding())
+    match = _unit("mem-match", "Alice prefers concise replies.")
+    indexer.add(match)
+    indexer.add(_unit("mem-group", match.summary, group_id="group-b"))
+    indexer.add(_unit("mem-type", match.summary, unit_type="note"))
+
+    incoming = _unit("mem-new", "Alice likes concise answers.", embedding=None)
+    candidates = indexer.semantic_candidates(incoming, top_k=5, min_similarity=0.80)
+
+    assert [(unit.unit_id, score) for unit, score in candidates] == [("mem-match", 1.0)]
+
+
+def test_indexer_replace_group_removes_stale_units():
+    from sirius_pulse.memory.units import MemoryUnitIndexer
+
+    indexer = MemoryUnitIndexer()
+    indexer.add(_unit("old", "old"))
+    replacement = _unit("new", "new")
+    indexer.replace_group("group-a", [replacement])
+    assert indexer.list_all() == [replacement]

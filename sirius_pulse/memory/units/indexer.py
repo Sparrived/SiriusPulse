@@ -7,6 +7,7 @@ import math
 import re
 
 from sirius_pulse.embedding.client import EmbeddingClient
+from sirius_pulse.memory.units.deduplicator import same_boundary
 from sirius_pulse.memory.units.models import MemoryUnit
 
 logger = logging.getLogger(__name__)
@@ -24,15 +25,31 @@ class MemoryUnitIndexer:
         return self._embedding_client is not None and self._embedding_client.available
 
     def add(self, unit: MemoryUnit) -> bool:
-        recomputed = False
-        if self.semantic_available and not unit.embedding:
-            text = self._unit_text(unit)
-            vec = self._embedding_client.encode_single(text) if self._embedding_client else []
-            if vec:
-                unit.embedding = vec
-                recomputed = True
+        recomputed = self._ensure_embedding(unit)
         self._units.append(unit)
         return recomputed
+
+    def semantic_candidates(
+        self,
+        incoming: MemoryUnit,
+        *,
+        top_k: int = 5,
+        min_similarity: float = 0.8,
+    ) -> list[tuple[MemoryUnit, float]]:
+        """Return boundary-scoped semantic candidates for an incoming unit."""
+        self._ensure_embedding(incoming)
+        if not incoming.embedding:
+            return []
+        candidates = [
+            (unit, self._cosine_sim(incoming.embedding, unit.embedding))
+            for unit in self._units
+            if unit.embedding
+            and unit.unit_id != incoming.unit_id
+            and same_boundary(unit, incoming)
+        ]
+        candidates = [item for item in candidates if item[1] >= min_similarity]
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        return candidates[:top_k]
 
     def search(
         self,
@@ -82,6 +99,25 @@ class MemoryUnitIndexer:
 
     def clear_group(self, group_id: str) -> None:
         self._units = [u for u in self._units if u.group_id != group_id]
+
+    def replace_group(self, group_id: str, units: list[MemoryUnit]) -> None:
+        """Replace every indexed unit in a group after persistence changes."""
+        self.clear_group(group_id)
+        for unit in units:
+            self.add(unit)
+
+    def _ensure_embedding(self, unit: MemoryUnit) -> bool:
+        if not self.semantic_available or unit.embedding:
+            return False
+        try:
+            vec = self._embedding_client.encode_single(self._unit_text(unit))
+        except Exception as exc:
+            logger.warning("Memory unit embedding failed: %s", exc)
+            return False
+        if not vec:
+            return False
+        unit.embedding = vec
+        return True
 
     @staticmethod
     def _unit_text(unit: MemoryUnit) -> str:
