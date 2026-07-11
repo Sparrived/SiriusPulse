@@ -1,6 +1,11 @@
 from sirius_pulse.memory.units import MemoryUnit
+import json
+
+import pytest
+
 from sirius_pulse.memory.units.deduplicator import (
     DedupVerdict,
+    MemoryUnitDeduplicator,
     link_conflict,
     merge_memory_units,
     normalize_summary,
@@ -116,3 +121,66 @@ def test_indexer_replace_group_removes_stale_units():
     replacement = _unit("new", "new")
     indexer.replace_group("group-a", [replacement])
     assert indexer.list_all() == [replacement]
+
+
+class _Brain:
+    def __init__(self, response=None, error=None):
+        self.response = response
+        self.error = error
+        self.requests = []
+
+    async def raw_call(self, request):
+        self.requests.append(request)
+        if self.error:
+            raise self.error
+        return json.dumps(self.response)
+
+
+@pytest.mark.asyncio
+async def test_adjudicator_accepts_only_valid_candidate_target():
+    brain = _Brain(
+        {
+            "decision": "MERGE",
+            "target_unit_id": "mem-old",
+            "merged_summary": "Alice prefers concise replies with examples.",
+            "reason": "兼容补充",
+        }
+    )
+
+    verdict = await MemoryUnitDeduplicator().adjudicate(
+        _unit("mem-new", "Alice likes short answers with examples."),
+        [_unit("mem-old", "Alice prefers concise replies.")],
+        brain=brain,
+        model_name="memory-model",
+    )
+
+    assert verdict.decision == "MERGE"
+    assert brain.requests[0].purpose == "memory_unit_deduplicate"
+    assert brain.requests[0].response_format == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        ({"decision": "DUPLICATE", "target_unit_id": "unknown"}, None),
+        (
+            {
+                "decision": "MERGE",
+                "target_unit_id": "mem-old",
+                "merged_summary": "x" * 181,
+            },
+            None,
+        ),
+        (None, RuntimeError("model unavailable")),
+    ],
+)
+async def test_adjudicator_falls_back_to_new_for_invalid_or_failed_response(response, error):
+    verdict = await MemoryUnitDeduplicator().adjudicate(
+        _unit("mem-new", "Alice likes short answers."),
+        [_unit("mem-old", "Alice prefers concise replies.")],
+        brain=_Brain(response, error),
+        model_name="memory-model",
+    )
+
+    assert verdict == DedupVerdict("NEW")
