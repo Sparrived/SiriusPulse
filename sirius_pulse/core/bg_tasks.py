@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.memory.cold_detector import ColdState
+from sirius_pulse.utils.json_io import atomic_write_json
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -56,6 +59,7 @@ class BackgroundTasks:
             asyncio.create_task(self.delayed.delayed_queue_ticker(), name="delayed_queue"),
             asyncio.create_task(self._memory_unit_checkpointer(), name="memory_checkpoint"),
             asyncio.create_task(self._sticker_cache_warmup(), name="sticker_cache_warmup"),
+            asyncio.create_task(self._memory_dedupe_job_worker(), name="memory_dedupe"),
         ]
         for t in tasks:
             engine._bg_tasks.add(t)
@@ -175,6 +179,85 @@ class BackgroundTasks:
     async def _diary_promoter(self) -> None:
         """Backward-compatible alias for the old diary promotion task."""
         await self._memory_unit_checkpointer()
+
+    async def _memory_dedupe_job_worker(self) -> None:
+        while self._engine._bg_running:
+            try:
+                await self._process_memory_dedupe_request_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Memory dedupe job worker failed: %s", exc)
+            await asyncio.sleep(1)
+
+    async def _process_memory_dedupe_request_once(self) -> None:
+        engine = self._engine
+        job_dir = Path(engine.work_path) / "engine_state" / "memory_dedupe"
+        job_dir.mkdir(parents=True, exist_ok=True)
+        request_path = job_dir / "request.json"
+        if request_path.exists():
+            claimed = job_dir / "request.processing.json"
+            try:
+                request_path.replace(claimed)
+            except FileNotFoundError:
+                claimed = None
+            if claimed is not None:
+                try:
+                    request = json.loads(claimed.read_text(encoding="utf-8"))
+                    job_id = str(request.get("job_id") or "")
+                    action = str(request.get("action") or "")
+                    status_path = job_dir / "status.json"
+                    report_path = Path(engine.work_path) / "logs" / "memory-dedupe" / f"{job_id}.json"
+                    cfg = engine.model_router.resolve("memory_extract")
+                    if action == "scan":
+                        atomic_write_json(status_path, {"job_id": job_id, "status": "scanning", "progress": 0})
+
+                        def update_progress(done: int, total: int) -> None:
+                            atomic_write_json(
+                                status_path,
+                                {"job_id": job_id, "status": "scanning", "progress": int(done * 100 / total) if total else 100},
+                            )
+
+                        report = await engine.memory_unit_manager.scan_duplicates(
+                            brain=engine.brain, model_name=cfg.model_name, progress=update_progress
+                        )
+                        report_path.parent.mkdir(parents=True, exist_ok=True)
+                        atomic_write_json(report_path, report)
+                        atomic_write_json(status_path, {"job_id": job_id, "status": "ready", "progress": 100, "report_path": str(report_path)})
+                    elif action == "apply":
+                        atomic_write_json(status_path, {"job_id": job_id, "status": "applying", "progress": 0})
+                        report = json.loads(report_path.read_text(encoding="utf-8"))
+                        result = await engine.memory_unit_manager.apply_duplicate_report(report)
+                        atomic_write_json(
+                            status_path,
+                            {"job_id": job_id, "status": result["status"], "progress": 100, "report_path": str(report_path), **{key: value for key, value in result.items() if key != "status"}},
+                        )
+                    else:
+                        raise ValueError(f"unknown memory dedupe action: {action}")
+                except Exception as exc:
+                    atomic_write_json(job_dir / "status.json", {"job_id": locals().get("job_id", ""), "status": "failed", "error": str(exc)})
+                finally:
+                    claimed.unlink(missing_ok=True)
+
+        reconcile_path = job_dir / "reconcile.json"
+        if not reconcile_path.exists():
+            return
+        claimed_reconcile = job_dir / "reconcile.processing.json"
+        try:
+            reconcile_path.replace(claimed_reconcile)
+        except FileNotFoundError:
+            return
+        try:
+            payload = json.loads(claimed_reconcile.read_text(encoding="utf-8"))
+            cfg = engine.model_router.resolve("memory_extract")
+            await engine.memory_unit_manager.reconcile_persisted_units(
+                [str(value) for value in payload.get("group_ids", [])],
+                [str(value) for value in payload.get("unit_ids", [])],
+                brain=engine.brain,
+                model_name=cfg.model_name,
+            )
+        finally:
+            claimed_reconcile.unlink(missing_ok=True)
 
     # ==================================================================
     # 委托方法（向后兼容）
