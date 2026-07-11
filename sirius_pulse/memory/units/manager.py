@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
+from sirius_pulse.memory.units.deduplicator import (
+    MemoryUnitDeduplicator,
+    apply_verdict,
+)
 from sirius_pulse.memory.units.generator import MemoryUnitGenerator
 from sirius_pulse.memory.units.indexer import MemoryUnitIndexer, MemoryUnitRetriever
 from sirius_pulse.memory.units.models import MemoryUnit, MemoryUnitGenerationResult
@@ -25,9 +31,12 @@ class MemoryUnitManager:
         embedding_client: EmbeddingClient | None = None,
     ) -> None:
         self._store = MemoryUnitFileStore(work_path)
+        self._embedding_client = embedding_client
         self._indexer = MemoryUnitIndexer(embedding_client=embedding_client)
         self._retriever = MemoryUnitRetriever(self._indexer)
         self._generator = MemoryUnitGenerator()
+        self._deduplicator = MemoryUnitDeduplicator()
+        self._mutation_lock = asyncio.Lock()
         self._checkpointed_sources: dict[str, set[str]] = {}
         self._loaded_groups: set[str] = set()
 
@@ -62,8 +71,82 @@ class MemoryUnitManager:
         if result is None or not result.units:
             return None
 
-        self.add_units(group_id, result.units)
-        return result
+        canonical_results = await self.reconcile_units(
+            group_id,
+            result.units,
+            brain=brain,
+            model_name=model_name,
+        )
+        return MemoryUnitGenerationResult(units=canonical_results)
+
+    async def reconcile_units(
+        self,
+        group_id: str,
+        units: list[MemoryUnit],
+        *,
+        brain: Any,
+        model_name: str,
+    ) -> list[MemoryUnit]:
+        """Reconcile generated units against the current group under one write lock."""
+        if not units:
+            return []
+        async with self._mutation_lock:
+            self.ensure_group_loaded(group_id)
+            existing = self._store.load(group_id)
+            accepted: dict[str, MemoryUnit] = {}
+            for incoming in units:
+                verdict = await self._deduplicator.decide(
+                    incoming,
+                    existing,
+                    self._indexer,
+                    brain=brain,
+                    model_name=model_name,
+                )
+                existing, result = apply_verdict(
+                    existing,
+                    incoming,
+                    verdict,
+                    now_iso=datetime.now(timezone.utc).isoformat(),
+                )
+                accepted[result.unit_id] = result
+                self._indexer.replace_group(group_id, existing)
+            self._store.save(group_id, existing)
+            self._replace_loaded_group(group_id, existing)
+            return list(accepted.values())
+
+    async def reconcile_persisted_units(
+        self,
+        group_ids: list[str],
+        unit_ids: list[str],
+        *,
+        brain: Any,
+        model_name: str,
+    ) -> None:
+        """Reconcile selected persisted units after an offline CRUD update."""
+        selected_ids = set(unit_ids)
+        async with self._mutation_lock:
+            for group_id in sorted(set(group_ids)):
+                loaded = self._store.load(group_id)
+                incoming = [unit for unit in loaded if unit.unit_id in selected_ids]
+                working = [unit for unit in loaded if unit.unit_id not in selected_ids]
+                self._indexer.replace_group(group_id, working)
+                for unit in sorted(incoming, key=lambda item: (item.created_at, item.unit_id)):
+                    verdict = await self._deduplicator.decide(
+                        unit,
+                        working,
+                        self._indexer,
+                        brain=brain,
+                        model_name=model_name,
+                    )
+                    working, _accepted = apply_verdict(
+                        working,
+                        unit,
+                        verdict,
+                        now_iso=datetime.now(timezone.utc).isoformat(),
+                    )
+                    self._indexer.replace_group(group_id, working)
+                self._store.save(group_id, working)
+                self._replace_loaded_group(group_id, working)
 
     def add_units(self, group_id: str, units: list[MemoryUnit]) -> None:
         if not units:
@@ -96,6 +179,13 @@ class MemoryUnitManager:
             self._store.save(group_id, units)
         self._loaded_groups.add(group_id)
         logger.info("Loaded %d checkpoint memory units for group %s", len(units), group_id)
+
+    def _replace_loaded_group(self, group_id: str, units: list[MemoryUnit]) -> None:
+        self._indexer.replace_group(group_id, units)
+        self._checkpointed_sources[group_id] = {
+            source_id for unit in units for source_id in unit.source_ids
+        }
+        self._loaded_groups.add(group_id)
 
     def is_source_checkpointed(self, group_id: str, entry_id: str) -> bool:
         self.ensure_group_loaded(group_id)

@@ -13,27 +13,37 @@ from sirius_pulse.memory.units import (
 
 
 class _FakeBrain:
+    def __init__(self, dedupe_response=None):
+        self.dedupe_response = dedupe_response
+
     async def raw_call(self, request):
+        if request.purpose == "memory_unit_deduplicate":
+            return json.dumps(self.dedupe_response or {"decision": "NEW"})
         assert request.purpose == "memory_unit_extract"
-        return json.dumps(
-            {
-                "units": [
-                    {
-                        "type": "event",
-                        "scope": "group",
-                        "summary": "Alice agreed to redeploy after tests pass.",
-                        "participants": ["alice"],
-                        "topics": ["deploy"],
-                        "keywords": ["redeploy", "tests"],
-                        "salience": 0.8,
-                        "confidence": 0.9,
-                        "lifespan": "medium",
-                        "should_prompt": True,
-                        "source_indices": [1, 2],
-                    }
-                ]
-            }
-        )
+        return json.dumps({"units": [_generated_unit()]})
+
+
+def _generated_unit(summary="Alice agreed to redeploy after tests pass."):
+    return {
+        "type": "event",
+        "scope": "group",
+        "summary": summary,
+        "participants": ["alice"],
+        "topics": ["deploy"],
+        "keywords": ["redeploy", "tests"],
+        "salience": 0.8,
+        "confidence": 0.9,
+        "lifespan": "medium",
+        "should_prompt": True,
+        "source_indices": [1],
+    }
+
+
+class _Embedding:
+    available = True
+
+    def encode_single(self, text):
+        return [1.0, 0.0]
 
 
 def test_memory_unit_generator_maps_source_indices_to_entry_ids():
@@ -58,7 +68,7 @@ def test_memory_unit_generator_maps_source_indices_to_entry_ids():
     assert len(result.units) == 1
     unit = result.units[0]
     assert unit.unit_type == "event"
-    assert unit.source_ids == [first.entry_id, second.entry_id]
+    assert unit.source_ids == [first.entry_id]
     assert unit.summary == "Alice agreed to redeploy after tests pass."
 
 
@@ -97,3 +107,108 @@ def test_memory_unit_manager_retrieves_and_tracks_checkpointed_sources(tmp_path)
     assert manager.is_source_checkpointed("group_a", "src_1") is True
     retrieved = manager.retrieve("deployment workflow", group_id="group_a", top_k=3)
     assert retrieved == [unit]
+
+
+def test_generation_collapses_exact_duplicate_and_tracks_new_source(tmp_path):
+    manager = MemoryUnitManager(tmp_path)
+    manager.add_units(
+        "group_a",
+        [
+            MemoryUnit(
+                unit_id="mem-existing",
+                group_id="group_a",
+                created_at="2026-07-12T00:00:00+00:00",
+                summary="Alice agreed to redeploy after tests pass.",
+                source_ids=["src-existing"],
+            )
+        ],
+    )
+    new_entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "redeploy")
+
+    result = asyncio.run(
+        manager.generate_from_candidates(
+            group_id="group_a",
+            candidates=[new_entry],
+            persona_name="Sirius",
+            persona_description="",
+            brain=_FakeBrain(),
+            model_name="memory-model",
+            min_candidate_count=1,
+        )
+    )
+
+    units = manager.get_units_for_group("group_a")
+    assert result is not None
+    assert len(units) == 1
+    assert units[0].unit_id == "mem-existing"
+    assert units[0].source_ids == ["src-existing", new_entry.entry_id]
+    assert manager.is_source_checkpointed("group_a", new_entry.entry_id) is True
+
+
+def test_generation_keeps_conflicting_facts_with_reciprocal_links(tmp_path):
+    manager = MemoryUnitManager(tmp_path, embedding_client=_Embedding())
+    manager.add_units(
+        "group_a",
+        [
+            MemoryUnit(
+                unit_id="mem-existing",
+                group_id="group_a",
+                created_at="2026-07-12T00:00:00+00:00",
+                summary="Alice prefers concise replies.",
+            )
+        ],
+    )
+    entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "detailed replies")
+    brain = _FakeBrain(
+        {"decision": "CONFLICT", "target_unit_id": "mem-existing", "reason": "偏好已改变"}
+    )
+
+    asyncio.run(
+        manager.generate_from_candidates(
+            group_id="group_a",
+            candidates=[entry],
+            persona_name="Sirius",
+            persona_description="",
+            brain=brain,
+            model_name="memory-model",
+            min_candidate_count=1,
+        )
+    )
+
+    units = manager.get_units_for_group("group_a")
+    assert len(units) == 2
+    existing = next(unit for unit in units if unit.unit_id == "mem-existing")
+    incoming = next(unit for unit in units if unit.unit_id != "mem-existing")
+    assert existing.metadata["conflicts_with"] == [incoming.unit_id]
+    assert incoming.metadata["conflicts_with"] == ["mem-existing"]
+
+
+def test_generation_keeps_identical_summaries_in_separate_group_files(tmp_path):
+    manager = MemoryUnitManager(tmp_path)
+    manager.add_units(
+        "group_a",
+        [
+            MemoryUnit(
+                unit_id="mem-a",
+                group_id="group_a",
+                created_at="2026-07-12T00:00:00+00:00",
+                summary="Alice agreed to redeploy after tests pass.",
+            )
+        ],
+    )
+    entry = BasicMemoryManager().add_entry("group_b", "alice", "human", "redeploy")
+
+    asyncio.run(
+        manager.generate_from_candidates(
+            group_id="group_b",
+            candidates=[entry],
+            persona_name="Sirius",
+            persona_description="",
+            brain=_FakeBrain(),
+            model_name="memory-model",
+            min_candidate_count=1,
+        )
+    )
+
+    assert [unit.unit_id for unit in manager.get_units_for_group("group_a")] == ["mem-a"]
+    assert len(manager.get_units_for_group("group_b")) == 1
