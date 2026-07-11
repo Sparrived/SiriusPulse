@@ -19,6 +19,9 @@ class PersonaProfile:
     # ------------------------------------------------------------------
     name: str = "小星"
     aliases: list[str] = field(default_factory=list)
+    identity_kind: str = ""
+    creator_name: str = ""
+    creator_relationship: str = ""
     persona_summary: str = ""
     full_system_prompt: str = ""
 
@@ -80,6 +83,9 @@ class PersonaProfile:
         return {
             "name": self.name,
             "aliases": list(self.aliases),
+            "identity_kind": self.identity_kind,
+            "creator_name": self.creator_name,
+            "creator_relationship": self.creator_relationship,
             "persona_summary": self.persona_summary,
             "full_system_prompt": self.full_system_prompt,
             "personality_traits": list(self.personality_traits),
@@ -111,6 +117,9 @@ class PersonaProfile:
         return cls(
             name=data.get("name", "小星"),
             aliases=list(data.get("aliases", [])),
+            identity_kind=data.get("identity_kind", ""),
+            creator_name=data.get("creator_name", ""),
+            creator_relationship=data.get("creator_relationship", ""),
             persona_summary=data.get("persona_summary", ""),
             full_system_prompt=data.get("full_system_prompt", ""),
             personality_traits=list(data.get("personality_traits", [])),
@@ -152,6 +161,9 @@ class PersonaProfile:
         return PromptFactory.build_persona_prompt(
             name=self.name,
             aliases=self.aliases,
+            identity_kind=self.identity_kind,
+            creator_name=self.creator_name,
+            creator_relationship=self.creator_relationship,
             persona_summary=self.persona_summary,
             backstory=self.backstory,
             personality_traits=self.personality_traits,

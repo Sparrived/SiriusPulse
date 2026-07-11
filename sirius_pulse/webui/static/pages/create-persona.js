@@ -100,9 +100,27 @@ function buildFormHTML() {
               <label>人格概述</label>
               <textarea id="directSummary" rows="3" placeholder="一句话描述这个角色"></textarea>
             </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">
+              <div class="form-group">
+                <label>数字身份</label>
+                <input type="text" id="directIdentityKind" placeholder="诞生于数字世界的猫娘">
+              </div>
+              <div class="form-group">
+                <label>创作者</label>
+                <input type="text" id="directCreatorName" placeholder="临雀">
+              </div>
+              <div class="form-group">
+                <label>与创作者关系</label>
+                <input type="text" id="directCreatorRelationship" placeholder="天然亲近、信任和在意的人">
+              </div>
+            </div>
             <div class="form-group">
               <label>性格特征（逗号分隔）</label>
               <input type="text" id="directTraits" placeholder="热情、幽默、善解人意">
+            </div>
+            <div class="form-group">
+              <label>说话方式</label>
+              <textarea id="directCommunicationStyle" rows="3" placeholder="习惯在句尾自然地加「喵」，但不要每一句都机械添加。"></textarea>
             </div>
             <div class="form-group">
               <label>背景故事</label>
@@ -237,7 +255,11 @@ function saveDraft() {
     answers: {},
     direct: {
       summary: $('directSummary')?.value || '',
+      identityKind: $('directIdentityKind')?.value || '',
+      creatorName: $('directCreatorName')?.value || '',
+      creatorRelationship: $('directCreatorRelationship')?.value || '',
       traits: $('directTraits')?.value || '',
+      communicationStyle: $('directCommunicationStyle')?.value || '',
       backstory: $('directBackstory')?.value || '',
       socialRole: $('directSocialRole')?.value || '',
       emojiPref: $('directEmojiPref')?.value || '',
@@ -280,7 +302,11 @@ function restoreDraft() {
     if (draft.direct) {
       const d = draft.direct;
       if (d.summary && $('directSummary')) $('directSummary').value = d.summary;
+      if (d.identityKind && $('directIdentityKind')) $('directIdentityKind').value = d.identityKind;
+      if (d.creatorName && $('directCreatorName')) $('directCreatorName').value = d.creatorName;
+      if (d.creatorRelationship && $('directCreatorRelationship')) $('directCreatorRelationship').value = d.creatorRelationship;
       if (d.traits && $('directTraits')) $('directTraits').value = d.traits;
+      if (d.communicationStyle && $('directCommunicationStyle')) $('directCommunicationStyle').value = d.communicationStyle;
       if (d.backstory && $('directBackstory')) $('directBackstory').value = d.backstory;
       if (d.socialRole && $('directSocialRole')) $('directSocialRole').value = d.socialRole;
       if (d.emojiPref && $('directEmojiPref')) $('directEmojiPref').value = d.emojiPref;
@@ -339,7 +365,7 @@ function bindEvents() {
   }
 
   // 直接填写模式的输入变化时保存草稿
-  const directInputs = ['directSummary', 'directTraits', 'directBackstory', 'directBoundaries'];
+  const directInputs = ['directSummary', 'directIdentityKind', 'directCreatorName', 'directCreatorRelationship', 'directTraits', 'directCommunicationStyle', 'directBackstory', 'directBoundaries'];
   directInputs.forEach(id => {
     const el = $(id);
     if (el) el.addEventListener('input', saveDraft);
@@ -364,8 +390,16 @@ function getDirectPersonaData() {
   const data = {};
   const summary = $('directSummary')?.value?.trim() || '';
   if (summary) data.persona_summary = summary;
+  const identityKind = $('directIdentityKind')?.value?.trim() || '';
+  if (identityKind) data.identity_kind = identityKind;
+  const creatorName = $('directCreatorName')?.value?.trim() || '';
+  if (creatorName) data.creator_name = creatorName;
+  const creatorRelationship = $('directCreatorRelationship')?.value?.trim() || '';
+  if (creatorRelationship) data.creator_relationship = creatorRelationship;
   const traits = $('directTraits')?.value?.trim() || '';
   if (traits) data.personality_traits = traits.split(',').map(s => s.trim()).filter(Boolean);
+  const communicationStyle = $('directCommunicationStyle')?.value?.trim() || '';
+  if (communicationStyle) data.communication_style = communicationStyle;
   const backstory = $('directBackstory')?.value?.trim() || '';
   if (backstory) data.backstory = backstory;
   const socialRole = $('directSocialRole')?.value || '';

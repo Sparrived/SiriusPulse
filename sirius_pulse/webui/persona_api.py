@@ -240,6 +240,9 @@ async def api_persona_post(request: web.Request, data_dir: Path) -> web.Response
     for key in (
         "name",
         "aliases",
+        "identity_kind",
+        "creator_name",
+        "creator_relationship",
         "persona_summary",
         "full_system_prompt",
         "personality_traits",

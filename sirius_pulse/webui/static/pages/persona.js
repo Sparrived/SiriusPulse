@@ -70,6 +70,18 @@ export async function init(container, params = {}) {
             <input type="text" name="aliases" placeholder="多个别名用空格分隔">
           </div>
           <div class="form-group">
+            <label>数字身份</label>
+            <input type="text" name="identity_kind" placeholder="诞生于数字世界的猫娘">
+          </div>
+          <div class="form-group">
+            <label>创作者</label>
+            <input type="text" name="creator_name" placeholder="临雀">
+          </div>
+          <div class="form-group">
+            <label>与创作者关系</label>
+            <input type="text" name="creator_relationship" placeholder="天然亲近、信任和在意的人">
+          </div>
+          <div class="form-group">
             <label>社交角色</label>
             <div class="select-wrap">
               <select name="social_role">
@@ -230,6 +242,9 @@ async function loadPersonaData(name) {
 
     form.name.value = data.name || name;
     form.aliases.value = (data.aliases || []).join(' ');
+    form.identity_kind.value = data.identity_kind || '';
+    form.creator_name.value = data.creator_name || '';
+    form.creator_relationship.value = data.creator_relationship || '';
     form.social_role.value = data.social_role || 'companion';
     form.persona_summary.value = data.persona_summary || '';
     form.personality_traits.value = (data.personality_traits || []).join(', ');
@@ -250,6 +265,9 @@ async function savePersona(name) {
   const persona = {
     name: form.name.value,
     aliases: form.aliases.value.split(/\s+/).filter(Boolean),
+    identity_kind: form.identity_kind.value,
+    creator_name: form.creator_name.value,
+    creator_relationship: form.creator_relationship.value,
     social_role: form.social_role.value,
     persona_summary: form.persona_summary.value,
     personality_traits: form.personality_traits.value.split(',').map(s => s.trim()).filter(Boolean),

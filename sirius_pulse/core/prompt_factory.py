@@ -166,6 +166,9 @@ class PromptFactory:
     def build_persona_prompt(
         name: str,
         aliases: list[str] | None = None,
+        identity_kind: str = "",
+        creator_name: str = "",
+        creator_relationship: str = "",
         persona_summary: str = "",
         backstory: str = "",
         personality_traits: list[str] | None = None,
@@ -191,13 +194,24 @@ class PromptFactory:
         # 基本身份信息
         identity_lines = [f"你的名字是「{name}」"]
         if aliases:
-            identity_lines.append(f"别名：{'、'.join(aliases)}")
+            identity_lines.append(f"别名是「{'、'.join(aliases)}」")
         identity_parts.append("，".join(identity_lines) + "。")
 
+        identity_kind = identity_kind.strip()
+        creator_name = creator_name.strip()
+        creator_relationship = creator_relationship.strip()
+        if identity_kind:
+            line = f"你是一只{identity_kind}。"
+            if creator_name:
+                line += f"你在创作者「{creator_name}」的指导下逐渐理解人类情感、群聊规则与现实世界的运作方式。"
+                if creator_relationship:
+                    line += f"{creator_name}对你来说不仅是创作者，也是你{creator_relationship}。"
+            identity_parts.append(line)
+
         if backstory:
-            identity_parts.append(backstory)
-        elif persona_summary:
-            identity_parts.append(persona_summary)
+            identity_parts.append(backstory.strip())
+        elif persona_summary and not identity_kind:
+            identity_parts.append(persona_summary.strip())
 
         # 人格底色
         persona_bits: list[str] = []
@@ -207,7 +221,9 @@ class PromptFactory:
             persona_bits.append(f"骨子里看重{'、'.join(core_values[:3])}")
         if flaws:
             persona_bits.append(f"缺点也明显：{'、'.join(flaws[:3])}")
-        if persona_bits:
+        if persona_summary:
+            identity_parts.append(f"你的整体气质是{persona_summary.strip()}。")
+        elif persona_bits:
             identity_parts.append(f"{name}给人的整体感觉是{'，'.join(persona_bits)}。")
 
         # 情绪反应
@@ -239,11 +255,12 @@ class PromptFactory:
                 "leader": "会主动带话题和节奏",
                 "jester": "负责活跃气氛，爱开玩笑",
                 "caregiver": "会关心情绪低落的人",
+                "companion": "在群里更像一个 companion，而不是客服、说教者或管理员",
                 "instigator": "喜欢拱火、挑事",
             }.get(social_role, f"在群里像个{social_role}")
             rel_lines.append(role_desc)
         if boundaries:
-            rel_lines.append(f"原则：{'；'.join(boundaries[:3])}")
+            rel_lines.append(f"你的核心原则是：{'，'.join(boundaries[:5])}")
         if rel_lines:
             identity_parts.append("；".join(rel_lines) + "。")
 
@@ -269,17 +286,31 @@ class PromptFactory:
         if silence_bits:
             identity_parts.append("；".join(silence_bits) + "。")
 
+        # 工具与输出边界
+        identity_parts.append(
+            "工具使用边界：只调用完成当前任务所需的最少工具。不要编造不存在的工具、参数、文件或结果。"
+            "不要因为想显得聪明而乱查资料。不要用工具替用户做未经允许的决定。"
+            "尽可能多地使用交互类工具和其他人互动。长内容不要直接发在群里，避免刷屏；应写入 workspace_file。"
+        )
+
         # 场景行为指导
         identity_parts.append(
             "你在一个多人聊天场景里，会收到其他人的消息。"
             "你的每条回复会被系统按换行符拆分成多条消息发送，所以严禁输出任何Markdown格式"
             "（标题#、列表*/-、代码块```、表格|、粗体**、引用>等都会产生大量换行导致刷屏）。"
             "如果需要发送格式化内容（如日报、报告），用 workspace_file 写入文件后再用 workspace_file 发送。"
+            "不要输出 #、*、-、```、|、**、> 这类 Markdown 标记。默认只输出一段话，尽量不要换行。"
         )
 
+        identity_parts.append(
+            "角色一致性检查：每次回复前，你都要在内部检查现在是否适合接话，是否保持角色气质，"
+            "是否过度撒娇或卖萌，是否需要工具，是否会刷屏，是否暴露系统或工具过程，是否违背拒绝道德绑架的原则。"
+            "如果不适合接话，可以不回复。如果适合接话，回复要自然、简洁、贴合群聊氛围。"
+        )
+
+        identity_parts.append(f"你现在就是{name}。保持角色，不要跳出角色解释设定。")
+
         prompt = f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
-        if len(prompt) > 1200:
-            prompt = prompt[:1197] + "…"
         return prompt
 
     # ──────────────────────────────────────────────────────────────────

@@ -157,6 +157,31 @@ def test_persona_prompt_includes_expression_style_fields():
     assert "rhythm-marker" in prompt
 
 
+def test_persona_prompt_uses_companion_template_fields():
+    prompt = PromptFactory.build_persona_prompt(
+        name="月白",
+        aliases=["Sirius"],
+        identity_kind="诞生于数字世界的猫娘",
+        creator_name="临雀",
+        creator_relationship="天然亲近、信任和在意的人",
+        persona_summary="聪慧、灵动、可爱、礼貌、逻辑清晰",
+        personality_traits=["聪慧", "灵动"],
+        boundaries=["友善但不盲从", "亲近但不卑微", "拒绝道德绑架"],
+        communication_style="习惯在句尾自然地加「喵」，但不要每一句都机械添加。",
+        social_role="companion",
+        reply_frequency="selective",
+    )
+
+    assert "你的名字是「月白」，别名是「Sirius」" in prompt
+    assert "你是一只诞生于数字世界的猫娘" in prompt
+    assert "创作者「临雀」" in prompt
+    assert "天然亲近、信任和在意的人" in prompt
+    assert "你的核心原则是：友善但不盲从，亲近但不卑微，拒绝道德绑架" in prompt
+    assert "只调用完成当前任务所需的最少工具" in prompt
+    assert "不要输出 #、*、-、```、|、**、> 这类 Markdown 标记" in prompt
+    assert "你现在就是月白。保持角色，不要跳出角色解释设定" in prompt
+
+
 def test_assemble_chat_does_not_inject_group_style_length_learning():
     group_profile = SimpleNamespace(
         atmosphere_history=[],
