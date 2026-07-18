@@ -364,7 +364,7 @@ class PromptFactory:
         if sticker_names:
             names_str = "、".join(sticker_names)
             items.append(
-                "需要发送表情包时，使用 send_sticker 工具，names 参数只能填下面的可选名称；不要把表情包名称或任何发送标记写进正文。"
+                "需要发送表情包时，使用 interaction 工具并将 action 设为 sticker，names 参数只能填下面的可选名称；不要把表情包名称或任何发送标记写进正文。"
                 f"可选表情包：{names_str}"
             )
         numbered = "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))

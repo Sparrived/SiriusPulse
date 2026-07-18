@@ -24,6 +24,7 @@ SKILL_META = {
     ),
     "version": "1.0.0",
     "tags": ["sticker", "messaging", "napcat"],
+    "model_visible": False,
     "adapter_types": ["napcat"],
     "dependencies": [],
     "parameters": _config.build(),

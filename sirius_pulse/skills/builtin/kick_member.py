@@ -31,6 +31,7 @@ SKILL_META = {
     "description": "群聊里有人明确要求踢出成员，且你已确认对象和理由时使用；高风险管理操作，需要 Bot 是当前群管理员或群主。",
     "version": "1.0.0",
     "tags": ["napcat", "qq", "group_admin"],
+    "model_visible": False,
     "admin_required": True,
     "adapter_types": ["napcat"],
     "parameters": _config.build(),

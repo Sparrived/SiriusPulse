@@ -35,7 +35,8 @@ def test_core_utils_when_history_xml_is_present_then_only_conversation_history_b
 def test_prompt_factory_when_stickers_are_available_then_reply_spec_uses_tool_call_only():
     spec = PromptFactory.build_reply_spec(sticker_names=["开心"])
 
-    assert "send_sticker" in spec
+    assert "interaction" in spec
+    assert "action 设为 sticker" in spec
     assert "任何发送标记" in spec
 
 

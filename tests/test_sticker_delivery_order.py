@@ -31,6 +31,21 @@ def test_collect_deferred_stickers_when_send_sticker_tool_called_then_returns_kn
     ) == ["开心"]
 
 
+def test_collect_deferred_stickers_when_interaction_sticker_tool_called_then_returns_known_names():
+    tool_calls = [
+        ToolCall(
+            id="call-1",
+            function_name="interaction",
+            function_arguments='{"action": "sticker", "names": ["开心"]}',
+        )
+    ]
+
+    assert collect_deferred_stickers_from_tool_calls(
+        tool_calls,
+        available_names=["开心"],
+    ) == ["开心"]
+
+
 @pytest.mark.asyncio
 async def test_napcat_delayed_delivery_sends_text_before_sticker():
     adapter = NapCatAdapter("ws://example.invalid")

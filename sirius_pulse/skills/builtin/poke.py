@@ -27,6 +27,7 @@ SKILL_META = {
     "description": "群聊里适合轻轻提醒、打招呼、撒娇、催一下或回应“戳他/戳我”时使用；要配合文字一起用，别无缘无故单独戳。",
     "version": "1.0.0",
     "tags": ["napcat", "qq", "messaging"],
+    "model_visible": False,
     "adapter_types": ["napcat"],
     "parameters": _config.build(),
 }

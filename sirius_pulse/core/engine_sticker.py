@@ -60,7 +60,7 @@ class EngineSticker:
         """扫描 stickers 文件夹，获取可用表情包名称列表。
 
         支持 `__` 分隔符命名：`喜欢__可爱.jpg`、`喜欢__生气.jpg`
-        都属于"喜欢"表情包，AI 调用 send_sticker(names=["喜欢"]) 时从中随机选一张。
+        都属于"喜欢"表情包，AI 调用 interaction(action="sticker", names=["喜欢"]) 时从中随机选一张。
         """
         engine = self._engine
         stickers_dir = Path(engine.work_path) / "stickers"

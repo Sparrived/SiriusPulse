@@ -22,7 +22,7 @@ def _past(seconds: float) -> str:
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_only_send_sticker_tool_then_retries_text_without_sticker_tool():
+async def test_delayed_queue_when_only_interaction_sticker_tool_then_retries_text_without_sticker_tool():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
         "group-1",
@@ -34,8 +34,8 @@ async def test_delayed_queue_when_only_send_sticker_tool_then_retries_text_witho
 
     tool_call = ToolCall(
         id="call-sticker",
-        function_name="send_sticker",
-        function_arguments='{"names": ["happy"]}',
+        function_name="interaction",
+        function_arguments='{"action": "sticker", "names": ["happy"]}',
     )
     chat_results = [
         SimpleNamespace(
@@ -53,7 +53,7 @@ async def test_delayed_queue_when_only_send_sticker_tool_then_retries_text_witho
             sticker_names=[],
         ),
     ]
-    skill = SimpleNamespace(name="send_sticker", silent=True, developer_only=False)
+    skill = SimpleNamespace(name="interaction", silent=False, developer_only=False)
     profile = SimpleNamespace(name="Alice", is_developer=False)
     execute_skill = AsyncMock(return_value=SkillResult(success=True, data={"sent": True}))
     brain_chat = AsyncMock(side_effect=chat_results)
@@ -107,6 +107,6 @@ async def test_delayed_queue_when_only_send_sticker_tool_then_retries_text_witho
     execute_skill.assert_not_awaited()
     assert brain_chat.await_count == 2
     assert brain_chat.await_args_list[0].args[0].disabled_skill_names == set()
-    assert brain_chat.await_args_list[1].args[0].disabled_skill_names == {"send_sticker"}
+    assert brain_chat.await_args_list[1].args[0].disabled_skill_names == {"interaction"}
     assert results[0]["reply"] == "text after sticker"
     assert results[0]["sticker_names"] == ["happy"]

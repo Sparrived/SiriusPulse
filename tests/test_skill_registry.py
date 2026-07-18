@@ -160,7 +160,7 @@ def test_skill_registry_when_skill_requires_admin_then_visible_only_for_admin_gr
     assert [tool["function"]["name"] for tool in tools] == ["mute_member"]
 
 
-def test_skill_registry_when_builtin_skills_load_then_chat_with_developer_is_napcat_tool(
+def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are_visible(
     tmp_path: Path,
 ):
     registry = SkillRegistry()
@@ -171,10 +171,20 @@ def test_skill_registry_when_builtin_skills_load_then_chat_with_developer_is_nap
         include_builtin=True,
     )
     skill = registry.get("chat_with_developer")
+    interaction = registry.get("interaction")
+    group_management = registry.get("group_management")
     tools = registry.build_tools_list(adapter_type="napcat")
+    admin_tools = registry.build_tools_list(
+        adapter_type="napcat", chat_type="group", admin_allowed=True
+    )
 
     assert skill is not None
     assert skill.silent is True
     assert skill.adapter_types == ["napcat"]
     assert "私聊" in skill.description
-    assert any(tool["function"]["name"] == "chat_with_developer" for tool in tools)
+    assert interaction is not None
+    assert group_management is not None
+    assert [tool["function"]["name"] for tool in tools].count("interaction") == 1
+    assert not any(tool["function"]["name"] == "send_sticker" for tool in tools)
+    assert any(tool["function"]["name"] == "group_management" for tool in admin_tools)
+    assert not any(tool["function"]["name"] == "kick_member" for tool in admin_tools)

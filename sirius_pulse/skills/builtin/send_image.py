@@ -25,6 +25,7 @@ SKILL_META = {
     ),
     "version": "1.0.0",
     "tags": ["napcat", "image", "messaging"],
+    "model_visible": False,
     "silent": True,
     "adapter_types": ["napcat"],
     "dependencies": [],

@@ -55,12 +55,15 @@ def collect_deferred_stickers_from_tool_calls(
 ) -> list[str]:
     names: list[str] = []
     for tool_call in tool_calls or []:
-        if getattr(tool_call, "function_name", "") != "send_sticker":
+        function_name = getattr(tool_call, "function_name", "")
+        if function_name not in {"send_sticker", "interaction"}:
             continue
         try:
             params = json.loads(getattr(tool_call, "function_arguments", "") or "{}")
         except Exception:
             params = {}
+        if function_name == "interaction" and str(params.get("action", "")).strip().lower() != "sticker":
+            continue
         selected, _tool_content = defer_send_sticker_tool(
             params,
             available_names=available_names,

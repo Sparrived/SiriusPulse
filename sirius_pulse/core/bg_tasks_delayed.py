@@ -40,6 +40,23 @@ _AUTONOMOUS_MESSAGE_SKILLS = {
     "send_sticker",
 }
 
+
+def _interaction_action(tool_call: ToolCall) -> str:
+    """Return the effective action for a legacy or unified interaction call."""
+    if tool_call.function_name == "send_sticker":
+        return "sticker"
+    if tool_call.function_name != "interaction":
+        return ""
+    try:
+        params = json.loads(tool_call.function_arguments or "{}")
+    except json.JSONDecodeError:
+        return ""
+    return str(params.get("action", "")).strip().lower()
+
+
+def _is_sticker_tool_call(tool_call: ToolCall) -> bool:
+    return _interaction_action(tool_call) == "sticker"
+
 # ── 内置流程控制工具定义 ──────────────────────────────────────────────
 
 STOP_TOOL_DEF: dict[str, Any] = {
@@ -875,12 +892,19 @@ class DelayedQueueTasks:
                 )
                 continue
 
-            all_silent = bool(regular_tools) and all(
-                engine._skill_registry is not None
-                and engine._skill_registry.get(tc.function_name) is not None
-                and engine._skill_registry.get(tc.function_name).silent
-                for tc in regular_tools
-            )
+            def _tool_is_silent(tool_call: ToolCall) -> bool:
+                skill = (
+                    engine._skill_registry.get(tool_call.function_name)
+                    if engine._skill_registry is not None
+                    else None
+                )
+                if skill is None:
+                    return False
+                if tool_call.function_name == "interaction":
+                    return _interaction_action(tool_call) in {"image", "sticker"}
+                return skill.silent
+
+            all_silent = bool(regular_tools) and all(_tool_is_silent(tc) for tc in regular_tools)
 
             non_skill_text = round_clean
             last_round_had_partial = False
@@ -959,7 +983,7 @@ class DelayedQueueTasks:
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
 
-                    if skill_name == "send_sticker":
+                    if _is_sticker_tool_call(tc):
                         names, tool_content = defer_send_sticker_tool(
                             params,
                             available_names=getattr(engine, "_sticker_names", []) or [],
@@ -974,7 +998,7 @@ class DelayedQueueTasks:
                     if (
                         caller_engagement < 0.1
                         and not caller_is_developer
-                        and not self._is_autonomous_message_skill(skill)
+                        and not self._is_autonomous_message_skill(skill, params)
                     ):
                         err_msg = f"Skill '{skill_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
                         logger.warning(err_msg)
@@ -1074,7 +1098,7 @@ class DelayedQueueTasks:
 
             # sticker-only 兜底：给模型一次纯文字重试机会
             if all_silent:
-                only_sticker_calls = all(tc.function_name == "send_sticker" for tc in regular_tools)
+                only_sticker_calls = all(_is_sticker_tool_call(tc) for tc in regular_tools)
                 if only_sticker_calls and not non_skill_text and not sticker_text_retry_used:
                     sticker_text_retry_used = True
                     pending_chat_result = await engine.brain.chat(
@@ -1083,12 +1107,12 @@ class DelayedQueueTasks:
                             user_id=item.user_id or "",
                             system_prompt=(
                                 system_prompt + "\n\nYou already selected a sticker for this turn. "
-                                "Now write the text reply only. Do not call send_sticker again."
+                                "Now write the text reply only. Do not call the sticker interaction again."
                             ),
                             messages=messages,
                             task_name="response_generate",
                             enable_skills=True,
-                            disabled_skill_names={"send_sticker"},
+                            disabled_skill_names={tc.function_name for tc in regular_tools},
                             caller_is_developer=caller_is_developer,
                             post_process=True,
                             extra_tools=_extra_tools,
@@ -1322,10 +1346,15 @@ class DelayedQueueTasks:
             logger.warning("Failed to inject group_id into reminder: %s", exc)
 
     @staticmethod
-    def _is_autonomous_message_skill(skill: Any) -> bool:
+    def _is_autonomous_message_skill(skill: Any, params: dict[str, Any] | None = None) -> bool:
         """Return True for package built-ins that replace legacy prompt tags."""
-        if getattr(skill, "name", "") not in _AUTONOMOUS_MESSAGE_SKILLS:
-            return False
+        skill_name = getattr(skill, "name", "")
+        if skill_name == "interaction":
+            if str((params or {}).get("action", "")).strip().lower() != "sticker":
+                return False
+        if skill_name not in _AUTONOMOUS_MESSAGE_SKILLS:
+            if skill_name != "interaction":
+                return False
         source_path = getattr(skill, "source_path", None)
         if source_path is None:
             return False
