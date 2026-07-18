@@ -168,8 +168,21 @@ class MemoryUnitGenerator:
         try:
             result = json.loads(text)
         except (json.JSONDecodeError, ValueError):
-            logger.warning("Memory unit response is not valid JSON")
-            return None
+            decoder = json.JSONDecoder()
+            for marker in ("{", "["):
+                start = text.find(marker)
+                if start < 0:
+                    continue
+                try:
+                    result, _ = decoder.raw_decode(text[start:])
+                    break
+                except json.JSONDecodeError:
+                    continue
+            else:
+                logger.warning("Memory unit response is not valid JSON")
+                return None
+        if isinstance(result, list):
+            result = {"units": result}
         return result if isinstance(result, dict) else None
 
     @staticmethod

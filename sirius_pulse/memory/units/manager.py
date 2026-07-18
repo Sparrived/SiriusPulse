@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -43,6 +44,7 @@ class MemoryUnitManager:
         self._mutation_lock = asyncio.Lock()
         self._checkpointed_sources: dict[str, set[str]] = {}
         self._loaded_groups: set[str] = set()
+        self._generation_backoff: dict[str, tuple[tuple[str, ...], float]] = {}
 
     async def generate_from_candidates(
         self,
@@ -54,7 +56,10 @@ class MemoryUnitManager:
         brain: Any,
         model_name: str,
         min_candidate_count: int = 8,
+        max_candidate_count: int = 32,
+        failure_backoff_seconds: float = 3600.0,
     ) -> MemoryUnitGenerationResult | None:
+        candidates = list(candidates[: max(1, int(max_candidate_count))])
         if len(candidates) < min_candidate_count:
             logger.debug(
                 "Group %s has not enough memory checkpoint candidates (%d < %d)",
@@ -62,6 +67,12 @@ class MemoryUnitManager:
                 len(candidates),
                 min_candidate_count,
             )
+            return None
+
+        candidate_key = tuple(entry.entry_id for entry in candidates)
+        blocked = self._generation_backoff.get(group_id)
+        if blocked and blocked[0] == candidate_key and time.monotonic() < blocked[1]:
+            logger.debug("Skipping memory checkpoint retry for group %s", group_id)
             return None
 
         result = await self._generator.generate(
@@ -73,6 +84,10 @@ class MemoryUnitManager:
             model_name=model_name,
         )
         if result is None or not result.units:
+            self._generation_backoff[group_id] = (
+                candidate_key,
+                time.monotonic() + max(0.0, float(failure_backoff_seconds)),
+            )
             return None
 
         canonical_results = await self.reconcile_units(
@@ -81,6 +96,7 @@ class MemoryUnitManager:
             brain=brain,
             model_name=model_name,
         )
+        self._generation_backoff.pop(group_id, None)
         return MemoryUnitGenerationResult(units=canonical_results)
 
     async def reconcile_units(

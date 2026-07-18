@@ -15,8 +15,10 @@ from sirius_pulse.memory.units import (
 class _FakeBrain:
     def __init__(self, dedupe_response=None):
         self.dedupe_response = dedupe_response
+        self.requests = []
 
     async def raw_call(self, request):
+        self.requests.append(request)
         if request.purpose == "memory_unit_deduplicate":
             return json.dumps(self.dedupe_response or {"decision": "NEW"})
         assert request.purpose == "memory_unit_extract"
@@ -212,3 +214,57 @@ def test_generation_keeps_identical_summaries_in_separate_group_files(tmp_path):
 
     assert [unit.unit_id for unit in manager.get_units_for_group("group_a")] == ["mem-a"]
     assert len(manager.get_units_for_group("group_b")) == 1
+
+
+def test_generation_caps_a_single_checkpoint_batch(tmp_path):
+    manager = MemoryUnitManager(tmp_path)
+    basic = BasicMemoryManager()
+    candidates = [
+        basic.add_entry("group_a", "alice", "human", f"message {index}")
+        for index in range(40)
+    ]
+    brain = _FakeBrain()
+
+    asyncio.run(
+        manager.generate_from_candidates(
+            group_id="group_a",
+            candidates=candidates,
+            persona_name="Sirius",
+            persona_description="",
+            brain=brain,
+            model_name="memory-model",
+            min_candidate_count=1,
+        )
+    )
+
+    request = next(item for item in brain.requests if item.purpose == "memory_unit_extract")
+    content = request.messages[0]["content"]
+    assert "source_id=" + candidates[0].entry_id in content
+    assert "source_id=" + candidates[31].entry_id in content
+    assert "source_id=" + candidates[32].entry_id not in content
+
+
+def test_failed_checkpoint_batch_enters_backoff(tmp_path):
+    class _InvalidBrain(_FakeBrain):
+        async def raw_call(self, request):
+            self.requests.append(request)
+            return "not json"
+
+    manager = MemoryUnitManager(tmp_path)
+    entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "message")
+    brain = _InvalidBrain()
+
+    for _ in range(2):
+        assert asyncio.run(
+            manager.generate_from_candidates(
+                group_id="group_a",
+                candidates=[entry],
+                persona_name="Sirius",
+                persona_description="",
+                brain=brain,
+                model_name="memory-model",
+                min_candidate_count=1,
+            )
+        ) is None
+
+    assert len(brain.requests) == 2
