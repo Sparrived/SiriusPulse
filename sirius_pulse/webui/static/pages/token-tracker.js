@@ -18,6 +18,8 @@ const TASK_LABELS = {
   response_generate: '主模型调用',
   cognition_analyze: '认知分析',
   diary_generate: '日记生成',
+  memory_unit_extract: '记忆提取',
+  memory_unit_deduplicate: '记忆去重',
 };
 
 let data = null;
@@ -140,6 +142,9 @@ async function loadData(silent = false) {
 
 function renderStats() {
   const s = data.summary || {};
+  const cache = data.cache_stats || {};
+  const cacheObserved = (cache.cache_info_calls || 0) > 0;
+  const cacheRate = cacheObserved ? `${cache.cache_hit_rate_pct || 0}%` : '未记录';
   const el = $('tokenStats');
   if (!el) return;
   el.innerHTML = `
@@ -158,6 +163,19 @@ function renderStats() {
     <div class="stat-card">
       <div class="stat-label">总 Tokens</div>
       <div class="stat-value">${(s.total_tokens || 0).toLocaleString()}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">缓存命中 Prompt</div>
+      <div class="stat-value">${(cache.cached_prompt_tokens || 0).toLocaleString()}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">未缓存 Prompt</div>
+      <div class="stat-value">${(cache.uncached_prompt_tokens || 0).toLocaleString()}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">缓存命中率</div>
+      <div class="stat-value">${cacheRate}</div>
+      <div class="stat-label">数据覆盖 ${(cache.cache_info_coverage_pct || 0)}%</div>
     </div>
   `;
 }
@@ -202,14 +220,22 @@ function renderOverviewTab(panels) {
   const hourly = data.hourly || [];
   if (hourly.length) {
     const labels = hourly.map(h => formatHourLabel(h.hour_ts));
+    const hasCache = hourly.some(h => (h.cached_prompt_tokens || 0) + (h.uncached_prompt_tokens || 0) > 0);
+    const series = [
+      { name: 'Prompt Tokens', data: hourly.map(h => h.prompt_tokens) },
+      { name: 'Completion Tokens', data: hourly.map(h => h.completion_tokens) },
+    ];
+    if (hasCache) {
+      series.push(
+        { name: '缓存命中 Prompt', data: hourly.map(h => h.cached_prompt_tokens || 0) },
+        { name: '未缓存 Prompt', data: hourly.map(h => h.uncached_prompt_tokens || 0) },
+      );
+    }
     renderLineChart(panels.querySelector('[data-chart="ts"]'), {
       labels,
       dualAxis: true,
-      colors: ['#4c9aff', '#36d399'],
-      series: [
-        { name: 'Prompt Tokens', data: hourly.map(h => h.prompt_tokens) },
-        { name: 'Completion Tokens', data: hourly.map(h => h.completion_tokens) },
-      ],
+      colors: hasCache ? ['#4c9aff', '#36d399', '#f59e0b', '#ef6c6c'] : ['#4c9aff', '#36d399'],
+      series,
     });
   }
 
@@ -311,12 +337,13 @@ function renderDimensionChart(panels, key, items, translateTask = false) {
     if (translateTask) return TASK_LABELS[i.name] || i.name;
     return i.name || '未分类';
   });
+  const series = [
+    { name: 'Prompt', values: items.map(i => i.prompt_tokens) },
+    { name: 'Completion', values: items.map(i => i.completion_tokens) },
+  ];
   renderBarChart(el, {
     labels,
-    data: [
-      { name: 'Prompt', values: items.map(i => i.prompt_tokens) },
-      { name: 'Completion', values: items.map(i => i.completion_tokens) },
-    ],
+    data: series,
     stacked: true,
     colors: ['#4c9aff', '#36d399'],
     horizontal: true,
@@ -358,6 +385,8 @@ function renderDetailTable() {
           <th>模型</th>
           <th>Prompt</th>
           <th>Completion</th>
+          <th>缓存命中</th>
+          <th>未缓存</th>
           <th>Top-3 模块</th>
         </tr>
       </thead>
@@ -365,6 +394,7 @@ function renderDetailTable() {
         ${page.map(r => {
           const ts = r.timestamp ? new Date(r.timestamp * 1000).toLocaleString('zh-CN') : '—';
           const task = TASK_LABELS[r.task_name] || r.task_name || '—';
+          const cacheAvailable = Boolean(r.cache_info_available);
           const bd = r.breakdown || {};
           const top3 = Object.entries(bd)
             .sort((a, b) => b[1] - a[1])
@@ -378,6 +408,8 @@ function renderDetailTable() {
               <td>${r.model || '—'}</td>
               <td>${(r.prompt_tokens || 0).toLocaleString()}</td>
               <td>${(r.completion_tokens || 0).toLocaleString()}</td>
+              <td>${cacheAvailable ? (r.cached_prompt_tokens || 0).toLocaleString() : '—'}</td>
+              <td>${cacheAvailable ? (r.uncached_prompt_tokens || 0).toLocaleString() : '—'}</td>
               <td style="font-size:12px;color:var(--text-2)">${top3 || '—'}</td>
             </tr>
           `;

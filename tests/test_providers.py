@@ -10,6 +10,7 @@ from sirius_pulse.providers.base import (
     ToolCall,
     build_chat_completion_payload,
     build_generation_debug_context,
+    extract_prompt_cache_usage,
     get_last_generation_usage,
     prepare_openai_compatible_messages,
     resolve_generation_timeout_seconds,
@@ -35,6 +36,26 @@ def test_generation_usage_when_read_then_clears_thread_local_value():
 
     assert get_last_generation_usage() == {"prompt_tokens": 3}
     assert get_last_generation_usage() is None
+
+
+def test_prompt_cache_usage_when_provider_shapes_vary_then_normalizes_hit_and_miss():
+    assert extract_prompt_cache_usage(
+        {
+            "prompt_tokens": 100,
+            "prompt_cache_hit_tokens": 70,
+            "prompt_cache_miss_tokens": 30,
+        },
+        prompt_tokens=100,
+    ) == {
+        "cache_info_available": True,
+        "cached_prompt_tokens": 70,
+        "uncached_prompt_tokens": 30,
+        "cache_creation_prompt_tokens": 0,
+    }
+    assert extract_prompt_cache_usage(
+        {"prompt_tokens_details": {"cached_tokens": 12}},
+        prompt_tokens=20,
+    )["uncached_prompt_tokens"] == 8
 
 
 def test_chat_payload_when_provider_disables_thinking_then_includes_provider_defaults():

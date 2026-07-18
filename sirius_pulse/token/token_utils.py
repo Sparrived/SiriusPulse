@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _META_KEY_PREFIX = "token_"
 
 _CREATE_TABLE = """\
@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS token_usage (
     duration_ms     REAL    NOT NULL DEFAULT 0,
     error_type      TEXT    NOT NULL DEFAULT '',
     error_message   TEXT    NOT NULL DEFAULT '',
-    conversation_depth INTEGER NOT NULL DEFAULT 0
+    conversation_depth INTEGER NOT NULL DEFAULT 0,
+    cached_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    uncached_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_info_available INTEGER NOT NULL DEFAULT 0
 );
 """
 

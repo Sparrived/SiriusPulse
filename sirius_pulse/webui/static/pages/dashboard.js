@@ -868,6 +868,12 @@ async function loadStats() {
     if ($('dsRunning')) animateNumber($('dsRunning'), running);
     if ($('dsCalls')) animateNumber($('dsCalls'), s.total_calls || 0);
     if ($('dsTokens')) animateNumber($('dsTokens'), s.total_tokens || 0);
+    const cache = tokenRes.cache_stats || {};
+    if ($('dsCache')) {
+      $('dsCache').textContent = cache.cache_info_calls
+        ? `${cache.cache_hit_rate_pct || 0}%`
+        : '—';
+    }
     if ($('dsAvgTokens')) animateNumber($('dsAvgTokens'), avg.avg_total_tokens || 0);
     if ($('dsSkillCalls')) animateNumber($('dsSkillCalls'), totalSkillCalls);
 

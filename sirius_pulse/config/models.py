@@ -363,6 +363,10 @@ class TokenUsageRecord(JsonSerializable):
     error_type: str = ""
     error_message: str = ""
     conversation_depth: int = 0
+    cached_prompt_tokens: int = 0
+    uncached_prompt_tokens: int = 0
+    cache_creation_prompt_tokens: int = 0
+    cache_info_available: bool = False
 
 
 @dataclass(slots=True)

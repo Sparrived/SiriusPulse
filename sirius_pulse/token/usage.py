@@ -12,6 +12,10 @@ class TokenUsageBucketDict(TypedDict):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache_info_calls: int
+    cached_prompt_tokens: int
+    uncached_prompt_tokens: int
+    cache_creation_prompt_tokens: int
 
 
 class TokenUsageBaselineDict(TypedDict):
@@ -24,6 +28,12 @@ class TokenUsageBaselineDict(TypedDict):
     avg_completion_tokens_per_call: float
     completion_to_prompt_ratio: float
     retry_rate: float
+    cache_info_calls: int
+    cached_prompt_tokens: int
+    uncached_prompt_tokens: int
+    cache_creation_prompt_tokens: int
+    cache_info_coverage: float
+    cache_hit_rate: float
 
 
 class TokenUsageSummary(TypedDict):
@@ -39,12 +49,21 @@ class TokenUsageBucket:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache_info_calls: int = 0
+    cached_prompt_tokens: int = 0
+    uncached_prompt_tokens: int = 0
+    cache_creation_prompt_tokens: int = 0
 
     def add(self, record: TokenUsageRecord) -> None:
         self.calls += 1
         self.prompt_tokens += record.prompt_tokens
         self.completion_tokens += record.completion_tokens
         self.total_tokens += record.total_tokens
+        if record.cache_info_available:
+            self.cache_info_calls += 1
+            self.cached_prompt_tokens += record.cached_prompt_tokens
+            self.uncached_prompt_tokens += record.uncached_prompt_tokens
+            self.cache_creation_prompt_tokens += record.cache_creation_prompt_tokens
 
     def to_dict(self) -> TokenUsageBucketDict:
         return {
@@ -52,6 +71,10 @@ class TokenUsageBucket:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
+            "cache_info_calls": self.cache_info_calls,
+            "cached_prompt_tokens": self.cached_prompt_tokens,
+            "uncached_prompt_tokens": self.uncached_prompt_tokens,
+            "cache_creation_prompt_tokens": self.cache_creation_prompt_tokens,
         }
 
 
@@ -66,6 +89,12 @@ class TokenUsageBaseline:
     avg_completion_tokens_per_call: float
     completion_to_prompt_ratio: float
     retry_rate: float
+    cache_info_calls: int
+    cached_prompt_tokens: int
+    uncached_prompt_tokens: int
+    cache_creation_prompt_tokens: int
+    cache_info_coverage: float
+    cache_hit_rate: float
 
     def to_dict(self) -> TokenUsageBaselineDict:
         return {
@@ -78,6 +107,12 @@ class TokenUsageBaseline:
             "avg_completion_tokens_per_call": self.avg_completion_tokens_per_call,
             "completion_to_prompt_ratio": self.completion_to_prompt_ratio,
             "retry_rate": self.retry_rate,
+            "cache_info_calls": self.cache_info_calls,
+            "cached_prompt_tokens": self.cached_prompt_tokens,
+            "uncached_prompt_tokens": self.uncached_prompt_tokens,
+            "cache_creation_prompt_tokens": self.cache_creation_prompt_tokens,
+            "cache_info_coverage": self.cache_info_coverage,
+            "cache_hit_rate": self.cache_hit_rate,
         }
 
 
@@ -92,6 +127,12 @@ def _empty_baseline() -> TokenUsageBaseline:
         avg_completion_tokens_per_call=0.0,
         completion_to_prompt_ratio=0.0,
         retry_rate=0.0,
+        cache_info_calls=0,
+        cached_prompt_tokens=0,
+        uncached_prompt_tokens=0,
+        cache_creation_prompt_tokens=0,
+        cache_info_coverage=0.0,
+        cache_hit_rate=0.0,
     )
 
 
@@ -104,6 +145,17 @@ def build_token_usage_baseline(records: list[TokenUsageRecord]) -> TokenUsageBas
     total_completion_tokens = sum(item.completion_tokens for item in records)
     total_tokens = sum(item.total_tokens for item in records)
     retried_calls = sum(1 for item in records if item.retries_used > 0)
+    cache_info_calls = sum(1 for item in records if item.cache_info_available)
+    cached_prompt_tokens = sum(
+        item.cached_prompt_tokens for item in records if item.cache_info_available
+    )
+    uncached_prompt_tokens = sum(
+        item.uncached_prompt_tokens for item in records if item.cache_info_available
+    )
+    cache_creation_prompt_tokens = sum(
+        item.cache_creation_prompt_tokens for item in records if item.cache_info_available
+    )
+    observed_prompt_tokens = cached_prompt_tokens + uncached_prompt_tokens
 
     return TokenUsageBaseline(
         total_calls=total_calls,
@@ -117,6 +169,14 @@ def build_token_usage_baseline(records: list[TokenUsageRecord]) -> TokenUsageBas
             (total_completion_tokens / total_prompt_tokens) if total_prompt_tokens else 0.0
         ),
         retry_rate=retried_calls / total_calls,
+        cache_info_calls=cache_info_calls,
+        cached_prompt_tokens=cached_prompt_tokens,
+        uncached_prompt_tokens=uncached_prompt_tokens,
+        cache_creation_prompt_tokens=cache_creation_prompt_tokens,
+        cache_info_coverage=cache_info_calls / total_calls,
+        cache_hit_rate=(cached_prompt_tokens / observed_prompt_tokens)
+        if observed_prompt_tokens
+        else 0.0,
     )
 
 

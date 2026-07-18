@@ -30,6 +30,132 @@ def get_last_generation_usage() -> dict[str, Any] | None:
     return usage
 
 
+def _usage_int(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_prompt_cache_usage(
+    usage: dict[str, Any] | None,
+    *,
+    prompt_tokens: int = 0,
+) -> dict[str, int | bool]:
+    """Normalize prompt-cache counters from common provider usage shapes.
+
+    OpenAI-compatible APIs usually nest ``cached_tokens`` below
+    ``prompt_tokens_details``; DeepSeek exposes hit/miss counters at the
+    top level.  Unknown providers remain valid and simply report the cache
+    counters as unavailable.
+    """
+    if not isinstance(usage, dict):
+        return {
+            "cache_info_available": False,
+            "cached_prompt_tokens": 0,
+            "uncached_prompt_tokens": 0,
+            "cache_creation_prompt_tokens": 0,
+        }
+
+    nested_sources = [
+        value for key in ("prompt_tokens_details", "input_tokens_details")
+        if isinstance((value := usage.get(key)), dict)
+    ]
+
+    def read(keys: tuple[str, ...]) -> tuple[int | None, bool]:
+        for source in (usage, *nested_sources):
+            for key in keys:
+                if key in source:
+                    value = _usage_int(source.get(key))
+                    if value is not None:
+                        return value, True
+        return None, False
+
+    cached, cached_present = read(
+        (
+            "prompt_cache_hit_tokens",
+            "cached_prompt_tokens",
+            "cache_read_input_tokens",
+            "cache_read_tokens",
+            "cached_tokens",
+        )
+    )
+    uncached, uncached_present = read(
+        (
+            "prompt_cache_miss_tokens",
+            "cache_miss_input_tokens",
+            "cache_miss_tokens",
+            "uncached_prompt_tokens",
+        )
+    )
+    cache_creation, creation_present = read(
+        (
+            "prompt_cache_creation_tokens",
+            "cache_creation_input_tokens",
+            "cache_write_input_tokens",
+            "cache_write_tokens",
+        )
+    )
+
+    cache_available = cached_present or uncached_present or creation_present
+    cached = cached or 0
+    cache_creation = cache_creation or 0
+    if uncached is None and cache_available:
+        uncached = max(0, prompt_tokens - cached)
+
+    return {
+        "cache_info_available": cache_available,
+        "cached_prompt_tokens": cached,
+        "uncached_prompt_tokens": uncached or 0,
+        "cache_creation_prompt_tokens": cache_creation,
+    }
+
+
+def normalize_generation_usage(
+    usage: dict[str, Any] | None,
+    *,
+    estimated_prompt_tokens: int,
+    estimated_completion_tokens: int,
+) -> dict[str, int | bool | str]:
+    """Return provider token counts plus normalized prompt-cache counters."""
+    if not isinstance(usage, dict):
+        prompt_tokens = estimated_prompt_tokens
+        completion_tokens = estimated_completion_tokens
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "estimation_method": "tiktoken" if estimated_completion_tokens > 0 else "char_div4",
+            **extract_prompt_cache_usage(None),
+        }
+
+    prompt_tokens = _usage_int(usage.get("prompt_tokens"))
+    if prompt_tokens is None:
+        prompt_tokens = _usage_int(usage.get("input_tokens"))
+    prompt_tokens = prompt_tokens if prompt_tokens is not None else estimated_prompt_tokens
+
+    completion_tokens = _usage_int(usage.get("completion_tokens"))
+    if completion_tokens is None:
+        completion_tokens = _usage_int(usage.get("output_tokens"))
+    completion_tokens = (
+        completion_tokens if completion_tokens is not None else estimated_completion_tokens
+    )
+
+    total_tokens = _usage_int(usage.get("total_tokens"))
+    if total_tokens is None:
+        total_tokens = prompt_tokens + completion_tokens
+
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "estimation_method": "provider_real",
+        **extract_prompt_cache_usage(usage, prompt_tokens=prompt_tokens),
+    }
+
+
 @dataclass(slots=True)
 class ToolCall:
     """表示一个 function_call 工具调用。"""

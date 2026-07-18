@@ -366,7 +366,7 @@ class Brain:
         )
 
         t0 = time.perf_counter()
-        raw, _, _ = await self._call_with_retry(
+        raw, _, real_usage = await self._call_with_retry(
             gen_request,
             retry_max=request.retry_max,
             retry_delay=request.retry_delay,
@@ -375,7 +375,7 @@ class Brain:
         duration_ms = round((time.perf_counter() - t0) * 1000, 2)
 
         raw_text = raw.content or ""
-        self._record_raw_tokens(gen_request, raw_text, duration_ms)
+        self._record_raw_tokens(gen_request, raw_text, duration_ms, real_usage=real_usage)
 
         return raw_text
 
@@ -773,14 +773,24 @@ class Brain:
         gen_request: Any,
         raw_output: str,
         duration_ms: float,
+        *,
+        real_usage: dict | None = None,
     ) -> None:
         """记录 raw_call() 通道的基础 token 用量。"""
         from sirius_pulse.config import TokenUsageRecord
-        from sirius_pulse.providers.base import estimate_generation_request_input_tokens
+        from sirius_pulse.providers.base import (
+            estimate_generation_request_input_tokens,
+            normalize_generation_usage,
+        )
         from sirius_pulse.token.utils import estimate_tokens
 
         estimated_input_tokens = estimate_generation_request_input_tokens(gen_request)
         estimated_output_tokens = estimate_tokens(raw_output) if raw_output else 0
+        usage = normalize_generation_usage(
+            real_usage,
+            estimated_prompt_tokens=estimated_input_tokens,
+            estimated_completion_tokens=estimated_output_tokens,
+        )
 
         persona_name = self.persona.name if self.persona else ""
         provider_name = getattr(
@@ -810,13 +820,13 @@ class Brain:
             actor_id="assistant",
             task_name=gen_request.purpose,
             model=gen_request.model,
-            prompt_tokens=estimated_input_tokens,
-            completion_tokens=estimated_output_tokens,
-            total_tokens=estimated_input_tokens + estimated_output_tokens,
+            prompt_tokens=int(usage["prompt_tokens"]),
+            completion_tokens=int(usage["completion_tokens"]),
+            total_tokens=int(usage["total_tokens"]),
             input_chars=sum(len(str(m.get("content", ""))) for m in (gen_request.messages or []))
             + len(gen_request.system_prompt),
             output_chars=len(raw_output),
-            estimation_method="tiktoken" if estimated_output_tokens > 0 else "char_div4",
+            estimation_method=str(usage["estimation_method"]),
             retries_used=0,
             persona_name=persona_name,
             group_id="",
@@ -824,6 +834,10 @@ class Brain:
             breakdown_json=breakdown_json,
             duration_ms=duration_ms,
             conversation_depth=0,
+            cached_prompt_tokens=int(usage["cached_prompt_tokens"]),
+            uncached_prompt_tokens=int(usage["uncached_prompt_tokens"]),
+            cache_creation_prompt_tokens=int(usage["cache_creation_prompt_tokens"]),
+            cache_info_available=bool(usage["cache_info_available"]),
         )
         self.token_usage_records.append(record)
         if self.token_store is not None:
@@ -848,20 +862,16 @@ class Brain:
     ) -> Any:
         """记录 chat() 通道的完整 token 用量。"""
         from sirius_pulse.config import TokenUsageRecord
+        from sirius_pulse.providers.base import normalize_generation_usage
         from sirius_pulse.token.utils import estimate_tokens
 
         output_chars = len(reply)
         estimated_output_tokens = estimate_tokens(reply) if reply else 0
-        if real_usage and isinstance(real_usage, dict):
-            prompt_tokens = int(real_usage.get("prompt_tokens", estimated_input_tokens))
-            completion_tokens = int(real_usage.get("completion_tokens", estimated_output_tokens))
-            total_tokens = int(real_usage.get("total_tokens", prompt_tokens + completion_tokens))
-            estimation_method = "provider_real"
-        else:
-            prompt_tokens = estimated_input_tokens
-            completion_tokens = estimated_output_tokens
-            total_tokens = estimated_input_tokens + estimated_output_tokens
-            estimation_method = "tiktoken" if estimated_output_tokens > 0 else "char_div4"
+        usage = normalize_generation_usage(
+            real_usage,
+            estimated_prompt_tokens=estimated_input_tokens,
+            estimated_completion_tokens=estimated_output_tokens,
+        )
 
         persona_name = self.persona.name if self.persona else ""
         provider_name = getattr(
@@ -877,13 +887,13 @@ class Brain:
             actor_id="assistant",
             task_name=task_name,
             model=gen_request.model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
+            prompt_tokens=int(usage["prompt_tokens"]),
+            completion_tokens=int(usage["completion_tokens"]),
+            total_tokens=int(usage["total_tokens"]),
             input_chars=len(system_prompt_used)
             + sum(len(str(m.get("content", ""))) for m in (gen_request.messages or [])),
             output_chars=output_chars,
-            estimation_method=estimation_method,
+            estimation_method=str(usage["estimation_method"]),
             retries_used=0,
             persona_name=persona_name,
             group_id=group_id,
@@ -891,6 +901,10 @@ class Brain:
             breakdown_json="",
             duration_ms=duration_ms,
             conversation_depth=conversation_depth,
+            cached_prompt_tokens=int(usage["cached_prompt_tokens"]),
+            uncached_prompt_tokens=int(usage["uncached_prompt_tokens"]),
+            cache_creation_prompt_tokens=int(usage["cache_creation_prompt_tokens"]),
+            cache_info_available=bool(usage["cache_info_available"]),
         )
         self.token_usage_records.append(record)
 

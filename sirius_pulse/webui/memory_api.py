@@ -436,6 +436,15 @@ async def api_tokens_get(request: web.Request, data_dir: Path) -> web.Response:
         "total_completion_tokens": 0,
         "total_tokens": 0,
     }
+    cache_stats: dict[str, Any] = {
+        "total_calls": 0,
+        "cache_info_calls": 0,
+        "cache_info_coverage_pct": 0.0,
+        "cached_prompt_tokens": 0,
+        "uncached_prompt_tokens": 0,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate_pct": 0.0,
+    }
 
     if db_path.exists():
         try:
@@ -445,6 +454,7 @@ async def api_tokens_get(request: web.Request, data_dir: Path) -> web.Response:
             total_summary["total_prompt_tokens"] = baseline.get("total_prompt_tokens", 0)
             total_summary["total_completion_tokens"] = baseline.get("total_completion_tokens", 0)
             total_summary["total_tokens"] = baseline.get("total_tokens", 0)
+            cache_stats = store.get_cache_stats()
         except Exception as exc:
             LOG.warning("读取 Token 统计失败: %s", exc)
 
@@ -472,6 +482,7 @@ async def api_tokens_get(request: web.Request, data_dir: Path) -> web.Response:
         {
             "summary": total_summary,
             "response_avg": response_avg,
+            "cache_stats": cache_stats,
         }
     )
 
@@ -535,7 +546,31 @@ async def api_persona_tokens_get(request: web.Request, data_dir: Path) -> web.Re
 
     db_path = paths.dir / "persona.db"
     if not db_path.exists():
-        return _json_response({"total": 0, "daily": [], "models": []})
+        return _json_response(
+            {
+                "summary": {
+                    "total_calls": 0,
+                    "total_prompt_tokens": 0,
+                    "total_completion_tokens": 0,
+                    "total_tokens": 0,
+                },
+                "cache_stats": {
+                    "total_calls": 0,
+                    "cache_info_calls": 0,
+                    "cache_info_coverage_pct": 0.0,
+                    "cached_prompt_tokens": 0,
+                    "uncached_prompt_tokens": 0,
+                    "cache_creation_prompt_tokens": 0,
+                    "cache_hit_rate_pct": 0.0,
+                },
+                "hourly": [],
+                "by_model": [],
+                "by_group": [],
+                "by_provider": [],
+                "by_task": [],
+                "recent_with_breakdown": [],
+            }
+        )
 
     # Parse optional time range from query params
     start_ts: float | None = None
@@ -551,6 +586,7 @@ async def api_persona_tokens_get(request: web.Request, data_dir: Path) -> web.Re
 
     store = TokenUsageStore(str(db_path), read_only=True)
     baseline = token_analytics.compute_baseline(store, start_ts=start_ts, end_ts=end_ts)
+    cache_stats = store.get_cache_stats(start_ts=start_ts, end_ts=end_ts)
     by_model = token_analytics.group_by_model(store, start_ts=start_ts, end_ts=end_ts)
     time_series = token_analytics.time_series(
         store, bucket_seconds=3600, start_ts=start_ts, end_ts=end_ts
@@ -591,6 +627,8 @@ async def api_persona_tokens_get(request: web.Request, data_dir: Path) -> web.Re
                 "prompt_tokens": ts.get("prompt_tokens", 0),
                 "completion_tokens": ts.get("completion_tokens", 0),
                 "total_tokens": ts.get("total_tokens", 0),
+                "cached_prompt_tokens": ts.get("cached_prompt_tokens", 0),
+                "uncached_prompt_tokens": ts.get("uncached_prompt_tokens", 0),
             }
         )
 
@@ -611,6 +649,10 @@ async def api_persona_tokens_get(request: web.Request, data_dir: Path) -> web.Re
             "prompt_tokens": v.get("prompt_tokens", 0),
             "completion_tokens": v.get("completion_tokens", 0),
             "total_tokens": v.get("total_tokens", 0),
+            "cache_info_calls": v.get("cache_info_calls", 0),
+            "cached_prompt_tokens": v.get("cached_prompt_tokens", 0),
+            "uncached_prompt_tokens": v.get("uncached_prompt_tokens", 0),
+            "cache_creation_prompt_tokens": v.get("cache_creation_prompt_tokens", 0),
         }
         for m, v in by_model.items()
     ]
@@ -641,6 +683,7 @@ async def api_persona_tokens_get(request: web.Request, data_dir: Path) -> web.Re
     return _json_response(
         {
             "summary": summary,
+            "cache_stats": cache_stats,
             "response_avg": response_avg,
             "hourly": hourly,
             "hourly_distribution": hourly_distribution_list,

@@ -54,29 +54,73 @@ def _calc_uptime_seconds(status: dict[str, Any] | None) -> float:
         return 0.0
 
 
-def _read_token_usage(persona_dir: Path) -> dict[str, int]:
+def _read_token_usage(persona_dir: Path) -> dict[str, Any]:
     """从 persona.db 读取聚合的 token 使用统计。"""
+    empty_cache_stats = {
+        "total_calls": 0,
+        "cache_info_calls": 0,
+        "cache_info_coverage_pct": 0.0,
+        "cached_prompt_tokens": 0,
+        "uncached_prompt_tokens": 0,
+        "cache_creation_prompt_tokens": 0,
+        "cache_hit_rate_pct": 0.0,
+    }
+    empty = {"total_input": 0, "total_output": 0, "call_count": 0, "cache_stats": empty_cache_stats}
     db_path = persona_dir / "persona.db"
     if not db_path.exists():
-        return {"total_input": 0, "total_output": 0, "call_count": 0}
+        return empty
     try:
         conn = sqlite3.connect(str(db_path), timeout=5)
         conn.execute("PRAGMA journal_mode=WAL;")
-        row = conn.execute("""SELECT
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)")}
+        has_cache_columns = {
+            "cached_prompt_tokens",
+            "uncached_prompt_tokens",
+            "cache_creation_prompt_tokens",
+            "cache_info_available",
+        }.issubset(columns)
+        cache_select = (
+            "SUM(CASE WHEN cache_info_available != 0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN cache_info_available != 0 THEN cached_prompt_tokens ELSE 0 END), "
+            "SUM(CASE WHEN cache_info_available != 0 THEN uncached_prompt_tokens ELSE 0 END), "
+            "SUM(CASE WHEN cache_info_available != 0 THEN cache_creation_prompt_tokens ELSE 0 END)"
+            if has_cache_columns
+            else "0, 0, 0, 0"
+        )
+        row = conn.execute(f"""SELECT
                 COALESCE(SUM(prompt_tokens), 0)  AS total_input,
                 COALESCE(SUM(completion_tokens), 0) AS total_output,
-                COUNT(*) AS call_count
+                COUNT(*) AS call_count,
+                {cache_select}
             FROM token_usage""").fetchone()
         conn.close()
         if row:
+            total_calls = int(row[2])
+            cache_info_calls = int(row[3] or 0)
+            cached = int(row[4] or 0)
+            uncached = int(row[5] or 0)
+            observed = cached + uncached
             return {
                 "total_input": int(row[0]),
                 "total_output": int(row[1]),
-                "call_count": int(row[2]),
+                "call_count": total_calls,
+                "cache_stats": {
+                    "total_calls": total_calls,
+                    "cache_info_calls": cache_info_calls,
+                    "cache_info_coverage_pct": round(cache_info_calls * 100.0 / total_calls, 1)
+                    if total_calls
+                    else 0.0,
+                    "cached_prompt_tokens": cached,
+                    "uncached_prompt_tokens": uncached,
+                    "cache_creation_prompt_tokens": int(row[6] or 0),
+                    "cache_hit_rate_pct": round(cached * 100.0 / observed, 1)
+                    if observed
+                    else 0.0,
+                },
             }
     except Exception:
         LOG.debug("读取 token 使用数据失败: %s", db_path, exc_info=True)
-    return {"total_input": 0, "total_output": 0, "call_count": 0}
+    return empty
 
 
 def _count_diary_entries(persona_dir: Path) -> int:

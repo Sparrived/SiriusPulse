@@ -21,6 +21,10 @@ def _record(
     duration_ms: int = 0,
     error_type: str = "",
     conversation_depth: int = 1,
+    cached_prompt: int = 0,
+    uncached_prompt: int = 0,
+    cache_creation_prompt: int = 0,
+    cache_info_available: bool = False,
 ) -> TokenUsageRecord:
     return TokenUsageRecord(
         actor_id=actor,
@@ -37,6 +41,10 @@ def _record(
         error_type=error_type,
         error_message="failed" if error_type else "",
         conversation_depth=conversation_depth,
+        cached_prompt_tokens=cached_prompt,
+        uncached_prompt_tokens=uncached_prompt,
+        cache_creation_prompt_tokens=cache_creation_prompt,
+        cache_info_available=cache_info_available,
     )
 
 
@@ -44,7 +52,7 @@ def test_token_store_when_created_then_schema_exists_and_count_is_zero(tmp_path)
     store = TokenUsageStore(tmp_path / "token.db")
 
     assert store.count() == 0
-    assert store.get_schema_version("token_schema_version") == 5
+    assert store.get_schema_version("token_schema_version") == 6
 
 
 def test_token_store_when_batch_size_reached_then_flushes_records(tmp_path):
@@ -114,6 +122,35 @@ def test_token_store_when_records_span_tasks_then_summary_and_breakdowns_are_ava
     assert model_breakdown[0]["name"] == "test-model"
     assert retry_stats["total_retries"] == 1
     assert duration_stats["overall"]["avg_ms"] == 80
+
+
+def test_token_store_when_cache_usage_is_recorded_then_stats_and_rows_are_available(tmp_path):
+    store = TokenUsageStore(tmp_path / "token.db")
+    store.add(
+        _record(
+            prompt=100,
+            completion=10,
+            cached_prompt=70,
+            uncached_prompt=30,
+            cache_creation_prompt=5,
+            cache_info_available=True,
+        ),
+        timestamp=1.0,
+    )
+    store.add(_record(prompt=80), timestamp=2.0)
+    store.flush()
+
+    cache_stats = store.get_cache_stats()
+    row = store.get_recent_records_with_breakdown(limit=1)[0]
+
+    assert cache_stats["total_calls"] == 2
+    assert cache_stats["cache_info_calls"] == 1
+    assert cache_stats["cache_info_coverage_pct"] == 50.0
+    assert cache_stats["cached_prompt_tokens"] == 70
+    assert cache_stats["uncached_prompt_tokens"] == 30
+    assert cache_stats["cache_creation_prompt_tokens"] == 5
+    assert cache_stats["cache_hit_rate_pct"] == 70.0
+    assert row["cache_info_available"] == 0
 
 
 def test_token_store_when_failures_and_empty_replies_exist_then_stats_are_reported(tmp_path):

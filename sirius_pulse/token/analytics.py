@@ -24,6 +24,10 @@ class BucketDict(TypedDict):
     input_chars: int
     output_chars: int
     retries: int
+    cache_info_calls: int
+    cached_prompt_tokens: int
+    uncached_prompt_tokens: int
+    cache_creation_prompt_tokens: int
 
 
 class BaselineDict(TypedDict):
@@ -36,6 +40,12 @@ class BaselineDict(TypedDict):
     avg_completion_tokens_per_call: float
     completion_to_prompt_ratio: float
     retry_rate: float
+    cache_info_calls: int
+    cached_prompt_tokens: int
+    uncached_prompt_tokens: int
+    cache_creation_prompt_tokens: int
+    cache_info_coverage: float
+    cache_hit_rate: float
 
 
 class TimeSliceDict(TypedDict):
@@ -44,6 +54,8 @@ class TimeSliceDict(TypedDict):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cached_prompt_tokens: int
+    uncached_prompt_tokens: int
 
 
 class AnalyticsReport(TypedDict):
@@ -58,7 +70,7 @@ class AnalyticsReport(TypedDict):
 # Internal helpers
 # ------------------------------------------------------------------
 
-_AGG_COLS = (
+_BASE_AGG_COLS = (
     "COUNT(*) AS calls, "
     "SUM(prompt_tokens) AS prompt_tokens, "
     "SUM(completion_tokens) AS completion_tokens, "
@@ -67,6 +79,25 @@ _AGG_COLS = (
     "SUM(output_chars) AS output_chars, "
     "SUM(CASE WHEN retries_used > 0 THEN 1 ELSE 0 END) AS retries"
 )
+
+_CACHE_AGG_COLS = (
+    "SUM(CASE WHEN cache_info_available != 0 THEN 1 ELSE 0 END) AS cache_info_calls, "
+    "SUM(CASE WHEN cache_info_available != 0 THEN cached_prompt_tokens ELSE 0 END) "
+    "AS cached_prompt_tokens, "
+    "SUM(CASE WHEN cache_info_available != 0 THEN uncached_prompt_tokens ELSE 0 END) "
+    "AS uncached_prompt_tokens, "
+    "SUM(CASE WHEN cache_info_available != 0 THEN cache_creation_prompt_tokens ELSE 0 END) "
+    "AS cache_creation_prompt_tokens"
+)
+
+
+def _agg_cols(store: TokenUsageStore) -> str:
+    if store.cache_columns_available:
+        return f"{_BASE_AGG_COLS}, {_CACHE_AGG_COLS}"
+    return (
+        f"{_BASE_AGG_COLS}, 0 AS cache_info_calls, 0 AS cached_prompt_tokens, "
+        "0 AS uncached_prompt_tokens, 0 AS cache_creation_prompt_tokens"
+    )
 
 
 def _bucket_from_row(row: dict[str, object]) -> BucketDict:
@@ -78,6 +109,10 @@ def _bucket_from_row(row: dict[str, object]) -> BucketDict:
         input_chars=int(row["input_chars"]),  # type: ignore[call-overload]
         output_chars=int(row["output_chars"]),  # type: ignore[call-overload]
         retries=int(row["retries"]),  # type: ignore[call-overload]
+        cache_info_calls=int(row["cache_info_calls"]),  # type: ignore[call-overload]
+        cached_prompt_tokens=int(row["cached_prompt_tokens"]),  # type: ignore[call-overload]
+        uncached_prompt_tokens=int(row["uncached_prompt_tokens"]),  # type: ignore[call-overload]
+        cache_creation_prompt_tokens=int(row["cache_creation_prompt_tokens"]),  # type: ignore[call-overload]
     )
 
 
@@ -132,7 +167,7 @@ def compute_baseline(
     where, params = _build_where(session_id, actor_id, task_name, model, start_ts, end_ts)
     conn = store.conn
     row = conn.execute(
-        f"SELECT {_AGG_COLS} FROM token_usage{where}",
+        f"SELECT {_agg_cols(store)} FROM token_usage{where}",
         params,
     ).fetchone()
     calls = int(row["calls"]) if row["calls"] else 0
@@ -140,6 +175,15 @@ def compute_baseline(
     comp = int(row["completion_tokens"]) if row["completion_tokens"] else 0
     total = int(row["total_tokens"]) if row["total_tokens"] else 0
     retries = int(row["retries"]) if row["retries"] else 0
+    cache_info_calls = int(row["cache_info_calls"]) if row["cache_info_calls"] else 0
+    cached = int(row["cached_prompt_tokens"]) if row["cached_prompt_tokens"] else 0
+    uncached = int(row["uncached_prompt_tokens"]) if row["uncached_prompt_tokens"] else 0
+    cache_creation = (
+        int(row["cache_creation_prompt_tokens"])
+        if row["cache_creation_prompt_tokens"]
+        else 0
+    )
+    observed_prompt = cached + uncached
     return BaselineDict(
         total_calls=calls,
         total_prompt_tokens=prompt,
@@ -150,6 +194,12 @@ def compute_baseline(
         avg_completion_tokens_per_call=comp / calls if calls else 0.0,
         completion_to_prompt_ratio=comp / prompt if prompt else 0.0,
         retry_rate=retries / calls if calls else 0.0,
+        cache_info_calls=cache_info_calls,
+        cached_prompt_tokens=cached,
+        uncached_prompt_tokens=uncached,
+        cache_creation_prompt_tokens=cache_creation,
+        cache_info_coverage=cache_info_calls / calls if calls else 0.0,
+        cache_hit_rate=cached / observed_prompt if observed_prompt else 0.0,
     )
 
 
@@ -164,7 +214,7 @@ def group_by_session(
     where, params = _build_where(None, actor_id, task_name, model)
     conn = store.conn
     rows = conn.execute(
-        f"SELECT session_id, {_AGG_COLS} FROM token_usage{where} GROUP BY session_id ORDER BY session_id",
+        f"SELECT session_id, {_agg_cols(store)} FROM token_usage{where} GROUP BY session_id ORDER BY session_id",
         params,
     ).fetchall()
     return {str(r["session_id"]): _bucket_from_row(dict(r)) for r in rows}
@@ -181,7 +231,7 @@ def group_by_actor(
     where, params = _build_where(session_id, None, task_name, model)
     conn = store.conn
     rows = conn.execute(
-        f"SELECT actor_id, {_AGG_COLS} FROM token_usage{where} GROUP BY actor_id ORDER BY actor_id",
+        f"SELECT actor_id, {_agg_cols(store)} FROM token_usage{where} GROUP BY actor_id ORDER BY actor_id",
         params,
     ).fetchall()
     return {str(r["actor_id"]): _bucket_from_row(dict(r)) for r in rows}
@@ -198,7 +248,7 @@ def group_by_task(
     where, params = _build_where(session_id, actor_id, None, model)
     conn = store.conn
     rows = conn.execute(
-        f"SELECT task_name, {_AGG_COLS} FROM token_usage{where} GROUP BY task_name ORDER BY task_name",
+        f"SELECT task_name, {_agg_cols(store)} FROM token_usage{where} GROUP BY task_name ORDER BY task_name",
         params,
     ).fetchall()
     return {str(r["task_name"]): _bucket_from_row(dict(r)) for r in rows}
@@ -217,7 +267,7 @@ def group_by_model(
     where, params = _build_where(session_id, actor_id, task_name, None, start_ts, end_ts)
     conn = store.conn
     rows = conn.execute(
-        f"SELECT model, {_AGG_COLS} FROM token_usage{where} GROUP BY model ORDER BY model",
+        f"SELECT model, {_agg_cols(store)} FROM token_usage{where} GROUP BY model ORDER BY model",
         params,
     ).fetchall()
     return {str(r["model"]): _bucket_from_row(dict(r)) for r in rows}
@@ -243,13 +293,22 @@ def time_series(
     """
     where, params = _build_where(session_id, actor_id, task_name, model, start_ts, end_ts)
     conn = store.conn
+    cache_series_cols = (
+        "SUM(CASE WHEN cache_info_available != 0 THEN cached_prompt_tokens ELSE 0 END)"
+        " AS cached_prompt_tokens, "
+        "SUM(CASE WHEN cache_info_available != 0 THEN uncached_prompt_tokens ELSE 0 END)"
+        " AS uncached_prompt_tokens"
+        if store.cache_columns_available
+        else "0 AS cached_prompt_tokens, 0 AS uncached_prompt_tokens"
+    )
     rows = conn.execute(
         f"""SELECT
                 CAST(timestamp / ? AS INTEGER) * ? AS ts_bucket,
                 COUNT(*) AS calls,
                 SUM(prompt_tokens)     AS prompt_tokens,
                 SUM(completion_tokens) AS completion_tokens,
-                SUM(total_tokens)      AS total_tokens
+                SUM(total_tokens)      AS total_tokens,
+                {cache_series_cols}
             FROM token_usage{where}
             GROUP BY ts_bucket
             ORDER BY ts_bucket""",
@@ -267,6 +326,8 @@ def time_series(
                 prompt_tokens=int(r["prompt_tokens"]),
                 completion_tokens=int(r["completion_tokens"]),
                 total_tokens=int(r["total_tokens"]),
+                cached_prompt_tokens=int(r["cached_prompt_tokens"] or 0),
+                uncached_prompt_tokens=int(r["uncached_prompt_tokens"] or 0),
             )
         )
     return result

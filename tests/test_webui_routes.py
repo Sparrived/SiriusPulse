@@ -7,7 +7,10 @@ import pytest
 from aiohttp import web
 
 from sirius_pulse.utils.json_io import atomic_write_json
+from sirius_pulse.config import TokenUsageRecord
+from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.webui import persona_manager_api as persona_manager
+from sirius_pulse.webui.memory_api import api_persona_tokens_get
 from sirius_pulse.webui.persona_api import (
     _resolve_persona_log_file,
     api_orchestration_get,
@@ -83,6 +86,34 @@ async def test_system_logs_when_called_then_reads_global_webui_log(tmp_path):
     assert payload["target"] == "webui"
     assert payload["path"] == str(webui_log)
     assert payload["lines"] == ["webui line"]
+
+
+@pytest.mark.asyncio
+async def test_persona_tokens_when_cache_usage_exists_then_returns_cache_stats(tmp_path):
+    store = TokenUsageStore(tmp_path / "persona.db", batch_size=1)
+    store.add(
+        TokenUsageRecord(
+            actor_id="assistant",
+            task_name="response_generate",
+            model="test-model",
+            prompt_tokens=100,
+            completion_tokens=10,
+            total_tokens=110,
+            cached_prompt_tokens=75,
+            uncached_prompt_tokens=25,
+            cache_info_available=True,
+        ),
+        timestamp=1.0,
+    )
+    store.close()
+
+    response = await api_persona_tokens_get(SimpleNamespace(query={}), tmp_path)
+    payload = json.loads(response.text)
+
+    assert payload["cache_stats"]["cached_prompt_tokens"] == 75
+    assert payload["cache_stats"]["uncached_prompt_tokens"] == 25
+    assert payload["cache_stats"]["cache_hit_rate_pct"] == 75.0
+    assert payload["recent_with_breakdown"][0]["cache_info_available"] == 1
 
 
 def test_webui_routes_when_declared_then_handler_names_are_available(tmp_path):

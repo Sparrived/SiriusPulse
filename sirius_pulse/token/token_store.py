@@ -97,9 +97,26 @@ class TokenUsageStore(BaseSqliteStore):
                 "error_type": "TEXT NOT NULL DEFAULT ''",
                 "error_message": "TEXT NOT NULL DEFAULT ''",
                 "conversation_depth": "INTEGER NOT NULL DEFAULT 0",
+                "cached_prompt_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "uncached_prompt_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "cache_creation_prompt_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "cache_info_available": "INTEGER NOT NULL DEFAULT 0",
             },
         )
         self.set_schema_version(_SCHEMA_VERSION, f"{_META_KEY_PREFIX}schema_version")
+
+    @property
+    def cache_columns_available(self) -> bool:
+        """Whether this database has the cache-aware token columns."""
+        columns = {
+            row["name"] for row in self.execute("PRAGMA table_info(token_usage)").fetchall()
+        }
+        return {
+            "cached_prompt_tokens",
+            "uncached_prompt_tokens",
+            "cache_creation_prompt_tokens",
+            "cache_info_available",
+        }.issubset(columns)
 
     # ------------------------------------------------------------------
     # Write
@@ -130,6 +147,10 @@ class TokenUsageStore(BaseSqliteStore):
                 record.error_type,
                 record.error_message,
                 record.conversation_depth,
+                record.cached_prompt_tokens,
+                record.uncached_prompt_tokens,
+                record.cache_creation_prompt_tokens,
+                int(record.cache_info_available),
             )
         )
         if len(self._buffer) >= self._batch_size:
@@ -163,6 +184,10 @@ class TokenUsageStore(BaseSqliteStore):
                     r.error_type,
                     r.error_message,
                     r.conversation_depth,
+                    r.cached_prompt_tokens,
+                    r.uncached_prompt_tokens,
+                    r.cache_creation_prompt_tokens,
+                    int(r.cache_info_available),
                 )
             )
         if len(self._buffer) >= self._batch_size:
@@ -178,8 +203,10 @@ class TokenUsageStore(BaseSqliteStore):
                 prompt_tokens, completion_tokens, total_tokens,
                 input_chars, output_chars, estimation_method, retries_used,
                 persona_name, group_id, provider_name, breakdown_json, duration_ms,
-                error_type, error_message, conversation_depth)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                error_type, error_message, conversation_depth,
+                cached_prompt_tokens, uncached_prompt_tokens,
+                cache_creation_prompt_tokens, cache_info_available)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             self._buffer,
         )
         self._buffer.clear()
@@ -409,8 +436,83 @@ class TokenUsageStore(BaseSqliteStore):
                 COALESCE(SUM(input_chars), 0) as total_input_chars,
                 COALESCE(SUM(output_chars), 0) as total_output_chars
             FROM token_usage""").fetchone()
-        return dict(row) if row else {}
+        result = dict(row) if row else {}
+        result.update(self.get_cache_stats())
+        return result
 
+    def get_cache_stats(
+        self,
+        *,
+        start_ts: float | None = None,
+        end_ts: float | None = None,
+    ) -> dict[str, Any]:
+        """Return cache counters without treating legacy rows as misses."""
+        result: dict[str, Any] = {
+            "total_calls": 0,
+            "cache_info_calls": 0,
+            "cache_info_coverage_pct": 0.0,
+            "cached_prompt_tokens": 0,
+            "uncached_prompt_tokens": 0,
+            "cache_creation_prompt_tokens": 0,
+            "cache_hit_rate_pct": 0.0,
+        }
+        if not self.cache_columns_available:
+            result["total_calls"] = self._count_in_range(start_ts=start_ts, end_ts=end_ts)
+            return result
+
+        clauses: list[str] = []
+        params: list[object] = []
+        if start_ts is not None:
+            clauses.append("timestamp >= ?")
+            params.append(start_ts)
+        if end_ts is not None:
+            clauses.append("timestamp <= ?")
+            params.append(end_ts)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        row = self.execute(
+            f"""SELECT
+                COUNT(*) AS total_calls,
+                COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN 1 ELSE 0 END), 0)
+                    AS cache_info_calls,
+                COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN cached_prompt_tokens ELSE 0 END), 0)
+                    AS cached_prompt_tokens,
+                COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN uncached_prompt_tokens ELSE 0 END), 0)
+                    AS uncached_prompt_tokens,
+                COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN cache_creation_prompt_tokens ELSE 0 END), 0)
+                    AS cache_creation_prompt_tokens
+            FROM token_usage{where}""",
+            params,
+        ).fetchone()
+        if not row:
+            return result
+        result.update({key: int(row[key]) for key in (
+            "total_calls",
+            "cache_info_calls",
+            "cached_prompt_tokens",
+            "uncached_prompt_tokens",
+            "cache_creation_prompt_tokens",
+        )})
+        observed = result["cached_prompt_tokens"] + result["uncached_prompt_tokens"]
+        result["cache_info_coverage_pct"] = round(
+            result["cache_info_calls"] * 100.0 / result["total_calls"], 1
+        ) if result["total_calls"] else 0.0
+        result["cache_hit_rate_pct"] = round(
+            result["cached_prompt_tokens"] * 100.0 / observed, 1
+        ) if observed else 0.0
+        return result
+
+    def _count_in_range(self, *, start_ts: float | None, end_ts: float | None) -> int:
+        clauses: list[str] = []
+        params: list[object] = []
+        if start_ts is not None:
+            clauses.append("timestamp >= ?")
+            params.append(start_ts)
+        if end_ts is not None:
+            clauses.append("timestamp <= ?")
+            params.append(end_ts)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        row = self.execute(f"SELECT COUNT(*) FROM token_usage{where}", params).fetchone()
+        return int(row[0]) if row else 0
     def get_breakdown_by(
         self,
         column: str,
@@ -430,6 +532,19 @@ class TokenUsageStore(BaseSqliteStore):
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = " WHERE " + " AND ".join(clauses)
+        cache_columns = """
+                ,COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN 1 ELSE 0 END), 0)
+                    AS cache_info_calls
+                ,COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN cached_prompt_tokens ELSE 0 END), 0)
+                    AS cached_prompt_tokens
+                ,COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN uncached_prompt_tokens ELSE 0 END), 0)
+                    AS uncached_prompt_tokens
+                ,COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN cache_creation_prompt_tokens ELSE 0 END), 0)
+                    AS cache_creation_prompt_tokens""" if self.cache_columns_available else """
+                ,0 AS cache_info_calls
+                ,0 AS cached_prompt_tokens
+                ,0 AS uncached_prompt_tokens
+                ,0 AS cache_creation_prompt_tokens"""
         rows = self.execute(
             f"""SELECT
                 {column} as name,
@@ -437,6 +552,7 @@ class TokenUsageStore(BaseSqliteStore):
                 COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) as completion_tokens,
                 COALESCE(SUM(total_tokens), 0) as total_tokens
+                {cache_columns}
             FROM token_usage{where}
             GROUP BY {column}
             ORDER BY total_tokens DESC""",
@@ -475,13 +591,22 @@ class TokenUsageStore(BaseSqliteStore):
             clauses.append("timestamp <= ?")
             params.append(end_ts)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        cache_columns = (
+            "COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN cached_prompt_tokens ELSE 0 END), 0)"
+            " AS cached_prompt_tokens, "
+            "COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN uncached_prompt_tokens ELSE 0 END), 0)"
+            " AS uncached_prompt_tokens"
+            if self.cache_columns_available
+            else "0 AS cached_prompt_tokens, 0 AS uncached_prompt_tokens"
+        )
         rows = self.execute(
             f"""SELECT
                 CAST(timestamp / 3600 AS INTEGER) * 3600 as hour_ts,
                 COUNT(*) as calls,
                 COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
                 COALESCE(SUM(completion_tokens), 0) as completion_tokens,
-                COALESCE(SUM(total_tokens), 0) as total_tokens
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                {cache_columns}
             FROM token_usage{where}
             GROUP BY hour_ts
             ORDER BY hour_ts""",
