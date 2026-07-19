@@ -136,10 +136,9 @@ def test_checkpoint_pass_prunes_covered_sources_and_consolidates_old_active_arch
 
     assert promoted == 1
     assert [entry.content for entry in manager.generated_candidates] == [
-        f"old message {index}" for index in range(2, 34)
+        f"old message {index}" for index in range(2, 40)
     ]
     assert [entry.content for entry in basic.get_all("group_a")] == [
-        *[f"old message {index}" for index in range(34, 40)],
         "recent archive message",
         *[f"current message {index}" for index in range(5)],
     ]
@@ -185,8 +184,8 @@ def test_checkpoint_pass_repeats_active_batches_until_token_target():
 
     promoted = asyncio.run(BackgroundTasks(engine)._checkpoint_memory_once())
 
-    assert promoted == 2
-    assert [len(batch) for batch in manager.generated_batches] == [32, 32]
+    assert promoted == 1
+    assert [len(batch) for batch in manager.generated_batches] == [64]
     assert BackgroundTasks(engine)._estimate_group_history_tokens("group_a") <= 100
 
 

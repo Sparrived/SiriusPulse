@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MEMORY_CHECKPOINT_BATCH_SIZE = 32
-MEMORY_CHECKPOINT_TOKEN_TRIGGER = 120_000
-MEMORY_CHECKPOINT_TOKEN_TARGET = 60_000
+MEMORY_CHECKPOINT_BATCH_SIZE = 64
+MEMORY_CHECKPOINT_TOKEN_TRIGGER = 80_000
+MEMORY_CHECKPOINT_TOKEN_TARGET = 20_000
 
 
 class BackgroundTasks:
@@ -112,7 +112,7 @@ class BackgroundTasks:
         Cold groups are consolidated immediately. Active groups can also
         consolidate archive entries once the selected batch is at least one
         hour old and history exceeds the token trigger. High-token groups keep
-        processing 32-entry batches until the target budget is restored.
+        processing 64-entry batches until the target budget is restored.
         """
         engine = self._engine
         interval = engine.config.get("memory_promote_interval_seconds", 180)
@@ -191,11 +191,17 @@ class BackgroundTasks:
                 if repeat_until_target and history_tokens <= token_target:
                     break
 
-                checkpoint_batch = candidates[:MEMORY_CHECKPOINT_BATCH_SIZE]
-                if cold_state != ColdState.COLD and not self._candidates_are_old_enough(
-                    checkpoint_batch,
-                    min_age_seconds=idle_consolidation_seconds,
-                ):
+                if cold_state != ColdState.COLD:
+                    checkpoint_batch = [
+                        entry
+                        for entry in candidates
+                        if self._candidates_are_old_enough(
+                            [entry], min_age_seconds=idle_consolidation_seconds
+                        )
+                    ][:MEMORY_CHECKPOINT_BATCH_SIZE]
+                else:
+                    checkpoint_batch = candidates[:MEMORY_CHECKPOINT_BATCH_SIZE]
+                if len(checkpoint_batch) < volume_threshold:
                     break
 
                 cfg = engine.model_router.resolve("memory_extract")
@@ -209,6 +215,7 @@ class BackgroundTasks:
                     brain=engine.brain,
                     model_name=cfg.model_name,
                     min_candidate_count=volume_threshold,
+                    max_candidate_count=MEMORY_CHECKPOINT_BATCH_SIZE,
                 )
                 if not result:
                     break
