@@ -20,6 +20,7 @@ const PAGE_SIZE = 100;
 let isLive = true;
 let isLoadingMessages = false;
 let needsReloadAfterLoad = false;
+let embeddedMode = false;
 const realtime = createRealtimeRefresh(() => loadMessages(true), {
   resources: ['conversations'],
   debounceMs: 500,
@@ -29,6 +30,7 @@ const realtime = createRealtimeRefresh(() => loadMessages(true), {
 export function dispose() {
   scopedPage.use(null, null);
   realtime.stop();
+  embeddedMode = false;
 }
 
 const TAG_COLORS = {
@@ -72,6 +74,7 @@ const TAG_COLORS = {
 
 export async function init(container, params = {}) {
   scopedPage.use(params?.ctx, container);
+  embeddedMode = Boolean(params.embedded);
   const name = store.currentPersona;
   if (!name) {
     container.innerHTML = `
@@ -263,10 +266,10 @@ function renderStats(total) {
       <div class="stat-label">AI 回复</div>
       <div class="stat-value">${assistantCount}</div>
     </div>
-    <div class="stat-card">
+    ${embeddedMode ? '' : `<div class="stat-card">
       <div class="stat-label">系统消息</div>
       <div class="stat-value">${systemCount}</div>
-    </div>
+    </div>`}
     <div class="stat-card">
       <div class="stat-label">参与用户</div>
       <div class="stat-value">${uniqueUsers}</div>
