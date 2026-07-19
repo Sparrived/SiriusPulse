@@ -461,7 +461,7 @@ def test_context_assembler_uses_memory_unit_top_k_when_present():
     assert retriever.last_kwargs["top_k"] == 3
 
 
-def test_context_assembler_keeps_all_uncheckpointed_basic_memory():
+def test_context_assembler_uses_recent_window_not_full_basic_memory():
     basic = BasicMemoryManager(hard_limit=20, context_window=5)
     for index in range(12):
         basic.add_entry(
@@ -480,8 +480,8 @@ def test_context_assembler_keeps_all_uncheckpointed_basic_memory():
     )
     joined = "\n".join(str(message.get("content", "")) for message in messages)
 
-    assert "old message 0" in joined
-    assert "old message 6" in joined
+    assert "old message 0" not in joined
+    assert "old message 6" not in joined
     assert "old message 7" in joined
     assert "old message 11" in joined
     assert "current question" in joined
