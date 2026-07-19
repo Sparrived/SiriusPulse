@@ -23,7 +23,6 @@ services:
       retries: 3
 
   embedding:
-    build: .
     image: sirius-pulse:latest
     container_name: sirius-pulse-v2-embedding
     restart: unless-stopped
