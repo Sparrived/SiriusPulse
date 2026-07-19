@@ -170,7 +170,9 @@ class BackgroundTasks:
             heat, seconds_since_last = engine.basic_memory.get_cold_params(group_id)
             cold_state = engine.cold_detector.check(heat, seconds_since_last)
 
-            history_tokens = self._estimate_group_history_tokens(group_id)
+            raw_history_tokens = self._estimate_group_history_tokens(group_id)
+            token_scale = self._history_token_scale(group_id, raw_history_tokens)
+            history_tokens = round(raw_history_tokens * token_scale)
             repeat_until_target = history_tokens > token_trigger
             if cold_state != ColdState.COLD and not repeat_until_target:
                 continue
@@ -219,7 +221,8 @@ class BackgroundTasks:
                     break
 
                 promoted_total += len(result.units)
-                history_tokens = self._estimate_group_history_tokens(group_id)
+                raw_history_tokens = self._estimate_group_history_tokens(group_id)
+                history_tokens = round(raw_history_tokens * token_scale)
                 logger.info(
                     "Memory checkpoint group=%s batch=%d removed=%d history_tokens=%d",
                     group_id,
@@ -253,6 +256,22 @@ class BackgroundTasks:
             estimate_tokens(str(getattr(entry, "content", "") or ""))
             for entry in self._engine.basic_memory.get_all(group_id)
         )
+
+    def _history_token_scale(self, group_id: str, raw_history_tokens: int) -> float:
+        """Calibrate raw history estimates against the latest real prompt."""
+        if raw_history_tokens <= 0:
+            return 1.0
+        records = getattr(self._engine, "token_usage_records", [])
+        for record in reversed(records):
+            if (
+                getattr(record, "task_name", "") == "response_generate"
+                and getattr(record, "group_id", "") == group_id
+            ):
+                prompt_tokens = int(getattr(record, "prompt_tokens", 0) or 0)
+                if prompt_tokens > raw_history_tokens:
+                    return prompt_tokens / raw_history_tokens
+                break
+        return 1.0
 
     @staticmethod
     def _candidates_are_old_enough(
