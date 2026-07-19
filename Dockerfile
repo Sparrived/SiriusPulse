@@ -18,7 +18,7 @@ RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home --uid 10001 sirius \
     && mkdir -p /app/data \
-    && chown sirius:sirius /app/data
+    && chown -R sirius:sirius /app/.venv /app/data
 
 USER sirius
 
