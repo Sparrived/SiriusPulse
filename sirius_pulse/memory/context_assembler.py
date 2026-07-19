@@ -312,8 +312,11 @@ class ContextAssembler:
         return self._build_history_xml(group_id, n=n, include_pending=include_pending)
 
     def _cacheable_history_entries(self, group_id: str, *, recent_n: int = 0) -> list[Any]:
-        limit = recent_n if recent_n and recent_n > 0 else getattr(self._basic, "context_window", 5)
-        entries = self._basic.get_context(group_id, n=limit)
+        entries = (
+            self._basic.get_context(group_id, n=recent_n)
+            if recent_n and recent_n > 0
+            else self._basic.get_all(group_id)
+        )
         source_filter = self._is_source_checkpointed or self._is_source_diarized
         if not entries or source_filter is None:
             return list(entries)

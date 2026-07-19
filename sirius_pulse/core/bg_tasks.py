@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -104,77 +105,131 @@ class BackgroundTasks:
     async def _memory_unit_checkpointer(self) -> None:
         """Periodically checkpoint basic memory entries into memory units.
 
-        Trigger conditions:
-        1. Group is cold (heat < threshold AND silence >= threshold).
-        2. The group has enough uncheckpointed archive candidates.
+        Cold groups are consolidated immediately. Active groups can also
+        consolidate archive entries once the selected batch is old enough,
+        so continuous chat does not keep an ever-growing raw prompt forever.
         """
         engine = self._engine
         interval = engine.config.get("memory_promote_interval_seconds", 180)
-        volume_threshold = engine.config.get(
-            "memory_unit_volume_threshold",
-            engine.config.get("diary_volume_threshold", 8),
-        )
-        idle_consolidation_seconds = engine.config.get("memory_idle_consolidation_seconds", 3600)
         while engine._bg_running:
             await asyncio.sleep(interval)
             try:
-                if engine.provider_async is None:
-                    continue
-
-                promoted_total = 0
-                for group_id in list(engine.basic_memory.list_groups()):
-                    heat, seconds_since_last = engine.basic_memory.get_cold_params(group_id)
-                    cold_state = engine.cold_detector.check(heat, seconds_since_last)
-
-                    # Layer 3: cold group -> memory checkpoint
-                    if cold_state == ColdState.COLD:
-                        candidates = engine.basic_memory.get_consolidation_candidates(
-                            group_id,
-                            include_context=seconds_since_last >= idle_consolidation_seconds,
-                        )
-                        if not candidates:
-                            continue
-                        candidates = [
-                            c
-                            for c in candidates
-                            if not engine.memory_unit_manager.is_source_checkpointed(
-                                group_id, c.entry_id
-                            )
-                        ]
-                        if not candidates:
-                            continue
-
-                        cfg = engine.model_router.resolve("memory_extract")
-                        result = await engine.memory_unit_manager.generate_from_candidates(
-                            group_id=group_id,
-                            candidates=candidates,
-                            persona_name=engine.persona.name,
-                            persona_description=(
-                                engine.persona.persona_summary or engine.persona.backstory or ""
-                            ),
-                            brain=engine.brain,
-                            model_name=cfg.model_name,
-                            min_candidate_count=volume_threshold,
-                        )
-                        if result:
-                            promoted_total += len(result.units)
-                            covered_source_ids: set[str] = set()
-                            for unit in result.units:
-                                covered_source_ids.update(unit.source_ids)
-                            removed = engine.basic_memory.remove_entries_by_ids(
-                                group_id, covered_source_ids
-                            )
-                            if removed:
-                                logger.info(
-                                    "Pruned %d checkpointed raw memory entries for group %s",
-                                    removed,
-                                    group_id,
-                                )
-
+                promoted_total = await self._checkpoint_memory_once()
                 if promoted_total > 0:
                     engine._log_inner_thought(f"整理了 {promoted_total} 条结构化记忆单元。")
             except Exception as exc:
                 logger.warning("Memory checkpoint failed: %s", exc)
+
+    async def _checkpoint_memory_once(self) -> int:
+        """Run one memory-unit checkpoint pass across all groups."""
+        engine = self._engine
+        if engine.provider_async is None:
+            return 0
+
+        volume_threshold = int(
+            engine.config.get(
+                "memory_unit_volume_threshold",
+                engine.config.get("diary_volume_threshold", 8),
+            )
+        )
+        idle_consolidation_seconds = float(
+            engine.config.get("memory_idle_consolidation_seconds", 3600)
+        )
+        promoted_total = 0
+        for group_id in list(engine.basic_memory.list_groups()):
+            entries = engine.basic_memory.get_all(group_id)
+            if not entries:
+                continue
+
+            # Reconcile raw entries restored after their units were persisted.
+            checkpointed_ids = {
+                entry.entry_id
+                for entry in entries
+                if engine.memory_unit_manager.is_source_checkpointed(group_id, entry.entry_id)
+            }
+            if checkpointed_ids:
+                removed = engine.basic_memory.remove_entries_by_ids(group_id, checkpointed_ids)
+                if removed:
+                    logger.info(
+                        "Pruned %d persisted checkpointed raw memory entries for group %s",
+                        removed,
+                        group_id,
+                    )
+
+            heat, seconds_since_last = engine.basic_memory.get_cold_params(group_id)
+            cold_state = engine.cold_detector.check(heat, seconds_since_last)
+            include_context = seconds_since_last >= idle_consolidation_seconds
+            candidates = engine.basic_memory.get_consolidation_candidates(
+                group_id,
+                include_context=include_context,
+            )
+            candidates = [
+                entry
+                for entry in candidates
+                if not engine.memory_unit_manager.is_source_checkpointed(
+                    group_id, entry.entry_id
+                )
+            ]
+            if not candidates or len(candidates) < volume_threshold:
+                continue
+
+            checkpoint_batch = candidates[:32]
+            if cold_state != ColdState.COLD and not self._candidates_are_old_enough(
+                checkpoint_batch,
+                min_age_seconds=idle_consolidation_seconds,
+            ):
+                continue
+
+            cfg = engine.model_router.resolve("memory_extract")
+            result = await engine.memory_unit_manager.generate_from_candidates(
+                group_id=group_id,
+                candidates=checkpoint_batch,
+                persona_name=engine.persona.name,
+                persona_description=(
+                    engine.persona.persona_summary or engine.persona.backstory or ""
+                ),
+                brain=engine.brain,
+                model_name=cfg.model_name,
+                min_candidate_count=volume_threshold,
+            )
+            if not result:
+                continue
+
+            promoted_total += len(result.units)
+            covered_source_ids: set[str] = set()
+            for unit in result.units:
+                covered_source_ids.update(unit.source_ids)
+            removed = engine.basic_memory.remove_entries_by_ids(group_id, covered_source_ids)
+            if removed:
+                logger.info(
+                    "Pruned %d checkpointed raw memory entries for group %s",
+                    removed,
+                    group_id,
+                )
+
+        return promoted_total
+
+    @staticmethod
+    def _candidates_are_old_enough(
+        candidates: list[Any], *, min_age_seconds: float
+    ) -> bool:
+        if min_age_seconds <= 0:
+            return True
+        timestamps: list[float] = []
+        for entry in candidates:
+            raw_timestamp = str(getattr(entry, "timestamp", "") or "")
+            if not raw_timestamp:
+                return False
+            try:
+                timestamps.append(
+                    datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00")).timestamp()
+                )
+            except (TypeError, ValueError):
+                return False
+        if not timestamps:
+            return False
+        newest_timestamp = max(timestamps)
+        return datetime.now(timezone.utc).timestamp() - newest_timestamp >= min_age_seconds
 
     async def _diary_promoter(self) -> None:
         """Backward-compatible alias for the old diary promotion task."""

@@ -1,9 +1,12 @@
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from sirius_pulse.core.bg_tasks import BackgroundTasks
+from sirius_pulse.memory.basic import BasicMemoryManager
+from sirius_pulse.memory.cold_detector import ColdDetector
 from sirius_pulse.utils.json_io import atomic_write_json
 
 
@@ -23,6 +26,22 @@ class _Manager:
 
     async def reconcile_persisted_units(self, group_ids, unit_ids, **kwargs):
         self.reconciled = (group_ids, unit_ids)
+
+
+class _CheckpointManager:
+    def __init__(self, checkpointed=None):
+        self.checkpointed = set(checkpointed or [])
+        self.generated_candidates = []
+
+    def is_source_checkpointed(self, _group_id, entry_id):
+        return entry_id in self.checkpointed
+
+    async def generate_from_candidates(self, **kwargs):
+        candidates = list(kwargs["candidates"])
+        self.generated_candidates = candidates
+        return SimpleNamespace(
+            units=[SimpleNamespace(source_ids=[entry.entry_id for entry in candidates])]
+        )
 
 
 def _tasks(tmp_path, manager):
@@ -62,3 +81,58 @@ def test_apply_and_reconcile_preserve_historical_status(tmp_path):
 
     assert manager.reconciled == (["g"], ["u"])
     assert json.loads((job_dir / "status.json").read_text(encoding="utf-8"))["status"] == "ready"
+
+
+def test_checkpoint_pass_prunes_covered_sources_and_consolidates_old_active_archive():
+    now = datetime.now(timezone.utc)
+    basic = BasicMemoryManager(context_window=5)
+    old_entries = [
+        basic.add_entry(
+            "group_a",
+            "alice",
+            "human",
+            f"old message {index}",
+            timestamp=(now - timedelta(hours=2)).isoformat(),
+        )
+        for index in range(40)
+    ]
+    basic.add_entry(
+        "group_a",
+        "alice",
+        "human",
+        "recent archive message",
+        timestamp=(now - timedelta(minutes=5)).isoformat(),
+    )
+    for index in range(5):
+        basic.add_entry(
+            "group_a",
+            "alice",
+            "human",
+            f"current message {index}",
+            timestamp=now.isoformat(),
+        )
+
+    manager = _CheckpointManager(checkpointed={old_entries[0].entry_id, old_entries[1].entry_id})
+    engine = SimpleNamespace(
+        config={"memory_idle_consolidation_seconds": 3600, "memory_unit_volume_threshold": 8},
+        provider_async=object(),
+        basic_memory=basic,
+        memory_unit_manager=manager,
+        cold_detector=ColdDetector(),
+        model_router=SimpleNamespace(resolve=lambda _: SimpleNamespace(model_name="memory-model")),
+        persona=SimpleNamespace(name="Sirius", persona_summary="", backstory=""),
+        brain=object(),
+        _bg_running=False,
+    )
+
+    promoted = asyncio.run(BackgroundTasks(engine)._checkpoint_memory_once())
+
+    assert promoted == 1
+    assert [entry.content for entry in manager.generated_candidates] == [
+        f"old message {index}" for index in range(2, 34)
+    ]
+    assert [entry.content for entry in basic.get_all("group_a")] == [
+        *[f"old message {index}" for index in range(34, 40)],
+        "recent archive message",
+        *[f"current message {index}" for index in range(5)],
+    ]
