@@ -17,6 +17,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _END_PUNCTUATION = "。！？.!?"
 _LIFESPAN_RANK = {"short": 0, "medium": 1, "long": 2}
+_ADJUDICATION_FIELDS = (
+    "unit_id",
+    "group_id",
+    "created_at",
+    "unit_type",
+    "scope",
+    "scope_id",
+    "summary",
+    "participants",
+    "topics",
+    "keywords",
+    "salience",
+    "confidence",
+    "lifespan",
+    "should_prompt",
+)
 _DEDUP_SYSTEM_PROMPT = """你负责判断同一边界内的记忆单元是否应去重。仅返回 JSON 对象，字段为 decision、target_unit_id、merged_summary、reason。
 NEW：新单元是独立事实。
 DUPLICATE：新旧单元表达同一事实，主体、对象、状态和时间含义等价；以新单元为 canonical，保留旧单元来源信息。
@@ -50,16 +66,18 @@ class MemoryUnitDeduplicator:
         from sirius_pulse.core.brain import RawRequest
 
         payload = {
-            "incoming": {key: value for key, value in incoming.to_dict().items() if key != "embedding"},
-            "candidates": [
-                {key: value for key, value in unit.to_dict().items() if key != "embedding"}
-                for unit in candidates
-            ],
+            "incoming": _adjudication_view(incoming),
+            "candidates": [_adjudication_view(unit) for unit in candidates],
         }
         request = RawRequest(
             model=model_name,
             system_prompt=_DEDUP_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                }
+            ],
             temperature=0.0,
             max_tokens=512,
             purpose="memory_unit_deduplicate",
@@ -112,6 +130,11 @@ class MemoryUnitDeduplicator:
         if not candidates:
             return DedupVerdict("NEW")
         return await self.adjudicate(incoming, candidates, brain=brain, model_name=model_name)
+
+
+def _adjudication_view(unit: MemoryUnit) -> dict[str, Any]:
+    """Keep provenance and embeddings out of the model-facing dedupe payload."""
+    return {field: getattr(unit, field) for field in _ADJUDICATION_FIELDS}
 
 
 def _clone(unit: MemoryUnit) -> MemoryUnit:

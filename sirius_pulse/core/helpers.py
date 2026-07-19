@@ -539,23 +539,27 @@ class Helpers:
         from sirius_pulse.providers.base import (
             estimate_generation_request_input_tokens,
             get_last_generation_usage,
+            normalize_generation_usage,
         )
         from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
 
         real_usage = get_last_generation_usage()
-        if real_usage and isinstance(real_usage, dict):
-            prompt_tokens = int(real_usage.get("prompt_tokens", 0))
-            completion_tokens = int(real_usage.get("completion_tokens", 0))
-            total_tokens = int(real_usage.get("total_tokens", prompt_tokens + completion_tokens))
-            estimation_method = "provider_real"
-        else:
-            if request is not None:
-                prompt_tokens = estimate_generation_request_input_tokens(request)
-            else:
-                prompt_tokens = 0
-            completion_tokens = 0
-            total_tokens = prompt_tokens
-            estimation_method = "unknown_subtask"
+        estimated_prompt_tokens = (
+            estimate_generation_request_input_tokens(request) if request is not None else 0
+        )
+        usage = normalize_generation_usage(
+            real_usage,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            estimated_completion_tokens=0,
+        )
+        prompt_tokens = int(usage["prompt_tokens"])
+        completion_tokens = int(usage["completion_tokens"])
+        total_tokens = int(usage["total_tokens"])
+        estimation_method = (
+            "provider_real"
+            if real_usage and isinstance(real_usage, dict)
+            else "unknown_subtask"
+        )
 
         # Build breakdown JSON from request if available
         breakdown_json = ""
@@ -593,6 +597,10 @@ class Helpers:
             provider_name=getattr(engine.provider_async, "_provider_name", "unknown"),
             breakdown_json=breakdown_json,
             duration_ms=duration_ms,
+            cached_prompt_tokens=int(usage["cached_prompt_tokens"]),
+            uncached_prompt_tokens=int(usage["uncached_prompt_tokens"]),
+            cache_creation_prompt_tokens=int(usage["cache_creation_prompt_tokens"]),
+            cache_info_available=bool(usage["cache_info_available"]),
         )
         engine.token_usage_records.append(record)
         if engine.token_store is not None:

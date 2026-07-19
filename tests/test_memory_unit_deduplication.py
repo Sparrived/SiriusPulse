@@ -160,6 +160,31 @@ async def test_adjudicator_accepts_only_valid_candidate_target():
 
 
 @pytest.mark.asyncio
+async def test_adjudicator_omits_large_provenance_fields_from_model_payload():
+    brain = _Brain({"decision": "NEW"})
+    old = _unit(
+        "mem-old",
+        "Alice prefers concise replies.",
+        source_ids=[f"src-{index}" for index in range(500)],
+        metadata={"merged_unit_ids": [f"mem-{index}" for index in range(100)]},
+    )
+
+    await MemoryUnitDeduplicator().adjudicate(
+        _unit("mem-new", "Alice likes short answers."),
+        [old],
+        brain=brain,
+        model_name="memory-model",
+    )
+
+    payload = json.loads(brain.requests[0].messages[0]["content"])
+    candidate = payload["candidates"][0]
+    assert "source_ids" not in candidate
+    assert "embedding" not in candidate
+    assert "metadata" not in candidate
+    assert len(brain.requests[0].messages[0]["content"]) < 2_000
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("response", "error"),
     [
