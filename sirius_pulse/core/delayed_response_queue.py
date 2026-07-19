@@ -16,12 +16,7 @@ from typing import Any
 
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.rhythm import RhythmAnalysis
-from sirius_pulse.models.response_strategy import (
-    PersonaProfilePromptContext,
-    DelayedResponseItem,
-    ResponseStrategy,
-    StrategyDecision,
-)
+from sirius_pulse.models.response_strategy import DelayedResponseItem, ResponseStrategy, StrategyDecision
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +71,6 @@ class DelayedResponseQueue:
         pace: str = "steady",
         speaker_name: str = "",
         platform_message_id: str = "",
-        persona_profile_context: PersonaProfilePromptContext | None = None,
         lane: str = "chat",
         plan_id: str = "",
     ) -> DelayedResponseItem:
@@ -129,19 +123,6 @@ class DelayedResponseQueue:
                 # Track all users whose messages were merged into this item
                 if user_id and user_id not in item.related_user_ids:
                     item.related_user_ids.append(user_id)
-                if persona_profile_context is not None:
-                    if persona_profile_context.speaker_card is not None:
-                        item.persona_profile_context.speaker_card = (
-                            persona_profile_context.speaker_card
-                        )
-                    if persona_profile_context.mentioned_cards:
-                        item.persona_profile_context.mentioned_cards.extend(
-                            c for c in persona_profile_context.mentioned_cards if c is not None
-                        )
-                    if persona_profile_context.confidence:
-                        item.persona_profile_context.confidence.update(
-                            persona_profile_context.confidence
-                        )
                 item.lane = lane
                 if plan_id:
                     item.plan_id = plan_id
@@ -173,7 +154,6 @@ class DelayedResponseQueue:
             heat_level=heat_level,
             pace=pace,
             related_user_ids=[user_id] if user_id else [],
-            persona_profile_context=persona_profile_context or PersonaProfilePromptContext(),
             lane=lane,
             plan_id=plan_id,
         )
@@ -294,7 +274,6 @@ class DelayedResponseQueue:
         channel_user_id: str | None = None,
         multimodal_inputs: list[dict[str, str]] | None = None,
         platform_message_id: str = "",
-        persona_profile_context: PersonaProfilePromptContext | None = None,
         lane: str = "chat",
     ) -> bool:
         """轻量合并：将新消息合并进已有 pending 项，跳过完整管线。
@@ -321,17 +300,6 @@ class DelayedResponseQueue:
                 item.multimodal_inputs.extend(multimodal_inputs)
             if user_id and user_id not in item.related_user_ids:
                 item.related_user_ids.append(user_id)
-            if persona_profile_context is not None:
-                if persona_profile_context.speaker_card is not None:
-                    item.persona_profile_context.speaker_card = persona_profile_context.speaker_card
-                if persona_profile_context.mentioned_cards:
-                    item.persona_profile_context.mentioned_cards.extend(
-                        c for c in persona_profile_context.mentioned_cards if c is not None
-                    )
-                if persona_profile_context.confidence:
-                    item.persona_profile_context.confidence.update(
-                        persona_profile_context.confidence
-                    )
             logger.debug(
                 "管线短路合并: group=%s item=%s content=%d chars",
                 group_id,

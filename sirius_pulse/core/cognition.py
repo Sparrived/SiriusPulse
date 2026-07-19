@@ -455,7 +455,6 @@ class CognitionAnalyzer:
         *,
         sender_type: str = "human",
         caller_is_developer: bool = False,
-        group_aliases: dict[str, str] | None = None,
         rhythm: Any | None = None,
     ) -> "SignalAnalysis":
         """纯规则计算信号分析，不调用 LLM。
@@ -467,7 +466,6 @@ class CognitionAnalyzer:
             context_messages: 最近消息上下文
             sender_type: "human" 或 "other_ai"
             caller_is_developer: 是否为开发者
-            group_aliases: 群组别名映射
             rhythm: RhythmAnalyzer.analyze() 的结果（可选，外部传入避免重复计算）
 
         Returns:

@@ -31,7 +31,6 @@ from sirius_pulse.core.sticker_delivery import (
     dedupe_sticker_names,
     defer_interaction_sticker_tool,
 )
-from sirius_pulse.models.response_strategy import PersonaProfilePromptContext
 from sirius_pulse.providers.base import ToolCall
 
 if TYPE_CHECKING:
@@ -239,26 +238,6 @@ class DelayedQueueTasks:
     def _side_effect_name(skill: Any) -> str:
         value = getattr(skill, "side_effect", "unknown")
         return str(getattr(value, "value", value) or "unknown")
-
-    @staticmethod
-    def _resolve_identity_with_optional_profile_manager(
-        engine: Any,
-        ctx: IdentityContext,
-        group_id: str,
-    ) -> Any:
-        try:
-            return engine.identity_resolver.resolve_with_alias(
-                ctx,
-                engine.user_manager,
-                group_id,
-                profile_manager=getattr(engine, "profile_manager", None),
-            )
-        except TypeError:
-            return engine.identity_resolver.resolve_with_alias(
-                ctx,
-                engine.user_manager,
-                group_id,
-            )
 
     async def delayed_queue_ticker(self) -> None:
         """Smart-sleep ticker for the delayed queue.
@@ -476,14 +455,18 @@ class DelayedQueueTasks:
                 platform_uid=item.channel_user_id,
                 platform=item.channel,
             )
-            resolution = self._resolve_identity_with_optional_profile_manager(engine, ctx, group_id)
+            resolution = engine.identity_resolver.resolve_with_alias(
+                ctx, engine.user_manager, group_id
+            )
             if resolution.user_id:
                 resolved_uid = resolution.user_id
                 caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
         if caller_profile is None:
             # Fallback: search by user_id (nickname) across all groups
             ctx = IdentityContext(speaker_name=item.user_id or "")
-            resolution = self._resolve_identity_with_optional_profile_manager(engine, ctx, group_id)
+            resolution = engine.identity_resolver.resolve_with_alias(
+                ctx, engine.user_manager, group_id
+            )
             if resolution.user_id:
                 resolved_uid = resolution.user_id
                 caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
@@ -1360,9 +1343,6 @@ class DelayedQueueTasks:
             max_sentence_chars=max_sentence_chars,
         )
 
-        # 仅使用队列项自带的人物传记快照，避免回读引擎共享状态
-        bio_ctx = self._merge_persona_profile_contexts(items)
-
         bundle = PromptFactory.assemble_chat(
             message_content=message_content,
             speaker_name=speaker_name,
@@ -1373,9 +1353,6 @@ class DelayedQueueTasks:
             style_params=style_params,
             other_ai_names=engine._other_ai_names,
             user_profiles=delayed_user_profiles,
-            persona_profile_speaker=bio_ctx.speaker_card,
-            persona_profile_mentioned=list(bio_ctx.mentioned_cards),
-            persona_profile_confidence=dict(bio_ctx.confidence),
             skill_registry=engine._skill_registry if expose_skills else None,
             plugin_registry=getattr(engine, "_plugin_registry", None),
             caller_is_developer=caller_is_developer,
@@ -1400,31 +1377,6 @@ class DelayedQueueTasks:
             )
 
         return bundle
-
-    @staticmethod
-    def _merge_persona_profile_contexts(items: list[Any]) -> PersonaProfilePromptContext:
-        """合并队列项中携带的人物传记快照。"""
-        speaker_card: Any | None = None
-        mentioned_cards: list[Any] = []
-        confidence: dict[str, float] = {}
-
-        for item in items:
-            ctx: PersonaProfilePromptContext | None = getattr(item, "persona_profile_context", None)
-            if ctx is None:
-                continue
-            if ctx.speaker_card is not None:
-                speaker_card = ctx.speaker_card
-            for card in ctx.mentioned_cards or []:
-                if card is not None:
-                    mentioned_cards.append(card)
-            for alias, score in (ctx.confidence or {}).items():
-                confidence[alias] = max(confidence.get(alias, 0.0), float(score))
-
-        return PersonaProfilePromptContext(
-            speaker_card=speaker_card,
-            mentioned_cards=mentioned_cards,
-            confidence=confidence,
-        )
 
     def _inject_group_id_into_latest_reminder(self, group_id: str) -> None:
         """Attach group_id and adapter_type to reminders that lack them."""

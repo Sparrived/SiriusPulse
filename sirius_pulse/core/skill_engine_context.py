@@ -39,10 +39,6 @@ class SkillEngineContextImpl:
     def skill_executor(self) -> Any:
         return self._engine._skill_executor
 
-    @property
-    def profile_manager(self) -> Any:
-        return getattr(self._engine, "profile_manager", None)
-
     def get_data_store(self, skill_name: str) -> Any:
         executor = self._engine._skill_executor
         if executor is None:

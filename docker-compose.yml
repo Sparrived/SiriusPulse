@@ -11,6 +11,7 @@ services:
     volumes:
       - ./data:/app/data
       - /root/.cache/huggingface:/home/sirius/.cache/huggingface
+      - ${SIRIUS_CONTAINER_ADMIN_SOCKET:-/dev/null}:/run/sirius-container-admin.sock:ro
     command: ["run"]
     healthcheck:
       test:

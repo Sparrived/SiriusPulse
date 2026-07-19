@@ -37,7 +37,6 @@ TAG_IDENTITY_VERIFY = "【身份识别】"
 TAG_REPLY_SPEC = "【回复规范】"
 TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_CROSS_GROUP = "【跨群认知】"
-TAG_BIOGRAPHY = "【人物速查】"
 TAG_GROUP_MEMBERS = "【群成员区分】"
 TAG_HISTORY_DIARY = "【历史日记】"
 TAG_HISTORY_DIARY_END = "【历史日记结束】"
@@ -428,87 +427,6 @@ class PromptFactory:
         )
 
     @staticmethod
-    def build_persona_profile_section(
-        *,
-        speaker_card: Any | None = None,
-        mentioned_cards: list[Any] | None = None,
-        confidence: dict[str, float] | None = None,
-    ) -> str | None:
-        """构建人物传记 section。
-
-        confidence 中值为 0.0 的表示消歧无法确定，需要加消歧提示。
-        """
-        lines: list[str] = [TAG_BIOGRAPHY]
-        written: set[str] = set()
-        low_confidence_names: list[str] = []
-
-        def _write_card(card: Any, conf: float = 1.0) -> None:
-            uid = getattr(card, "user_id", "")
-            name = getattr(card, "display_name", "") or getattr(card, "name", uid) or uid
-            if uid and uid in written:
-                return
-            if uid:
-                written.add(uid)
-
-            if conf <= 0.0:
-                low_confidence_names.append(name)
-
-            aliases: list[str] = []
-            if hasattr(card, "section"):
-                try:
-                    aliases = [item.value for item in card.section("aliases").active_items()]
-                except Exception:
-                    aliases = []
-            else:
-                aliases = list(getattr(card, "aliases", []) or [])
-
-            alias_hint = f"（别称：{'、'.join(aliases[:4])}）" if aliases else ""
-            uid_hint = f"（{uid}）" if uid else ""
-            lines.append(f"关于{name}{uid_hint}{alias_hint}：")
-
-            impression = getattr(card, "short_impression", "") or getattr(card, "short_bio", "")
-            if impression:
-                lines.append(f"  {impression}")
-
-            if hasattr(card, "section"):
-                for section_name in (
-                    "identity",
-                    "interests",
-                    "preferences",
-                    "communication_style",
-                    "relationship",
-                    "boundaries",
-                ):
-                    section = card.section(section_name)
-                    values = [item.value for item in section.active_items()[:3]]
-                    if values:
-                        lines.append(f"  {'；'.join(values)}")
-                return
-
-            relationships = getattr(card, "relationships", [])
-            for rel in relationships[:3]:
-                fact = getattr(rel, "fact_hint", "")
-                if fact:
-                    lines.append(f"  {fact}")
-
-        conf_map = confidence or {}
-        if speaker_card is not None:
-            _write_card(speaker_card, conf_map.get(getattr(speaker_card, "user_id", ""), 1.0))
-
-        if mentioned_cards:
-            for card in mentioned_cards:
-                _write_card(card, conf_map.get(getattr(card, "user_id", ""), 1.0))
-
-        # 消歧提示
-        if low_confidence_names:
-            names = "、".join(low_confidence_names)
-            lines.append(f"【注意】消息中提到的别名可能指{names}中的一位，请根据上下文判断。")
-
-        if len(lines) <= 1:
-            return None
-        return "\n".join(lines)
-
-    @staticmethod
     def build_memory_context(memories: list[dict[str, Any]]) -> str:
         """构建相关记忆 section。"""
         lines = [
@@ -740,9 +658,6 @@ class PromptFactory:
         style_params: Any,
         other_ai_names: list[str],
         user_profiles: list[Any] | None = None,
-        persona_profile_speaker: Any | None = None,
-        persona_profile_mentioned: list[Any] | None = None,
-        persona_profile_confidence: dict[str, float] | None = None,
         skill_registry: Any | None = None,
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
@@ -807,15 +722,6 @@ class PromptFactory:
             tool_flow_mode=tool_flow_mode,
         )
         _add(output_spec_text, "output_constraint")
-
-        # ── L2 变动：每条消息级变化，放 dynamic_context（注入 user 消息）──
-        bio = PromptFactory.build_persona_profile_section(
-            speaker_card=persona_profile_speaker,
-            mentioned_cards=persona_profile_mentioned,
-            confidence=persona_profile_confidence,
-        )
-        if bio:
-            _add(bio, "identity", target="dynamic")
 
         if memories:
             _add(PromptFactory.build_memory_context(memories), "memory", target="dynamic")

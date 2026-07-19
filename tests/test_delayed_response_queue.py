@@ -223,7 +223,6 @@ def test_build_delayed_prompt_injects_configured_length_limit():
         channel_user_id="u1",
         related_user_ids=[],
         candidate_memories=[],
-        persona_profile_context=None,
     )
 
     bundle = DelayedQueueTasks(engine)._build_delayed_prompt(item, "group-1")

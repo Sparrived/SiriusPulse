@@ -8,7 +8,6 @@ from sirius_pulse.skills.builtin import (
     group_management,
     interaction,
     qq_member_info,
-    recall_message,
 )
 
 
@@ -62,7 +61,7 @@ async def test_qq_builtin_skills_call_expected_adapter_methods():
     assert (await interaction.run("poke", user_id=1001, bridge=adapter, chat_context=ctx))[
         "success"
     ] is True
-    assert (await recall_message.run(42, bridge=adapter))["success"] is True
+    assert (await interaction.run("recall", message_id=42, bridge=adapter))["success"] is True
     members = await qq_member_info.run("list", bridge=adapter, chat_context=ctx)
     member_info = await qq_member_info.run("get", 1002, bridge=adapter, chat_context=ctx)
     assert (await group_management.run("kick", user_id=1001, bridge=adapter, chat_context=ctx))[

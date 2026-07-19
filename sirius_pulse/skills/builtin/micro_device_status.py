@@ -13,6 +13,7 @@ from sirius_pulse.config.config_builder import ConfigBuilder
 
 _MDS_BASE_URL = "https://sparrived.xyz/mds"
 _MDS_TOKEN_ENV = "MDS_PUBLIC_STATUS_TOKEN"
+_MDS_BASE_URL_ENV = "MDS_API_BASE_URL"
 _MAX_RESPONSE_BYTES = 512 * 1024
 _DEFAULT_TIMEOUT_SECONDS = 10
 
@@ -36,6 +37,25 @@ SKILL_META = {
     "tags": ["microdevicestatus", "mds", "status", "location", "presence"],
     "dependencies": [],
     "parameters": _config.build(),
+    "config": {
+        "public_status_token": {
+            "type": "password",
+            "description": "MDS 公开状态接口令牌；保存在当前人格的 developer_status.json 中。",
+            "group": "MDS 连接",
+        },
+        "base_url": {
+            "type": "str",
+            "description": "MDS 服务基地址。",
+            "default": _MDS_BASE_URL,
+            "group": "MDS 连接",
+        },
+        "timeout_seconds": {
+            "type": "int",
+            "description": "请求超时秒数，范围 1 到 60。",
+            "default": _DEFAULT_TIMEOUT_SECONDS,
+            "group": "MDS 连接",
+        },
+    },
 }
 
 
@@ -45,15 +65,22 @@ def run(
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Fetch and redact the public MDS snapshot for model consumption."""
+    _reload_data_store(data_store)
     token = _resolve_token(data_store)
     if not token:
         return _failure(
-            "未配置 MDS_PUBLIC_STATUS_TOKEN。请在当前人格的 skill_data/developer_status.json "
-            "中设置 public_status_token，或在运行环境设置同名环境变量。"
+            "未配置 MDS 公开状态令牌。请在 WebUI 的 developer_status 配置中填写，"
+            "它会保存到当前人格的 skill_data/developer_status.json；"
+            "MDS_PUBLIC_STATUS_TOKEN 环境变量可作为后备。"
         )
 
     try:
-        snapshot = _fetch_snapshot(token)
+        endpoint = _snapshot_url(_resolve_base_url(data_store))
+        snapshot = _fetch_snapshot(
+            token,
+            endpoint=endpoint,
+            timeout_seconds=_resolve_timeout_seconds(data_store),
+        )
     except json.JSONDecodeError:
         return _failure("MDS 返回的不是合法 JSON。")
     except ValueError as exc:
@@ -80,7 +107,7 @@ def run(
         "devices": devices,
         "text_blocks": [_render_summary(devices, generated_at, wanted_id)],
         "internal_metadata": {
-            "endpoint": _snapshot_url(),
+            "endpoint": endpoint,
             "device_count": len(devices),
             "generated_at": generated_at,
         },
@@ -88,30 +115,42 @@ def run(
 
 
 def _resolve_token(data_store: Any) -> str:
-    env_token = os.environ.get(_MDS_TOKEN_ENV, "").strip()
-    if env_token:
-        return env_token
-    if data_store is None:
-        return ""
-    reload_store = getattr(data_store, "reload", None)
-    if callable(reload_store):
-        reload_store()
-    return str(data_store.get("public_status_token", "") or "").strip()
+    if data_store is not None:
+        configured = str(data_store.get("public_status_token", "") or "").strip()
+        if configured:
+            return configured
+    return os.environ.get(_MDS_TOKEN_ENV, "").strip()
 
 
-def _snapshot_url() -> str:
-    base_url = os.environ.get("MDS_API_BASE_URL", _MDS_BASE_URL).strip().rstrip("/")
+def _resolve_base_url(data_store: Any) -> str:
+    if data_store is not None:
+        configured = str(data_store.get("base_url", "") or "").strip()
+        if configured:
+            return configured
+    return os.environ.get(_MDS_BASE_URL_ENV, _MDS_BASE_URL).strip()
+
+
+def _resolve_timeout_seconds(data_store: Any) -> int:
+    value = data_store.get("timeout_seconds", _DEFAULT_TIMEOUT_SECONDS) if data_store else _DEFAULT_TIMEOUT_SECONDS
+    try:
+        return max(1, min(60, int(value)))
+    except (TypeError, ValueError):
+        return _DEFAULT_TIMEOUT_SECONDS
+
+
+def _snapshot_url(base_url: str | None = None) -> str:
+    base_url = (base_url or os.environ.get(_MDS_BASE_URL_ENV, _MDS_BASE_URL)).strip().rstrip("/")
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("MDS_API_BASE_URL 必须是合法的 http/https 地址。")
+        raise ValueError("MDS 服务地址必须是合法的 http/https 地址。")
     if parsed.query or parsed.fragment:
-        raise ValueError("MDS_API_BASE_URL 不能包含 query 或 fragment。")
+        raise ValueError("MDS 服务地址不能包含 query 或 fragment。")
     return f"{base_url}/api/v1/public/snapshot"
 
 
-def _fetch_snapshot(token: str) -> dict[str, Any]:
+def _fetch_snapshot(token: str, *, endpoint: str, timeout_seconds: int) -> dict[str, Any]:
     request = Request(
-        _snapshot_url(),
+        endpoint,
         headers={
             "Accept": "application/json",
             "Authorization": f"Bearer {token}",
@@ -119,7 +158,7 @@ def _fetch_snapshot(token: str) -> dict[str, Any]:
         },
         method="GET",
     )
-    with urlopen(request, timeout=_DEFAULT_TIMEOUT_SECONDS) as response:
+    with urlopen(request, timeout=timeout_seconds) as response:
         body = response.read(_MAX_RESPONSE_BYTES + 1)
     if len(body) > _MAX_RESPONSE_BYTES:
         raise ValueError("MDS 返回内容过大，已拒绝处理。")
@@ -127,6 +166,12 @@ def _fetch_snapshot(token: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("MDS 返回的数据结构无效。")
     return payload
+
+
+def _reload_data_store(data_store: Any) -> None:
+    reload_store = getattr(data_store, "reload", None)
+    if callable(reload_store):
+        reload_store()
 
 
 def _normalize_devices(raw_devices: Any) -> list[dict[str, Any]]:

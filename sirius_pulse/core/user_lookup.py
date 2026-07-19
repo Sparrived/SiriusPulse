@@ -61,7 +61,6 @@ class UserLookupService:
                 ctx,
                 self._user_manager,
                 group_id or "default",
-                profile_manager=getattr(self._engine, "profile_manager", None),
             )
             if not resolution.user_id or resolution.source == "unresolved":
                 return None
@@ -83,16 +82,16 @@ class UserLookupService:
         *,
         fuzzy: bool = True,
     ) -> dict[str, Any] | None:
-        """通过显示名或别名查找用户。
+        """通过显示名查找用户。
 
         Args:
-            name: 用户显示名或别名
+            name: 用户显示名
             group_id: 群组 ID（可选）
             fuzzy: 是否启用模糊匹配（默认启用）
 
         Returns:
             用户信息字典，未找到返回 None
-            {"user_id": "...", "name": "...", "confidence": 0.9, "source": "alias_exact"}
+            {"user_id": "...", "name": "...", "confidence": 0.9, "source": "name_fuzzy"}
         """
         if not name:
             return None
@@ -104,7 +103,6 @@ class UserLookupService:
                 ctx,
                 self._user_manager,
                 group_id or "default",
-                profile_manager=getattr(self._engine, "profile_manager", None),
             )
             if not resolution.user_id or resolution.source == "unresolved":
                 return None
@@ -118,19 +116,6 @@ class UserLookupService:
         except Exception:
             logger.warning("find_by_name 失败", exc_info=True)
             return None
-
-    def _profile_aliases(self, user_id: str, group_id: str) -> list[str]:
-        profile_manager = getattr(self._engine, "profile_manager", None)
-        if profile_manager is None:
-            return []
-        try:
-            profile = profile_manager.get_profile(group_id or "default", user_id, create=False)
-            if profile is None:
-                return []
-            return [item.value for item in profile.section("aliases").active_items()]
-        except Exception:
-            logger.debug("读取画像别名失败", exc_info=True)
-            return []
 
     def get_info(self, user_id: str, group_id: str = "") -> dict[str, Any] | None:
         """获取用户详细信息。
@@ -149,7 +134,7 @@ class UserLookupService:
             return {
                 "user_id": profile.user_id,
                 "name": profile.name,
-                "aliases": self._profile_aliases(profile.user_id, group_id or "default"),
+                "aliases": [],
                 "identities": profile.identities,
                 "is_developer": profile.is_developer,
             }
@@ -172,7 +157,7 @@ class UserLookupService:
                 {
                     "user_id": u.user_id,
                     "name": u.name,
-                    "aliases": self._profile_aliases(u.user_id, group_id or "default"),
+                    "aliases": [],
                     "is_developer": u.is_developer,
                 }
                 for u in users

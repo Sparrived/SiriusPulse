@@ -147,10 +147,6 @@ export async function init(container, params = {}) {
         <div class="card-header"><div class="card-title">决策时间线（分数 vs 阈值）</div></div>
         <div data-chart="decision-timeline" style="min-height:300px"></div>
       </div>
-      <div class="card" style="margin-top:20px">
-        <div class="card-header"><div class="card-title">用户认知画像</div></div>
-        <div id="userStatsTable"></div>
-      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px">
         <div class="card">
           <div class="card-header"><div class="card-title">决策原因 TOP 15</div></div>
@@ -211,7 +207,6 @@ async function loadAnalysis(silent = false) {
     renderScoreHistogram('score-sarcasm', '讽刺', res.score_histograms?.sarcasm);
     renderScoreHistogram('score-entitlement', '资格感', res.score_histograms?.entitlement);
     renderDecisionTimeline(res.decision_timeline || []);
-    renderUserStatsTable(res.user_stats || []);
     renderReasonTable(res.decision_summary?.reason_distribution || {});
     renderGroupSummaryTable(res.group_summary || []);
     renderDecisionTable(res.decision_timeline || []);
@@ -268,10 +263,6 @@ function renderAnalysisStats(res) {
     <div class="stat-card">
       <div class="stat-label">平均消息速率</div>
       <div class="stat-value">${(ds.avg_msg_rate || 0).toFixed(2)}/min</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">活跃用户数</div>
-      <div class="stat-value">${(res.user_stats || []).length}</div>
     </div>
   `;
 }
@@ -478,47 +469,6 @@ function renderDecisionTimeline(timeline) {
     ],
     areaStyle: false,
   });
-}
-
-// ── 深度分析：用户画像表格 ──────────────────────────────────────
-
-function renderUserStatsTable(stats) {
-  const el = $('userStatsTable');
-  if (!el) return;
-  if (!stats.length) {
-    el.innerHTML = '<div style="color:var(--text-3);padding:24px;text-align:center">暂无用户数据</div>';
-    return;
-  }
-  el.innerHTML = `
-    <table class="table">
-      <thead>
-        <tr>
-          <th>用户 ID</th>
-          <th>事件数</th>
-          <th>平均效价</th>
-          <th>平均唤醒度</th>
-          <th>平均定向</th>
-          <th>平均讽刺</th>
-          <th>平均紧急度</th>
-          <th>最近活跃</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${stats.map(s => `
-          <tr>
-            <td>${s.user_id || '—'}</td>
-            <td>${s.event_count}</td>
-            <td style="color:${(s.avg_valence || 0) >= 0 ? '#52c41a' : '#ff4d4f'}">${(s.avg_valence || 0).toFixed(3)}</td>
-            <td>${(s.avg_arousal || 0).toFixed(3)}</td>
-            <td>${(s.avg_directed || 0).toFixed(3)}</td>
-            <td>${(s.avg_sarcasm || 0).toFixed(3)}</td>
-            <td>${(s.avg_urgency || 0).toFixed(2)}</td>
-            <td>${formatTs(s.last_active)}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
 }
 
 // ── 深度分析：决策原因表格 ──────────────────────────────────────

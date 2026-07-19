@@ -333,7 +333,7 @@ def run(query: str = "", data_store=None, **kwargs) -> dict:
     return {"success": True, "text": result}
 ```
 
-内置技能包括：`bash`、`web_lookup`、`qq_member_info`、`reminder`、`github_monitor`、`desktop_screenshot` 等。
+内置技能包括：`bash`、`container_admin`、`web_lookup`、`qq_member_info`、`reminder`、`github_monitor`、`desktop_screenshot` 等。
 
 支持**被动技能**：后台任务、事件触发器、生命周期回调。
 
