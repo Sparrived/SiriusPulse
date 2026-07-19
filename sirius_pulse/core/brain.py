@@ -66,6 +66,8 @@ class ChatRequest:
     caller_is_developer: bool = False
     disabled_skill_names: set[str] = field(default_factory=set)
     extra_tools: list[dict[str, Any]] | None = None
+    skill_query: str = ""
+    max_skill_candidates: int = 0
 
     # ── 对话深度 ──
     last_reply_at: float = 0.0
@@ -467,16 +469,28 @@ class Brain:
                     if self.current_adapter_type_fn is not None
                     else None
                 )
-                tools = self.skill_registry.build_tools_list(
-                    invocation_context=inv_ctx,
-                    adapter_type=adapter_type,
-                    chat_type="private" if request.group_id.startswith("private_") else "group",
-                    admin_allowed=(
+                tool_kwargs = {
+                    "invocation_context": inv_ctx,
+                    "adapter_type": adapter_type,
+                    "chat_type": "private" if request.group_id.startswith("private_") else "group",
+                    "admin_allowed": (
                         self.current_admin_allowed_fn(request.group_id)
                         if self.current_admin_allowed_fn is not None
                         else False
                     ),
-                )
+                }
+                if (
+                    request.skill_query.strip()
+                    and request.max_skill_candidates > 0
+                    and hasattr(self.skill_registry, "build_tools_for_query")
+                ):
+                    tools = self.skill_registry.build_tools_for_query(
+                        request.skill_query,
+                        limit=request.max_skill_candidates,
+                        **tool_kwargs,
+                    )
+                else:
+                    tools = self.skill_registry.build_tools_list(**tool_kwargs)
                 if request.disabled_skill_names:
                     disabled = set(request.disabled_skill_names)
                     tools = [

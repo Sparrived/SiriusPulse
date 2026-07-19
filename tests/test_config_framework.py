@@ -162,6 +162,7 @@ def test_models_when_orchestration_policy_resolves_models_then_validates_modes()
         {
             "task_models": {"memory_extract": "memory-model"},
             "task_enabled": {"memory_extract": False},
+            "agent_max_skill_candidates": 5,
             "memory": {"max_facts_per_user": 3, "decay_schedule": {"7": 0.1}},
         },
         agent_model="fallback-model",
@@ -173,12 +174,15 @@ def test_models_when_orchestration_policy_resolves_models_then_validates_modes()
     assert policy.resolve_model_for_task("response_generate", default_model="default") == "default"
     assert policy.is_task_enabled("memory_extract") is False
     assert policy.is_task_enabled("unknown_task") is True
+    assert policy.agent_max_skill_candidates == 5
     assert policy.memory.max_facts_per_user == 3
     assert policy.memory.decay_schedule[7] == 0.1
     with pytest.raises(ValueError):
         OrchestrationPolicy().validate()
     with pytest.raises(ValueError):
         OrchestrationPolicy(unified_model="one", task_models={"memory_extract": "two"}).validate()
+    with pytest.raises(ValueError):
+        OrchestrationPolicy(unified_model="one", agent_max_skill_candidates=0).validate()
 
 
 def test_config_builder_when_params_are_declared_then_metadata_is_rendered():

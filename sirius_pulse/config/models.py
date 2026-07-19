@@ -254,6 +254,7 @@ class OrchestrationPolicy:
     enable_skills: bool = True
     max_skill_rounds: int = 3  # max consecutive skill call rounds per turn
     skill_execution_timeout: float = 30.0  # max seconds per SKILL execution, 0 = no limit
+    agent_max_skill_candidates: int = 8
     auto_install_skill_deps: bool = True  # auto-install missing SKILL dependencies via uv/pip
 
     # Hidden planning mode: normal chat can stay lightweight while plan runs privately.
@@ -299,6 +300,8 @@ class OrchestrationPolicy:
             raise ValueError("memory_extract_batch_size 必须大于 0。")
         if self.memory_extract_min_content_length < 0:
             raise ValueError("memory_extract_min_content_length 不能小于 0。")
+        if self.agent_max_skill_candidates <= 0:
+            raise ValueError("agent_max_skill_candidates 必须大于 0。")
 
         if self.event_extract_batch_size <= 0:
             raise ValueError("event_extract_batch_size 必须大于 0。")

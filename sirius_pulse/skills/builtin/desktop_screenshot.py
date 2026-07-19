@@ -29,6 +29,7 @@ SKILL_META = {
     "name": "desktop_screenshot",
     "description": "开发者让你看看电脑屏幕、当前窗口、报错画面或“现在发生了什么”时使用；截图只供你分析后再在群里说明。",
     "version": "1.1.0",
+    "side_effect": "read_only",
     "tags": ["system", "image"],
     "developer_only": True,
     "dependencies": ["Pillow"],

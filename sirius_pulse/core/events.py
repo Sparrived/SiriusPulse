@@ -26,6 +26,7 @@ class SessionEventType(enum.Enum):
     COGNITION_COMPLETED = "cognition_completed"
     DECISION_COMPLETED = "decision_completed"
     EXECUTION_COMPLETED = "execution_completed"
+    AGENT_TURN_UPDATED = "agent_turn_updated"
     DELAYED_RESPONSE_TRIGGERED = "delayed_response_triggered"
     REMINDER_TRIGGERED = "reminder_triggered"
     CUSTOM = "custom"

@@ -24,6 +24,56 @@ def _past(seconds: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
 
 
+def _agent_tool_tasks(queue, skill, chat_results, execute_skill):
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    engine = SimpleNamespace(
+        config={"max_skill_rounds": 2},
+        delayed_queue=queue,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
+                user_id="u1"
+            )
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": kwargs["current_query"]},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(chat=AsyncMock(side_effect=chat_results)),
+        _skill_registry=SimpleNamespace(get=lambda name: skill),
+        _skill_executor=SimpleNamespace(
+            set_chat_context=lambda **kwargs: None,
+            execute_async=execute_skill,
+        ),
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="request",
+        token_breakdown=None,
+        dynamic_context="",
+    )
+    return tasks, engine
+
+
 def test_delayed_queue_when_immediate_messages_share_group_then_merges_into_one_item():
     queue = DelayedResponseQueue()
 
@@ -262,7 +312,7 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
             reply_references=[],
         ),
     ]
-    skill = SimpleNamespace(name="lookup", silent=False, developer_only=False)
+    skill = SimpleNamespace(name="lookup", silent=False, developer_only=False, retry_safe=False)
     profile = SimpleNamespace(name="Alice", is_developer=False)
     order: list[str] = []
 
@@ -271,7 +321,11 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
         return SkillResult(success=True, data={"ok": True})
 
     engine = SimpleNamespace(
-        config={"max_skill_rounds": 2, "partial_reply_lead_seconds": 1.5},
+        config={
+            "max_skill_rounds": 2,
+            "partial_reply_lead_seconds": 1.5,
+            "skill_execution_timeout": 12,
+        },
         delayed_queue=queue,
         _helpers=SimpleNamespace(
             get_recent_messages=lambda group_id, n: [],
@@ -345,6 +399,60 @@ async def test_delayed_queue_when_tool_call_has_text_then_partial_leads_final_re
     assert order == ["partial", "tool", "lead_wait"]
     assert slept[0] == pytest.approx(1.5, abs=0.1)
     assert results[0]["reply"] == "Everything is ready."
+    execute_kwargs = engine._skill_executor.execute_async.await_args.kwargs
+    assert execute_kwargs["timeout"] == 12
+    assert execute_kwargs["max_retries"] == 0
+    second_request = engine.brain.chat.await_args_list[1].args[0]
+    tool_message = next(message for message in second_request.messages if message["role"] == "tool")
+    assert tool_message["content"].startswith("[Tool result: success]")
+    assert "reference data" in tool_message["content"]
+    first_request = engine.brain.chat.await_args_list[0].args[0]
+    assert first_request.skill_query == "check status"
+    assert first_request.max_skill_candidates == 8
+    turn_events = [
+        call.args[0].data
+        for call in engine.event_bus.emit.await_args_list
+        if call.args[0].type.value == "agent_turn_updated"
+    ]
+    assert turn_events[-1]["phase"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_executes_high_risk_tool_without_confirmation():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1", "u1", "remove this member", _decision(ResponseStrategy.IMMEDIATE)
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    tool_call = ToolCall(
+        id="call-risky",
+        function_name="group_management",
+        function_arguments='{"action": "kick", "user_id": 42}',
+    )
+    skill = SimpleNamespace(
+        name="group_management",
+        silent=False,
+        developer_only=False,
+        retry_safe=False,
+        side_effect="destructive",
+    )
+    execute_skill = AsyncMock(return_value=SkillResult(success=True, data={"ok": True}))
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        skill,
+        [
+            SimpleNamespace(
+                raw_text="", clean_text="", tool_calls=[tool_call], reply_references=[]
+            ),
+            SimpleNamespace(raw_text="Done.", clean_text="Done.", tool_calls=[], reply_references=[]),
+        ],
+        execute_skill,
+    )
+
+    results = await tasks.tick_delayed_queue("group-1")
+
+    assert results[0]["reply"] == "Done."
+    assert execute_skill.await_args.args[1] == {"action": "kick", "user_id": 42}
 
 
 @pytest.mark.asyncio
@@ -623,6 +731,12 @@ async def test_delayed_queue_when_enter_plan_then_intermediate_text_is_hidden():
         tool["function"]["name"] for tool in (second_request.extra_tools or [])
     }
     assert "隐藏计划模式" in second_request.system_prompt
+    turn_events = [
+        call.args[0].data
+        for call in engine.event_bus.emit.await_args_list
+        if call.args[0].type.value == "agent_turn_updated"
+    ]
+    assert any("plan" in event["phases"] for event in turn_events)
 
     third_request = engine.brain.chat.await_args_list[2].args[0]
     assert any(
@@ -951,7 +1065,7 @@ async def test_delayed_queue_when_normal_chat_requests_plan_status_then_reads_pu
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_deferred():
+async def test_delayed_queue_when_interaction_sticker_tool_is_called_then_sticker_is_deferred():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
         "group-1",
@@ -963,10 +1077,10 @@ async def test_delayed_queue_when_send_sticker_tool_is_called_then_sticker_is_de
 
     tool_call = ToolCall(
         id="call-sticker",
-        function_name="send_sticker",
-        function_arguments='{"names": ["开心"]}',
+        function_name="interaction",
+        function_arguments='{"action": "sticker", "names": ["开心"]}',
     )
-    skill = SimpleNamespace(name="send_sticker", silent=True, developer_only=False)
+    skill = SimpleNamespace(name="interaction", silent=False, developer_only=False)
     profile = SimpleNamespace(name="Alice", is_developer=False)
     execute_skill = AsyncMock(return_value=SkillResult(success=True, data={"sent": True}))
     engine = SimpleNamespace(

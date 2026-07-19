@@ -24,6 +24,7 @@ SKILL_META = {
     "name": "recall_message",
     "description": "群聊里需要撤回刚发错、误发或不该继续展示的指定消息时使用；只能撤回最近真实存在且平台仍允许撤回的消息。",
     "version": "1.0.0",
+    "side_effect": "destructive",
     "tags": ["napcat", "qq", "message_admin"],
     "adapter_types": ["napcat"],
     "parameters": _config.build(),

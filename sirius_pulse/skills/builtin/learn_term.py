@@ -28,6 +28,7 @@ SKILL_META = {
     "name": "learn_term",
     "description": "群聊里出现大家反复使用的新梗、黑话、项目代号或专有名词，且含义已被解释清楚时使用；记录后方便以后自然接话。",
     "version": "1.0.0",
+    "side_effect": "external_write",
     "tags": ["memory", "learning"],
     "silent": True,
     "dependencies": [],

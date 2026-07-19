@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from sirius_pulse.memory.user.unified_models import UnifiedUser
-from sirius_pulse.skills import SkillDefinition, SkillInvocationContext, SkillRegistry
+from sirius_pulse.skills import (
+    SkillDefinition,
+    SkillInvocationContext,
+    SkillRegistry,
+    SkillSideEffect,
+)
 
 
 def _skill(
@@ -15,6 +20,7 @@ def _skill(
     developer_only: bool = False,
     admin_required: bool = False,
     adapter_types: list[str] | None = None,
+    tags: list[str] | None = None,
     model_visible: bool = True,
 ) -> SkillDefinition:
     def run(**kwargs):
@@ -27,6 +33,7 @@ def _skill(
         developer_only=developer_only,
         admin_required=admin_required,
         adapter_types=adapter_types or [],
+        tags=tags or [],
         model_visible=model_visible,
         source_path=None,
         _run_func=run,
@@ -115,15 +122,15 @@ def test_skill_registry_when_adapter_is_unknown_then_adapter_limited_skills_are_
 
 def test_skill_registry_when_skill_is_not_model_visible_then_tool_is_hidden():
     registry = SkillRegistry()
-    registry.register(_skill("send_sticker"))
+    registry.register(_skill("interaction"))
     registry.register(_skill("list_stickers", model_visible=False))
 
     descriptions = registry.build_tool_descriptions()
     tools = registry.build_tools_list()
 
-    assert "send_sticker" in descriptions
+    assert "interaction" in descriptions
     assert "list_stickers" not in descriptions
-    assert [tool["function"]["name"] for tool in tools] == ["send_sticker"]
+    assert [tool["function"]["name"] for tool in tools] == ["interaction"]
 
 
 def test_skill_registry_when_workspace_hot_reloads_then_removed_skills_disappear():
@@ -139,7 +146,7 @@ def test_skill_registry_when_workspace_hot_reloads_then_removed_skills_disappear
 
 def test_skill_registry_when_skill_requires_admin_then_visible_only_for_admin_group():
     registry = SkillRegistry()
-    registry.register(_skill("mute_member", admin_required=True, adapter_types=["napcat"]))
+    registry.register(_skill("group_management", admin_required=True, adapter_types=["napcat"]))
 
     assert registry.build_tools_list(adapter_type="napcat", chat_type="group") == []
     assert (
@@ -157,7 +164,42 @@ def test_skill_registry_when_skill_requires_admin_then_visible_only_for_admin_gr
         admin_allowed=True,
     )
 
-    assert [tool["function"]["name"] for tool in tools] == ["mute_member"]
+    assert [tool["function"]["name"] for tool in tools] == ["group_management"]
+
+
+def test_skill_registry_when_query_scopes_tools_then_ranked_results_are_bounded():
+    registry = SkillRegistry()
+    registry.register(_skill("weather_lookup", description="查询实时预报"))
+    registry.register(_skill("forecast", description="查询天气", tags=["weather", "forecast"]))
+    registry.register(_skill("web_search", description="搜索网页", tags=["search"]))
+
+    tools = registry.build_tools_for_query("weather forecast", limit=2)
+
+    assert [tool["function"]["name"] for tool in tools] == [
+        "forecast",
+        "weather_lookup",
+    ]
+    assert registry.build_tools_for_query("unrelated", limit=2) == []
+
+
+def test_skill_registry_when_query_scopes_tools_then_existing_access_filters_apply():
+    registry = SkillRegistry()
+    registry.register(_skill("public_weather", description="天气查询"))
+    registry.register(_skill("developer_weather", developer_only=True, description="天气查询"))
+    registry.register(_skill("admin_weather", admin_required=True, description="天气查询"))
+    registry.register(_skill("discord_weather", adapter_types=["discord"], description="天气查询"))
+    registry.register(_skill("hidden_weather", description="天气查询", model_visible=False))
+    user_context = SkillInvocationContext(caller=UnifiedUser(user_id="u1", name="普通用户"))
+
+    tools = registry.build_tools_for_query(
+        "天气",
+        limit=5,
+        invocation_context=user_context,
+        adapter_type="napcat",
+        chat_type="group",
+    )
+
+    assert [tool["function"]["name"] for tool in tools] == ["public_weather"]
 
 
 def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are_visible(
@@ -172,6 +214,8 @@ def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are
     )
     skill = registry.get("chat_with_developer")
     interaction = registry.get("interaction")
+    bash = registry.get("bash")
+    file_upload = registry.get("file_upload")
     group_management = registry.get("group_management")
     tools = registry.build_tools_list(adapter_type="napcat")
     admin_tools = registry.build_tools_list(
@@ -183,8 +227,35 @@ def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are
     assert skill.adapter_types == ["napcat"]
     assert "私聊" in skill.description
     assert interaction is not None
+    assert bash is not None
+    assert [param.name for param in bash.config_parameters] == [
+        "allowed_commands",
+        "allow_write_commands",
+        "allow_destructive_commands",
+        "max_timeout_seconds",
+        "max_output_chars",
+    ]
+    assert "allowed_commands" not in bash.to_tool_schema()["function"]["parameters"]["properties"]
+    assert file_upload is not None
     assert group_management is not None
+    for old_name in (
+        "poke",
+        "send_sticker",
+        "send_image",
+        "upload_file",
+        "kick_member",
+        "mute_member",
+        "mute_all",
+        "set_group_card",
+    ):
+        assert registry.get(old_name) is None
+    assert registry.get("web_lookup").retry_safe is True
+    assert registry.get("web_lookup").side_effect is SkillSideEffect.READ_ONLY
+    assert group_management.side_effect is SkillSideEffect.DESTRUCTIVE
     assert [tool["function"]["name"] for tool in tools].count("interaction") == 1
+    assert [tool["function"]["name"] for tool in tools].count("file_upload") == 1
     assert not any(tool["function"]["name"] == "send_sticker" for tool in tools)
+    assert not any(tool["function"]["name"] == "send_image" for tool in tools)
+    assert not any(tool["function"]["name"] == "upload_file" for tool in tools)
     assert any(tool["function"]["name"] == "group_management" for tool in admin_tools)
     assert not any(tool["function"]["name"] == "kick_member" for tool in admin_tools)

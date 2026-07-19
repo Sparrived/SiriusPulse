@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.core.agent_turn import AgentTurn, AgentTurnPhase
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
@@ -26,7 +27,10 @@ from sirius_pulse.core.plan_runtime import (
     update_plan_progress,
 )
 from sirius_pulse.core.prompt_factory import TAG_GLOSSARY, PromptFactory
-from sirius_pulse.core.sticker_delivery import dedupe_sticker_names, defer_send_sticker_tool
+from sirius_pulse.core.sticker_delivery import (
+    dedupe_sticker_names,
+    defer_interaction_sticker_tool,
+)
 from sirius_pulse.models.response_strategy import PersonaProfilePromptContext
 from sirius_pulse.providers.base import ToolCall
 
@@ -37,15 +41,12 @@ logger = logging.getLogger(__name__)
 
 _AUTONOMOUS_MESSAGE_SKILLS = {
     "chat_with_developer",
-    "send_sticker",
 }
 
 
-def _interaction_action(tool_call: ToolCall) -> str:
-    """Return the effective action for a legacy or unified interaction call."""
-    if tool_call.function_name == "send_sticker":
-        return "sticker"
-    if tool_call.function_name != "interaction":
+def _composite_action(tool_call: ToolCall) -> str:
+    """Return the effective action for a legacy or unified tool call."""
+    if tool_call.function_name not in {"interaction", "file_upload"}:
         return ""
     try:
         params = json.loads(tool_call.function_arguments or "{}")
@@ -55,7 +56,7 @@ def _interaction_action(tool_call: ToolCall) -> str:
 
 
 def _is_sticker_tool_call(tool_call: ToolCall) -> bool:
-    return _interaction_action(tool_call) == "sticker"
+    return _composite_action(tool_call) == "sticker"
 
 # ── 内置流程控制工具定义 ──────────────────────────────────────────────
 
@@ -227,6 +228,17 @@ class DelayedQueueTasks:
 
     def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
         self._engine = engine
+
+    @staticmethod
+    async def _emit_agent_turn(engine: Any, turn: AgentTurn) -> None:
+        await engine.event_bus.emit(
+            SessionEvent(type=SessionEventType.AGENT_TURN_UPDATED, data=turn.to_event_data())
+        )
+
+    @staticmethod
+    def _side_effect_name(skill: Any) -> str:
+        value = getattr(skill, "side_effect", "unknown")
+        return str(getattr(value, "value", value) or "unknown")
 
     @staticmethod
     def _resolve_identity_with_optional_profile_manager(
@@ -534,8 +546,26 @@ class DelayedQueueTasks:
         speaker_display = triggered[0].user_id if triggered else ""
 
         # 提取原始聊天内容用于日记检索，避免 XML 标签干扰
-        raw_parts = [it.message_content for it in triggered if getattr(it, "message_content", None)]
+        raw_parts = [
+            text
+            for triggered_item in triggered
+            for text in PromptFactory._extract_message_texts(
+                getattr(triggered_item, "message_content", "")
+            )
+        ]
         raw_chat_content = "\n".join(raw_parts) if raw_parts else bundle.user_content
+        agent_turn = AgentTurn(
+            group_id=group_id,
+            item_ids=[triggered_item.item_id for triggered_item in triggered],
+            query=raw_chat_content,
+        )
+        await self._emit_agent_turn(engine, agent_turn)
+        try:
+            agent_max_skill_candidates = max(
+                1, int(engine.config.get("agent_max_skill_candidates", 8))
+            )
+        except (TypeError, ValueError):
+            agent_max_skill_candidates = 8
 
         msgs, ca_breakdown = engine.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
@@ -575,7 +605,7 @@ class DelayedQueueTasks:
 
         # Multi-round generation with function_call support
         from sirius_pulse.core.brain import ChatRequest
-        from sirius_pulse.skills.models import SkillInvocationContext
+        from sirius_pulse.skills.models import SkillInvocationContext, SkillResult
 
         max_skill_rounds = engine.config.get("max_skill_rounds", 8)
         partial_replies: list[str] = []
@@ -643,6 +673,8 @@ class DelayedQueueTasks:
                         and engine._skill_executor is not None
                     )
                     break
+                agent_turn.advance(AgentTurnPhase.DECIDE)
+                await self._emit_agent_turn(engine, agent_turn)
                 chat_result = await engine.brain.chat(
                     ChatRequest(
                         group_id=group_id,
@@ -654,11 +686,14 @@ class DelayedQueueTasks:
                         caller_is_developer=caller_is_developer,
                         post_process=True,
                         extra_tools=_extra_tools,
+                        skill_query=agent_turn.query,
+                        max_skill_candidates=agent_max_skill_candidates,
                     )
                 )
                 _round += 1
             reply = chat_result.raw_text.strip()
             round_clean = chat_result.clean_text
+            agent_turn.set_candidates(getattr(chat_result, "injected_tool_names", []))
 
             # 分类工具调用：流程控制 vs 普通技能
             tool_calls = chat_result.tool_calls or []
@@ -670,9 +705,15 @@ class DelayedQueueTasks:
                 if tc.function_name not in FLOW_CONTROL_TOOL_NAMES
                 and tc.function_name not in PLAN_CONTROL_TOOL_NAMES
             ]
+            agent_turn.advance(
+                AgentTurnPhase.PLAN if regular_tools or plan_control else AgentTurnPhase.RESPOND
+            )
+            await self._emit_agent_turn(engine, agent_turn)
 
             # 没调用任何工具 → 隐式 stop，文本作为最终回复
             if not tool_calls:
+                agent_turn.advance(AgentTurnPhase.RESPOND)
+                await self._emit_agent_turn(engine, agent_turn)
                 if plan_mode:
                     plan_final_reply = chat_result.clean_text
                     plan_send_to_group = bool(plan_final_reply)
@@ -901,7 +942,9 @@ class DelayedQueueTasks:
                 if skill is None:
                     return False
                 if tool_call.function_name == "interaction":
-                    return _interaction_action(tool_call) in {"image", "sticker"}
+                    return _composite_action(tool_call) == "sticker"
+                if tool_call.function_name == "file_upload":
+                    return _composite_action(tool_call) == "image"
                 return skill.silent
 
             all_silent = bool(regular_tools) and all(_tool_is_silent(tc) for tc in regular_tools)
@@ -963,6 +1006,13 @@ class DelayedQueueTasks:
                 }
                 messages.append(assistant_msg)
 
+                try:
+                    skill_timeout = max(
+                        0.0, float(engine.config.get("skill_execution_timeout", 30.0))
+                    )
+                except (TypeError, ValueError):
+                    skill_timeout = 30.0
+
                 # 逐个执行 tool_call 并收集结果
                 for idx, tc in enumerate(regular_tools):
                     skill_name = tc.function_name
@@ -983,12 +1033,29 @@ class DelayedQueueTasks:
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
 
+                    side_effect = self._side_effect_name(skill)
+
                     if _is_sticker_tool_call(tc):
-                        names, tool_content = defer_send_sticker_tool(
+                        if not agent_turn.begin_action(
+                            tool_call_id=tc.id,
+                            skill_name=skill_name,
+                            params=params,
+                            side_effect=side_effect,
+                            deduplicate=side_effect != "read_only",
+                        ):
+                            err_msg = f"Skill '{skill_name}' 被拒绝：本轮相同副作用动作已经执行过。"
+                            messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                            continue
+                        agent_turn.advance(AgentTurnPhase.ACT)
+                        await self._emit_agent_turn(engine, agent_turn)
+                        names, tool_content = defer_interaction_sticker_tool(
                             params,
                             available_names=getattr(engine, "_sticker_names", []) or [],
                         )
                         deferred_sticker_names.extend(names)
+                        agent_turn.finish_action(tc.id, success=True, summary=tool_content)
+                        agent_turn.advance(AgentTurnPhase.VERIFY)
+                        await self._emit_agent_turn(engine, agent_turn)
                         messages.append(
                             {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
                         )
@@ -1011,6 +1078,21 @@ class DelayedQueueTasks:
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
 
+                    if not agent_turn.begin_action(
+                        tool_call_id=tc.id,
+                        skill_name=skill_name,
+                        params=params,
+                        side_effect=side_effect,
+                        deduplicate=side_effect != "read_only",
+                    ):
+                        err_msg = f"Skill '{skill_name}' 被拒绝：本轮相同副作用动作已经执行过。"
+                        await self._emit_agent_turn(engine, agent_turn)
+                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        continue
+
+                    agent_turn.advance(AgentTurnPhase.ACT)
+                    await self._emit_agent_turn(engine, agent_turn)
+
                     ctx = SkillInvocationContext(  # type: ignore[assignment]
                         caller=skill_caller,
                         developer_profiles=developer_profiles,
@@ -1024,15 +1106,26 @@ class DelayedQueueTasks:
                     )
                     try:
                         result = await engine._skill_executor.execute_async(
-                            skill, params, invocation_context=ctx, max_retries=2
+                            skill,
+                            params,
+                            timeout=skill_timeout,
+                            invocation_context=ctx,
+                            max_retries=2 if getattr(skill, "retry_safe", False) else 0,
                         )
+                        agent_turn.finish_action(
+                            tc.id,
+                            success=result.success,
+                            summary=result.error if not result.success else result.to_display_text(),
+                        )
+                        agent_turn.advance(AgentTurnPhase.VERIFY)
+                        await self._emit_agent_turn(engine, agent_turn)
                         logger.info(
                             "Skill execute success: %s -> %s",
                             skill_name,
                             "success" if result.success else "failed",
                         )
+                        tool_content = result.to_model_text()
                         if result.success:
-                            tool_content = result.to_display_text()
                             # 收集多模态内容
                             for block in result.multimodal_blocks:
                                 skill_multimodal.append(
@@ -1058,10 +1151,14 @@ class DelayedQueueTasks:
                             ):
                                 self._inject_group_id_into_latest_reminder(group_id)
                         else:
-                            tool_content = result.error or "Unknown error"
-                            logger.warning("SKILL '%s' 执行失败: %s", skill_name, tool_content)
+                            logger.warning(
+                                "SKILL '%s' 执行失败: %s", skill_name, result.error or "Unknown error"
+                            )
                     except Exception as exc:
-                        tool_content = str(exc)
+                        tool_content = SkillResult(success=False, error=str(exc)).to_model_text()
+                        agent_turn.finish_action(tc.id, success=False, summary=str(exc))
+                        agent_turn.advance(AgentTurnPhase.VERIFY)
+                        await self._emit_agent_turn(engine, agent_turn)
                         logger.error("SKILL '%s' 执行异常: %s", skill_name, exc)
 
                     # 添加 tool 结果消息
@@ -1116,6 +1213,8 @@ class DelayedQueueTasks:
                             caller_is_developer=caller_is_developer,
                             post_process=True,
                             extra_tools=_extra_tools,
+                            skill_query=agent_turn.query,
+                            max_skill_candidates=agent_max_skill_candidates,
                         )
                     )
                     continue
@@ -1177,6 +1276,10 @@ class DelayedQueueTasks:
         sticker_names = dedupe_sticker_names(deferred_sticker_names)
 
         # Emit event with full reply data for external delivery
+        agent_turn.advance(AgentTurnPhase.RESPOND)
+        await self._emit_agent_turn(engine, agent_turn)
+        agent_turn.advance(AgentTurnPhase.COMPLETE)
+        await self._emit_agent_turn(engine, agent_turn)
         await engine.event_bus.emit(
             SessionEvent(
                 type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
@@ -1186,6 +1289,7 @@ class DelayedQueueTasks:
                     "reply": final_reply,
                     "partial_replies": partial_replies,
                     "sticker_names": sticker_names,
+                    "agent_turn_id": agent_turn.turn_id,
                 },
             )
         )
@@ -1198,6 +1302,7 @@ class DelayedQueueTasks:
                 "partial_replies": partial_replies,
                 "reply_references": reply_references,
                 "sticker_names": sticker_names,
+                "agent_turn_id": agent_turn.turn_id,
             }
         ]
 

@@ -57,6 +57,8 @@ SKILL_META = {
         "可搜索关键词或读取 URL，拿到结果后再用自然口吻概括回应。"
     ),
     "version": "1.0.0",
+    "retry_safe": True,
+    "side_effect": "read_only",
     "tags": ["web", "search", "content"],
     "dependencies": ["requests", "beautifulsoup4"],
     "parameters": _config.build(),

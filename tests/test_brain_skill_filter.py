@@ -35,7 +35,7 @@ class _Provider:
 async def test_brain_chat_when_skill_is_disabled_then_tool_schema_is_not_sent_to_provider():
     provider = _Provider()
     registry = SkillRegistry()
-    registry.register(_skill("send_sticker"))
+    registry.register(_skill("interaction"))
     registry.register(_skill("lookup"))
     brain = Brain(
         provider_async=provider,
@@ -57,7 +57,7 @@ async def test_brain_chat_when_skill_is_disabled_then_tool_schema_is_not_sent_to
             user_id="u1",
             system_prompt="system",
             messages=[{"role": "user", "content": "hello"}],
-            disabled_skill_names={"send_sticker"},
+            disabled_skill_names={"interaction"},
         )
     )
 
@@ -104,6 +104,40 @@ async def test_brain_chat_result_records_injected_tool_names():
 
 
 @pytest.mark.asyncio
+async def test_brain_chat_when_query_scopes_skills_then_only_matching_tools_are_sent():
+    provider = _Provider()
+    registry = SkillRegistry()
+    registry.register(_skill("weather_lookup"))
+    registry.register(_skill("calendar_lookup"))
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="model", max_tokens=100, temperature=0.1, timeout=30
+            )
+        ),
+        persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
+        skill_registry=registry,
+    )
+
+    await brain.chat(
+        ChatRequest(
+            group_id="group-1",
+            user_id="u1",
+            system_prompt="system",
+            messages=[{"role": "user", "content": "weather"}],
+            skill_query="weather",
+            max_skill_candidates=1,
+        )
+    )
+
+    assert provider.last_request is not None
+    assert [tool["function"]["name"] for tool in (provider.last_request.tools or [])] == [
+        "weather_lookup"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_brain_chat_injects_current_time_into_user_message_not_system_prompt():
     provider = _Provider()
     brain = Brain(
@@ -132,6 +166,8 @@ async def test_brain_chat_injects_current_time_into_user_message_not_system_prom
     assert "【当前时间】" not in provider.last_request.system_prompt
     assert provider.last_request.messages[0]["role"] == "user"
     assert "【当前时间】" in provider.last_request.messages[0]["content"]
+    assert "请记住你tester的身份" not in provider.last_request.messages[0]["content"]
+    assert "多使用interaction工具" not in provider.last_request.messages[0]["content"]
     assert "hello" in provider.last_request.messages[0]["content"]
 
 
@@ -169,6 +205,8 @@ async def test_brain_chat_injects_current_time_into_latest_user_message():
     assert current_time_tag not in provider.last_request.system_prompt
     assert current_time_tag not in provider.last_request.messages[0]["content"]
     assert current_time_tag in provider.last_request.messages[2]["content"]
+    assert "请记住你tester的身份" not in provider.last_request.messages[0]["content"]
+    assert "请记住你tester的身份" not in provider.last_request.messages[2]["content"]
     assert "latest user" in provider.last_request.messages[2]["content"]
 
 

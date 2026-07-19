@@ -98,6 +98,68 @@ class SkillExecutor:
     # Backward-compatible alias
     _get_data_store = get_data_store
 
+    def _prepare_call_params(
+        self,
+        skill: SkillDefinition,
+        params: dict[str, Any],
+        chain_context: SkillChainContext | None,
+        invocation_context: SkillInvocationContext | None,
+    ) -> tuple[dict[str, Any] | None, SkillResult | None]:
+        """Apply the same validation contract to sync and async skills."""
+        if skill._run_func is None:
+            return None, SkillResult(
+                success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数"
+            )
+
+        if chain_context is not None:
+            params = chain_context.resolve_templates(params)
+
+        access_error = validate_skill_access(skill=skill, invocation_context=invocation_context)
+        if access_error:
+            return None, SkillResult(success=False, error=access_error)
+
+        admin_error = self._validate_admin_requirement(skill)
+        if admin_error:
+            return None, SkillResult(success=False, error=admin_error)
+
+        for param_def in skill.parameters:
+            if param_def.required and param_def.name not in params:
+                return None, SkillResult(success=False, error=f"缺少必填参数: {param_def.name}")
+
+        call_params: dict[str, Any] = {}
+        for param_def in skill.parameters:
+            if param_def.name in params:
+                call_params[param_def.name] = _coerce_type(params[param_def.name], param_def.type)
+            elif param_def.default is not None:
+                call_params[param_def.name] = param_def.default
+        return call_params, None
+
+    def _inject_runtime_params(
+        self,
+        skill: SkillDefinition,
+        call_params: dict[str, Any],
+        invocation_context: SkillInvocationContext | None,
+    ) -> None:
+        """Inject framework-owned inputs after model-owned parameters are validated."""
+        assert skill._run_func is not None
+        data_store = self._get_data_store(skill.name)
+        injection_plan = _build_injection_plan(skill._run_func)
+        if injection_plan.accepts("data_store"):
+            call_params["data_store"] = data_store
+        if invocation_context is not None and injection_plan.accepts("invocation_context"):
+            call_params["invocation_context"] = invocation_context
+        bridge = self.get_bridge_for_skill(skill)
+        if bridge is not None and injection_plan.accepts("bridge"):
+            call_params["bridge"] = bridge
+        if injection_plan.accepts("chat_context") and self._chat_context:
+            call_params["chat_context"] = dict(self._chat_context)
+        if (
+            self._engine_context is not None
+            and _can_receive_engine_context(skill)
+            and injection_plan.accepts("engine_context")
+        ):
+            call_params["engine_context"] = self._engine_context
+
     def execute(
         self,
         skill: SkillDefinition,
@@ -130,73 +192,15 @@ class SkillExecutor:
         )
 
         try:
-            if skill._run_func is None:
-                skill_result = SkillResult(
-                    success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数"
-                )
-                logger.warning("Skill execute failed: %s -> no run() function", skill.name)
+            call_params, skill_result = self._prepare_call_params(
+                skill, params, chain_context, invocation_context
+            )
+            if skill_result is not None:
+                logger.warning("Skill execute rejected: %s -> %s", skill.name, skill_result.error)
                 return skill_result
-
-            # Resolve chain-context template placeholders before validation
-            if chain_context is not None:
-                params = chain_context.resolve_templates(params)
-
-            # Validate required parameters
-            for param_def in skill.parameters:
-                if param_def.required and param_def.name not in params:
-                    skill_result = SkillResult(
-                        success=False,
-                        error=f"缺少必填参数: {param_def.name}",
-                    )
-                    logger.warning(
-                        "Skill execute failed: %s -> missing required param '%s'",
-                        skill.name,
-                        param_def.name,
-                    )
-                    return skill_result
-
-            # Apply defaults for optional parameters
-            call_params: dict[str, Any] = {}
-            for param_def in skill.parameters:
-                if param_def.name in params:
-                    call_params[param_def.name] = _coerce_type(
-                        params[param_def.name], param_def.type
-                    )
-                elif param_def.default is not None:
-                    call_params[param_def.name] = param_def.default
-
-            access_error = validate_skill_access(skill=skill, invocation_context=invocation_context)
-            if access_error:
-                skill_result = SkillResult(success=False, error=access_error)
-                logger.warning(
-                    "Skill execute failed: %s -> access denied: %s", skill.name, access_error
-                )
-                return skill_result
-            admin_error = self._validate_admin_requirement(skill)
-            if admin_error:
-                skill_result = SkillResult(success=False, error=admin_error)
-                logger.warning(
-                    "Skill execute failed: %s -> admin denied: %s", skill.name, admin_error
-                )
-                return skill_result
-
+            assert call_params is not None
+            self._inject_runtime_params(skill, call_params, invocation_context)
             data_store = self._get_data_store(skill.name)
-            injection_plan = _build_injection_plan(skill._run_func)
-            if injection_plan.accepts("data_store"):
-                call_params["data_store"] = data_store
-            if invocation_context is not None and injection_plan.accepts("invocation_context"):
-                call_params["invocation_context"] = invocation_context
-            bridge = self.get_bridge_for_skill(skill)
-            if bridge is not None and injection_plan.accepts("bridge"):
-                call_params["bridge"] = bridge
-            if injection_plan.accepts("chat_context") and self._chat_context:
-                call_params["chat_context"] = dict(self._chat_context)
-            if (
-                self._engine_context is not None
-                and _can_receive_engine_context(skill)
-                and injection_plan.accepts("engine_context")
-            ):
-                call_params["engine_context"] = self._engine_context
 
             logger.info("Skill execute calling: %s(final_params=%s)", skill.name, call_params)
 
@@ -355,37 +359,15 @@ class SkillExecutor:
             getattr(invocation_context, "caller", None) if invocation_context else None,
         )
         try:
-            if skill._run_func is None:
-                logger.warning("Skill async execute failed: %s -> no run() function", skill.name)
-                return SkillResult(
-                    success=False, error=f"SKILL '{skill.name}' 没有可执行的 run() 函数"
-                )
-
-            # Resolve chain-context template placeholders before validation
-            if chain_context is not None:
-                params = chain_context.resolve_templates(params)
-
-            call_params = dict(params)
-            admin_error = self._validate_admin_requirement(skill)
-            if admin_error:
-                return SkillResult(success=False, error=admin_error)
+            call_params, rejected = self._prepare_call_params(
+                skill, params, chain_context, invocation_context
+            )
+            if rejected is not None:
+                logger.warning("Skill async execute rejected: %s -> %s", skill.name, rejected.error)
+                return rejected
+            assert call_params is not None
+            self._inject_runtime_params(skill, call_params, invocation_context)
             data_store = self._get_data_store(skill.name)
-            injection_plan = _build_injection_plan(skill._run_func)
-            if injection_plan.accepts("data_store"):
-                call_params["data_store"] = data_store
-            if invocation_context is not None and injection_plan.accepts("invocation_context"):
-                call_params["invocation_context"] = invocation_context
-            bridge = self.get_bridge_for_skill(skill)
-            if bridge is not None and injection_plan.accepts("bridge"):
-                call_params["bridge"] = bridge
-            if injection_plan.accepts("chat_context") and self._chat_context:
-                call_params["chat_context"] = dict(self._chat_context)
-            if (
-                self._engine_context is not None
-                and _can_receive_engine_context(skill)
-                and injection_plan.accepts("engine_context")
-            ):
-                call_params["engine_context"] = self._engine_context
 
             logger.info("Skill async execute calling: %s(final_params=%s)", skill.name, call_params)
 

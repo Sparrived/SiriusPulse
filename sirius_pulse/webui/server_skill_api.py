@@ -75,7 +75,9 @@ def _save_skill_data_store(persona_dir: Path, skill_name: str, data: dict[str, A
 
 def _extract_config(data: dict[str, Any], skill: Any) -> dict[str, Any]:
     """从 data_store 数据中提取配置字段（过滤掉 _ 前缀的元数据和运行时字段）。"""
-    config_keys: set[str] = {p.name for p in skill.parameters}
+    config_keys: set[str] = {
+        p.name for p in [*skill.parameters, *getattr(skill, "config_parameters", [])]
+    }
     return {k: v for k, v in data.items() if k in config_keys}
 
 
@@ -107,6 +109,16 @@ async def api_persona_skills_get(request: web.Request, data_dir: Path) -> web.Re
                         "default": p.default,
                     }
                     for p in skill.parameters
+                ],
+                "config_parameters": [
+                    {
+                        "name": p.name,
+                        "type": p.type,
+                        "description": p.description,
+                        "required": p.required,
+                        "default": p.default,
+                    }
+                    for p in getattr(skill, "config_parameters", [])
                 ],
                 "config": _extract_config(data, skill),
             }
@@ -160,6 +172,16 @@ async def api_persona_skill_config_get(request: web.Request, data_dir: Path) -> 
             "name": skill.name,
             "description": skill.description,
             "parameters": skill.get_parameter_schema(),
+            "config_parameters": [
+                {
+                    "name": p.name,
+                    "type": p.type,
+                    "description": p.description,
+                    "required": p.required,
+                    "default": p.default,
+                }
+                for p in getattr(skill, "config_parameters", [])
+            ],
         }
 
     return _json_response(

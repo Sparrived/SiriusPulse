@@ -11,12 +11,12 @@ from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
 from sirius_pulse.providers.base import ToolCall
 
 
-def test_collect_deferred_stickers_when_send_sticker_tool_called_then_returns_known_names():
+def test_collect_deferred_stickers_when_interaction_tool_called_then_returns_known_names():
     tool_calls = [
         ToolCall(
             id="call-1",
-            function_name="send_sticker",
-            function_arguments='{"names": ["开心", "不存在", "开心"]}',
+            function_name="interaction",
+            function_arguments='{"action": "sticker", "names": ["开心", "不存在", "开心"]}',
         ),
         ToolCall(
             id="call-2",

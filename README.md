@@ -230,7 +230,6 @@ sirius_pulse/
 │   ├── telemetry.py         # 技能遥测
 │   └── builtin/             # 内置技能
 │       ├── web_lookup.py
-│       ├── workspace_file.py
 │       ├── qq_member_info.py
 │       ├── reminder.py（混合：主动 + 后台）
 │       ├── github_monitor.py（纯被动）
@@ -334,7 +333,7 @@ def run(query: str = "", data_store=None, **kwargs) -> dict:
     return {"success": True, "text": result}
 ```
 
-内置技能包括：`web_lookup`、`workspace_file`、`qq_member_info`、`reminder`、`github_monitor`、`system_info`、`desktop_screenshot` 等。
+内置技能包括：`bash`、`web_lookup`、`qq_member_info`、`reminder`、`github_monitor`、`desktop_screenshot` 等。
 
 支持**被动技能**：后台任务、事件触发器、生命周期回调。
 

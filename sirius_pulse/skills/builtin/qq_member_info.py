@@ -41,6 +41,7 @@ SKILL_META = {
         "可列出群成员或查询单个成员详情。"
     ),
     "version": "1.0.0",
+    "side_effect": "read_only",
     "tags": ["napcat", "qq", "group_info"],
     "adapter_types": ["napcat"],
     "parameters": _config.build(),

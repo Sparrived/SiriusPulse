@@ -32,6 +32,7 @@ from sirius_pulse.skills.models import (
     SkillParameter,
     SkillPassiveType,
     SkillResult,
+    SkillSideEffect,
     TriggerSpec,
 )
 from sirius_pulse.skills.registry import SkillRegistry
@@ -44,6 +45,7 @@ __all__ = [
     "SkillParameter",
     "SkillPassiveType",
     "SkillResult",
+    "SkillSideEffect",
     "SkillChainContext",
     "TriggerSpec",
     "SkillRegistry",

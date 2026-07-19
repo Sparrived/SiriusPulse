@@ -90,6 +90,7 @@ SKILL_META = {
         "让仓库更新自动发到当前聊天。"
     ),
     "version": "1.1.0",
+    "side_effect": "external_write",
     "tags": ["github", "monitor", "notification"],
     "developer_only": False,
     "dependencies": ["playwright", "httpx"],

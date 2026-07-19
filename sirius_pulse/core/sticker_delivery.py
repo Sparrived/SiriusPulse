@@ -28,12 +28,12 @@ def dedupe_sticker_names(names: list[str]) -> list[str]:
     return result
 
 
-def defer_send_sticker_tool(
+def defer_interaction_sticker_tool(
     params: dict[str, Any],
     *,
     available_names: list[str] | set[str] | tuple[str, ...],
 ) -> tuple[list[str], str]:
-    """Return sticker candidates and a tool message for a deferred send_sticker call."""
+    """Return sticker candidates and a tool message for a deferred interaction call."""
     candidates = normalize_sticker_names(params.get("names"))
     if not candidates:
         return [], "names 不能为空"
@@ -56,15 +56,15 @@ def collect_deferred_stickers_from_tool_calls(
     names: list[str] = []
     for tool_call in tool_calls or []:
         function_name = getattr(tool_call, "function_name", "")
-        if function_name not in {"send_sticker", "interaction"}:
+        if function_name != "interaction":
             continue
         try:
             params = json.loads(getattr(tool_call, "function_arguments", "") or "{}")
         except Exception:
             params = {}
-        if function_name == "interaction" and str(params.get("action", "")).strip().lower() != "sticker":
+        if str(params.get("action", "")).strip().lower() != "sticker":
             continue
-        selected, _tool_content = defer_send_sticker_tool(
+        selected, _tool_content = defer_interaction_sticker_tool(
             params,
             available_names=available_names,
         )

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from sirius_pulse.skills.models import (
     SkillInvocationContext,
     SkillParameter,
     SkillPassiveType,
+    SkillSideEffect,
 )
 
 logger = logging.getLogger(__name__)
@@ -261,6 +263,12 @@ class SkillRegistry:
         developer_only = bool(meta.get("developer_only", False))
         admin_required = bool(meta.get("admin_required", False))
         silent = bool(meta.get("silent", False))
+        retry_safe = bool(meta.get("retry_safe", False))
+        raw_side_effect = str(meta.get("side_effect", "unknown")).strip().lower()
+        try:
+            side_effect = SkillSideEffect(raw_side_effect)
+        except ValueError:
+            side_effect = SkillSideEffect.UNKNOWN
         model_visible = bool(meta.get("model_visible", True))
         tags: list[str] = []
         raw_tags = meta.get("tags", [])
@@ -275,48 +283,20 @@ class SkillRegistry:
         if not description:
             logger.warning("SKILL '%s' 缺少描述", name)
 
-        # Parse parameters
-        raw_params = meta.get("parameters", {})
-        parameters: list[SkillParameter] = []
-        if isinstance(raw_params, dict):
-            for param_name, param_def in raw_params.items():
-                if isinstance(param_def, dict):
-                    parameters.append(
-                        SkillParameter(
-                            name=param_name,
-                            type=str(param_def.get("type", "str")),
-                            description=str(param_def.get("description", "")),
-                            required=bool(param_def.get("required", False)),
-                            default=param_def.get("default"),
-                            choices=param_def.get("choices"),
-                            fields=param_def.get("fields"),
-                            group=str(param_def.get("group", "")),
-                        )
-                    )
-        elif isinstance(raw_params, list):
-            for item in raw_params:
-                if isinstance(item, dict):
-                    parameters.append(
-                        SkillParameter(
-                            name=str(item.get("name", "")),
-                            type=str(item.get("type", "str")),
-                            description=str(item.get("description", "")),
-                            required=bool(item.get("required", False)),
-                            default=item.get("default"),
-                            choices=item.get("choices"),
-                            fields=item.get("fields"),
-                            group=str(item.get("group", "")),
-                        )
-                    )
+        parameters = SkillRegistry._parse_parameters(meta.get("parameters", {}))
+        config_parameters = SkillRegistry._parse_parameters(meta.get("config", {}))
 
         return SkillDefinition(
             name=name,
             description=description,
             parameters=parameters,
+            config_parameters=config_parameters,
             version=version,
             developer_only=developer_only,
             admin_required=admin_required,
             silent=silent,
+            retry_safe=retry_safe,
+            side_effect=side_effect,
             model_visible=model_visible,
             tags=tags,
             adapter_types=adapter_types,
@@ -327,6 +307,31 @@ class SkillRegistry:
             _on_load_factory=on_load_factory if callable(on_load_factory) else None,
             _on_unload_factory=on_unload_factory if callable(on_unload_factory) else None,
         )
+
+    @staticmethod
+    def _parse_parameters(raw_params: Any) -> list[SkillParameter]:
+        """Parse model parameters or private per-persona config parameters."""
+        parameters: list[SkillParameter] = []
+        items = raw_params.items() if isinstance(raw_params, dict) else enumerate(raw_params or [])
+        for key, raw in items:
+            if not isinstance(raw, dict):
+                continue
+            name = str(key) if isinstance(raw_params, dict) else str(raw.get("name", ""))
+            if not name:
+                continue
+            parameters.append(
+                SkillParameter(
+                    name=name,
+                    type=str(raw.get("type", "str")),
+                    description=str(raw.get("description", "")),
+                    required=bool(raw.get("required", False)),
+                    default=raw.get("default"),
+                    choices=raw.get("choices"),
+                    fields=raw.get("fields"),
+                    group=str(raw.get("group", "")),
+                )
+            )
+        return parameters
 
     def build_tools_list(
         self,
@@ -345,26 +350,44 @@ class SkillRegistry:
         Returns:
             OpenAI tools 格式的列表。
         """
-        tools: list[dict[str, Any]] = []
-        for skill in self._skills.values():
-            if not skill.model_visible:
-                continue
-            # 被动技能（仅有后台任务或触发器，无 run 函数）不参与 function_call
-            if skill._run_func is None and skill.is_passive:
-                continue
-            if (
-                skill.developer_only
-                and invocation_context is not None
-                and not invocation_context.caller_is_developer
-            ):
-                continue
-            # 适配器过滤
-            if skill.adapter_types and adapter_type not in skill.adapter_types:
-                continue
-            if skill.admin_required and not (chat_type == "group" and admin_allowed):
-                continue
-            tools.append(skill.to_tool_schema())
-        return tools
+        return [
+            skill.to_tool_schema()
+            for skill in self._available_model_skills(
+                invocation_context=invocation_context,
+                adapter_type=adapter_type,
+                chat_type=chat_type,
+                admin_allowed=admin_allowed,
+            )
+        ]
+
+    def build_tools_for_query(
+        self,
+        query: str,
+        *,
+        limit: int,
+        invocation_context: SkillInvocationContext | None = None,
+        adapter_type: str | None = None,
+        chat_type: str | None = None,
+        admin_allowed: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return a bounded, query-relevant subset of available tool schemas."""
+        query_tokens = _tool_retrieval_tokens(query)
+        if not query_tokens or limit <= 0:
+            return []
+
+        # ponytail: lexical ranking is sufficient until evaluations justify semantic retrieval.
+        ranked = [
+            (score, skill.name.casefold(), skill)
+            for skill in self._available_model_skills(
+                invocation_context=invocation_context,
+                adapter_type=adapter_type,
+                chat_type=chat_type,
+                admin_allowed=admin_allowed,
+            )
+            if (score := _tool_query_score(skill, query_tokens)) > 0
+        ]
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return [skill.to_tool_schema() for _, _, skill in ranked[:limit]]
 
     def build_tool_descriptions(
         self,
@@ -391,24 +414,12 @@ class SkillRegistry:
             return ""
 
         lines: list[str] = []
-        for skill in self._skills.values():
-            if not skill.model_visible:
-                continue
-            # Passive-only skills (has factories but no run func) are not callable by the model
-            if skill._run_func is None and skill.is_passive:
-                continue
-            if (
-                skill.developer_only
-                and invocation_context is not None
-                and not invocation_context.caller_is_developer
-            ):
-                continue
-
-            # Adapter filtering: skip skills that are locked to other adapters
-            if skill.adapter_types and adapter_type not in skill.adapter_types:
-                continue
-            if skill.admin_required and not (chat_type == "group" and admin_allowed):
-                continue
+        for skill in self._available_model_skills(
+            invocation_context=invocation_context,
+            adapter_type=adapter_type,
+            chat_type=chat_type,
+            admin_allowed=admin_allowed,
+        ):
 
             security_notes: list[str] = []
             if skill.developer_only:
@@ -436,6 +447,34 @@ class SkillRegistry:
                         )
                     lines.extend(param_parts)
         return "\n".join(lines)
+
+    def _available_model_skills(
+        self,
+        *,
+        invocation_context: SkillInvocationContext | None,
+        adapter_type: str | None,
+        chat_type: str | None,
+        admin_allowed: bool,
+    ) -> list[SkillDefinition]:
+        """Return model-callable skills after applying the shared access filters."""
+        skills: list[SkillDefinition] = []
+        for skill in self._skills.values():
+            if not skill.model_visible:
+                continue
+            if skill._run_func is None and skill.is_passive:
+                continue
+            if (
+                skill.developer_only
+                and invocation_context is not None
+                and not invocation_context.caller_is_developer
+            ):
+                continue
+            if skill.adapter_types and adapter_type not in skill.adapter_types:
+                continue
+            if skill.admin_required and not (chat_type == "group" and admin_allowed):
+                continue
+            skills.append(skill)
+        return skills
 
     @staticmethod
     def _install_skill_dependencies(py_file: Path, *, auto_install_deps: bool) -> None:
@@ -465,3 +504,21 @@ def _build_compact_param_signature(parameters: list[SkillParameter]) -> str:
             piece += f" {p.description.strip()}"
         parts.append(piece)
     return f"({', '.join(parts)})"
+
+
+_TOOL_RETRIEVAL_TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]")
+
+
+def _tool_retrieval_tokens(text: str) -> set[str]:
+    return set(_TOOL_RETRIEVAL_TOKEN_RE.findall(text.casefold()))
+
+
+def _tool_query_score(skill: SkillDefinition, query_tokens: set[str]) -> int:
+    name_tokens = _tool_retrieval_tokens(skill.name)
+    tag_tokens = _tool_retrieval_tokens(" ".join(skill.tags))
+    description_tokens = _tool_retrieval_tokens(skill.description)
+    return (
+        4 * len(query_tokens & name_tokens)
+        + 2 * len(query_tokens & tag_tokens)
+        + len(query_tokens & description_tokens)
+    )

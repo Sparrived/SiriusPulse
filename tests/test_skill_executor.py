@@ -13,6 +13,7 @@ from sirius_pulse.skills import (
     SkillExecutor,
     SkillInvocationContext,
     SkillParameter,
+    SkillResult,
 )
 
 
@@ -271,6 +272,81 @@ async def test_skill_executor_when_async_skill_finishes_then_result_is_returned(
 
     assert result.success is True
     assert result.to_display_text() == "异步完成：Alice"
+
+
+@pytest.mark.asyncio
+async def test_skill_executor_when_async_skill_params_are_normalized_then_defaults_and_types_match_sync(
+    tmp_path: Path,
+):
+    received: list[int] = []
+
+    async def run(count: int = 3) -> dict[str, Any]:
+        received.append(count)
+        return {"success": True, "text": str(count)}
+
+    skill = _make_skill(
+        "async_count",
+        run,
+        params=[SkillParameter(name="count", type="int", description="数量", default=3)],
+    )
+    executor = SkillExecutor(work_path=tmp_path)
+
+    default_result = await executor.execute_async(skill, {}, invocation_context=_context())
+    coerced_result = await executor.execute_async(
+        skill, {"count": "4"}, invocation_context=_context()
+    )
+
+    assert default_result.success is True
+    assert coerced_result.success is True
+    assert received == [3, 4]
+
+
+@pytest.mark.asyncio
+async def test_skill_executor_when_async_developer_skill_is_called_by_user_then_access_is_denied(
+    tmp_path: Path,
+):
+    async def run() -> dict[str, Any]:
+        return {"success": True, "text": "secret"}
+
+    executor = SkillExecutor(work_path=tmp_path)
+    skill = _make_skill("async_server_shell", run, developer_only=True)
+
+    result = await executor.execute_async(
+        skill, {}, invocation_context=_context(is_developer=False)
+    )
+
+    assert result.success is False
+    assert "developer" in result.error.lower() or "开发" in result.error
+
+
+@pytest.mark.asyncio
+async def test_skill_executor_when_async_required_param_is_missing_then_skill_is_not_called(
+    tmp_path: Path,
+):
+    async def run(query: str) -> dict[str, Any]:
+        raise AssertionError(f"should not call skill with {query}")
+
+    executor = SkillExecutor(work_path=tmp_path)
+    skill = _make_skill(
+        "async_search",
+        run,
+        params=[SkillParameter(name="query", type="str", description="查询", required=True)],
+    )
+
+    result = await executor.execute_async(skill, {}, invocation_context=_context())
+
+    assert result.success is False
+    assert "query" in result.error
+
+
+def test_skill_result_when_rendered_for_model_then_marks_data_and_bounds_length():
+    result = SkillResult(success=True, data="x" * 300)
+
+    model_text = result.to_model_text(max_chars=256)
+
+    assert model_text.startswith("[Tool result: success]")
+    assert "reference data" in model_text
+    assert "[结果已截断]" in model_text
 
 
 def test_skill_executor_when_skill_raises_error_then_failure_is_visible_to_model(

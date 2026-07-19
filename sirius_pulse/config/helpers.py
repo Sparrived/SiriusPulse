@@ -65,6 +65,7 @@ def build_orchestration_policy_from_dict(
         "enable_skills",
         "max_skill_rounds",
         "skill_execution_timeout",
+        "agent_max_skill_candidates",
         "auto_install_skill_deps",
     }
     has_config = any(key in raw for key in recognized_keys)
@@ -136,6 +137,7 @@ def build_orchestration_policy_from_dict(
         "enable_skills": (bool, True),
         "max_skill_rounds": (int, 3),
         "skill_execution_timeout": (float, 30.0),
+        "agent_max_skill_candidates": (int, 8),
         "auto_install_skill_deps": (bool, True),
         "plan_mode_enabled": (bool, False),
         "plan_mode_limit_normal_tools": (bool, False),

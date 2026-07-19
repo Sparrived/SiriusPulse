@@ -30,6 +30,7 @@ SKILL_META = {
         "撒娇或表达委屈，内容要像自然 QQ 私聊。"
     ),
     "version": "1.0.0",
+    "side_effect": "external_write",
     "tags": ["napcat", "qq", "developer", "chat", "messaging"],
     "adapter_types": ["napcat"],
     "silent": True,

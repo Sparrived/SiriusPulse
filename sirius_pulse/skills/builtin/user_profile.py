@@ -74,6 +74,7 @@ SKILL_META = {
         "不要记录临时玩笑、一次性情绪或猜测。"
     ),
     "version": "1.0.0",
+    "side_effect": "external_write",
     "tags": ["memory", "profile", "identity"],
     "silent": True,
     "dependencies": [],

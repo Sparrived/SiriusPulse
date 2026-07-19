@@ -74,6 +74,7 @@ _SESSION_CONFIG_COMMENTS = {
     "orchestration.enable_skills": "是否允许 AI 调用外部 SKILL。",
     "orchestration.max_skill_rounds": "单轮回复最多允许多少轮连续 SKILL 调用。",
     "orchestration.skill_execution_timeout": "单次 SKILL 执行超时时间（秒）。0 表示不限制。",
+    "orchestration.agent_max_skill_candidates": "每个 Agent 回合最多向模型注入多少个与当前请求相关的 SKILL schema。",
     "orchestration.auto_install_skill_deps": "加载 SKILL 时是否自动安装缺失依赖。",
     "orchestration.plan_mode_enabled": "Enable hidden planning sessions.",
     "orchestration.plan_mode_limit_normal_tools": (
@@ -140,6 +141,7 @@ def build_default_orchestration_payload() -> dict[str, Any]:
         "enable_skills": defaults.enable_skills,
         "max_skill_rounds": defaults.max_skill_rounds,
         "skill_execution_timeout": defaults.skill_execution_timeout,
+        "agent_max_skill_candidates": defaults.agent_max_skill_candidates,
         "auto_install_skill_deps": defaults.auto_install_skill_deps,
         "plan_mode_enabled": defaults.plan_mode_enabled,
         "plan_mode_limit_normal_tools": defaults.plan_mode_limit_normal_tools,

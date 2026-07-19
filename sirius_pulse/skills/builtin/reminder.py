@@ -94,6 +94,7 @@ SKILL_META = {
         "群聊里有人说“提醒我/叫我/到点说一声/每天每周提醒”时使用；可创建、查看或取消提醒，到时间会在聊天里通知对应用户。"
     ),
     "version": "2.0.0",
+    "side_effect": "external_write",
     "tags": ["utility", "time"],
     "developer_only": False,
     "dependencies": [],

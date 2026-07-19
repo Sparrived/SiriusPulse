@@ -5,13 +5,10 @@ from typing import Any
 import pytest
 
 from sirius_pulse.skills.builtin import (
-    kick_member,
-    mute_all,
-    mute_member,
-    poke,
+    group_management,
+    interaction,
     qq_member_info,
     recall_message,
-    set_group_card,
 )
 
 
@@ -62,18 +59,28 @@ async def test_qq_builtin_skills_call_expected_adapter_methods():
     adapter = FakeQQAdapter()
     ctx = {"chat_type": "group", "chat_id": "9001", "group_id": "9001"}
 
-    assert (await poke.run(1001, bridge=adapter, chat_context=ctx))["success"] is True
+    assert (await interaction.run("poke", user_id=1001, bridge=adapter, chat_context=ctx))[
+        "success"
+    ] is True
     assert (await recall_message.run(42, bridge=adapter))["success"] is True
     members = await qq_member_info.run("list", bridge=adapter, chat_context=ctx)
     member_info = await qq_member_info.run("get", 1002, bridge=adapter, chat_context=ctx)
-    assert (await kick_member.run(1001, bridge=adapter, chat_context=ctx))["success"] is True
-    assert (await mute_member.run(1001, duration=60, bridge=adapter, chat_context=ctx))[
+    assert (await group_management.run("kick", user_id=1001, bridge=adapter, chat_context=ctx))[
         "success"
     ] is True
-    assert (await mute_all.run(False, bridge=adapter, chat_context=ctx))["success"] is True
-    assert (await set_group_card.run(1001, "NewCard", bridge=adapter, chat_context=ctx))[
+    assert (
+        await group_management.run(
+            "mute_member", user_id=1001, duration=60, bridge=adapter, chat_context=ctx
+        )
+    )["success"] is True
+    assert (await group_management.run("mute_all", enable=False, bridge=adapter, chat_context=ctx))[
         "success"
     ] is True
+    assert (
+        await group_management.run(
+            "set_group_card", user_id=1001, card="NewCard", bridge=adapter, chat_context=ctx
+        )
+    )["success"] is True
 
     assert "1001" in members["text_blocks"][0]
     assert "Bob" in member_info["text_blocks"][0]
@@ -92,7 +99,9 @@ async def test_qq_builtin_skills_call_expected_adapter_methods():
 @pytest.mark.asyncio
 async def test_qq_group_skills_require_group_context():
     adapter = FakeQQAdapter()
-    result = await poke.run(1001, bridge=adapter, chat_context={"chat_type": "private"})
+    result = await interaction.run(
+        "poke", user_id=1001, bridge=adapter, chat_context={"chat_type": "private"}
+    )
 
     assert result["success"] is False
     assert adapter.calls == []
