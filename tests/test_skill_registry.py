@@ -215,9 +215,15 @@ def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are
     skill = registry.get("chat_with_developer")
     interaction = registry.get("interaction")
     bash = registry.get("bash")
+    developer_status = registry.get("developer_status")
     file_upload = registry.get("file_upload")
     group_management = registry.get("group_management")
+    web_lookup = registry.get("web_lookup")
     tools = registry.build_tools_list(adapter_type="napcat")
+    regular_user_tools = registry.build_tools_list(
+        adapter_type="napcat",
+        invocation_context=SkillInvocationContext(caller=UnifiedUser(user_id="u1", name="普通用户")),
+    )
     admin_tools = registry.build_tools_list(
         adapter_type="napcat", chat_type="group", admin_allowed=True
     )
@@ -229,15 +235,24 @@ def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are
     assert interaction is not None
     assert bash is not None
     assert [param.name for param in bash.config_parameters] == [
-        "allowed_commands",
-        "allow_write_commands",
-        "allow_destructive_commands",
         "max_timeout_seconds",
         "max_output_chars",
     ]
-    assert "allowed_commands" not in bash.to_tool_schema()["function"]["parameters"]["properties"]
+    assert bash.developer_only is False
+    assert "max_timeout_seconds" not in bash.to_tool_schema()["function"]["parameters"]["properties"]
+    assert any(tool["function"]["name"] == "bash" for tool in regular_user_tools)
+    assert developer_status is not None
+    assert [param.name for param in developer_status.config_parameters] == [
+        "public_status_token",
+        "base_url",
+        "timeout_seconds",
+    ]
+    assert "public_status_token" not in developer_status.to_tool_schema()["function"]["parameters"]["properties"]
     assert file_upload is not None
     assert group_management is not None
+    assert web_lookup is not None
+    assert [param.name for param in web_lookup.config_parameters] == ["tavily_api_key"]
+    assert "tavily_api_key" not in web_lookup.to_tool_schema()["function"]["parameters"]["properties"]
     for old_name in (
         "poke",
         "send_sticker",
@@ -249,8 +264,9 @@ def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are
         "set_group_card",
     ):
         assert registry.get(old_name) is None
-    assert registry.get("web_lookup").retry_safe is True
-    assert registry.get("web_lookup").side_effect is SkillSideEffect.READ_ONLY
+    assert registry.get("user_profile") is None
+    assert web_lookup.retry_safe is True
+    assert web_lookup.side_effect is SkillSideEffect.READ_ONLY
     assert group_management.side_effect is SkillSideEffect.DESTRUCTIVE
     assert [tool["function"]["name"] for tool in tools].count("interaction") == 1
     assert [tool["function"]["name"] for tool in tools].count("file_upload") == 1

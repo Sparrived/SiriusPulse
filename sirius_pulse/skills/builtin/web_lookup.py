@@ -11,7 +11,10 @@ from bs4 import BeautifulSoup
 
 from sirius_pulse.config.config_builder import ConfigBuilder
 
-SEARCH_URL = "https://www.bing.com/search"
+TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+_MAX_SEARCH_RESULTS = 5
+_SEARCH_TIMEOUT = 10
+_MAX_RESULT_CONTENT = 600
 
 _config = ConfigBuilder()
 _config.group("网页查询").add(
@@ -62,6 +65,14 @@ SKILL_META = {
     "tags": ["web", "search", "content"],
     "dependencies": ["requests", "beautifulsoup4"],
     "parameters": _config.build(),
+    "config": {
+        "tavily_api_key": {
+            "type": "password",
+            "description": "Tavily API Key；请在当前人格的 web_lookup 设置中配置。",
+            "required": True,
+            "group": "Tavily",
+        },
+    },
 }
 
 
@@ -77,46 +88,65 @@ def run(
 ) -> dict[str, Any]:
     action_key = str(action or "").strip().lower()
     if action_key == "search":
-        return _search_web(query, count)
+        return _search_web(query, count, data_store)
     if action_key == "read_url":
         return _read_url(url, max_chars, timeout, data_store)
     return {"success": False, "error": "action 必须是 search 或 read_url"}
 
 
-def _search_web(query: str, count: int = 3) -> dict[str, Any]:
+def _search_web(query: str, count: int = 3, data_store: Any = None) -> dict[str, Any]:
     text = str(query or "").strip()
     if not text:
         return {"success": False, "error": "query 不能为空"}
-    params = {"q": text}
+
+    reload_store = getattr(data_store, "reload", None)
+    if callable(reload_store):
+        reload_store()
+    api_key = str(data_store.get("tavily_api_key", "") if data_store else "").strip()
+    if not api_key:
+        return {
+            "success": False,
+            "error": "请先在 web_lookup 技能设置中配置 Tavily API Key",
+        }
+
+    request_payload = {
+        "api_key": api_key,
+        "query": text,
+        "topic": "general",
+        "search_depth": "basic",
+        "max_results": _clamp_int(count, default=3, low=1, high=_MAX_SEARCH_RESULTS),
+        "include_answer": False,
+    }
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
     }
     try:
-        resp = requests.get(SEARCH_URL, params=params, headers=headers, timeout=10)
+        resp = requests.post(
+            TAVILY_SEARCH_URL,
+            json=request_payload,
+            headers=headers,
+            timeout=_SEARCH_TIMEOUT,
+        )
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        response_payload = resp.json()
         results: list[dict[str, Any]] = []
-        for item in soup.select("li.b_algo")[: max(1, min(int(count), 5))]:
-            title_tag = item.select_one("h2 a")
-            snippet_tag = item.select_one(".b_caption p") or item.select_one("p")
-            result_url = title_tag["href"] if title_tag and title_tag.has_attr("href") else None
-            title = title_tag.get_text(strip=True) if title_tag else None
-            snippet = snippet_tag.get_text(strip=True) if snippet_tag else None
+        for item in response_payload.get("results", [])[: request_payload["max_results"]]:
+            if not isinstance(item, dict):
+                continue
+            result_url = str(item.get("url", "")).strip()
+            title = str(item.get("title", "")).strip()
+            snippet = _normalize_text(str(item.get("content", "")))[:_MAX_RESULT_CONTENT]
             if title and result_url:
                 results.append({"title": title, "url": result_url, "snippet": snippet})
         if not results:
             return {
                 "success": False,
                 "error": "未找到相关网页",
-                "summary": "必应搜索未返回有效结果",
+                "summary": "Tavily 搜索未返回有效结果",
             }
 
-        lines = [f"必应搜索「{text}」结果："]
+        lines = [f"Tavily 搜索「{text}」结果："]
         for i, result in enumerate(results, 1):
             lines.append(f"\n[{i}] {result['title']}")
             lines.append(f"链接: {result['url']}")
@@ -129,7 +159,7 @@ def _search_web(query: str, count: int = 3) -> dict[str, Any]:
             "text_blocks": ["\n".join(lines)],
         }
     except Exception as exc:
-        return {"success": False, "error": f"搜索失败: {exc}", "summary": "必应搜索执行失败"}
+        return {"success": False, "error": f"搜索失败: {exc}", "summary": "Tavily 搜索执行失败"}
 
 
 def _read_url(

@@ -20,25 +20,30 @@ _config.group("互动操作").add(
     "action",
     type="str",
     description=(
-        "操作类型：poke 戳一戳；sticker 发送表情包。你正在以当前人格参与群聊，"
+        "操作类型：poke 戳一戳；sticker 发送表情包；recall 撤回指定消息。你正在以当前人格参与群聊，"
         "当角色想打招呼、轻轻提醒、催促、卖萌、安慰或接梗时，优先用这个工具表达动作；"
-        "图片和文件使用 file_upload。"
+        "图片和文件使用 file_upload；撤回只能用于最近真实存在且平台仍允许撤回的消息。"
     ),
     required=True,
-    choices=["poke", "sticker"],
+    choices=["poke", "sticker", "recall"],
 )
 _config.group("互动操作").add("user_id", type="int", description="action=poke 时的目标 QQ 号。")
 _config.group("互动操作").add(
     "names", type="list", description="action=sticker 时的候选表情包名称列表。"
 )
+_config.group("互动操作").add(
+    "message_id",
+    type="int",
+    description="action=recall 时要撤回的 QQ/OneBot message_id，只能填写最近消息里真实出现的 msg_id。",
+)
 
 SKILL_META = {
     "name": "interaction",
     "description": (
-        "以当前人格参与群聊时使用的社交互动工具：当角色的情绪、语气或关系适合时，"
-        "自然、主动地在回复中使用戳一戳或表情包让回应更像真实互动。"
+        "以当前人格参与群聊时使用的互动与消息纠错工具：当角色的情绪、语气或关系适合时，"
+        "自然、主动地使用戳一戳或表情包；刚发错消息时可撤回指定消息。"
     ),
-    "version": "1.0.0",
+    "version": "1.1.0",
     "side_effect": "external_write",
     "tags": ["napcat", "qq", "messaging"],
     "adapter_types": ["napcat"],
@@ -50,6 +55,7 @@ async def run(
     action: str,
     user_id: int | None = None,
     names: list[str] | str | None = None,
+    message_id: int | None = None,
     bridge: Any = None,
     chat_context: dict[str, Any] | None = None,
     engine_context: Any = None,
@@ -61,6 +67,8 @@ async def run(
         result = await _run_poke(user_id, bridge, chat_context)
     elif action_key == "sticker":
         result = await _run_sticker(names, chat_context, engine_context)
+    elif action_key == "recall":
+        result = await _run_recall(message_id, bridge)
     else:
         return {"success": False, "error": f"不支持的互动 action: {action}"}
 
@@ -128,6 +136,24 @@ async def _run_sticker(
         "error": str(result.get("error", "表情包发送失败")),
         "internal_metadata": result,
     }
+
+
+async def _run_recall(message_id: int | None, bridge: Any) -> dict[str, Any]:
+    if message_id is None:
+        return {"success": False, "error": "缺少必填参数: message_id"}
+    adapter = get_adapter(bridge)
+    if adapter is None:
+        return bridge_error("撤回消息")
+    try:
+        result = await adapter.delete_message(str(message_id))
+        return success_result(
+            f"已请求撤回消息 {message_id}",
+            text=f"已撤回消息：{message_id}",
+            message_id=message_id,
+            raw=result,
+        )
+    except Exception as exc:
+        return failure_from_exception("撤回消息", exc)
 
 
 def _normalize_names(value: list[str] | str | None) -> list[str]:

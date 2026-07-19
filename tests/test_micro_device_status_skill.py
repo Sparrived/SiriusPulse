@@ -7,15 +7,15 @@ from sirius_pulse.skills.builtin import micro_device_status
 
 
 class _Store:
-    def __init__(self, token: str) -> None:
-        self.token = token
+    def __init__(self, token: str, **data: Any) -> None:
+        self.data = {"public_status_token": token, **data}
         self.reloaded = False
 
     def reload(self) -> None:
         self.reloaded = True
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.token if key == "public_status_token" else default
+        return self.data.get(key, default)
 
 
 class _Response:
@@ -36,6 +36,11 @@ def test_metadata_exposes_developer_status_for_persona_sensing() -> None:
     assert micro_device_status.SKILL_META["name"] == "developer_status"
     assert "developer_only" not in micro_device_status.SKILL_META
     assert "人格需要感知开发者当前状态时使用" in micro_device_status.SKILL_META["description"]
+    assert set(micro_device_status.SKILL_META["config"]) == {
+        "public_status_token",
+        "base_url",
+        "timeout_seconds",
+    }
 
 
 def test_run_reads_token_from_store_and_redacts_private_public_fields(monkeypatch) -> None:
@@ -114,6 +119,35 @@ def test_run_filters_by_device_id(monkeypatch) -> None:
     result = micro_device_status.run(device_id="second")
 
     assert [device["id"] for device in result["devices"]] == ["second"]
+
+
+def test_run_prefers_persona_configuration_over_environment(monkeypatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["authorization"] = request.headers["Authorization"]
+        seen["timeout"] = timeout
+        return _Response({"generated_at": "now", "devices": []})
+
+    monkeypatch.setenv("MDS_PUBLIC_STATUS_TOKEN", "env-token")
+    monkeypatch.setenv("MDS_API_BASE_URL", "https://env.example/mds")
+    monkeypatch.setattr(micro_device_status, "urlopen", fake_urlopen)
+
+    result = micro_device_status.run(
+        data_store=_Store(
+            "config-token",
+            base_url="https://config.example/mds",
+            timeout_seconds=15,
+        )
+    )
+
+    assert result["success"] is True
+    assert seen == {
+        "url": "https://config.example/mds/api/v1/public/snapshot",
+        "authorization": "Bearer config-token",
+        "timeout": 15,
+    }
 
 
 def test_run_reports_missing_token_without_network(monkeypatch) -> None:

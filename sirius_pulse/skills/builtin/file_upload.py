@@ -16,7 +16,7 @@ _config.group("图片与文件").add(
     "action",
     type="str",
     description=(
-        "操作类型：image 发送图片；file 上传文件。你正在以当前人格参与群聊，"
+        "操作类型：image 发送图片；file 上传文件。你正在以当前人格参与对话，"
         "当角色想分享截图、图片、资料或把一份文件交给对方时，直接使用这个工具完成互动。"
     ),
     required=True,
@@ -39,7 +39,7 @@ SKILL_META = {
         "能让角色的表达更具体、更自然时主动调用，不要只在正文里描述一个本地路径。"
         "纯文字回复直接写在正文中，不要每轮强行调用。"
     ),
-    "version": "1.0.0",
+    "version": "1.1.0",
     "side_effect": "external_write",
     "tags": ["napcat", "qq", "file", "messaging"],
     "adapter_types": ["napcat"],
@@ -94,8 +94,7 @@ async def _send_image(
         }
 
     chat_context = chat_context or {}
-    target_type = chat_context.get("chat_type", "")
-    target_id = chat_context.get("chat_id", "")
+    target_type, target_id = _chat_target(chat_context)
     if not target_type or not target_id:
         return {
             "success": False,
@@ -171,8 +170,7 @@ async def _upload_file(
         }
 
     chat_context = chat_context or {}
-    target_type = chat_context.get("chat_type", "")
-    target_id = chat_context.get("chat_id", "")
+    target_type, target_id = _chat_target(chat_context)
     if not target_type or not target_id:
         return {
             "success": False,
@@ -218,3 +216,43 @@ async def _upload_file(
         }
     except Exception as exc:
         return {"success": False, "error": str(exc), "summary": f"文件上传失败: {exc}"}
+
+
+def _chat_target(chat_context: dict[str, Any] | None) -> tuple[str, str]:
+    """Resolve group and private targets from runtime and direct-call contexts."""
+    context = chat_context or {}
+    chat_type = str(context.get("chat_type") or "").strip().lower()
+    chat_id = str(context.get("chat_id") or "").strip()
+    group_id = str(context.get("group_id") or "").strip()
+    user_id = str(context.get("user_id") or "").strip()
+
+    if chat_type and chat_type not in {"group", "private"}:
+        return "", ""
+    if not chat_type:
+        if group_id.startswith("private_") or user_id:
+            chat_type = "private"
+        elif group_id:
+            chat_type = "group"
+        else:
+            return "", ""
+
+    if chat_type == "group":
+        target_id = chat_id or group_id
+        if not target_id or target_id.startswith("private_"):
+            return "", ""
+        return "group", target_id
+
+    for candidate in (chat_id, user_id, group_id):
+        target_id = _private_target_id(candidate)
+        if target_id:
+            return "private", target_id
+    return "", ""
+
+
+def _private_target_id(value: str) -> str:
+    target_id = value.strip()
+    if target_id.startswith("private_"):
+        target_id = target_id.removeprefix("private_")
+    if target_id.startswith("qq_"):
+        target_id = target_id.removeprefix("qq_")
+    return target_id
