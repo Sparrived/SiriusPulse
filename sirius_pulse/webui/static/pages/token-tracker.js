@@ -169,10 +169,6 @@ function renderStats() {
       <div class="stat-value">${(cache.cached_prompt_tokens || 0).toLocaleString()}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">未缓存 Prompt</div>
-      <div class="stat-value">${(cache.uncached_prompt_tokens || 0).toLocaleString()}</div>
-    </div>
-    <div class="stat-card">
       <div class="stat-label">缓存命中率</div>
       <div class="stat-value">${cacheRate}</div>
       <div class="stat-label">数据覆盖 ${(cache.cache_info_coverage_pct || 0)}%</div>
@@ -220,21 +216,14 @@ function renderOverviewTab(panels) {
   const hourly = data.hourly || [];
   if (hourly.length) {
     const labels = hourly.map(h => formatHourLabel(h.hour_ts));
-    const hasCache = hourly.some(h => (h.cached_prompt_tokens || 0) + (h.uncached_prompt_tokens || 0) > 0);
     const series = [
       { name: 'Prompt Tokens', data: hourly.map(h => h.prompt_tokens) },
       { name: 'Completion Tokens', data: hourly.map(h => h.completion_tokens) },
     ];
-    if (hasCache) {
-      series.push(
-        { name: '缓存命中 Prompt', data: hourly.map(h => h.cached_prompt_tokens || 0) },
-        { name: '未缓存 Prompt', data: hourly.map(h => h.uncached_prompt_tokens || 0) },
-      );
-    }
     renderLineChart(panels.querySelector('[data-chart="ts"]'), {
       labels,
       dualAxis: true,
-      colors: hasCache ? ['#4c9aff', '#36d399', '#f59e0b', '#ef6c6c'] : ['#4c9aff', '#36d399'],
+      colors: ['#4c9aff', '#36d399'],
       series,
     });
   }
@@ -386,7 +375,6 @@ function renderDetailTable() {
           <th>Prompt</th>
           <th>Completion</th>
           <th>缓存命中</th>
-          <th>未缓存</th>
           <th>Top-3 模块</th>
         </tr>
       </thead>
@@ -409,7 +397,6 @@ function renderDetailTable() {
               <td>${(r.prompt_tokens || 0).toLocaleString()}</td>
               <td>${(r.completion_tokens || 0).toLocaleString()}</td>
               <td>${cacheAvailable ? (r.cached_prompt_tokens || 0).toLocaleString() : '—'}</td>
-              <td>${cacheAvailable ? (r.uncached_prompt_tokens || 0).toLocaleString() : '—'}</td>
               <td style="font-size:12px;color:var(--text-2)">${top3 || '—'}</td>
             </tr>
           `;
