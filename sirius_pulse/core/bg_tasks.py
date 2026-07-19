@@ -117,13 +117,13 @@ class BackgroundTasks:
         engine = self._engine
         interval = engine.config.get("memory_promote_interval_seconds", 180)
         while engine._bg_running:
-            await asyncio.sleep(interval)
             try:
                 promoted_total = await self._checkpoint_memory_once()
                 if promoted_total > 0:
                     engine._log_inner_thought(f"整理了 {promoted_total} 条结构化记忆单元。")
             except Exception as exc:
                 logger.warning("Memory checkpoint failed: %s", exc)
+            await asyncio.sleep(interval)
 
     async def _checkpoint_memory_once(self) -> int:
         """Run one memory-unit checkpoint pass across all groups."""
@@ -261,6 +261,11 @@ class BackgroundTasks:
         """Calibrate raw history estimates against the latest real prompt."""
         if raw_history_tokens <= 0:
             return 1.0
+
+        conversation_tokens = self._latest_conversation_tokens(group_id)
+        if conversation_tokens > raw_history_tokens:
+            return conversation_tokens / raw_history_tokens
+
         records = getattr(self._engine, "token_usage_records", [])
         for record in reversed(records):
             if (
@@ -272,6 +277,22 @@ class BackgroundTasks:
                     return prompt_tokens / raw_history_tokens
                 break
         return 1.0
+
+    def _latest_conversation_tokens(self, group_id: str) -> int:
+        """Read the same approximate token count shown for an LLM message chain."""
+        entries = self._engine.basic_memory.get_all(group_id)
+        for entry in reversed(entries):
+            chain = getattr(entry, "conversation_chain", None)
+            if not isinstance(chain, list) or not chain:
+                continue
+            chars = sum(
+                len(str(message.get("content", "") or ""))
+                for message in chain
+                if isinstance(message, dict)
+            )
+            if chars:
+                return (chars + 1) // 2
+        return 0
 
     @staticmethod
     def _candidates_are_old_enough(

@@ -190,7 +190,7 @@ def test_checkpoint_pass_repeats_active_batches_until_token_target():
     assert BackgroundTasks(engine)._estimate_group_history_tokens("group_a") <= 100
 
 
-def test_checkpoint_uses_latest_response_prompt_tokens_for_trigger():
+def test_checkpoint_uses_latest_conversation_chain_tokens_for_trigger():
     now = datetime.now(timezone.utc)
     basic = BasicMemoryManager(context_window=5)
     for index in range(40):
@@ -209,6 +209,14 @@ def test_checkpoint_uses_latest_response_prompt_tokens_for_trigger():
             f"current message {index}",
             timestamp=now.isoformat(),
         )
+    basic.add_entry(
+        "group_a",
+        "assistant",
+        "assistant",
+        "current reply",
+        timestamp=now.isoformat(),
+        conversation_chain=[{"role": "system", "content": "x" * 260_000}],
+    )
 
     manager = _CheckpointManager()
     engine = SimpleNamespace(
@@ -220,13 +228,6 @@ def test_checkpoint_uses_latest_response_prompt_tokens_for_trigger():
         model_router=SimpleNamespace(resolve=lambda _: SimpleNamespace(model_name="memory-model")),
         persona=SimpleNamespace(name="Sirius", persona_summary="", backstory=""),
         brain=object(),
-        token_usage_records=[
-            SimpleNamespace(
-                task_name="response_generate",
-                group_id="group_a",
-                prompt_tokens=130_000,
-            )
-        ],
         _bg_running=False,
     )
 
