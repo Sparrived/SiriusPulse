@@ -5,20 +5,26 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_NO_CACHE=1 \
     SIRIUS_PULSE_HOME=/app \
     SIRIUS_PULSE_FILE_ROOT=/ \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock README.md ./
 RUN pip install --no-cache-dir uv \
     && uv sync --frozen --no-dev --no-install-project
 
 COPY sirius_pulse ./sirius_pulse
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev \
+    && .venv/bin/python -m playwright install --with-deps chromium
 
 RUN useradd --create-home --uid 10001 sirius \
-    && mkdir -p /app/data \
-    && chown -R sirius:sirius /app/.venv /app/data
+    && mkdir -p /app/data /ms-playwright \
+    && chown -R sirius:sirius /app/.venv /app/data /ms-playwright
 
 USER sirius
 

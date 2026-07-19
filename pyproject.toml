@@ -27,6 +27,7 @@ dependencies = [
 	"aiohttp>=3.8.0",
 	"websockets>=11.0.0",
 	"textual>=0.89.0",
+	"playwright>=1.57.0",
 ]
 
 [project.scripts]

@@ -1,0 +1,14 @@
+[Unit]
+Description=Sirius restricted container administration proxy
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /root/SiriusPulse/scripts/container_admin_proxy.py --config /etc/sirius-container-admin.json --socket /run/sirius-container-admin.sock --socket-gid 10001
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
