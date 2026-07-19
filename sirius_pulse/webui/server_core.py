@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import socket
 import multiprocessing
-import asyncio
+import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -202,20 +202,29 @@ class WebUIServer:
 
     def get_embedding_status(self) -> dict[str, Any]:
         """返回 embedding 服务的真实健康状态。"""
-        # 线程不存在 → 未启动
-        if self._embedding_process is None:
-            return {"running": False, "ready": False, "error": self._embedding_error or "未启动"}
-        # 线程已死亡（启动失败）→ 检查是否还在运行
-        if not self._embedding_process.is_alive():
+        if self._embedding_process is not None and not self._embedding_process.is_alive():
             return {
                 "running": False,
                 "ready": False,
                 "error": self._embedding_error or "服务线程已退出",
             }
-        # 线程存活但模型还没加载完
-        if not self._embedding_ready:
+        self._embedding_ready = self._embedding_healthy()
+        if self._embedding_ready:
+            return {"running": True, "ready": True, "error": ""}
+        if self._embedding_process is not None:
             return {"running": True, "ready": False, "error": "模型加载中..."}
-        return {"running": True, "ready": True, "error": ""}
+        return {"running": False, "ready": False, "error": self._embedding_error or "未启动"}
+
+    def _embedding_healthy(self) -> bool:
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self._embedding_port}/health", timeout=2.0
+            ) as response:
+                return json.loads(response.read().decode("utf-8")).get("status") == "ok"
+        except Exception:
+            return False
 
     def _start_embedding_service(self) -> None:
         if self._embedding_process is not None:
@@ -224,25 +233,13 @@ class WebUIServer:
 
         if not self._is_port_free(self._embedding_port):
             # 端口被占用：可能是外部已启动，尝试健康检查
-            import json as _json
-            import urllib.request
-
-            try:
-                req = urllib.request.Request(
-                    f"http://127.0.0.1:{self._embedding_port}/health", method="GET"
+            if self._embedding_healthy():
+                self._embedding_ready = True
+                LOG.info(
+                    "Embedding 服务端口 %d 已被外部进程占用且健康，跳过内部启动",
+                    self._embedding_port,
                 )
-                with urllib.request.urlopen(req, timeout=2.0) as resp:
-                    data = _json.loads(resp.read().decode("utf-8"))
-                    if data.get("status") == "ok":
-                        self._embedding_ready = True
-                        LOG.info(
-                            "Embedding 服务端口 %d 已被外部进程占用且健康，跳过内部启动",
-                            self._embedding_port,
-                        )
-                        return
-            except Exception:
-                LOG.warning("Embedding 服务健康检查失败", exc_info=True)
-                pass
+                return
             LOG.warning(
                 "Embedding 服务端口 %d 已被占用但不健康，可能有残留进程",
                 self._embedding_port,
@@ -260,9 +257,14 @@ class WebUIServer:
         LOG.info("Embedding 服务后台线程已启动 (host=127.0.0.1 port=%d)", self._embedding_port)
 
     def _stop_embedding_service(self) -> None:
-        if self._embedding_process is not None:
+        process = self._embedding_process
+        if process is not None:
             LOG.info("Embedding 服务线程将随主进程退出")
-            self._embedding_process = None
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        self._embedding_process = None
+        self._embedding_ready = False
 
     # ─── 静态页面 ─────────────────────────────────────────
 
@@ -341,7 +343,7 @@ class WebUIServer:
 
         for _ in range(30):
             await _aio.sleep(1)
-            if self._embedding_ready:
+            if self.get_embedding_status()["ready"]:
                 return _json_response({"success": True, "ready": True})
             if self._embedding_error:
                 return _json_response({"success": False, "error": self._embedding_error})

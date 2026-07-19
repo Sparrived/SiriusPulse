@@ -12,6 +12,7 @@ export function dispose() {
 const $ = scopedPage.$;
 
 let currentModal = null;
+const modal$ = (id) => currentModal?.querySelector(`#${id}`);
 
 export async function init(container, params = {}) {
   scopedPage.use(params?.ctx, container);
@@ -140,24 +141,24 @@ async function openConfigModal(skillName) {
   document.body.appendChild(overlay);
   currentModal = overlay;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
-  $('modalClose').addEventListener('click', closeModal);
-  $('modalCancel').addEventListener('click', closeModal);
+  overlay.querySelector('#modalClose').addEventListener('click', closeModal);
+  overlay.querySelector('#modalCancel').addEventListener('click', closeModal);
 
   try {
     const data = await get(`/persona/skills/${skillName}/config`);
-    renderConfigModal(data, skillName);
+    await renderConfigModal(data, skillName);
   } catch (e) {
     if (e?.name === 'AbortError') return;
-    const body = $('modalBody');
+    const body = modal$('modalBody');
     if (body) body.innerHTML = `<div style="color:var(--danger);padding:12px">加载失败: ${e.message}</div>`;
   }
 }
 
 async function renderConfigModal(config, skillName) {
   const meta = config.meta || {};
-  const params = meta.parameters || [];
-  const extraKeys = Object.keys(config).filter(k => k !== 'enabled' && k !== 'meta' && k !== 'config');
+  const params = meta.config_parameters?.length ? meta.config_parameters : (meta.parameters || []);
   const skillConfig = config.config || {};
+  const extraKeys = Object.keys(skillConfig);
 
   let html = `
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;margin-bottom:16px">
@@ -178,20 +179,20 @@ async function renderConfigModal(config, skillName) {
     await form.init();
     html += `<div id="skillConfigForm"></div>`;
 
-    const body = $('modalBody');
+    const body = modal$('modalBody');
     if (body) body.innerHTML = html;
     form.render();
 
     // 保存时使用表单收集的值，包装在 config 键下以匹配 API 期望的结构
-    $('modalSave')?.addEventListener('click', async () => {
+    modal$('modalSave')?.addEventListener('click', async () => {
       const values = form.collectValues();
-      await saveConfig({ config: values }, skillName);
+      await saveConfig({ config: values, enabled: modal$('cfgEnabled')?.checked !== false }, skillName);
     });
   } else {
     // 无参数时显示 JSON 编辑器
     if (extraKeys.length > 0) {
       const extra = {};
-      extraKeys.forEach(k => { extra[k] = config[k]; });
+      extraKeys.forEach(k => { extra[k] = skillConfig[k]; });
       const extraVal = JSON.stringify(extra, null, 2);
       html += `
         <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">
@@ -201,13 +202,13 @@ async function renderConfigModal(config, skillName) {
       `;
     }
 
-    const body = $('modalBody');
+    const body = modal$('modalBody');
     if (body) body.innerHTML = html;
 
-    $('modalSave')?.addEventListener('click', async () => {
-      const enabledEl = $('cfgEnabled');
+    modal$('modalSave')?.addEventListener('click', async () => {
+      const enabledEl = modal$('cfgEnabled');
       const payload = { enabled: enabledEl ? enabledEl.checked : true };
-      const extraText = $('cfgExtra')?.value?.trim();
+      const extraText = modal$('cfgExtra')?.value?.trim();
       if (extraText) {
         try {
           const extra = JSON.parse(extraText);
@@ -224,7 +225,7 @@ async function renderConfigModal(config, skillName) {
 
 async function saveConfig(payload, skillName) {
   const name = store.currentPersona;
-  const btn = $('modalSave');
+  const btn = modal$('modalSave');
   if (btn) {
     btn.disabled = true;
     btn.textContent = '保存中...';

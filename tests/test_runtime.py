@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from sirius_pulse.platforms.runtime import EngineRuntime
+import os
+from types import SimpleNamespace
+
 from sirius_pulse.persona_config import PersonaExperienceConfig
 from sirius_pulse.persona_worker import PersonaWorker
+from sirius_pulse.platforms.runtime import EngineRuntime
 from sirius_pulse.utils.json_io import atomic_write_json
 
 
@@ -78,6 +81,23 @@ def test_persona_worker_experience_reload_updates_runtime_config_keys(tmp_path):
     assert engine.config["memory_unit_top_k"] == 2
     assert "engagement_sensitivity" not in engine.config
     assert engine.brain.config["memory_unit_top_k"] == 2
+
+
+def test_persona_worker_config_reload_consumes_experience_flag(tmp_path):
+    worker = PersonaWorker(tmp_path)
+    PersonaExperienceConfig(memory_unit_top_k=15).save(tmp_path / "experience.json")
+    engine = SimpleNamespace(config={}, brain=SimpleNamespace(config={}))
+    worker._runtime = SimpleNamespace(engine=engine)
+    flag = tmp_path / "engine_state" / "reload_requested"
+    flag.parent.mkdir()
+    flag.write_text("experience", encoding="utf-8")
+    os.utime(flag, (0, 0))
+
+    worker._check_config_reload()
+
+    assert not flag.exists()
+    assert engine.config["memory_unit_top_k"] == 15
+    assert engine.brain.config["memory_unit_top_k"] == 15
 
 
 def test_engine_runtime_includes_main_model_reply_cooldown_in_engine_config(tmp_path):
