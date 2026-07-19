@@ -142,7 +142,8 @@ def test_generation_collapses_exact_duplicate_and_tracks_new_source(tmp_path):
     units = manager.get_units_for_group("group_a")
     assert result is not None
     assert len(units) == 1
-    assert units[0].unit_id == "mem-existing"
+    assert units[0].unit_id == result.units[0].unit_id
+    assert units[0].unit_id != "mem-existing"
     assert units[0].source_ids == ["src-existing", new_entry.entry_id]
     assert manager.is_source_checkpointed("group_a", new_entry.entry_id) is True
 

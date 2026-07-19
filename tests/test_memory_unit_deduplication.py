@@ -45,7 +45,7 @@ def test_normalized_equal_summary_is_duplicate_only_inside_same_boundary():
     assert same_boundary(old, other_group) is False
 
 
-def test_merge_keeps_canonical_identity_and_all_sources():
+def test_merge_uses_incoming_identity_and_keeps_all_sources():
     old = _unit("mem-old", "Alice prefers concise replies.")
     new = _unit(
         "mem-new",
@@ -66,7 +66,7 @@ def test_merge_keeps_canonical_identity_and_all_sources():
         now_iso="2026-07-12T02:00:00+00:00",
     )
 
-    assert merged.unit_id == "mem-old"
+    assert merged.unit_id == "mem-new"
     assert merged.created_at == old.created_at
     assert merged.source_ids == ["src-1", "src-2"]
     assert merged.participants == ["alice", "sirius"]
@@ -76,7 +76,7 @@ def test_merge_keeps_canonical_identity_and_all_sources():
     assert merged.confidence == 0.8
     assert merged.lifespan == "long"
     assert merged.embedding is None
-    assert merged.metadata["merged_unit_ids"] == ["mem-new"]
+    assert merged.metadata["merged_unit_ids"] == ["mem-old"]
     assert merged.metadata["revision_count"] == 1
 
 
