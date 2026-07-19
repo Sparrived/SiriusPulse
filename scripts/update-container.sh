@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 git pull --ff-only origin master
 git submodule update --init --recursive
-docker compose up -d --build --force-recreate
+docker compose up -d --build --force-recreate --remove-orphans
 
 for _ in {1..60}; do
   if curl -fsS http://127.0.0.1:8080/ >/dev/null \
