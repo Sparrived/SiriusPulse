@@ -32,6 +32,7 @@ class _CheckpointManager:
     def __init__(self, checkpointed=None):
         self.checkpointed = set(checkpointed or [])
         self.generated_candidates = []
+        self.generated_batches = []
 
     def is_source_checkpointed(self, _group_id, entry_id):
         return entry_id in self.checkpointed
@@ -39,6 +40,7 @@ class _CheckpointManager:
     async def generate_from_candidates(self, **kwargs):
         candidates = list(kwargs["candidates"])
         self.generated_candidates = candidates
+        self.generated_batches.append(candidates)
         return SimpleNamespace(
             units=[SimpleNamespace(source_ids=[entry.entry_id for entry in candidates])]
         )
@@ -114,7 +116,12 @@ def test_checkpoint_pass_prunes_covered_sources_and_consolidates_old_active_arch
 
     manager = _CheckpointManager(checkpointed={old_entries[0].entry_id, old_entries[1].entry_id})
     engine = SimpleNamespace(
-        config={"memory_idle_consolidation_seconds": 3600, "memory_unit_volume_threshold": 8},
+        config={
+            "memory_idle_consolidation_seconds": 3600,
+            "memory_unit_volume_threshold": 8,
+            "memory_unit_token_trigger": 1,
+            "memory_unit_token_target": 1,
+        },
         provider_async=object(),
         basic_memory=basic,
         memory_unit_manager=manager,
@@ -136,3 +143,48 @@ def test_checkpoint_pass_prunes_covered_sources_and_consolidates_old_active_arch
         "recent archive message",
         *[f"current message {index}" for index in range(5)],
     ]
+
+
+def test_checkpoint_pass_repeats_active_batches_until_token_target():
+    now = datetime.now(timezone.utc)
+    basic = BasicMemoryManager(context_window=5)
+    for index in range(80):
+        basic.add_entry(
+            "group_a",
+            "alice",
+            "human",
+            f"old message {index}",
+            timestamp=(now - timedelta(hours=2)).isoformat(),
+        )
+    for index in range(5):
+        basic.add_entry(
+            "group_a",
+            "alice",
+            "human",
+            f"current message {index}",
+            timestamp=now.isoformat(),
+        )
+
+    manager = _CheckpointManager()
+    engine = SimpleNamespace(
+        config={
+            "memory_idle_consolidation_seconds": 3600,
+            "memory_unit_volume_threshold": 8,
+            "memory_unit_token_trigger": 1,
+            "memory_unit_token_target": 100,
+        },
+        provider_async=object(),
+        basic_memory=basic,
+        memory_unit_manager=manager,
+        cold_detector=ColdDetector(),
+        model_router=SimpleNamespace(resolve=lambda _: SimpleNamespace(model_name="memory-model")),
+        persona=SimpleNamespace(name="Sirius", persona_summary="", backstory=""),
+        brain=object(),
+        _bg_running=False,
+    )
+
+    promoted = asyncio.run(BackgroundTasks(engine)._checkpoint_memory_once())
+
+    assert promoted == 2
+    assert [len(batch) for batch in manager.generated_batches] == [32, 32]
+    assert BackgroundTasks(engine)._estimate_group_history_tokens("group_a") <= 100

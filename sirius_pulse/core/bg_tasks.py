@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MEMORY_CHECKPOINT_BATCH_SIZE = 32
+MEMORY_CHECKPOINT_TOKEN_TRIGGER = 120_000
+MEMORY_CHECKPOINT_TOKEN_TARGET = 60_000
+
 
 class BackgroundTasks:
     """后台任务管理组件。
@@ -106,8 +110,9 @@ class BackgroundTasks:
         """Periodically checkpoint basic memory entries into memory units.
 
         Cold groups are consolidated immediately. Active groups can also
-        consolidate archive entries once the selected batch is old enough,
-        so continuous chat does not keep an ever-growing raw prompt forever.
+        consolidate archive entries once the selected batch is at least one
+        hour old and history exceeds the token trigger. High-token groups keep
+        processing 32-entry batches until the target budget is restored.
         """
         engine = self._engine
         interval = engine.config.get("memory_promote_interval_seconds", 180)
@@ -135,6 +140,12 @@ class BackgroundTasks:
         idle_consolidation_seconds = float(
             engine.config.get("memory_idle_consolidation_seconds", 3600)
         )
+        token_trigger = int(
+            engine.config.get("memory_unit_token_trigger", MEMORY_CHECKPOINT_TOKEN_TRIGGER)
+        )
+        token_target = int(
+            engine.config.get("memory_unit_token_target", MEMORY_CHECKPOINT_TOKEN_TARGET)
+        )
         promoted_total = 0
         for group_id in list(engine.basic_memory.list_groups()):
             entries = engine.basic_memory.get_all(group_id)
@@ -158,56 +169,90 @@ class BackgroundTasks:
 
             heat, seconds_since_last = engine.basic_memory.get_cold_params(group_id)
             cold_state = engine.cold_detector.check(heat, seconds_since_last)
-            include_context = seconds_since_last >= idle_consolidation_seconds
-            candidates = engine.basic_memory.get_consolidation_candidates(
-                group_id,
-                include_context=include_context,
-            )
-            candidates = [
-                entry
-                for entry in candidates
-                if not engine.memory_unit_manager.is_source_checkpointed(
-                    group_id, entry.entry_id
+
+            history_tokens = self._estimate_group_history_tokens(group_id)
+            repeat_until_target = history_tokens > token_trigger
+            if cold_state != ColdState.COLD and not repeat_until_target:
+                continue
+
+            while True:
+                include_context = (
+                    cold_state == ColdState.COLD
+                    and seconds_since_last >= idle_consolidation_seconds
                 )
-            ]
-            if not candidates or len(candidates) < volume_threshold:
-                continue
-
-            checkpoint_batch = candidates[:32]
-            if cold_state != ColdState.COLD and not self._candidates_are_old_enough(
-                checkpoint_batch,
-                min_age_seconds=idle_consolidation_seconds,
-            ):
-                continue
-
-            cfg = engine.model_router.resolve("memory_extract")
-            result = await engine.memory_unit_manager.generate_from_candidates(
-                group_id=group_id,
-                candidates=checkpoint_batch,
-                persona_name=engine.persona.name,
-                persona_description=(
-                    engine.persona.persona_summary or engine.persona.backstory or ""
-                ),
-                brain=engine.brain,
-                model_name=cfg.model_name,
-                min_candidate_count=volume_threshold,
-            )
-            if not result:
-                continue
-
-            promoted_total += len(result.units)
-            covered_source_ids: set[str] = set()
-            for unit in result.units:
-                covered_source_ids.update(unit.source_ids)
-            removed = engine.basic_memory.remove_entries_by_ids(group_id, covered_source_ids)
-            if removed:
-                logger.info(
-                    "Pruned %d checkpointed raw memory entries for group %s",
-                    removed,
+                candidates = self._get_uncheckpointed_candidates(
                     group_id,
+                    include_context=include_context,
                 )
+                if not candidates or len(candidates) < volume_threshold:
+                    break
+                if repeat_until_target and history_tokens <= token_target:
+                    break
+
+                checkpoint_batch = candidates[:MEMORY_CHECKPOINT_BATCH_SIZE]
+                if cold_state != ColdState.COLD and not self._candidates_are_old_enough(
+                    checkpoint_batch,
+                    min_age_seconds=idle_consolidation_seconds,
+                ):
+                    break
+
+                cfg = engine.model_router.resolve("memory_extract")
+                result = await engine.memory_unit_manager.generate_from_candidates(
+                    group_id=group_id,
+                    candidates=checkpoint_batch,
+                    persona_name=engine.persona.name,
+                    persona_description=(
+                        engine.persona.persona_summary or engine.persona.backstory or ""
+                    ),
+                    brain=engine.brain,
+                    model_name=cfg.model_name,
+                    min_candidate_count=volume_threshold,
+                )
+                if not result:
+                    break
+
+                covered_source_ids: set[str] = set()
+                for unit in result.units:
+                    covered_source_ids.update(unit.source_ids)
+                removed = engine.basic_memory.remove_entries_by_ids(group_id, covered_source_ids)
+                if not removed:
+                    break
+
+                promoted_total += len(result.units)
+                history_tokens = self._estimate_group_history_tokens(group_id)
+                logger.info(
+                    "Memory checkpoint group=%s batch=%d removed=%d history_tokens=%d",
+                    group_id,
+                    len(checkpoint_batch),
+                    removed,
+                    history_tokens,
+                )
+                if not repeat_until_target or history_tokens <= token_target:
+                    break
 
         return promoted_total
+
+    def _get_uncheckpointed_candidates(
+        self, group_id: str, *, include_context: bool
+    ) -> list[Any]:
+        engine = self._engine
+        candidates = engine.basic_memory.get_consolidation_candidates(
+            group_id,
+            include_context=include_context,
+        )
+        return [
+            entry
+            for entry in candidates
+            if not engine.memory_unit_manager.is_source_checkpointed(group_id, entry.entry_id)
+        ]
+
+    def _estimate_group_history_tokens(self, group_id: str) -> int:
+        from sirius_pulse.token.utils import estimate_tokens
+
+        return sum(
+            estimate_tokens(str(getattr(entry, "content", "") or ""))
+            for entry in self._engine.basic_memory.get_all(group_id)
+        )
 
     @staticmethod
     def _candidates_are_old_enough(
