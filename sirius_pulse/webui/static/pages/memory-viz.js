@@ -18,21 +18,19 @@ const TABS = [
   { id: 'diary', label: '日记记忆', hint: '长期总结', canCreate: true },
   { id: 'units', label: '记忆单元', hint: 'MemoryUnit', canCreate: true },
   { id: 'glossary', label: '名词解释', hint: '概念词典', canCreate: true },
-  { id: 'users', label: '用户画像', hint: '语义档案', canCreate: true },
 ];
 
 const TAB_ENDPOINTS = {
   diary: '/persona/diary?limit=200',
   units: '/persona/memory-units?limit=200',
   glossary: '/persona/glossary?limit=200',
-  users: '/persona/users?limit=200',
 };
 
 let state = {
   tab: 'conversations',
   search: '',
   group: '',
-  data: { diary: null, units: null, glossary: null, users: null },
+  data: { diary: null, units: null, glossary: null },
   viz: null,
   loadedTabs: new Set(),
   loadingTabs: new Set(),
@@ -115,7 +113,7 @@ export async function init(container, params = {}) {
       }
       .memory-tabs {
         display:grid;
-        grid-template-columns:repeat(5,minmax(0,1fr));
+        grid-template-columns:repeat(4,minmax(0,1fr));
         gap:8px;
         margin:18px 0;
       }
@@ -272,7 +270,7 @@ export async function init(container, params = {}) {
       <div>
         <div class="memory-kicker">新记忆模块 · CRUD</div>
         <div class="memory-title">记忆管理工作台</div>
-        <div class="memory-subtitle">面向当前运行中的记忆系统：统一检索基础记忆、记忆单元、日记、术语和用户画像，并直接新增、编辑、删除可维护条目。</div>
+        <div class="memory-subtitle">面向当前运行中的记忆系统：统一检索基础记忆、记忆单元、日记和术语，并直接新增、编辑、删除可维护条目。</div>
       </div>
       <div class="memory-toolbar">
         <select id="memoryGroupFilter" style="width:160px"></select>
@@ -481,7 +479,6 @@ function renderStats() {
     statCard('日记条目', count('diary', data.diary?.total), '可新增、编辑、删除', '◫'),
     statCard('记忆单元', count('units', data.units?.total), '检查点提炼', '▣'),
     statCard('术语数量', count('glossary', data.glossary?.total), '人格级词典', '◱'),
-    statCard('用户画像', count('users', data.users?.total), '按群组维护', '◎'),
   ].join('');
 }
 
@@ -491,7 +488,6 @@ function renderGroupFilter() {
   const groups = new Set();
   if (state.tab === 'diary') (state.data.diary?.groups || []).forEach((g) => groups.add(g));
   if (state.tab === 'units') (state.data.units?.groups || []).forEach((g) => groups.add(g));
-  if (state.tab === 'users') (state.data.users?.groups || []).forEach((g) => groups.add(g));
   const current = state.group;
   select.innerHTML = '<option value="">全部群组</option>' +
     [...groups].sort().map((g) => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
@@ -505,7 +501,7 @@ function updateCreateButton() {
   const tab = TABS.find((item) => item.id === state.tab);
   if (!btn || !tab) return;
   btn.style.display = tab.canCreate ? '' : 'none';
-  btn.textContent = state.tab === 'users' ? '新增画像' : state.tab === 'units' ? '新增单元' : '新增记忆';
+  btn.textContent = state.tab === 'units' ? '新增单元' : '新增记忆';
   const dedupeBtn = $('memoryDedupeBtn');
   if (dedupeBtn) dedupeBtn.style.display = state.tab === 'units' ? '' : 'none';
 }
@@ -544,7 +540,7 @@ function updateConversationAnalysisView() {
   if (chartsView) chartsView.style.display = isDiaryTab ? '' : 'none';
   if (groupFilter) groupFilter.style.display = isConversationsTab ? 'none' : '';
   if (searchInput) searchInput.style.display = isConversationsTab ? 'none' : '';
-  if (searchInput) searchInput.placeholder = state.tab === 'users' ? '搜索用户画像...' : '搜索记忆内容...';
+  if (searchInput) searchInput.placeholder = '搜索记忆内容...';
 
   if (isConversationsTab) {
     mountConversationAnalysis();
@@ -586,7 +582,6 @@ function getActiveItems() {
   if (state.tab === 'diary') return state.data.diary?.entries || [];
   if (state.tab === 'units') return state.data.units?.units || [];
   if (state.tab === 'glossary') return state.data.glossary?.terms || [];
-  if (state.tab === 'users') return state.data.users?.users || [];
   return [];
 }
 
@@ -666,15 +661,6 @@ function renderItem(item, index) {
       editable: true,
     });
   }
-  if (state.tab === 'users') {
-    return renderItemShell({
-      title: item.name || item.user_id || '未知用户',
-      meta: [item.user_id, `互动 ${item.interaction_count || 0} 次`, `参与度 ${formatPercent(item.engagement_rate)}`],
-      content: `首次互动: ${formatDate(item.first_interaction_at)}\n最近互动: ${formatDate(item.last_interaction_at)}`,
-      index,
-      editable: true,
-    });
-  }
   return renderItemShell({
     title: item.speaker_name || item.user_id || item.role || '消息',
     meta: [item.group_id, item.role, formatDate(item.timestamp)],
@@ -720,8 +706,6 @@ function openEditor(tab, item) {
     form.innerHTML = unitForm(item);
   } else if (tab === 'glossary') {
     form.innerHTML = glossaryForm(item);
-  } else if (tab === 'users') {
-    form.innerHTML = userForm(item);
   } else {
     form.innerHTML = '<div class="memory-empty">基础记忆来自运行窗口和归档，仅支持浏览检索。</div>';
     return;
@@ -799,24 +783,6 @@ function glossaryForm(item = {}) {
   `;
 }
 
-function userForm(item = {}) {
-  return `
-    <div class="memory-form-grid">
-      ${field('群组 ID', 'editGroupId', item.group_id || state.group || '', '必填')}
-      ${field('用户 ID', 'editUserId', item.user_id || '', '', 'text', '', '', '', Boolean(item.user_id))}
-      ${field('名称', 'editUserName', item.name || '')}
-      ${field('参与度', 'editEngagement', item.engagement_rate ?? 0, '', 'number', '0', '1', '0.01')}
-      ${field('互动次数', 'editInteractionCount', item.interaction_count || 0, '', 'number', '0', '', '1')}
-      ${field('首次互动', 'editFirstAt', item.first_interaction_at || '')}
-      ${field('最近互动', 'editLastAt', item.last_interaction_at || '')}
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" id="memorySaveBtn">保存</button>
-        <button class="btn" id="memoryCancelBtn">取消</button>
-      </div>
-    </div>
-  `;
-}
-
 function field(label, id, value, hint = '', type = 'text', min = '', max = '', step = '', disabled = false) {
   return `
     <div>
@@ -880,21 +846,6 @@ async function saveEditor(tab, item) {
       };
       if (item?.term) await put(`/persona/glossary/${encodeURIComponent(item.term)}`, payload);
       else await post('/persona/glossary', payload);
-    } else if (tab === 'users') {
-      const userId = (item?.user_id || $('editUserId').value).trim();
-      const payload = {
-        group_id: $('editGroupId').value.trim(),
-        name: $('editUserName').value.trim(),
-        engagement_rate: Number($('editEngagement').value || 0),
-        interaction_count: Number($('editInteractionCount').value || 0),
-        first_interaction_at: $('editFirstAt').value.trim(),
-        last_interaction_at: $('editLastAt').value.trim(),
-      };
-      if (!userId || !payload.group_id) {
-        toast('用户 ID 和群组 ID 不能为空', 'error');
-        return;
-      }
-      await put(`/persona/users/${encodeURIComponent(userId)}`, payload);
     }
     toast('记忆已保存');
     closeEditor();
@@ -933,7 +884,7 @@ async function deleteItem(tab, item) {
       ? item.term
       : tab === 'conversations'
         ? (item.content || item.entry_id || item.timestamp || '\u8be5\u6d88\u606f').slice(0, 40)
-        : (item.name || item.user_id);
+        : '';
   if (!confirmDanger(`确定删除「${label}」吗？此操作不可撤销。`)) return;
   try {
     if (tab === 'diary') {
@@ -942,10 +893,6 @@ async function deleteItem(tab, item) {
       await del(`/persona/memory-units/${encodeURIComponent(item.unit_id)}`);
     } else if (tab === 'glossary') {
       await del(`/persona/glossary/${encodeURIComponent(item.term)}`);
-    } else if (tab === 'users') {
-      const group = item.group_id || state.group || '';
-      const suffix = group ? `?group_id=${encodeURIComponent(group)}` : '';
-      await del(`/persona/users/${encodeURIComponent(item.user_id)}${suffix}`);
     } else if (tab === 'conversations') {
       await del(buildConversationDeletePath(item));
     }

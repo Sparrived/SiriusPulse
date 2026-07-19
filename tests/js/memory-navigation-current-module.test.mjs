@@ -23,7 +23,6 @@ for (const oldPage of [
 for (const apiPath of [
   '/persona/diary',
   '/persona/glossary',
-  '/persona/users',
   '/persona/conversations',
 ]) {
   assert.match(memorySource, new RegExp(apiPath.replaceAll('/', '\\/')));
@@ -32,3 +31,4 @@ for (const apiPath of [
 assert.match(memorySource, /记忆管理工作台/);
 assert.match(memorySource, /openEditor\(state\.tab, null\)/);
 assert.match(memorySource, /deleteItem\(state\.tab, filtered\[Number\(btn\.dataset\.delete\)\]\)/);
+assert.doesNotMatch(memorySource, /\/persona\/users|用户画像/);

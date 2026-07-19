@@ -8,7 +8,7 @@
 实现已拆分到：
   - server_core   : WebUIServer 类定义、路由、生命周期、全局 API
   - persona_api   : 人格列表/创建/删除/状态/启停/配置/访谈/模型编排/体验/Adapter/引擎重载
-  - memory_api    : Token 统计（全局+人格）、认知事件、日记、向量存储状态、用户画像
+  - memory_api    : Token 统计（全局+人格）、认知事件、日记、向量存储状态
   - server_skill_api: Skill 管理（已存在）
 
 本模块作为向后兼容的 shim，重新导出 WebUIServer。
@@ -47,10 +47,6 @@ from sirius_pulse.webui.memory_api import (
     api_persona_memory_units_post,
     api_persona_memory_viz,
     api_persona_tokens_get,
-    api_persona_user_delete,
-    api_persona_user_get,
-    api_persona_user_put,
-    api_persona_users_get,
     api_persona_vector_store_status_get,
     api_telemetry_get,
     api_tokens_get,
@@ -154,10 +150,6 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_diary_put": api_persona_diary_put,
     "api_persona_diary_delete": api_persona_diary_delete,
     "api_persona_vector_store_status_get": api_persona_vector_store_status_get,
-    "api_persona_users_get": api_persona_users_get,
-    "api_persona_user_get": api_persona_user_get,
-    "api_persona_user_put": api_persona_user_put,
-    "api_persona_user_delete": api_persona_user_delete,
     "api_persona_glossary_get": api_persona_glossary_get,
     "api_persona_glossary_post": api_persona_glossary_post,
     "api_persona_glossary_put": api_persona_glossary_put,
@@ -226,8 +218,6 @@ _PERSONA_SCOPED_PREFIXES = (
     "api_cognition_",
     "api_diary_",
     "api_vector_",
-    "api_users_",
-    "api_user_",
     "api_glossary_",
     "api_skill_",
     "api_conversations_",

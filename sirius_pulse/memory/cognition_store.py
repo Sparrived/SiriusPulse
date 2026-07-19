@@ -356,30 +356,6 @@ class CognitionEventStore(BaseSqliteStore):
         ).fetchall()
         return {row[0] or "unknown": row[1] for row in rows}
 
-    def get_user_stats(self, group_id: str | None = None) -> list[dict[str, Any]]:
-        """Return per-user aggregated cognition stats."""
-        where = "WHERE group_id = ? AND user_id != ''" if group_id else "WHERE user_id != ''"
-        params = (group_id,) if group_id else ()
-        rows = self.execute(
-            f"""SELECT
-                user_id,
-                COUNT(*) as event_count,
-                ROUND(AVG(valence), 4) as avg_valence,
-                ROUND(AVG(arousal), 4) as avg_arousal,
-                ROUND(AVG(intensity), 4) as avg_intensity,
-                ROUND(AVG(directed_score), 4) as avg_directed,
-                ROUND(AVG(sarcasm_score), 4) as avg_sarcasm,
-                ROUND(AVG(urgency_score), 4) as avg_urgency,
-                ROUND(AVG(relevance_score), 4) as avg_relevance,
-                MAX(timestamp) as last_active
-            FROM cognition_events
-            {where}
-            GROUP BY user_id
-            ORDER BY event_count DESC""",
-            params,
-        ).fetchall()
-        return [dict(row) for row in rows]
-
     def get_group_summary(self) -> list[dict[str, Any]]:
         """Return per-group aggregated cognition summary."""
         rows = self.execute(

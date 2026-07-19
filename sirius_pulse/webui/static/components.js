@@ -243,7 +243,7 @@ export class DynamicConfigForm {
         fieldHtml = this._renderPassword(key, param.name, value, defaultVal, desc, required);
       } else if (type === 'boolean') {
         fieldHtml = this._renderCheckbox(key, param.name, value, desc);
-      } else if (type === 'int' || type === 'number') {
+      } else if (type === 'int' || type === 'float' || type === 'number') {
         fieldHtml = this._renderNumber(key, param.name, value, defaultVal, desc, required);
       } else if (type === 'string' || type === 'str') {
         fieldHtml = this._renderText(key, param.name, value, defaultVal, desc, required);

@@ -1,4 +1,4 @@
-"""WebUI API endpoints for memory, tokens, cognition, diary, and user profiles."""
+"""WebUI API endpoints for memory, tokens, cognition, diary, and glossary data."""
 
 from __future__ import annotations
 
@@ -727,7 +727,7 @@ async def api_persona_cognition_get(request: web.Request, data_dir: Path) -> web
 
 @handle_api_errors
 async def api_persona_cognition_analysis_get(request: web.Request, data_dir: Path) -> web.Response:
-    """Return rich cognition analysis: intent/user/hourly/score distributions + decision stats."""
+    """Return rich cognition analysis: intent/hourly/score distributions + decision stats."""
     paths = PersonaConfigPaths(data_dir)
 
     db_path = paths.dir / "persona.db"
@@ -743,7 +743,6 @@ async def api_persona_cognition_analysis_get(request: web.Request, data_dir: Pat
 
     # 认知事件聚合
     result["intent_distribution"] = store.get_intent_distribution(group_id=group_id)
-    result["user_stats"] = store.get_user_stats(group_id=group_id)
     result["group_summary"] = store.get_group_summary()
     result["hourly_distribution"] = store.get_hourly_distribution(group_id=group_id)
 
@@ -988,176 +987,6 @@ async def api_persona_vector_store_status_get(request: web.Request, data_dir: Pa
                 "error": str(exc),
             }
         )
-
-
-@handle_api_errors
-async def api_persona_users_get(request: web.Request, data_dir: Path) -> web.Response:
-    """Return user semantic profiles for the current persona (paginated)."""
-    from sirius_pulse.memory.semantic.store import SemanticProfileStore
-
-    paths = PersonaConfigPaths(data_dir)
-
-    semantic_base = paths.dir / "memory" / "semantic"
-    if not semantic_base.exists():
-        return _json_response({"users": [], "groups": [], "total": 0})
-
-    group_id = request.query.get("group_id", "")
-    search = request.query.get("search", "").strip().lower()
-    limit = min(int(request.query.get("limit", "50")), 200)
-    offset = max(int(request.query.get("offset", "0")), 0)
-    store = SemanticProfileStore(paths.dir)
-
-    users: list[dict[str, Any]] = []
-    groups: set[str] = set()
-    users_dir = semantic_base / "users"
-    if users_dir.exists():
-        for g_dir in users_dir.iterdir():
-            if g_dir.is_dir():
-                groups.add(g_dir.name)
-
-    if group_id:
-        for profile in store.list_group_user_profiles(group_id):
-            if profile.user_id:
-                item = profile.to_dict()
-                item["group_id"] = group_id
-                users.append(item)
-    else:
-        for g in groups:
-            for profile in store.list_group_user_profiles(g):
-                if profile.user_id:
-                    item = profile.to_dict()
-                    item["group_id"] = g
-                    users.append(item)
-
-    # 后端搜索：按名称或 user_id 模糊匹配
-    if search:
-        users = [
-            u
-            for u in users
-            if search in (u.get("name", "") or "").lower()
-            or search in (u.get("user_id", "") or "").lower()
-        ]
-
-    total = len(users)
-    users.sort(key=lambda u: u.get("last_interaction_at", ""), reverse=True)
-    # 从末尾分页
-    end = total - offset
-    start = max(0, end - limit)
-    users = users[start:end] if end > 0 else []
-
-    return _json_response({"users": users, "groups": sorted(groups), "total": total})
-
-
-@handle_api_errors
-async def api_persona_user_get(request: web.Request, data_dir: Path) -> web.Response:
-    """Return a single user semantic profile for the current persona."""
-    from sirius_pulse.memory.semantic.store import SemanticProfileStore
-
-    user_id = str(request.match_info.get("user_id", "")).strip()
-    if not user_id:
-        return _json_response({"error": "缺少用户ID"}, 400)
-
-    paths = PersonaConfigPaths(data_dir)
-
-    # SemanticProfileStore expects persona_dir and appends memory/semantic itself
-    semantic_base = paths.dir / "memory" / "semantic"
-    if not semantic_base.exists():
-        return _json_response({"error": "用户不存在"}, 404)
-
-    group_id = request.query.get("group_id", "")
-    store = SemanticProfileStore(paths.dir)
-
-    profile = None
-    if group_id:
-        profile = store.load_user_profile(group_id, user_id)
-    if profile is None:
-        # Fallback: scan all groups
-        users_dir = semantic_base / "users"
-        if users_dir.exists():
-            for g_dir in users_dir.iterdir():
-                if g_dir.is_dir():
-                    p = store.load_user_profile(g_dir.name, user_id)
-                    if p is not None:
-                        profile = p
-                        break
-
-    if profile is None:
-        return _json_response({"error": "用户不存在"}, 404)
-
-    item = profile.to_dict()
-    if group_id:
-        item["group_id"] = group_id
-    return _json_response({"user": item})
-
-
-@handle_api_errors
-async def api_persona_user_put(request: web.Request, data_dir: Path) -> web.Response:
-    """Update a semantic user profile."""
-    from sirius_pulse.memory.semantic.models import UserSemanticProfile
-    from sirius_pulse.memory.semantic.store import SemanticProfileStore
-
-    user_id = str(request.match_info.get("user_id", "")).strip()
-    if not user_id:
-        return _json_response({"error": "缺少用户 ID"}, 400)
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "Invalid JSON"}, 400)
-
-    group_id = str(body.get("group_id") or request.query.get("group_id", "")).strip()
-    if not group_id:
-        return _json_response({"error": "缺少 group_id"}, 400)
-
-    paths = PersonaConfigPaths(data_dir)
-    store = SemanticProfileStore(paths.dir)
-    profile = store.load_user_profile(group_id, user_id) or UserSemanticProfile(
-        user_id=user_id,
-        name=str(body.get("name") or user_id),
-    )
-
-    if "name" in body:
-        profile.name = str(body.get("name") or "")
-    if "engagement_rate" in body:
-        profile.engagement_rate = max(0.0, min(1.0, float(body.get("engagement_rate") or 0)))
-    if "interaction_count" in body:
-        profile.interaction_count = max(0, int(body.get("interaction_count") or 0))
-    if "first_interaction_at" in body:
-        profile.first_interaction_at = str(body.get("first_interaction_at") or "")
-    if "last_interaction_at" in body:
-        profile.last_interaction_at = str(body.get("last_interaction_at") or "")
-
-    store.save_user_profile(group_id, user_id, profile)
-    item = profile.to_dict()
-    item["group_id"] = group_id
-    return _json_response({"success": True, "user": item})
-
-
-@handle_api_errors
-async def api_persona_user_delete(request: web.Request, data_dir: Path) -> web.Response:
-    """Delete a semantic user profile from one group or all groups."""
-    user_id = str(request.match_info.get("user_id", "")).strip()
-    if not user_id:
-        return _json_response({"error": "缺少用户 ID"}, 400)
-
-    paths = PersonaConfigPaths(data_dir)
-    users_dir = paths.dir / "memory" / "semantic" / "users"
-    if not users_dir.exists():
-        return _json_response({"success": True, "deleted": 0})
-
-    group_id = str(request.query.get("group_id", "")).strip()
-    deleted = 0
-    groups = (
-        [users_dir / _safe_memory_name(group_id)]
-        if group_id
-        else [path for path in users_dir.iterdir() if path.is_dir()]
-    )
-    safe_user_id = _safe_memory_name(user_id)
-    for group_dir in groups:
-        path = group_dir / f"{safe_user_id}.json"
-        if path.exists():
-            path.unlink()
-            deleted += 1
-    return _json_response({"success": True, "deleted": deleted})
 
 
 @handle_api_errors
@@ -1640,8 +1469,6 @@ async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Re
     diary_dir = paths.dir / "diary"
     diary_entries: list[dict[str, Any]] = []
     keyword_freq: dict[str, int] = {}
-    # 群组 → 日记关键词集合（用于后续构建用户-话题二部图）
-    group_keyword_map: dict[str, set[str]] = {}
     if diary_dir.exists():
         for path in diary_dir.glob("*.json"):
             try:
@@ -1666,78 +1493,11 @@ async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Re
                     )
                     for kw in item.get("keywords", []):
                         keyword_freq[kw] = keyword_freq.get(kw, 0) + 1
-                        if kw not in group_keyword_map.setdefault(g_id, set()):
-                            group_keyword_map[g_id].add(kw)
             except (OSError, json.JSONDecodeError):
                 continue
     diary_entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
     diary_entries = diary_entries[:limit_diary]
     top_keywords = sorted(keyword_freq.items(), key=lambda x: x[1], reverse=True)[:20]
-
-    # ── 3. 用户-话题二部图 ──
-    # 数据来源：用户语义画像 → 群组归属；日记 keywords → 话题节点
-    semantic_base = paths.dir / "memory" / "semantic"
-    user_nodes: list[dict[str, Any]] = []
-    topic_nodes: list[dict[str, str]] = []
-    user_topic_links: list[dict[str, Any]] = []
-    # 群组 → 用户 ID 集合（用于后续将用户关联到群组话题）
-    group_users: dict[str, set[str]] = {}
-    if semantic_base.exists():
-        users_dir = semantic_base / "users"
-        if users_dir.exists():
-            seen: set[str] = set()
-            for g_dir in users_dir.iterdir():
-                if not g_dir.is_dir():
-                    continue
-                if group_filter and g_dir.name != group_filter:
-                    continue
-                gid = g_dir.name
-                group_users[gid] = set()
-                for u_file in g_dir.glob("*.json"):
-                    try:
-                        u_data = json.loads(u_file.read_text(encoding="utf-8"))
-                        uid = u_data.get("user_id", "")
-                        if not uid or uid in seen:
-                            continue
-                        seen.add(uid)
-                        group_users[gid].add(uid)
-                        engagement = u_data.get("engagement_rate", 0)
-                        count = u_data.get("interaction_count", 0)
-                        user_nodes.append(
-                            {
-                                "user_id": uid,
-                                "name": u_data.get("name", uid),
-                                "engagement_rate": engagement,
-                                "interaction_count": count,
-                            }
-                        )
-                    except (OSError, json.JSONDecodeError, TypeError):
-                        continue
-
-    # 话题节点：取出现在 ≥2 个群组或频率 ≥3 的日记关键词
-    topic_freq: dict[str, int] = {}
-    topic_group_count: dict[str, int] = {}
-    for g_id, kws in group_keyword_map.items():
-        for kw in kws:
-            topic_freq[kw] = topic_freq.get(kw, 0) + 1
-            topic_group_count[kw] = topic_group_count.get(kw, 0) + 1
-    # 过滤低价值关键词，保留跨群出现或高频的话题
-    valid_topics = {
-        kw for kw in topic_group_count if topic_group_count[kw] >= 2 or keyword_freq.get(kw, 0) >= 3
-    }
-    for t in sorted(valid_topics):
-        topic_nodes.append({"id": t, "name": t})
-
-    # 构建用户-话题边：用户 ∈ 群组 → 群组日记含关键词 → (user, topic) 边
-    link_set: set[tuple[str, str]] = set()
-    for gid, keywords in group_keyword_map.items():
-        users = group_users.get(gid, set())
-        for uid in users:
-            for kw in keywords:
-                if kw in valid_topics:
-                    link_set.add((uid, kw))
-    for uid, kw in sorted(link_set):
-        user_topic_links.append({"source": f"u_{uid}", "target": f"t_{kw}"})
 
     return _json_response(
         {
@@ -1750,9 +1510,6 @@ async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Re
             },
             "diary_entries": diary_entries,
             "diary_top_keywords": top_keywords,
-            "user_nodes": user_nodes,
-            "topic_nodes": topic_nodes,
-            "user_topic_links": user_topic_links,
         }
     )
 

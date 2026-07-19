@@ -16,11 +16,7 @@ from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.core.participation import ParticipationPolicy, get_reply_time_coefficient
 from sirius_pulse.models.emotion import EmotionState
 from sirius_pulse.models.models import Message, UnifiedUser
-from sirius_pulse.models.response_strategy import (
-    PersonaProfilePromptContext,
-    ResponseStrategy,
-    StrategyDecision,
-)
+from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 from sirius_pulse.models.signal import SignalAnalysis
 
 if TYPE_CHECKING:
@@ -102,7 +98,6 @@ class Pipeline:
             engine.user_manager,
             group_id,
             recent_speakers=recent_speakers,
-            profile_manager=getattr(engine, "profile_manager", None),
         )
 
         # 记录解析结果（低置信度时发出警告）
@@ -185,13 +180,6 @@ class Pipeline:
         recent_msgs = engine._helpers.get_recent_messages(group_id, n=10)
         rhythm = engine.rhythm_analyzer.analyze(group_id, recent_msgs)
 
-        # 别名信息
-        group_aliases: dict[str, str] | None = None
-        try:
-            group_aliases = engine.profile_manager.get_aliases_for_group(group_id) or None
-        except Exception:
-            pass
-
         # 纯规则信号计算
         signal = engine.cognition_analyzer.compute_signal(
             content,
@@ -200,7 +188,6 @@ class Pipeline:
             context_messages,
             sender_type=sender_type,
             caller_is_developer=caller_is_developer,
-            group_aliases=group_aliases,
             rhythm=rhythm,
         )
 
@@ -394,13 +381,6 @@ class Pipeline:
         """
         engine = self._engine
 
-        # 收集人物传记
-        persona_profile_context = self._collect_persona_profile_section(
-            group_id,
-            user_id,
-            message.content or "",
-        )
-
         # 构造 StrategyDecision 供 delayed_queue 使用
         participation = signal.participation or {}
         strategy_value = participation.get("strategy")
@@ -465,7 +445,6 @@ class Pipeline:
             pace=signal.pace,
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
-            persona_profile_context=persona_profile_context,
         )
         engine._persist_group_state(group_id)
 
@@ -525,10 +504,8 @@ class Pipeline:
         group_id: str,
         user_id: str,
         rhythm: Any,
-        persona_profile_context: PersonaProfilePromptContext | None = None,
     ) -> dict[str, Any]:
         engine = self._engine
-        bio_ctx = persona_profile_context or PersonaProfilePromptContext()
         engine.delayed_queue.enqueue(
             group_id=group_id,
             user_id=user_id,
@@ -543,7 +520,6 @@ class Pipeline:
             pace=rhythm.pace,
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
-            persona_profile_context=bio_ctx,
         )
         engine._persist_group_state(group_id)
         result = {
@@ -556,44 +532,6 @@ class Pipeline:
             result["thought"] = ""
             result["partial_replies"] = []
         return result
-
-    def _collect_persona_profile_section(
-        self,
-        group_id: str,
-        user_id: str,
-        message_content: str,
-    ) -> PersonaProfilePromptContext:
-        """收集人物画像快照，供延迟回复链路持久化使用。"""
-        engine = self._engine
-        profile_manager = getattr(engine, "profile_manager", None)
-        if profile_manager is None:
-            return PersonaProfilePromptContext()
-
-        speaker_profile = (
-            profile_manager.get_profile(group_id, user_id, create=False) if user_id else None
-        )
-
-        mentioned: dict[str, float] = {}
-        aliases = profile_manager.list_alias_entries(group_id)
-        if message_content:
-            for alias in aliases.keys():
-                if len(alias) < 2 or alias not in message_content.lower():
-                    continue
-                uid, conf, _ = profile_manager.resolve_alias(alias, group_id=group_id)
-                if uid and uid != user_id:
-                    mentioned[uid] = max(mentioned.get(uid, 0.0), conf)
-
-        mentioned_profiles = [
-            profile
-            for uid in mentioned.keys()
-            if (profile := profile_manager.get_profile(group_id, uid, create=False)) is not None
-        ]
-
-        return PersonaProfilePromptContext(
-            speaker_card=speaker_profile,
-            mentioned_cards=mentioned_profiles,
-            confidence=dict(mentioned),
-        )
 
     def background_update(
         self,

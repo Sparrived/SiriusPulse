@@ -17,9 +17,6 @@ from sirius_pulse.webui.memory_api import (
     api_persona_memory_dedupe_apply,
     api_persona_memory_dedupe_scan,
     api_persona_memory_dedupe_status,
-    api_persona_user_delete,
-    api_persona_user_put,
-    api_persona_users_get,
 )
 
 
@@ -122,32 +119,3 @@ async def test_persona_glossary_crud_roundtrip(tmp_path):
         tmp_path,
     )
     assert _payload(response)["success"] is True
-
-
-@pytest.mark.asyncio
-async def test_persona_user_profile_update_list_and_delete(tmp_path):
-    response = await api_persona_user_put(
-        _request(
-            {
-                "group_id": "group-a",
-                "name": "Alice",
-                "engagement_rate": 0.75,
-                "interaction_count": 12,
-            },
-            match={"user_id": "10001"},
-        ),
-        tmp_path,
-    )
-    assert _payload(response)["user"]["group_id"] == "group-a"
-
-    response = await api_persona_users_get(_request(query={"limit": "20", "offset": "0"}), tmp_path)
-    payload = _payload(response)
-    assert payload["total"] == 1
-    assert payload["users"][0]["group_id"] == "group-a"
-    assert payload["users"][0]["name"] == "Alice"
-
-    response = await api_persona_user_delete(
-        _request(query={"group_id": "group-a"}, match={"user_id": "10001"}),
-        tmp_path,
-    )
-    assert _payload(response)["deleted"] == 1

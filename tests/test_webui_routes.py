@@ -40,6 +40,7 @@ def test_webui_routes_when_server_is_created_then_all_declared_routes_are_regist
 
     for spec in WEBUI_ROUTES:
         assert (spec.method, spec.path) in registered
+    assert not any(spec.path.startswith("/api/persona/users") for spec in WEBUI_ROUTES)
     assert ("GET", "/") in registered
     assert ("GET", "/ws/events") in registered
 

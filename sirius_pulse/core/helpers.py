@@ -194,7 +194,6 @@ class Helpers:
                         ctx,
                         engine.user_manager,
                         group_id,
-                        profile_manager=getattr(engine, "profile_manager", None),
                     )
                     if resolution.user_id:
                         caller_profile = engine.user_manager.get_user(resolution.user_id, group_id)

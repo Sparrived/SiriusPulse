@@ -45,7 +45,6 @@ from sirius_pulse.memory.cold_detector import ColdDetector
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.diary import DiaryManager
 from sirius_pulse.memory.glossary import GlossaryManager
-from sirius_pulse.memory.profile import UserPersonaProfileManager, UserPersonaProfileStore
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.units import MemoryUnitManager
@@ -197,21 +196,12 @@ class _EmotionalGroupChatEngineBase:
         )
         self.identity_resolver = IdentityResolver()
 
-        # ── 记忆体系组件（共享 persona.db 连接）──
-        self.profile_store = UserPersonaProfileStore(conn=self._persona_db_conn)
-        self.profile_manager = UserPersonaProfileManager(
-            self.profile_store,
-            persona_name=self.persona.name,
-            user_manager=self.user_manager,
-            semantic_memory=self.semantic_memory,
-        )
         self.biography_view = None
         self.cold_detector = ColdDetector()
 
         self.context_assembler = ContextAssembler(
             self.basic_memory,
             self.diary_manager._retriever,
-            profile_manager=self.profile_manager,
             is_source_diarized=self.diary_manager.is_source_diarized,
             memory_unit_retriever=self.memory_unit_manager,
             is_source_checkpointed=self.memory_unit_manager.is_source_checkpointed,

@@ -153,22 +153,6 @@ def _count_glossary_terms(persona_dir: Path) -> int:
         return 0
 
 
-def _count_user_profiles(persona_dir: Path) -> int:
-    """统计语义记忆中的用户画像数量（遍历 memory/semantic/users/ 下所有 JSON）。"""
-    users_dir = persona_dir / "memory" / "semantic" / "users"
-    if not users_dir.exists():
-        return 0
-    count = 0
-    try:
-        for group_dir in users_dir.iterdir():
-            if not group_dir.is_dir():
-                continue
-            count += len(list(group_dir.glob("*.json")))
-    except OSError:
-        return 0
-    return count
-
-
 def _count_cognition_events(persona_dir: Path) -> int:
     """统计认知事件总数。"""
     db_path = persona_dir / "persona.db"
@@ -252,7 +236,6 @@ async def api_monitoring_persona_metrics(
     token_usage = _read_token_usage(persona_dir)
     diary_count = _count_diary_entries(persona_dir)
     glossary_count = _count_glossary_terms(persona_dir)
-    user_count = _count_user_profiles(persona_dir)
     event_count = _count_cognition_events(persona_dir)
 
     return _json_response(
@@ -265,7 +248,6 @@ async def api_monitoring_persona_metrics(
             "memory": {
                 "diary_count": diary_count,
                 "glossary_count": glossary_count,
-                "user_count": user_count,
             },
             "cognition": {
                 "event_count": event_count,

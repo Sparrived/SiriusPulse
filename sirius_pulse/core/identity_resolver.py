@@ -1,11 +1,10 @@
 """Identity resolver: decouples framework from platform-specific user identifiers.
 
-增强版解析链（四层）:
+增强版解析链（三层）:
   L1: platform_id 精确匹配（confidence=1.0）
   L1.5: Bot 自身检测（confidence=1.0）
-  L2: 已确认别名精确匹配（confidence 来自别名记录）
-  L3: 模糊匹配（confidence=0.7-0.9）
-  L4: 上下文推断（confidence=0.6）
+  L2: 显示名模糊匹配（confidence=0.7-0.9）
+  L3: 上下文推断（confidence=0.6）
 """
 
 from __future__ import annotations
@@ -121,16 +120,14 @@ class IdentityResolver:
         user_manager: UnifiedUserManager,
         group_id: str,
         recent_speakers: list[str] | None = None,
-        profile_manager: Any | None = None,
     ) -> IdentityResolution:
         """增强版解析，整合 UnifiedUserManager 的能力。
 
         解析链:
         L1: platform_id 精确匹配（confidence=1.0）
         L1.5: Bot 自身检测（confidence=1.0）
-        L2: 已确认别名精确匹配（confidence 来自别名记录）
-        L3: 模糊匹配（confidence=0.7-0.9）
-        L4: 上下文推断（confidence=0.6）
+        L2: 显示名模糊匹配（confidence=0.7-0.9）
+        L3: 上下文推断（confidence=0.6）
 
         Args:
             ctx: 身份上下文
@@ -168,28 +165,13 @@ class IdentityResolver:
                 display_name=speaker,
             )
 
-        # L2: 已确认别名精确匹配
-        if speaker and profile_manager is not None:
-            alias_result = profile_manager.resolve_alias(
-                speaker,
-                group_id=group_id,
-                recent_speakers=recent_speakers,
-            )
-            if alias_result and alias_result[0] and alias_result[1] > 0.5:
-                return IdentityResolution(
-                    user_id=alias_result[0],
-                    confidence=alias_result[1],
-                    source="alias_exact",
-                    display_name=speaker,
-                )
-
-        # L3: 模糊匹配
+        # L2: 显示名模糊匹配
         if speaker:
-            fuzzy_result = self._fuzzy_match(speaker, group_id, user_manager, profile_manager)
+            fuzzy_result = self._fuzzy_match(speaker, group_id, user_manager)
             if fuzzy_result:
                 return fuzzy_result
 
-        # L4: 上下文推断
+        # L3: 上下文推断
         if recent_speakers and speaker:
             context_result = self._context_inference(
                 speaker, recent_speakers, group_id, user_manager
@@ -230,7 +212,6 @@ class IdentityResolver:
         speaker: str,
         group_id: str,
         user_manager: UnifiedUserManager,
-        profile_manager: Any | None = None,
     ) -> IdentityResolution | None:
         """模糊匹配：基于编辑距离或包含关系。"""
         speaker_lower = speaker.strip().lower()
@@ -251,21 +232,12 @@ class IdentityResolver:
                     best_score = score
                     best_match = user_id
 
-        alias_entries = (
-            profile_manager.list_alias_entries(group_id) if profile_manager is not None else {}
-        )
-        for alias_key, entry in alias_entries.items():
-            score = self._compute_similarity(speaker_lower, alias_key)
-            if score > best_score:
-                best_score = score
-                best_match = str(entry.get("user_id", ""))
-
         if best_match and best_score > 0.7:
             confidence = min(0.9, best_score * 0.8)
             return IdentityResolution(
                 user_id=best_match,
                 confidence=confidence,
-                source="alias_fuzzy",
+                source="name_fuzzy",
                 display_name=speaker,
             )
 

@@ -4,8 +4,6 @@
 每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
 assistant 回复单独作为一条消息。
 
-新架构增强：
-- 注入 UserPersonaProfile 画像（模型工具维护）
 """
 
 from __future__ import annotations
@@ -28,21 +26,18 @@ class ContextAssembler:
     Combines:
     - Basic memory (immediate context, XML format)
     - Diary entries (historical RAG)
-    - UserPersonaProfile cards (model-maintained people profiles)
     """
 
     def __init__(
         self,
         basic_mgr: BasicMemoryManager,
         diary_retriever: DiaryRetriever | None = None,
-        profile_manager: Any | None = None,
         is_source_diarized: Callable[[str, str], bool] | None = None,
         memory_unit_retriever: Any | None = None,
         is_source_checkpointed: Callable[[str, str], bool] | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._diary = diary_retriever
-        self._profile_manager = profile_manager
         self._is_source_diarized = is_source_diarized
         self._memory_units = memory_unit_retriever
         self._is_source_checkpointed = is_source_checkpointed
@@ -87,9 +82,7 @@ class ContextAssembler:
                 由 PromptFactory.assemble_chat 产出，注入到当前 user 消息中。
         """
         # 1. Retrieve relevant long-term memory.
-        enriched_query = self._enrich_search_query(
-            search_query or current_query, speaker_user_id, mentioned_user_ids
-        )
+        enriched_query = search_query or current_query
 
         memory_context = ""
         memory_count = 0
@@ -262,9 +255,7 @@ class ContextAssembler:
 
         breakdown: dict[str, int] = {}
         if messages:
-            enriched_query = self._enrich_search_query(
-                search_query or current_query, speaker_user_id, mentioned_user_ids
-            )
+            enriched_query = search_query or current_query
             memory_text = ""
             effective_memory_unit_top_k = (
                 diary_top_k if memory_unit_top_k is None else memory_unit_top_k
@@ -478,36 +469,3 @@ class ContextAssembler:
         产出为 dynamic_context，注入到 user 消息中。
         """
         return base_prompt
-
-    def _enrich_search_query(
-        self,
-        base_query: str,
-        speaker_user_id: str = "",
-        mentioned_user_ids: list[str] | None = None,
-    ) -> str:
-        """用人物画像信息丰富日记检索 query。"""
-        if not self._profile_manager:
-            return base_query
-
-        bio_parts: list[str] = []
-
-        if speaker_user_id:
-            profile = self._profile_manager.get_profile("default", speaker_user_id, create=False)
-            if profile:
-                if profile.display_name:
-                    bio_parts.append(profile.display_name)
-                if profile.short_impression:
-                    bio_parts.append(profile.short_impression[:100])
-
-        for uid in mentioned_user_ids or []:
-            if uid == speaker_user_id:
-                continue
-            profile = self._profile_manager.get_profile("default", uid, create=False)
-            if profile and profile.display_name:
-                bio_parts.append(profile.display_name)
-
-        if not bio_parts:
-            return base_query
-
-        enriched = f"{base_query} {' '.join(bio_parts)}"
-        return enriched[:500]
