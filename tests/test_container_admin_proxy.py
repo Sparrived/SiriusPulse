@@ -88,6 +88,37 @@ def test_proxy_allows_fixed_readonly_minecraft_log_commands(tmp_path, monkeypatc
     ]
 
 
+def test_proxy_allows_fixed_readonly_find_for_minecraft_reports(tmp_path, monkeypatch):
+    module, proxy = _proxy(tmp_path)
+    seen = {}
+
+    def fake_run(arguments, config):
+        seen["arguments"] = arguments
+        return "/data/crash-reports/crash-2026-07-20.txt"
+
+    monkeypatch.setattr(proxy, "_run_docker", fake_run)
+
+    result = proxy.handle(
+        {
+            "action": "exec_readonly",
+            "container": "minecraft",
+            "command": ["find", "/data/crash-reports", "-maxdepth", "1", "-type", "f"],
+        }
+    )
+
+    assert result["success"] is True
+    assert seen["arguments"] == [
+        "exec",
+        "minecraft",
+        "find",
+        "/data/crash-reports",
+        "-maxdepth",
+        "1",
+        "-type",
+        "f",
+    ]
+
+
 def test_proxy_rejects_unbounded_exec_before_running_docker(tmp_path, monkeypatch):
     module, proxy = _proxy(tmp_path)
     monkeypatch.setattr(proxy, "_run_docker", lambda *_: (_ for _ in ()).throw(AssertionError()))
@@ -105,10 +136,21 @@ def test_proxy_rejects_unbounded_exec_before_running_docker(tmp_path, monkeypatc
             "command": ["grep", "-r", "error", "/data/logs/latest.log"],
         }
     )
+    exec_in_find = proxy.handle(
+        {
+            "action": "exec_readonly",
+            "container": "minecraft",
+            "command": ["find", "/data", "-exec", "sh", "{}", ";"],
+        }
+    )
 
-    assert shell == {"success": False, "error": "只读 exec 仅允许 ls、cat、head、tail 或 grep"}
+    assert shell == {"success": False, "error": "只读 exec 仅允许 ls、cat、head、tail、grep 或 find"}
     assert outside_data == {"success": False, "error": "只读 exec 只能访问容器内的 /data 路径"}
     assert recursive_grep == {"success": False, "error": "只读 grep 仅允许 -i、-n、-E 选项"}
+    assert exec_in_find == {
+        "success": False,
+        "error": "只读 find 仅允许 -maxdepth、-type、-name 选项",
+    }
 
 
 def test_proxy_lists_all_host_containers(tmp_path, monkeypatch):
@@ -140,7 +182,7 @@ def test_proxy_passes_a_valid_container_name_filter_to_docker(tmp_path, monkeypa
 
     monkeypatch.setattr(proxy, "_run_docker", fake_run)
 
-    result = proxy.handle({"action": "list", "name_filter": "minecraft"})
+    result = proxy.handle({"action": "list", "name_filters": ["minecraft"]})
 
     assert result["success"] is True
     assert seen["arguments"] == [

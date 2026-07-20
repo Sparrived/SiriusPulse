@@ -15,7 +15,7 @@ from sirius_pulse.skills.builtin import _docker_cli
                 "container": "",
                 "tail_lines": 100,
                 "all": False,
-                "name_filter": "",
+                "name_filters": [],
             },
         ),
         (
@@ -25,17 +25,17 @@ from sirius_pulse.skills.builtin import _docker_cli
                 "container": "",
                 "tail_lines": 100,
                 "all": True,
-                "name_filter": "",
+                "name_filters": [],
             },
         ),
         (
-            ["ps", "-a", "--filter", "name=minecraft"],
+            ["ps", "-a", "--filter", "name=mc", "--filter=name=minecraft"],
             {
                 "action": "list",
                 "container": "",
                 "tail_lines": 100,
                 "all": True,
-                "name_filter": "minecraft",
+                "name_filters": ["mc", "minecraft"],
             },
         ),
         (
@@ -58,6 +58,10 @@ from sirius_pulse.skills.builtin import _docker_cli
         (
             ["restart", "sirius-pulse-v2-test"],
             {"action": "restart", "container": "sirius-pulse-v2-test", "tail_lines": 100},
+        ),
+        (
+            ["stats", "--no-stream", "minecraft"],
+            {"action": "stats", "container": "minecraft", "tail_lines": 100},
         ),
     ],
 )

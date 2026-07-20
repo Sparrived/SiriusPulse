@@ -18,10 +18,21 @@ import time
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-_ACTIONS = {"list", "inspect", "logs", "start", "stop", "restart", "exec_readonly"}
+_ACTIONS = {
+    "list",
+    "inspect",
+    "logs",
+    "stats",
+    "top",
+    "port",
+    "start",
+    "stop",
+    "restart",
+    "exec_readonly",
+}
 _MUTATIONS = {"start", "stop", "restart"}
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-_READONLY_EXEC_TOOLS = {"ls", "cat", "head", "tail", "grep"}
+_READONLY_EXEC_TOOLS = {"ls", "cat", "head", "tail", "grep", "find"}
 _DATA_ROOT = PurePosixPath("/data")
 _MAX_REQUEST_BYTES = 4096
 _MAX_OUTPUT_CHARS = 50_000
@@ -59,7 +70,7 @@ class ContainerAdminProxy:
                 return self._list_containers(
                     config,
                     all_containers=payload.get("all") is not False,
-                    name_filter=self._name_filter(payload.get("name_filter")),
+                    name_filters=self._name_filters(payload.get("name_filters")),
                 )
             if not _CONTAINER_NAME.fullmatch(target):
                 raise ProxyError("无效的容器名称")
@@ -74,6 +85,8 @@ class ContainerAdminProxy:
                     payload.get("command"), maximum_lines=config["max_log_lines"]
                 )
                 output = self._run_docker(["exec", target, *command], config)
+            elif action == "stats":
+                output = self._run_docker(["stats", "--no-stream", target], config)
             else:
                 output = self._run_docker([action, target], config)
             return {"success": True, "output": output}
@@ -108,10 +121,12 @@ class ContainerAdminProxy:
         return self._bounded_int(value, 1, maximum)
 
     @staticmethod
-    def _name_filter(value: Any) -> str:
-        if value is None or value == "":
-            return ""
-        if not isinstance(value, str) or not _CONTAINER_NAME.fullmatch(value):
+    def _name_filters(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or len(value) > 4:
+            raise ProxyError("容器名称过滤条件无效")
+        if not all(isinstance(item, str) and _CONTAINER_NAME.fullmatch(item) for item in value):
             raise ProxyError("无效的容器名称过滤条件")
         return value
 
@@ -120,14 +135,38 @@ class ContainerAdminProxy:
             raise ProxyError("只读 exec 请求必须指定日志命令和 /data 路径")
         tool, *args = value
         if tool not in _READONLY_EXEC_TOOLS:
-            raise ProxyError("只读 exec 仅允许 ls、cat、head、tail 或 grep")
+            raise ProxyError("只读 exec 仅允许 ls、cat、head、tail、grep 或 find")
         if tool == "ls":
             return self._readonly_ls(args)
         if tool == "cat":
             return [tool, *self._data_paths(args)]
         if tool in {"head", "tail"}:
             return self._readonly_line_reader(tool, args, maximum_lines)
+        if tool == "find":
+            return self._readonly_find(args)
         return self._readonly_grep(args)
+
+    def _readonly_find(self, args: list[str]) -> list[str]:
+        if not args:
+            raise ProxyError("只读 find 必须指定 /data 路径")
+        command = ["find", self._data_paths([args.pop(0)])[0]]
+        while args:
+            option = args.pop(0)
+            if option == "-maxdepth":
+                if not args or not args[0].isdigit() or not 0 <= int(args[0]) <= 8:
+                    raise ProxyError("只读 find 的 -maxdepth 必须在 0 到 8 之间")
+                command.extend([option, args.pop(0)])
+            elif option == "-type":
+                if not args or args[0] not in {"f", "d"}:
+                    raise ProxyError("只读 find 的 -type 仅允许 f 或 d")
+                command.extend([option, args.pop(0)])
+            elif option == "-name":
+                if not args:
+                    raise ProxyError("只读 find 的 -name 缺少模式")
+                command.extend([option, args.pop(0)])
+            else:
+                raise ProxyError("只读 find 仅允许 -maxdepth、-type、-name 选项")
+        return command
 
     def _readonly_ls(self, args: list[str]) -> list[str]:
         options: list[str] = []
@@ -187,12 +226,12 @@ class ContainerAdminProxy:
         return paths
 
     def _list_containers(
-        self, config: dict[str, Any], *, all_containers: bool, name_filter: str
+        self, config: dict[str, Any], *, all_containers: bool, name_filters: list[str]
     ) -> dict[str, Any]:
         arguments = ["ps"]
         if all_containers:
             arguments.append("-a")
-        if name_filter:
+        for name_filter in name_filters:
             arguments.extend(["--filter", f"name={name_filter}"])
         arguments.extend(["--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"])
         output = self._run_docker(arguments, config)

@@ -15,7 +15,7 @@ _REQUEST_TIMEOUT = 15.0
 _MAX_RESPONSE_BYTES = 50_000
 _MAX_LOG_LINES = 200
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-_ALLOWED_COMMANDS = "ps、inspect、logs、start、stop、restart，以及只读 exec 日志查询"
+_ALLOWED_COMMANDS = "ps、inspect、logs、stats、top、port、start、stop、restart，以及只读 exec 日志查询"
 INSPECT_STATUS_MARKER = "__SIRIUS_DOCKER_INSPECT_STATUS__:"
 
 
@@ -43,6 +43,10 @@ def build_request(arguments: Sequence[str]) -> dict[str, Any]:
         return _parse_single_container(command, args)
     if command == "logs":
         return _parse_logs(args)
+    if command in {"top", "port"}:
+        return _parse_single_container(command, args)
+    if command == "stats":
+        return _parse_stats(args)
     if command == "exec":
         return _parse_readonly_exec(args)
 
@@ -100,6 +104,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             for item in response["containers"]
             if isinstance(item, dict)
         )
+        if not output and request.get("action") == "list":
+            output = "未找到匹配容器；请执行 docker ps -a 查看全部容器。"
     if output:
         print(output)
     status = response.get("status")
@@ -116,7 +122,7 @@ def format_inspect_status_marker(status: dict[str, Any]) -> str:
 
 def _parse_ps(args: list[str]) -> dict[str, Any]:
     all_containers = False
-    name_filter = ""
+    name_filters: list[str] = []
     position = 0
     while position < len(args):
         arg = args[position]
@@ -126,9 +132,9 @@ def _parse_ps(args: list[str]) -> dict[str, Any]:
             position += 1
             if position >= len(args):
                 raise DockerCommandError("docker ps 的 --filter 缺少 name=<容器名称>")
-            name_filter = _validated_name_filter(args[position], name_filter)
+            name_filters.append(_validated_name_filter(args[position]))
         elif arg.startswith("--filter="):
-            name_filter = _validated_name_filter(arg.split("=", 1)[1], name_filter)
+            name_filters.append(_validated_name_filter(arg.split("=", 1)[1]))
         else:
             raise DockerCommandError(
                 f"docker ps 不支持参数: {arg}；只允许 -a、--all 或 --filter name=<容器名称>"
@@ -139,7 +145,7 @@ def _parse_ps(args: list[str]) -> dict[str, Any]:
         "container": "",
         "tail_lines": 100,
         "all": all_containers,
-        "name_filter": name_filter,
+        "name_filters": name_filters,
     }
 
 
@@ -192,6 +198,14 @@ def _parse_readonly_exec(args: list[str]) -> dict[str, Any]:
     }
 
 
+def _parse_stats(args: list[str]) -> dict[str, Any]:
+    if args and args[0] == "--no-stream":
+        args = args[1:]
+    if len(args) != 1:
+        raise DockerCommandError("docker stats 必须且只能指定一个容器名称")
+    return {"action": "stats", "container": _validated_container(args[0]), "tail_lines": 100}
+
+
 def _validated_container(value: str) -> str:
     container = str(value or "").strip()
     if not _CONTAINER_NAME.fullmatch(container):
@@ -199,9 +213,7 @@ def _validated_container(value: str) -> str:
     return container
 
 
-def _validated_name_filter(value: str, existing: str) -> str:
-    if existing:
-        raise DockerCommandError("docker ps 只允许一个 name 过滤条件")
+def _validated_name_filter(value: str) -> str:
     text = str(value or "").strip()
     if not text.startswith("name="):
         raise DockerCommandError("docker ps 仅支持 --filter name=<容器名称>")
