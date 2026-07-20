@@ -18,6 +18,13 @@ _DEFAULT_MAX_TIMEOUT = 15.0
 _DEFAULT_MAX_OUTPUT = 12_000
 _MAX_COMMAND_LENGTH = 4_000
 _MIN_OUTPUT = 256
+_DOCKER_FUNCTION = """docker() {
+    python -m sirius_pulse.skills.builtin._docker_cli \"$@\"
+}
+docker-compose() {
+    docker compose \"$@\"
+}
+"""
 
 _config = ConfigBuilder()
 _config.group("Bash 执行").add(
@@ -49,9 +56,11 @@ SKILL_META = {
     "name": "bash",
     "description": (
         "在容器中启动 Bash，用于文件处理、系统状态查询和自动化。"
-        "支持标准 Bash 语法与容器内任意工作目录；每个人格可在技能配置中调整执行时限和输出上限。"
+        "支持标准 Bash 语法与容器内任意工作目录，也支持受控的原生 Docker 命令："
+        "docker ps、inspect、logs、start、stop、restart。Docker 删除、清理、重建及镜像、卷、网络、exec 操作会被拒绝；"
+        "每个人格可在技能配置中调整执行时限和输出上限。"
     ),
-    "version": "1.0.0",
+    "version": "1.1.0",
     "side_effect": "unknown",
     "tags": ["bash", "shell", "file", "system", "container"],
     "parameters": _config.build(),
@@ -80,7 +89,7 @@ def run(
     data_store: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Execute one Bash command in the container with per-persona resource limits."""
+    """Execute one Bash command with a restricted native Docker function."""
     if data_store is not None and data_store.get("_enabled", True) is False:
         return {"success": False, "error": "bash Skill 已被当前人格禁用"}
 
@@ -111,7 +120,7 @@ def run(
 
     try:
         completed = subprocess.run(
-            [bash, "-o", "pipefail", "-lc", command_text],
+            [bash, "-o", "pipefail", "-lc", f"{_DOCKER_FUNCTION}\n{command_text}"],
             cwd=str(cwd_path),
             env=_safe_environment(),
             capture_output=True,
@@ -132,6 +141,7 @@ def run(
         "cwd": str(cwd_path),
         "returncode": completed.returncode,
         "command_length": len(command_text),
+        "docker_bridge_enabled": True,
         "truncated": len(completed.stdout + completed.stderr) > output_limit,
     }
     if completed.returncode != 0:
@@ -211,6 +221,7 @@ def _safe_environment() -> dict[str, str]:
         "LANG",
         "LC_ALL",
         "PATH",
+        "SIRIUS_CONTAINER_ADMIN_SOCKET",
         "SYSTEMROOT",
         "TEMP",
         "TMP",

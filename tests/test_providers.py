@@ -101,18 +101,18 @@ def test_openai_compatible_messages_preserve_tool_call_results():
             "content": None,
             "tool_calls": [
                 {
-                    "id": "call-inspect",
+                    "id": "call-bash",
                     "type": "function",
                     "function": {
-                        "name": "container_admin",
-                        "arguments": '{"action":"inspect","container":"minecraft"}',
+                        "name": "bash",
+                        "arguments": '{"command":"docker inspect minecraft"}',
                     },
                 }
             ],
         },
         {
             "role": "tool",
-            "tool_call_id": "call-inspect",
+            "tool_call_id": "call-bash",
             "content": "[Tool result: success]\\ncontainer minecraft is running",
         },
     ]

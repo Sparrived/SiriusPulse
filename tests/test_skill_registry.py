@@ -241,6 +241,7 @@ def test_skill_registry_when_builtin_skills_load_then_composite_napcat_tools_are
     assert bash.developer_only is False
     assert "max_timeout_seconds" not in bash.to_tool_schema()["function"]["parameters"]["properties"]
     assert any(tool["function"]["name"] == "bash" for tool in regular_user_tools)
+    assert registry.get("container_admin") is None
     assert developer_status is not None
     assert [param.name for param in developer_status.config_parameters] == [
         "public_status_token",

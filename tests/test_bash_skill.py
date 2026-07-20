@@ -46,7 +46,8 @@ cat /proc/meminfo 2>/dev/null | grep -E '^(MemTotal|MemAvailable)' || echo unava
     assert result["success"] is True
     assert result["text_blocks"] == ["ok\n"]
     assert calls["cwd"] == str(container_cwd.resolve())
-    assert calls["args"][-1] == command
+    assert calls["args"][-1].endswith(command)
+    assert "docker()" in calls["args"][-1]
 
 
 def test_bash_skill_rejects_invalid_command_and_missing_cwd(monkeypatch, tmp_path: Path):
@@ -70,7 +71,18 @@ def test_bash_skill_allows_commands_not_present_in_old_whitelist(monkeypatch, tm
     result = bash.run("free -h | head -3", data_store=store)
 
     assert result["success"] is True
-    assert calls["args"][-1] == "free -h | head -3"
+    assert calls["args"][-1].endswith("free -h | head -3")
+
+
+def test_bash_skill_makes_the_restricted_docker_cli_available(monkeypatch, tmp_path: Path):
+    calls = _fake_bash(monkeypatch)
+
+    result = bash.run("docker logs --tail 20 nginx | grep error", data_store=_Store(tmp_path))
+
+    assert result["success"] is True
+    assert 'python -m sirius_pulse.skills.builtin._docker_cli "$@"' in calls["args"][-1]
+    assert calls["args"][-1].endswith("docker logs --tail 20 nginx | grep error")
+    assert result["internal_metadata"]["docker_bridge_enabled"] is True
 
 
 def test_bash_skill_clamps_output_to_persona_policy(monkeypatch, tmp_path: Path):

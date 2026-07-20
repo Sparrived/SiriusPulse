@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-side restricted Docker proxy for Sirius container_admin."""
+"""Host-side restricted Docker proxy for the Sirius Bash Docker bridge."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class ContainerAdminProxy:
             if action == "list":
                 if target:
                     raise ProxyError("list 操作不能指定 container")
-                return self._list_containers(config)
+                return self._list_containers(config, all_containers=payload.get("all") is not False)
             if not _CONTAINER_NAME.fullmatch(target):
                 raise ProxyError("无效的容器名称")
 
@@ -96,10 +96,14 @@ class ContainerAdminProxy:
     def _tail_lines(self, value: Any, maximum: int) -> int:
         return self._bounded_int(value, 1, maximum)
 
-    def _list_containers(self, config: dict[str, Any]) -> dict[str, Any]:
-        output = self._run_docker(
-            ["ps", "-a", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"], config
-        )
+    def _list_containers(
+        self, config: dict[str, Any], *, all_containers: bool
+    ) -> dict[str, Any]:
+        arguments = ["ps"]
+        if all_containers:
+            arguments.append("-a")
+        arguments.extend(["--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"])
+        output = self._run_docker(arguments, config)
         containers = []
         for line in output.splitlines():
             name, status_text, image = (line.split("\t", 2) + ["", "", ""])[:3]
