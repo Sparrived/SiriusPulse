@@ -110,11 +110,6 @@ async def _send_image(
             "summary": "发送失败：缺少图片路径",
         }
 
-    if "://" not in image_path and not image_path.startswith("file://"):
-        path = Path(image_path)
-        if path.exists():
-            image_path = str(path.resolve())
-
     if image_path.startswith(("http://", "https://")):
         cache_fn = getattr(adapter, "cache_image", None)
         if cache_fn is not None:
@@ -125,6 +120,8 @@ async def _send_image(
                     LOG.info("远程图片已缓存到本地: %s", local_path)
             except Exception as exc:
                 LOG.warning("远程图片缓存失败，直接使用原始 URL: %s | %s", exc, image_path[:80])
+
+    image_path = _to_image_uri(image_path)
 
     message = [{"type": "image", "data": {"file": image_path}}]
     try:
@@ -256,3 +253,11 @@ def _private_target_id(value: str) -> str:
     if target_id.startswith("qq_"):
         target_id = target_id.removeprefix("qq_")
     return target_id
+
+
+def _to_image_uri(image_path: str) -> str:
+    """Give NapCat an explicit URI when the image is a local file."""
+    if image_path.startswith(("http://", "https://", "file://", "data:")):
+        return image_path
+    path = Path(image_path).expanduser()
+    return path.resolve().as_uri() if path.is_file() else image_path

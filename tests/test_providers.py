@@ -94,6 +94,38 @@ def test_chat_payload_when_bailian_provider_then_uses_enable_thinking_flag():
     assert payload["enable_thinking"] is False
 
 
+def test_openai_compatible_messages_preserve_tool_call_results():
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call-inspect",
+                    "type": "function",
+                    "function": {
+                        "name": "container_admin",
+                        "arguments": '{"action":"inspect","container":"minecraft"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-inspect",
+            "content": "[Tool result: success]\\ncontainer minecraft is running",
+        },
+    ]
+
+    payload = build_chat_completion_payload(
+        GenerationRequest(model="deepseek-v4-flash", system_prompt="system", messages=messages),
+        provider_name="deepseek",
+    )
+    wire_messages, _ = prepare_openai_compatible_messages(payload["messages"])
+
+    assert wire_messages[1:] == messages
+
+
 def test_generation_debug_context_when_multimodal_messages_exist_then_counts_parts():
     request = GenerationRequest(
         model="test-model",
