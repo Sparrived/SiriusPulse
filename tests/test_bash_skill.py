@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 from sirius_pulse.skills.builtin import bash
@@ -80,7 +82,10 @@ def test_bash_skill_makes_the_restricted_docker_cli_available(monkeypatch, tmp_p
     result = bash.run("docker logs --tail 20 nginx | grep error", data_store=_Store(tmp_path))
 
     assert result["success"] is True
-    assert 'python -m sirius_pulse.skills.builtin._docker_cli "$@"' in calls["args"][-1]
+    assert (
+        f'{shlex.quote(sys.executable)} -m sirius_pulse.skills.builtin._docker_cli "$@"'
+        in calls["args"][-1]
+    )
     assert calls["args"][-1].endswith("docker logs --tail 20 nginx | grep error")
     assert result["internal_metadata"]["docker_bridge_enabled"] is True
 

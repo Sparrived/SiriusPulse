@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +20,12 @@ _DEFAULT_MAX_TIMEOUT = 15.0
 _DEFAULT_MAX_OUTPUT = 12_000
 _MAX_COMMAND_LENGTH = 4_000
 _MIN_OUTPUT = 256
-_DOCKER_FUNCTION = """docker() {
-    python -m sirius_pulse.skills.builtin._docker_cli \"$@\"
-}
-docker-compose() {
+_DOCKER_FUNCTION_TEMPLATE = """docker() {{
+    {python_executable} -m sirius_pulse.skills.builtin._docker_cli \"$@\"
+}}
+docker-compose() {{
     docker compose \"$@\"
-}
+}}
 """
 
 _config = ConfigBuilder()
@@ -120,7 +122,7 @@ def run(
 
     try:
         completed = subprocess.run(
-            [bash, "-o", "pipefail", "-lc", f"{_DOCKER_FUNCTION}\n{command_text}"],
+            [bash, "-o", "pipefail", "-lc", f"{_docker_function()}\n{command_text}"],
             cwd=str(cwd_path),
             env=_safe_environment(),
             capture_output=True,
@@ -213,6 +215,11 @@ def _resolve_cwd(cwd: str) -> Path:
 def _find_bash() -> str | None:
     configured = os.environ.get("SIRIUS_BASH_PATH", "").strip()
     return configured or shutil.which("bash")
+
+
+def _docker_function() -> str:
+    """Build the Docker shell function with the active Sirius interpreter."""
+    return _DOCKER_FUNCTION_TEMPLATE.format(python_executable=shlex.quote(sys.executable))
 
 
 def _safe_environment() -> dict[str, str]:
