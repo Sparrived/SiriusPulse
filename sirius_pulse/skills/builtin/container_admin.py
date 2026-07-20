@@ -1,4 +1,4 @@
-"""Developer-only access to an allowlisted host container proxy."""
+"""Developer-only access to a restricted host container proxy."""
 
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ _config.group("容器管理").add(
 SKILL_META = {
     "name": "container_admin",
     "description": (
-        "管理宿主机上已由管理员允许的容器。可查看状态、检查详情、读取日志，并在宿主机策略允许时"
-        "启动、停止或重启；inspect 会保留排障状态并在当前 QQ 会话发送容器状态卡片，"
+        "管理宿主机上的全部容器。可查看状态、检查详情、读取日志，"
+        "并在宿主机策略允许时启动、停止或重启；inspect 会保留排障状态并在当前 QQ 会话发送容器状态卡片，"
         "不得用于执行任意 Docker 命令。"
     ),
     "version": "1.2.0",
@@ -73,7 +73,7 @@ async def run(
     engine_context: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Send one allowlisted container operation to the host proxy."""
+    """Send one restricted container operation to the host proxy."""
     ensure_developer_access(skill_name="container_admin", invocation_context=invocation_context)
     if data_store is not None and data_store.get("_enabled", True) is False:
         return {"success": False, "error": "container_admin Skill 已被当前人格禁用"}
@@ -277,9 +277,7 @@ async def _render_status_card(status: dict[str, Any], data_store: Any) -> Path:
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:
-        raise RuntimeError(
-            "container_admin 需要 Playwright；请重新部署包含 Chromium 的镜像"
-        ) from exc
+        raise RuntimeError("container_admin 需要 Playwright；请重新部署包含 Chromium 的镜像") from exc
 
     output_dir = _artifact_dir(data_store)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -313,7 +311,9 @@ def _build_status_card_html(status: dict[str, Any]) -> str:
     tone = (
         "healthy"
         if status_key == "running"
-        else "warning" if status_key == "paused" else "critical"
+        else "warning"
+        if status_key == "paused"
+        else "critical"
     )
     labels = {
         "running": "运行中",

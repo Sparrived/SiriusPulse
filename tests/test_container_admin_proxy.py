@@ -13,29 +13,29 @@ def _load_proxy_module():
     return module
 
 
-def _proxy(tmp_path: Path, *, allow_mutations: bool = False):
+def _proxy(tmp_path: Path, *, allow_mutations: bool | None = None):
     module = _load_proxy_module()
     config = tmp_path / "container-admin.json"
     config.write_text(
-        '{"allowed_containers":["nginx"],"allow_mutations":'
-        + ("true" if allow_mutations else "false")
-        + "}",
+        "{}"
+        if allow_mutations is None
+        else '{"allow_mutations":' + str(allow_mutations).lower() + "}",
         encoding="utf-8",
     )
     return module, module.ContainerAdminProxy(config)
 
 
-def test_proxy_rejects_unallowed_containers_without_running_docker(tmp_path, monkeypatch):
+def test_proxy_rejects_invalid_containers_without_running_docker(tmp_path, monkeypatch):
     module, proxy = _proxy(tmp_path)
     monkeypatch.setattr(proxy, "_run_docker", lambda *_: (_ for _ in ()).throw(AssertionError()))
 
-    result = proxy.handle({"action": "logs", "container": "postgres", "tail_lines": 20})
+    result = proxy.handle({"action": "logs", "container": "../../host", "tail_lines": 20})
 
-    assert result == {"success": False, "error": "目标容器不在宿主机允许列表中"}
+    assert result == {"success": False, "error": "无效的容器名称"}
 
 
 def test_proxy_blocks_mutations_until_host_policy_allows_them(tmp_path, monkeypatch):
-    module, proxy = _proxy(tmp_path)
+    module, proxy = _proxy(tmp_path, allow_mutations=False)
     monkeypatch.setattr(proxy, "_run_docker", lambda *_: (_ for _ in ()).throw(AssertionError()))
 
     result = proxy.handle({"action": "restart", "container": "nginx"})
@@ -43,35 +43,38 @@ def test_proxy_blocks_mutations_until_host_policy_allows_them(tmp_path, monkeypa
     assert result == {"success": False, "error": "宿主机策略未允许变更容器状态"}
 
 
-def test_proxy_uses_fixed_docker_arguments_for_an_allowed_mutation(tmp_path, monkeypatch):
-    module, proxy = _proxy(tmp_path, allow_mutations=True)
+def test_proxy_allows_mutations_by_default_with_fixed_docker_arguments(tmp_path, monkeypatch):
+    module, proxy = _proxy(tmp_path)
     seen = {}
 
     def fake_run(arguments, config):
         seen["arguments"] = arguments
-        return "nginx"
+        return "postgres"
 
     monkeypatch.setattr(proxy, "_run_docker", fake_run)
 
-    result = proxy.handle({"action": "restart", "container": "nginx"})
+    result = proxy.handle({"action": "restart", "container": "postgres"})
 
-    assert result == {"success": True, "output": "nginx"}
-    assert seen["arguments"] == ["restart", "nginx"]
+    assert result == {"success": True, "output": "postgres"}
+    assert seen["arguments"] == ["restart", "postgres"]
 
 
-def test_proxy_filters_list_results_to_the_host_allowlist(tmp_path, monkeypatch):
+def test_proxy_lists_all_host_containers(tmp_path, monkeypatch):
     module, proxy = _proxy(tmp_path)
     monkeypatch.setattr(
         proxy,
         "_run_docker",
-        lambda *_: "nginx\tUp 2 hours\tnginx:latest\npostgres\tUp 2 hours\tpostgres:16",
+        lambda *_: "nginx\tUp 2 hours\tnginx:latest\npostgres\tExited (0) 2 hours ago\tpostgres:16",
     )
 
     result = proxy.handle({"action": "list"})
 
     assert result == {
         "success": True,
-        "containers": [{"name": "nginx", "status": "Up 2 hours", "image": "nginx:latest"}],
+        "containers": [
+            {"name": "nginx", "status": "Up 2 hours", "image": "nginx:latest"},
+            {"name": "postgres", "status": "Exited (0) 2 hours ago", "image": "postgres:16"},
+        ],
     }
 
 

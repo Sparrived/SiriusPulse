@@ -1,6 +1,5 @@
 {
-  "allowed_containers": ["sirius-pulse-v2-test", "napcat"],
-  "allow_mutations": false,
+  "allow_mutations": true,
   "max_log_lines": 200,
   "timeout_seconds": 15
 }

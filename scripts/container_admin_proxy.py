@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-side allowlisted Docker proxy for Sirius container_admin."""
+"""Host-side restricted Docker proxy for Sirius container_admin."""
 
 from __future__ import annotations
 
@@ -57,8 +57,6 @@ class ContainerAdminProxy:
                 return self._list_containers(config)
             if not _CONTAINER_NAME.fullmatch(target):
                 raise ProxyError("无效的容器名称")
-            if target not in config["allowed_containers"]:
-                raise ProxyError("目标容器不在宿主机允许列表中")
 
             if action == "inspect":
                 return self._inspect_container(target, config)
@@ -81,15 +79,8 @@ class ContainerAdminProxy:
         if not isinstance(raw, dict):
             raise ProxyError("代理配置必须是 JSON 对象")
 
-        allowed = raw.get("allowed_containers")
-        if not isinstance(allowed, list):
-            raise ProxyError("allowed_containers 必须是容器名称列表")
-        names = {str(item).strip() for item in allowed}
-        if not names or any(not _CONTAINER_NAME.fullmatch(name) for name in names):
-            raise ProxyError("allowed_containers 必须包含至少一个有效容器名称")
         return {
-            "allowed_containers": names,
-            "allow_mutations": raw.get("allow_mutations") is True,
+            "allow_mutations": raw.get("allow_mutations", True) is not False,
             "max_log_lines": self._bounded_int(raw.get("max_log_lines", 200), 1, 200),
             "timeout_seconds": self._bounded_int(raw.get("timeout_seconds", 15), 1, 60),
         }
@@ -112,8 +103,7 @@ class ContainerAdminProxy:
         containers = []
         for line in output.splitlines():
             name, status_text, image = (line.split("\t", 2) + ["", "", ""])[:3]
-            if name in config["allowed_containers"]:
-                containers.append({"name": name, "status": status_text, "image": image})
+            containers.append({"name": name, "status": status_text, "image": image})
         return {"success": True, "containers": containers}
 
     def _inspect_container(self, target: str, config: dict[str, Any]) -> dict[str, Any]:
