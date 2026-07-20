@@ -15,12 +15,14 @@ import stat
 import subprocess
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-_ACTIONS = {"list", "inspect", "logs", "start", "stop", "restart"}
+_ACTIONS = {"list", "inspect", "logs", "start", "stop", "restart", "exec_readonly"}
 _MUTATIONS = {"start", "stop", "restart"}
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_READONLY_EXEC_TOOLS = {"ls", "cat", "head", "tail", "grep"}
+_DATA_ROOT = PurePosixPath("/data")
 _MAX_REQUEST_BYTES = 4096
 _MAX_OUTPUT_CHARS = 50_000
 _STATUS_FORMAT = (
@@ -63,6 +65,11 @@ class ContainerAdminProxy:
             elif action == "logs":
                 tail_lines = self._tail_lines(payload.get("tail_lines"), config["max_log_lines"])
                 output = self._run_docker(["logs", "--tail", str(tail_lines), target], config)
+            elif action == "exec_readonly":
+                command = self._readonly_exec_command(
+                    payload.get("command"), maximum_lines=config["max_log_lines"]
+                )
+                output = self._run_docker(["exec", target, *command], config)
             else:
                 output = self._run_docker([action, target], config)
             return {"success": True, "output": output}
@@ -95,6 +102,77 @@ class ContainerAdminProxy:
 
     def _tail_lines(self, value: Any, maximum: int) -> int:
         return self._bounded_int(value, 1, maximum)
+
+    def _readonly_exec_command(self, value: Any, *, maximum_lines: int) -> list[str]:
+        if not isinstance(value, list) or len(value) < 2 or not all(isinstance(item, str) for item in value):
+            raise ProxyError("只读 exec 请求必须指定日志命令和 /data 路径")
+        tool, *args = value
+        if tool not in _READONLY_EXEC_TOOLS:
+            raise ProxyError("只读 exec 仅允许 ls、cat、head、tail 或 grep")
+        if tool == "ls":
+            return self._readonly_ls(args)
+        if tool == "cat":
+            return [tool, *self._data_paths(args)]
+        if tool in {"head", "tail"}:
+            return self._readonly_line_reader(tool, args, maximum_lines)
+        return self._readonly_grep(args)
+
+    def _readonly_ls(self, args: list[str]) -> list[str]:
+        options: list[str] = []
+        while args and args[0].startswith("-"):
+            option = args.pop(0)
+            if not re.fullmatch(r"-[alth]+", option):
+                raise ProxyError("只读 ls 仅允许 -a、-l、-t、-h 选项")
+            options.append(option)
+        return ["ls", *options, *self._data_paths(args)]
+
+    def _readonly_line_reader(self, tool: str, args: list[str], maximum_lines: int) -> list[str]:
+        line_count: int | None = None
+        if args and args[0] in {"-n", "--lines"}:
+            if len(args) < 3:
+                raise ProxyError(f"{tool} 的行数或路径缺失")
+            line_count = self._tail_lines(args[1], maximum_lines)
+            args = args[2:]
+        elif args and args[0].startswith("-n") and len(args[0]) > 2:
+            line_count = self._tail_lines(args[0][2:], maximum_lines)
+            args = args[1:]
+        elif args and args[0].startswith("--lines="):
+            line_count = self._tail_lines(args[0].split("=", 1)[1], maximum_lines)
+            args = args[1:]
+        paths = self._data_paths(args)
+        if len(paths) != 1:
+            raise ProxyError(f"只读 {tool} 必须且只能读取一个文件")
+        command = [tool]
+        if line_count is not None:
+            command.extend(["-n", str(line_count)])
+        command.append(paths[0])
+        return command
+
+    def _readonly_grep(self, args: list[str]) -> list[str]:
+        options: list[str] = []
+        while args and args[0].startswith("-") and args[0] != "--":
+            option = args.pop(0)
+            if not re.fullmatch(r"-[inE]+", option):
+                raise ProxyError("只读 grep 仅允许 -i、-n、-E 选项")
+            options.append(option)
+        if args and args[0] == "--":
+            args.pop(0)
+        if len(args) < 2:
+            raise ProxyError("只读 grep 必须指定模式和至少一个 /data 文件")
+        pattern = args.pop(0)
+        return ["grep", *options, "--", pattern, *self._data_paths(args)]
+
+    @staticmethod
+    def _data_paths(values: list[str]) -> list[str]:
+        if not values:
+            raise ProxyError("只读 exec 必须指定 /data 路径")
+        paths: list[str] = []
+        for value in values:
+            path = PurePosixPath(value)
+            if not path.is_absolute() or ".." in path.parts or not path.is_relative_to(_DATA_ROOT):
+                raise ProxyError("只读 exec 只能访问容器内的 /data 路径")
+            paths.append(str(path))
+        return paths
 
     def _list_containers(
         self, config: dict[str, Any], *, all_containers: bool

@@ -15,7 +15,7 @@ _REQUEST_TIMEOUT = 15.0
 _MAX_RESPONSE_BYTES = 50_000
 _MAX_LOG_LINES = 200
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-_ALLOWED_COMMANDS = "ps、inspect、logs、start、stop、restart"
+_ALLOWED_COMMANDS = "ps、inspect、logs、start、stop、restart，以及只读 exec 日志查询"
 INSPECT_STATUS_MARKER = "__SIRIUS_DOCKER_INSPECT_STATUS__:"
 
 
@@ -43,9 +43,11 @@ def build_request(arguments: Sequence[str]) -> dict[str, Any]:
         return _parse_single_container(command, args)
     if command == "logs":
         return _parse_logs(args)
+    if command == "exec":
+        return _parse_readonly_exec(args)
 
     raise DockerCommandError(
-        f"不允许 Docker 操作: {command}。容器删除、清理、重建、镜像、卷、网络和 exec 操作均被拒绝；"
+        f"不允许 Docker 操作: {command}。容器删除、清理、重建、镜像、卷、网络和任意 exec 操作均被拒绝；"
         f"只允许 {_ALLOWED_COMMANDS}。"
     )
 
@@ -158,6 +160,17 @@ def _parse_logs(args: list[str]) -> dict[str, Any]:
     if not container:
         raise DockerCommandError("docker logs 必须指定容器名称")
     return {"action": "logs", "container": container, "tail_lines": tail_lines}
+
+
+def _parse_readonly_exec(args: list[str]) -> dict[str, Any]:
+    if len(args) < 2:
+        raise DockerCommandError("docker exec 必须指定容器和只读日志命令")
+    return {
+        "action": "exec_readonly",
+        "container": _validated_container(args[0]),
+        "tail_lines": 100,
+        "command": args[1:],
+    }
 
 
 def _validated_container(value: str) -> str:

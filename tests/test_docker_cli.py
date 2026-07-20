@@ -25,6 +25,15 @@ from sirius_pulse.skills.builtin import _docker_cli
             {"action": "logs", "container": "nginx", "tail_lines": 50},
         ),
         (
+            ["exec", "minecraft", "tail", "-n", "200", "/data/logs/latest.log"],
+            {
+                "action": "exec_readonly",
+                "container": "minecraft",
+                "tail_lines": 100,
+                "command": ["tail", "-n", "200", "/data/logs/latest.log"],
+            },
+        ),
+        (
             ["restart", "sirius-pulse-v2-test"],
             {"action": "restart", "container": "sirius-pulse-v2-test", "tail_lines": 100},
         ),
@@ -42,7 +51,6 @@ def test_docker_cli_translates_native_safe_commands_to_fixed_proxy_requests(argu
         ["compose", "down"],
         ["system", "prune"],
         ["run", "alpine"],
-        ["exec", "nginx", "sh"],
         ["image", "rm", "nginx:latest"],
         ["volume", "rm", "data"],
         ["network", "rm", "bridge"],

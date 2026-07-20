@@ -59,6 +59,58 @@ def test_proxy_allows_mutations_by_default_with_fixed_docker_arguments(tmp_path,
     assert seen["arguments"] == ["restart", "postgres"]
 
 
+def test_proxy_allows_fixed_readonly_minecraft_log_commands(tmp_path, monkeypatch):
+    module, proxy = _proxy(tmp_path)
+    seen = {}
+
+    def fake_run(arguments, config):
+        seen["arguments"] = arguments
+        return "java.lang.RuntimeException: crash"
+
+    monkeypatch.setattr(proxy, "_run_docker", fake_run)
+
+    result = proxy.handle(
+        {
+            "action": "exec_readonly",
+            "container": "minecraft",
+            "command": ["tail", "-n", "200", "/data/logs/latest.log"],
+        }
+    )
+
+    assert result == {"success": True, "output": "java.lang.RuntimeException: crash"}
+    assert seen["arguments"] == [
+        "exec",
+        "minecraft",
+        "tail",
+        "-n",
+        "200",
+        "/data/logs/latest.log",
+    ]
+
+
+def test_proxy_rejects_unbounded_exec_before_running_docker(tmp_path, monkeypatch):
+    module, proxy = _proxy(tmp_path)
+    monkeypatch.setattr(proxy, "_run_docker", lambda *_: (_ for _ in ()).throw(AssertionError()))
+
+    shell = proxy.handle(
+        {"action": "exec_readonly", "container": "minecraft", "command": ["sh", "-lc", "id"]}
+    )
+    outside_data = proxy.handle(
+        {"action": "exec_readonly", "container": "minecraft", "command": ["cat", "/etc/passwd"]}
+    )
+    recursive_grep = proxy.handle(
+        {
+            "action": "exec_readonly",
+            "container": "minecraft",
+            "command": ["grep", "-r", "error", "/data/logs/latest.log"],
+        }
+    )
+
+    assert shell == {"success": False, "error": "只读 exec 仅允许 ls、cat、head、tail 或 grep"}
+    assert outside_data == {"success": False, "error": "只读 exec 只能访问容器内的 /data 路径"}
+    assert recursive_grep == {"success": False, "error": "只读 grep 仅允许 -i、-n、-E 选项"}
+
+
 def test_proxy_lists_all_host_containers(tmp_path, monkeypatch):
     module, proxy = _proxy(tmp_path)
     monkeypatch.setattr(

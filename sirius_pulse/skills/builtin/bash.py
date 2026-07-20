@@ -66,6 +66,7 @@ SKILL_META = {
         "在容器中启动 Bash，用于文件处理、系统状态查询和自动化。"
         "支持标准 Bash 语法与容器内任意工作目录，也支持受控的原生 Docker 命令："
         "docker ps、inspect、logs、start、stop、restart。Docker 删除、清理、重建及镜像、卷、网络、exec 操作会被拒绝；"
+        "读取 Minecraft 崩溃报告时可使用 docker exec <容器> 的只读 ls、cat、head、tail、grep 命令访问 /data；"
         "docker inspect 会在当前 QQ 会话发送容器状态卡片；"
         "每个人格可在技能配置中调整执行时限和输出上限。"
     ),
