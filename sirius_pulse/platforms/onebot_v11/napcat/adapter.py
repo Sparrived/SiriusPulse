@@ -15,9 +15,13 @@ import asyncio
 import html
 import json
 import logging
+import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote, unquote, urlparse
+from uuid import uuid4
 
 import websockets
 import websockets.exceptions
@@ -415,31 +419,95 @@ class NapCatAdapter(BaseAdapter):
         p = Path(file_path).resolve()
         return "file://" + pathname2url(str(p))
 
+    @staticmethod
+    def _shared_upload_root() -> Path:
+        """返回 Sirius 与 NapCat 约定的文件上传暂存目录。"""
+        return Path(os.getenv("SIRIUS_NAPCAT_UPLOAD_ROOT", "/app/data/napcat-upload"))
+
+    @staticmethod
+    def _napcat_upload_root() -> str:
+        """返回上述暂存目录在 NapCat 容器中的只读挂载位置。"""
+        return os.getenv("SIRIUS_NAPCAT_UPLOAD_TARGET_ROOT", "/sirius-upload").rstrip("/")
+
+    @staticmethod
+    def _local_file_path(file_path: str) -> Path:
+        """将本地路径或 file:// URI 规范化为当前容器可读的路径。"""
+        if file_path.startswith("file://"):
+            return Path(unquote(urlparse(file_path).path)).expanduser()
+        return Path(file_path).expanduser()
+
+    @classmethod
+    async def _prepare_upload_file(cls, file_path: str) -> tuple[str, Path | None]:
+        """暂存本地文件，并返回 NapCat 可访问的引用和待清理副本。"""
+        reference = str(file_path or "").strip()
+        if reference.startswith(("http://", "https://", "base64://")):
+            return reference, None
+
+        source = cls._local_file_path(reference)
+        if not source.is_file():
+            return cls._to_file_uri(str(source)), None
+
+        source = source.resolve()
+        shared_root = cls._shared_upload_root().resolve()
+        try:
+            relative_path = source.relative_to(shared_root)
+            temporary_path = None
+        except ValueError:
+            await asyncio.to_thread(shared_root.mkdir, parents=True, exist_ok=True)
+            temporary_path = shared_root / f"{uuid4().hex}_{source.name}"
+            try:
+                await asyncio.to_thread(shutil.copyfile, source, temporary_path)
+            except BaseException:
+                await cls._cleanup_staged_upload(temporary_path)
+                raise
+            relative_path = temporary_path.relative_to(shared_root)
+
+        target_root = cls._napcat_upload_root() or "/sirius-upload"
+        target_path = f"{target_root}/{relative_path.as_posix()}"
+        return f"file://{quote(target_path, safe='/')}", temporary_path
+
+    @staticmethod
+    async def _cleanup_staged_upload(temporary_path: Path | None) -> None:
+        if temporary_path is None:
+            return
+        try:
+            await asyncio.to_thread(temporary_path.unlink)
+        except OSError as exc:
+            LOG.warning("清理 NapCat 文件上传暂存副本失败: %s | %s", temporary_path, exc)
+
     async def upload_group_file(
         self, group_id: str | int, file_path: str, name: str = ""
     ) -> dict[str, Any]:
         """上传文件到群文件。"""
-        return await self.call_api(
-            "upload_group_file",
-            {
-                "group_id": int(group_id),
-                "file": self._to_file_uri(file_path),
-                "name": name or Path(file_path).name,
-            },
-        )
+        file_reference, temporary_path = await self._prepare_upload_file(file_path)
+        try:
+            return await self.call_api(
+                "upload_group_file",
+                {
+                    "group_id": int(group_id),
+                    "file": file_reference,
+                    "name": name or Path(file_path).name,
+                },
+            )
+        finally:
+            await self._cleanup_staged_upload(temporary_path)
 
     async def upload_private_file(
         self, user_id: str | int, file_path: str, name: str = ""
     ) -> dict[str, Any]:
         """上传文件到私聊。"""
-        return await self.call_api(
-            "upload_private_file",
-            {
-                "user_id": int(user_id),
-                "file": self._to_file_uri(file_path),
-                "name": name or Path(file_path).name,
-            },
-        )
+        file_reference, temporary_path = await self._prepare_upload_file(file_path)
+        try:
+            return await self.call_api(
+                "upload_private_file",
+                {
+                    "user_id": int(user_id),
+                    "file": file_reference,
+                    "name": name or Path(file_path).name,
+                },
+            )
+        finally:
+            await self._cleanup_staged_upload(temporary_path)
 
     async def get_group_member_info(
         self, group_id: str | int, user_id: str | int, no_cache: bool = False
