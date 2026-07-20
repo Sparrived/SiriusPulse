@@ -36,7 +36,8 @@ LABEL org.sirius-pulse.environment-cache-key=$SIRIUS_ENV_CACHE_KEY
 WORKDIR /app
 
 USER root
-RUN rm -rf /app/sirius_pulse /app/sirius_pulse.egg-info
+RUN rm -rf /app/sirius_pulse /app/sirius_pulse.egg-info \
+    && chown sirius:sirius /app
 COPY --chown=sirius:sirius sirius_pulse ./sirius_pulse
 USER sirius
 RUN uv sync --frozen --no-dev
