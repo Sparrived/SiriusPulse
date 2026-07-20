@@ -16,11 +16,11 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock README.md ./
 RUN pip install --no-cache-dir uv \
-    && uv sync --frozen --no-dev --no-install-project
+    && uv sync --frozen --no-dev --no-install-project \
+    && .venv/bin/python -m playwright install --with-deps chromium
 
 COPY sirius_pulse ./sirius_pulse
-RUN uv sync --frozen --no-dev \
-    && .venv/bin/python -m playwright install --with-deps chromium
+RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home --uid 10001 sirius \
     && mkdir -p /app/data /ms-playwright \
