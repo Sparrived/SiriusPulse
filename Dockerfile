@@ -1,3 +1,10 @@
+ARG SIRIUS_PLAYWRIGHT_CACHE_IMAGE=playwright-cache-empty
+
+FROM python:3.12-slim AS playwright-cache-empty
+RUN mkdir /ms-playwright
+
+FROM ${SIRIUS_PLAYWRIGHT_CACHE_IMAGE} AS playwright-cache
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -17,7 +24,10 @@ RUN apt-get update \
 COPY pyproject.toml uv.lock README.md ./
 RUN pip install --no-cache-dir uv \
     && uv sync --frozen --no-dev --no-install-project \
-    && .venv/bin/python -m playwright install --with-deps chromium
+    && .venv/bin/python -m playwright install-deps chromium
+
+COPY --from=playwright-cache /ms-playwright /ms-playwright
+RUN .venv/bin/python -m playwright install chromium
 
 COPY sirius_pulse ./sirius_pulse
 RUN uv sync --frozen --no-dev

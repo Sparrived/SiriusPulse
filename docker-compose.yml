@@ -1,6 +1,9 @@
 services:
   sirius-pulse:
-    build: .
+    build:
+      context: .
+      args:
+        SIRIUS_PLAYWRIGHT_CACHE_IMAGE: ${SIRIUS_PLAYWRIGHT_CACHE_IMAGE:-playwright-cache-empty}
     image: sirius-pulse:latest
     container_name: sirius-pulse-v2-test
     restart: unless-stopped

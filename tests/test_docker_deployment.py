@@ -7,7 +7,11 @@ ROOT = Path(__file__).parents[1]
 def test_dockerfile_caches_chromium_before_application_source():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert dockerfile.index("playwright install --with-deps chromium") < dockerfile.index(
+    assert "FROM ${SIRIUS_PLAYWRIGHT_CACHE_IMAGE} AS playwright-cache" in dockerfile
+    assert dockerfile.index("playwright install-deps chromium") < dockerfile.index(
+        "COPY --from=playwright-cache /ms-playwright /ms-playwright"
+    )
+    assert dockerfile.index("playwright install chromium") < dockerfile.index(
         "COPY sirius_pulse"
     )
 
@@ -16,6 +20,8 @@ def test_update_script_refuses_to_replace_an_unmigrated_container_data_directory
     script = (ROOT / "scripts" / "update-container.sh").read_text(encoding="utf-8")
 
     assert "docker container inspect sirius-pulse-v2-test" in script
+    assert "docker image inspect sirius-pulse:latest" in script
+    assert "export SIRIUS_PLAYWRIGHT_CACHE_IMAGE=sirius-pulse:latest" in script
     assert "exit 2" in script
     assert script.index("docker compose config -q") < script.index("docker compose up -d")
 

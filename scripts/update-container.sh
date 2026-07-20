@@ -14,6 +14,10 @@ fi
 git pull --ff-only origin master
 git submodule update --init --recursive
 docker compose config -q
+unset SIRIUS_PLAYWRIGHT_CACHE_IMAGE
+if docker image inspect sirius-pulse:latest >/dev/null 2>&1; then
+  export SIRIUS_PLAYWRIGHT_CACHE_IMAGE=sirius-pulse:latest
+fi
 docker compose up -d --build --force-recreate --remove-orphans
 
 for _ in {1..60}; do
