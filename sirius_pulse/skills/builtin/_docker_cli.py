@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -15,6 +16,7 @@ _MAX_RESPONSE_BYTES = 50_000
 _MAX_LOG_LINES = 200
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _ALLOWED_COMMANDS = "ps、inspect、logs、start、stop、restart"
+INSPECT_STATUS_MARKER = "__SIRIUS_DOCKER_INSPECT_STATUS__:"
 
 
 class DockerCommandError(ValueError):
@@ -79,7 +81,8 @@ def request_host_proxy(request: dict[str, Any]) -> dict[str, Any]:
 def main(arguments: Sequence[str] | None = None) -> int:
     """Run the bridge with Docker-like stdout, stderr, and exit codes."""
     try:
-        response = request_host_proxy(build_request(arguments if arguments is not None else sys.argv[1:]))
+        request = build_request(arguments if arguments is not None else sys.argv[1:])
+        response = request_host_proxy(request)
     except (DockerCommandError, OSError, TimeoutError) as exc:
         print(f"docker: {exc}", file=sys.stderr)
         return 2
@@ -97,7 +100,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
     if output:
         print(output)
+    status = response.get("status")
+    if request.get("action") == "inspect" and isinstance(status, dict):
+        print(format_inspect_status_marker(status), file=sys.stderr)
     return 0
+
+
+def format_inspect_status_marker(status: dict[str, Any]) -> str:
+    """Encode inspect status for the Bash skill without exposing it to shell output."""
+    payload = json.dumps(status, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return INSPECT_STATUS_MARKER + base64.b64encode(payload).decode("ascii")
 
 
 def _parse_ps(args: list[str]) -> dict[str, Any]:

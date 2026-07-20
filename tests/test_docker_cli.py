@@ -86,6 +86,22 @@ def test_docker_cli_prints_proxy_output(monkeypatch, capsys):
     assert capsys.readouterr().out == "nginx\tUp 1 hour\tnginx:latest\n"
 
 
+def test_docker_cli_emits_inspect_status_as_an_internal_marker(monkeypatch, capsys):
+    status = {"name": "nginx", "status": "running"}
+    monkeypatch.setattr(
+        _docker_cli,
+        "request_host_proxy",
+        lambda request: {"success": True, "output": '{"Status":"running"}', "status": status},
+    )
+
+    exit_code = _docker_cli.main(["inspect", "nginx"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out == '{"Status":"running"}\n'
+    assert captured.err == _docker_cli.format_inspect_status_marker(status) + "\n"
+
+
 def test_docker_cli_returns_nonzero_for_rejected_commands(capsys):
     exit_code = _docker_cli.main(["rm", "nginx"])
 

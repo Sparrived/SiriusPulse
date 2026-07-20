@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
+import json
 import os
 import re
 import shlex
@@ -12,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
+from sirius_pulse.skills.builtin import _container_status_card, _docker_cli
+from sirius_pulse.skills.models import SkillInvocationContext
 
 _SENSITIVE_ENV = re.compile(
     r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)", re.IGNORECASE
@@ -60,9 +66,10 @@ SKILL_META = {
         "在容器中启动 Bash，用于文件处理、系统状态查询和自动化。"
         "支持标准 Bash 语法与容器内任意工作目录，也支持受控的原生 Docker 命令："
         "docker ps、inspect、logs、start、stop、restart。Docker 删除、清理、重建及镜像、卷、网络、exec 操作会被拒绝；"
+        "docker inspect 会在当前 QQ 会话发送容器状态卡片；"
         "每个人格可在技能配置中调整执行时限和输出上限。"
     ),
-    "version": "1.1.0",
+    "version": "1.2.0",
     "side_effect": "unknown",
     "tags": ["bash", "shell", "file", "system", "container"],
     "parameters": _config.build(),
@@ -83,12 +90,15 @@ SKILL_META = {
 }
 
 
-def run(
+async def run(
     command: str,
     cwd: str = ".",
     timeout_seconds: float = 10.0,
     max_output_chars: int = 8_000,
     data_store: Any = None,
+    chat_context: dict[str, Any] | None = None,
+    engine_context: Any = None,
+    invocation_context: SkillInvocationContext | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute one Bash command with a restricted native Docker function."""
@@ -121,7 +131,8 @@ def run(
         }
 
     try:
-        completed = subprocess.run(
+        completed = await asyncio.to_thread(
+            subprocess.run,
             [bash, "-o", "pipefail", "-lc", f"{_docker_function()}\n{command_text}"],
             cwd=str(cwd_path),
             env=_safe_environment(),
@@ -138,13 +149,15 @@ def run(
     except OSError as exc:
         return {"success": False, "error": f"启动 Bash 失败: {exc}"}
 
-    output = _decode_output(completed.stdout + completed.stderr, output_limit)
+    output, inspect_statuses, truncated = _decode_output_with_inspect_status(
+        completed.stdout + completed.stderr, output_limit
+    )
     metadata = {
         "cwd": str(cwd_path),
         "returncode": completed.returncode,
         "command_length": len(command_text),
         "docker_bridge_enabled": True,
-        "truncated": len(completed.stdout + completed.stderr) > output_limit,
+        "truncated": truncated,
     }
     if completed.returncode != 0:
         detail = f"命令退出码 {completed.returncode}"
@@ -152,10 +165,29 @@ def run(
             detail += f"\n{output}"
         return {"success": False, "error": detail, "internal_metadata": metadata}
 
+    cards = await _send_inspect_status_cards(
+        inspect_statuses,
+        data_store=data_store,
+        chat_context=chat_context,
+        engine_context=engine_context,
+        invocation_context=invocation_context,
+    )
+    metadata["inspect_statuses"] = [item["status"] for item in cards if item.get("status")]
+    metadata["status_cards"] = cards
+    sent_count = sum(1 for item in cards if item["sent"])
+    card_errors = [str(item["error"]) for item in cards if item["error"]]
+    text_parts = [output or "命令执行成功，但没有输出。"]
+    text_parts.extend(_container_status_card.status_summary(item["status"]) for item in cards if item.get("status"))
+    if card_errors:
+        text_parts.append("状态卡片未发送：" + "；".join(card_errors))
+    summary = f"Bash 执行完成（退出码 0，工作目录 {cwd_path}）"
+    if sent_count:
+        summary += f"；已发送 {sent_count} 张容器状态卡片"
+
     return {
         "success": True,
-        "summary": f"Bash 执行完成（退出码 0，工作目录 {cwd_path}）",
-        "text_blocks": [output or "命令执行成功，但没有输出。"],
+        "summary": summary,
+        "text_blocks": ["\n".join(text_parts)],
         "internal_metadata": metadata,
     }
 
@@ -222,6 +254,60 @@ def _docker_function() -> str:
     return _DOCKER_FUNCTION_TEMPLATE.format(python_executable=shlex.quote(sys.executable))
 
 
+async def _send_inspect_status_cards(
+    statuses: list[dict[str, Any]],
+    *,
+    data_store: Any,
+    chat_context: dict[str, Any] | None,
+    engine_context: Any,
+    invocation_context: SkillInvocationContext | None,
+) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for raw_status in statuses:
+        status = _container_status_card.normalize_status(raw_status)
+        record: dict[str, Any] = {"status": status, "sent": False, "error": "", "message_id": None}
+        cards.append(record)
+        if status is None:
+            record["error"] = "Docker 代理未返回有效的容器状态"
+            continue
+        if not _chat_target(chat_context)[1]:
+            record["error"] = "当前调用没有 QQ 会话上下文"
+            continue
+        registry = getattr(engine_context, "skill_registry", None)
+        executor = getattr(engine_context, "skill_executor", None)
+        if registry is None or executor is None:
+            record["error"] = "Skill 运行上下文未就绪，无法发送状态卡片"
+            continue
+        file_upload = registry.get("file_upload")
+        if file_upload is None:
+            record["error"] = "未找到 file_upload Skill，无法发送状态卡片"
+            continue
+        try:
+            image_path = await _container_status_card.render_status_card(status, data_store)
+            record["card_path"] = str(image_path)
+            sent = await executor.execute_async(
+                file_upload,
+                {"action": "image", "image_path": str(image_path)},
+                invocation_context=invocation_context,
+            )
+            if sent.success:
+                record["sent"] = True
+                record["message_id"] = sent.internal_metadata.get("message_id")
+            else:
+                record["error"] = sent.error or "状态卡片发送失败"
+        except Exception as exc:
+            record["error"] = str(exc)
+    return cards
+
+
+def _chat_target(chat_context: dict[str, Any] | None) -> tuple[str, str]:
+    context = chat_context or {}
+    chat_type = str(context.get("chat_type") or "").strip()
+    if chat_type not in {"group", "private"}:
+        return "", ""
+    return chat_type, str(context.get("chat_id") or context.get("group_id") or "").strip()
+
+
 def _safe_environment() -> dict[str, str]:
     keep = {
         "HOME",
@@ -251,7 +337,29 @@ def _bounded_number(value: Any, *, default: float, minimum: float, maximum: floa
 
 
 def _decode_output(raw: bytes, limit: int) -> str:
-    text = raw.decode("utf-8", errors="replace")
+    return _truncate_text(raw.decode("utf-8", errors="replace"), limit)[0]
+
+
+def _decode_output_with_inspect_status(raw: bytes, limit: int) -> tuple[str, list[dict[str, Any]], bool]:
+    statuses: list[dict[str, Any]] = []
+    kept_lines: list[str] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines(keepends=True):
+        if not line.startswith(_docker_cli.INSPECT_STATUS_MARKER):
+            kept_lines.append(line)
+            continue
+        encoded = line[len(_docker_cli.INSPECT_STATUS_MARKER) :].strip()
+        try:
+            value = json.loads(base64.b64decode(encoded, validate=True).decode("utf-8"))
+        except (binascii.Error, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            kept_lines.append(line)
+            continue
+        if isinstance(value, dict):
+            statuses.append(value)
+    output, truncated = _truncate_text("".join(kept_lines), limit)
+    return output, statuses, truncated
+
+
+def _truncate_text(text: str, limit: int) -> tuple[str, bool]:
     if len(text) > limit:
-        return f"{text[:limit]}\n[输出已截断]"
-    return text
+        return f"{text[:limit]}\n[输出已截断]", True
+    return text, False
