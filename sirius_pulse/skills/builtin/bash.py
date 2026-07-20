@@ -67,6 +67,8 @@ SKILL_META = {
         "支持标准 Bash 语法与容器内任意工作目录，也支持受控的原生 Docker 命令："
         "docker ps、inspect、logs、start、stop、restart。Docker 删除、清理、重建及镜像、卷、网络、exec 操作会被拒绝；"
         "读取 Minecraft 崩溃报告时可使用 docker exec <容器> 的只读 ls、cat、head、tail、grep 命令访问 /data；"
+        "容器或 Minecraft 故障请依次执行 docker ps -a、docker inspect <容器>、docker logs --tail 200 <容器>，"
+        "再读取 /data/logs/latest.log 或 /data/crash-reports；Bash 不在宿主机，不能使用 systemctl 或宿主机 /var/log；"
         "docker inspect 会在当前 QQ 会话发送容器状态卡片；"
         "每个人格可在技能配置中调整执行时限和输出上限。"
     ),
@@ -164,6 +166,7 @@ async def run(
         detail = f"命令退出码 {completed.returncode}"
         if output:
             detail += f"\n{output}"
+        detail += _container_recovery_hint(command_text)
         return {"success": False, "error": detail, "internal_metadata": metadata}
 
     cards = await _send_inspect_status_cards(
@@ -307,6 +310,20 @@ def _chat_target(chat_context: dict[str, Any] | None) -> tuple[str, str]:
     if chat_type not in {"group", "private"}:
         return "", ""
     return chat_type, str(context.get("chat_id") or context.get("group_id") or "").strip()
+
+
+def _container_recovery_hint(command: str) -> str:
+    text = command.lower()
+    if not any(token in text for token in ("docker", "minecraft", "systemctl")):
+        return ""
+    return (
+        "\n容器排障请继续使用受支持命令，不要在 Sirius 容器中使用 systemctl 或宿主机 /var/log："
+        "\n1. docker ps -a"
+        "\n2. docker inspect <容器名称>"
+        "\n3. docker logs --tail 200 <容器名称>"
+        "\n4. docker exec <容器名称> tail -n 200 /data/logs/latest.log"
+        "\n5. docker exec <容器名称> ls -lt /data/crash-reports"
+    )
 
 
 def _safe_environment() -> dict[str, str]:

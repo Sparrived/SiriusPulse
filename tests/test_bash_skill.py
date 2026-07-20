@@ -27,14 +27,14 @@ class _Store:
 
 
 def _fake_bash(
-    monkeypatch, stdout: bytes = b"ok\n", stderr: bytes = b""
+    monkeypatch, stdout: bytes = b"ok\n", stderr: bytes = b"", returncode: int = 0
 ) -> dict[str, object]:
     calls: dict[str, object] = {}
 
     def fake_run(args, **kwargs):
         calls["args"] = args
         calls.update(kwargs)
-        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
 
     monkeypatch.setattr(bash, "_find_bash", lambda: "bash")
     monkeypatch.setattr(bash.subprocess, "run", fake_run)
@@ -173,3 +173,15 @@ def test_bash_preserves_an_invalid_status_marker_as_regular_output():
     assert output == raw.decode("utf-8")
     assert statuses == []
     assert truncated is False
+
+
+@pytest.mark.asyncio
+async def test_bash_container_failures_provide_a_recovery_command_sequence(monkeypatch, tmp_path: Path):
+    _fake_bash(monkeypatch, stdout=b"systemctl unavailable\n", returncode=1)
+
+    result = await bash.run("systemctl list-units | grep minecraft", data_store=_Store(tmp_path))
+
+    assert result["success"] is False
+    assert "docker ps -a" in result["error"]
+    assert "docker logs --tail 200 <容器名称>" in result["error"]
+    assert "/data/logs/latest.log" in result["error"]

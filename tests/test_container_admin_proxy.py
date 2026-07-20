@@ -130,6 +130,29 @@ def test_proxy_lists_all_host_containers(tmp_path, monkeypatch):
     }
 
 
+def test_proxy_passes_a_valid_container_name_filter_to_docker(tmp_path, monkeypatch):
+    module, proxy = _proxy(tmp_path)
+    seen = {}
+
+    def fake_run(arguments, config):
+        seen["arguments"] = arguments
+        return "minecraft\tUp 1 hour\tminecraft-server-minecraft"
+
+    monkeypatch.setattr(proxy, "_run_docker", fake_run)
+
+    result = proxy.handle({"action": "list", "name_filter": "minecraft"})
+
+    assert result["success"] is True
+    assert seen["arguments"] == [
+        "ps",
+        "-a",
+        "--filter",
+        "name=minecraft",
+        "--format",
+        "{{.Names}}\t{{.Status}}\t{{.Image}}",
+    ]
+
+
 def test_proxy_inspect_keeps_diagnostics_and_returns_status_card_fields(tmp_path, monkeypatch):
     module, proxy = _proxy(tmp_path)
     seen = []

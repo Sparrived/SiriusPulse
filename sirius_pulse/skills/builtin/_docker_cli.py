@@ -116,12 +116,31 @@ def format_inspect_status_marker(status: dict[str, Any]) -> str:
 
 def _parse_ps(args: list[str]) -> dict[str, Any]:
     all_containers = False
-    for arg in args:
+    name_filter = ""
+    position = 0
+    while position < len(args):
+        arg = args[position]
         if arg in {"-a", "--all"}:
             all_containers = True
-            continue
-        raise DockerCommandError(f"docker ps 不支持参数: {arg}；只允许 -a 或 --all")
-    return {"action": "list", "container": "", "tail_lines": 100, "all": all_containers}
+        elif arg == "--filter":
+            position += 1
+            if position >= len(args):
+                raise DockerCommandError("docker ps 的 --filter 缺少 name=<容器名称>")
+            name_filter = _validated_name_filter(args[position], name_filter)
+        elif arg.startswith("--filter="):
+            name_filter = _validated_name_filter(arg.split("=", 1)[1], name_filter)
+        else:
+            raise DockerCommandError(
+                f"docker ps 不支持参数: {arg}；只允许 -a、--all 或 --filter name=<容器名称>"
+            )
+        position += 1
+    return {
+        "action": "list",
+        "container": "",
+        "tail_lines": 100,
+        "all": all_containers,
+        "name_filter": name_filter,
+    }
 
 
 def _parse_single_container(command: str, args: list[str]) -> dict[str, Any]:
@@ -178,6 +197,15 @@ def _validated_container(value: str) -> str:
     if not _CONTAINER_NAME.fullmatch(container):
         raise DockerCommandError("容器名称无效")
     return container
+
+
+def _validated_name_filter(value: str, existing: str) -> str:
+    if existing:
+        raise DockerCommandError("docker ps 只允许一个 name 过滤条件")
+    text = str(value or "").strip()
+    if not text.startswith("name="):
+        raise DockerCommandError("docker ps 仅支持 --filter name=<容器名称>")
+    return _validated_container(text.split("=", 1)[1])
 
 
 def _validated_tail(value: str) -> int:

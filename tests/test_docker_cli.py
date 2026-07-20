@@ -10,11 +10,33 @@ from sirius_pulse.skills.builtin import _docker_cli
     [
         (
             ["ps"],
-            {"action": "list", "container": "", "tail_lines": 100, "all": False},
+            {
+                "action": "list",
+                "container": "",
+                "tail_lines": 100,
+                "all": False,
+                "name_filter": "",
+            },
         ),
         (
             ["container", "ls", "--all"],
-            {"action": "list", "container": "", "tail_lines": 100, "all": True},
+            {
+                "action": "list",
+                "container": "",
+                "tail_lines": 100,
+                "all": True,
+                "name_filter": "",
+            },
+        ),
+        (
+            ["ps", "-a", "--filter", "name=minecraft"],
+            {
+                "action": "list",
+                "container": "",
+                "tail_lines": 100,
+                "all": True,
+                "name_filter": "minecraft",
+            },
         ),
         (
             ["inspect", "minecraft"],

@@ -56,7 +56,11 @@ class ContainerAdminProxy:
             if action == "list":
                 if target:
                     raise ProxyError("list 操作不能指定 container")
-                return self._list_containers(config, all_containers=payload.get("all") is not False)
+                return self._list_containers(
+                    config,
+                    all_containers=payload.get("all") is not False,
+                    name_filter=self._name_filter(payload.get("name_filter")),
+                )
             if not _CONTAINER_NAME.fullmatch(target):
                 raise ProxyError("无效的容器名称")
 
@@ -102,6 +106,14 @@ class ContainerAdminProxy:
 
     def _tail_lines(self, value: Any, maximum: int) -> int:
         return self._bounded_int(value, 1, maximum)
+
+    @staticmethod
+    def _name_filter(value: Any) -> str:
+        if value is None or value == "":
+            return ""
+        if not isinstance(value, str) or not _CONTAINER_NAME.fullmatch(value):
+            raise ProxyError("无效的容器名称过滤条件")
+        return value
 
     def _readonly_exec_command(self, value: Any, *, maximum_lines: int) -> list[str]:
         if not isinstance(value, list) or len(value) < 2 or not all(isinstance(item, str) for item in value):
@@ -175,11 +187,13 @@ class ContainerAdminProxy:
         return paths
 
     def _list_containers(
-        self, config: dict[str, Any], *, all_containers: bool
+        self, config: dict[str, Any], *, all_containers: bool, name_filter: str
     ) -> dict[str, Any]:
         arguments = ["ps"]
         if all_containers:
             arguments.append("-a")
+        if name_filter:
+            arguments.extend(["--filter", f"name={name_filter}"])
         arguments.extend(["--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"])
         output = self._run_docker(arguments, config)
         containers = []
