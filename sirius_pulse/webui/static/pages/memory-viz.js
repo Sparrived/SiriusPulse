@@ -508,14 +508,15 @@ function updateCreateButton() {
 
 let dedupePollTimer = null;
 let dedupeStatus = { status: 'idle' };
+let dedupeModal = null;
 
-function closeDedupeModal() { if (dedupePollTimer) clearInterval(dedupePollTimer); dedupePollTimer = null; document.getElementById('memoryDedupeModal')?.remove(); }
+function closeDedupeModal() { if (dedupePollTimer) clearInterval(dedupePollTimer); dedupePollTimer = null; dedupeModal?.remove(); dedupeModal = null; }
 async function openDedupeModal() {
-  closeDedupeModal(); const overlay = document.createElement('div'); overlay.id = 'memoryDedupeModal'; overlay.className = 'modal-overlay';
+  closeDedupeModal(); const overlay = document.createElement('div'); dedupeModal = overlay; overlay.id = 'memoryDedupeModal'; overlay.className = 'modal-overlay';
   overlay.innerHTML = '<div class="modal"><div class="modal-header">重复记忆扫描</div><div class="modal-body" id="memoryDedupeBody"></div><div class="modal-footer" id="memoryDedupeFooter"></div></div>'; document.body.appendChild(overlay);
   dedupeStatus = await get('/persona/memory-units/dedupe/status'); renderDedupeStatus(); if (['queued', 'scanning', 'applying'].includes(dedupeStatus.status)) startDedupePolling();
 }
-function startDedupePolling() { if (dedupePollTimer) clearInterval(dedupePollTimer); dedupePollTimer = setInterval(pollDedupeStatus, 1000); }
+function startDedupePolling() { if (dedupePollTimer) clearInterval(dedupePollTimer); dedupePollTimer = scopedPage.interval(pollDedupeStatus, 1000); }
 async function pollDedupeStatus() { dedupeStatus = await get('/persona/memory-units/dedupe/status'); if (['ready', 'completed', 'stale', 'failed'].includes(dedupeStatus.status)) { clearInterval(dedupePollTimer); dedupePollTimer = null; } renderDedupeStatus(); if (dedupeStatus.status === 'completed') await loadActiveTab({ force: true }); }
 function renderDedupeStatus() {
   const body = $('memoryDedupeBody'); const footer = $('memoryDedupeFooter'); if (!body || !footer) return;

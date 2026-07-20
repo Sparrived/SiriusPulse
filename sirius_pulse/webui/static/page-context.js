@@ -11,6 +11,14 @@ function emitLoadingEvent(type) {
   window.dispatchEvent(new CustomEvent(type));
 }
 
+const INERT_ELEMENT = new Proxy(() => {}, {
+  get(_target, property) {
+    return property === 'then' ? undefined : INERT_ELEMENT;
+  },
+  set: () => true,
+  apply: () => undefined,
+});
+
 export function createPageContext({ container, signal, fetchImpl = globalThis.fetch } = {}) {
   const cleanups = new Set();
 
@@ -122,7 +130,7 @@ export function createScopedPage() {
 
     $(id) {
       if (ctx) {
-        if (!isActive()) return null;
+        if (!isActive()) return INERT_ELEMENT;
         return ctx.$(id);
       }
       if (!container) return null;

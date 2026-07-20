@@ -1,11 +1,12 @@
 const API = '/api';
-let authToken = localStorage.getItem('sirius_token') || '';
+const tokenStorage = globalThis.localStorage;
+let authToken = tokenStorage?.getItem('sirius_token') || '';
 let activeRequests = 0;
 let loadingIndicator = null;
 let loadingEventsBound = false;
 
-export function setToken(t) { authToken = t; localStorage.setItem('sirius_token', t); }
-export function clearToken() { authToken = ''; localStorage.removeItem('sirius_token'); }
+export function setToken(t) { authToken = t; tokenStorage?.setItem('sirius_token', t); }
+export function clearToken() { authToken = ''; tokenStorage?.removeItem('sirius_token'); }
 export function getToken() { return authToken; }
 
 function authHeaders() {

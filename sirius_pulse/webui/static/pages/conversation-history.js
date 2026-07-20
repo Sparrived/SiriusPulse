@@ -372,7 +372,7 @@ function normalizeChainContent(content) {
       .map(part => part.text || '')
       .join('');
   }
-  return content || '';
+  return typeof content === 'string' ? content : String(content || '');
 }
 
 function truncate(str, max = 500) {
@@ -730,11 +730,43 @@ const CHAIN_ROLE_STYLES = {
   system:    { color: '#9e9e9e', label: 'SYSTEM', bg: '#9e9e9e08' },
   user:      { color: 'var(--accent)', label: 'USER', bg: 'var(--accent)08' },
   assistant: { color: 'var(--success)', label: 'ASSISTANT', bg: 'var(--success)08' },
+  tool:      { color: '#ff9800', label: 'TOOL', bg: '#ff980008' },
 };
+
+function getToolCalls(message) {
+  return Array.isArray(message?.tool_calls)
+    ? message.tool_calls.filter(call => call && typeof call === 'object')
+    : [];
+}
+
+function getToolName(toolCall) {
+  return String(toolCall?.function?.name || toolCall?.name || 'unknown');
+}
+
+function formatToolPayload(payload) {
+  if (typeof payload === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(payload), null, 2);
+    } catch {
+      return payload || '{}';
+    }
+  }
+  try {
+    return JSON.stringify(payload ?? {}, null, 2);
+  } catch {
+    return String(payload || '');
+  }
+}
+
+function chainMessageLength(message) {
+  return normalizeChainContent(message?.content).length + getToolCalls(message)
+    .reduce((total, call) => total + getToolName(call).length
+      + formatToolPayload(call.function?.arguments ?? call.arguments).length, 0);
+}
 
 function renderConversationChainToggle(chainMsgId, chain, entryId = '', messageIndex = 0, isOpen = false, parentMessage = null) {
   const msgCount = chain.length;
-  const totalChars = chain.reduce((sum, m) => sum + (m.content || '').length, 0);
+  const totalChars = chain.reduce((sum, message) => sum + chainMessageLength(message), 0);
   const totalTokens = Math.ceil(totalChars / 2);
 
   const displayStyle = isOpen ? 'display:block' : 'display:none';
@@ -768,6 +800,13 @@ function renderConversationChainToggle(chainMsgId, chain, entryId = '', messageI
 }
 
 function renderChainMessages(chain, parentMessage = null) {
+  const toolNamesById = new Map();
+  chain.forEach(message => {
+    getToolCalls(message).forEach(call => {
+      if (call.id) toolNamesById.set(call.id, getToolName(call));
+    });
+  });
+
   return chain.map((msg, idx) => {
     const role = msg.role || 'unknown';
     const style = CHAIN_ROLE_STYLES[role] || CHAIN_ROLE_STYLES.system;
@@ -785,6 +824,21 @@ function renderChainMessages(chain, parentMessage = null) {
       return renderChainUserMessage(content, style, idx, parentMessage);
     }
 
+    if (role === 'tool') {
+      return renderChainToolResultMessage(
+        content,
+        style,
+        idx,
+        toolNamesById.get(msg.tool_call_id),
+        msg.tool_call_id,
+      );
+    }
+
+    const toolCalls = getToolCalls(msg);
+    if (toolCalls.length) {
+      return renderChainToolCallMessage(content, toolCalls, style, idx);
+    }
+
     // assistant 消息：直接展示
     return `
       <div style="border-bottom:1px solid var(--border);background:${style.bg}">
@@ -796,6 +850,50 @@ function renderChainMessages(chain, parentMessage = null) {
       </div>
     `;
   }).join('');
+}
+
+function renderChainToolCallMessage(content, toolCalls, style, idx) {
+  const callsHtml = toolCalls.map(toolCall => {
+    const name = getToolName(toolCall);
+    const argumentsText = formatToolPayload(toolCall.function?.arguments ?? toolCall.arguments);
+    const callId = String(toolCall.id || '');
+    return `
+      <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+          <span style="font-size:11px;font-weight:600;color:${style.color}">${escapeHtml(name)}</span>
+          ${callId ? `<span style="font-size:10px;color:var(--text-3);margin-left:auto">${escapeHtml(callId)}</span>` : ''}
+        </div>
+        <pre style="margin:0;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;font-family:monospace">${escapeHtml(argumentsText)}</pre>
+      </div>
+    `;
+  }).join('');
+  const textHtml = content
+    ? `<div style="padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;font-family:monospace">${escapeHtml(content)}</div>`
+    : '';
+
+  return `
+    <div style="border-bottom:1px solid var(--border);background:${style.bg}">
+      <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
+        <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} 工具调用</span>
+        <span style="font-size:10px;color:var(--text-3);margin-left:auto">${toolCalls.length} 个调用</span>
+      </div>
+      ${textHtml}
+      ${callsHtml}
+    </div>
+  `;
+}
+
+function renderChainToolResultMessage(content, style, idx, toolName = '', callId = '') {
+  const label = toolName ? `工具调用结果 · ${toolName}` : '工具调用结果';
+  return `
+    <div style="border-bottom:1px solid var(--border);background:${style.bg}">
+      <div style="padding:6px 12px;display:flex;align-items:center;gap:6px;background:${style.color}11">
+        <span style="font-size:11px;font-weight:600;color:${style.color}">#${idx + 1} ${escapeHtml(label)}</span>
+        ${callId ? `<span style="font-size:10px;color:var(--text-3);margin-left:auto">${escapeHtml(callId)}</span>` : ''}
+      </div>
+      <pre style="margin:0;padding:8px 12px;font-size:11px;color:var(--text-2);line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;font-family:monospace">${escapeHtml(content || '（无返回内容）')}</pre>
+    </div>
+  `;
 }
 
 const SPEAKER_COLORS = [

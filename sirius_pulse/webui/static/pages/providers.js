@@ -674,7 +674,7 @@ function setProviderSaveStatus(text) {
 function scheduleSaveAll() {
   if (saveTimer) clearTimeout(saveTimer);
   setProviderSaveStatus('等待自动保存…');
-  saveTimer = setTimeout(saveAll, 800);
+  saveTimer = scopedPage.timeout(saveAll, 800);
 }
 
 async function saveAll() {
