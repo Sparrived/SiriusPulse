@@ -14,9 +14,15 @@ fi
 git pull --ff-only origin master
 git submodule update --init --recursive
 docker compose config -q
-unset SIRIUS_PLAYWRIGHT_CACHE_IMAGE
+export SIRIUS_ENV_CACHE_KEY="$(sha256sum Dockerfile | awk '{print $1}')"
+unset SIRIUS_ENV_CACHE_IMAGE
 if docker image inspect sirius-pulse:latest >/dev/null 2>&1; then
-  export SIRIUS_PLAYWRIGHT_CACHE_IMAGE=sirius-pulse:latest
+  current_environment_key="$(docker image inspect --format '{{ index .Config.Labels \"org.sirius-pulse.environment-cache-key\" }}' sirius-pulse:latest)"
+  current_lock_hash="$(docker run --rm --entrypoint sha256sum sirius-pulse:latest /app/uv.lock 2>/dev/null | awk '{print $1}' || true)"
+  if [[ ( -z "$current_environment_key" || "$current_environment_key" == "<no value>" || "$current_environment_key" == "$SIRIUS_ENV_CACHE_KEY" ) \
+    && "$(sha256sum uv.lock | awk '{print $1}')" == "$current_lock_hash" ]]; then
+    export SIRIUS_ENV_CACHE_IMAGE=sirius-pulse:latest
+  fi
 fi
 docker compose up -d --build --force-recreate --remove-orphans
 

@@ -4,15 +4,13 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_dockerfile_caches_chromium_before_application_source():
+def test_dockerfile_reuses_the_complete_environment_before_application_source():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert "FROM ${SIRIUS_PLAYWRIGHT_CACHE_IMAGE} AS playwright-cache" in dockerfile
-    assert dockerfile.index("playwright install-deps chromium") < dockerfile.index(
-        "COPY --from=playwright-cache /ms-playwright /ms-playwright"
-    )
-    assert dockerfile.index("playwright install chromium") < dockerfile.index(
-        "COPY sirius_pulse"
+    assert "FROM python:3.12-slim AS environment" in dockerfile
+    assert "FROM ${SIRIUS_ENV_CACHE_IMAGE} AS runtime" in dockerfile
+    assert dockerfile.index("playwright install --with-deps chromium") < dockerfile.index(
+        "sirius_pulse ./sirius_pulse"
     )
 
 
@@ -21,7 +19,8 @@ def test_update_script_refuses_to_replace_an_unmigrated_container_data_directory
 
     assert "docker container inspect sirius-pulse-v2-test" in script
     assert "docker image inspect sirius-pulse:latest" in script
-    assert "export SIRIUS_PLAYWRIGHT_CACHE_IMAGE=sirius-pulse:latest" in script
+    assert "export SIRIUS_ENV_CACHE_KEY=" in script
+    assert "export SIRIUS_ENV_CACHE_IMAGE=sirius-pulse:latest" in script
     assert "exit 2" in script
     assert script.index("docker compose config -q") < script.index("docker compose up -d")
 
