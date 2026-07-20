@@ -12,6 +12,9 @@ def test_dockerfile_reuses_the_complete_environment_before_application_source():
     assert dockerfile.index("playwright install --with-deps chromium") < dockerfile.index(
         "sirius_pulse ./sirius_pulse"
     )
+    assert dockerfile.index("rm -rf /app/sirius_pulse /app/sirius_pulse.egg-info") < dockerfile.index(
+        "sirius_pulse ./sirius_pulse"
+    )
 
 
 def test_update_script_refuses_to_replace_an_unmigrated_container_data_directory():
