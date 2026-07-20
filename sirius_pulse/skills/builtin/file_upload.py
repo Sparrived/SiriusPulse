@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from pathlib import Path
 from typing import Any
@@ -121,9 +122,10 @@ async def _send_image(
             except Exception as exc:
                 LOG.warning("远程图片缓存失败，直接使用原始 URL: %s | %s", exc, image_path[:80])
 
-    image_path = _to_image_uri(image_path)
+    display_path = image_path
+    image_reference = _to_image_reference(image_path)
 
-    message = [{"type": "image", "data": {"file": image_path}}]
+    message = [{"type": "image", "data": {"file": image_reference}}]
     try:
         if target_type == "group":
             result = await adapter.send_group_msg(target_id, message)
@@ -134,7 +136,7 @@ async def _send_image(
         return {
             "success": True,
             "summary": f"图片已发送到 {target_type} {target_id}",
-            "text_blocks": [f"图片发送成功: {image_path}"],
+            "text_blocks": [f"图片发送成功: {display_path}"],
             "internal_metadata": {
                 "target_type": target_type,
                 "target_id": target_id,
@@ -255,9 +257,12 @@ def _private_target_id(value: str) -> str:
     return target_id
 
 
-def _to_image_uri(image_path: str) -> str:
-    """Give NapCat an explicit URI when the image is a local file."""
-    if image_path.startswith(("http://", "https://", "file://", "data:")):
+def _to_image_reference(image_path: str) -> str:
+    """Encode local images so NapCat need not access this container's filesystem."""
+    if image_path.startswith(("http://", "https://", "data:", "base64://")):
         return image_path
-    path = Path(image_path).expanduser()
-    return path.resolve().as_uri() if path.is_file() else image_path
+    path = Path(image_path.removeprefix("file://")).expanduser()
+    if not path.is_file():
+        return image_path
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"base64://{encoded}"

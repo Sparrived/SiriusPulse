@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -199,7 +200,14 @@ async def test_inspect_sends_a_local_card_through_the_real_executor(monkeypatch,
     assert adapter.calls == [
         (
             "9001",
-            [{"type": "image", "data": {"file": card_path.resolve().as_uri()}}],
+            [
+                {
+                    "type": "image",
+                    "data": {
+                        "file": f"base64://{base64.b64encode(card_path.read_bytes()).decode('ascii')}"
+                    },
+                }
+            ],
         )
     ]
 

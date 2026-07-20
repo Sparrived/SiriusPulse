@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +117,38 @@ async def test_file_upload_sends_image_and_uploads_file(tmp_path: Path):
     assert file_result["success"] is True
     assert file_result["internal_metadata"]["file_upload_action"] == "file"
     assert [call[0] for call in adapter.calls] == ["send_group_msg", "upload_group_file"]
+
+
+@pytest.mark.asyncio
+async def test_file_upload_encodes_local_images_for_napcat(tmp_path: Path):
+    adapter = _Adapter()
+    image_path = tmp_path / "container_status.png"
+    image_path.write_bytes(b"image-bytes")
+
+    result = await file_upload.run(
+        action="image",
+        image_path=str(image_path),
+        bridge=adapter,
+        chat_context={"chat_type": "group", "chat_id": "9001"},
+    )
+
+    assert result["success"] is True
+    assert adapter.calls == [
+        (
+            "send_group_msg",
+            (
+                "9001",
+                [
+                    {
+                        "type": "image",
+                        "data": {
+                            "file": f"base64://{base64.b64encode(b'image-bytes').decode('ascii')}"
+                        },
+                    }
+                ],
+            ),
+        )
+    ]
 
 
 @pytest.mark.asyncio
