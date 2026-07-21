@@ -65,7 +65,7 @@ SKILL_META = {
     "description": (
         "在容器中启动 Bash，用于文件处理、系统状态查询和自动化。"
         "支持标准 Bash 语法与容器内任意工作目录，也支持受控的原生 Docker 命令："
-        "docker ps、inspect、logs、stats、top、port、start、stop、restart。Docker 删除、清理、重建及镜像、卷、网络、exec 操作会被拒绝；"
+        "docker ps（支持 --format 容器列表字段）、inspect、logs、stats、top、port、start、stop、restart。Docker 删除、清理、重建及镜像、卷、网络、exec 操作会被拒绝；"
         "读取 Minecraft 崩溃报告时可使用 docker exec <容器> 的只读 ls、cat、head、tail、grep、find 命令访问 /data；"
         "容器或 Minecraft 故障请依次执行 docker ps -a、docker inspect <容器>、docker logs --tail 200 <容器>，"
         "再读取 /data/logs/latest.log 或 /data/crash-reports；Bash 不在宿主机，不能使用 systemctl 或宿主机 /var/log；"

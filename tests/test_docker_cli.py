@@ -39,6 +39,17 @@ from sirius_pulse.skills.builtin import _docker_cli
             },
         ),
         (
+            ["ps", "-a", "--filter", "name=mc", "--format", "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"],
+            {
+                "action": "list",
+                "container": "",
+                "tail_lines": 100,
+                "all": True,
+                "name_filters": ["mc"],
+                "format": "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}",
+            },
+        ),
+        (
             ["inspect", "minecraft"],
             {"action": "inspect", "container": "minecraft", "tail_lines": 100},
         ),
@@ -93,7 +104,7 @@ def test_docker_cli_rejects_destructive_or_unbounded_commands(arguments):
         ["logs", "--tail", "0", "nginx"],
         ["logs", "--follow", "nginx"],
         ["start", "nginx", "postgres"],
-        ["ps", "--format", "{{.ID}}"],
+        ["ps", "--format", "{{json .}}"],
         ["inspect", "../../host"],
     ],
 )

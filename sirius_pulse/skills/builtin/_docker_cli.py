@@ -12,7 +12,7 @@ from typing import Any, Sequence
 
 _SOCKET_PATH = "/run/sirius-container-admin.sock"
 _REQUEST_TIMEOUT = 15.0
-_MAX_RESPONSE_BYTES = 50_000
+_MAX_RESPONSE_BYTES = 256_000
 _MAX_LOG_LINES = 200
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _ALLOWED_COMMANDS = "ps、inspect、logs、stats、top、port、start、stop、restart，以及只读 exec 日志查询"
@@ -123,6 +123,7 @@ def format_inspect_status_marker(status: dict[str, Any]) -> str:
 def _parse_ps(args: list[str]) -> dict[str, Any]:
     all_containers = False
     name_filters: list[str] = []
+    list_format = ""
     position = 0
     while position < len(args):
         arg = args[position]
@@ -135,18 +136,28 @@ def _parse_ps(args: list[str]) -> dict[str, Any]:
             name_filters.append(_validated_name_filter(args[position]))
         elif arg.startswith("--filter="):
             name_filters.append(_validated_name_filter(arg.split("=", 1)[1]))
+        elif arg == "--format":
+            position += 1
+            if position >= len(args):
+                raise DockerCommandError("docker ps 的 --format 缺少格式")
+            list_format = _validated_ps_format(args[position], list_format)
+        elif arg.startswith("--format="):
+            list_format = _validated_ps_format(arg.split("=", 1)[1], list_format)
         else:
             raise DockerCommandError(
-                f"docker ps 不支持参数: {arg}；只允许 -a、--all 或 --filter name=<容器名称>"
+                f"docker ps 不支持参数: {arg}；只允许 -a、--all、--filter name=<容器名称> 或 --format"
             )
         position += 1
-    return {
+    request = {
         "action": "list",
         "container": "",
         "tail_lines": 100,
         "all": all_containers,
         "name_filters": name_filters,
     }
+    if list_format:
+        request["format"] = list_format
+    return request
 
 
 def _parse_single_container(command: str, args: list[str]) -> dict[str, Any]:
@@ -218,6 +229,24 @@ def _validated_name_filter(value: str) -> str:
     if not text.startswith("name="):
         raise DockerCommandError("docker ps 仅支持 --filter name=<容器名称>")
     return _validated_container(text.split("=", 1)[1])
+
+
+def _validated_ps_format(value: str, existing: str) -> str:
+    if existing:
+        raise DockerCommandError("docker ps 只允许一个 --format")
+    text = str(value or "").strip()
+    if not text or len(text) > 400:
+        raise DockerCommandError("docker ps 的 --format 无效")
+    allowed_fields = "ID|Image|CreatedAt|RunningFor|Ports|Status|Size|Names|Mounts|Networks"
+    pattern = re.compile(r"{{\s*\.?(?:" + allowed_fields + r")\s*}}")
+    position = 0
+    for match in pattern.finditer(text):
+        if "{{" in text[position : match.start()] or "}}" in text[position : match.start()]:
+            raise DockerCommandError("docker ps 的 --format 只允许容器列表字段")
+        position = match.end()
+    if position == 0 or "{{" in text[position:] or "}}" in text[position:]:
+        raise DockerCommandError("docker ps 的 --format 只允许容器列表字段")
+    return text
 
 
 def _validated_tail(value: str) -> int:

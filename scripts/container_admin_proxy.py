@@ -32,6 +32,9 @@ _ACTIONS = {
 }
 _MUTATIONS = {"start", "stop", "restart"}
 _CONTAINER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_PS_FORMAT_TOKEN = re.compile(
+    r"{{\s*\.?(?:ID|Image|CreatedAt|RunningFor|Ports|Status|Size|Names|Mounts|Networks)\s*}}"
+)
 _READONLY_EXEC_TOOLS = {"ls", "cat", "head", "tail", "grep", "find"}
 _DATA_ROOT = PurePosixPath("/data")
 _MAX_REQUEST_BYTES = 4096
@@ -71,6 +74,7 @@ class ContainerAdminProxy:
                     config,
                     all_containers=payload.get("all") is not False,
                     name_filters=self._name_filters(payload.get("name_filters")),
+                    list_format=self._ps_format(payload.get("format")),
                 )
             if not _CONTAINER_NAME.fullmatch(target):
                 raise ProxyError("无效的容器名称")
@@ -128,6 +132,21 @@ class ContainerAdminProxy:
             raise ProxyError("容器名称过滤条件无效")
         if not all(isinstance(item, str) and _CONTAINER_NAME.fullmatch(item) for item in value):
             raise ProxyError("无效的容器名称过滤条件")
+        return value
+
+    @staticmethod
+    def _ps_format(value: Any) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str) or not value or len(value) > 400:
+            raise ProxyError("docker ps 格式无效")
+        position = 0
+        for match in _PS_FORMAT_TOKEN.finditer(value):
+            if "{{" in value[position : match.start()] or "}}" in value[position : match.start()]:
+                raise ProxyError("docker ps 格式只允许容器列表字段")
+            position = match.end()
+        if position == 0 or "{{" in value[position:] or "}}" in value[position:]:
+            raise ProxyError("docker ps 格式只允许容器列表字段")
         return value
 
     def _readonly_exec_command(self, value: Any, *, maximum_lines: int) -> list[str]:
@@ -226,13 +245,15 @@ class ContainerAdminProxy:
         return paths
 
     def _list_containers(
-        self, config: dict[str, Any], *, all_containers: bool, name_filters: list[str]
+        self, config: dict[str, Any], *, all_containers: bool, name_filters: list[str], list_format: str
     ) -> dict[str, Any]:
         arguments = ["ps"]
         if all_containers:
             arguments.append("-a")
         for name_filter in name_filters:
             arguments.extend(["--filter", f"name={name_filter}"])
+        if list_format:
+            return {"success": True, "output": self._run_docker([*arguments, "--format", list_format], config)}
         arguments.extend(["--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"])
         output = self._run_docker(arguments, config)
         containers = []

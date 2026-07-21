@@ -195,6 +195,46 @@ def test_proxy_passes_a_valid_container_name_filter_to_docker(tmp_path, monkeypa
     ]
 
 
+def test_proxy_allows_a_safe_custom_container_list_format(tmp_path, monkeypatch):
+    module, proxy = _proxy(tmp_path)
+    seen = {}
+
+    def fake_run(arguments, config):
+        seen["arguments"] = arguments
+        return "NAMES       STATUS      PORTS\nminecraft   Up 1 hour   0.0.0.0:25565->25565/tcp"
+
+    monkeypatch.setattr(proxy, "_run_docker", fake_run)
+
+    result = proxy.handle(
+        {
+            "action": "list",
+            "all": True,
+            "name_filters": ["mc"],
+            "format": "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}",
+        }
+    )
+
+    assert result["success"] is True
+    assert result["output"].startswith("NAMES")
+    assert seen["arguments"] == [
+        "ps",
+        "-a",
+        "--filter",
+        "name=mc",
+        "--format",
+        "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}",
+    ]
+
+
+def test_proxy_rejects_unsafe_container_list_format(tmp_path, monkeypatch):
+    module, proxy = _proxy(tmp_path)
+    monkeypatch.setattr(proxy, "_run_docker", lambda *_: (_ for _ in ()).throw(AssertionError()))
+
+    result = proxy.handle({"action": "list", "format": "{{json .}}"})
+
+    assert result == {"success": False, "error": "docker ps 格式只允许容器列表字段"}
+
+
 def test_proxy_inspect_keeps_diagnostics_and_returns_status_card_fields(tmp_path, monkeypatch):
     module, proxy = _proxy(tmp_path)
     seen = []
