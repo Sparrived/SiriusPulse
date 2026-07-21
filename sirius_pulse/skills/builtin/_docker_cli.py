@@ -106,11 +106,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
         if not output and request.get("action") == "list":
             output = "未找到匹配容器；请执行 docker ps -a 查看全部容器。"
-    if output:
-        print(output)
-    status = response.get("status")
-    if request.get("action") == "inspect" and isinstance(status, dict):
-        print(format_inspect_status_marker(status), file=sys.stderr)
+    try:
+        if output:
+            print(output)
+        status = response.get("status")
+        if request.get("action") == "inspect" and isinstance(status, dict):
+            print(format_inspect_status_marker(status), file=sys.stderr)
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except BrokenPipeError:
+            pass
     return 0
 
 

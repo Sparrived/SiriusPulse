@@ -131,6 +131,28 @@ def test_docker_cli_prints_proxy_output(monkeypatch, capsys):
     assert capsys.readouterr().out == "nginx\tUp 1 hour\tnginx:latest\n"
 
 
+def test_docker_cli_treats_a_closed_output_pipe_as_success(monkeypatch):
+    class ClosedPipe:
+        closed = False
+
+        def write(self, value):
+            raise BrokenPipeError
+
+        def close(self):
+            self.closed = True
+
+    pipe = ClosedPipe()
+    monkeypatch.setattr(
+        _docker_cli,
+        "request_host_proxy",
+        lambda request: {"success": True, "output": "crash report"},
+    )
+    monkeypatch.setattr(_docker_cli.sys, "stdout", pipe)
+
+    assert _docker_cli.main(["ps"]) == 0
+    assert pipe.closed is True
+
+
 def test_docker_cli_emits_inspect_status_as_an_internal_marker(monkeypatch, capsys):
     status = {"name": "nginx", "status": "running"}
     monkeypatch.setattr(
