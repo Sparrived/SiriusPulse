@@ -172,7 +172,7 @@ def test_proxy_lists_all_host_containers(tmp_path, monkeypatch):
     }
 
 
-def test_proxy_passes_a_valid_container_name_filter_to_docker(tmp_path, monkeypatch):
+def test_proxy_matches_a_partial_container_name_without_passing_it_to_docker(tmp_path, monkeypatch):
     module, proxy = _proxy(tmp_path)
     seen = {}
 
@@ -182,14 +182,12 @@ def test_proxy_passes_a_valid_container_name_filter_to_docker(tmp_path, monkeypa
 
     monkeypatch.setattr(proxy, "_run_docker", fake_run)
 
-    result = proxy.handle({"action": "list", "name_filters": ["minecraft"]})
+    result = proxy.handle({"action": "list", "name_filters": ["mc"]})
 
     assert result["success"] is True
     assert seen["arguments"] == [
         "ps",
         "-a",
-        "--filter",
-        "name=minecraft",
         "--format",
         "{{.Names}}\t{{.Status}}\t{{.Image}}",
     ]
@@ -200,7 +198,9 @@ def test_proxy_allows_a_safe_custom_container_list_format(tmp_path, monkeypatch)
     seen = {}
 
     def fake_run(arguments, config):
-        seen["arguments"] = arguments
+        seen.setdefault("arguments", []).append(arguments)
+        if "{{.Image}}" in arguments[-1]:
+            return "minecraft\tUp 1 hour\tminecraft-server-minecraft"
         return "NAMES       STATUS      PORTS\nminecraft   Up 1 hour   0.0.0.0:25565->25565/tcp"
 
     monkeypatch.setattr(proxy, "_run_docker", fake_run)
@@ -217,12 +217,15 @@ def test_proxy_allows_a_safe_custom_container_list_format(tmp_path, monkeypatch)
     assert result["success"] is True
     assert result["output"].startswith("NAMES")
     assert seen["arguments"] == [
-        "ps",
-        "-a",
-        "--filter",
-        "name=mc",
-        "--format",
-        "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}",
+        ["ps", "-a", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"],
+        [
+            "ps",
+            "-a",
+            "--filter",
+            "name=minecraft",
+            "--format",
+            "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}",
+        ],
     ]
 
 

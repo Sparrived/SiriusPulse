@@ -250,17 +250,48 @@ class ContainerAdminProxy:
         arguments = ["ps"]
         if all_containers:
             arguments.append("-a")
-        for name_filter in name_filters:
-            arguments.extend(["--filter", f"name={name_filter}"])
         if list_format:
-            return {"success": True, "output": self._run_docker([*arguments, "--format", list_format], config)}
-        arguments.extend(["--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"])
-        output = self._run_docker(arguments, config)
+            if not name_filters:
+                return {"success": True, "output": self._run_docker([*arguments, "--format", list_format], config)}
+            containers = self._listed_containers(arguments, config, name_filters)
+            return {"success": True, "output": self._format_containers(arguments, containers, list_format, config)}
+        return {"success": True, "containers": self._listed_containers(arguments, config, name_filters)}
+
+    def _listed_containers(
+        self, arguments: list[str], config: dict[str, Any], name_filters: list[str]
+    ) -> list[dict[str, str]]:
+        output = self._run_docker(
+            [*arguments, "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"], config
+        )
         containers = []
         for line in output.splitlines():
             name, status_text, image = (line.split("\t", 2) + ["", "", ""])[:3]
-            containers.append({"name": name, "status": status_text, "image": image})
-        return {"success": True, "containers": containers}
+            if not name_filters or any(self._matches_name(name, value) for value in name_filters):
+                containers.append({"name": name, "status": status_text, "image": image})
+        return containers
+
+    @staticmethod
+    def _matches_name(name: str, value: str) -> bool:
+        query = value.lower()
+        candidate = name.lower()
+        characters = iter(candidate)
+        return query in candidate or all(character in characters for character in query)
+
+    def _format_containers(
+        self, arguments: list[str], containers: list[dict[str, str]], list_format: str, config: dict[str, Any]
+    ) -> str:
+        if not containers:
+            return "未找到匹配容器；请执行 docker ps -a 查看全部容器。"
+        outputs: list[str] = []
+        for index, container in enumerate(containers):
+            output = self._run_docker(
+                [*arguments, "--filter", f"name={container['name']}", "--format", list_format], config
+            )
+            if index and list_format.startswith("table "):
+                output = output.partition("\n")[2]
+            if output:
+                outputs.append(output)
+        return "\n".join(outputs)
 
     def _inspect_container(self, target: str, config: dict[str, Any]) -> dict[str, Any]:
         return {
