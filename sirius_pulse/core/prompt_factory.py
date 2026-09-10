@@ -169,11 +169,7 @@ class PromptFactory:
         identity_parts.append("Bash 任务允许并提倡串行调用：先执行一个明确的观察或操作步骤，等待结果后再根据结果调用下一次 Bash。")
 
         # 场景行为指导
-        identity_parts.append(
-            "你在一个多人聊天场景里。你的每条回复会被系统按换行符拆分成多条消息发送。"
-            "发送的所有Markdown内容必须使用```进行包裹，Markdown会被转译为图片发送。"
-            "发送超过一般说话长度的内容，都必须使用```包裹内容，确保最终回复不会刷屏。"
-        )
+        identity_parts.append("你在一个多人聊天场景里。你的每条回复会被系统按换行符拆分成多条消息发送。")
 
         identity_parts.append("角色一致性检查：每次回复前，你都要检查现在是否适合接话，是否保持角色气质，是否需要工具，回复要自然、简洁、贴合群聊氛围。")
 
@@ -205,7 +201,6 @@ class PromptFactory:
         if length_instruction:
             items.append(length_instruction)
         if supports_function_call:
-            items.append("仅在完成当前任务需要外部信息、状态变更或可验证动作时调用 Tool Call；" "聊天氛围本身不是调用理由。工具调用不要写成正文标记。")
             items.append(
                 "Bash 可以连续串行调用：一次只推进一个可验证步骤，先读取工具结果，再决定下一次 Bash。"
                 "对于相互依赖的命令，不要并行堆叠或猜测上一步尚未返回的路径和内容。"
@@ -244,7 +239,7 @@ class PromptFactory:
     ) -> str:
         """Build the single system section for model-emitted interaction markers."""
         items = [
-            "下面的交互标记是系统控制语法，不是要展示给用户的正文。只使用这里定义的 ASCII 格式；不要改成 JSON、XML、函数调用、中文括号、中文冒号、自然语言说明或自创标签。",
+            "下面的交互标记是系统控制语法，不要改成 JSON、XML、函数调用、中文括号、中文冒号、自然语言说明或自创标签。",
             "交互标记必须写在正文最前面，标记与正文之间用空格或换行分隔；不要放进 Markdown 代码块，不要在标记中添加引号、参数名或额外文字。没有对应交互时不要输出标记。",
             "引用回复使用 [REPLY:msg_id]，例如 [REPLY:123]；msg_id 必须是最近消息中真实出现的消息 ID，只在确实针对某条消息时使用，最多使用一个。",
         ]

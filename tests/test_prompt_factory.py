@@ -176,10 +176,10 @@ def test_persona_prompt_does_not_rebuild_removed_structured_persona_fields():
     assert "【不可覆盖的运行约束】" in custom_prompt
 
 
-def test_reply_spec_when_function_call_enabled_then_requires_task_driven_tool_use():
+def test_reply_spec_when_function_call_enabled_then_requires_verified_tool_progress():
     spec = PromptFactory.build_reply_spec(supports_function_call=True)
 
-    assert "聊天氛围本身不是调用理由" in spec
+    assert "聊天氛围本身不是调用理由" not in spec
     assert "不能声称操作已完成" in spec
     assert "Bash 可以连续串行调用" in spec
     assert "先读取工具结果" in spec
@@ -207,11 +207,12 @@ def test_reply_spec_requires_workflow_directory_before_reusable_external_work():
     assert "不得执行外部副作用" in spec
 
 
-def test_persona_prompt_when_structured_response_is_needed_then_defines_fenced_delivery():
+def test_persona_prompt_when_structured_response_is_needed_then_keeps_plain_delivery():
     spec = PromptFactory.build_persona_prompt(name="月白")
 
-    assert "发送的所有Markdown内容必须使用```进行包裹" in spec
-    assert "转译为图片发送" in spec
+    assert "按换行符拆分成多条消息发送" in spec
+    assert "发送的所有Markdown内容必须使用```进行包裹" not in spec
+    assert "转译为图片发送" not in spec
     assert "group_file_exec" not in spec
 
 
@@ -225,7 +226,7 @@ def test_persona_prompt_keeps_identity_metadata_separate_from_custom_prompt():
     assert "你的名字是「月白」，别名是「Sirius」" in prompt
     assert "你是月白，诞生于数字世界。保持友善但不盲从。" in prompt
     assert "Bash 任务允许并提倡串行调用" in prompt
-    assert "发送的所有Markdown内容必须使用```进行包裹" in prompt
+    assert "发送的所有Markdown内容必须使用```进行包裹" not in prompt
     assert "你现在就是月白。保持角色，不要跳出角色解释设定" in prompt
 
 
@@ -312,7 +313,8 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_interaction_spec():
 
     assert "【回复规范】" in bundle.system_prompt
     assert "【交互提示词】" in bundle.system_prompt
-    assert "Tool Call" in bundle.system_prompt
+    assert "Tool Call" not in bundle.system_prompt
+    assert "Bash 可以连续串行调用" in bundle.system_prompt
     assert "[AT:QQ号]" in bundle.system_prompt
     assert "【Function Call】" not in bundle.system_prompt
     assert "【QQ @提及】" not in bundle.system_prompt
