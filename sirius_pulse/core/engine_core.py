@@ -895,10 +895,9 @@ class _EmotionalGroupChatEngineBase:
             "entitlement_score": round(float(getattr(signal, "entitlement_score", 0.0)), 4),
             "turn_gap_readiness": round(float(getattr(signal, "turn_gap_readiness", 0.0)), 4),
         }
-        try:
-            self.basic_store.update_entry(entry)
-        except Exception:
-            logger.debug("Failed to update archived intent scores", exc_info=True)
+        # The archive is append-only. Rewriting a multi-gigabyte JSONL file for
+        # every incoming message can exhaust host memory and I/O; scores remain in
+        # the active window and its bounded state snapshot for WebUI observability.
 
     # ==================================================================
     # 向后兼容的委托方法（委托给 Persistence 组件）
@@ -1240,17 +1239,26 @@ class _EmotionalGroupChatEngineBase:
         record_content = str(content or "").strip()
         if not record_content:
             return
+        request_snapshot = injected_request if isinstance(injected_request, dict) else {}
+        record_system_prompt = system_prompt or str(request_snapshot.get("system_prompt") or "")
+        record_chain = list(conversation_chain or [])
+        if (
+            record_chain
+            and record_chain[0].get("role") == "system"
+            and record_chain[0].get("content") == record_system_prompt
+        ):
+            record_chain.pop(0)
         entry = self.basic_memory.add_entry(
             group_id=group_id,
             user_id="assistant",
             role="assistant",
             content=record_content,
             speaker_name=speaker_name or (self.persona.name if self.persona else "assistant"),
-            system_prompt=system_prompt,
+            system_prompt=record_system_prompt,
             platform_message_id=platform_message_id,
             tags=tags,
-            conversation_chain=conversation_chain,
-            injected_request=injected_request,
+            conversation_chain=record_chain,
+            injected_request=request_snapshot,
             injected_tool_names=injected_tool_names,
             reasoning_content=reasoning_content,
         )

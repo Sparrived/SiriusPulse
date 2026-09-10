@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
+from heapq import heappush, heapreplace
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
 from aiohttp import web
 
+from sirius_pulse.memory.basic.file_lock import archive_file_lock
 from sirius_pulse.memory.units.deduplicator import normalize_summary
 from sirius_pulse.persona_config import PersonaConfigPaths
 from sirius_pulse.webui.persona_manager_api import _is_persona_running
@@ -18,6 +21,7 @@ from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
 _ACTIVE_DEDUPE_STATES = {"queued", "scanning", "ready", "applying"}
+_MAX_RUNTIME_BASIC_MEMORY_BYTES = 64 * 1024 * 1024
 
 
 def _now_iso() -> str:
@@ -102,41 +106,35 @@ def _find_diary_entry(
     return None
 
 
-def _read_tail_lines(path: Path, n: int) -> list[str]:
-    """从文件末尾倒序读取 n 行非空内容，返回倒序列表（最新在前）。"""
-    lines: list[str] = []
+def _iter_tail_lines(path: Path, n: int) -> Iterator[str]:
+    """Yield at most n non-empty JSONL records from newest to oldest."""
     with path.open("rb") as f:
         f.seek(0, 2)
-        file_size = f.tell()
-        if file_size == 0:
-            return lines
-
-        buf = b""
-        pos = file_size
-        chunk_size = 8192
-
-        while pos > 0 and len(lines) < n:
-            read_size = min(chunk_size, pos)
+        pos = f.tell()
+        buffer = b""
+        yielded = 0
+        while pos > 0 and yielded < n:
+            read_size = min(8192, pos)
             pos -= read_size
             f.seek(pos)
-            chunk = f.read(read_size)
-            buf = chunk + buf
-
-            parts = buf.split(b"\n")
-            buf = parts[0]
+            buffer = f.read(read_size) + buffer
+            parts = buffer.split(b"\n")
+            buffer = parts[0]
             for part in reversed(parts[1:]):
                 stripped = part.strip()
                 if stripped:
-                    lines.append(stripped.decode("utf-8", errors="replace"))
-                    if len(lines) >= n:
-                        break
+                    yielded += 1
+                    yield stripped.decode("utf-8", errors="replace")
+                    if yielded >= n:
+                        return
+        stripped = buffer.strip()
+        if stripped and yielded < n:
+            yield stripped.decode("utf-8", errors="replace")
 
-        if buf and len(lines) < n:
-            stripped = buf.strip()
-            if stripped:
-                lines.append(stripped.decode("utf-8", errors="replace"))
 
-    return lines
+def _read_tail_lines(path: Path, n: int) -> list[str]:
+    """Backward-compatible list wrapper for small callers."""
+    return list(_iter_tail_lines(path, n))
 
 
 def _conversation_entry_key(entry: dict[str, Any]) -> str:
@@ -150,6 +148,42 @@ def _conversation_entry_key(entry: dict[str, Any]) -> str:
     return f"fallback:{timestamp}:{role}:{user_id}:{content}"
 
 
+def _truncate_history_text(value: Any, limit: int) -> Any:
+    if not isinstance(value, str) or len(value) <= limit:
+        return value
+    return f"{value[:limit]}\n…[历史记录已截断 {len(value) - limit} 个字符]"
+
+
+def _compact_history_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Bound one legacy archive entry before returning it to the WebUI."""
+    result = dict(entry)
+    result["content"] = _truncate_history_text(result.get("content"), 8_000)
+    result["system_prompt"] = _truncate_history_text(result.get("system_prompt"), 8_000)
+    result["reasoning_content"] = _truncate_history_text(result.get("reasoning_content"), 4_000)
+
+    chain = result.get("conversation_chain")
+    if isinstance(chain, list):
+        messages = [message for message in chain if isinstance(message, dict)]
+        if len(messages) > 12:
+            first = messages[0]
+            messages = ([first] if first.get("role") == "system" else []) + messages[-11:]
+        result["conversation_chain"] = [
+            {
+                **message,
+                "content": _truncate_history_text(message.get("content"), 4_000),
+                "reasoning_content": _truncate_history_text(
+                    message.get("reasoning_content"), 2_000
+                ),
+            }
+            for message in messages
+        ]
+
+    # Legacy records duplicate the complete prompt and tool schemas here. The
+    # bounded conversation_chain above is sufficient for history inspection.
+    result["injected_request"] = {}
+    return result
+
+
 def _load_runtime_basic_memory_messages(paths: Any, group_id: str = "") -> list[dict[str, Any]]:
     """Load the active basic-memory window used for prompt assembly.
 
@@ -160,8 +194,10 @@ def _load_runtime_basic_memory_messages(paths: Any, group_id: str = "") -> list[
     state_path = paths.engine_state / "basic_memory.json"
     if not state_path.exists():
         return []
-
     try:
+        if state_path.stat().st_size > _MAX_RUNTIME_BASIC_MEMORY_BYTES:
+            LOG.warning("跳过过大的运行态基础记忆快照: %s", state_path)
+            return []
         raw = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         return []
@@ -340,48 +376,48 @@ def _conversation_key_from_query(request: web.Request) -> str:
 
 
 def _rewrite_jsonl_without_conversation_key(path: Path, group_id: str, key: str) -> int:
+    """Remove a message via a streamed, crash-safe JSONL rewrite."""
     if not path.exists():
         return 0
 
-    deleted = 0
-    lines: list[str] = []
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            for raw_line in f:
-                stripped = raw_line.strip()
-                if not stripped:
-                    lines.append(raw_line)
-                    continue
-                try:
-                    entry = json.loads(stripped)
-                except json.JSONDecodeError:
-                    lines.append(raw_line)
-                    continue
-                if not isinstance(entry, dict):
-                    lines.append(raw_line)
-                    continue
-                entry_with_group = dict(entry)
-                entry_with_group["group_id"] = entry_with_group.get("group_id") or group_id
-                if _conversation_entry_key(entry_with_group) == key:
-                    deleted += 1
-                    continue
-                lines.append(raw_line)
-    except OSError:
-        return 0
-
-    if deleted <= 0:
-        return 0
-
-    tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
-    try:
-        tmp.write_text("".join(lines), encoding="utf-8")
-        tmp.replace(path)
-    finally:
+    with archive_file_lock(path):
+        if not path.exists():
+            return 0
+        deleted = 0
+        tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
         try:
-            tmp.unlink(missing_ok=True)
+            with path.open("r", encoding="utf-8") as src, tmp.open("w", encoding="utf-8") as dst:
+                for raw_line in src:
+                    stripped = raw_line.strip()
+                    if not stripped:
+                        dst.write(raw_line)
+                        continue
+                    try:
+                        entry = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        dst.write(raw_line)
+                        continue
+                    if not isinstance(entry, dict):
+                        dst.write(raw_line)
+                        continue
+                    entry_with_group = dict(entry)
+                    entry_with_group["group_id"] = entry_with_group.get("group_id") or group_id
+                    if _conversation_entry_key(entry_with_group) == key:
+                        deleted += 1
+                        continue
+                    dst.write(raw_line)
+                dst.flush()
+                os.fsync(dst.fileno())
+            if deleted:
+                tmp.replace(path)
+            return deleted
         except OSError:
-            pass
-    return deleted
+            return 0
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _delete_runtime_basic_memory_message(paths: Any, key: str, group_id: str = "") -> int:
@@ -390,6 +426,9 @@ def _delete_runtime_basic_memory_message(paths: Any, key: str, group_id: str = "
         return 0
 
     try:
+        if state_path.stat().st_size > _MAX_RUNTIME_BASIC_MEMORY_BYTES:
+            LOG.warning("拒绝重写过大的运行态基础记忆快照: %s", state_path)
+            return 0
         raw = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError):
         return 0
@@ -1413,51 +1452,74 @@ async def api_persona_conversation_history_get(
         return _json_response({"messages": [], "groups": groups, "total": 0})
 
     has_filters = bool(search or speaker or start_time or end_time)
+    max_offset = 1_000
+    if offset > max_offset:
+        raise web.HTTPBadRequest(text=f"offset must not exceed {max_offset}")
 
     if has_filters:
-        # 有筛选条件时：全量读取并过滤（无法利用倒序优化）
-        all_messages: list[dict[str, Any]] = []
+        # Stream the complete archive and retain only the requested page. A large
+        # archive must never be materialized as one in-memory list for a search.
+        max_offset = 1_000
+        if offset > max_offset:
+            raise web.HTTPBadRequest(text=f"offset must not exceed {max_offset}")
+        need = offset + limit
+        newest: list[tuple[str, int, dict[str, Any]]] = []
+        sequence = 0
+        total = 0
+        runtime_by_key = {
+            _conversation_entry_key(message): _compact_history_entry(message)
+            for message in runtime_messages
+        }
+
+        def keep_matching(entry: dict[str, Any]) -> None:
+            nonlocal sequence, total
+            if not _conversation_message_matches_filters(
+                entry,
+                search=search,
+                speaker=speaker,
+                start_time=start_time,
+                end_time=end_time,
+            ):
+                return
+            total += 1
+            sequence += 1
+            item = (str(entry.get("timestamp") or ""), sequence, _compact_history_entry(entry))
+            if len(newest) < need:
+                heappush(newest, item)
+            elif item[:2] > newest[0][:2]:
+                heapreplace(newest, item)
+
         for fpath in target_files:
             g_id = fpath.stem
             try:
                 with fpath.open("r", encoding="utf-8") as f:
                     for line in f:
-                        line = line.strip()
-                        if not line:
+                        if not line.strip():
                             continue
                         try:
                             entry = json.loads(line)
-                            entry["group_id"] = g_id
-                            if not entry.get("tags"):
-                                entry["tags"] = []
-                            all_messages.append(entry)
                         except json.JSONDecodeError:
                             continue
+                        if not isinstance(entry, dict):
+                            continue
+                        entry["group_id"] = g_id
+                        if not entry.get("tags"):
+                            entry["tags"] = []
+                        key = _conversation_entry_key(entry)
+                        runtime = runtime_by_key.pop(key, None)
+                        keep_matching({**entry, **runtime} if runtime else entry)
             except OSError:
                 continue
 
-        all_messages = _merge_conversation_messages(all_messages, runtime_messages)
+        for entry in runtime_by_key.values():
+            keep_matching(entry)
 
-        # 应用筛选
-        all_messages = [
-            m
-            for m in all_messages
-            if _conversation_message_matches_filters(
-                m,
-                search=search,
-                speaker=speaker,
-                start_time=start_time,
-                end_time=end_time,
-            )
-        ]
-
-        all_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
-        total = len(all_messages)
-        messages = all_messages[offset : offset + limit]
+        newest.sort(key=lambda item: item[:2], reverse=True)
+        messages = [item[2] for item in newest[offset : offset + limit]]
         _annotate_memory_compression(messages, compressed_source_index)
     else:
-        # 无筛选条件时：使用倒序读取优化
-        # 统计总行数
+        # Count records without deserializing them, then retain only the requested
+        # page while scanning each file backwards.
         total = 0
         for fpath in target_files:
             try:
@@ -1466,35 +1528,52 @@ async def api_persona_conversation_history_get(
             except OSError:
                 continue
 
-        # 倒序读取
         need = offset + limit
-        raw_lines: list[tuple[str, str]] = []
+        newest: list[tuple[str, int, dict[str, Any]]] = []
+        sequence = 0
+        runtime_by_key = {
+            _conversation_entry_key(message): _compact_history_entry(message)
+            for message in runtime_messages
+        }
+
+        def keep_recent(entry: dict[str, Any]) -> None:
+            nonlocal sequence
+            sequence += 1
+            item = (
+                str(entry.get("timestamp") or ""),
+                sequence,
+                _compact_history_entry(entry),
+            )
+            if len(newest) < need:
+                heappush(newest, item)
+            elif item[:2] > newest[0][:2]:
+                heapreplace(newest, item)
+
         for fpath in target_files:
             g_id = fpath.stem
             try:
-                lines = _read_tail_lines(fpath, need)
-                for line in lines:
-                    raw_lines.append((g_id, line))
+                for line in _iter_tail_lines(fpath, need):
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    entry["group_id"] = g_id
+                    if not entry.get("tags"):
+                        entry["tags"] = []
+                    key = _conversation_entry_key(entry)
+                    runtime = runtime_by_key.pop(key, None)
+                    keep_recent({**entry, **runtime} if runtime else entry)
             except OSError:
                 continue
 
-        messages_raw: list[dict[str, Any]] = []
-        for g_id, line in raw_lines:
-            try:
-                entry = json.loads(line)
-                entry["group_id"] = g_id
-                if not entry.get("tags"):
-                    entry["tags"] = []
-                messages_raw.append(entry)
-            except json.JSONDecodeError:
-                continue
+        for entry in runtime_by_key.values():
+            keep_recent(entry)
+        total += len(runtime_by_key)
 
-        merged_messages = _merge_conversation_messages(messages_raw, runtime_messages)
-        runtime_extra = max(0, len(merged_messages) - len(messages_raw))
-        total += runtime_extra
-
-        merged_messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
-        messages = merged_messages[offset : offset + limit]
+        newest.sort(key=lambda item: item[:2], reverse=True)
+        messages = [item[2] for item in newest[offset : offset + limit]]
         _annotate_memory_compression(messages, compressed_source_index)
 
     return _json_response(
@@ -1519,6 +1598,8 @@ async def api_persona_conversation_history_delete(
         raise web.HTTPBadRequest(text="missing conversation message identifier")
 
     paths = PersonaConfigPaths(data_dir)
+    if _is_persona_running(data_dir):
+        raise web.HTTPConflict(text="stop the persona before deleting archived history")
     archive_dir = paths.dir / "archive"
 
     deleted_archive = 0

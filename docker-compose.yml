@@ -9,6 +9,8 @@ services:
     image: sirius-pulse:latest
     container_name: sirius-pulse-v2-test
     restart: unless-stopped
+    mem_limit: 12g
+    memswap_limit: 14g
     network_mode: host
     environment:
       SIRIUS_PULSE_HOME: /app

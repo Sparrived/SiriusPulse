@@ -101,7 +101,7 @@ def test_apply_and_reconcile_preserve_historical_status(tmp_path):
 
 def test_checkpoint_pass_prunes_covered_sources_and_consolidates_old_active_archive():
     now = datetime.now(timezone.utc)
-    basic = BasicMemoryManager(context_window=5)
+    basic = BasicMemoryManager(hard_limit=0, context_window=5)
     old_entries = [
         basic.add_entry(
             "group_a",
@@ -161,7 +161,7 @@ def test_checkpoint_pass_prunes_covered_sources_and_consolidates_old_active_arch
 
 def test_checkpoint_pass_repeats_active_batches_until_token_target():
     now = datetime.now(timezone.utc)
-    basic = BasicMemoryManager(context_window=5)
+    basic = BasicMemoryManager(hard_limit=0, context_window=5)
     for index in range(80):
         basic.add_entry(
             "group_a",

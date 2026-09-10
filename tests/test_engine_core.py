@@ -108,7 +108,8 @@ def test_engine_records_delivered_markdown_card_in_basic_history():
     assert entry.content == "部署结论\n\n- 服务已恢复"
     assert entry.tags == [{"type": "image", "label": "富文本卡片"}]
     assert entry.platform_message_id == "42"
-    assert entry.injected_request["system_prompt"] == "完整 system"
+    assert entry.system_prompt == "完整 system"
+    assert entry.injected_request == {"tool_choice": None}
     assert stored == [entry]
     assert semantic[0]["target_user_id"] == "1001"
     assert persisted == ["9001"]

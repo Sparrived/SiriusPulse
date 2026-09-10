@@ -13,16 +13,76 @@ from typing import Any
 from sirius_pulse.core.constants import (
     COLD_HEAT_THRESHOLD,
     DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW,
+    DEFAULT_BASIC_MEMORY_HARD_LIMIT,
     SILENCE_THRESHOLD_SECONDS,
 )
 from sirius_pulse.memory.basic.models import BasicMemoryEntry, HeatState
 
 logger = logging.getLogger(__name__)
 
-HARD_LIMIT = 0
+HARD_LIMIT = DEFAULT_BASIC_MEMORY_HARD_LIMIT
 CONTEXT_WINDOW = DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW
 COLD_THRESHOLD = COLD_HEAT_THRESHOLD
 SILENCE_THRESHOLD_SEC = SILENCE_THRESHOLD_SECONDS
+
+# Keep diagnostic snapshots useful without persisting an ever-growing copy of every prompt.
+_SNAPSHOT_MAX_MESSAGES = 12
+_SNAPSHOT_MAX_MESSAGE_CHARS = 2_000
+_SNAPSHOT_MAX_SYSTEM_PROMPT_CHARS = 8_000
+_SNAPSHOT_MAX_TOOL_CALLS = 16
+
+
+def _truncate_text(value: Any, limit: int) -> Any:
+    if not isinstance(value, str) or len(value) <= limit:
+        return value
+    return f"{value[:limit]}\n…[已截断 {len(value) - limit} 个字符]"
+
+
+def _snapshot_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Keep one diagnostic chat message within a bounded archive footprint."""
+    result = dict(message)
+    result["content"] = _truncate_text(result.get("content"), _SNAPSHOT_MAX_MESSAGE_CHARS)
+    result["reasoning_content"] = _truncate_text(
+        result.get("reasoning_content"), _SNAPSHOT_MAX_MESSAGE_CHARS
+    )
+    tool_calls = result.get("tool_calls")
+    if isinstance(tool_calls, list):
+        result["tool_calls"] = tool_calls[:_SNAPSHOT_MAX_TOOL_CALLS]
+    return result
+
+
+def _snapshot_conversation_chain(
+    conversation_chain: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    messages = [message for message in (conversation_chain or []) if isinstance(message, dict)]
+    if len(messages) > _SNAPSHOT_MAX_MESSAGES:
+        first = messages[0]
+        tail_size = (
+            _SNAPSHOT_MAX_MESSAGES - 1 if first.get("role") == "system" else _SNAPSHOT_MAX_MESSAGES
+        )
+        messages = ([first] if first.get("role") == "system" else []) + messages[-tail_size:]
+    snapshots = [_snapshot_message(message) for message in messages]
+    if snapshots and snapshots[0].get("role") == "system":
+        snapshots[0]["content"] = _truncate_text(
+            snapshots[0].get("content"), _SNAPSHOT_MAX_SYSTEM_PROMPT_CHARS
+        )
+    return snapshots
+
+
+def _snapshot_injected_request(request: dict[str, Any] | None) -> dict[str, Any]:
+    """Persist request metadata without a second full copy of the prompt chain."""
+    if not isinstance(request, dict):
+        return {}
+    fields = (
+        "model",
+        "purpose",
+        "reasoning_effort",
+        "tool_choice",
+        "temperature",
+        "max_tokens",
+        "timeout_seconds",
+    )
+    return {field: deepcopy(request[field]) for field in fields if field in request}
 
 
 class HeatCalculator:
@@ -121,17 +181,15 @@ class BasicMemoryManager:
             role=role,
             content=content,
             timestamp=timestamp or now_iso(),
-            system_prompt=system_prompt,
+            system_prompt=_truncate_text(system_prompt, _SNAPSHOT_MAX_SYSTEM_PROMPT_CHARS),
             channel_user_id=channel_user_id,
             platform_message_id=platform_message_id,
             multimodal_inputs=[
                 dict(item) for item in (multimodal_inputs or []) if isinstance(item, dict)
             ],
             tags=list(tags) if tags else [],
-            conversation_chain=list(conversation_chain) if conversation_chain else [],
-            injected_request=(
-                deepcopy(injected_request) if isinstance(injected_request, dict) else {}
-            ),
+            conversation_chain=_snapshot_conversation_chain(conversation_chain),
+            injected_request=_snapshot_injected_request(injected_request),
             injected_tool_names=list(injected_tool_names) if injected_tool_names else [],
             reasoning_content=str(reasoning_content or ""),
         )

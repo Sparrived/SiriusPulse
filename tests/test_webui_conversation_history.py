@@ -5,9 +5,11 @@ from types import SimpleNamespace
 
 from sirius_pulse.webui.memory_api import (
     _annotate_memory_compression,
+    _compact_history_entry,
     _load_compressed_memory_source_index,
     _load_runtime_basic_memory_messages,
     _merge_conversation_messages,
+    _rewrite_jsonl_without_conversation_key,
 )
 
 
@@ -50,6 +52,45 @@ def test_runtime_basic_memory_messages_are_loaded_for_conversation_history(tmp_p
     assert messages[0]["entry_id"] == "assistant_1"
     assert messages[0]["group_id"] == "group_a"
     assert messages[0]["tags"] == []
+
+
+def test_rewrite_jsonl_when_deleting_one_message_then_keeps_other_and_invalid_lines(tmp_path):
+    archive = tmp_path / "group_a.jsonl"
+    archive.write_text(
+        "{not-json}\n"
+        + json.dumps({"entry_id": "remove", "content": "gone"})
+        + "\n"
+        + json.dumps({"entry_id": "keep", "content": "stays"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    deleted = _rewrite_jsonl_without_conversation_key(archive, "group_a", "id:remove")
+
+    assert deleted == 1
+    assert (
+        archive.read_text(encoding="utf-8")
+        == "{not-json}\n" + json.dumps({"entry_id": "keep", "content": "stays"}) + "\n"
+    )
+    assert not list(tmp_path.glob("group_a.jsonl.*.tmp"))
+
+
+def test_history_entry_compaction_drops_duplicate_request_and_bounds_chain():
+    entry = _compact_history_entry(
+        {
+            "content": "x" * 9_000,
+            "injected_request": {"messages": [{"content": "duplicate"}]},
+            "conversation_chain": [
+                {"role": "system", "content": "s" * 9_000},
+                *[{"role": "user", "content": "m" * 5_000} for _ in range(20)],
+            ],
+        }
+    )
+
+    assert entry["injected_request"] == {}
+    assert len(entry["conversation_chain"]) == 12
+    assert len(entry["conversation_chain"][0]["content"]) < 8_100
+    assert len(entry["content"]) < 8_100
 
 
 def test_conversation_merge_prefers_runtime_chain_for_same_entry_id():

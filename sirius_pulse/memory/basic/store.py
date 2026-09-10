@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.memory.basic.file_lock import archive_file_lock
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
@@ -52,7 +54,10 @@ class BasicMemoryFileStore:
         return target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
 
     def _atomic_replace(self, tmp: Path, target: Path) -> None:
-        """原子替换文件，Windows下添加重试机制。"""
+        """Synchronize a completed temporary archive then replace the target."""
+        with tmp.open("a", encoding="utf-8") as f:
+            f.flush()
+            os.fsync(f.fileno())
         for attempt in range(_REPLACE_MAX_RETRIES):
             try:
                 tmp.replace(target)
@@ -74,7 +79,7 @@ class BasicMemoryFileStore:
         path = self._path(entry.group_id)
         line = json.dumps(entry.to_dict(), ensure_ascii=False) + "\n"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock_for(path):
+        with self._lock_for(path), archive_file_lock(path):
             with path.open("a", encoding="utf-8") as f:
                 f.write(line)
 
@@ -85,53 +90,43 @@ class BasicMemoryFileStore:
         path = self._path(group_id)
         lines = "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in entries) + "\n"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock_for(path):
+        with self._lock_for(path), archive_file_lock(path):
             with path.open("a", encoding="utf-8") as f:
                 f.write(lines)
 
     def update_entry(self, entry: BasicMemoryEntry) -> bool:
-        """Rewrite an archived entry in place by entry_id."""
+        """Rewrite one archived entry without loading the whole JSONL file."""
         if not entry.entry_id:
             return False
 
         path = self._path(entry.group_id)
-        with self._lock_for(path):
+        replacement = json.dumps(entry.to_dict(), ensure_ascii=False) + "\n"
+        with self._lock_for(path), archive_file_lock(path):
             if not path.exists():
                 return False
 
-            replacement = json.dumps(entry.to_dict(), ensure_ascii=False) + "\n"
             updated = False
-            lines: list[str] = []
-
-            try:
-                with path.open("r", encoding="utf-8") as f:
-                    for raw_line in f:
-                        stripped = raw_line.strip()
-                        if not stripped:
-                            lines.append(raw_line)
-                            continue
-                        try:
-                            data = json.loads(stripped)
-                        except json.JSONDecodeError:
-                            lines.append(raw_line)
-                            continue
-
-                        if data.get("entry_id") == entry.entry_id:
-                            lines.append(replacement)
-                            updated = True
-                        else:
-                            lines.append(raw_line)
-            except OSError:
-                return False
-
-            if not updated:
-                return False
-
             tmp = self._tmp_path(path)
             try:
-                tmp.write_text("".join(lines), encoding="utf-8")
-                self._atomic_replace(tmp, path)
-                return True
+                with path.open("r", encoding="utf-8") as src, tmp.open(
+                    "w", encoding="utf-8"
+                ) as dst:
+                    for raw_line in src:
+                        try:
+                            data = json.loads(raw_line)
+                        except json.JSONDecodeError:
+                            dst.write(raw_line)
+                            continue
+                        if isinstance(data, dict) and data.get("entry_id") == entry.entry_id:
+                            dst.write(replacement)
+                            updated = True
+                        else:
+                            dst.write(raw_line)
+                if updated:
+                    self._atomic_replace(tmp, path)
+                return updated
+            except OSError:
+                return False
             finally:
                 try:
                     tmp.unlink(missing_ok=True)
@@ -170,7 +165,7 @@ class BasicMemoryFileStore:
         path = self._path(group_id)
         lines = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock_for(path):
+        with self._lock_for(path), archive_file_lock(path):
             tmp = self._tmp_path(path)
             try:
                 tmp.write_text(lines, encoding="utf-8")

@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 # Per-file locks to prevent concurrent writes on Windows (WinError 32)
 _write_locks: dict[str, threading.Lock] = {}
 _write_locks_lock = threading.Lock()
+_MAX_BASIC_MEMORY_STATE_BYTES = 64 * 1024 * 1024
 
 
 def _get_file_lock(path: Path) -> threading.Lock:
@@ -199,12 +200,20 @@ class EngineStateStore:
             return None
 
     def load_basic_memory(self) -> dict[str, Any] | None:
-        """Load basic memory state."""
+        """Load a bounded basic-memory state without risking startup OOM."""
         path = self._base / "basic_memory.json"
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            if path.stat().st_size > _MAX_BASIC_MEMORY_STATE_BYTES:
+                logger.warning(
+                    "跳过过大的基础记忆快照 (%d MiB): %s",
+                    path.stat().st_size // (1024 * 1024),
+                    path,
+                )
+                return None
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
         except (OSError, json.JSONDecodeError):
             return None
 

@@ -116,7 +116,7 @@ def test_memory_snapshot_when_engine_restarts_then_restores_dialogue_and_heat_st
     assert restored.get_heat_state("group_a") is not None
 
 
-def test_memory_snapshot_when_legacy_state_is_large_then_restores_all_by_default():
+def test_memory_snapshot_when_legacy_state_is_large_then_restores_recent_window_by_default():
     payload: dict[str, list[dict[str, str]]] = {"group_a": []}
     for index in range(35):
         payload["group_a"].append(
@@ -133,7 +133,7 @@ def test_memory_snapshot_when_legacy_state_is_large_then_restores_all_by_default
     restored = BasicMemoryManager.from_dict(payload)
 
     assert [entry.content for entry in restored.get_all("group_a")] == [
-        f"legacy-{index}" for index in range(35)
+        f"legacy-{index}" for index in range(5, 35)
     ]
 
 
@@ -182,10 +182,30 @@ def test_basic_memory_entry_records_injected_tool_names():
     )
 
     injected_request["messages"][0]["content"] = "changed"
-    assert entry.injected_request["messages"][0]["content"] == "question"
+    assert entry.injected_request == {"tool_choice": None}
+    assert entry.conversation_chain == []
     assert entry.injected_tool_names == ["lookup", "extra_tool"]
     assert entry.to_dict()["injected_tool_names"] == ["lookup", "extra_tool"]
-    assert entry.to_dict()["injected_request"]["system_prompt"] == "system"
+
+
+def test_basic_memory_entry_bounds_diagnostic_prompt_snapshots():
+    entry = BasicMemoryManager().add_entry(
+        "group_a",
+        "assistant",
+        "assistant",
+        "reply",
+        system_prompt="s" * 20_000,
+        conversation_chain=[
+            {"role": "system", "content": "s" * 20_000},
+            *[{"role": "user", "content": "m" * 5_000} for _ in range(20)],
+        ],
+        injected_request={"messages": [{"role": "user", "content": "duplicate"}]},
+    )
+
+    assert len(entry.system_prompt) < 8_100
+    assert len(entry.conversation_chain) == 12
+    assert len(entry.conversation_chain[0]["content"]) < 8_100
+    assert entry.injected_request == {}
 
 
 def test_basic_memory_entry_records_reasoning_without_changing_visible_content():
