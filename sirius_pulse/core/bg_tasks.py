@@ -13,6 +13,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.core.constants import (
+    DEFAULT_BASIC_MEMORY_CHECKPOINT_BATCH_SIZE as MEMORY_CHECKPOINT_BATCH_SIZE,
+)
+from sirius_pulse.core.constants import (
+    DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TARGET as MEMORY_CHECKPOINT_TOKEN_TARGET,
+)
+from sirius_pulse.core.constants import (
+    DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER as MEMORY_CHECKPOINT_TOKEN_TRIGGER,
+)
 from sirius_pulse.memory.cold_detector import ColdState
 from sirius_pulse.utils.json_io import atomic_write_json
 
@@ -20,13 +29,6 @@ if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 
 logger = logging.getLogger(__name__)
-
-# Keep extraction prompts bounded.  Each candidate can contain up to 500
-# characters plus provenance fields, so 64 candidates can exhaust a provider's
-# context before the JSON response is generated.
-MEMORY_CHECKPOINT_BATCH_SIZE = 32
-MEMORY_CHECKPOINT_TOKEN_TRIGGER = 80_000
-MEMORY_CHECKPOINT_TOKEN_TARGET = 20_000
 
 
 class BackgroundTasks:

@@ -32,14 +32,25 @@ DIARY_GENERATION_MAX_TOKENS = 2048
 COGNITION_MAX_TOKENS = 1024
 
 # ── 记忆相关 ──────────────────────────────────────────────
-# 原始消息保留到被 checkpoint 记忆单元覆盖为止（见提交 0866054）。这里的数值只是
-# 防止 checkpoint 长期停滞时内存无限增长的兜底上限，不等于注入提示词的历史长度；
-# 真正发给模型的历史由 DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET 约束。
-DEFAULT_BASIC_MEMORY_HARD_LIMIT = 2_000
+# 原始消息保留到被 checkpoint 记忆单元覆盖为止（见提交 0866054）。保留量由下面的
+# token 触发阈值主导；DEFAULT_BASIC_MEMORY_HARD_LIMIT 只是高于该阈值的内存兜底上限，
+# 正常运行时会先触发 token 压缩，不会先按条数丢消息。
+DEFAULT_BASIC_MEMORY_HARD_LIMIT = 10_000
 DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW = 5
-# 注入聊天提示词的对话历史 token 上限。活跃窗口可以远大于此值，但只有这个预算内的
-# 最近消息会进入提示词，避免历史无限膨胀导致提示词过大与宿主 OOM。
-DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET = 12_000
+
+# 基础记忆压缩：原始窗口超过 TRIGGER 时开始归纳成记忆单元，归纳到 TARGET 为止；
+# 被覆盖的原始条目随后从活跃窗口移除，改由记忆单元 RAG 提供摘要。
+DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER = 80_000
+DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TARGET = 20_000
+# Keep extraction prompts bounded. Each candidate can contain up to 500 characters
+# plus provenance fields, so 64 candidates can exhaust a provider's context before
+# the JSON response is generated.
+DEFAULT_BASIC_MEMORY_CHECKPOINT_BATCH_SIZE = 32
+
+# 注入聊天提示词的对话历史 token 上限。默认与压缩触发阈值一致：正常运行时整个原始
+# 窗口（约 2 万~8 万 token）都会进入提示词，与压缩设计保持一致；该预算只在窗口异常
+# 膨胀（例如后台归纳被长时间拖住）时兜底，避免再次把提示词和宿主内存推向失控。
+DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET = DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER
 DEFAULT_DIARY_TOP_K = 5
 DEFAULT_DIARY_TOKEN_BUDGET = 800
 DEFAULT_DIARY_VOLUME_THRESHOLD = 8
