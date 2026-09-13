@@ -35,6 +35,12 @@ from sirius_pulse.providers.base import GenerationResult, ToolCall
 
 logger = logging.getLogger(__name__)
 
+# 模型主动跳过本轮回复的控制标记：<skip/>、<SKIP>、[SKIP]、【SKIP】等写法均识别。
+_SKIP_REPLY_RE = re.compile(
+    r"<\s*skip\s*/?\s*>|[\[［【]\s*skip\s*[\]］】]",
+    flags=re.IGNORECASE,
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # 参数类
@@ -589,9 +595,11 @@ class Brain:
             reply = strip_conversation_history_xml(reply)
 
             # ── 默认 post: SKIP 标签检测 ──
-            if re.search(r"<\s*skip\s*/?\s*>", reply, flags=re.IGNORECASE):
-                logger.info("[%s] LLM 主动选择跳过回复（输出 skip 标签）。", request.task_name)
+            if _SKIP_REPLY_RE.search(reply):
+                logger.info("[%s] LLM 主动选择跳过回复（输出 SKIP 标记）。", request.task_name)
                 reply = ""
+                # 告知 post-hooks：本轮是主动跳过，不应按一次真实回复记账。
+                ctx["skip_reply"] = True
 
             # ── 默认 post: 处理 tool_calls ──
             tool_calls: list[ToolCall] = gen_result.tool_calls or []

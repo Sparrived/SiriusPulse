@@ -969,6 +969,8 @@ class _EmotionalGroupChatEngineBase:
 
         # ── priority 0: 对话深度追踪 ──
         def _hook_depth(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
+            if ctx.get("skip_reply"):
+                return
             gid = _req.group_id
             now_ts = time.time()
             last_ts = _engine._last_reply_at.get(gid, 0)
@@ -1044,6 +1046,9 @@ class _EmotionalGroupChatEngineBase:
 
         # ── priority 50: 回复时间戳+持久化 ──
         def _hook_timestamp(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
+            # 主动跳过的一轮没有发出任何内容，不算一次回复，也不该占用回复冷却。
+            if ctx.get("skip_reply"):
+                return
             _engine._last_reply_at[_req.group_id] = datetime.now(timezone.utc).timestamp()
             _engine._persist_group_state(_req.group_id)
 
