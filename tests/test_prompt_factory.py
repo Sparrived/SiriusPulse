@@ -577,6 +577,52 @@ def test_context_assembler_keeps_all_uncheckpointed_basic_memory():
     assert "current question" in joined
 
 
+def test_context_assembler_bounds_injected_history_by_token_budget():
+    basic = BasicMemoryManager(hard_limit=0)
+    for index in range(200):
+        basic.add_entry(
+            "group_a",
+            "alice",
+            "human",
+            f"message {index} " + "填充" * 120,
+            speaker_name="Alice",
+        )
+    assembler = ContextAssembler(basic, _NoopDiaryRetriever())
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="current question",
+        system_prompt="system",
+        history_token_budget=500,
+    )
+    joined = "\n".join(str(message.get("content", "")) for message in messages)
+
+    # 活跃窗口仍保留全部原始消息，但注入提示词的只有最近预算内的部分。
+    assert len(basic.get_all("group_a")) == 200
+    assert "message 199" in joined
+    assert "message 0 " not in joined
+    history_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
+    assert len(history_messages) < 20
+
+
+def test_context_assembler_history_budget_zero_keeps_whole_window():
+    basic = BasicMemoryManager(hard_limit=0)
+    for index in range(40):
+        basic.add_entry("group_a", "alice", "human", f"message {index}", speaker_name="Alice")
+    assembler = ContextAssembler(basic, _NoopDiaryRetriever())
+
+    messages = assembler.build_messages(
+        group_id="group_a",
+        current_query="current question",
+        system_prompt="system",
+        history_token_budget=0,
+    )
+    joined = "\n".join(str(message.get("content", "")) for message in messages)
+
+    assert "message 0" in joined
+    assert "message 39" in joined
+
+
 def test_context_assembler_builds_user_assistant_alternation():
     """历史对话以 user/assistant 交替形式构建，不再嵌入 system prompt。"""
     basic = BasicMemoryManager()

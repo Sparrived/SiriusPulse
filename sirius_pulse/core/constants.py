@@ -32,8 +32,14 @@ DIARY_GENERATION_MAX_TOKENS = 2048
 COGNITION_MAX_TOKENS = 1024
 
 # ── 记忆相关 ──────────────────────────────────────────────
-DEFAULT_BASIC_MEMORY_HARD_LIMIT = 30
+# 原始消息保留到被 checkpoint 记忆单元覆盖为止（见提交 0866054）。这里的数值只是
+# 防止 checkpoint 长期停滞时内存无限增长的兜底上限，不等于注入提示词的历史长度；
+# 真正发给模型的历史由 DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET 约束。
+DEFAULT_BASIC_MEMORY_HARD_LIMIT = 2_000
 DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW = 5
+# 注入聊天提示词的对话历史 token 上限。活跃窗口可以远大于此值，但只有这个预算内的
+# 最近消息会进入提示词，避免历史无限膨胀导致提示词过大与宿主 OOM。
+DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET = 12_000
 DEFAULT_DIARY_TOP_K = 5
 DEFAULT_DIARY_TOKEN_BUDGET = 800
 DEFAULT_DIARY_VOLUME_THRESHOLD = 8

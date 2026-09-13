@@ -25,10 +25,13 @@ CONTEXT_WINDOW = DEFAULT_BASIC_MEMORY_CONTEXT_WINDOW
 COLD_THRESHOLD = COLD_HEAT_THRESHOLD
 SILENCE_THRESHOLD_SEC = SILENCE_THRESHOLD_SECONDS
 
-# Keep diagnostic snapshots useful without persisting an ever-growing copy of every prompt.
-_SNAPSHOT_MAX_MESSAGES = 12
-_SNAPSHOT_MAX_MESSAGE_CHARS = 2_000
-_SNAPSHOT_MAX_SYSTEM_PROMPT_CHARS = 8_000
+# Per-entry diagnostics are duplicated across every assistant turn (the same
+# system prompt and the same tail messages), so they dominate the active window's
+# footprint. Keep them small: the window itself carries the real memory.
+_SNAPSHOT_MAX_MESSAGES = 8
+_SNAPSHOT_MAX_MESSAGE_CHARS = 1_000
+_SNAPSHOT_MAX_SYSTEM_PROMPT_CHARS = 2_000
+_SNAPSHOT_MAX_REASONING_CHARS = 2_000
 _SNAPSHOT_MAX_TOOL_CALLS = 16
 
 
@@ -191,7 +194,9 @@ class BasicMemoryManager:
             conversation_chain=_snapshot_conversation_chain(conversation_chain),
             injected_request=_snapshot_injected_request(injected_request),
             injected_tool_names=list(injected_tool_names) if injected_tool_names else [],
-            reasoning_content=str(reasoning_content or ""),
+            reasoning_content=_truncate_text(
+                str(reasoning_content or ""), _SNAPSHOT_MAX_REASONING_CHARS
+            ),
         )
 
         window = self._windows.setdefault(gid, deque())

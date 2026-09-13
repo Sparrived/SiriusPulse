@@ -6,6 +6,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
+from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HARD_LIMIT
 from sirius_pulse.memory.basic import (
     BasicMemoryEntry,
     BasicMemoryFileStore,
@@ -116,7 +117,7 @@ def test_memory_snapshot_when_engine_restarts_then_restores_dialogue_and_heat_st
     assert restored.get_heat_state("group_a") is not None
 
 
-def test_memory_snapshot_when_legacy_state_is_large_then_restores_recent_window_by_default():
+def test_memory_snapshot_when_legacy_state_is_large_then_keeps_raw_tail_until_checkpointed():
     payload: dict[str, list[dict[str, str]]] = {"group_a": []}
     for index in range(35):
         payload["group_a"].append(
@@ -132,9 +133,34 @@ def test_memory_snapshot_when_legacy_state_is_large_then_restores_recent_window_
 
     restored = BasicMemoryManager.from_dict(payload)
 
+    # 原始消息保留到被 checkpoint 覆盖为止，不按固定条数丢弃。
     assert [entry.content for entry in restored.get_all("group_a")] == [
-        f"legacy-{index}" for index in range(5, 35)
+        f"legacy-{index}" for index in range(35)
     ]
+
+
+def test_memory_snapshot_when_state_exceeds_safety_ceiling_then_keeps_newest_entries():
+    hard_limit = DEFAULT_BASIC_MEMORY_HARD_LIMIT
+    payload: dict[str, list[dict[str, str]]] = {
+        "group_a": [
+            {
+                "entry_id": f"entry_{index}",
+                "group_id": "group_a",
+                "user_id": "alice",
+                "role": "human",
+                "content": f"legacy-{index}",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            }
+            for index in range(hard_limit + 10)
+        ]
+    }
+
+    restored = BasicMemoryManager.from_dict(payload)
+
+    entries = restored.get_all("group_a")
+    assert len(entries) == hard_limit
+    assert entries[0].content == "legacy-10"
+    assert entries[-1].content == f"legacy-{hard_limit + 9}"
 
 
 def test_remove_entries_by_ids_when_units_cover_sources_then_prunes_active_window():
@@ -202,9 +228,9 @@ def test_basic_memory_entry_bounds_diagnostic_prompt_snapshots():
         injected_request={"messages": [{"role": "user", "content": "duplicate"}]},
     )
 
-    assert len(entry.system_prompt) < 8_100
-    assert len(entry.conversation_chain) == 12
-    assert len(entry.conversation_chain[0]["content"]) < 8_100
+    assert len(entry.system_prompt) < 2_100
+    assert len(entry.conversation_chain) == 8
+    assert len(entry.conversation_chain[0]["content"]) < 2_100
     assert entry.injected_request == {}
 
 

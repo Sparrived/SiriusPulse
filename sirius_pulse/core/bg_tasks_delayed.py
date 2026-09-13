@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.agent_turn import AgentTurn, AgentTurnPhase
+from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
@@ -634,6 +635,12 @@ class DelayedQueueTasks:
         diary_top_k = engine.config.get("diary_top_k", 5)
         memory_unit_top_k = engine.config.get("memory_unit_top_k", diary_top_k)
         diary_token_budget = engine.config.get("diary_token_budget", 800)
+        history_token_budget = int(
+            engine.config.get(
+                "basic_memory_history_token_budget",
+                DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+            )
+        )
 
         # 获取当前发言者信息
         speaker_uid = resolved_uid or ""
@@ -701,6 +708,7 @@ class DelayedQueueTasks:
             cross_group_enabled=bool(engine.config.get("cross_group_memory_enabled", True)),
             content_is_tagged=True,
             dynamic_context=bundle.dynamic_context,
+            history_token_budget=history_token_budget,
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]

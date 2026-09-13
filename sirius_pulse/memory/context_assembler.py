@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
+from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
 from sirius_pulse.memory.diary.indexer import DiaryRetriever
 
@@ -67,6 +68,7 @@ class ContextAssembler:
         content_is_tagged: bool = False,
         platform_message_id: str = "",
         dynamic_context: str = "",
+        history_token_budget: int = DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
     ) -> list[dict[str, Any]]:
         """构建消息链（user/assistant 交替）。
 
@@ -125,7 +127,10 @@ class ContextAssembler:
         messages: list[dict[str, Any]] = [{"role": "system", "content": enriched_system}]
 
         # 3. 构建 user/assistant 交替的历史消息
+        # 活跃窗口会保留远多于提示词所需的原始消息（直到被 checkpoint 覆盖），
+        # 因此这里必须按 token 预算裁剪，只有最近预算内的消息进入提示词。
         recent = self._cacheable_history_entries(group_id, recent_n=recent_n)
+        recent = self._trim_history_to_token_budget(recent, history_token_budget)
         pending_entries: list[Any] = []
 
         if recent and not include_pending:
@@ -277,6 +282,7 @@ class ContextAssembler:
         content_is_tagged: bool = False,
         platform_message_id: str = "",
         dynamic_context: str = "",
+        history_token_budget: int = DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。"""
         messages = self.build_messages(
@@ -298,6 +304,7 @@ class ContextAssembler:
             content_is_tagged=content_is_tagged,
             platform_message_id=platform_message_id,
             dynamic_context=dynamic_context,
+            history_token_budget=history_token_budget,
         )
 
         from sirius_pulse.token.utils import estimate_tokens
@@ -378,6 +385,28 @@ class ContextAssembler:
             if not diarized:
                 result.append(entry)
         return result
+
+    @staticmethod
+    def _trim_history_to_token_budget(entries: list[Any], budget: int) -> list[Any]:
+        """保留最近 N token 内的历史消息，从最旧一端裁剪。
+
+        活跃窗口保留的是"尚未被 checkpoint 覆盖"的原始消息，数量可能远超提示词所能
+        承载；只有本预算内的最近消息才注入模型。budget <= 0 表示不限制。
+        """
+        if budget <= 0 or not entries:
+            return entries
+        from sirius_pulse.token.utils import estimate_tokens
+
+        kept: list[Any] = []
+        used = 0
+        for entry in reversed(entries):
+            cost = estimate_tokens(str(getattr(entry, "content", "") or ""))
+            if kept and used + cost > budget:
+                break
+            used += cost
+            kept.append(entry)
+        kept.reverse()
+        return kept
 
     @staticmethod
     def _build_memory_unit_context(memory_units: list[Any]) -> str:
