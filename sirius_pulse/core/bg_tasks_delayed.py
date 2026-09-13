@@ -451,6 +451,34 @@ class DelayedQueueTasks:
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Process a delayed queue partition and always close its tool-chain window.
+
+        The injection window is opened while tools run so that messages addressed
+        to the persona mid-chain can join the next round. A provider failure in a
+        later round raises out of the generation loop, so the window must be
+        closed here as well; otherwise the group would keep swallowing every
+        addressed message into a chain that is no longer running.
+        """
+        try:
+            return await self._tick_delayed_queue_impl(
+                group_id,
+                on_partial_reply,
+                adapter_type=adapter_type,
+                adapter_route_id=adapter_route_id,
+            )
+        finally:
+            end_tool_chain = getattr(self._engine, "end_tool_chain", None)
+            if callable(end_tool_chain):
+                end_tool_chain(group_id)
+
+    async def _tick_delayed_queue_impl(
+        self,
+        group_id: str,
+        on_partial_reply: Any | None = None,
+        *,
+        adapter_type: str | None = None,
+        adapter_route_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Process delayed response queue for a group.
 
         If multiple items trigger in the same tick, merge them into a single

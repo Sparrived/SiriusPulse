@@ -303,6 +303,49 @@ async def test_tool_chain_injects_explicit_group_text_into_next_model_round():
     assert active == set()
 
 
+@pytest.mark.asyncio
+async def test_tool_chain_window_closes_when_provider_fails_mid_chain():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "look up the status",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    tool_call = ToolCall(
+        id="call-1",
+        function_name="lookup",
+        function_arguments='{"q":"status"}',
+    )
+    execute_tool = AsyncMock(return_value=ToolResult(success=True, data={"ok": True}))
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="lookup", silent=False, developer_only=False),
+        [
+            SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[tool_call],
+                reply_references=[],
+                injected_request={},
+            ),
+            RuntimeError("提供商响应内容为空。"),
+        ],
+        execute_tool,
+    )
+    active: set[str] = set()
+    engine.begin_tool_chain = active.add
+    engine.end_tool_chain = active.discard
+    engine.pop_tool_chain_messages = lambda group_id: []
+
+    with pytest.raises(RuntimeError):
+        await tasks.tick_delayed_queue("group-1")
+
+    assert active == set()
+
+
 def test_delayed_queue_when_immediate_is_enqueued_then_triggers_without_waiting():
     queue = DelayedResponseQueue()
     item = queue.enqueue("group-1", "u1", "hello", _decision(ResponseStrategy.IMMEDIATE))
