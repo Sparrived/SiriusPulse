@@ -721,14 +721,30 @@ class DelayedQueueTasks:
             else:
                 token_breakdown[key] = token_breakdown.get(key, 0) + val
 
-        # Collect multimodal inputs from all triggered items and inject into user message.
+        # Collect multimodal inputs from triggered items AND recent messages, then
+        # inject into the last user message. Recent-message images are needed because
+        # an image sent on its own (or attached to an earlier text message) only
+        # survives as a caption/XML placeholder otherwise, and pure-image messages
+        # never reach the delayed queue at all.
+        unanswered_from = 0
+        for idx in range(len(recent) - 1, -1, -1):
+            if recent[idx].get("role") == "assistant":
+                unanswered_from = idx + 1
+                break
         all_multimodal: list[dict[str, str]] = []
-        for triggered_item in triggered:
-            if getattr(triggered_item, "multimodal_inputs", None):
-                for m in triggered_item.multimodal_inputs:
-                    if m.get("type") == "image" and m.get("sub_type") == "1":
-                        continue
-                    all_multimodal.append(m)
+        seen_values: set[str] = set()
+        for source in (
+            *[getattr(i, "multimodal_inputs", None) for i in triggered],
+            *[r.get("multimodal_inputs") for r in recent[unanswered_from:]],
+        ):
+            for m in source or []:
+                if m.get("type") != "image" or m.get("sub_type") == "1":
+                    continue
+                value = str(m.get("value", ""))
+                if not value or value in seen_values:
+                    continue
+                seen_values.add(value)
+                all_multimodal.append(m)
 
         messages = engine._helpers.inject_multimodal_into_user_message(messages, all_multimodal)
 
