@@ -10,7 +10,7 @@ import { createRealtimeRefresh } from './pages/realtime.js';
 const PAGE_META = {
   'dashboard': { title: '概览', breadcrumb: 'Dashboard', icon: '◈' },
   'global-settings': { title: '全局设置', breadcrumb: 'Configuration / Global', icon: '⚙' },
-  'providers': { title: 'Provider', breadcrumb: 'Configuration / Providers', icon: '⬡' },
+  'amkr': { title: 'AMKR 运维', breadcrumb: 'Configuration / AMKR', icon: '⬡' },
   'create-persona': { title: '新建人格', breadcrumb: 'Configuration / Create', icon: '＋' },
   'persona': { title: '人格配置', breadcrumb: 'Configuration / Persona', icon: '◎' },
   'orchestration': { title: '模型编排', breadcrumb: 'Configuration / Orchestration', icon: '⧉' },
@@ -31,7 +31,7 @@ const NAV_GROUPS = [
   { id: 'dashboard', label: '仪表盘', items: [{ page: 'dashboard', icon: '◈', label: '概览' }] },
   { id: 'global', label: '全局', items: [
     { page: 'global-settings', icon: '⚙', label: '全局设置' },
-    { page: 'providers', icon: '⬡', label: 'Provider' },
+    { page: 'amkr', icon: '⬡', label: 'AMKR 运维' },
   ]},
   { id: 'persona-config', label: '人格配置', items: [
     { page: 'create-persona', icon: '＋', label: '新建人格' },

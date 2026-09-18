@@ -2,7 +2,6 @@ const state = {
   personas: [],
   currentPersona: null,
   personaState: {},
-  providers: [],
   globalConfig: {},
   theme: localStorage.getItem('sirius-theme') || 'dark',
   sidebarCollapsed: false,

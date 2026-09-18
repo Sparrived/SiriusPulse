@@ -1,15 +1,13 @@
-"""Shared WebUI model catalog contract."""
+"""Shared WebUI model catalog contract.
+
+Sirius Pulse 不再维护 Provider/模型清单：``model`` 字段直接填 AMKR 的**任务名**，
+由 AMKR 按任务定义决定真实模型、供应商与采样参数。因此本目录返回的是本框架在
+AMKR 工作空间里定义的那些任务名，供编排页下拉选择。
+"""
 
 from __future__ import annotations
 
-import logging
-from pathlib import Path
 from typing import Any, TypedDict
-
-from sirius_pulse.providers.models_dev import ModelsDevCache, list_provider_model_details
-from sirius_pulse.providers.routing import WorkspaceProviderManager, normalize_provider_type
-
-LOG = logging.getLogger("sirius.webui")
 
 
 class ModelChoice(TypedDict, total=False):
@@ -23,133 +21,63 @@ class ModelCatalog(TypedDict):
     model_choices: list[ModelChoice]
 
 
-def build_model_catalog(data_path: Any) -> ModelCatalog:
-    """Build the shared WebUI model selection contract."""
-    available_models: list[str] = []
-    model_choices: list[ModelChoice] = []
-    seen_models: set[str] = set()
-    seen_choices: set[str] = set()
-    provider_models: dict[str, list[str]] = {}
-    provider_types: dict[str, str] = {}
+# 任务名的中文说明，用于下拉框标签；未列出的任务名原样显示。
+TASK_LABELS: dict[str, str] = {
+    "cognition_analyze": "认知分析",
+    "memory_extract": "记忆提取",
+    "response_generate": "对话生成",
+    "proactive_generate": "主动发言",
+    "passive_tool": "被动技能",
+    "plugin_analyze": "插件分析",
+    "plugin_generate": "插件生成",
+    "plugin_render": "插件渲染",
+    "plugin_raw": "插件原生",
+    "diary_generate": "日记生成",
+    "diary_consolidate": "日记归纳",
+    "topic_cluster": "话题聚类",
+}
 
-    try:
-        for provider_name, provider_type, models in _configured_provider_models(Path(data_path)):
-            provider_models[provider_name] = list(models)
-            provider_types[provider_name] = provider_type
-            for model in models:
-                if model not in seen_models:
-                    seen_models.add(model)
-                    available_models.append(model)
-                composite = format_model_choice_value(provider_name, model)
-                if composite in seen_choices:
-                    continue
-                seen_choices.add(composite)
-                model_choices.append(
-                    {
-                        "label": f"{provider_name}/{model}",
-                        "value": composite,
-                    }
-                )
-    except Exception:
-        LOG.warning("获取模型列表失败", exc_info=True)
 
-    enrich_model_choices(data_path, model_choices, provider_models, provider_types)
-    return {"available_models": available_models, "model_choices": model_choices}
+def list_task_names() -> list[str]:
+    """本框架会在 AMKR 工作空间中定义的任务名。
+
+    任务名即模型名：调用时把它填进 ``model`` 字段，AMKR 就能按任务定义路由。
+    """
+    from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY
+
+    return list(_DEFAULT_TASK_REGISTRY)
+
+
+def build_model_catalog(data_path: Any = None) -> ModelCatalog:
+    """构建 WebUI 的模型选择契约。
+
+    ``data_path`` 仅为保持既有调用签名兼容，当前不再参与计算。
+    """
+    task_names = list_task_names()
+    return {
+        "available_models": list(task_names),
+        "model_choices": [
+            {"label": f"{TASK_LABELS.get(name, name)}（{name}）", "value": name}
+            for name in task_names
+        ],
+    }
 
 
 def format_model_choice_value(provider_name: str, model_id: str) -> str:
-    return f"{provider_name}/{model_id}"
-
-
-def _configured_provider_models(data_path: Path) -> list[tuple[str, str, list[str]]]:
-    """Return enabled models keyed by the registry's canonical Provider name."""
-    providers = WorkspaceProviderManager(data_path).load()
-    result: list[tuple[str, str, list[str]]] = []
-    for provider_name, config in providers.items():
-        if not config.enabled or not config.api_key.strip() or not config.models:
-            continue
-        result.append((provider_name, config.provider_type, list(config.models)))
-    return result
-
-
-def enrich_model_choices(
-    data_path: Any,
-    model_choices: list[ModelChoice],
-    provider_models: dict[str, list[str]] | None = None,
-    provider_types: dict[str, str] | None = None,
-) -> None:
-    """Enrich model choices with provider-aware models.dev capability tags."""
-    try:
-        data = ModelsDevCache(Path(data_path)).get()
-        if not data:
-            return
-        provider_names = (
-            list(provider_models) if provider_models is not None else _provider_types(model_choices)
-        )
-        type_by_name = provider_types or {
-            provider_name: normalize_provider_type(provider_name)
-            for provider_name in provider_names
-        }
-        tag_index = _build_capability_tag_index(data, type_by_name)
-        for choice in model_choices:
-            parsed = parse_model_choice_value(choice["value"])
-            if parsed is None:
-                continue
-            provider_name, model_id = parsed
-            tags = tag_index.get((provider_name, model_id))
-            if tags:
-                choice["tags"] = tags
-    except Exception:
-        LOG.debug("注入模型能力标签失败", exc_info=True)
+    """兼容旧调用点：任务名没有 provider 前缀。"""
+    return model_id
 
 
 def parse_model_choice_value(value: str) -> tuple[str, str] | None:
-    provider_type, sep, model_id = value.partition("/")
-    if not sep or not provider_type or not model_id:
-        return None
-    return provider_type, model_id
+    """兼容旧调用点：任务名没有 provider 前缀，始终返回 ``None``。"""
+    return None
 
 
-def _provider_types(model_choices: list[ModelChoice]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for choice in model_choices:
-        parsed = parse_model_choice_value(choice["value"])
-        if parsed is None:
-            continue
-        provider_type, _ = parsed
-        if provider_type not in seen:
-            seen.add(provider_type)
-            result.append(provider_type)
-    return result
-
-
-def _build_capability_tag_index(
-    data: dict[str, Any],
-    provider_types: dict[str, str],
-) -> dict[tuple[str, str], list[str]]:
-    index: dict[tuple[str, str], list[str]] = {}
-    for provider_name, provider_type in provider_types.items():
-        for item in list_provider_model_details(data, provider_type):
-            model_id = str(item.get("id", "")).strip()
-            if not model_id:
-                continue
-            tags = _capability_tags(item)
-            if tags:
-                index[(provider_name, model_id)] = tags
-    return index
-
-
-def _capability_tags(model: dict[str, Any]) -> list[str]:
-    tags: list[str] = []
-    if model.get("tool_call"):
-        tags.append("函数调用")
-    if model.get("reasoning"):
-        tags.append("推理")
-    if model.get("structured_output"):
-        tags.append("结构化")
-    if model.get("vision"):
-        tags.append("视觉")
-    if model.get("audio"):
-        tags.append("音频")
-    return tags
+def enrich_model_choices(
+    data_path: Any = None,
+    model_choices: list[ModelChoice] | None = None,
+    provider_models: dict[str, list[str]] | None = None,
+    provider_types: dict[str, str] | None = None,
+) -> None:
+    """兼容旧调用点：任务名不带能力标签，无需补全。"""
+    return None
