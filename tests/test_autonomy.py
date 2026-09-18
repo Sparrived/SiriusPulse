@@ -145,22 +145,63 @@ def test_intention_fades_instead_of_being_revived_by_waiting(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_tick_does_nothing_when_daily_budget_is_spent(tmp_path):
-    """预算用尽时既不调用模型，也不留下任何记录。"""
+async def test_tick_acts_whenever_she_is_carrying_something(tmp_path):
+    """没有每日配额：只要她确实惦记着什么，就可以随时行动。"""
     ctx = _make_ctx(
         tmp_path,
         messages=[{"role": "user", "content": "https://example.com/tides"}],
-        state={
-            "episode_count_date": _NOW.date().isoformat(),
-            "episode_count_today": 3,
-            "last_attempt_at": "1970-01-01T00:00:00+00:00",
-        },
+        # 今天已经自主过很多次，也不应被计数挡住。
+        state={"episode_count_date": _NOW.date().isoformat(), "episode_count_today": 99},
     )
 
-    assert await autonomy.run_tick(ctx) is None
-    assert ctx.recorded == []
-    assert ctx.delivered == []
-    assert not (tmp_path / "memory" / "autonomy" / "episodes.json").exists()
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    assert episode.kind == "reading"
+    assert ctx.recorded != []
+
+
+@pytest.mark.asyncio
+async def test_she_can_act_on_consecutive_heartbeats(tmp_path):
+    """心跳之间没有额外冷却：只要每次都惦记着新东西，就都能行动。"""
+    ctx = _make_ctx(
+        tmp_path,
+        messages=[{"role": "user", "content": "https://example.com/tides"}],
+    )
+
+    first = await autonomy.run_tick(ctx)
+    assert first is not None
+
+    # 紧接着的下一次心跳带来新素材，不该被"刚自主过"挡住。
+    ctx.get_recent_messages = lambda _gid, _n=10: [
+        {"role": "user", "content": "https://example.com/moons"}
+    ]
+
+    second = await autonomy.run_tick(ctx)
+
+    assert second is not None
+    assert second.seed.startswith("https://example.com/moons")
+
+
+@pytest.mark.asyncio
+async def test_one_unfinishable_intention_does_not_loop_forever(tmp_path):
+    """同一件始终没结果的事不能每个心跳都烧一次模型调用。"""
+    ctx = _make_ctx(
+        tmp_path,
+        messages=[{"role": "user", "content": "https://example.com/tides"}],
+    )
+
+    async def decline(**_kwargs):
+        return {"text": "什么也不做"}
+
+    ctx.run_autonomous_turn = decline
+
+    # 前几次心跳允许尝试，之后这条意图就该被放下。
+    for _ in range(5):
+        await autonomy.run_tick(ctx)
+
+    calls = len(ctx.recorded)
+    assert calls <= 3, f"同一意图被反复重试了 {calls} 次"
 
 
 @pytest.mark.asyncio
@@ -235,13 +276,17 @@ async def test_encountering_something_plants_a_durable_intention(tmp_path):
     ctx = _make_ctx(
         tmp_path,
         messages=[{"role": "user", "content": "https://example.com/tides"}],
-        # 预算已用尽，这一 tick 不会行动……
-        state={"episode_count_date": _NOW.date().isoformat(), "episode_count_today": 3},
     )
+
+    # 这一 tick 她决定不做，于是没有产出……
+    async def decline(**_kwargs):
+        return {"text": "什么也不做"}
+
+    ctx.run_autonomous_turn = decline
 
     assert await autonomy.run_tick(ctx) is None
 
-    # ……但"想弄明白"这件事已经记下来了。
+    # ……但"想弄明白"这件事已经记下来了，不会因为这次没做而消失。
     carried = IntentFileStore(tmp_path).load()
     assert [item.what for item in carried.all()] == ["https://example.com/tides"]
 
