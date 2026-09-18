@@ -58,7 +58,6 @@ class AutonomyDecision:
     urgency: float = 0.0
     restlessness_score: float = 0.0
     novelty_score: float = 0.0
-    budget_pressure: float = 0.0
     context: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,7 +75,6 @@ class AutonomyDecision:
             "urgency": round(self.urgency, 4),
             "restlessness_score": round(self.restlessness_score, 4),
             "novelty_score": round(self.novelty_score, 4),
-            "budget_pressure": round(self.budget_pressure, 4),
             "context": dict(self.context),
         }
 
@@ -184,23 +182,22 @@ class AutonomyPolicy:
         seconds_since_episode: float,
         intentions: IntentStore | list[Intention] | None = None,
         recent_kinds: list[str] | None = None,
-        episodes_today: int = 0,
-        daily_episode_budget: int = 3,
         expressiveness: float = 0.5,
         now: str = "",
     ) -> AutonomyDecision:
         """Decide whether to pursue one intention, without calling an LLM.
 
+        There is no daily quota: she may act whenever she is actually carrying
+        something.  What limits her is not a counter but the intentions
+        themselves — an empty or faded set yields "do nothing" on its own.
+
         Args:
             seconds_since_episode: Idle time since the last self-initiated episode.
             intentions: The intentions she is carrying.
             recent_kinds: Kinds of the most recent episodes, newest first.
-            episodes_today: Episodes already started today.
-            daily_episode_budget: Hard daily cap; reaching it suppresses autonomy.
             expressiveness: Persona trait (0-1) shifting the threshold.
             now: Reference timestamp for urgency decay.
         """
-        budget_pressure = self._budget_pressure(episodes_today, daily_episode_budget)
         restlessness = self._restlessness_score(seconds_since_episode)
         threshold = self._threshold(expressiveness)
         open_items = self._open_intentions(intentions, now=now)
@@ -208,15 +205,7 @@ class AutonomyPolicy:
         if not open_items:
             # Nothing is being carried: she does not get to act out of boredom.
             # Material may still *plant* an intention, which is a later tick's job.
-            return self._decision(
-                False,
-                "no_intention",
-                0.0,
-                threshold,
-                restlessness=restlessness,
-                budget_pressure=budget_pressure,
-                context={"episodes_today": episodes_today},
-            )
+            return self._decision(False, "no_intention", 0.0, threshold, restlessness=restlessness)
 
         best = max(
             open_items,
@@ -227,12 +216,11 @@ class AutonomyPolicy:
         # Motivation comes from her own urgency; idleness only nudges it.  A
         # stale intention cannot be revived by waiting alone.
         score = _clamp(0.70 * urgency + 0.20 * restlessness + 0.10 * novelty)
-        score = _clamp(score - 0.45 * budget_pressure)
         should_act = score >= threshold and not best.is_expired(now=now)
         reason = (
             "pursuing_intention"
             if should_act
-            else self._suppression_reason(urgency, restlessness, budget_pressure, threshold, score)
+            else self._suppression_reason(urgency, threshold, score)
         )
         return self._decision(
             should_act,
@@ -248,11 +236,7 @@ class AutonomyPolicy:
             urgency=urgency,
             restlessness=restlessness,
             novelty=novelty,
-            budget_pressure=budget_pressure,
-            context={
-                "open_intentions": len(open_items),
-                "episodes_today": episodes_today,
-            },
+            context={"open_intentions": len(open_items)},
         )
 
     @staticmethod
@@ -285,7 +269,6 @@ class AutonomyPolicy:
         urgency: float = 0.0,
         restlessness: float = 0.0,
         novelty: float = 0.0,
-        budget_pressure: float = 0.0,
         context: dict[str, Any] | None = None,
     ) -> AutonomyDecision:
         return AutonomyDecision(
@@ -302,7 +285,6 @@ class AutonomyPolicy:
             urgency=urgency,
             restlessness_score=restlessness,
             novelty_score=novelty,
-            budget_pressure=budget_pressure,
             context=dict(context or {}),
         )
 
@@ -320,17 +302,6 @@ class AutonomyPolicy:
         return 0.35 if kind in window else 1.0
 
     @staticmethod
-    def _budget_pressure(episodes_today: int, daily_episode_budget: int) -> float:
-        try:
-            budget = int(daily_episode_budget)
-            used = int(episodes_today)
-        except (TypeError, ValueError):
-            return 0.0
-        if budget <= 0:
-            return 1.0
-        return _clamp(used / budget)
-
-    @staticmethod
     def _threshold(expressiveness: float) -> float:
         value = _clamp(expressiveness)
         if value >= 0.65:
@@ -340,15 +311,7 @@ class AutonomyPolicy:
         return 0.50
 
     @staticmethod
-    def _suppression_reason(
-        urgency: float,
-        restlessness: float,
-        budget_pressure: float,
-        threshold: float,
-        score: float,
-    ) -> str:
-        if budget_pressure >= 1.0:
-            return "daily_budget_exhausted"
+    def _suppression_reason(urgency: float, threshold: float, score: float) -> str:
         if urgency < 0.15:
             return "intention_faded"
         if score < threshold:
