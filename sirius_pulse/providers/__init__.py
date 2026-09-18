@@ -1,4 +1,5 @@
 from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
+from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
 from sirius_pulse.providers.base import GenerationRequest, LLMProvider
 from sirius_pulse.providers.bigmodel import BigModelProvider
 from sirius_pulse.providers.deepseek import DeepSeekProvider
@@ -39,6 +40,8 @@ from sirius_pulse.providers.volcengine_ark import VolcengineArkProvider
 __all__ = [
     "GenerationRequest",
     "LLMProvider",
+    "AmkrSettings",
+    "load_amkr_settings",
     "AliyunBailianProvider",
     "BigModelProvider",
     "MockProvider",

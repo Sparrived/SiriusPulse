@@ -99,21 +99,16 @@ def test_engine_runtime_when_tool_bridge_has_routes_then_registers_proactive_des
     assert runtime._engine._adapter is adapter
 
 
-def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_providers(tmp_path):
+def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_amkr_settings(tmp_path):
     data_dir = tmp_path / "data"
     persona_dir = data_dir / "personas" / "sirius"
     persona_dir.mkdir(parents=True)
     atomic_write_json(
-        data_dir / "providers" / "provider_keys.json",
+        data_dir / "global_config.json",
         {
-            "providers": {
-                "deepseek": {
-                    "type": "deepseek",
-                    "api_key": "sk-test",
-                    "enabled": True,
-                    "models": ["deepseek-chat"],
-                }
-            }
+            "amkr_base_url": "http://amkr.internal:8000",
+            "amkr_local_api_key": "sk-amkr-admin",
+            "amkr_workspace": "sirius-pulse",
         },
     )
 
@@ -121,6 +116,26 @@ def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_provider
 
     assert runtime.global_data_path == data_dir
     assert runtime.has_provider_config() is True
+
+    provider = runtime._build_provider()
+    assert provider is not None
+    assert provider._base_url == "http://amkr.internal:8000"
+    assert provider._api_key == "sk-amkr-admin"
+    assert provider._workspace == "sirius-pulse"
+
+
+def test_engine_runtime_when_amkr_key_missing_then_not_ready(tmp_path):
+    """没配授权 Key 时不应就绪，且不抛异常。"""
+    persona_dir = tmp_path / "data" / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    atomic_write_json(
+        persona_dir.parent.parent / "global_config.json",
+        {"amkr_base_url": "http://127.0.0.1:8000"},
+    )
+
+    runtime = EngineRuntime(persona_dir)
+
+    assert runtime.has_provider_config() is False
 
 
 def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_path):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import cast
+from typing import Iterable, cast
 
 import httpx
 
@@ -18,26 +18,57 @@ from sirius_pulse.providers.base import (
     resolve_generation_timeout_seconds,
     set_last_generation_usage,
 )
-from sirius_pulse.providers.proxy import httpx_proxy_kwargs
 from sirius_pulse.providers.response_utils import extract_assistant_text
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider(AsyncLLMProvider):
-    """OpenAI-compatible provider backed by /v1/chat/completions."""
+    """OpenAI-compatible provider backed by /v1/chat/completions.
+
+    本框架只保留这一个实现：端点固定指向 AMKR，由它承担供应商与 Key 池、
+    故障切换与采样参数固定。``workspace`` 会作为 ``X-AMKR-Workspace`` 头发送，
+    让多个 AI 服务共用同一个 AMKR 实例时各自持有独立的任务空间。
+    """
 
     _provider_name = "openai-compatible"
 
     def __init__(
-        self, *, base_url: str, api_key: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        workspace: str = "",
+        task_names: Iterable[str] = (),
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
+        self._workspace = workspace.strip()
+        # 采样参数交给 AMKR 的那些模型名（即任务名）。不在其中的名字按普通模型
+        # 直连，此时本框架仍自己决定 temperature / max_tokens。
+        self._task_names = frozenset(name for name in task_names if name)
+
+    def _delegates_sampling_params(self, request: GenerationRequest) -> bool:
+        return request.model in self._task_names
 
     def _build_url(self, request: GenerationRequest) -> str:
         return f"{self._base_url}/v1/chat/completions"
+
+    def _build_headers(self) -> dict[str, str]:
+        """构造请求头。
+
+        ``X-AMKR-Workspace`` 是 AMKR 自己的路由状态，不会被转发给上游；空值
+        时不发送，等价于 AMKR 的默认工作空间。
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._api_key}",
+        }
+        if self._workspace:
+            headers["X-AMKR-Workspace"] = self._workspace
+        return headers
 
     async def generate_async(
         self, request: GenerationRequest, return_reasoning: bool = False
@@ -59,7 +90,11 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             f"预计要花 {debug_context['estimated_input_tokens']} 个 Token，"
             f"超时 {timeout_seconds:.1f} 秒～"
         )
-        payload = build_chat_completion_payload(request, provider_name=self._provider_name)
+        payload = build_chat_completion_payload(
+            request,
+            provider_name=self._provider_name,
+            delegate_sampling_params=self._delegates_sampling_params(request),
+        )
         wire_messages, transport_stats = prepare_openai_compatible_messages(
             cast(list[dict[str, object]], payload["messages"])
         )
@@ -72,13 +107,10 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             f"{json.dumps({**debug_context, **transport_stats, 'request_body_bytes': len(body), 'payload': payload}, ensure_ascii=False, indent=2)}"
         )
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-        }
+        headers = self._build_headers()
 
         try:
-            async with httpx.AsyncClient(timeout=timeout_seconds, **httpx_proxy_kwargs()) as client:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 response = await client.post(url, content=body, headers=headers)
                 status_code = response.status_code
                 content_type = str(response.headers.get("Content-Type", "")).strip()
@@ -185,7 +217,11 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         """流式生成，逐 token yield (chunk_type, text) 其中 chunk_type 为 'reasoning' 或 'content'。"""
         timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
         url = self._build_url(request)
-        payload = build_chat_completion_payload(request, provider_name=self._provider_name)
+        payload = build_chat_completion_payload(
+            request,
+            provider_name=self._provider_name,
+            delegate_sampling_params=self._delegates_sampling_params(request),
+        )
         wire_messages, _ = prepare_openai_compatible_messages(
             cast(list[dict[str, object]], payload["messages"])
         )
@@ -193,12 +229,9 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         wire_payload["messages"] = wire_messages
         wire_payload["stream"] = True
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-        }
+        headers = self._build_headers()
 
-        async with httpx.AsyncClient(timeout=timeout_seconds, **httpx_proxy_kwargs()) as client:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             async with client.stream("POST", url, json=wire_payload, headers=headers) as response:
                 if response.status_code >= 400:
                     body = await response.aread()

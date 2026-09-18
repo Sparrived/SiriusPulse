@@ -15,20 +15,17 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_emotional_engine
+from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
-from sirius_pulse.providers.routing import (
-    AutoRoutingProvider,
-    ProviderConfig,
-    normalize_provider_name,
-    normalize_provider_type,
-)
+from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.tools.executor import ToolExecutor
 from sirius_pulse.tools.mcp_client import MCPClientManager, load_mcp_config
@@ -118,70 +115,23 @@ async def _await_cleanup(awaitable: Any) -> bool:
     return cancelled
 
 
-def _resolve_api_key(raw: str) -> str:
-    text = raw.strip()
-    if text.lower().startswith("env:"):
-        return os.getenv(text[4:].strip(), "").strip()
-    if text.isupper() and " " not in text:
-        env_val = os.getenv(text, "").strip()
-        if env_val:
-            return env_val
-    return text
+def _build_provider(
+    settings: AmkrSettings,
+    task_names: Iterable[str] = (),
+) -> OpenAICompatibleProvider | None:
+    """按 AMKR 连接配置构建唯一的 provider。
 
-
-def _build_provider_from_config(config: dict[str, Any]) -> AutoRoutingProvider | None:
-    providers = config.get("providers")
-    if not providers:
+    未配置凭据时返回 ``None``，由调用方决定如何报告不就绪。
+    """
+    if not settings.configured:
         return None
-
-    entries: dict[str, ProviderConfig] = {}
-    for idx, item in enumerate(providers):
-        if not isinstance(item, dict):
-            continue
-        ptype = normalize_provider_type(str(item.get("type") or item.get("platform_type") or ""))
-        api_key = _resolve_api_key(str(item.get("api_key", "")))
-        if not ptype or not api_key:
-            continue
-        provider_name = normalize_provider_name(
-            str(item.get("name", "")).strip() or f"{ptype}-{idx + 1}"
-        )
-        cfg = ProviderConfig(
-            provider_type=ptype,
-            api_key=api_key,
-            base_url=str(item.get("base_url", "")).strip(),
-            healthcheck_model=str(item.get("healthcheck_model", "")).strip(),
-            enabled=bool(item.get("enabled", True)),
-            models=list(item.get("models", []) or []),
-            name=provider_name,
-        )
-        entries[provider_name] = cfg
-
-    if not entries:
-        return None
-    return AutoRoutingProvider(entries)
-
-
-def _build_provider_from_env() -> AutoRoutingProvider | None:
-    """从环境变量构建 provider（快速测试模式）。"""
-    ptype = normalize_provider_type(os.getenv("SIRIUS_PROVIDER_TYPE", "openai-compatible").strip())
-    api_key = _resolve_api_key(os.getenv("SIRIUS_API_KEY", ""))
-    base_url = os.getenv("SIRIUS_BASE_URL", "").strip()
-    model = os.getenv("SIRIUS_MODEL", "gpt-4o-mini").strip()
-    provider_name = os.getenv("SIRIUS_PROVIDER_NAME", "").strip() or ptype
-
-    if not api_key:
-        return None
-
-    cfg = ProviderConfig(
-        provider_type=ptype,
-        api_key=api_key,
-        base_url=base_url,
-        healthcheck_model=model,
-        enabled=True,
-        models=[model] if model else [],
-        name=provider_name,
+    return OpenAICompatibleProvider(
+        base_url=settings.base_url,
+        api_key=settings.api_key,
+        timeout_seconds=settings.timeout_seconds,
+        workspace=settings.workspace,
+        task_names=task_names,
     )
-    return AutoRoutingProvider({provider_name: cfg})
 
 
 class EngineRuntime:
@@ -230,7 +180,7 @@ class EngineRuntime:
         return self.work_path
 
     def has_provider_config(self) -> bool:
-        """检查是否已配置有效的 Provider。"""
+        """检查是否已配置有效的 AMKR 连接。"""
         return self._build_provider() is not None
 
     def has_persona(self) -> bool:
@@ -249,10 +199,11 @@ class EngineRuntime:
         return "小星"
 
     def is_ready(self) -> bool:
-        """检查引擎是否已就绪（provider + persona 均配置完成）。"""
+        """检查引擎是否已就绪（AMKR 连接 + persona 均配置完成）。"""
         if not self.has_provider_config():
             LOG.warning(
-                "引擎未就绪: 未配置 Provider。请在 WebUI 的「Provider 配置」页面添加 API Key，或在 data/providers/provider_keys.json 中配置。"
+                "引擎未就绪: 未配置 AMKR 连接。请在 WebUI 的「AMKR 运维」页面填写"
+                "服务地址与本地授权 Key，或设置环境变量 SIRIUS_AMKR_BASE_URL / SIRIUS_AMKR_API_KEY。"
             )
             return False
         if not self.has_persona():
@@ -277,25 +228,30 @@ class EngineRuntime:
             LOG.warning("引擎未就绪: 引擎初始化失败: %s", exc)
             return False
 
-    def _build_provider(self) -> AutoRoutingProvider | None:
-        # 1) 从 ProviderRegistry 加载
-        try:
-            from sirius_pulse.providers.routing import ProviderRegistry
+    def _amkr_task_names(self) -> set[str]:
+        """本框架会当作 AMKR 任务名发送的模型名集合。
 
-            registry = ProviderRegistry(self.global_data_path)
-            loaded = registry.load()
-            if loaded:
-                return AutoRoutingProvider(loaded)
-        except Exception as exc:
-            LOG.debug("ProviderRegistry 加载失败: %s", exc)
+        任务名与 AMKR 一致（``cognition_analyze``、``memory_extract`` …），因此
+        取任务注册表的键；编排配置里自定义的任务键一并纳入，避免它们退化成
+        「按普通模型直连」而被 AMKR 拒绝采样参数。
+        """
+        from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY
 
-        # 2) 从插件配置读取（覆盖/补充）
-        provider = _build_provider_from_config(self.plugin_config)
-        if provider is not None:
-            return provider
+        names = set(_DEFAULT_TASK_REGISTRY)
+        orch = OrchestrationStore.load(self.work_path)
+        task_models = orch.get("task_models")
+        if isinstance(task_models, dict):
+            names.update(str(key) for key in task_models)
+        return names
 
-        # 3) fallback 到环境变量
-        return _build_provider_from_env()
+    def _build_provider(self) -> OpenAICompatibleProvider | None:
+        """按 AMKR 连接配置构建 provider。
+
+        配置来自 ``global_config.json``，环境变量优先。任务名集合取自编排配置，
+        用于决定采样参数是否交给 AMKR 的任务定义。
+        """
+        settings = load_amkr_settings(self.global_data_path)
+        return _build_provider(settings, self._amkr_task_names())
 
     def _merge_plugin_config(self, definition: Any) -> None:
         """将 plugins/_config.json 中的运行时配置合并到 definition.permissions。"""
@@ -674,10 +630,13 @@ class EngineRuntime:
     async def _build_engine(self) -> "EmotionalGroupChatEngine":
         provider = self._build_provider()
         if provider is None:
+            settings = load_amkr_settings(self.global_data_path)
             raise RuntimeError(
-                "未配置 Provider。请通过以下任一方式配置：\n"
-                "1) 环境变量: SIRIUS_PROVIDER_TYPE, SIRIUS_API_KEY, SIRIUS_BASE_URL, SIRIUS_MODEL\n"
-                "2) 配置项 providers（列表格式）"
+                "未配置 AMKR 连接。请通过以下任一方式配置：\n"
+                "1) WebUI 的「AMKR 运维」页面（写入 global_config.json）\n"
+                "2) 环境变量: SIRIUS_AMKR_API_KEY（必填）、"
+                "SIRIUS_AMKR_BASE_URL、SIRIUS_AMKR_WORKSPACE\n"
+                f"当前地址为 {settings.base_url}，缺少本地授权 Key。"
             )
 
         # 优先从 experience.json 读取记忆配置，回退到 plugin_config

@@ -96,9 +96,10 @@ def test_prompt_cache_usage_when_provider_shapes_vary_then_normalizes_hit_and_mi
     )
 
 
-def test_chat_payload_when_deepseek_request_uses_defaults_then_enables_low_reasoning():
+def test_chat_payload_when_sampling_params_delegated_then_omits_temperature_and_max_tokens():
+    """任务名路由下采样参数由 AMKR 任务定义固定，调用方不能再传。"""
     request = GenerationRequest(
-        model="deepseek-chat",
+        model="cognition_analyze",
         system_prompt="system",
         messages=[{"role": "user", "content": "hello"}],
         max_tokens=50,
@@ -106,46 +107,57 @@ def test_chat_payload_when_deepseek_request_uses_defaults_then_enables_low_reaso
         tools=[{"type": "function", "function": {"name": "lookup"}}],
         tool_choice="auto",
         response_format={"type": "json_object"},
-        reasoning_effort="low",
     )
 
     payload = build_chat_completion_payload(
         request,
-        provider_name="deepseek",
+        provider_name="openai-compatible",
+        delegate_sampling_params=True,
     )
 
+    assert "temperature" not in payload
+    assert "max_tokens" not in payload
+    # 非采样参数照常透传
+    assert payload["model"] == "cognition_analyze"
     assert payload["messages"][0] == {"role": "system", "content": "system"}
     assert payload["messages"][1] == {"role": "user", "content": "hello"}
     assert payload["tools"] == request.tools
     assert payload["tool_choice"] == "auto"
     assert payload["response_format"] == {"type": "json_object"}
-    assert payload["thinking"] == {"type": "enabled"}
-    assert payload["reasoning_effort"] == "low"
 
 
-def test_chat_payload_when_deepseek_reasoning_is_disabled_then_preserves_disabled_mode():
+def test_chat_payload_when_sampling_not_delegated_then_keeps_temperature_and_max_tokens():
+    """普通模型名（非任务）直连时，采样参数仍由本框架决定。"""
+    payload = build_chat_completion_payload(
+        GenerationRequest(
+            model="gpt-4o-mini",
+            system_prompt="",
+            messages=[],
+            temperature=0.9,
+            max_tokens=123,
+        ),
+        provider_name="openai-compatible",
+    )
+
+    assert payload["temperature"] == 0.9
+    assert payload["max_tokens"] == 123
+
+
+def test_chat_payload_when_no_vendor_thinking_params_then_never_injects_them():
+    """单一 OpenAI-compatible 客户端不再注入任何厂商私有思考参数。"""
     payload = build_chat_completion_payload(
         GenerationRequest(
             model="deepseek-chat",
             system_prompt="",
-            messages=[],
-            reasoning_effort=None,
+            messages=[{"role": "user", "content": "hello"}],
+            reasoning_effort="low",
         ),
-        provider_name="deepseek",
+        provider_name="openai-compatible",
     )
 
-    assert payload["thinking"] == {"type": "disabled"}
-
-
-def test_chat_payload_when_bailian_provider_then_uses_enable_thinking_flag():
-    payload = build_chat_completion_payload(
-        GenerationRequest(
-            model="qwen-plus", system_prompt="", messages=[{"role": "user", "content": "hello"}]
-        ),
-        provider_name="aliyun-bailian",
-    )
-
-    assert payload["enable_thinking"] is False
+    assert "thinking" not in payload
+    assert "enable_thinking" not in payload
+    assert "reasoning_effort" not in payload
 
 
 def test_chat_payload_when_opencode_provider_then_does_not_inject_unknown_params():
@@ -754,7 +766,8 @@ def test_httpx_proxy_kwargs_when_proxy_disabled_then_empty():
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_provider_when_proxy_configured_then_client_uses_proxy(monkeypatch):
+async def test_openai_compatible_provider_when_workspace_set_then_sends_amkr_header(monkeypatch):
+    """共享 AMKR 时靠工作空间头隔离，两个请求路径都必须带上。"""
     captured: dict[str, object] = {}
 
     class _Response:
@@ -773,7 +786,7 @@ async def test_openai_compatible_provider_when_proxy_configured_then_client_uses
 
     class _Client:
         def __init__(self, *args, **kwargs):
-            captured["kwargs"] = kwargs
+            pass
 
         async def __aenter__(self):
             return self
@@ -781,18 +794,36 @@ async def test_openai_compatible_provider_when_proxy_configured_then_client_uses
         async def __aexit__(self, *args):
             return None
 
-        async def post(self, *args, **kwargs):
+        async def post(self, url, content=None, headers=None, **kwargs):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json.loads(content.decode("utf-8"))
             return _Response()
 
     monkeypatch.setattr("sirius_pulse.providers.openai_compatible.httpx.AsyncClient", _Client)
-    set_current_proxy(ProxySettings(https="https://proxy.example:7890"))
 
-    provider = OpenAICompatibleProvider(base_url="https://api.example.test", api_key="sk-x")
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:8000",
+        api_key="sk-local",
+        workspace="sirius-pulse",
+        task_names={"cognition_analyze"},
+    )
     await provider.generate_async(
-        GenerationRequest(model="m", system_prompt="", messages=[{"role": "user", "content": "hi"}])
+        GenerationRequest(
+            model="cognition_analyze",
+            system_prompt="",
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.7,
+            max_tokens=512,
+        )
     )
 
-    assert captured["kwargs"].get("proxy") == "https://proxy.example:7890"
+    assert captured["url"] == "http://127.0.0.1:8000/v1/chat/completions"
+    assert captured["headers"]["X-AMKR-Workspace"] == "sirius-pulse"
+    assert captured["headers"]["Authorization"] == "Bearer sk-local"
+    # 任务名路由：采样参数不能随请求发出，否则 AMKR 会以参数冲突拒绝
+    assert "temperature" not in captured["json"]
+    assert "max_tokens" not in captured["json"]
 
 
 # ─── models 接口探测 ─────────────────────────────────────

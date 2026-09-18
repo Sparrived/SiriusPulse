@@ -390,11 +390,10 @@ class PersonaWorker:
         LOG.info("Global config reloaded")
 
     def _reload_provider(self, engine: Any) -> None:
-        """热重载 Provider 配置（provider_keys.json）。
+        """热重载 AMKR 连接配置。
 
-        重新从磁盘加载 provider 配置，构建新的 AutoRoutingProvider 并同步到
-        engine、brain、cognition_analyzer 中，使 provider 变更（新增/删除提供商、
-        模型列表更新等）无需重启引擎即可生效。
+        重新读取连接配置并同步到 engine、brain、cognition_analyzer，使 WebUI 上
+        的地址 / Key / 工作空间变更无需重启引擎即可生效。
         """
         if not self._runtime:
             LOG.debug("Runtime 未就绪，跳过 provider 重载")
@@ -402,7 +401,7 @@ class PersonaWorker:
 
         new_provider = self._runtime._build_provider()
         if new_provider is None:
-            LOG.warning("Provider 重建失败（无可用配置），保留旧 provider")
+            LOG.warning("AMKR 连接重建失败（缺少地址或授权 Key），保留旧 provider")
             return
 
         # 同步到 engine 及其子系统
@@ -412,7 +411,7 @@ class PersonaWorker:
         if hasattr(engine, "cognition_analyzer") and engine.cognition_analyzer:
             engine.cognition_analyzer.provider_async = new_provider
 
-        LOG.info("Provider 配置已热重载")
+        LOG.info("AMKR 连接配置已热重载")
 
     def _write_status(self, status: dict[str, Any]) -> None:
         try:

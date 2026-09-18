@@ -274,46 +274,36 @@ def build_generation_debug_context(
     }
 
 
-def _build_thinking_defaults(
-    request: GenerationRequest,
-    provider_name: str,
-) -> dict[str, object]:
-    normalized_name = provider_name.strip().lower()
-    if normalized_name in {"aliyun-bailian", "siliconflow"}:
-        return {"enable_thinking": False}
-    if normalized_name == "deepseek":
-        if request.reasoning_effort:
-            return {
-                "thinking": {"type": "enabled"},
-                "reasoning_effort": request.reasoning_effort,
-            }
-        return {"thinking": {"type": "disabled"}}
-    if normalized_name in {"bigmodel", "volcengine-ark"}:
-        return {"thinking": {"type": "disabled"}}
-    return {}
-
-
 def build_chat_completion_payload(
     request: GenerationRequest,
     *,
     provider_name: str,
+    delegate_sampling_params: bool = False,
 ) -> dict[str, object]:
+    """Build the OpenAI-compatible chat completion body.
+
+    采样参数（``temperature`` / ``max_tokens``）为 ``None`` 时**不写进载荷**：
+    请求最终由 AMKR 按任务名路由，任务定义里的固定值才是权威，调用方再传一份
+    会与任务冲突（AMKR 对「调用方显式传了任务已固定的参数」直接回 400，不做
+    静默覆盖）。``provider_name`` 仅用于日志与调试上下文。
+    """
     payload: dict[str, object] = {
         "model": request.model,
-        "temperature": request.temperature,
-        "max_tokens": request.max_tokens,
         "messages": [
             {"role": "system", "content": request.system_prompt},
             *request.messages,
         ],
     }
+    if not delegate_sampling_params:
+        # 直连模式下由本框架决定采样参数；任务名路由下交给 AMKR 的任务定义。
+        payload["temperature"] = request.temperature
+        payload["max_tokens"] = request.max_tokens
     if request.response_format is not None:
         payload["response_format"] = request.response_format
     if request.tools is not None:
         payload["tools"] = request.tools
     if request.tool_choice is not None:
         payload["tool_choice"] = request.tool_choice
-    payload.update(_build_thinking_defaults(request, provider_name))
     return payload
 
 
