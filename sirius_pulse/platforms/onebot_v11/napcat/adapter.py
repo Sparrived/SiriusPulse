@@ -881,44 +881,34 @@ class NapCatAdapter(BaseAdapter):
 
         nickname, card = self.extract_sender_names(raw_event)
 
+        # 被引用消息携带的图片（引用回复场景下模型也需要看到）
+        quote_images: list[dict[str, str]] = []
         if is_poke:
             prompt = self._render_poke_prompt(raw_event, self_id)
         elif msg_type == "group":
-            prompt = await self._render_group_prompt(raw_event, self_id, gid)
+            prompt = await self._render_group_prompt(raw_event, self_id, gid, quote_images)
         elif msg_type == "private":
-            prompt = await self._render_private_prompt(raw_event)
+            prompt = await self._render_private_prompt(raw_event, quote_images)
         else:
             return None
 
         if not prompt:
             return None
 
-        multimodal_inputs: list[dict[str, str]] = []
         # 提取 @ 提及目标
         at_user_ids: list[str] = []
         mention_all = False
         for seg in raw_event.get("message", []):
-            if seg.get("type") == "image":
-                data = seg.get("data", {})
-                url = data.get("url", "") or data.get("file", "")
-                sub_type = data.get("sub_type", "")
-                if url:
-                    is_sticker = str(sub_type) == "1"
-                    local_path = await self.cache_image(str(url), is_sticker=is_sticker)
-                    mm_item: dict[str, str] = {
-                        "type": "image",
-                        "value": local_path,
-                        "file_path": local_path,
-                    }
-                    if is_sticker:
-                        mm_item["sub_type"] = "1"
-                    multimodal_inputs.append(mm_item)
-            elif seg.get("type") == "at":
+            if seg.get("type") == "at":
                 at_qq = str(seg.get("data", {}).get("qq", ""))
                 if at_qq == "all":
                     mention_all = True
                 elif at_qq:
                     at_user_ids.append(at_qq)
+
+        multimodal_inputs = quote_images + await self._collect_image_inputs(
+            raw_event.get("message", [])
+        )
 
         try:
             event_time = int(raw_event.get("time", 0) or 0)
@@ -953,7 +943,13 @@ class NapCatAdapter(BaseAdapter):
         target_name = self._persona_name if target_id == self_id else f"qq_{target_id}"
         return f"戳了一下 {target_name}"
 
-    async def _render_group_prompt(self, event: dict[str, Any], self_id: str, group_id: str) -> str:
+    async def _render_group_prompt(
+        self,
+        event: dict[str, Any],
+        self_id: str,
+        group_id: str,
+        quote_images: list[dict[str, str]] | None = None,
+    ) -> str:
         """将群聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
         from ..protocol import _face_to_text, build_image_label
 
@@ -967,7 +963,7 @@ class NapCatAdapter(BaseAdapter):
             data = seg.get("data", {})
             if seg_type == "reply":
                 # 引用消息：尝试获取被引用消息内容并注入 prompt
-                quote_text = await self._resolve_quote_content(data)
+                quote_text = await self._resolve_quote_content(data, quote_images)
                 if quote_text:
                     parts.append(quote_text)
             elif seg_type == "text":
@@ -1003,25 +999,43 @@ class NapCatAdapter(BaseAdapter):
 
         return "".join(parts).strip()
 
-    async def _resolve_quote_content(self, data: dict[str, Any]) -> str:
+    async def _resolve_quote_content(
+        self,
+        data: dict[str, Any],
+        quote_images: list[dict[str, str]] | None = None,
+    ) -> str:
         """解析引用消息段，通过 get_msg API 获取被引用消息内容。
+
+        被引用消息中的图片会缓存到本地并追加进 ``quote_images``，使其作为真实
+        视觉输入进入多模态通道（仅文本注入时模型无法「看到」引用的图）。
 
         Returns:
             格式化的引用文本，如 ``[引用消息 msg_id="123" speaker="张三"] 内容 [/引用消息]``
             获取失败时返回空字符串。
         """
+        from ..protocol import build_image_label
+
         msg_id = str(data.get("id", ""))
         if not msg_id:
             return ""
         try:
             resp = await self.call_api("get_msg", {"message_id": int(msg_id)})
             msg_data = resp.get("data", {})
-            # 提取被引用消息的文本内容
+            # 提取被引用消息的文本与图片标签
             raw_segments = msg_data.get("message", [])
             text_parts: list[str] = []
+            image_index = 1
+            image_names: dict[str, int] = {}
             for seg in raw_segments:
                 if seg.get("type") == "text":
                     text_parts.append(seg.get("data", {}).get("text", ""))
+                elif seg.get("type") == "image":
+                    is_sticker = str(seg.get("data", {}).get("sub_type", "")) == "1"
+                    label = "动画表情" if is_sticker else "图片"
+                    text_parts.append(build_image_label(seg, image_index, label, image_names))
+                    image_index += 1
+            if quote_images is not None:
+                quote_images.extend(await self._collect_image_inputs(raw_segments))
             quote_text = "".join(text_parts).strip()
             if not quote_text:
                 return ""
@@ -1041,7 +1055,33 @@ class NapCatAdapter(BaseAdapter):
             LOG.debug("获取引用消息失败 (msg_id=%s): %s", msg_id, exc)
             return ""
 
-    async def _render_private_prompt(self, event: dict[str, Any]) -> str:
+    async def _collect_image_inputs(self, segments: list[dict[str, Any]]) -> list[dict[str, str]]:
+        """把 OneBot 消息段中的图片缓存到本地并转换为多模态输入项。"""
+        inputs: list[dict[str, str]] = []
+        for seg in segments:
+            if seg.get("type") != "image":
+                continue
+            data = seg.get("data", {})
+            url = data.get("url", "") or data.get("file", "")
+            if not url:
+                continue
+            is_sticker = str(data.get("sub_type", "")) == "1"
+            local_path = await self.cache_image(str(url), is_sticker=is_sticker)
+            item: dict[str, str] = {
+                "type": "image",
+                "value": local_path,
+                "file_path": local_path,
+            }
+            if is_sticker:
+                item["sub_type"] = "1"
+            inputs.append(item)
+        return inputs
+
+    async def _render_private_prompt(
+        self,
+        event: dict[str, Any],
+        quote_images: list[dict[str, str]] | None = None,
+    ) -> str:
         """将私聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
         from ..protocol import _face_to_text, build_image_label
 
@@ -1053,7 +1093,7 @@ class NapCatAdapter(BaseAdapter):
             seg_type = seg.get("type")
             data = seg.get("data", {})
             if seg_type == "reply":
-                quote_text = await self._resolve_quote_content(data)
+                quote_text = await self._resolve_quote_content(data, quote_images)
                 if quote_text:
                     parts.append(quote_text)
             elif seg_type == "text":
