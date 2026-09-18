@@ -1,13 +1,22 @@
 """Built-in autonomous-life TOOL.
 
-This TOOL gives a persona a life of her own.  On a slow tick it looks at what she
-has already encountered, decides *by pure rule* whether anything is worth
-pursuing, and only then spends an LLM turn on it.  Nobody asked, and the result
-is material for herself: making and telling are two separate decisions, so this
-TOOL never sends anything to a chat.
+This TOOL gives a persona a life of her own.  On a slow tick it looks at the
+*intentions* she is already carrying and decides by pure rule whether one is
+worth acting on now.  The tick never invents a reason to act: no intentions means
+she does nothing, however long she has been idle.
 
-Options are read from this TOOL's per-persona data store, so they can be tuned in
-the WebUI without restarting the persona.
+Two things can happen when an intention is picked:
+
+``do``
+    She works something out (reads it, tries it, writes it down).  This costs one
+    LLM turn, and the result is material for herself.
+``tell``
+    She says what she wanted to say, to the audience she chose.  The words were
+    already written down when the intention formed, so this costs nothing and is
+    delivered through the normal proactive-message pipeline.
+
+Making and telling stay separate decisions, and telling is never a broadcast: the
+audience is part of the intention itself.
 """
 
 from __future__ import annotations
@@ -20,6 +29,12 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.core.autonomy import AutonomyPolicy, Episode, build_seed
+from sirius_pulse.core.intent import (
+    RESOLUTION_DO,
+    IntentFileStore,
+    Intention,
+    IntentStore,
+)
 from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.memory.units.models import MemoryUnit
 from sirius_pulse.utils.json_io import atomic_write_json
@@ -36,6 +51,10 @@ _RECENT_MESSAGE_COUNT = 20
 _MAX_SEEDS = 8
 _OUTCOME_MAX_CHARS = 600
 
+# A tell-intention is cheap to deliver, so it gets its own, much tighter gate:
+# one share per hour per persona, on top of the normal reply cooldown.
+_DEFAULT_SHARE_COOLDOWN_SECONDS = 3600
+
 # The persona is explicitly allowed to decline.  A declined turn is not an
 # episode: autonomy that must always produce something is just a cron job.
 _DECLINE_RE = re.compile(r"^\s*(什么也不做|什么都不做|无事可做|没有想做的|没什么想做的)")
@@ -43,14 +62,12 @@ _DECLINE_RE = re.compile(r"^\s*(什么也不做|什么都不做|无事可做|没
 TOOL_META = {
     "name": "autonomy",
     "description": (
-        "人格的自主时间。定期查看她留意到的素材，按规则决定是否自己去做点什么"
-        "（查资料、读文章、写点东西、整理想法……），并把结果留给她自己的记忆。"
-        "该 TOOL 不会向任何群或私聊发送消息。"
+        "人格的自主时间。定期查看她正在惦记的事（意图），按规则决定是否推进其中一件：" "要么自己去做点什么，要么把想说的话告诉她想告诉的人。" "大多数时候结论是什么都不做。"
     ),
-    "version": "1.0.0",
+    "version": "2.0.0",
     "model_visible": False,
     "side_effect": "external_write",
-    "tags": ["autonomy", "persona", "memory", "background"],
+    "tags": ["autonomy", "intent", "persona", "memory", "background"],
     "config": {
         "check_interval_seconds": {
             "type": "int",
@@ -62,6 +79,12 @@ TOOL_META = {
             "type": "int",
             "description": "两次真正调用模型的自主回合之间的最小间隔秒数，默认 3600。",
             "default": _DEFAULT_ATTEMPT_COOLDOWN_SECONDS,
+            "group": "节奏",
+        },
+        "share_cooldown_seconds": {
+            "type": "int",
+            "description": "两次主动分享之间的最小间隔秒数，默认 3600。",
+            "default": _DEFAULT_SHARE_COOLDOWN_SECONDS,
             "group": "节奏",
         },
         "daily_episode_budget": {
@@ -105,29 +128,53 @@ async def run_tick(ctx: Any) -> Episode | None:
 
     state = _load_state(store)
     now = datetime.now(timezone.utc)
-    # 每日预算是硬上限，不交给打分去"大概率"拦住。
+
+    # Noticing comes before acting: encountering something is where motivation
+    # originates, so it happens even on a tick that is not allowed to act.  The
+    # budget limits what she *does*, not what she cares about.
+    intentions = _load_intentions(ctx)
+    _plant_intentions(ctx, intentions)
+
     if _episodes_today(state, now) >= _daily_budget(ctx, store):
         return None
+
+    # Sharing is cheap and does not spend an LLM turn, so it is gated separately
+    # from the model budget and can happen even while a model turn is cooling down.
+    if _share_ready(state, now, ctx):
+        share = _next_share(intentions, now)
+        if share is not None and await _deliver_share(ctx, share, state, now):
+            return _record_share(ctx, state, share, now)
+
     cooldown = timedelta(
         seconds=_option_seconds(ctx, "attempt_cooldown_seconds", _DEFAULT_ATTEMPT_COOLDOWN_SECONDS)
     )
     if now - _parse_time(state.get("last_attempt_at", "")) < cooldown:
         return None
 
-    group_id, seeds = _collect_seeds(ctx, state)
-    if not group_id or not seeds:
-        return None
-
+    # Only two kinds of intention are worth a model turn: something to work out,
+    # and something she wants to say but has not decided who to tell.  A tell that
+    # already has an audience is delivered mechanically, so it must never be
+    # re-litigated here — that would rewrite words she has already chosen.
+    actionable = [
+        item
+        for item in intentions.open_items(now=now.isoformat())
+        if not (item.is_tell and item.audience.strip())
+    ]
     decision = AutonomyPolicy().evaluate(
         seconds_since_episode=(now - _parse_time(state.get("last_episode_at", ""))).total_seconds(),
-        seeds=seeds,
+        intentions=actionable,
         recent_kinds=list(state.get("recent_kinds", [])),
         episodes_today=_episodes_today(state, now),
         daily_episode_budget=_daily_budget(ctx, store),
         expressiveness=ctx.get_expressiveness(),
+        now=now.isoformat(),
     )
     logger.debug("自主性评估: %s", decision.to_dict())
     if not decision.should_act:
+        return None
+
+    target = intentions.get(decision.intention_id)
+    if target is None:
         return None
 
     # From here on a model turn happens, so the attempt itself is booked even if
@@ -138,11 +185,20 @@ async def run_tick(ctx: Any) -> Episode | None:
     result = await ctx.run_autonomous_turn(
         kind=decision.kind,
         seed=decision.seed,
-        group_id=group_id,
+        group_id=target.origin_group or _fallback_group(ctx),
+        why=target.why,
+        intention_id=target.intention_id,
+        resolution=target.resolution,
     )
     outcome = str(result.get("text", "") or "").strip()
+
+    # The turn may itself have written to the intention store (e.g. she finally
+    # decided who to tell).  Re-read before touching it, or that decision would be
+    # overwritten by this stale copy — and the words would never be delivered.
+    intentions = _load_intentions(ctx)
+
     if not outcome or _DECLINE_RE.match(outcome):
-        logger.info("自主回合未产出内容，跳过记录: %s", decision.reason)
+        logger.info("自主回合未产出内容，保留意图: %s", decision.reason)
         return None
 
     episode = Episode(
@@ -152,17 +208,21 @@ async def run_tick(ctx: Any) -> Episode | None:
         kind=decision.kind,
         seed=decision.seed,
         outcome=outcome[:_OUTCOME_MAX_CHARS],
+        intention_id=target.intention_id,
+        resolution=target.resolution,
         refs=_extract_refs(decision.seed),
         intensity=decision.score,
         status="done",
     )
+    # A `tell` is only finished once it has actually been said, so this turn must
+    # not close it: if she still has not picked who to tell, the intention stays
+    # open and gets asked again instead of silently disappearing.
+    if not target.is_tell:
+        intentions.resolve(target.intention_id, outcome=episode.outcome, now=episode.ended_at)
+    _save_intentions(ctx, intentions)
     _append_episode(ctx, episode)
-    _write_memory_unit(ctx, group_id, episode)
-
-    state["last_episode_at"] = episode.ended_at
-    state["episode_count_date"] = _date_key(now)
-    state["episode_count_today"] = _episodes_today(state, now) + 1
-    state["recent_kinds"] = [episode.kind, *list(state.get("recent_kinds", []))][:5]
+    _write_memory_unit(ctx, target.origin_group or _fallback_group(ctx), episode)
+    _finish_tick(state, now, episode)
     _save_state(store, state)
 
     ctx.log_inner_thought(f"我自己去{episode.kind}了：{episode.outcome[:60]}")
@@ -173,12 +233,130 @@ async def run_tick(ctx: Any) -> Episode | None:
     return episode
 
 
-def _collect_seeds(ctx: Any, state: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
-    """Gather material she already encountered, plus anything left unfinished."""
+async def run_share_tick(ctx: Any) -> bool:
+    """Deliver one pending share out of band.  Used by tests and manual nudges."""
+    store = ctx.get_data_store("autonomy")
+    state = _load_state(store)
+    now = datetime.now(timezone.utc)
+    intentions = _load_intentions(ctx)
+    share = _next_share(intentions, now)
+    if share is None:
+        return False
+    delivered = await _deliver_share(ctx, share, state, now)
+    if delivered:
+        _record_share(ctx, state, share, now)
+    return delivered
+
+
+async def _deliver_share(ctx: Any, share: Intention, state: dict[str, Any], now: datetime) -> bool:
+    """Say what she wanted to say, to the audience she picked."""
+    audience = share.audience.strip()
+    if not audience:
+        # She never picked anyone.  Ask her once, on a model turn, rather than
+        # guessing a destination on her behalf.
+        return False
+    try:
+        delivered = await ctx.deliver_share(
+            audience=audience,
+            text=share.what,
+            event_id=f"autonomy-share:{share.intention_id}",
+        )
+    except Exception as exc:
+        logger.warning("自主分享投递失败: %s", exc)
+        return False
+    if not delivered:
+        logger.info("自主分享当前不可达，保留待投递: %s", audience)
+        return False
+    state["last_share_at"] = now.isoformat()
+    return True
+
+
+def _record_share(ctx: Any, state: dict[str, Any], share: Intention, now: datetime) -> Episode:
+    """Record a delivered share as an episode so her timeline shows it once."""
+    intentions = _load_intentions(ctx)
+    intentions.mark_shared(share.intention_id, now=now.isoformat())
+    _save_intentions(ctx, intentions)
+
+    episode = Episode(
+        episode_id=uuid.uuid4().hex,
+        started_at=now.isoformat(),
+        ended_at=now.isoformat(),
+        kind="share",
+        seed=share.what,
+        outcome=share.what,
+        intention_id=share.intention_id,
+        resolution=share.resolution,
+        audience=share.audience,
+        intensity=share.effective_urgency(now=now.isoformat()),
+        status="done",
+    )
+    _append_episode(ctx, episode)
+    _finish_tick(state, now, episode)
+    _save_state(ctx.get_data_store("autonomy"), state)
+    ctx.log_inner_thought(f"我把想说的话告诉了{share.audience_label or share.audience}")
+    return episode
+
+
+def _finish_tick(state: dict[str, Any], now: datetime, episode: Episode) -> None:
+    state["last_episode_at"] = episode.ended_at
+    state["episode_count_date"] = _date_key(now)
+    state["episode_count_today"] = _episodes_today(state, now) + 1
+    state["recent_kinds"] = [episode.kind, *list(state.get("recent_kinds", []))][:5]
+
+
+def _share_ready(state: dict[str, Any], now: datetime, ctx: Any) -> bool:
+    cooldown = timedelta(
+        seconds=_option_seconds(ctx, "share_cooldown_seconds", _DEFAULT_SHARE_COOLDOWN_SECONDS)
+    )
+    return now - _parse_time(state.get("last_share_at", "")) >= cooldown
+
+
+def _next_share(intentions: IntentStore, now: datetime) -> Intention | None:
+    ready = intentions.pending_shares(now=now.isoformat())
+    return ready[0] if ready else None
+
+
+def _plant_intentions(ctx: Any, intentions: IntentStore) -> None:
+    """Turn something she encountered into an intention she will carry.
+
+    This is where motivation originates: material she actually ran into, not idle
+    time.  The planted intention is persisted, so it outlives this tick — even if
+    the policy declines to act now (budget spent, still cooling down), the reason
+    to act is still there next time.
+    """
+    known = {item.what for item in intentions.all()}
+    group_id, seeds = _collect_seeds(ctx)
+    if not seeds:
+        return
+    planted = 0
+    for seed in sorted(seeds, key=lambda item: item.get("weight", 0.0), reverse=True):
+        what = str(seed.get("seed", "")).strip()
+        if not what or what in known:
+            continue
+        intentions.add(
+            Intention.create(
+                what=what,
+                why="在群里看到，想弄明白",
+                resolution=RESOLUTION_DO,
+                kind=str(seed.get("kind", "musing")),
+                urgency=float(seed.get("weight", 0.5)),
+                source=str(seed.get("source", "chat")),
+                origin_group=group_id,
+                refs=_extract_refs(what),
+            )
+        )
+        known.add(what)
+        planted += 1
+        if planted >= 2:
+            break
+    if planted:
+        intentions.prune()
+        _save_intentions(ctx, intentions)
+
+
+def _collect_seeds(ctx: Any) -> tuple[str, list[dict[str, Any]]]:
+    """Gather material she already encountered, from the liveliest group."""
     seeds: list[dict[str, Any]] = []
-    for episode in state.get("active_episodes", [])[:_MAX_SEEDS]:
-        if str(episode.get("seed", "")).strip():
-            seeds.append(build_seed(episode["seed"], kind=str(episode.get("kind", "")), weight=1.0))
 
     # 素材取自最近真正聊过话的群：活跃群列表按首次出现排序，不能直接取末位。
     group_id = ""
@@ -200,6 +378,19 @@ def _collect_seeds(ctx: Any, state: dict[str, Any]) -> tuple[str, list[dict[str,
             continue
         seeds.append(build_seed(content, source="chat"))
     return group_id, seeds[:_MAX_SEEDS]
+
+
+def _fallback_group(ctx: Any) -> str:
+    groups = [str(item) for item in ctx.get_active_groups() if str(item).strip()]
+    return groups[-1] if groups else ""
+
+
+def _load_intentions(ctx: Any) -> IntentStore:
+    return IntentFileStore(ctx.get_work_path()).load()
+
+
+def _save_intentions(ctx: Any, intentions: IntentStore) -> None:
+    IntentFileStore(ctx.get_work_path()).save(intentions)
 
 
 def _append_episode(ctx: Any, episode: Episode) -> None:
@@ -232,7 +423,11 @@ def _episodes_path(ctx: Any) -> Path:
 
 
 def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
-    """Feed the outcome into existing memory so retrieval surfaces it in chat."""
+    """Feed the outcome into existing memory so she *knows* it later.
+
+    This makes the episode part of what she remembers; it is deliberately not a
+    delivery channel.  Whether she mentions it is decided elsewhere.
+    """
     persona = ctx.get_persona()
     unit = MemoryUnit(
         unit_id=f"autonomy-{episode.episode_id}",
@@ -249,7 +444,11 @@ def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
         salience=_clamp(0.4 + episode.intensity * 0.4),
         lifespan="long",
         should_prompt=True,
-        metadata={"origin": "self_initiated", "episode_id": episode.episode_id},
+        metadata={
+            "origin": "self_initiated",
+            "episode_id": episode.episode_id,
+            "first_person_experience": True,
+        },
     )
     try:
         ctx.add_memory_unit(unit)
