@@ -42,8 +42,6 @@ from sirius_pulse.utils.json_io import atomic_write_json
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL_SECONDS = 900
-_DEFAULT_ATTEMPT_COOLDOWN_SECONDS = 3600
-_DEFAULT_DAILY_EPISODE_BUDGET = 3
 _MIN_INTERVAL_SECONDS = 60
 
 _MAX_EPISODES = 200
@@ -75,23 +73,11 @@ TOOL_META = {
             "default": _DEFAULT_INTERVAL_SECONDS,
             "group": "节奏",
         },
-        "attempt_cooldown_seconds": {
-            "type": "int",
-            "description": "两次真正调用模型的自主回合之间的最小间隔秒数，默认 3600。",
-            "default": _DEFAULT_ATTEMPT_COOLDOWN_SECONDS,
-            "group": "节奏",
-        },
         "share_cooldown_seconds": {
             "type": "int",
             "description": "两次主动分享之间的最小间隔秒数，默认 3600。",
             "default": _DEFAULT_SHARE_COOLDOWN_SECONDS,
             "group": "节奏",
-        },
-        "daily_episode_budget": {
-            "type": "int",
-            "description": "每天最多发生的自主事件数量，默认 3；设为 0 表示停用自主行为。",
-            "default": _DEFAULT_DAILY_EPISODE_BUDGET,
-            "group": "限制",
         },
     },
 }
@@ -123,34 +109,26 @@ async def run_tick(ctx: Any) -> Episode | None:
 
     if store.get("_enabled", True) is False:
         return None
-    if _daily_budget(ctx, store) <= 0:
-        return None
 
     state = _load_state(store)
     now = datetime.now(timezone.utc)
 
     # Noticing comes before acting: encountering something is where motivation
-    # originates, so it happens even on a tick that is not allowed to act.  The
-    # budget limits what she *does*, not what she cares about.
+    # originates, so it happens on every tick.  What she *does* is then gated only
+    # by whether she is actually carrying something, not by a daily counter.
     intentions = _load_intentions(ctx)
     _plant_intentions(ctx, intentions)
 
-    if _episodes_today(state, now) >= _daily_budget(ctx, store):
-        return None
-
     # Sharing is cheap and does not spend an LLM turn, so it is gated separately
-    # from the model budget and can happen even while a model turn is cooling down.
+    # from model pacing and can happen even while a model turn is cooling down.
     if _share_ready(state, now, ctx):
         share = _next_share(intentions, now)
         if share is not None and await _deliver_share(ctx, share, state, now):
             return _record_share(ctx, state, share, now)
 
-    cooldown = timedelta(
-        seconds=_option_seconds(ctx, "attempt_cooldown_seconds", _DEFAULT_ATTEMPT_COOLDOWN_SECONDS)
-    )
-    if now - _parse_time(state.get("last_attempt_at", "")) < cooldown:
-        return None
-
+    # No model-call cooldown either: if she is still carrying something, she may
+    # act now.  The real pace limit is the heartbeat interval itself, so an empty
+    # intention set (not a timer) is what keeps her quiet.
     # Only two kinds of intention are worth a model turn: something to work out,
     # and something she wants to say but has not decided who to tell.  A tell that
     # already has an audience is delivered mechanically, so it must never be
@@ -164,8 +142,6 @@ async def run_tick(ctx: Any) -> Episode | None:
         seconds_since_episode=(now - _parse_time(state.get("last_episode_at", ""))).total_seconds(),
         intentions=actionable,
         recent_kinds=list(state.get("recent_kinds", [])),
-        episodes_today=_episodes_today(state, now),
-        daily_episode_budget=_daily_budget(ctx, store),
         expressiveness=ctx.get_expressiveness(),
         now=now.isoformat(),
     )
@@ -177,10 +153,12 @@ async def run_tick(ctx: Any) -> Episode | None:
     if target is None:
         return None
 
-    # From here on a model turn happens, so the attempt itself is booked even if
-    # she then decides there is nothing she wants to do.
-    state["last_attempt_at"] = now.isoformat()
-    _save_state(store, state)
+    # From here on a model turn happens, so book the attempt against *this*
+    # intention before running it.  That is what bounds the cost now that there is
+    # no pacing cooldown: she can always act on something new, but she cannot
+    # re-decide the same unfinishable thing on every heartbeat.
+    intentions.record_attempt(target.intention_id, now=now.isoformat())
+    _save_intentions(ctx, intentions)
 
     result = await ctx.run_autonomous_turn(
         kind=decision.kind,
@@ -222,7 +200,7 @@ async def run_tick(ctx: Any) -> Episode | None:
     _save_intentions(ctx, intentions)
     _append_episode(ctx, episode)
     _write_memory_unit(ctx, target.origin_group or _fallback_group(ctx), episode)
-    _finish_tick(state, now, episode)
+    _finish_tick(state, episode)
     _save_state(store, state)
 
     ctx.log_inner_thought(f"我自己去{episode.kind}了：{episode.outcome[:60]}")
@@ -291,16 +269,14 @@ def _record_share(ctx: Any, state: dict[str, Any], share: Intention, now: dateti
         status="done",
     )
     _append_episode(ctx, episode)
-    _finish_tick(state, now, episode)
+    _finish_tick(state, episode)
     _save_state(ctx.get_data_store("autonomy"), state)
     ctx.log_inner_thought(f"我把想说的话告诉了{share.audience_label or share.audience}")
     return episode
 
 
-def _finish_tick(state: dict[str, Any], now: datetime, episode: Episode) -> None:
+def _finish_tick(state: dict[str, Any], episode: Episode) -> None:
     state["last_episode_at"] = episode.ended_at
-    state["episode_count_date"] = _date_key(now)
-    state["episode_count_today"] = _episodes_today(state, now) + 1
     state["recent_kinds"] = [episode.kind, *list(state.get("recent_kinds", []))][:5]
 
 
@@ -472,16 +448,6 @@ def _save_state(store: Any, state: dict[str, Any]) -> None:
         save()
 
 
-def _daily_budget(ctx: Any, store: Any) -> int:
-    raw = store.get("daily_episode_budget")
-    if raw is None:
-        raw = TOOL_META["config"]["daily_episode_budget"]["default"]
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return _DEFAULT_DAILY_EPISODE_BUDGET
-
-
 def _option_seconds(ctx: Any, key: str, default: int) -> float:
     store = ctx.get_data_store("autonomy")
     raw = store.get(key, default)
@@ -489,19 +455,6 @@ def _option_seconds(ctx: Any, key: str, default: int) -> float:
         return max(_MIN_INTERVAL_SECONDS, float(raw))
     except (TypeError, ValueError):
         return float(default)
-
-
-def _episodes_today(state: dict[str, Any], now: datetime) -> int:
-    if state.get("episode_count_date") != _date_key(now):
-        return 0
-    try:
-        return int(state.get("episode_count_today", 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _date_key(now: datetime) -> str:
-    return now.date().isoformat()
 
 
 def _parse_time(value: Any) -> datetime:
