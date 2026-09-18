@@ -16,8 +16,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from sirius_pulse.core.intent import (
+    RESOLUTION_TELL,
+    Intention,
+    IntentStore,
+)
+
 # Restlessness reaches its maximum after this much idle time since the last
-# self-initiated episode.  Longer waits do not score higher.
+# self-initiated episode.  It only ever *adds* to an intention's urgency.
 _RESTLESSNESS_FULL_SECONDS = 6 * 60 * 60
 
 # Size of the recent-kind memory used for the novelty term.
@@ -28,9 +34,8 @@ _IMAGE_RE = re.compile(r"\[图片|\[动画表情|表情包|图里|截图|图片�
 _CODE_RE = re.compile(r"(代码|项目|重构|函数|脚本|报错|异常|接口|部署|bug|error|traceback|refactor)", re.IGNORECASE)
 _QUESTION_RE = re.compile(r"[?？]|(怎么|为什么|如何|哪个|有没有)")
 
-# Seed weights: an unfinished episode is the strongest reason to continue,
-# a link or a technical thread is next, a picture or an open question is weaker.
-_WEIGHT_ACTIVE_EPISODE = 1.0
+# Seed weights: a link or a technical thread is worth carrying further than a
+# picture or a passing question.
 _WEIGHT_LINK_OR_CODE = 0.7
 _WEIGHT_IMAGE_OR_QUESTION = 0.5
 _WEIGHT_PLAIN = 0.3
@@ -38,7 +43,7 @@ _WEIGHT_PLAIN = 0.3
 
 @dataclass(slots=True)
 class AutonomyDecision:
-    """A non-LLM decision about whether to start an episode, and which one."""
+    """A non-LLM decision about whether to pursue an intention right now."""
 
     should_act: bool
     reason: str
@@ -46,8 +51,12 @@ class AutonomyDecision:
     threshold: float
     kind: str = ""
     seed: str = ""
+    resolution: str = ""
+    intention_id: str = ""
+    audience: str = ""
+    is_share: bool = False
+    urgency: float = 0.0
     restlessness_score: float = 0.0
-    curiosity_score: float = 0.0
     novelty_score: float = 0.0
     budget_pressure: float = 0.0
     context: dict[str, Any] = field(default_factory=dict)
@@ -60,8 +69,12 @@ class AutonomyDecision:
             "threshold": round(self.threshold, 4),
             "kind": self.kind,
             "seed": self.seed,
+            "resolution": self.resolution,
+            "intention_id": self.intention_id,
+            "audience": self.audience,
+            "is_share": self.is_share,
+            "urgency": round(self.urgency, 4),
             "restlessness_score": round(self.restlessness_score, 4),
-            "curiosity_score": round(self.curiosity_score, 4),
             "novelty_score": round(self.novelty_score, 4),
             "budget_pressure": round(self.budget_pressure, 4),
             "context": dict(self.context),
@@ -72,7 +85,7 @@ class AutonomyDecision:
 class Episode:
     """One thing the persona did on her own initiative.
 
-    ``kind`` is a free-form label (reading / note / draft / image / musing ...),
+    ``kind`` is a free-form label (reading / note / draft / share / musing ...),
     not an enum: autonomy is not restricted to producing "works".
     """
 
@@ -82,6 +95,9 @@ class Episode:
     seed: str = ""
     outcome: str = ""
     ended_at: str = ""
+    intention_id: str = ""
+    resolution: str = ""
+    audience: str = ""
     refs: list[str] = field(default_factory=list)
     intensity: float = 0.5
     status: str = "done"
@@ -94,6 +110,9 @@ class Episode:
             "kind": self.kind,
             "seed": self.seed,
             "outcome": self.outcome,
+            "intention_id": self.intention_id,
+            "resolution": self.resolution,
+            "audience": self.audience,
             "refs": list(self.refs),
             "intensity": round(self.intensity, 4),
             "status": self.status,
@@ -108,6 +127,9 @@ class Episode:
             seed=str(data.get("seed", "")),
             outcome=str(data.get("outcome", "")),
             ended_at=str(data.get("ended_at", "")),
+            intention_id=str(data.get("intention_id", "")),
+            resolution=str(data.get("resolution", "")),
+            audience=str(data.get("audience", "")),
             refs=[str(item) for item in data.get("refs", []) or []],
             intensity=_clamp(data.get("intensity", 0.5)),
             status=str(data.get("status", "done")),
@@ -148,69 +170,104 @@ def build_seed(text: str, *, kind: str = "", weight: float = 0.0, source: str = 
 
 
 class AutonomyPolicy:
-    """Pure-rule autonomy policy for a persona acting on her own."""
+    """Pure-rule autonomy policy for a persona acting on her own.
+
+    The policy is an *intention gate*, not a motivation generator: it scores the
+    intentions she already formed and picks at most one to pursue.  Nothing in
+    here can invent a reason to act, so an empty or fully-faded intention set
+    reliably yields "do nothing" no matter how long she has been idle.
+    """
 
     def evaluate(
         self,
         *,
         seconds_since_episode: float,
-        seeds: list[dict[str, Any]],
+        intentions: IntentStore | list[Intention] | None = None,
         recent_kinds: list[str] | None = None,
         episodes_today: int = 0,
         daily_episode_budget: int = 3,
         expressiveness: float = 0.5,
+        now: str = "",
     ) -> AutonomyDecision:
-        """Decide whether to start an episode, without calling an LLM.
+        """Decide whether to pursue one intention, without calling an LLM.
 
         Args:
             seconds_since_episode: Idle time since the last self-initiated episode.
-            seeds: Candidate material, each ``{kind, seed, weight, source}``.
+            intentions: The intentions she is carrying.
             recent_kinds: Kinds of the most recent episodes, newest first.
             episodes_today: Episodes already started today.
             daily_episode_budget: Hard daily cap; reaching it suppresses autonomy.
             expressiveness: Persona trait (0-1) shifting the threshold.
+            now: Reference timestamp for urgency decay.
         """
-        valid_seeds = [seed for seed in seeds if str(seed.get("seed", "")).strip()]
-        if not valid_seeds:
+        budget_pressure = self._budget_pressure(episodes_today, daily_episode_budget)
+        restlessness = self._restlessness_score(seconds_since_episode)
+        threshold = self._threshold(expressiveness)
+        open_items = self._open_intentions(intentions, now=now)
+
+        if not open_items:
+            # Nothing is being carried: she does not get to act out of boredom.
+            # Material may still *plant* an intention, which is a later tick's job.
             return self._decision(
                 False,
-                "no_seed",
+                "no_intention",
                 0.0,
-                self._threshold(expressiveness),
-                restlessness=self._restlessness_score(seconds_since_episode),
+                threshold,
+                restlessness=restlessness,
+                budget_pressure=budget_pressure,
+                context={"episodes_today": episodes_today},
             )
 
-        best = max(valid_seeds, key=lambda item: float(item.get("weight", 0.0)))
-        kind = str(best.get("kind", "musing"))
-        restlessness = self._restlessness_score(seconds_since_episode)
-        curiosity = self._curiosity_score(valid_seeds)
-        novelty = self._novelty_score(kind, recent_kinds or [])
-        budget_pressure = self._budget_pressure(episodes_today, daily_episode_budget)
-        threshold = self._threshold(expressiveness)
-
-        score = 0.50 * restlessness + 0.35 * curiosity + 0.15 * novelty - 0.45 * budget_pressure
-        score = _clamp(score)
-        should_act = score >= threshold
+        best = max(
+            open_items,
+            key=lambda item: self._intention_score(item, restlessness=restlessness, now=now),
+        )
+        urgency = best.effective_urgency(now=now)
+        novelty = self._novelty_score(best.kind, recent_kinds or [])
+        # Motivation comes from her own urgency; idleness only nudges it.  A
+        # stale intention cannot be revived by waiting alone.
+        score = _clamp(0.70 * urgency + 0.20 * restlessness + 0.10 * novelty)
+        score = _clamp(score - 0.45 * budget_pressure)
+        should_act = score >= threshold and not best.is_expired(now=now)
         reason = (
-            "self_initiated"
+            "pursuing_intention"
             if should_act
-            else self._suppression_reason(
-                restlessness, curiosity, novelty, budget_pressure, score, threshold
-            )
+            else self._suppression_reason(urgency, restlessness, budget_pressure, threshold, score)
         )
         return self._decision(
             should_act,
             reason,
             score,
             threshold,
-            kind=kind if should_act else "",
-            seed=str(best.get("seed", "")) if should_act else "",
+            kind=best.kind,
+            seed=best.what,
+            resolution=best.resolution,
+            intention_id=best.intention_id,
+            audience=best.audience,
+            is_share=best.resolution == RESOLUTION_TELL,
+            urgency=urgency,
             restlessness=restlessness,
-            curiosity=curiosity,
             novelty=novelty,
             budget_pressure=budget_pressure,
-            context={"seed_count": len(valid_seeds), "episodes_today": episodes_today},
+            context={
+                "open_intentions": len(open_items),
+                "episodes_today": episodes_today,
+            },
         )
+
+    @staticmethod
+    def _open_intentions(
+        intentions: IntentStore | list[Intention] | None, *, now: str
+    ) -> list[Intention]:
+        if intentions is None:
+            return []
+        if isinstance(intentions, IntentStore):
+            return intentions.open_items(now=now)
+        return [item for item in intentions if item.is_open and not item.is_expired(now=now)]
+
+    @classmethod
+    def _intention_score(cls, intention: Intention, *, restlessness: float, now: str) -> float:
+        return _clamp(0.70 * intention.effective_urgency(now=now) + 0.20 * restlessness)
 
     def _decision(
         self,
@@ -221,8 +278,12 @@ class AutonomyPolicy:
         *,
         kind: str = "",
         seed: str = "",
+        resolution: str = "",
+        intention_id: str = "",
+        audience: str = "",
+        is_share: bool = False,
+        urgency: float = 0.0,
         restlessness: float = 0.0,
-        curiosity: float = 0.0,
         novelty: float = 0.0,
         budget_pressure: float = 0.0,
         context: dict[str, Any] | None = None,
@@ -234,8 +295,12 @@ class AutonomyPolicy:
             threshold=threshold,
             kind=kind,
             seed=seed,
+            resolution=resolution,
+            intention_id=intention_id,
+            audience=audience,
+            is_share=is_share,
+            urgency=urgency,
             restlessness_score=restlessness,
-            curiosity_score=curiosity,
             novelty_score=novelty,
             budget_pressure=budget_pressure,
             context=dict(context or {}),
@@ -248,16 +313,6 @@ class AutonomyPolicy:
         except (TypeError, ValueError):
             idle = 0.0
         return _clamp(idle / _RESTLESSNESS_FULL_SECONDS)
-
-    @staticmethod
-    def _curiosity_score(seeds: list[dict[str, Any]]) -> float:
-        weights = sorted(
-            (_clamp(seed.get("weight", 0.0)) for seed in seeds),
-            reverse=True,
-        )[:_RECENT_KIND_WINDOW]
-        if not weights:
-            return 0.0
-        return _clamp(sum(weights) / len(weights))
 
     @staticmethod
     def _novelty_score(kind: str, recent_kinds: list[str]) -> float:
@@ -279,26 +334,23 @@ class AutonomyPolicy:
     def _threshold(expressiveness: float) -> float:
         value = _clamp(expressiveness)
         if value >= 0.65:
-            return 0.47
+            return 0.42
         if value <= 0.35:
-            return 0.63
-        return 0.55
+            return 0.58
+        return 0.50
 
     @staticmethod
     def _suppression_reason(
+        urgency: float,
         restlessness: float,
-        curiosity: float,
-        novelty: float,
         budget_pressure: float,
-        score: float,
         threshold: float,
+        score: float,
     ) -> str:
         if budget_pressure >= 1.0:
             return "daily_budget_exhausted"
-        if restlessness < 0.15:
-            return "not_restless_yet"
-        if curiosity < 0.2:
-            return "nothing_worth_pursuing"
+        if urgency < 0.15:
+            return "intention_faded"
         if score < threshold:
             return "below_autonomy_threshold"
         return "suppressed"
