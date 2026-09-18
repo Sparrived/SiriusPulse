@@ -18,22 +18,8 @@ _SESSION_CONFIG_COMMENTS = {
     "history_max_chars": "触发历史压缩前保留的最近字符预算。",
     "max_recent_participant_messages": "每个参与者额外保留的最近发言条数。",
     "enable_auto_compression": "超过上下文预算时是否自动压缩历史。",
-    "provider": "旧版单 provider 兼容字段。新配置优先使用 providers 列表。",
-    "provider.name": "Provider 全局唯一识别名称，用于 name/model 路由。",
-    "provider.type": "Provider 类型，例如 openai-compatible / deepseek / opencode / opencode-go。",
-    "provider.base_url": "Provider 基地址。留空时使用该平台默认值。",
-    "provider.api_key": "Provider API Key。",
-    "provider.healthcheck_model": "可用性检测模型名。用于 /provider add 或自动探测流程。",
-    "provider.enabled": "是否启用该 provider。",
-    "provider.models": "显式声明该 provider 可处理的模型列表；自动路由时优先按这里精确匹配。",
-    "providers": "Provider 列表。main.py 和 sirius-chat CLI 会优先读取这个字段。",
-    "providers[].name": "Provider 全局唯一识别名称，用于 name/model 路由。",
-    "providers[].type": "Provider 类型，例如 openai-compatible / deepseek / opencode / opencode-go。",
-    "providers[].base_url": "Provider 基地址。留空时使用该平台默认值。",
-    "providers[].api_key": "Provider API Key。",
-    "providers[].healthcheck_model": "可用性检测模型名。用于 /provider add 或自动探测流程。",
-    "providers[].enabled": "是否启用该 provider。",
-    "providers[].models": "显式声明该 provider 可处理的模型列表；自动路由时优先按这里精确匹配。",
+    "provider": "旧版单 provider 兼容字段。已废弃：模型调用统一交给 AMKR。",
+    "providers": "旧版 Provider 列表。已废弃：模型调用统一交给 AMKR。",
     "orchestration": "任务级编排配置，可为 cognition_analyze、memory_extract、response_generate、vision 等任务单独设置模型与参数。",
     "orchestration.unified_model": "统一模型。若 task_models 未单独指定任务模型，则优先使用这里。",
     "orchestration.task_models": "按任务单独指定模型。常见键包括 cognition_analyze、memory_extract、response_generate、vision。",
@@ -153,23 +139,12 @@ def build_default_orchestration_payload() -> dict[str, Any]:
 
 
 def build_default_session_config_payload() -> dict[str, Any]:
-    sample_provider = {
-        "name": "openai-compatible",
-        "type": "openai-compatible",
-        "base_url": "https://api.openai.com",
-        "api_key": "your-api-key-here",
-        "healthcheck_model": "",
-        "enabled": True,
-        "models": [],
-    }
     return {
         "generated_agent_key": "",
         "history_max_messages": 24,
         "history_max_chars": 6000,
         "max_recent_participant_messages": 5,
         "enable_auto_compression": True,
-        "provider": dict(sample_provider),
-        "providers": [dict(sample_provider)],
         "orchestration": build_default_orchestration_payload(),
     }
 

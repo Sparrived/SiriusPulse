@@ -103,6 +103,10 @@ def _default_global_config() -> dict:
         "webui_port": 8080,
         "napcat_install_dir": str(REPO_ROOT / "napcat"),
         "log_level": "INFO",
+        "amkr_base_url": "http://127.0.0.1:8000",
+        "amkr_local_api_key": "",
+        "amkr_workspace": "sirius-pulse",
+        "amkr_ui_enabled": True,
     }
 
 

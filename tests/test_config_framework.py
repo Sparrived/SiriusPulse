@@ -9,7 +9,6 @@ from sirius_pulse.config import (
     AgentPreset,
     ConfigManager,
     OrchestrationPolicy,
-    ProviderPolicy,
     SessionConfig,
     SessionDefaults,
     WorkspaceConfig,
@@ -141,7 +140,6 @@ def test_config_manager_when_workspace_config_is_saved_then_manifest_and_snapsho
             enable_auto_compression=False,
         ),
         orchestration_defaults={"unified_model": "workspace-model", "memory_extract_batch_size": 2},
-        provider_policy=ProviderPolicy(prefer_workspace_registry=False),
     )
 
     manager.save_workspace_config(work_path, config, data_path=data_path)
@@ -154,9 +152,8 @@ def test_config_manager_when_workspace_config_is_saved_then_manifest_and_snapsho
     assert reloaded.session_defaults.enable_auto_compression is False
     assert reloaded.orchestration_defaults["unified_model"] == "workspace-model"
     assert reloaded.orchestration_defaults["memory_extract_batch_size"] == 2
-    assert reloaded.provider_policy.prefer_workspace_registry is False
     manifest = json.loads((work_path / "workspace.json").read_text(encoding="utf-8"))
-    assert manifest["provider_policy"] == {"prefer_workspace_registry": False}
+    assert "provider_policy" not in manifest
 
 
 def test_models_when_orchestration_policy_resolves_models_then_validates_modes():
@@ -251,7 +248,6 @@ def test_workspace_config_when_serialized_then_paths_and_nested_defaults_round_t
         active_agent_key="agent-alpha",
         session_defaults=SessionDefaults(history_max_messages=7, enable_auto_compression=False),
         orchestration_defaults={"unified_model": "model-a"},
-        provider_policy=ProviderPolicy(prefer_workspace_registry=False),
     )
 
     restored = WorkspaceConfig.from_dict(config.to_dict())
@@ -264,7 +260,6 @@ def test_workspace_config_when_serialized_then_paths_and_nested_defaults_round_t
     assert restored.session_defaults.history_max_messages == 7
     assert restored.session_defaults.enable_auto_compression is False
     assert restored.orchestration_defaults == {"unified_model": "model-a"}
-    assert restored.provider_policy.prefer_workspace_registry is False
 
 
 def test_config_helpers_when_values_need_coercion_then_defaults_and_nested_cleanup_are_applied(
@@ -332,7 +327,6 @@ def test_config_helpers_when_workspace_payload_is_built_then_nulls_keep_fallback
             "memory_extract_batch_size": 3,
             "task_budgets": {"old": 1},
         },
-        provider_policy=ProviderPolicy(prefer_workspace_registry=False),
     )
 
     built = _build_workspace_config_from_payload(
@@ -352,7 +346,6 @@ def test_config_helpers_when_workspace_payload_is_built_then_nulls_keep_fallback
                 "task_budgets": {"drop": 1},
                 "split_marker": "drop",
             },
-            "provider_policy": {"prefer_workspace_registry": "on"},
         },
         layout=layout,
         fallback=fallback,
@@ -370,7 +363,6 @@ def test_config_helpers_when_workspace_payload_is_built_then_nulls_keep_fallback
         "unified_model": "payload-model",
         "memory_extract_batch_size": 2,
     }
-    assert built.provider_policy.prefer_workspace_registry is True
     assert normalized.work_path == layout.config_root
     assert normalized.data_path == layout.data_root
     assert normalized.layout_version == layout.layout_version

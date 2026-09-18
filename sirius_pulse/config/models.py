@@ -107,13 +107,6 @@ class SessionDefaults:
 
 
 @dataclass(slots=True)
-class ProviderPolicy:
-    """Workspace-level provider bootstrap policy."""
-
-    prefer_workspace_registry: bool = True
-
-
-@dataclass(slots=True)
 class WorkspaceBootstrap:
     """Host-provided defaults injected at workspace open time.
 
@@ -124,8 +117,6 @@ class WorkspaceBootstrap:
     active_agent_key: str | None = None
     session_defaults: SessionDefaults | None = None
     orchestration_defaults: dict[str, object] | None = None
-    provider_entries: list[dict[str, object]] | None = None
-    provider_policy: ProviderPolicy | None = None
 
 
 @dataclass(slots=True)
@@ -380,7 +371,6 @@ class WorkspaceConfig:
     active_agent_key: str = ""
     session_defaults: SessionDefaults = field(default_factory=SessionDefaults)
     orchestration_defaults: dict[str, Any] = field(default_factory=dict)
-    provider_policy: ProviderPolicy = field(default_factory=ProviderPolicy)
 
     def __post_init__(self) -> None:
         self.work_path = Path(self.work_path)
@@ -406,15 +396,11 @@ class WorkspaceConfig:
                 "enable_auto_compression": self.session_defaults.enable_auto_compression,
             },
             "orchestration_defaults": dict(self.orchestration_defaults),
-            "provider_policy": {
-                "prefer_workspace_registry": self.provider_policy.prefer_workspace_registry
-            },
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "WorkspaceConfig":
         session_defaults_payload = payload.get("session_defaults", {})
-        provider_policy_payload = payload.get("provider_policy", {})
         return cls(
             work_path=Path(payload.get("work_path", ".")),
             data_path=Path(payload.get("data_path", payload.get("work_path", "."))),
@@ -432,11 +418,6 @@ class WorkspaceConfig:
                 ),
             ),
             orchestration_defaults=dict(payload.get("orchestration_defaults", {})),
-            provider_policy=ProviderPolicy(
-                prefer_workspace_registry=bool(
-                    provider_policy_payload.get("prefer_workspace_registry", True)
-                ),
-            ),
         )
 
 

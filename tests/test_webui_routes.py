@@ -3009,3 +3009,79 @@ async def test_webui_models_probe_when_named_provider_then_uses_stored_key(tmp_p
     assert payload["success"] is True
     assert captured["api_key"] == "sk-stored-secret"
     assert captured["base_url"] == "https://api.deepseek.com"
+
+
+# ─── 全局配置（AMKR 连接） ────────────────────────────────
+
+
+def _empty_request():
+    return make_mocked_request("GET", "/api/global-config")
+
+
+@pytest.mark.asyncio
+async def test_global_config_post_when_amkr_fields_sent_then_persisted(tmp_path):
+    """AMKR 连接配置由 WebUI 维护，需能落盘并被 runtime 读到。"""
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_global_config_post(
+        _FakeJsonRequest(
+            {
+                "amkr_base_url": "http://amkr.internal:8000/",
+                "amkr_local_api_key": "sk-amkr-admin",
+                "amkr_workspace": "sirius-pulse",
+                "amkr_ui_enabled": False,
+            }
+        )
+    )
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+
+    assert response.status == 200
+    assert saved["amkr_base_url"] == "http://amkr.internal:8000/"
+    assert saved["amkr_local_api_key"] == "sk-amkr-admin"
+    assert saved["amkr_workspace"] == "sirius-pulse"
+    assert saved["amkr_ui_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_global_config_get_when_key_set_then_returns_mask(tmp_path):
+    """管理员 Key 不能以明文回显给前端。"""
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {"amkr_local_api_key": "sk-amkr-admin-secret", "amkr_workspace": "sirius-pulse"},
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_global_config_get(_empty_request())
+    payload = json.loads(response.text)
+
+    assert payload["amkr_local_api_key"] == "sk-a****"
+    assert "secret" not in payload["amkr_local_api_key"]
+    assert payload["amkr_workspace"] == "sirius-pulse"
+
+
+@pytest.mark.asyncio
+async def test_global_config_post_when_masked_key_echoed_then_keeps_stored_secret(tmp_path):
+    """前端回显掩码时不得把掩码写回磁盘，否则 Key 会被悄悄破坏。"""
+    atomic_write_json(tmp_path / "global_config.json", {"amkr_local_api_key": "sk-real-secret"})
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_global_config_post(
+        _FakeJsonRequest({"amkr_local_api_key": "sk-r****", "amkr_workspace": "other"})
+    )
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+
+    assert response.status == 200
+    assert saved["amkr_local_api_key"] == "sk-real-secret"
+    assert saved["amkr_workspace"] == "other"
+
+
+@pytest.mark.asyncio
+async def test_global_config_post_when_key_empty_then_keeps_stored_secret(tmp_path):
+    """空串表示「不改动」，避免误清空凭据。"""
+    atomic_write_json(tmp_path / "global_config.json", {"amkr_local_api_key": "sk-real-secret"})
+    server = WebUIServer(data_dir=tmp_path)
+
+    await server.api_global_config_post(_FakeJsonRequest({"amkr_local_api_key": ""}))
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+
+    assert saved["amkr_local_api_key"] == "sk-real-secret"

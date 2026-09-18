@@ -288,12 +288,23 @@ class WebUIServer:
     def _global_config_path(self) -> Path:
         return self.data_dir / "global_config.json"
 
+    def _masked_global_config(self, data: dict[str, Any]) -> dict[str, Any]:
+        """脱敏后返回全局配置。
+
+        ``amkr_local_api_key`` 是 AMKR 的管理员凭据（可增删供应商与 Key），
+        接口只回显掩码；前端提交掩码值时保留磁盘上的原值。
+        """
+        result = dict(data)
+        if result.get("amkr_local_api_key"):
+            result["amkr_local_api_key"] = self._mask_api_key(result["amkr_local_api_key"])
+        return result
+
     async def api_global_config_get(self, request: web.Request) -> web.Response:
         path = self._global_config_path()
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                return _json_response(data)
+                return _json_response(self._masked_global_config(data))
             except Exception:
                 LOG.warning("读取全局配置失败", exc_info=True)
                 pass
@@ -302,6 +313,10 @@ class WebUIServer:
                 "webui_host": self.host,
                 "webui_port": self.port,
                 "log_level": "INFO",
+                "amkr_base_url": "http://127.0.0.1:8000",
+                "amkr_local_api_key": "",
+                "amkr_workspace": "sirius-pulse",
+                "amkr_ui_enabled": True,
             }
         )
 
@@ -320,9 +335,24 @@ class WebUIServer:
                 LOG.warning("读取全局配置失败", exc_info=True)
                 pass
 
-        for key in ("webui_host", "webui_port", "log_level"):
-            if key in body:
-                data[key] = body[key]
+        for key in (
+            "webui_host",
+            "webui_port",
+            "log_level",
+            "amkr_base_url",
+            "amkr_local_api_key",
+            "amkr_workspace",
+            "amkr_ui_enabled",
+        ):
+            if key not in body:
+                continue
+            value = body[key]
+            if key == "amkr_local_api_key":
+                # 掩码值表示「保持原样」，避免前端回显后又把掩码写回磁盘。
+                text = str(value or "").strip()
+                if not text or self._is_masked_api_key(text):
+                    continue
+            data[key] = value
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -369,6 +399,11 @@ class WebUIServer:
         if not key:
             return ""
         return key[:4] + "****" if len(key) > 4 else "****"
+
+    @staticmethod
+    def _is_masked_api_key(value: str) -> bool:
+        """判断提交上来的 Key 是否为回显掩码（表示保持原值）。"""
+        return value.endswith("****")
 
     @staticmethod
     def _provider_mapping_from_payload(payload: Any) -> dict[str, dict[str, Any]]:

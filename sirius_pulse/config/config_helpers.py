@@ -15,7 +15,6 @@ from sirius_pulse.config.jsonc import (
 from sirius_pulse.config.models import (
     Agent,
     AgentPreset,
-    ProviderPolicy,
     SessionConfig,
     SessionDefaults,
     WorkspaceConfig,
@@ -166,8 +165,6 @@ def _build_workspace_config_from_payload(
         payload.get("session_defaults"),
         fallback.session_defaults,
     )
-    provider_policy_payload = payload.get("provider_policy")
-    provider_policy_default = fallback.provider_policy.prefer_workspace_registry
 
     return WorkspaceConfig(
         work_path=_coerce_path(payload.get("work_path"), layout.config_root),
@@ -185,16 +182,6 @@ def _build_workspace_config_from_payload(
         orchestration_defaults=_normalize_orchestration_defaults(
             payload.get("orchestration_defaults"),
             fallback=dict(fallback.orchestration_defaults),
-        ),
-        provider_policy=ProviderPolicy(
-            prefer_workspace_registry=_coerce_bool(
-                (
-                    provider_policy_payload.get("prefer_workspace_registry")
-                    if isinstance(provider_policy_payload, dict)
-                    else None
-                ),
-                provider_policy_default,
-            )
         ),
     )
 
@@ -219,13 +206,6 @@ def _normalize_workspace_config(
             None,
         ),
     }
-    provider_policy_payload = {
-        "prefer_workspace_registry": getattr(
-            config.provider_policy,
-            "prefer_workspace_registry",
-            None,
-        )
-    }
 
     return WorkspaceConfig(
         work_path=layout.config_root,
@@ -246,12 +226,6 @@ def _normalize_workspace_config(
         orchestration_defaults=_normalize_orchestration_defaults(
             getattr(config, "orchestration_defaults", None),
             fallback=dict(fallback.orchestration_defaults),
-        ),
-        provider_policy=ProviderPolicy(
-            prefer_workspace_registry=_coerce_bool(
-                provider_policy_payload.get("prefer_workspace_registry"),
-                fallback.provider_policy.prefer_workspace_registry,
-            )
         ),
     )
 
