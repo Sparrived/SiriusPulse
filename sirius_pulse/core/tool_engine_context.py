@@ -96,6 +96,31 @@ class ToolEngineContextImpl:
             caller=caller,
             developer_profiles=[caller] if caller_is_developer else [],
         )
+        result = await self._run_tool_loop(
+            system_prompt=system_prompt,
+            messages=messages,
+            group_id=group_id,
+            user_id=user_id,
+            task_name="proactive_generate",
+            adapter_type=adapter_type,
+            caller_is_developer=caller_is_developer,
+            invocation_context=invocation_context,
+        )
+        return self._scheduled_result_payload(result) if result else {}
+
+    async def _run_tool_loop(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        group_id: str,
+        user_id: str,
+        task_name: str,
+        adapter_type: str,
+        caller_is_developer: bool,
+        invocation_context: ToolInvocationContext,
+    ) -> Any:
+        """Run the normal multi-round tool loop and return the final ChatResult."""
         max_rounds = max(1, int(self.get_config_value("max_tool_rounds", 8)))
         last_result: Any = None
 
@@ -106,7 +131,7 @@ class ToolEngineContextImpl:
                     user_id=user_id,
                     system_prompt=system_prompt,
                     messages=messages,
-                    task_name="proactive_generate",
+                    task_name=task_name,
                     adapter_type=adapter_type,
                     caller_is_developer=caller_is_developer,
                 )
@@ -114,7 +139,7 @@ class ToolEngineContextImpl:
             last_result = result
             tool_calls = list(getattr(result, "tool_calls", []) or [])
             if not tool_calls:
-                return self._scheduled_result_payload(result)
+                break
 
             messages.append(self._assistant_tool_message(result.raw_text, tool_calls))
             tool_multimodal: list[dict[str, Any]] = []
@@ -156,7 +181,45 @@ class ToolEngineContextImpl:
             if tool_multimodal:
                 messages.append({"role": "user", "content": tool_multimodal})
 
-        return self._scheduled_result_payload(last_result) if last_result else {}
+        return last_result
+
+    async def run_autonomous_turn(
+        self,
+        *,
+        kind: str,
+        seed: str,
+        group_id: str,
+        task_name: str = "autonomy_generate",
+    ) -> dict[str, Any]:
+        """Run one self-initiated turn with no chat session context.
+
+        The turn carries ``self_initiated=True``, which makes the tool executor
+        refuse every delivery-capable tool for the whole turn.  Autonomy
+        therefore *produces*; whether to *share* anything is a separate decision
+        made elsewhere.  No shared executor state is mutated, so this is safe to
+        run while a normal reply is in flight.
+        """
+        identity = self._engine.persona.build_system_prompt() if self._engine.persona else ""
+        tool_desc = self.get_tool_descriptions()
+        system_prompt, messages = PromptFactory.build_autonomous_turn_sections(
+            identity=identity,
+            kind=kind,
+            seed=seed,
+            tool_desc=tool_desc,
+        )
+        caller = self._build_caller("autonomy", "autonomy", False)
+        invocation_context = ToolInvocationContext(caller=caller, self_initiated=True)
+        result = await self._run_tool_loop(
+            system_prompt=system_prompt,
+            messages=messages,
+            group_id=group_id,
+            user_id="",
+            task_name=task_name,
+            adapter_type="",
+            caller_is_developer=False,
+            invocation_context=invocation_context,
+        )
+        return self._scheduled_result_payload(result) if result else {}
 
     @staticmethod
     def _scheduled_result_payload(result: Any) -> dict[str, Any]:
@@ -268,8 +331,36 @@ class ToolEngineContextImpl:
     def get_active_groups(self) -> list[str]:
         return list(self._engine._group_last_message_at.keys())
 
+    def get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
+        """只读获取某群最近消息，用于为自主行为挑选素材。"""
+        getter = getattr(self._engine, "_get_recent_messages", None)
+        if not callable(getter):
+            return []
+        return list(getter(group_id, n))
+
+    def add_memory_unit(self, unit: Any) -> bool:
+        """把一条记忆单元写入人格记忆，供后续对话检索复用。"""
+        manager = getattr(self._engine, "memory_unit_manager", None)
+        if manager is None:
+            return False
+        group_id = str(getattr(unit, "group_id", "") or "")
+        manager.add_units(group_id, [unit])
+        return True
+
     def get_config_value(self, key: str, default: Any = None) -> Any:
         return self._engine.config.get(key, default)
+
+    def get_work_path(self) -> str:
+        return str(getattr(self._engine, "work_path", "") or "")
+
+    def get_expressiveness(self) -> float:
+        """返回人格表达性（0-1），配置缺失时取中性值。"""
+        raw = getattr(self._engine, "expressiveness", None)
+        value = getattr(raw, "expressiveness", raw)
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            return 0.5
 
     def get_persona(self) -> Any:
         return self._engine.persona

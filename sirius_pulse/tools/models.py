@@ -452,8 +452,35 @@ class ToolEngineContext(Protocol):
         """获取当前活跃的群组 ID 列表。"""
         ...
 
+    def get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
+        """只读获取某群最近消息，用于挑选自主行为的素材。"""
+        ...
+
+    async def run_autonomous_turn(
+        self,
+        *,
+        kind: str,
+        seed: str,
+        group_id: str,
+        task_name: str = "autonomy_generate",
+    ) -> dict[str, Any]:
+        """执行一次无会话上下文的自主回合，返回人格自述的产出。"""
+        ...
+
+    def add_memory_unit(self, unit: Any) -> bool:
+        """把一条记忆单元写入人格记忆。"""
+        ...
+
     def get_config_value(self, key: str, default: Any = None) -> Any:
         """读取引擎配置项。"""
+        ...
+
+    def get_work_path(self) -> str:
+        """获取当前人格的工作目录，用于把产出收敛到她自己的工作区。"""
+        ...
+
+    def get_expressiveness(self) -> float:
+        """获取当前人格的表达性（0-1），用于调整自主阈值。"""
         ...
 
     def get_persona(self) -> Any:
@@ -499,6 +526,12 @@ class ToolInvocationContext:
 
     caller: UnifiedUser | None = None
     developer_profiles: list[UnifiedUser] = field(default_factory=list)
+    self_initiated: bool = False
+    """True when the persona started this turn on her own.
+
+    Autonomy produces material for herself; telling someone about it is a
+    separate decision, so delivery-capable tools are refused on these turns.
+    """
 
     @property
     def caller_is_developer(self) -> bool:

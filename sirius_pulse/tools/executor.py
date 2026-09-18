@@ -16,6 +16,7 @@ from sirius_pulse.tools.models import (
     ToolDefinition,
     ToolInvocationContext,
     ToolResult,
+    ToolSideEffect,
 )
 from sirius_pulse.tools.security import validate_tool_access
 from sirius_pulse.tools.telemetry import ToolExecutionRecord, ToolTelemetry
@@ -111,6 +112,11 @@ class ToolExecutor:
         """Apply the same validation contract to sync and async tools."""
         if tool._run_func is None:
             return None, ToolResult(success=False, error=f"TOOL '{tool.name}' 没有可执行的 run() 函数")
+
+        if invocation_context is not None and getattr(invocation_context, "self_initiated", False):
+            blocked = _self_initiated_block_reason(tool)
+            if blocked:
+                return None, ToolResult(success=False, error=blocked)
 
         if chain_context is not None:
             params = chain_context.resolve_templates(params)
@@ -489,6 +495,19 @@ def _coerce_type(value: Any, type_hint: str) -> Any:
                 return [v.strip() for v in value.split(",") if v.strip()]
         return value
     return value
+
+
+def _self_initiated_block_reason(tool: ToolDefinition) -> str:
+    """Refuse delivery-capable tools on a turn the persona started herself.
+
+    Autonomy is about *making* something; whether to *tell* anyone is a separate
+    decision made elsewhere.  Anything classified as an external write is
+    therefore refused here, at the single choke point every tool call goes
+    through, rather than trusting each tool to check its own chat context.
+    """
+    if tool.side_effect in {ToolSideEffect.EXTERNAL_WRITE, ToolSideEffect.DESTRUCTIVE}:
+        return f"TOOL '{tool.name}' 会向外部发送内容；自主产出的内容先留作她自己的素材。"
+    return ""
 
 
 def _can_receive_engine_context(tool: ToolDefinition) -> bool:
