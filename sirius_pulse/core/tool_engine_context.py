@@ -190,22 +190,35 @@ class ToolEngineContextImpl:
         seed: str,
         group_id: str,
         task_name: str = "autonomy_generate",
+        why: str = "",
+        intention_id: str = "",
+        resolution: str = "",
     ) -> dict[str, Any]:
         """Run one self-initiated turn with no chat session context.
 
         The turn carries ``self_initiated=True``, which makes the tool executor
-        refuse every delivery-capable tool for the whole turn.  Autonomy
-        therefore *produces*; whether to *share* anything is a separate decision
-        made elsewhere.  No shared executor state is mutated, so this is safe to
-        run while a normal reply is in flight.
+        refuse every delivery-capable tool for the whole turn.  So she cannot
+        push words into a group mid-turn; saying something is a *separate*,
+        later decision taken by the autonomy tick with an explicit audience.
+        No shared executor state is mutated, so this is safe to run while a
+        normal reply is in flight.
         """
         identity = self._engine.persona.build_system_prompt() if self._engine.persona else ""
         tool_desc = self.get_tool_descriptions()
+        audiences = [
+            item.to_dict() if hasattr(item, "to_dict") else dict(item)
+            for item in self.list_audiences()
+        ]
         system_prompt, messages = PromptFactory.build_autonomous_turn_sections(
             identity=identity,
             kind=kind,
             seed=seed,
             tool_desc=tool_desc,
+            why=why,
+            intention_id=intention_id,
+            resolution=resolution,
+            audiences=audiences,
+            unaddressed=self._unaddressed_intentions(),
         )
         caller = self._build_caller("autonomy", "autonomy", False)
         invocation_context = ToolInvocationContext(caller=caller, self_initiated=True)
@@ -328,8 +341,102 @@ class ToolEngineContextImpl:
             self.activate_private_group(group_id)
         return bool(emitted)
 
+    def _unaddressed_intentions(self) -> list[dict[str, str]]:
+        """她想说却还没决定说给谁的话，先给她自己看一眼。"""
+        from sirius_pulse.core.intent import IntentFileStore
+
+        try:
+            store = IntentFileStore(self.get_work_path()).load()
+        except Exception:
+            logger.debug("读取待分享意图失败")
+            return []
+        return [
+            {"intention_id": item.intention_id, "what": item.what}
+            for item in store.needs_audience()
+        ]
+
     def get_active_groups(self) -> list[str]:
         return list(self._engine._group_last_message_at.keys())
+
+    def list_audiences(self) -> list[Any]:
+        """列出她可以"说给谁听"的候选会话，供她自己挑选受众。
+
+        只返回确实可达的目标：群聊来自活跃群，私聊来自已配置的主人 QQ。
+        不可达的目标不会出现，避免意图指向一个发不出去的会话而永远悬着。
+        """
+        from sirius_pulse.core.intent import Audience
+
+        audiences: list[Audience] = []
+        stamps = getattr(self._engine, "_group_last_message_at", {}) or {}
+        for group_id in sorted(stamps, key=lambda gid: str(stamps.get(gid, "")), reverse=True):
+            chat_id = str(group_id)
+            if not chat_id or chat_id.startswith("private_"):
+                continue
+            audiences.append(
+                Audience(
+                    chat_id=chat_id,
+                    label=self._group_label(chat_id),
+                    kind="group",
+                    last_active_at=str(stamps.get(group_id, "") or ""),
+                )
+            )
+        master = self._master_private_chat_id()
+        if master:
+            audiences.append(Audience(chat_id=master, label="主人（私聊）", kind="private"))
+        return audiences
+
+    async def deliver_share(
+        self,
+        *,
+        audience: str,
+        text: str,
+        event_id: str = "",
+        adapter_type: str = "",
+    ) -> bool:
+        """把一条自主分享投递到指定会话，复用既有主动消息管线。
+
+        返回 False 表示不可达或投递失败，调用方应保留意图以便稍后重试。
+        """
+        chat_id = str(audience or "").strip()
+        body = str(text or "").strip()
+        if not chat_id or not body:
+            return False
+        if not self._audience_reachable(chat_id):
+            return False
+        return await self.dispatch_proactive_message(
+            group_id=chat_id,
+            text=body,
+            adapter_type=adapter_type,
+            event_id=event_id,
+        )
+
+    def _audience_reachable(self, chat_id: str) -> bool:
+        if chat_id.startswith("private_"):
+            return chat_id == self._master_private_chat_id()
+        stamps = getattr(self._engine, "_group_last_message_at", {}) or {}
+        return chat_id in stamps
+
+    def _master_private_chat_id(self) -> str:
+        """主人私聊会话 ID；未配置 root QQ 时为空（即无此候选受众）。"""
+        from sirius_pulse.tools.builtin.interaction_with_master import _master_qq_from_adapter
+
+        adapter = getattr(self._engine, "_adapter", None)
+        root = _master_qq_from_adapter(adapter)
+        return f"private_{root}" if root else ""
+
+    def _group_label(self, group_id: str) -> str:
+        """群名，取不到时退回群号——她要能认出自己想去说话的地方。"""
+        manager = getattr(self._engine, "semantic_memory", None)
+        getter = getattr(manager, "get_group_profile", None)
+        if callable(getter):
+            try:
+                profile = getter(group_id)
+                name = str(getattr(profile, "group_name", "") or "").strip()
+                if name:
+                    return name
+            except Exception:
+                logger.debug("读取群名失败: %s", group_id)
+        return f"群 {group_id}"
 
     def get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
         """只读获取某群最近消息，用于为自主行为挑选素材。"""

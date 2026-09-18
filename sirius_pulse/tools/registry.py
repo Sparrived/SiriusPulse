@@ -267,6 +267,7 @@ class ToolRegistry:
         except ValueError:
             side_effect = ToolSideEffect.UNKNOWN
         model_visible = bool(meta.get("model_visible", True))
+        allowed_when_self_initiated = bool(meta.get("allowed_when_self_initiated", False))
         tags: list[str] = []
         raw_tags = meta.get("tags", [])
         if isinstance(raw_tags, list):
@@ -295,6 +296,7 @@ class ToolRegistry:
             retry_safe=retry_safe,
             side_effect=side_effect,
             model_visible=model_visible,
+            allowed_when_self_initiated=allowed_when_self_initiated,
             tags=tags,
             adapter_types=adapter_types,
             source_path=file_path,

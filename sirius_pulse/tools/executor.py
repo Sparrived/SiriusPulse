@@ -503,8 +503,11 @@ def _self_initiated_block_reason(tool: ToolDefinition) -> str:
     Autonomy is about *making* something; whether to *tell* anyone is a separate
     decision made elsewhere.  Anything classified as an external write is
     therefore refused here, at the single choke point every tool call goes
-    through, rather than trusting each tool to check its own chat context.
+    through, rather than trusting each tool to check its own chat context.  A
+    Tool may opt out only when it records rather than delivers.
     """
+    if getattr(tool, "allowed_when_self_initiated", False):
+        return ""
     if tool.side_effect in {ToolSideEffect.EXTERNAL_WRITE, ToolSideEffect.DESTRUCTIVE}:
         return f"TOOL '{tool.name}' 会向外部发送内容；自主产出的内容先留作她自己的素材。"
     return ""

@@ -218,6 +218,13 @@ class ToolDefinition:
     retry_safe: bool = False
     side_effect: ToolSideEffect = ToolSideEffect.UNKNOWN
     model_visible: bool = True
+    allowed_when_self_initiated: bool = False
+    """Whether this Tool is usable on a turn the persona started herself.
+
+    Autonomy refuses delivery-capable Tools so she cannot push words into a chat
+    mid-thought.  A Tool that only records something for later — like noting who
+    she wants to tell — is the deliberate exception, and opts in here.
+    """
     tags: list[str] = field(default_factory=list)
     adapter_types: list[str] = field(default_factory=list)
     source_path: Path | None = None
@@ -463,8 +470,26 @@ class ToolEngineContext(Protocol):
         seed: str,
         group_id: str,
         task_name: str = "autonomy_generate",
+        why: str = "",
+        intention_id: str = "",
+        resolution: str = "",
     ) -> dict[str, Any]:
         """执行一次无会话上下文的自主回合，返回人格自述的产出。"""
+        ...
+
+    def list_audiences(self) -> list[Any]:
+        """列出她可以主动说给谁听的候选会话。"""
+        ...
+
+    async def deliver_share(
+        self,
+        *,
+        audience: str,
+        text: str,
+        event_id: str = "",
+        adapter_type: str = "",
+    ) -> bool:
+        """把一条自主分享投递到指定会话；不可达时返回 False。"""
         ...
 
     def add_memory_unit(self, unit: Any) -> bool:
