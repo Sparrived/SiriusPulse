@@ -175,18 +175,26 @@ async def run_tick(ctx: Any) -> Episode | None:
 
 def _collect_seeds(ctx: Any, state: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     """Gather material she already encountered, plus anything left unfinished."""
-    groups = [str(item) for item in ctx.get_active_groups() if str(item).strip()]
-    if not groups:
-        return "", []
-
     seeds: list[dict[str, Any]] = []
     for episode in state.get("active_episodes", [])[:_MAX_SEEDS]:
         if str(episode.get("seed", "")).strip():
             seeds.append(build_seed(episode["seed"], kind=str(episode.get("kind", "")), weight=1.0))
 
-    # 最近活跃的群最可能提供连贯的素材。
-    group_id = groups[-1]
-    for message in ctx.get_recent_messages(group_id, _RECENT_MESSAGE_COUNT)[-_MAX_SEEDS:]:
+    # 素材取自最近真正聊过话的群：活跃群列表按首次出现排序，不能直接取末位。
+    group_id = ""
+    recent: list[dict[str, Any]] = []
+    best_stamp = ""
+    for candidate in (str(item) for item in ctx.get_active_groups()):
+        if not candidate.strip():
+            continue
+        messages = ctx.get_recent_messages(candidate, _RECENT_MESSAGE_COUNT)
+        if not messages:
+            continue
+        stamp = str(messages[-1].get("timestamp", "") or "")
+        if not group_id or stamp > best_stamp:
+            group_id, recent, best_stamp = candidate, messages, stamp
+
+    for message in recent[-_MAX_SEEDS:]:
         content = str(message.get("content", "") or "").strip()
         if not content or message.get("role") == "assistant":
             continue

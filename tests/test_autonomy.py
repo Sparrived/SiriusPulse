@@ -37,10 +37,15 @@ class _Store:
 
 
 def _make_ctx(
-    tmp_path, *, messages: list[dict] | None = None, state: dict | None = None
+    tmp_path,
+    *,
+    messages: list[dict] | None = None,
+    state: dict | None = None,
+    groups: dict[str, list[dict]] | None = None,
 ) -> SimpleNamespace:
     store = _Store({"state": dict(state or {})})
     recorded: list = []
+    by_group = groups if groups is not None else {"group-1": list(messages or [])}
 
     async def run_autonomous_turn(**kwargs):
         recorded.append(kwargs)
@@ -48,8 +53,8 @@ def _make_ctx(
 
     ctx = SimpleNamespace(
         get_data_store=lambda _name: store,
-        get_active_groups=lambda: ["group-1"],
-        get_recent_messages=lambda _gid, _n=10: list(messages or []),
+        get_active_groups=lambda: list(by_group),
+        get_recent_messages=lambda gid, _n=10: list(by_group.get(gid, [])),
         run_autonomous_turn=run_autonomous_turn,
         add_memory_unit=lambda unit: recorded.append(unit) or True,
         get_persona=lambda: PersonaProfile(name="小星"),
@@ -143,6 +148,32 @@ async def test_tick_skips_episode_when_persona_declines(tmp_path):
 
     assert await autonomy.run_tick(ctx) is None
     assert not (tmp_path / "memory" / "autonomy" / "episodes.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_tick_picks_material_from_most_recently_active_group(tmp_path):
+    """活跃群列表按首次出现排序，素材要取最近真正聊过话的那个群。"""
+    ctx = _make_ctx(
+        tmp_path,
+        groups={
+            "group-old": [
+                {"role": "user", "content": "旧的", "timestamp": "2026-01-01T00:00:00+00:00"}
+            ],
+            "group-new": [
+                {
+                    "role": "user",
+                    "content": "https://example.com/tides",
+                    "timestamp": "2026-09-01T00:00:00+00:00",
+                }
+            ],
+        },
+    )
+
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    assert episode.seed == "https://example.com/tides"
+    assert ctx.recorded[0]["group_id"] == "group-new"
 
 
 def test_self_initiated_turn_refuses_delivery_tools():
