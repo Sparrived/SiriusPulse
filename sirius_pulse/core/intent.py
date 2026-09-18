@@ -41,6 +41,11 @@ _DEFAULT_TTL_SECONDS = 3 * 24 * 60 * 60
 # motivation.
 _DEFAULT_URGENCY = 0.6
 
+# How many times she may spend a model turn on the same intention before leaving
+# it.  The heartbeat interval spaces these out; the cap only stops one
+# never-finished intention from costing a turn on every beat forever.
+_MAX_ATTEMPTS = 3
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -73,16 +78,29 @@ class Intention:
     resolved_at: str = ""
     shared_at: str = ""
     share_count: int = 0
+    attempts: int = 0
+    last_attempt_at: str = ""
     refs: list[str] = field(default_factory=list)
     outcome: str = ""
 
     @property
     def is_open(self) -> bool:
-        return self.status in {STATUS_NASCENT, STATUS_ACTIVE}
+        return self.status in {STATUS_NASCENT, STATUS_ACTIVE} and not self.is_spent
 
     @property
     def is_tell(self) -> bool:
         return self.resolution == RESOLUTION_TELL
+
+    @property
+    def is_spent(self) -> bool:
+        """Whether she has already tried this enough times to leave it alone.
+
+        Without this, dropping the pacing cooldown would let one intention she
+        never finishes (or keeps declining) buy a model turn on every heartbeat.
+        Being able to act at any time must not mean re-deciding the same thing
+        forever — that is how autonomy turns back into a loop.
+        """
+        return self.attempts >= _MAX_ATTEMPTS
 
     def effective_urgency(
         self, *, now: str = "", ttl_seconds: float = _DEFAULT_TTL_SECONDS
@@ -116,6 +134,8 @@ class Intention:
             "resolved_at": self.resolved_at,
             "shared_at": self.shared_at,
             "share_count": int(self.share_count),
+            "attempts": int(self.attempts),
+            "last_attempt_at": self.last_attempt_at,
             "refs": list(self.refs),
             "outcome": self.outcome,
         }
@@ -138,6 +158,8 @@ class Intention:
             resolved_at=str(data.get("resolved_at", "")),
             shared_at=str(data.get("shared_at", "")),
             share_count=int(data.get("share_count", 0) or 0),
+            attempts=int(data.get("attempts", 0) or 0),
+            last_attempt_at=str(data.get("last_attempt_at", "")),
             refs=[str(item) for item in data.get("refs", []) or []],
             outcome=str(data.get("outcome", "")),
         )
@@ -195,6 +217,15 @@ class IntentStore:
                 item.status = STATUS_ACTIVE
         alive.sort(key=lambda item: item.effective_urgency(now=now), reverse=True)
         return alive
+
+    def record_attempt(self, intention_id: str, *, now: str = "") -> Intention | None:
+        """Book one model turn spent on this intention."""
+        item = self.get(intention_id)
+        if item is None:
+            return None
+        item.attempts += 1
+        item.last_attempt_at = now or _now_iso()
+        return item
 
     def resolve(self, intention_id: str, *, outcome: str = "", now: str = "") -> Intention | None:
         item = self.get(intention_id)
