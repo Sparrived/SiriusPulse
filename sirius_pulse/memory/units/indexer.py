@@ -107,6 +107,7 @@ class MemoryUnitIndexer:
             unit
             for unit in self._units
             if unit.should_prompt
+            and not self._is_expired(unit)
             and self._scope_allowed(
                 unit,
                 query=query,
@@ -165,6 +166,12 @@ class MemoryUnitIndexer:
             key=lambda item: (item[1], self._parse_time(item[0].event_time or item[0].created_at)),
             reverse=True,
         )
+        # 冲突对里旧的那条让位，避免同一事实槽位的新旧值同时进入提示词，让模型
+        # 自己去猜哪个才是当前状态。
+        present = {unit.unit_id: unit for unit, _score in scored}
+        scored = [
+            (unit, score) for unit, score in scored if not self._superseded_within(unit, present)
+        ]
         # ponytail: in-memory O(n) scoring is enough for the current unit volume;
         # add a persistent ANN index only when this scan becomes measurable.
         return scored[:top_k]
@@ -411,6 +418,37 @@ class MemoryUnitIndexer:
             r"[^0-9a-z\u4e00-\u9fff]+", "", unicodedata.normalize("NFKC", value).casefold()
         )
         return text[2:] if text.startswith("qq") and text[2:].isdigit() else text
+
+    @classmethod
+    def _is_expired(cls, unit: MemoryUnit) -> bool:
+        """valid_until 已过的事实不再进入候选。
+
+        这是硬闩而不是降权：过期事实一旦被注入上下文，模型就可能当成当前状态复述，
+        而 LLM 给出的 valid_until 本身并不可靠，靠降分挡不住它。解析失败一律视为
+        未过期，宁可多召回一条也不要因为脏数据把有效记忆判死。
+        """
+        if not unit.valid_until:
+            return False
+        deadline = cls._parse_time(unit.valid_until)
+        return 0.0 < deadline < datetime.now(timezone.utc).timestamp()
+
+    @classmethod
+    def _superseded_within(cls, unit: MemoryUnit, present: dict[str, MemoryUnit]) -> bool:
+        """冲突对中若更新的那条也在候选里，本条让位。
+
+        只压掉「两条同时被召回」的情况：另一条没被召回到时，保留本条也比什么都不给
+        更好。两条时间都无法解析时不比较，倾向于两条都留。
+        """
+        metadata = unit.metadata if isinstance(unit.metadata, dict) else {}
+        for other_id in metadata.get("conflicts_with") or []:
+            other = present.get(str(other_id))
+            if other is None:
+                continue
+            if cls._parse_time(other.event_time or other.created_at) > cls._parse_time(
+                unit.event_time or unit.created_at
+            ):
+                return True
+        return False
 
     @classmethod
     def _temporal_score(cls, query: str, unit: MemoryUnit) -> float:
