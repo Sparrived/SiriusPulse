@@ -25,6 +25,11 @@ from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
 from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.amkr_sync import (
+    AmkrError,
+    SyncResult,
+    register_persona_tasks_async,
+)
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.tools.executor import ToolExecutor
@@ -160,6 +165,8 @@ class EngineRuntime:
         self._plugin_executor: Any | None = None
         self._plugin_scheduler: Any | None = None
         self._plugin_tasks_started = False
+        # 最近一次 AMKR 任务注册的结果，供 WebUI 的「AMKR 运维」页展示。
+        self._amkr_sync_result: SyncResult | None = None
         # Serialize lazy initialization and lifecycle transitions. Building an
         # engine starts resources, so concurrent builders must not discard one.
         self._engine_lock = asyncio.Lock()
@@ -252,6 +259,33 @@ class EngineRuntime:
         """
         settings = load_amkr_settings(self.global_data_path)
         return _build_provider(settings, self._amkr_task_names())
+
+    async def register_amkr_tasks(self) -> SyncResult:
+        """把本框架的任务名注册到 AMKR 里本 persona 的工作空间。
+
+        只创建缺失的任务，已存在的一律不动——模型与采样参数由运维之后在 AMKR
+        侧配置。失败不抛异常：注册不成功最多是 AMKR 侧还没有这些任务，而引擎仍
+        可能靠直连模型名工作，因此这里只记录结果供 WebUI 展示。
+        """
+        settings = load_amkr_settings(self.global_data_path)
+        if not settings.configured:
+            result = SyncResult()
+            result.failed["*"] = "尚未配置 AMKR 本地授权 Key（amkr_local_api_key）"
+            return result
+        try:
+            result = await register_persona_tasks_async(settings, self.work_path.name)
+        except AmkrError as exc:
+            result = SyncResult()
+            result.failed["*"] = str(exc)
+        if result.ok:
+            LOG.info(
+                "AMKR 任务注册完成: 新建 %d 个，已存在 %d 个",
+                len(result.created),
+                len(result.existing),
+            )
+        else:
+            LOG.warning("AMKR 任务注册未全部成功: %s", result.failed)
+        return result
 
     def _merge_plugin_config(self, definition: Any) -> None:
         """将 plugins/_config.json 中的运行时配置合并到 definition.permissions。"""
@@ -642,6 +676,9 @@ class EngineRuntime:
         # 优先从 experience.json 读取记忆配置，回退到 plugin_config
         exp = self._load_experience_config()
         config = self._build_engine_runtime_config(exp)
+
+        # 在 AMKR 里确保本 persona 的任务已注册（只创建缺失的，不覆盖已有配置）。
+        self._amkr_sync_result = await self.register_amkr_tasks()
 
         # 创建向量存储（ChromaDB）
         vector_store = DiaryVectorStore(self.work_path / "diary" / "vector_db")
