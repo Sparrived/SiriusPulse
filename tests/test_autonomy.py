@@ -22,7 +22,7 @@ from sirius_pulse.core.intent import (
     Intention,
 )
 from sirius_pulse.models.persona import PersonaProfile
-from sirius_pulse.tools.builtin import autonomy, intend_share
+from sirius_pulse.tools.builtin import autonomy, intend_pursue, intend_share
 from sirius_pulse.tools.executor import _self_initiated_block_reason
 from sirius_pulse.tools.models import ToolDefinition, ToolSideEffect
 
@@ -147,12 +147,8 @@ def test_intention_fades_instead_of_being_revived_by_waiting(tmp_path):
 @pytest.mark.asyncio
 async def test_tick_acts_whenever_she_is_carrying_something(tmp_path):
     """没有每日配额：只要她确实惦记着什么，就可以随时行动。"""
-    ctx = _make_ctx(
-        tmp_path,
-        messages=[{"role": "user", "content": "https://example.com/tides"}],
-        # 今天已经自主过很多次，也不应被计数挡住。
-        state={"episode_count_date": _NOW.date().isoformat(), "episode_count_today": 99},
-    )
+    _seed_intention(tmp_path, kind="reading", urgency=0.9)
+    ctx = _make_ctx(tmp_path)
 
     episode = await autonomy.run_tick(ctx)
 
@@ -164,32 +160,30 @@ async def test_tick_acts_whenever_she_is_carrying_something(tmp_path):
 @pytest.mark.asyncio
 async def test_she_can_act_on_consecutive_heartbeats(tmp_path):
     """心跳之间没有额外冷却：只要每次都惦记着新东西，就都能行动。"""
-    ctx = _make_ctx(
-        tmp_path,
-        messages=[{"role": "user", "content": "https://example.com/tides"}],
-    )
+    first_intention = _seed_intention(tmp_path, what="弄懂潮汐", kind="reading", urgency=0.9)
+    ctx = _make_ctx(tmp_path)
 
     first = await autonomy.run_tick(ctx)
     assert first is not None
 
-    # 紧接着的下一次心跳带来新素材，不该被"刚自主过"挡住。
-    ctx.get_recent_messages = lambda _gid, _n=10: [
-        {"role": "user", "content": "https://example.com/moons"}
-    ]
+    # 紧接着的下一次心跳前她又惦记上一件新事，不该被"刚自主过"挡住。
+    store = IntentFileStore(tmp_path)
+    intentions = store.load()
+    intentions.drop(first_intention.intention_id)
+    intentions.add(Intention.create(what="弄懂月亮", kind="reading", urgency=0.9))
+    store.save(intentions)
 
     second = await autonomy.run_tick(ctx)
 
     assert second is not None
-    assert second.seed.startswith("https://example.com/moons")
+    assert second.seed == "弄懂月亮"
 
 
 @pytest.mark.asyncio
 async def test_one_unfinishable_intention_does_not_loop_forever(tmp_path):
     """同一件始终没结果的事不能每个心跳都烧一次模型调用。"""
-    ctx = _make_ctx(
-        tmp_path,
-        messages=[{"role": "user", "content": "https://example.com/tides"}],
-    )
+    _seed_intention(tmp_path, kind="reading", urgency=0.9)
+    ctx = _make_ctx(tmp_path)
 
     async def decline(**_kwargs):
         return {"text": "什么也不做"}
@@ -206,10 +200,8 @@ async def test_one_unfinishable_intention_does_not_loop_forever(tmp_path):
 
 @pytest.mark.asyncio
 async def test_tick_records_episode_and_memory_without_sending_anything(tmp_path):
-    ctx = _make_ctx(
-        tmp_path,
-        messages=[{"role": "user", "content": "https://example.com/tides"}],
-    )
+    _seed_intention(tmp_path, what="https://example.com/tides", kind="reading", urgency=0.9)
+    ctx = _make_ctx(tmp_path)
 
     episode = await autonomy.run_tick(ctx)
 
@@ -218,7 +210,7 @@ async def test_tick_records_episode_and_memory_without_sending_anything(tmp_path
     assert episode.outcome.startswith("今天读到")
 
     saved = json.loads((tmp_path / "memory" / "autonomy" / "episodes.json").read_text("utf-8"))
-    assert saved["episodes"][0]["seed"].startswith("https://example.com/tides")
+    assert saved["episodes"][0]["seed"] == "https://example.com/tides"
 
     unit = next(item for item in ctx.recorded if not isinstance(item, dict))
     assert unit.scope == "persona"
@@ -230,10 +222,8 @@ async def test_tick_records_episode_and_memory_without_sending_anything(tmp_path
 
 @pytest.mark.asyncio
 async def test_tick_skips_episode_when_persona_declines(tmp_path):
-    ctx = _make_ctx(
-        tmp_path,
-        messages=[{"role": "user", "content": "https://example.com/tides"}],
-    )
+    _seed_intention(tmp_path, kind="reading", urgency=0.9)
+    ctx = _make_ctx(tmp_path)
 
     async def decline(**_kwargs):
         return {"text": "什么也不做"}
@@ -245,50 +235,99 @@ async def test_tick_skips_episode_when_persona_declines(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_tick_picks_material_from_most_recently_active_group(tmp_path):
-    """活跃群列表按首次出现排序，素材要取最近真正聊过话的那个群。"""
-    ctx = _make_ctx(
+async def test_pursuing_happens_in_the_group_she_was_in(tmp_path):
+    """自主时间在她当初产生这件事的场景里进行，而不是随便挑一个群。"""
+    _seed_intention(
         tmp_path,
-        groups={
-            "group-old": [
-                {"role": "user", "content": "旧的", "timestamp": "2026-01-01T00:00:00+00:00"}
-            ],
-            "group-new": [
-                {
-                    "role": "user",
-                    "content": "https://example.com/tides",
-                    "timestamp": "2026-09-01T00:00:00+00:00",
-                }
-            ],
-        },
+        what="https://example.com/tides",
+        kind="reading",
+        urgency=0.9,
+        origin_group="group-new",
     )
+    ctx = _make_ctx(tmp_path, groups={"group-old": [{"role": "user", "content": "旧的"}]})
 
     episode = await autonomy.run_tick(ctx)
 
     assert episode is not None
-    assert episode.seed == "https://example.com/tides"
     assert ctx.recorded[0]["group_id"] == "group-new"
 
 
 @pytest.mark.asyncio
-async def test_encountering_something_plants_a_durable_intention(tmp_path):
-    """动机产生于"看到了什么"，并且会留下来等下一次 tick。"""
+async def test_pursuing_falls_back_when_origin_group_is_gone(tmp_path):
+    """来源群没了（比如退群）也不能因此就不做了。"""
+    _seed_intention(tmp_path, what="弄懂潮汐", kind="reading", urgency=0.9)
+    ctx = _make_ctx(tmp_path, groups={"group-1": []})
+
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    assert ctx.recorded[0]["group_id"] == "group-1"
+
+
+# --- 动机从哪来 -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tick_never_invents_motivation_from_the_chat_log(tmp_path):
+    """心跳不翻群聊记录找素材：那些内容她在正常回复时已经处理过了。"""
     ctx = _make_ctx(
         tmp_path,
-        messages=[{"role": "user", "content": "https://example.com/tides"}],
+        messages=[
+            {"role": "user", "content": "https://example.com/tides"},
+            {"role": "user", "content": "这个重构你帮我看看"},
+        ],
     )
-
-    # 这一 tick 她决定不做，于是没有产出……
-    async def decline(**_kwargs):
-        return {"text": "什么也不做"}
-
-    ctx.run_autonomous_turn = decline
 
     assert await autonomy.run_tick(ctx) is None
 
-    # ……但"想弄明白"这件事已经记下来了，不会因为这次没做而消失。
+    # 既没有行动，也没有凭空登记出"想弄明白"的事。
+    assert ctx.recorded == []
+    assert IntentFileStore(tmp_path).load().all() == []
+
+
+@pytest.mark.asyncio
+async def test_she_can_write_down_something_she_wants_to_work_out(tmp_path):
+    """她在真实对话里判断"这件事值得回头弄明白"时，只登记、不立刻去做。"""
+    ctx = _make_ctx(tmp_path)
+
+    result = intend_pursue.run(
+        what="潮汐为什么一天有两次",
+        why="刚才聊到一半没弄明白",
+        kind="reading",
+        urgency=0.8,
+        engine_context=ctx,
+    )
+
+    assert result["success"] is True
+
     carried = IntentFileStore(tmp_path).load()
-    assert [item.what for item in carried.all()] == ["https://example.com/tides"]
+    item = carried.all()[0]
+    assert item.what == "潮汐为什么一天有两次"
+    assert item.why == "刚才聊到一半没弄明白"
+    assert item.resolution == "do"
+    assert item.kind == "reading"
+    assert item.source == "intend_pursue"
+    # 只登记：这一次回复里不去做。
+    assert ctx.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_a_recorded_intention_is_pursued_on_a_later_heartbeat(tmp_path):
+    """登记下来的事会留下来等心跳，并在那时被真正推进。"""
+    ctx = _make_ctx(tmp_path)
+    intend_pursue.run(what="潮汐为什么一天有两次", why="想弄懂", engine_context=ctx)
+
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    assert episode.seed == "潮汐为什么一天有两次"
+    assert episode.resolution == "do"
+
+
+def test_intend_pursue_refuses_without_engine_context():
+    """没有运行上下文时不能假装登记成功。"""
+    assert intend_pursue.run(what="弄懂潮汐")["success"] is False
+    assert intend_pursue.run(what="", engine_context=SimpleNamespace())["success"] is False
 
 
 # --- 说给谁听 ---------------------------------------------------------------------
@@ -440,3 +479,10 @@ def test_self_initiated_turn_allows_recording_tools():
     )
 
     assert _self_initiated_block_reason(recording) == ""
+
+
+def test_pursuing_a_thing_cannot_register_the_next_one():
+    """推进一件事的回合里不能顺手登记下一件，否则每个回合都喂养下一个回合。"""
+    assert intend_share.TOOL_META["allowed_when_self_initiated"] is True
+    assert intend_pursue.TOOL_META.get("allowed_when_self_initiated", False) is False
+    assert intend_pursue.TOOL_META["model_visible"] is True
