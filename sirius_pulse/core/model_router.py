@@ -22,7 +22,6 @@ class TaskConfig:
     temperature: float
     max_tokens: int
     timeout: float = 30.0
-    fallback_model: str | None = None
     retries: int = 1
 
 
@@ -148,7 +147,6 @@ class ModelRouter:
                         temperature=base.temperature,
                         max_tokens=base.max_tokens,
                         timeout=patch.get("timeout", base.timeout),
-                        fallback_model=base.fallback_model,
                         retries=patch.get("retries", base.retries),
                     )
 

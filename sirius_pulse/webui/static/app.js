@@ -13,7 +13,6 @@ const PAGE_META = {
   'amkr': { title: 'AMKR 运维', breadcrumb: 'Configuration / AMKR', icon: '⬡' },
   'create-persona': { title: '新建人格', breadcrumb: 'Configuration / Create', icon: '＋' },
   'persona': { title: '人格配置', breadcrumb: 'Configuration / Persona', icon: '◎' },
-  'orchestration': { title: '模型编排', breadcrumb: 'Configuration / Orchestration', icon: '⧉' },
   'experience': { title: '体验参数', breadcrumb: 'Configuration / Experience', icon: '◇' },
   'adapters': { title: '适配器', breadcrumb: 'Configuration / Adapters', icon: '⟐' },
   'tools': { title: 'Tools', breadcrumb: 'Extensions / Tools', icon: '⏣' },
@@ -36,7 +35,6 @@ const NAV_GROUPS = [
   { id: 'persona-config', label: '人格配置', items: [
     { page: 'create-persona', icon: '＋', label: '新建人格' },
     { page: 'persona', icon: '◎', label: '人格' },
-    { page: 'orchestration', icon: '⧉', label: '模型编排' },
     { page: 'experience', icon: '◇', label: '体验参数' },
     { page: 'adapters', icon: '⟐', label: 'Adapter' },
   ]},
@@ -59,7 +57,7 @@ const NAV_GROUPS = [
 ];
 
 const PERSONA_PAGES = new Set([
-  'persona', 'orchestration', 'experience', 'adapters', 'tools',
+  'persona', 'experience', 'adapters', 'tools',
   'token-tracker', 'cognition', 'tools-tracker', 'conversation-history',
   'logs',
   'memory-viz', 'create-persona',

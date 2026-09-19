@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -19,7 +20,6 @@ from sirius_pulse.webui.app_keys import DATA_DIR_KEY
 from sirius_pulse.webui.memory_api import api_persona_tokens_get
 from sirius_pulse.webui.persona_api import (
     _resolve_persona_log_file,
-    api_orchestration_get,
     api_persona_logs_get,
     api_system_logs_get,
 )
@@ -2728,3 +2728,111 @@ async def test_global_config_post_when_key_empty_then_keeps_stored_secret(tmp_pa
     saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
 
     assert saved["amkr_local_api_key"] == "sk-real-secret"
+
+
+# ─── AMKR 运维页 ──────────────────────────────────────────
+
+
+def _refuse_all_amkr_connections(monkeypatch) -> None:
+    """让 AMKR 探测立即失败，避免测试真的去解析域名或连端口。"""
+
+    def handler(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+
+def test_webui_routes_when_registered_then_amkr_ops_routes_exist_and_orchestration_is_gone():
+    """编排接口随编排页一并下线，替换为只读巡检与任务登记两条。"""
+    registered = {(spec.method, spec.path) for spec in WEBUI_ROUTES}
+
+    assert ("GET", "/api/amkr/status") in registered
+    assert ("POST", "/api/amkr/register") in registered
+    assert not any("/orchestration" in path for _, path in registered)
+    assert not any("/task-params" in path for _, path in registered)
+
+
+@pytest.mark.asyncio
+async def test_amkr_status_get_when_key_missing_then_asks_for_configuration(tmp_path):
+    """未配置凭据时页面要给出可操作提示，而不是空白或 500。"""
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_status_get(_empty_request())
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["configured"] is False
+    assert "amkr_local_api_key" in payload["error"]
+    assert payload["known_tasks"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_status_get_when_configured_then_reports_personas_and_ui_url(
+    tmp_path, monkeypatch
+):
+    """运维页需要看到连的是哪个 AMKR、以及每个人格的子空间名。"""
+    _refuse_all_amkr_connections(monkeypatch)
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {"amkr_base_url": "http://amkr.test", "amkr_local_api_key": "sk-x", "amkr_workspace": "sp"},
+    )
+    (tmp_path / "personas" / "sirius").mkdir(parents=True)
+    atomic_write_json(tmp_path / "personas" / "sirius" / "persona.json", {"name": "月白"})
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_status_get(_empty_request())
+    payload = json.loads(response.text)
+
+    assert payload["base_url"] == "http://amkr.test"
+    assert payload["ui_url"] == "http://amkr.test/ui"
+    assert payload["workspace_base"] == "sp"
+    assert payload["reachable"] is False
+    assert "无法连接 AMKR" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_register_post_when_no_personas_then_rejects_with_message(tmp_path):
+    """没有人格时无处可注册，应直接拒绝而不是静默成功。"""
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_register_post(_FakeJsonRequest({}))
+
+    assert response.status == 400
+    assert "人格" in json.loads(response.text)["error"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_register_post_when_key_missing_then_reports_per_persona_error(tmp_path):
+    """凭据缺失时逐人格报错，前端能指出是哪个人的任务没登记上。"""
+    (tmp_path / "personas" / "sirius").mkdir(parents=True)
+    atomic_write_json(tmp_path / "personas" / "sirius" / "persona.json", {"name": "月白"})
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_register_post(_FakeJsonRequest({}))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert "amkr_local_api_key" in payload["results"]["sirius"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_register_post_when_persona_given_then_only_that_persona_is_touched(
+    tmp_path, monkeypatch
+):
+    """单个工作空间的「注册缺失项」按钮不该顺手改动其他人格的空间。"""
+    _refuse_all_amkr_connections(monkeypatch)
+    for name in ("sirius", "alice"):
+        (tmp_path / "personas" / name).mkdir(parents=True)
+        atomic_write_json(tmp_path / "personas" / name / "persona.json", {"name": name})
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_register_post(_FakeJsonRequest({"persona": "alice"}))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert list(payload["results"]) == ["alice"]

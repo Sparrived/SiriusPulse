@@ -13,6 +13,12 @@ from typing import Any
 
 from aiohttp import web
 
+from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.amkr_sync import (
+    AmkrError,
+    collect_amkr_status_async,
+    register_persona_tasks_async,
+)
 from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY, DATA_DIR_KEY, WS_MANAGER_KEY
 from sirius_pulse.webui.auth import AuthManager
 from sirius_pulse.webui.middleware import auth_middleware
@@ -414,6 +420,51 @@ class WebUIServer:
             LOG.debug("已写入配置重载标志: %s", sorted(types))
         except Exception as exc:
             LOG.debug("写入配置重载标志失败: %s", exc)
+
+    # ─── 全局 API: AMKR 运维 ───────────────────────────────
+
+    def _amkr_settings(self) -> AmkrSettings:
+        return load_amkr_settings(self.data_dir)
+
+    def _persona_names(self) -> list[str]:
+        return [item["name"] for item in self.list_personas() if item.get("name")]
+
+    async def api_amkr_status_get(self, request: web.Request) -> web.Response:
+        """只读返回 AMKR 连接状态与各人格的任务登记情况。
+
+        本页不做任何模型或参数编排——那是 AMKR 自带 WebUI 的职责，这里只回答
+        「连得上吗」「这个名字登记了没有」，并给出跳转 AMKR 的外链。
+        """
+        status = await collect_amkr_status_async(self._amkr_settings(), self._persona_names())
+        return _json_response(status)
+
+    async def api_amkr_register_post(self, request: web.Request) -> web.Response:
+        """为某个人格（或全部人格）补齐缺失的任务名。
+
+        只创建缺失的任务，已存在的一律不动，因此可以放心重复点击。
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        requested = str(body.get("persona", "") or "").strip()
+        personas = [requested] if requested else self._persona_names()
+        if not personas:
+            return _json_response({"error": "没有可注册的人格"}, 400)
+
+        settings = self._amkr_settings()
+        results: dict[str, object] = {}
+        for persona in personas:
+            try:
+                result = await register_persona_tasks_async(settings, persona)
+            except AmkrError as exc:
+                results[persona] = {"error": str(exc)}
+                continue
+            results[persona] = result.to_dict()
+        return _json_response({"results": results})
 
     # ─── 全局 API: 可用模型列表 ───────────────────────────
 

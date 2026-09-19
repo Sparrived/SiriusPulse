@@ -312,3 +312,126 @@ async def register_persona_tasks_async(
     （AMKR 不可达时更久）。因此丢到线程里执行。
     """
     return await asyncio.to_thread(register_persona_tasks, settings, persona, task_names)
+
+
+# ── 只读巡检（WebUI 运维页） ───────────────────────────────
+
+
+@dataclass(slots=True)
+class WorkspaceState:
+    """某人格在 AMKR 上的任务登记状态。"""
+
+    persona: str
+    workspace: str
+    registered: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "persona": self.persona,
+            "workspace": self.workspace,
+            "registered": self.registered,
+            "missing": self.missing,
+            "error": self.error,
+        }
+
+
+def amkr_ui_url(settings: AmkrSettings, health: dict[str, Any] | None = None) -> str:
+    """AMKR 自带 WebUI 的地址，供运维页「打开 AMKR」外链使用。
+
+    AMKR 未被嵌入其它服务时挂载前缀为空，``/health`` 的 ``webui_path`` 就是
+    ``/ui``；未挂载时该字段为 null，此时退回 ``/ui``——让运维至少能点进一个
+    明确的位置，而不是一个被拼坏的地址。
+    """
+    if not settings.base_url:
+        return ""
+    path = ""
+    if isinstance(health, dict):
+        raw = health.get("webui_path")
+        if isinstance(raw, str) and raw.strip():
+            path = raw.strip()
+    return f"{settings.base_url.rstrip('/')}{path or '/ui'}"
+
+
+def inspect_persona_workspace(
+    settings: AmkrSettings,
+    persona: str,
+    task_names: list[str] | None = None,
+) -> WorkspaceState:
+    """读取某人格工作空间里已登记与缺失的任务名。"""
+    wanted = list(task_names) if task_names is not None else known_task_names()
+    workspace = workspace_for(settings, persona)
+    state = WorkspaceState(persona=persona, workspace=workspace)
+    try:
+        with AmkrAdminClient(settings).for_workspace(workspace) as client:
+            tasks, _ = client.list_tasks()
+    except AmkrError as exc:
+        state.error = str(exc)
+        state.missing = list(wanted)
+        return state
+    present = {
+        str(item.get("name", "")).strip() for item in tasks if str(item.get("name", "")).strip()
+    }
+    state.registered = [name for name in wanted if name in present]
+    state.missing = [name for name in wanted if name not in present]
+    return state
+
+
+def collect_amkr_status(
+    settings: AmkrSettings,
+    personas: list[str] | None = None,
+    task_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """汇总 AMKR 连接状态与各人格的任务登记情况。
+
+    只读：不会创建或修改任何任务，可安全地反复调用。
+    """
+    wanted = list(task_names) if task_names is not None else known_task_names()
+    status: dict[str, Any] = {
+        "configured": settings.configured,
+        "base_url": settings.base_url,
+        "workspace_base": settings.workspace,
+        "ui_url": amkr_ui_url(settings),
+        "reachable": False,
+        "error": "",
+        "version": "",
+        "ops_enabled": False,
+        "webui_mounted": False,
+        "known_tasks": wanted,
+        "workspaces": [],
+    }
+    if not settings.configured:
+        status["error"] = "尚未配置 AMKR 本地授权 Key（amkr_local_api_key）"
+        return status
+
+    with AmkrAdminClient(settings) as client:
+        try:
+            health = client.health()
+        except AmkrError as exc:
+            status["error"] = str(exc)
+            return status
+        status["reachable"] = True
+        status["version"] = str(health.get("version", "") or "")
+        status["ops_enabled"] = bool(health.get("ops_enabled"))
+        status["webui_mounted"] = bool(health.get("webui_mounted"))
+        status["ui_url"] = amkr_ui_url(settings, health)
+
+    status["workspaces"] = [
+        inspect_persona_workspace(settings, persona, wanted).to_dict()
+        for persona in (personas or [])
+    ]
+    return status
+
+
+async def collect_amkr_status_async(
+    settings: AmkrSettings,
+    personas: list[str] | None = None,
+    task_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """``collect_amkr_status`` 的异步版本：探测会串行往返多次，放到线程里跑。"""
+    return await asyncio.to_thread(collect_amkr_status, settings, personas, task_names)

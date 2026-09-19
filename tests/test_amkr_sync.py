@@ -15,6 +15,9 @@ from sirius_pulse.providers.amkr import AmkrSettings
 from sirius_pulse.providers.amkr_sync import (
     AmkrAdminClient,
     AmkrError,
+    amkr_ui_url,
+    collect_amkr_status,
+    inspect_persona_workspace,
     known_task_names,
     register_persona_tasks,
     register_persona_tasks_async,
@@ -31,6 +34,13 @@ class _FakeAmkr:
         self.revision = revision
         self.requests: list[tuple[str, str, dict, dict]] = []
         self._reject_once = reject_once
+        self.health = {
+            "status": "ok",
+            "version": "1.2.3",
+            "ops_enabled": True,
+            "webui_mounted": True,
+            "webui_path": "/ui",
+        }
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content) if request.content else None
@@ -42,6 +52,8 @@ class _FakeAmkr:
                 body,
             )
         )
+        if request.url.path == "/health":
+            return httpx.Response(200, json=self.health)
         if request.url.path == "/api/tasks" and request.method == "GET":
             return httpx.Response(
                 200,
@@ -202,3 +214,98 @@ async def test_register_persona_tasks_async_when_called_then_registers(monkeypat
 
     assert result.created == ["plugin_raw"]
     assert fake.requests
+
+
+def test_inspect_persona_workspace_when_tasks_partly_exist_then_splits_registered_and_missing(
+    monkeypatch,
+):
+    """巡检要能把「已登记」与「还缺的」分开，运维页据此显示缺口。"""
+    fake = _FakeAmkr(tasks=["response_generate", "memory_extract"])
+    _install(monkeypatch, fake)
+
+    state = inspect_persona_workspace(
+        _settings(), "sirius", task_names=["response_generate", "topic_cluster"]
+    )
+
+    assert state.ok
+    assert state.registered == ["response_generate"]
+    assert state.missing == ["topic_cluster"]
+    assert state.workspace == "sirius-pulse/sirius"
+
+
+def test_inspect_persona_workspace_when_amkr_unreachable_then_reports_error_and_all_missing(
+    monkeypatch,
+):
+    """AMKR 不可达时不应抛异常打断巡检，而是把错误与缺口一并报给页面。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    state = inspect_persona_workspace(_settings(), "sirius", task_names=["response_generate"])
+
+    assert not state.ok
+    assert state.missing == ["response_generate"]
+    assert "无法连接 AMKR" in state.error
+
+
+def test_collect_amkr_status_when_unconfigured_then_asks_for_key_without_requests():
+    """没配 Key 时直接给出可操作提示，不发起网络请求。"""
+    status = collect_amkr_status(_settings(api_key=""), ["sirius"])
+
+    assert status["configured"] is False
+    assert status["reachable"] is False
+    assert "amkr_local_api_key" in status["error"]
+    assert status["workspaces"] == []
+
+
+def test_collect_amkr_status_when_reachable_then_reports_health_and_ui_url(monkeypatch):
+    """页面需要的信息：版本、运维开关、WebUI 外链地址、各人格的任务缺口。"""
+    fake = _FakeAmkr(tasks=["response_generate"])
+    _install(monkeypatch, fake)
+
+    status = collect_amkr_status(_settings(), ["sirius"])
+
+    assert status["reachable"] is True
+    assert status["version"] == "1.2.3"
+    assert status["ops_enabled"] is True
+    assert status["ui_url"] == "http://amkr.test/ui"
+    assert status["known_tasks"] == known_task_names()
+    workspace = status["workspaces"][0]
+    assert workspace["workspace"] == "sirius-pulse/sirius"
+    assert workspace["registered"] == ["response_generate"]
+    assert "topic_cluster" in workspace["missing"]
+
+
+def test_collect_amkr_status_when_not_reachable_then_reports_error(monkeypatch):
+    """AMKR 不可达时页面仍要能渲染，因此这里返回带 error 的结构而不是抛异常。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    status = collect_amkr_status(_settings(), ["sirius"])
+
+    assert status["reachable"] is False
+    assert "无法连接 AMKR" in status["error"]
+
+
+def test_collect_amkr_status_when_health_has_no_webui_path_then_falls_back_to_slash_ui():
+    """未挂载 WebUI 时 webui_path 为 null，外链应退回 /ui 而不是拼出坏地址。"""
+    settings = _settings(base_url="http://amkr.test/")
+
+    assert amkr_ui_url(settings) == "http://amkr.test/ui"
+    assert amkr_ui_url(settings, {"webui_path": None}) == "http://amkr.test/ui"
+    assert amkr_ui_url(settings, {"webui_path": "/amkr/ui"}) == "http://amkr.test/amkr/ui"

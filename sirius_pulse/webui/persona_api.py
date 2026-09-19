@@ -9,7 +9,6 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.models.persona import PersonaProfile
 from sirius_pulse.persona_config import (
@@ -18,8 +17,6 @@ from sirius_pulse.persona_config import (
     PersonaConfigPaths,
     PersonaExperienceConfig,
 )
-from sirius_pulse.webui.app_keys import DATA_DIR_KEY
-from sirius_pulse.webui.model_catalog import build_model_catalog
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
@@ -222,114 +219,6 @@ async def api_persona_post(request: web.Request, data_dir: Path) -> web.Response
 
     PersonaStore.save(paths.dir, profile)
     _request_config_reload("persona", data_dir)
-    return _json_response({"success": True})
-
-
-async def api_orchestration_get(request: web.Request, data_dir: Path) -> web.Response:
-    paths = PersonaConfigPaths(data_dir)
-
-    data = OrchestrationStore.load(paths.dir)
-    global_data_dir: Path = request.app.get(DATA_DIR_KEY, data_dir)
-    data["model_choices"] = build_model_catalog(global_data_dir)["model_choices"]
-    return _json_response(data)
-
-
-async def api_orchestration_post(request: web.Request, data_dir: Path) -> web.Response:
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "Invalid JSON"}, 400)
-
-    paths = PersonaConfigPaths(data_dir)
-
-    cfg = OrchestrationStore.load(paths.dir)
-
-    for key in ("analysis_model", "chat_model", "memory_model", "plugin_model", "summary_model"):
-        if key in body:
-            cfg[key] = body[key]
-
-    for key in (
-        "task_models",
-        "task_temperatures",
-        "task_max_tokens",
-        "task_enabled",
-        "task_timeout",
-        "task_fallback_model",
-    ):
-        if key in body and isinstance(body[key], dict):
-            cfg[key] = body[key]
-
-    from datetime import datetime, timezone
-
-    cfg["_updated_at"] = datetime.now(timezone.utc).isoformat()
-    OrchestrationStore.save(paths.dir, cfg)
-    _request_config_reload("orchestration", data_dir)
-    return _json_response({"success": True})
-
-
-async def api_task_params_get(request: web.Request, data_dir: Path) -> web.Response:
-    """获取所有任务的参数调优配置（temperature/max_tokens/timeout/fallback_model）。"""
-    paths = PersonaConfigPaths(data_dir)
-
-    cfg = OrchestrationStore.load(paths.dir)
-
-    from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY
-
-    defaults = {}
-    for task_name, task_cfg in _DEFAULT_TASK_REGISTRY.items():
-        defaults[task_name] = {
-            "temperature": task_cfg.temperature,
-            "max_tokens": task_cfg.max_tokens,
-            "timeout": task_cfg.timeout,
-            "fallback_model": task_cfg.fallback_model or "",
-        }
-
-    task_params = {}
-    task_temperatures = cfg.get("task_temperatures", {})
-    task_max_tokens = cfg.get("task_max_tokens", {})
-    task_timeout = cfg.get("task_timeout", {})
-    task_fallback_model = cfg.get("task_fallback_model", {})
-
-    for task_name in _DEFAULT_TASK_REGISTRY:
-        task_params[task_name] = {
-            "temperature": task_temperatures.get(task_name),
-            "max_tokens": task_max_tokens.get(task_name),
-            "timeout": task_timeout.get(task_name),
-            "fallback_model": task_fallback_model.get(task_name, ""),
-        }
-
-    return _json_response(
-        {
-            "task_params": task_params,
-            "defaults": defaults,
-        }
-    )
-
-
-async def api_task_params_post(request: web.Request, data_dir: Path) -> web.Response:
-    """保存任务参数调优配置。"""
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "Invalid JSON"}, 400)
-
-    paths = PersonaConfigPaths(data_dir)
-
-    cfg = OrchestrationStore.load(paths.dir)
-
-    for key in ("task_temperatures", "task_max_tokens", "task_timeout", "task_fallback_model"):
-        if key in body and isinstance(body[key], dict):
-            cleaned = {}
-            for k, v in body[key].items():
-                if v is not None and v != "":
-                    cleaned[k] = v
-            cfg[key] = cleaned
-
-    from datetime import datetime, timezone
-
-    cfg["_updated_at"] = datetime.now(timezone.utc).isoformat()
-    OrchestrationStore.save(paths.dir, cfg)
-    _request_config_reload("orchestration", data_dir)
     return _json_response({"success": True})
 
 
