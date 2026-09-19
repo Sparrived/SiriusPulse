@@ -285,7 +285,8 @@ grep -r "^description:" .github/skills/*/SKILL.md
 ✓ TaskConfig 只填本地字段（timeout / retries）与预算估算用的默认值；
   模型、temperature、max_tokens 一律不在此决定，留给 AMKR 的任务定义
 ✓ 任务名无需手工登记：known_task_names() 直接读取注册表键，
-  引擎启动时会自动把它注册进 AMKR 的 <amkr_workspace>/<persona> 空间
+  引擎启动时会先建出 <amkr_workspace>/<persona> 工作空间（拿面板 key），
+  再把它注册进去
 ✓ 确认注册是「只创建缺失」：已存在的任务不会被比对或覆盖
 ✓ 在 sirius_pulse/webui/model_catalog.py 的 TASK_LABELS 中补中文标签（可选但推荐）
 ✓ 在 docs/modules/provider-system.md 与 docs/reference/provider-config.md 的 12 个内置任务名清单中同步
@@ -309,6 +310,10 @@ grep -r "^description:" .github/skills/*/SKILL.md
 ✓ 新增或扩展 tests/test_webui_routes.py
 ✓ 若涉及密钥字段（如 amkr_local_api_key），响应中必须脱敏为 sk-a****，
   且提交脱敏值时保留磁盘原值
+✓ 凭据类字段不得随只读接口回显：amkr_panel_keys（面板 key 映射）整字段
+  都不出现在 GET /api/global-config 里，面板地址只走管理员专用接口
+✓ 只读凭据接口若 GET 即可取到秘密，必须在 handler 里显式判 auth_role——
+  中间件只对写方法限制 admin
 ```
 
 ## 防护与约定

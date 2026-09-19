@@ -169,7 +169,9 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 ### 工作空间与注册
 
 - AMKR 是**共享单实例**，多个 AI 服务可同时使用，**不是多租户**。隔离靠请求头 `X-AMKR-Workspace`，框架按人格拼接为 `<amkr_workspace>/<persona>`（如 `sirius-pulse/sirius`，由 `workspace_for()` 生成）。
-- 工作空间由「在里面建第一个任务」隐式产生，**没有**「新建工作空间」这一步；请求头为空时不发送，等价于 AMKR 的默认工作空间。
+- 工作空间由框架**显式创建**（`POST /api/workspaces`，见 `ensure_persona_workspace_key()`），不再靠「建第一个任务」隐式产生。原因：创建的那一刻是拿到该空间**面板 key** 的唯一时机，之后 AMKR 的目录与导出都刻意剥掉它。顺序必须是**先建空间拿 key，再注册任务**。请求头为空时不发送，等价于 AMKR 的默认工作空间。
+- 面板 key 存在 `data/global_config.json` 的 `amkr_panel_keys`（`{工作空间: key}` 明文映射，只为服务端持有）。**该字段绝不随 `GET /api/global-config` 回显**；面板地址只从管理员专用的 `GET /api/amkr/panel?persona=` 取，地址形如 `<ui_url>/panel.html#k=<key>`，凭据必须在 fragment 里（查询串会进 `Referer` 与服务端日志）。
+- 若空间已在 AMKR 侧存在而本地没有 key，AMKR 只返回 409 且不会重发 key：此时注册会报错并提示去读 AMKR 配置文件的 `workspaces.<空间>.api_key`，或删掉该空间后重建。
 - 注册**只创建缺失的任务名**，已存在的一律不比对、不更新——后续所有模型与参数调整都在 AMKR 自带 WebUI 里完成，避免每次启动把运维调好的配置打回去。注册是幂等的，可重复触发。
 - 写操作遵循 AMKR 的乐观并发（携带 `config_revision`），版本过期返回 409 时重读并重试一次。
 
@@ -184,8 +186,9 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 
 ### 仍然保留的 WebUI / API
 
-- `GET /api/amkr/status`：只读巡检（连通性、版本、各人格 `registered` / `missing`），可安全反复调用。
-- `POST /api/amkr/register`：补齐缺失任务名；body `{"persona": "..."}` 指定单个人格，`{}` 表示全部人格。
+- `GET /api/amkr/status`：只读巡检（连通性、版本、各人格 `registered` / `missing` / `panel_ready`），可安全反复调用；**不含**面板 key 或面板地址。
+- `GET /api/amkr/panel?persona=<名字>`：**仅管理员**（非 admin 返回 403）。返回 `{"persona", "url"}`，`url` 是可嵌入的 AMKR 工作空间面板地址（fragment 内含明文 key）；该人格没有 key 时返回 409 并说明补救路径。运维页按需调用它再把地址塞进 iframe。
+- `POST /api/amkr/register`：建出工作空间（含取面板 key）并补齐缺失任务名；body `{"persona": "..."}` 指定单个人格，`{}` 表示全部人格。
 - `GET /api/models`：仍然存在，但返回的是上述 12 个任务名（含中文标签），不再是厂商模型列表。
 
 ### 生产环境建议
