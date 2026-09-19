@@ -9,6 +9,11 @@ from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
+# How often a not-yet-started background task re-checks whether its host is up.
+# Small enough that a starting engine feels immediate, large enough to be free
+# while the engine is still being built.
+_STARTUP_POLL_SECONDS = 0.1
+
 
 @dataclass(slots=True)
 class BackgroundTaskSpec:
@@ -19,7 +24,17 @@ class BackgroundTaskSpec:
     task_func: Callable[..., Awaitable[None]]
 
     async def run_loop(self, running_check: Callable[[], bool]) -> None:
-        """Run ``task_func`` periodically until ``running_check`` is false."""
+        """Run ``task_func`` periodically until ``running_check`` is false.
+
+        The loop waits for the host to become ready before its first beat.
+        Passive tools are registered while the engine is still being built —
+        before ``running_check`` turns true — and the event loop starts running
+        the freshly created task during that window.  Returning immediately on a
+        false check would therefore kill the task permanently: nothing ever
+        restarts it, so the tool silently never runs.
+        """
+        while not running_check():
+            await asyncio.sleep(_STARTUP_POLL_SECONDS)
         while running_check():
             await asyncio.sleep(self.interval_seconds)
             if not running_check():
