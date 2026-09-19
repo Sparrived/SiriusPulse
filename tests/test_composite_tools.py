@@ -192,3 +192,51 @@ async def test_group_file_exec_group_file_actions_reject_private_chat():
 
     assert result["success"] is False
     assert "群聊" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_group_file_exec_expands_tilde_against_process_home(tmp_path: Path, monkeypatch):
+    """`~` must resolve to this process's home, matching what bash sees."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / "moonlit").mkdir()
+    (tmp_path / "moonlit" / "report.md").write_text("report", encoding="utf-8")
+
+    adapter = _Adapter()
+    result = await group_file_exec.run(
+        action="file",
+        file_path="~/moonlit/report.md",
+        bridge=adapter,
+        chat_context={"chat_type": "group", "chat_id": "9001"},
+    )
+
+    assert result["success"] is True
+    assert adapter.calls[-1] == (
+        "upload_group_file",
+        ("9001", str(tmp_path / "moonlit" / "report.md"), "report.md"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_group_file_exec_reports_home_when_path_check_raises(tmp_path: Path, monkeypatch):
+    """An unreadable parent (other user's home) must not surface a bare errno."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    adapter = _Adapter()
+
+    def _raise(self: Path) -> bool:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "exists", _raise)
+
+    result = await group_file_exec.run(
+        action="file",
+        file_path="/root/moonlit/report.md",
+        bridge=adapter,
+        chat_context={"chat_type": "group", "chat_id": "9001"},
+    )
+
+    assert result["success"] is False
+    assert adapter.calls == []
+    assert "没有权限访问" in result["error"]
+    assert str(tmp_path) in result["error"]

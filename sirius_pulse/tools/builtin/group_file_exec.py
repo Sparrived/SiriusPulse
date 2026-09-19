@@ -24,7 +24,11 @@ _config.group("图片与文件").add(
     choices=["image", "file", "list", "download"],
 )
 _config.group("图片与文件").add("image_path", type="str", description="action=image 时的本地图片路径或网络 URL。")
-_config.group("图片与文件").add("file_path", type="str", description="action=file 时要上传的本地文件路径。")
+_config.group("图片与文件").add(
+    "file_path",
+    type="str",
+    description="action=file 时要上传的本地文件路径；~ 展开为当前进程家目录。",
+)
 _config.group("图片与文件").add(
     "file_name",
     type="str",
@@ -201,12 +205,18 @@ async def _upload_file(
             "summary": "上传失败：缺少文件路径",
         }
 
-    path = Path(file_path)
-    if not path.exists():
+    # path.exists() raises (rather than returning False) on an unreadable parent,
+    # so the bare errno must be turned into a hint the model can act on.
+    path = Path(file_path).expanduser()
+    try:
+        problem = "" if path.exists() else f"文件不存在: {file_path}（展开后 {path}）"
+    except PermissionError:
+        problem = f"没有权限访问 {file_path}"
+    if problem:
         return {
             "success": False,
-            "error": f"文件不存在: {file_path}",
-            "summary": "上传失败：文件不存在",
+            "error": f"{problem}；当前进程家目录是 {Path.home()}，请确认路径。",
+            "summary": f"上传失败：{problem}",
         }
 
     resolved_path = str(path.resolve())
