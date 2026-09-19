@@ -36,6 +36,8 @@
 
 ### Fixed
 
+- **索引过期在混合状态下漏报**：`DiaryVectorStore.get_stats()` 原先只在「所有 collection 模型名一致且不等于当前模型」时判定过期。重建中途或存在空组时模型名是混合的，取不到单一名字便返回 `indexed_model=""`，`index_stale` 随之变成 `False`——此时一半 collection 还是旧维度、检索结果一半不可信，界面却显示「就绪」。改为只要存在任何一个 collection 记的不是当前模型就判过期，并新增 `indexed_models` 列出全部模型名。
+- **重建后索引仍被判为过期**：`_rebuild_diary_embeddings()` 遇到条目为空的组直接跳过，同名 collection 与其中的旧维度行原样留下，这些组永远带着旧模型名，用户点多少次重建都修不好。现在空组与磁盘上已无对应文件的组都会删除 collection。
 - **Pylance mixin 类型错误**：`engine_core.py` 添加 `TYPE_CHECKING` 条件桩方法声明；`pipeline.py`/`bg_tasks.py`/`helpers.py` 添加条件继承，消除 mixin 方法不可见诊断。
 - **Pylance 真实代码 bug**：`bg_tasks.py` 修复 `resolved_uid` 未绑定、`build_skill_status_message` 参数缺失、`_round`/`calls`/`reply` 未初始化；`cognition.py`/`bg_tasks.py` 添加 `provider_async` None 守卫。
 - **Pylance server_core 子类方法不可见**：`server_core.py` 添加 `TYPE_CHECKING` 桩方法声明；`FileResponse` 返回类型改为 `StreamResponse`。
