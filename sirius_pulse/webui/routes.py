@@ -18,6 +18,7 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/api/amkr/status", "api_amkr_status_get"),
     RouteSpec("GET", "/api/amkr/panel", "api_amkr_panel_get"),
     RouteSpec("POST", "/api/amkr/register", "api_amkr_register_post"),
+    RouteSpec("POST", "/api/amkr/rotate-inference-key", "api_amkr_rotate_inference_key_post"),
     RouteSpec("GET", "/api/tokens", "api_tokens_get"),
     RouteSpec("GET", "/api/telemetry", "api_telemetry_get"),
     RouteSpec("GET", "/api/embedding/status", "api_embedding_status"),

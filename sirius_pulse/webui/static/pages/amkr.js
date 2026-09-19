@@ -1,13 +1,18 @@
 import { get, post } from '../app.js';
-import { toast, flashSuccess } from '../components.js';
+import { toast, flashSuccess, confirmDanger } from '../components.js';
 import { createScopedPage } from '../page-context.js';
 
 /**
  * AMKR 运维页。
  *
  * 本页**只做巡检与登记**，不做模型或采样参数编排：任务指向哪个模型、用什么
- * temperature，全部由运维在 AMKR 自带 WebUI 里配置。这里回答两个问题——连得上
- * 吗、任务名登记齐了吗——并提供跳转 AMKR 的外链。
+ * temperature，全部由运维在 AMKR 自带 WebUI 里配置。这里回答——连得上吗、任务名
+ * 登记齐了吗、各空间有没有推理凭据——并提供跳转 AMKR 的外链。
+ *
+ * 「推理凭据」一栏是本页的存在理由之一：模型调用用的是钉死在单个空间上的推理
+ * key，不是全局管理员 key。空间若建于 AMKR 支持该能力之前，本地只有面板 key，
+ * 而 key 拿不回来了，只能在这里轮换补上。缺凭据的人格**起不来**，所以这一栏必须
+ * 能一眼看出，并给出补救按钮。
  */
 
 const scopedPage = createScopedPage();
@@ -50,6 +55,7 @@ export async function init(container, params = {}) {
         </div>
       </div>
       <div id="amkrWorkspaces"></div>
+      <div id="amkrKeyReveal" style="margin-top:12px"></div>
     </div>
     <div class="card" style="margin-top:16px">
       <div class="card-header">
@@ -168,7 +174,8 @@ function renderOverview(root, data) {
       : `<span class="tag tag-danger">不可达</span>${data.error ? ` ${escapeHtml(data.error)}` : ''}`],
     ['版本', escapeHtml(data.version || '—')],
     ['工作空间前缀', escapeHtml(data.workspace_base || '—')],
-    ['访问方式', `<code>X-AMKR-Workspace: ${escapeHtml(data.workspace_base)}/&lt;人格&gt;</code>`],
+    ['模型调用凭据', '<code>amkr_ik_…</code> 推理 key（按空间）'],
+    ['管理凭据', '<code>amkr_local_api_key</code>（仅建空间/注册任务）'],
     ['运维接口', data.ops_enabled
       ? '<span class="tag tag-success">已启用</span>'
       : '<span class="tag tag-danger">已关闭（--no-ops）</span>'],
@@ -224,6 +231,15 @@ function renderWorkspaces(root, data) {
     const panelLine = item.panel_ready
       ? ''
       : '<div class="card-subtitle">尚无面板 key（AMKR 只在建空间时返回一次）</div>';
+    // 推理 key 缺失会让该人格**起不来**（provider 拿不到凭据），因此这条比面板 key
+    // 更要紧，排在上面并给出补救按钮。
+    const inferenceLine = item.inference_ready
+      ? ''
+      : `<div class="card-subtitle" style="color:var(--danger,#e5534b)">
+           尚无推理 key，该人格的模型调用无法发起。
+           <button type="button" class="btn btn-sm" style="margin-left:8px"
+                   data-amkr-rotate="${escapeHtml(item.persona || '')}">轮换推理 key</button>
+         </div>`;
     return `
       <div style="padding:12px 0;border-top:1px solid var(--border,#333)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
@@ -234,6 +250,7 @@ function renderWorkspaces(root, data) {
           <button type="button" class="btn btn-sm" data-amkr-persona="${escapeHtml(item.persona || '')}">注册缺失项</button>
         </div>
         ${errorLine}
+        ${inferenceLine}
         ${panelLine}
         ${missing ? `<div style="margin-top:8px">${missing}</div>` : ''}
       </div>
@@ -242,6 +259,81 @@ function renderWorkspaces(root, data) {
 
   scopedPage.$$('[data-amkr-persona]').forEach(button => {
     scopedPage.on(button, 'click', () => registerTasks(button, button.dataset.amkrPersona));
+  });
+  scopedPage.$$('[data-amkr-rotate]').forEach(button => {
+    scopedPage.on(button, 'click', () => rotateInferenceKey(button, button.dataset.amkrRotate));
+  });
+}
+
+/**
+ * 轮换某人格的推理 key，并把新 key 显示出来。
+ *
+ * 旧 key 立即失效，新 key 明文只回这一次——所以必须当场显示，并提示要存好。
+ * 后端轮换完会通知该人格重建 provider，因此不需要用户再手动重启。
+ */
+async function rotateInferenceKey(button, persona) {
+  if (button?.disabled) return;
+  if (!persona) return;
+  const confirmed = confirmDanger(
+    `确定为「${persona}」轮换推理 key 吗？\n\n`
+    + '旧 key 会立即失效。本框架会立刻换用新 key，但若还有别处（如监控脚本）在用这把 key，'
+    + '它们会开始收到 401。'
+  );
+  if (!confirmed) return;
+  if (button) button.disabled = true;
+  try {
+    const data = await post('/amkr/rotate-inference-key', { persona });
+    const key = data?.inference_key || '';
+    if (key) {
+      revealKey(persona, key);
+    }
+    toast(`已轮换「${persona}」的推理 key`);
+    await loadStatus();
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      toast(`轮换推理 key 失败：${error?.message || '未知错误'}`, 'error');
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+/**
+ * 就地展示一把只回一次的新 key。
+ *
+ * 不用 ``window.prompt``：它是单行输入框，没有可靠的全选，用户误点确定就永久丢了
+ * 这把 key（AMKR 不再重发）。这里给一个可全选的只读框加复制按钮，并留在页面上直到
+ * 下一次操作——丢了就只能再轮换一次，而那会作废刚发出去的这把。
+ */
+function revealKey(persona, key) {
+  const root = $('amkrKeyReveal');
+  if (!root) return;
+  root.innerHTML = `
+    <div style="padding:12px;border:1px solid var(--border,#333);border-radius:8px">
+      <div><strong>「${escapeHtml(persona)}」的新推理 key</strong>
+        <span class="tag tag-danger">只显示这一次</span></div>
+      <div class="card-subtitle" style="margin:4px 0 8px">
+        旧 key 已失效。请立即存进该人格的配置或密钥管理；离开本页后 AMKR 与本站都不再返回它。
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="amkrKeyValue" class="btn btn-sm" readonly
+               style="flex:1;font-family:monospace;text-align:left"
+               value="${escapeHtml(key)}" />
+        <button type="button" class="btn btn-sm btn-primary" id="amkrKeyCopy">复制</button>
+      </div>
+    </div>
+  `;
+  const input = $('amkrKeyValue');
+  if (input) input.select();
+  scopedPage.on($('amkrKeyCopy'), 'click', async () => {
+    try {
+      await navigator.clipboard.writeText(key);
+      toast('推理 key 已复制');
+    } catch {
+      // 剪贴板不可用（非安全上下文等）时退回手动全选，不让复制失败静默无事发生。
+      input?.select();
+      toast('无法自动复制，请手动全选复制', 'error');
+    }
   });
 }
 

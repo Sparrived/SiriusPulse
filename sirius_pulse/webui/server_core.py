@@ -13,12 +13,18 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.providers.amkr import PANEL_KEYS_FIELD, AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.amkr import (
+    INFERENCE_KEYS_FIELD,
+    PANEL_KEYS_FIELD,
+    AmkrSettings,
+    load_amkr_settings,
+)
 from sirius_pulse.providers.amkr_sync import (
     AmkrError,
     collect_amkr_status_async,
     persona_panel_url,
     register_persona_tasks_async,
+    rotate_persona_inference_key,
 )
 from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY, DATA_DIR_KEY, WS_MANAGER_KEY
 from sirius_pulse.webui.auth import AuthManager
@@ -284,14 +290,17 @@ class WebUIServer:
         ``amkr_local_api_key`` 是 AMKR 的管理员凭据（可增删供应商与 Key），
         接口只回显掩码；前端提交掩码值时保留磁盘上的原值。
 
-        ``amkr_panel_keys`` **整个字段都不回显**：那是「工作空间 → 面板 key」的
-        明文映射，且这个接口是任何已登录用户（含只读角色）都能读的。面板地址只
-        从管理员专用的 ``/api/amkr/panel`` 取，这里连字段名都不必暴露。
+        ``amkr_panel_keys`` 与 ``amkr_inference_keys`` **整个字段都不回显**：前者是
+        「工作空间 → 面板 key」，后者是「工作空间 → 推理 key」，都是明文凭据映射，
+        且这个接口是任何已登录用户（含只读角色）都能读的。面板地址只从管理员专用的
+        ``/api/amkr/panel`` 取；推理 key 只在轮换那一次作为响应回给管理员。这里连
+        字段名都不必暴露。
         """
         result = dict(data)
         if result.get("amkr_local_api_key"):
             result["amkr_local_api_key"] = self._mask_api_key(result["amkr_local_api_key"])
         result.pop(PANEL_KEYS_FIELD, None)
+        result.pop(INFERENCE_KEYS_FIELD, None)
         return result
 
     async def api_global_config_get(self, request: web.Request) -> web.Response:
@@ -399,10 +408,15 @@ class WebUIServer:
         """判断提交上来的 Key 是否为回显掩码（表示保持原值）。"""
         return value.endswith("****")
 
-    def _notify_config_reload(self, reload_type: str) -> None:
-        """向当前人格写入配置重载标志，并合并快速连续请求。"""
+    def _notify_config_reload(self, reload_type: str, persona_dir: Path | None = None) -> None:
+        """向人格写入配置重载标志，并合并快速连续请求。
+
+        ``persona_dir`` 省略时用当前活跃人格（全局配置变更的既有语义）。按人格发出
+        的变更要显式传目标目录，否则会通知错的对象——活跃人格重建了 provider，
+        真正换了凭据的那个却还拿着旧 key。
+        """
         try:
-            flag = self.persona_dir / "engine_state" / "reload_requested"
+            flag = (persona_dir or self.persona_dir) / "engine_state" / "reload_requested"
             flag.parent.mkdir(parents=True, exist_ok=True)
             types: set[str] = set()
             if flag.exists():
@@ -443,8 +457,9 @@ class WebUIServer:
         本页不做任何模型或参数编排——那是 AMKR 自带 WebUI 的职责，这里只回答
         「连得上吗」「这个名字登记了没有」，并给出跳转 AMKR 的外链。
 
-        刻意**不**包含面板 key 或面板地址：带凭据的地址只从管理员接口
-        :meth:`api_amkr_panel_get` 取，否则一次普通的只读请求就把凭据洒出去了。
+        刻意**不**包含面板 key 或推理 key：前者带凭据的面板地址只从管理员接口
+        :meth:`api_amkr_panel_get` 取，后者只在轮换响应里回一次，否则一次普通的
+        只读请求就把凭据洒出去了。这里只报「有没有」。
         """
         status = await collect_amkr_status_async(
             self._amkr_settings(),
@@ -515,6 +530,48 @@ class WebUIServer:
                 continue
             results[persona] = result.to_dict()
         return _json_response({"results": results})
+
+    async def api_amkr_rotate_inference_key_post(self, request: web.Request) -> web.Response:
+        """管理员专用：给某人格的工作空间换一把推理 key。
+
+        这是「模型调用不再动用管理员凭据」这件事的补救入口：空间建于 AMKR 支持
+        推理 key 之前时，本地只有面板 key，而 AMKR 不再重发——只能轮换补上。
+
+        与面板接口同理，GET 不足以挡住 viewer（中间件只拦写方法），但轮换是**写**
+        操作，中间件已按写方法要求管理员。这里仍显式判角色，避免中间件配置变动后
+        悄悄放开。
+
+        新 key 明文只在这次响应里回，且**旧 key 立即失效**。调用方必须把它存好。
+        """
+        if request.get("auth_role") != "admin":
+            return _json_response({"error": "权限不足，需要管理员权限"}, 403)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        persona = str(body.get("persona", "") or "").strip()
+        if not persona:
+            return _json_response({"error": "缺少 persona 参数"}, 400)
+        if persona not in self._persona_names():
+            return _json_response({"error": f"人格不存在: {persona}"}, 404)
+
+        try:
+            key = rotate_persona_inference_key(
+                self._amkr_settings(),
+                persona,
+                global_data_path=self.data_dir,
+            )
+        except AmkrError as exc:
+            return _json_response({"error": str(exc)}, 502)
+
+        # 正在运行的人格手里还拿着旧 key，必须让它重建 provider，否则下一次对话
+        # 就是一个 401——而且要到那时才暴露。只通知这一个人格。
+        self._notify_config_reload("provider", self.get_persona_dir(persona))
+        return _json_response({"persona": persona, "inference_key": key})
 
     # ─── 全局 API: 可用模型列表 ───────────────────────────
 
