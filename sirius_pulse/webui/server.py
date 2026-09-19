@@ -24,6 +24,7 @@ from typing import Any
 
 from aiohttp import web
 
+from sirius_pulse.webui.autonomy_api import api_persona_autonomy_get
 from sirius_pulse.webui.dispatcher_api import api_dispatcher_overview as _api_dispatcher_overview
 from sirius_pulse.webui.memory_api import (
     api_persona_cognition_analysis_get,
@@ -136,6 +137,7 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_memory_dedupe_apply": api_persona_memory_dedupe_apply,
     "api_persona_memory_dedupe_report": api_persona_memory_dedupe_report,
     "api_persona_memory_viz": api_persona_memory_viz,
+    "api_persona_autonomy_get": api_persona_autonomy_get,
     "api_persona_conversation_history_delete": api_persona_conversation_history_delete,
     "api_persona_conversation_history_get": api_persona_conversation_history_get,
     "api_config_post": api_config_post,
