@@ -13,10 +13,8 @@ goes through the normal proactive-message pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
-from sirius_pulse.core.autonomy import is_quiet_hours
 from sirius_pulse.core.intent import (
     RESOLUTION_TELL,
     IntentFileStore,
@@ -28,19 +26,6 @@ logger = logging.getLogger(__name__)
 _MAX_WHAT_CHARS = 300
 _MAX_WHY_CHARS = 200
 _DEFAULT_URGENCY = 0.7
-
-# 宵禁期间最多只留下一条待发的消息。理由是最靠后的那条会被拖得最不新鲜：
-# 夜里攒下 8 条、天亮后按 share_cooldown_seconds 每小时放一条，23:00 写的那条
-# 可能到次日 15:00 才说出口，"今天的晚霞"到那时早已不是今天的事。所以宵禁只
-# 允许一次成功的登记——她照样可以继续想、继续做事，只是不再往队列里堆。
-# 天亮后第一条会在第一个满足条件的时刻发出（不再受本上限影响）。
-_QUIET_HOURS_MAX_PENDING = 1
-
-
-def _now() -> datetime:
-    """Current UTC time.  Indirection point so tests can pin the clock."""
-    return datetime.now(timezone.utc)
-
 
 TOOL_META = {
     "name": "intend_share",
@@ -118,17 +103,6 @@ def run(
     if not body:
         return {"success": False, "error": "what 不能为空", "summary": "没有记下任何内容"}
 
-    # 宵禁期间最多只留一条：夜里攒下的多条会在天亮后被冷却摊到很晚，
-    # 越靠后越不新鲜。已有的那条会照原样在合适时间发出，不会被顶掉。
-    moment = _now()
-    if is_quiet_hours(moment) and _pending_tell_count(store) >= _QUIET_HOURS_MAX_PENDING:
-        logger.debug("宵禁期间已有待发的消息，不再堆积新的一条")
-        return {
-            "success": False,
-            "error": "宵禁期间已经有一条待发的消息",
-            "summary": "现在已经有一条准备早一点说出去的话了，这条先不记，等天亮之后再说。",
-        }
-
     label = _audience_label(engine_context, audience)
     intention = Intention.create(
         what=body[:_MAX_WHAT_CHARS],
@@ -177,19 +151,6 @@ def _attach_audience(
         "audience": item.audience,
         "summary": f"好，这句话之后找机会说给「{label}」听。",
     }
-
-
-def _pending_tell_count(store: Any) -> int:
-    """还没说出口的 tell 意图数，含"还没想好说给谁"的那些。
-
-    不能只看 ``pending_shares``：那条只算定了受众的，若只数它，她就能在宵禁里
-    无限登记"还没想好说给谁"的话，上限形同虚设。
-    """
-    return sum(
-        1
-        for item in store.all()
-        if item.is_tell and not item.shared_at and bool(str(item.what).strip())
-    )
 
 
 def _load_store(engine_context: Any) -> Any:
