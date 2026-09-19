@@ -11,7 +11,12 @@ import json
 import httpx
 import pytest
 
-from sirius_pulse.providers.amkr import AmkrSettings, load_panel_keys, save_panel_key
+from sirius_pulse.providers.amkr import (
+    AmkrSettings,
+    load_amkr_settings,
+    load_panel_keys,
+    save_panel_key,
+)
 from sirius_pulse.providers.amkr_sync import (
     AmkrAdminClient,
     AmkrError,
@@ -328,6 +333,60 @@ def test_collect_amkr_status_when_health_has_no_webui_path_then_falls_back_to_sl
     assert amkr_ui_url(settings) == "http://amkr.test/ui"
     assert amkr_ui_url(settings, {"webui_path": None}) == "http://amkr.test/ui"
     assert amkr_ui_url(settings, {"webui_path": "/amkr/ui"}) == "http://amkr.test/amkr/ui"
+
+
+# ── 后端地址与浏览器地址的分工 ─────────────────────────────
+
+
+def test_browser_base_url_when_unset_then_falls_back_to_backend_url():
+    """单机部署下两者本就是同一个地址，不该强迫运维填两遍。"""
+    settings = _settings(base_url="http://amkr.test/")
+
+    assert settings.browser_base_url == "http://amkr.test"
+
+
+def test_load_amkr_settings_when_public_url_stored_then_reads_it(tmp_path):
+    """「AMKR 浏览器地址」与「AMKR 地址」都必须能从全局配置读出来。"""
+    (tmp_path / "global_config.json").write_text(
+        json.dumps(
+            {
+                "amkr_base_url": "http://127.0.0.1:28881",
+                "amkr_local_api_key": "sk-local",
+                "amkr_public_url": "https://amkr.example.com/",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_amkr_settings(tmp_path)
+
+    assert settings.base_url == "http://127.0.0.1:28881"
+    assert settings.browser_base_url == "https://amkr.example.com"
+
+
+def test_amkr_ui_url_when_public_url_set_then_uses_it_for_browser_link():
+    """同机部署时后端走回环最省事，但那个地址在用户浏览器里指向用户自己的机器。
+
+    运维页外链与面板 iframe 都是**浏览器**去访问，因此必须用 amkr_public_url。
+    """
+    settings = _settings(base_url="http://127.0.0.1:28881", public_url="https://amkr.example.com")
+
+    assert amkr_ui_url(settings) == "https://amkr.example.com/ui"
+    # 后端自己仍然连回环——面板数据由浏览器直连获取，不由后端代取。
+    assert settings.base_url == "http://127.0.0.1:28881"
+
+
+def test_persona_panel_url_when_public_url_set_then_uses_browser_origin(monkeypatch, tmp_path):
+    """iframe 的 src 必须是浏览器能解析的源，否则面板永远加载不出来。"""
+    fake = _FakeAmkr()
+    _install(monkeypatch, fake)
+    settings = _settings(base_url="http://127.0.0.1:28881", public_url="https://amkr.example.com")
+    save_panel_key(tmp_path, "sirius-pulse/sirius", "amkr_ws_secret")
+
+    url = persona_panel_url(settings, "sirius", tmp_path)
+
+    assert url == "https://amkr.example.com/ui/panel.html#k=amkr_ws_secret"
+    assert "127.0.0.1" not in url
 
 
 # ── 工作空间与面板 key ─────────────────────────────────────

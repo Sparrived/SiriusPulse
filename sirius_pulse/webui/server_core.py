@@ -311,6 +311,7 @@ class WebUIServer:
                 "amkr_base_url": "http://127.0.0.1:8000",
                 "amkr_local_api_key": "",
                 "amkr_workspace": "sirius-pulse",
+                "amkr_public_url": "",
                 "amkr_ui_enabled": True,
             }
         )
@@ -337,6 +338,7 @@ class WebUIServer:
             "amkr_base_url",
             "amkr_local_api_key",
             "amkr_workspace",
+            "amkr_public_url",
             "amkr_ui_enabled",
         ):
             if key not in body:

@@ -434,15 +434,20 @@ def amkr_ui_url(settings: AmkrSettings, health: dict[str, Any] | None = None) ->
     AMKR 未被嵌入其它服务时挂载前缀为空，``/health`` 的 ``webui_path`` 就是
     ``/ui``；未挂载时该字段为 null，此时退回 ``/ui``——让运维至少能点进一个
     明确的位置，而不是一个被拼坏的地址。
+
+    用 ``browser_base_url`` 而不是 ``base_url``：这个地址是给**用户的浏览器**点
+    的。部署在同一台机器上时后端走回环最省事，但那在用户浏览器里指向用户自己
+    的机器，链接必然打不开。
     """
-    if not settings.base_url:
+    base = settings.browser_base_url
+    if not base:
         return ""
     path = ""
     if isinstance(health, dict):
         raw = health.get("webui_path")
         if isinstance(raw, str) and raw.strip():
             path = raw.strip()
-    return f"{settings.base_url.rstrip('/')}{path or '/ui'}"
+    return f"{base}{path or '/ui'}"
 
 
 def inspect_persona_workspace(
@@ -492,6 +497,8 @@ def collect_amkr_status(
     status: dict[str, Any] = {
         "configured": settings.configured,
         "base_url": settings.base_url,
+        # 浏览器侧的地址，可能因反向代理而与 base_url 不同（见 AmkrSettings）。
+        "browser_base_url": settings.browser_base_url,
         "workspace_base": settings.workspace,
         "ui_url": amkr_ui_url(settings),
         "reachable": False,

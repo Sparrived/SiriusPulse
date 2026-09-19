@@ -2686,6 +2686,26 @@ async def test_global_config_post_when_amkr_fields_sent_then_persisted(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_global_config_post_when_public_url_sent_then_persisted(tmp_path):
+    """容器走回环、浏览器走反代域名时，两个地址都必须能被运维保存下来。"""
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_global_config_post(
+        _FakeJsonRequest(
+            {
+                "amkr_base_url": "http://127.0.0.1:28881",
+                "amkr_public_url": "https://amkr.example.com",
+            }
+        )
+    )
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+
+    assert response.status == 200
+    assert saved["amkr_base_url"] == "http://127.0.0.1:28881"
+    assert saved["amkr_public_url"] == "https://amkr.example.com"
+
+
+@pytest.mark.asyncio
 async def test_global_config_get_when_key_set_then_returns_mask(tmp_path):
     """管理员 Key 不能以明文回显给前端。"""
     atomic_write_json(

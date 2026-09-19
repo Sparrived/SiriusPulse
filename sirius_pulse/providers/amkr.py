@@ -12,6 +12,7 @@ Sirius Pulse 不再自带多供应商注册表：所有模型调用都指向同�
 ``amkr_base_url``    ``SIRIUS_AMKR_BASE_URL``    ``http://127.0.0.1:8000``
 ``amkr_local_api_key`` ``SIRIUS_AMKR_API_KEY``   空（未配置则引擎不就绪）
 ``amkr_workspace``   ``SIRIUS_AMKR_WORKSPACE``   ``sirius-pulse``
+``amkr_public_url``  ``SIRIUS_AMKR_PUBLIC_URL``  空（回落到 ``amkr_base_url``）
 ===================  ==========================  ============================
 
 工作空间是本应用在**共享** AMKR 里的命名空间：多个 AI 服务共用一个 AMKR
@@ -22,6 +23,11 @@ Sirius Pulse 不再自带多供应商注册表：所有模型调用都指向同�
 能拿到该空间「面板 key」的时机——之后 AMKR 永不再返回它。这把 key 用于把
 AMKR 的工作空间面板嵌进本框架的运维页，因此必须当场存下来，且只存在服务端
 （见 :mod:`sirius_pulse.providers.amkr_sync`）。
+
+``amkr_public_url`` 是**浏览器**该用哪个地址访问同一个 AMKR，与 ``amkr_base_url``
+（服务端容器自己怎么连）分开。容器与 AMKR 同机时后端走回环最省事，但回环地址
+在用户浏览器里指向用户的机器，面板 iframe 会直接加载失败；反向代理把 AMKR 暴露
+在别的域名时，两者必然不同。留空表示「浏览器也用 ``amkr_base_url``」。
 """
 
 from __future__ import annotations
@@ -77,11 +83,21 @@ class AmkrSettings:
     api_key: str = ""
     workspace: str = AMKR_DEFAULT_WORKSPACE
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    public_url: str = ""
 
     @property
     def configured(self) -> bool:
         """是否已配好到可以发起请求（地址与凭据齐备）。"""
         return bool(self.base_url.strip() and self.api_key.strip())
+
+    @property
+    def browser_base_url(self) -> str:
+        """浏览器该用的 AMKR 基址。
+
+        没单独配 ``amkr_public_url`` 时回落到 ``amkr_base_url``——单机部署下两者
+        本来就是同一个地址。
+        """
+        return (self.public_url or self.base_url).rstrip("/")
 
 
 def load_amkr_settings(global_data_path: Path | str) -> AmkrSettings:
@@ -114,11 +130,16 @@ def load_amkr_settings(global_data_path: Path | str) -> AmkrSettings:
         or str(data.get("amkr_workspace", "") or "").strip()
         or AMKR_DEFAULT_WORKSPACE
     )
+    public_url = (
+        os.getenv("SIRIUS_AMKR_PUBLIC_URL", "").strip()
+        or str(data.get("amkr_public_url", "") or "").strip()
+    )
 
     return AmkrSettings(
         base_url=base_url.rstrip("/"),
         api_key=_resolve_api_key(raw_key),
         workspace=workspace,
+        public_url=public_url.rstrip("/"),
     )
 
 
