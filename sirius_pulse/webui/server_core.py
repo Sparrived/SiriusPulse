@@ -26,6 +26,7 @@ from sirius_pulse.providers.amkr_sync import (
 )
 from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY, DATA_DIR_KEY, WS_MANAGER_KEY
 from sirius_pulse.webui.auth import AuthManager
+from sirius_pulse.webui.event_bridge import EngineEventBridge
 from sirius_pulse.webui.middleware import auth_middleware
 from sirius_pulse.webui.model_catalog import build_model_catalog
 from sirius_pulse.webui.routes import WEBUI_ROUTES
@@ -65,6 +66,11 @@ class WebUIServer:
         self.port = port
         self.ws_manager = WebSocketManager()
         self.file_event_bridge = WebUIFileEventBridge(self.data_dir, self.ws_manager)
+        # 人格引擎的实时事件（含自主回合）需要一座桥才能到达浏览器；此前
+        # 事件总线没有任何订阅者，自主过程因此不可见。
+        self.engine_event_bridge = EngineEventBridge(
+            self.ws_manager, lambda: getattr(self, "persona_manager", None)
+        )
         self.auth_manager = AuthManager(self.data_dir)
         self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
         self.app[DATA_DIR_KEY] = self.data_dir
@@ -152,10 +158,12 @@ class WebUIServer:
         self.site = web.TCPSite(self.runner, self.host, self.port)
         await self.site.start()
         self.file_event_bridge.start(asyncio.get_running_loop())
+        self.engine_event_bridge.start()
         LOG.info("WebUI running on http://%s:%s", self.host, self.port)
 
     async def stop(self) -> None:
         self.file_event_bridge.stop()
+        await self.engine_event_bridge.stop()
         await self.ws_manager.close_all()
         if self.site:
             await self.site.stop()
