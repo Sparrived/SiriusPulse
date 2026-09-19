@@ -236,6 +236,16 @@ class DiaryManager:
         self.ensure_group_loaded(group_id)
         return entry_id in self._diarized_sources.get(group_id, set())
 
+    def reload_from_disk(self) -> None:
+        """丢弃已加载分组的缓存，下次访问时从磁盘重新读取。
+
+        WebUI 的「重建索引」在另一个进程里重算了日记向量；本进程缓存的是重建前的
+        旧向量，不丢弃就会继续按旧维度比较。
+        """
+        self._loaded_groups.clear()
+        self._diarized_sources.clear()
+        self._indexer.clear()
+
     # ------------------------------------------------------------------
     # Index / Store
     # ------------------------------------------------------------------

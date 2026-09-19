@@ -172,6 +172,10 @@ class MemoryUnitIndexer:
     def list_all(self) -> list[MemoryUnit]:
         return list(self._units)
 
+    def reset(self) -> None:
+        """丢弃全部已索引单元，供向量重建后强制重新加载。"""
+        self._units = []
+
     def clear_group(self, group_id: str) -> None:
         self._units = [u for u in self._units if u.group_id != group_id]
 
@@ -193,6 +197,68 @@ class MemoryUnitIndexer:
             return False
         unit.embedding = vec
         return True
+
+    def ensure_model_current(self, units: list[MemoryUnit], *, batch_size: int = 64) -> bool:
+        """把维度与当前 embedding 模型不一致的向量重算一遍；返回是否有改动。
+
+        换 embedding 模型必然换维度（``bge-small-zh`` 512 维、``bge-m3`` 1024 维）。
+        内存单元的向量是内联存在 JSON 里的，旧向量留着不但没用，还会因为维度不同被
+        判为不相似，让语义检索静默退化成纯关键词检索，所以必须在加载时重算。
+
+        当前维度未知时先编码第一条文本，用它的结果同时拿到维度与向量，避免为探测多花
+        一次请求。
+        """
+        if not self.semantic_available or not units:
+            return False
+
+        expected = self._embedding_client.dimension
+        changed = False
+        if expected is None:
+            probed = self._encode_texts([self._unit_text(units[0])])
+            if not probed:
+                return False
+            units[0].embedding = probed[0]
+            expected = len(probed[0])
+            changed = True
+            rest = units[1:]
+        else:
+            rest = units
+
+        stale = [unit for unit in rest if not unit.embedding or len(unit.embedding) != expected]
+        if not stale:
+            return changed
+
+        recomputed = 0
+        for start in range(0, len(stale), batch_size):
+            chunk = stale[start : start + batch_size]
+            vectors = self._encode_texts([self._unit_text(unit) for unit in chunk])
+            for unit, vector in zip(chunk, vectors):
+                if vector and len(vector) == expected:
+                    unit.embedding = vector
+                    recomputed += 1
+                    changed = True
+        if recomputed:
+            logger.info(
+                "已按 %s 重算 %d/%d 条记忆单元向量（原维度与当前模型不一致）",
+                self._embedding_client.model or "当前模型",
+                recomputed,
+                len(units),
+            )
+        return changed
+
+    def _encode_texts(self, texts: list[str]) -> list[list[float]]:
+        """按位置返回向量；不做过滤，否则向量会与文本错配。"""
+        if not self._embedding_client or not texts:
+            return []
+        try:
+            vectors = self._embedding_client.encode(texts)
+        except Exception as exc:
+            logger.warning("Memory unit embedding failed: %s", exc)
+            return []
+        if len(vectors) != len(texts):
+            logger.warning("Embedding 返回数量与请求不一致，跳过本次重算")
+            return []
+        return vectors
 
     def _encode_queries(self, queries: list[str]) -> list[list[float]]:
         if not self._embedding_client:
@@ -347,6 +413,10 @@ class MemoryUnitIndexer:
 
     @staticmethod
     def _cosine_sim(a: list[float], b: list[float]) -> float:
+        # 维度不一致时必须直接判为不相似：zip 会按短的那条截断，算出一个看似合理的
+        # 分数。换 embedding 模型后旧向量与新查询向量维度不同，正是这种情况。
+        if len(a) != len(b):
+            return 0.0
         dot = sum(x * y for x, y in zip(a, b))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))

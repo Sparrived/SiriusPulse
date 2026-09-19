@@ -240,6 +240,17 @@ class MemoryUnitManager:
         self._loaded_groups.add(group_id)
         logger.info("Loaded %d checkpoint memory units for group %s", len(units), group_id)
 
+    async def rebuild_embeddings(self) -> int:
+        """按当前 embedding 模型重算全部记忆单元向量并落盘，返回涉及的单元数。
+
+        换 embedding 模型后，内联在 JSON 里的旧维度向量一律失效。这里不放在加载路径
+        上顺带做：单个人格可能有上千条单元，同步重算会把事件循环卡住几十秒。改由
+        WebUI 的「重建索引」显式触发，重建后由 worker 重建引擎重新加载。
+        """
+        return await asyncio.to_thread(
+            rebuild_memory_unit_embeddings, self._embedding_client, self._store
+        )
+
     def _replace_loaded_group(self, group_id: str, units: list[MemoryUnit]) -> None:
         self._indexer.replace_group(group_id, units)
         self._checkpointed_sources[group_id] = {
@@ -282,3 +293,36 @@ class MemoryUnitManager:
     def get_units_for_group(self, group_id: str) -> list[MemoryUnit]:
         self.ensure_group_loaded(group_id)
         return [unit for unit in self._indexer.list_all() if unit.group_id == group_id]
+
+    def reload_from_disk(self) -> None:
+        """丢弃已加载分组的缓存，下次访问时从磁盘重新读取。
+
+        WebUI 重建完向量后由 worker 调用：这里缓存的向量还是旧维度的，不丢弃的话
+        重建等于没做。
+        """
+        self._loaded_groups.clear()
+        self._checkpointed_sources.clear()
+        self._indexer.reset()
+
+
+def rebuild_memory_unit_embeddings(
+    embedding_client: EmbeddingClient | None,
+    store: MemoryUnitFileStore,
+) -> int:
+    """按当前 embedding 模型重算全部记忆单元的向量并落盘，返回涉及的单元数。
+
+    记忆单元的向量内联存在 ``memory_units/*.json`` 里，换模型后维度失配，语义检索会
+    静默退化成纯关键词检索。每组的维度都从当前模型重新学，因此不需要预知具体维度。
+    """
+    if embedding_client is None:
+        return 0
+    indexer = MemoryUnitIndexer(embedding_client=embedding_client)
+    total = 0
+    for group_id in store.list_group_ids():
+        units = store.load(group_id)
+        if not units:
+            continue
+        if indexer.ensure_model_current(units):
+            store.save(group_id, units)
+            total += len(units)
+    return total

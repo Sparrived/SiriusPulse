@@ -243,7 +243,7 @@ class PersonaWorker:
         """检查配置文件变更，热重载到引擎。
 
         通过读取 engine_state/reload_requested 标志文件触发重载。
-        标志文件内容为重载类型：persona / orchestration / experience / provider / global / mcp / all
+        标志文件内容为重载类型：persona / orchestration / experience / provider / global / mcp / memory / all
         """
         reload_flag = self.paths.engine_state / "reload_requested"
         if not reload_flag.exists():
@@ -298,6 +298,9 @@ class PersonaWorker:
 
             if reload_types & {"mcp", "all"}:
                 self._schedule_engine_rebuild()
+
+            if reload_types & {"memory", "all"}:
+                self._reload_memory_index(engine)
 
             LOG.info("配置热重载完成: types=%s", sorted(reload_types))
         except Exception as exc:
@@ -388,6 +391,26 @@ class PersonaWorker:
     def _reload_global_config(self, engine: Any) -> None:
         """Reload global config; runtime output limits live in experience now."""
         LOG.info("Global config reloaded")
+
+    def _reload_memory_index(self, engine: Any) -> None:
+        """丢弃日记与记忆单元的内存缓存，下次检索时从磁盘重新加载。
+
+        WebUI 的「重建索引」在另一个进程里重写了日记向量库与 ``memory_units/*.json``；
+        本进程缓存的是重建前的旧向量，不丢弃就会继续按旧维度检索。
+        """
+        reloaded = []
+        diary = getattr(engine, "diary_manager", None)
+        if diary is not None:
+            diary.reload_from_disk()
+            reloaded.append("diary")
+        units = getattr(engine, "memory_unit_manager", None)
+        if units is not None:
+            units.reload_from_disk()
+            reloaded.append("memory_units")
+        if reloaded:
+            LOG.info("已清空 %s 的内存索引缓存，将按新向量重新加载", "、".join(reloaded))
+        else:
+            LOG.debug("引擎无日记/记忆单元管理器，跳过记忆索引重载")
 
     def _reload_provider(self, engine: Any) -> None:
         """热重载 AMKR 连接配置。
