@@ -15,6 +15,7 @@
 
 ### Removed
 
+- **遗留的「任务 → 模型」配置面**：`OrchestrationPolicy` 的 `unified_model` / `task_models` / `task_temperatures` / `task_max_tokens` 字段、`resolve_model_for_task()`、`MultiModelConfig`，以及 `config/helpers.py` 里对应的构造与改写函数（`configure_orchestration_models`、`configure_orchestration_temperatures`、`create_multimodel_config`、`setup_multimodel_config`，`configure_full_orchestration` 的 `task_models` / `task_temperatures` 入参）。写在这些键上的值现在会被直接忽略，因此不再存在「某个任务直连某个真实模型名」的路径：发往 AMKR 的 `model` 只可能是任务名。`configure_orchestration_retries` 与 `configure_full_orchestration` 的 `task_retries` / `**extra_fields` 保留（本地传输层参数）。
 - **厂商实现**：`aliyun_bailian.py`、`bigmodel.py`、`deepseek.py`、`mimo.py`、`opencode.py`、`siliconflow.py`、`volcengine_ark.py`、`ytea.py`。
 - **路由与注册表**：`providers/routing.py`（`AutoRoutingProvider`、`ProviderRegistry`、`WorkspaceProviderManager`、`ProviderConfig` 及各类探测/校验函数）、`providers/proxy.py`、`providers/models_dev.py`。
 - **Provider 管理界面与接口**：整组 `/api/providers*` 接口、WebUI Provider 页面、`providers/proxy.json` 网络代理配置。
