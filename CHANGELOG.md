@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **模型看到的不是别人发的图，而是一个「禁止访问」的链接**：入站图片原本在适配器层就下载到本地，再由传输层转成 base64 data URL，模型确实拿到像素。但 `cache_image()` 在下载失败（HTTP 403 / 网络异常）或图片超过 10MB 时会**直接把原始 URL 当结果返回**——那多半是 `https://multimedia.nt.qq.com.cn/download?...&rkey=...` 这种带短时效签名、且校验 `Referer` 的 QQ 多媒体链接。上游模型拿它自行下载必然 403（线上日志累计 309 次 `Failed to download multimodal content`），于是模型只能说「这是一张 QQ 空间禁止访问的图片」。现在 `cache_image()` 失败时返回空字符串，该图直接不进视觉通道；超过上限的图片改为降采样成 JPEG 保留，而不是丢弃。`_collect_image_inputs()` 在直连失败时还会调用 NapCat 的 `get_image` 兜底取回图片。
+- **聊天历史 XML 回显图片路径/链接**：`context_assembler.py` 的 `<image>` 标签原先带 `src="..."`，把本地缓存路径或平台签名 URL 直接写进 prompt。这对模型没有视觉价值，反而诱导它复述一个自己无法访问的地址。改为只输出 `caption`（`<image type="image" caption="..."/>`）。
+- **旧数据里的签名链接仍会被送上游**：视觉通道新增不变式——只接受本地路径与 `data:` 地址，`http(s)://` 值一律剔除并告警。这同时清理了修复前已持久化到会话与记忆里的失效链接。
+- **超大本地图内联撑爆请求体**：`_file_to_data_url()` 现在会在 base64 编码（体积放大 4/3）前先降采样。新增 `sirius_pulse/utils/image_bytes.py` 统一压缩逻辑：先按长边 1568 像素缩略，再沿 JPEG 质量阶梯下压，仍超限则继续缩小长边（不低于 320 像素），尽量让图片留在内联通道里。
+
 ### Changed
 
 - **向量化改由 AMKR 提供**：`sirius_pulse/embedding/client.py` 直接调用 AMKR 的 `/v1/embeddings`，模型名取自 `global_config.json` 的 `embedding_model`（默认 `BAAI/bge-m3`，支持 `SIRIUS_EMBEDDING_MODEL` 覆盖），凭据用该人格工作空间的推理 key。响应按 OpenAI 契约的 `index` 归位，避免向量与文本错配。
