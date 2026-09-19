@@ -13,6 +13,7 @@ returns ``should_act`` is an LLM turn worth paying for.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sirius_pulse.core.intent import (
@@ -33,7 +34,38 @@ _RECENT_KIND_WINDOW = 3
 # gets a stretch of her own to start something new.  This is the one entry point
 # that does not require someone else to speak first.
 _FREE_TIME_KIND = "musing"
-_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 3 * 60 * 60
+_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 60 * 60
+
+# Quiet hours, in local (China) time: she may still *work on* things, but nothing
+# may be *sent*.  A message that arrives at 03:00 is read in the morning at best
+# and resented at worst, so the window gates delivery only.  It never cancels
+# what she wanted to say -- the intention stays pending and goes out after 08:00.
+#
+# Fixed UTC+8 rather than a tz database lookup: China has no DST, and the project
+# already pins its local time this way in ``tools/cron_tasks.py``.  It lives here
+# rather than being imported from there because core must not depend on tools.
+_LOCAL_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+_QUIET_HOURS_START = 23
+_QUIET_HOURS_END = 8
+
+
+def is_quiet_hours(now: datetime) -> bool:
+    """Whether ``now`` falls inside the no-sending window, in local time.
+
+    The window wraps midnight (23:00-08:00), so it is a union of two ranges
+    rather than a single ``start <= hour < end`` comparison.  A naive timestamp
+    is read as UTC, matching how the autonomy tick parses its own state.
+
+    Args:
+        now: The moment to test.
+
+    Returns:
+        True when sending must be deferred to the morning.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    local_hour = now.astimezone(_LOCAL_TIMEZONE).hour
+    return local_hour >= _QUIET_HOURS_START or local_hour < _QUIET_HOURS_END
 
 
 @dataclass(slots=True)
@@ -373,4 +405,5 @@ __all__ = [
     "AutonomyDecision",
     "AutonomyPolicy",
     "Episode",
+    "is_quiet_hours",
 ]
