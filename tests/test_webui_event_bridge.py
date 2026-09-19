@@ -160,3 +160,19 @@ async def test_oversized_event_payload_is_bounded_before_broadcast():
     assert len(data["outcome"]) < 5000
 
     await bridge.stop()
+
+
+def test_autonomy_records_refresh_the_autonomy_page(tmp_path):
+    """意图与产出的落盘要能触发自主页面刷新，否则只能等轮询。
+
+    这两类记录都写在 memory/ 下，走的是既有的文件监听通路，不需要为此
+    再建一条推送。
+    """
+    from sirius_pulse.webui.ws_server import _path_event_payload
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    for rel in ("memory/intentions.json", "memory/autonomy/episodes.json"):
+        payload = _path_event_payload(tmp_path, persona_dir / rel)
+        assert payload is not None, rel
+        assert payload["persona"] == "sirius"
+        assert "autonomy" in payload["resources"], rel

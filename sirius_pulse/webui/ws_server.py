@@ -63,6 +63,10 @@ def _path_event_payload(data_dir: Path, path: Path) -> dict[str, Any] | None:
         resources.update({"tool-history", "monitoring", "dashboard"})
     if "diary" in parts or "memory" in parts:
         resources.update({"memory", "dashboard"})
+    # 意图与自主产出都写在 memory/ 下：让她惦记的和做过的事都能自动刷新，
+    # 不必为此另开一条推送通路。
+    if "autonomy" in parts or name == "intentions.json":
+        resources.update({"autonomy", "dashboard"})
 
     if not resources:
         return None
