@@ -8,6 +8,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
+from typing import Any
 
 from sirius_pulse.memory.units.models import MemoryUnit
 from sirius_pulse.utils.json_io import atomic_write_json
@@ -27,27 +28,46 @@ class MemoryUnitFileStore:
         layout = work_path if isinstance(work_path, WorkspaceLayout) else WorkspaceLayout(work_path)
         self._base_dir = layout.work_path / "memory_units"
         self._base_dir.mkdir(parents=True, exist_ok=True)
+        self._group_ids: set[str] | None = None
 
     def save(self, group_id: str, units: list[MemoryUnit]) -> None:
         path = self._path(group_id)
         data = {"group_id": group_id, "units": [u.to_dict() for u in units]}
         atomic_write_json(path, data)
+        self._group_ids = None
 
     @property
     def base_dir(self) -> Path:
         return self._base_dir
 
     def list_group_ids(self) -> list[str]:
-        result: set[str] = set()
-        for path in self._base_dir.glob("*.json"):
-            units = self.load(path.stem)
-            if units:
-                result.add(units[0].group_id)
-        return sorted(result)
+        """Return every group that has units, reading each file at most once.
+
+        调用方是检索路径（cross-group 记忆默认开启），每条消息都会走到这里。逐次
+        全量解析 ``memory_units/*.json`` 只为拿一个 group_id，会在群多、单元多时
+        变成明显的每消息开销，因此按写入失效做进程内缓存。
+        """
+        if self._group_ids is None:
+            group_ids: set[str] = set()
+            for path in self._base_dir.glob("*.json"):
+                data = self._read_payload(path)
+                if data is not None and data.get("units"):
+                    group_ids.add(str(data.get("group_id") or path.stem))
+            self._group_ids = group_ids
+        return sorted(self._group_ids)
+
+    @staticmethod
+    def _read_payload(path: Path) -> dict[str, Any] | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        return data if isinstance(data, dict) else None
 
     def save_many_atomically(self, groups: dict[str, list[MemoryUnit]]) -> None:
         stage_dir = self._base_dir.parent / f".memory_units_stage_{uuid.uuid4().hex}"
         stage_dir.mkdir(parents=True)
+        self._group_ids = None
         try:
             staged: dict[str, Path] = {}
             for group_id, units in groups.items():
