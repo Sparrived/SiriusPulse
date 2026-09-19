@@ -36,6 +36,7 @@
 
 ### Fixed
 
+- **重建部分失败却谎报成功**：`POST /api/embedding/rebuild` 原来无论中途丢了多少条都返回 `success: true`。线上实测 9,154 条记忆单元中有 128 条因两次批次超时（`Embedding 服务请求失败: timed out`）原样留在 512 维，接口却报成功——那些条目与 1024 维新查询向量算出的相似度恒为 0，检索已经缺了一块而用户毫不知情。现在批次失败会二分重试救回其余条目，仍失败的条数如实计入 `failed` 并返回 `success: false`，日记侧单个组失败也不再中断其余组。
 - **索引过期在混合状态下漏报**：`DiaryVectorStore.get_stats()` 原先只在「所有 collection 模型名一致且不等于当前模型」时判定过期。重建中途或存在空组时模型名是混合的，取不到单一名字便返回 `indexed_model=""`，`index_stale` 随之变成 `False`——此时一半 collection 还是旧维度、检索结果一半不可信，界面却显示「就绪」。改为只要存在任何一个 collection 记的不是当前模型就判过期，并新增 `indexed_models` 列出全部模型名。
 - **重建后索引仍被判为过期**：`_rebuild_diary_embeddings()` 遇到条目为空的组直接跳过，同名 collection 与其中的旧维度行原样留下，这些组永远带着旧模型名，用户点多少次重建都修不好。现在空组与磁盘上已无对应文件的组都会删除 collection。
 - **Pylance mixin 类型错误**：`engine_core.py` 添加 `TYPE_CHECKING` 条件桩方法声明；`pipeline.py`/`bg_tasks.py`/`helpers.py` 添加条件继承，消除 mixin 方法不可见诊断。
