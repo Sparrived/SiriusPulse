@@ -21,7 +21,6 @@ silently register the next, or every turn would feed the following one.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from sirius_pulse.core.intent import (
@@ -29,8 +28,7 @@ from sirius_pulse.core.intent import (
     IntentFileStore,
     Intention,
 )
-
-logger = logging.getLogger(__name__)
+from sirius_pulse.tools.builtin._internal._qq_ops import current_group_id
 
 _MAX_WHAT_CHARS = 300
 _MAX_WHY_CHARS = 200
@@ -126,13 +124,7 @@ def _normalize_kind(kind: Any) -> str:
 
 def _origin_group(chat_context: dict[str, Any] | None) -> str:
     """Remember where this came up, so her own time happens in that context."""
-    from sirius_pulse.tools.builtin._internal._qq_ops import current_group_id
-
-    try:
-        return current_group_id(chat_context)
-    except Exception:
-        logger.debug("解析来源群失败", exc_info=True)
-        return ""
+    return current_group_id(chat_context)
 
 
 def _clamp(value: Any) -> float:
