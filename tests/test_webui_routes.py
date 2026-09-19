@@ -2748,10 +2748,11 @@ def _refuse_all_amkr_connections(monkeypatch) -> None:
 
 
 def test_webui_routes_when_registered_then_amkr_ops_routes_exist_and_orchestration_is_gone():
-    """编排接口随编排页一并下线，替换为只读巡检与任务登记两条。"""
+    """编排接口随编排页一并下线，替换为只读巡检、面板地址与任务登记三条。"""
     registered = {(spec.method, spec.path) for spec in WEBUI_ROUTES}
 
     assert ("GET", "/api/amkr/status") in registered
+    assert ("GET", "/api/amkr/panel") in registered
     assert ("POST", "/api/amkr/register") in registered
     assert not any("/orchestration" in path for _, path in registered)
     assert not any("/task-params" in path for _, path in registered)
@@ -2836,3 +2837,107 @@ async def test_amkr_register_post_when_persona_given_then_only_that_persona_is_t
 
     assert response.status == 200
     assert list(payload["results"]) == ["alice"]
+
+
+# ─── 工作空间面板（管理员专用） ────────────────────────────
+
+
+def _panel_request(role: str, persona: str = "sirius"):
+    """造一个带角色与 persona 查询参数的 GET 请求。"""
+    query = f"?persona={persona}" if persona else ""
+    request = make_mocked_request("GET", f"/api/amkr/panel{query}")
+    request["auth_role"] = role
+    return request
+
+
+def _panel_persona(tmp_path, name: str = "sirius") -> Path:
+    persona_dir = tmp_path / "personas" / name
+    persona_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(persona_dir / "persona.json", {"name": name})
+    return persona_dir
+
+
+@pytest.mark.asyncio
+async def test_amkr_panel_get_when_viewer_then_denied(tmp_path):
+    """面板地址里是明文凭据：只读角色不能取，否则 viewer 就能改那个空间的任务。"""
+    _panel_persona(tmp_path)
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_panel_get(_panel_request("viewer"))
+
+    assert response.status == 403
+    assert "管理员" in json.loads(response.text)["error"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_panel_get_when_admin_then_returns_embed_url_with_key_in_fragment(
+    tmp_path, monkeypatch
+):
+    """管理员拿到可嵌入地址；凭据必须在 fragment 里，不能落到查询串。"""
+    _refuse_all_amkr_connections(monkeypatch)
+    _panel_persona(tmp_path)
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {
+            "amkr_base_url": "http://amkr.test",
+            "amkr_local_api_key": "sk-x",
+            "amkr_workspace": "sp",
+            "amkr_panel_keys": {"sp/sirius": "amkr_ws_secret"},
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_panel_get(_panel_request("admin"))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["url"] == "http://amkr.test/ui/panel.html#k=amkr_ws_secret"
+    assert "?" not in payload["url"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_panel_get_when_unknown_persona_then_404(tmp_path):
+    """不存在的人格应被拒，避免拿它去拼一个注定 401 的地址。"""
+    _panel_persona(tmp_path)
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_panel_get(_panel_request("admin", persona="nobody"))
+
+    assert response.status == 404
+
+
+@pytest.mark.asyncio
+async def test_amkr_panel_get_when_no_key_stored_then_explains_how_to_recover(tmp_path):
+    """没有 key 时给出可操作的补救指引，而不是一个加载后 401 的面板地址。"""
+    _panel_persona(tmp_path)
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_panel_get(_panel_request("admin"))
+    payload = json.loads(response.text)
+
+    assert response.status == 409
+    assert "api_key" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_status_get_when_key_stored_then_does_not_leak_it(tmp_path, monkeypatch):
+    """只读状态接口必须能说明「面板可用」，但绝不能带出 key 本身。"""
+    _refuse_all_amkr_connections(monkeypatch)
+    _panel_persona(tmp_path)
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {
+            "amkr_base_url": "http://amkr.test",
+            "amkr_local_api_key": "sk-x",
+            "amkr_workspace": "sp",
+            "amkr_panel_keys": {"sp/sirius": "amkr_ws_secret"},
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_status_get(_empty_request())
+    payload = json.loads(response.text)
+
+    assert payload["reachable"] is False
+    assert payload["workspaces"][0]["panel_ready"] is True
+    assert "amkr_ws_secret" not in response.text

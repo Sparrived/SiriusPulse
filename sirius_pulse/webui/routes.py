@@ -16,6 +16,7 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("POST", "/api/global-config", "api_global_config_post"),
     RouteSpec("GET", "/api/models", "api_available_models_get"),
     RouteSpec("GET", "/api/amkr/status", "api_amkr_status_get"),
+    RouteSpec("GET", "/api/amkr/panel", "api_amkr_panel_get"),
     RouteSpec("POST", "/api/amkr/register", "api_amkr_register_post"),
     RouteSpec("GET", "/api/tokens", "api_tokens_get"),
     RouteSpec("GET", "/api/telemetry", "api_telemetry_get"),

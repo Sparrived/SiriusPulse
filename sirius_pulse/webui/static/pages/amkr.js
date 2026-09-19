@@ -51,10 +51,29 @@ export async function init(container, params = {}) {
       </div>
       <div id="amkrWorkspaces"></div>
     </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <div>
+          <div class="card-title">工作空间面板</div>
+          <div class="card-subtitle">
+            内嵌的是 AMKR 自带面板，只能看到所选人格自己的空间：用量读数与任务增删改都在 AMKR 侧完成
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="amkrPanelPersona" class="btn btn-sm" aria-label="选择人格"></select>
+          <button type="button" class="btn btn-sm btn-primary" id="amkrPanelBtn">打开面板</button>
+        </div>
+      </div>
+      <div id="amkrPanelHint" class="card-subtitle" style="margin-top:8px">
+        面板按需加载，点「打开面板」后才会向 AMKR 取地址。
+      </div>
+      <div id="amkrPanelFrame" style="margin-top:12px"></div>
+    </div>
   `;
 
   scopedPage.on($('amkrRefreshBtn'), 'click', () => loadStatus());
   scopedPage.on($('amkrRegisterBtn'), 'click', (event) => registerTasks(event.currentTarget));
+  scopedPage.on($('amkrPanelBtn'), 'click', (event) => openPanel(event.currentTarget));
 
   await loadStatus();
 }
@@ -66,11 +85,64 @@ async function loadStatus() {
     const data = await get('/amkr/status');
     renderOverview(overview, data);
     renderWorkspaces(workspaces, data);
+    renderPanelPersonas(data);
   } catch (error) {
     if (error?.name === 'AbortError') return;
     overview.innerHTML = '<div class="card-subtitle">读取 AMKR 状态失败</div>';
     workspaces.innerHTML = '';
     toast('读取 AMKR 状态失败', 'error');
+  }
+}
+
+function renderPanelPersonas(data) {
+  const select = $('amkrPanelPersona');
+  if (!select) return;
+  const items = Array.isArray(data.workspaces) ? data.workspaces : [];
+  const previous = select.value;
+  select.innerHTML = items
+    .map(item => `<option value="${escapeHtml(item.persona || '')}">${escapeHtml(item.persona || '(默认)')}</option>`)
+    .join('');
+  if (previous && items.some(item => item.persona === previous)) select.value = previous;
+
+  // 面板是浏览器直接去连 AMKR 的：若地址是回环，只有从服务器本机打开本页才连得上。
+  const hint = $('amkrPanelHint');
+  if (hint && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(data.base_url || '')) {
+    hint.textContent =
+      '注意：AMKR 地址是回环地址，只有从部署本框架的机器上打开本页才能加载面板；'
+      + '远程访问请把 AMKR 暴露在同一域名下的路径（反向代理）。';
+  }
+}
+
+/**
+ * 取面板地址并把它塞进 iframe。
+ *
+ * 地址（fragment 里是明文面板 key）只从后端的管理员接口拿，绝不写进本页源码；
+ * 也因此这里按需加载——不必每次打开运维页都把凭据取回来。
+ */
+async function openPanel(button) {
+  const persona = $('amkrPanelPersona')?.value || '';
+  const hint = $('amkrPanelHint');
+  const frame = $('amkrPanelFrame');
+  if (!persona || !frame) return;
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
+  try {
+    const data = await get(`/amkr/panel?persona=${encodeURIComponent(persona)}`);
+    frame.innerHTML = `
+      <iframe
+        src="${escapeHtml(data.url)}"
+        title="AMKR 工作空间面板 · ${escapeHtml(persona)}"
+        style="width:100%;height:720px;border:0;border-radius:8px;background:var(--surface-2)"
+      ></iframe>
+    `;
+    if (hint) hint.textContent = `正在显示「${persona}」工作空间的面板。`;
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    frame.innerHTML = '';
+    if (hint) hint.textContent = `无法打开面板：${error?.message || '未知错误'}`;
+    toast('打开工作空间面板失败', 'error');
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -145,6 +217,9 @@ function renderWorkspaces(root, data) {
     const errorLine = item.error
       ? `<div class="card-subtitle" style="color:var(--danger,#e5534b)">${escapeHtml(item.error)}</div>`
       : '';
+    const panelLine = item.panel_ready
+      ? ''
+      : '<div class="card-subtitle">尚无面板 key（AMKR 只在建空间时返回一次）</div>';
     return `
       <div style="padding:12px 0;border-top:1px solid var(--border,#333)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
@@ -155,6 +230,7 @@ function renderWorkspaces(root, data) {
           <button type="button" class="btn btn-sm" data-amkr-persona="${escapeHtml(item.persona || '')}">注册缺失项</button>
         </div>
         ${errorLine}
+        ${panelLine}
         ${missing ? `<div style="margin-top:8px">${missing}</div>` : ''}
       </div>
     `;

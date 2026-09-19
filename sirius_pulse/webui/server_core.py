@@ -17,6 +17,7 @@ from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
 from sirius_pulse.providers.amkr_sync import (
     AmkrError,
     collect_amkr_status_async,
+    persona_panel_url,
     register_persona_tasks_async,
 )
 from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY, DATA_DIR_KEY, WS_MANAGER_KEY
@@ -434,14 +435,52 @@ class WebUIServer:
 
         本页不做任何模型或参数编排——那是 AMKR 自带 WebUI 的职责，这里只回答
         「连得上吗」「这个名字登记了没有」，并给出跳转 AMKR 的外链。
+
+        刻意**不**包含面板 key 或面板地址：带凭据的地址只从管理员接口
+        :meth:`api_amkr_panel_get` 取，否则一次普通的只读请求就把凭据洒出去了。
         """
-        status = await collect_amkr_status_async(self._amkr_settings(), self._persona_names())
+        status = await collect_amkr_status_async(
+            self._amkr_settings(),
+            self._persona_names(),
+            global_data_path=self.data_dir,
+        )
         return _json_response(status)
 
-    async def api_amkr_register_post(self, request: web.Request) -> web.Response:
-        """为某个人格（或全部人格）补齐缺失的任务名。
+    async def api_amkr_panel_get(self, request: web.Request) -> web.Response:
+        """管理员专用：返回某人格工作空间的可嵌入面板地址。
 
-        只创建缺失的任务，已存在的一律不动，因此可以放心重复点击。
+        地址的 fragment 里是明文面板 key。它必须只走管理员这一条路：钥匙只能读写
+        一个空间的任务与读数，但拿到它的人可以自己调该空间的任务配置。GET 本身
+        不足以挡住 viewer（中间件只拦写方法），因此这里显式判角色。
+        """
+        if request.get("auth_role") != "admin":
+            return _json_response({"error": "权限不足，需要管理员权限"}, 403)
+
+        persona = str(request.query.get("persona", "") or "").strip()
+        if not persona:
+            return _json_response({"error": "缺少 persona 参数"}, 400)
+        if persona not in self._persona_names():
+            return _json_response({"error": f"人格不存在: {persona}"}, 404)
+
+        url = persona_panel_url(self._amkr_settings(), persona, self.data_dir)
+        if not url:
+            return _json_response(
+                {
+                    "error": (
+                        "该人格的工作空间还没有面板 key。key 只在建空间时返回一次："
+                        "请在 AMKR 里删掉该空间后重新注册，或从 AMKR 配置文件 "
+                        "workspaces.<空间>.api_key 取出。"
+                    )
+                },
+                409,
+            )
+        return _json_response({"persona": persona, "url": url})
+
+    async def api_amkr_register_post(self, request: web.Request) -> web.Response:
+        """为某个人格（或全部人格）建出工作空间并补齐缺失的任务名。
+
+        建空间与注册一起做，因为顺序有依赖：面板 key 只在建空间那一次返回，必须
+        当场存下来。任务只创建缺失的，已存在的一律不动，因此可以放心重复点击。
         """
         try:
             body = await request.json()
@@ -459,7 +498,11 @@ class WebUIServer:
         results: dict[str, object] = {}
         for persona in personas:
             try:
-                result = await register_persona_tasks_async(settings, persona)
+                result = await register_persona_tasks_async(
+                    settings,
+                    persona,
+                    global_data_path=self.data_dir,
+                )
             except AmkrError as exc:
                 results[persona] = {"error": str(exc)}
                 continue

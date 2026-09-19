@@ -269,7 +269,10 @@ class EngineRuntime:
         return _build_provider(settings, self._amkr_task_names(), workspace)
 
     async def register_amkr_tasks(self) -> SyncResult:
-        """把本框架的任务名注册到 AMKR 里本 persona 的工作空间。
+        """建出本 persona 的工作空间并注册任务名。
+
+        顺序不能反：**先建空间**才能拿到它的面板 key（AMKR 只在创建那一次返回），
+        有了 key 运维页才能把该空间的面板嵌进来。
 
         只创建缺失的任务，已存在的一律不动——模型与采样参数由运维之后在 AMKR
         侧配置。失败不抛异常：注册不成功最多是 AMKR 侧还没有这些任务，而引擎仍
@@ -281,7 +284,11 @@ class EngineRuntime:
             result.failed["*"] = "尚未配置 AMKR 本地授权 Key（amkr_local_api_key）"
             return result
         try:
-            result = await register_persona_tasks_async(settings, self.work_path.name)
+            result = await register_persona_tasks_async(
+                settings,
+                self.work_path.name,
+                global_data_path=self.global_data_path,
+            )
         except AmkrError as exc:
             result = SyncResult()
             result.failed["*"] = str(exc)

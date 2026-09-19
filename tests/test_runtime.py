@@ -12,6 +12,7 @@ from sirius_pulse.persona_config import PersonaExperienceConfig
 from sirius_pulse.persona_worker import PersonaWorker
 from sirius_pulse.platforms.runtime import EngineRuntime, _wait_for_embedding_health
 from sirius_pulse.plugins.models import PluginDefinition, PluginPermissionDef
+from sirius_pulse.providers.amkr import load_panel_keys
 from sirius_pulse.utils.json_io import atomic_write_json
 
 
@@ -166,6 +167,8 @@ def test_engine_runtime_when_registering_tasks_then_requests_use_the_same_worksp
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.headers.get("x-amkr-workspace", ""))
+        if request.url.path == "/api/workspaces":
+            return httpx.Response(201, json={"name": "sirius-pulse/sirius", "api_key": "amkr_ws_k"})
         if request.url.path == "/api/tasks":
             return httpx.Response(200, json={"tasks": [], "config_revision": "rev-1"})
         return httpx.Response(200, json={"config_revision": "rev-2"})
@@ -181,11 +184,13 @@ def test_engine_runtime_when_registering_tasks_then_requests_use_the_same_worksp
     result = asyncio.run(runtime.register_amkr_tasks())
     provider = runtime._build_provider()
 
-    assert result.ok
+    assert result.ok, result.failed
     assert seen, "注册应当真的发起请求"
     assert set(seen) == {"sirius-pulse/sirius"}
     assert provider is not None
     assert provider._workspace == "sirius-pulse/sirius"
+    # 面板 key 只在建空间时返回一次，因此必须当场落到全局配置里。
+    assert load_panel_keys(data_dir) == {"sirius-pulse/sirius": "amkr_ws_k"}
 
 
 def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_path):
