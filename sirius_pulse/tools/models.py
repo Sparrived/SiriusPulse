@@ -460,7 +460,7 @@ class ToolEngineContext(Protocol):
         ...
 
     def get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
-        """只读获取某群最近消息，用于挑选自主行为的素材。"""
+        """只读获取某群最近消息。"""
         ...
 
     async def run_autonomous_turn(
@@ -473,8 +473,12 @@ class ToolEngineContext(Protocol):
         why: str = "",
         intention_id: str = "",
         resolution: str = "",
+        free_time: bool = False,
     ) -> dict[str, Any]:
-        """执行一次无会话上下文的自主回合，返回人格自述的产出。"""
+        """执行一次无会话上下文的自主回合，返回人格自述的产出。
+
+        ``free_time`` 表示这次回合背后没有任何意图，只是她有一段自己的时间。
+        """
         ...
 
     def list_audiences(self) -> list[Any]:

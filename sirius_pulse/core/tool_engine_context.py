@@ -193,6 +193,7 @@ class ToolEngineContextImpl:
         why: str = "",
         intention_id: str = "",
         resolution: str = "",
+        free_time: bool = False,
     ) -> dict[str, Any]:
         """Run one self-initiated turn with no chat session context.
 
@@ -202,6 +203,9 @@ class ToolEngineContextImpl:
         later decision taken by the autonomy tick with an explicit audience.
         No shared executor state is mutated, so this is safe to run while a
         normal reply is in flight.
+
+        With ``free_time=True`` there is no intention behind the turn at all: it
+        is time of her own and she may start something new, or nothing.
         """
         identity = self._engine.persona.build_system_prompt() if self._engine.persona else ""
         tool_desc = self.get_tool_descriptions()
@@ -219,6 +223,7 @@ class ToolEngineContextImpl:
             resolution=resolution,
             audiences=audiences,
             unaddressed=self._unaddressed_intentions(),
+            free_time=free_time,
         )
         caller = self._build_caller("autonomy", "autonomy", False)
         invocation_context = ToolInvocationContext(caller=caller, self_initiated=True)

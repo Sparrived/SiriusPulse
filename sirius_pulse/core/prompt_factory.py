@@ -490,6 +490,7 @@ class PromptFactory:
         resolution: str = "",
         audiences: list[dict[str, str]] | None = None,
         unaddressed: list[dict[str, str]] | None = None,
+        free_time: bool = False,
     ) -> tuple[str, list[dict[str, str]]]:
         """Build a prompt for a turn the persona started on her own.
 
@@ -497,25 +498,39 @@ class PromptFactory:
         result is material for herself rather than a message to a group.  The
         turn is anchored on an intention she already formed, so it reads as
         "continuing something I care about", not "produce something now".
+
+        When *free_time* is set there is no intention at all: she has simply been
+        left to herself and may start anything, or nothing.
         """
         material = str(seed or "").strip()
         reason = str(why or "").strip()
         wants_to_tell = resolution == "tell"
 
-        opening = [
-            identity.strip(),
-            "【自主时间】",
-            "没有人给你发消息。现在是你的时间，你想起了一件自己惦记着的事。",
-        ]
-        focus = f"你惦记的是：{material}" if material else f"你惦记的是：{kind or '随便做点什么'}"
-        opening.append(focus)
-        if reason:
-            opening.append(f"你惦记它的原因是：{reason}")
+        if free_time:
+            opening = [
+                identity.strip(),
+                "【自主时间】",
+                "没有人给你发消息，你手上也没有非做不可的事。接下来这段时间完全是你自己的。",
+            ]
+        else:
+            opening = [
+                identity.strip(),
+                "【自主时间】",
+                "没有人给你发消息。现在是你的时间，你想起了一件自己惦记着的事。",
+            ]
+            focus = f"你惦记的是：{material}" if material else f"你惦记的是：{kind or '随便做点什么'}"
+            opening.append(focus)
+            if reason:
+                opening.append(f"你惦记它的原因是：{reason}")
         if wants_to_tell:
             opening.append(
                 "你想把这件事说给某个人听，但还没定下说给谁。"
                 "想好了就用 intend_share 把 audience 补上"
                 + (f"（intention_id 填 {intention_id}）。" if intention_id else "。")
+            )
+        elif free_time:
+            opening.append(
+                "你想起什么就做什么：读点东西、上网看看、写点什么、想点事情都可以；" "如果这会儿冒出了一件想以后接着弄明白的事，可以用 intend_pursue 记下来。"
             )
         else:
             opening.append("这是你自己的事，想怎么做由你决定：可以查资料、读点东西、写点东西、" "整理想法，或者干脆只是在心里想一想。")

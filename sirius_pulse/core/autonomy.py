@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sirius_pulse.core.intent import (
+    RESOLUTION_DO,
     RESOLUTION_TELL,
     Intention,
     IntentStore,
@@ -27,6 +28,12 @@ _RESTLESSNESS_FULL_SECONDS = 6 * 60 * 60
 
 # Size of the recent-kind memory used for the novelty term.
 _RECENT_KIND_WINDOW = 3
+
+# Free time: when she is carrying nothing and nobody has needed her, she still
+# gets a stretch of her own to start something new.  This is the one entry point
+# that does not require someone else to speak first.
+_FREE_TIME_KIND = "musing"
+_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 3 * 60 * 60
 
 
 @dataclass(slots=True)
@@ -127,9 +134,27 @@ class AutonomyPolicy:
 
     The policy is an *intention gate*, not a motivation generator: it scores the
     intentions she already formed and picks at most one to pursue.  Nothing in
-    here can invent a reason to act, so an empty or fully-faded intention set
-    reliably yields "do nothing" no matter how long she has been idle.
+    here invents a *reason*, and an intention set that is empty or fully faded
+    never revives itself just because time passed.
+
+    But a gate alone is a closed loop: every intention has to come from somewhere,
+    and if the only source is a reply turn, she can never start anything by
+    herself.  So when she is carrying nothing *and* has been left alone for long
+    enough, the policy hands her free time with no material at all — an open
+    "your time, do as you like" turn that she may also decline.  That is the one
+    place a self-initiated turn can begin from nothing, and it is deliberately
+    gated by its own idle interval so it cannot degenerate into a cron job.
     """
+
+    def __init__(self, *, free_time_interval_seconds: float = _DEFAULT_FREE_TIME_INTERVAL_SECONDS):
+        """Configure the free-time gate.
+
+        Args:
+            free_time_interval_seconds: How long she must have been left to herself
+                before she is offered free time with no material.  A non-positive
+                value disables free time entirely, leaving a pure intention gate.
+        """
+        self._free_time_interval_seconds = float(free_time_interval_seconds)
 
     def evaluate(
         self,
@@ -139,12 +164,14 @@ class AutonomyPolicy:
         recent_kinds: list[str] | None = None,
         expressiveness: float = 0.5,
         now: str = "",
+        seconds_since_free_time: float = 0.0,
     ) -> AutonomyDecision:
         """Decide whether to pursue one intention, without calling an LLM.
 
         There is no daily quota: she may act whenever she is actually carrying
         something.  What limits her is not a counter but the intentions
-        themselves — an empty or faded set yields "do nothing" on its own.
+        themselves — an empty or faded set yields "do nothing" on its own, unless
+        she has been idle long enough to earn free time.
 
         Args:
             seconds_since_episode: Idle time since the last self-initiated episode.
@@ -152,15 +179,23 @@ class AutonomyPolicy:
             recent_kinds: Kinds of the most recent episodes, newest first.
             expressiveness: Persona trait (0-1) shifting the threshold.
             now: Reference timestamp for urgency decay.
+            seconds_since_free_time: Idle time since her last free-time turn was
+                offered.  Passing 0 means free time is not currently on offer.
         """
         restlessness = self._restlessness_score(seconds_since_episode)
         threshold = self._threshold(expressiveness)
         open_items = self._open_intentions(intentions, now=now)
 
         if not open_items:
-            # Nothing is being carried: she does not get to act out of boredom.
-            # Intentions form in real turns (intend_pursue / intend_share), not here.
-            return self._decision(False, "no_intention", 0.0, threshold, restlessness=restlessness)
+            # Nothing is being carried.  She does not act out of boredom — but if
+            # nobody has needed her for a long while she gets time of her own,
+            # with no material and no reason attached.
+            return self._free_time_decision(
+                seconds_since_free_time=seconds_since_free_time,
+                threshold=threshold,
+                restlessness=restlessness,
+                open_intentions=len(open_items),
+            )
 
         best = max(
             open_items,
@@ -203,6 +238,58 @@ class AutonomyPolicy:
         if isinstance(intentions, IntentStore):
             return intentions.open_items(now=now)
         return [item for item in intentions if item.is_open and not item.is_expired(now=now)]
+
+    def _free_time_decision(
+        self,
+        *,
+        seconds_since_free_time: float,
+        threshold: float,
+        restlessness: float,
+        open_intentions: int,
+    ) -> AutonomyDecision:
+        """Offer free time when nothing is carried and she has been left alone.
+
+        This is the only path that starts from nothing, so it is gated by its own
+        interval rather than by an intention.  Without that gate it would either
+        be a dead end (never offer) or a cron job (offer on every heartbeat, and
+        keep paying for a decline forever) — the interval is what makes "act
+        whenever you like" bounded.  Note the turn may still end in "do nothing".
+
+        This deliberately makes idleness a trigger, which the intention path
+        forbids.  The two are not in conflict: an intention's urgency must never
+        be inflated by waiting, but a persona who can only ever start something
+        because someone spoke to her has no autonomy at all.
+        """
+        # A non-positive interval means "free time off": she then acts only on
+        # intentions.  Without this check 0 would mean the opposite (always offer).
+        if self._free_time_interval_seconds <= 0:
+            return self._decision(
+                False,
+                "no_intention",
+                0.0,
+                threshold,
+                restlessness=restlessness,
+                context={"open_intentions": open_intentions, "free_time_disabled": True},
+            )
+        if seconds_since_free_time < self._free_time_interval_seconds:
+            return self._decision(
+                False,
+                "no_intention",
+                0.0,
+                threshold,
+                restlessness=restlessness,
+                context={"open_intentions": open_intentions},
+            )
+        return self._decision(
+            True,
+            "free_time",
+            _clamp(0.5 + 0.5 * restlessness),
+            threshold,
+            kind=_FREE_TIME_KIND,
+            resolution=RESOLUTION_DO,
+            restlessness=restlessness,
+            context={"open_intentions": open_intentions, "free_time": True},
+        )
 
     @classmethod
     def _intention_score(cls, intention: Intention, *, restlessness: float, now: str) -> float:
