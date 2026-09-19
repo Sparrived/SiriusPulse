@@ -350,7 +350,7 @@ class PersonaWorker:
         LOG.info("Persona 配置已热重载: %s", persona.name)
 
     def _reload_orchestration(self, engine: Any) -> None:
-        """热重载 Orchestration 配置（orchestration.json）。"""
+        """热重载编排配置（orchestration.json 中的 task_timeout / task_retries）。"""
         from sirius_pulse.core.orchestration_store import OrchestrationStore
 
         orch = OrchestrationStore.load(self.persona_dir)
@@ -358,7 +358,7 @@ class PersonaWorker:
             LOG.warning("Orchestration 配置加载失败，跳过重载")
             return
 
-        # 重新初始化任务模型映射和模型路由器
+        # 重新读取本地任务参数并重建模型路由器（任务名 → AMKR 任务定义）。
         engine._init_orchestration_and_task_models()
         engine._init_model_router()
 
@@ -366,7 +366,7 @@ class PersonaWorker:
         if hasattr(engine, "brain") and engine.brain:
             engine.brain.router = engine.model_router
 
-        # 编排配置变更时同步刷新 provider，确保新模型名能被路由到正确的提供商
+        # 一并刷新 AMKR 连接，确保地址 / Key / 工作空间变更立即生效。
         self._reload_provider(engine)
 
         LOG.info("Orchestration 配置已热重载")
