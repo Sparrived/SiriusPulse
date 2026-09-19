@@ -41,6 +41,7 @@ _NOW = _REAL_NOW + timedelta(hours=(12 - _REAL_NOW.astimezone(_CN_TZ).hour) % 24
 def _pin_clock(monkeypatch):
     """所有用例都在本地白天运行，避免夜间静默期让分享类断言随机失败。"""
     monkeypatch.setattr(autonomy, "_now", lambda: _NOW)
+    monkeypatch.setattr(intend_share, "_now", lambda: _NOW)
 
 
 class _Store:
@@ -702,3 +703,61 @@ async def test_a_message_written_at_night_waits_until_morning(tmp_path, monkeypa
     assert episode is not None and episode.kind == "share"
     carried = IntentFileStore(tmp_path).load()
     assert carried.get(intention.intention_id).shared_at != ""
+
+
+# --- 宵禁期间最多留一条 -----------------------------------------------------------
+
+
+def test_only_one_message_is_recorded_during_the_night(tmp_path, monkeypatch):
+    """夜里最多留下一条：否则天亮后会被冷却摊到很晚，越靠后越不新鲜。"""
+    monkeypatch.setattr(intend_share, "_now", lambda: _cn(23, 30))
+    ctx = _make_ctx(tmp_path)
+
+    first = intend_share.run(what="今天的晚霞特别好看", engine_context=ctx)
+    second = intend_share.run(what="还有一件想说的", engine_context=ctx)
+
+    assert first["success"] is True
+    assert second["success"] is False
+    carried = IntentFileStore(tmp_path).load()
+    assert [item.what for item in carried.all()] == ["今天的晚霞特别好看"]
+
+
+def test_the_cap_also_covers_messages_without_an_audience(tmp_path, monkeypatch):
+    """只数"已定受众"的话会让上限形同虚设：她能无限登记还没想好说给谁的。"""
+    monkeypatch.setattr(intend_share, "_now", lambda: _cn(23, 30))
+    ctx = _make_ctx(tmp_path)
+
+    assert intend_share.run(what="有点想找人说说话", engine_context=ctx)["success"] is True
+    assert intend_share.run(what="还有一句", engine_context=ctx)["success"] is False
+
+
+def test_recording_is_unlimited_outside_the_night(tmp_path, monkeypatch):
+    """上限只属于宵禁：白天想记多少记多少。"""
+    monkeypatch.setattr(intend_share, "_now", lambda: _cn(12))
+    ctx = _make_ctx(tmp_path)
+
+    for i in range(3):
+        assert intend_share.run(what=f"第{i + 1}条", engine_context=ctx)["success"] is True
+
+    assert len(IntentFileStore(tmp_path).load().all()) == 3
+
+
+@pytest.mark.asyncio
+async def test_the_cap_is_released_once_the_first_one_is_delivered(tmp_path, monkeypatch):
+    """那条发出后，新的又能记了——上限限的是"积压"，不是"一天一条"。"""
+    monkeypatch.setattr(intend_share, "_now", lambda: _cn(23, 30))
+    ctx = _make_ctx(tmp_path)
+    assert (
+        intend_share.run(what="今天的晚霞特别好看", audience="private_10001", engine_context=ctx)["success"]
+        is True
+    )
+    assert intend_share.run(what="第二条", engine_context=ctx)["success"] is False
+
+    # 天亮后那条发出去，队列随之清空。
+    monkeypatch.setattr(autonomy, "_now", lambda: _cn(8, 5))
+    morning = _make_ctx(tmp_path)
+    assert await autonomy.run_tick(morning) is not None
+    assert len(morning.delivered) == 1
+
+    assert intend_share.run(what="现在可以记新的了", engine_context=ctx)["success"] is True
+    assert len(IntentFileStore(tmp_path).load().all()) == 2
