@@ -146,6 +146,9 @@ class MemoryUnitGenerator:
 
             source_ids = self._resolve_source_ids(item, index_to_source, all_source_ids)
             if not source_ids:
+                # 摘要已经生成好，仅因模型没给出可解析的 source_indices 就被丢弃。这是
+                # 纯召回损失且此前完全不可观测，所以留痕以便判断实际丢弃率。
+                logger.warning("丢弃无溯源的记忆单元: %s", summary[:60])
                 continue
 
             participants = self._clean_list(item.get("participants"), limit=8)
