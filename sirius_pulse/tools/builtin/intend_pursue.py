@@ -14,9 +14,13 @@ front of her: she decides "this is worth coming back to" and writes down what sh
 wants to work out and why.  The generic autonomy tick later decides whether and
 when to actually pursue it, exactly as it does for a tell.
 
-Deliberately **not** allowed during a self-initiated turn
-(``allowed_when_self_initiated`` stays false): pursuing one thing must not
-silently register the next, or every turn would feed the following one.
+It is also available **during** a self-initiated turn (``allowed_when_self_initiated``
+is true).  That matters more than it looks: free time is the one moment she can
+start something that nobody prompted, so if she could not write down a follow-up
+there, every thread she opened would die when the turn ended and her only durable
+source of new intentions would be other people's messages.  Runaway chains are
+paced elsewhere instead — each new intention still has to clear ``autonomy``'s
+gate and its own attempt budget before it costs a turn.
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ TOOL_META = {
     ),
     "version": "1.0.0",
     "model_visible": True,
+    "allowed_when_self_initiated": True,
     "side_effect": "external_write",
     "tags": ["autonomy", "intent", "persona"],
     "parameters": {

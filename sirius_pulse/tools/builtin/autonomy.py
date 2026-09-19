@@ -7,10 +7,18 @@ she does nothing, however long she has been idle.
 
 Intentions are formed in real turns, not here — ``intend_share`` for something she
 wants to say, ``intend_pursue`` for something she wants to work out.  That is what
-keeps the reason behind each one genuine: she decided it while actually thinking
-about the conversation, so the recorded ``why`` is hers rather than a constant.
-A background job scanning the chat log cannot know what she has already handled,
-so it would mostly queue up material she has already read.
+keeps the reason behind each one genuine: she decided it while actually thinking,
+so the recorded ``why`` is hers rather than a constant.  A background job scanning
+the chat log cannot know what she has already handled, so it would mostly queue up
+material she has already read.
+
+Intentions cannot be the *only* entry point, though, or the whole thing is a closed
+loop: every intention would have to come from a reply, so she could never start
+anything by herself and a quiet group would leave her permanently silent.  So when
+she is carrying nothing and has been left alone for a long while, the tick offers
+her **free time** with no material at all ("your time, do as you like").  She may
+still decline.  This is the one place a self-initiated turn begins from nothing,
+and it is paced by ``free_time_interval_seconds`` so it cannot become a job.
 
 Two things can happen when an intention is picked:
 
@@ -53,6 +61,12 @@ _MIN_INTERVAL_SECONDS = 60
 _MAX_EPISODES = 200
 _OUTCOME_MAX_CHARS = 600
 
+# How long she must have been left to herself before free time is offered.  This
+# is the only path that starts from nothing, so it is paced separately from the
+# heartbeat: at 900s heartbeats a 3h interval means a handful of free-time turns
+# a day at most, not one per beat.
+_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 3 * 60 * 60
+
 # A tell-intention is cheap to deliver, so it gets its own, much tighter gate:
 # one share per hour per persona, on top of the normal reply cooldown.
 _DEFAULT_SHARE_COOLDOWN_SECONDS = 3600
@@ -81,6 +95,14 @@ TOOL_META = {
             "type": "int",
             "description": "两次主动分享之间的最小间隔秒数，默认 3600。",
             "default": _DEFAULT_SHARE_COOLDOWN_SECONDS,
+            "group": "节奏",
+        },
+        "free_time_interval_seconds": {
+            "type": "int",
+            "description": (
+                "她无事惦记且长时间没人找她时，隔多久给她一段完全空白的自主时间。" "设为 0 表示关闭（她只会在已经惦记着什么时才行动）。默认 10800。"
+            ),
+            "default": _DEFAULT_FREE_TIME_INTERVAL_SECONDS,
             "group": "节奏",
         },
     },
@@ -117,6 +139,13 @@ async def run_tick(ctx: Any) -> Episode | None:
     state = _load_state(store)
     now = datetime.now(timezone.utc)
 
+    # First sight of a fresh state: start the free-time clock now rather than
+    # leaving it absent.  ``_parse_time("")`` reads as 1970, which would hand her
+    # a free-time turn on the first tick of every restart.
+    if not state.get("last_free_time_at"):
+        state["last_free_time_at"] = now.isoformat()
+        _save_state(store, state)
+
     # This tick is a checkpoint, not a source of motivation: it reads what she is
     # already carrying.  Forming intentions happens in real turns (intend_pursue /
     # intend_share), where the conversation is in front of her.
@@ -141,20 +170,35 @@ async def run_tick(ctx: Any) -> Episode | None:
         for item in intentions.open_items(now=now.isoformat())
         if not (item.is_tell and item.audience.strip())
     ]
-    decision = AutonomyPolicy().evaluate(
+    decision = AutonomyPolicy(
+        free_time_interval_seconds=_option_seconds(
+            ctx, "free_time_interval_seconds", _DEFAULT_FREE_TIME_INTERVAL_SECONDS, minimum=0
+        )
+    ).evaluate(
         seconds_since_episode=(now - _parse_time(state.get("last_episode_at", ""))).total_seconds(),
         intentions=actionable,
         recent_kinds=list(state.get("recent_kinds", [])),
         expressiveness=ctx.get_expressiveness(),
         now=now.isoformat(),
+        # Idle since free time was last *offered*, not since she last acted: a
+        # declined offer must not be re-offered on the very next heartbeat.
+        seconds_since_free_time=(
+            now - _parse_time(state.get("last_free_time_at", ""))
+        ).total_seconds(),
     )
     logger.debug("自主性评估: %s", decision.to_dict())
     if not decision.should_act:
         return None
 
     target = intentions.get(decision.intention_id)
-    if target is None:
+    if decision.intention_id and target is None:
         return None
+
+    # Free time carries no intention: there is nothing to book an attempt against
+    # and nothing to resolve afterwards.  It is recorded like an episode so the
+    # next offer is paced, nothing more.
+    if target is None:
+        return await _run_free_time(ctx, state, store, decision, now)
 
     # From here on a model turn happens, so book the attempt against *this*
     # intention before running it.  That is what bounds the cost now that there is
@@ -207,6 +251,55 @@ async def run_tick(ctx: Any) -> Episode | None:
     _save_state(store, state)
 
     ctx.log_inner_thought(f"我自己去{episode.kind}了：{episode.outcome[:60]}")
+    await ctx.emit_event(
+        "agent_turn_updated",
+        {"origin": "self_initiated", "phase": "complete", "episode": episode.to_dict()},
+    )
+    return episode
+
+
+async def _run_free_time(
+    ctx: Any, state: dict[str, Any], store: Any, decision: Any, now: datetime
+) -> Episode | None:
+    """Give her a stretch of time with nothing in it.
+
+    Her own time in the truest sense: no material, no reason, nobody waiting.  She
+    may do something or answer 「什么也不做」.  A decline still counts as the offer
+    being spent, so the interval — not the outcome — is what paces this path.
+    """
+    result = await ctx.run_autonomous_turn(
+        kind=decision.kind,
+        seed="",
+        group_id=_fallback_group(ctx),
+        free_time=True,
+    )
+    outcome = str(result.get("text", "") or "").strip()
+
+    if not outcome or _DECLINE_RE.match(outcome):
+        # Nothing came of it, but the offer is used up: remember that, or the very
+        # next heartbeat would offer again and bill another turn.
+        state["last_free_time_at"] = now.isoformat()
+        _save_state(store, state)
+        return None
+
+    episode = Episode(
+        episode_id=uuid.uuid4().hex,
+        started_at=now.isoformat(),
+        ended_at=datetime.now(timezone.utc).isoformat(),
+        kind=decision.kind,
+        seed="",
+        outcome=outcome[:_OUTCOME_MAX_CHARS],
+        refs=_extract_refs(outcome),
+        intensity=decision.score,
+        status="done",
+    )
+    _append_episode(ctx, episode)
+    _write_memory_unit(ctx, _fallback_group(ctx), episode)
+    state["last_free_time_at"] = episode.ended_at
+    _finish_tick(state, episode)
+    _save_state(store, state)
+
+    ctx.log_inner_thought(f"我自己的时间：{episode.outcome[:60]}")
     await ctx.emit_event(
         "agent_turn_updated",
         {"origin": "self_initiated", "phase": "complete", "episode": episode.to_dict()},
@@ -387,11 +480,13 @@ def _save_state(store: Any, state: dict[str, Any]) -> None:
         save()
 
 
-def _option_seconds(ctx: Any, key: str, default: int) -> float:
+def _option_seconds(
+    ctx: Any, key: str, default: int, *, minimum: int = _MIN_INTERVAL_SECONDS
+) -> float:
     store = ctx.get_data_store("autonomy")
     raw = store.get(key, default)
     try:
-        return max(_MIN_INTERVAL_SECONDS, float(raw))
+        return max(minimum, float(raw))
     except (TypeError, ValueError):
         return float(default)
 
