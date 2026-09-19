@@ -569,10 +569,11 @@ class ContextAssembler:
                             f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
                         )
                         continue
-                    url = html.escape(str(m.get("value", "")), quote=True)
                     caption = html.escape(str(m.get("caption", "")), quote=True)
+                    # 只暴露描述，不回显本地路径或平台签名 URL：两者对模型都没有
+                    # 视觉价值，反而会诱使它复述一个自己无法访问的地址。
                     lines.append(
-                        f'  <image src="{url}" caption="{caption}" '
+                        f'  <image type="image" caption="{caption}" '
                         f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
                     )
         if include_wrapper:

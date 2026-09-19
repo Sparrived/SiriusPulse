@@ -731,12 +731,30 @@ class Helpers:
     ) -> list[dict[str, Any]]:
         """Convert the last user message's string content into OpenAI multimodal list.
 
-        Supports image URLs (local paths are later converted to base64 data URLs
-        by the transport layer in ``prepare_openai_compatible_messages``).
+        The chat vision channel only carries **local paths or data URLs**; the
+        transport layer in ``prepare_openai_compatible_messages`` turns local
+        paths into base64 data URLs. Platform image URLs are deliberately not
+        forwarded: they carry short-lived signatures and a Referer check, so the
+        upstream model's own download fails and it reports "cannot see the image".
+        That invariant also filters values persisted before this rule existed.
         """
         if not multimodal_inputs:
             return messages
         if not messages:
+            return messages
+
+        usable: list[dict[str, str]] = []
+        for item in multimodal_inputs:
+            if item.get("type") != "image":
+                continue
+            value = str(item.get("value", "")).strip()
+            if not value:
+                continue
+            if value.startswith(("http://", "https://")):
+                logger.warning("跳过聊天图片的平台签名地址，避免上游下载失败: %s", value[:80])
+                continue
+            usable.append(item)
+        if not usable:
             return messages
 
         for i in range(len(messages) - 1, -1, -1):
@@ -745,11 +763,8 @@ class Helpers:
                 content: list[dict[str, Any]] = [
                     {"type": "text", "text": str(user_msg.get("content", ""))}
                 ]
-                for item in multimodal_inputs:
-                    if item.get("type") == "image":
-                        content.append(
-                            {"type": "image_url", "image_url": {"url": str(item["value"])}}
-                        )
+                for item in usable:
+                    content.append({"type": "image_url", "image_url": {"url": str(item["value"])}})
                 user_msg["content"] = content
                 messages[i] = user_msg
                 break

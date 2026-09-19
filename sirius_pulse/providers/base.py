@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import unquote, urlparse
 
+from sirius_pulse.utils.image_bytes import (
+    MAX_INLINE_IMAGE_BYTES,
+    downscale_image_bytes,
+)
+
 logger = logging.getLogger(__name__)
 
 # 默认超时秒数（各 provider 构造函数共用）
@@ -333,7 +338,17 @@ def _file_to_data_url(file_path: Path, *, default_mime: str) -> str:
     resolved_mime = str(mime_type or default_mime).strip() or default_mime
     if default_mime.startswith("image/") and not resolved_mime.startswith("image/"):
         resolved_mime = default_mime
-    encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    data = file_path.read_bytes()
+    limit = MAX_INLINE_IMAGE_BYTES
+    if default_mime.startswith("image/") and len(data) > limit:
+        # base64 会把体积再放大 4/3，超大原图内联前先降采样，避免请求体超限。
+        # 显式传入 limit：downscale_image_bytes 的默认值在定义时就已绑定，
+        # 不传就绕过了此处（及测试中）的配置。
+        shrunk = downscale_image_bytes(data, max_bytes=limit)
+        if shrunk is not None:
+            data = shrunk
+            resolved_mime = "image/jpeg"
+    encoded = base64.b64encode(data).decode("ascii")
     return f"data:{resolved_mime};base64,{encoded}"
 
 
