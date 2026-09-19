@@ -392,8 +392,10 @@ class PersonaWorker:
     def _reload_provider(self, engine: Any) -> None:
         """热重载 AMKR 连接配置。
 
-        重新读取连接配置并同步到 engine、brain、cognition_analyzer，使 WebUI 上
-        的地址 / Key / 工作空间变更无需重启引擎即可生效。
+        重新读取连接配置与**该空间的推理 key**并同步到 engine、brain、
+        cognition_analyzer，使 WebUI 上的地址 / Key / 工作空间变更，以及运维页的
+        推理 key 轮换，都无需重启引擎即可生效。凭据每次都从磁盘重读，因此轮换后
+        旧 provider 不会继续拿着已作废的 key。
         """
         if not self._runtime:
             LOG.debug("Runtime 未就绪，跳过 provider 重载")
@@ -401,7 +403,7 @@ class PersonaWorker:
 
         new_provider = self._runtime._build_provider()
         if new_provider is None:
-            LOG.warning("AMKR 连接重建失败（缺少地址或授权 Key），保留旧 provider")
+            LOG.warning("AMKR provider 重建失败（缺少地址或该空间的推理 key），保留旧 provider")
             return
 
         # 同步到 engine 及其子系统
