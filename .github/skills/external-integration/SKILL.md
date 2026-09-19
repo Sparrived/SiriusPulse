@@ -159,21 +159,31 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 
 - `amkr_local_api_key` 是 AMKR 的**本地授权 Key，同时是它的管理员凭据**（可增删供应商与 Key），因此只保存在服务端；WebUI 响应中脱敏为 `sk-a****`，提交脱敏值时服务端保留磁盘原值。`amkr_ui_enabled` 控制是否显示跳转 AMKR 面板的外链。
 
+  **它只用于管理操作**（建空间、注册任务名），**不再用于模型调用**：推理路径发的是下面那把按空间签发的作用域凭据。把一个能增删供应商的全权 key 放进每次对话补全的请求头，等于让推理路径随时可以升级成管理操作。缺少推理 key 时引擎**不就绪**，绝不回落到 `amkr_local_api_key`。
+
 ### 任务名契约（核心）
 
 - AMKR 把一个**任务名**解析成真实模型，因此框架把任务名本身填进 OpenAI 兼容请求的 `model` 字段。
 - 内置 12 个任务名：`cognition_analyze`、`memory_extract`、`response_generate`、`proactive_generate`、`passive_tool`、`plugin_analyze`、`plugin_generate`、`plugin_render`、`plugin_raw`、`diary_generate`、`diary_consolidate`、`topic_cluster`。
 - `model` 命中任务名时框架**不发送** `temperature` 与 `max_tokens`，模型选择、温度、最大 token 与故障切换都取 AMKR 任务定义里的值。显式传任务已固定的参数会被 AMKR 以 400 拒绝，不会静默覆盖。
-- `model` 不是任务名时按普通模型直连，此时采样参数由框架给出。任务名必须与 AMKR 工作空间里的任务同名，否则 AMKR 会把它当成真实模型去查找并失败。
+- `model` 不是任务名时按普通模型直连，此时采样参数由框架给出。任务名必须与 AMKR 工作空间里的任务同名，否则 AMKR 会把它当成真实模型去查找并失败。注意：若该空间在 AMKR 侧配了 `models` 直呼白名单，**任务名不受它限制**，但直呼模型必须落在白名单内。
 - 本地的任务超时与重试写在 `data/personas/<name>/engine_state/orchestration.json` 的 `task_timeout` / `task_retries`，属于传输层参数；`_DEFAULT_TASK_REGISTRY` 里的 `temperature` / `max_tokens` 仅供预算估算。
 
 ### 工作空间与注册
 
-- AMKR 是**共享单实例**，多个 AI 服务可同时使用，**不是多租户**。隔离靠请求头 `X-AMKR-Workspace`，框架按人格拼接为 `<amkr_workspace>/<persona>`（如 `sirius-pulse/sirius`，由 `workspace_for()` 生成）。
+- AMKR 是**共享单实例**，多个 AI 服务可同时使用，**不是多租户**。隔离靠**凭据本身**：模型调用用该空间的推理 key，AMKR 据此决定空间，请求头 `X-AMKR-Workspace` 会被忽略（框架仍发送它，仅为兼容旧版 AMKR）。空间名由 `workspace_for()` 按人格拼成 `<amkr_workspace>/<persona>`（如 `sirius-pulse/sirius`）。
 - **两个地址**：`amkr_base_url` 是服务端/容器怎么连 AMKR，`amkr_public_url` 是**用户浏览器**怎么连同一个 AMKR（留空回落前者）。同机部署时二者必然不同——容器走回环最省事，但回环在用户浏览器里指向用户自己的机器；面板与运维页外链都是浏览器直连 AMKR，故远程访问必须配 `amkr_public_url`（反代域名）。代码里用 `AmkrSettings.browser_base_url` 取浏览器侧地址。
-- 工作空间由框架**显式创建**（`POST /api/workspaces`，见 `ensure_persona_workspace_key()`），不再靠「建第一个任务」隐式产生。原因：创建的那一刻是拿到该空间**面板 key** 的唯一时机，之后 AMKR 的目录与导出都刻意剥掉它。顺序必须是**先建空间拿 key，再注册任务**。请求头为空时不发送，等价于 AMKR 的默认工作空间。
-- 面板 key 存在 `data/global_config.json` 的 `amkr_panel_keys`（`{工作空间: key}` 明文映射，只为服务端持有）。**该字段绝不随 `GET /api/global-config` 回显**；面板地址只从管理员专用的 `GET /api/amkr/panel?persona=` 取，地址形如 `<ui_url>/panel.html#k=<key>`，凭据必须在 fragment 里（查询串会进 `Referer` 与服务端日志）。
-- 若空间已在 AMKR 侧存在而本地没有 key，AMKR 只返回 409 且不会重发 key：此时注册会报错并提示去读 AMKR 配置文件的 `workspaces.<空间>.api_key`，或删掉该空间后重建。
+- 工作空间由框架**显式创建**（`POST /api/workspaces`，见 `ensure_persona_workspace_key()`），不再靠「建第一个任务」隐式产生。原因：创建的那一刻是拿到该空间**两把凭据**的唯一时机，之后 AMKR 的目录与导出都刻意剥掉它们。顺序必须是**先建空间拿 key，再注册任务**；引擎构建同理——**先备齐凭据再建 provider**，否则全新安装永远拿不到推理 key。
+- 两把凭据，都存在 `data/global_config.json`，都是 `{工作空间: key}` 明文映射且**绝不随 `GET /api/global-config` 回显**：
+
+  | 字段 | 前缀 | 用途 | 出口 |
+  |---|---|---|---|
+  | `amkr_panel_keys` | `amkr_ws_` | 嵌入式面板（读写本空间任务与读数） | 仅 `GET /api/amkr/panel?persona=`（管理员），地址形如 `<ui_url>/panel.html#k=<key>`，凭据必须在 fragment 里 |
+  | `amkr_inference_keys` | `amkr_ik_` | `/v1` 模型调用 | 仅 `POST /api/amkr/rotate-inference-key`（管理员）的响应 |
+
+  两者**互不通用**：面板 key 调不了 `/v1`，推理 key 调不了 `/api`（均 401）。
+- 若空间已在 AMKR 侧存在而本地没有 key，AMKR 只返回 409 且不会重发 key：此时注册会报错并提示去读 AMKR 配置文件的 `workspaces.<空间>.api_key` / `inference_key`，或删掉该空间后重建。
+- 推理 key 可以**单独轮换**（`POST /api/workspaces/{空间}/inference-key`），**不会**影响面板 key 或已嵌入的面板。轮换后旧 key 立即失效，因此 WebUI 的轮换接口会接着给该人格发一条 `provider` 热重载标志重建 provider；调用方若绕过它，必须自己确保重建。
 - 注册**只创建缺失的任务名**，已存在的一律不比对、不更新——后续所有模型与参数调整都在 AMKR 自带 WebUI 里完成，避免每次启动把运维调好的配置打回去。注册是幂等的，可重复触发。
 - 写操作遵循 AMKR 的乐观并发（携带 `config_revision`），版本过期返回 409 时重读并重试一次。
 
@@ -188,9 +198,10 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 
 ### 仍然保留的 WebUI / API
 
-- `GET /api/amkr/status`：只读巡检（连通性、版本、各人格 `registered` / `missing` / `panel_ready`），可安全反复调用；**不含**面板 key 或面板地址。
-- `GET /api/amkr/panel?persona=<名字>`：**仅管理员**（非 admin 返回 403）。返回 `{"persona", "url"}`，`url` 是可嵌入的 AMKR 工作空间面板地址（fragment 内含明文 key）；该人格没有 key 时返回 409 并说明补救路径。运维页按需调用它再把地址塞进 iframe。
-- `POST /api/amkr/register`：建出工作空间（含取面板 key）并补齐缺失任务名；body `{"persona": "..."}` 指定单个人格，`{}` 表示全部人格。
+- `GET /api/amkr/status`：只读巡检（连通性、版本、各人格 `registered` / `missing` / `panel_ready` / `inference_ready`），可安全反复调用；**不含**任何 key 或面板地址，只报「有没有」。
+- `GET /api/amkr/panel?persona=<名字>`：**仅管理员**（非 admin 返回 403）。返回 `{"persona", "url"}`，`url` 是可嵌入的 AMKR 工作空间面板地址（fragment 内含明文面板 key）；该人格没有 key 时返回 409 并说明补救路径。运维页按需调用它再把地址塞进 iframe。
+- `POST /api/amkr/rotate-inference-key`：**仅管理员**（非 admin 返回 403）。body `{"persona": "..."}`，为该人格的空间换一把推理 key，返回 `{"persona", "inference_key"}`——**明文只回这一次**，随后给该人格写 `provider` 重载标志。用于空间建于推理 key 支持之前（本地只有面板 key，无法重新取回）或凭据疑似泄漏。旧 key 立即失效，不影响面板 key。
+- `POST /api/amkr/register`：建出工作空间（含取两把凭据）并补齐缺失任务名；body `{"persona": "..."}` 指定单个人格，`{}` 表示全部人格。
 - `GET /api/models`：仍然存在，但返回的是上述 12 个任务名（含中文标签），不再是厂商模型列表。
 
 ### 生产环境建议

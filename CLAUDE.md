@@ -98,14 +98,20 @@ data/
 │   ├── adapters.json         # NapCat adapter configs (ws_url, QQ number, group whitelist)
 │   ├── experience.json       # Persona experience/background
 │   └── persona.db            # Unified SQLite DB (memory, tokens, cognition events, session state)
-├── global_config.json        # AMKR connection: amkr_base_url / amkr_local_api_key / amkr_workspace / amkr_panel_keys
+├── global_config.json        # AMKR connection: amkr_base_url / amkr_local_api_key / amkr_workspace
+│                             #   + per-workspace credentials: amkr_panel_keys / amkr_inference_keys
 ├── tools/                   # User-installed tools (scanned at runtime)
 └── adapter_port_registry.json
 ```
 
 AMKR itself lives outside this repo; the framework creates the AMKR workspace
-`<amkr_workspace>/<persona>` (the only moment its panel key is returned, so the key is
-persisted into `amkr_panel_keys`) and then registers its task names into it.
+`<amkr_workspace>/<persona>` (the only moment its two credentials are returned, so both are
+persisted) and then registers its task names into it. The workspace issues a **panel key**
+(`amkr_ws_…`, for the embedded AMKR panel) and an **inference key** (`amkr_ik_…`, for `/v1`
+model calls); they are mutually unusable. Only the inference key is sent on the inference
+path — `amkr_local_api_key` is an admin credential (it can add/remove providers and keys)
+and must never travel with a chat completion request. Scoped keys pin the workspace, so
+`X-AMKR-Workspace` is ignored when one is used.
 
 ### Dual Extension System
 - **Tools** = AI autonomously invokes tools during conversation (function calling)

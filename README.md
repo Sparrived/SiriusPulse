@@ -80,6 +80,7 @@ Perception → Cognition → Decision → Execution → Background
 - 所有模型调用统一交给本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）处理
 - 供应商、Key 池、故障切换与采样参数都由 AMKR 维护，本框架不再内置任何厂商实现
 - 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 日记…），模型选择下沉到 AMKR 的任务定义
+- 模型调用只用该人格工作空间的**推理 key**（建空间时自动签发），管理员 Key 仅用于建空间与注册任务
 
 ### 🎯 **双重扩展机制**
 - **工具系统**（Tools）：AI 通过 `[TOOL_CALL: ...]` 自主调用工具，提供多个内置工具
@@ -107,7 +108,7 @@ pip install sirius-pulse
 
 外部插件是独立维护的 Git submodule，不会打包进 PyPI wheel，也不会复制进 Docker 镜像。源码必须在运行目录的 `plugins/` 中由宿主机准备；详见下方的插件初始化和 Docker 挂载说明。
 
-> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key**，框架会存下来），再把用到的 12 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。
+> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 12 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
 
 ### 2️⃣ 启动 CLI
 
@@ -129,7 +130,7 @@ sirius-pulse webui
 |-----------|------|
 | **Dashboard** | 创建/启动/停止人格 |
 | **人格管理** | 填写角色名字、性格、说话风格 |
-| **AMKR 运维** | 查看 AMKR 连接状态、注册任务名、内嵌该空间的面板 |
+| **AMKR 运维** | 查看 AMKR 连接状态、注册任务名、内嵌该空间的面板、轮换推理 key |
 | **NapCat** | 配置 QQ 号、扫码登录 |
 | **适配器** | 将人格绑定到 QQ 号 |
 | **实时日志** | 在 WebUI 内查看 WebUI 与人格 worker 日志 |
@@ -257,7 +258,7 @@ sirius_pulse/
 ├── providers/               # LLM 接入层（统一指向 AMKR）
 │   ├── base.py              # LLMProvider 基类接口
 │   ├── openai_compatible.py # 唯一的真实实现，端点指向 AMKR
-│   ├── amkr.py              # AMKR 连接配置解析与面板 key 存放
+│   ├── amkr.py              # AMKR 连接配置解析与两把工作空间凭据的存放
 │   ├── amkr_sync.py         # 建 AMKR 工作空间并注册任务名
 │   └── mock.py              # Mock Provider（测试用）
 │
