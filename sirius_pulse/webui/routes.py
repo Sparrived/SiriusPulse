@@ -22,7 +22,7 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/api/tokens", "api_tokens_get"),
     RouteSpec("GET", "/api/telemetry", "api_telemetry_get"),
     RouteSpec("GET", "/api/embedding/status", "api_embedding_status"),
-    RouteSpec("POST", "/api/embedding/restart", "api_embedding_restart"),
+    RouteSpec("POST", "/api/embedding/rebuild", "api_embedding_rebuild"),
     RouteSpec("GET", "/api/system/logs", "api_system_logs_get"),
     RouteSpec("POST", "/api/auth/login", "api_auth_login"),
     RouteSpec("GET", "/api/auth/status", "api_auth_status"),

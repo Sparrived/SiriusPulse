@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import multiprocessing
-import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -35,28 +33,6 @@ from sirius_pulse.webui.server_utils import _json_response
 from sirius_pulse.webui.ws_server import WebSocketManager, WebUIFileEventBridge, setup_ws_routes
 
 LOG = logging.getLogger("sirius.webui")
-
-
-def _run_embedding_server_process(port: int) -> None:
-    """Run the embedding HTTP server in a child process."""
-    import time as _time
-
-    from sirius_pulse.embedding.server import create_app
-
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            app = create_app()
-            if attempt == 0:
-                LOG.info("Embedding model loaded; starting HTTP service")
-            else:
-                LOG.info("Restarting embedding service (attempt %d)", attempt)
-            web.run_app(app, host="127.0.0.1", port=port, print=None)
-            break
-        except Exception as exc:
-            LOG.error("Embedding service failed (attempt %d/%d): %s", attempt + 1, max_retries, exc)
-            if attempt < max_retries - 1:
-                _time.sleep(5)
 
 
 @web.middleware
@@ -96,10 +72,6 @@ class WebUIServer:
         self.app[WS_MANAGER_KEY] = self.ws_manager
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
-        self._embedding_process: multiprocessing.Process | None = None
-        self._embedding_ready: bool = False
-        self._embedding_error: str = ""
-        self._embedding_port: int = 18900
         self._load_global_config()
         self.auth_manager.get_or_create_admin_password()
         self._setup_routes()
@@ -112,7 +84,6 @@ class WebUIServer:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    self._embedding_port = int(data.get("embedding_port", 18900))
                     self._active_persona_name = data.get("active_persona", "")
             except Exception:
                 LOG.warning("读取全局配置失败", exc_info=True)
@@ -176,7 +147,6 @@ class WebUIServer:
     # ─── 生命周期 ─────────────────────────────────────────
 
     async def start(self) -> None:
-        self._start_embedding_service()
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.host, self.port)
@@ -191,85 +161,92 @@ class WebUIServer:
             await self.site.stop()
         if self.runner:
             await self.runner.cleanup()
-        self._stop_embedding_service()
         LOG.info("WebUI stopped")
 
-    # ─── Embedding 服务管理 ────────────────────────────────
-
-    @staticmethod
-    def _is_port_free(port: int) -> bool:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("localhost", port))
-                return True
-        except OSError:
-            return False
+    # ─── Embedding 状态 ────────────────────────────────────
+    #
+    # 向量化由 AMKR 提供，本框架不再自己拉起本地模型服务，因此这里只是**只读探测**：
+    # 报告 AMKR 是否可达、配置的模型是否在 AMKR 的模型表里，以及已建索引用的是哪个
+    # 模型。没有「启动/重启」动作可做——要换模型得去 AMKR 改配置。
 
     def get_embedding_status(self) -> dict[str, Any]:
-        """返回 embedding 服务的真实健康状态。"""
-        if self._embedding_process is not None and not self._embedding_process.is_alive():
-            return {
-                "running": False,
-                "ready": False,
-                "error": self._embedding_error or "服务线程已退出",
-            }
-        self._embedding_ready = self._embedding_healthy()
-        if self._embedding_ready:
-            return {"running": True, "ready": True, "error": ""}
-        if self._embedding_process is not None:
-            return {"running": True, "ready": False, "error": "模型加载中..."}
-        return {"running": False, "ready": False, "error": self._embedding_error or "未启动"}
+        """返回 embedding 状态：AMKR 可达性、模型名、以及索引是否对得上。
 
-    def _embedding_healthy(self) -> bool:
-        import urllib.request
+        ``index_stale`` 为 ``True`` 表示已建索引来自另一个模型（多半是另一个维度），
+        此时向量检索结果不可信，需要重建索引——这正是 WebUI 要提醒用户的事。
+        """
+        from sirius_pulse.embedding.client import create_embedding_client
 
         try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{self._embedding_port}/health", timeout=2.0
-            ) as response:
-                return json.loads(response.read().decode("utf-8")).get("status") == "ok"
-        except Exception:
-            return False
+            client = create_embedding_client(self.data_dir, self._active_persona_name)
+        except Exception as exc:
+            LOG.warning("构造 EmbeddingClient 失败: %s", exc)
+            return {"running": False, "ready": False, "error": str(exc)}
 
-    def _start_embedding_service(self) -> None:
-        if self._embedding_process is not None:
-            LOG.warning("Embedding 服务已在运行")
-            return
+        model = client.model
+        indexed_model = self._indexed_embedding_model()
+        status: dict[str, Any] = {
+            "running": True,
+            "ready": False,
+            "error": "",
+            "model": model,
+            "indexed_model": indexed_model,
+            "index_stale": bool(indexed_model and model and indexed_model != model),
+            "base_url": client._base_url,
+        }
+        if client.check_health():
+            status["ready"] = True
+            return status
+        status["running"] = False
+        status["error"] = f"AMKR 不可达或未配置模型 {model}（{client._base_url}）"
+        return status
 
-        if not self._is_port_free(self._embedding_port):
-            # 端口被占用：可能是外部已启动，尝试健康检查
-            if self._embedding_healthy():
-                self._embedding_ready = True
-                LOG.info(
-                    "Embedding 服务端口 %d 已被外部进程占用且健康，跳过内部启动",
-                    self._embedding_port,
-                )
-                return
-            LOG.warning(
-                "Embedding 服务端口 %d 已被占用但不健康，可能有残留进程",
-                self._embedding_port,
-            )
-            self._embedding_error = f"端口 {self._embedding_port} 已被占用且不可用"
-            return
+    def _indexed_embedding_model(self) -> str:
+        """已建日记索引所用的模型名；没有索引时返回空串。"""
+        from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 
-        self._embedding_process = multiprocessing.Process(
-            target=_run_embedding_server_process,
-            args=(self._embedding_port,),
-            daemon=True,
-            name="embedding-server",
-        )
-        self._embedding_process.start()
-        LOG.info("Embedding 服务后台线程已启动 (host=127.0.0.1 port=%d)", self._embedding_port)
+        try:
+            store = DiaryVectorStore(self.persona_dir / "diary" / "vector_db")
+            return str(store.get_stats().get("indexed_model") or "")
+        except Exception as exc:
+            LOG.debug("读取已建索引模型失败: %s", exc)
+            return ""
 
-    def _stop_embedding_service(self) -> None:
-        process = self._embedding_process
-        if process is not None:
-            LOG.info("Embedding 服务线程将随主进程退出")
-            if process.is_alive():
-                process.terminate()
-                process.join(timeout=5)
-        self._embedding_process = None
-        self._embedding_ready = False
+    def _rebuild_diary_embeddings(self) -> int:
+        """用当前模型重算该人格所有日记条目的向量并重建 Chroma 索引。
+
+        返回重建的条目数。必须整个重建而不是增量补齐：换模型就换了维度，旧向量与
+        新向量算出来的余弦毫无意义，混在一张表里只会得到静默错误的检索结果。
+        """
+        from sirius_pulse.embedding.client import create_embedding_client
+        from sirius_pulse.memory.diary.store import DiaryFileStore
+        from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
+
+        persona_dir = self.persona_dir
+        client = create_embedding_client(self.data_dir, persona_dir.name)
+        store = DiaryFileStore(persona_dir)
+        vector_store = DiaryVectorStore(persona_dir / "diary" / "vector_db")
+
+        total = 0
+        for path in sorted((persona_dir / "diary").glob("*.json")):
+            try:
+                entries = store.load(path.stem)
+            except Exception as exc:
+                LOG.warning("读取日记失败，跳过 %s: %s", path.name, exc)
+                continue
+            if not entries:
+                continue
+            group_id = entries[0].group_id or path.stem
+            texts = [e.content for e in entries]
+            vectors = client.encode(texts)
+            for entry, vector in zip(entries, vectors):
+                entry.embedding = vector
+            vector_store.drop_group(group_id)
+            vector_store.add_many(entries)
+            store.save(group_id, entries)
+            total += len(entries)
+            LOG.info("已重建群 %s 的日记索引: %d 条", group_id, len(entries))
+        return total
 
     # ─── 静态页面 ─────────────────────────────────────────
 
@@ -375,24 +352,37 @@ class WebUIServer:
     async def api_embedding_status(self, request: web.Request) -> web.Response:
         return _json_response(self.get_embedding_status())
 
-    async def api_embedding_restart(self, request: web.Request) -> web.Response:
-        LOG.info("收到 Embedding 服务重启请求")
-        self._stop_embedding_service()
-        self._embedding_ready = False
-        self._embedding_error = ""
-        import time as _time
+    async def api_embedding_rebuild(self, request: web.Request) -> web.Response:
+        """用当前模型重建该人格的日记与记忆单元向量索引。
 
-        _time.sleep(1)
-        self._start_embedding_service()
-        import asyncio as _aio
+        换 embedding 模型后必须做这一步：维度变了，旧向量虽然还躺在库里，但和新
+        查询向量算出来的相似度没有意义。日记要整个重建（而非补齐）才能保证库里只有
+        一套维度；记忆单元的向量内联在 JSON 里，逐组重算。
+        """
+        LOG.info("收到语义索引重建请求")
+        loop = asyncio.get_running_loop()
+        try:
+            entries = await loop.run_in_executor(None, self._rebuild_diary_embeddings)
+            units = await loop.run_in_executor(None, self._rebuild_memory_unit_embeddings)
+        except Exception as exc:
+            LOG.error("语义索引重建失败: %s", exc, exc_info=True)
+            return _json_response({"success": False, "error": str(exc)})
+        # 人格进程自己缓存了日记与记忆单元向量，重建后要让 worker 丢弃缓存重新加载，
+        # 否则它仍在用旧维度的向量，重建等于没做。
+        if entries or units:
+            self._notify_config_reload("memory")
+        LOG.info("语义索引重建完成: 日记 %d 条，记忆单元 %d 条", entries, units)
+        return _json_response({"success": True, "entries": entries, "units": units})
 
-        for _ in range(30):
-            await _aio.sleep(1)
-            if self.get_embedding_status()["ready"]:
-                return _json_response({"success": True, "ready": True})
-            if self._embedding_error:
-                return _json_response({"success": False, "error": self._embedding_error})
-        return _json_response({"success": False, "error": "启动超时"})
+    def _rebuild_memory_unit_embeddings(self) -> int:
+        """按当前模型重算该人格全部记忆单元的向量并落盘。"""
+        from sirius_pulse.embedding.client import create_embedding_client
+        from sirius_pulse.memory.units.manager import rebuild_memory_unit_embeddings
+        from sirius_pulse.memory.units.store import MemoryUnitFileStore
+
+        persona_dir = self.persona_dir
+        client = create_embedding_client(self.data_dir, persona_dir.name)
+        return rebuild_memory_unit_embeddings(client, MemoryUnitFileStore(persona_dir))
 
     # ─── 全局 API: 通用工具 ────────────────────────────────
 

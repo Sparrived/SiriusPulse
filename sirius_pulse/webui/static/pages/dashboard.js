@@ -658,25 +658,40 @@ async function showEmbeddingModal() {
   pop.style.top = `${itemRect.top - parentRect.top}px`;
 
   function renderPopover(s) {
-    const stateText = s.ready ? '就绪' : s.running ? '加载中' : '离线';
-    const stateColor = s.ready ? 'var(--success)' : s.running ? 'var(--warn)' : 'var(--text-3)';
+    const stateText = s.ready ? '就绪' : '不可用';
+    const stateColor = s.ready ? 'var(--success)' : 'var(--danger, #f87171)';
     const dotClass = s.ready ? 'running' : '';
+    const model = s.model || '未知';
+    const indexed = s.indexed_model || '';
+    // 索引来自另一个模型时，旧向量与新查询向量不在同一个空间里比较，
+    // 检索结果会静默地变得不可信——必须显式提示并给出重建入口。
+    const stale = s.index_stale
+      ? `<div class="embed-popover-warn">
+           索引由 <b>${indexed || '旧模型'}</b> 建立，当前模型是 <b>${model}</b>。<br>
+           维度不同，语义检索结果不可用，请重建索引。
+         </div>`
+      : '';
 
     pop.innerHTML = `
-      <div class="embed-popover-title">Embedding 服务</div>
+      <div class="embed-popover-title">Embedding（由 AMKR 提供）</div>
       <div class="embed-popover-status">
         <span class="status-dot ${dotClass}" style="width:7px;height:7px"></span>
         <span style="color:${stateColor};font-size:13px">${stateText}</span>
       </div>
+      <div class="embed-popover-detail">
+        <div>模型：<span class="text-mono">${model}</span></div>
+        ${indexed ? `<div>已建索引：<span class="text-mono">${indexed}</span></div>` : ''}
+      </div>
+      ${stale}
       ${s.error ? `<div style="color:var(--text-3);font-size:11px;margin-bottom:10px;word-break:break-all">${s.error}</div>` : ''}
       <div class="embed-popover-actions">
-        <button class="btn btn-primary btn-sm" id="embedRestartBtn">重启</button>
+        <button class="btn ${s.index_stale ? 'btn-primary' : ''} btn-sm" id="embedRebuildBtn">重建索引</button>
         <button class="btn btn-sm" id="embedRefreshBtn">刷新</button>
       </div>
     `;
 
     const refreshBtn = pop.querySelector('#embedRefreshBtn');
-    const restartBtn = pop.querySelector('#embedRestartBtn');
+    const rebuildBtn = pop.querySelector('#embedRebuildBtn');
 
     if (refreshBtn) refreshBtn.onclick = async (e) => {
       e.stopPropagation();
@@ -687,24 +702,28 @@ async function showEmbeddingModal() {
       } catch { toast('刷新失败', 'error'); }
     };
 
-    if (restartBtn) restartBtn.onclick = async (e) => {
+    if (rebuildBtn) rebuildBtn.onclick = async (e) => {
       e.stopPropagation();
-      restartBtn.disabled = true;
-      restartBtn.textContent = '重启中…';
+      if (!confirm('重建会用当前模型重算该人格全部日记与记忆单元的向量。条目较多时需要一段时间，期间语义检索不可用。继续？')) return;
+      rebuildBtn.disabled = true;
+      rebuildBtn.textContent = '重建中…';
       try {
-        const res = await post('/embedding/restart', {});
+        const res = await post('/embedding/rebuild', {});
         if (res.success) {
-          toast('Embedding 服务已重启', 'success');
-          renderPopover({ running: true, ready: true, error: '' });
-          updateEmbeddingPanel({ running: true, ready: true, error: '' });
+          const units = res.units || 0;
+          toast(`索引已重建（日记 ${res.entries} 条、记忆单元 ${units} 条）`, 'success');
+          const fresh = await get('/embedding/status');
+          renderPopover(fresh);
+          updateEmbeddingPanel(fresh);
         } else {
-          toast('重启失败: ' + (res.error || '未知错误'), 'error');
-          renderPopover({ running: false, ready: false, error: res.error || '重启失败' });
+          toast('重建失败: ' + (res.error || '未知错误'), 'error');
+          rebuildBtn.disabled = false;
+          rebuildBtn.textContent = '重建索引';
         }
       } catch {
-        toast('重启请求失败', 'error');
-        restartBtn.disabled = false;
-        restartBtn.textContent = '重启';
+        toast('重建请求失败', 'error');
+        rebuildBtn.disabled = false;
+        rebuildBtn.textContent = '重建索引';
       }
     };
   }
@@ -717,16 +736,17 @@ async function showEmbeddingModal() {
 
 function updateEmbeddingPanel(s) {
   if (!$('dsEmbedding') || !$('dsEmbeddingIcon')) return;
-  if (s.ready) {
+  if (s.index_stale) {
+    // 索引过期比「不可用」更隐蔽：服务好好的，但检索结果是错的。用警告色单独标出。
+    $('dsEmbedding').textContent = '待重建';
+    $('dsEmbedding').style.color = 'var(--warn)';
+    $('dsEmbeddingIcon').style.color = 'var(--warn)';
+  } else if (s.ready) {
     $('dsEmbedding').textContent = '就绪';
     $('dsEmbedding').style.color = 'var(--success)';
     $('dsEmbeddingIcon').style.color = 'var(--success)';
-  } else if (s.running) {
-    $('dsEmbedding').textContent = '加载中';
-    $('dsEmbedding').style.color = 'var(--warn)';
-    $('dsEmbeddingIcon').style.color = 'var(--warn)';
   } else {
-    $('dsEmbedding').textContent = '离线';
+    $('dsEmbedding').textContent = '不可用';
     $('dsEmbedding').style.color = 'var(--text-3)';
     $('dsEmbeddingIcon').style.color = 'var(--text-3)';
   }
@@ -895,16 +915,16 @@ async function loadStats() {
 
     // Embedding 状态
     if ($('dsEmbedding') && $('dsEmbeddingIcon')) {
-      if (embeddingRes.ready) {
+      if (embeddingRes.index_stale) {
+        $('dsEmbedding').textContent = '待重建';
+        $('dsEmbedding').style.color = 'var(--warn)';
+        $('dsEmbeddingIcon').style.color = 'var(--warn)';
+      } else if (embeddingRes.ready) {
         $('dsEmbedding').textContent = '就绪';
         $('dsEmbedding').style.color = 'var(--success)';
         $('dsEmbeddingIcon').style.color = 'var(--success)';
-      } else if (embeddingRes.running) {
-        $('dsEmbedding').textContent = '加载中';
-        $('dsEmbedding').style.color = 'var(--warn)';
-        $('dsEmbeddingIcon').style.color = 'var(--warn)';
       } else {
-        $('dsEmbedding').textContent = '离线';
+        $('dsEmbedding').textContent = '不可用';
         $('dsEmbedding').style.color = 'var(--text-3)';
         $('dsEmbeddingIcon').style.color = 'var(--text-3)';
       }

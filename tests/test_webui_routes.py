@@ -2801,6 +2801,77 @@ def test_webui_routes_when_registered_then_amkr_ops_routes_exist_and_orchestrati
     assert not any("/task-params" in path for _, path in registered)
 
 
+def test_webui_routes_when_registered_then_embedding_rebuild_replaces_restart():
+    """本地 embedding 服务已下线，接口从「重启服务」改为「重建索引」。"""
+    registered = {(spec.method, spec.path) for spec in WEBUI_ROUTES}
+
+    assert ("GET", "/api/embedding/status") in registered
+    assert ("POST", "/api/embedding/rebuild") in registered
+    assert ("POST", "/api/embedding/restart") not in registered
+
+
+@pytest.mark.asyncio
+async def test_embedding_rebuild_when_rebuilt_then_reports_both_counts_and_wakes_worker(
+    tmp_path, monkeypatch
+):
+    """重建要同时覆盖日记与记忆单元，并唤醒人格进程丢弃旧向量缓存。"""
+    (tmp_path / "personas" / "sirius").mkdir(parents=True)
+    server = WebUIServer(data_dir=tmp_path)
+    monkeypatch.setattr(server, "_rebuild_diary_embeddings", lambda: 7)
+    monkeypatch.setattr(server, "_rebuild_memory_unit_embeddings", lambda: 3)
+    reloads: list[str] = []
+    monkeypatch.setattr(server, "_notify_config_reload", reloads.append)
+
+    response = await server.api_embedding_rebuild(
+        make_mocked_request("POST", "/api/embedding/rebuild")
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload == {"success": True, "entries": 7, "units": 3}
+    assert reloads == ["memory"]
+
+
+@pytest.mark.asyncio
+async def test_embedding_rebuild_when_nothing_indexed_then_skips_worker_wakeup(
+    tmp_path, monkeypatch
+):
+    """没有任何索引时可重建内容为空，不必打扰人格进程。"""
+    (tmp_path / "personas" / "sirius").mkdir(parents=True)
+    server = WebUIServer(data_dir=tmp_path)
+    monkeypatch.setattr(server, "_rebuild_diary_embeddings", lambda: 0)
+    monkeypatch.setattr(server, "_rebuild_memory_unit_embeddings", lambda: 0)
+    reloads: list[str] = []
+    monkeypatch.setattr(server, "_notify_config_reload", reloads.append)
+
+    response = await server.api_embedding_rebuild(
+        make_mocked_request("POST", "/api/embedding/rebuild")
+    )
+
+    assert json.loads(response.text)["success"] is True
+    assert reloads == []
+
+
+@pytest.mark.asyncio
+async def test_embedding_rebuild_when_rebuild_fails_then_reports_error(tmp_path, monkeypatch):
+    """重建失败要如实报错，不能假装成功让用户以为索引已经可用。"""
+    (tmp_path / "personas" / "sirius").mkdir(parents=True)
+    server = WebUIServer(data_dir=tmp_path)
+
+    def boom() -> int:
+        raise RuntimeError("AMKR 不可达")
+
+    monkeypatch.setattr(server, "_rebuild_diary_embeddings", boom)
+
+    response = await server.api_embedding_rebuild(
+        make_mocked_request("POST", "/api/embedding/rebuild")
+    )
+    payload = json.loads(response.text)
+
+    assert payload["success"] is False
+    assert "AMKR 不可达" in payload["error"]
+
+
 @pytest.mark.asyncio
 async def test_amkr_status_get_when_key_missing_then_asks_for_configuration(tmp_path):
     """未配置凭据时页面要给出可操作提示，而不是空白或 500。"""
