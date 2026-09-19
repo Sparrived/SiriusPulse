@@ -24,7 +24,7 @@ from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
-from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings, load_inference_keys
 from sirius_pulse.providers.amkr_sync import (
     AmkrError,
     SyncResult,
@@ -125,6 +125,7 @@ def _build_provider(
     settings: AmkrSettings,
     task_names: Iterable[str] = (),
     workspace: str = "",
+    inference_key: str = "",
 ) -> OpenAICompatibleProvider | None:
     """按 AMKR 连接配置构建唯一的 provider。
 
@@ -133,12 +134,20 @@ def _build_provider(
     ``workspace`` 是该 provider 要写入的 AMKR 工作空间。调用方传人格级子空间
     （``<amkr_workspace>/<persona>``），必须与任务注册用的空间一致，否则请求里的
     任务名在 AMKR 侧查不到定义，会被当成普通模型名直连而失败。
+
+    ``inference_key`` 是该空间的**推理 key**，也是这里真正发出去的凭据。它必须是
+    作用域凭据而不是 ``settings.api_key``：后者是能增删供应商与 Key 的管理员凭据，
+    把它放进每次对话补全的请求头，等于让模型调用路径随时可以升级成管理操作。
+    推理 key 缺失时**不回落**到管理员凭据——那会把一个配置疏漏静默变成一次越权，
+    宁可让调用方显式拿到未就绪。
     """
     if not settings.configured:
         return None
+    if not inference_key.strip():
+        return None
     return OpenAICompatibleProvider(
         base_url=settings.base_url,
-        api_key=settings.api_key,
+        api_key=inference_key,
         timeout_seconds=settings.timeout_seconds,
         workspace=workspace or settings.workspace,
         task_names=task_names,
@@ -263,10 +272,15 @@ class EngineRuntime:
         配置来自 ``global_config.json``，环境变量优先。任务名集合取自编排配置，
         用于决定采样参数是否交给 AMKR 的任务定义；工作空间取本 persona 的子空间，
         与 ``register_amkr_tasks`` 写入的空间保持一致。
+
+        凭据用该空间的**推理 key**（不是 ``settings.api_key``）。这把 key 被 AMKR
+        钉死在这个空间上，因此它在模型调用路径上即使泄漏也换不来别的空间，更做不了
+        管理操作。空间还没有推理 key 时返回 ``None``（不就绪），不回落。
         """
         settings = load_amkr_settings(self.global_data_path)
         workspace = workspace_for(settings, self.work_path.name)
-        return _build_provider(settings, self._amkr_task_names(), workspace)
+        inference_key = load_inference_keys(self.global_data_path).get(workspace, "")
+        return _build_provider(settings, self._amkr_task_names(), workspace, inference_key)
 
     async def register_amkr_tasks(self) -> SyncResult:
         """建出本 persona 的工作空间并注册任务名。
@@ -677,9 +691,30 @@ class EngineRuntime:
         }
 
     async def _build_engine(self) -> "EmotionalGroupChatEngine":
+        # 顺序不能反：**先备齐工作空间与它的推理 key，才能建 provider**。
+        # provider 发出去的是该空间的推理 key，而它只在建空间那一次返回；先建
+        # provider 会在全新安装上永远拿不到凭据。注册本身用的是管理员凭据，因此
+        # 这一步不依赖 provider。
+        #
+        # 在 AMKR 里确保本 persona 的任务已注册（只创建缺失的，不覆盖已有配置）。
+        self._amkr_sync_result = await self.register_amkr_tasks()
+
         provider = self._build_provider()
         if provider is None:
             settings = load_amkr_settings(self.global_data_path)
+            workspace = workspace_for(settings, self.work_path.name)
+            has_inference_key = bool(load_inference_keys(self.global_data_path).get(workspace))
+            if settings.configured and not has_inference_key:
+                # 地址与管理员凭据都在，缺的只是这一把作用域凭据。这与「没配
+                # AMKR」是两回事，混成一条提示会让运维去翻一个没问题的配置。
+                raise RuntimeError(
+                    f"工作空间 {workspace} 还没有推理 key，模型调用无法发起。\n"
+                    "建空间时 AMKR 会一并返回它，但本空间建于该能力之前（或从只含"
+                    "面板 key 的备份恢复），key 已无法重新取回。补救办法：\n"
+                    "1) 在本框架的「AMKR 运维」页点「轮换推理 key」（会把旧 key 作废）；\n"
+                    f"2) 或直接调 AMKR: POST /api/workspaces/{workspace}/inference-key\n"
+                    f'3) 或从 AMKR 配置文件 workspaces."{workspace}".inference_key 取出。'
+                )
             raise RuntimeError(
                 "未配置 AMKR 连接。请通过以下任一方式配置：\n"
                 "1) WebUI 的「AMKR 运维」页面（写入 global_config.json）\n"
@@ -691,9 +726,6 @@ class EngineRuntime:
         # 优先从 experience.json 读取记忆配置，回退到 plugin_config
         exp = self._load_experience_config()
         config = self._build_engine_runtime_config(exp)
-
-        # 在 AMKR 里确保本 persona 的任务已注册（只创建缺失的，不覆盖已有配置）。
-        self._amkr_sync_result = await self.register_amkr_tasks()
 
         # 创建向量存储（ChromaDB）
         vector_store = DiaryVectorStore(self.work_path / "diary" / "vector_db")

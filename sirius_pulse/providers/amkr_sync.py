@@ -30,8 +30,10 @@ import httpx
 
 from sirius_pulse.providers.amkr import (
     AmkrSettings,
+    load_inference_keys,
     load_panel_keys,
     panel_url,
+    save_inference_key,
     save_panel_key,
 )
 
@@ -46,6 +48,19 @@ _WORKSPACE_EXISTS_HINT = "工作空间已存在"
 
 class AmkrError(RuntimeError):
     """调用 AMKR 管理接口失败。"""
+
+
+@dataclass(slots=True)
+class WorkspaceCredentials:
+    """一个工作空间的两把凭据，只在建空间那一次一起拿到。
+
+    分成两个字段而不是「一把 key + 用途参数」：它们**互不通用**（面板 key 调不了
+    ``/v1``，推理 key 调不了 ``/api``），任何一处把两者搞混都会得到一个 401。
+    """
+
+    workspace: str
+    panel_key: str
+    inference_key: str
 
 
 @dataclass(slots=True)
@@ -207,11 +222,11 @@ class AmkrAdminClient:
             return self._revision_of(response)
         raise AmkrError(self._error_message(response))
 
-    def create_workspace(self, name: str, revision: str | None) -> str:
-        """显式建出一个工作空间，返回它的面板 key。
+    def create_workspace(self, name: str, revision: str | None) -> WorkspaceCredentials:
+        """显式建出一个工作空间，返回它的两把凭据。
 
-        key 由 AMKR 生成（不传 ``api_key``）：本框架没有既定的凭据命名规范，
-        让服务端生成可以少一处自造格式。**响应是拿到它的唯一时机**，调用方必须
+        两把 key 都由 AMKR 生成（不传 ``api_key``）：本框架没有既定的凭据命名规范，
+        让服务端生成可以少一处自造格式。**响应是拿到它们的唯一时机**，调用方必须
         立刻存下来。
 
         ``revision`` 为 ``None`` 时先读一次任务列表取。空间已存在时 AMKR 返回
@@ -225,17 +240,54 @@ class AmkrAdminClient:
             message = self._error_message(response)
             if response.status_code == 409 and _WORKSPACE_EXISTS_HINT in message:
                 raise AmkrError(
-                    f"{message}。AMKR 不会再返回它的面板 key：请从 AMKR 配置文件 "
-                    f'workspaces."{name}".api_key 取出，或在 AMKR 里删掉该空间后重新注册。'
+                    f"{message}。AMKR 不会再返回它的凭据：请从 AMKR 配置文件 "
+                    f'workspaces."{name}".api_key（面板 key）与 '
+                    f'workspaces."{name}".inference_key（推理 key）取出，'
+                    f"或在 AMKR 里删掉该空间后重新注册。"
                 )
             raise AmkrError(message)
         try:
             data = response.json()
         except Exception as exc:
             raise AmkrError(f"AMKR 建空间的响应不是 JSON：{exc}") from exc
-        key = str(data.get("api_key", "") or "").strip() if isinstance(data, dict) else ""
-        if not key:
+        if not isinstance(data, dict):
+            raise AmkrError("AMKR 建空间的响应格式异常")
+        panel = str(data.get("api_key", "") or "").strip()
+        inference = str(data.get("inference_key", "") or "").strip()
+        if not panel:
             raise AmkrError("AMKR 建空间成功但没有返回面板 key")
+        if not inference:
+            # 缺少推理 key 意味着接下来模型调用只能动用全权凭据。这不该静默发生：
+            # 运维会以为已经收窄了，实际没有。老版本 AMKR 不会返回这个字段。
+            raise AmkrError(
+                "AMKR 建空间成功但没有返回推理 key（inference_key）。"
+                "本框架的模型调用需要它来避免动用管理员凭据；请确认 AMKR 版本支持工作空间推理 key。"
+            )
+        return WorkspaceCredentials(workspace=name, panel_key=panel, inference_key=inference)
+
+    def rotate_inference_key(self, workspace: str, revision: str | None) -> str:
+        """给已有工作空间换一把推理 key，返回新的那把。
+
+        用于补上「建空间时 AMKR 还没这个字段」的历史空间，或凭据疑似泄漏时的轮换。
+        只换推理 key——面板 key 换掉会让已嵌入的面板立刻失效。
+        """
+        if revision is None:
+            _, revision = self.list_tasks()
+        payload: dict[str, object] = {"config_revision": revision}
+        response = self._request(
+            "POST",
+            f"/api/workspaces/{quote(workspace, safe='')}/inference-key",
+            json_body=payload,
+        )
+        if response.status_code not in (200, 201):
+            raise AmkrError(self._error_message(response))
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise AmkrError(f"AMKR 轮换推理 key 的响应不是 JSON：{exc}") from exc
+        key = str(data.get("inference_key", "") or "").strip() if isinstance(data, dict) else ""
+        if not key:
+            raise AmkrError("AMKR 轮换推理 key 成功但没有返回新 key")
         return key
 
     def delete_task(self, name: str, revision: str | None) -> str | None:
@@ -339,8 +391,11 @@ def ensure_persona_workspace_key(
 ) -> str:
     """确保某人格的工作空间存在，并返回它的面板 key。
 
-    AMKR 只在创建空间那一次返回 key，所以顺序不能反：**先建空间拿 key，再注册
+    AMKR 只在创建空间那一次返回凭据，所以顺序不能反：**先建空间拿 key，再注册
     任务**。已存过 key 的空间直接返回，不再打扰 AMKR（重复创建会被 409 拒掉）。
+
+    建空间时**两把 key 一起存**（面板 + 推理）。推理 key 同样只在那一刻返回，
+    漏存就得走轮换才能补（见 :func:`rotate_persona_inference_key`）。
 
     空间已存在但本地没有 key 时抛 :class:`AmkrError`——AMKR 不会重发 key，只能
     去读它的配置文件或删掉重建。这是必须让运维看见的状况，不能静默跳过。
@@ -354,10 +409,37 @@ def ensure_persona_workspace_key(
         return existing
 
     with AmkrAdminClient(settings).for_workspace(workspace) as client:
-        key = client.create_workspace(workspace, None)
+        credentials = client.create_workspace(workspace, None)
 
-    save_panel_key(global_data_path, workspace, key)
-    LOGGER.info("已在 AMKR 建出工作空间 %s 并保存面板 key", workspace)
+    save_panel_key(global_data_path, workspace, credentials.panel_key)
+    save_inference_key(global_data_path, workspace, credentials.inference_key)
+    LOGGER.info("已在 AMKR 建出工作空间 %s 并保存面板 key 与推理 key", workspace)
+    return credentials.panel_key
+
+
+def rotate_persona_inference_key(
+    settings: AmkrSettings,
+    persona: str,
+    *,
+    global_data_path: Path | str,
+) -> str:
+    """给某人格的工作空间换一把推理 key，存下来并返回它。
+
+    用于两类情况：空间建于 AMKR 支持推理 key 之前（本地只有面板 key），或这把
+    key 疑似泄漏需要轮换。只换推理 key，面板 key 与已嵌入的面板都不受影响。
+
+    轮换会让**旧 key 立即失效**，因此调用方应当紧接着重建 provider（引擎侧已有
+    热重载路径），否则该人格会一直拿着旧 key 拿到 401。
+    """
+    if not settings.configured:
+        raise AmkrError("尚未配置 AMKR 本地授权 Key（amkr_local_api_key）")
+
+    workspace = workspace_for(settings, persona)
+    with AmkrAdminClient(settings).for_workspace(workspace) as client:
+        key = client.rotate_inference_key(workspace, None)
+
+    save_inference_key(global_data_path, workspace, key)
+    LOGGER.info("已轮换工作空间 %s 的推理 key", workspace)
     return key
 
 
@@ -412,6 +494,7 @@ class WorkspaceState:
     missing: list[str] = field(default_factory=list)
     error: str = ""
     panel_ready: bool = False
+    inference_ready: bool = False
 
     @property
     def ok(self) -> bool:
@@ -425,6 +508,7 @@ class WorkspaceState:
             "missing": self.missing,
             "error": self.error,
             "panel_ready": self.panel_ready,
+            "inference_ready": self.inference_ready,
         }
 
 
@@ -459,14 +543,15 @@ def inspect_persona_workspace(
 ) -> WorkspaceState:
     """读取某人格工作空间里已登记与缺失的任务名。
 
-    ``global_data_path`` 只用来判断本地是否存有该空间的面板 key（``panel_ready``），
-    不会向 AMKR 索取任何凭据——key 早已拿不到了。
+    ``global_data_path`` 只用来判断本地是否存有该空间的两把凭据（``panel_ready``
+    / ``inference_ready``），不会向 AMKR 索取任何凭据——key 早已拿不到了。
     """
     wanted = list(task_names) if task_names is not None else known_task_names()
     workspace = workspace_for(settings, persona)
     state = WorkspaceState(persona=persona, workspace=workspace)
     if global_data_path is not None:
         state.panel_ready = bool(load_panel_keys(global_data_path).get(workspace))
+        state.inference_ready = bool(load_inference_keys(global_data_path).get(workspace))
     try:
         with AmkrAdminClient(settings).for_workspace(workspace) as client:
             tasks, _ = client.list_tasks()

@@ -27,8 +27,12 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
     """OpenAI-compatible provider backed by /v1/chat/completions.
 
     本框架只保留这一个实现：端点固定指向 AMKR，由它承担供应商与 Key 池、
-    故障切换与采样参数固定。``workspace`` 会作为 ``X-AMKR-Workspace`` 头发送，
-    让多个 AI 服务共用同一个 AMKR 实例时各自持有独立的任务空间。
+    故障切换与采样参数固定。
+
+    ``api_key`` 必须是该工作空间的**推理 key**（``amkr_ik_…``）：AMKR 用它决定
+    这次请求落在哪个空间，因此调用方换不掉。``workspace`` 仍会作为
+    ``X-AMKR-Workspace`` 头发送，但在推理 key 生效时 AMKR **忽略**它——留着是为了
+    兼容旧版 AMKR（那里空间只由请求头决定），而不是因为它在起作用。
     """
 
     _provider_name = "openai-compatible"
