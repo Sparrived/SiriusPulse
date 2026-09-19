@@ -42,16 +42,6 @@ class WorkspaceLayout:
     def session_config_path(self) -> Path:
         return self.config_dir() / "session_config.json"
 
-    def providers_dir(self) -> Path:
-        return self.config_root / "providers"
-
-    def provider_registry_path(self) -> Path:
-        return self.providers_dir() / "provider_keys.json"
-
-    def provider_proxy_path(self) -> Path:
-        """全局网络代理配置文件路径。"""
-        return self.providers_dir() / "proxy.json"
-
     def sessions_dir(self) -> Path:
         return self.data_root / "sessions"
 
@@ -126,7 +116,6 @@ class WorkspaceLayout:
         paths = [
             self.workspace_manifest_path(),
             self.session_config_path(),
-            self.provider_registry_path(),
             self.generated_agents_path(),
         ]
         tools_dir = self.tools_dir()
@@ -140,7 +129,6 @@ class WorkspaceLayout:
             self.config_root,
             self.data_root,
             self.config_dir(),
-            self.providers_dir(),
             self.sessions_dir(),
             self.user_memory_dir(),
             self.event_memory_dir(),

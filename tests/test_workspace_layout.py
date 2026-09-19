@@ -10,7 +10,6 @@ def test_workspace_layout_when_config_and_data_roots_differ_then_paths_use_expec
 
     assert layout.workspace_manifest_path() == config_root / "workspace.json"
     assert layout.session_config_path() == config_root / "config" / "session_config.json"
-    assert layout.provider_registry_path() == config_root / "providers" / "provider_keys.json"
     assert layout.generated_agents_path() == config_root / "roleplay" / "generated_agents.json"
     assert layout.token_usage_db_path() == data_root / "token" / "token_usage.db"
     assert (
@@ -43,7 +42,6 @@ def test_workspace_layout_when_ensuring_directories_then_creates_runtime_and_con
     layout.ensure_directories(session_id="chat A/B")
 
     assert layout.config_dir().is_dir()
-    assert layout.providers_dir().is_dir()
     assert layout.generated_agent_trace_dir().is_dir()
     assert layout.user_memory_dir().is_dir()
     assert layout.event_memory_dir().is_dir()
@@ -61,10 +59,9 @@ def test_workspace_layout_when_tools_exist_then_watch_paths_include_tool_files_a
 
     paths = layout.config_watch_paths()
 
-    assert paths[:4] == [
+    assert paths[:3] == [
         layout.workspace_manifest_path(),
         layout.session_config_path(),
-        layout.provider_registry_path(),
         layout.generated_agents_path(),
     ]
     assert paths[-3:] == [

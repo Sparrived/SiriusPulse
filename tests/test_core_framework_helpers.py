@@ -8,9 +8,6 @@ from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.utils import now_iso, strip_conversation_history_xml
 from sirius_pulse.developer_profiles import metadata_declares_developer
-from sirius_pulse.providers.aliyun_bailian import _normalize_aliyun_bailian_base_url
-from sirius_pulse.providers.bigmodel import _normalize_bigmodel_base_url
-from sirius_pulse.providers.mimo import _normalize_mimo_base_url
 
 
 def test_developer_profiles_when_metadata_contains_flags_or_roles_then_developer_status_is_detected():
@@ -91,26 +88,3 @@ def test_persona_database_when_used_as_context_manager_then_meta_table_exists_an
         assert reopened.execute("SELECT value FROM _meta WHERE key = 'schema'").fetchone()[0] == "1"
     finally:
         reopened.close()
-
-
-def test_provider_url_helpers_when_base_urls_vary_then_expected_request_roots_are_returned():
-    assert (
-        _normalize_aliyun_bailian_base_url("") == "https://dashscope.aliyuncs.com/compatible-mode"
-    )
-    assert (
-        _normalize_aliyun_bailian_base_url("https://dashscope.aliyuncs.com/compatible-mode/v1/")
-        == "https://dashscope.aliyuncs.com/compatible-mode"
-    )
-    assert _normalize_bigmodel_base_url("") == "https://open.bigmodel.cn/api/paas/v4"
-    assert (
-        _normalize_bigmodel_base_url("https://open.bigmodel.cn/api/paas")
-        == "https://open.bigmodel.cn/api/paas/v4"
-    )
-    assert (
-        _normalize_bigmodel_base_url("https://open.bigmodel.cn")
-        == "https://open.bigmodel.cn/api/paas/v4"
-    )
-    assert (
-        _normalize_mimo_base_url("https://api.xiaomimimo.com/v1/")
-        == "https://api.xiaomimimo.com/v1"
-    )

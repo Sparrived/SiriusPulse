@@ -1,79 +1,24 @@
-from sirius_pulse.providers.aliyun_bailian import AliyunBailianProvider
+"""LLM 接入层。
+
+本框架只保留一个真实实现：:class:`OpenAICompatibleProvider`，端点固定指向
+AMKR（``auto-model-key-router``）。供应商、Key 池、模型与采样参数都由 AMKR
+承担，这里不再有厂商实现与路由注册表。
+"""
+
 from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.amkr_sync import AmkrError, SyncResult, register_persona_tasks
 from sirius_pulse.providers.base import GenerationRequest, LLMProvider
-from sirius_pulse.providers.bigmodel import BigModelProvider
-from sirius_pulse.providers.deepseek import DeepSeekProvider
-from sirius_pulse.providers.mimo import MimoProvider, MimoTokenPlanProvider
 from sirius_pulse.providers.mock import MockProvider
-from sirius_pulse.providers.models_dev import (
-    ModelCost,
-    ModelFilter,
-    ModelsDevCache,
-    auto_fill_models_from_dev,
-    estimate_cost,
-    filter_models,
-    get_context_length,
-    get_models_dev_provider_ids,
-    list_provider_model_ids,
-    parse_model_cost,
-)
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
-from sirius_pulse.providers.opencode import OpenCodeGoProvider, OpenCodeProvider
-from sirius_pulse.providers.routing import (
-    AutoRoutingProvider,
-    ProviderConfig,
-    ProviderRegistry,
-    WorkspaceProviderManager,
-    ensure_provider_platform_supported,
-    get_supported_provider_platforms,
-    merge_provider_sources,
-    normalize_provider_name,
-    normalize_provider_type,
-    probe_provider_availability,
-    probe_provider_models,
-    register_provider_with_validation,
-    run_provider_detection_flow,
-)
-from sirius_pulse.providers.siliconflow import SiliconFlowProvider
-from sirius_pulse.providers.volcengine_ark import VolcengineArkProvider
 
 __all__ = [
     "GenerationRequest",
     "LLMProvider",
     "AmkrSettings",
     "load_amkr_settings",
-    "AliyunBailianProvider",
-    "BigModelProvider",
+    "AmkrError",
+    "SyncResult",
+    "register_persona_tasks",
     "MockProvider",
-    "DeepSeekProvider",
-    "MimoProvider",
-    "MimoTokenPlanProvider",
     "OpenAICompatibleProvider",
-    "ProviderConfig",
-    "ProviderRegistry",
-    "WorkspaceProviderManager",
-    "AutoRoutingProvider",
-    "normalize_provider_name",
-    "normalize_provider_type",
-    "ensure_provider_platform_supported",
-    "get_supported_provider_platforms",
-    "merge_provider_sources",
-    "probe_provider_availability",
-    "probe_provider_models",
-    "run_provider_detection_flow",
-    "register_provider_with_validation",
-    "SiliconFlowProvider",
-    "VolcengineArkProvider",
-    "OpenCodeProvider",
-    "OpenCodeGoProvider",
-    "ModelsDevCache",
-    "ModelCost",
-    "ModelFilter",
-    "auto_fill_models_from_dev",
-    "estimate_cost",
-    "filter_models",
-    "get_context_length",
-    "get_models_dev_provider_ids",
-    "list_provider_model_ids",
-    "parse_model_cost",
 ]
