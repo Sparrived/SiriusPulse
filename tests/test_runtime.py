@@ -121,7 +121,9 @@ def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_amkr_set
     assert provider is not None
     assert provider._base_url == "http://amkr.internal:8000"
     assert provider._api_key == "sk-amkr-admin"
-    assert provider._workspace == "sirius-pulse"
+    # 必须指向本 persona 的子空间：任务注册写在 <base>/<persona>，请求带错空间
+    # 会让 AMKR 查不到任务定义。
+    assert provider._workspace == "sirius-pulse/sirius"
 
 
 def test_engine_runtime_when_amkr_key_missing_then_not_ready(tmp_path):
@@ -136,6 +138,54 @@ def test_engine_runtime_when_amkr_key_missing_then_not_ready(tmp_path):
     runtime = EngineRuntime(persona_dir)
 
     assert runtime.has_provider_config() is False
+
+
+def test_engine_runtime_when_registering_tasks_then_requests_use_the_same_workspace(
+    tmp_path, monkeypatch
+):
+    """注册与请求必须落在同一个工作空间。
+
+    任务名只在工作空间内唯一：如果注册写进 ``<base>/<persona>`` 而请求只带
+    ``<base>``，AMKR 就会把任务名当成普通模型名去查，从而永远命中不了任务定义。
+    """
+    import httpx
+
+    data_dir = tmp_path / "data"
+    persona_dir = data_dir / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    atomic_write_json(
+        data_dir / "global_config.json",
+        {
+            "amkr_base_url": "http://amkr.internal:8000",
+            "amkr_local_api_key": "sk-amkr-admin",
+            "amkr_workspace": "sirius-pulse",
+        },
+    )
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("x-amkr-workspace", ""))
+        if request.url.path == "/api/tasks":
+            return httpx.Response(200, json={"tasks": [], "config_revision": "rev-1"})
+        return httpx.Response(200, json={"config_revision": "rev-2"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    runtime = EngineRuntime(persona_dir)
+    result = asyncio.run(runtime.register_amkr_tasks())
+    provider = runtime._build_provider()
+
+    assert result.ok
+    assert seen, "注册应当真的发起请求"
+    assert set(seen) == {"sirius-pulse/sirius"}
+    assert provider is not None
+    assert provider._workspace == "sirius-pulse/sirius"
 
 
 def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_path):

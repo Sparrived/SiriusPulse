@@ -29,6 +29,7 @@ from sirius_pulse.providers.amkr_sync import (
     AmkrError,
     SyncResult,
     register_persona_tasks_async,
+    workspace_for,
 )
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.token.token_store import TokenUsageStore
@@ -123,10 +124,15 @@ async def _await_cleanup(awaitable: Any) -> bool:
 def _build_provider(
     settings: AmkrSettings,
     task_names: Iterable[str] = (),
+    workspace: str = "",
 ) -> OpenAICompatibleProvider | None:
     """按 AMKR 连接配置构建唯一的 provider。
 
     未配置凭据时返回 ``None``，由调用方决定如何报告不就绪。
+
+    ``workspace`` 是该 provider 要写入的 AMKR 工作空间。调用方传人格级子空间
+    （``<amkr_workspace>/<persona>``），必须与任务注册用的空间一致，否则请求里的
+    任务名在 AMKR 侧查不到定义，会被当成普通模型名直连而失败。
     """
     if not settings.configured:
         return None
@@ -134,7 +140,7 @@ def _build_provider(
         base_url=settings.base_url,
         api_key=settings.api_key,
         timeout_seconds=settings.timeout_seconds,
-        workspace=settings.workspace,
+        workspace=workspace or settings.workspace,
         task_names=task_names,
     )
 
@@ -255,10 +261,12 @@ class EngineRuntime:
         """按 AMKR 连接配置构建 provider。
 
         配置来自 ``global_config.json``，环境变量优先。任务名集合取自编排配置，
-        用于决定采样参数是否交给 AMKR 的任务定义。
+        用于决定采样参数是否交给 AMKR 的任务定义；工作空间取本 persona 的子空间，
+        与 ``register_amkr_tasks`` 写入的空间保持一致。
         """
         settings = load_amkr_settings(self.global_data_path)
-        return _build_provider(settings, self._amkr_task_names())
+        workspace = workspace_for(settings, self.work_path.name)
+        return _build_provider(settings, self._amkr_task_names(), workspace)
 
     async def register_amkr_tasks(self) -> SyncResult:
         """把本框架的任务名注册到 AMKR 里本 persona 的工作空间。
