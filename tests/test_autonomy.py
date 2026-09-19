@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sirius_pulse.core.autonomy import AutonomyPolicy
+from sirius_pulse.core.autonomy import AutonomyPolicy, is_quiet_hours
 from sirius_pulse.core.intent import (
     RESOLUTION_TELL,
     IntentFileStore,
@@ -26,7 +26,21 @@ from sirius_pulse.tools.builtin import autonomy, intend_pursue, intend_share
 from sirius_pulse.tools.executor import _self_initiated_block_reason
 from sirius_pulse.tools.models import ToolDefinition, ToolSideEffect
 
-_NOW = datetime.now(timezone.utc)
+_REAL_NOW = datetime.now(timezone.utc)
+_CN_TZ = timezone(timedelta(hours=8))
+
+# Pin the tick clock to local noon so the night gate cannot make these tests pass
+# or fail depending on when CI happens to run.  The shift always moves *forward*
+# (to the next local noon), so a pinned "now" is never earlier than the real
+# instant an intention was created at — otherwise its age, and therefore its
+# urgency decay, would go negative.
+_NOW = _REAL_NOW + timedelta(hours=(12 - _REAL_NOW.astimezone(_CN_TZ).hour) % 24)
+
+
+@pytest.fixture(autouse=True)
+def _pin_clock(monkeypatch):
+    """所有用例都在本地白天运行，避免夜间静默期让分享类断言随机失败。"""
+    monkeypatch.setattr(autonomy, "_now", lambda: _NOW)
 
 
 class _Store:
@@ -617,3 +631,74 @@ def test_both_recording_tools_are_allowed_on_her_own_time():
     assert intend_share.TOOL_META["allowed_when_self_initiated"] is True
     assert intend_pursue.TOOL_META["allowed_when_self_initiated"] is True
     assert intend_pursue.TOOL_META["model_visible"] is True
+
+
+# --- 夜间：可以做事，但不可以发出去 -----------------------------------------------
+
+
+def _cn(hour: int, minute: int = 0) -> datetime:
+    """本地（中国）某个整点对应的 UTC 时刻。"""
+    return datetime(2026, 3, 1, hour, minute, tzinfo=_CN_TZ).astimezone(timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "moment",
+    [_cn(23, 0), _cn(23, 59), _cn(0, 0), _cn(3, 30), _cn(7, 59)],
+)
+def test_sending_is_blocked_through_the_night(moment):
+    """23:00 到次日 08:00 之间一律不发送，含跨零点两侧。"""
+    assert is_quiet_hours(moment) is True
+
+
+@pytest.mark.parametrize("moment", [_cn(8, 0), _cn(12, 0), _cn(22, 59)])
+def test_sending_is_allowed_outside_the_night(moment):
+    """08:00 整点即恢复，22:59 仍在窗口之外。"""
+    assert is_quiet_hours(moment) is False
+
+
+def test_night_window_is_read_in_china_time_not_utc():
+    """判定按中国时间，而不是 UTC，否则静默期会整整错开八小时。"""
+    # 中国的凌晨 3 点 == UTC 前一天 19 点，恰好是 UTC 的"白天"。
+    assert is_quiet_hours(_cn(3)) is True
+    assert is_quiet_hours(datetime(2026, 3, 1, 19, tzinfo=timezone.utc)) is True
+
+
+@pytest.mark.asyncio
+async def test_she_can_still_work_on_things_at_night(tmp_path, monkeypatch):
+    """夜里她照样可以自己想事情：静默的只是"发出去"。"""
+    _seed_intention(tmp_path, what="弄懂潮汐", kind="reading", urgency=0.9)
+    monkeypatch.setattr(autonomy, "_now", lambda: _cn(3))
+    ctx = _make_ctx(tmp_path)
+
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    assert ctx.recorded[0]["kind"] == "reading"
+
+
+@pytest.mark.asyncio
+async def test_a_message_written_at_night_waits_until_morning(tmp_path, monkeypatch):
+    """夜里想说的话不会被丢掉，也不会被标记成已说，只是等到早上再发。"""
+    intention = _seed_intention(
+        tmp_path,
+        what="今天的晚霞特别好看",
+        resolution=RESOLUTION_TELL,
+        audience="private_10001",
+        urgency=0.9,
+    )
+    monkeypatch.setattr(autonomy, "_now", lambda: _cn(23, 30))
+    night = _make_ctx(tmp_path)
+    await autonomy.run_tick(night)
+
+    assert night.delivered == []
+
+    # 到了早上，同一条意图仍然待发，且一个字都没改。
+    monkeypatch.setattr(autonomy, "_now", lambda: _cn(8, 5))
+    morning = _make_ctx(tmp_path, state=night.store.data["state"])
+    episode = await autonomy.run_tick(morning)
+
+    assert len(morning.delivered) == 1
+    assert morning.delivered[0]["text"] == "今天的晚霞特别好看"
+    assert episode is not None and episode.kind == "share"
+    carried = IntentFileStore(tmp_path).load()
+    assert carried.get(intention.intention_id).shared_at != ""
