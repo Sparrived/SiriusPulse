@@ -22,9 +22,6 @@ COLD_HEAT_THRESHOLD = 0.25
 # 心跳超时（秒）
 HEARTBEAT_TIMEOUT_SECONDS = 30
 
-# Embedding 服务默认端口
-EMBEDDING_DEFAULT_PORT = 18900
-
 # ── Token 相关 ────────────────────────────────────────────
 DEFAULT_MAX_TOKENS = 512
 RESPONSE_MAX_TOKENS = 4096

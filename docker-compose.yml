@@ -23,7 +23,6 @@ services:
       - ./data:/app/data
       # External plugin source and _config.json remain on the host.
       - ./plugins:/app/plugins:rw
-      - /root/.cache/huggingface:/home/sirius/.cache/huggingface
       - ${SIRIUS_CONTAINER_ADMIN_SOCKET:-/dev/null}:/run/sirius-container-admin.sock:ro
     command: ["run"]
     healthcheck:

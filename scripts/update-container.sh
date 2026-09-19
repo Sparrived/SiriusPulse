@@ -89,9 +89,19 @@ if docker image inspect sirius-pulse:latest >/dev/null 2>&1; then
 fi
 docker compose up -d --build --force-recreate --remove-orphans
 
+# 语义检索的可用性现在取决于 AMKR（向量化由它提供），容器本地不再有 embedding
+# 端口可探。用容器里同一份客户端做判定，避免脚本与运行时代码对「就绪」的定义漂移。
+embedding_ready() {
+  docker compose exec -T sirius-pulse python -c '
+import sys
+from sirius_pulse.embedding.client import create_embedding_client
+client = create_embedding_client("/app/data", "")
+sys.exit(0 if client.check_health() else 1)
+' >/dev/null 2>&1
+}
+
 for _ in {1..60}; do
-  if curl -fsS http://127.0.0.1:8080/ >/dev/null \
-    && curl -fsS http://127.0.0.1:18900/health >/dev/null; then
+  if curl -fsS http://127.0.0.1:8080/ >/dev/null && embedding_ready; then
     if ! restore_system_packages; then
       docker compose ps
       docker compose logs --tail=100

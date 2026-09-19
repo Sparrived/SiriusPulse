@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -20,7 +19,7 @@ from typing import Any, Iterable
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_emotional_engine
 from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
-from sirius_pulse.embedding.client import EmbeddingClient
+from sirius_pulse.embedding.client import EmbeddingClient, create_embedding_client
 from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
 from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings, load_inference_keys
@@ -727,25 +726,26 @@ class EngineRuntime:
         else:
             LOG.warning("日记向量存储未启用，将使用纯内存索引")
 
-        # 创建共享 Embedding 客户端（连接 Embedding 微服务）
-        embedding_url = os.environ.get("SIRIUS_EMBEDDING_URL", "http://127.0.0.1:18900")
+        # 创建共享 Embedding 客户端。向量化由 AMKR 提供，本框架不再自己拉起本地
+        # 模型服务，因此这里没有「先启动再等就绪」这一步，只做一次可达性预检。
+        embedding_client = create_embedding_client(self.global_data_path, self.work_path.name)
+        embedding_model = embedding_client.model
 
         # 指数退避：失败后冷却，避免每次消息都阻塞 60 秒
         now = time.monotonic()
         cooldown = min(300.0, 30.0 * (2**self._embedding_fail_count))
         if self._embedding_build_failed and (now - self._embedding_last_fail_at) < cooldown:
             remaining = int(cooldown - (now - self._embedding_last_fail_at))
-            raise RuntimeError(f"Embedding 服务不可用 ({embedding_url})，{remaining}秒后重试。")
+            raise RuntimeError(f"Embedding 模型 {embedding_model} 不可用，{remaining}秒后重试。")
 
-        embedding_client = EmbeddingClient(base_url=embedding_url)
-        LOG.info("等待共享 Embedding 服务就绪: %s ...", embedding_url)
+        LOG.info("检查 AMKR Embedding 可用性: %s (%s) ...", embedding_model, embedding_client._base_url)
         try:
             embedding_ready = await _wait_for_embedding_health(embedding_client)
         except asyncio.CancelledError:
             # Do not turn shutdown/reload into a cached service failure.
             raise
         if embedding_ready:
-            LOG.info("共享 Embedding 服务已连接: %s", embedding_url)
+            LOG.info("AMKR Embedding 已就绪: %s", embedding_model)
             self._embedding_build_failed = False
             self._embedding_fail_count = 0
         else:
@@ -753,14 +753,13 @@ class EngineRuntime:
             self._embedding_last_fail_at = time.monotonic()
             self._embedding_fail_count = min(self._embedding_fail_count + 1, 4)
             LOG.error(
-                "共享 Embedding 服务不可用: %s (连续失败 %d 次)",
-                embedding_url,
+                "AMKR Embedding 不可用: %s (连续失败 %d 次)",
+                embedding_model,
                 self._embedding_fail_count,
             )
             raise RuntimeError(
-                f"Embedding 服务不可用 ({embedding_url})。"
-                "请在 WebUI 检查 Embedding 状态，或手动启动: "
-                "python -m sirius_pulse.embedding.server"
+                f"Embedding 模型 {embedding_model} 不可用。请在 AMKR 中确认该模型已配置"
+                "（供应商与 Key 都可用），并已加入本工作空间的模型白名单。"
             )
 
         engine = create_emotional_engine(

@@ -381,28 +381,33 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     await webui.start()
     LOG.info("WebUI: http://localhost:%s", webui.port)
 
-    # 等待 Embedding 服务就绪
+    # 预检 AMKR 的 embedding 能力。向量化已改由 AMKR 提供，本框架不再自己拉起
+    # 本地模型服务；这里只确认「够得着、模型已配置、白名单已放行」，不成功就明确
+    # 报错，而不是让每个人格在后台各失败一次。
     import time
 
-    from sirius_pulse.embedding.client import EmbeddingClient
+    from sirius_pulse.embedding.client import create_embedding_client
 
-    emb_url = config.get("embedding_url", "http://127.0.0.1:18900")
-    emb_client = EmbeddingClient(base_url=emb_url)
-    LOG.info("等待 Embedding 服务就绪: %s ...", emb_url)
+    # 预检用第一个人格的工作空间。embedding 模型是全局配置，但凭据（推理 key）按人格
+    # 工作空间存放，取错空间会拿到空 key、变成一次必然失败的 401。
+    active = persona_names[0] if persona_names else ""
+    emb_client = create_embedding_client(DATA_DIR, active)
+    emb_model = emb_client.model
+    LOG.info("检查 AMKR Embedding 可用性: %s (%s) ...", emb_model, emb_client._base_url)
     for _attempt in range(120):
         if emb_client.check_health():
             try:
                 _ = emb_client.encode(["ping"])
-                LOG.info("Embedding 服务已就绪: %s", emb_url)
+                LOG.info("AMKR Embedding 已就绪: %s", emb_model)
                 break
-            except Exception:
-                pass
+            except Exception as exc:
+                LOG.warning("AMKR Embedding 预热失败，稍后重试: %s", exc)
         time.sleep(0.5)
     else:
-        LOG.error("Embedding 服务在 60 秒内未就绪，无法启动人格")
+        LOG.error("AMKR Embedding 在 60 秒内未就绪，无法启动人格")
         await webui.stop()
         raise RuntimeError(
-            f"Embedding 服务不可用 ({emb_url})。" "请检查日志或手动启动: python -m sirius_pulse.embedding.server"
+            f"Embedding 模型 {emb_model} 不可用。请在 AMKR 中确认该模型已配置" "（供应商与 Key 都可用），并已加入本工作空间的模型白名单。"
         )
 
     from sirius_pulse.persona_worker import PersonaWorker

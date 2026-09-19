@@ -28,6 +28,9 @@ COPY pyproject.toml uv.lock README.md ./
 RUN pip install --no-cache-dir uv \
     && uv sync --frozen --no-dev --no-install-project
 
+# Chromium 从上一版镜像里复制过来（见 scripts/update-container.sh 的
+# SIRIUS_BROWSER_CACHE_IMAGE），playwright install 发现版本已存在就不再下载。
+# 直接从 CDN 拉很慢且偶尔超时，这一步是让日常重建不必重下浏览器的关键。
 COPY --from=browser-cache /ms-playwright/ /ms-playwright/
 RUN .venv/bin/python -m playwright install --with-deps chromium
 
@@ -57,7 +60,7 @@ RUN uv sync --frozen --no-dev
 # External plugins are supplied by the host checkout and mounted at runtime.
 VOLUME ["/app/data", "/app/plugins"]
 
-EXPOSE 8080 18900
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8080), 3).close()"
