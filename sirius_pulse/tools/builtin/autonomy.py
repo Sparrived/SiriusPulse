@@ -5,6 +5,13 @@ This TOOL gives a persona a life of her own.  On a slow tick it looks at the
 worth acting on now.  The tick never invents a reason to act: no intentions means
 she does nothing, however long she has been idle.
 
+Intentions are formed in real turns, not here — ``intend_share`` for something she
+wants to say, ``intend_pursue`` for something she wants to work out.  That is what
+keeps the reason behind each one genuine: she decided it while actually thinking
+about the conversation, so the recorded ``why`` is hers rather than a constant.
+A background job scanning the chat log cannot know what she has already handled,
+so it would mostly queue up material she has already read.
+
 Two things can happen when an intention is picked:
 
 ``do``
@@ -28,9 +35,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.core.autonomy import AutonomyPolicy, Episode, build_seed
+from sirius_pulse.core.autonomy import AutonomyPolicy, Episode
 from sirius_pulse.core.intent import (
-    RESOLUTION_DO,
     IntentFileStore,
     Intention,
     IntentStore,
@@ -45,8 +51,6 @@ _DEFAULT_INTERVAL_SECONDS = 900
 _MIN_INTERVAL_SECONDS = 60
 
 _MAX_EPISODES = 200
-_RECENT_MESSAGE_COUNT = 20
-_MAX_SEEDS = 8
 _OUTCOME_MAX_CHARS = 600
 
 # A tell-intention is cheap to deliver, so it gets its own, much tighter gate:
@@ -113,11 +117,10 @@ async def run_tick(ctx: Any) -> Episode | None:
     state = _load_state(store)
     now = datetime.now(timezone.utc)
 
-    # Noticing comes before acting: encountering something is where motivation
-    # originates, so it happens on every tick.  What she *does* is then gated only
-    # by whether she is actually carrying something, not by a daily counter.
+    # This tick is a checkpoint, not a source of motivation: it reads what she is
+    # already carrying.  Forming intentions happens in real turns (intend_pursue /
+    # intend_share), where the conversation is in front of her.
     intentions = _load_intentions(ctx)
-    _plant_intentions(ctx, intentions)
 
     # Sharing is cheap and does not spend an LLM turn, so it is gated separately
     # from model pacing and can happen even while a model turn is cooling down.
@@ -290,70 +293,6 @@ def _share_ready(state: dict[str, Any], now: datetime, ctx: Any) -> bool:
 def _next_share(intentions: IntentStore, now: datetime) -> Intention | None:
     ready = intentions.pending_shares(now=now.isoformat())
     return ready[0] if ready else None
-
-
-def _plant_intentions(ctx: Any, intentions: IntentStore) -> None:
-    """Turn something she encountered into an intention she will carry.
-
-    This is where motivation originates: material she actually ran into, not idle
-    time.  The planted intention is persisted, so it outlives this tick — even if
-    the policy declines to act now (budget spent, still cooling down), the reason
-    to act is still there next time.
-    """
-    known = {item.what for item in intentions.all()}
-    group_id, seeds = _collect_seeds(ctx)
-    if not seeds:
-        return
-    planted = 0
-    for seed in sorted(seeds, key=lambda item: item.get("weight", 0.0), reverse=True):
-        what = str(seed.get("seed", "")).strip()
-        if not what or what in known:
-            continue
-        intentions.add(
-            Intention.create(
-                what=what,
-                why="在群里看到，想弄明白",
-                resolution=RESOLUTION_DO,
-                kind=str(seed.get("kind", "musing")),
-                urgency=float(seed.get("weight", 0.5)),
-                source=str(seed.get("source", "chat")),
-                origin_group=group_id,
-                refs=_extract_refs(what),
-            )
-        )
-        known.add(what)
-        planted += 1
-        if planted >= 2:
-            break
-    if planted:
-        intentions.prune()
-        _save_intentions(ctx, intentions)
-
-
-def _collect_seeds(ctx: Any) -> tuple[str, list[dict[str, Any]]]:
-    """Gather material she already encountered, from the liveliest group."""
-    seeds: list[dict[str, Any]] = []
-
-    # 素材取自最近真正聊过话的群：活跃群列表按首次出现排序，不能直接取末位。
-    group_id = ""
-    recent: list[dict[str, Any]] = []
-    best_stamp = ""
-    for candidate in (str(item) for item in ctx.get_active_groups()):
-        if not candidate.strip():
-            continue
-        messages = ctx.get_recent_messages(candidate, _RECENT_MESSAGE_COUNT)
-        if not messages:
-            continue
-        stamp = str(messages[-1].get("timestamp", "") or "")
-        if not group_id or stamp > best_stamp:
-            group_id, recent, best_stamp = candidate, messages, stamp
-
-    for message in recent[-_MAX_SEEDS:]:
-        content = str(message.get("content", "") or "").strip()
-        if not content or message.get("role") == "assistant":
-            continue
-        seeds.append(build_seed(content, source="chat"))
-    return group_id, seeds[:_MAX_SEEDS]
 
 
 def _fallback_group(ctx: Any) -> str:
