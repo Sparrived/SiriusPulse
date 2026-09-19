@@ -54,8 +54,11 @@ def _make_ctx(
     state: dict | None = None,
     groups: dict[str, list[dict]] | None = None,
     audiences: list[dict] | None = None,
+    config: dict | None = None,
 ) -> SimpleNamespace:
-    store = _Store({"state": dict(state or {})})
+    data: dict = {"state": dict(state or {})}
+    data.update(config or {})
+    store = _Store(data)
     recorded: list = []
     delivered: list[dict] = []
     by_group = groups if groups is not None else {"group-1": list(messages or [])}
@@ -110,7 +113,7 @@ def _seed_intention(tmp_path, *, what="弄懂潮汐", resolution="do", audience=
 
 
 def test_policy_does_nothing_without_any_intention(tmp_path):
-    """空闲再久也不会凭空产生动机。"""
+    """空闲本身不会让一件不存在的事变重要（自由时间另有独立门槛）。"""
     decision = AutonomyPolicy().evaluate(seconds_since_episode=10_000_000)
 
     assert decision.should_act is False
@@ -330,6 +333,134 @@ def test_intend_pursue_refuses_without_engine_context():
     assert intend_pursue.run(what="", engine_context=SimpleNamespace())["success"] is False
 
 
+# --- 没人找她的时候，她也能开始 -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_first_tick_does_not_hand_her_free_time(tmp_path):
+    """刚启动不等于"被冷落很久"：不能一重启就白送一段自由时间。"""
+    ctx = _make_ctx(tmp_path)
+
+    assert await autonomy.run_tick(ctx) is None
+    assert ctx.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_she_starts_something_herself_after_being_left_alone(tmp_path):
+    """没有别人说话、也没有任何意图时，久到一定程度她仍能自己开始。"""
+    ctx = _make_ctx(
+        tmp_path,
+        state={"last_free_time_at": (_NOW - timedelta(hours=4)).isoformat()},
+    )
+
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    # 这一段是她自己的，不挂在任何意图上。
+    assert episode.intention_id == ""
+    assert ctx.recorded[0]["free_time"] is True
+    assert ctx.recorded[0]["seed"] == ""
+
+
+@pytest.mark.asyncio
+async def test_she_may_still_do_nothing_with_free_time(tmp_path):
+    """自由时间不是必须产出：她可以拒绝，且拒绝同样消耗掉这次机会。"""
+    ctx = _make_ctx(
+        tmp_path,
+        state={"last_free_time_at": (_NOW - timedelta(hours=4)).isoformat()},
+    )
+
+    async def decline(**_kwargs):
+        return {"text": "什么也不做"}
+
+    ctx.run_autonomous_turn = decline
+
+    assert await autonomy.run_tick(ctx) is None
+    assert not (tmp_path / "memory" / "autonomy" / "episodes.json").exists()
+
+    # 紧接着的下一个心跳不再重复提供，否则每个心跳都会烧一次调用。
+    ctx2 = _make_ctx(tmp_path)
+    ctx2.store.data["state"] = ctx.store.data["state"]
+    assert await autonomy.run_tick(ctx2) is None
+
+
+@pytest.mark.asyncio
+async def test_free_time_is_paced_by_its_own_interval(tmp_path):
+    """间隔没到就不提供：默认不会每个心跳都给一段自由时间。"""
+    ctx = _make_ctx(
+        tmp_path,
+        state={"last_free_time_at": (_NOW - timedelta(minutes=30)).isoformat()},
+    )
+
+    assert await autonomy.run_tick(ctx) is None
+    assert ctx.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_free_time_can_be_turned_off_entirely(tmp_path):
+    """设成 0 就退回纯意图闸门：不惦记任何事时永远不会开始。"""
+    ctx = _make_ctx(
+        tmp_path,
+        state={"last_free_time_at": (_NOW - timedelta(days=30)).isoformat()},
+        config={"free_time_interval_seconds": 0},
+    )
+
+    assert await autonomy.run_tick(ctx) is None
+    assert ctx.recorded == []
+
+
+@pytest.mark.asyncio
+async def test_free_time_records_episode_and_memory_without_sending_anything(tmp_path):
+    """自由时间的产出照常留档，但同样不向任何地方发送。"""
+    ctx = _make_ctx(
+        tmp_path,
+        state={"last_free_time_at": (_NOW - timedelta(hours=4)).isoformat()},
+    )
+
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    saved = json.loads((tmp_path / "memory" / "autonomy" / "episodes.json").read_text("utf-8"))
+    assert saved["episodes"][0]["outcome"] == episode.outcome
+
+    unit = next(item for item in ctx.recorded if not isinstance(item, dict))
+    assert unit.metadata["origin"] == "self_initiated"
+    assert ctx.delivered == []
+
+
+@pytest.mark.asyncio
+async def test_she_can_start_a_new_thread_while_nothing_is_carried(tmp_path):
+    """自由时间里冒出的新念头要能登记下来，否则线索在回合结束时就断了。"""
+    ctx = _make_ctx(
+        tmp_path,
+        state={"last_free_time_at": (_NOW - timedelta(hours=4)).isoformat()},
+    )
+
+    async def writes_it_down(**kwargs):
+        ctx.recorded.append(kwargs)
+        intend_pursue.run(
+            what="潮汐为什么一天有两次",
+            why="刚才自己翻资料时想到的",
+            engine_context=ctx,
+        )
+        return {"text": "我翻了点东西，还留了个想接着弄明白的问题。"}
+
+    ctx.run_autonomous_turn = writes_it_down
+
+    episode = await autonomy.run_tick(ctx)
+
+    assert episode is not None
+    carried = IntentFileStore(tmp_path).load()
+    assert [item.what for item in carried.all()] == ["潮汐为什么一天有两次"]
+
+    # 下一次心跳就能接着推进这条她自己开出来的线索。
+    ctx2 = _make_ctx(tmp_path)
+    ctx2.store.data["state"] = ctx.store.data["state"]
+    follow_up = await autonomy.run_tick(ctx2)
+    assert follow_up is not None
+    assert follow_up.seed == "潮汐为什么一天有两次"
+
+
 # --- 说给谁听 ---------------------------------------------------------------------
 
 
@@ -481,8 +612,8 @@ def test_self_initiated_turn_allows_recording_tools():
     assert _self_initiated_block_reason(recording) == ""
 
 
-def test_pursuing_a_thing_cannot_register_the_next_one():
-    """推进一件事的回合里不能顺手登记下一件，否则每个回合都喂养下一个回合。"""
+def test_both_recording_tools_are_allowed_on_her_own_time():
+    """做和说都要能登记，否则她的自由时间只能攒出"想说的"，攒不出"想做的"。"""
     assert intend_share.TOOL_META["allowed_when_self_initiated"] is True
-    assert intend_pursue.TOOL_META.get("allowed_when_self_initiated", False) is False
+    assert intend_pursue.TOOL_META["allowed_when_self_initiated"] is True
     assert intend_pursue.TOOL_META["model_visible"] is True
