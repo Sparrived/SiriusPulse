@@ -13,7 +13,8 @@ def test_engine_when_pending_message_is_low_information_then_detects_filler():
     assert _EmotionalGroupChatEngineBase._is_low_information_pending_message("怎么了？") is False
 
 
-def test_engine_orchestration_defaults_route_memory_extract_to_memory_model(tmp_path):
+def test_engine_orchestration_defaults_when_no_config_then_no_task_overrides(tmp_path):
+    """没有人格编排配置时不预设任何模型相关的覆盖项。"""
     engine = engine_core._EmotionalGroupChatEngineBase.__new__(
         engine_core._EmotionalGroupChatEngineBase
     )
@@ -21,12 +22,15 @@ def test_engine_orchestration_defaults_route_memory_extract_to_memory_model(tmp_
     engine.config = {}
 
     engine._init_orchestration_and_task_models()
+    engine._init_model_router()
 
-    assert engine._task_models["cognition_analyze"] == "gpt-4o-mini"
-    assert engine._task_models["memory_extract"] == "gpt-4o-mini"
+    # 每个任务都原样发出任务名，不因缺失配置而换成某个本地模型。
+    assert engine.model_router.resolve("cognition_analyze").model_name == "cognition_analyze"
+    assert engine.model_router.resolve("memory_extract").model_name == "memory_extract"
 
 
-def test_engine_orchestration_custom_models_route_memory_extract_to_memory_model(tmp_path):
+def test_engine_orchestration_custom_config_then_only_local_fields_are_applied(tmp_path):
+    """编排配置里只有超时与重试属于本地；模型字段一律被忽略。"""
     from sirius_pulse.core.orchestration_store import OrchestrationStore
 
     OrchestrationStore.save(
@@ -34,8 +38,9 @@ def test_engine_orchestration_custom_models_route_memory_extract_to_memory_model
         {
             "analysis_model": "vision-model",
             "chat_model": "chat-model",
-            "memory_model": "memory-model",
-            "plugin_model": "plugin-model",
+            "task_models": {"cognition_analyze": "memory-model"},
+            "task_timeout": {"response_generate": 45.0},
+            "task_retries": {"memory_extract": 3},
         },
     )
     engine = engine_core._EmotionalGroupChatEngineBase.__new__(
@@ -45,12 +50,12 @@ def test_engine_orchestration_custom_models_route_memory_extract_to_memory_model
     engine.config = {}
 
     engine._init_orchestration_and_task_models()
+    engine._init_model_router()
 
-    assert engine._task_models["cognition_analyze"] == "vision-model"
-    assert engine._task_models["memory_extract"] == "memory-model"
-    assert engine._task_models["proactive_generate"] == "chat-model"
-    assert "diary_generate" not in engine._task_models
-    assert "diary_consolidate" not in engine._task_models
+    assert engine.model_router.resolve("response_generate").timeout == 45.0
+    assert engine.model_router.resolve("memory_extract").retries == 3
+    # 配置里写了模型名也不生效：模型归 AMKR 的任务定义。
+    assert engine.model_router.resolve("cognition_analyze").model_name == "cognition_analyze"
 
 
 def test_engine_adapter_routes_when_registered_then_resolve_groups_and_private_users():

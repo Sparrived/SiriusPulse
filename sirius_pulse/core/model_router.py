@@ -1,8 +1,11 @@
-"""Model router: task-aware LLM model selection for v0.28+.
+"""Model router: task-aware LLM routing for v0.28+.
 
-Maps cognitive tasks to optimal (model, temperature, max_tokens, timeout)
-configurations. Supports dynamic escalation (high-urgency 鈫?stronger model)
-and user-defined overrides via engine config.
+把认知任务映射到它们的 **AMKR 任务名**。模型选择、采样参数、故障回退都由 AMKR
+的任务定义决定，本框架只负责说明「这是哪个任务」。
+
+因此 ``resolve()`` 返回的 ``model_name`` 就是任务名本身：它作为 ``model`` 字段发往
+AMKR，由 AMKR 查表换成真实模型。这里保留的其余字段（``timeout`` / ``retries``）
+是**本地传输层**的关注点，与模型无关。
 """
 
 from __future__ import annotations
@@ -27,114 +30,100 @@ class TaskConfig:
 # Default task registry
 # ---------------------------------------------------------------------------
 
+# 认知任务名清单。这些名字同时是：
+#   1. 发往 AMKR 的 ``model`` 字段（AMKR 用它查任务定义）；
+#   2. 本框架向 AMKR 注册的任务名。
+# 每条记录只带**本地**关注点（超时、重试）与预算估算用的默认值；模型与采样参数
+# 不由这里决定。
 _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
-    # Lightweight tasks 鈫?fast/cheap models
     "cognition_analyze": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="cognition_analyze",
         temperature=0.3,
         max_tokens=1024,
         timeout=15.0,
-        fallback_model="deepseek-chat",
     ),
     "memory_extract": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="memory_extract",
         temperature=0.3,
-        # Structured memory extraction must have enough room to finish JSON;
-        # 1024 is easily consumed by a large checkpoint batch.
+        # 结构化记忆抽取要留够空间写完 JSON；1024 很容易被大会话批次吃满。
         max_tokens=4096,
         timeout=30.0,
-        fallback_model="deepseek-chat",
         retries=0,
     ),
-    # High-quality tasks 鈫?stronger models
     "response_generate": TaskConfig(
-        model_name="gpt-4o",
+        model_name="response_generate",
         temperature=0.7,
         max_tokens=4096,
         timeout=30.0,
-        fallback_model="deepseek-reasoner",
     ),
     "proactive_generate": TaskConfig(
-        model_name="gpt-4o",
+        model_name="proactive_generate",
         temperature=0.8,
         max_tokens=1024,
         timeout=20.0,
-        fallback_model="deepseek-chat",
     ),
-    # Plugin 鍒嗘瀽浠诲姟 鈫?灏忔ā鍨?
     "plugin_analyze": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="plugin_analyze",
         temperature=0.5,
         max_tokens=1024,
         timeout=30.0,
-        fallback_model="deepseek-chat",
     ),
-    # Plugin 鍏朵粬
     "plugin_generate": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="plugin_generate",
         temperature=0.7,
         max_tokens=4096,
         timeout=30.0,
-        fallback_model="deepseek-chat",
     ),
     "plugin_render": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="plugin_render",
         temperature=0.7,
         max_tokens=2048,
         timeout=30.0,
-        fallback_model="deepseek-chat",
     ),
     "plugin_raw": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="plugin_raw",
         temperature=0.5,
         max_tokens=2048,
         timeout=30.0,
-        fallback_model="deepseek-chat",
     ),
-    # 琚姩鎶€鑳?
     "passive_tool": TaskConfig(
-        model_name="gpt-4o",
+        model_name="passive_tool",
         temperature=0.8,
         max_tokens=1024,
         timeout=20.0,
-        fallback_model="deepseek-chat",
     ),
-    # 璁板繂缁存姢
     "diary_generate": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="diary_generate",
         temperature=0.5,
         max_tokens=512,
         timeout=20.0,
-        fallback_model="deepseek-chat",
     ),
     "topic_cluster": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="topic_cluster",
         temperature=0.3,
         max_tokens=1024,
         timeout=20.0,
-        fallback_model="deepseek-chat",
     ),
     "diary_consolidate": TaskConfig(
-        model_name="gpt-4o-mini",
+        model_name="diary_consolidate",
         temperature=0.4,
         max_tokens=2048,
         timeout=30.0,
-        fallback_model="deepseek-chat",
     ),
 }
-# Urgency thresholds for escalation
-_URGENCY_ESCALATE = 80  # urgency > 80 鈫?use stronger model
-_URGENCY_CRITICAL = 95  # urgency > 95 鈫?strongest model + more tokens
+
+# 兜底任务：未注册的任务名按它的超时/重试处理。
+_FALLBACK_TASK = "response_generate"
 
 
 class ModelRouter:
-    """Routes cognitive tasks to appropriate LLM configurations.
+    """Routes cognitive tasks to their AMKR task definitions.
 
     Usage::
 
         router = ModelRouter()
-        cfg = router.resolve("response_generate", urgency=85)
-        # cfg.model_name == "gpt-4o" (escalated from default)
+        cfg = router.resolve("response_generate")
+        # cfg.model_name == "response_generate"（即 AMKR 的任务名）
     """
 
     def __init__(
@@ -145,9 +134,9 @@ class ModelRouter:
         """Initialize router.
 
         Args:
-            task_registry: Full task鈫抍onfig mapping. If None, uses defaults.
-            overrides: Partial overrides per task (e.g.
-                {"response_generate": {"temperature": 0.5}}).
+            task_registry: Full task→config mapping. If None, uses defaults.
+            overrides: Partial overrides per task, 只支持本地字段
+                （``timeout`` / ``retries``）。
         """
         self._registry: dict[str, TaskConfig] = dict(task_registry or _DEFAULT_TASK_REGISTRY)
         if overrides:
@@ -155,11 +144,11 @@ class ModelRouter:
                 if task_name in self._registry:
                     base = self._registry[task_name]
                     self._registry[task_name] = TaskConfig(
-                        model_name=patch.get("model_name", base.model_name),
-                        temperature=patch.get("temperature", base.temperature),
-                        max_tokens=patch.get("max_tokens", base.max_tokens),
+                        model_name=base.model_name,
+                        temperature=base.temperature,
+                        max_tokens=base.max_tokens,
                         timeout=patch.get("timeout", base.timeout),
-                        fallback_model=patch.get("fallback_model", base.fallback_model),
+                        fallback_model=base.fallback_model,
                         retries=patch.get("retries", base.retries),
                     )
 
@@ -174,80 +163,24 @@ class ModelRouter:
         urgency: int = 0,
         heat_level: str = "warm",
     ) -> TaskConfig:
-        """Resolve the best config for a task, considering urgency and context.
+        """Resolve the config for a task.
 
-        Escalation rules:
-            - urgency > 80: upgrade to stronger model, lower temperature
-            - urgency > 95: strongest model, more tokens
-
-        heat_level 涓嶅啀褰卞搷 max_tokens锛岄伩鍏嶅湪 TOOL 璋冪敤鍦烘櫙涓?        鍥?token 棰勭畻涓嶈冻瀵艰嚧鎶€鑳芥爣璁拌鎴柇銆?"""
-        base = self._registry.get(task_name)
+        ``urgency`` 与 ``heat_level`` 保留在签名里以兼容既有调用方，但不再影响
+        结果：模型与采样参数的调整权在 AMKR，本框架不按本地启发式换模型。
+        """
+        base = self._registry.get(task_name) or self._registry.get(_FALLBACK_TASK)
         if base is None:
-            base = self._registry.get(
-                "response_generate",
-                TaskConfig(model_name="gpt-4o", temperature=0.7, max_tokens=512),
-            )
-
-        model = base.model_name
-        temperature = base.temperature
-        max_tokens = base.max_tokens
-        timeout = base.timeout
-        fallback = base.fallback_model
-
-        # Urgency escalation
-        if urgency > _URGENCY_CRITICAL:
-            model = self._stronger_model(model)
-            temperature = max(0.1, temperature - 0.3)
-            max_tokens = max(max_tokens, min(8192, int(max_tokens * 1.3)))
-        elif urgency > _URGENCY_ESCALATE:
-            model = self._stronger_model(model)
-            temperature = max(0.2, temperature - 0.2)
-            max_tokens = max(max_tokens, min(4096, int(max_tokens * 1.1)))
-
+            return TaskConfig(model_name=task_name, temperature=0.7, max_tokens=512, timeout=30.0)
+        # model_name 始终用调用方给的任务名：AMKR 侧可能正是按这个名字建的任务，
+        # 换成兜底名会让它查不到任务定义。
         return TaskConfig(
-            model_name=model,
-            temperature=round(temperature, 2),
-            max_tokens=max_tokens,
-            timeout=timeout,
-            fallback_model=fallback,
+            model_name=task_name,
+            temperature=base.temperature,
+            max_tokens=base.max_tokens,
+            timeout=base.timeout,
             retries=base.retries,
         )
-
-    def get_fallback(self, task_name: str) -> TaskConfig | None:
-        """Get fallback config for a task."""
-        base = self._registry.get(task_name)
-        if base and base.fallback_model:
-            return TaskConfig(
-                model_name=base.fallback_model,
-                temperature=base.temperature,
-                max_tokens=base.max_tokens,
-                timeout=base.timeout,
-                retries=base.retries,
-            )
-        return None
 
     def list_tasks(self) -> list[str]:
         """Return all registered task names."""
         return list(self._registry.keys())
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _stronger_model(current: str) -> str:
-        """Return a stronger model for escalation.
-
-        Simple tier mapping; real deployment should use provider registry.
-        """
-        tiers: dict[str, str] = {
-            "gpt-4o-mini": "gpt-4o",
-            "gpt-4o": "gpt-4o-2024-08-06",  # latest snapshot
-            "deepseek-chat": "deepseek-reasoner",
-            "deepseek-reasoner": "deepseek-chat",  # no stronger known
-            "qwen-turbo": "qwen-max",
-            "qwen-max": "qwen-max-longcontext",
-            "claude-3-haiku": "claude-3-sonnet",
-            "claude-3-sonnet": "claude-3-opus",
-        }
-        return tiers.get(current, current)

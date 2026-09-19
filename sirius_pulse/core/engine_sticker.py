@@ -171,7 +171,7 @@ class EngineSticker:
         try:
             raw = await raw_call(
                 RawRequest(
-                    model=getattr(self._engine, "_default_model", ""),
+                    model="plugin_generate",
                     system_prompt=system_prompt,
                     messages=[
                         {

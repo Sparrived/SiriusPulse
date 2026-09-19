@@ -28,7 +28,7 @@ from sirius_pulse.core.engine_sticker import EngineSticker
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
 from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
-from sirius_pulse.core.model_router import ModelRouter
+from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY, ModelRouter
 from sirius_pulse.core.participation import get_group_reply_strategy
 from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.plan_runtime import (
@@ -128,44 +128,16 @@ class _EmotionalGroupChatEngineBase:
                 )
 
     def _init_orchestration_and_task_models(self) -> None:
+        """读取人格的编排配置中属于本地的部分。
+
+        模型与采样参数不再由本框架决定——它们属于 AMKR 的任务定义。这里只保留
+        本地传输层的关注点：每个任务的超时与重试次数。
+        """
         from sirius_pulse.core.orchestration_store import OrchestrationStore
 
         orch = OrchestrationStore.load(self.work_path)
-        if not orch:
-            orch = {
-                "analysis_model": "gpt-4o-mini",
-                "chat_model": "gpt-4o",
-                "memory_model": "gpt-4o-mini",
-                "plugin_model": "gpt-4o-mini",
-            }
-            OrchestrationStore.save(self.work_path, orch)
-        analysis_model = orch.get("analysis_model", "gpt-4o-mini")
-        chat_model = orch.get("chat_model", "gpt-4o")
-        memory_model = orch.get("memory_model", "gpt-4o-mini")
-        plugin_model = orch.get("plugin_model", "gpt-4o-mini")
-        self._default_model = analysis_model
-        self._task_models = {
-            "cognition_analyze": analysis_model,
-            "memory_extract": memory_model,
-            "response_generate": chat_model,
-            "proactive_generate": chat_model,
-            "passive_tool": chat_model,
-            "plugin_generate": plugin_model,
-            "plugin_analyze": plugin_model,
-            "plugin_render": plugin_model,
-            "plugin_raw": plugin_model,
-        }
-        orch_task_models = orch.get("task_models")
-        if isinstance(orch_task_models, dict):
-            for task, model in orch_task_models.items():
-                if isinstance(model, str) and model.strip() and model.strip() != "__inherit__":
-                    self._task_models[task] = model.strip()
-        self._task_models.update(self.config.get("task_models", {}))
-        self._orch_task_temperatures = orch.get("task_temperatures")
-        self._orch_task_max_tokens = orch.get("task_max_tokens")
         self._orch_task_timeout = orch.get("task_timeout")
         self._orch_task_retries = orch.get("task_retries")
-        self._orch_task_fallback_model = orch.get("task_fallback_model")
 
     def _init_memory_system(self) -> None:
         # 共享同一个 SQLite 存储（persona.db）
@@ -210,7 +182,7 @@ class _EmotionalGroupChatEngineBase:
     def _init_cognitive_layer(self) -> None:
         self.cognition_analyzer = CognitionAnalyzer(
             provider_async=self.provider_async,
-            model_name=self._task_models.get("cognition_analyze", self._default_model),
+            model_name="cognition_analyze",
             ai_name=self.persona.name,
             ai_aliases=self.persona.aliases,
             persona=self.persona,
@@ -224,17 +196,10 @@ class _EmotionalGroupChatEngineBase:
     def _init_model_router(self) -> None:
         self._other_ai_names = list(self.config.get("other_ai_names", []))
         self.style_adapter = StyleAdapter()
+        # 只覆盖本地字段：模型与采样参数由 AMKR 的任务定义决定。
         task_overrides: dict[str, dict[str, Any]] = {}
-        for task, model in self._task_models.items():
-            override: dict[str, Any] = {"model_name": model}
-            if isinstance(self._orch_task_temperatures, dict):
-                t = self._orch_task_temperatures.get(task)
-                if isinstance(t, (int, float)):
-                    override["temperature"] = float(t)
-            if isinstance(self._orch_task_max_tokens, dict):
-                m = self._orch_task_max_tokens.get(task)
-                if isinstance(m, int):
-                    override["max_tokens"] = m
+        for task in _DEFAULT_TASK_REGISTRY:
+            override: dict[str, Any] = {}
             if isinstance(self._orch_task_timeout, dict):
                 to = self._orch_task_timeout.get(task)
                 if isinstance(to, (int, float)):
@@ -243,17 +208,8 @@ class _EmotionalGroupChatEngineBase:
                 retries = self._orch_task_retries.get(task)
                 if isinstance(retries, int):
                     override["retries"] = max(0, retries)
-            if isinstance(self._orch_task_fallback_model, dict):
-                fb = self._orch_task_fallback_model.get(task)
-                if isinstance(fb, str) and fb.strip():
-                    override["fallback_model"] = fb.strip()
-            task_overrides[task] = override
-        if self.config.get("task_model_overrides"):
-            for task, patch in self.config["task_model_overrides"].items():
-                if task in task_overrides:
-                    task_overrides[task].update(patch)
-                else:
-                    task_overrides[task] = dict(patch)
+            if override:
+                task_overrides[task] = override
         self.model_router = ModelRouter(
             overrides=task_overrides,
         )
