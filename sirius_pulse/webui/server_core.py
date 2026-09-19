@@ -228,13 +228,19 @@ class WebUIServer:
         vector_store = DiaryVectorStore(persona_dir / "diary" / "vector_db")
 
         total = 0
+        rebuilt: set[str] = set()
         for path in sorted((persona_dir / "diary").glob("*.json")):
+            if path.stem == "sim_cache":
+                continue
             try:
                 entries = store.load(path.stem)
             except Exception as exc:
                 LOG.warning("读取日记失败，跳过 %s: %s", path.name, exc)
                 continue
             if not entries:
+                # 空组也要删掉同名 collection：条目被删光后旧行会留在 Chroma 里，
+                # 既占空间又让 metadata 里的旧模型名把索引一直标记为过期。
+                vector_store.drop_group(path.stem)
                 continue
             group_id = entries[0].group_id or path.stem
             texts = [e.content for e in entries]
@@ -244,8 +250,17 @@ class WebUIServer:
             vector_store.drop_group(group_id)
             vector_store.add_many(entries)
             store.save(group_id, entries)
+            rebuilt.add(group_id)
             total += len(entries)
             LOG.info("已重建群 %s 的日记索引: %d 条", group_id, len(entries))
+
+        # 磁盘上已不存在的组（人格被改名、群被移除）同样要清掉，否则它们的旧 collection
+        # 会一直把索引判为过期，重建也永远修不掉。
+        for group in vector_store.get_stats().get("groups", []):
+            group_id = str(group.get("group_id") or "")
+            if group_id and group_id not in rebuilt:
+                vector_store.drop_group(group_id)
+                LOG.info("已清理无对应日记文件的索引: %s", group_id)
         return total
 
     # ─── 静态页面 ─────────────────────────────────────────

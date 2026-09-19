@@ -2872,6 +2872,72 @@ async def test_embedding_rebuild_when_rebuild_fails_then_reports_error(tmp_path,
     assert "AMKR 不可达" in payload["error"]
 
 
+def test_rebuild_diary_embeddings_when_group_is_empty_then_drops_orphan_collection(
+    tmp_path, monkeypatch
+):
+    """条目被删光的组必须删掉同名 collection。
+
+    只跳过错过的空组会留下旧维度的行与旧模型名，索引被永久判定为过期——重建就再也
+    修不好了。
+    """
+    import sirius_pulse.memory.diary.store as store_module
+    import sirius_pulse.memory.diary.vector_store as vs_module
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    (persona_dir / "diary").mkdir(parents=True)
+    atomic_write_json(persona_dir / "persona.json", {"name": "sirius"})
+    # 磁盘上有这个组的文件，但没有任何条目。
+    atomic_write_json(
+        persona_dir / "diary" / "group_empty.json",
+        {"group_id": "group_empty", "entries": []},
+    )
+
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        vs_module.DiaryVectorStore, "drop_group", lambda self, gid: dropped.append(gid)
+    )
+    monkeypatch.setattr(vs_module.DiaryVectorStore, "get_stats", lambda self: {"groups": []})
+    monkeypatch.setattr(store_module.DiaryFileStore, "load", lambda self, gid: [])
+    monkeypatch.setattr(
+        "sirius_pulse.embedding.client.create_embedding_client", lambda *a, **k: None
+    )
+
+    server = WebUIServer(data_dir=tmp_path)
+    total = server._rebuild_diary_embeddings()
+
+    assert total == 0
+    assert dropped == ["group_empty"]
+
+
+def test_rebuild_diary_embeddings_when_collection_has_no_file_then_drops_it(tmp_path, monkeypatch):
+    """磁盘上没有对应文件的旧 collection（群被移除/人格改名）也要清掉。"""
+    import sirius_pulse.memory.diary.store as store_module
+    import sirius_pulse.memory.diary.vector_store as vs_module
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    (persona_dir / "diary").mkdir(parents=True)
+    atomic_write_json(persona_dir / "persona.json", {"name": "sirius"})
+
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        vs_module.DiaryVectorStore, "drop_group", lambda self, gid: dropped.append(gid)
+    )
+    monkeypatch.setattr(
+        vs_module.DiaryVectorStore,
+        "get_stats",
+        lambda self: {"groups": [{"group_id": "group_removed", "count": 6}]},
+    )
+    monkeypatch.setattr(store_module.DiaryFileStore, "load", lambda self, gid: [])
+    monkeypatch.setattr(
+        "sirius_pulse.embedding.client.create_embedding_client", lambda *a, **k: None
+    )
+
+    server = WebUIServer(data_dir=tmp_path)
+    server._rebuild_diary_embeddings()
+
+    assert "group_removed" in dropped
+
+
 @pytest.mark.asyncio
 async def test_amkr_status_get_when_key_missing_then_asks_for_configuration(tmp_path):
     """未配置凭据时页面要给出可操作提示，而不是空白或 500。"""

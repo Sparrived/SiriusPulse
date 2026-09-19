@@ -68,3 +68,26 @@ def test_vector_store_when_no_collections_then_no_indexed_model(tmp_path):
 
     assert stats["indexed_model"] == ""
     assert stats["stale"] is False
+
+
+def test_vector_store_when_models_are_mixed_then_reports_stale(tmp_path):
+    """混合状态（例如重建到一半）必须仍然报过期。
+
+    这里最容易出的错是「拿不到单一模型名 → 当作不过期」，恰好会把最该报警的情况
+    吞掉：一半 collection 还是旧维度，检索结果一半不可信。
+    """
+    vector_db = tmp_path / "vector_db"
+    old = DiaryVectorStore(vector_db, model_name="BAAI/bge-small-zh")
+    if not old.available:
+        pytest.skip("chromadb 不可用")
+    old._get_collection("group_old")
+
+    current = DiaryVectorStore(vector_db, model_name="BAAI/bge-m3")
+    current._get_collection("group_new")
+
+    stats = current.get_stats()
+
+    assert stats["stale"] is True
+    # 提示里要能说出到底是哪个旧模型建的库。
+    assert stats["indexed_model"] == "BAAI/bge-small-zh"
+    assert stats["indexed_models"] == ["BAAI/bge-m3", "BAAI/bge-small-zh"]

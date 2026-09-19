@@ -287,12 +287,16 @@ class DiaryVectorStore:
         except Exception as exc:
             logger.warning("向量存储统计失败: %s", exc)
 
-        indexed_model = next(iter(indexed_models)) if len(indexed_models) == 1 else ""
+        # 只要存在任何一个 collection 记的不是当前模型，索引就已过期。不能要求「所有
+        # collection 一致」才判定：混合状态（重建到一半、或有的组是空组）下拿不到单一
+        # 模型名，若因此返回「不过期」，恰恰在最该报警的时候把提示吞掉。
+        mismatched = sorted(m for m in indexed_models if m != self._model_name)
         return {
             "available": True,
             "total_entries": total,
             "groups": groups,
             "model": self._model_name,
-            "indexed_model": indexed_model,
-            "stale": bool(indexed_models and self._model_name not in indexed_models),
+            "indexed_model": (mismatched or sorted(indexed_models) or [""])[0],
+            "indexed_models": sorted(indexed_models),
+            "stale": bool(mismatched),
         }
