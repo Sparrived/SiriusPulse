@@ -16,7 +16,12 @@ Sirius Pulse 不再自带多供应商注册表：所有模型调用都指向同�
 
 工作空间是本应用在**共享** AMKR 里的命名空间：多个 AI 服务共用一个 AMKR
 实例时，各自持有一个空间，任务名可以重名（``cognition_analyze`` 等），
-互不干扰。空间由「在里面建第一个任务」隐式产生，不需要预先创建。
+互不干扰。
+
+空间由本框架**显式创建**（``POST /api/workspaces``），因为创建的那一刻是唯一
+能拿到该空间「面板 key」的时机——之后 AMKR 永不再返回它。这把 key 用于把
+AMKR 的工作空间面板嵌进本框架的运维页，因此必须当场存下来，且只存在服务端
+（见 :mod:`sirius_pulse.providers.amkr_sync`）。
 """
 
 from __future__ import annotations
@@ -26,12 +31,20 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from sirius_pulse.providers.base import DEFAULT_TIMEOUT_SECONDS
+from sirius_pulse.utils.json_io import atomic_write_json, read_json
 
 LOGGER = logging.getLogger(__name__)
 
 GLOBAL_CONFIG_FILENAME = "global_config.json"
+
+# 全局配置里存工作空间面板 key 的字段：``{工作空间名: 面板 key}``。
+#
+# 放这里而不是单独一个文件，是因为它天然属于「AMKR 连接」这一组配置，且
+# global_config.json 已有现成的原子写。注意 ``data/`` 是 gitignored 的。
+PANEL_KEYS_FIELD = "amkr_panel_keys"
 
 # AMKR 默认监听地址（与其 README 的默认端口一致）。
 AMKR_DEFAULT_BASE_URL = "http://127.0.0.1:8000"
@@ -107,3 +120,51 @@ def load_amkr_settings(global_data_path: Path | str) -> AmkrSettings:
         api_key=_resolve_api_key(raw_key),
         workspace=workspace,
     )
+
+
+# ── 工作空间面板 key 的存放 ────────────────────────────────
+#
+# AMKR 只在**创建空间那一次**返回面板 key，之后目录与导出都剥掉它。因此本框架
+# 必须自己存：丢了就只能去读 AMKR 的配置文件，或把空间删了重建。
+#
+# 存的是明文——它是一把「只能读写一个空间的任务与读数」的受限凭据，加密的密钥
+# 又得再找一个地方放。真正的边界是：这些值只留在服务端，绝不出现在前端源码里。
+
+
+def load_panel_keys(global_data_path: Path | str) -> dict[str, str]:
+    """读取已保存的「工作空间 → 面板 key」映射。"""
+    data = read_json(Path(global_data_path) / GLOBAL_CONFIG_FILENAME, default=None)
+    if not isinstance(data, dict):
+        return {}
+    raw = data.get(PANEL_KEYS_FIELD)
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(name): str(key) for name, key in raw.items() if str(name).strip() and str(key).strip()
+    }
+
+
+def save_panel_key(global_data_path: Path | str, workspace: str, key: str) -> None:
+    """记下一把新拿到的面板 key（保留配置里的其它字段）。"""
+    path = Path(global_data_path) / GLOBAL_CONFIG_FILENAME
+    data = read_json(path, default=None)
+    if not isinstance(data, dict):
+        data = {}
+    keys = data.get(PANEL_KEYS_FIELD)
+    merged = dict(keys) if isinstance(keys, dict) else {}
+    merged[str(workspace)] = str(key)
+    data[PANEL_KEYS_FIELD] = merged
+    atomic_write_json(path, data)
+
+
+def panel_url(ui_url: str, key: str) -> str:
+    """由 AMKR WebUI 基址拼出可嵌入的工作空间面板地址。
+
+    凭据放 **fragment**（``#k=``）而不是查询串：fragment 不会被浏览器发给服务端，
+    因此既不会进 ``Referer``，也不会进 AMKR 或任何反代的访问日志。这是 AMKR 的
+    硬要求（见其 ``docs/PANEL.md`` 第 4 节），不是风格选择。
+    """
+    base = str(ui_url or "").strip().rstrip("/")
+    if not base or not str(key or "").strip():
+        return ""
+    return f"{base}/panel.html#k={quote(key.strip(), safe='')}"

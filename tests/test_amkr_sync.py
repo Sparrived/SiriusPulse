@@ -11,14 +11,16 @@ import json
 import httpx
 import pytest
 
-from sirius_pulse.providers.amkr import AmkrSettings
+from sirius_pulse.providers.amkr import AmkrSettings, load_panel_keys, save_panel_key
 from sirius_pulse.providers.amkr_sync import (
     AmkrAdminClient,
     AmkrError,
     amkr_ui_url,
     collect_amkr_status,
+    ensure_persona_workspace_key,
     inspect_persona_workspace,
     known_task_names,
+    persona_panel_url,
     register_persona_tasks,
     register_persona_tasks_async,
     register_tasks,
@@ -29,11 +31,13 @@ from sirius_pulse.providers.amkr_sync import (
 class _FakeAmkr:
     """一个够用的 AMKR 管理面替身：记录收到的请求，维护任务与 revision。"""
 
-    def __init__(self, tasks=None, *, revision="rev-1", reject_once=False):
+    def __init__(self, tasks=None, *, revision="rev-1", reject_once=False, workspaces=None):
         self.tasks = {name: {} for name in (tasks or [])}
+        self.workspaces = set(workspaces or [])
         self.revision = revision
         self.requests: list[tuple[str, str, dict, dict]] = []
         self._reject_once = reject_once
+        self._key_seq = 0
         self.health = {
             "status": "ok",
             "version": "1.2.3",
@@ -54,6 +58,21 @@ class _FakeAmkr:
         )
         if request.url.path == "/health":
             return httpx.Response(200, json=self.health)
+        if request.url.path == "/api/workspaces" and request.method == "POST":
+            name = str(body.get("name", ""))
+            if name in self.workspaces:
+                return httpx.Response(409, json={"error": f"工作空间已存在: {name}"})
+            self.workspaces.add(name)
+            self._key_seq += 1
+            return httpx.Response(
+                201,
+                json={
+                    "name": name,
+                    "task_count": 0,
+                    "api_key": f"amkr_ws_key{self._key_seq}",
+                    "config_revision": self.revision,
+                },
+            )
         if request.url.path == "/api/tasks" and request.method == "GET":
             return httpx.Response(
                 200,
@@ -309,3 +328,106 @@ def test_collect_amkr_status_when_health_has_no_webui_path_then_falls_back_to_sl
     assert amkr_ui_url(settings) == "http://amkr.test/ui"
     assert amkr_ui_url(settings, {"webui_path": None}) == "http://amkr.test/ui"
     assert amkr_ui_url(settings, {"webui_path": "/amkr/ui"}) == "http://amkr.test/amkr/ui"
+
+
+# ── 工作空间与面板 key ─────────────────────────────────────
+
+
+def test_ensure_persona_workspace_key_when_new_then_creates_workspace_and_saves_key(
+    monkeypatch, tmp_path
+):
+    """首次接入：建空间拿 key 并存到本地——这是唯一的获取时机。"""
+    fake = _FakeAmkr()
+    _install(monkeypatch, fake)
+
+    key = ensure_persona_workspace_key(_settings(), "sirius", tmp_path)
+
+    assert key == "amkr_ws_key1"
+    created = next(b for m, p, _, b in fake.requests if m == "POST" and p == "/api/workspaces")
+    assert created["name"] == "sirius-pulse/sirius"
+    assert "api_key" not in created  # 让 AMKR 生成，本框架不自造格式
+    assert load_panel_keys(tmp_path) == {"sirius-pulse/sirius": "amkr_ws_key1"}
+
+
+def test_ensure_persona_workspace_key_when_already_stored_then_does_not_touch_amkr(
+    monkeypatch, tmp_path
+):
+    """已存过 key 就不该再建空间：AMKR 对已存在的空间返回 409，徒增噪音。"""
+    fake = _FakeAmkr()
+    _install(monkeypatch, fake)
+    save_panel_key(tmp_path, "sirius-pulse/sirius", "amkr_ws_saved")
+
+    key = ensure_persona_workspace_key(_settings(), "sirius", tmp_path)
+
+    assert key == "amkr_ws_saved"
+    assert fake.requests == []
+
+
+def test_ensure_persona_workspace_key_when_workspace_exists_without_key_then_explains_recovery(
+    monkeypatch, tmp_path
+):
+    """空间已在 AMKR 侧存在但没有本地 key 时，必须明确告知无法自动恢复。"""
+    fake = _FakeAmkr(workspaces=["sirius-pulse/sirius"])
+    _install(monkeypatch, fake)
+
+    with pytest.raises(AmkrError, match="工作空间已存在"):
+        ensure_persona_workspace_key(_settings(), "sirius", tmp_path)
+
+    assert load_panel_keys(tmp_path) == {}
+
+
+def test_register_persona_tasks_when_provisioning_then_creates_workspace_before_tasks(
+    monkeypatch, tmp_path
+):
+    """建空间必须发生在注册任务之前，否则拿不到面板 key。"""
+    fake = _FakeAmkr()
+    _install(monkeypatch, fake)
+
+    result = register_persona_tasks(
+        _settings(), "sirius", task_names=["plugin_raw"], global_data_path=tmp_path
+    )
+
+    assert result.created == ["plugin_raw"]
+    posts = [p for m, p, _, _ in fake.requests if m == "POST"]
+    assert posts[0] == "/api/workspaces"
+    assert posts.count("/api/tasks") == 1
+    assert load_panel_keys(tmp_path) == {"sirius-pulse/sirius": "amkr_ws_key1"}
+
+
+def test_persona_panel_url_when_key_stored_then_puts_credential_in_fragment(monkeypatch, tmp_path):
+    """凭据必须在 fragment 里：查询串会进 Referer 与服务端日志。"""
+    save_panel_key(tmp_path, "sirius-pulse/sirius", "amkr_ws_secret")
+
+    url = persona_panel_url(_settings(), "sirius", tmp_path)
+
+    assert url == "http://amkr.test/ui/panel.html#k=amkr_ws_secret"
+    assert "?" not in url
+
+
+def test_persona_panel_url_when_no_key_stored_then_returns_empty(tmp_path):
+    """没有 key 时返回空串，由调用方决定如何提示，而不是拼一个 401 的地址。"""
+    assert persona_panel_url(_settings(), "sirius", tmp_path) == ""
+
+
+def test_collect_amkr_status_when_key_stored_then_marks_panel_ready(monkeypatch, tmp_path):
+    """巡检要能告诉运维「这个空间的面板能不能用」。"""
+    fake = _FakeAmkr(tasks=["response_generate"])
+    _install(monkeypatch, fake)
+    save_panel_key(tmp_path, "sirius-pulse/sirius", "amkr_ws_secret")
+
+    status = collect_amkr_status(_settings(), ["sirius"], global_data_path=tmp_path)
+
+    assert status["reachable"] is True
+    assert status["workspaces"][0]["panel_ready"] is True
+    # 状态里绝不出现 key 本身：它是管理员接口的事。
+    assert "amkr_ws_secret" not in json.dumps(status, ensure_ascii=False)
+
+
+def test_collect_amkr_status_when_no_key_stored_then_panel_not_ready(monkeypatch, tmp_path):
+    """没有面板 key 的空间要显式标出来，页面才能提示运维。"""
+    fake = _FakeAmkr()
+    _install(monkeypatch, fake)
+
+    status = collect_amkr_status(_settings(), ["sirius"], global_data_path=tmp_path)
+
+    assert status["workspaces"][0]["panel_ready"] is False
