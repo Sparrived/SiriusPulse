@@ -1,7 +1,9 @@
-"""WebSocket 事件推送服务 — 桥接 SessionEventBus 到 WebUI 前端。
+"""WebSocket 事件推送服务 — 把事件送到 WebUI 前端。
 
-将引擎运行时产生的 SessionEvent 实时推送给连接的 WebSocket 客户端，
-支持按人格订阅（/ws/events/{name}）和全局订阅（/ws/events）。
+本模块只负责连接管理与广播（按人格订阅 ``/ws/events/{name}``、全局订阅
+``/ws/events``）。内容有两个来源：``WebUIFileEventBridge`` 把 ``data/`` 下的
+文件变更映射成粗粒度资源事件，``EngineEventBridge`` 订阅人格引擎的
+``SessionEventBus`` 并转发引擎事件。
 """
 
 from __future__ import annotations
