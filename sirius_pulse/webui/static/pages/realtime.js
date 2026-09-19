@@ -7,6 +7,9 @@ const TYPE_RESOURCES = {
   execution_completed: ['conversations', 'tokens', 'logs', 'monitoring', 'dashboard'],
   delayed_response_triggered: ['conversations', 'logs', 'monitoring', 'dashboard'],
   reminder_triggered: ['conversations', 'logs', 'monitoring', 'dashboard'],
+  // 自主回合（origin=self_initiated）与普通回合共用这一个事件；页面按
+  // resources 里的 'autonomy' 决定要不要刷新自己的视图。
+  agent_turn_updated: ['autonomy', 'conversations', 'logs', 'monitoring', 'dashboard'],
   local_change: ['dashboard'],
 };
 

@@ -5070,3 +5070,364 @@ tr:hover td {
   font-size: 10px;
   color: var(--text-3);
 }
+
+/* ==========================================================================
+   Autonomy — 自主行为
+   ========================================================================== */
+
+.autonomy-page {
+  --autonomy-accent: #c9a6ff;
+  --autonomy-accent-dim: rgba(201, 166, 255, 0.12);
+  --autonomy-line: rgba(201, 166, 255, 0.28);
+  max-width: 1560px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+}
+
+.autonomy-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.autonomy-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--autonomy-accent);
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.14em;
+}
+
+.autonomy-signal-dot {
+  width: 7px;
+  height: 7px;
+  display: inline-block;
+  border-radius: 50%;
+  background: var(--autonomy-accent);
+  box-shadow: 0 0 0 4px var(--autonomy-accent-dim), 0 0 12px var(--autonomy-accent);
+}
+
+.autonomy-heading {
+  margin-top: 8px;
+  font-size: 25px;
+  font-weight: 600;
+}
+
+.autonomy-subtitle {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.autonomy-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.autonomy-connection,
+.autonomy-count,
+.autonomy-live-badge {
+  color: var(--text-3);
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.autonomy-connection::before {
+  content: '●';
+  margin-right: 6px;
+  color: var(--text-3);
+}
+
+.autonomy-connection.is-live {
+  color: var(--success);
+}
+
+.autonomy-connection.is-live::before {
+  color: var(--success);
+}
+
+.autonomy-connection.is-loading {
+  color: var(--warn);
+}
+
+.autonomy-connection.is-loading::before {
+  color: var(--warn);
+}
+
+.autonomy-connection.is-error {
+  color: var(--danger);
+}
+
+.autonomy-connection.is-error::before {
+  color: var(--danger);
+}
+
+.autonomy-stat-grid {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  margin-bottom: 20px;
+}
+
+.autonomy-stat-open .stat-value {
+  color: var(--autonomy-accent);
+}
+
+.autonomy-stat-when {
+  font-size: 15px;
+  font-family: var(--font-mono);
+}
+
+.autonomy-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .autonomy-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.autonomy-live-card {
+  border-color: var(--autonomy-line);
+  margin-bottom: 20px;
+}
+
+.autonomy-live-badge {
+  color: var(--autonomy-accent);
+}
+
+.autonomy-live-body {
+  padding: 4px 16px 16px;
+}
+
+.autonomy-live-head,
+.autonomy-episode-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.autonomy-live-outcome {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.autonomy-list,
+.autonomy-timeline {
+  padding: 4px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 640px;
+  overflow-y: auto;
+}
+
+.autonomy-item {
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--autonomy-line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.02));
+}
+
+.autonomy-item.is-spent {
+  opacity: 0.6;
+}
+
+.autonomy-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.autonomy-item-what {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-1);
+  word-break: break-word;
+}
+
+.autonomy-urgency {
+  flex-shrink: 0;
+  font: 600 11px/1 var(--font-mono);
+  color: var(--autonomy-accent);
+}
+
+.autonomy-item-tags {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.autonomy-item-why,
+.autonomy-item-outcome {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.autonomy-item-why {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.autonomy-item-refs {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.autonomy-ref {
+  font: 500 10px/1.4 var(--font-mono);
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--autonomy-accent-dim);
+  color: var(--autonomy-accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+a.autonomy-ref:hover {
+  text-decoration: underline;
+}
+
+.autonomy-item-meta,
+.autonomy-episode-time {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+  font: 500 10px/1 var(--font-mono);
+  color: var(--text-3);
+}
+
+.autonomy-episode {
+  display: flex;
+  gap: 12px;
+}
+
+.autonomy-episode-rail {
+  flex-shrink: 0;
+  width: 10px;
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.autonomy-episode-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--autonomy-accent);
+  box-shadow: 0 0 0 3px var(--autonomy-accent-dim);
+}
+
+.autonomy-kind-reading {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.autonomy-kind-building {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-dim);
+}
+
+.autonomy-kind-image {
+  background: var(--info);
+  box-shadow: 0 0 0 3px var(--info-dim);
+}
+
+.autonomy-kind-share {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-dim);
+}
+
+.autonomy-episode-body {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.autonomy-episode:last-child .autonomy-episode-body {
+  border-bottom: none;
+}
+
+.autonomy-episode-kind {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--autonomy-accent);
+}
+
+.autonomy-episode-outcome {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.autonomy-episode-seed,
+.autonomy-episode-to {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-3);
+  word-break: break-word;
+}
+
+.autonomy-episode-to {
+  color: var(--warn);
+}
+
+.autonomy-empty {
+  padding: 36px 16px;
+  text-align: center;
+}
+
+.autonomy-empty-title {
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.autonomy-empty-detail {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+.autonomy-footnote {
+  margin-top: 16px;
+  font-size: 11px;
+  color: var(--text-3);
+  word-break: break-all;
+}
+
+.autonomy-footnote code {
+  font-family: var(--font-mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--autonomy-accent-dim);
+  color: var(--autonomy-accent);
+}
+

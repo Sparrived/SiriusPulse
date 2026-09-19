@@ -1,0 +1,73 @@
+<div class="autonomy-page" id="autonomyPage">
+  <div class="autonomy-toolbar">
+    <div>
+      <div class="autonomy-eyebrow"><span class="autonomy-signal-dot"></span> SELF-INITIATED</div>
+      <h2 class="autonomy-heading">自主行为</h2>
+      <p class="autonomy-subtitle">她惦记着什么 · 她自己做了什么 · 说给了谁听</p>
+    </div>
+    <div class="autonomy-toolbar-actions">
+      <span class="autonomy-connection" id="autonomyConnection">读取中</span>
+      <button class="btn btn-sm" id="autonomyRefresh" title="重新读取">↻ 刷新</button>
+    </div>
+  </div>
+
+  <div class="stat-grid autonomy-stat-grid">
+    <div class="stat-card autonomy-stat-card autonomy-stat-open">
+      <div class="stat-label">未了心意</div>
+      <div class="stat-value" id="autonomyOpen">—</div>
+      <div class="stat-detail">还没了结的念头</div>
+    </div>
+    <div class="stat-card autonomy-stat-card">
+      <div class="stat-label">累计自主</div>
+      <div class="stat-value" id="autonomyEpisodeTotal">—</div>
+      <div class="stat-detail">她主动做过的事</div>
+    </div>
+    <div class="stat-card autonomy-stat-card">
+      <div class="stat-label">说出口</div>
+      <div class="stat-value" id="autonomyShared">—</div>
+      <div class="stat-detail">其中分享给别人的</div>
+    </div>
+    <div class="stat-card autonomy-stat-card">
+      <div class="stat-label">最近一次</div>
+      <div class="stat-value autonomy-stat-when" id="autonomyLastAt">—</div>
+      <div class="stat-detail" id="autonomyLastKind">还没有过</div>
+    </div>
+  </div>
+
+  <section class="card autonomy-live-card" id="autonomyLiveCard" hidden>
+    <div class="card-header">
+      <div>
+        <div class="card-title">刚刚</div>
+        <div class="card-subtitle">她自己发起的回合，实时到达</div>
+      </div>
+      <span class="autonomy-live-badge" id="autonomyLiveBadge">LIVE</span>
+    </div>
+    <div id="autonomyLive" class="autonomy-live-body"></div>
+  </section>
+
+  <div class="autonomy-grid">
+    <section class="card autonomy-intent-card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">她惦记着什么</div>
+          <div class="card-subtitle">动机是持久的；心跳只决定"这一轮要不要动"</div>
+        </div>
+        <span class="autonomy-count" id="autonomyIntentCount">0 条</span>
+      </div>
+      <div id="autonomyIntentions" class="autonomy-list"></div>
+    </section>
+
+    <section class="card autonomy-episode-card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">她自己做过什么</div>
+          <div class="card-subtitle">按时间倒序，只记录真的发生过的事</div>
+        </div>
+        <span class="autonomy-count" id="autonomyEpisodeCount">0 条</span>
+      </div>
+      <div id="autonomyEpisodes" class="autonomy-timeline"></div>
+    </section>
+  </div>
+
+  <div class="autonomy-footnote" id="autonomyFootnote"></div>
+</div>
