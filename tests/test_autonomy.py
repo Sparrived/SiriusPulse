@@ -41,7 +41,6 @@ _NOW = _REAL_NOW + timedelta(hours=(12 - _REAL_NOW.astimezone(_CN_TZ).hour) % 24
 def _pin_clock(monkeypatch):
     """所有用例都在本地白天运行，避免夜间静默期让分享类断言随机失败。"""
     monkeypatch.setattr(autonomy, "_now", lambda: _NOW)
-    monkeypatch.setattr(intend_share, "_now", lambda: _NOW)
 
 
 class _Store:
@@ -705,35 +704,27 @@ async def test_a_message_written_at_night_waits_until_morning(tmp_path, monkeypa
     assert carried.get(intention.intention_id).shared_at != ""
 
 
-# --- 宵禁期间最多留一条 -----------------------------------------------------------
+# --- 天亮时不会一次轰炸 -----------------------------------------------------------
 
 
-def test_only_one_message_is_recorded_during_the_night(tmp_path, monkeypatch):
-    """夜里最多留下一条：否则天亮后会被冷却摊到很晚，越靠后越不新鲜。"""
-    monkeypatch.setattr(intend_share, "_now", lambda: _cn(23, 30))
-    ctx = _make_ctx(tmp_path)
-
-    first = intend_share.run(what="今天的晚霞特别好看", engine_context=ctx)
-    second = intend_share.run(what="还有一件想说的", engine_context=ctx)
-
-    assert first["success"] is True
-    assert second["success"] is False
-    carried = IntentFileStore(tmp_path).load()
-    assert [item.what for item in carried.all()] == ["今天的晚霞特别好看"]
+def _seed_pending_shares(tmp_path, count: int) -> None:
+    """夜里攒下若干条待发的话（不设上限，她想记多少记多少）。"""
+    for i in range(count):
+        _seed_intention(
+            tmp_path,
+            what=f"夜里第{i + 1}件想说的",
+            resolution=RESOLUTION_TELL,
+            audience="private_10001",
+            urgency=0.9,
+        )
 
 
-def test_the_cap_also_covers_messages_without_an_audience(tmp_path, monkeypatch):
-    """只数"已定受众"的话会让上限形同虚设：她能无限登记还没想好说给谁的。"""
-    monkeypatch.setattr(intend_share, "_now", lambda: _cn(23, 30))
-    ctx = _make_ctx(tmp_path)
+def test_she_may_record_any_number_of_messages_at_night(tmp_path):
+    """夜里登记不设上限：她晚上做了多少事是她自己的事。
 
-    assert intend_share.run(what="有点想找人说说话", engine_context=ctx)["success"] is True
-    assert intend_share.run(what="还有一句", engine_context=ctx)["success"] is False
-
-
-def test_recording_is_unlimited_outside_the_night(tmp_path, monkeypatch):
-    """上限只属于宵禁：白天想记多少记多少。"""
-    monkeypatch.setattr(intend_share, "_now", lambda: _cn(12))
+    三条就足以证伪"上限为 1"，不必写更多——每次登记都是一次原子落盘，
+    条数越多越容易撞上 Windows 上杀软抢占重命名的已知抖动。
+    """
     ctx = _make_ctx(tmp_path)
 
     for i in range(3):
@@ -743,21 +734,31 @@ def test_recording_is_unlimited_outside_the_night(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_cap_is_released_once_the_first_one_is_delivered(tmp_path, monkeypatch):
-    """那条发出后，新的又能记了——上限限的是"积压"，不是"一天一条"。"""
-    monkeypatch.setattr(intend_share, "_now", lambda: _cn(23, 30))
+async def test_a_night_of_backlog_does_not_burst_at_dawn(tmp_path, monkeypatch):
+    """要紧的是 08:00 不能轰炸：积压 8 条时，天亮后第一个小时也只发一条。"""
+    _seed_pending_shares(tmp_path, 8)
+    clock = [_cn(7, 45)]
+    monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
     ctx = _make_ctx(tmp_path)
-    assert (
-        intend_share.run(what="今天的晚霞特别好看", audience="private_10001", engine_context=ctx)["success"]
-        is True
-    )
-    assert intend_share.run(what="第二条", engine_context=ctx)["success"] is False
 
-    # 天亮后那条发出去，队列随之清空。
-    monkeypatch.setattr(autonomy, "_now", lambda: _cn(8, 5))
-    morning = _make_ctx(tmp_path)
-    assert await autonomy.run_tick(morning) is not None
-    assert len(morning.delivered) == 1
+    for _ in range(4):  # 08:00 起按 15 分钟心跳走满一小时
+        clock[0] += timedelta(minutes=15)
+        await autonomy.run_tick(ctx)
 
-    assert intend_share.run(what="现在可以记新的了", engine_context=ctx)["success"] is True
-    assert len(IntentFileStore(tmp_path).load().all()) == 2
+    assert len(ctx.delivered) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_backlog_drains_one_per_cooldown_interval(tmp_path, monkeypatch):
+    """积压按 share_cooldown_seconds 一条条摊开，不会攒到某一刻一起倒出来。"""
+    _seed_pending_shares(tmp_path, 3)
+    clock = [_cn(7, 45)]
+    monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
+    ctx = _make_ctx(tmp_path)
+
+    for _ in range(4 * 3):  # 三小时，每 15 分钟一跳
+        clock[0] += timedelta(minutes=15)
+        await autonomy.run_tick(ctx)
+
+    assert len(ctx.delivered) == 3
+    assert ctx.delivered[0]["text"] == "夜里第1件想说的"
