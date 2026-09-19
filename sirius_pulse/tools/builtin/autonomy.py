@@ -43,7 +43,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.core.autonomy import AutonomyPolicy, Episode
+from sirius_pulse.core.autonomy import AutonomyPolicy, Episode, is_quiet_hours
 from sirius_pulse.core.intent import (
     IntentFileStore,
     Intention,
@@ -63,9 +63,9 @@ _OUTCOME_MAX_CHARS = 600
 
 # How long she must have been left to herself before free time is offered.  This
 # is the only path that starts from nothing, so it is paced separately from the
-# heartbeat: at 900s heartbeats a 3h interval means a handful of free-time turns
-# a day at most, not one per beat.
-_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 3 * 60 * 60
+# heartbeat: at 900s heartbeats a 1h interval means at most a handful of free-time
+# turns a day, not one per beat.
+_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 60 * 60
 
 # A tell-intention is cheap to deliver, so it gets its own, much tighter gate:
 # one share per hour per persona, on top of the normal reply cooldown.
@@ -100,7 +100,7 @@ TOOL_META = {
         "free_time_interval_seconds": {
             "type": "int",
             "description": (
-                "她无事惦记且长时间没人找她时，隔多久给她一段完全空白的自主时间。" "设为 0 表示关闭（她只会在已经惦记着什么时才行动）。默认 10800。"
+                "她无事惦记且长时间没人找她时，隔多久给她一段完全空白的自主时间。" "设为 0 表示关闭（她只会在已经惦记着什么时才行动）。默认 3600。"
             ),
             "default": _DEFAULT_FREE_TIME_INTERVAL_SECONDS,
             "group": "节奏",
@@ -126,6 +126,11 @@ def create_background_tasks(ctx: Any) -> list[BackgroundTaskSpec]:
     ]
 
 
+def _now() -> datetime:
+    """Current UTC time.  Indirection point so tests can pin the clock."""
+    return datetime.now(timezone.utc)
+
+
 async def run_tick(ctx: Any) -> Episode | None:
     """Run one autonomy tick.  Returns the episode, or None when she did nothing."""
     store = ctx.get_data_store("autonomy")
@@ -137,7 +142,7 @@ async def run_tick(ctx: Any) -> Episode | None:
         return None
 
     state = _load_state(store)
-    now = datetime.now(timezone.utc)
+    now = _now()
 
     # First sight of a fresh state: start the free-time clock now rather than
     # leaving it absent.  ``_parse_time("")`` reads as 1970, which would hand her
@@ -311,7 +316,7 @@ async def run_share_tick(ctx: Any) -> bool:
     """Deliver one pending share out of band.  Used by tests and manual nudges."""
     store = ctx.get_data_store("autonomy")
     state = _load_state(store)
-    now = datetime.now(timezone.utc)
+    now = _now()
     intentions = _load_intentions(ctx)
     share = _next_share(intentions, now)
     if share is None:
@@ -328,6 +333,13 @@ async def _deliver_share(ctx: Any, share: Intention, state: dict[str, Any], now:
     if not audience:
         # She never picked anyone.  Ask her once, on a model turn, rather than
         # guessing a destination on her behalf.
+        return False
+    # Quiet hours gate *sending* only, and deliberately not ``last_share_at``:
+    # the intention stays pending so it goes out after the window ends instead of
+    # being dropped or silently marked as said.  She is still free to think and
+    # work during the night -- only the message waits.
+    if is_quiet_hours(now):
+        logger.debug("夜间静默期，暂不投递分享: %s", audience)
         return False
     try:
         delivered = await ctx.deliver_share(
