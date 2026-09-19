@@ -105,6 +105,27 @@ def _remove_file_if_exists(path: Path) -> None:
         pass
 
 
+def _normalize_local_path(value: str) -> Path | None:
+    """把 NapCat 报出的文件引用解析成本机路径，非本机文件返回 ``None``。
+
+    兼容 ``file://`` 形式（含 Windows 盘符写法）与 ``file:///`` 三斜杠路径。
+    """
+    text = str(value or "").strip()
+    if not text or text.startswith(("http://", "https://", "data:", "base64://")):
+        return None
+    if text.startswith("file://"):
+        parsed = urlparse(text)
+        raw_path = unquote(parsed.path or "")
+        if parsed.netloc:
+            raw_path = f"//{parsed.netloc}{raw_path}"
+        if raw_path.startswith("/") and len(raw_path) >= 3 and raw_path[2] == ":":
+            raw_path = raw_path[1:]
+        text = raw_path
+    if not text:
+        return None
+    return Path(text).expanduser()
+
+
 class NapCatAdapter(BaseAdapter):
     """NapCat OneBot v11 正向 WebSocket 客户端 + 平台集成。
 
@@ -1056,7 +1077,12 @@ class NapCatAdapter(BaseAdapter):
             return ""
 
     async def _collect_image_inputs(self, segments: list[dict[str, Any]]) -> list[dict[str, str]]:
-        """把 OneBot 消息段中的图片缓存到本地并转换为多模态输入项。"""
+        """把 OneBot 消息段中的图片缓存到本地并转换为多模态输入项。
+
+        只有真正拿到本地副本的图片才会进入多模态通道：下载失败时该图被丢弃，
+        而不是退回原始平台地址（QQ 多媒体链接带短时效签名且校验 Referer，
+        上游模型自行下载只会得到 403）。
+        """
         inputs: list[dict[str, str]] = []
         for seg in segments:
             if seg.get("type") != "image":
@@ -1066,7 +1092,10 @@ class NapCatAdapter(BaseAdapter):
             if not url:
                 continue
             is_sticker = str(data.get("sub_type", "")) == "1"
-            local_path = await self.cache_image(str(url), is_sticker=is_sticker)
+            local_path = await self._resolve_segment_image(data, is_sticker=is_sticker)
+            if not local_path:
+                LOG.warning("图片无法本地化，已跳过视觉输入: %s", str(url)[:80])
+                continue
             item: dict[str, str] = {
                 "type": "image",
                 "value": local_path,
@@ -1076,6 +1105,87 @@ class NapCatAdapter(BaseAdapter):
                 item["sub_type"] = "1"
             inputs.append(item)
         return inputs
+
+    async def _resolve_segment_image(self, data: dict[str, Any], *, is_sticker: bool) -> str:
+        """把一个 OneBot 图片段落成本地可用引用，失败返回空字符串。"""
+        primary = str(data.get("url", "") or data.get("file", "")).strip()
+        file_ref = str(data.get("file", "")).strip()
+
+        # 非网络地址（本地路径/数据地址）已经是可用输入，无需下载或兜底。
+        if primary and not primary.startswith(("http://", "https://")):
+            return primary
+
+        candidates: list[str] = []
+        for candidate in (primary, file_ref):
+            if candidate and candidate.startswith(("http://", "https://")):
+                if candidate not in candidates:
+                    candidates.append(candidate)
+
+        for candidate in candidates:
+            local_path = await self.cache_image(candidate, is_sticker=is_sticker)
+            if local_path:
+                return local_path
+
+        return await self._recover_image_via_api(file_ref or primary, is_sticker=is_sticker)
+
+    async def _recover_image_via_api(self, file_ref: str, *, is_sticker: bool) -> str:
+        """直连下载失败时，用 NapCat 的 get_image 取回图片。
+
+        NapCat 与该进程可能不在同一文件系统上，因此只有当它给出的路径在本机
+        确实可读时才会采用；否则退回按 URL 再缓存一次。
+        """
+        file_ref = str(file_ref or "").strip()
+        if not file_ref:
+            return ""
+        try:
+            resp = await self.call_api("get_image", {"file": file_ref})
+        except Exception as exc:
+            LOG.debug("get_image 兜底失败 (%s): %s", file_ref[:60], exc)
+            return ""
+
+        payload = resp.get("data") if isinstance(resp, dict) else None
+        if not isinstance(payload, dict):
+            return ""
+        for key in ("file", "path", "url"):
+            value = str(payload.get(key, "") or "").strip()
+            if not value:
+                continue
+            adopted = self._adopt_local_image(value, is_sticker=is_sticker)
+            if adopted:
+                return adopted
+            if value.startswith(("http://", "https://")):
+                cached = await self.cache_image(value, is_sticker=is_sticker)
+                if cached:
+                    return cached
+        return ""
+
+    def _adopt_local_image(self, value: str, *, is_sticker: bool) -> str:
+        """把 NapCat 报出的本机图片文件收进人格图片缓存，失败返回空字符串。"""
+        import hashlib
+
+        source = _normalize_local_path(value)
+        if source is None:
+            return ""
+        try:
+            if not source.is_file():
+                return ""
+            data = source.read_bytes()
+        except OSError as exc:
+            LOG.debug("读取 NapCat 本地图片失败 (%s): %s", source, exc)
+            return ""
+
+        cache_dir = self._sticker_cache_dir if is_sticker else self._image_cache_dir
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            suffix = source.suffix or ".jpg"
+            content_hash = hashlib.md5(data, usedforsecurity=False).hexdigest()
+            cache_path = cache_dir / f"{content_hash}{suffix}"
+            if not cache_path.exists():
+                cache_path.write_bytes(data)
+            return str(cache_path)
+        except OSError as exc:
+            LOG.debug("写入 NapCat 图片缓存失败 (%s): %s", source, exc)
+            return ""
 
     async def _render_private_prompt(
         self,

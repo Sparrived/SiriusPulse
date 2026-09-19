@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.adapters.models import MessageGroup, ParsedEvent
+from sirius_pulse.utils.image_bytes import (
+    MAX_INLINE_IMAGE_BYTES,
+    MAX_INLINE_IMAGE_EDGE,
+    downscale_image_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +55,30 @@ class BaseAdapter(ABC):
 
     # ── 图片缓存（通用，子类可覆写 _cache_image_headers） ──
 
+    #: 单张图片缓存上限。超过此体积的图片会先降采样再落盘，而不是放弃内联：
+    #: 一旦退回原始网络地址，那多半是带短时效签名的 CDN 链接，上游模型自行
+    #: 下载时必然失败（QQ 多媒体链接尤其如此）。
+    MAX_CACHED_IMAGE_BYTES: int = MAX_INLINE_IMAGE_BYTES
+
     async def cache_image(self, url: str, *, is_sticker: bool = False) -> str:
-        """下载并缓存图片到本地。
+        """下载并缓存图片到本地，返回**本地文件路径**。
 
         跨平台通用：HTTP 下载 + MD5 去重 + 本地文件存储。
         子类可覆写 _cache_image_headers() 来适配不同平台的请求头要求。
+
+        Returns:
+            本地文件路径；下载或落盘失败时返回空字符串。
+
+        失败时**不再回退成原始 URL**：平台图片地址通常带短时效签名并校验
+        Referer，交给上游模型只会得到 403 与「看不到图片」的幻觉。宁可明确
+        地没有这张图，也不要给出一个必然失效的链接。
         """
         import hashlib
 
         import aiohttp
 
         if not url.startswith(("http://", "https://")):
+            # 调用方已经给了本地路径/数据地址时原样透传，仍可能是可用输入。
             return url
 
         cache_dir = (
@@ -74,25 +92,58 @@ class BaseAdapter(ABC):
             timeout = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, headers=self._cache_image_headers()) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        if len(data) > 10 * 1024 * 1024:
-                            logger.warning("图片过大(%d bytes)，跳过缓存: %s", len(data), url[:80])
-                            return url
-                        # MD5 is used only as a deterministic cache key, never
-                        # for integrity, authentication, or another security decision.
-                        content_hash = hashlib.md5(data, usedforsecurity=False).hexdigest()
-                        cache_path = cache_dir / f"{content_hash}{ext}"
-                        if cache_path.exists():
-                            return str(cache_path)
-                        cache_path.write_bytes(data)
-                        (cache_dir / f"{content_hash}{ext}.url").write_text(url, encoding="utf-8")
-                        if not is_sticker:
-                            await self._cleanup_cache(cache_dir, max_files=200)
-                        return str(cache_path)
+                    if resp.status != 200:
+                        logger.warning("图片下载失败 HTTP %s: %s", resp.status, url[:80])
+                        return ""
+                    data = await resp.read()
         except Exception as exc:
             logger.warning("图片下载异常: %s | %s", exc, url[:80])
-        return url
+            return ""
+
+        if len(data) > self.MAX_CACHED_IMAGE_BYTES:
+            shrunk = self._downscale_image_bytes(data)
+            if shrunk is None:
+                logger.warning("图片过大且无法压缩，放弃内联: %s", url[:80])
+                return ""
+            data = shrunk
+            # 压缩输出恒为 JPEG，扩展名必须跟着改，否则传输层会按原扩展名
+            # 推断出与字节内容不符的 MIME。
+            ext = ".jpg"
+
+        try:
+            # MD5 is used only as a deterministic cache key, never
+            # for integrity, authentication, or another security decision.
+            content_hash = hashlib.md5(data, usedforsecurity=False).hexdigest()
+            cache_path = cache_dir / f"{content_hash}{ext}"
+            if cache_path.exists():
+                return str(cache_path)
+            cache_path.write_bytes(data)
+            (cache_dir / f"{content_hash}{ext}.url").write_text(url, encoding="utf-8")
+        except OSError as exc:
+            logger.warning("图片写入缓存失败: %s | %s", exc, url[:80])
+            return ""
+
+        if not is_sticker:
+            await self._cleanup_cache(cache_dir, max_files=200)
+        return str(cache_path)
+
+    def _downscale_image_bytes(
+        self,
+        data: bytes,
+        *,
+        max_bytes: int | None = None,
+        max_edge: int = MAX_INLINE_IMAGE_EDGE,
+    ) -> bytes | None:
+        """把过大的图片降采样到 JPEG，使其能作为内联视觉输入。
+
+        Returns:
+            压缩后的 JPEG 字节；Pillow 不可用或解码失败时返回 ``None``。
+        """
+        return downscale_image_bytes(
+            data,
+            max_bytes=max_bytes if max_bytes is not None else self.MAX_CACHED_IMAGE_BYTES,
+            max_edge=max_edge,
+        )
 
     @staticmethod
     def _cache_image_headers() -> dict[str, str]:
