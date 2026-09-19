@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- **所有被动后台任务从未真正运行**：`BackgroundTaskSpec.run_loop()` 的首句是 `while running_check()`。被动 TOOL 与 Plugin 的后台任务都在引擎**构造期**由 `asyncio.create_task` 建好，而引擎把 `_bg_running` 置为 `True` 要等 `_build_engine()` 返回之后；构造期剩余的 `await`（例如 MCP 工具加载，实测约 3 秒）足以让事件循环首次调度这些任务。此时检查为假，循环体一次都不执行，协程直接返回并**永久结束**——没有日志、没有异常，外部只看到「任务已注册」。受影响的是全部复用该循环的被动行为，包括人格自主心跳与 Bash 内部定时任务（线上 `bash.json` 里每日任务的 `run_count` 停在 8 月 31 日，正是引入该循环的提交时间）。现在 `run_loop()` 会先等待 `running_check` 为真再进入周期循环。
 - **模型看到的不是别人发的图，而是一个「禁止访问」的链接**：入站图片原本在适配器层就下载到本地，再由传输层转成 base64 data URL，模型确实拿到像素。但 `cache_image()` 在下载失败（HTTP 403 / 网络异常）或图片超过 10MB 时会**直接把原始 URL 当结果返回**——那多半是 `https://multimedia.nt.qq.com.cn/download?...&rkey=...` 这种带短时效签名、且校验 `Referer` 的 QQ 多媒体链接。上游模型拿它自行下载必然 403（线上日志累计 309 次 `Failed to download multimodal content`），于是模型只能说「这是一张 QQ 空间禁止访问的图片」。现在 `cache_image()` 失败时返回空字符串，该图直接不进视觉通道；超过上限的图片改为降采样成 JPEG 保留，而不是丢弃。`_collect_image_inputs()` 在直连失败时还会调用 NapCat 的 `get_image` 兜底取回图片。
 - **聊天历史 XML 回显图片路径/链接**：`context_assembler.py` 的 `<image>` 标签原先带 `src="..."`，把本地缓存路径或平台签名 URL 直接写进 prompt。这对模型没有视觉价值，反而诱导它复述一个自己无法访问的地址。改为只输出 `caption`（`<image type="image" caption="..."/>`）。
 - **旧数据里的签名链接仍会被送上游**：视觉通道新增不变式——只接受本地路径与 `data:` 地址，`http(s)://` 值一律剔除并告警。这同时清理了修复前已持久化到会话与记忆里的失效链接。
@@ -35,6 +36,8 @@
 
 ### Added
 
+- **人格自主行为**：新增内置 `autonomy` Tool，让每个人格拥有一段属于自己的时间。它不向模型暴露入口，只注册一个慢速心跳；心跳本身不是闹钟，职责是「看看她心里还惦记着什么」，因此大多数时候的结论就是什么都不做。限制她的是**意图**而不是计数器：没有每日配额，也没有调用冷却，节奏上限就是心跳间隔本身。动机来自她**遇到**的东西（群里的一篇文章、一个没弄明白的问题），记为 `{persona}/memory/intentions.json` 里的持久意图，跨心跳存在。意图只有两种归宿，都是同一份数据的不同 `resolution`：`do`（自己去做点什么）与 `tell`（把某件事说给某个人听，**受众是意图的一部分**）。产出写入 `{persona}/memory/autonomy/episodes.json`，并作为 `scope=persona` 的记忆单元进入既有记忆，让她以后**知道**自己做过这件事。为了避免同一件始终做不完的事在每个心跳上各烧一次模型调用，单条意图最多尝试 3 次。
+- **`intend_share` Tool**：唯一对模型可见的自主相关 Tool，只**登记**她想说的话与由她自己指定的受众，绝不立即发送；可带 `intention_id` 给一条「还没想好说给谁」的旧意图补上受众，而不是重复登记。投递经既有主动消息管线（`dispatch_proactive_message`），因此白名单、投递确认与 `event_id` 幂等都由框架保证，一次投递即标记 `shared_at`，不会重复说第二遍。
 - **Embedding 模型变更检测与索引重建**：`DiaryVectorStore.get_stats()` 读出建库时记下的模型名，与当前配置比对后给出 `indexed_model` / `stale`；WebUI 仪表盘的 Embedding 项在模型不匹配时显示「待重建」，气泡内说明原因并提供「重建索引」按钮（`POST /api/embedding/rebuild`）。换模型必然换维度（`bge-small-zh` 512 维、`bge-m3` 1024 维），旧向量与新查询向量不在同一空间，不重建会得到静默错误的检索结果。重建用 `drop_group()` 删掉整个 collection 而非清空条目——Chroma 的 collection `metadata` 只在创建时写入，只清条目会让旧模型名一直留着，索引被永久判定为过期。
 - **AMKR 任务注册与巡检**：`sirius_pulse/providers/amkr_sync.py` 提供 `AmkrAdminClient`、`register_persona_tasks`、`collect_amkr_status`、`inspect_persona_workspace` 等接口；revision 冲突自动重读重试，AMKR 不可达时以结构化结果返回而不中断引擎构建。
 - **记忆可视化 WebUI 页面**：新增 `memory-viz.html` 记忆浏览器与知识图谱可视化，后端 `memory_api.py` 提供记忆 CRUD、搜索、知识图谱、统计 API。
