@@ -212,11 +212,12 @@ class WebUIServer:
             LOG.debug("读取已建索引模型失败: %s", exc)
             return ""
 
-    def _rebuild_diary_embeddings(self) -> int:
+    def _rebuild_diary_embeddings(self) -> tuple[int, int]:
         """用当前模型重算该人格所有日记条目的向量并重建 Chroma 索引。
 
-        返回重建的条目数。必须整个重建而不是增量补齐：换模型就换了维度，旧向量与
-        新向量算出来的余弦毫无意义，混在一张表里只会得到静默错误的检索结果。
+        返回 ``(重建的条目数, 失败的组数)``。必须整个重建而不是增量补齐：换模型就换了
+        维度，旧向量与新向量算出来的余弦毫无意义，混在一张表里只会得到静默错误的检索
+        结果。单个组失败不应中断其余组，但要计入失败数如实上报。
         """
         from sirius_pulse.embedding.client import create_embedding_client
         from sirius_pulse.memory.diary.store import DiaryFileStore
@@ -228,14 +229,20 @@ class WebUIServer:
         vector_store = DiaryVectorStore(persona_dir / "diary" / "vector_db")
 
         total = 0
+        failed = 0
         rebuilt: set[str] = set()
+        # 有源文件的组：重建成功、重建失败、以及条目为空的组都算在内。孤儿清理只能删
+        # 这些之外的 collection，否则会把待重试的旧索引一起删掉。
+        handled: set[str] = set()
         for path in sorted((persona_dir / "diary").glob("*.json")):
             if path.stem == "sim_cache":
                 continue
+            handled.add(path.stem)
             try:
                 entries = store.load(path.stem)
             except Exception as exc:
                 LOG.warning("读取日记失败，跳过 %s: %s", path.name, exc)
+                failed += 1
                 continue
             if not entries:
                 # 空组也要删掉同名 collection：条目被删光后旧行会留在 Chroma 里，
@@ -243,8 +250,17 @@ class WebUIServer:
                 vector_store.drop_group(path.stem)
                 continue
             group_id = entries[0].group_id or path.stem
-            texts = [e.content for e in entries]
-            vectors = client.encode(texts)
+            handled.add(group_id)
+            try:
+                vectors = client.encode([e.content for e in entries])
+            except Exception as exc:
+                LOG.error("重算群 %s 的日记向量失败，保留原索引: %s", group_id, exc)
+                failed += 1
+                continue
+            if len(vectors) != len(entries):
+                LOG.error("群 %s 的向量数量与条目不符，保留原索引", group_id)
+                failed += 1
+                continue
             for entry, vector in zip(entries, vectors):
                 entry.embedding = vector
             vector_store.drop_group(group_id)
@@ -258,10 +274,10 @@ class WebUIServer:
         # 会一直把索引判为过期，重建也永远修不掉。
         for group in vector_store.get_stats().get("groups", []):
             group_id = str(group.get("group_id") or "")
-            if group_id and group_id not in rebuilt:
+            if group_id and group_id not in handled:
                 vector_store.drop_group(group_id)
                 LOG.info("已清理无对应日记文件的索引: %s", group_id)
-        return total
+        return total, failed
 
     # ─── 静态页面 ─────────────────────────────────────────
 
@@ -373,24 +389,49 @@ class WebUIServer:
         换 embedding 模型后必须做这一步：维度变了，旧向量虽然还躺在库里，但和新
         查询向量算出来的相似度没有意义。日记要整个重建（而非补齐）才能保证库里只有
         一套维度；记忆单元的向量内联在 JSON 里，逐组重算。
+
+        部分失败时如实返回 ``success: false`` 与失败数：embedding 请求超时会让一批
+        向量原样留在旧维度，若还报成功，用户会以为索引已经修好，而检索结果其实是错的。
         """
         LOG.info("收到语义索引重建请求")
         loop = asyncio.get_running_loop()
         try:
-            entries = await loop.run_in_executor(None, self._rebuild_diary_embeddings)
-            units = await loop.run_in_executor(None, self._rebuild_memory_unit_embeddings)
+            entries, diary_failed = await loop.run_in_executor(None, self._rebuild_diary_embeddings)
+            units, units_failed = await loop.run_in_executor(
+                None, self._rebuild_memory_unit_embeddings
+            )
         except Exception as exc:
             LOG.error("语义索引重建失败: %s", exc, exc_info=True)
             return _json_response({"success": False, "error": str(exc)})
+
         # 人格进程自己缓存了日记与记忆单元向量，重建后要让 worker 丢弃缓存重新加载，
         # 否则它仍在用旧维度的向量，重建等于没做。
         if entries or units:
             self._notify_config_reload("memory")
-        LOG.info("语义索引重建完成: 日记 %d 条，记忆单元 %d 条", entries, units)
-        return _json_response({"success": True, "entries": entries, "units": units})
 
-    def _rebuild_memory_unit_embeddings(self) -> int:
-        """按当前模型重算该人格全部记忆单元的向量并落盘。"""
+        failed = diary_failed + units_failed
+        LOG.info(
+            "语义索引重建完成: 日记 %d 条（失败组 %d），记忆单元 %d 条（失败 %d）",
+            entries,
+            diary_failed,
+            units,
+            units_failed,
+        )
+        result: dict[str, Any] = {
+            "success": failed == 0,
+            "entries": entries,
+            "units": units,
+            "failed": failed,
+        }
+        if failed:
+            result["error"] = f"有 {failed} 处向量未能重算（embedding 请求失败），" "这些条目仍与当前模型不一致，请稍后重试。"
+        return _json_response(result)
+
+    def _rebuild_memory_unit_embeddings(self) -> tuple[int, int]:
+        """按当前模型重算该人格全部记忆单元的向量并落盘。
+
+        返回 ``(涉及的单元数, 仍失败的条数)``。
+        """
         from sirius_pulse.embedding.client import create_embedding_client
         from sirius_pulse.memory.units.manager import rebuild_memory_unit_embeddings
         from sirius_pulse.memory.units.store import MemoryUnitFileStore

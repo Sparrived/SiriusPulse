@@ -110,9 +110,9 @@ def test_rebuild_memory_unit_embeddings_when_dimensions_stale_then_persists_new_
     store.save("group_a", [_unit("u1", embedding=[0.5] * 512)])
     client = _StubEmbedding(dimension=1024)
 
-    total = rebuild_memory_unit_embeddings(client, store)
+    total, failed = rebuild_memory_unit_embeddings(client, store)
 
-    assert total == 1
+    assert (total, failed) == (1, 0)
     reloaded = store.load("group_a")
     assert len(reloaded[0].embedding or []) == 1024
 
@@ -125,14 +125,75 @@ def test_rebuild_memory_unit_embeddings_when_nothing_stale_then_skips_write(tmp_
     writes: list[str] = []
     monkeypatch.setattr(store, "save", lambda group, units: writes.append(group))
 
-    total = rebuild_memory_unit_embeddings(client, store)
+    total, failed = rebuild_memory_unit_embeddings(client, store)
+
+    assert (total, failed) == (0, 0)
+    assert writes == []
+
+
+def test_rebuild_memory_unit_embeddings_when_batch_encode_fails_then_reports_failure(
+    tmp_path,
+):
+    """整批编码失败必须计入失败数。
+
+    线上 64 条一批偶发超时，接口原本照样返回成功，用户以为索引已修好，实际那批还留在
+    旧维度。失败的条数要如实上报，界面才能提示重试。
+    """
+    store = MemoryUnitFileStore(tmp_path)
+    store.save(
+        "group_a",
+        [_unit("u1", embedding=[0.5] * 512), _unit("u2", embedding=[0.5] * 512)],
+    )
+
+    class _Failing:
+        model = "BAAI/bge-m3"
+        dimension = 1024
+        available = True
+
+        def encode(self, texts):
+            raise RuntimeError("Embedding 服务请求失败: timed out")
+
+    total, failed = rebuild_memory_unit_embeddings(_Failing(), store)
 
     assert total == 0
-    assert writes == []
+    assert failed == 2
+
+
+def test_rebuild_memory_unit_embeddings_when_one_unit_fails_then_retries_rest(
+    tmp_path,
+):
+    """一批里个别条目失败时二分重试救回其余条目，只报真正失败的那条。"""
+    store = MemoryUnitFileStore(tmp_path)
+    store.save(
+        "group_a",
+        [_unit("u%d" % i, embedding=[0.5] * 512) for i in range(4)],
+    )
+
+    class _Partial:
+        model = "BAAI/bge-m3"
+        dimension = 1024
+        available = True
+
+        def encode(self, texts):
+            # 批量请求一律超时（线上就是这样），单条时可定位到具体是哪一条坏的。
+            if len(texts) > 1:
+                raise RuntimeError("timed out")
+            if "summary u0" in texts[0]:
+                raise RuntimeError("timed out")
+            return [[0.25] * 1024 for _ in texts]
+
+    total, failed = rebuild_memory_unit_embeddings(_Partial(), store)
+
+    assert total == 4
+    assert failed == 1
+    reloaded = {u.unit_id: len(u.embedding or []) for u in store.load("group_a")}
+    assert reloaded["u0"] == 512
+    assert reloaded["u1"] == 1024
+    assert reloaded["u3"] == 1024
 
 
 def test_rebuild_memory_unit_embeddings_when_no_client_then_zero(tmp_path):
     store = MemoryUnitFileStore(tmp_path)
     store.save("group_a", [_unit("u1", embedding=[0.5] * 512)])
 
-    assert rebuild_memory_unit_embeddings(None, store) == 0
+    assert rebuild_memory_unit_embeddings(None, store) == (0, 0)

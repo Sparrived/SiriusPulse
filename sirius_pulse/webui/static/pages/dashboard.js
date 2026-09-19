@@ -712,14 +712,15 @@ async function showEmbeddingModal() {
         if (res.success) {
           const units = res.units || 0;
           toast(`索引已重建（日记 ${res.entries} 条、记忆单元 ${units} 条）`, 'success');
-          const fresh = await get('/embedding/status');
-          renderPopover(fresh);
-          updateEmbeddingPanel(fresh);
         } else {
-          toast('重建失败: ' + (res.error || '未知错误'), 'error');
-          rebuildBtn.disabled = false;
-          rebuildBtn.textContent = '重建索引';
+          // 部分失败也要刷新并提示：仍然过期的条目会让检索结果不可信。
+          toast('重建未完成: ' + (res.error || '未知错误'), 'error');
         }
+        const fresh = await get('/embedding/status');
+        renderPopover(fresh);
+        updateEmbeddingPanel(fresh);
+        rebuildBtn.disabled = false;
+        rebuildBtn.textContent = '重建索引';
       } catch {
         toast('重建请求失败', 'error');
         rebuildBtn.disabled = false;

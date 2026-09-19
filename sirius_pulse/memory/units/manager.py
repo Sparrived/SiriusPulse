@@ -240,17 +240,6 @@ class MemoryUnitManager:
         self._loaded_groups.add(group_id)
         logger.info("Loaded %d checkpoint memory units for group %s", len(units), group_id)
 
-    async def rebuild_embeddings(self) -> int:
-        """按当前 embedding 模型重算全部记忆单元向量并落盘，返回涉及的单元数。
-
-        换 embedding 模型后，内联在 JSON 里的旧维度向量一律失效。这里不放在加载路径
-        上顺带做：单个人格可能有上千条单元，同步重算会把事件循环卡住几十秒。改由
-        WebUI 的「重建索引」显式触发，重建后由 worker 重建引擎重新加载。
-        """
-        return await asyncio.to_thread(
-            rebuild_memory_unit_embeddings, self._embedding_client, self._store
-        )
-
     def _replace_loaded_group(self, group_id: str, units: list[MemoryUnit]) -> None:
         self._indexer.replace_group(group_id, units)
         self._checkpointed_sources[group_id] = {
@@ -308,16 +297,21 @@ class MemoryUnitManager:
 def rebuild_memory_unit_embeddings(
     embedding_client: EmbeddingClient | None,
     store: MemoryUnitFileStore,
-) -> int:
-    """按当前 embedding 模型重算全部记忆单元的向量并落盘，返回涉及的单元数。
+) -> tuple[int, int]:
+    """按当前 embedding 模型重算全部记忆单元的向量并落盘。
 
     记忆单元的向量内联存在 ``memory_units/*.json`` 里，换模型后维度失配，语义检索会
     静默退化成纯关键词检索。每组的维度都从当前模型重新学，因此不需要预知具体维度。
+
+    返回 ``(总条数, 仍失败的条数)``。失败的条目要如实报给调用方：整批超时会让那一批
+    原样留在旧维度，只回一个「成功」会让人以为索引已经修好了。
     """
     if embedding_client is None:
-        return 0
+        return 0, 0
     indexer = MemoryUnitIndexer(embedding_client=embedding_client)
+    expected = embedding_client.dimension
     total = 0
+    failed = 0
     for group_id in store.list_group_ids():
         units = store.load(group_id)
         if not units:
@@ -325,4 +319,6 @@ def rebuild_memory_unit_embeddings(
         if indexer.ensure_model_current(units):
             store.save(group_id, units)
             total += len(units)
-    return total
+        if expected is not None:
+            failed += sum(1 for unit in units if len(unit.embedding or []) != expected)
+    return total, failed

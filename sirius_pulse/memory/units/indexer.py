@@ -203,10 +203,11 @@ class MemoryUnitIndexer:
 
         换 embedding 模型必然换维度（``bge-small-zh`` 512 维、``bge-m3`` 1024 维）。
         内存单元的向量是内联存在 JSON 里的，旧向量留着不但没用，还会因为维度不同被
-        判为不相似，让语义检索静默退化成纯关键词检索，所以必须在加载时重算。
+        判为不相似，让语义检索静默退化成纯关键词检索，所以必须重算。
 
         当前维度未知时先编码第一条文本，用它的结果同时拿到维度与向量，避免为探测多花
-        一次请求。
+        一次请求。仍然失败的批次会在日志里点名，调用方可据此如实汇报，而不是把部分
+        失败当成功。
         """
         if not self.semantic_available or not units:
             return False
@@ -231,20 +232,46 @@ class MemoryUnitIndexer:
         recomputed = 0
         for start in range(0, len(stale), batch_size):
             chunk = stale[start : start + batch_size]
-            vectors = self._encode_texts([self._unit_text(unit) for unit in chunk])
-            for unit, vector in zip(chunk, vectors):
-                if vector and len(vector) == expected:
-                    unit.embedding = vector
-                    recomputed += 1
-                    changed = True
+            recomputed += self._recompute_chunk(chunk, expected)
+
+        failed = [unit for unit in stale if not unit.embedding or len(unit.embedding) != expected]
         if recomputed:
+            changed = True
             logger.info(
                 "已按 %s 重算 %d/%d 条记忆单元向量（原维度与当前模型不一致）",
                 self._embedding_client.model or "当前模型",
                 recomputed,
                 len(units),
             )
+        if failed:
+            logger.warning(
+                "仍有 %d 条记忆单元向量未能重算（embedding 请求失败），它们会被判为不相似",
+                len(failed),
+            )
         return changed
+
+    def _recompute_chunk(self, chunk: list[MemoryUnit], expected: int) -> int:
+        """重算一批向量；失败时二分重试，返回成功的条数。
+
+        整批超时会把整批都丢掉。线上 64 条一批时偶发超时，二分重试能把绝大多数救回来，
+        比直接放弃整批更划算；最后仍失败的会在调用方被点名。
+        """
+        vectors = self._encode_texts([self._unit_text(unit) for unit in chunk])
+        if len(vectors) == len(chunk):
+            done = 0
+            for unit, vector in zip(chunk, vectors):
+                if vector and len(vector) == expected:
+                    unit.embedding = vector
+                    done += 1
+            if done == len(chunk):
+                return done
+
+        if len(chunk) == 1:
+            return 0
+        middle = len(chunk) // 2
+        return self._recompute_chunk(chunk[:middle], expected) + self._recompute_chunk(
+            chunk[middle:], expected
+        )
 
     def _encode_texts(self, texts: list[str]) -> list[list[float]]:
         """按位置返回向量；不做过滤，否则向量会与文本错配。"""
