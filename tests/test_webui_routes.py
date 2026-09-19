@@ -3118,6 +3118,34 @@ async def test_amkr_rotate_inference_key_when_amkr_unreachable_then_reports_502(
 
 
 @pytest.mark.asyncio
+async def test_amkr_rotate_inference_key_when_other_persona_active_then_notifies_the_rotated_one(
+    tmp_path, monkeypatch
+):
+    """轮换必须通知**被轮换**的人格，而不是当时活跃的那个。
+
+    凭据是按人格分开的，只有一个真正换了。通知错对象的话，活跃人格白重建一次，而
+    真正换了 key 的那个人格继续拿旧 key 跑——它要等到下一次对话才以 401 暴露。
+    """
+    _panel_persona(tmp_path, "sirius")
+    _panel_persona(tmp_path, "other")
+    _accept_rotation(monkeypatch, new_key="amkr_ik_fresh")
+    server = _server_with_amkr(tmp_path)
+    # 活跃人格是 sirius，但我们轮换的是 other。
+    server._active_persona_name = "sirius"
+
+    response = await server.api_amkr_rotate_inference_key_post(
+        _rotate_request("admin", persona="other")
+    )
+
+    assert response.status == 200
+    flag = tmp_path / "personas" / "other" / "engine_state" / "reload_requested"
+    assert flag.exists(), "被轮换的人格必须收到 provider 重载标志"
+    assert "provider" in flag.read_text(encoding="utf-8")
+    active_flag = tmp_path / "personas" / "sirius" / "engine_state" / "reload_requested"
+    assert not active_flag.exists(), "不该去动活跃人格"
+
+
+@pytest.mark.asyncio
 async def test_global_config_get_when_inference_keys_stored_then_never_echoed(tmp_path):
     """推理 key 映射与面板 key 同等对待：整个字段都不回显。
 
