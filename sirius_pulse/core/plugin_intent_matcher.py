@@ -26,6 +26,9 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.65
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """计算两个向量的余弦相似度。"""
+    # 维度不一致时直接判为不相似：zip 会按短的那条截断，算出一个看似合理的分数。
+    if len(a) != len(b):
+        return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))

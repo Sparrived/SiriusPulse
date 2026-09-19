@@ -175,6 +175,10 @@ class DiaryIndexer:
 
     @staticmethod
     def _cosine_sim(a: list[float], b: list[float]) -> float:
+        # 维度不一致时必须直接判为不相似：zip 会按短的那条截断，算出一个看似合理的
+        # 分数。换 embedding 模型后旧向量与新查询向量维度不同，正是这种情况。
+        if len(a) != len(b):
+            return 0.0
         dot = sum(x * y for x, y in zip(a, b))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))

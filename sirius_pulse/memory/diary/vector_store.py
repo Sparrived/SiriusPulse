@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.embedding.client import DEFAULT_MODEL
 from sirius_pulse.memory.diary.models import DiaryEntry
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,9 @@ class DiaryVectorStore:
     """
 
     COLLECTION_PREFIX: str = "diary_"
-    MODEL_NAME: str = "BAAI/bge-small-zh"
+    #: 模型名的唯一来源是 embedding 配置的默认值——写死两份就会漂移，而漂移的后果
+    #: 是「索引明明过期了却判定为新鲜」，正好绕过换模型时必须重建索引这件事。
+    MODEL_NAME: str = DEFAULT_MODEL
 
     def __init__(self, persist_dir: Path | str, model_name: str | None = None) -> None:
         self._persist_dir = Path(persist_dir)
@@ -211,6 +214,20 @@ class DiaryVectorStore:
         except Exception as exc:
             logger.warning("清空日记向量存储失败: %s", exc)
 
+    def drop_group(self, group_id: str) -> None:
+        """删除整个 collection（含建库时写下的模型名）。
+
+        重建索引时必须用它而不是 :meth:`clear_group`：collection 的 ``metadata``
+        只在创建时写入，``get_or_create_collection`` 对已存在的 collection 不会改写。
+        只清空条目的话，``metadata.model`` 仍是旧模型名，索引会被永远判定为过期。
+        """
+        if self._client is None:
+            return
+        try:
+            self._client.delete_collection(self._collection_name(group_id))
+        except Exception as exc:
+            logger.debug("删除日记 collection 失败（可能本就不存在）: %s", exc)
+
     def count(self, group_id: str) -> int:
         if self._client is None:
             return 0
@@ -230,12 +247,22 @@ class DiaryVectorStore:
         - total_entries: int
         - groups: list of {group_id, count}
         - model: str
+        - indexed_model: str — 已建索引所用的模型名（多个 collection 不一致时取其一）
+        - stale: bool — 已建索引的模型与当前配置的模型不同，需要重建
         """
         if self._client is None:
-            return {"available": False, "total_entries": 0, "groups": [], "model": self._model_name}
+            return {
+                "available": False,
+                "total_entries": 0,
+                "groups": [],
+                "model": self._model_name,
+                "indexed_model": "",
+                "stale": False,
+            }
 
         total = 0
         groups: list[dict[str, Any]] = []
+        indexed_models: set[str] = set()
         try:
             for coll_name in self._client.list_collections():
                 name = coll_name.name if hasattr(coll_name, "name") else str(coll_name)
@@ -244,18 +271,28 @@ class DiaryVectorStore:
                 try:
                     coll = self._client.get_collection(name)
                     cnt = coll.count()
-                    total += cnt
+                    # 建 collection 时写下的模型名，是判断「索引是否过期」的唯一依据：
+                    # 维度本身在 Chroma 里不暴露，而换模型必然换维度。
+                    metadata = getattr(coll, "metadata", None)
+                    if isinstance(metadata, dict):
+                        recorded = str(metadata.get("model") or "").strip()
+                        if recorded:
+                            indexed_models.add(recorded)
                     # Derive group_id from collection name
                     gid = name[len(self.COLLECTION_PREFIX) :]
                     groups.append({"group_id": gid, "count": cnt})
+                    total += cnt
                 except Exception:
                     continue
         except Exception as exc:
             logger.warning("向量存储统计失败: %s", exc)
 
+        indexed_model = next(iter(indexed_models)) if len(indexed_models) == 1 else ""
         return {
             "available": True,
             "total_entries": total,
             "groups": groups,
             "model": self._model_name,
+            "indexed_model": indexed_model,
+            "stale": bool(indexed_models and self._model_name not in indexed_models),
         }
