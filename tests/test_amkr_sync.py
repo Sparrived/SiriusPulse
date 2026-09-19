@@ -14,7 +14,9 @@ import pytest
 from sirius_pulse.providers.amkr import (
     AmkrSettings,
     load_amkr_settings,
+    load_inference_keys,
     load_panel_keys,
+    save_inference_key,
     save_panel_key,
 )
 from sirius_pulse.providers.amkr_sync import (
@@ -29,6 +31,7 @@ from sirius_pulse.providers.amkr_sync import (
     register_persona_tasks,
     register_persona_tasks_async,
     register_tasks,
+    rotate_persona_inference_key,
     workspace_for,
 )
 
@@ -43,6 +46,8 @@ class _FakeAmkr:
         self.requests: list[tuple[str, str, dict, dict]] = []
         self._reject_once = reject_once
         self._key_seq = 0
+        # 记录每个空间最近一次轮换出来的推理 key，供断言使用。
+        self.rotated: dict[str, str] = {}
         self.health = {
             "status": "ok",
             "version": "1.2.3",
@@ -75,6 +80,23 @@ class _FakeAmkr:
                     "name": name,
                     "task_count": 0,
                     "api_key": f"amkr_ws_key{self._key_seq}",
+                    "inference_key": f"amkr_ik_key{self._key_seq}",
+                    "config_revision": self.revision,
+                },
+            )
+        if request.url.path.endswith("/inference-key") and request.method == "POST":
+            prefix = "/api/workspaces/"
+            workspace = request.url.path[len(prefix) :].removesuffix("/inference-key")
+            if workspace not in self.workspaces:
+                return httpx.Response(404, json={"error": f"工作空间不存在: {workspace}"})
+            self._key_seq += 1
+            rotated = f"amkr_ik_rotated{self._key_seq}"
+            self.rotated[workspace] = rotated
+            return httpx.Response(
+                200,
+                json={
+                    "name": workspace,
+                    "inference_key": rotated,
                     "config_revision": self.revision,
                 },
             )
@@ -97,8 +119,12 @@ class _FakeAmkr:
         return httpx.Response(404, json={"error": "未预期的请求"})
 
 
-def _install(monkeypatch, fake: _FakeAmkr) -> None:
-    transport = httpx.MockTransport(fake.handler)
+def _install(monkeypatch, fake: _FakeAmkr, *, handler=None) -> None:
+    """把 httpx.Client 换成打向 ``fake`` 的 MockTransport。
+
+    ``handler`` 可换成包装过的实现，用于模拟特定 AMKR 版本的响应差异。
+    """
+    transport = httpx.MockTransport(handler or fake.handler)
     real_client = httpx.Client
 
     def _client(*args, **kwargs):
@@ -490,3 +516,99 @@ def test_collect_amkr_status_when_no_key_stored_then_panel_not_ready(monkeypatch
     status = collect_amkr_status(_settings(), ["sirius"], global_data_path=tmp_path)
 
     assert status["workspaces"][0]["panel_ready"] is False
+
+
+# ── 工作空间推理 key ───────────────────────────────────────
+
+
+def test_ensure_persona_workspace_key_when_new_then_saves_both_credentials(monkeypatch, tmp_path):
+    """建空间是拿两把 key 的唯一时机，必须一起存下来，否则推理 key 就丢了。
+
+    丢了只能靠轮换补，而轮换会作废已有的那把——所以这里漏存是有真实代价的。
+    """
+    fake = _FakeAmkr()
+    _install(monkeypatch, fake)
+
+    key = ensure_persona_workspace_key(_settings(), "sirius", tmp_path)
+
+    assert key == "amkr_ws_key1"
+    assert load_panel_keys(tmp_path) == {"sirius-pulse/sirius": "amkr_ws_key1"}
+    assert load_inference_keys(tmp_path) == {"sirius-pulse/sirius": "amkr_ik_key1"}
+
+
+def test_create_workspace_when_inference_key_missing_then_errors_instead_of_degrading(
+    monkeypatch, tmp_path
+):
+    """老版本 AMKR 不返回 inference_key，必须明确报错而不是静默退化成全权凭据。
+
+    退化的后果是模型调用继续动用管理员 key，而运维会以为已经收窄了。
+    """
+    fake = _FakeAmkr()
+
+    def legacy_handler(request: httpx.Request) -> httpx.Response:
+        response = fake.handler(request)
+        if request.url.path == "/api/workspaces" and request.method == "POST":
+            payload = response.json()
+            payload.pop("inference_key", None)  # 模拟不支持该字段的 AMKR
+            return httpx.Response(response.status_code, json=payload)
+        return response
+
+    _install(monkeypatch, fake, handler=legacy_handler)
+
+    with pytest.raises(AmkrError, match="推理 key"):
+        ensure_persona_workspace_key(_settings(), "sirius", tmp_path)
+
+    assert load_inference_keys(tmp_path) == {}
+
+
+def test_rotate_persona_inference_key_when_called_then_stores_new_key(monkeypatch, tmp_path):
+    """轮换要落到本地：否则引擎下次构建时又拿到旧 key（已失效）。"""
+    fake = _FakeAmkr(workspaces=["sirius-pulse/sirius"])
+    _install(monkeypatch, fake)
+
+    key = rotate_persona_inference_key(_settings(), "sirius", global_data_path=tmp_path)
+
+    assert key == "amkr_ik_rotated1"
+    assert load_inference_keys(tmp_path) == {"sirius-pulse/sirius": "amkr_ik_rotated1"}
+    posted = [p for m, p, _, _ in fake.requests if m == "POST"]
+    assert posted == ["/api/workspaces/sirius-pulse/sirius/inference-key"]
+
+
+def test_rotate_persona_inference_key_when_amkr_rejects_then_keeps_existing_key(
+    monkeypatch, tmp_path
+):
+    """轮换失败不能损坏已有凭据：本地仍要留着原来那把可用的 key。"""
+    fake = _FakeAmkr(workspaces=[])  # 空间不存在 → 404
+    _install(monkeypatch, fake)
+    save_inference_key(tmp_path, "sirius-pulse/sirius", "amkr_ik_existing")
+
+    with pytest.raises(AmkrError):
+        rotate_persona_inference_key(_settings(), "sirius", global_data_path=tmp_path)
+
+    assert load_inference_keys(tmp_path) == {"sirius-pulse/sirius": "amkr_ik_existing"}
+
+
+def test_collect_amkr_status_when_inference_key_absent_then_not_ready(monkeypatch, tmp_path):
+    """巡检要能标出「这个空间还用不了」——它缺的是模型调用的那把 key。"""
+    fake = _FakeAmkr(tasks=["response_generate"])
+    _install(monkeypatch, fake)
+    save_panel_key(tmp_path, "sirius-pulse/sirius", "amkr_ws_secret")
+
+    status = collect_amkr_status(_settings(), ["sirius"], global_data_path=tmp_path)
+
+    assert status["workspaces"][0]["panel_ready"] is True
+    assert status["workspaces"][0]["inference_ready"] is False
+    # 状态里绝不出现任何 key，包括推理 key。
+    assert "amkr_ik" not in json.dumps(status, ensure_ascii=False)
+
+
+def test_collect_amkr_status_when_inference_key_stored_then_ready(monkeypatch, tmp_path):
+    """两把 key 齐备时才报告就绪。"""
+    fake = _FakeAmkr(tasks=["response_generate"])
+    _install(monkeypatch, fake)
+    save_panel_key(tmp_path, "sirius-pulse/sirius", "amkr_ws_secret")
+    save_inference_key(tmp_path, "sirius-pulse/sirius", "amkr_ik_secret")
+
+    status = collect_amkr_status(_settings(), ["sirius"], global_data_path=tmp_path)
+
+    assert status["workspaces"][0]["inference_ready"] is True

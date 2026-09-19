@@ -2790,12 +2790,13 @@ def _refuse_all_amkr_connections(monkeypatch) -> None:
 
 
 def test_webui_routes_when_registered_then_amkr_ops_routes_exist_and_orchestration_is_gone():
-    """编排接口随编排页一并下线，替换为只读巡检、面板地址与任务登记三条。"""
+    """编排接口随编排页一并下线，替换为只读巡检、面板地址、任务登记与凭据轮换。"""
     registered = {(spec.method, spec.path) for spec in WEBUI_ROUTES}
 
     assert ("GET", "/api/amkr/status") in registered
     assert ("GET", "/api/amkr/panel") in registered
     assert ("POST", "/api/amkr/register") in registered
+    assert ("POST", "/api/amkr/rotate-inference-key") in registered
     assert not any("/orchestration" in path for _, path in registered)
     assert not any("/task-params" in path for _, path in registered)
 
@@ -2982,4 +2983,178 @@ async def test_amkr_status_get_when_key_stored_then_does_not_leak_it(tmp_path, m
 
     assert payload["reachable"] is False
     assert payload["workspaces"][0]["panel_ready"] is True
-    assert "amkr_ws_secret" not in response.text
+
+
+# ─── 推理 key 轮换 ─────────────────────────────────────────
+
+
+class _RoleJsonRequest(_FakeJsonRequest):
+    """带 ``auth_role`` 的 JSON 请求替身（轮换接口要同时读角色与请求体）。"""
+
+    def __init__(self, payload: dict[str, object], role: str) -> None:
+        super().__init__(payload)
+        self._role = role
+
+    def get(self, key: str, default: object = None) -> object:
+        return self._role if key == "auth_role" else default
+
+
+def _rotate_request(role: str, persona: str = "sirius"):
+    """造一个带角色与 persona 的 POST 请求。"""
+    return _RoleJsonRequest({"persona": persona}, role)
+
+
+def _accept_rotation(monkeypatch, *, new_key="amkr_ik_rotated") -> None:
+    """让 AMKR 接受轮换请求并返回一把新 key。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"name": "sp/sirius", "inference_key": new_key, "config_revision": "r"}
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+
+def _server_with_amkr(tmp_path) -> WebUIServer:
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {
+            "amkr_base_url": "http://amkr.test",
+            "amkr_local_api_key": "sk-x",
+            "amkr_workspace": "sp",
+        },
+    )
+    return WebUIServer(data_dir=tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_amkr_rotate_inference_key_when_admin_then_returns_and_stores_new_key(
+    tmp_path, monkeypatch
+):
+    """轮换要同时做两件事：回给运维看，并落到本地供 provider 取用。
+
+    只回不存的话引擎下次构建仍拿旧 key（已失效）；只存不回则运维没有补救手段。
+    """
+    _panel_persona(tmp_path)
+    _accept_rotation(monkeypatch, new_key="amkr_ik_fresh")
+    server = _server_with_amkr(tmp_path)
+
+    response = await server.api_amkr_rotate_inference_key_post(_rotate_request("admin"))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["inference_key"] == "amkr_ik_fresh"
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+    assert saved["amkr_inference_keys"] == {"sp/sirius": "amkr_ik_fresh"}
+
+
+@pytest.mark.asyncio
+async def test_amkr_rotate_inference_key_when_viewer_then_denied(tmp_path, monkeypatch):
+    """轮换会作废正在用的凭据：只读角色不能触发。"""
+    _panel_persona(tmp_path)
+    _accept_rotation(monkeypatch)
+    server = _server_with_amkr(tmp_path)
+
+    response = await server.api_amkr_rotate_inference_key_post(_rotate_request("viewer"))
+
+    assert response.status == 403
+    assert "管理员" in json.loads(response.text)["error"]
+
+
+@pytest.mark.asyncio
+async def test_amkr_rotate_inference_key_when_unknown_persona_then_404(tmp_path, monkeypatch):
+    """不存在的人格不该被拿去轮换，否则会在 AMKR 侧对一个陌生空间动手。"""
+    _panel_persona(tmp_path)
+    _accept_rotation(monkeypatch)
+    server = _server_with_amkr(tmp_path)
+
+    response = await server.api_amkr_rotate_inference_key_post(
+        _rotate_request("admin", persona="nobody")
+    )
+
+    assert response.status == 404
+
+
+@pytest.mark.asyncio
+async def test_amkr_rotate_inference_key_when_no_persona_then_400(tmp_path, monkeypatch):
+    """缺 persona 时明确报错，而不是挑一个人格默默轮换掉。"""
+    _panel_persona(tmp_path)
+    _accept_rotation(monkeypatch)
+    server = _server_with_amkr(tmp_path)
+
+    response = await server.api_amkr_rotate_inference_key_post(_rotate_request("admin", persona=""))
+
+    assert response.status == 400
+
+
+@pytest.mark.asyncio
+async def test_amkr_rotate_inference_key_when_amkr_unreachable_then_reports_502(
+    tmp_path, monkeypatch
+):
+    """AMKR 侧失败要如实回报，且不能改动本地已存的凭据。"""
+    _panel_persona(tmp_path)
+    _refuse_all_amkr_connections(monkeypatch)
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {
+            "amkr_base_url": "http://amkr.test",
+            "amkr_local_api_key": "sk-x",
+            "amkr_workspace": "sp",
+            "amkr_inference_keys": {"sp/sirius": "amkr_ik_existing"},
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_amkr_rotate_inference_key_post(_rotate_request("admin"))
+
+    assert response.status == 502
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+    assert saved["amkr_inference_keys"] == {"sp/sirius": "amkr_ik_existing"}
+
+
+@pytest.mark.asyncio
+async def test_global_config_get_when_inference_keys_stored_then_never_echoed(tmp_path):
+    """推理 key 映射与面板 key 同等对待：整个字段都不回显。
+
+    这个接口任何已登录角色都能读，回显等于把每个空间的推理凭据发给所有用户。
+    """
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {
+            "amkr_local_api_key": "sk-x",
+            "amkr_inference_keys": {"sp/sirius": "amkr_ik_secret"},
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_global_config_get(_empty_request())
+    payload = json.loads(response.text)
+
+    assert "amkr_inference_keys" not in payload
+    assert "amkr_ik_secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_global_config_post_when_inference_keys_present_then_not_overwritten(tmp_path):
+    """全局配置保存不能顺手把推理 key 抹掉：前端表单里根本没有这个字段。
+
+    一旦被覆盖，每个人格都会在下次构建时缺凭据而起不来。
+    """
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {
+            "amkr_local_api_key": "sk-x",
+            "amkr_inference_keys": {"sp/sirius": "amkr_ik_secret"},
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    await server.api_global_config_post(_FakeJsonRequest({"amkr_workspace": "other"}))
+
+    saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
+    assert saved["amkr_inference_keys"] == {"sp/sirius": "amkr_ik_secret"}

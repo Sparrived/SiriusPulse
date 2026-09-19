@@ -12,7 +12,7 @@ from sirius_pulse.persona_config import PersonaExperienceConfig
 from sirius_pulse.persona_worker import PersonaWorker
 from sirius_pulse.platforms.runtime import EngineRuntime, _wait_for_embedding_health
 from sirius_pulse.plugins.models import PluginDefinition, PluginPermissionDef
-from sirius_pulse.providers.amkr import load_panel_keys
+from sirius_pulse.providers.amkr import load_inference_keys, load_panel_keys
 from sirius_pulse.utils.json_io import atomic_write_json
 
 
@@ -110,6 +110,7 @@ def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_amkr_set
             "amkr_base_url": "http://amkr.internal:8000",
             "amkr_local_api_key": "sk-amkr-admin",
             "amkr_workspace": "sirius-pulse",
+            "amkr_inference_keys": {"sirius-pulse/sirius": "amkr_ik_persona"},
         },
     )
 
@@ -121,10 +122,35 @@ def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_amkr_set
     provider = runtime._build_provider()
     assert provider is not None
     assert provider._base_url == "http://amkr.internal:8000"
-    assert provider._api_key == "sk-amkr-admin"
+    # 模型调用发出去的是该空间的**推理 key**，不是全局管理员 key：后者能增删
+    # 供应商与 Key，放在每次对话补全的请求头上等于让推理路径随时可以升级成管理操作。
+    assert provider._api_key == "amkr_ik_persona"
+    assert provider._api_key != "sk-amkr-admin"
     # 必须指向本 persona 的子空间：任务注册写在 <base>/<persona>，请求带错空间
     # 会让 AMKR 查不到任务定义。
     assert provider._workspace == "sirius-pulse/sirius"
+
+
+def test_engine_runtime_when_inference_key_missing_then_not_ready(tmp_path):
+    """有管理员凭据但缺该空间的推理 key 时**不就绪**，且绝不回落到管理员 key。
+
+    回落会让一个配置疏漏静默变成一次越权：请求照样成功，运维以为已经收窄了。
+    """
+    data_dir = tmp_path / "data"
+    persona_dir = data_dir / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    atomic_write_json(
+        data_dir / "global_config.json",
+        {
+            "amkr_base_url": "http://amkr.internal:8000",
+            "amkr_local_api_key": "sk-amkr-admin",
+            "amkr_workspace": "sirius-pulse",
+        },
+    )
+
+    runtime = EngineRuntime(persona_dir)
+
+    assert runtime._build_provider() is None
 
 
 def test_engine_runtime_when_amkr_key_missing_then_not_ready(tmp_path):
@@ -168,7 +194,14 @@ def test_engine_runtime_when_registering_tasks_then_requests_use_the_same_worksp
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.headers.get("x-amkr-workspace", ""))
         if request.url.path == "/api/workspaces":
-            return httpx.Response(201, json={"name": "sirius-pulse/sirius", "api_key": "amkr_ws_k"})
+            return httpx.Response(
+                201,
+                json={
+                    "name": "sirius-pulse/sirius",
+                    "api_key": "amkr_ws_k",
+                    "inference_key": "amkr_ik_k",
+                },
+            )
         if request.url.path == "/api/tasks":
             return httpx.Response(200, json={"tasks": [], "config_revision": "rev-1"})
         return httpx.Response(200, json={"config_revision": "rev-2"})
@@ -189,8 +222,66 @@ def test_engine_runtime_when_registering_tasks_then_requests_use_the_same_worksp
     assert set(seen) == {"sirius-pulse/sirius"}
     assert provider is not None
     assert provider._workspace == "sirius-pulse/sirius"
-    # 面板 key 只在建空间时返回一次，因此必须当场落到全局配置里。
+    assert provider._api_key == "amkr_ik_k"
+    # 两把 key 都只在建空间时返回一次，因此必须当场落到全局配置里。
     assert load_panel_keys(data_dir) == {"sirius-pulse/sirius": "amkr_ws_k"}
+    assert load_inference_keys(data_dir) == {"sirius-pulse/sirius": "amkr_ik_k"}
+
+
+def test_engine_runtime_when_building_engine_then_provisions_credentials_before_provider(
+    tmp_path, monkeypatch
+):
+    """全新安装时，建引擎必须**先备齐空间凭据，再建 provider**。
+
+    推理 key 只在建空间那一次返回，而 provider 要拿它才能构造。顺序反了的话，
+    全新部署上 provider 永远拿不到凭据，引擎永远不就绪——而且报的是「未配置
+    AMKR」，把人引向一个没问题的配置项。
+    """
+    import httpx
+
+    data_dir = tmp_path / "data"
+    persona_dir = data_dir / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    atomic_write_json(
+        data_dir / "global_config.json",
+        {
+            "amkr_base_url": "http://amkr.internal:8000",
+            "amkr_local_api_key": "sk-amkr-admin",
+            "amkr_workspace": "sirius-pulse",
+        },
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/workspaces":
+            return httpx.Response(
+                201,
+                json={
+                    "name": "sirius-pulse/sirius",
+                    "api_key": "amkr_ws_new",
+                    "inference_key": "amkr_ik_new",
+                },
+            )
+        if request.url.path == "/api/tasks":
+            return httpx.Response(200, json={"tasks": [], "config_revision": "rev-1"})
+        return httpx.Response(200, json={"config_revision": "rev-2"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
+    )
+
+    runtime = EngineRuntime(persona_dir)
+    # 尚未注册过任何东西：这时直接建 provider 必然是 None（这正是顺序问题的现场）。
+    assert runtime._build_provider() is None
+
+    asyncio.run(runtime.register_amkr_tasks())
+
+    # 注册补齐了凭据，于是 provider 现在能建起来，且用的是推理 key。
+    provider = runtime._build_provider()
+    assert provider is not None
+    assert provider._api_key == "amkr_ik_new"
 
 
 def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_path):
