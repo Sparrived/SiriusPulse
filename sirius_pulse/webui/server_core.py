@@ -13,7 +13,7 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.amkr import PANEL_KEYS_FIELD, AmkrSettings, load_amkr_settings
 from sirius_pulse.providers.amkr_sync import (
     AmkrError,
     collect_amkr_status_async,
@@ -283,10 +283,15 @@ class WebUIServer:
 
         ``amkr_local_api_key`` 是 AMKR 的管理员凭据（可增删供应商与 Key），
         接口只回显掩码；前端提交掩码值时保留磁盘上的原值。
+
+        ``amkr_panel_keys`` **整个字段都不回显**：那是「工作空间 → 面板 key」的
+        明文映射，且这个接口是任何已登录用户（含只读角色）都能读的。面板地址只
+        从管理员专用的 ``/api/amkr/panel`` 取，这里连字段名都不必暴露。
         """
         result = dict(data)
         if result.get("amkr_local_api_key"):
             result["amkr_local_api_key"] = self._mask_api_key(result["amkr_local_api_key"])
+        result.pop(PANEL_KEYS_FIELD, None)
         return result
 
     async def api_global_config_get(self, request: web.Request) -> web.Response:

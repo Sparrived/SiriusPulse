@@ -2703,6 +2703,28 @@ async def test_global_config_get_when_key_set_then_returns_mask(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_global_config_get_when_panel_keys_stored_then_never_echoed(tmp_path):
+    """面板 key 映射绝不能随全局配置回显。
+
+    这个接口任何已登录用户（含只读角色）都能读，而面板 key 能改那个空间的任务；
+    它只从管理员专用的 /api/amkr/panel 取。
+    """
+    atomic_write_json(
+        tmp_path / "global_config.json",
+        {
+            "amkr_local_api_key": "sk-amkr-admin-secret",
+            "amkr_panel_keys": {"sp/sirius": "amkr_ws_secret"},
+        },
+    )
+    server = WebUIServer(data_dir=tmp_path)
+
+    response = await server.api_global_config_get(_empty_request())
+
+    assert "amkr_ws_secret" not in response.text
+    assert "amkr_panel_keys" not in json.loads(response.text)
+
+
+@pytest.mark.asyncio
 async def test_global_config_post_when_masked_key_echoed_then_keeps_stored_secret(tmp_path):
     """前端回显掩码时不得把掩码写回磁盘，否则 Key 会被悄悄破坏。"""
     atomic_write_json(tmp_path / "global_config.json", {"amkr_local_api_key": "sk-real-secret"})
