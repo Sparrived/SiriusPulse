@@ -22,12 +22,8 @@ from sirius_pulse.config.file_io import atomic_json_save
 from sirius_pulse.config.helpers import (
     auto_configure_multimodal_agent,
     configure_full_orchestration,
-    configure_orchestration_models,
     configure_orchestration_retries,
-    configure_orchestration_temperatures,
     create_agent_with_multimodal,
-    create_multimodel_config,
-    setup_multimodel_config,
 )
 
 # Configuration management
@@ -39,7 +35,6 @@ from sirius_pulse.config.models import (
     AgentPreset,
     ConfigParameter,
     MemoryPolicy,
-    MultiModelConfig,
     OrchestrationPolicy,
     SessionConfig,
     SessionDefaults,
@@ -54,7 +49,6 @@ __all__ = [
     "AgentPreset",
     "ConfigParameter",
     "MemoryPolicy",
-    "MultiModelConfig",
     "OrchestrationPolicy",
     "SessionConfig",
     "SessionDefaults",
@@ -73,11 +67,7 @@ __all__ = [
     "build_parameters_from_class",
     # Helpers
     "configure_full_orchestration",
-    "configure_orchestration_models",
     "configure_orchestration_retries",
-    "configure_orchestration_temperatures",
     "auto_configure_multimodal_agent",
     "create_agent_with_multimodal",
-    "create_multimodel_config",
-    "setup_multimodel_config",
 ]

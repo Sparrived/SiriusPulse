@@ -34,7 +34,6 @@ from sirius_pulse.config import (
     Agent,
     AgentPreset,
     MemoryPolicy,
-    MultiModelConfig,
     OrchestrationPolicy,
     SessionConfig,
     SessionDefaults,
@@ -54,12 +53,8 @@ from sirius_pulse.config.config_builder import (
 from sirius_pulse.config.helpers import (
     auto_configure_multimodal_agent,
     configure_full_orchestration,
-    configure_orchestration_models,
     configure_orchestration_retries,
-    configure_orchestration_temperatures,
     create_agent_with_multimodal,
-    create_multimodel_config,
-    setup_multimodel_config,
 )
 from sirius_pulse.config.manager import ConfigManager
 
@@ -242,7 +237,6 @@ __all__ = [
     "Agent",
     "AgentPreset",
     "MemoryPolicy",
-    "MultiModelConfig",
     "OrchestrationPolicy",
     "SessionConfig",
     "SessionDefaults",
@@ -251,13 +245,9 @@ __all__ = [
     "WorkspaceConfig",
     "ConfigManager",
     "configure_full_orchestration",
-    "configure_orchestration_models",
     "configure_orchestration_retries",
-    "configure_orchestration_temperatures",
     "auto_configure_multimodal_agent",
     "create_agent_with_multimodal",
-    "create_multimodel_config",
-    "setup_multimodel_config",
     # Models
     "Message",
     "Transcript",

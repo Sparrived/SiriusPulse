@@ -305,8 +305,7 @@ class ConfigManager:
                 )
             ),
             orchestration=build_orchestration_policy_from_dict(
-                dict(workspace_config.orchestration_defaults),
-                agent_model=preset.agent.model,
+                dict(workspace_config.orchestration_defaults)
             ),
             session_id=session_id,
         )

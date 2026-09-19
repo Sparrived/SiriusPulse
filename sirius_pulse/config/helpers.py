@@ -1,6 +1,8 @@
-"""多模型协同配置工具。
+"""本地编排配置工具。
 
-提供便捷的配置函数，用于在运行时配置多模型协同参数。
+提供便捷的配置函数，用于在运行时调整 OrchestrationPolicy 的本地参数。
+
+模型与采样参数**不在**这里配置：它们属于 AMKR 的任务定义。
 """
 
 from __future__ import annotations
@@ -11,29 +13,25 @@ from typing import Any
 from sirius_pulse.config.models import (
     Agent,
     MemoryPolicy,
-    MultiModelConfig,
     OrchestrationPolicy,
     SessionConfig,
 )
-
-_TASK_COGNITION_ANALYZE = "cognition_analyze"
 
 
 def build_orchestration_policy_from_dict(
     orch_dict: dict[str, Any] | None,
     *,
-    agent_model: str,
     return_none_if_empty: bool = False,
 ) -> OrchestrationPolicy | None:
-    """Build an OrchestrationPolicy from raw JSON-like data."""
+    """Build an OrchestrationPolicy from raw JSON-like data.
+
+    历史配置里的 ``unified_model`` / ``task_models`` / ``task_temperatures`` /
+    ``task_max_tokens`` 会被忽略：模型与采样参数由 AMKR 的任务定义决定。
+    """
     raw = dict(orch_dict or {})
     recognized_keys = {
-        "unified_model",
-        "task_models",
         "task_enabled",
         "task_budgets",
-        "task_temperatures",
-        "task_max_tokens",
         "task_retries",
         "max_multimodal_inputs_per_turn",
         "max_multimodal_value_length",
@@ -70,34 +68,12 @@ def build_orchestration_policy_from_dict(
     if return_none_if_empty and not has_config:
         return None
 
-    unified_model = str(raw.get("unified_model", "")).strip()
-    task_models = {
-        str(key).strip(): str(value).strip()
-        for key, value in dict(raw.get("task_models", {})).items()
-        if str(key).strip() and str(value).strip()
-    }
-
-    kwargs: dict[str, Any] = {
-        "unified_model": unified_model,
-        "task_models": task_models,
-    }
+    kwargs: dict[str, Any] = {}
 
     if "task_enabled" in raw and isinstance(raw.get("task_enabled"), dict):
         kwargs["task_enabled"] = {
             str(key).strip(): bool(value)
             for key, value in dict(raw.get("task_enabled", {})).items()
-            if str(key).strip()
-        }
-    if "task_temperatures" in raw and isinstance(raw.get("task_temperatures"), dict):
-        kwargs["task_temperatures"] = {
-            str(key).strip(): float(value)
-            for key, value in dict(raw.get("task_temperatures", {})).items()
-            if str(key).strip()
-        }
-    if "task_max_tokens" in raw and isinstance(raw.get("task_max_tokens"), dict):
-        kwargs["task_max_tokens"] = {
-            str(key).strip(): int(value)
-            for key, value in dict(raw.get("task_max_tokens", {})).items()
             if str(key).strip()
         }
     if "task_retries" in raw and isinstance(raw.get("task_retries"), dict):
@@ -147,9 +123,6 @@ def build_orchestration_policy_from_dict(
             continue
         value = raw.get(field_name)
         kwargs[field_name] = caster(value) if caster is not bool else bool(value)
-
-    if not kwargs.get("unified_model") and not kwargs.get("task_models"):
-        kwargs["unified_model"] = agent_model
 
     memory_raw = raw.get("memory")
     if isinstance(memory_raw, dict):
@@ -257,140 +230,13 @@ def create_agent_with_multimodal(
     return agent
 
 
-def configure_orchestration_models(
-    config: SessionConfig,
-    **task_models: str,
-) -> SessionConfig:
-    """为会话配置多模型协同的任务模型。
-
-    这个函数允许外部代码在收到 OrchestrationConfigError 后动态添加模型配置。
-    使用此函数时，会自动切换到按任务配置模式（task_models）。
-
-    Args:
-        config: 会话配置对象
-        **task_models: 任务名称到模型名称的映射。
-            支持的任务名：
-            - cognition_analyze: 认知分析
-            - memory_extract: 记忆提取
-            - response_generate: 回复生成
-            - vision: 多模态
-
-    Returns:
-        更新后的 SessionConfig 对象（原对象被修改并返回）
-
-    Example:
-        >>> config = SessionConfig(...)
-        >>> from sirius_pulse.config import configure_orchestration_models
-        >>> config = configure_orchestration_models(
-        ...     config,
-        ...     cognition_analyze="gpt-4-mini",
-        ...     memory_extract="gpt-4-mini",
-        ... )
-    """
-    if not config.orchestration:
-        raise ValueError("config.orchestration 为 None，无法配置")
-
-    # 合并新的任务模型配置
-    updated_models = dict(config.orchestration.task_models)
-    updated_models.update(task_models)
-
-    # 当使用 task_models 时，清除 unified_model（两种模式互斥）
-    # 创建新的 OrchestrationPolicy 对象
-    updated_orchestration = replace(
-        config.orchestration,
-        unified_model="",  # 清除统一模型，切换到按任务配置模式
-        task_models=updated_models,
-    )
-
-    # 创建并返回新的 SessionConfig
-    updated_config = replace(
-        config,
-        orchestration=updated_orchestration,
-    )
-
-    return updated_config
-
-
-def setup_multimodel_config(
-    *,
-    session_config: SessionConfig,
-    task_models: dict[str, str],
-    task_temperatures: dict[str, float] | None = None,
-    task_max_tokens: dict[str, int] | None = None,
-    task_retries: dict[str, int] | None = None,
-    max_multimodal_inputs_per_turn: int = 4,
-    max_multimodal_value_length: int = 4096,
-) -> SessionConfig:
-    """在现有会话配置中设置多模型编排。"""
-    config = MultiModelConfig(
-        task_models=task_models,
-        task_temperatures=task_temperatures or {},
-        task_max_tokens=task_max_tokens or {},
-        task_retries=task_retries or {},
-        max_multimodal_inputs_per_turn=max_multimodal_inputs_per_turn,
-        max_multimodal_value_length=max_multimodal_value_length,
-    )
-    session_config.orchestration = config.to_orchestration_policy()
-    return session_config
-
-
-def create_multimodel_config(
-    *,
-    task_models: dict[str, str],
-    task_temperatures: dict[str, float] | None = None,
-    task_max_tokens: dict[str, int] | None = None,
-    task_retries: dict[str, int] | None = None,
-    max_multimodal_inputs_per_turn: int = 4,
-    max_multimodal_value_length: int = 4096,
-) -> MultiModelConfig:
-    """创建多模型配置对象。"""
-    return MultiModelConfig(
-        task_models=task_models,
-        task_temperatures=task_temperatures or {},
-        task_max_tokens=task_max_tokens or {},
-        task_retries=task_retries or {},
-        max_multimodal_inputs_per_turn=max_multimodal_inputs_per_turn,
-        max_multimodal_value_length=max_multimodal_value_length,
-    )
-
-
-def configure_orchestration_temperatures(
-    config: SessionConfig,
-    **task_temperatures: float,
-) -> SessionConfig:
-    """配置多模型协同任务的采样温度。
-
-    Args:
-        config: 会话配置对象
-        **task_temperatures: 任务名称到温度值（0.0-2.0）的映射
-
-    Returns:
-        更新后的 SessionConfig 对象
-    """
-    if not config.orchestration:
-        raise ValueError("config.orchestration 为 None，无法配置")
-
-    updated_temps = dict(config.orchestration.task_temperatures)
-    updated_temps.update(task_temperatures)
-
-    updated_orchestration = replace(
-        config.orchestration,
-        task_temperatures=updated_temps,
-    )
-
-    updated_config = replace(
-        config,
-        orchestration=updated_orchestration,
-    )
-
-    return updated_config
-
-
 def configure_orchestration_retries(
     config: SessionConfig,
     **task_retries: int,
 ) -> SessionConfig:
-    """配置多模型协同任务的重试次数。
+    """配置各任务的失败重试次数。
+
+    重试属于本地传输层参数（与模型无关），因此仍然保留在这里。
 
     Args:
         config: 会话配置对象
@@ -420,20 +266,16 @@ def configure_orchestration_retries(
 
 def configure_full_orchestration(
     config: SessionConfig,
-    task_models: dict[str, str] | None = None,
-    task_temperatures: dict[str, float] | None = None,
     task_retries: dict[str, int] | None = None,
     **extra_fields: Any,
 ) -> SessionConfig:
-    """一次性配置多模型协同的所有参数。
+    """一次性配置本地编排参数。
 
-    这是一个便捷方法，可以一次性设置多个配置字段。
-    如果指定了 task_models，会自动切换到按任务配置模式（task_models）。
+    模型与采样参数不在这里：它们由 AMKR 的任务定义决定。``task_models`` /
+    ``task_temperatures`` 这类入参已被移除。
 
     Args:
         config: 会话配置对象
-        task_models: 任务模型映射
-        task_temperatures: 任务温度映射
         task_retries: 任务重试次数映射
         **extra_fields: 其他 OrchestrationPolicy 字段（如 pending_message_threshold）
 
@@ -443,13 +285,7 @@ def configure_full_orchestration(
     Example:
         >>> config = configure_full_orchestration(
         ...     config,
-        ...     task_models={
-        ...         "memory_extract": "gpt-4-mini",
-        ...         "event_extract": "gpt-4-mini",
-        ...     },
-        ...     task_temperatures={
-        ...         "memory_extract": 0.1,
-        ...     },
+        ...     task_retries={"memory_extract": 3},
         ...     pending_message_threshold=0,
         ... )
     """
@@ -458,18 +294,6 @@ def configure_full_orchestration(
 
     # 准备更新字段
     update_fields: dict[str, Any] = {}
-
-    # 如果指定了 task_models，清除 unified_model（切换到按任务配置模式）
-    if task_models is not None:
-        merged_models = dict(config.orchestration.task_models)
-        merged_models.update(task_models)
-        update_fields["task_models"] = merged_models
-        update_fields["unified_model"] = ""  # 清除统一模型
-
-    if task_temperatures is not None:
-        merged_temps = dict(config.orchestration.task_temperatures)
-        merged_temps.update(task_temperatures)
-        update_fields["task_temperatures"] = merged_temps
 
     if task_retries is not None:
         merged_retries = dict(config.orchestration.task_retries)

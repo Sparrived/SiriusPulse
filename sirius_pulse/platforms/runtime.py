@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_emotional_engine
-from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.embedding.client import EmbeddingClient
@@ -254,17 +253,11 @@ class EngineRuntime:
         """本框架会当作 AMKR 任务名发送的模型名集合。
 
         任务名与 AMKR 一致（``cognition_analyze``、``memory_extract`` …），因此
-        取任务注册表的键；编排配置里自定义的任务键一并纳入，避免它们退化成
-        「按普通模型直连」而被 AMKR 拒绝采样参数。
+        直接取任务注册表的键。
         """
         from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY
 
-        names = set(_DEFAULT_TASK_REGISTRY)
-        orch = OrchestrationStore.load(self.work_path)
-        task_models = orch.get("task_models")
-        if isinstance(task_models, dict):
-            names.update(str(key) for key in task_models)
-        return names
+        return set(_DEFAULT_TASK_REGISTRY)
 
     def _build_provider(self) -> OpenAICompatibleProvider | None:
         """按 AMKR 连接配置构建 provider。

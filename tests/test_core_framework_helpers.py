@@ -46,7 +46,7 @@ def test_prompt_factory_when_interaction_markers_are_available_then_spec_is_expl
 
 
 def test_orchestration_store_when_config_is_saved_then_json_round_trips_atomically(tmp_path):
-    config = {"unified_model": "model-a", "task_enabled": {"memory_extract": False}}
+    config = {"task_retries": {"memory_extract": 3}, "task_enabled": {"memory_extract": False}}
 
     assert OrchestrationStore.load(tmp_path) == {}
     OrchestrationStore.save(tmp_path, config)

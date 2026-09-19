@@ -146,27 +146,17 @@ class MemoryPolicy:
 
 @dataclass(slots=True)
 class OrchestrationPolicy:
-    """Multi-model orchestration strategy (required).
+    """Local orchestration knobs for the 5-stage pipeline.
 
-    Supports two configuration approaches:
-
-    Approach 1 - Unified Model: all tasks use the same model
-        - Set unified_model: model name
-        - Simplifies configuration, suitable for small task volumes
-
-    Approach 2 - Per-Task Configuration: specify model for each task
-        - Set task_models: {"memory_extract": "model-a", "event_extract": "model-b", ...}
-        - Supports fine-grained task-level control
+    模型与采样参数的调整权都在 AMKR：本框架发出的 ``model`` 字段就是任务名，因此这里
+    不再保留任何「任务 → 模型」映射字段。历史配置里的 ``unified_model`` /
+    ``task_models`` 会被忽略（见 :mod:`sirius_pulse.config.jsonc`）。
 
     Task Enablement:
         - All tasks (memory_extract, event_extract, intent_analysis) enabled by default
         - Use task_enabled dict to enable/disable specific tasks
         - Example: task_enabled={"memory_extract": False} disables memory extraction tasks
     """
-
-    # Configuration approach selection (choose one, cannot both be empty)
-    unified_model: str = ""  # Approach 1: all tasks use this model (higher priority)
-    task_models: dict[str, str] = field(default_factory=dict)  # Approach 2: per-task configuration
 
     # Task enablement control (bool fields, all enabled by default)
     task_enabled: dict[str, bool] = field(
@@ -176,9 +166,7 @@ class OrchestrationPolicy:
         }
     )
 
-    # Per-task parameter tuning
-    task_temperatures: dict[str, float] = field(default_factory=dict)
-    task_max_tokens: dict[str, int] = field(default_factory=dict)
+    # Per-task transport tuning (模型与采样参数在 AMKR 的任务定义里配置)
     task_retries: dict[str, int] = field(default_factory=dict)
 
     # Multimodal processing configuration
@@ -262,29 +250,11 @@ class OrchestrationPolicy:
     def is_task_enabled(self, task_name: str) -> bool:
         return bool(self.task_enabled.get(task_name, True))
 
-    def resolve_model_for_task(self, task_name: str, *, default_model: str = "") -> str:
-        explicit_model = str(self.task_models.get(task_name, "")).strip()
-        if explicit_model:
-            return explicit_model
-        if self.unified_model:
-            return self.unified_model.strip()
-        return default_model.strip()
-
     def validate(self) -> None:
-        """Validate configuration legitimacy."""
-        if not self.unified_model and not self.task_models:
-            raise ValueError(
-                "Multi-model orchestration configuration error: must specify either "
-                "unified_model (approach 1) or task_models (approach 2)."
-            )
+        """Validate configuration legitimacy.
 
-        if self.unified_model and self.task_models:
-            raise ValueError(
-                "Multi-model orchestration configuration error: unified_model (approach 1) "
-                "and task_models (approach 2) cannot be specified simultaneously. "
-                "Please choose one approach."
-            )
-
+        不再校验「统一模型 / 按任务模型」二选一：那两个字段已废弃，模型归属 AMKR。
+        """
         if self.memory_extract_batch_size <= 0:
             raise ValueError("memory_extract_batch_size 必须大于 0。")
         if self.memory_extract_min_content_length < 0:
@@ -421,48 +391,6 @@ class WorkspaceConfig:
         )
 
 
-@dataclass(slots=True)
-class MultiModelConfig:
-    """多模型协作配置对象。"""
-
-    task_models: dict[str, str]
-    task_temperatures: dict[str, float] | None = None
-    task_max_tokens: dict[str, int] | None = None
-    task_retries: dict[str, int] | None = None
-    max_multimodal_inputs_per_turn: int = 4
-    max_multimodal_value_length: int = 4096
-
-    def __post_init__(self) -> None:
-        if self.task_temperatures is None:
-            self.task_temperatures = {}
-        if self.task_max_tokens is None:
-            self.task_max_tokens = {}
-        if self.task_retries is None:
-            self.task_retries = {}
-
-    def to_orchestration_policy(self) -> OrchestrationPolicy:
-        """转换为 OrchestrationPolicy 对象。"""
-        return OrchestrationPolicy(
-            unified_model="",
-            task_models=self.task_models,
-            task_temperatures=self.task_temperatures or {},
-            task_max_tokens=self.task_max_tokens or {},
-            task_retries=self.task_retries or {},
-            max_multimodal_inputs_per_turn=self.max_multimodal_inputs_per_turn,
-            max_multimodal_value_length=self.max_multimodal_value_length,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "task_models": dict(self.task_models),
-            "task_temperatures": dict(self.task_temperatures or {}),
-            "task_max_tokens": dict(self.task_max_tokens or {}),
-            "task_retries": dict(self.task_retries or {}),
-            "max_multimodal_inputs_per_turn": self.max_multimodal_inputs_per_turn,
-            "max_multimodal_value_length": self.max_multimodal_value_length,
-        }
-
-
 @dataclass(slots=True, init=False)
 class SessionConfig:
     """Session configuration including agent, paths, and orchestration policy."""
@@ -499,12 +427,11 @@ class SessionConfig:
         self.enable_auto_compression = enable_auto_compression
         self.session_id = str(session_id).strip() or "default"
 
-        # If no orchestration provided, create default: use main AI model as unified model
+        # 未显式给编排配置时用默认值：模型不属于本地配置，没有需要从 agent 推导的字段。
         if orchestration is None:
-            orchestration = OrchestrationPolicy(unified_model=preset.agent.model)
+            orchestration = OrchestrationPolicy()
 
         self.orchestration = orchestration
-        # Validate multi-model orchestration configuration
         self.orchestration.validate()
 
     @property

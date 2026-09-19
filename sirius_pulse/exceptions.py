@@ -312,7 +312,7 @@ class OrchestrationConfigError(ConfigError):
                 f"多模型协同已启用，但缺少以下模型配置：\n"
                 f"  未配置的任务: {tasks_str}\n"
                 f"  缺失的模型: {models_str}\n"
-                f"请使用 configure_orchestration_models() 函数添加配置。"
+                f"模型与任务路由请在 AMKR 的任务定义中配置。"
             )
 
         context = {"missing_models": missing_models}

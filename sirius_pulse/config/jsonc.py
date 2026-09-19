@@ -21,13 +21,9 @@ _SESSION_CONFIG_COMMENTS = {
     "provider": "旧版单 provider 兼容字段。已废弃：模型调用统一交给 AMKR。",
     "providers": "旧版 Provider 列表。已废弃：模型调用统一交给 AMKR。",
     "orchestration": "任务级编排配置。模型、温度与最大输出 token 都在 AMKR 的任务定义里配置，这里只保留本地参数。",
-    "orchestration.unified_model": "已废弃：统一模型由 AMKR 的任务定义承担，本框架发出的 model 字段就是任务名。",
-    "orchestration.task_models": "已废弃：任务到模型的映射在 AMKR 侧维护，本框架只注册任务名。",
     "orchestration.task_enabled": "按任务控制是否启用。常见键包括 cognition_analyze、memory_extract。",
     "orchestration.task_enabled.memory_extract": "是否启用用户记忆提取任务。",
     "orchestration.task_enabled.cognition_analyze": "是否启用认知分析任务。",
-    "orchestration.task_temperatures": "已废弃：采样温度在 AMKR 的任务定义里配置。",
-    "orchestration.task_max_tokens": "已废弃：最大输出 token 在 AMKR 的任务定义里配置。",
     "orchestration.task_retries": "按任务设置失败重试次数。本地传输层参数，与模型无关。",
     "orchestration.task_timeout": "按任务设置请求超时（秒）。本地传输层参数，与模型无关。",
     "orchestration.max_multimodal_inputs_per_turn": "单轮最多保留多少个多模态输入。",
@@ -86,11 +82,7 @@ def build_default_orchestration_payload() -> dict[str, Any]:
     defaults = OrchestrationPolicy()
     memory_defaults = MemoryPolicy()
     return {
-        "unified_model": defaults.unified_model,
-        "task_models": dict(defaults.task_models),
         "task_enabled": dict(defaults.task_enabled),
-        "task_temperatures": dict(defaults.task_temperatures),
-        "task_max_tokens": dict(defaults.task_max_tokens),
         "task_retries": dict(defaults.task_retries),
         "max_multimodal_inputs_per_turn": defaults.max_multimodal_inputs_per_turn,
         "max_multimodal_value_length": defaults.max_multimodal_value_length,

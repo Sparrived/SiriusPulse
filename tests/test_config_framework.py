@@ -8,7 +8,6 @@ from sirius_pulse.config import (
     Agent,
     AgentPreset,
     ConfigManager,
-    OrchestrationPolicy,
     SessionConfig,
     SessionDefaults,
     WorkspaceConfig,
@@ -39,12 +38,8 @@ from sirius_pulse.config.helpers import (
     auto_configure_multimodal_agent,
     build_orchestration_policy_from_dict,
     configure_full_orchestration,
-    configure_orchestration_models,
     configure_orchestration_retries,
-    configure_orchestration_temperatures,
     create_agent_with_multimodal,
-    create_multimodel_config,
-    setup_multimodel_config,
 )
 from sirius_pulse.config.jsonc import (
     load_json_document,
@@ -119,7 +114,8 @@ def test_config_manager_when_loading_json_then_resolves_env_and_relative_paths(
     assert config.work_path == config_path.parent / "workspace"
     assert config.data_path == config_path.parent / "runtime"
     assert config.agent.model == "env-model"
-    assert config.orchestration.unified_model == "env-model"
+    # 历史字段 unified_model 被忽略：模型归 AMKR，本地只留编排参数
+    assert not hasattr(config.orchestration, "unified_model")
     assert config.orchestration.memory_extract_batch_size == 2
 
 
@@ -139,7 +135,7 @@ def test_config_manager_when_workspace_config_is_saved_then_manifest_and_snapsho
             max_recent_participant_messages=2,
             enable_auto_compression=False,
         ),
-        orchestration_defaults={"unified_model": "workspace-model", "memory_extract_batch_size": 2},
+        orchestration_defaults={"memory_extract_batch_size": 2},
     )
 
     manager.save_workspace_config(work_path, config, data_path=data_path)
@@ -150,34 +146,37 @@ def test_config_manager_when_workspace_config_is_saved_then_manifest_and_snapsho
     assert reloaded.active_agent_key == "agent-alpha"
     assert reloaded.session_defaults.history_max_messages == 9
     assert reloaded.session_defaults.enable_auto_compression is False
-    assert reloaded.orchestration_defaults["unified_model"] == "workspace-model"
+    assert reloaded.orchestration_defaults["memory_extract_batch_size"] == 2
     assert reloaded.orchestration_defaults["memory_extract_batch_size"] == 2
     manifest = json.loads((work_path / "workspace.json").read_text(encoding="utf-8"))
     assert "provider_policy" not in manifest
 
 
-def test_models_when_orchestration_policy_resolves_models_then_validates_modes():
+def test_models_when_legacy_model_fields_are_present_then_they_are_ignored():
+    """历史配置里的模型映射必须被丢弃：模型归属 AMKR，本框架只发任务名。"""
     policy = build_orchestration_policy_from_dict(
         {
+            "unified_model": "leaked-model",
             "task_models": {"memory_extract": "memory-model"},
+            "task_temperatures": {"memory_extract": 0.2},
+            "task_max_tokens": {"memory_extract": 128},
             "task_enabled": {"memory_extract": False},
             "memory": {"max_facts_per_user": 3, "decay_schedule": {"7": 0.1}},
-        },
-        agent_model="fallback-model",
+        }
     )
 
-    assert (
-        policy.resolve_model_for_task("memory_extract", default_model="default") == "memory-model"
-    )
-    assert policy.resolve_model_for_task("response_generate", default_model="default") == "default"
+    assert not hasattr(policy, "unified_model")
+    assert not hasattr(policy, "task_models")
+    assert not hasattr(policy, "task_temperatures")
+    assert not hasattr(policy, "task_max_tokens")
+    assert not hasattr(policy, "resolve_model_for_task")
     assert policy.is_task_enabled("memory_extract") is False
     assert policy.is_task_enabled("unknown_task") is True
     assert policy.memory.max_facts_per_user == 3
     assert policy.memory.decay_schedule[7] == 0.1
-    with pytest.raises(ValueError):
-        OrchestrationPolicy().validate()
-    with pytest.raises(ValueError):
-        OrchestrationPolicy(unified_model="one", task_models={"memory_extract": "two"}).validate()
+    # 只有本地传输层的参数会被保留
+    local_only = build_orchestration_policy_from_dict({"task_retries": {"memory_extract": 3}})
+    assert local_only.task_retries["memory_extract"] == 3
 
 
 def test_config_builder_when_params_are_declared_then_metadata_is_rendered():
@@ -247,7 +246,7 @@ def test_workspace_config_when_serialized_then_paths_and_nested_defaults_round_t
         bootstrap_signature="sig",
         active_agent_key="agent-alpha",
         session_defaults=SessionDefaults(history_max_messages=7, enable_auto_compression=False),
-        orchestration_defaults={"unified_model": "model-a"},
+        orchestration_defaults={"memory_extract_batch_size": 2},
     )
 
     restored = WorkspaceConfig.from_dict(config.to_dict())
@@ -259,7 +258,7 @@ def test_workspace_config_when_serialized_then_paths_and_nested_defaults_round_t
     assert restored.active_agent_key == "agent-alpha"
     assert restored.session_defaults.history_max_messages == 7
     assert restored.session_defaults.enable_auto_compression is False
-    assert restored.orchestration_defaults == {"unified_model": "model-a"}
+    assert restored.orchestration_defaults == {"memory_extract_batch_size": 2}
 
 
 def test_config_helpers_when_values_need_coercion_then_defaults_and_nested_cleanup_are_applied(
@@ -359,8 +358,8 @@ def test_config_helpers_when_workspace_payload_is_built_then_nulls_keep_fallback
     assert built.session_defaults.history_max_messages == 12
     assert built.session_defaults.history_max_chars == fallback.session_defaults.history_max_chars
     assert built.session_defaults.enable_auto_compression is True
+    # 归一化只保留仍属于本地编排的键：模型字段被丢弃
     assert built.orchestration_defaults == {
-        "unified_model": "payload-model",
         "memory_extract_batch_size": 2,
     }
     assert normalized.work_path == layout.config_root
@@ -415,7 +414,8 @@ def test_config_helpers_when_session_config_dict_is_loaded_then_paths_agent_and_
     assert config.agent.temperature == 0.2
     assert config.agent.max_tokens == 256
     assert config.global_system_prompt == "system"
-    assert config.orchestration.task_models == {"memory_extract": "memory-model"}
+    # orchestration 里的 task_models 是历史字段，被忽略
+    assert not hasattr(config.orchestration, "task_models")
     assert config.history_max_messages == 5
     assert config.enable_auto_compression is False
     with pytest.raises(ValueError):
@@ -445,7 +445,7 @@ def test_config_helpers_when_multimodal_agent_helpers_are_used_then_metadata_is_
     assert created.max_tokens == 42
 
 
-def test_config_helpers_when_orchestration_shortcuts_are_used_then_session_config_is_replaced(
+def test_config_helpers_when_local_tuning_shortcuts_are_used_then_session_config_is_replaced(
     tmp_path,
 ):
     config = SessionConfig(
@@ -454,45 +454,17 @@ def test_config_helpers_when_orchestration_shortcuts_are_used_then_session_confi
             agent=Agent(name="Agent", persona="Helpful", model="base-model"),
             global_system_prompt="system",
         ),
-        orchestration=OrchestrationPolicy(unified_model="base-model"),
     )
 
-    model_config = create_multimodel_config(
-        task_models={"memory_extract": "memory-model"},
-        task_temperatures={"memory_extract": 0.1},
-        task_max_tokens={"memory_extract": 128},
-        task_retries={"memory_extract": 2},
-        max_multimodal_inputs_per_turn=2,
-        max_multimodal_value_length=99,
-    )
-    setup = setup_multimodel_config(
-        session_config=config,
-        task_models={"response_generate": "response-model"},
-        task_temperatures={"response_generate": 0.8},
-        task_max_tokens={"response_generate": 512},
-        task_retries={"response_generate": 1},
-    )
-    with_models = configure_orchestration_models(setup, memory_extract="memory-model")
-    with_temps = configure_orchestration_temperatures(with_models, memory_extract=0.2)
-    with_retries = configure_orchestration_retries(with_temps, memory_extract=3)
+    with_retries = configure_orchestration_retries(config, memory_extract=3)
     full = configure_full_orchestration(
         with_retries,
-        task_models={"event_extract": "event-model"},
-        task_temperatures={"event_extract": 0.3},
         task_retries={"event_extract": 4},
         pending_message_threshold=0,
     )
 
-    assert model_config.to_dict()["task_models"] == {"memory_extract": "memory-model"}
-    assert model_config.to_orchestration_policy().max_multimodal_inputs_per_turn == 2
-    assert setup is config
-    assert setup.orchestration.task_models == {"response_generate": "response-model"}
-    assert with_models is not setup
-    assert with_models.orchestration.unified_model == ""
-    assert with_models.orchestration.task_models["memory_extract"] == "memory-model"
-    assert with_temps.orchestration.task_temperatures["memory_extract"] == 0.2
+    assert with_retries is not config
     assert with_retries.orchestration.task_retries["memory_extract"] == 3
-    assert full.orchestration.task_models["event_extract"] == "event-model"
-    assert full.orchestration.task_temperatures["event_extract"] == 0.3
+    # 模型与采样参数不再有入参，也不会被写进编排配置
     assert full.orchestration.task_retries["event_extract"] == 4
     assert full.orchestration.pending_message_threshold == 0

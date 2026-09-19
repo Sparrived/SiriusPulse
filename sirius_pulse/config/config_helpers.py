@@ -119,7 +119,7 @@ def _normalize_orchestration_defaults(
     sanitized.pop("task_budgets", None)
     sanitized.pop("split_marker", None)
     sanitized.pop("consolidation_enabled", None)
-    policy = build_orchestration_policy_from_dict(sanitized, agent_model="")
+    policy = build_orchestration_policy_from_dict(sanitized)
     if policy is None:
         return {}
     normalized = asdict(policy)
@@ -321,10 +321,7 @@ def _dict_to_session_config(config_dict: dict[str, Any], base_dir: Path) -> Sess
         global_system_prompt=config_dict.get("global_system_prompt", ""),
     )
 
-    orchestration = build_orchestration_policy_from_dict(
-        config_dict.get("orchestration", {}),
-        agent_model=agent.model,
-    )
+    orchestration = build_orchestration_policy_from_dict(config_dict.get("orchestration", {}))
 
     return SessionConfig(
         work_path=work_path,
