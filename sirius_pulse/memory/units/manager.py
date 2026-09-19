@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from sirius_pulse.core.constants import DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.memory.units.deduplicator import (
@@ -157,9 +158,45 @@ class MemoryUnitManager:
                 )
                 accepted[result.unit_id] = result
                 self._indexer.replace_group(group_id, existing)
+            self.retire_overflow(group_id, existing)
             self._store.save(group_id, existing)
             self._replace_loaded_group(group_id, existing)
             return list(accepted.values())
+
+    def retire_overflow(self, group_id: str, units: list[MemoryUnit]) -> int:
+        """把过期和超额的低价值单元标记为不再注入提示词；返回本次标记数。
+
+        只翻转 ``should_prompt``，从不删除：记忆单元必须能被真人追溯，模型侧不再
+        召回不等于数据可以丢。单元总量本身不是问题（summary 上限 180 字），注入
+        污染才是，所以这里控制的是「谁参与检索」而不是「谁存在」。
+        """
+        retired = 0
+        for unit in units:
+            if unit.should_prompt and MemoryUnitIndexer._is_expired(unit):
+                unit.should_prompt = False
+                retired += 1
+
+        active = [unit for unit in units if unit.should_prompt]
+        if len(active) > DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT:
+            active.sort(
+                key=lambda unit: (
+                    unit.salience * unit.confidence,
+                    MemoryUnitIndexer._parse_time(unit.event_time or unit.created_at),
+                ),
+                reverse=True,
+            )
+            for unit in active[DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT:]:
+                unit.should_prompt = False
+                retired += 1
+
+        if retired:
+            logger.info(
+                "Retired %d memory units for group %s (active limit %d)",
+                retired,
+                group_id,
+                DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT,
+            )
+        return retired
 
     async def reconcile_persisted_units(
         self,
@@ -224,13 +261,19 @@ class MemoryUnitManager:
             self._checkpointed_sources.setdefault(group_id, set()).update(unit.source_ids)
             changed = True
         if changed:
+            self.retire_overflow(group_id, existing)
             self._store.save(group_id, existing)
+            # 重新加载过的对象与索引里那一批不是同一批，退休标记必须同步进索引，
+            # 否则模型侧仍按旧标记召回。
+            self._replace_loaded_group(group_id, existing)
 
     def ensure_group_loaded(self, group_id: str) -> None:
         if group_id in self._loaded_groups:
             return
         units = self._store.load(group_id)
-        any_recomputed = False
+        # 存量分组可能早就超额或早已过期（限额是后加的），加载时立即生效，不必等
+        # 下一次 checkpoint；否则要等到有新对话才会收敛。
+        any_recomputed = bool(self.retire_overflow(group_id, units))
         for unit in units:
             if self._indexer.add(unit):
                 any_recomputed = True

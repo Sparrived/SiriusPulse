@@ -52,6 +52,10 @@ DEFAULT_DIARY_TOP_K = 5
 DEFAULT_DIARY_TOKEN_BUDGET = 800
 DEFAULT_DIARY_VOLUME_THRESHOLD = 8
 
+# 每群可参与检索注入的记忆单元上限。超出的按 显著度×置信度 与时间排序后软退休
+# （should_prompt=False），单元本身保留在磁盘与 WebUI 中，仍可被真人追溯和手动恢复。
+DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT = 500
+
 # ── 传记相关 ──────────────────────────────────────────────
 BIOGRAPHY_TOKEN_BUDGET = 500
 BIOGRAPHY_MAX_MESSAGE_CHARS = 2000
