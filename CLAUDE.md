@@ -98,13 +98,14 @@ data/
 │   ├── adapters.json         # NapCat adapter configs (ws_url, QQ number, group whitelist)
 │   ├── experience.json       # Persona experience/background
 │   └── persona.db            # Unified SQLite DB (memory, tokens, cognition events, session state)
-├── global_config.json        # AMKR connection: amkr_base_url / amkr_local_api_key / amkr_workspace
+├── global_config.json        # AMKR connection: amkr_base_url / amkr_local_api_key / amkr_workspace / amkr_panel_keys
 ├── tools/                   # User-installed tools (scanned at runtime)
 └── adapter_port_registry.json
 ```
 
-AMKR itself lives outside this repo; each persona registers its task names into the AMKR
-workspace `<amkr_workspace>/<persona>`.
+AMKR itself lives outside this repo; the framework creates the AMKR workspace
+`<amkr_workspace>/<persona>` (the only moment its panel key is returned, so the key is
+persisted into `amkr_panel_keys`) and then registers its task names into it.
 
 ### Dual Extension System
 - **Tools** = AI autonomously invokes tools during conversation (function calling)

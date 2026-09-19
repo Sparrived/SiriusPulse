@@ -58,7 +58,7 @@
 - **多人格管理**：每个人格独立进程、独立控制台窗口、独立文件日志，支持同时运行多个 AI 角色
 - **人格隔离**：`data/personas/{name}/` 下独立配置与状态隔离
 - **NapCat 多实例**：每个人格可绑定独立 QQ 号与独立 WebSocket 端口，自动管理 NapCat 生命周期
-- **WebUI 管理面板**：Dashboard 查看所有人格状态，支持启停、配置、模型编排、群管理
+- **WebUI 管理面板**：Dashboard 查看所有人格状态，支持启停、配置、群管理
 
 ### 🧠 **分层记忆系统**
 - **基础记忆**（Basic Memory）：按群保留原始消息直到被 checkpoint 记忆单元覆盖（硬限制 10000 条仅作内存兜底，上下文窗口 5 条）；原始窗口超过 80000 token 触发归纳、归纳到 20000 token 为止，被覆盖的原始条目改由记忆单元 RAG 提供摘要；注入提示词的历史预算默认 80000 token，含热度计算与归档
@@ -107,7 +107,7 @@ pip install sirius-pulse
 
 外部插件是独立维护的 Git submodule，不会打包进 PyPI wheel，也不会复制进 Docker 镜像。源码必须在运行目录的 `plugins/` 中由宿主机准备；详见下方的插件初始化和 Docker 挂载说明。
 
-> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」，本框架用到的 12 个认知任务就会在这个人格的工作空间里建好，模型则统一在 AMKR 自带面板里配置。
+> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key**，框架会存下来），再把用到的 12 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。
 
 ### 2️⃣ 启动 CLI
 
@@ -129,7 +129,7 @@ sirius-pulse webui
 |-----------|------|
 | **Dashboard** | 创建/启动/停止人格 |
 | **人格管理** | 填写角色名字、性格、说话风格 |
-| **AMKR 运维** | 查看 AMKR 连接状态、注册任务名、跳转 AMKR 面板 |
+| **AMKR 运维** | 查看 AMKR 连接状态、注册任务名、内嵌该空间的面板 |
 | **NapCat** | 配置 QQ 号、扫码登录 |
 | **适配器** | 将人格绑定到 QQ 号 |
 | **实时日志** | 在 WebUI 内查看 WebUI 与人格 worker 日志 |
@@ -257,8 +257,8 @@ sirius_pulse/
 ├── providers/               # LLM 接入层（统一指向 AMKR）
 │   ├── base.py              # LLMProvider 基类接口
 │   ├── openai_compatible.py # 唯一的真实实现，端点指向 AMKR
-│   ├── amkr.py              # AMKR 连接配置解析
-│   ├── amkr_sync.py         # 向 AMKR 注册任务名
+│   ├── amkr.py              # AMKR 连接配置解析与面板 key 存放
+│   ├── amkr_sync.py         # 建 AMKR 工作空间并注册任务名
 │   └── mock.py              # Mock Provider（测试用）
 │
 ├── platforms/               # 平台适配
