@@ -4,13 +4,28 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **模型接入整体收敛到 AMKR**：本框架不再自带任何厂商实现，所有模型调用统一发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）。供应商、Key 池、模型选择、采样参数与故障切换全部由 AMKR 承担。
+- **认知任务按任务名路由**：发往 AMKR 的 `model` 字段就是任务名本身（`cognition_analyze`、`memory_extract`、`response_generate`、`proactive_generate`、`passive_tool`、`plugin_analyze`、`plugin_generate`、`plugin_render`、`plugin_raw`、`diary_generate`、`diary_consolidate`、`topic_cluster` 共 12 个），由 AMKR 查任务定义换成真实模型。因此本框架对任务名请求**不再发送** `temperature` / `max_tokens`——任务定义里的值优先。
+- **自动注册任务名**：人格启动时向 AMKR 工作空间 `<amkr_workspace>/<persona>` 注册缺失的任务名，只创建、不修改，后续调优一律在 AMKR 侧完成。工作空间由首个任务隐式创建。
+- **全局配置改为 AMKR 连接配置**：`global_config.json` 用 `amkr_base_url`（默认 `http://127.0.0.1:8000`）、`amkr_local_api_key`、`amkr_workspace`（默认 `sirius-pulse`）、`amkr_ui_enabled` 取代原 Provider 注册表；支持 `SIRIUS_AMKR_BASE_URL` / `SIRIUS_AMKR_API_KEY` / `SIRIUS_AMKR_WORKSPACE` 环境变量覆盖。`amkr_local_api_key` 是 AMKR 管理员凭据，WebUI 接口只回显掩码。
+- **WebUI 改用只读的 AMKR 运维页替换模型编排页**：新增 `GET /api/amkr/status`（连接状态、版本、各人格任务缺口、AMKR 面板外链）与 `POST /api/amkr/register`（补齐缺失任务名）。模型与参数不再由本框架编辑。`GET /api/models` 保留，但返回的是任务名列表。
+- **多个人格共用一个 AMKR**：通过 `X-AMKR-Workspace` 请求头按人格隔离，同名任务在不同人格下可指向不同模型。
+
+### Removed
+
+- **厂商实现**：`aliyun_bailian.py`、`bigmodel.py`、`deepseek.py`、`mimo.py`、`opencode.py`、`siliconflow.py`、`volcengine_ark.py`、`ytea.py`。
+- **路由与注册表**：`providers/routing.py`（`AutoRoutingProvider`、`ProviderRegistry`、`WorkspaceProviderManager`、`ProviderConfig` 及各类探测/校验函数）、`providers/proxy.py`、`providers/models_dev.py`。
+- **Provider 管理界面与接口**：整组 `/api/providers*` 接口、WebUI Provider 页面、`providers/proxy.json` 网络代理配置。
+- **模型编排页面与接口**：`GET/POST /api/persona/orchestration`、`GET/POST /api/persona/task-params` 及编排页前端。
+- **CLI 的 `/provider add|remove|list|platforms` 命令**、`providers_dir()` / `provider_registry_path()` / `provider_proxy_path()` 布局接口（`data/providers/` 不再创建或监听）。
+- **失效插件** `plugins/amkr_key_manager`（按旧供应商模型设计，调用 AMKR 并不存在的接口）。
+- **废弃脚本与测试**：`scripts/migrate_to_evolution.py`、`scripts/list_provider_models.py`、`scripts/migrate_to_standalone.py`、`tests/test_providers.py`、`tests/test_models_dev.py`。
+
 ### Added
 
-- **Provider 唯一名称与同端点多 Key 路由**：Provider 新增可修改且全局唯一的 `name`，模型选择与运行时统一使用 `name/model` 路由；相同平台和 API 端点的不同 API Key 可并存。旧配置会自动生成并写回唯一名称，改名时同步迁移人格编排中的模型引用。
-- **WebUI 网络代理设置**：Provider 页面新增「网络代理设置」卡片（http / https / no_proxy），配置持久化到 `providers/proxy.json`。OpenAI 兼容请求、models 接口探测与 models.dev 拉取统一生效，保存后通过 provider 重载通知立即应用。
-- **models 接口模型探测**：Provider 编辑卡片与添加弹窗新增「探测模型」按钮，`POST /api/providers/models-probe` 调用 Provider 自身的 `models` 接口（支持 `models_url` 显式指定与 `<base>/models`、`<base>/v1/models` 候选回退，兼容 OpenAI / Ollama / 数组响应格式），自动合并模型到列表；已保存 Provider 由服务端读取真实 API Key。
-- **OpenCode Provider**：新增 `OpenCodeProvider`（OpenCode Zen）与 `OpenCodeGoProvider`（OpenCode GO 订阅），适配 opencode.ai 官方 OpenAI 兼容接口（`https://opencode.ai/zen/v1` / `https://opencode.ai/zen/go/v1`，均走 `/chat/completions`）。支持 `opencode-zen`、`opencode_go` 等别名与 base URL 自动补全 `/v1`，WebUI Provider 页面已同步新增"OpenCode Zen"和"OpenCode GO"类型。
-- **小米 MiMo Provider**：新增 `MimoProvider` 和 `MimoTokenPlanProvider`，适配小米 MIMO 平台 OpenAI 兼容接口。`MimoProvider` 支持按量付费（`https://api.xiaomimimo.com/v1`，API Key 格式 `sk-xxx`），`MimoTokenPlanProvider` 支持 Token Plan 订阅制（`https://token-plan-cn.xiaomimimo.com/v1`，API Key 格式 `tp-xxx`）。WebUI Provider 页面已同步更新，支持选择"小米 MiMo"和"小米 MiMo Token Plan"类型。
+- **AMKR 任务注册与巡检**：`sirius_pulse/providers/amkr_sync.py` 提供 `AmkrAdminClient`、`register_persona_tasks`、`collect_amkr_status`、`inspect_persona_workspace` 等接口；revision 冲突自动重读重试，AMKR 不可达时以结构化结果返回而不中断引擎构建。
 - **记忆可视化 WebUI 页面**：新增 `memory-viz.html` 记忆浏览器与知识图谱可视化，后端 `memory_api.py` 提供记忆 CRUD、搜索、知识图谱、统计 API。
 - **技能管理 WebUI 页面**：新增 `skills.html` 技能管理页面（状态/安装/配置卡片），后端 `server_skill_api.py` 提供技能状态、安装、配置管理 API。
 - **Token 用量分析图表**：`analytics.js` 新增 Token 用量可视化模块。

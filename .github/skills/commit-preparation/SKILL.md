@@ -93,7 +93,7 @@ git diff --cached --stat
 
 ### Added
 - 初始版本发布：多人角色扮演编排引擎
-- 支持OpenAI兼容接口与SiliconFlow适配
+- 支持 OpenAI 兼容接口（外部 AMKR 路由）
 - 动态群聊模式与记忆管理系统
 ```
 
@@ -140,7 +140,7 @@ git diff --cached --stat
 - `perf`: 性能优化
 
 **Scope** (可选,但推荐)：
-- 受影响的模块名，如 `memory`, `provider`, `cli`, `tests`
+- 受影响的模块名，如 `memory`, `providers`, `webui`, `cli`, `tests`
 
 **Subject**：
 - 使用祈使句，第一个单词大写
@@ -174,10 +174,10 @@ git commit -m "feat(memory): 实现记忆质量评估与智能遗忘引擎
 Closes #234"
 
 # 修复问题类提交
-git commit -m "fix(provider): 修复SiliconFlow API响应超时处理
+git commit -m "fix(providers): 修复 AMKR 任务注册在配置版本过期时的重试
 
-之前在网络波动时未正确捕获超时异常，导致会话中断。
-现在使用exponential backoff重试机制，重试次数配置为3次。"
+之前 config_revision 过期返回 409 时直接失败，导致任务名注册不完整。
+现在重读最新 revision 后重试一次，仍失败才记入 SyncResult.failed。"
 
 # 文档更新提交
 git commit -m "docs(architecture): 补充Phase 2记忆质量系统说明

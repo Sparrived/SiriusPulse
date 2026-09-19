@@ -29,13 +29,15 @@ description: "在为 Sirius Pulse 做发布准备时使用，用于校验版本�
 3. 命令校验
    - `sirius-pulse --help`
    - `python main.py --help`
-   - 若使用 `examples/session.json` 这类 `generated_agent_key` 示例配置，先在独立 smoke workspace 中准备最小 generated agent 资产，或按首次引导完成初始化
-   - 使用独立工作目录运行 `python main.py --config examples/session.json --work-path data/release_smoke --config-root data/release_smoke_config`，验证首次引导和入口可用
-   - 首次仅进入并退出时，检查 `data/release_smoke_config/workspace.json`、`data/release_smoke_config/roleplay/generated_agents.json` 与 `data/release_smoke/sessions/default/participants.json` 是否成功写出
-   - 若要验证 `data/release_smoke/sessions/default/session_state.db`，需在可用 provider 下完成至少一轮真实消息往返
+   - 在独立 smoke 工作目录中准备最小 generated agent 资产，或按首次引导完成初始化
+   - 运行 `python main.py webui --foreground`，验证首次引导和 WebUI 入口可用（CLI 当前没有 `--config` / `--work-path` / `--config-root` 参数）
+   - 首次仅进入并退出时，检查 smoke 工作目录下的 `workspace.json`、`roleplay/generated_agents.json` 与 `sessions/default/participants.json` 是否成功写出
+   - 若要验证 `sessions/default/session_state.db`，需在 AMKR 可达且本地授权 Key 已配置的前提下，完成至少一轮真实消息往返
+   - 触发一次 `POST /api/amkr/register`，确认 `GET /api/amkr/status` 中各人格的 `missing` 为空
 4. 文档与 AI 资产同步
    - 确认 `README.md` 中命令/示例仍可使用。
-   - 确认 `docs/architecture.md` 与当前模块边界一致。
+   - 确认 `docs/guide/architecture-overview.md` 与当前模块边界一致。
+   - 确认 `docs/reference/provider-config.md` 反映当前 AMKR 配置键与任务名契约。
    - 确认 `.github/skills/framework-quickstart/SKILL.md` 反映最新架构。
 5. 变更摘要
    - 总结关键变更与已知限制。

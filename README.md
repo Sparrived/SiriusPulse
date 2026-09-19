@@ -76,10 +76,10 @@ Perception → Cognition → Decision → Execution → Background
 - 四层策略：IMMEDIATE / DELAYED / SILENT / PLUGIN
 - 延迟响应队列 + 节奏分析 + 过热抑制
 
-### 🔌 **多模型协同**
-- 支持 DeepSeek / SiliconFlow / 阿里云百炼 / 火山方舟 / 智谱 GLM / OpenAI 兼容
-- 任务级模型选择（对话 / 分析 / 视觉 / 主动发起）
-- 自动路由与健康检查
+### 🔌 **AMKR 统一模型接入**
+- 所有模型调用统一交给本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）处理
+- 供应商、Key 池、故障切换与采样参数都由 AMKR 维护，本框架不再内置任何厂商实现
+- 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 日记…），模型选择下沉到 AMKR 的任务定义
 
 ### 🎯 **双重扩展机制**
 - **工具系统**（Tools）：AI 通过 `[TOOL_CALL: ...]` 自主调用工具，提供多个内置工具
@@ -91,7 +91,7 @@ Perception → Cognition → Decision → Execution → Background
 - Token 消耗追踪与分析
 - `@command` 装饰器声明式插件开发
 - 被动工具：后台任务、事件触发器、生命周期回调
-- Provider 全局共享 + 人格级模型编排独立
+- 共用一个 AMKR 实例，通过工作空间隔离各人格的任务定义
 
 ---
 
@@ -106,6 +106,8 @@ pip install sirius-pulse
 ```
 
 外部插件是独立维护的 Git submodule，不会打包进 PyPI wheel，也不会复制进 Docker 镜像。源码必须在运行目录的 `plugins/` 中由宿主机准备；详见下方的插件初始化和 Docker 挂载说明。
+
+> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」，本框架用到的 12 个认知任务就会在这个人格的工作空间里建好，模型则统一在 AMKR 自带面板里配置。
 
 ### 2️⃣ 启动 CLI
 
@@ -127,8 +129,7 @@ sirius-pulse webui
 |-----------|------|
 | **Dashboard** | 创建/启动/停止人格 |
 | **人格管理** | 填写角色名字、性格、说话风格 |
-| **模型编排** | 选择 LLM 模型、细调各任务参数 |
-| **Provider** | 填 API Key（支持 DeepSeek / SiliconFlow 等） |
+| **AMKR 运维** | 查看 AMKR 连接状态、注册任务名、跳转 AMKR 面板 |
 | **NapCat** | 配置 QQ 号、扫码登录 |
 | **适配器** | 将人格绑定到 QQ 号 |
 | **实时日志** | 在 WebUI 内查看 WebUI 与人格 worker 日志 |
@@ -250,16 +251,14 @@ sirius_pulse/
 │   └── events.py            # 事件定义
 ├── plugins/                 # Git submodule：外部 Plugin 仓库
 │   ├── github_monitor/      # GitHub Poll/Webhook 监控
-│   ├── amkr_key_manager/    # AMKR 模型和 Key 管理
 │   ├── sub2api_monitor/     # Sub2API 订阅与分组倍率监控
 │   └── ...                  # 其他由子模块版本提供的外部扩展
 │
-├── providers/               # LLM Provider
-│   ├── base.py              # Provider 基类接口
-│   ├── openai_compatible.py
-│   ├── deepseek.py / siliconflow.py
-│   ├── aliyun_bailian.py / volcengine_ark.py / bigmodel.py
-│   ├── opencode.py / mimo.py
+├── providers/               # LLM 接入层（统一指向 AMKR）
+│   ├── base.py              # LLMProvider 基类接口
+│   ├── openai_compatible.py # 唯一的真实实现，端点指向 AMKR
+│   ├── amkr.py              # AMKR 连接配置解析
+│   ├── amkr_sync.py         # 向 AMKR 注册任务名
 │   └── mock.py              # Mock Provider（测试用）
 │
 ├── platforms/               # 平台适配
@@ -343,7 +342,7 @@ def run(query: str = "", data_store=None, **kwargs) -> dict:
 
 ### 插件系统（Plugins）
 
-用户通过 `/` `#` `!` 前缀**显式命令**触发。外部插件位于根目录 `plugins/` Git submodule 中，当前包含 `github_monitor`、`amkr_key_manager`、`sub2api_monitor` 等扩展，具体目录以子模块版本为准。
+用户通过 `/` `#` `!` 前缀**显式命令**触发。外部插件位于根目录 `plugins/` Git submodule 中，当前包含 `github_monitor`、`sub2api_monitor` 等扩展，具体目录以子模块版本为准。
 
 初始化插件 submodule：
 
@@ -402,7 +401,7 @@ class MyPlugin(PluginBase):
 |------|------|
 | 📖 **指南** | 快速开始 → 安装 → 配置 → 人格系统 → 引擎架构 → 记忆系统 → NapCat 接入 |
 | 🔧 **扩展开发** | 工具系统（总览/编写工具/内置工具/被动工具）+ 插件系统（总览/编写插件/指令详解/生命周期） |
-| 📋 **参考** | 全局配置 / 人格配置 / Provider 配置 / Python API / WebUI API / 开发指南 |
+| 📋 **参考** | 全局配置 / 人格配置 / AMKR 接入 / Python API / WebUI API / 开发指南 |
 
 ### 本地运行
 

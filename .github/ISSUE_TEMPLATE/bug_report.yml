@@ -71,7 +71,7 @@ body:
         - Prompt 构建（prompt_factory）
         - 记忆系统（memory / diary）
         - 消息平台（NapCat / OneBot）
-        - 模型路由（ModelRouter / Provider）
+        - 模型路由 / AMKR 接入（ModelRouter / amkr_sync）
         - 技能系统（Skill / 表情包 / RAG）
         - WebUI / REST API
         - Embedding 服务

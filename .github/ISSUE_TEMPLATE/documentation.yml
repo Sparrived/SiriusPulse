@@ -33,7 +33,7 @@ body:
     attributes:
       label: "📍 文档位置"
       description: "问题所在的文档路径或 URL"
-      placeholder: "例如：README.md / docs/architecture.md / https://sirius-pulse-docs.vercel.app/..."
+      placeholder: "例如：README.md / docs/guide/architecture-overview.md / https://sirius-pulse-docs.vercel.app/..."
     validations:
       required: true
 

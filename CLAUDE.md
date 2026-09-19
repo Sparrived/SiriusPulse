@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Sirius Pulse (灵动月白) is an async roleplay chat framework for QQ group chats. It runs multiple AI personas as isolated OS subprocesses, each with independent config, memory, and QQ identity. The core engine uses a 5-stage pipeline (Perception → Cognition → Decision → Execution → Background) with layered memory (basic/diary/semantic/biography) and supports multiple LLM providers with auto-routing.
+Sirius Pulse (灵动月白) is an async roleplay chat framework for QQ group chats. It runs multiple AI personas as isolated OS subprocesses, each with independent config, memory, and QQ identity. The core engine uses a 5-stage pipeline (Perception → Cognition → Decision → Execution → Background) with layered memory (basic/diary/semantic/biography).
+
+All LLM traffic goes through **AMKR** (`auto-model-key-router`), an external local OpenAI-compatible router that owns vendors, API key pools, model selection and sampling parameters. Sirius Pulse sends **task names** (e.g. `response_generate`, `memory_extract`) as the `model` field and AMKR resolves them into real models.
 
 Python 3.12+. Package name: `sirius-pulse`. MIT license.
 
@@ -77,7 +79,7 @@ Each persona runs as an isolated subprocess (`python -m sirius_pulse.persona_wor
 ### Key Module Boundaries
 
 - **`sirius_pulse/core/`** — The engine brain. `EmotionalGroupChatEngine` is a final class composed via mixins (`engine_core.py` for init/lifecycle, `pipeline.py` for the 5-stage pipeline, `bg_tasks.py` for background tasks, `helpers.py` for tool/plugin integration). Don't mix provider-specific logic into core.
-- **`sirius_pulse/providers/`** — LLM provider abstraction. All providers implement `LLMProvider` from `base.py`. `AutoRoutingProvider` handles multi-provider failover. New providers go here only.
+- **`sirius_pulse/providers/`** — The only LLM boundary. `OpenAICompatibleProvider` (`openai_compatible.py`) points at AMKR; `amkr.py` parses the connection config; `amkr_sync.py` registers task names into AMKR. There are no vendor implementations and no local routing registry — adding one back is a regression.
 - **`sirius_pulse/adapters/`** — Platform-agnostic message types (`TextSegment`, `ImageSegment`, `MessageGroup`, etc. in `models.py`) and `BaseAdapter` abstract class.
 - **`sirius_pulse/platforms/`** — Concrete platform implementations. Currently only OneBot v11 via NapCat (`platforms/onebot_v11/napcat/adapter.py`). `runtime.py` bridges platform adapters to the engine.
 - **`sirius_pulse/memory/`** — Layered memory: basic (retains the raw tail until a checkpoint memory unit covers it; compaction triggers above `DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER` and drains to `..._TARGET`, after which the covered raw entries leave the window and only memory units are retrieved; `DEFAULT_BASIC_MEMORY_HARD_LIMIT` is only a RAM safety ceiling above that trigger, and `DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET` caps what the chat prompt injects), diary (LLM summaries + ChromaDB vectors), semantic (vector search at group/user/global levels), biography (cross-session character profiles).
@@ -92,14 +94,17 @@ Each persona runs as an isolated subprocess (`python -m sirius_pulse.persona_wor
 data/
 ├── personas/{name}/          # Per-persona isolated directory
 │   ├── persona.json          # Character name, personality, speaking style
-│   ├── orchestration.json    # OrchestrationPolicy, model assignments
+│   ├── orchestration.json    # Local task tuning only: task_timeout / task_retries
 │   ├── adapters.json         # NapCat adapter configs (ws_url, QQ number, group whitelist)
 │   ├── experience.json       # Persona experience/background
 │   └── persona.db            # Unified SQLite DB (memory, tokens, cognition events, session state)
-├── providers/                # Global provider configs (API keys, endpoints)
+├── global_config.json        # AMKR connection: amkr_base_url / amkr_local_api_key / amkr_workspace
 ├── tools/                   # User-installed tools (scanned at runtime)
 └── adapter_port_registry.json
 ```
+
+AMKR itself lives outside this repo; each persona registers its task names into the AMKR
+workspace `<amkr_workspace>/<persona>`.
 
 ### Dual Extension System
 - **Tools** = AI autonomously invokes tools during conversation (function calling)
@@ -112,8 +117,9 @@ These are distinct systems with separate base classes, registries, and execution
 ### Code Style
 - Python 3.12 target. Public interfaces must have type annotations.
 - Prefer dataclasses and small, focused modules over large utility classes.
-- Provider implementations must stay isolated in `sirius_pulse/providers/`.
-- Don't add provider dependencies in the engine layer — always go through the provider abstraction.
+- Vendor/Key/model logic must NOT come back here — that is AMKR's job. The engine only ever sends a task name.
+- Engine layer must not know about specific models or sampling parameters.
+- Task names are the wire contract: the string sent as `model` must match a task named in AMKR's workspace, or AMKR will look for a real model by that name and fail.
 
 ### Architecture Rules
 - `sirius_pulse/models/models.py` is the single source of truth for session/transcript contracts.
@@ -138,6 +144,6 @@ Use `uv` for Python project management (dependency installation, virtual environ
 
 ### Documentation Sync
 When changing module boundaries, commands, or API contracts, update:
-- `.github/skills/framework-quickstart/SKILL.md`
+- `.github/skills/project-structure-sync/SKILL.md` and `.github/skills/external-integration/SKILL.md`
 - `docs/` submodule content (VitePress)
 - `README.md` if user-visible usage changes

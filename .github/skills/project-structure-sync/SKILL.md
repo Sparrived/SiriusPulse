@@ -15,23 +15,19 @@ description: "遍历项目结构变化并同步更新文档。监控模块变化
 
 ```
 sirius_pulse/
-├── api/                      - 对外 API facade（engine/models/providers/session 等）
 ├── core/                     - 编排核心（emotional_engine.py、prompt_factory.py、model_router.py、engine_persistence.py、identity_resolver.py）
-├── async_engine/             - 兼容导出 + prompts/orchestration/utils 辅助层
 ├── embedding/                - Embedding 微服务（server.py aiohttp 服务端 + client.py 同步客户端）
 ├── persona_generation/       - 人格资产生成子包（templates.py 数据模型 + builders.py LLM 生成）
-├── workspace/                - WorkspaceLayout / Runtime / Watcher / RoleplayManager
-├── config/                   - SessionConfig / WorkspaceConfig / JSONC / ConfigManager
+├── config/                   - SessionConfig / WorkspaceBootstrap / JSONC / ConfigManager
 ├── models/                   - Message / Participant / Transcript 等数据契约
-├── memory/                   - basic/diary/user/semantic 子包；context_assembler.py 将短期记忆以 XML 嵌入 system prompt，返回 [system, user] 两条消息；日记条目支持时间戳显示
+├── memory/                   - basic/diary/semantic/user/units 子包；context_assembler.py 将短期记忆以 XML 嵌入 system prompt，返回 [system, user] 两条消息；日记条目支持时间戳显示
 ├── session/                  - SessionStore / runner
-├── providers/                - Provider 实现、路由（全链路异步 httpx）
+├── providers/                - 唯一 LLM 边界：AMKR 连接配置、任务名注册、OpenAI 兼容客户端
 ├── token/                    - token 记录、SQLite 持久化与分析
-├── skills/                   - SKILL 注册、执行与 data store；被动 SKILL 支持；表情包子系统 sticker/
+├── tools/                    - Tool 注册、执行与 data store；被动工具支持；内置 Tool 位于 tools/builtin/
 ├── platforms/                - NapCat 多实例管理、QQ 桥接器、EngineRuntime 封装
 ├── webui/                    - WebUI REST API + 静态页面
 ├── utils/                    - 工具函数、WorkspaceLayout 路径布局
-├── config/                   - SessionConfig / WorkspaceConfig / ConfigManager / JSONC
 └── cli.py                    - 库内薄 CLI
 ```
 
@@ -41,31 +37,34 @@ sirius_pulse/
 |------|------|--------|
 | `pyproject.toml` | 项目元数据、依赖、入口 | 版本、依赖、命令名称 |
 | `.github/workflows/ci.yml` | CI/CD 流程 | Python 版本、测试命令 |
-| `Makefile` | 开发便利命令 | 命令定义 |
+| `.pre-commit-config.yaml` | 提交前钩子 | 工具版本、钩子定义 |
 | `scripts/` | 设置/工具脚本 | 新增脚本 |
 
 ### 文档文件
 
+文档目录按 VitePress 侧边栏划分为 `guide/`、`modules/`、`reference/`、`extensions/` 四块。
+
 | 文件 | 内容 | 同步触发 |
 |------|------|----------|
-| `docs/architecture.md` | 架构设计详解 | 模块重构、新增模块、接口变化 |
-| `docs/full-architecture-flow.md` | 完整架构流程图 | 数据流、执行流变化 |
-| `docs/memory-system.md` | 四层记忆底座 | 记忆系统变更 |
-| `docs/engine-emotional.md` | Emotional Engine 详细说明 | 引擎行为变更 |
-| `docs/external-usage.md` | 外部接入指南 | Provider 变化、API 变化、配置变化 |
-| `docs/best-practices.md` | 最佳实践与模式 | 性能优化、内存管理特性新增 |
-| `docs/configuration.md` | 配置项详解 | 配置选项新增、参数变化 |
-| `docs/quickstart.md` | 快速启动指南 | 命令名称、基本用法变化 |
+| `docs/guide/architecture-overview.md` | 系统架构全景、模块边界 | 模块重构、新增模块、接口变化、数据流变化 |
+| `docs/guide/engine-architecture.md` | 对话引擎详细说明 | 引擎行为变更 |
+| `docs/guide/memory-system.md` | 分层记忆底座 | 记忆系统变更 |
+| `docs/guide/configuration.md` | 配置项详解 | 配置选项新增、参数变化 |
+| `docs/guide/quickstart.md` | 快速启动指南 | 命令名称、基本用法变化 |
+| `docs/modules/provider-system.md` | AMKR 接入模块（任务名契约、工作空间、注册策略） | 任务名变化、AMKR 边界变化 |
+| `docs/reference/provider-config.md` | AMKR 连接配置与任务名契约 | AMKR 配置项、环境变量、接口变化 |
+| `docs/reference/global-config.md` | 全局配置字段 | 全局配置字段变化 |
+| `docs/reference/python-api.md` | Python API 参考 | 对外 API 变化 |
+| `docs/reference/webui-api.md` | WebUI REST API 参考 | WebUI 路由变化 |
+| `docs/reference/cli.md` | CLI 参考 | 命令名称、参数变化 |
 | `README.md` | 项目总览 | 用法、特性、依赖版本 |
-| `docs/migration-v0.28.md` | v0.28 Emotional Engine 迁移指南 | 引擎切换、记忆系统变更 |
-| `docs/migration-roleplay-v0.20.md` | 外部人格生成迁移指南 | roleplay_prompting 对外用法变化 |
 
 ### SKILL 文件
 
 | SKILL | 内容 | 同步触发 |
 |-------|------|----------|
 | `framework-quickstart` | 架构快速理解、模块导读 | 新增/删除模块、模块位置变化、依赖关系变化 |
-| `external-integration` | 外部接入指南、API 用法 | Provider 变化、配置变化、API 变化 |
+| `external-integration` | 外部接入指南、API 用法 | AMKR 边界变化、配置变化、API 变化 |
 | `skill-sync-enforcer` | 代码变更检查清单 | 所有满足触发条件的变更 |
 | `commit-preparation` | Commit 前检查 | ChangeLog 格式、版本信息变化 |
 | `release-checklist` | 发布前检查 | 版本信息、文档同步状态 |
@@ -95,11 +94,10 @@ git diff HEAD~1 --stat
 - 新增 `sirius_pulse/<module_name>/` 目录及 `.py` 文件
 - 删除现有模块
 - 模块文件重构（拆分/合并）
-- 新增 Provider 类型
+- 新增/删除 WebUI/API 路由或页面
 
 **必须更新**：
-- [ ] `docs/architecture.md` - 新增模块说明
-- [ ] `docs/full-architecture-flow.md` - 更新数据流/执行流
+- [ ] `docs/guide/architecture-overview.md` - 新增模块说明与数据流/执行流
 - [ ] `.github/skills/framework-quickstart/SKILL.md` - 更新阅读顺序和模块描述
 - [ ] `.github/skills/external-integration/SKILL.md` - 若涉及外部接入
 - [ ] 所有其他 SKILL 的推荐读取顺序（若改变了模块位置）
@@ -107,34 +105,34 @@ git diff HEAD~1 --stat
 
 **示例提示**：
 ```
-检测到新增模块: sirius_pulse/cache/
+检测到新增模块: sirius_pulse/<new_module>/
 请更新：
-1. docs/architecture.md - 在心智模型中添加 cache/ 说明
+1. docs/guide/architecture-overview.md - 在「核心边界」中补充该模块说明
 2. .github/skills/framework-quickstart/SKILL.md - 在阅读顺序添加对应模块
-3. 新增 tests/test_cache.py
+3. 新增 tests/test_<new_module>.py
 ```
 
 #### B. 接口/API 变更（中-高影响）
 
 **触发条件**：
-- 修改 `sirius_pulse/api/` 中的公开接口
+- 修改顶层公开接口（公开符号统一从 `sirius_pulse/__init__.py` 导出，没有 `sirius_pulse/api/` 子模块）
 - 修改 `EmotionalGroupChatEngine` 的公开方法签名
 - 新增/删除 CLI 命令（`sirius-pulse`）
+- 新增/删除 WebUI 路由（`sirius_pulse/webui/routes.py`）
 - 配置结构变化
 
 **必须更新**：
-- [ ] `docs/external-usage.md` - 使用示例
+- [ ] `docs/reference/python-api.md` / `docs/reference/cli.md` - 使用示例
+- [ ] `docs/reference/webui-api.md` - 若涉及 WebUI 路由
 - [ ] `.github/skills/external-integration/SKILL.md` - API 说明
 - [ ] `README.md` - 快速开始示例
-- [ ] `examples/*.py` 或 `examples/*.json` - 实际示例代码
 
 **示例提示**：
 ```
 检测到 API 变更: EmotionalGroupChatEngine.process_message() 签名变化
 请更新：
-1. docs/external-usage.md - 更新方法说明和示例
-2. examples/ - 修改使用示例
-3. README.md - 更新快速开始代码
+1. docs/reference/python-api.md - 更新方法说明和示例
+2. README.md - 更新快速开始代码
 ```
 
 #### C. 细节实现变更（中影响）
@@ -143,10 +141,10 @@ git diff HEAD~1 --stat
 - `sirius_pulse/models/models.py` 的消息 / transcript 契约变化
 - `sirius_pulse/config/models.py` 的 session / workspace / orchestration 契约变化
 - 系统提示词生成逻辑改动
-- 缓存策略、性能监控逻辑修改
+- 记忆压缩、缓存策略逻辑修改
 
 **必须更新**：
-- [ ] `docs/architecture.md` - 对应部分的详解
+- [ ] `docs/guide/architecture-overview.md` - 对应部分的详解
 - [ ] `.github/skills/framework-quickstart/SKILL.md` - 心智模型部分
 - [ ] 对应的 tests 文件
 
@@ -154,8 +152,8 @@ git diff HEAD~1 --stat
 ```
 检测到数据契约变化: SessionConfig / WorkspaceConfig / Transcript 新增字段
 请更新：
-1. docs/architecture.md - 更新模型说明
-2. docs/external-usage.md - 若外部调用契约受影响则补充说明
+1. docs/guide/architecture-overview.md - 更新模型说明
+2. docs/reference/python-api.md - 若外部调用契约受影响则补充说明
 3. 对应 tests 文件 - 补充测试覆盖
 ```
 
@@ -167,23 +165,23 @@ git diff HEAD~1 --stat
 - `.pre-commit-config.yaml` 的工具版本变化
 
 **必须更新**：
-- [ ] `docs/configuration.md` - 新增配置选项说明
+- [ ] `docs/guide/configuration.md` - 新增配置选项说明
+- [ ] `docs/reference/global-config.md` - 若涉及全局配置字段
 - [ ] `README.md` - 依赖版本、安装步骤
-- [ ] `examples/session.json` - 配置示例
 
 **示例提示**：
 ```
 检测到依赖变更: 新增 redis>=4.0
 请更新：
 1. README.md - 依赖安装说明
-2. docs/configuration.md - Redis 配置选项
+2. docs/guide/configuration.md - Redis 配置选项
 ```
 
 #### E. 工具/流程变更（低影响）
 
 **触发条件**：
 - `.github/workflows/` 的 CI/CD 流程变化
-- `Makefile` 的命令变化
+- `.pre-commit-config.yaml` 的钩子或工具版本变化
 - `scripts/` 下的工具脚本变化
 
 **必须更新**：
@@ -195,11 +193,10 @@ git diff HEAD~1 --stat
 ### 【新增/修改模块时】
 
 - [ ] 新模块已在 `sirius_pulse/<module>/` 下创建
-- [ ] 新模块包含 `__init__.py` 导出公开接口
+- [ ] 新模块包含 `__init__.py` 导出公开接口（顶层符号同步到 `sirius_pulse/__init__.py`）
 - [ ] 新增 `tests/test_<module>.py` 单元测试
 - [ ] 所有新增类/函数都有完整的文档字符串和类型注解
-- [ ] `docs/architecture.md` 已补充模块说明和设计初衷
-- [ ] `docs/full-architecture-flow.md` 已更新数据流/执行流
+- [ ] `docs/guide/architecture-overview.md` 已补充模块说明和设计初衷
 - [ ] `framework-quickstart SKILL` 已更新阅读顺序和模块描述
 - [ ] `external-integration SKILL` 已更新（若涉及外部接入）
 - [ ] 可用性检查：`python main.py --help` 执行正常
@@ -209,9 +206,8 @@ git diff HEAD~1 --stat
 
 - [ ] 所有修改都有类型注解
 - [ ] 向后兼容性已确认（或有明确的弃用计划）
-- [ ] `sirius_pulse/api/` 中的导出已同步更新
-- [ ] `examples/` 中的示例已测试并更新
-- [ ] `docs/external-usage.md` 已补充新用法说明
+- [ ] `sirius_pulse/__init__.py` 中的顶层导出已同步更新
+- [ ] `docs/reference/python-api.md` 已补充新用法说明
 - [ ] `tests/` 的相关测试已更新
 - [ ] `README.md` 的快速开始已验证
 - [ ] 破坏性变更已在 `CHANGELOG.md` 记录
@@ -220,8 +216,7 @@ git diff HEAD~1 --stat
 
 - [ ] `pyproject.toml` 已正确更新
 - [ ] 可选依赖已在 `[project.optional-dependencies]` 中声明
-- [ ] `docs/configuration.md` 已补充新配置项说明
-- [ ] `examples/session.json` 已示例新配置（若适用）
+- [ ] `docs/guide/configuration.md` 已补充新配置项说明
 - [ ] `README.md` 的安装步骤已验证
 - [ ] CI/CD 已测试新依赖的兼容性
 
@@ -250,17 +245,16 @@ grep -r "^description:" .github/skills/*/SKILL.md
 
 ## 常见同步场景
 
-### 场景 1：新增性能监控模块
+### 场景 1：新增模块
 
 ```
-变更：创建 sirius_pulse/performance/{metrics,profiler,benchmarks}.py
+变更：创建 sirius_pulse/<new_module>/{...}.py
 
 检查清单：
-✓ 在 docs/architecture.md 的"心智模型"中补充性能监控特性说明
-✓ 在 docs/full-architecture-flow.md 中补充性能指标的收集流程
+✓ 在 docs/guide/architecture-overview.md 的「核心边界」表格中补充该模块说明
 ✓ 在 framework-quickstart SKILL 的"阅读顺序"中添加新模块
-✓ 在 external-integration SKILL 中补充使用示例
-✓ 新增 tests/test_performance.py 包含 19+ 个测试
+✓ 在 external-integration SKILL 中补充使用示例（若对外可见）
+✓ 新增 tests/test_<new_module>.py
 ✓ tests/test_*.py 中的所有相关测试通过
 ✓ python main.py --help 可正常执行
 ```
@@ -273,32 +267,54 @@ grep -r "^description:" .github/skills/*/SKILL.md
 检查清单：
 ✓ 字段包含完整类型注解和文档字符串
 ✓ 在 config/models.py 中补充字段说明
-✓ 在 docs/architecture.md 中更新对应数据模型描述
-✓ 在 docs/external-usage.md 中补充使用示例
-✓ 更新 examples/session.json 示例配置
-✓ tests/test_config_manager.py 或相关测试中有相应覆盖
+✓ 在 docs/guide/architecture-overview.md 中更新对应数据模型描述
+✓ 在 docs/reference/python-api.md 中补充使用示例
+✓ tests/test_config.py 或相关测试中有相应覆盖
 ✓ 旧代码的兼容性已确认（提供默认值或迁移逻辑）
 ```
 
-### 场景 3：新增 Provider 类型
+### 场景 3：新增认知任务名
+
+任务名是 Sirius Pulse 与 AMKR 之间的**唯一线协议**：框架把任务名填进 OpenAI 兼容请求的 `model` 字段，AMKR 用它查任务定义换成真实模型。因此新增一个认知任务 = 新增一个任务名，**不是**新增一个 Provider 实现。
 
 ```
-变更：实现 sirius_pulse/providers/new_platform.py
+变更：在 sirius_pulse/core/model_router.py 的 _DEFAULT_TASK_REGISTRY 中新增任务名
 
 检查清单：
-✓ 新 Provider 继承 AsyncLLMProvider 或 LLMProvider
-✓ 在 sirius_pulse/providers/__init__.py 中导出
-✓ 在 sirius_pulse/providers/routing.py 中注册路由
-✓ 在 docs/external-usage.md 中补充接入说明
-✓ 在 examples/ 中提供配置示例
-✓ 在 framework-quickstart SKILL 中更新 providers 部分说明
-✓ 新增 tests/test_providers_new_platform.py
+✓ 任务名已加入 _DEFAULT_TASK_REGISTRY（键与 TaskConfig.model_name 一致）
+✓ TaskConfig 只填本地字段（timeout / retries）与预算估算用的默认值；
+  模型、temperature、max_tokens 一律不在此决定，留给 AMKR 的任务定义
+✓ 任务名无需手工登记：known_task_names() 直接读取注册表键，
+  引擎启动时会自动把它注册进 AMKR 的 <amkr_workspace>/<persona> 空间
+✓ 确认注册是「只创建缺失」：已存在的任务不会被比对或覆盖
+✓ 在 sirius_pulse/webui/model_catalog.py 的 TASK_LABELS 中补中文标签（可选但推荐）
+✓ 在 docs/modules/provider-system.md 与 docs/reference/provider-config.md 的 12 个内置任务名清单中同步
+✓ 新增或扩展 tests/test_model_router.py 覆盖该任务名
+✓ 若任务有独立调用点，确认它通过 engine.model_router.resolve("<task>") 取配置
+
+注意：不要在 sirius_pulse/providers/ 下新增厂商实现或路由注册表——
+供应商、Key 池、模型选择与采样参数都由 AMKR 承担，加回来属于架构回退。
+```
+
+### 场景 4：新增 WebUI 页面 / REST API
+
+```
+变更：在 sirius_pulse/webui/routes.py 中新增 RouteSpec，并在 server_core.py 实现 handler
+
+检查清单：
+✓ RouteSpec 已登记（method + path + handler_name），handler 与名称一致
+✓ 写操作需要鉴权时沿用既有 auth 流程，不要在页面里绕过
+✓ 返回契约同步到 docs/reference/webui-api.md
+✓ 前端静态页面已同步（sirius_pulse/webui/static/）
+✓ 新增或扩展 tests/test_webui_routes.py
+✓ 若涉及密钥字段（如 amkr_local_api_key），响应中必须脱敏为 sk-a****，
+  且提交脱敏值时保留磁盘原值
 ```
 
 ## 防护与约定
 
 1. **同步时间点**：每次代码提交前或在 skill-sync-enforcer 触发后立即执行。
-2. **优先级顺序**：优先同步 `docs/` > `SKILL` > `README.md` > `examples/`。
+2. **优先级顺序**：优先同步 `docs/` > `SKILL` > `README.md`。
 3. **文档一致性检查**：
    - 所有 SKILL 中提及的模块路径必须真实存在
    - 所有 SKILL 中的阅读顺序必须反映当前的模块依赖关系
@@ -315,7 +331,7 @@ grep -r "^description:" .github/skills/*/SKILL.md
 - [ ] 识别了变更的所有影响范围
 - [ ] 更新了所有受影响的 `docs/` 文件
 - [ ] 更新了所有受影响的 SKILL 文件
-- [ ] 更新了 `README.md` 和 `examples/`（若需要）
+- [ ] 更新了 `README.md`（若需要）
 - [ ] 所有文档中的代码示例都已验证可执行
 - [ ] 所有 SKILL 的 frontmatter 格式正确（`name:` 和 `description:` 完整）
 - [ ] 提交说明清晰地列出了本次同步的内容

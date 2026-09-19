@@ -23,9 +23,9 @@ description: "编写新测试文件或为现有模块补充测试时使用，覆
 ### 推荐覆盖
 
 - 用户发送消息后，引擎是否依据人格、上下文、记忆和策略给出合理响应。
-- 用户配置 Provider、人格、技能或平台适配后，系统是否产生符合预期的业务行为。
+- 用户配置 AMKR 连接、人格、技能或平台适配后，系统是否产生符合预期的业务行为。
 - 记忆、事件、技能执行等内部模块是否在真实调用链中协作正确。
-- 失败、空输入、非法配置、Provider 异常等场景是否返回用户可理解的降级结果。
+- 失败、空输入、非法配置、AMKR 不可达或任务名缺失等场景是否返回用户可理解的降级结果。
 
 ### 禁止倾向
 
@@ -64,7 +64,7 @@ engine = EmotionalGroupChatEngine(
 
 ---
 
-## 二、标准 Provider 与引擎初始化
+## 二、标准 MockProvider 与引擎初始化
 
 ```python
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
