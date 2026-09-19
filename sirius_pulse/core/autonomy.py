@@ -12,7 +12,6 @@ returns ``should_act`` is an LLM turn worth paying for.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,17 +27,6 @@ _RESTLESSNESS_FULL_SECONDS = 6 * 60 * 60
 
 # Size of the recent-kind memory used for the novelty term.
 _RECENT_KIND_WINDOW = 3
-
-_URL_RE = re.compile(r"https?://", re.IGNORECASE)
-_IMAGE_RE = re.compile(r"\[图片|\[动画表情|表情包|图里|截图|图片描述")
-_CODE_RE = re.compile(r"(代码|项目|重构|函数|脚本|报错|异常|接口|部署|bug|error|traceback|refactor)", re.IGNORECASE)
-_QUESTION_RE = re.compile(r"[?？]|(怎么|为什么|如何|哪个|有没有)")
-
-# Seed weights: a link or a technical thread is worth carrying further than a
-# picture or a passing question.
-_WEIGHT_LINK_OR_CODE = 0.7
-_WEIGHT_IMAGE_OR_QUESTION = 0.5
-_WEIGHT_PLAIN = 0.3
 
 
 @dataclass(slots=True)
@@ -134,39 +122,6 @@ class Episode:
         )
 
 
-def infer_kind(text: str) -> str:
-    """Map a piece of encountered material to a free-form episode label."""
-    sample = str(text or "")
-    if _URL_RE.search(sample):
-        return "reading"
-    if _CODE_RE.search(sample):
-        return "building"
-    if _IMAGE_RE.search(sample):
-        return "image"
-    if _QUESTION_RE.search(sample):
-        return "note"
-    return "musing"
-
-
-def build_seed(text: str, *, kind: str = "", weight: float = 0.0, source: str = "chat") -> dict:
-    """Build one autonomy seed from material the persona already encountered."""
-    sample = " ".join(str(text or "").split())[:120]
-    resolved_kind = kind or infer_kind(sample)
-    if weight <= 0:
-        if resolved_kind == "reading" or resolved_kind == "building":
-            weight = _WEIGHT_LINK_OR_CODE
-        elif resolved_kind in {"image", "note"}:
-            weight = _WEIGHT_IMAGE_OR_QUESTION
-        else:
-            weight = _WEIGHT_PLAIN
-    return {
-        "kind": resolved_kind,
-        "seed": sample,
-        "weight": _clamp(weight),
-        "source": source,
-    }
-
-
 class AutonomyPolicy:
     """Pure-rule autonomy policy for a persona acting on her own.
 
@@ -204,7 +159,7 @@ class AutonomyPolicy:
 
         if not open_items:
             # Nothing is being carried: she does not get to act out of boredom.
-            # Material may still *plant* an intention, which is a later tick's job.
+            # Intentions form in real turns (intend_pursue / intend_share), not here.
             return self._decision(False, "no_intention", 0.0, threshold, restlessness=restlessness)
 
         best = max(
@@ -331,6 +286,4 @@ __all__ = [
     "AutonomyDecision",
     "AutonomyPolicy",
     "Episode",
-    "build_seed",
-    "infer_kind",
 ]
