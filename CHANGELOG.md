@@ -6,6 +6,7 @@
 
 ### Changed
 
+- **向量化改由 AMKR 提供**：`sirius_pulse/embedding/client.py` 直接调用 AMKR 的 `/v1/embeddings`，模型名取自 `global_config.json` 的 `embedding_model`（默认 `BAAI/bge-m3`，支持 `SIRIUS_EMBEDDING_MODEL` 覆盖），凭据用该人格工作空间的推理 key。响应按 OpenAI 契约的 `index` 归位，避免向量与文本错配。
 - **模型接入整体收敛到 AMKR**：本框架不再自带任何厂商实现，所有模型调用统一发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）。供应商、Key 池、模型选择、采样参数与故障切换全部由 AMKR 承担。
 - **认知任务按任务名路由**：发往 AMKR 的 `model` 字段就是任务名本身（`cognition_analyze`、`memory_extract`、`response_generate`、`proactive_generate`、`passive_tool`、`plugin_analyze`、`plugin_generate`、`plugin_render`、`plugin_raw`、`diary_generate`、`diary_consolidate`、`topic_cluster` 共 12 个），由 AMKR 查任务定义换成真实模型。因此本框架对任务名请求**不再发送** `temperature` / `max_tokens`——任务定义里的值优先。
 - **自动注册任务名**：人格启动时向 AMKR 工作空间 `<amkr_workspace>/<persona>` 注册缺失的任务名，只创建、不修改，后续调优一律在 AMKR 侧完成。工作空间由首个任务隐式创建。
@@ -15,6 +16,7 @@
 
 ### Removed
 
+- **本地 Embedding 服务**：删除 `sirius_pulse/embedding/server.py` 与 `__main__.py`（含 aiohttp 服务、`_BatchProcessor`、SentenceTransformer 加载），以及 WebUI 拉起该子进程的整套逻辑（`_start_embedding_service` / `_stop_embedding_service` / `_run_embedding_server_process` / 端口探测）与 CLI 的就绪等待。`sentence-transformers` 依赖随之删除，连带移除 `torch` / `triton` / `nvidia-*` 约 4.4GB 的镜像体积；`EMBEDDING_DEFAULT_PORT`、`SIRIUS_EMBEDDING_URL`、`embedding_port` 与 Compose 的 Hugging Face 缓存挂载一并失效。`POST /api/embedding/restart` 由 `POST /api/embedding/rebuild` 取代——本地服务已无可重启，需要处理的是换模型后的索引重建。
 - **遗留的「任务 → 模型」配置面**：`OrchestrationPolicy` 的 `unified_model` / `task_models` / `task_temperatures` / `task_max_tokens` 字段、`resolve_model_for_task()`、`MultiModelConfig`，以及 `config/helpers.py` 里对应的构造与改写函数（`configure_orchestration_models`、`configure_orchestration_temperatures`、`create_multimodel_config`、`setup_multimodel_config`，`configure_full_orchestration` 的 `task_models` / `task_temperatures` 入参）。写在这些键上的值现在会被直接忽略，因此不再存在「某个任务直连某个真实模型名」的路径：发往 AMKR 的 `model` 只可能是任务名。`configure_orchestration_retries` 与 `configure_full_orchestration` 的 `task_retries` / `**extra_fields` 保留（本地传输层参数）。
 - **厂商实现**：`aliyun_bailian.py`、`bigmodel.py`、`deepseek.py`、`mimo.py`、`opencode.py`、`siliconflow.py`、`volcengine_ark.py`、`ytea.py`。
 - **路由与注册表**：`providers/routing.py`（`AutoRoutingProvider`、`ProviderRegistry`、`WorkspaceProviderManager`、`ProviderConfig` 及各类探测/校验函数）、`providers/proxy.py`、`providers/models_dev.py`。
@@ -26,6 +28,7 @@
 
 ### Added
 
+- **Embedding 模型变更检测与索引重建**：`DiaryVectorStore.get_stats()` 读出建库时记下的模型名，与当前配置比对后给出 `indexed_model` / `stale`；WebUI 仪表盘的 Embedding 项在模型不匹配时显示「待重建」，气泡内说明原因并提供「重建索引」按钮（`POST /api/embedding/rebuild`）。换模型必然换维度（`bge-small-zh` 512 维、`bge-m3` 1024 维），旧向量与新查询向量不在同一空间，不重建会得到静默错误的检索结果。重建用 `drop_group()` 删掉整个 collection 而非清空条目——Chroma 的 collection `metadata` 只在创建时写入，只清条目会让旧模型名一直留着，索引被永久判定为过期。
 - **AMKR 任务注册与巡检**：`sirius_pulse/providers/amkr_sync.py` 提供 `AmkrAdminClient`、`register_persona_tasks`、`collect_amkr_status`、`inspect_persona_workspace` 等接口；revision 冲突自动重读重试，AMKR 不可达时以结构化结果返回而不中断引擎构建。
 - **记忆可视化 WebUI 页面**：新增 `memory-viz.html` 记忆浏览器与知识图谱可视化，后端 `memory_api.py` 提供记忆 CRUD、搜索、知识图谱、统计 API。
 - **技能管理 WebUI 页面**：新增 `skills.html` 技能管理页面（状态/安装/配置卡片），后端 `server_skill_api.py` 提供技能状态、安装、配置管理 API。

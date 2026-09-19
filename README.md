@@ -138,7 +138,7 @@ sirius-pulse webui
 ### 3️⃣ 后台运行
 
 默认交互式 CLI 基于 Textual 构建，提供人格状态表、WebUI 控制、人格启停与运行模式入口。WebUI、人格 worker 与 NapCat 会以后台子进程运行，不再弹出独立控制台窗口。日志可在 WebUI 的 **实时日志** 页面查看，也可以通过 CLI 查看最近日志。
-在交互式 CLI 中按 `q` 或点击「退出并清理」时，会触发统一清理流程，停止后台 WebUI、WebUI 托管的 Embedding 微服务以及所有运行中的人格。
+在交互式 CLI 中按 `q` 或点击「退出并清理」时，会触发统一清理流程，停止后台 WebUI 以及所有运行中的人格。
 
 ```bash
 sirius-pulse run              # 启动所有已配置人格 + WebUI
@@ -266,7 +266,7 @@ sirius_pulse/
 │   ├── runtime.py           # EngineRuntime 封装
 │   └── onebot_v11/napcat/   # NapCat 适配器
 │
-├── embedding/               # Embedding 微服务
+├── embedding/               # 向量化客户端（调用 AMKR）
 ├── webui/                   # Web 管理界面（aiohttp）
 ├── token/                   # Token 统计与分析
 ├── config/                  # 配置管理

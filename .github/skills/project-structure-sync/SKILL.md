@@ -16,7 +16,7 @@ description: "遍历项目结构变化并同步更新文档。监控模块变化
 ```
 sirius_pulse/
 ├── core/                     - 编排核心（emotional_engine.py、prompt_factory.py、model_router.py、engine_persistence.py、identity_resolver.py）
-├── embedding/                - Embedding 微服务（server.py aiohttp 服务端 + client.py 同步客户端）
+├── embedding/                - 向量化客户端（client.py 调用 AMKR `/v1/embeddings`，本框架不再自带模型服务）
 ├── persona_generation/       - 人格资产生成子包（templates.py 数据模型 + builders.py LLM 生成）
 ├── config/                   - SessionConfig / WorkspaceBootstrap / JSONC / ConfigManager
 ├── models/                   - Message / Participant / Transcript 等数据契约
