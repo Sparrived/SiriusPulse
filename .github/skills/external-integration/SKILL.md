@@ -155,6 +155,7 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
   | `amkr_base_url` | `SIRIUS_AMKR_BASE_URL` | `http://127.0.0.1:8000` |
   | `amkr_local_api_key` | `SIRIUS_AMKR_API_KEY` | 空（未配置则引擎不就绪） |
   | `amkr_workspace` | `SIRIUS_AMKR_WORKSPACE` | `sirius-pulse` |
+  | `amkr_public_url` | `SIRIUS_AMKR_PUBLIC_URL` | 空（浏览器侧，回落到 `amkr_base_url`） |
 
 - `amkr_local_api_key` 是 AMKR 的**本地授权 Key，同时是它的管理员凭据**（可增删供应商与 Key），因此只保存在服务端；WebUI 响应中脱敏为 `sk-a****`，提交脱敏值时服务端保留磁盘原值。`amkr_ui_enabled` 控制是否显示跳转 AMKR 面板的外链。
 
@@ -169,6 +170,7 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 ### 工作空间与注册
 
 - AMKR 是**共享单实例**，多个 AI 服务可同时使用，**不是多租户**。隔离靠请求头 `X-AMKR-Workspace`，框架按人格拼接为 `<amkr_workspace>/<persona>`（如 `sirius-pulse/sirius`，由 `workspace_for()` 生成）。
+- **两个地址**：`amkr_base_url` 是服务端/容器怎么连 AMKR，`amkr_public_url` 是**用户浏览器**怎么连同一个 AMKR（留空回落前者）。同机部署时二者必然不同——容器走回环最省事，但回环在用户浏览器里指向用户自己的机器；面板与运维页外链都是浏览器直连 AMKR，故远程访问必须配 `amkr_public_url`（反代域名）。代码里用 `AmkrSettings.browser_base_url` 取浏览器侧地址。
 - 工作空间由框架**显式创建**（`POST /api/workspaces`，见 `ensure_persona_workspace_key()`），不再靠「建第一个任务」隐式产生。原因：创建的那一刻是拿到该空间**面板 key** 的唯一时机，之后 AMKR 的目录与导出都刻意剥掉它。顺序必须是**先建空间拿 key，再注册任务**。请求头为空时不发送，等价于 AMKR 的默认工作空间。
 - 面板 key 存在 `data/global_config.json` 的 `amkr_panel_keys`（`{工作空间: key}` 明文映射，只为服务端持有）。**该字段绝不随 `GET /api/global-config` 回显**；面板地址只从管理员专用的 `GET /api/amkr/panel?persona=` 取，地址形如 `<ui_url>/panel.html#k=<key>`，凭据必须在 fragment 里（查询串会进 `Referer` 与服务端日志）。
 - 若空间已在 AMKR 侧存在而本地没有 key，AMKR 只返回 409 且不会重发 key：此时注册会报错并提示去读 AMKR 配置文件的 `workspaces.<空间>.api_key`，或删掉该空间后重建。
