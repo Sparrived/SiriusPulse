@@ -275,6 +275,56 @@ class DelayedQueueTasks:
         return bool(getattr(tool, "silent", False))
 
     @staticmethod
+    def _note_external_delivery(
+        engine: Any,
+        group_id: str,
+        item: Any,
+        chat_result: Any,
+        tool_call: ToolCall,
+        params: dict[str, Any],
+        result: Any,
+    ) -> None:
+        """把已经发到群里的图片/文件写回历史，供下一轮模型自查。
+
+        group_file_exec 的 image/file 是静默投递：群里收到了内容，本轮却不产生
+        任何文本，``_record_assistant_message`` 因此不会留下记录。模型下一轮
+        看不到自己发过，只能重新找文件再发一次。这里按富文本卡片的既有做法，
+        用一条简短回执补上这条历史。只处理真正投递到外部的动作，list/download
+        等本地动作不写。
+        """
+        if _composite_action(tool_call) not in {"image", "file"}:
+            return
+        metadata = getattr(result, "internal_metadata", {})
+        if not isinstance(metadata, dict):
+            return
+        if not (metadata.get("target_type") and metadata.get("target_id")):
+            return
+        record = getattr(engine, "_record_assistant_message", None)
+        if not callable(record):
+            return
+        action = _composite_action(tool_call)
+        if action == "file":
+            label = str(metadata.get("file_name") or params.get("file_path") or "").strip()
+            subject = f"文件「{label}」" if label else "文件"
+        else:
+            label = str(params.get("image_path") or "").strip()
+            subject = f"图片 {label}" if label else "图片"
+        try:
+            record(
+                group_id=group_id,
+                target_user_id=getattr(item, "user_id", "") or "",
+                content=f"（已发送{subject}；除非用户明确要求重发，否则不要再发）",
+                system_prompt=getattr(chat_result, "system_prompt", ""),
+                tags=[{"type": action, "label": label}],
+                injected_request=getattr(chat_result, "injected_request", {}),
+                injected_tool_names=getattr(chat_result, "injected_tool_names", []),
+                platform_message_id=str(metadata.get("message_id") or ""),
+                **_reasoning_memory_kwargs(chat_result),
+            )
+        except Exception as exc:  # 回执只是辅助信息，不能拖垮本轮回复
+            logger.debug("外部投递回执写入失败: %s", exc)
+
+    @staticmethod
     def _append_tool_chain_messages(
         engine: Any,
         messages: list[dict[str, Any]],
@@ -1282,6 +1332,9 @@ class DelayedQueueTasks:
                         )
                         tool_content = result.to_model_text()
                         if result.success:
+                            self._note_external_delivery(
+                                engine, group_id, item, chat_result, tc, params, result
+                            )
                             # 收集多模态内容
                             for block in result.multimodal_blocks:
                                 tool_multimodal.append(

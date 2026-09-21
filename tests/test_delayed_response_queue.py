@@ -1906,3 +1906,151 @@ async def test_delayed_queue_when_markdown_card_render_fails_then_falls_back_to_
     assert results[0]["reply"] == ""
     assert delivered[0]["content"] == "# 状态\n- healthy\n- service ok"
     assert "tags" not in delivered[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_call", "metadata", "expected_content", "expected_tags"),
+    [
+        (
+            ToolCall(
+                id="call-1",
+                function_name="group_file_exec",
+                function_arguments='{"action": "image", "image_path": "/tmp/sirius.png"}',
+            ),
+            {
+                "target_type": "group",
+                "target_id": "group-1",
+                "message_id": "77",
+                "group_file_exec_action": "image",
+            },
+            "（已发送图片 /tmp/sirius.png；除非用户明确要求重发，否则不要再发）",
+            [{"type": "image", "label": "/tmp/sirius.png"}],
+        ),
+        (
+            ToolCall(
+                id="call-1",
+                function_name="group_file_exec",
+                function_arguments='{"action": "file", "file_path": "/tmp/notes.md"}',
+            ),
+            {
+                "target_type": "group",
+                "target_id": "group-1",
+                "file_name": "notes.md",
+                "message_id": "78",
+                "group_file_exec_action": "file",
+            },
+            "（已发送文件「notes.md」；除非用户明确要求重发，否则不要再发）",
+            [{"type": "file", "label": "notes.md"}],
+        ),
+    ],
+)
+async def test_delayed_queue_when_external_delivery_succeeds_then_records_receipt_for_next_turn(
+    tool_call, metadata, expected_content, expected_tags
+):
+    """静默投递的图片/文件必须留下历史，否则下一轮模型看不到自己发过而重发。"""
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "send it",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(
+            name="group_file_exec",
+            silent=False,
+            developer_only=False,
+            retry_safe=False,
+        ),
+        [
+            SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[tool_call],
+                reply_references=[],
+            ),
+            SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[],
+                reply_references=[],
+            ),
+        ],
+        AsyncMock(return_value=ToolResult(success=True, internal_metadata=metadata)),
+    )
+    delivered: list[dict[str, object]] = []
+    engine._record_assistant_message = lambda **kwargs: delivered.append(kwargs)
+
+    await tasks.tick_delayed_queue("group-1")
+
+    assert [entry["content"] for entry in delivered] == [expected_content]
+    assert delivered[0]["group_id"] == "group-1"
+    assert delivered[0]["target_user_id"] == "u1"
+    assert delivered[0]["tags"] == expected_tags
+    assert delivered[0]["platform_message_id"] == metadata["message_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arguments", "metadata"),
+    [
+        (
+            '{"action": "list", "folder_id": ""}',
+            {"target_type": "group", "target_id": "group-1"},
+        ),
+        (
+            '{"action": "download", "file_id": "f1"}',
+            {"target_type": "group", "target_id": "group-1", "file_name": "a.md"},
+        ),
+    ],
+)
+async def test_delayed_queue_when_group_file_action_is_local_then_records_no_receipt(
+    arguments, metadata
+):
+    """list/download 只在本地读写，没有发给群里，不该写入投递回执。"""
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "list the files",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    tool_call = ToolCall(
+        id="call-1",
+        function_name="group_file_exec",
+        function_arguments=arguments,
+    )
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(
+            name="group_file_exec",
+            silent=False,
+            developer_only=False,
+            retry_safe=False,
+        ),
+        [
+            SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[tool_call],
+                reply_references=[],
+            ),
+            SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[],
+                reply_references=[],
+            ),
+        ],
+        AsyncMock(return_value=ToolResult(success=True, internal_metadata=metadata)),
+    )
+    delivered: list[dict[str, object]] = []
+    engine._record_assistant_message = lambda **kwargs: delivered.append(kwargs)
+
+    await tasks.tick_delayed_queue("group-1")
+
+    assert delivered == []
