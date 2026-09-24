@@ -13,11 +13,6 @@ const $ = scopedPage.$;
 
 const BOOLEAN_FIELDS = [
   'enable_tools',
-  'plan_mode_enabled',
-  'plan_mode_limit_normal_tools',
-  'plan_mode_allow_light_chat',
-  'plan_mode_chat_awareness_enabled',
-  'plan_mode_presence_enabled',
 ];
 
 let replyTimeCurvePoints = [];
@@ -336,16 +331,10 @@ export async function init(container, params = {}) {
           ${replyTimeCurveEditor()}
         `)}
 
-        ${section('工具与计划', '集中管理工具能力、计划流程和计划状态表现。', `
+        ${section('工具', '集中管理工具能力与工具调用轮数。', `
           <div class="exp-grid">
             ${toggleInput('enable_tools', '启用工具', '允许模型在需要时调用已启用工具。', 'exp-card-wide')}
             ${fieldCard('最大工具轮数', '限制单次回复中工具调用和模型续写的循环次数。', numberInput('max_tool_rounds', 0))}
-            ${toggleInput('plan_mode_enabled', '启用计划模式', '允许模型进入多步骤计划流程。', 'exp-card-tall')}
-            ${toggleInput('plan_mode_limit_normal_tools', '普通聊天限制工具', '计划模式开启时，普通聊天不主动使用常规工具。')}
-            ${toggleInput('plan_mode_allow_light_chat', '计划中允许轻量闲聊', '计划执行期间允许少量自然聊天，不完全静默。', 'exp-card-wide')}
-            ${toggleInput('plan_mode_chat_awareness_enabled', '在聊天中暴露计划状态', '把公开计划状态注入聊天提示词，便于上下文衔接。')}
-            ${toggleInput('plan_mode_presence_enabled', '发送计划状态消息', '计划处理较久时，向群里发送“正在处理”的存在感消息。')}
-            ${fieldCard('状态消息间隔（秒）', '计划状态消息的最小发送间隔。', numberInput('plan_mode_presence_min_interval_seconds', 0))}
           </div>
         `)}
 
@@ -719,17 +708,11 @@ async function loadExperience(name, autoSave) {
     }
     form.max_sentence_chars.value = data.max_sentence_chars ?? 20;
     form.max_tool_rounds.value = data.max_tool_rounds ?? 3;
-    form.plan_mode_presence_min_interval_seconds.value = data.plan_mode_presence_min_interval_seconds ?? 45;
     form.diary_top_k.value = data.diary_top_k ?? 5;
     form.memory_unit_top_k.value = data.memory_unit_top_k ?? data.diary_top_k ?? 5;
     form.diary_token_budget.value = data.diary_token_budget ?? 2000;
 
     setBooleanField('enable_tools', data.enable_tools ?? true);
-    setBooleanField('plan_mode_enabled', data.plan_mode_enabled ?? false);
-    setBooleanField('plan_mode_limit_normal_tools', data.plan_mode_limit_normal_tools ?? false);
-    setBooleanField('plan_mode_allow_light_chat', data.plan_mode_allow_light_chat ?? true);
-    setBooleanField('plan_mode_chat_awareness_enabled', data.plan_mode_chat_awareness_enabled ?? false);
-    setBooleanField('plan_mode_presence_enabled', data.plan_mode_presence_enabled ?? false);
 
     setupQuadrant(autoSave);
     setupGroupReplyStrategies(autoSave);
@@ -767,10 +750,6 @@ async function saveExperience(name) {
     reply_time_curve_points: normalizeCurvePoints(replyTimeCurvePoints),
     max_sentence_chars: parseInt(form.max_sentence_chars.value, 10),
     max_tool_rounds: parseInt(form.max_tool_rounds.value, 10),
-    plan_mode_presence_min_interval_seconds: parseInt(
-      form.plan_mode_presence_min_interval_seconds.value,
-      10
-    ),
     diary_top_k: parseInt(form.diary_top_k.value, 10),
     memory_unit_top_k: parseInt(form.memory_unit_top_k.value, 10),
     diary_token_budget: parseInt(form.diary_token_budget.value, 10),
