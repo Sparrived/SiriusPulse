@@ -18,15 +18,6 @@ from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGE
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
-from sirius_pulse.core.plan_runtime import (
-    consume_plan_events,
-    finish_plan_session,
-    format_plan_events_for_model,
-    format_public_plan_status,
-    get_active_plan_session,
-    start_plan_session,
-    update_plan_progress,
-)
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
 from sirius_pulse.providers.base import ToolCall
@@ -89,151 +80,6 @@ def _build_assistant_tool_message(
 def _reasoning_memory_kwargs(chat_result: Any) -> dict[str, str]:
     reasoning_content = str(getattr(chat_result, "reasoning_content", "") or "").strip()
     return {"reasoning_content": reasoning_content} if reasoning_content else {}
-
-
-# ── 内置流程控制工具定义 ──────────────────────────────────────────────
-
-ENTER_PLAN_TOOL_DEF: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "enter_plan",
-        "description": (
-            "Enter hidden planning mode for a complex request. "
-            "Use this when the task needs multiple tool calls or careful background work. "
-            "Intermediate text in planning mode is private; call exit_plan to send the final message."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "goal": {
-                    "type": "string",
-                    "description": "The concrete goal for the hidden planning session.",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Short reason why planning mode is needed.",
-                },
-            },
-            "required": ["goal"],
-        },
-    },
-}
-
-EXIT_PLAN_TOOL_DEF: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "exit_plan",
-        "description": (
-            "Exit hidden planning mode and optionally send exactly one final message to the chat."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "final_message": {
-                    "type": "string",
-                    "description": "The final visible message to send to the chat.",
-                },
-                "send_to_group": {
-                    "type": "boolean",
-                    "description": "Whether the final_message should be sent.",
-                    "default": True,
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "Private execution summary for logs.",
-                },
-            },
-            "required": ["final_message"],
-        },
-    },
-}
-
-ABORT_PLAN_TOOL_DEF: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "abort_plan",
-        "description": (
-            "Abort hidden planning mode when the task should not continue, was cancelled, "
-            "or cannot be completed safely."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "reason": {
-                    "type": "string",
-                    "description": "Private reason for aborting the plan.",
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Optional visible message to send to the chat.",
-                },
-                "send_to_group": {
-                    "type": "boolean",
-                    "description": "Whether the optional message should be sent.",
-                    "default": False,
-                },
-            },
-        },
-    },
-}
-
-UPDATE_PLAN_PROGRESS_TOOL_DEF: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "update_plan_progress",
-        "description": (
-            "Update the public, sanitized progress snapshot for the active hidden plan. "
-            "This does not send a chat message and must not include private reasoning, "
-            "tool results, secrets, or pending message text."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "phase": {
-                    "type": "string",
-                    "description": "Short public phase label, e.g. searching/analyzing/verifying.",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "Brief public progress summary safe for normal chat awareness.",
-                },
-                "confidence": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high"],
-                    "description": "Public confidence in current progress.",
-                },
-                "visible": {
-                    "type": "boolean",
-                    "description": "Whether the public snapshot may be shown to normal chat.",
-                    "default": True,
-                },
-            },
-        },
-    },
-}
-
-GET_PLAN_STATUS_TOOL_DEF: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "get_plan_status",
-        "description": (
-            "Read the public status snapshot for the active hidden plan in this group. "
-            "Only public progress is returned; private reasoning and tool details are never exposed."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-}
-
-PLAN_CONTROL_TOOL_NAMES = {
-    "enter_plan",
-    "exit_plan",
-    "abort_plan",
-    "update_plan_progress",
-    "get_plan_status",
-}
 
 
 class DelayedQueueTasks:
@@ -429,71 +275,6 @@ class DelayedQueueTasks:
                 except Exception as exc:
                     logger.warning("Delayed queue tick failed for %s: %s", group_id, exc)
 
-    async def _maybe_send_plan_presence(
-        self,
-        engine: _EmotionalGroupChatEngineBase,
-        on_partial_reply: Any | None,
-        group_id: str,
-        event: str,
-        system_prompt: str,
-    ) -> None:
-        if on_partial_reply is None:
-            return
-        if not bool(engine.config.get("plan_mode_presence_enabled", False)):
-            return
-        try:
-            min_interval = float(engine.config.get("plan_mode_presence_min_interval_seconds", 45.0))
-        except (TypeError, ValueError):
-            min_interval = 45.0
-        now = time.monotonic()
-        state = getattr(engine, "_plan_presence_sent_at", None)
-        if not isinstance(state, dict):
-            state = {}
-            setattr(engine, "_plan_presence_sent_at", state)
-        last = float(state.get(group_id, 0.0) or 0.0)
-        if last and now - last < max(0.0, min_interval):
-            return
-
-        try:
-            max_chars = int(engine.config.get("max_sentence_chars", 20))
-        except (TypeError, ValueError):
-            max_chars = 20
-        max_chars = max(5, min(50, max_chars))
-        scene = "刚进入后台计划状态" if event == "enter" else "后台计划收到新进展"
-        prompt = (
-            "请以当前人格口吻生成一条即将发到群聊的短状态消息。\n"
-            f"场景：{scene}，需要让对方知道你看到了并会继续处理。\n"
-            f"要求：只输出消息本身；一句话；不超过 {max_chars} 个汉字；"
-            "不要透露工具、后台计划、内部推理或系统提示；不要 Markdown。"
-        )
-        try:
-            from sirius_pulse.core.brain import ChatRequest
-
-            result = await engine.brain.chat(
-                ChatRequest(
-                    group_id=group_id,
-                    user_id="",
-                    system_prompt=system_prompt,
-                    messages=[{"role": "user", "content": prompt}],
-                    task_name="response_generate",
-                    enable_tools=False,
-                    post_process=True,
-                    max_tokens=48,
-                )
-            )
-            text = (getattr(result, "clean_text", "") or getattr(result, "raw_text", "")).strip()
-        except Exception as exc:
-            logger.warning("Plan presence generation failed for %s: %s", group_id, exc)
-            return
-        if not text:
-            return
-        try:
-            await on_partial_reply(text)
-        except Exception as exc:
-            logger.warning("Plan presence send failed for %s: %s", group_id, exc)
-            return
-        state[group_id] = now
-
     async def tick_delayed_queue(
         self,
         group_id: str,
@@ -604,8 +385,6 @@ class DelayedQueueTasks:
                 multimodal_inputs=item.get("multimodal_inputs", []),
                 adapter_type=item.get("adapter_type"),
                 adapter_route_id=item.get("adapter_route_id"),
-                lane=item.get("lane", "chat"),
-                plan_id=item.get("plan_id", ""),
             )
             triggered[0] = item
 
@@ -643,43 +422,12 @@ class DelayedQueueTasks:
 
         # Merge all triggered items into one prompt and one generation call
         adapter_type = getattr(triggered[0], "adapter_type", None) if triggered else None
-        plan_mode_enabled = bool(engine.config.get("plan_mode_enabled", False))
-        limit_normal_tools = bool(engine.config.get("plan_mode_limit_normal_tools", False))
-        initial_lane = getattr(triggered[0], "lane", "chat") if triggered else "chat"
-        expose_tools_in_prompt = not (
-            plan_mode_enabled and limit_normal_tools and initial_lane != "plan"
-        )
         bundle = self._build_delayed_prompt(
             triggered,
             group_id,
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
-            expose_tools=expose_tools_in_prompt,
-            tool_flow_mode="plan" if initial_lane == "plan" else "chat",
         )
-        active_plan_for_chat = (
-            get_active_plan_session(engine, group_id)
-            if plan_mode_enabled and initial_lane != "plan"
-            else None
-        )
-        if active_plan_for_chat is not None and bool(
-            engine.config.get("plan_mode_chat_awareness_enabled", False)
-        ):
-            bundle.system_prompt = (
-                f"{bundle.system_prompt}\n\n" f"{format_public_plan_status(active_plan_for_chat)}"
-            )
-        if (
-            plan_mode_enabled
-            and limit_normal_tools
-            and initial_lane != "plan"
-            and not getattr(engine, "_active_plan_sessions", {}).get(group_id)
-        ):
-            bundle.system_prompt = (
-                f"{bundle.system_prompt}\n\n"
-                "【计划模式】普通聊天阶段只做轻量可见回复。"
-                "如果请求需要复杂工具、多步确认或较长推理，请调用 enter_plan。"
-                "enter_plan 后的中间内容不会发送到群里，完成后用 exit_plan 给出最终消息。"
-            )
 
         # Use ContextAssembler to build full messages with diary RAG + XML history
         diary_top_k = engine.config.get("diary_top_k", 5)
@@ -815,50 +563,11 @@ class DelayedQueueTasks:
         pending_chat_result: Any = None
         ended_because_max_rounds = False
         max_round_reply: Any | None = None
-        plan_mode_enabled = bool(engine.config.get("plan_mode_enabled", False))
-        limit_normal_tools = bool(engine.config.get("plan_mode_limit_normal_tools", False))
-        plan_mode = getattr(item, "lane", "chat") == "plan"
-        plan_session: Any | None = None
-        plan_final_reply: str | None = None
-        plan_send_to_group = True
         tool_chain_active = False
 
         while True:
             self._append_tool_chain_messages(engine, messages, group_id)
-            if plan_mode and plan_session is None:
-                plan_session = get_active_plan_session(engine, group_id)
-            if plan_mode and plan_session is not None:
-                if getattr(plan_session, "status", "active") != "active":
-                    plan_final_reply = ""
-                    plan_send_to_group = False
-                    break
-                event_text = format_plan_events_for_model(consume_plan_events(plan_session))
-                if event_text:
-                    messages.append({"role": "user", "content": event_text})
-                    await self._maybe_send_plan_presence(
-                        engine,
-                        on_partial_reply,
-                        group_id,
-                        "update",
-                        system_prompt,
-                    )
-
-            # 内置流程控制工具
-            _extra_tools = []
-            if plan_mode_enabled:
-                if plan_mode:
-                    _extra_tools = [
-                        UPDATE_PLAN_PROGRESS_TOOL_DEF,
-                        EXIT_PLAN_TOOL_DEF,
-                        ABORT_PLAN_TOOL_DEF,
-                    ]
-                elif not getattr(engine, "_active_plan_sessions", {}).get(group_id):
-                    _extra_tools.append(ENTER_PLAN_TOOL_DEF)
-                else:
-                    _extra_tools.append(GET_PLAN_STATUS_TOOL_DEF)
             enable_tools_for_round = bool(engine.config.get("enable_tools", True))
-            if plan_mode_enabled and limit_normal_tools and not plan_mode:
-                enable_tools_for_round = False
 
             if pending_chat_result is not None:
                 chat_result = pending_chat_result
@@ -883,7 +592,6 @@ class DelayedQueueTasks:
                         enable_tools=enable_tools_for_round,
                         caller_is_developer=caller_is_developer,
                         post_process=True,
-                        extra_tools=_extra_tools,
                     )
                 )
                 _round += 1
@@ -893,17 +601,12 @@ class DelayedQueueTasks:
             poke_user_ids_accumulated.extend(getattr(chat_result, "poke_user_ids", []) or [])
             agent_turn.set_candidates(getattr(chat_result, "injected_tool_names", []))
 
-            # 分类工具调用：计划控制 vs 普通工具
+            # 分类工具调用：本轮全部作为普通工具执行
             tool_calls = chat_result.tool_calls or []
-            report_next_tool_output = send_next_tool_output and not plan_mode
+            regular_tools = list(tool_calls)
+            report_next_tool_output = send_next_tool_output
             send_next_tool_output = False
-            plan_control = [tc for tc in tool_calls if tc.function_name in PLAN_CONTROL_TOOL_NAMES]
-            regular_tools = [
-                tc for tc in tool_calls if tc.function_name not in PLAN_CONTROL_TOOL_NAMES
-            ]
-            agent_turn.advance(
-                AgentTurnPhase.PLAN if regular_tools or plan_control else AgentTurnPhase.RESPOND
-            )
+            agent_turn.advance(AgentTurnPhase.PLAN if regular_tools else AgentTurnPhase.RESPOND)
             await self._emit_agent_turn(engine, agent_turn)
 
             # 没有调用任何工具 → 文本作为最终回复
@@ -913,7 +616,7 @@ class DelayedQueueTasks:
                 agent_turn.advance(AgentTurnPhase.RESPOND)
                 await self._emit_agent_turn(engine, agent_turn)
                 rich_content = round_clean.strip()
-                if not plan_mode and _markdown_image.has_rich_structure(rich_content):
+                if _markdown_image.has_rich_structure(rich_content):
                     try:
                         delivery = await _markdown_image.render_and_send_rich_reply(
                             rich_content,
@@ -954,185 +657,7 @@ class DelayedQueueTasks:
                     chat_result.clean_text = ""
                     reply = ""
                     break
-                if plan_mode:
-                    plan_final_reply = chat_result.clean_text
-                    plan_send_to_group = bool(plan_final_reply)
-                    if plan_session is not None:
-                        finish_plan_session(engine, group_id)
                 break
-
-            enter_plan_tc = next(
-                (tc for tc in plan_control if tc.function_name == "enter_plan"), None
-            )
-            if enter_plan_tc and plan_mode_enabled and not plan_mode:
-                try:
-                    plan_params = (
-                        json.loads(enter_plan_tc.function_arguments)
-                        if enter_plan_tc.function_arguments
-                        else {}
-                    )
-                except json.JSONDecodeError:
-                    plan_params = {}
-                goal = str(plan_params.get("goal") or raw_chat_content or bundle.user_content)
-                reason = str(plan_params.get("reason") or "")
-                plan_session = start_plan_session(
-                    engine,
-                    group_id=group_id,
-                    owner_user_id=item.user_id or "",
-                    goal=goal,
-                    reason=reason,
-                )
-                plan_mode = True
-                messages.append(
-                    _build_assistant_tool_message(
-                        reply,
-                        [enter_plan_tc],
-                        getattr(chat_result, "reasoning_content", ""),
-                    )
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": enter_plan_tc.id,
-                        "content": (
-                            "Planning mode is now active. Do not send intermediate text. "
-                            "Use available tools privately. Optionally call update_plan_progress "
-                            "with a public-safe status snapshot, then call exit_plan or abort_plan."
-                        ),
-                    }
-                )
-                system_prompt = (
-                    f"{system_prompt}\n\n"
-                    "【隐藏计划模式】你现在处于后台计划模式。中间文本不会发送到群里；"
-                    "可以私下调用可用工具并处理计划事件。完成时必须调用 exit_plan，"
-                    "需要放弃或无法完成时调用 abort_plan。不要发送计划过程中的中间文本。"
-                )
-                engine._log_inner_thought(f"进入计划模式: {goal[:60]}")
-                await self._maybe_send_plan_presence(
-                    engine,
-                    on_partial_reply,
-                    group_id,
-                    "enter",
-                    system_prompt,
-                )
-                continue
-
-            get_plan_status_tc = next(
-                (tc for tc in plan_control if tc.function_name == "get_plan_status"), None
-            )
-            if get_plan_status_tc and plan_mode_enabled and not plan_mode:
-                active_session = get_active_plan_session(engine, group_id)
-                status_text = (
-                    format_public_plan_status(active_session)
-                    if active_session is not None
-                    else "No active hidden planning session in this group."
-                )
-                messages.append(
-                    _build_assistant_tool_message(
-                        reply,
-                        [get_plan_status_tc],
-                        getattr(chat_result, "reasoning_content", ""),
-                    )
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": get_plan_status_tc.id,
-                        "content": (
-                            f"{status_text}\n"
-                            "Answer naturally if the user asked about progress. "
-                            "Do not call get_plan_status again unless new status is needed."
-                        ),
-                    }
-                )
-                continue
-
-            exit_plan_tc = next(
-                (tc for tc in plan_control if tc.function_name == "exit_plan"), None
-            )
-            if exit_plan_tc and plan_mode:
-                try:
-                    plan_params = (
-                        json.loads(exit_plan_tc.function_arguments)
-                        if exit_plan_tc.function_arguments
-                        else {}
-                    )
-                except json.JSONDecodeError:
-                    plan_params = {}
-                plan_final_reply = str(plan_params.get("final_message") or "").strip()
-                plan_send_to_group = bool(plan_params.get("send_to_group", True))
-                if plan_session is not None:
-                    finish_plan_session(engine, group_id)
-                engine._log_inner_thought(
-                    "计划模式结束，准备发送最终回复" if plan_send_to_group else "计划模式结束，不发送群消息"
-                )
-                break
-
-            abort_plan_tc = next(
-                (tc for tc in plan_control if tc.function_name == "abort_plan"), None
-            )
-            if abort_plan_tc and plan_mode:
-                try:
-                    plan_params = (
-                        json.loads(abort_plan_tc.function_arguments)
-                        if abort_plan_tc.function_arguments
-                        else {}
-                    )
-                except json.JSONDecodeError:
-                    plan_params = {}
-                plan_final_reply = str(plan_params.get("message") or "").strip()
-                plan_send_to_group = bool(plan_params.get("send_to_group", False))
-                if plan_session is not None:
-                    finish_plan_session(engine, group_id, status="aborted")
-                reason = str(plan_params.get("reason") or "").strip()
-                engine._log_inner_thought(f"计划模式中止: {reason[:80]}")
-                break
-
-            # 1. 发送当前轮次的文字（排除计划控制工具，只看普通工具是否全 silent）
-            update_progress_tc = next(
-                (tc for tc in plan_control if tc.function_name == "update_plan_progress"), None
-            )
-            if update_progress_tc and plan_mode:
-                if plan_session is None:
-                    plan_session = get_active_plan_session(engine, group_id)
-                try:
-                    progress_params = (
-                        json.loads(update_progress_tc.function_arguments)
-                        if update_progress_tc.function_arguments
-                        else {}
-                    )
-                except json.JSONDecodeError:
-                    progress_params = {}
-                if plan_session is not None:
-                    update_plan_progress(
-                        plan_session,
-                        phase=str(progress_params.get("phase") or ""),
-                        summary=str(progress_params.get("summary") or ""),
-                        confidence=str(progress_params.get("confidence") or ""),
-                        visible=(
-                            bool(progress_params["visible"])
-                            if "visible" in progress_params
-                            else None
-                        ),
-                    )
-                    tool_content = "Public planning progress updated."
-                else:
-                    tool_content = "No active hidden planning session to update."
-                messages.append(
-                    _build_assistant_tool_message(
-                        reply,
-                        [update_progress_tc],
-                        getattr(chat_result, "reasoning_content", ""),
-                    )
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": update_progress_tc.id,
-                        "content": tool_content,
-                    }
-                )
-                continue
 
             def _tool_is_silent(tool_call: ToolCall) -> bool:
                 tool = (
@@ -1144,9 +669,7 @@ class DelayedQueueTasks:
 
             non_tool_text = round_clean
             all_silent = bool(regular_tools) and all(_tool_is_silent(tc) for tc in regular_tools)
-            if plan_mode and non_tool_text:
-                engine._log_inner_thought(f"计划模式中间文本已隐藏: {non_tool_text[:40]}...")
-            elif non_tool_text and report_next_tool_output:
+            if non_tool_text and report_next_tool_output:
                 engine._log_inner_thought(f"工具调用出现问题，转发下一轮模型输出：{non_tool_text[:40]}...")
                 if on_partial_reply is None:
                     logger.debug("工具异常后的模型输出没有可用发送回调，保留在消息链中")
@@ -1219,7 +742,7 @@ class DelayedQueueTasks:
                     if tool is None:
                         err_msg = f"Tool '{tool_name}' not found"
                         logger.warning(err_msg)
-                        send_next_tool_output = not plan_mode
+                        send_next_tool_output = True
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
 
@@ -1235,14 +758,14 @@ class DelayedQueueTasks:
                             f"Tool '{tool_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
                         )
                         logger.warning(err_msg)
-                        send_next_tool_output = not plan_mode
+                        send_next_tool_output = True
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
 
                     if tool.developer_only and not caller_is_developer:
                         err_msg = f"Tool '{tool_name}' 被拒绝：caller 不是 developer"
                         logger.warning(err_msg)
-                        send_next_tool_output = not plan_mode
+                        send_next_tool_output = True
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
 
@@ -1255,7 +778,7 @@ class DelayedQueueTasks:
                     ):
                         err_msg = f"Tool '{tool_name}' 被拒绝：本轮相同副作用动作已经执行过。"
                         await self._emit_agent_turn(engine, agent_turn)
-                        send_next_tool_output = not plan_mode
+                        send_next_tool_output = True
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
 
@@ -1311,14 +834,14 @@ class DelayedQueueTasks:
                                 tool_name,
                                 result.error or "Unknown error",
                             )
-                            send_next_tool_output = not plan_mode
+                            send_next_tool_output = True
                     except Exception as exc:
                         tool_content = ToolResult(success=False, error=str(exc)).to_model_text()
                         agent_turn.finish_action(tc.id, success=False, summary=str(exc))
                         agent_turn.advance(AgentTurnPhase.VERIFY)
                         await self._emit_agent_turn(engine, agent_turn)
                         logger.error("TOOL '%s' 执行异常: %s", tool_name, exc)
-                        send_next_tool_output = not plan_mode
+                        send_next_tool_output = True
 
                     # 添加 tool 结果消息
                     messages.append(
@@ -1343,7 +866,7 @@ class DelayedQueueTasks:
                 end_tool_chain(group_id)
 
         # Let the model turn the accumulated tool results into the final reply.
-        if ended_because_max_rounds and not plan_mode:
+        if ended_because_max_rounds:
             logger.debug(
                 "Chain hit max_tool_rounds=%d; asking the model for a final reply",
                 max_tool_rounds,
@@ -1390,10 +913,6 @@ class DelayedQueueTasks:
                 clean_reply = ""
         else:
             clean_reply = chat_result.clean_text if chat_result else ""
-        if plan_mode and plan_session is not None and plan_final_reply is None:
-            finish_plan_session(engine, group_id, status="aborted")
-            plan_final_reply = clean_reply if clean_reply else ""
-            plan_send_to_group = bool(plan_final_reply)
 
         # Determine return strategy
         from sirius_pulse.models.response_strategy import ResponseStrategy
@@ -1402,9 +921,7 @@ class DelayedQueueTasks:
         if any(i.strategy_decision.strategy == ResponseStrategy.IMMEDIATE for i in triggered):
             strategy = "immediate"
 
-        if plan_final_reply is not None:
-            final_reply = plan_final_reply if plan_send_to_group else ""
-        elif ended_because_max_rounds:
+        if ended_because_max_rounds:
             final_reply = clean_reply or "本轮工具调用上限已到，部分操作尚未完成。"
         else:
             final_reply = clean_reply
@@ -1472,8 +989,6 @@ class DelayedQueueTasks:
         group_id: str,
         caller_is_developer: bool = False,
         adapter_type: str | None = None,
-        expose_tools: bool = True,
-        tool_flow_mode: str = "chat",
     ):
         """构建延迟响应的 PromptBundle。"""
         engine = self._engine
@@ -1527,7 +1042,7 @@ class DelayedQueueTasks:
             style_params=style_params,
             other_ai_names=engine._other_ai_names,
             user_profiles=delayed_user_profiles,
-            tool_registry=engine._tool_registry if expose_tools else None,
+            tool_registry=engine._tool_registry,
             plugin_registry=getattr(engine, "_plugin_registry", None),
             caller_is_developer=caller_is_developer,
             adapter_type=adapter_type,
@@ -1537,7 +1052,6 @@ class DelayedQueueTasks:
                 if hasattr(engine, "get_qq_group_members_for_prompt")
                 else []
             ),
-            tool_flow_mode=tool_flow_mode,
         )
         return bundle
 

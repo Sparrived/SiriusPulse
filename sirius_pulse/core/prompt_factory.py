@@ -192,7 +192,6 @@ class PromptFactory:
         *,
         length_instruction: str = "",
         supports_function_call: bool = False,
-        tool_flow_mode: str = "chat",
     ) -> str:
         """回复规范，防止模型添加多余前缀。"""
         items = [
@@ -228,14 +227,6 @@ class PromptFactory:
                 "用户说‘继续’、‘再来一次’、‘按刚才的流程’或省略上一轮参数时，先读取 workflow-reuse Skill，"
                 "再调用 workflow_state 的 resume；不要用 bash 重走已成功步骤。"
             )
-            if tool_flow_mode == "plan":
-                items.append(
-                    "当前是隐藏计划模式：中间文本不会发送到群里。"
-                    "需要继续处理时直接调用可用工具；完成后必须调用 exit_plan 给出最终可见消息。"
-                    "如果不能完成或应当放弃，调用 abort_plan。"
-                    "可以调用 update_plan_progress 更新普通聊天可见的公开进度摘要，"
-                    "但不要写入私有思考、工具结果、密钥或未确认的新消息原文。"
-                )
         numbered = "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
         return f"{TAG_REPLY_SPEC}\n{numbered}"
 
@@ -274,13 +265,11 @@ class PromptFactory:
         *,
         length_instruction: str = "",
         supports_function_call: bool = False,
-        tool_flow_mode: str = "chat",
     ) -> str:
         """Backward-compatible alias for build_reply_spec()."""
         return PromptFactory.build_reply_spec(
             length_instruction=length_instruction,
             supports_function_call=supports_function_call,
-            tool_flow_mode=tool_flow_mode,
         )
 
     @staticmethod
@@ -579,7 +568,6 @@ class PromptFactory:
         sticker_names: list[str] | None = None,
         qq_mention_members: list[dict[str, Any]] | None = None,
         platform_message_id: str = "",
-        tool_flow_mode: str = "chat",
     ) -> PromptBundle:
         """统一组装聊天响应 prompt。返回 PromptBundle。
 
@@ -631,7 +619,6 @@ class PromptFactory:
         output_spec_text = PromptFactory.build_reply_spec(
             length_instruction=length_instruction,
             supports_function_call=tool_registry is not None,
-            tool_flow_mode=tool_flow_mode,
         )
         _add(output_spec_text, "output_constraint")
 

@@ -59,8 +59,6 @@ class DelayedResponseItem:
     related_user_ids: list[str] = field(
         default_factory=list
     )  # merged messages may involve multiple users
-    lane: str = "chat"  # chat | plan
-    plan_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -81,6 +79,4 @@ class DelayedResponseItem:
             "heat_level": self.heat_level,
             "pace": self.pace,
             "related_user_ids": list(self.related_user_ids),
-            "lane": self.lane,
-            "plan_id": self.plan_id,
         }

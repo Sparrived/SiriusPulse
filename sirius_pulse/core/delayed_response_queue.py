@@ -91,8 +91,6 @@ class DelayedResponseQueue:
         pace: str = "steady",
         speaker_name: str = "",
         platform_message_id: str = "",
-        lane: str = "chat",
-        plan_id: str = "",
     ) -> DelayedResponseItem:
         """Add an item to the delayed queue.
 
@@ -115,16 +113,12 @@ class DelayedResponseQueue:
         # shared item to a zero-second window.
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if (
-                item.status == "pending"
-                and getattr(item, "lane", "chat") == lane
-                and self._matches_source(
-                    item,
-                    adapter_type=adapter_type,
-                    # Enqueue never merges an unrouted legacy source into a
-                    # concrete same-type adapter instance partition.
-                    adapter_route_id=str(adapter_route_id or ""),
-                )
+            if item.status == "pending" and self._matches_source(
+                item,
+                adapter_type=adapter_type,
+                # Enqueue never merges an unrouted legacy source into a
+                # concrete same-type adapter instance partition.
+                adapter_route_id=str(adapter_route_id or ""),
             ):
                 item.message_content += f"\n{tagged}"
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
@@ -151,9 +145,6 @@ class DelayedResponseQueue:
                 # Track all users whose messages were merged into this item
                 if user_id and user_id not in item.related_user_ids:
                     item.related_user_ids.append(user_id)
-                item.lane = lane
-                if plan_id:
-                    item.plan_id = plan_id
                 logger.debug(
                     "Merged %s item %s for group %s (content now %d chars, window %.1fs)",
                     strategy_decision.strategy.value,
@@ -183,8 +174,6 @@ class DelayedResponseQueue:
             heat_level=heat_level,
             pace=pace,
             related_user_ids=[user_id] if user_id else [],
-            lane=lane,
-            plan_id=plan_id,
         )
         if group_id not in self._queues:
             self._queues[group_id] = []
@@ -322,21 +311,16 @@ class DelayedResponseQueue:
         *,
         max_window_seconds: float = 0.0,
         reason: str = "pending_promoted",
-        lane: str = "chat",
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
     ) -> DelayedResponseItem | None:
         """Shorten the wait window for one source-adapter pending item."""
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if (
-                item.status != "pending"
-                or getattr(item, "lane", "chat") != lane
-                or not self._matches_source(
-                    item,
-                    adapter_type=adapter_type,
-                    adapter_route_id=str(adapter_route_id or ""),
-                )
+            if item.status != "pending" or not self._matches_source(
+                item,
+                adapter_type=adapter_type,
+                adapter_route_id=str(adapter_route_id or ""),
             ):
                 continue
             item.window_seconds = min(item.window_seconds, max(0.0, max_window_seconds))
@@ -364,7 +348,6 @@ class DelayedResponseQueue:
         channel_user_id: str | None = None,
         multimodal_inputs: list[dict[str, str]] | None = None,
         platform_message_id: str = "",
-        lane: str = "chat",
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
     ) -> bool:
@@ -378,14 +361,10 @@ class DelayedResponseQueue:
         """
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if (
-                item.status != "pending"
-                or getattr(item, "lane", "chat") != lane
-                or not self._matches_source(
-                    item,
-                    adapter_type=adapter_type,
-                    adapter_route_id=str(adapter_route_id or ""),
-                )
+            if item.status != "pending" or not self._matches_source(
+                item,
+                adapter_type=adapter_type,
+                adapter_route_id=str(adapter_route_id or ""),
             ):
                 continue
             # 使用统一的 tag_message 生成 <message> 标签
