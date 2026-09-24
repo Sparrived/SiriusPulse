@@ -1,0 +1,51 @@
+<div class="work-mode-page" id="workModePage">
+  <div class="work-mode-toolbar">
+    <div>
+      <div class="work-mode-eyebrow"><span class="work-mode-signal-dot"></span> WORK MODE</div>
+      <h2 class="work-mode-heading">工作模式</h2>
+      <p class="work-mode-subtitle">她独自做完的事 · 每一轮的正文、工具与结果</p>
+    </div>
+    <div class="work-mode-toolbar-actions">
+      <span class="work-mode-connection" id="workModeConnection">读取中</span>
+      <button class="btn btn-sm" id="workModeRefresh" title="重新读取">↻ 刷新</button>
+    </div>
+  </div>
+
+  <div class="stat-grid work-mode-stat-grid">
+    <div class="stat-card work-mode-stat-card work-mode-stat-total">
+      <div class="stat-label">累计工作</div>
+      <div class="stat-value" id="workModeTotal">—</div>
+      <div class="stat-detail">她进过多少次工作模式</div>
+    </div>
+    <div class="stat-card work-mode-stat-card">
+      <div class="stat-label">已完成</div>
+      <div class="stat-value" id="workModeCompleted">—</div>
+      <div class="stat-detail">自己退出并给出结果</div>
+    </div>
+    <div class="stat-card work-mode-stat-card">
+      <div class="stat-label">进行中</div>
+      <div class="stat-value" id="workModeRunning">—</div>
+      <div class="stat-detail">此刻还在工作模式里</div>
+    </div>
+    <div class="stat-card work-mode-stat-card">
+      <div class="stat-label">最近一次</div>
+      <div class="stat-value work-mode-stat-when" id="workModeLastAt">—</div>
+      <div class="stat-detail" id="workModeLastGoal">还没有过</div>
+    </div>
+  </div>
+
+  <section class="card work-mode-log-card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">工作轨迹</div>
+        <div class="card-subtitle">
+          工作模式内的正文不会外发，所以这里按轮次留下她说过什么、调用了什么、拿回了什么
+        </div>
+      </div>
+      <span class="work-mode-count" id="workModeCount">0 次</span>
+    </div>
+    <div id="workModeSessions" class="work-mode-sessions"></div>
+  </section>
+
+  <div class="work-mode-footnote" id="workModeFootnote"></div>
+</div>

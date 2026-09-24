@@ -67,6 +67,9 @@ def _path_event_payload(data_dir: Path, path: Path) -> dict[str, Any] | None:
     # 不必为此另开一条推送通路。
     if "autonomy" in parts or name == "intentions.json":
         resources.update({"autonomy", "dashboard"})
+    # 工作模式轨迹同样落在 memory/ 下，写一轮就能在页面上看到一轮。
+    if "work_mode" in parts:
+        resources.update({"work-mode", "dashboard"})
 
     if not resources:
         return None

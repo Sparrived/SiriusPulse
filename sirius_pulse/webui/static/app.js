@@ -19,6 +19,7 @@ const PAGE_META = {
   'token-tracker': { title: 'Token 追踪', breadcrumb: 'Analytics / Tokens', icon: '△' },
   'cognition': { title: '认知分析', breadcrumb: 'Analytics / Cognition', icon: '◎' },
   'autonomy': { title: '自主行为', breadcrumb: 'Analytics / Autonomy', icon: '✧' },
+  'work-mode': { title: '工作模式', breadcrumb: 'Analytics / Work Mode', icon: '⌘' },
   'tools-tracker': { title: 'Tool 追踪', breadcrumb: 'Analytics / Tools', icon: '⟠' },
   'conversation-history': { title: '对话分析', breadcrumb: 'Analytics / Conversations', icon: '◧' },
   'logs': { title: '实时日志', breadcrumb: 'Operations / Logs', icon: '▣' },
@@ -47,6 +48,7 @@ const NAV_GROUPS = [
     { page: 'token-tracker', icon: '△', label: 'Token 追踪' },
     { page: 'cognition', icon: '◎', label: '认知分析' },
     { page: 'autonomy', icon: '✧', label: '自主行为' },
+    { page: 'work-mode', icon: '⌘', label: '工作模式' },
     { page: 'tools-tracker', icon: '⟠', label: 'Tool 追踪' },
   ]},
   { id: 'memory', label: '记忆', items: [
@@ -61,7 +63,7 @@ const NAV_GROUPS = [
 const PERSONA_PAGES = new Set([
   'persona', 'experience', 'adapters', 'tools',
   'token-tracker', 'cognition', 'tools-tracker', 'conversation-history',
-  'logs', 'autonomy',
+  'logs', 'autonomy', 'work-mode',
   'memory-viz', 'create-persona',
 ]);
 
