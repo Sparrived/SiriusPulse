@@ -211,12 +211,6 @@ class PersonaExperienceConfig:
     enable_tools: bool = True
     max_tool_rounds: int = 3
     auto_install_tool_deps: bool = True
-    plan_mode_enabled: bool = False
-    plan_mode_limit_normal_tools: bool = False
-    plan_mode_allow_light_chat: bool = True
-    plan_mode_chat_awareness_enabled: bool = False
-    plan_mode_presence_enabled: bool = False
-    plan_mode_presence_min_interval_seconds: float = 45.0
 
     # 日记检索参数
     diary_top_k: int = 5
@@ -243,14 +237,6 @@ class PersonaExperienceConfig:
             "enable_tools": self.enable_tools,
             "max_tool_rounds": self.max_tool_rounds,
             "auto_install_tool_deps": self.auto_install_tool_deps,
-            "plan_mode_enabled": self.plan_mode_enabled,
-            "plan_mode_limit_normal_tools": self.plan_mode_limit_normal_tools,
-            "plan_mode_allow_light_chat": self.plan_mode_allow_light_chat,
-            "plan_mode_chat_awareness_enabled": self.plan_mode_chat_awareness_enabled,
-            "plan_mode_presence_enabled": self.plan_mode_presence_enabled,
-            "plan_mode_presence_min_interval_seconds": (
-                self.plan_mode_presence_min_interval_seconds
-            ),
             "diary_top_k": self.diary_top_k,
             "diary_token_budget": self.diary_token_budget,
             "memory_unit_top_k": self.memory_unit_top_k,
@@ -283,16 +269,6 @@ class PersonaExperienceConfig:
             other_ai_names=[str(v) for v in data.get("other_ai_names", [])],
             max_tool_rounds=int(data.get("max_tool_rounds", 3)),
             auto_install_tool_deps=bool(data.get("auto_install_tool_deps", True)),
-            plan_mode_enabled=bool(data.get("plan_mode_enabled", False)),
-            plan_mode_limit_normal_tools=bool(data.get("plan_mode_limit_normal_tools", False)),
-            plan_mode_allow_light_chat=bool(data.get("plan_mode_allow_light_chat", True)),
-            plan_mode_chat_awareness_enabled=bool(
-                data.get("plan_mode_chat_awareness_enabled", False)
-            ),
-            plan_mode_presence_enabled=bool(data.get("plan_mode_presence_enabled", False)),
-            plan_mode_presence_min_interval_seconds=float(
-                data.get("plan_mode_presence_min_interval_seconds", 45.0)
-            ),
             diary_top_k=int(data.get("diary_top_k", 5)),
             diary_token_budget=int(data.get("diary_token_budget", 800)),
             memory_unit_top_k=int(data.get("memory_unit_top_k", data.get("diary_top_k", 8))),

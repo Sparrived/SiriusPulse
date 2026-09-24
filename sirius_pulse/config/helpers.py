@@ -111,12 +111,6 @@ def build_orchestration_policy_from_dict(
         "max_tool_rounds": (int, 3),
         "tool_execution_timeout": (float, 30.0),
         "auto_install_tool_deps": (bool, True),
-        "plan_mode_enabled": (bool, False),
-        "plan_mode_limit_normal_tools": (bool, False),
-        "plan_mode_allow_light_chat": (bool, True),
-        "plan_mode_chat_awareness_enabled": (bool, False),
-        "plan_mode_presence_enabled": (bool, False),
-        "plan_mode_presence_min_interval_seconds": (float, 45.0),
     }
     for field_name, (caster, _) in scalar_fields.items():
         if field_name not in raw:

@@ -69,11 +69,6 @@ def test_experience_config_when_webui_loads_form_then_all_user_options_are_seria
     assert "engagement_sensitivity" in payload
     assert "enable_tools" in payload
     assert payload["max_sentence_chars"] == 20
-    assert "plan_mode_enabled" in payload
-    assert "plan_mode_limit_normal_tools" in payload
-    assert "plan_mode_allow_light_chat" in payload
-    assert "plan_mode_chat_awareness_enabled" in payload
-    assert "plan_mode_presence_enabled" in payload
     assert "diary_token_budget" in payload
     assert payload["memory_unit_top_k"] == 8
     assert "reply_time_curve_enabled" not in payload
@@ -92,10 +87,6 @@ def test_experience_config_when_webui_posts_partial_payload_then_missing_values_
 
     assert config.engagement_sensitivity == 0.2
     assert config.enable_tools is False
-    assert config.plan_mode_enabled is False
-    assert config.plan_mode_allow_light_chat is True
-    assert config.plan_mode_chat_awareness_enabled is False
-    assert config.plan_mode_presence_enabled is False
     assert config.expressiveness == 0.5
     assert config.max_sentence_chars == 20
     assert config.diary_top_k == 5

@@ -59,22 +59,6 @@ _SESSION_CONFIG_COMMENTS = {
     "orchestration.max_tool_rounds": "单轮回复最多允许多少轮连续 TOOL 调用。",
     "orchestration.tool_execution_timeout": "单次 TOOL 执行超时时间（秒）。0 表示不限制。",
     "orchestration.auto_install_tool_deps": "加载 TOOL 时是否自动安装缺失依赖。",
-    "orchestration.plan_mode_enabled": "Enable hidden planning sessions.",
-    "orchestration.plan_mode_limit_normal_tools": (
-        "Limit normal chat to lightweight runtime tools when plan mode is enabled."
-    ),
-    "orchestration.plan_mode_allow_light_chat": (
-        "Allow unrelated light chat in the same group while a plan is active."
-    ),
-    "orchestration.plan_mode_chat_awareness_enabled": (
-        "Inject the active plan's public progress snapshot into normal chat prompts."
-    ),
-    "orchestration.plan_mode_presence_enabled": (
-        "Send a short persona-style status message when hidden planning starts."
-    ),
-    "orchestration.plan_mode_presence_min_interval_seconds": (
-        "Minimum seconds between planning status messages."
-    ),
 }
 
 
@@ -120,14 +104,6 @@ def build_default_orchestration_payload() -> dict[str, Any]:
         "max_tool_rounds": defaults.max_tool_rounds,
         "tool_execution_timeout": defaults.tool_execution_timeout,
         "auto_install_tool_deps": defaults.auto_install_tool_deps,
-        "plan_mode_enabled": defaults.plan_mode_enabled,
-        "plan_mode_limit_normal_tools": defaults.plan_mode_limit_normal_tools,
-        "plan_mode_allow_light_chat": defaults.plan_mode_allow_light_chat,
-        "plan_mode_chat_awareness_enabled": defaults.plan_mode_chat_awareness_enabled,
-        "plan_mode_presence_enabled": defaults.plan_mode_presence_enabled,
-        "plan_mode_presence_min_interval_seconds": (
-            defaults.plan_mode_presence_min_interval_seconds
-        ),
     }
 
 
