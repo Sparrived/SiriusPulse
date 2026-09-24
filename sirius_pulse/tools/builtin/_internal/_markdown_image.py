@@ -1,15 +1,22 @@
-"""Render model-authored Markdown-like text into a single shareable image."""
+"""Render a whole structured reply into one shareable image.
+
+当回复里出现行内符号之外的排版结构（代码块、表格、制表符、分隔线、标题、
+引用、列表块）时，纯文本已经无法还原排版，因此整段内容都会渲染成一张图片；
+同时通过平台适配器补发一条合并转发消息，保留可复制的原文。
+"""
 
 from __future__ import annotations
 
 import base64
 import html
+import logging
 import re
 import tempfile
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+LOG = logging.getLogger("sirius.tools.markdown_image")
 
 _MAX_CONTENT_CHARS = 12_000
 _MAX_TITLE_CHARS = 80
@@ -17,224 +24,63 @@ _HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$")
 _ORDERED_ITEM_RE = re.compile(r"^\d+[.)]\s+(.+)$")
 _BULLET_ITEM_RE = re.compile(r"^[-*+]\s+(.+)$")
 _FENCE_LINE_RE = re.compile(r"^\s{0,3}([`~]+)([^\r\n]*)$")
-_MARKDOWN_LABEL_RE = re.compile(r"^\s*(?:markdown|md)\s*[:：]\s*(.*)$", re.IGNORECASE)
-_MARKDOWN_LABEL_ONLY_RE = re.compile(r"^\s*(?:markdown|md)\s*$", re.IGNORECASE)
-_STRONG_ONLY_RE = re.compile(r"^\s*(?:\*\*.+\*\*|__.+__)\s*$")
-_INLINE_MARKDOWN_RE = re.compile(
-    r"(?<!\\)(?:\*\*[^*\r\n]+\*\*|__[^_\r\n]+__|`[^`\r\n]+`|" r"(?<!\*)\*[^*\r\n]+\*(?!\*))"
-)
+_HEADING_LINE_RE = re.compile(r"^#{1,6}\s+\S")
+_BLOCKQUOTE_LINE_RE = re.compile(r"^>\s*\S")
+_LIST_ITEM_LINE_RE = re.compile(r"^(?:[-*+]|\d+[.)])\s+\S")
 _HORIZONTAL_RULE_RE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,}|—-+|—{2,}|－{3,}|＿{3,})$")
+_TABLE_ROW_PIPES = 2
+_MIN_TABLE_ROWS = 2
+_MIN_LIST_ITEMS = 2
 _CUTE_FONT_PATH = Path(__file__).with_name("assets") / "ZCOOLKuaiLe-Regular.ttf"
 
 
-def split_fenced_markdown(text: str) -> list[tuple[bool, str]]:
-    """Split and repair fenced or clearly structured Markdown in display order."""
+def has_rich_structure(text: str) -> bool:
+    """判断回复是否含有行内符号之外的排版结构。
+
+    代码块、表格、制表符、分隔线、标题、引用、列表块都需要真正的排版才能还原，
+    所以只要出现其中任意一种，整段内容都应该转成图片；行内的反引号代码与
+    **加粗** 仍算普通文本符号，单独出现时不触发转换。
+    """
     source = _normalize_fence_chars(str(text or ""))
-    parts: list[tuple[bool, str]] = []
-    plain_lines: list[str] = []
-    markdown_lines: list[str] = []
-    fence_char = ""
-
-    def flush_plain() -> None:
-        content = "\n".join(plain_lines).strip()
-        if content:
-            parts.append((False, content))
-        plain_lines.clear()
-
-    def flush_markdown() -> None:
-        content = "\n".join(markdown_lines).strip()
-        if content:
-            parts.append((True, content))
-        markdown_lines.clear()
-
-    for raw_line in source.splitlines():
-        line = raw_line.rstrip()
-        fence_match = _FENCE_LINE_RE.match(line)
-        marker = fence_match.group(1) if fence_match else ""
-        info = fence_match.group(2).strip() if fence_match else ""
-
-        if not fence_char:
-            if len(marker) >= 3:
-                flush_plain()
-                fence_char = marker[0]
-            else:
-                plain_lines.append(raw_line)
-            continue
-
-        # Accept a shorter matching closing marker so a malformed model fence
-        # cannot swallow the rest of the reply.
-        if marker and marker[0] == fence_char and not info:
-            flush_markdown()
-            fence_char = ""
-        else:
-            markdown_lines.append(raw_line)
-
-    if fence_char:
-        flush_markdown()
-    flush_plain()
-
-    if any(is_markdown for is_markdown, _ in parts):
-        return parts
-
-    return _split_unfenced_markdown(source)
-
-
-def merge_markdown_blocks(blocks: Iterable[str]) -> str:
-    """Join fenced blocks into one readable Markdown document."""
-    clean_blocks = [str(block or "").strip() for block in blocks if str(block or "").strip()]
-    return "\n\n---\n\n".join(clean_blocks)
-
-
-def should_render_markdown_card(blocks: Iterable[str]) -> bool:
-    """Require a substantive Markdown reply before creating an image card."""
-    clean_blocks = [str(block or "").strip() for block in blocks if str(block or "").strip()]
-    if not clean_blocks:
+    if not source.strip():
         return False
-    content = "\n".join(clean_blocks)
-    nonempty_lines = [line for line in content.splitlines() if line.strip()]
-    return len(nonempty_lines) > 2 or len(content) > 80
+    if "\t" in source:
+        return True
+
+    table_rows = 0
+    list_items = 0
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if not line:
+            list_items = 0
+            continue
+        if (
+            _is_code_fence_line(line)
+            or _is_horizontal_rule_line(line)
+            or _HEADING_LINE_RE.match(line)
+            or _BLOCKQUOTE_LINE_RE.match(line)
+        ):
+            return True
+        if line.count("|") >= _TABLE_ROW_PIPES:
+            table_rows += 1
+            if table_rows >= _MIN_TABLE_ROWS:
+                return True
+            continue
+        if _LIST_ITEM_LINE_RE.match(line):
+            list_items += 1
+            if list_items >= _MIN_LIST_ITEMS:
+                return True
+            continue
+        list_items = 0
+    return False
 
 
 def _normalize_fence_chars(text: str) -> str:
     return str(text or "").replace("｀", "`").replace("～", "~")
 
 
-def _strip_markdown_label(text: str) -> str:
-    lines = str(text or "").strip().splitlines()
-    if not lines:
-        return ""
-    label_match = _MARKDOWN_LABEL_RE.match(lines[0])
-    if label_match:
-        replacement = label_match.group(1).strip()
-        lines = ([replacement] if replacement else []) + lines[1:]
-    elif _MARKDOWN_LABEL_ONLY_RE.match(lines[0]):
-        lines = lines[1:]
-    return "\n".join(lines).strip()
-
-
-def _split_unfenced_markdown(text: str) -> list[tuple[bool, str]]:
-    source = _strip_markdown_label(text)
-    if not source:
-        return []
-
-    parts: list[tuple[bool, str]] = []
-    for block in re.split(r"\n\s*\n", source):
-        lines = block.splitlines()
-        structural_indexes = [
-            index for index, line in enumerate(lines) if _is_markdown_structure_line(line)
-        ]
-        if not structural_indexes or not _looks_like_unfenced_markdown(block):
-            clean_block = block.strip()
-            if clean_block:
-                parts.append((False, clean_block))
-            continue
-
-        first = structural_indexes[0]
-        last = structural_indexes[-1]
-        before = "\n".join(lines[:first]).strip()
-        markdown = "\n".join(lines[first : last + 1]).strip()
-        after = "\n".join(lines[last + 1 :]).strip()
-        if before:
-            parts.append((False, before))
-        if markdown:
-            parts.append((True, markdown))
-        if after:
-            parts.append((False, after))
-    return _remove_orphan_markdown_separators(_promote_markdown_sections(parts))
-
-
-def _is_markdown_structure_line(line: str) -> bool:
-    clean_line = str(line or "").strip()
-    return bool(
-        _HEADING_RE.match(clean_line)
-        or _ORDERED_ITEM_RE.match(clean_line)
-        or _BULLET_ITEM_RE.match(clean_line)
-        or clean_line.startswith(">")
-        or _is_table_row_line(clean_line)
-        or _STRONG_ONLY_RE.match(clean_line)
-        or _INLINE_MARKDOWN_RE.search(clean_line)
-        or _HORIZONTAL_RULE_RE.match(clean_line)
-    )
-
-
-def _looks_like_unfenced_markdown(text: str) -> bool:
-    source = str(text or "").strip()
-    if not source:
-        return False
-    lines = [line.strip() for line in source.splitlines() if line.strip()]
-    headings = sum(bool(_HEADING_RE.match(line)) for line in lines)
-    bullets = sum(bool(_BULLET_ITEM_RE.match(line)) for line in lines)
-    ordered = sum(bool(_ORDERED_ITEM_RE.match(line)) for line in lines)
-    table_rows = sum(_is_table_row_line(line) for line in lines)
-    quotes = sum(line.startswith(">") for line in lines)
-    strong_lines = sum(bool(_STRONG_ONLY_RE.match(line)) for line in lines)
-    inline_lines = sum(bool(_INLINE_MARKDOWN_RE.search(line)) for line in lines)
-    horizontal_rules = sum(bool(_HORIZONTAL_RULE_RE.match(line)) for line in lines)
-    score = 2 * headings
-    score += 2 if bullets >= 2 else 0
-    score += 2 if ordered >= 2 else 0
-    score += 2 if table_rows >= 2 else 0
-    score += 2 if strong_lines else 0
-    score += min(quotes, 1)
-    score += min(horizontal_rules, 1)
-    score += 2 if inline_lines else 0
-    score += 1 if re.search(r"[`*_]{2}", source) else 0
-    score += 1 if len(source) >= 160 else 0
-    return score >= 2 and bool(
-        headings
-        or bullets >= 2
-        or ordered >= 2
-        or table_rows >= 2
-        or quotes
-        or strong_lines
-        or inline_lines
-    )
-
-
 def _is_table_row_line(line: str) -> bool:
     return str(line or "").count("|") >= 2
-
-
-def _remove_orphan_markdown_separators(
-    parts: list[tuple[bool, str]],
-) -> list[tuple[bool, str]]:
-    result: list[tuple[bool, str]] = []
-    for index, (is_markdown, content) in enumerate(parts):
-        if not is_markdown and _is_horizontal_rule_line(content):
-            previous_is_markdown = bool(result and result[-1][0])
-            next_is_markdown = index + 1 < len(parts) and parts[index + 1][0]
-            if previous_is_markdown or next_is_markdown:
-                continue
-        result.append((is_markdown, content))
-    return result
-
-
-def _promote_markdown_sections(parts: list[tuple[bool, str]]) -> list[tuple[bool, str]]:
-    result: list[tuple[bool, str]] = []
-    index = 0
-    while index < len(parts):
-        is_markdown, content = parts[index]
-        if not is_markdown:
-            result.append((is_markdown, content))
-            index += 1
-            continue
-
-        section = [content]
-        cursor = index + 1
-        while cursor < len(parts) and not parts[cursor][0]:
-            section.append(parts[cursor][1])
-            if _is_horizontal_rule_line(parts[cursor][1]):
-                cursor += 1
-                break
-            cursor += 1
-
-        if cursor > index + 1 and _is_horizontal_rule_line(section[-1]):
-            result.append((True, "\n\n".join(section)))
-            index = cursor
-        else:
-            result.append((True, content))
-            index += 1
-    return result
 
 
 def _is_horizontal_rule_line(line: str) -> bool:
@@ -244,11 +90,6 @@ def _is_horizontal_rule_line(line: str) -> bool:
 def _is_code_fence_line(line: str) -> bool:
     match = _FENCE_LINE_RE.match(str(line or "").rstrip())
     return bool(match and len(match.group(1)) >= 3)
-
-
-def has_fenced_markdown(text: str) -> bool:
-    parts = split_fenced_markdown(text)
-    return should_render_markdown_card(content for is_markdown, content in parts if is_markdown)
 
 
 async def render_markdown_image(content: str, title: str, data_store: Any) -> Path:
@@ -281,34 +122,64 @@ async def render_markdown_image(content: str, title: str, data_store: Any) -> Pa
     return output_path
 
 
-async def render_and_send_markdown_image(
+async def render_and_send_rich_reply(
     content: str,
     *,
     adapter: Any,
     group_id: str,
     title: str = "",
-) -> str:
-    """Render a fenced reply block and deliver it to the current chat directly."""
+) -> dict[str, str]:
+    """把整段结构化回复渲染成图片发出，再补发同内容的合并转发消息。
+
+    返回 ``{"image_message_id": ..., "forward_message_id": ...}``。合并转发只是
+    让用户能复制原文的备份，发送失败只记日志，不影响已经发出的图片。
+    """
     target = str(group_id or "").strip()
     client = getattr(adapter, "adapter", None) or adapter
     if not client or not target:
         raise RuntimeError("富文本图片发送缺少平台适配器或聊天目标")
 
+    private = target.startswith("private_")
+    target_id = target.removeprefix("private_").removeprefix("qq_")
     image_path = await render_markdown_image(content, title, data_store=None)
     try:
         image = [{"type": "image", "data": {"file": to_image_reference(str(image_path))}}]
-        if target.startswith("private_"):
-            user_id = target.removeprefix("private_").removeprefix("qq_")
-            response = await client.send_private_msg(user_id, image)
+        if private:
+            response = await client.send_private_msg(target_id, image)
         else:
             response = await client.send_group_msg(target, image)
-        data = response.get("data", {}) if isinstance(response, dict) else {}
-        return str(data.get("message_id") or "") if isinstance(data, dict) else ""
     finally:
         try:
             image_path.unlink(missing_ok=True)
         except OSError:
             pass
+
+    return {
+        "image_message_id": _response_message_id(response),
+        "forward_message_id": await _send_merged_forward(
+            client, target_id, content, private=private
+        ),
+    }
+
+
+async def _send_merged_forward(client: Any, target_id: str, content: str, *, private: bool) -> str:
+    """调用平台适配器补发合并转发消息；适配器不支持或发送失败时返回空串。"""
+    sender = getattr(
+        client, "send_private_forward_msg" if private else "send_group_forward_msg", None
+    )
+    if not callable(sender):
+        return ""
+    try:
+        response = await sender(target_id, content)
+    except Exception as exc:  # noqa: BLE001 - 合并转发是备份，失败不影响图片
+        LOG.warning("合并转发消息发送失败: %s", exc)
+        return ""
+    return _response_message_id(response)
+
+
+def _response_message_id(response: Any) -> str:
+    data = response.get("data", {}) if isinstance(response, dict) else {}
+    return str(data.get("message_id") or "") if isinstance(data, dict) else ""
 
 
 def to_image_reference(image_path: str) -> str:

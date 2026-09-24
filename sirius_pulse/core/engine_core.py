@@ -938,7 +938,7 @@ class _EmotionalGroupChatEngineBase:
 
         # ── priority 30: 回复去重（仅常规对话）──
         def _hook_dedup(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
-            if _markdown_image.has_fenced_markdown(_result.clean_text):
+            if _markdown_image.has_rich_structure(_result.clean_text):
                 return
             if not _result.clean_text:
                 return
@@ -963,8 +963,11 @@ class _EmotionalGroupChatEngineBase:
 
         # ── priority 40: 记忆记录 ──
         def _hook_memory(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
-            # 围栏内容由调度器在平台确认发送成功后按实际顺序写回历史。
-            if _markdown_image.has_fenced_markdown(_result.clean_text):
+            # 结构化回复由调度器转成图片后，在平台确认发送成功时按实际顺序写回历史；
+            # 其他任务（如 proactive_generate）仍按纯文本发送，必须在这里记录。
+            if getattr(_req, "task_name", "") == "response_generate" and (
+                _markdown_image.has_rich_structure(_result.clean_text)
+            ):
                 return
             record_content = _result.clean_text
             if not record_content:

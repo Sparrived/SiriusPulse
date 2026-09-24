@@ -1689,7 +1689,7 @@ async def test_delayed_queue_when_text_sticker_marker_is_present_then_sticker_is
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_fenced_markdown_has_context_then_sends_text_image_text(
+async def test_delayed_queue_when_reply_has_structure_then_sends_whole_content_as_image(
     monkeypatch,
 ):
     queue = DelayedResponseQueue()
@@ -1701,14 +1701,18 @@ async def test_delayed_queue_when_fenced_markdown_has_context_then_sends_text_im
     )
     item.enqueue_time = _past(item.window_seconds + 1)
     order: list[str] = []
+    content = (
+        "我先说下整体思路。\n```markdown\n**顶层模块**：\n- core/\n```\n"
+        "中间说明。\n```markdown\n**执行层**：\n- worker/\n```\n细节之后再聊。"
+    )
 
-    async def send_markdown_card(content: str, *, adapter, group_id: str, title: str = "") -> str:
-        order.append("card")
-        assert content == "**顶层模块**：\n- core/\n\n---\n\n**执行层**：\n- worker/"
+    async def send_rich_reply(content_arg: str, *, adapter, group_id: str, title: str = ""):
+        order.append("image")
+        assert content_arg == content
         assert adapter is engine._adapter
         assert group_id == "group-1"
         assert title == ""
-        return "42"
+        return {"image_message_id": "42", "forward_message_id": "77"}
 
     execute_tool = AsyncMock()
     tasks, engine = _agent_tool_tasks(
@@ -1716,8 +1720,8 @@ async def test_delayed_queue_when_fenced_markdown_has_context_then_sends_text_im
         SimpleNamespace(name="lookup", silent=False, developer_only=False),
         [
             SimpleNamespace(
-                raw_text="我先说下整体思路。\n```markdown\n**顶层模块**：\n- core/\n```\n中间说明。\n```markdown\n**执行层**：\n- worker/\n```\n细节之后再聊。",
-                clean_text="我先说下整体思路。\n```markdown\n**顶层模块**：\n- core/\n```\n中间说明。\n```markdown\n**执行层**：\n- worker/\n```\n细节之后再聊。",
+                raw_text=content,
+                clean_text=content,
                 tool_calls=[],
                 reply_references=[],
                 injected_request={
@@ -1732,8 +1736,8 @@ async def test_delayed_queue_when_fenced_markdown_has_context_then_sends_text_im
     )
     engine._adapter = SimpleNamespace()
     monkeypatch.setattr(
-        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_markdown_image",
-        send_markdown_card,
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        send_rich_reply,
     )
     delivered_cards: list[dict[str, object]] = []
     engine._record_assistant_message = lambda **kwargs: delivered_cards.append(kwargs)
@@ -1745,13 +1749,8 @@ async def test_delayed_queue_when_fenced_markdown_has_context_then_sends_text_im
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
-    assert partials == ["我先说下整体思路。", "中间说明。", "细节之后再聊。"]
-    assert order == [
-        "text:我先说下整体思路。",
-        "card",
-        "text:中间说明。",
-        "text:细节之后再聊。",
-    ]
+    assert partials == []
+    assert order == ["image"]
     assert engine.brain.chat.await_count == 1
     execute_tool.assert_not_awaited()
     assert results[0]["reply"] == ""
@@ -1759,20 +1758,7 @@ async def test_delayed_queue_when_fenced_markdown_has_context_then_sends_text_im
         {
             "group_id": "group-1",
             "target_user_id": "u1",
-            "content": "我先说下整体思路。",
-            "system_prompt": "",
-            "injected_request": {
-                "system_prompt": "system",
-                "messages": [{"role": "user", "content": "question"}],
-                "tools": [],
-                "tool_choice": None,
-            },
-            "injected_tool_names": [],
-        },
-        {
-            "group_id": "group-1",
-            "target_user_id": "u1",
-            "content": "**顶层模块**：\n- core/\n\n---\n\n**执行层**：\n- worker/",
+            "content": content,
             "system_prompt": "",
             "tags": [{"type": "image", "label": "富文本卡片"}],
             "injected_request": {
@@ -1783,33 +1769,7 @@ async def test_delayed_queue_when_fenced_markdown_has_context_then_sends_text_im
             },
             "injected_tool_names": [],
             "platform_message_id": "42",
-        },
-        {
-            "group_id": "group-1",
-            "target_user_id": "u1",
-            "content": "中间说明。",
-            "system_prompt": "",
-            "injected_request": {
-                "system_prompt": "system",
-                "messages": [{"role": "user", "content": "question"}],
-                "tools": [],
-                "tool_choice": None,
-            },
-            "injected_tool_names": [],
-        },
-        {
-            "group_id": "group-1",
-            "target_user_id": "u1",
-            "content": "细节之后再聊。",
-            "system_prompt": "",
-            "injected_request": {
-                "system_prompt": "system",
-                "messages": [{"role": "user", "content": "question"}],
-                "tools": [],
-                "tool_choice": None,
-            },
-            "injected_tool_names": [],
-        },
+        }
     ]
 
 
@@ -1840,20 +1800,20 @@ async def test_delayed_queue_when_short_inline_markdown_stays_text(monkeypatch):
         execute_tool,
     )
     engine._adapter = SimpleNamespace()
-    render_markdown = AsyncMock()
+    render_rich = AsyncMock()
     monkeypatch.setattr(
-        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_markdown_image",
-        render_markdown,
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        render_rich,
     )
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
 
-    render_markdown.assert_not_awaited()
+    render_rich.assert_not_awaited()
     assert results[0]["reply"] == "执行 `docker ps` 查看状态。"
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_markdown_card_render_fails_then_falls_back_to_text(
+async def test_delayed_queue_when_rich_reply_render_fails_then_falls_back_to_text(
     monkeypatch,
 ):
     queue = DelayedResponseQueue()
@@ -1864,6 +1824,7 @@ async def test_delayed_queue_when_markdown_card_render_fails_then_falls_back_to_
         _decision(ResponseStrategy.IMMEDIATE),
     )
     item.enqueue_time = _past(item.window_seconds + 1)
+    content = "```markdown\n# 状态\n- healthy\n- service ok\n```"
 
     async def fail_to_render(*args, **kwargs):
         raise ValueError("content 过长")
@@ -1874,8 +1835,8 @@ async def test_delayed_queue_when_markdown_card_render_fails_then_falls_back_to_
         SimpleNamespace(name="lookup", silent=False, developer_only=False),
         [
             SimpleNamespace(
-                raw_text="```markdown\n# 状态\n- healthy\n- service ok\n```",
-                clean_text="```markdown\n# 状态\n- healthy\n- service ok\n```",
+                raw_text=content,
+                clean_text=content,
                 tool_calls=[],
                 reply_references=[],
                 injected_request={
@@ -1890,7 +1851,7 @@ async def test_delayed_queue_when_markdown_card_render_fails_then_falls_back_to_
     )
     engine._adapter = SimpleNamespace()
     monkeypatch.setattr(
-        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_markdown_image",
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
         fail_to_render,
     )
     delivered: list[dict[str, object]] = []
@@ -1902,9 +1863,9 @@ async def test_delayed_queue_when_markdown_card_render_fails_then_falls_back_to_
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
-    assert partials == ["# 状态\n- healthy\n- service ok"]
+    assert partials == [content]
     assert results[0]["reply"] == ""
-    assert delivered[0]["content"] == "# 状态\n- healthy\n- service ok"
+    assert delivered[0]["content"] == content
     assert "tags" not in delivered[0]
 
 

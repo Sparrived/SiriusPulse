@@ -912,80 +912,45 @@ class DelayedQueueTasks:
                     continue
                 agent_turn.advance(AgentTurnPhase.RESPOND)
                 await self._emit_agent_turn(engine, agent_turn)
-                fenced_parts = _markdown_image.split_fenced_markdown(round_clean)
-                markdown_contents = [
-                    content for is_markdown, content in fenced_parts if is_markdown
-                ]
-                merged_markdown = _markdown_image.merge_markdown_blocks(markdown_contents)
-                if not plan_mode and _markdown_image.should_render_markdown_card(markdown_contents):
-                    markdown_sent = False
-                    for is_markdown, content in fenced_parts:
-                        if is_markdown:
-                            if not markdown_sent:
-                                try:
-                                    message_id = (
-                                        await _markdown_image.render_and_send_markdown_image(
-                                            merged_markdown,
-                                            adapter=getattr(engine, "_adapter", None),
-                                            group_id=group_id,
-                                        )
-                                    )
-                                except (RuntimeError, ValueError) as exc:
-                                    logger.warning(
-                                        "Markdown card delivery failed for %s; falling back to text: %s",
-                                        group_id,
-                                        exc,
-                                    )
-                                    if on_partial_reply is None:
-                                        raise
-                                    await on_partial_reply(merged_markdown)
-                                    engine._record_assistant_message(
-                                        group_id=group_id,
-                                        target_user_id=item.user_id,
-                                        content=merged_markdown,
-                                        system_prompt=getattr(chat_result, "system_prompt", ""),
-                                        injected_request=getattr(
-                                            chat_result, "injected_request", {}
-                                        ),
-                                        injected_tool_names=getattr(
-                                            chat_result, "injected_tool_names", []
-                                        ),
-                                        **_reasoning_memory_kwargs(chat_result),
-                                    )
-                                    last_partial_sent_at = time.monotonic()
-                                else:
-                                    engine._record_assistant_message(
-                                        group_id=group_id,
-                                        target_user_id=item.user_id,
-                                        content=merged_markdown,
-                                        system_prompt=getattr(chat_result, "system_prompt", ""),
-                                        tags=[{"type": "image", "label": "富文本卡片"}],
-                                        injected_request=getattr(
-                                            chat_result, "injected_request", {}
-                                        ),
-                                        injected_tool_names=getattr(
-                                            chat_result, "injected_tool_names", []
-                                        ),
-                                        **_reasoning_memory_kwargs(chat_result),
-                                        platform_message_id=message_id,
-                                    )
-                                markdown_sent = True
-                        else:
-                            if on_partial_reply is None:
-                                raise RuntimeError(
-                                    "Fenced Markdown delivery requires on_partial_reply for text"
-                                )
-                            await on_partial_reply(content)
-                            engine._record_assistant_message(
-                                group_id=group_id,
-                                target_user_id=item.user_id,
-                                content=content,
-                                system_prompt=getattr(chat_result, "system_prompt", ""),
-                                injected_request=getattr(chat_result, "injected_request", {}),
-                                injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                                **_reasoning_memory_kwargs(chat_result),
-                            )
-                            last_partial_sent_at = time.monotonic()
+                rich_content = round_clean.strip()
+                if not plan_mode and _markdown_image.has_rich_structure(rich_content):
+                    try:
+                        delivery = await _markdown_image.render_and_send_rich_reply(
+                            rich_content,
+                            adapter=getattr(engine, "_adapter", None),
+                            group_id=group_id,
+                        )
+                    except (RuntimeError, ValueError) as exc:
+                        logger.warning(
+                            "Rich reply image delivery failed for %s; falling back to text: %s",
+                            group_id,
+                            exc,
+                        )
+                        if on_partial_reply is None:
+                            raise
+                        await on_partial_reply(rich_content)
+                        engine._record_assistant_message(
+                            group_id=group_id,
+                            target_user_id=item.user_id,
+                            content=rich_content,
+                            system_prompt=getattr(chat_result, "system_prompt", ""),
+                            injected_request=getattr(chat_result, "injected_request", {}),
+                            injected_tool_names=getattr(chat_result, "injected_tool_names", []),
+                            **_reasoning_memory_kwargs(chat_result),
+                        )
+                        last_partial_sent_at = time.monotonic()
+                    else:
+                        engine._record_assistant_message(
+                            group_id=group_id,
+                            target_user_id=item.user_id,
+                            content=rich_content,
+                            system_prompt=getattr(chat_result, "system_prompt", ""),
+                            tags=[{"type": "image", "label": "富文本卡片"}],
+                            injected_request=getattr(chat_result, "injected_request", {}),
+                            injected_tool_names=getattr(chat_result, "injected_tool_names", []),
+                            **_reasoning_memory_kwargs(chat_result),
+                            platform_message_id=delivery["image_message_id"],
+                        )
                     chat_result.clean_text = ""
                     reply = ""
                     break
