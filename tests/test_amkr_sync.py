@@ -371,6 +371,51 @@ def test_browser_base_url_when_unset_then_falls_back_to_backend_url():
     assert settings.browser_base_url == "http://amkr.test"
 
 
+def test_browser_base_url_when_backend_is_loopback_then_falls_back_to_same_origin_proxy():
+    """回环地址在**用户浏览器**里指向用户自己的机器，不能当作面板地址下发。
+
+    面板必须与取数接口同源（AMKR 不发 CORS 头），而浏览器又是先打开本框架的
+    WebUI，因此唯一处处可用的地址就是本框架源上的反代路径。
+    """
+    for base in (
+        "http://127.0.0.1:28881",
+        "http://127.0.0.1:8000",
+        "http://localhost:28881",
+        "http://[::1]:28881",
+    ):
+        assert _settings(base_url=base).browser_base_url == "/amkr"
+
+
+def test_persona_panel_url_when_backend_is_loopback_then_embeds_same_origin_path(
+    tmp_path,
+):
+    """同机部署是默认形态：面板地址必须落在本框架自己的源上。
+
+    这是本次修复的核心——此前这里会拼出一个远程 AMKR 域名（或回环地址），
+    iframe 于是加载到别的实例、或干脆加载不出来。
+    """
+    save_panel_key(tmp_path, "sirius-pulse/sirius", "amkr_ws_secret")
+
+    url = persona_panel_url(_settings(base_url="http://127.0.0.1:28881"), "sirius", tmp_path)
+
+    assert url == "/amkr/ui/panel.html#k=amkr_ws_secret"
+    assert "127.0.0.1" not in url
+    # 同源相对路径：浏览器按当前页面的源解析，因而与取数接口天然同源。
+    assert "sparrived.xyz" not in url
+
+
+def test_browser_base_url_when_non_loopback_backend_then_used_as_is():
+    """跨机部署时后端地址本身就是浏览器可达的，不该被改写成反代路径。"""
+    assert (
+        _settings(base_url="http://192.168.2.181:28881").browser_base_url
+        == "http://192.168.2.181:28881"
+    )
+    assert (
+        _settings(base_url="https://amkr.example.com").browser_base_url
+        == "https://amkr.example.com"
+    )
+
+
 def test_load_amkr_settings_when_public_url_stored_then_reads_it(tmp_path):
     """「AMKR 浏览器地址」与「AMKR 地址」都必须能从全局配置读出来。"""
     (tmp_path / "global_config.json").write_text(
