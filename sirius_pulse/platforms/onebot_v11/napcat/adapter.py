@@ -55,6 +55,7 @@ from sirius_pulse.tools.builtin._internal._markdown_image import to_image_refere
 
 LOG = logging.getLogger("sirius.platforms.napcat")
 _DISPATCH_EVENT_TIME_BUCKET_SECONDS = 5
+_FORWARD_NODE_CHARS = 800
 _ATOMIC_PROACTIVE_SEND: ContextVar[bool] = ContextVar("atomic_proactive_send", default=False)
 _PROACTIVE_DELIVERY_START: ContextVar[Callable[[], bool] | None] = ContextVar(
     "proactive_delivery_start",
@@ -84,6 +85,30 @@ def _is_ws_closed(ws: Any) -> bool:
 def _safe_download_name(file_name: str) -> str:
     name = str(file_name or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     return "".join("_" if char in '<>:"|?*' or ord(char) < 32 else char for char in name)
+
+
+def _split_forward_node_texts(text: str, limit: int = _FORWARD_NODE_CHARS) -> list[str]:
+    """按行把文本切成不超过 *limit* 个字符的节点正文，避免单个节点超出 QQ 上限。"""
+    chunks: list[str] = []
+    current = ""
+    for raw_line in str(text or "").splitlines():
+        line = raw_line
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if not current:
+            current = line
+        elif len(current) + 1 + len(line) <= limit:
+            current = f"{current}\n{line}"
+        else:
+            chunks.append(current)
+            current = line
+    if current:
+        chunks.append(current)
+    return chunks or [""]
 
 
 def _download_url(url: str, destination: Path) -> int:
@@ -514,21 +539,28 @@ class NapCatAdapter(BaseAdapter):
 
     @staticmethod
     def _is_send_action(action: str) -> bool:
-        return action in ("send_group_msg", "send_private_msg")
+        return action in (
+            "send_group_msg",
+            "send_private_msg",
+            "send_group_forward_msg",
+            "send_private_forward_msg",
+        )
 
     @staticmethod
     def _is_irreversible_action(action: str) -> bool:
         return action in (
             "send_group_msg",
             "send_private_msg",
+            "send_group_forward_msg",
+            "send_private_forward_msg",
             "group_poke",
             "friend_poke",
         )
 
     def _send_channel_key(self, action: str, params: dict[str, Any]) -> str:
-        if action == "send_group_msg":
+        if action in ("send_group_msg", "send_group_forward_msg"):
             return f"group_{params.get('group_id', '')}"
-        if action == "send_private_msg":
+        if action in ("send_private_msg", "send_private_forward_msg"):
             return f"private_{params.get('user_id', '')}"
         return ""
 
@@ -647,6 +679,39 @@ class NapCatAdapter(BaseAdapter):
         return await self.call_api(
             "send_private_msg", {"user_id": int(user_id), "message": segments}
         )
+
+    # ─── 合并转发（NapCat Go-CQHTTP 接口） ──────────────────
+
+    async def send_group_forward_msg(self, group_id: str | int, text: str) -> dict[str, Any]:
+        """发送群聊合并转发消息，节点正文来自 *text*。"""
+        self._require_allowed_group(str(group_id))
+        return await self.call_api(
+            "send_group_forward_msg",
+            {"group_id": int(group_id), "messages": self._build_forward_nodes(text)},
+        )
+
+    async def send_private_forward_msg(self, user_id: str | int, text: str) -> dict[str, Any]:
+        """发送私聊合并转发消息，节点正文来自 *text*。"""
+        return await self.call_api(
+            "send_private_forward_msg",
+            {"user_id": int(user_id), "messages": self._build_forward_nodes(text)},
+        )
+
+    def _build_forward_nodes(self, text: str) -> list[dict[str, Any]]:
+        """把纯文本包装成合并转发节点，署名保持当前登录账号。"""
+        uin = str(self.plugin_config.get("qq_number", "") or "").strip()
+        nickname = self._persona_name or uin or "Sirius"
+        return [
+            {
+                "type": "node",
+                "data": {
+                    "uin": uin,
+                    "nickname": nickname,
+                    "content": [{"type": "text", "data": {"text": chunk}}],
+                },
+            }
+            for chunk in _split_forward_node_texts(text)
+        ]
 
     @staticmethod
     def _to_file_uri(file_path: str) -> str:

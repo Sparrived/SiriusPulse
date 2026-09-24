@@ -190,3 +190,80 @@ async def test_napcat_downloads_group_file_url_to_persona_directory(
     assert calls == [
         ("get_group_file_url", {"group_id": 9001, "file_id": "file-1"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_napcat_group_forward_wraps_text_into_signed_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    adapter = NapCatAdapter(
+        "ws://example.invalid",
+        config={"allowed_group_ids": [9001], "qq_number": "3385516316"},
+    )
+    adapter.set_persona_name("月白")
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_call_api(action: str, params: dict[str, object]) -> dict[str, object]:
+        calls.append((action, params))
+        return {"data": {"message_id": 88}}
+
+    monkeypatch.setattr(adapter, "call_api", fake_call_api)
+
+    result = await adapter.send_group_forward_msg(9001, "第一行\n第二行")
+
+    assert result == {"data": {"message_id": 88}}
+    assert calls == [
+        (
+            "send_group_forward_msg",
+            {
+                "group_id": 9001,
+                "messages": [
+                    {
+                        "type": "node",
+                        "data": {
+                            "uin": "3385516316",
+                            "nickname": "月白",
+                            "content": [{"type": "text", "data": {"text": "第一行\n第二行"}}],
+                        },
+                    }
+                ],
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_napcat_private_forward_splits_long_text_across_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    adapter = NapCatAdapter("ws://example.invalid", config={"qq_number": "3385516316"})
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_call_api(action: str, params: dict[str, object]) -> dict[str, object]:
+        calls.append((action, params))
+        return {"data": {"message_id": 99}}
+
+    monkeypatch.setattr(adapter, "call_api", fake_call_api)
+
+    long_text = "\n".join(f"第{index}行" for index in range(400))
+    await adapter.send_private_forward_msg(10001, long_text)
+
+    action, params = calls[0]
+    assert action == "send_private_forward_msg"
+    assert params["user_id"] == 10001
+    nodes = params["messages"]
+    assert isinstance(nodes, list) and len(nodes) > 1
+    assert all(len(node["data"]["content"][0]["data"]["text"]) <= 800 for node in nodes)
+    assert "\n".join(node["data"]["content"][0]["data"]["text"] for node in nodes) == long_text
+
+
+@pytest.mark.asyncio
+async def test_napcat_forward_actions_share_the_reply_throttle_channel():
+    adapter = NapCatAdapter("ws://example.invalid")
+
+    assert adapter._is_send_action("send_group_forward_msg") is True
+    assert adapter._is_send_action("send_private_forward_msg") is True
+    assert adapter._send_channel_key("send_group_forward_msg", {"group_id": 9001}) == "group_9001"
+    assert (
+        adapter._send_channel_key("send_private_forward_msg", {"user_id": 10001}) == "private_10001"
+    )
