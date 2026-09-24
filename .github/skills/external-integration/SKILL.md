@@ -95,6 +95,7 @@ description: "当需要让外部项目正确接入 Sirius Pulse 时使用，覆�
   - 示例：`from sirius_pulse.config import ConfigManager; cfg = ConfigManager.load_from_json('config/base.json')`
 - ✨ **SKILL 系统**：通过 `tools/` 模块让 AI 在运行时调用外部 Python 代码
   - 默认：`enable_tools=True`；框架会先加载包内置 Tool（当前为 `autonomy`、`bash`、`desktop_screenshot`、`group_file_exec`、`group_management`、`intend_share`、`interaction_with_master`、`qq_like`、`qq_member_info`、`read_skill`、`web_lookup`、`workflow_state`，见 `sirius_pulse/tools/builtin/`），再加载 workspace `tools/` 目录。Tool 文件默认放在 `{work_path}/tools/`，双根布局时位于 `config_root/tools/`。若只想保留目录结构、不执行 Tool，可显式设置 `enable_tools=False`
+  - 可见性与执行是两件事：`bash`、`read_skill`、`workflow_state`、`group_file_exec` 只在**工作模式**内对模型可见（`Brain.chat` 按 `ChatRequest.work_mode` 过滤，非工作模式回合只提供 `enter_work_mode`），但注册表里始终存在，`ToolExecutor` 不做额外拦截。工作模式的控制工具（`enter_work_mode` / `quit_work_mode` / `send_midway_msg`，见 `sirius_pulse/core/work_mode.py`）不注册进注册表，而是经 `ChatRequest.extra_tools` 注入
   - 加载时机：框架启动时预加载，`tools/` 目录变化时自动全量重载；不再在每条 message 路径上扫描 SKILL
   - 覆盖规则：如果 workspace 中存在同名文件（如 `tools/system_info.py`），则以 workspace 版本覆盖内置实现
   - 权限模型：developer-only SKILL 只会在 developer 当前轮次出现在提示词中，执行时 runtime 会再次校验当前调用者是否被显式标记为 developer
