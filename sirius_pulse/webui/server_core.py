@@ -24,6 +24,7 @@ from sirius_pulse.providers.amkr_sync import (
     register_persona_tasks_async,
     rotate_persona_inference_key,
 )
+from sirius_pulse.webui.amkr_proxy import AmkrProxy, setup_amkr_proxy_routes
 from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY, DATA_DIR_KEY, WS_MANAGER_KEY
 from sirius_pulse.webui.auth import AuthManager
 from sirius_pulse.webui.event_bridge import EngineEventBridge
@@ -72,6 +73,9 @@ class WebUIServer:
             self.ws_manager, lambda: getattr(self, "persona_manager", None)
         )
         self.auth_manager = AuthManager(self.data_dir)
+        # AMKR 同源反代：AMKR 不发 CORS 头，面板必须与它同源，因此挂在 WebUI
+        # 自己的源上（运维用哪个地址打开本页，面板就在哪个源上）。
+        self.amkr_proxy = AmkrProxy(self.data_dir)
         self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
         self.app[DATA_DIR_KEY] = self.data_dir
         self.app[AUTH_MANAGER_KEY] = self.auth_manager
@@ -147,6 +151,9 @@ class WebUIServer:
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
         self.app.router.add_static("/static/", Path(__file__).parent / "static", show_index=False)
+        # 反代路由先于 WEBUI_ROUTES 注册：它的通配尾巴会吃掉 /amkr 下的一切，
+        # 而本框架自己的接口全在 /api/ 下，两者不重叠。
+        setup_amkr_proxy_routes(self.app, self.amkr_proxy)
         for spec in WEBUI_ROUTES:
             self.app.router.add_route(spec.method, spec.path, getattr(self, spec.handler_name))
 
@@ -164,6 +171,7 @@ class WebUIServer:
     async def stop(self) -> None:
         self.file_event_bridge.stop()
         await self.engine_event_bridge.stop()
+        await self.amkr_proxy.close()
         await self.ws_manager.close_all()
         if self.site:
             await self.site.stop()

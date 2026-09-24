@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from sirius_pulse.providers.amkr import AMKR_PROXY_PREFIX
 from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY
 from sirius_pulse.webui.server_utils import _json_response
 
@@ -18,10 +19,17 @@ LOG = logging.getLogger("sirius.webui.middleware")
 
 # 认证白名单路径前缀（免认证）。WebSocket 不在白名单中：它会和
 # REST API 一样在 upgrade 前经过 JWT 校验，避免 /ws/* 新路由意外裸露。
+#
+# ``/amkr/``（同源反代，见 :mod:`sirius_pulse.webui.amkr_proxy`）必须免 JWT：
+# 面板是 iframe 里的**另一个文档**，它持有的是 AMKR 的工作空间面板 key，而不是
+# 本框架的 JWT，因此带不了认证头。这条路径把「有没有凭据」重新交还给 AMKR——
+# 静态资源本就不需要凭据，而取数接口仍要一把面板 key，且反代只放行面板用得到
+# 的那几条路径。
 _WHITELIST_PREFIXES: tuple[str, ...] = (
     "/static/",
     "/api/auth/login",
     "/api/auth/status",
+    f"{AMKR_PROXY_PREFIX}/",
 )
 
 # 浏览器 WebSocket API 不允许设置 Authorization 头。前端把 JWT 放在

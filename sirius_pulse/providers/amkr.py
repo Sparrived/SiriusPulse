@@ -12,7 +12,7 @@ Sirius Pulse 不再自带多供应商注册表：所有模型调用都指向同�
 ``amkr_base_url``    ``SIRIUS_AMKR_BASE_URL``    ``http://127.0.0.1:8000``
 ``amkr_local_api_key`` ``SIRIUS_AMKR_API_KEY``   空（未配置则引擎不就绪）
 ``amkr_workspace``   ``SIRIUS_AMKR_WORKSPACE``   ``sirius-pulse``
-``amkr_public_url``  ``SIRIUS_AMKR_PUBLIC_URL``  空（回落到 ``amkr_base_url``）
+``amkr_public_url``  ``SIRIUS_AMKR_PUBLIC_URL``  空（回环后端时回落同源反代 ``/amkr/``）
 ===================  ==========================  ============================
 
 工作空间是本应用在**共享** AMKR 里的命名空间：多个 AI 服务共用一个 AMKR
@@ -34,7 +34,12 @@ Key 的管理员凭据，不该出现在推理路径上。
 ``amkr_public_url`` 是**浏览器**该用哪个地址访问同一个 AMKR，与 ``amkr_base_url``
 （服务端容器自己怎么连）分开。容器与 AMKR 同机时后端走回环最省事，但回环地址
 在用户浏览器里指向用户的机器，面板 iframe 会直接加载失败；反向代理把 AMKR 暴露
-在别的域名时，两者必然不同。留空表示「浏览器也用 ``amkr_base_url``」。
+在别的域名时，两者必然不同。
+
+两处都留空（或 ``amkr_base_url`` 就是回环）时不再回落到那个回环地址——它在浏览器里
+必然指向浏览器自己的机器——而是回落到**本框架自己域名下的同源反代路径**
+``/amkr``（见 :mod:`sirius_pulse.webui.amkr_proxy`）。AMKR 不发 CORS 头，面板与它
+的接口必须同源，挂在 WebUI 的源上就同时满足了「浏览器可达」与「同源」。
 """
 
 from __future__ import annotations
@@ -44,7 +49,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from sirius_pulse.providers.base import DEFAULT_TIMEOUT_SECONDS
 from sirius_pulse.utils.json_io import atomic_write_json, read_json
@@ -68,6 +73,13 @@ INFERENCE_KEYS_FIELD = "amkr_inference_keys"
 
 # AMKR 默认监听地址（与其 README 的默认端口一致）。
 AMKR_DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+
+# 本框架在**自己的源**上把 AMKR 的 WebUI 挂到哪条路径下。
+#
+# 定义在这里而不是反代模块里，是因为它同时被两侧依赖：反代按它注册路由，而
+# ``AmkrSettings.browser_base_url`` 要用它拼出给浏览器的地址。放在底层模块可以
+# 避免 providers 反向 import webui。
+AMKR_PROXY_PREFIX = "/amkr"
 
 # 本应用在 AMKR 中的默认工作空间名。
 AMKR_DEFAULT_WORKSPACE = "sirius-pulse"
@@ -108,10 +120,37 @@ class AmkrSettings:
     def browser_base_url(self) -> str:
         """浏览器该用的 AMKR 基址。
 
-        没单独配 ``amkr_public_url`` 时回落到 ``amkr_base_url``——单机部署下两者
-        本来就是同一个地址。
+        优先级：显式配置的 ``amkr_public_url`` > 非同源的 ``amkr_base_url`` >
+        本框架的同源反代路径 ``/amkr``。
+
+        最后那条回落是关键：``amkr_base_url`` 在单机部署里通常就是宿主回环
+        （``http://127.0.0.1:28881``），而回环在**用户浏览器**里指向用户自己的
+        机器，面板 iframe 必然加载不出来。既然 AMKR 与 Sirius 部署在一起、浏览器
+        又是先打开 Sirius 的 WebUI，那么把面板挂到 WebUI 自己的源上才是唯一
+        处处可用的地址。
         """
-        return (self.public_url or self.base_url).rstrip("/")
+        explicit = self.public_url.strip()
+        if explicit:
+            return explicit.rstrip("/")
+        backend = self.base_url.strip().rstrip("/")
+        if backend and not _is_loopback_url(backend):
+            return backend
+        return AMKR_PROXY_PREFIX
+
+
+def _is_loopback_url(url: str) -> bool:
+    """判断一个 URL 的主机是否是回环地址。
+
+    只看主机名，不解析 DNS：这里要回答的是「浏览器访问它时会不会落到浏览器自己
+    的机器上」，而任何名字解析都不改变 ``localhost`` 与 ``127.0.0.0/8`` 的这层
+    含义。带端口的回环地址同样算——问题出在主机，不在端口。
+    """
+    host = urlsplit(url).hostname or ""
+    if host in ("localhost", "::1"):
+        return True
+    if host.startswith("127."):
+        return True
+    return False
 
 
 def load_amkr_settings(global_data_path: Path | str) -> AmkrSettings:
