@@ -31,6 +31,7 @@ from typing import Any, Callable
 
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
 from sirius_pulse.core.utils import strip_conversation_history_xml
+from sirius_pulse.core.work_mode import WORK_MODE_ONLY_TOOL_NAMES
 from sirius_pulse.providers.base import GenerationResult, ToolCall
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,8 @@ class ChatRequest:
     adapter_type: str | None = None
     extra_tools: list[dict[str, Any]] | None = None
     tool_choice: str | None = None
+    work_mode: bool = False
+    """True 时才暴露工作模式专属的重工具（bash/read_skill/workflow_state/group_file_exec）。"""
 
     # ── 对话深度 ──
     last_reply_at: float = 0.0
@@ -490,6 +493,8 @@ class Brain:
                         if self.current_admin_allowed_fn is not None
                         else False
                     ),
+                    # 重工具只在工作模式里可见，普通聊天只能看到 enter_work_mode。
+                    "exclude_names": None if request.work_mode else WORK_MODE_ONLY_TOOL_NAMES,
                 }
                 tools = self.tool_registry.build_tools_list(**tool_kwargs)
                 if not tools:

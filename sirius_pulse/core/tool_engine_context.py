@@ -501,11 +501,16 @@ class ToolEngineContextImpl:
         self._engine._persist_group_state(group_id)
 
     def get_tool_descriptions(
-        self, caller_is_developer: bool = False, adapter_type: str | None = None
+        self,
+        caller_is_developer: bool = False,
+        adapter_type: str | None = None,
+        *,
+        work_mode: bool = False,
     ) -> str:
         """获取工具描述文本（用于被动工具的 prompt 注入）。"""
         if self._engine._tool_registry is None:
             return ""
+        from sirius_pulse.core.work_mode import WORK_MODE_ONLY_TOOL_NAMES
         from sirius_pulse.memory.user.unified_models import UnifiedUser
         from sirius_pulse.tools.models import ToolInvocationContext
 
@@ -518,6 +523,7 @@ class ToolEngineContextImpl:
         tools = self._engine._tool_registry.build_tools_list(
             invocation_context=ctx,
             adapter_type=adapter_type or self._engine._current_adapter_type or None,
+            exclude_names=None if work_mode else WORK_MODE_ONLY_TOOL_NAMES,
         )
         if not tools:
             return ""

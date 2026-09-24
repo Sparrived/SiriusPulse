@@ -227,6 +227,69 @@ async def test_brain_chat_when_tool_choice_is_none_then_all_schemas_are_still_se
 
 
 @pytest.mark.asyncio
+async def test_brain_chat_when_not_in_work_mode_then_heavy_tools_are_hidden():
+    provider = _Provider()
+    registry = ToolRegistry()
+    registry.register(_tool("bash"))
+    registry.register(_tool("read_skill"))
+    registry.register(_tool("lookup"))
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="model", max_tokens=100, temperature=0.1, timeout=30
+            )
+        ),
+        persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
+        tool_registry=registry,
+    )
+
+    await brain.chat(
+        ChatRequest(
+            group_id="group-1",
+            user_id="u1",
+            system_prompt="system",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+    )
+
+    assert [tool["function"]["name"] for tool in (provider.last_request.tools or [])] == ["lookup"]
+
+
+@pytest.mark.asyncio
+async def test_brain_chat_when_in_work_mode_then_heavy_tools_are_offered():
+    provider = _Provider()
+    registry = ToolRegistry()
+    registry.register(_tool("bash"))
+    registry.register(_tool("lookup"))
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="model", max_tokens=100, temperature=0.1, timeout=30
+            )
+        ),
+        persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
+        tool_registry=registry,
+    )
+
+    await brain.chat(
+        ChatRequest(
+            group_id="group-1",
+            user_id="u1",
+            system_prompt="system",
+            messages=[{"role": "user", "content": "hello"}],
+            work_mode=True,
+        )
+    )
+
+    assert [tool["function"]["name"] for tool in (provider.last_request.tools or [])] == [
+        "bash",
+        "lookup",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_brain_chat_injects_current_time_into_user_message_not_system_prompt():
     provider = _Provider()
     brain = Brain(

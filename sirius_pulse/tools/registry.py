@@ -11,7 +11,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Collection
 
 from sirius_pulse.tools.dependency_resolver import resolve_tool_dependencies
 from sirius_pulse.tools.models import (
@@ -339,12 +339,14 @@ class ToolRegistry:
         adapter_type: str | None = None,
         chat_type: str | None = None,
         admin_allowed: bool = False,
+        exclude_names: Collection[str] | None = None,
     ) -> list[dict[str, Any]]:
         """构建 OpenAI tools 列表，用于原生 function_call。
 
         Args:
             invocation_context: 可选的调用上下文，用于 developer_only 过滤。
             adapter_type: 如果提供，只包含 adapter_types 为空或包含此类型的工具。
+            exclude_names: 本次调用要隐藏的工具名（如工作模式外的重工具）。
 
         Returns:
             OpenAI tools 格式的列表。
@@ -356,6 +358,7 @@ class ToolRegistry:
                 adapter_type=adapter_type,
                 chat_type=chat_type,
                 admin_allowed=admin_allowed,
+                exclude_names=exclude_names,
             )
         ]
 
@@ -367,6 +370,7 @@ class ToolRegistry:
         adapter_type: str | None = None,
         chat_type: str | None = None,
         admin_allowed: bool = False,
+        exclude_names: Collection[str] | None = None,
     ) -> str:
         """Build a formatted text block describing all available tools.
 
@@ -379,6 +383,7 @@ class ToolRegistry:
                 save tokens when many tools are registered.
             adapter_type: If provided, only include tools whose adapter_types
                 is empty or contains this adapter type.
+            exclude_names: Tool names to leave out of the description block.
         """
         if not self._tools:
             return ""
@@ -389,6 +394,7 @@ class ToolRegistry:
             adapter_type=adapter_type,
             chat_type=chat_type,
             admin_allowed=admin_allowed,
+            exclude_names=exclude_names,
         ):
             security_notes: list[str] = []
             if tool.developer_only:
@@ -422,11 +428,15 @@ class ToolRegistry:
         adapter_type: str | None,
         chat_type: str | None,
         admin_allowed: bool,
+        exclude_names: Collection[str] | None = None,
     ) -> list[ToolDefinition]:
         """Return model-callable tools after applying the shared access filters."""
+        hidden = set(exclude_names or ())
         tools: list[ToolDefinition] = []
         for tool in self._tools.values():
             if not tool.model_visible:
+                continue
+            if tool.name in hidden:
                 continue
             if tool._run_func is None and tool.is_passive:
                 continue
