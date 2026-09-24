@@ -155,7 +155,7 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
   | `amkr_base_url` | `SIRIUS_AMKR_BASE_URL` | `http://127.0.0.1:8000` |
   | `amkr_local_api_key` | `SIRIUS_AMKR_API_KEY` | 空（未配置则引擎不就绪） |
   | `amkr_workspace` | `SIRIUS_AMKR_WORKSPACE` | `sirius-pulse` |
-  | `amkr_public_url` | `SIRIUS_AMKR_PUBLIC_URL` | 空（浏览器侧，回落到 `amkr_base_url`） |
+  | `amkr_public_url` | `SIRIUS_AMKR_PUBLIC_URL` | 空（浏览器侧，回环后端时回落同源反代 `/amkr/`） |
 
 - `amkr_local_api_key` 是 AMKR 的**本地授权 Key，同时是它的管理员凭据**（可增删供应商与 Key），因此只保存在服务端；WebUI 响应中脱敏为 `sk-a****`，提交脱敏值时服务端保留磁盘原值。`amkr_ui_enabled` 控制是否显示跳转 AMKR 面板的外链。
 
@@ -172,7 +172,8 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 ### 工作空间与注册
 
 - AMKR 是**共享单实例**，多个 AI 服务可同时使用，**不是多租户**。隔离靠**凭据本身**：模型调用用该空间的推理 key，AMKR 据此决定空间，请求头 `X-AMKR-Workspace` 会被忽略（框架仍发送它，仅为兼容旧版 AMKR）。空间名由 `workspace_for()` 按人格拼成 `<amkr_workspace>/<persona>`（如 `sirius-pulse/sirius`）。
-- **两个地址**：`amkr_base_url` 是服务端/容器怎么连 AMKR，`amkr_public_url` 是**用户浏览器**怎么连同一个 AMKR（留空回落前者）。同机部署时二者必然不同——容器走回环最省事，但回环在用户浏览器里指向用户自己的机器；面板与运维页外链都是浏览器直连 AMKR，故远程访问必须配 `amkr_public_url`（反代域名）。代码里用 `AmkrSettings.browser_base_url` 取浏览器侧地址。
+- **两个地址**：`amkr_base_url` 是服务端/容器怎么连 AMKR，`amkr_public_url` 是**用户浏览器**怎么连同一个 AMKR。代码里用 `AmkrSettings.browser_base_url` 取浏览器侧地址，优先级是：显式 `amkr_public_url` > 非同源的 `amkr_base_url` > **本框架的同源反代路径 `/amkr/`**。最后那条是默认路径：回环地址在用户浏览器里指向用户自己的机器，而 AMKR **不发 CORS 头**、面板必须与取数接口同源，所以 WebUI 自己在 `/amkr/` 上反代 AMKR（`webui/amkr_proxy.py`），面板地址因此是相对路径。同机部署无需给 AMKR 配域名或证书；只有 AMKR 在别的机器上且浏览器能直连它时才填 `amkr_public_url`。
+- **`/amkr/` 反代有一条硬边界**：它免本框架 JWT（iframe 是独立文档，带的是 AMKR 的面板 key 而非 JWT），但**不注入任何密钥**，只放行面板用得到的 `/ui/*`、`/health` 与 `/api/tasks`，其余路径 403。绝不可在那里注入 `amkr_local_api_key`——那等于开出一条无需本框架认证即可增删供应商与 Key 池的同源路径。
 - 工作空间由框架**显式创建**（`POST /api/workspaces`，见 `ensure_persona_workspace_key()`），不再靠「建第一个任务」隐式产生。原因：创建的那一刻是拿到该空间**两把凭据**的唯一时机，之后 AMKR 的目录与导出都刻意剥掉它们。顺序必须是**先建空间拿 key，再注册任务**；引擎构建同理——**先备齐凭据再建 provider**，否则全新安装永远拿不到推理 key。
 - 两把凭据，都存在 `data/global_config.json`，都是 `{工作空间: key}` 明文映射且**绝不随 `GET /api/global-config` 回显**：
 
