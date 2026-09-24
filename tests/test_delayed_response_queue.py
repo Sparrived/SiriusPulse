@@ -600,7 +600,7 @@ def test_delayed_queue_when_corrupted_entry_exists_then_tick_filters_it_out():
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_tool_call_has_text_then_keeps_part_in_chain_before_final(
+async def test_delayed_queue_when_tool_call_has_text_then_sends_part_before_final(
     monkeypatch,
 ):
     queue = DelayedResponseQueue()
@@ -704,9 +704,9 @@ async def test_delayed_queue_when_tool_call_has_text_then_keeps_part_in_chain_be
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
-    assert partials == []
-    assert order == ["tool"]
-    assert slept == []
+    assert partials == ["I will check."]
+    assert order == ["partial", "tool", "lead_wait"]
+    assert len(slept) == 1 and 0 < slept[0] <= 1.5
     assert results[0]["reply"] == "Everything is ready."
     execute_kwargs = engine._tool_executor.execute_async.await_args.kwargs
     assert execute_kwargs["timeout"] == 12
@@ -728,7 +728,7 @@ async def test_delayed_queue_when_tool_call_has_text_then_keeps_part_in_chain_be
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_tool_chain_has_many_statuses_then_keeps_them_in_chain():
+async def test_delayed_queue_when_tool_chain_has_many_statuses_then_sends_each_status():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
         "group-1",
@@ -774,7 +774,7 @@ async def test_delayed_queue_when_tool_chain_has_many_statuses_then_keeps_them_i
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
-    assert partials == []
+    assert partials == ["Checking step 1.", "Checking step 2.", "Checking step 3."]
     assert results[0]["reply"] == "Everything is ready."
     final_request = engine.brain.chat.await_args_list[-1].args[0]
     assert [
@@ -841,7 +841,7 @@ async def test_delayed_queue_when_tool_fails_then_sends_the_next_model_output():
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
-    assert partials == ["The lookup failed, so I will try another way."]
+    assert partials == ["I will check.", "The lookup failed, so I will try another way."]
     assert results[0]["reply"] == "I could not finish the check."
     second_request = engine.brain.chat.await_args_list[1].args[0]
     assistant_message = next(
@@ -1006,7 +1006,7 @@ async def test_delayed_queue_executes_high_risk_tool_without_confirmation():
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_chat_round_has_no_completion_control_tool():
+async def test_delayed_queue_when_normal_round_then_offers_only_work_mode_entry_tool():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
         "group-1",
@@ -1074,11 +1074,11 @@ async def test_delayed_queue_when_chat_round_has_no_completion_control_tool():
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
 
     assert results[0]["reply"] == "One reply."
-    assert seen_extra_tools == [set()]
+    assert seen_extra_tools == [{"enter_work_mode"}]
 
 
 @pytest.mark.asyncio
-async def test_delayed_queue_when_normal_tool_part_is_suppressed_then_tool_still_executes():
+async def test_delayed_queue_when_text_accompanies_tool_then_both_are_sent_and_executed():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
         "group-1",
@@ -1151,11 +1151,14 @@ async def test_delayed_queue_when_normal_tool_part_is_suppressed_then_tool_still
         dynamic_context="",
     )
 
-    async def fail_if_called(text: str) -> None:
-        raise AssertionError(f"normal tool part should not be sent: {text}")
+    sent: list[str] = []
 
-    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=fail_if_called)
+    async def capture_partial(text: str) -> None:
+        sent.append(text)
 
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
+
+    assert sent == ["I will check."]
     execute_tool.assert_awaited_once()
     assert results[0]["reply"] == "本轮工具调用上限已到，部分操作尚未完成。"
 

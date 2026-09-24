@@ -9,6 +9,7 @@ from sirius_pulse.adapters.models import ParsedEvent
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.events import SessionEvent, SessionEventType
+from sirius_pulse.core.work_mode import WorkModeRun
 from sirius_pulse.models.models import Message
 from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
 
@@ -158,6 +159,7 @@ def _engine_for_sending_window() -> (
         persist_group_state=lambda group_id: persisted.append(group_id)
     )
     engine._log_inner_thought = lambda *args, **kwargs: None
+    engine._work_mode_runs = {}
 
     return engine, background_updates, persisted
 
@@ -297,3 +299,52 @@ async def test_engine_when_message_arrives_during_send_with_bot_mention_then_del
     assert "Luna 等下看这里" in pending[0].message_content
     assert background_updates
     assert persisted == ["group-1"]
+
+
+@pytest.mark.asyncio
+async def test_engine_when_work_mode_is_running_then_message_is_stashed_not_queued():
+    engine, background_updates, persisted = _engine_for_sending_window()
+    run = WorkModeRun(group_id="group-1", goal="整理资料")
+    engine.begin_work_mode("group-1", run)
+
+    result = await engine.process_message(
+        Message(role="user", content="你们聊什么呢", speaker="Alice"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+
+    assert result["strategy"] == "work_mode_stashed"
+    assert engine.delayed_queue.get_pending("group-1") == []
+    assert run.take_flushed() == []
+    assert [message for message in run.stash] == ["你们聊什么呢"]
+    assert background_updates
+    assert persisted == []
+
+
+@pytest.mark.asyncio
+async def test_engine_when_work_mode_message_names_persona_then_whole_stash_is_released_once():
+    engine, _, _ = _engine_for_sending_window()
+    run = WorkModeRun(group_id="group-1", goal="整理资料")
+    engine.begin_work_mode("group-1", run)
+
+    await engine.process_message(
+        Message(role="user", content="你们聊什么呢", speaker="Alice"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+    await engine.process_message(
+        Message(role="user", content="顺便说一句", speaker="Bob"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+    await engine.process_message(
+        Message(role="user", content="Luna 你弄完没有", speaker="Alice"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+
+    assert run.take_flushed() == ["你们聊什么呢", "顺便说一句", "Luna 你弄完没有"]
+    assert run.take_flushed() == []
+
+    engine.end_work_mode("group-1")
+    assert engine.is_work_mode_active("group-1") is False

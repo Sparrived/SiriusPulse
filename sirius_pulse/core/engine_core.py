@@ -283,6 +283,10 @@ class _EmotionalGroupChatEngineBase:
         self._active_tool_chain_groups: set[str] = set()
         self._tool_chain_messages: dict[str, list[Message]] = {}
 
+        # 工作模式：任务期间进来的群消息先暂存，只有点名当前人格时才补进上下文，
+        # 这样工作期间的提示词前缀不动、缓存命中不被破坏。
+        self._work_mode_runs: dict[str, Any] = {}
+
         self._pending_reminders: dict[str, list[dict[str, Any]]] = {}
         self._current_adapter_type: str = ""
         # Adapter registrations are used by background/proactive messages.  A
@@ -1280,6 +1284,25 @@ class _EmotionalGroupChatEngineBase:
         """Take messages captured since the last tool-chain round."""
         return self._tool_chain_messages.pop(str(group_id or "").strip(), [])
 
+    def begin_work_mode(self, group_id: str, run: Any) -> None:
+        """Register a work-mode run and start stashing inbound group chatter."""
+        group_id = str(group_id or "").strip()
+        if not group_id:
+            return
+        self._work_mode_runs[group_id] = run
+        # 进工作模式前排队等回复的消息已被这次任务取代，留着只会在退出后再插一句。
+        clear_group = getattr(self.delayed_queue, "clear_group", None)
+        if callable(clear_group):
+            clear_group(group_id)
+
+    def is_work_mode_active(self, group_id: str) -> bool:
+        """Return whether a work-mode run currently owns this chat."""
+        return str(group_id or "").strip() in self._work_mode_runs
+
+    def end_work_mode(self, group_id: str) -> None:
+        """Release the work-mode run so normal replies resume."""
+        self._work_mode_runs.pop(str(group_id or "").strip(), None)
+
     def preview_dispatch(
         self,
         message: Message,
@@ -1408,6 +1431,22 @@ class _EmotionalGroupChatEngineBase:
                 data={"group_id": group_id, "user_id": user_id},
             )
         )
+
+        # 工作模式期间不新起一轮回复：消息先暂存，等模型点名时才补进上下文。
+        work_run = self._work_mode_runs.get(group_id)
+        if work_run is not None:
+            mentioned = self._message_explicitly_mentions_current_bot(message)
+            work_run.stash_message(content, mentions_persona=mentioned)
+            self._background_update(group_id, message, None, None, user_id)
+            self._log_inner_thought(
+                f"{speaker} 在我工作时说话，先替她记下来" + ("（点了我，下一轮就给她看）～" if mentioned else "～")
+            )
+            return {
+                "strategy": "work_mode_stashed",
+                "reply": None,
+                "emotion": {},
+                "intent": {},
+            }
 
         # Bot 正在发送多段回复时到达的新消息：不打断当前发送。
         # 只有明确点名当前 bot 的消息才进入 delayed queue，避免立刻抢话。

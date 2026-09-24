@@ -20,6 +20,16 @@ from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
+from sirius_pulse.core.work_mode import (
+    ENTER_WORK_MODE,
+    QUIT_WORK_MODE,
+    SEND_MIDWAY_MSG,
+    WorkModeRun,
+    WorkModeStore,
+    control_tools,
+    is_control_tool,
+    parse_arguments,
+)
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.builtin._internal import _markdown_image
 
@@ -302,6 +312,10 @@ class DelayedQueueTasks:
             end_tool_chain = getattr(self._engine, "end_tool_chain", None)
             if callable(end_tool_chain):
                 end_tool_chain(group_id)
+            # 工作模式同理：生成过程中抛错也不能把群永久留在暂存窗口里。
+            end_work_mode = getattr(self._engine, "end_work_mode", None)
+            if callable(end_work_mode):
+                end_work_mode(group_id)
 
     async def _tick_delayed_queue_impl(
         self,
@@ -319,11 +333,17 @@ class DelayedQueueTasks:
 
         Args:
             group_id: The group / private chat to tick.
-            on_partial_reply: Optional async callable used for the model output
-                immediately following a failed or blocked tool call. Normal
-                tool-round text stays in the assistant/tool message chain.
+            on_partial_reply: Optional async callable used for model output the
+                group should see immediately: text that accompanies a tool call
+                outside work mode, text following a failed tool call, and
+                ``send_midway_msg`` inside work mode. In work mode the model's
+                own text is never sent.
         """
         engine = self._engine
+        # 工作模式内部自带循环；期间不放行新的 tick，避免同一个群并排跑两轮。
+        is_work_mode_active = getattr(engine, "is_work_mode_active", None)
+        if callable(is_work_mode_active) and is_work_mode_active(group_id):
+            return []
         recent = engine._helpers.get_recent_messages(group_id, n=10)
         rhythm = engine.rhythm_analyzer.analyze(group_id, recent)
         triggered = engine.delayed_queue.tick(
@@ -564,8 +584,23 @@ class DelayedQueueTasks:
         ended_because_max_rounds = False
         max_round_reply: Any | None = None
         tool_chain_active = False
+        work_run: WorkModeRun | None = None
+        work_store: WorkModeStore | None = None
+        work_final_reply: str | None = None
+
+        def _save_work_run() -> None:
+            """轨迹落盘；没有开始过工作模式就没有可写的东西。"""
+            if work_run is not None and work_store is not None:
+                work_store.save_run(work_run)
 
         while True:
+            # 本轮开始时的工作模式状态：本轮才调用 enter_work_mode 的话，本轮正文
+            # 仍按普通聊天规则外发。
+            was_in_work_mode = work_run is not None
+            if work_run is not None:
+                # 暂存的群消息只有被点名时才一次性补进来，其余轮次保持前缀不变。
+                for stashed in work_run.take_flushed():
+                    messages.append({"role": "user", "content": stashed})
             self._append_tool_chain_messages(engine, messages, group_id)
             enable_tools_for_round = bool(engine.config.get("enable_tools", True))
 
@@ -592,6 +627,8 @@ class DelayedQueueTasks:
                         enable_tools=enable_tools_for_round,
                         caller_is_developer=caller_is_developer,
                         post_process=True,
+                        work_mode=work_run is not None,
+                        extra_tools=control_tools(active=work_run is not None),
                     )
                 )
                 _round += 1
@@ -601,16 +638,114 @@ class DelayedQueueTasks:
             poke_user_ids_accumulated.extend(getattr(chat_result, "poke_user_ids", []) or [])
             agent_turn.set_candidates(getattr(chat_result, "injected_tool_names", []))
 
-            # 分类工具调用：本轮全部作为普通工具执行
+            # 分类工具调用：流程控制工具由本循环处理，其余交给 ToolExecutor
             tool_calls = chat_result.tool_calls or []
-            regular_tools = list(tool_calls)
+            control_calls = [tc for tc in tool_calls if is_control_tool(tc.function_name)]
+            regular_tools = [tc for tc in tool_calls if not is_control_tool(tc.function_name)]
             report_next_tool_output = send_next_tool_output
             send_next_tool_output = False
-            agent_turn.advance(AgentTurnPhase.PLAN if regular_tools else AgentTurnPhase.RESPOND)
+            agent_turn.advance(AgentTurnPhase.PLAN if tool_calls else AgentTurnPhase.RESPOND)
             await self._emit_agent_turn(engine, agent_turn)
+
+            # ── 工作模式流程控制工具：由本循环直接处理，不进 ToolExecutor ──
+            has_executable_tools = bool(
+                regular_tools
+                and engine._tool_registry is not None
+                and engine._tool_executor is not None
+            )
+            if tool_calls and (control_calls or has_executable_tools):
+                messages.append(
+                    _build_assistant_tool_message(
+                        reply,
+                        tool_calls,
+                        getattr(chat_result, "reasoning_content", ""),
+                    )
+                )
+
+            quit_result: str | None = None
+            for tc in control_calls:
+                params = parse_arguments(tc.function_arguments)
+                if tc.function_name == SEND_MIDWAY_MSG:
+                    midway_text = str(params.get("message", "") or "").strip()
+                    if midway_text and on_partial_reply is not None:
+                        await on_partial_reply(midway_text)
+                        last_partial_sent_at = time.monotonic()
+                        if work_run is not None:
+                            work_run.add_step(kind="midway", text=midway_text)
+                        midway_result = "消息已发送给群里。"
+                    elif not midway_text:
+                        midway_result = "message 为空，没有发送。"
+                    else:
+                        midway_result = "当前没有可用的发送通道，消息没有发出去。"
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc.id, "content": midway_result}
+                    )
+                elif tc.function_name == ENTER_WORK_MODE:
+                    goal = str(params.get("goal", "") or "").strip()
+                    if work_run is None:
+                        work_run = WorkModeRun(group_id=group_id, goal=goal)
+                        work_store = WorkModeStore(engine.work_path)
+                        engine.begin_work_mode(group_id, work_run)
+                        # 工作模式有自己的暂存窗口，前面那轮开着的工具链窗口得关上。
+                        if tool_chain_active:
+                            end_tool_chain = getattr(engine, "end_tool_chain", None)
+                            if callable(end_tool_chain):
+                                end_tool_chain(group_id)
+                            tool_chain_active = False
+                        _save_work_run()
+                        engine._log_inner_thought(f"进入工作模式：{goal}")
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": (
+                                "已进入工作模式：重工具已解锁，你的正文不会再被发送。"
+                                "完成后用 quit_work_mode 退出，需要对外说话用 send_midway_msg。"
+                            ),
+                        }
+                    )
+                elif tc.function_name == QUIT_WORK_MODE:
+                    quit_result = str(params.get("result", "") or "").strip()
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": "已退出工作模式。"})
+
+            work_step: dict[str, Any] | None = None
+            if work_run is not None:
+                work_step = {
+                    "round": len(work_run.steps) + 1,
+                    "text": round_clean,
+                    "tools": [
+                        {"name": tc.function_name, "arguments": tc.function_arguments}
+                        for tc in tool_calls
+                    ],
+                    "results": [],
+                }
+                work_run.steps.append(work_step)
+                _save_work_run()
+
+            if quit_result is not None:
+                work_final_reply = quit_result
+                if work_run is not None:
+                    work_run.finish(result=quit_result)
+                    _save_work_run()
+                engine._log_inner_thought(f"退出工作模式，结果：{quit_result[:40]}...")
+                break
 
             # 没有调用任何工具 → 文本作为最终回复
             if not tool_calls:
+                if work_run is not None:
+                    # 工作模式里正文不外发，也不能就此结束：催她继续或主动退出。
+                    messages.append({"role": "assistant", "content": reply or "(无输出)"})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "【工具链控制信息】你还在工作模式中。"
+                                "上面的话没有人会看到；想对外说话用 send_midway_msg。"
+                                "继续推进任务，做完了或者做不下去就用 quit_work_mode 退出并说明结果。"
+                            ),
+                        }
+                    )
+                    continue
                 if self._append_tool_chain_messages(engine, messages, group_id):
                     continue
                 agent_turn.advance(AgentTurnPhase.RESPOND)
@@ -669,15 +804,20 @@ class DelayedQueueTasks:
 
             non_tool_text = round_clean
             all_silent = bool(regular_tools) and all(_tool_is_silent(tc) for tc in regular_tools)
-            if non_tool_text and report_next_tool_output:
-                engine._log_inner_thought(f"工具调用出现问题，转发下一轮模型输出：{non_tool_text[:40]}...")
+            if non_tool_text and was_in_work_mode:
+                # 工作模式内模型正文一律不外发，只有工具结果和 send_midway_msg 有效。
+                engine._log_inner_thought(f"工作模式内正文不外发，留在自己的上下文里：{non_tool_text[:40]}...")
+            elif non_tool_text and (report_next_tool_output or not all_silent):
+                # 普通聊天里伴随工具调用的正文照常发出去，不再悄悄留在消息链里。
                 if on_partial_reply is None:
-                    logger.debug("工具异常后的模型输出没有可用发送回调，保留在消息链中")
+                    logger.debug("伴随工具调用的模型输出没有可用发送回调，保留在消息链中")
                 else:
+                    if report_next_tool_output:
+                        engine._log_inner_thought(f"工具调用出现问题，转发下一轮模型输出：{non_tool_text[:40]}...")
+                    else:
+                        engine._log_inner_thought(f"正文与工具调用同轮返回，先发正文：{non_tool_text[:40]}...")
                     await on_partial_reply(non_tool_text)
                     last_partial_sent_at = time.monotonic()
-            elif non_tool_text and not all_silent:
-                engine._log_inner_thought(f"工具链中间文本保留在消息链，不发送：{non_tool_text[:40]}...")
 
             # 2. 执行普通工具
             tool_multimodal: list[dict[str, Any]] = []
@@ -686,10 +826,12 @@ class DelayedQueueTasks:
                 and engine._tool_registry is not None
                 and engine._tool_executor is not None
             ):
-                begin_tool_chain = getattr(engine, "begin_tool_chain", None)
-                if callable(begin_tool_chain):
-                    begin_tool_chain(group_id)
-                    tool_chain_active = True
+                # 工作模式有自己的暂存窗口，别再开工具链注入窗口，免得两条路各记一份。
+                if work_run is None:
+                    begin_tool_chain = getattr(engine, "begin_tool_chain", None)
+                    if callable(begin_tool_chain):
+                        begin_tool_chain(group_id)
+                        tool_chain_active = True
                 from sirius_pulse.memory.user.unified_models import UnifiedUser
 
                 caller_user_id = item.user_id
@@ -710,14 +852,7 @@ class DelayedQueueTasks:
                     adapter_type=getattr(engine, "_current_adapter_type", ""),
                 )
 
-                # 构造 assistant 消息（含普通工具的 tool_calls）
-                assistant_msg = _build_assistant_tool_message(
-                    reply,
-                    regular_tools,
-                    getattr(chat_result, "reasoning_content", ""),
-                )
-                messages.append(assistant_msg)
-
+                # assistant 消息（含本轮的 tool_calls）已在流程控制工具处理前写入
                 try:
                     tool_timeout = max(
                         0.0, float(engine.config.get("tool_execution_timeout", 30.0))
@@ -847,10 +982,15 @@ class DelayedQueueTasks:
                     messages.append(
                         {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
                     )
+                    if work_step is not None:
+                        work_step["results"].append({"tool": tool_name, "output": tool_content})
 
                     # 链式调用中间增加延迟，避免回复过快
                     if idx < len(regular_tools) - 1:
                         await asyncio.sleep(2)
+
+            if work_step is not None:
+                _save_work_run()
 
             if all_silent and not send_next_tool_output:
                 if not self._append_tool_chain_messages(engine, messages, group_id):
@@ -864,6 +1004,16 @@ class DelayedQueueTasks:
             end_tool_chain = getattr(engine, "end_tool_chain", None)
             if callable(end_tool_chain):
                 end_tool_chain(group_id)
+
+        # 工作模式只由 quit_work_mode 正常收尾；循环因别的原因结束（轮次上限、
+        # 静默退出等）时如实记成未完成，并释放暂存窗口。
+        if work_run is not None:
+            if work_run.status == "running":
+                work_run.finish(
+                    result=work_final_reply or "工作模式被中断，任务未完成。",
+                    status="aborted",
+                )
+            _save_work_run()
 
         # Let the model turn the accumulated tool results into the final reply.
         if ended_because_max_rounds:
@@ -925,6 +1075,10 @@ class DelayedQueueTasks:
             final_reply = clean_reply or "本轮工具调用上限已到，部分操作尚未完成。"
         else:
             final_reply = clean_reply
+
+        # quit_work_mode 的 result 是这次工作的对外结果，直接作为本轮回复发出。
+        if work_final_reply is not None:
+            final_reply = work_final_reply
 
         # Fast tools can finish before the client has had time to visually render
         # the partial reply. Keep a minimum lead window without delaying tool work.

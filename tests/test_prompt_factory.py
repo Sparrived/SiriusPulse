@@ -119,13 +119,33 @@ def test_reply_spec_no_newline_split_instruction():
     assert "禁止任何形式的换行符" not in spec
 
 
-def test_reply_spec_includes_memory_and_time_restraints():
+def test_reply_spec_includes_memory_restraints():
     spec = PromptFactory.build_reply_spec()
 
     assert "记忆只在和当前话题直接相关时自然使用" in spec
     assert "不要再次显式提及" in spec
-    assert "当前时间可使用bash获取" in spec
     assert "除非用户主动问" in spec
+    # 重工具收进工作模式后，普通聊天不该再让模型去用 bash 取时间。
+    assert "当前时间可使用bash获取" not in spec
+
+
+def test_reply_spec_when_function_call_enabled_then_states_the_work_mode_contract():
+    """模型必须先知道：进了工作模式正文就不外发，出口是 send_midway_msg。"""
+    spec = PromptFactory.build_reply_spec(supports_function_call=True)
+
+    assert "enter_work_mode" in spec
+    assert "不会被发送" in spec
+    assert "send_midway_msg" in spec
+    assert "quit_work_mode" in spec
+    assert "工作不一定必须做完" in spec
+    assert "点名" in spec
+
+
+def test_reply_spec_without_function_call_then_has_no_work_mode_instructions():
+    spec = PromptFactory.build_reply_spec(supports_function_call=False)
+
+    assert "enter_work_mode" not in spec
+    assert "send_midway_msg" not in spec
 
 
 def test_memory_context_marks_memories_as_candidates():
