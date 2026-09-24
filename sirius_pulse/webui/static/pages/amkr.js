@@ -110,15 +110,14 @@ function renderPanelPersonas(data) {
     .join('');
   if (previous && items.some(item => item.persona === previous)) select.value = previous;
 
-  // 面板是浏览器直接去连 AMKR 的：若地址是回环，只有从服务器本机打开本页才连得上。
+  // 面板由浏览器经本框架的同源反代（/amkr/）加载：只有运维把「AMKR 浏览器地址」
+  // 显式填成一个回环地址时才会真的连不上——默认已经回落到同源路径。
   const hint = $('amkrPanelHint');
-  // 面板是**浏览器**去连 AMKR 的，因此这里看的是浏览器侧地址，而不是容器自己
-  // 用的那个（同机部署时后端常走回环，但那在用户浏览器里指向用户自己的机器）。
   const browserBase = data.browser_base_url || data.base_url || '';
   if (hint && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(browserBase)) {
     hint.textContent =
-      '注意：浏览器侧 AMKR 地址是回环地址，只有从部署本框架的机器上打开本页才能加载面板；'
-      + '远程访问请把 AMKR 暴露在同一域名下的路径（反向代理），并在全局设置里填「AMKR 浏览器地址」。';
+      '注意：「AMKR 浏览器地址」被填成了回环地址，只有从部署本框架的机器上打开本页才能加载面板；'
+      + '远程访问请清空该字段，让面板走本框架的同源反代路径 /amkr/。';
   }
 }
 

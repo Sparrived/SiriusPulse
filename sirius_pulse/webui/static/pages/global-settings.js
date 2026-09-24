@@ -22,7 +22,10 @@ const AMKR_FIELDS = [
   { key: 'amkr_base_url', label: 'AMKR 地址', type: 'text', placeholder: 'http://127.0.0.1:8000', defaultVal: 'http://127.0.0.1:8000' },
   { key: 'amkr_local_api_key', label: 'AMKR 本地授权 Key', type: 'password', placeholder: '留空或保持掩码表示不修改', defaultVal: '' },
   { key: 'amkr_workspace', label: '工作空间前缀', type: 'text', placeholder: 'sirius-pulse', defaultVal: 'sirius-pulse' },
-  { key: 'amkr_public_url', label: 'AMKR 浏览器地址（可选）', type: 'text', placeholder: '留空表示与 AMKR 地址相同', defaultVal: '' },
+  // 面板嵌在 iframe 里，而 AMKR 不发 CORS 头，所以面板与它的接口必须同源。
+  // 默认由本框架在自己的源上反代（/amkr/），只有 AMKR 在**别的机器**上且浏览器
+  // 能直连它时，才需要在这里填它的外部地址。
+  { key: 'amkr_public_url', label: 'AMKR 浏览器地址（可选）', type: 'text', placeholder: '留空表示走本框架同源反代 /amkr/', defaultVal: '' },
   { key: 'amkr_ui_enabled', label: '启用 AMKR 自带 WebUI', type: 'checkbox', defaultVal: true },
 ];
 
