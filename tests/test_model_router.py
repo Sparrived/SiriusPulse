@@ -100,3 +100,65 @@ def test_known_task_registry_when_inspected_then_holds_only_task_names():
     model_names = {cfg.model_name for cfg in _DEFAULT_TASK_REGISTRY.values()}
 
     assert model_names == set(_DEFAULT_TASK_REGISTRY)
+
+
+def _task_names_sent_by_the_code() -> dict[str, set[str]]:
+    """源码里作为 ``task_name`` 默认值出现的任务名 → 用到它的文件。
+
+    连源码一起扫，是因为这里的失效模式不是写错字，而是**新增了任务名却忘了登记**：
+    注册表同时就是发往 AMKR 的名字清单，漏一个，那个任务在 AMKR 侧就不存在。
+    """
+    import ast
+    from pathlib import Path
+
+    package = Path(__file__).resolve().parent.parent / "sirius_pulse"
+    found: dict[str, set[str]] = {}
+    for path in package.rglob("*.py"):
+        # utf-8-sig：仓库里有个别文件带 BOM，裸 utf-8 读进来会让 ast.parse 抛错。
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = node.args
+            positional = args.posonlyargs + args.args
+            # defaults 只对齐最后 len(defaults) 个位置参数。
+            offset = len(positional) - len(args.defaults)
+            paired = list(zip(positional[offset:], args.defaults))
+            for arg, default in paired + list(zip(args.kwonlyargs, args.kw_defaults)):
+                if arg.arg != "task_name":
+                    continue
+                if isinstance(default, ast.Constant) and isinstance(default.value, str):
+                    if default.value.strip():
+                        found.setdefault(default.value, set()).add(path.name)
+    return found
+
+
+def test_every_task_name_sent_by_the_code_is_registered():
+    """凡是被当 ``task_name`` 发出去的名字，都必须出现在注册表里。
+
+    不变量：注册表 == 发往 AMKR 的名字清单。曾经 ``autonomy_generate`` 只在前者
+    缺席、后者出现，于是自主回合每一次都 HTTP 404（AMKR 把它当真实模型名去查），
+    自主行为在线上整整两天一次都没成功过——而所有单测都是绿的。
+    """
+    sent = _task_names_sent_by_the_code()
+    # 守卫自身要有效：至少得扫到几个已知任务名，否则规则被改坏了也不会有人发现。
+    assert {"response_generate", "passive_tool", "autonomy_generate"} <= set(sent)
+
+    unregistered = {
+        name: sorted(files) for name, files in sent.items() if name not in _DEFAULT_TASK_REGISTRY
+    }
+
+    assert not unregistered, (
+        f"这些任务名会被发往 AMKR 但没有登记：{unregistered}；"
+        f"请在 _DEFAULT_TASK_REGISTRY 中补上，否则 AMKR 会当成模型名而 404。"
+    )
+
+
+def test_autonomy_turn_uses_a_registered_task_name():
+    """自主回合的任务名必须已登记——它只靠背景心跳驱动，失败时没有对话可暴露。"""
+    sent = _task_names_sent_by_the_code()
+
+    # 引擎实际发出的名字（扫源码取得，不在这里复制一份常量）。
+    assert "autonomy_generate" in sent
+    assert "autonomy_generate" in _DEFAULT_TASK_REGISTRY
+    assert ModelRouter().resolve("autonomy_generate").model_name == "autonomy_generate"

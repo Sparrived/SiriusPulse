@@ -117,6 +117,16 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         max_tokens=2048,
         timeout=30.0,
     ),
+    # 自主时间（autonomy tick）的回合。单列一个任务名，是因为它和聊天回合的性格
+    # 不同：她要在这里自己找事做、写点东西，可能想用更便宜或更强的模型，也可能
+    # 想关掉它。**必须留在本表里**——本表同时就是向 AMKR 注册的任务名清单，
+    # 漏掉它这个任务在 AMKR 侧不存在，每次自主回合都会 404（见下方守护测试）。
+    "autonomy_generate": TaskConfig(
+        model_name="autonomy_generate",
+        temperature=0.7,
+        max_tokens=4096,
+        timeout=30.0,
+    ),
 }
 
 # 兜底任务：未注册的任务名按它的超时/重试处理。
