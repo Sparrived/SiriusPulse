@@ -272,19 +272,28 @@ async def _run_free_time(
     may do something or answer 「什么也不做」.  A decline still counts as the offer
     being spent, so the interval — not the outcome — is what paces this path.
     """
-    result = await ctx.run_autonomous_turn(
-        kind=decision.kind,
-        seed="",
-        group_id=_fallback_group(ctx),
-        free_time=True,
-    )
+    # 这次机会在**开始**时就记下，而不是等回合结束：回合可能抛异常（供应商不可用、
+    # 任务名没绑模型……）。旧写法把记录放在成功之后，于是失败时这个间隔永远是过期
+    # 的，下一个心跳立刻再提供一次——自主行为曾以每 900 秒一次的速度空转，两天里
+    # 空烧了 142 次回合，正是这个形状。宁可少做一次，也不要每个心跳都重试。
+    state["last_free_time_at"] = now.isoformat()
+    _save_state(store, state)
+
+    try:
+        result = await ctx.run_autonomous_turn(
+            kind=decision.kind,
+            seed="",
+            group_id=_fallback_group(ctx),
+            free_time=True,
+        )
+    except Exception:
+        # 在这里就地记一条带堆栈的日志再吞掉：否则它只会以「后台任务失败」的形式
+        # 冒到后台循环，看不出是哪一段自主工作出的问题。机会已经花掉，不再重试。
+        logger.warning("自由时间回合失败，这次机会已消耗", exc_info=True)
+        return None
     outcome = str(result.get("text", "") or "").strip()
 
     if not outcome or _DECLINE_RE.match(outcome):
-        # Nothing came of it, but the offer is used up: remember that, or the very
-        # next heartbeat would offer again and bill another turn.
-        state["last_free_time_at"] = now.isoformat()
-        _save_state(store, state)
         return None
 
     episode = Episode(

@@ -411,6 +411,33 @@ async def test_free_time_is_paced_by_its_own_interval(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_failed_free_time_turn_is_not_retried_on_every_heartbeat(tmp_path):
+    """回合失败也要消耗掉这次机会，否则每个心跳都会重试一次。
+
+    自主行为曾整整两天什么都没做：任务名没绑模型，每个回合都在第一次调用上
+    404。当时"已提供自由时间"只在回合成功后才记，于是这个间隔永远过期，900
+    秒的心跳就把同一次失败重试了两天（142 次）。失败不等于没发生过。
+    """
+    ctx = _make_ctx(
+        tmp_path,
+        state={"last_free_time_at": (_NOW - timedelta(hours=4)).isoformat()},
+    )
+
+    async def boom(**_kwargs):
+        raise RuntimeError("提供商 HTTP 错误 404：模型未配置")
+
+    ctx.run_autonomous_turn = boom
+
+    assert await autonomy.run_tick(ctx) is None
+
+    # 紧接着的下一个心跳不该再试：机会已经花掉了。
+    ctx2 = _make_ctx(tmp_path)
+    ctx2.store.data["state"] = ctx.store.data["state"]
+    assert await autonomy.run_tick(ctx2) is None
+    assert ctx2.recorded == []
+
+
+@pytest.mark.asyncio
 async def test_free_time_can_be_turned_off_entirely(tmp_path):
     """设成 0 就退回纯意图闸门：不惦记任何事时永远不会开始。"""
     ctx = _make_ctx(
