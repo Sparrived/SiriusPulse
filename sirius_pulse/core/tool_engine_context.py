@@ -8,6 +8,12 @@ from typing import Any
 
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.work_mode import (
+    WORK_MODE_SOURCE_AUTONOMY,
+    WORK_MODE_SOURCE_SCHEDULED,
+    WorkModeRun,
+    WorkModeStore,
+)
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.models import ToolInvocationContext
 
@@ -79,14 +85,16 @@ class ToolEngineContextImpl:
     ) -> dict[str, Any]:
         """Run a scheduled message through the same tool-call loop as chat."""
         identity = self._engine.persona.build_system_prompt() if self._engine.persona else ""
+        # 定时任务回合由框架自动进入工作模式，所以提示词里的工具清单也要按工作模式给。
         tool_desc = self.get_tool_descriptions(
-            caller_is_developer=caller_is_developer, adapter_type=adapter_type
+            caller_is_developer=caller_is_developer, adapter_type=adapter_type, work_mode=True
         )
         system_prompt, messages = PromptFactory.build_scheduled_task_sections(
             identity=identity,
             job=job,
             command_output=command_output,
             tool_desc=tool_desc,
+            work_mode=True,
         )
         self._engine._tool_executor.set_chat_context(
             group_id=group_id, user_id=user_id, adapter_type=adapter_type
@@ -96,6 +104,7 @@ class ToolEngineContextImpl:
             caller=caller,
             developer_profiles=[caller] if caller_is_developer else [],
         )
+        goal = str(job.get("name") or job.get("command") or "").strip()
         result = await self._run_tool_loop(
             system_prompt=system_prompt,
             messages=messages,
@@ -105,6 +114,8 @@ class ToolEngineContextImpl:
             adapter_type=adapter_type,
             caller_is_developer=caller_is_developer,
             invocation_context=invocation_context,
+            goal=f"定时任务：{goal}" if goal else "定时任务",
+            source=WORK_MODE_SOURCE_SCHEDULED,
         )
         return self._scheduled_result_payload(result) if result else {}
 
@@ -119,10 +130,27 @@ class ToolEngineContextImpl:
         adapter_type: str,
         caller_is_developer: bool,
         invocation_context: ToolInvocationContext,
+        goal: str = "",
+        source: str = WORK_MODE_SOURCE_AUTONOMY,
     ) -> Any:
-        """Run the normal multi-round tool loop and return the final ChatResult."""
+        """Run the normal multi-round tool loop inside work mode.
+
+        自主回合与定时任务回合本来就是她自己动手的时刻，所以框架直接替她进入
+        工作模式：重工具可用、过程留轨迹，最后那轮正文就是这次工作的结果。
+        进出的决定权仍在她自己手上的，只有聊天里的工作模式（那要她调
+        ``enter_work_mode``）；这里的入口是回合本身。
+        """
+        store = WorkModeStore(self._engine.work_path)
+        run = WorkModeRun(
+            group_id=group_id,
+            goal=goal or source,
+            source=source,
+            task_name=store.work_task_name() or task_name,
+        )
+        store.save_run(run)
         max_rounds = max(1, int(self.get_config_value("max_tool_rounds", 8)))
         last_result: Any = None
+        ended_by_round_limit = True
 
         for _ in range(max_rounds):
             result = await self._engine.brain.chat(
@@ -131,14 +159,25 @@ class ToolEngineContextImpl:
                     user_id=user_id,
                     system_prompt=system_prompt,
                     messages=messages,
-                    task_name=task_name,
+                    task_name=run.task_name,
                     adapter_type=adapter_type,
                     caller_is_developer=caller_is_developer,
+                    work_mode=True,
                 )
             )
             last_result = result
             tool_calls = list(getattr(result, "tool_calls", []) or [])
+            step = {
+                "text": str(getattr(result, "clean_text", "") or "").strip(),
+                "tools": [
+                    {"name": tool_call.function_name, "arguments": tool_call.function_arguments}
+                    for tool_call in tool_calls
+                ],
+                "results": [],
+            }
+            run.add_step(**step)
             if not tool_calls:
+                ended_by_round_limit = False
                 break
 
             messages.append(self._assistant_tool_message(result.raw_text, tool_calls))
@@ -178,9 +217,17 @@ class ToolEngineContextImpl:
                 messages.append(
                     {"role": "tool", "tool_call_id": tool_call.id, "content": tool_content}
                 )
+                run.steps[-1]["results"].append({"tool": tool_name, "output": tool_content})
             if tool_multimodal:
                 messages.append({"role": "user", "content": tool_multimodal})
+            store.save_run(run)
 
+        final_text = str(getattr(last_result, "clean_text", "") or "").strip()
+        run.finish(
+            result=final_text,
+            status="aborted" if ended_by_round_limit else "completed",
+        )
+        store.save_run(run)
         return last_result
 
     async def run_autonomous_turn(
@@ -208,7 +255,7 @@ class ToolEngineContextImpl:
         is time of her own and she may start something new, or nothing.
         """
         identity = self._engine.persona.build_system_prompt() if self._engine.persona else ""
-        tool_desc = self.get_tool_descriptions()
+        tool_desc = self.get_tool_descriptions(work_mode=True)
         audiences = [
             item.to_dict() if hasattr(item, "to_dict") else dict(item)
             for item in self.list_audiences()
@@ -224,9 +271,12 @@ class ToolEngineContextImpl:
             audiences=audiences,
             unaddressed=self._unaddressed_intentions(),
             free_time=free_time,
+            work_mode=True,
         )
         caller = self._build_caller("autonomy", "autonomy", False)
         invocation_context = ToolInvocationContext(caller=caller, self_initiated=True)
+        reason = str(why or seed or "").strip()
+        goal = f"自主回合（{kind}）" + (f"：{reason}" if reason else "")
         result = await self._run_tool_loop(
             system_prompt=system_prompt,
             messages=messages,
@@ -236,6 +286,8 @@ class ToolEngineContextImpl:
             adapter_type="",
             caller_is_developer=False,
             invocation_context=invocation_context,
+            goal=goal,
+            source=WORK_MODE_SOURCE_AUTONOMY,
         )
         return self._scheduled_result_payload(result) if result else {}
 
