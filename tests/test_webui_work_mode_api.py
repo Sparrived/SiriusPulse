@@ -1,7 +1,8 @@
-"""工作模式只读 API：页面要能看到她进过哪些工作模式、每一轮做了什么。
+"""工作模式 API：页面要能看到她进过哪些工作模式、每一轮做了什么，并能设置模型。
 
 工作模式内的正文不外发，聊天记录里看不到过程，所以轨迹文件是唯一的过程视图；
-这里验证接口把它读出来，并且不会因为被看一眼就写文件。
+这里验证接口把它读出来、不会因为被看一眼就写文件，以及"工作期间用哪个模型"确实
+能被设置并记住。
 """
 
 from __future__ import annotations
@@ -12,12 +13,25 @@ from pathlib import Path
 import pytest
 
 from sirius_pulse.core.work_mode import WorkModeRun, WorkModeStore
-from sirius_pulse.webui.work_mode_api import api_persona_work_mode_get
+from sirius_pulse.webui.work_mode_api import (
+    api_persona_work_mode_get,
+    api_persona_work_mode_post,
+)
 
 
 class _FakeRequest:
-    def __init__(self, query: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        query: dict[str, str] | None = None,
+        body: dict | None = None,
+    ) -> None:
         self.query = query or {}
+        self._body = body
+
+    async def json(self):
+        if self._body is None:
+            raise ValueError("no body")
+        return self._body
 
 
 def _work_path(tmp_path: Path) -> Path:
@@ -100,3 +114,59 @@ async def test_work_mode_api_is_empty_and_read_only_for_a_fresh_persona(tmp_path
     assert payload["summary"]["sessions_total"] == 0
     assert payload["summary"]["last_session_at"] == ""
     assert not (work / "memory" / "work_mode" / "sessions.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_work_mode_api_exposes_the_model_choices_for_work_mode(tmp_path):
+    """页面要能把"工作期间用哪个模型"选出来，所以接口得给出可选项。"""
+    work = _work_path(tmp_path)
+
+    payload = json.loads((await api_persona_work_mode_get(_FakeRequest(), work)).text)
+
+    values = [choice["value"] for choice in payload["task_options"]]
+    assert "work_mode_generate" in values
+    assert "response_generate" in values
+    assert payload["settings"]["task_name"] == ""
+
+
+@pytest.mark.asyncio
+async def test_work_mode_api_post_then_remembers_the_chosen_model(tmp_path):
+    work = _work_path(tmp_path)
+
+    response = await api_persona_work_mode_post(
+        _FakeRequest(body={"task_name": "work_mode_generate"}), work
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["task_name"] == "work_mode_generate"
+    # 设置落在人格自己的目录里，重新读接口就能看到，不需要重启人格。
+    assert WorkModeStore(work).work_task_name() == "work_mode_generate"
+    reloaded = json.loads((await api_persona_work_mode_get(_FakeRequest(), work)).text)
+    assert reloaded["settings"]["task_name"] == "work_mode_generate"
+    assert reloaded["paths"]["settings"].endswith("settings.json")
+
+
+@pytest.mark.asyncio
+async def test_work_mode_api_post_empty_then_falls_back_to_the_native_model(tmp_path):
+    work = _work_path(tmp_path)
+    await api_persona_work_mode_post(_FakeRequest(body={"task_name": "work_mode_generate"}), work)
+
+    response = await api_persona_work_mode_post(_FakeRequest(body={"task_name": ""}), work)
+    payload = json.loads(response.text)
+
+    assert payload["task_name"] == ""
+    assert WorkModeStore(work).work_task_name() == ""
+
+
+@pytest.mark.asyncio
+async def test_work_mode_api_post_rejects_a_bogus_task_name(tmp_path):
+    """任务名会当 model 字段发给 AMKR，脏值不能让进配置。"""
+    work = _work_path(tmp_path)
+
+    response = await api_persona_work_mode_post(
+        _FakeRequest(body={"task_name": "bad name\n"}), work
+    )
+
+    assert response.status == 400
+    assert WorkModeStore(work).work_task_name() == ""

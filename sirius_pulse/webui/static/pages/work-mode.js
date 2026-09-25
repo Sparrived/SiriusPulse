@@ -1,4 +1,4 @@
-import { get } from '../app.js';
+import { get, post } from '../app.js';
 import { toast } from '../components.js';
 import { createScopedPage } from '../page-context.js';
 import { store } from '../store.js';
@@ -12,6 +12,15 @@ const STATUS_LABELS = {
   completed: '已完成',
   aborted: '未完成',
 };
+
+const SOURCE_LABELS = {
+  chat: '她自己进去的',
+  autonomy: '自主回合',
+  scheduled: '定时任务',
+};
+
+// 空值表示沿用本回合原本的任务名，也就是普通聊天用的那个模型。
+const INHERIT_LABEL = '沿用本回合原本的模型';
 
 // 心跳轮询是兜底：实时推送若不可用（例如没连上 WebSocket），页面仍然会更新。
 const POLL_MS = 15000;
@@ -42,12 +51,37 @@ export async function init(container, params = {}) {
   }
 
   $('workModeRefresh')?.addEventListener('click', () => load(false));
+  $('workModeTaskSave')?.addEventListener('click', saveTaskName);
 
   realtime.start();
   scopedPage.on(window, 'sirius:event', onLiveEvent);
 
   await load(false);
   scopedPage.interval(() => load(true), POLL_MS);
+}
+
+async function saveTaskName() {
+  const select = $('workModeTask');
+  const state = $('workModeTaskState');
+  if (!select) return;
+  const taskName = String(select.value || '');
+  if (state) {
+    state.textContent = '保存中';
+    state.className = 'work-mode-settings-state is-loading';
+  }
+  try {
+    await post('/persona/work-mode', { task_name: taskName });
+    if (state) {
+      state.textContent = taskName ? `已设为 ${taskName}` : '已改为沿用本回合原本的模型';
+      state.className = 'work-mode-settings-state is-saved';
+    }
+  } catch {
+    if (state) {
+      state.textContent = '保存失败';
+      state.className = 'work-mode-settings-state is-error';
+    }
+    toast('工作模式模型设置保存失败', 'error');
+  }
 }
 
 function onLiveEvent(event) {
@@ -97,10 +131,31 @@ function render(data) {
       ? sessions.map(sessionCard).join('')
       : emptyState(
           '她还没有进过工作模式',
-          '需要多步工具协作时，她会自己调用 enter_work_mode 进去做事，做完再退出。'
+          '需要多步工具协作时，她会自己调用 enter_work_mode 进去做事，做完再退出；自主回合与定时任务回合会由框架自动进入。'
         );
   }
+  renderSettings(data?.settings, data?.task_options);
   renderFootnote(data?.paths);
+}
+
+function renderSettings(settings, options) {
+  const select = $('workModeTask');
+  if (!select) return;
+  const current = String(settings?.task_name || '');
+  const choices = Array.isArray(options) ? options : [];
+  const entries = [
+    `<option value="">${escapeHtml(INHERIT_LABEL)}</option>`,
+    ...choices.map((choice) => {
+      const value = String(choice?.value || '');
+      const label = String(choice?.label || value);
+      return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+    }),
+  ];
+  // 正在保存时不覆盖用户刚选的值。
+  if (document.activeElement !== select) {
+    select.innerHTML = entries.join('');
+    select.value = current;
+  }
 }
 
 function sessionCard(session) {
@@ -108,6 +163,8 @@ function sessionCard(session) {
   const steps = Array.isArray(session.steps) ? session.steps : [];
   const result = String(session.result || '').trim();
   const ended = session.ended_at ? ` → ${shortTime(session.ended_at)}` : ' → 进行中';
+  const source = String(session.source || 'chat');
+  const taskName = String(session.task_name || '');
   return `
     <article class="work-mode-session is-${escapeHtml(status)}">
       <header class="work-mode-session-head">
@@ -115,6 +172,8 @@ function sessionCard(session) {
           STATUS_LABELS[status] || status
         )}</span>
         <span class="work-mode-goal">${escapeHtml(session.goal || '（没有说明目标）')}</span>
+        <span class="work-mode-source">${escapeHtml(SOURCE_LABELS[source] || source)}</span>
+        ${taskName ? `<span class="work-mode-model">${escapeHtml(taskName)}</span>` : ''}
         <span class="work-mode-time">${escapeHtml(shortTime(session.started_at) + ended)}</span>
       </header>
       ${result ? resultBlock(result) : ''}
@@ -184,9 +243,15 @@ function renderFootnote(paths) {
   const box = $('workModeFootnote');
   if (!box) return;
   const path = paths?.sessions;
-  box.innerHTML = path
-    ? `记录文件：<code>${escapeHtml(path)}</code> · 工作模式内的正文不会发到群里，只有工具结果和 send_midway_msg 会。`
-    : '';
+  const settings = paths?.settings;
+  if (!path) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML =
+    `记录文件：<code>${escapeHtml(path)}</code>` +
+    (settings ? ` · 设置：<code>${escapeHtml(settings)}</code>` : '') +
+    ' · 工作模式内的正文不会发到群里，只有工具结果和 send_midway_msg 会（自主回合与定时任务回合的最终正文仍按它们原本的约定送出）。';
 }
 
 function emptyState(title, detail) {

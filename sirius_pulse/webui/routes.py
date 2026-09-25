@@ -81,6 +81,7 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/api/persona/memory-viz", "api_persona_memory_viz"),
     RouteSpec("GET", "/api/persona/autonomy", "api_persona_autonomy_get"),
     RouteSpec("GET", "/api/persona/work-mode", "api_persona_work_mode_get"),
+    RouteSpec("POST", "/api/persona/work-mode", "api_persona_work_mode_post"),
     RouteSpec("GET", "/api/persona/conversations", "api_persona_conversation_history_get"),
     RouteSpec("DELETE", "/api/persona/conversations", "api_persona_conversation_history_delete"),
     # ── 插件 API（全局） ──

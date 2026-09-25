@@ -55,6 +55,14 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         max_tokens=4096,
         timeout=30.0,
     ),
+    # 工作模式专用任务名：多步工具协作一轮要读的上下文更多、也想用更强的模型，
+    # 因此在 AMKR 面板里可以单独把它指向另一个模型，不影响普通聊天。
+    "work_mode_generate": TaskConfig(
+        model_name="work_mode_generate",
+        temperature=0.7,
+        max_tokens=4096,
+        timeout=60.0,
+    ),
     "proactive_generate": TaskConfig(
         model_name="proactive_generate",
         temperature=0.8,

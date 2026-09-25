@@ -9,6 +9,14 @@
   补进去。这样提示词前缀在整段工作期间保持不变，缓存命中不被破坏；
 - 每次工作模式按会话记录完整轨迹（目标、每一轮正文与工具结果、结果），
   落到 ``memory/work_mode/sessions.json``，供 WebUI 查看。
+
+自主回合与定时任务回合由框架自己走同一套工作模式：它们本来就是"她独自做事"
+的时刻，重工具必须可用，过程也应该留在同一份轨迹里，所以不需要模型再调一次
+``enter_work_mode``。
+
+工作模式期间用哪个模型，取决于用哪个**任务名**——AMKR 按任务名换真实模型。因此
+``memory/work_mode/settings.json`` 里的 ``task_name`` 留空表示沿用本回合原本的
+任务名，填了则整段工作都用它（见 ``WorkModeStore.work_task_name``）。
 """
 
 from __future__ import annotations
@@ -39,6 +47,11 @@ WORK_MODE_CONTROL_TOOL_NAMES = frozenset({ENTER_WORK_MODE, QUIT_WORK_MODE, SEND_
 
 #: 保留最近多少次工作模式轨迹（WebUI 只需要近期记录）。
 MAX_RECORDED_SESSIONS = 50
+
+#: 轨迹来源：模型自己进的工作模式，还是框架为自主/定时任务回合自动开的。
+WORK_MODE_SOURCE_CHAT = "chat"
+WORK_MODE_SOURCE_AUTONOMY = "autonomy"
+WORK_MODE_SOURCE_SCHEDULED = "scheduled"
 
 _ENTER_TOOL: dict[str, Any] = {
     "type": "function",
@@ -133,6 +146,9 @@ class WorkModeRun:
     status: str = "running"
     result: str = ""
     ended_at: str = ""
+    source: str = WORK_MODE_SOURCE_CHAT
+    task_name: str = ""
+    """这次工作模式用的任务名（AMKR 按它换真实模型）；空 = 沿用本回合原本的任务名。"""
     steps: list[dict[str, Any]] = field(default_factory=list)
     stash: list[str] = field(default_factory=list)
     flush_pending: bool = False
@@ -172,21 +188,48 @@ class WorkModeRun:
             "goal": self.goal,
             "status": self.status,
             "result": self.result,
+            "source": self.source,
+            "task_name": self.task_name,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "steps": list(self.steps),
         }
 
 
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    """原子写盘，失败重试几次。
+
+    轨迹与设置都是观察/配置数据，不能因为一次写盘失败打断正在进行的对话；
+    Windows 上 ``os.replace`` 偶尔会被索引或杀软短暂占用，所以退避重试。
+    """
+    for attempt in range(3):
+        try:
+            atomic_write_json(path, payload)
+            return
+        except OSError:
+            if attempt == 2:
+                logger.warning("工作模式写入失败: %s", path, exc_info=True)
+            else:
+                time.sleep(0.05 * (attempt + 1))
+
+
 class WorkModeStore:
-    """``memory/work_mode/sessions.json``：工作模式轨迹的落盘视图。"""
+    """``memory/work_mode/``：工作模式轨迹与设置的落盘视图。"""
 
     def __init__(self, work_path: Any) -> None:
         self.work_path = Path(work_path)
 
     @property
+    def _dir(self) -> Path:
+        return WorkspaceLayout(self.work_path).memory_dir() / "work_mode"
+
+    @property
     def path(self) -> Path:
-        return WorkspaceLayout(self.work_path).memory_dir() / "work_mode" / "sessions.json"
+        return self._dir / "sessions.json"
+
+    @property
+    def settings_path(self) -> Path:
+        return self._dir / "settings.json"
 
     def load(self) -> list[dict[str, Any]]:
         raw = read_json(self.path, None)
@@ -195,24 +238,26 @@ class WorkModeStore:
             return []
         return [item for item in items if isinstance(item, dict)]
 
+    def load_settings(self) -> dict[str, Any]:
+        raw = read_json(self.settings_path, None)
+        return raw if isinstance(raw, dict) else {}
+
+    def work_task_name(self) -> str:
+        """工作模式该用哪个任务名；空字符串表示沿用本回合原本的任务名。"""
+        return str(self.load_settings().get("task_name", "") or "").strip()
+
+    def save_settings(self, *, task_name: str) -> None:
+        """记住工作模式使用的任务名；每次开始工作时重新读取，改完即刻生效。"""
+        _write_json(self.settings_path, {"task_name": str(task_name or "").strip()})
+
     def save_run(self, run: WorkModeRun) -> None:
         """Upsert one run so a crash mid-work still leaves a readable trace.
 
         每次写入的都是这份会话的完整快照，所以单次写失败不会丢状态，下一轮会整份
-        补上；轨迹是观察数据，不能因为写盘失败打断正在进行的对话。重试是因为
-        Windows 上 ``os.replace`` 偶尔会被索引或杀软短暂占用。
+        补上。
         """
         session = run.to_dict()
         session_id = run.session_id
         kept = [item for item in self.load() if str(item.get("session_id", "")) != session_id]
         kept.append(session)
-        payload = {"sessions": kept[-MAX_RECORDED_SESSIONS:]}
-        for attempt in range(3):
-            try:
-                atomic_write_json(self.path, payload)
-                return
-            except OSError:
-                if attempt == 2:
-                    logger.warning("工作模式轨迹写入失败: %s", self.path, exc_info=True)
-                else:
-                    time.sleep(0.05 * (attempt + 1))
+        _write_json(self.path, {"sessions": kept[-MAX_RECORDED_SESSIONS:]})

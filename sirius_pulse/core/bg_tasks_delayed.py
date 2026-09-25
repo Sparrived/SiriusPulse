@@ -617,13 +617,19 @@ class DelayedQueueTasks:
                     break
                 agent_turn.advance(AgentTurnPhase.DECIDE)
                 await self._emit_agent_turn(engine, agent_turn)
+                # 工作模式期间可以换一个任务名，也就是换 AMKR 里的模型。
+                round_task_name = (
+                    (work_run.task_name or "response_generate")
+                    if work_run is not None
+                    else "response_generate"
+                )
                 chat_result = await engine.brain.chat(
                     ChatRequest(
                         group_id=group_id,
                         user_id=item.user_id or "",
                         system_prompt=system_prompt,
                         messages=messages,
-                        task_name="response_generate",
+                        task_name=round_task_name,
                         enable_tools=enable_tools_for_round,
                         caller_is_developer=caller_is_developer,
                         post_process=True,
@@ -685,6 +691,8 @@ class DelayedQueueTasks:
                     if work_run is None:
                         work_run = WorkModeRun(group_id=group_id, goal=goal)
                         work_store = WorkModeStore(engine.work_path)
+                        # 每次进入时重新读设置：改完设置不需要重启人格。
+                        work_run.task_name = work_store.work_task_name()
                         engine.begin_work_mode(group_id, work_run)
                         # 工作模式有自己的暂存窗口，前面那轮开着的工具链窗口得关上。
                         if tool_chain_active:

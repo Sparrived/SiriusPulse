@@ -296,3 +296,52 @@ def test_work_mode_store_when_many_runs_then_keeps_the_newest(tmp_path, monkeypa
     sessions = store.load()
     assert [session["session_id"] for session in sessions] == ["s1", "s2"]
     assert store.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_model_is_configured_then_only_work_rounds_use_it(tmp_path):
+    """工作模式可以换模型：进入之后的那几轮走配置的任务名，进入前的普通回合不变。"""
+    WorkModeStore(tmp_path).save_settings(task_name="work_mode_generate")
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    calls: list = []
+
+    async def chat(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return _round("我先看一眼。", _call(ENTER_WORK_MODE, '{"goal": "整理群文件"}', "c-enter"))
+        if len(calls) == 2:
+            return _round("", _call("bash", '{"command": "ls"}', "c-bash"))
+        return _round("", _call(QUIT_WORK_MODE, '{"result": "整理完了"}', "c-quit"))
+
+    tasks, _, _ = _work_mode_tasks(tmp_path, queue, chat)
+
+    await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    assert [request.task_name for request in calls] == [
+        "response_generate",
+        "work_mode_generate",
+        "work_mode_generate",
+    ]
+    session = _session(tmp_path)
+    assert session["task_name"] == "work_mode_generate"
+    assert session["source"] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_model_is_not_configured_then_keeps_normal_task_name(tmp_path):
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    calls: list = []
+
+    async def chat(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return _round("我先看一眼。", _call(ENTER_WORK_MODE, '{"goal": "整理群文件"}', "c-enter"))
+        return _round("", _call(QUIT_WORK_MODE, '{"result": "整理完了"}', "c-quit"))
+
+    tasks, _, _ = _work_mode_tasks(tmp_path, queue, chat)
+
+    await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    assert [request.task_name for request in calls] == ["response_generate", "response_generate"]

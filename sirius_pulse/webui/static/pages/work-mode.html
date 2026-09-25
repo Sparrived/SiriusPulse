@@ -34,12 +34,28 @@
     </div>
   </div>
 
+  <section class="card work-mode-settings">
+    <div class="card-header">
+      <div>
+        <div class="card-title">工作期间使用的模型</div>
+        <div class="card-subtitle">
+          任务名就是 AMKR 的模型入口：在 AMKR 面板里把选中的任务名指向想用的模型，改完下一次工作模式生效
+        </div>
+      </div>
+    </div>
+    <div class="work-mode-settings-body">
+      <select class="work-mode-task-select" id="workModeTask"></select>
+      <button class="btn btn-sm" id="workModeTaskSave">保存</button>
+      <span class="work-mode-settings-state" id="workModeTaskState"></span>
+    </div>
+  </section>
+
   <section class="card work-mode-log-card">
     <div class="card-header">
       <div>
         <div class="card-title">工作轨迹</div>
         <div class="card-subtitle">
-          工作模式内的正文不会外发，所以这里按轮次留下她说过什么、调用了什么、拿回了什么
+          工作模式内的正文不会外发，所以这里按轮次留下她说过什么、调用了什么、拿回了什么；自主回合与定时任务回合也走工作模式
         </div>
       </div>
       <span class="work-mode-count" id="workModeCount">0 次</span>

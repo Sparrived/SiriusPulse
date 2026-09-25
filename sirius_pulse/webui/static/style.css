@@ -5538,6 +5538,51 @@ a.autonomy-ref:hover {
   gap: 14px;
 }
 
+.work-mode-settings {
+  margin-bottom: 20px;
+}
+
+.work-mode-settings-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.work-mode-task-select {
+  min-width: 260px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font: 500 12px/1.4 var(--font-mono);
+}
+
+.work-mode-task-select:focus {
+  outline: none;
+  border-color: var(--work-mode-line);
+}
+
+.work-mode-settings-state {
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.work-mode-settings-state.is-loading {
+  color: var(--warn);
+}
+
+.work-mode-settings-state.is-saved {
+  color: var(--success);
+}
+
+.work-mode-settings-state.is-error {
+  color: var(--danger);
+}
+
 .work-mode-session {
   border: 1px solid var(--border);
   border-left: 2px solid var(--work-mode-line);
@@ -5598,6 +5643,22 @@ a.autonomy-ref:hover {
   font: 500 11px/1 var(--font-mono);
   color: var(--text-3);
   white-space: nowrap;
+}
+
+.work-mode-source,
+.work-mode-model {
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  padding: 4px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  color: var(--text-3);
+  background: rgba(139, 148, 158, 0.1);
+}
+
+.work-mode-model {
+  color: var(--work-mode-accent);
+  background: var(--work-mode-accent-dim);
 }
 
 .work-mode-result {

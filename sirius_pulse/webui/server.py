@@ -100,7 +100,10 @@ from sirius_pulse.webui.server_tool_api import (
     api_persona_tools_get,
 )
 from sirius_pulse.webui.server_utils import _json_response
-from sirius_pulse.webui.work_mode_api import api_persona_work_mode_get
+from sirius_pulse.webui.work_mode_api import (
+    api_persona_work_mode_get,
+    api_persona_work_mode_post,
+)
 
 LOG = logging.getLogger("sirius.webui")
 
@@ -140,6 +143,7 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_memory_viz": api_persona_memory_viz,
     "api_persona_autonomy_get": api_persona_autonomy_get,
     "api_persona_work_mode_get": api_persona_work_mode_get,
+    "api_persona_work_mode_post": api_persona_work_mode_post,
     "api_persona_conversation_history_delete": api_persona_conversation_history_delete,
     "api_persona_conversation_history_get": api_persona_conversation_history_get,
     "api_config_post": api_config_post,
