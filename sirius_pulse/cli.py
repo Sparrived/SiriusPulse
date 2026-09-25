@@ -62,6 +62,17 @@ PERSONA_LOGGER_PREFIXES = (
     "sirius_pulse.providers.",
     "sirius_pulse.tools.",
     "sirius_pulse.token.",
+    # 引擎运行时本身（后台任务循环）也必须进 persona.log。它此前不在任何前缀里，
+    # 于是「Background task 'autonomy_tick' failed」这类最该被看见的失败只落在
+    # docker logs：自主行为整整两天什么都没做，而人格日志里一条痕迹都没有。
+    # 漏在这些前缀之外的模块日志同理，所以下面的守护测试会核对全量 logger 名称。
+    "sirius_pulse.extension_runtime",
+    "sirius_pulse.adapters.",
+    "sirius_pulse.config.",
+    "sirius_pulse.persona_config",
+    "sirius_pulse.providers",
+    "sirius_pulse.utils.",
+    "sirius.tools.markdown_image",
 )
 
 
