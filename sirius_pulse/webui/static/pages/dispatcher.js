@@ -18,7 +18,6 @@ const REASONS = {
   target_unavailable: '目标人格不可用',
   all_candidates_silent: '所有人格判断为静默',
   preview_failed: '基础评分失败',
-  reply_send_window: '当前有人格正在发送',
   no_workers: '没有在线人格',
   event_granted: '事件已被其他人格接管',
 };

@@ -27,8 +27,6 @@ class Message(JsonSerializable):
     adapter_type: str | None = None
     # 发送者类型：human / self_ai / other_ai / system
     sender_type: str = "human"
-    # 平台层在消息到达时记录的运行态信号；用于避免 bot 多段发送时被插话打断。
-    received_during_bot_send: bool = False
     mentions_current_bot: bool = False
     # Cross-persona group dispatcher metadata. A granted message bypasses the
     # local participation gate; the lease itself is finalized by the adapter.

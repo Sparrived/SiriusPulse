@@ -15,6 +15,7 @@
 
 ### Changed
 
+- **发送多段回复期间收到的消息恢复常规评分**：适配器原先在发送窗口内置位（`_reply_send_active_counts` 覆盖整段发送序列与段间停顿）并给入站事件打上 `_sirius_received_during_reply_send` 标记，最终落到 `Message.received_during_bot_send`；引擎据此对这批消息**整体短路**——未被点名的一律静默 `score=0.0`，被点名的则用写死的 `score=1.0 / urgency=60.0` 塞进延迟队列。这让「刚好在发送时到达」本身变成了一条独立的评分规则，而消息内容其实未被评估过。现在这层机制整套删除：消息照常走 `_compute_signal` → `_pre_filter` → 入队，够分的进延迟队列，不够分的正常静默；是否让出话轮仍由既有评分与跨人格调度（`GroupDispatcher.coordinate`）决定。多段发送本身的行为不变，段间按字数的人味停顿（`_sleep_before_reply_part`）与每会话回复锁（`_get_reply_lock`）保留。
 - **向量化改由 AMKR 提供**：`sirius_pulse/embedding/client.py` 直接调用 AMKR 的 `/v1/embeddings`，模型名取自 `global_config.json` 的 `embedding_model`（默认 `BAAI/bge-m3`，支持 `SIRIUS_EMBEDDING_MODEL` 覆盖），凭据用该人格工作空间的推理 key。响应按 OpenAI 契约的 `index` 归位，避免向量与文本错配。
 - **模型接入整体收敛到 AMKR**：本框架不再自带任何厂商实现，所有模型调用统一发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）。供应商、Key 池、模型选择、采样参数与故障切换全部由 AMKR 承担。
 - **认知任务按任务名路由**：发往 AMKR 的 `model` 字段就是任务名本身（`cognition_analyze`、`memory_extract`、`response_generate`、`proactive_generate`、`passive_tool`、`plugin_analyze`、`plugin_generate`、`plugin_render`、`plugin_raw`、`diary_generate`、`diary_consolidate`、`topic_cluster` 共 12 个），由 AMKR 查任务定义换成真实模型。因此本框架对任务名请求**不再发送** `temperature` / `max_tokens`——任务定义里的值优先。
