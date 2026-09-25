@@ -304,6 +304,16 @@ class EngineRuntime:
                 len(result.created),
                 len(result.existing),
             )
+            # 新建的任务名是没有模型的：模型是 AMKR 的权限，本框架从不预设。但
+            # 「注册成功」不等于「能用」——没绑模型的任务在推理时会让 AMKR 拿任务
+            # 名去找同名模型，然后每个回合回 404。自主行为整整两天什么都没做，
+            # 就是因为 autonomy_generate 曾停在这个状态，而日志里只有 404。这里
+            # 明确告诉运维还要做什么，别让它看起来像已经配好了。
+            if result.created:
+                LOG.warning(
+                    "AMKR 新建任务尚未绑定模型，在绑定前调用它们会 404: %s。" "请到 AMKR 面板为这些任务各指定一个真实模型。",
+                    ", ".join(result.created),
+                )
         else:
             LOG.warning("AMKR 任务注册未全部成功: %s", result.failed)
         return result

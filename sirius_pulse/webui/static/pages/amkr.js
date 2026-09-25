@@ -216,14 +216,30 @@ function renderWorkspaces(root, data) {
 
   root.innerHTML = knownBlock + items.map(item => {
     const total = (item.registered?.length || 0) + (item.missing?.length || 0);
+    // 未绑模型的任务也要算进「不齐备」：名字在、注册检查放行，但一调用就 404。
+    // 只看 missing 的话，这种状态会被显示成「已齐备」，而自主行为正是这样停摆了两天。
+    const unboundCount = item.unbound?.length || 0;
     const badge = item.error
       ? `<span class="tag tag-danger">读取失败</span>`
       : item.missing?.length
         ? `<span class="tag tag-danger">缺 ${item.missing.length} 项</span>`
-        : `<span class="tag tag-success">已齐备</span>`;
+        : unboundCount
+          ? `<span class="tag tag-danger">${unboundCount} 项未绑模型</span>`
+          : `<span class="tag tag-success">已齐备</span>`;
     const missing = (item.missing || [])
       .map(name => `<span class="tag tag-danger">${escapeHtml(name)}</span>`)
       .join(' ');
+    const unbound = (item.unbound || [])
+      .map(name => `<span class="tag tag-danger">${escapeHtml(name)}</span>`)
+      .join(' ');
+    const unboundLine = unboundCount
+      ? `<div style="margin-top:8px">
+           <div class="card-subtitle" style="color:var(--danger,#e5534b)">
+             这些任务已登记但未绑定模型，调用它们会 404。请在 AMKR 面板里为每一个指定真实模型。
+           </div>
+           ${unbound}
+         </div>`
+      : '';
     const errorLine = item.error
       ? `<div class="card-subtitle" style="color:var(--danger,#e5534b)">${escapeHtml(item.error)}</div>`
       : '';
@@ -252,6 +268,7 @@ function renderWorkspaces(root, data) {
         ${inferenceLine}
         ${panelLine}
         ${missing ? `<div style="margin-top:8px">${missing}</div>` : ''}
+        ${unboundLine}
       </div>
     `;
   }).join('');

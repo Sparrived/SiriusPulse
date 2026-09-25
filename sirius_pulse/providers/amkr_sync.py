@@ -492,6 +492,14 @@ class WorkspaceState:
     workspace: str
     registered: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    unbound: list[str] = field(default_factory=list)
+    """已登记但没绑模型的任务名。
+
+    这类任务比"缺失"更隐蔽：名字在，只比对名字的注册检查会放行，但推理时 AMKR
+    找不到同名模型，于是每个回合都 404。自主行为整整两天什么都没做，就是因为
+    ``autonomy_generate`` 曾是这样一个"看起来配好了"的任务。
+    """
+
     error: str = ""
     panel_ready: bool = False
     inference_ready: bool = False
@@ -506,6 +514,7 @@ class WorkspaceState:
             "workspace": self.workspace,
             "registered": self.registered,
             "missing": self.missing,
+            "unbound": self.unbound,
             "error": self.error,
             "panel_ready": self.panel_ready,
             "inference_ready": self.inference_ready,
@@ -564,6 +573,14 @@ def inspect_persona_workspace(
     }
     state.registered = [name for name in wanted if name in present]
     state.missing = [name for name in wanted if name not in present]
+    # 「名字在」不等于「能用」：任务没绑模型时 AMKR 会拿任务名去找同名模型，然后
+    # 每个回合回 404。这里把它单独列出来，否则运维页只看 missing，会显示一切正常。
+    unbound = {
+        str(item.get("name", "")).strip()
+        for item in tasks
+        if str(item.get("name", "")).strip() and not str(item.get("model") or "").strip()
+    }
+    state.unbound = [name for name in wanted if name in unbound]
     return state
 
 

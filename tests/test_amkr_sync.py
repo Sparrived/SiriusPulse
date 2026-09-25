@@ -37,10 +37,19 @@ from sirius_pulse.providers.amkr_sync import (
 
 
 class _FakeAmkr:
-    """一个够用的 AMKR 管理面替身：记录收到的请求，维护任务与 revision。"""
+    """一个够用的 AMKR 管理面替身：记录收到的请求，维护任务与 revision。
+
+    ``tasks`` 可给一串任务名（默认视为已绑定模型），或给 ``{任务名: 模型}`` 的
+    映射——模型传 ``None`` 或空串即表示「登记了但没绑模型」。
+    """
 
     def __init__(self, tasks=None, *, revision="rev-1", reject_once=False, workspaces=None):
-        self.tasks = {name: {} for name in (tasks or [])}
+        if isinstance(tasks, dict):
+            self.tasks = {name: {"name": name, "model": model} for name, model in tasks.items()}
+        else:
+            self.tasks = {
+                name: {"name": name, "model": "wb-deepseek-v4.1-flash"} for name in (tasks or [])
+            }
         self.workspaces = set(workspaces or [])
         self.revision = revision
         self.requests: list[tuple[str, str, dict, dict]] = []
@@ -104,7 +113,12 @@ class _FakeAmkr:
             return httpx.Response(
                 200,
                 json={
-                    "tasks": [{"name": name} for name in self.tasks],
+                    # 真 AMKR 会回任务绑定的模型；未绑定时该字段为空。巡检要能分辨
+                    # 「登记了但没绑模型」这种看着正常、一调用就 404 的状态。
+                    "tasks": [
+                        {"name": name, "model": str(body.get("model") or "")}
+                        for name, body in self.tasks.items()
+                    ],
                     "config_revision": self.revision,
                 },
             )
@@ -250,7 +264,7 @@ def test_register_tasks_when_task_list_requested_then_returns_revision(monkeypat
     with AmkrAdminClient(_settings()) as client:
         tasks, revision = client.list_tasks()
 
-    assert tasks == [{"name": "a"}]
+    assert [item["name"] for item in tasks] == ["a"]
     assert revision == "rev-42"
 
 
@@ -281,6 +295,40 @@ def test_inspect_persona_workspace_when_tasks_partly_exist_then_splits_registere
     assert state.registered == ["response_generate"]
     assert state.missing == ["topic_cluster"]
     assert state.workspace == "sirius-pulse/sirius"
+
+
+def test_inspect_persona_workspace_when_task_has_no_model_then_reports_it_as_unbound(
+    monkeypatch,
+):
+    """「登记了」不等于「能用」：没绑模型的任务要单独报出来。
+
+    这是自主行为停摆两天的那个状态：``autonomy_generate`` 曾在任务表里，运维页
+    于是显示一切正常，而每个回合调用它都 404。只比对任务名的巡检看不出这件事。
+    """
+    fake = _FakeAmkr(tasks={"response_generate": "wb-deepseek-v4.1-flash", "autonomy_generate": ""})
+    _install(monkeypatch, fake)
+
+    state = inspect_persona_workspace(
+        _settings(), "sirius", task_names=["response_generate", "autonomy_generate"]
+    )
+
+    assert state.ok
+    assert state.registered == ["response_generate", "autonomy_generate"]
+    assert state.missing == []
+    assert state.unbound == ["autonomy_generate"]
+
+
+def test_inspect_persona_workspace_when_all_tasks_are_bound_then_unbound_is_empty(monkeypatch):
+    """全部绑好模型时不该报出假警，否则运维会开始忽略这一栏。"""
+    fake = _FakeAmkr(tasks=["response_generate", "autonomy_generate"])
+    _install(monkeypatch, fake)
+
+    state = inspect_persona_workspace(
+        _settings(), "sirius", task_names=["response_generate", "autonomy_generate"]
+    )
+
+    assert state.registered == ["response_generate", "autonomy_generate"]
+    assert state.unbound == []
 
 
 def test_inspect_persona_workspace_when_amkr_unreachable_then_reports_error_and_all_missing(
