@@ -77,6 +77,8 @@ def _context(tmp_path, brain, executor=None):
     context = ToolEngineContextImpl.__new__(ToolEngineContextImpl)
     context._engine = engine
     context.get_tool_descriptions = lambda **_kwargs: "- web_lookup: 查询天气"
+    context.list_audiences = lambda: []
+    context._unaddressed_intentions = lambda: []
     return context
 
 
@@ -169,8 +171,6 @@ async def test_scheduled_turn_then_runs_in_work_mode_and_leaves_a_trace(tmp_path
 async def test_autonomous_turn_then_runs_in_work_mode_and_leaves_a_trace(tmp_path):
     brain = _Brain([_final_round("读完了那篇文章。")])
     context = _context(tmp_path, brain)
-    context.list_audiences = lambda: []
-    context._unaddressed_intentions = lambda: []
 
     result = await context.run_autonomous_turn(
         kind="reading",
@@ -210,3 +210,58 @@ async def test_work_mode_task_setting_unset_then_keeps_the_native_task_name(tmp_
     assert brain.requests[0].task_name == "autonomy_generate"
     # 轨迹是给页面读的，必须能原样序列化。
     assert json.loads(json.dumps(_sessions(tmp_path)))[0]["task_name"] == "autonomy_generate"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_burns_every_tool_round_still_leaves_written_words(tmp_path):
+    """轮次用完时必须再要一轮正文，否则她读了一堆东西却一个字都没留下。
+
+    这正是自主行为"调用了但没产出"的原因：模型把全部轮次花在侦察上，最后一轮
+    仍是工具调用，循环带回来的正文是空的，整次工作就此消失。收尾轮不带工具，
+    所以正文不会再被一次工具调用顶掉。
+    """
+    brain = _Brain([_tool_round(), _tool_round(), _final_round("读完了两回，接着往下写。")])
+    context = _context(tmp_path, brain)
+
+    result = await context.run_autonomous_turn(kind="reading", seed="读一下连载写到哪了", group_id="group-1")
+
+    assert result["text"] == "读完了两回，接着往下写。"
+    # 前两轮带工具，收尾轮必须把工具摘掉。
+    assert [request.enable_tools for request in brain.requests] == [True, True, False]
+    session = _sessions(tmp_path)[0]
+    assert session["result"] == "读完了两回，接着往下写。"
+    # 撞到上限仍是"未完成"：收尾只是把已有结果写下来，不代表事情做完了。
+    assert session["status"] == "aborted"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_finishes_on_its_own_does_not_pay_for_a_wrap_up(tmp_path):
+    """只有真撞到上限才补收尾轮；正常收尾的回合不该多花一次调用。"""
+    brain = _Brain([_tool_round(), _final_round("天气不错。")])
+    context = _context(tmp_path, brain)
+
+    result = await context.run_autonomous_turn(kind="reading", seed="", group_id="group-1")
+
+    assert result["text"] == "天气不错。"
+    assert len(brain.requests) == 2
+    assert _sessions(tmp_path)[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_the_wrap_up_keeps_the_earlier_text_when_it_fails(tmp_path):
+    """收尾轮失败不该把整次工作变成异常：退回最后一轮已有的文字。"""
+
+    class _BrainThatFailsOnWrapUp(_Brain):
+        async def chat(self, request):
+            if not request.enable_tools:
+                raise RuntimeError("provider down")
+            return await super().chat(request)
+
+    brain = _BrainThatFailsOnWrapUp([_tool_round(), _tool_round()])
+    context = _context(tmp_path, brain)
+
+    result = await context.run_autonomous_turn(kind="reading", seed="", group_id="group-1")
+
+    # 两轮工具都没写正文，所以结果仍是空的——但这一次是"如实为空"，不是崩溃。
+    assert result["text"] == ""
+    assert _sessions(tmp_path)[0]["status"] == "aborted"

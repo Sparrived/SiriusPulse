@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 
 _EVENT_TYPE_MAP: dict[str, SessionEventType] = {v.value: v for v in SessionEventType}
 
+# 工具循环撞到轮次上限时，必须再要一轮"只说话"的收尾。模型很容易把全部轮次花在
+# 侦察上（读文件、翻目录、查记录），最后一轮仍然是工具调用，于是循环带回来的正文
+# 是空的——她做了一堆事却一个字都没留下。聊天通道早已用同样的收尾解决过这个问题
+# （见 bg_tasks_delayed 的 final reply），这里让自主回合与定时任务回合也走这一步。
+# 这一轮不带工具：正文不能再被一次工具调用顶掉，所以不依赖模型自觉。
+_TOOL_LIMIT_WRAP_UP = (
+    "【工具链控制信息】本轮已经达到工具调用轮次上限，工具不再可用。"
+    "请直接用你自己的话写下这次做了什么、看到了什么、想到了什么，这就是这次的结果。"
+    "如果确实什么都没做成，就如实说没做成，不要声称未经验证的事已经完成。"
+)
+
 
 class ToolEngineContextImpl:
     """Adapts EmotionalGroupChatEngine to the ToolEngineContext Protocol.
@@ -223,12 +234,76 @@ class ToolEngineContextImpl:
             store.save_run(run)
 
         final_text = str(getattr(last_result, "clean_text", "") or "").strip()
+
+        # 撞上限说明最后一轮仍是工具调用，带回来的正文是空的：她刚读了一堆东西，
+        # 却没有任何一句话留下来。这里补一轮"只说话"，把已经拿到的工具结果变成
+        # 这次的结果。它只在真的撞到上限时才发生，所以代价有界（多一次调用）。
+        if ended_by_round_limit:
+            wrap_up = await self._final_round_after_limit(
+                messages=messages,
+                system_prompt=system_prompt,
+                group_id=group_id,
+                user_id=user_id,
+                task_name=run.task_name,
+                adapter_type=adapter_type,
+                caller_is_developer=caller_is_developer,
+                run=run,
+                store=store,
+            )
+            # 收尾轮没写出东西时，退回最后一轮可能夹带的文字；两者都空才是真的空。
+            wrap_up_text = str(getattr(wrap_up, "clean_text", "") or "").strip()
+            if wrap_up_text:
+                last_result = wrap_up
+                final_text = wrap_up_text
+
         run.finish(
             result=final_text,
             status="aborted" if ended_by_round_limit else "completed",
         )
         store.save_run(run)
         return last_result
+
+    async def _final_round_after_limit(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        system_prompt: str,
+        group_id: str,
+        user_id: str,
+        task_name: str,
+        adapter_type: str,
+        caller_is_developer: bool,
+        run: WorkModeRun,
+        store: WorkModeStore,
+    ) -> Any:
+        """Ask for the closing prose once the tool rounds are used up.
+
+        工具被显式摘掉（``enable_tools=False``），而不是靠提示词请求模型别调用：
+        只要工具还在，这一轮就可能又被一次工具调用占满，收尾就白做了。失败不该
+        让整次工作消失，所以异常只记一条日志，返回 ``None`` 交给调用方退回原文。
+        """
+        messages.append({"role": "user", "content": _TOOL_LIMIT_WRAP_UP})
+        try:
+            result = await self._engine.brain.chat(
+                self._chat_request(
+                    group_id=group_id,
+                    user_id=user_id,
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    task_name=task_name,
+                    adapter_type=adapter_type,
+                    caller_is_developer=caller_is_developer,
+                    work_mode=True,
+                    enable_tools=False,
+                )
+            )
+        except Exception as exc:
+            logger.warning("工具轮次用尽后的收尾回合失败: %s", exc)
+            return None
+        step_text = str(getattr(result, "clean_text", "") or "").strip()
+        run.add_step(text=step_text, tools=[], results=[])
+        store.save_run(run)
+        return result
 
     async def run_autonomous_turn(
         self,
@@ -303,7 +378,11 @@ class ToolEngineContextImpl:
     def _chat_request(self, **kwargs: Any) -> Any:
         from sirius_pulse.core.brain import ChatRequest
 
-        return ChatRequest(enable_tools=True, post_process=True, **kwargs)
+        # 用 setdefault 而不是直接写死：收尾轮要显式传 enable_tools=False 把工具摘掉，
+        # 硬编码会让那个参数变成"重复传参"而报 TypeError。
+        kwargs.setdefault("enable_tools", True)
+        kwargs.setdefault("post_process", True)
+        return ChatRequest(**kwargs)
 
     @staticmethod
     def _assistant_tool_message(reply: str, tool_calls: list[ToolCall]) -> dict[str, Any]:
