@@ -45,7 +45,6 @@ from sirius_pulse.memory.units import MemoryUnitManager
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.models import Message, Transcript, UnifiedUser
-from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 from sirius_pulse.tools.builtin._internal import _markdown_image
 
 logger = logging.getLogger(__name__)
@@ -1314,14 +1313,6 @@ class _EmotionalGroupChatEngineBase:
         explicitly_mentioned = bool(
             message.mentions_current_bot or self._message_explicitly_mentions_current_bot(message)
         )
-        if message.received_during_bot_send and not explicitly_mentioned:
-            return {
-                "should_reply": False,
-                "score": 0.0,
-                "reason": "reply_send_window",
-                "strategy": "silent",
-                "delay_seconds": 0.0,
-            }
         if content.lstrip().startswith("/"):
             return {
                 "should_reply": True,
@@ -1443,52 +1434,6 @@ class _EmotionalGroupChatEngineBase:
             )
             return {
                 "strategy": "work_mode_stashed",
-                "reply": None,
-                "emotion": {},
-                "intent": {},
-            }
-
-        # Bot 正在发送多段回复时到达的新消息：不打断当前发送。
-        # 只有明确点名当前 bot 的消息才进入 delayed queue，避免立刻抢话。
-        if getattr(message, "received_during_bot_send", False) and not message.dispatch_coordinated:
-            self._background_update(group_id, message, None, None, user_id)
-            if self._message_explicitly_mentions_current_bot(message):
-                decision = StrategyDecision(
-                    strategy=ResponseStrategy.DELAYED,
-                    score=1.0,
-                    threshold=0.0,
-                    urgency=60.0,
-                    relevance=1.0,
-                    reason="received_during_bot_send_mention",
-                )
-                self.delayed_queue.enqueue(
-                    group_id=group_id,
-                    user_id=user_id,
-                    message_content=content,
-                    strategy_decision=decision,
-                    candidate_memories=[],
-                    channel=message.channel,
-                    channel_user_id=message.channel_user_id,
-                    multimodal_inputs=message.multimodal_inputs,
-                    adapter_type=message.adapter_type,
-                    adapter_route_id=message.adapter_route_id,
-                    heat_level="warm",
-                    pace="steady",
-                    speaker_name=message.speaker or "",
-                    platform_message_id=message.message_id or "",
-                )
-                self._persist_group_state(group_id)
-                self._log_inner_thought(f"{speaker} 在我发送时点名我，先排进延迟回复～")
-                return {
-                    "strategy": "delayed",
-                    "reply": None,
-                    "emotion": {},
-                    "intent": {},
-                }
-
-            self._log_inner_thought(f"{speaker} 在我发送时插话，我先不打断当前回复～")
-            return {
-                "strategy": "silent",
                 "reply": None,
                 "emotion": {},
                 "intent": {},
