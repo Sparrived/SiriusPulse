@@ -207,7 +207,6 @@ class NapCatAdapter(BaseAdapter):
         self._engine: Any = None
         self._last_not_ready_log: float = 0.0
         self._reply_locks: dict[str, asyncio.Lock] = {}
-        self._reply_send_active_counts: dict[str, int] = {}
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._seen_message_ids: dict[str, float] = {}
         self._seen_message_ttl = 300.0
@@ -1492,7 +1491,6 @@ class NapCatAdapter(BaseAdapter):
             return
         if not self._enabled:
             return
-        self._mark_event_if_received_during_reply_send(event, str(event.get("group_id", "")))
         if self._engine is None or not self._engine_ready():
             self._log_not_ready()
             return
@@ -1571,7 +1569,6 @@ class NapCatAdapter(BaseAdapter):
             return
         if not self._enabled:
             return
-        self._mark_event_if_received_during_reply_send(event, f"private_{uid}")
         if self._engine is None or not self._engine_ready():
             self._log_not_ready()
             return
@@ -1671,7 +1668,6 @@ class NapCatAdapter(BaseAdapter):
             adapter_type=self.adapter_type,
             adapter_route_id=self.adapter_route_id,
             sender_type="other_ai" if is_peer_ai else "human",
-            received_during_bot_send=bool(event.get("_sirius_received_during_reply_send")),
             mentions_current_bot=mentions_current_bot,
         )
 
@@ -1788,13 +1784,11 @@ class NapCatAdapter(BaseAdapter):
                 if partial:
                     if parsed.message_type == "group":
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_sequence_part(group_id, partial)
+                            await self._sleep_before_reply_part(partial)
                         sent = bool(await self._send_group_text(group_id, partial))
                     else:
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_sequence_part(
-                                f"private_{parsed.user_id}", partial
-                            )
+                            await self._sleep_before_reply_part(partial)
                         sent = bool(await self._send_private_text(parsed.user_id, partial))
                     if sent:
                         response_parts.append(str(partial))
@@ -1815,14 +1809,12 @@ class NapCatAdapter(BaseAdapter):
                 if clean_reply:
                     if parsed.message_type == "group":
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_sequence_part(group_id, clean_reply)
+                            await self._sleep_before_reply_part(clean_reply)
                         if clean_reply:
                             sent = bool(await self._send_group_text(group_id, clean_reply))
                     else:
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_sequence_part(
-                                f"private_{parsed.user_id}", clean_reply
-                            )
+                            await self._sleep_before_reply_part(clean_reply)
                         if clean_reply:
                             sent = bool(await self._send_private_text(parsed.user_id, clean_reply))
                     if sent:
@@ -2205,10 +2197,6 @@ class NapCatAdapter(BaseAdapter):
                 except Exception:
                     self._dispatch_delivery_active.discard(gid)
                     raise
-                send_key = gid
-                if gid.startswith("private_"):
-                    uid = gid.replace("private_", "").replace("qq_", "")
-                    send_key = f"private_{uid}"
                 partial_sent_count = 0
                 dispatch_sent = False
                 response_parts: list[str] = []
@@ -2216,7 +2204,7 @@ class NapCatAdapter(BaseAdapter):
                 async def _send_partial(text: str) -> None:
                     nonlocal dispatch_sent, partial_sent_count
                     if partial_sent_count > 0:
-                        await self._sleep_before_reply_sequence_part(send_key, text)
+                        await self._sleep_before_reply_part(text)
                     if gid.startswith("private_"):
                         uid = gid.replace("private_", "").replace("qq_", "")
                         sent = await self._send_private_text(uid, text)
@@ -2230,7 +2218,6 @@ class NapCatAdapter(BaseAdapter):
                     response_parts.append(str(text))
                     partial_sent_count += 1
 
-                self._begin_reply_send(send_key)
                 try:
                     try:
                         results = await engine.tick_delayed_queue(
@@ -2253,9 +2240,7 @@ class NapCatAdapter(BaseAdapter):
                             uid = gid.replace("private_", "").replace("qq_", "")
                             if reply:
                                 if partial_sent_count > 0:
-                                    await self._sleep_before_reply_sequence_part(
-                                        f"private_{uid}", reply
-                                    )
+                                    await self._sleep_before_reply_part(reply)
                                 if reply:
                                     sent = await self._send_private_text(uid, reply, reply_refs)
                                     dispatch_sent = bool(sent) or dispatch_sent
@@ -2267,7 +2252,7 @@ class NapCatAdapter(BaseAdapter):
                         elif gid in self._get_allowed_group_ids():
                             if reply:
                                 if partial_sent_count > 0:
-                                    await self._sleep_before_reply_sequence_part(gid, reply)
+                                    await self._sleep_before_reply_part(reply)
                                 if reply:
                                     sent = await self._send_group_text(gid, reply, reply_refs)
                                     dispatch_sent = bool(sent) or dispatch_sent
@@ -2277,7 +2262,6 @@ class NapCatAdapter(BaseAdapter):
                             poke_sent = await self._send_pokes_after_reply(gid, poke_user_ids)
                             dispatch_sent = sticker_sent or poke_sent or dispatch_sent
                 finally:
-                    self._end_reply_send(send_key)
                     # Clear the guard before lease finalization; even a
                     # dispatcher storage error must not wedge this group.
                     self._dispatch_delivery_active.discard(gid)
@@ -2498,42 +2482,34 @@ class NapCatAdapter(BaseAdapter):
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
         key = str(group_id)
-        self._begin_reply_send(key)
-        try:
-            async with self._get_reply_lock(key):
-                if _ATOMIC_PROACTIVE_SEND.get():
-                    return await self._send_group_text_single_locked(
-                        group_id,
-                        text,
-                        reply_refs,
-                    )
-                # 最终兜底：按换行符拆分为多条消息，仅首条携带引用
-                lines = [line for line in text.splitlines() if line.strip()]
-                if len(lines) > 1:
-                    first = True
-                    for line in lines:
-                        if not first:
-                            await self._sleep_before_reply_part(line)
-                        refs = reply_refs if first else None
-                        ok = await self._send_group_text_single_locked(group_id, line, refs)
-                        if not ok:
-                            return False
-                        first = False
-                    return True
-                return await self._send_group_text_single_locked(group_id, text, reply_refs)
-        finally:
-            self._end_reply_send(key)
+        async with self._get_reply_lock(key):
+            if _ATOMIC_PROACTIVE_SEND.get():
+                return await self._send_group_text_single_locked(
+                    group_id,
+                    text,
+                    reply_refs,
+                )
+            # 最终兜底：按换行符拆分为多条消息，仅首条携带引用
+            lines = [line for line in text.splitlines() if line.strip()]
+            if len(lines) > 1:
+                first = True
+                for line in lines:
+                    if not first:
+                        await self._sleep_before_reply_part(line)
+                    refs = reply_refs if first else None
+                    ok = await self._send_group_text_single_locked(group_id, line, refs)
+                    if not ok:
+                        return False
+                    first = False
+                return True
+            return await self._send_group_text_single_locked(group_id, text, reply_refs)
 
     async def _send_group_text_single(
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
         key = str(group_id)
-        self._begin_reply_send(key)
-        try:
-            async with self._get_reply_lock(key):
-                return await self._send_group_text_single_locked(group_id, text, reply_refs)
-        finally:
-            self._end_reply_send(key)
+        async with self._get_reply_lock(key):
+            return await self._send_group_text_single_locked(group_id, text, reply_refs)
 
     async def _send_group_text_single_locked(
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
@@ -2646,35 +2622,27 @@ class NapCatAdapter(BaseAdapter):
         self, user_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
         key = f"private_{user_id}"
-        self._begin_reply_send(key)
-        try:
-            async with self._get_reply_lock(key):
-                if _ATOMIC_PROACTIVE_SEND.get():
-                    return await self._send_private_text_single_locked(user_id, text)
-                # 最终兜底：按换行符拆分为多条消息
-                lines = [line for line in text.splitlines() if line.strip()]
-                if len(lines) > 1:
-                    first = True
-                    for line in lines:
-                        if not first:
-                            await self._sleep_before_reply_part(line)
-                        ok = await self._send_private_text_single_locked(user_id, line)
-                        if not ok:
-                            return False
-                        first = False
-                    return True
+        async with self._get_reply_lock(key):
+            if _ATOMIC_PROACTIVE_SEND.get():
                 return await self._send_private_text_single_locked(user_id, text)
-        finally:
-            self._end_reply_send(key)
+            # 最终兜底：按换行符拆分为多条消息
+            lines = [line for line in text.splitlines() if line.strip()]
+            if len(lines) > 1:
+                first = True
+                for line in lines:
+                    if not first:
+                        await self._sleep_before_reply_part(line)
+                    ok = await self._send_private_text_single_locked(user_id, line)
+                    if not ok:
+                        return False
+                    first = False
+                return True
+            return await self._send_private_text_single_locked(user_id, text)
 
     async def _send_private_text_single(self, user_id: str, text: str) -> bool:
         key = f"private_{user_id}"
-        self._begin_reply_send(key)
-        try:
-            async with self._get_reply_lock(key):
-                return await self._send_private_text_single_locked(user_id, text)
-        finally:
-            self._end_reply_send(key)
+        async with self._get_reply_lock(key):
+            return await self._send_private_text_single_locked(user_id, text)
 
     async def _send_private_text_single_locked(self, user_id: str, text: str) -> bool:
         text = text.rstrip("\n")
@@ -2784,42 +2752,10 @@ class NapCatAdapter(BaseAdapter):
             self._reply_locks[key] = lock
         return lock
 
-    def _mark_event_if_received_during_reply_send(
-        self, event: dict[str, Any], send_key: str
-    ) -> None:
-        if send_key and self._is_reply_send_active(send_key):
-            event["_sirius_received_during_reply_send"] = True
-
-    def _begin_reply_send(self, send_key: str) -> None:
-        if not send_key:
-            return
-        self._reply_send_active_counts[send_key] = (
-            self._reply_send_active_counts.get(send_key, 0) + 1
-        )
-
-    def _end_reply_send(self, send_key: str) -> None:
-        if not send_key:
-            return
-        remaining = self._reply_send_active_counts.get(send_key, 0) - 1
-        if remaining > 0:
-            self._reply_send_active_counts[send_key] = remaining
-        else:
-            self._reply_send_active_counts.pop(send_key, None)
-
-    def _is_reply_send_active(self, send_key: str) -> bool:
-        return self._reply_send_active_counts.get(send_key, 0) > 0
-
     async def _sleep_before_reply_part(self, line: str) -> None:
         delay = self._reply_part_delay_seconds(line)
         if delay > 0:
             await asyncio.sleep(delay)
-
-    async def _sleep_before_reply_sequence_part(self, send_key: str, line: str) -> None:
-        self._begin_reply_send(send_key)
-        try:
-            await self._sleep_before_reply_part(line)
-        finally:
-            self._end_reply_send(send_key)
 
     def _reply_part_delay_seconds(self, line: str) -> float:
         if self.plugin_config.get("human_reply_delay_enabled", True) is False:
