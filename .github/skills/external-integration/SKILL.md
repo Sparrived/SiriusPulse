@@ -122,7 +122,7 @@ description: "当需要让外部项目正确接入 Sirius Pulse 时使用，覆�
 ## 最小可用接入模板
 
 - 接入前先配好 AMKR：在 `data/global_config.json` 写入 `amkr_base_url` / `amkr_local_api_key` / `amkr_workspace`（或设置 `SIRIUS_AMKR_BASE_URL` / `SIRIUS_AMKR_API_KEY` / `SIRIUS_AMKR_WORKSPACE`）。缺少凭据时引擎不就绪，`EngineRuntime.is_ready()` 返回 `False`。
-- 首次启动会自动把 12 个内置任务名注册进 AMKR 的 `<amkr_workspace>/<persona>` 空间（只创建缺失项）；也可用 WebUI 的 `POST /api/amkr/register` 手动触发，用 `GET /api/amkr/status` 查看 `registered` / `missing`。
+- 首次启动会自动把 13 个内置任务名注册进 AMKR 的 `<amkr_workspace>/<persona>` 空间（只创建缺失项）；也可用 WebUI 的 `POST /api/amkr/register` 手动触发，用 `GET /api/amkr/status` 查看 `registered` / `missing`。
 - Python 调用：从顶层 `sirius_pulse` 导入并构造引擎，参考本文档「接入决策规则」中的入口说明。
 - CLI 入口：`python main.py run`（活跃人格 + WebUI）、`python main.py webui [--foreground|--status|--stop]`、`python main.py persona list|create|activate|delete`。CLI 当前没有 `--config` / `--work-path` 参数。
 - 仓库内的 `examples/` 目录已整体删除，不要引用其中的示例文件。
@@ -165,7 +165,7 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 ### 任务名契约（核心）
 
 - AMKR 把一个**任务名**解析成真实模型，因此框架把任务名本身填进 OpenAI 兼容请求的 `model` 字段。
-- 内置 12 个任务名：`cognition_analyze`、`memory_extract`、`response_generate`、`proactive_generate`、`passive_tool`、`plugin_analyze`、`plugin_generate`、`plugin_render`、`plugin_raw`、`diary_generate`、`diary_consolidate`、`topic_cluster`。
+- 内置 13 个任务名：`cognition_analyze`、`memory_extract`、`response_generate`、`work_mode_generate`、`proactive_generate`、`passive_tool`、`plugin_analyze`、`plugin_generate`、`plugin_render`、`plugin_raw`、`diary_generate`、`diary_consolidate`、`topic_cluster`。`work_mode_generate` 供工作模式使用（默认不启用，工作模式沿用本回合原本的任务名，见 `memory/work_mode/settings.json` 的 `task_name`），把工作模式交给更强模型的推荐做法就是让 AMKR 把这个任务名指向另一个模型。
 - `model` 命中任务名时框架**不发送** `temperature` 与 `max_tokens`，模型选择、温度、最大 token 与故障切换都取 AMKR 任务定义里的值。显式传任务已固定的参数会被 AMKR 以 400 拒绝，不会静默覆盖。
 - `model` 不是任务名时按普通模型直连，此时采样参数由框架给出。任务名必须与 AMKR 工作空间里的任务同名，否则 AMKR 会把它当成真实模型去查找并失败。注意：若该空间在 AMKR 侧配了 `models` 直呼白名单，**任务名不受它限制**，但直呼模型必须落在白名单内。
 - 本地的任务超时与重试写在 `data/personas/<name>/engine_state/orchestration.json` 的 `task_timeout` / `task_retries`，属于传输层参数；`_DEFAULT_TASK_REGISTRY` 里的 `temperature` / `max_tokens` 仅供预算估算。
@@ -204,7 +204,7 @@ Sirius Pulse **不再自带多供应商系统**。所有模型调用都发往本
 - `GET /api/amkr/panel?persona=<名字>`：**仅管理员**（非 admin 返回 403）。返回 `{"persona", "url"}`，`url` 是可嵌入的 AMKR 工作空间面板地址（fragment 内含明文面板 key）；该人格没有 key 时返回 409 并说明补救路径。运维页按需调用它再把地址塞进 iframe。
 - `POST /api/amkr/rotate-inference-key`：**仅管理员**（非 admin 返回 403）。body `{"persona": "..."}`，为该人格的空间换一把推理 key，返回 `{"persona", "inference_key"}`——**明文只回这一次**，随后给该人格写 `provider` 重载标志。用于空间建于推理 key 支持之前（本地只有面板 key，无法重新取回）或凭据疑似泄漏。旧 key 立即失效，不影响面板 key。
 - `POST /api/amkr/register`：建出工作空间（含取两把凭据）并补齐缺失任务名；body `{"persona": "..."}` 指定单个人格，`{}` 表示全部人格。
-- `GET /api/models`：仍然存在，但返回的是上述 12 个任务名（含中文标签），不再是厂商模型列表。
+- `GET /api/models`：仍然存在，但返回的是上述 13 个任务名（含中文标签），不再是厂商模型列表。
 
 ### 生产环境建议
 

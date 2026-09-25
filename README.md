@@ -108,7 +108,7 @@ pip install sirius-pulse
 
 外部插件是独立维护的 Git submodule，不会打包进 PyPI wheel，也不会复制进 Docker 镜像。源码必须在运行目录的 `plugins/` 中由宿主机准备；详见下方的插件初始化和 Docker 挂载说明。
 
-> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 12 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
+> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 13 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
 
 ### 2️⃣ 启动 CLI
 

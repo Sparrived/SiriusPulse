@@ -289,7 +289,7 @@ grep -r "^description:" .github/skills/*/SKILL.md
   再把它注册进去
 ✓ 确认注册是「只创建缺失」：已存在的任务不会被比对或覆盖
 ✓ 在 sirius_pulse/webui/model_catalog.py 的 TASK_LABELS 中补中文标签（可选但推荐）
-✓ 在 docs/modules/provider-system.md 与 docs/reference/provider-config.md 的 12 个内置任务名清单中同步
+✓ 在 docs/modules/provider-system.md 与 docs/reference/provider-config.md 的内置任务名清单中同步
 ✓ 新增或扩展 tests/test_model_router.py 覆盖该任务名
 ✓ 若任务有独立调用点，确认它通过 engine.model_router.resolve("<task>") 取配置
 
