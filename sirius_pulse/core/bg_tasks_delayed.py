@@ -744,7 +744,26 @@ class DelayedQueueTasks:
                     )
                 elif tc.function_name == QUIT_WORK_MODE:
                     quit_result = str(params.get("result", "") or "").strip()
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": "已退出工作模式。"})
+                    if quit_result:
+                        messages.append(
+                            {"role": "tool", "tool_call_id": tc.id, "content": "已退出工作模式。"}
+                        )
+                    else:
+                        # result 是这次工作唯一的对外出口。让它空着退出等于这一轮群里
+                        # 什么都收不到（模型漏参、参数 JSON 截断都会走到这里），所以
+                        # 空 result 不算退出，只回一句提醒让它补上。
+                        quit_result = None
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": (
+                                    "result 为空，不能这样退出：群里会收不到任何结果。"
+                                    "请用一句话说明这次工作做完了什么、没做完什么，"
+                                    "再调用 quit_work_mode。"
+                                ),
+                            }
+                        )
 
             work_step: dict[str, Any] | None = None
             if work_run is not None:
@@ -1123,6 +1142,10 @@ class DelayedQueueTasks:
         # quit_work_mode 的 result 是这次工作的对外结果，直接作为本轮回复发出。
         if work_final_reply is not None:
             final_reply = work_final_reply
+        elif work_run is not None and not final_reply:
+            # 兜底：进了工作模式就必须留下一个对外结果。轮次用尽、模型没话说、
+            # 收尾轮也失败时，宁可说实话被打断，也不能让群里一声不响。
+            final_reply = work_run.result
 
         # Fast tools can finish before the client has had time to visually render
         # the partial reply. Keep a minimum lead window without delaying tool work.

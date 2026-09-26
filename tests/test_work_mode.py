@@ -345,3 +345,69 @@ async def test_work_mode_when_model_is_not_configured_then_keeps_normal_task_nam
     await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
 
     assert [request.task_name for request in calls] == ["response_generate", "response_generate"]
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_quit_result_is_empty_then_group_still_hears_something(tmp_path):
+    """模型退出工作模式却没给出 result 时，群里不能一声不响。"""
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    calls: list = []
+
+    async def chat(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return _round("", _call(ENTER_WORK_MODE, '{"goal": "整理群文件"}', "c-enter"))
+        if len(calls) == 2:
+            return _round("目录已经列完，正在整理。", _call("bash", '{"command": "ls"}', "c-bash"))
+        return _round("", _call(QUIT_WORK_MODE, "{}", "c-quit"))
+
+    tasks, _, _ = _work_mode_tasks(tmp_path, queue, chat)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    assert results[0]["reply"]
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_work_is_cut_off_then_group_hears_it_is_unfinished(tmp_path):
+    """撞上轮次上限、收尾轮也没正文时，框架要替她说明没做完，而不是静默消失。"""
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    calls: list = []
+
+    async def chat(request):
+        calls.append(request)
+        if request.tool_choice == "none":
+            return _round("")
+        if len(calls) == 1:
+            return _round("", _call(ENTER_WORK_MODE, '{"goal": "跑很久的任务"}', "c-enter"))
+        return _round("", _call("bash", '{"command": "sleep 1"}', f"c-bash-{len(calls)}"))
+
+    tasks, _, _ = _work_mode_tasks(tmp_path, queue, chat, max_tool_rounds=1)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    assert results[0]["reply"]
+    assert _session(tmp_path)["status"] == "aborted"
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_generation_fails_then_group_is_released(tmp_path):
+    """工作模式中途抛错也不能把群永久留在暂存窗口里——那会让她从此收不到话也不说话。"""
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    calls: list = []
+
+    async def chat(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return _round("", _call(ENTER_WORK_MODE, '{"goal": "整理群文件"}', "c-enter"))
+        raise RuntimeError("provider down")
+
+    tasks, _, runs = _work_mode_tasks(tmp_path, queue, chat)
+
+    with pytest.raises(RuntimeError):
+        await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    assert runs == {}
