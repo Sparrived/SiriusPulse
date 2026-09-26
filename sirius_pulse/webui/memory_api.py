@@ -786,9 +786,31 @@ def _load_memory_units_file(path: Path) -> tuple[str, list[dict[str, Any]]]:
 
 
 def _save_memory_units_file(data_dir: Path, group_id: str, units: list[dict[str, Any]]) -> None:
-    _atomic_write_json(
-        _memory_unit_file(data_dir, group_id), {"group_id": group_id, "units": units}
+    """写回单元文件，并保留向量 sidecar 的引用与格式版本。
+
+    WebUI 只编辑元数据，向量存放在 ``memory_units/vectors/`` 下的独立文件里。这里
+    必须把 ``vector_file`` 原样带回去：丢掉它，整组向量就会变成无人引用的孤儿文件，
+    而单元仍带着指向它的偏移——等于一次人工编辑清空该群全部语义检索能力。
+    """
+    from sirius_pulse.memory.units.store import (
+        UNITS_FORMAT_KEY,
+        UNITS_FORMAT_VERSION,
+        VECTOR_FILE_KEY,
     )
+
+    path = _memory_unit_file(data_dir, group_id)
+    payload: dict[str, Any] = {
+        "group_id": group_id,
+        UNITS_FORMAT_KEY: UNITS_FORMAT_VERSION,
+        "units": units,
+    }
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        existing = None
+    if isinstance(existing, dict) and isinstance(existing.get(VECTOR_FILE_KEY), str):
+        payload[VECTOR_FILE_KEY] = existing[VECTOR_FILE_KEY]
+    _atomic_write_json(path, payload)
 
 
 def _string_list(value: Any) -> list[str]:
