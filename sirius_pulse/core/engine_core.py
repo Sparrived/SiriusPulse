@@ -43,7 +43,7 @@ from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.units import MemoryUnitManager
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
-from sirius_pulse.models.models import Message, Transcript, UnifiedUser
+from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.tools.builtin._internal import _markdown_image
 
 logger = logging.getLogger(__name__)
@@ -197,7 +197,6 @@ class _EmotionalGroupChatEngineBase:
         )
 
     def _init_brain(self) -> None:
-        self._token_records: list[Any] = []
         self.brain = Brain(
             provider_async=self.provider_async,
             model_router=self.model_router,
@@ -205,7 +204,6 @@ class _EmotionalGroupChatEngineBase:
             rhythm_analyzer=self.rhythm_analyzer,
             style_adapter=self.style_adapter,
             config=self.config,
-            token_usage_records=self._token_records,
             other_ai_names=self._other_ai_names,
         )
         self.brain.set_context_fns(
@@ -226,22 +224,26 @@ class _EmotionalGroupChatEngineBase:
 
         self.event_bus = SessionEventBus()
 
-        from sirius_pulse.config import TokenUsageRecord
-
-        self.token_usage_records: list[TokenUsageRecord] = self._token_records
         self.token_store: Any | None = None  # injected by EngineRuntime
 
         from sirius_pulse.memory.cognition_store import CognitionEventStore
 
-        self.cognition_store = CognitionEventStore(
-            Path(work_path) / "cognition_events.db",
-            conn=self._persona_db_conn,
-            batch_size=1,
-        )
+        # 生产环境由 EngineRuntime 注入共享的 persona.db 连接；测试或独立构造
+        # 时没有连接，则回退到 work_path 下的独立库文件。两者互斥，不能同时传：
+        # BaseSqliteStore 在同时收到时会以 conn 为准，静默忽略 db_path。
+        if self._persona_db_conn is not None:
+            self.cognition_store = CognitionEventStore(
+                conn=self._persona_db_conn,
+                batch_size=1,
+            )
+        else:
+            self.cognition_store = CognitionEventStore(
+                Path(work_path) / "cognition_events.db",
+                batch_size=1,
+            )
 
     def _init_tool_plugin_and_runtime(self) -> None:
         self._group_last_message_at: dict[str, str] = {}
-        self._transcripts: dict[str, Transcript] = {}
         self._last_reply_at: dict[str, float] = {}
         self._last_reply_depth: dict[str, int] = {}
 

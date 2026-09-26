@@ -118,6 +118,10 @@ class CognitionEventStore(BaseSqliteStore):
 
     def _create_tables(self) -> None:
         """创建表结构并执行 schema 迁移。"""
+        # _meta 承载 schema 版本号，必须先于 set_schema_version() 建立。
+        # 生产环境由 PersonaDatabase 预先建好；独立打开库文件时（无共享 conn）
+        # 只能在这里补建，否则 set_schema_version() 会抛 "no such table: _meta"。
+        self.ensure_meta_table()
         self.execute(_CREATE_TABLE)
         for idx_sql in _CREATE_INDEXES:
             self.execute(idx_sql)
