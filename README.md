@@ -61,8 +61,8 @@
 - **WebUI 管理面板**：Dashboard 查看所有人格状态，支持启停、配置、群管理
 
 ### 🧠 **分层记忆系统**
-- **基础记忆**（Basic Memory）：按群保留原始消息直到被 checkpoint 记忆单元覆盖（硬限制 10000 条仅作内存兜底，上下文窗口 5 条）；原始窗口超过 80000 token 触发归纳、归纳到 20000 token 为止，被覆盖的原始条目改由记忆单元 RAG 提供摘要；注入提示词的历史预算默认 80000 token，含热度计算与归档
-- **日记系统**（Diary）：LLM 生成群聊摘要，ChromaDB 向量索引，token 预算检索
+- **基础记忆**（Basic Memory）：按群保留原始消息直到被 checkpoint 记忆单元覆盖（硬限制 10000 条仅作内存兜底，上下文窗口 5 条）；原始窗口超过 80000 token 触发归纳、归纳到 20000 token 为止，被覆盖的原始条目改由记忆单元 RAG 提供摘要；注入提示词的历史预算默认 40000 token、记忆单元检索预算默认 20000 token，含热度计算与归档
+- **记忆单元**（Memory Units）：LLM 提取的结构化长期记忆片段，嵌入向量内联存放在各自的 JSON 文件中，以内存索引做 RAG 检索
 - **语义记忆**（Semantic Memory）：群级/用户级/全局级向量记忆，支持话题关联与兴趣学习
 - **人物传记**（Biography）：跨对话人物画像提取与注入
 
@@ -79,11 +79,11 @@ Perception → Cognition → Decision → Execution → Background
 ### 🔌 **AMKR 统一模型接入**
 - 所有模型调用统一交给本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）处理
 - 供应商、Key 池、故障切换与采样参数都由 AMKR 维护，本框架不再内置任何厂商实现
-- 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 日记…），模型选择下沉到 AMKR 的任务定义
+- 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 自主行为…），模型选择与采样参数下沉到 AMKR 的任务定义
 - 模型调用只用该人格工作空间的**推理 key**（建空间时自动签发），管理员 Key 仅用于建空间与注册任务
 
 ### 🎯 **双重扩展机制**
-- **工具系统**（Tools）：AI 通过 `[TOOL_CALL: ...]` 自主调用工具，提供多个内置工具
+- **工具系统**（Tools）：AI 通过标准 function calling 自主调用工具，提供多个内置工具
 - **插件系统**（Plugins）：用户通过 `/` `#` `!` 前缀显式命令触发
 - 详见 [扩展开发](#-扩展开发)
 
@@ -108,7 +108,7 @@ pip install sirius-pulse
 
 外部插件是独立维护的 Git submodule，不会打包进 PyPI wheel，也不会复制进 Docker 镜像。源码必须在运行目录的 `plugins/` 中由宿主机准备；详见下方的插件初始化和 Docker 挂载说明。
 
-> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 13 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
+> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 11 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
 
 ### 2️⃣ 启动 CLI
 
@@ -137,42 +137,33 @@ sirius-pulse webui
 
 ### 3️⃣ 后台运行
 
-默认交互式 CLI 基于 Textual 构建，提供人格状态表、WebUI 控制、人格启停与运行模式入口。WebUI、人格 worker 与 NapCat 会以后台子进程运行，不再弹出独立控制台窗口。日志可在 WebUI 的 **实时日志** 页面查看，也可以通过 CLI 查看最近日志。
-在交互式 CLI 中按 `q` 或点击「退出并清理」时，会触发统一清理流程，停止后台 WebUI 以及所有运行中的人格。
+`sirius-pulse run` 在当前进程内为每个活跃人格创建一个 `PersonaWorker` 并作为 asyncio 任务运行，
+WebUI 与 NapCat 则以后台子进程运行，不再弹出独立控制台窗口。日志可在 WebUI 的 **实时日志**
+页面查看。停止主进程会触发统一清理流程，终止后台 WebUI 以及所有运行中的人格。
 
 ```bash
 sirius-pulse run              # 启动所有已配置人格 + WebUI
-sirius-pulse persona start my-bot   # 后台启动单人格
+sirius-pulse webui            # 只启动 WebUI
 ```
 
 ### CLI 命令
 
 | 命令 | 说明 |
 |------|------|
-| `sirius-pulse` | 默认进入交互式 CLI |
-| `sirius-pulse cli` | 显式进入交互式 CLI |
+| `sirius-pulse run` | 在当前进程内启动所有已启用人格 + WebUI |
 | `sirius-pulse webui` | 后台启动 WebUI 管理服务 |
 | `sirius-pulse webui --status` | 查看后台 WebUI 状态 |
 | `sirius-pulse webui --stop` | 停止后台 WebUI |
 | `sirius-pulse webui --foreground` | 前台运行 WebUI（调试用） |
-| `sirius-pulse run` | 启动所有已启用人格 + WebUI |
-| `sirius-pulse persona create <name>` | 创建新人格 |
-| `sirius-pulse persona start <name>` | 后台启动单个人格 |
 | `sirius-pulse persona list` | 列出所有人格 |
-| `sirius-pulse persona stop <name>` | 停止人格 |
-| `sirius-pulse persona remove <name>` | 删除人格 |
-| `sirius-pulse persona logs <name>` | 查看人格日志 |
+| `sirius-pulse persona create <name>` | 创建新人格 |
+| `sirius-pulse persona activate <name>` | 切换活跃人格 |
+| `sirius-pulse persona delete <name>` | 删除人格 |
+
+没有交互式 CLI，也没有 `cli` 子命令；不带子命令运行只打印帮助。
+人格的启停由 `run` 与 WebUI 管理，不存在 `persona start/stop/logs`。
 
 ### Python API
-
-```python
-from sirius_pulse.persona_manager import PersonaManager
-
-manager = PersonaManager("data")
-manager.create_persona("yuebai")
-manager.start_all()
-manager.stop_persona("yuebai")
-```
 
 ```python
 from sirius_pulse import create_emotional_engine
@@ -184,6 +175,9 @@ engine = create_emotional_engine(
 result = await engine.process_message("你好！", participants=[], group_id="g1")
 ```
 
+多人格编排由 `sirius_pulse/cli.py` 的 `_cmd_run()` 负责：它为每个活跃人格创建一个
+`PersonaWorker` 并作为 asyncio 任务拉起；没有 `PersonaManager` 类。
+
 ---
 
 ## 📁 项目结构
@@ -193,34 +187,36 @@ result = await engine.process_message("你好！", participants=[], group_id="g1
 ```
 sirius_pulse/
 ├── __init__.py              # 公开 API 清单（严格 __all__）
-├── persona_manager.py       # 多人格生命周期管理
-├── persona_worker.py        # 单人格子进程入口
+├── cli.py                   # CLI 入口：run / webui / persona 子命令
+├── persona_worker.py        # 单人格 worker（状态、心跳、配置热重载）
 ├── persona_config.py        # 人格级配置模型
 │
-├── core/                    # 核心引擎（Mixin 架构）
+├── core/                    # 核心引擎（组合模式）
 │   ├── emotional_engine.py  # EmotionalGroupChatEngine 最终类
 │   ├── engine_core.py       # 引擎基类（__init__、API、持久化）
-│   ├── pipeline.py          # 5 阶段管线 Mixin
-│   ├── prompt_factory.py    # Prompt 构建工具类（含 StyleAdapter）
-│   ├── bg_tasks.py          # 6 个后台任务 Mixin
-│   ├── helpers.py           # 工具集成、被动 TOOL、插件集成 Mixin
+│   ├── pipeline.py          # 5 阶段管线
+│   ├── prompt_factory.py    # Prompt 构建工具类
+│   ├── bg_tasks.py          # 后台任务管理
+│   ├── bg_tasks_delayed.py  # 延迟队列任务
+│   ├── helpers.py           # 工具集成、被动 TOOL、插件集成
 │   ├── tool_engine_context.py  # 被动 TOOL 引擎交互适配器
 │   ├── cognition.py         # 统一认知分析器（情绪 + 意图）
-│   ├── response_strategy.py # 四层响应策略
+│   ├── participation.py     # 参与度策略评分
+│   ├── group_dispatcher.py  # 群调度与投递回执
+│   ├── autonomy.py          # 自主行为（Episode / Intention）
+│   ├── intent.py            # 意图与 IntentStore
+│   ├── work_mode.py         # 工作模式
 │   ├── delayed_response_queue.py
-│   ├── proactive_trigger.py
 │   ├── rhythm.py            # 对话节奏分析
-│   ├── threshold_engine.py  # 动态阈值引擎
-│   ├── model_router.py      # 模型路由器
+│   ├── model_router.py      # 任务名 → AMKR 任务定义解析
 │   ├── brain.py             # LLM 调用层（含 Post-Hooks 链）
 │   └── ...
 │
 ├── memory/                  # 分层记忆系统
-│   ├── basic/               # 基础记忆（滑动窗口）
-│   ├── diary/               # 日记记忆（LLM + ChromaDB）
+│   ├── basic/               # 基础记忆（保留原始尾部）
 │   ├── semantic/            # 语义记忆（向量检索）
-│   ├── user/                # 用户管理
-│   ├── biography/           # 人物传记
+│   ├── units/               # 记忆单元（LLM 提取 + 内联向量 RAG）
+│   ├── user/                # 统一用户管理
 │   └── context_assembler.py # 上下文组装器
 │
 ├── tools/                  # 工具系统
@@ -236,8 +232,7 @@ sirius_pulse/
 │       ├── bash.py（含项目级 crontab 兼容调度）
 │       └── ...
 │
-├── extension_runtime.py     # Tool / Plugin 共用的扩展运行时契约
-├── sirius_pulse/plugins/    # Plugin 框架（加载、执行、调度、上下文）
+├── plugins/                 # Plugin 框架（加载、执行、调度、上下文）
 │   ├── base.py              # PluginBase 基类
 │   ├── registry.py          # 多维度插件索引
 │   ├── executor.py          # 插件执行器（权限 + 速率限制）
@@ -250,10 +245,6 @@ sirius_pulse/
 │   ├── scheduler.py         # 定时调度器（cron/interval）
 │   ├── models.py            # 插件数据模型
 │   └── events.py            # 事件定义
-├── plugins/                 # Git submodule：外部 Plugin 仓库
-│   ├── github_monitor/      # GitHub Poll/Webhook 监控
-│   ├── sub2api_monitor/     # Sub2API 订阅与分组倍率监控
-│   └── ...                  # 其他由子模块版本提供的外部扩展
 │
 ├── providers/               # LLM 接入层（统一指向 AMKR）
 │   ├── base.py              # LLMProvider 基类接口
@@ -273,6 +264,9 @@ sirius_pulse/
 ├── models/                  # 数据模型
 └── persona_generation/      # 人格资产生成
 ```
+
+仓库根目录另有 `plugins/`（外部 Plugin 的 Git 子模块，含 GitHub 监控、Sub2API 监控等），
+不属于 `sirius_pulse` 包。
 
 ---
 
@@ -324,7 +318,8 @@ Sirius Pulse 提供**双重扩展机制**，区分"AI 主动使用工具"与"用
 
 ### 工具系统（Tools）
 
-AI 在对话中**自主决定**调用工具。通过 `[TOOL_CALL: name | {params}]` 标记实现。
+AI 在对话中**自主决定**调用工具。工具以标准 OpenAI `tools` JSON 声明（在 `brain.py` 中组装），
+由模型通过 function calling 选择调用，参数经校验后执行。
 
 ```python
 # tools/my_tool.py

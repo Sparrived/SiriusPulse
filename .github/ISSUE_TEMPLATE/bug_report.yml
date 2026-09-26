@@ -69,7 +69,7 @@ body:
       options:
         - 核心引擎（emotional_engine / pipeline）
         - Prompt 构建（prompt_factory）
-        - 记忆系统（memory / diary）
+        - 记忆系统（memory）
         - 消息平台（NapCat / OneBot）
         - 模型路由 / AMKR 接入（ModelRouter / amkr_sync）
         - 技能系统（Skill / 表情包 / RAG）

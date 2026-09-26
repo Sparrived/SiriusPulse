@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Sirius Pulse (灵动月白) is an async roleplay chat framework for QQ group chats. It runs multiple AI personas as isolated OS subprocesses, each with independent config, memory, and QQ identity. The core engine uses a 5-stage pipeline (Perception → Cognition → Decision → Execution → Background) with layered memory (basic/diary/semantic/biography).
+Sirius Pulse (灵动月白) is an async roleplay chat framework for QQ group chats. It runs multiple AI personas, each with independent config, memory, and QQ identity. The core engine uses a 5-stage pipeline (Perception → Cognition → Decision → Execution → Background) with layered memory (basic/memory_units/semantic/user).
 
 All LLM traffic goes through **AMKR** (`auto-model-key-router`), an external local OpenAI-compatible router that owns vendors, API key pools, model selection and sampling parameters. Sirius Pulse sends **task names** (e.g. `response_generate`, `memory_extract`) as the `model` field and AMKR resolves them into real models.
 
@@ -22,22 +22,24 @@ pip install -e ".[dev,test,provider,quality]"
 
 ### Run
 ```bash
-python main.py                    # Interactive TUI (Textual-based)
-python main.py run                # Start all personas + WebUI
-python main.py webui              # Background WebUI only
-python main.py persona start <n>  # Start single persona
+python main.py run                # Start all active personas + WebUI
+python main.py webui              # WebUI only (background; --foreground/--status/--stop)
+python main.py persona list       # Persona management: list / create / activate / delete
 sirius-pulse                      # Same as python main.py (console_scripts entry)
 ```
 
+There is no interactive TUI: `python main.py` with no subcommand prints help.
+
 ### Test
 ```bash
-pytest -q                                    # All tests (~2s)
-pytest tests/test_config.py -q               # Single file
-pytest -q --cov=sirius_pulse                 # With coverage
-pytest -q --tb=short                         # Short tracebacks
+.venv/Scripts/python -m pytest -q             # All tests (~37s)
+.venv/Scripts/python -m pytest tests/test_config.py -q   # Single file
+.venv/Scripts/python -m pytest -q --cov=sirius_pulse     # With coverage
+.venv/Scripts/python -m pytest -q --tb=short             # Short tracebacks
 ```
 
 pytest config: `testpaths=["tests"]`, `asyncio_mode="strict"` (in pyproject.toml).
+Use the project venv — the system Python lacks runtime deps such as `mcp`.
 
 ### Lint & Format
 ```bash
@@ -61,20 +63,23 @@ cd docs && npm install && npm run dev        # Local preview on :5173
 
 ### Process Model
 ```
-CLI (cli.py) ──→ PersonaManager (persona_manager.py)
-                   ├── spawns → PersonaWorker subprocess (persona_worker.py)
-                   │               └── EngineRuntime (platforms/runtime.py)
-                   │                     └── EmotionalGroupChatEngine (core/emotional_engine.py)
-                   │                           ├── Brain (core/brain.py) — LLM calls + post-hooks
-                   │                           ├── Pipeline — 5-stage message processing
-                   │                           ├── Memory subsystems (memory/)
-                   │                           ├── Tools (tools/) — AI-callable tools
-                   │                           └── Plugins (plugins/) — user chat commands
-                   ├── spawns → WebUI (webui/server_core.py) on :8080
-                   └── manages → NapCat instances (QQ OneBot v11 gateway)
+CLI (cli.py) ──→ _cmd_run() — 同进程 asyncio 任务，每个人格一个 PersonaWorker
+                   ├── PersonaWorker (persona_worker.py)
+                   │     └── EngineRuntime (platforms/runtime.py)
+                   │           └── EmotionalGroupChatEngine (core/emotional_engine.py)
+                   │                 ├── Brain (core/brain.py) — LLM calls + post-hooks
+                   │                 ├── Pipeline — 5-stage message processing
+                   │                 ├── Memory subsystems (memory/)
+                   │                 ├── Tools (tools/) — AI-callable tools
+                   │                 └── Plugins (plugins/) — user chat commands
+                   ├── WebUI (webui/server_core.py) on :8080
+                   └── AMKR (external process) — owns vendors/keys/models/sampling params
 ```
 
-Each persona runs as an isolated subprocess (`python -m sirius_pulse.persona_worker --config data/personas/<name>`). PersonaManager monitors health via heartbeat files and manages WebSocket port allocation (starting from 3001).
+没有 `PersonaManager` 类。`python main.py run` 在**同一进程内**为 `data/global_config.json`
+里的每个活跃人格创建一个 `PersonaWorker` 并 `asyncio.create_task()` 拉起（不是每人格一个独立 OS 子进程，
+因此容器内 PID 1 就是 `sirius-pulse run`）。`PersonaWorker` 写状态文件与心跳供 WebUI 读取，
+并负责配置热重载。
 
 ### Key Module Boundaries
 
@@ -82,10 +87,10 @@ Each persona runs as an isolated subprocess (`python -m sirius_pulse.persona_wor
 - **`sirius_pulse/providers/`** — The only LLM boundary. `OpenAICompatibleProvider` (`openai_compatible.py`) points at AMKR; `amkr.py` parses the connection config; `amkr_sync.py` registers task names into AMKR. There are no vendor implementations and no local routing registry — adding one back is a regression.
 - **`sirius_pulse/adapters/`** — Platform-agnostic message types (`TextSegment`, `ImageSegment`, `MessageGroup`, etc. in `models.py`) and `BaseAdapter` abstract class.
 - **`sirius_pulse/platforms/`** — Concrete platform implementations. Currently only OneBot v11 via NapCat (`platforms/onebot_v11/napcat/adapter.py`). `runtime.py` bridges platform adapters to the engine.
-- **`sirius_pulse/memory/`** — Layered memory: basic (retains the raw tail until a checkpoint memory unit covers it; compaction triggers above `DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER` and drains to `..._TARGET`, after which the covered raw entries leave the window and only memory units are retrieved; `DEFAULT_BASIC_MEMORY_HARD_LIMIT` is only a RAM safety ceiling above that trigger, and `DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET` caps what the chat prompt injects), diary (LLM summaries + ChromaDB vectors), semantic (vector search at group/user/global levels), biography (cross-session character profiles).
-- **`sirius_pulse/tools/`** — AI-callable tools. Tools are Python files exporting `TOOL_META` + `run()`. The LLM invokes them via `[TOOL_CALL: name | {params}]`. Includes passive tools (background tasks, event triggers, lifecycle hooks).
+- **`sirius_pulse/memory/`** — Layered memory: basic (retains the raw tail until a checkpoint memory unit covers it; compaction triggers above `DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER` and drains to `..._TARGET`, after which the covered raw entries leave the window and only memory units are retrieved; `DEFAULT_BASIC_MEMORY_HARD_LIMIT` is only a RAM safety ceiling above that trigger, and `DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET` caps what the chat prompt injects), memory_units (LLM-extracted structured units stored inline in their JSON files, retrieved by RAG through an in-memory index), semantic (vector search at group/user/global levels), user (unified identity resolution). There is no biography/diary/evolution-chain subsystem.
+- **`sirius_pulse/tools/`** — AI-callable tools. Tools are Python files exporting `TOOL_META` + `run()`, invoked through standard OpenAI `tools` JSON assembled in `brain.py`. Includes passive tools (background tasks, event triggers, lifecycle hooks).
 - **`sirius_pulse/plugins/`** — User-facing chat commands triggered by `/` `#` `!` prefixes. Inherit `PluginBase`, use `@command` decorator (v1.2+). Three output modes: `direct` / `llm` (AI-personalized) / `silent`.
-- **`sirius_pulse/webui/`** — aiohttp REST API + static frontend for persona management, config, monitoring. Split into domain modules: `persona_api.py`, `memory_api.py`, `biography_api.py`, `evolution_api.py`, `monitoring_api.py`, etc.
+- **`sirius_pulse/webui/`** — aiohttp REST API + static frontend for persona management, config, monitoring. Split into domain modules: `persona_api.py`, `memory_api.py`, `monitoring_api.py`, `autonomy_api.py`, `amkr_proxy.py`, `model_catalog.py`, etc.
 - **`sirius_pulse/config/`** — Data models for session/agent/orchestration config. Shared across plugins and tools.
 - **`sirius_pulse/models/`** — Canonical data models. `models.py` is the single source of truth for session and transcript contracts.
 
@@ -93,16 +98,24 @@ Each persona runs as an isolated subprocess (`python -m sirius_pulse.persona_wor
 ```
 data/
 ├── personas/{name}/          # Per-persona isolated directory
-│   ├── persona.json          # Character name, personality, speaking style
-│   ├── orchestration.json    # Local task tuning only: task_timeout / task_retries
+│   ├── persona.json          # Character name, personality, speaking style (PersonaProfile)
 │   ├── adapters.json         # NapCat adapter configs (ws_url, QQ number, group whitelist)
-│   ├── experience.json       # Persona experience/background
-│   └── persona.db            # Unified SQLite DB (memory, tokens, cognition events, session state)
+│   ├── experience.json       # Persona experience / reply tuning
+│   ├── persona.db            # Unified SQLite DB (users, token_usage, cognition_events, ...)
+│   ├── engine_state/         # Runtime state
+│   │   └── orchestration.json  # ← the file the engine actually loads (OrchestrationStore)
+│   ├── memory/               # Memory units (per-group JSON, inline vectors)
+│   ├── tool_data/            # Tool KV data (incl. stickers/ RAG assets)
+│   └── logs/
 ├── global_config.json        # AMKR connection: amkr_base_url / amkr_local_api_key / amkr_workspace
 │                             #   + per-workspace credentials: amkr_panel_keys / amkr_inference_keys
-├── tools/                   # User-installed tools (scanned at runtime)
+├── tools/                    # User-installed tools (scanned at runtime)
 └── adapter_port_registry.json
 ```
+
+A legacy `personas/{name}/orchestration.json` is still written by `persona_config.py` for
+`task_timeout` / `task_retries`, but the engine's live read path is
+`engine_state/orchestration.json` via `OrchestrationStore`.
 
 AMKR itself lives outside this repo; the framework creates the AMKR workspace
 `<amkr_workspace>/<persona>` (the only moment its two credentials are returned, so both are
@@ -151,6 +164,5 @@ Use `uv` for Python project management (dependency installation, virtual environ
 
 ### Documentation Sync
 When changing module boundaries, commands, or API contracts, update:
-- `.github/skills/project-structure-sync/SKILL.md` and `.github/skills/external-integration/SKILL.md`
-- `docs/` submodule content (VitePress)
+- `docs/` submodule content (VitePress) — 唯一权威文档源
 - `README.md` if user-visible usage changes
