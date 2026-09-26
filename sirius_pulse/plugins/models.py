@@ -865,12 +865,14 @@ class PluginPermissionDef:
 
 @dataclass(slots=True)
 class PluginRenderDef:
-    """Plugin 渲染策略定义。"""
+    """Plugin 渲染策略定义。
+
+    采样参数（``max_tokens`` / ``temperature``）不在此处：它们由 AMKR 的任务
+    定义持有。
+    """
 
     mode: str = "direct"  # direct | llm | silent
     system_prompt_suffix: str = ""  # llm 模式下追加的 system prompt
-    max_tokens: int = 500
-    temperature: float = 0.8
 
 
 @dataclass(slots=True)
@@ -1047,8 +1049,6 @@ class PluginDefinition:
         render = PluginRenderDef(
             mode=render_raw.get("mode", "direct"),
             system_prompt_suffix=render_raw.get("system_prompt_suffix", ""),
-            max_tokens=render_raw.get("max_tokens", 500),
-            temperature=render_raw.get("temperature", 0.8),
         )
 
         return PluginDefinition(

@@ -175,8 +175,6 @@ class EngineProxy:
         inject_persona: bool = False,
         task_name: str = "plugin_raw",
         model: str | None = None,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
         json_mode: bool = False,
         return_reasoning: bool = False,
     ) -> str | tuple[str, str]:
@@ -192,8 +190,8 @@ class EngineProxy:
             inject_persona: 是否自动在 system_prompt 开头注入当前人格信息
             task_name: 认知任务名，用于模型路由（当 model 未指定时）
             model: 强制指定模型名，优先级高于 task_name 路由
-            temperature: 采样温度
-            max_tokens: 最大生成 token 数
+
+        采样参数不在此接口：它们由 AMKR 的任务定义持有，需要调整时改 AMKR 侧。
         """
         if self._engine is None:
             return "[引擎未绑定]"
@@ -225,13 +223,7 @@ class EngineProxy:
         if resolved_model is None:
             model_router = getattr(self._engine, "model_router", None)
             if model_router is not None:
-                cfg = model_router.resolve(task_name)
-                resolved_model = cfg.model_name
-                # 路由配置中有 temperature/max_tokens 时使用，但保持用户显式传入的优先级
-                if temperature == 0.7:  # 用户未显式修改
-                    temperature = cfg.temperature
-                if max_tokens == 4096:  # 用户未显式修改
-                    max_tokens = cfg.max_tokens
+                resolved_model = model_router.resolve(task_name).model_name
 
         # 3. 构建消息
         msgs: list[dict[str, object]] = []
@@ -246,8 +238,6 @@ class EngineProxy:
             model=resolved_model or "",
             system_prompt="",
             messages=msgs,
-            temperature=temperature,
-            max_tokens=max_tokens,
             timeout_seconds=60.0,
             purpose=task_name,
             response_format={"type": "json_object"} if json_mode else None,

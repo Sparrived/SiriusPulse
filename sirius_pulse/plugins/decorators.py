@@ -75,9 +75,8 @@ class PluginCommandMeta:
     examples: list[str] = field(default_factory=list)  # 使用示例
     hidden_from_intent: bool = False  # 是否对意图识别隐藏（v1.3+）
     # LLM 渲染参数
+    # 采样参数（max_tokens / temperature）不在此列：它们由 AMKR 的任务定义持有。
     system_prompt_suffix: str = ""
-    max_tokens: int = 500
-    temperature: float = 0.8
     mood_hint: str = ""
     # 执行超时
     timeout: float = 0.0  # 单次执行超时秒数，0 使用默认值
@@ -156,9 +155,8 @@ class GroupCommandMeta:
     hidden_from_intent: bool = False  # 是否对意图识别隐藏
     parent: str = ""  # 父指令组名（用于嵌套，如 "ca" 或 "ca.report"）
     # LLM 渲染参数
+    # 采样参数（max_tokens / temperature）不在此列：它们由 AMKR 的任务定义持有。
     system_prompt_suffix: str = ""
-    max_tokens: int = 500
-    temperature: float = 0.8
     mood_hint: str = ""
     # 执行超时
     timeout: float = 0.0  # 单次执行超时秒数，0 使用默认值
@@ -198,8 +196,6 @@ def command(
     examples: list[str] | None = None,
     hidden_from_intent: bool = False,
     system_prompt_suffix: str = "",
-    max_tokens: int = 500,
-    temperature: float = 0.8,
     mood_hint: str = "",
     timeout: float = 0.0,
 ) -> Callable[[F], F]:
@@ -220,8 +216,6 @@ def command(
         examples: 使用示例列表
         hidden_from_intent: 是否对意图识别隐藏（v1.3+）
         system_prompt_suffix: LLM 模式下追加到 system prompt 的文本
-        max_tokens: LLM 模式最大 token 数
-        temperature: LLM 模式生成温度
         mood_hint: 情绪提示文本
 
     Returns:
@@ -259,8 +253,6 @@ def command(
         examples=examples or [],
         hidden_from_intent=hidden_from_intent,
         system_prompt_suffix=system_prompt_suffix,
-        max_tokens=max_tokens,
-        temperature=temperature,
         mood_hint=mood_hint,
         timeout=timeout,
     )
@@ -369,8 +361,6 @@ def group_command(
     hidden_from_intent: bool = False,
     parent: str = "",
     system_prompt_suffix: str = "",
-    max_tokens: int = 500,
-    temperature: float = 0.8,
     mood_hint: str = "",
     timeout: float = 0.0,
 ) -> Callable[[F], F]:
@@ -389,8 +379,6 @@ def group_command(
         hidden_from_intent: 是否对意图识别隐藏
         parent: 父指令组路径（用于嵌套，如 "ca" 或 "ca.report"）
         system_prompt_suffix: LLM 模式下追加到 system prompt 的文本
-        max_tokens: LLM 模式最大 token 数
-        temperature: LLM 模式生成温度
         mood_hint: 情绪提示文本
         timeout: 单次执行超时秒数，0 使用默认值
 
@@ -422,8 +410,6 @@ def group_command(
         hidden_from_intent=hidden_from_intent,
         parent=parent,
         system_prompt_suffix=system_prompt_suffix,
-        max_tokens=max_tokens,
-        temperature=temperature,
         mood_hint=mood_hint,
         timeout=timeout,
     )
@@ -489,8 +475,6 @@ def discover_commands(instance: object) -> dict[str, PluginCommandMeta]:
                 description=meta.description,
                 examples=list(meta.examples),
                 system_prompt_suffix=meta.system_prompt_suffix,
-                max_tokens=meta.max_tokens,
-                temperature=meta.temperature,
                 mood_hint=meta.mood_hint,
                 timeout=meta.timeout,
                 handler=bound,
@@ -567,8 +551,6 @@ def discover_command_groups(
                     examples=list(sub_meta.examples),
                     hidden_from_intent=sub_meta.hidden_from_intent,
                     system_prompt_suffix=sub_meta.system_prompt_suffix,
-                    max_tokens=sub_meta.max_tokens,
-                    temperature=sub_meta.temperature,
                     mood_hint=sub_meta.mood_hint,
                     timeout=sub_meta.timeout,
                     handler=bound,
