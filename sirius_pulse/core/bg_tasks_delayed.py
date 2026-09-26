@@ -304,14 +304,48 @@ class DelayedQueueTasks:
         later round raises out of the generation loop, so the window must be
         closed here as well; otherwise the group would keep swallowing every
         addressed message into a chain that is no longer running.
+
+        ``tick()`` consumes the queue destructively before generation, so a
+        failure out of the generation loop would otherwise drop the user's
+        message entirely. Items already taken are therefore re-queued here.
         """
+        queue = self._engine.delayed_queue
+        # 记录调用前已在途的条目，避免把并发/上一轮的在途条目误判为本轮产物。
+        pre_existing = set(queue.in_flight_ids(group_id))
         try:
-            return await self._tick_delayed_queue_impl(
+            results = await self._tick_delayed_queue_impl(
                 group_id,
                 on_partial_reply,
                 adapter_type=adapter_type,
                 adapter_route_id=adapter_route_id,
             )
+        except BaseException:
+            # 生成/投递失败：把本群刚触发但未成功外发的条目放回队列。
+            # 用 BaseException 是为了连取消也回队——被取消的条目同样还没外发。
+            in_flight = [
+                item_id for item_id in queue.in_flight_ids(group_id) if item_id not in pre_existing
+            ]
+            if in_flight:
+                requeued = queue.requeue_in_flight(in_flight)
+                dropped = [item_id for item_id in in_flight if item_id not in requeued]
+                if dropped:
+                    logger.error(
+                        "群 %s 有 %d 条延迟回复已达重试上限被放弃: %s",
+                        group_id,
+                        len(dropped),
+                        dropped,
+                    )
+            raise
+        else:
+            # 生成 + 外发成功，确认丢弃本轮在途引用（合并批次可能有多条）。
+            queue.commit_in_flight(
+                [
+                    item_id
+                    for item_id in queue.in_flight_ids(group_id)
+                    if item_id not in pre_existing
+                ]
+            )
+            return results
         finally:
             end_tool_chain = getattr(self._engine, "end_tool_chain", None)
             if callable(end_tool_chain):

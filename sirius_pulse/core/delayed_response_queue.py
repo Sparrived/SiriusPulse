@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,6 +24,10 @@ from sirius_pulse.models.response_strategy import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: 生成/投递失败后重新入队的次数上限。超过则放弃并记 ERROR，避免坏条目
+#: （例如被平台永久拒绝的内容）无限占用 tick。
+DEFAULT_MAX_GENERATION_RETRIES = 2
 
 # Heat-based window multipliers: hotter groups = longer wait
 _HEAT_WINDOW_MULT = {
@@ -55,6 +60,11 @@ class DelayedResponseQueue:
     def __init__(self) -> None:
         # group_id -> list of items
         self._queues: dict[str, list[DelayedResponseItem]] = {}
+        # item_id -> item：已被 tick 取走、正在生成/投递中的条目。
+        # tick() 是破坏性消费，条目一旦触发就离开 _queues；若生成阶段抛错，
+        # 旧实现只剩一行 warning，消息就永久消失了。这里额外留一份引用，
+        # 让失败可以回队、成功可以确认丢弃。
+        self._in_flight: dict[str, DelayedResponseItem] = {}
 
     @staticmethod
     def _matches_source(
@@ -242,6 +252,7 @@ class DelayedResponseQueue:
             if action == "trigger":
                 item.status = "triggered"
                 triggered.append(item)
+                self._in_flight[item.item_id] = item
             elif action == "cancel":
                 item.status = "cancelled"
             else:
@@ -259,6 +270,142 @@ class DelayedResponseQueue:
                 item.status = "cancelled"
                 cancelled += 1
         return cancelled
+
+    def requeue_after_failure(
+        self,
+        item: DelayedResponseItem,
+        *,
+        max_retries: int = DEFAULT_MAX_GENERATION_RETRIES,
+        reset_window_seconds: float = 0.0,
+    ) -> bool:
+        """把生成/投递失败的条目放回队列，供下一轮 tick 重试。
+
+        ``tick()`` 在触发时就把条目移出 ``remaining`` 并置为 ``triggered``，
+        因此生成阶段抛错或投递失败时，这条消息在旧实现里只剩一行 warning 就
+        永久消失了。这里显式回队，让「失败」不等于「丢消息」。
+
+        Args:
+            item: 失败条目。会重置为 ``pending`` 并清空窗口起点。
+            max_retries: 重新入队的次数上限，超过则放弃并返回 False。
+            reset_window_seconds: 回队后重新等待的秒数；0 表示下一轮立即重试。
+
+        Returns:
+            是否成功回队。返回 False 表示已达重试上限（调用方应记 ERROR）。
+        """
+        if item is None:
+            return False
+        if item.retry_count >= max_retries:
+            logger.error(
+                "延迟条目 %s 已重试 %d 次仍失败，放弃以免死循环（群 %s）",
+                item.item_id,
+                item.retry_count,
+                item.group_id,
+            )
+            return False
+
+        item.retry_count += 1
+        item.status = "pending"
+        item.window_seconds = max(0.0, float(reset_window_seconds))
+        # window_seconds 是相对 enqueue_time 计算的，回队必须重置起点，
+        # 否则新窗口会被旧的 enqueue_time 直接判为已过期而立刻再次触发。
+        item.enqueue_time = datetime.now(timezone.utc).isoformat()
+
+        queue = self._queues.setdefault(item.group_id, [])
+        if not any(existing.item_id == item.item_id for existing in queue):
+            queue.append(item)
+        logger.warning(
+            "延迟条目 %s 生成/投递失败，已重新入队（第 %d 次，群 %s）",
+            item.item_id,
+            item.retry_count,
+            item.group_id,
+        )
+        return True
+
+    def requeue_in_flight(
+        self,
+        item_ids: Iterable[str],
+        *,
+        max_retries: int = DEFAULT_MAX_GENERATION_RETRIES,
+        reset_window_seconds: float = 0.0,
+    ) -> list[str]:
+        """把一批已触发但生成/投递失败的条目放回队列。
+
+        Args:
+            item_ids: 失败批次的 item_id。
+            max_retries: 单条重新入队上限，超过则放弃并记 ERROR。
+            reset_window_seconds: 回队后重新等待的秒数。
+
+        Returns:
+            真正成功回队的 item_id 列表；已达上限的条目会被丢弃。
+        """
+        requeued: list[str] = []
+        for item_id in item_ids:
+            item = self._in_flight.pop(str(item_id), None)
+            if item is None:
+                continue
+            if self.requeue_after_failure(
+                item,
+                max_retries=max_retries,
+                reset_window_seconds=reset_window_seconds,
+            ):
+                requeued.append(item.item_id)
+        return requeued
+
+    def commit_in_flight(self, item_ids: Iterable[str]) -> None:
+        """确认一批条目已成功生成并投递，从在途表移除。"""
+        for item_id in item_ids:
+            item = self._in_flight.pop(str(item_id), None)
+            if item is not None:
+                item.status = "sent"
+
+    def in_flight_ids(self, group_id: str | None = None) -> list[str]:
+        """列出正在生成/投递中的条目 id，可按群过滤。"""
+        return [
+            item_id
+            for item_id, item in self._in_flight.items()
+            if group_id is None or item.group_id == group_id
+        ]
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        """导出所有待触发条目，用于进程重启后恢复。
+
+        只导出 ``pending`` 项：``triggered`` 表示已经被生成流程取走，
+        ``cancelled`` 已作废，两者都不该在重启后复活。
+        """
+        return [
+            item.to_dict()
+            for queue in self._queues.values()
+            for item in queue
+            if item.status == "pending"
+        ]
+
+    def restore(self, payload: list[dict[str, Any]]) -> int:
+        """从 ``snapshot()`` 的输出恢复队列，返回成功恢复的条目数。
+
+        单条损坏只跳过该条并记 WARNING，不影响其余消息恢复。
+
+        恢复后窗口立即到期：``enqueue_time`` 是重启前写下的时间戳，若沿用原
+        ``window_seconds``，重启耗时会被算进等待时间，可能出现刚恢复就被判
+        为已过期（或反之）的错位。这里统一按「现在就该重新评估」处理。
+        """
+        restored = 0
+        for raw in payload or []:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                item = DelayedResponseItem.from_dict(raw)
+            except Exception as exc:  # 恢复期不能让单条坏数据炸掉整轮启动
+                logger.warning("延迟队列条目恢复失败，已跳过: %s", exc)
+                continue
+            if not item.item_id or not item.group_id or item.status != "pending":
+                continue
+            item.window_seconds = 0.0
+            item.enqueue_time = datetime.now(timezone.utc).isoformat()
+            self._queues.setdefault(item.group_id, []).append(item)
+            restored += 1
+        if restored:
+            logger.info("已从磁盘恢复 %d 条延迟队列条目", restored)
+        return restored
 
     def get_pending(
         self,

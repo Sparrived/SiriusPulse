@@ -320,10 +320,12 @@ class EnginePersistence:
 
         import dataclasses
 
+        # 延迟队列必须落盘：进程重启时内存里等待触发的条目会全部消失，
+        # 而这些正是「用户已经说了话、AI 只是还没开口」的消息。
         engine._state_store.save_all(
             working_memories=working_memories,
             assistant_emotion=dataclasses.asdict(engine.assistant_emotion),
-            delayed_queue=[],
+            delayed_queue=engine.delayed_queue.snapshot(),
             group_timestamps=dict(engine._group_last_message_at),
             basic_memory=engine.basic_memory.to_dict(),
         )
@@ -365,6 +367,14 @@ class EnginePersistence:
 
             # Group timestamps
             engine._group_last_message_at = dict(state.get("group_timestamps", {}))
+
+            # 延迟队列：重启前尚未开口的消息要接着等，否则它们会静默消失。
+            delayed_items = state.get("delayed_queue") or []
+            if delayed_items:
+                try:
+                    engine.delayed_queue.restore(delayed_items)
+                except Exception as exc:
+                    logger.warning("延迟队列恢复失败，跳过: %s", exc)
 
             # Reset timestamps to now so the silence timer starts fresh
             # after engine restart; otherwise offline time would be mis-counted as
