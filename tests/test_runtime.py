@@ -645,3 +645,78 @@ async def test_persona_worker_startup_lock_serializes_initialization(tmp_path):
     )
 
     assert state["max_active"] == 1
+
+
+def _heartbeat_status_for(worker: PersonaWorker, adapter: object) -> dict:
+    """跑一轮心跳循环并返回写入的 worker_status。"""
+    worker._adapters = [adapter]  # type: ignore[list-item]
+    worker._running = True
+    written: dict = {}
+    worker._write_status = lambda status: written.update(status)  # type: ignore[method-assign]
+    worker._check_config_reload = lambda: None  # type: ignore[method-assign]
+
+    async def _once() -> None:
+        sleeps = 0
+
+        async def _fake_sleep(_seconds: float) -> None:
+            nonlocal sleeps
+            sleeps += 1
+            if sleeps >= 1:
+                worker._running = False
+
+        original = asyncio.sleep
+        asyncio.sleep = _fake_sleep  # type: ignore[assignment]
+        try:
+            await worker._heartbeat_loop()
+        finally:
+            asyncio.sleep = original  # type: ignore[assignment]
+
+    asyncio.run(_once())
+    return written
+
+
+def test_heartbeat_reports_adapter_offline_without_claiming_process_stopped():
+    """适配器离线时心跳要如实暴露，但 status 必须仍是 running。
+
+    §3.3 的故障是「AI 静默离线、心跳照写、UI 仍显示运行中」。修法是把连接
+    健康写进心跳；但若顺手把 status 改成非 running，`_is_persona_running()`
+    会判定进程已停，WebUI 就会重复拉起第二个 worker —— 那是更严重的故障。
+    """
+
+    class _OfflineAdapter:
+        def connection_state(self) -> dict:
+            return {"online": False, "reconnect_exhausted": False, "offline_seconds": 42.0}
+
+    worker = PersonaWorker(os.path.join(os.getcwd(), "unused-persona-dir"))
+    status = _heartbeat_status_for(worker, _OfflineAdapter())
+
+    assert status["status"] == "running"
+    assert status["adapter_online"] is False
+    assert status["degraded"] is True
+    assert status["adapter_offline_seconds"] == 42.0
+
+
+def test_heartbeat_marks_adapter_online_when_connected():
+    class _OnlineAdapter:
+        def connection_state(self) -> dict:
+            return {"online": True, "reconnect_exhausted": False, "offline_seconds": 0.0}
+
+    worker = PersonaWorker(os.path.join(os.getcwd(), "unused-persona-dir"))
+    status = _heartbeat_status_for(worker, _OnlineAdapter())
+
+    assert status["status"] == "running"
+    assert status["adapter_online"] is True
+    assert status["degraded"] is False
+
+
+def test_heartbeat_omits_connection_fields_for_legacy_adapters():
+    """不支持连接状态的适配器不应让心跳出现假字段。"""
+
+    class _LegacyAdapter:
+        pass
+
+    worker = PersonaWorker(os.path.join(os.getcwd(), "unused-persona-dir"))
+    status = _heartbeat_status_for(worker, _LegacyAdapter())
+
+    assert status["status"] == "running"
+    assert "adapter_online" not in status

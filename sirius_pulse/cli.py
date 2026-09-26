@@ -461,6 +461,14 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     ]
     workers_done = asyncio.gather(*worker_tasks, return_exceptions=True)
     stop_task = asyncio.create_task(stop_all_event.wait())
+
+    # 容器内本进程就是 PID 1：孤儿进程会被内核挂到我们名下，不 wait() 就永久
+    # 停留在僵尸态。Playwright 的 Chromium 会持续产生这类孤儿。
+    from sirius_pulse.utils.child_reaper import start_child_reaper
+
+    reaper_task = start_child_reaper()
+    if reaper_task is not None:
+        LOG.info("已启动孤儿子进程回收任务（本进程为 PID 1）")
     try:
         done, _pending = await asyncio.wait(
             {workers_done, stop_task}, return_when=asyncio.FIRST_COMPLETED
@@ -477,6 +485,9 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         if not stop_task.done():
             stop_task.cancel()
         await asyncio.gather(stop_task, return_exceptions=True)
+        if reaper_task is not None and not reaper_task.done():
+            reaper_task.cancel()
+            await asyncio.gather(reaper_task, return_exceptions=True)
         await webui.stop()
         LOG.info("所有服务已停止")
 

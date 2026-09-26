@@ -159,10 +159,14 @@ class NapCatAdapter(BaseAdapter):
 
     _RECONNECT_BASE_DELAY = 1.0
     _RECONNECT_MAX_DELAY = 30.0
-    _MAX_RECONNECT_ATTEMPTS = 5
+    # 0 表示**永不放弃**：NapCat 重启、网络抖动期间适配器会一直在退避重试，
+    # 而不是在 5 次失败后永久离线（此时心跳照写、UI 仍显示运行中，没人发现）。
+    # 退避上限 30 秒，因此长期断线也只留下很低的日志/CPU 噪音。
+    _MAX_RECONNECT_ATTEMPTS = 0
 
     adapter_type = "napcat"
     _NOT_READY_LOG_INTERVAL = 30.0
+    _OFFLINE_LOG_INTERVAL = 60.0
 
     def __init__(
         self,
@@ -206,6 +210,10 @@ class NapCatAdapter(BaseAdapter):
         self._enabled = True
         self._engine: Any = None
         self._last_not_ready_log: float = 0.0
+        # 离线可观测性：断线起点、上次播报时间、是否已耗尽重试
+        self._offline_since: float | None = None
+        self._last_offline_log: float = 0.0
+        self._reconnect_exhausted = False
         self._reply_locks: dict[str, asyncio.Lock] = {}
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._seen_message_ids: dict[str, float] = {}
@@ -418,14 +426,23 @@ class NapCatAdapter(BaseAdapter):
             self.ws = None
 
     async def _reconnect_loop(self) -> None:
-        """自动重连循环：连接断开后指数退避重试。"""
+        """自动重连循环：连接断开后指数退避重试，默认永不放弃。
+
+        放弃重连等于「AI 静默离线但 UI 仍显示运行中」——这是最难被发现的一类
+        故障。因此默认 ``_MAX_RECONNECT_ATTEMPTS = 0``（无限重试），并在断线
+        持续期间周期性升格日志级别，让运维能从日志看出适配器已经离线多久。
+        """
         delay = self._RECONNECT_BASE_DELAY
         attempts = 0
         while self._running:
             if self.ws is None or _is_ws_closed(self.ws):
                 if await self._connect_once():
+                    if attempts > 0:
+                        LOG.warning("NapCat WS 已恢复连接（此前失败 %d 次）", attempts)
                     delay = self._RECONNECT_BASE_DELAY
                     attempts = 0
+                    self._offline_since = None
+                    self._reconnect_exhausted = False
                     self._listen_task = asyncio.create_task(self._listen_loop())
                     # 等待监听任务结束（连接断开）
                     try:
@@ -441,15 +458,45 @@ class NapCatAdapter(BaseAdapter):
                         and attempts >= self._MAX_RECONNECT_ATTEMPTS
                     ):
                         LOG.error(
-                            "NapCat WS 重连次数耗尽 (%s 次)，停止重连",
+                            "NapCat WS 重连次数耗尽 (%s 次)，适配器已离线；需重启进程恢复",
                             self._MAX_RECONNECT_ATTEMPTS,
                         )
+                        self._offline_since = self._offline_since or time.monotonic()
+                        self._reconnect_exhausted = True
                         break
+                    self._offline_since = self._offline_since or time.monotonic()
+                    attempts += 1
+                    # 持续断线期间按固定间隔播报一次，避免刷屏又不会没人发现。
+                    if time.monotonic() - self._last_offline_log >= self._OFFLINE_LOG_INTERVAL:
+                        self._last_offline_log = time.monotonic()
+                        LOG.error(
+                            "NapCat WS 离线中（已失败 %d 次，持续 %.0f 秒），继续重试",
+                            attempts,
+                            time.monotonic() - self._offline_since,
+                        )
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, self._RECONNECT_MAX_DELAY)
-                    attempts += 1
             else:
+                self._offline_since = None
                 await asyncio.sleep(self.reconnect_interval)
+
+    @property
+    def is_online(self) -> bool:
+        """WebSocket 当前是否处于已连接状态。"""
+        return self.ws is not None and not _is_ws_closed(self.ws)
+
+    def connection_state(self) -> dict[str, Any]:
+        """供 WebUI / 监控读取的连接健康快照。"""
+        offline_seconds = (
+            round(time.monotonic() - self._offline_since, 1)
+            if self._offline_since is not None
+            else 0.0
+        )
+        return {
+            "online": self.is_online,
+            "reconnect_exhausted": self._reconnect_exhausted,
+            "offline_seconds": offline_seconds,
+        }
 
     # ─── 事件分发 ─────────────────────────────────────────
 

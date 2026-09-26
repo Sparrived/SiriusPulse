@@ -221,15 +221,45 @@ class PersonaWorker:
                 dispatcher = getattr(adapter, "_dispatcher", None)
                 if dispatcher is not None:
                     dispatcher.register()
-            self._write_status(
-                {
-                    "status": "running",
-                    "pid": os.getpid(),
-                    "heartbeat_at": _now_iso(),
-                }
-            )
+            status: dict[str, Any] = {
+                "status": "running",
+                "pid": os.getpid(),
+                "heartbeat_at": _now_iso(),
+            }
+            # 进程活着不等于人格在线：适配器可能已断线并耗尽重连。把连接健康
+            # 一并写进心跳，UI 才不会把「离线」显示成「运行中」。
+            #
+            # 注意：这里**不能**把 status 改成 "degraded" —— `_is_persona_running()`
+            # 只认 starting/running，改掉会让 WebUI 误判进程已停而重复拉起。
+            # 降级信息另用字段表达。
+            offline = self._adapter_connection_summary()
+            if offline is not None:
+                status["adapter_online"] = offline["online"]
+                status["adapter_offline_seconds"] = offline["offline_seconds"]
+                status["degraded"] = not offline["online"]
+            self._write_status(status)
             self._check_config_reload()
             await asyncio.sleep(10)
+
+    def _adapter_connection_summary(self) -> dict[str, Any] | None:
+        """汇总各适配器连接状态；适配器不支持时返回 None。"""
+        states = []
+        for adapter in self._adapters:
+            getter = getattr(adapter, "connection_state", None)
+            if callable(getter):
+                try:
+                    states.append(getter())
+                except Exception as exc:  # 状态读取失败不能拖垮心跳
+                    LOG.debug("读取适配器连接状态失败: %s", exc)
+        if not states:
+            return None
+        return {
+            "online": all(state.get("online") for state in states),
+            "offline_seconds": max(
+                (float(state.get("offline_seconds") or 0.0) for state in states),
+                default=0.0,
+            ),
+        }
 
     def _check_config_reload(self) -> None:
         """检查配置文件变更，热重载到引擎。
