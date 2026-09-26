@@ -205,10 +205,10 @@ def test_register_tasks_when_revision_is_stale_then_rereads_and_retries(monkeypa
     fake = _FakeAmkr(reject_once=True)
     _install(monkeypatch, fake)
 
-    result = register_persona_tasks(_settings(), "sirius", task_names=["topic_cluster"])
+    result = register_persona_tasks(_settings(), "sirius", task_names=["autonomy_generate"])
 
     assert result.ok, result.failed
-    assert result.created == ["topic_cluster"]
+    assert result.created == ["autonomy_generate"]
     assert sum(1 for m, _, _, _ in fake.requests if m == "GET") == 2
 
 
@@ -288,12 +288,12 @@ def test_inspect_persona_workspace_when_tasks_partly_exist_then_splits_registere
     _install(monkeypatch, fake)
 
     state = inspect_persona_workspace(
-        _settings(), "sirius", task_names=["response_generate", "topic_cluster"]
+        _settings(), "sirius", task_names=["response_generate", "autonomy_generate"]
     )
 
     assert state.ok
     assert state.registered == ["response_generate"]
-    assert state.missing == ["topic_cluster"]
+    assert state.missing == ["autonomy_generate"]
     assert state.workspace == "sirius-pulse/sirius"
 
 
@@ -378,7 +378,7 @@ def test_collect_amkr_status_when_reachable_then_reports_health_and_ui_url(monke
     workspace = status["workspaces"][0]
     assert workspace["workspace"] == "sirius-pulse/sirius"
     assert workspace["registered"] == ["response_generate"]
-    assert "topic_cluster" in workspace["missing"]
+    assert "autonomy_generate" in workspace["missing"]
 
 
 def test_collect_amkr_status_when_not_reachable_then_reports_error(monkeypatch):
