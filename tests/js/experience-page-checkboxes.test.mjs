@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const source = readFileSync('sirius_pulse/webui/static/pages/experience.js', 'utf8');
+const rawSource = readFileSync('sirius_pulse/webui/static/pages/experience.js', 'utf8');
+// Normalize EOL so the multi-line assertions below hold on both LF and CRLF checkouts.
+const source = rawSource.replaceAll('\r\n', '\n');
 
 assert.match(
   source,
