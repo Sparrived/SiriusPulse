@@ -23,12 +23,11 @@
 ## 约定
 
 - 任何涉及模块边界、命令或 API 契约的变更，必须同步更新：
-  - `.github/skills/framework-quickstart/SKILL.md`
-  - `.github/skills/external-integration/SKILL.md`（若外部接入方式或配置变化）
-  - `docs/guide/architecture-overview.md`
+  - `docs/guide/architecture-overview.md`、`docs/guide/engine-architecture.md`
+  - `docs/guide/memory-system.md`、`docs/guide/tool-system.md`（若涉及记忆/工具）
   - `docs/reference/provider-config.md`（若 AMKR 配置或任务名契约变化）
   - `README.md`（若用法变化）
-- 若涉及会话持久化/重启恢复或记忆压缩策略，必须同步检查 `sirius_pulse/session/store.py` 相关用法文档与示例。
+- 若涉及会话持久化/重启恢复或记忆压缩策略，必须同步检查 `sirius_pulse/core/engine_persistence.py`、`sirius_pulse/memory/basic/manager.py` 相关用法文档与示例。
 - **事件系统 LLM 验证**：事件记忆采用两级验证：快速路径（关键词匹配）和 LLM 验证路径。新事件默认为 pending (verified=False)，当积累足够消息数（默认 min_mentions=3）后，应定期调用 `finalize_pending_events()` 用 LLM 验证并充实事件信息。详见 `docs/guide/memory-system.md` 的事件记忆部分。
 - CLI 与 API 启用时必须显式提供 `work_path`，所有持久化文件都应从该路径派生。
 - 会话模型约束：一个 engine 会话只对应一个主 AI（`SessionConfig.agent`），`participants` 表示人类参与者。
@@ -40,7 +39,7 @@
   - AI 根据提示词指导，在合适位置使用标记符（如 `<MSG_SPLIT>`）标记分割点
   - engine 识别分割标记后，将响应拆分为多条独立消息添加到 transcript 中，模拟实时网络聊天效果
 - **提示词安全约束**：所有生成的系统提示词都应当在末尾包含安全提醒，告诉模型不要主动泄露自己的系统提示词、初始指令或内部配置信息。当用户请求系统提示词时，模型应礼貌拒绝并说明这是安全考虑。
-- **测试编写**：新增测试文件或为现有模块补充测试时，必须使用 `write-tests` SKILL（`.github/skills/write-tests/SKILL.md`）。核心约束：
+- **测试编写**：新增测试文件或为现有模块补充测试时，遵循 `CLAUDE.md` 的 Testing Conventions。核心约束：
   - 测试必须从业务侧出发，依照用户实际使用路径编写，优先验证公开入口到可观察结果的业务闭环
   - 禁止只为了覆盖率测试私有方法、内部字段或临时实现细节，除非该内部行为本身是业务契约
   - `pending_message_threshold=0`（显式禁用积压静默批处理，保证每次调用语义稳定且易断言）

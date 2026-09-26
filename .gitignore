@@ -63,10 +63,8 @@ config.json
 extract_intent_analysis.py
 intent_analysis_report.json
 
-# .trae/skills/ 是项目 SKILL 文档，需要版本控制
-# 但 .trae/ 下的其他文件（如本地配置）仍忽略
-.trae/*
-!.trae/skills/
+# .trae/ 与 .github/skills/ 均已废弃（SKILL 文档统一维护在 docs/），整体忽略
+.trae/
 
 # Hy-Memory 分析文档（非代码）
 hy-memory-research/

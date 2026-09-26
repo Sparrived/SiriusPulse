@@ -33,11 +33,11 @@ description: "当新增或修改 Python 后端代码时使用，用于强制执�
 
 ## 测试编写参考
 
-编写新测试时，使用 `write-tests` SKILL（`.github/skills/write-tests/SKILL.md`）获取完整规范：
+新增测试时遵循 `CLAUDE.md` 的 Testing Conventions 与以下要点：
 - 标准 `OrchestrationPolicy` 配置（禁止开启积压静默批处理 / 后台任务）
+- 设置 `pending_message_threshold=0`，并关闭辅助 LLM 任务（`memory_extract`、`event_extract`）
 - 速度红线：单测 < 1 秒，套件 < 30 秒
-- `_run_live_turns` 辅助模式
-- 常见陷阱速查表
+- 优先覆盖关键节点（用户输入 → 可观察输出/持久化）的端到端走通，不做实现细节断言
 
 ## 若测试无法执行
 
