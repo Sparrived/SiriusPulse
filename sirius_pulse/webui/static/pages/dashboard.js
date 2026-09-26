@@ -704,14 +704,14 @@ async function showEmbeddingModal() {
 
     if (rebuildBtn) rebuildBtn.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm('重建会用当前模型重算该人格全部日记与记忆单元的向量。条目较多时需要一段时间，期间语义检索不可用。继续？')) return;
+      if (!confirm('重建会用当前模型重算该人格全部记忆单元的向量。条目较多时需要一段时间，期间语义检索不可用。继续？')) return;
       rebuildBtn.disabled = true;
       rebuildBtn.textContent = '重建中…';
       try {
         const res = await post('/embedding/rebuild', {});
         if (res.success) {
           const units = res.units || 0;
-          toast(`索引已重建（日记 ${res.entries} 条、记忆单元 ${units} 条）`, 'success');
+          toast(`索引已重建（记忆单元 ${units} 条）`, 'success');
         } else {
           // 部分失败也要刷新并提示：仍然过期的条目会让检索结果不可信。
           toast('重建未完成: ' + (res.error || '未知错误'), 'error');
@@ -836,7 +836,6 @@ async function loadPersonaMonitoring(name) {
       if ($('panelTokenIn')) $('panelTokenIn').textContent = (token.total_input || 0).toLocaleString();
       if ($('panelTokenOut')) $('panelTokenOut').textContent = (token.total_output || 0).toLocaleString();
       if ($('panelCalls')) $('panelCalls').textContent = (token.call_count || 0).toLocaleString();
-      if ($('panelDiary')) $('panelDiary').textContent = (memory.diary_count || 0).toLocaleString();
       if ($('panelCognition')) $('panelCognition').textContent = (cognition.event_count || 0).toLocaleString();
     }
 

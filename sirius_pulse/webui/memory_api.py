@@ -1,4 +1,4 @@
-"""WebUI API endpoints for memory, tokens, cognition, and diary data."""
+"""WebUI API endpoints for memory, tokens and cognition data."""
 
 from __future__ import annotations
 
@@ -73,37 +73,6 @@ def _queue_memory_reconcile(data_dir: Path, *, group_ids: list[str], unit_ids: l
             "unit_ids": sorted(set(current.get("unit_ids") or []) | set(unit_ids)),
         },
     )
-
-
-def _diary_file(paths: PersonaConfigPaths, group_id: str) -> Path:
-    return paths.dir / "diary" / f"{_safe_memory_name(group_id)}.json"
-
-
-def _load_diary_payload(path: Path, group_id: str = "") -> dict[str, Any]:
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                entries = data.get("entries", [])
-                if isinstance(entries, list):
-                    return {"group_id": str(data.get("group_id") or group_id), "entries": entries}
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
-    return {"group_id": group_id, "entries": []}
-
-
-def _find_diary_entry(
-    paths: PersonaConfigPaths, entry_id: str
-) -> tuple[Path, dict[str, Any], dict[str, Any], int] | None:
-    diary_dir = paths.dir / "diary"
-    if not diary_dir.exists():
-        return None
-    for path in diary_dir.glob("*.json"):
-        payload = _load_diary_payload(path)
-        for idx, item in enumerate(payload.get("entries", [])):
-            if isinstance(item, dict) and str(item.get("entry_id") or "") == entry_id:
-                return path, payload, item, idx
-    return None
 
 
 def _iter_tail_lines(path: Path, n: int) -> Iterator[str]:
@@ -285,32 +254,6 @@ def _load_compressed_memory_source_index(
                         "summary": str(unit.get("summary") or "")[:180],
                         "created_at": str(unit.get("created_at") or ""),
                         "unit_type": str(unit.get("unit_type") or ""),
-                    },
-                )
-
-    diary_dir = paths.dir / "diary"
-    if diary_dir.exists():
-        diary_files = (
-            [diary_dir / f"{_safe_memory_name(group_id)}.json"]
-            if group_id
-            else sorted(diary_dir.glob("*.json"))
-        )
-        for path in diary_files:
-            payload = _load_diary_payload(path, path.stem)
-            entries = payload.get("entries", [])
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                add_ref(
-                    entry.get("source_ids"),
-                    {
-                        "kind": "diary",
-                        "id": str(entry.get("entry_id") or ""),
-                        "summary": str(entry.get("summary") or entry.get("content") or "")[:180],
-                        "created_at": str(entry.get("created_at") or ""),
-                        "unit_type": "diary",
                     },
                 )
 
@@ -821,213 +764,6 @@ def _build_histogram(
     return {"labels": labels, "counts": counts, "total": len(values)}
 
 
-@handle_api_errors
-async def api_persona_diary_get(request: web.Request, data_dir: Path) -> web.Response:
-    paths = PersonaConfigPaths(data_dir)
-
-    diary_dir = paths.dir / "diary"
-    if not diary_dir.exists():
-        return _json_response({"entries": [], "stats": {}, "groups": [], "total": 0})
-
-    limit = min(int(request.query.get("limit", "50")), 200)
-    offset = max(int(request.query.get("offset", "0")), 0)
-    group_id = request.query.get("group_id", "")
-    search = request.query.get("search", "").strip().lower()
-    keyword = request.query.get("keyword", "").strip()
-
-    entries: list[dict[str, Any]] = []
-    groups: set[str] = set()
-    keyword_counts: dict[str, int] = {}
-
-    for path in diary_dir.glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            g_id = data.get("group_id", "")
-            if g_id:
-                groups.add(g_id)
-            if group_id and g_id != group_id:
-                continue
-            for item in data.get("entries", []):
-                if not isinstance(item, dict):
-                    continue
-                # 关键词筛选
-                if keyword and keyword not in item.get("keywords", []):
-                    continue
-                # 全文搜索（匹配内容和摘要）
-                if search:
-                    content = (item.get("content", "") + item.get("summary", "")).lower()
-                    if search not in content:
-                        continue
-                entries.append(item)
-                for kw in item.get("keywords", []):
-                    keyword_counts[kw] = keyword_counts.get(kw, 0) + 1
-        except (OSError, json.JSONDecodeError):
-            continue
-
-    total = len(entries)
-    entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
-    # 从末尾分页：offset=0 → 最新一页
-    end = total - offset
-    start = max(0, end - limit)
-    entries = entries[start:end] if end > 0 else []
-
-    stats = {
-        "total": total,
-        "groups": len(groups),
-        "top_keywords": sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:20],
-    }
-
-    return _json_response(
-        {
-            "entries": entries,
-            "stats": stats,
-            "groups": sorted(groups),
-            "total": total,
-        }
-    )
-
-
-@handle_api_errors
-async def api_persona_diary_post(request: web.Request, data_dir: Path) -> web.Response:
-    """Create a diary memory entry."""
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "Invalid JSON"}, 400)
-
-    group_id = str(body.get("group_id") or body.get("group") or "default").strip() or "default"
-    content = str(body.get("content") or "").strip()
-    summary = str(body.get("summary") or "").strip()
-    if not content and not summary:
-        return _json_response({"error": "日记内容不能为空"}, 400)
-
-    raw_keywords = body.get("keywords", [])
-    if isinstance(raw_keywords, str):
-        keywords = [kw.strip() for kw in raw_keywords.replace("，", ",").split(",") if kw.strip()]
-    elif isinstance(raw_keywords, list):
-        keywords = [str(kw).strip() for kw in raw_keywords if str(kw).strip()]
-    else:
-        keywords = []
-
-    entry = {
-        "entry_id": str(body.get("entry_id") or f"diary_{uuid4().hex}"),
-        "group_id": group_id,
-        "created_at": str(body.get("created_at") or _now_iso()),
-        "source_ids": body.get("source_ids") if isinstance(body.get("source_ids"), list) else [],
-        "content": content,
-        "keywords": keywords,
-        "summary": summary or content[:80],
-        "embedding": body.get("embedding") if isinstance(body.get("embedding"), list) else None,
-        "merge_count": int(body.get("merge_count") or 0),
-        "source_diary_ids": (
-            body.get("source_diary_ids") if isinstance(body.get("source_diary_ids"), list) else []
-        ),
-    }
-
-    paths = PersonaConfigPaths(data_dir)
-    path = _diary_file(paths, group_id)
-    payload = _load_diary_payload(path, group_id)
-    payload["group_id"] = group_id
-    payload.setdefault("entries", []).append(entry)
-    _atomic_write_json(path, payload)
-    return _json_response({"success": True, "entry": entry}, 201)
-
-
-@handle_api_errors
-async def api_persona_diary_put(request: web.Request, data_dir: Path) -> web.Response:
-    """Update a diary memory entry."""
-    entry_id = str(request.match_info.get("entry_id", "")).strip()
-    if not entry_id:
-        return _json_response({"error": "缺少日记 ID"}, 400)
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_response({"error": "Invalid JSON"}, 400)
-
-    paths = PersonaConfigPaths(data_dir)
-    found = _find_diary_entry(paths, entry_id)
-    if found is None:
-        return _json_response({"error": "日记不存在"}, 404)
-    path, payload, entry, idx = found
-
-    old_group_id = str(entry.get("group_id") or payload.get("group_id") or "default")
-    new_group_id = (
-        str(body.get("group_id") or body.get("group") or old_group_id).strip() or "default"
-    )
-    for key in ("content", "summary", "created_at"):
-        if key in body:
-            entry[key] = str(body.get(key) or "")
-    if "keywords" in body:
-        raw_keywords = body.get("keywords", [])
-        if isinstance(raw_keywords, str):
-            entry["keywords"] = [
-                kw.strip() for kw in raw_keywords.replace("，", ",").split(",") if kw.strip()
-            ]
-        elif isinstance(raw_keywords, list):
-            entry["keywords"] = [str(kw).strip() for kw in raw_keywords if str(kw).strip()]
-    if "source_ids" in body and isinstance(body.get("source_ids"), list):
-        entry["source_ids"] = body["source_ids"]
-    if "source_diary_ids" in body and isinstance(body.get("source_diary_ids"), list):
-        entry["source_diary_ids"] = body["source_diary_ids"]
-    if "merge_count" in body:
-        entry["merge_count"] = int(body.get("merge_count") or 0)
-    entry["group_id"] = new_group_id
-
-    if new_group_id != old_group_id:
-        payload["entries"].pop(idx)
-        _atomic_write_json(path, payload)
-        target_path = _diary_file(paths, new_group_id)
-        target_payload = _load_diary_payload(target_path, new_group_id)
-        target_payload["group_id"] = new_group_id
-        target_payload.setdefault("entries", []).append(entry)
-        _atomic_write_json(target_path, target_payload)
-    else:
-        payload["entries"][idx] = entry
-        _atomic_write_json(path, payload)
-
-    return _json_response({"success": True, "entry": entry})
-
-
-@handle_api_errors
-async def api_persona_diary_delete(request: web.Request, data_dir: Path) -> web.Response:
-    """Delete a diary memory entry."""
-    entry_id = str(request.match_info.get("entry_id", "")).strip()
-    if not entry_id:
-        return _json_response({"error": "缺少日记 ID"}, 400)
-
-    paths = PersonaConfigPaths(data_dir)
-    found = _find_diary_entry(paths, entry_id)
-    if found is None:
-        return _json_response({"error": "日记不存在"}, 404)
-    path, payload, _entry, idx = found
-    payload["entries"].pop(idx)
-    _atomic_write_json(path, payload)
-    return _json_response({"success": True})
-
-
-async def api_persona_vector_store_status_get(request: web.Request, data_dir: Path) -> web.Response:
-    paths = PersonaConfigPaths(data_dir)
-
-    from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
-
-    vector_db_dir = paths.dir / "diary" / "vector_db"
-    try:
-        vs = DiaryVectorStore(vector_db_dir)
-        stats = vs.get_stats()
-        return _json_response(stats)
-    except Exception as exc:
-        LOG.warning("读取向量存储状态失败: %s", exc)
-        return _json_response(
-            {
-                "available": False,
-                "total_entries": 0,
-                "groups": [],
-                "model": DiaryVectorStore.MODEL_NAME,
-                "error": str(exc),
-            }
-        )
-
-
 def _memory_units_dir(data_dir: Path) -> Path:
     return data_dir / "memory_units"
 
@@ -1299,11 +1035,9 @@ async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Re
     Query params:
         group_id     : 按群过滤（为空则全部）
         basic_limit  : 基础记忆条数上限（默认 500，最大 2000）
-        diary_limit  : 日记条数上限（默认 200，最大 500）
     """
     group_filter = request.query.get("group_id", "").strip()
     limit_basic = min(int(request.query.get("basic_limit", "500")), 2000)
-    limit_diary = min(int(request.query.get("diary_limit", "200")), 500)
 
     paths = PersonaConfigPaths(data_dir)
 
@@ -1358,40 +1092,6 @@ async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Re
     days_sorted = sorted(day_bucket.keys())
     groups_in_data = sorted({g for bucket in day_bucket.values() for g in bucket})
 
-    # ── 2. 日记聚类：embedding + 关键词频率 ──
-    diary_dir = paths.dir / "diary"
-    diary_entries: list[dict[str, Any]] = []
-    keyword_freq: dict[str, int] = {}
-    if diary_dir.exists():
-        for path in diary_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                g_id = data.get("group_id", "")
-                if group_filter and g_id != group_filter:
-                    continue
-                for item in data.get("entries", []):
-                    if not isinstance(item, dict):
-                        continue
-                    emb = item.get("embedding")
-                    diary_entries.append(
-                        {
-                            "entry_id": item.get("entry_id", ""),
-                            "group_id": g_id,
-                            "created_at": item.get("created_at", ""),
-                            "summary": item.get("summary", ""),
-                            "content": item.get("content", "")[:300],
-                            "keywords": item.get("keywords", []),
-                            "embedding": emb,
-                        }
-                    )
-                    for kw in item.get("keywords", []):
-                        keyword_freq[kw] = keyword_freq.get(kw, 0) + 1
-            except (OSError, json.JSONDecodeError):
-                continue
-    diary_entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
-    diary_entries = diary_entries[:limit_diary]
-    top_keywords = sorted(keyword_freq.items(), key=lambda x: x[1], reverse=True)[:20]
-
     return _json_response(
         {
             "groups": sorted(all_groups),
@@ -1401,8 +1101,6 @@ async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Re
                 "buckets": day_bucket,
                 "recent": recent_entries,
             },
-            "diary_entries": diary_entries,
-            "diary_top_keywords": top_keywords,
         }
     )
 

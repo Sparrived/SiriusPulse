@@ -17,7 +17,6 @@ const $ = scopedPage.$;
 const TASK_LABELS = {
   response_generate: '主模型调用',
   cognition_analyze: '认知分析',
-  diary_generate: '日记生成',
   memory_unit_extract: '记忆提取',
   memory_unit_deduplicate: '记忆去重',
 };

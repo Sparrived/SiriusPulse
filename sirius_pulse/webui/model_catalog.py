@@ -33,9 +33,6 @@ TASK_LABELS: dict[str, str] = {
     "plugin_generate": "插件生成",
     "plugin_render": "插件渲染",
     "plugin_raw": "插件原生",
-    "diary_generate": "日记生成",
-    "diary_consolidate": "日记归纳",
-    "topic_cluster": "话题聚类",
 }
 
 

@@ -62,7 +62,6 @@ const TAG_COLORS = {
   gift:       { bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
   poke:       { bg: '#9e9e9e22', color: '#9e9e9e', border: '#9e9e9e44' },
   shake:      { bg: '#9e9e9e22', color: '#9e9e9e', border: '#9e9e9e44' },
-  diary:      { bg: '#e8a87c22', color: '#e8a87c', border: '#e8a87c44' },
   cross_group:{ bg: '#85cdca22', color: '#85cdca', border: '#85cdca44' },
   conversation:{ bg: '#d8b4e222', color: '#d8b4e2', border: '#d8b4e244' },
   tool_result:{ bg: '#ff980022', color: '#ff9800', border: '#ff980044' },
@@ -574,7 +573,7 @@ const SECTION_COLORS = {
   '首次互动': '#ff5722', '触发原因': '#f44336',
   '语气': '#e91e63', '提醒': '#ff9800', '话题建议': '#4caf50',
   '话题': '#2196f3', '群体兴趣': '#8bc34a',
-  '关系': '#00bcd4', '历史日记': '#e8a87c', '其他群近期记录': '#85cdca',
+  '关系': '#00bcd4', '其他群近期记录': '#85cdca',
   '近期对话记录': '#d8b4e2', '工具执行结果': '#ff9800', '当前时间': '#9e9e9e',
   '氛围趋势': '#4caf50', '插件能力': '#2196f3',
   '钉住的重要消息': '#e91e63', '最近消息': '#607d8b',
@@ -746,10 +745,8 @@ function renderMemoryCompressionTags(message) {
   if (!message?.memory_compressed) return '';
   const refs = Array.isArray(message.memory_refs) ? message.memory_refs : [];
   const unitCount = refs.filter(ref => ref.kind === 'memory_unit').length;
-  const diaryCount = refs.filter(ref => ref.kind === 'diary').length;
   const pieces = [
     unitCount ? `${unitCount} 记忆单元` : '',
-    diaryCount ? `${diaryCount} 日记` : '',
   ].filter(Boolean);
   const title = refs.map(ref => ref.summary).filter(Boolean).join('\n');
   const suffix = pieces.length ? ` · ${pieces.join(' · ')}` : '';

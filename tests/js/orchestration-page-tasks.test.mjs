@@ -9,15 +9,15 @@ assert.match(
   'orchestration page should declare module-scoped autoSave before init assigns it',
 );
 
+assert.equal(source.includes("key: 'memory_extract'"), true);
+
 for (const removedTask of ['diary_generate', 'diary_consolidate', 'topic_cluster']) {
   assert.equal(
-    source.includes(`key: '${removedTask}'`),
+    source.includes(removedTask),
     false,
-    `${removedTask} should not be configurable on the orchestration page`,
+    `${removedTask} was removed from the task registry and must not appear on the orchestration page`,
   );
 }
-
-assert.equal(source.includes("key: 'memory_extract'"), true);
 
 for (const discoveredCatalogHook of ['loadModelsDevForTypes', 'buildModelChoicesByType']) {
   assert.equal(

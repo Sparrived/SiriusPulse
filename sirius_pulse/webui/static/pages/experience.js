@@ -338,11 +338,10 @@ export async function init(container, params = {}) {
           </div>
         `)}
 
-        ${section('记忆检索', '控制本轮回复最多注入多少日记上下文。数值越高越有记忆感，也越耗 token。', `
+        ${section('记忆检索', '控制本轮回复最多注入多少记忆单元上下文。数值越高越有记忆感，也越耗 token。', `
           <div class="exp-grid">
-            ${fieldCard('日记 Top-K', '从日记索引中最多检索多少条相关记录。', numberInput('diary_top_k', 0))}
-            ${fieldCard('记忆单元 Top-K', '从 memory units 中最多检索多少条相关记录；默认跟随日记 Top-K。', numberInput('memory_unit_top_k', 0))}
-            ${fieldCard('日记 Token 预算', '日记上下文可占用的最大 token 预算。', numberInput('diary_token_budget', 0))}
+            ${fieldCard('记忆单元 Top-K', '从 memory units 中最多检索多少条相关记录；默认跟随记忆单元 Top-K。', numberInput('memory_unit_top_k', 0))}
+            ${fieldCard('记忆单元 Token 预算', '记忆单元上下文可占用的最大 token 预算。', numberInput('memory_unit_token_budget', 0))}
           </div>
         `)}
       </form>
@@ -708,9 +707,8 @@ async function loadExperience(name, autoSave) {
     }
     form.max_sentence_chars.value = data.max_sentence_chars ?? 20;
     form.max_tool_rounds.value = data.max_tool_rounds ?? 3;
-    form.diary_top_k.value = data.diary_top_k ?? 5;
     form.memory_unit_top_k.value = data.memory_unit_top_k ?? data.diary_top_k ?? 5;
-    form.diary_token_budget.value = data.diary_token_budget ?? 2000;
+    form.memory_unit_token_budget.value = data.memory_unit_token_budget ?? data.diary_token_budget ?? 20000;
 
     setBooleanField('enable_tools', data.enable_tools ?? true);
 
@@ -750,9 +748,8 @@ async function saveExperience(name) {
     reply_time_curve_points: normalizeCurvePoints(replyTimeCurvePoints),
     max_sentence_chars: parseInt(form.max_sentence_chars.value, 10),
     max_tool_rounds: parseInt(form.max_tool_rounds.value, 10),
-    diary_top_k: parseInt(form.diary_top_k.value, 10),
     memory_unit_top_k: parseInt(form.memory_unit_top_k.value, 10),
-    diary_token_budget: parseInt(form.diary_token_budget.value, 10),
+    memory_unit_token_budget: parseInt(form.memory_unit_token_budget.value, 10),
   };
 
   BOOLEAN_FIELDS.forEach(name => {

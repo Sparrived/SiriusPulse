@@ -6,10 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from sirius_pulse.webui.memory_api import (
-    api_persona_diary_delete,
-    api_persona_diary_get,
-    api_persona_diary_post,
-    api_persona_diary_put,
     api_persona_memory_dedupe_apply,
     api_persona_memory_dedupe_scan,
     api_persona_memory_dedupe_status,
@@ -50,42 +46,3 @@ async def test_memory_dedupe_scan_lifecycle(tmp_path, monkeypatch):
     assert (
         await api_persona_memory_dedupe_apply(_request({"job_id": payload["job_id"]}), tmp_path)
     ).status == 409
-
-
-@pytest.mark.asyncio
-async def test_persona_diary_crud_roundtrip(tmp_path):
-    response = await api_persona_diary_post(
-        _request(
-            {
-                "group_id": "group-a",
-                "summary": "一次重要讨论",
-                "content": "大家确认了周末活动安排。",
-                "keywords": ["活动", "周末"],
-            }
-        ),
-        tmp_path,
-    )
-    created = _payload(response)["entry"]
-
-    response = await api_persona_diary_put(
-        _request(
-            {"summary": "更新后的讨论", "keywords": "活动,更新"},
-            match={"entry_id": created["entry_id"]},
-        ),
-        tmp_path,
-    )
-    assert _payload(response)["entry"]["summary"] == "更新后的讨论"
-
-    response = await api_persona_diary_get(_request(query={"limit": "20", "offset": "0"}), tmp_path)
-    payload = _payload(response)
-    assert payload["total"] == 1
-    assert payload["entries"][0]["keywords"] == ["活动", "更新"]
-
-    response = await api_persona_diary_delete(
-        _request(match={"entry_id": created["entry_id"]}),
-        tmp_path,
-    )
-    assert _payload(response)["success"] is True
-
-    response = await api_persona_diary_get(_request(query={"limit": "20", "offset": "0"}), tmp_path)
-    assert _payload(response)["total"] == 0

@@ -186,10 +186,10 @@ class WebUIServer:
     # 模型。没有「启动/重启」动作可做——要换模型得去 AMKR 改配置。
 
     def get_embedding_status(self) -> dict[str, Any]:
-        """返回 embedding 状态：AMKR 可达性、模型名、以及索引是否对得上。
+        """返回 embedding 状态：AMKR 可达性与当前模型名。
 
-        ``index_stale`` 为 ``True`` 表示已建索引来自另一个模型（多半是另一个维度），
-        此时向量检索结果不可信，需要重建索引——这正是 WebUI 要提醒用户的事。
+        记忆单元的向量内联在 ``memory_units/*.json`` 里，不持久化所用模型名，
+        因此这里无法再比对"已建索引的模型"，``index_stale`` 恒为 ``False``。
         """
         from sirius_pulse.embedding.client import create_embedding_client
 
@@ -200,14 +200,13 @@ class WebUIServer:
             return {"running": False, "ready": False, "error": str(exc)}
 
         model = client.model
-        indexed_model = self._indexed_embedding_model()
         status: dict[str, Any] = {
             "running": True,
             "ready": False,
             "error": "",
             "model": model,
-            "indexed_model": indexed_model,
-            "index_stale": bool(indexed_model and model and indexed_model != model),
+            "indexed_model": "",
+            "index_stale": False,
             "base_url": client._base_url,
         }
         if client.check_health():
@@ -216,84 +215,6 @@ class WebUIServer:
         status["running"] = False
         status["error"] = f"AMKR 不可达或未配置模型 {model}（{client._base_url}）"
         return status
-
-    def _indexed_embedding_model(self) -> str:
-        """已建日记索引所用的模型名；没有索引时返回空串。"""
-        from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
-
-        try:
-            store = DiaryVectorStore(self.persona_dir / "diary" / "vector_db")
-            return str(store.get_stats().get("indexed_model") or "")
-        except Exception as exc:
-            LOG.debug("读取已建索引模型失败: %s", exc)
-            return ""
-
-    def _rebuild_diary_embeddings(self) -> tuple[int, int]:
-        """用当前模型重算该人格所有日记条目的向量并重建 Chroma 索引。
-
-        返回 ``(重建的条目数, 失败的组数)``。必须整个重建而不是增量补齐：换模型就换了
-        维度，旧向量与新向量算出来的余弦毫无意义，混在一张表里只会得到静默错误的检索
-        结果。单个组失败不应中断其余组，但要计入失败数如实上报。
-        """
-        from sirius_pulse.embedding.client import create_embedding_client
-        from sirius_pulse.memory.diary.store import DiaryFileStore
-        from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
-
-        persona_dir = self.persona_dir
-        client = create_embedding_client(self.data_dir, persona_dir.name)
-        store = DiaryFileStore(persona_dir)
-        vector_store = DiaryVectorStore(persona_dir / "diary" / "vector_db")
-
-        total = 0
-        failed = 0
-        rebuilt: set[str] = set()
-        # 有源文件的组：重建成功、重建失败、以及条目为空的组都算在内。孤儿清理只能删
-        # 这些之外的 collection，否则会把待重试的旧索引一起删掉。
-        handled: set[str] = set()
-        for path in sorted((persona_dir / "diary").glob("*.json")):
-            if path.stem == "sim_cache":
-                continue
-            handled.add(path.stem)
-            try:
-                entries = store.load(path.stem)
-            except Exception as exc:
-                LOG.warning("读取日记失败，跳过 %s: %s", path.name, exc)
-                failed += 1
-                continue
-            if not entries:
-                # 空组也要删掉同名 collection：条目被删光后旧行会留在 Chroma 里，
-                # 既占空间又让 metadata 里的旧模型名把索引一直标记为过期。
-                vector_store.drop_group(path.stem)
-                continue
-            group_id = entries[0].group_id or path.stem
-            handled.add(group_id)
-            try:
-                vectors = client.encode([e.content for e in entries])
-            except Exception as exc:
-                LOG.error("重算群 %s 的日记向量失败，保留原索引: %s", group_id, exc)
-                failed += 1
-                continue
-            if len(vectors) != len(entries):
-                LOG.error("群 %s 的向量数量与条目不符，保留原索引", group_id)
-                failed += 1
-                continue
-            for entry, vector in zip(entries, vectors):
-                entry.embedding = vector
-            vector_store.drop_group(group_id)
-            vector_store.add_many(entries)
-            store.save(group_id, entries)
-            rebuilt.add(group_id)
-            total += len(entries)
-            LOG.info("已重建群 %s 的日记索引: %d 条", group_id, len(entries))
-
-        # 磁盘上已不存在的组（人格被改名、群被移除）同样要清掉，否则它们的旧 collection
-        # 会一直把索引判为过期，重建也永远修不掉。
-        for group in vector_store.get_stats().get("groups", []):
-            group_id = str(group.get("group_id") or "")
-            if group_id and group_id not in handled:
-                vector_store.drop_group(group_id)
-                LOG.info("已清理无对应日记文件的索引: %s", group_id)
-        return total, failed
 
     # ─── 静态页面 ─────────────────────────────────────────
 
@@ -400,11 +321,10 @@ class WebUIServer:
         return _json_response(self.get_embedding_status())
 
     async def api_embedding_rebuild(self, request: web.Request) -> web.Response:
-        """用当前模型重建该人格的日记与记忆单元向量索引。
+        """用当前模型重建该人格的记忆单元向量索引。
 
-        换 embedding 模型后必须做这一步：维度变了，旧向量虽然还躺在库里，但和新
-        查询向量算出来的相似度没有意义。日记要整个重建（而非补齐）才能保证库里只有
-        一套维度；记忆单元的向量内联在 JSON 里，逐组重算。
+        换 embedding 模型后必须做这一步：维度变了，旧向量虽然还躺在 JSON 里，但和新
+        查询向量算出来的相似度没有意义。记忆单元的向量内联在 JSON 中，逐组重算。
 
         部分失败时如实返回 ``success: false`` 与失败数：embedding 请求超时会让一批
         向量原样留在旧维度，若还报成功，用户会以为索引已经修好，而检索结果其实是错的。
@@ -412,7 +332,6 @@ class WebUIServer:
         LOG.info("收到语义索引重建请求")
         loop = asyncio.get_running_loop()
         try:
-            entries, diary_failed = await loop.run_in_executor(None, self._rebuild_diary_embeddings)
             units, units_failed = await loop.run_in_executor(
                 None, self._rebuild_memory_unit_embeddings
             )
@@ -420,22 +339,19 @@ class WebUIServer:
             LOG.error("语义索引重建失败: %s", exc, exc_info=True)
             return _json_response({"success": False, "error": str(exc)})
 
-        # 人格进程自己缓存了日记与记忆单元向量，重建后要让 worker 丢弃缓存重新加载，
+        # 人格进程自己缓存了记忆单元向量，重建后要让 worker 丢弃缓存重新加载，
         # 否则它仍在用旧维度的向量，重建等于没做。
-        if entries or units:
+        if units:
             self._notify_config_reload("memory")
 
-        failed = diary_failed + units_failed
+        failed = units_failed
         LOG.info(
-            "语义索引重建完成: 日记 %d 条（失败组 %d），记忆单元 %d 条（失败 %d）",
-            entries,
-            diary_failed,
+            "语义索引重建完成: 记忆单元 %d 条（失败 %d）",
             units,
             units_failed,
         )
         result: dict[str, Any] = {
             "success": failed == 0,
-            "entries": entries,
             "units": units,
             "failed": failed,
         }

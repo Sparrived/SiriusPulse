@@ -129,7 +129,7 @@ const SECTION_LABELS = {
   emotion: '情感上下文', empathy: '共情策略',
   memory: '记忆引用', interests: '用户兴趣', group_style: '群体风格',
   participants: '近期参与者', cross_group: '跨群认知', tools: '可用工具',
-  output_format: '输出格式', diary: '日记记忆',
+  output_format: '输出格式',
   history_xml: '对话历史', cross_group_xml: '跨群历史',
   system_prompt_total: '系统指令', user_message: '用户消息',
 };
@@ -138,7 +138,7 @@ const SECTION_LABELS = {
 const SECTION_GROUPS = [
   { name: '人格与身份', keys: ['persona', 'identity'], color: '#58a6ff' },
   { name: '情感上下文', keys: ['emotion', 'empathy'], color: '#3fb950' },
-  { name: '记忆与历史', keys: ['memory', 'diary', 'history_xml', 'cross_group_xml'], color: '#d29922' },
+  { name: '记忆与历史', keys: ['memory', 'history_xml', 'cross_group_xml'], color: '#d29922' },
   { name: '环境与风格', keys: ['group_style', 'participants', 'cross_group', 'interests'], color: '#f85149' },
   { name: '功能与格式', keys: ['tools', 'output_format', 'output_constraint'], color: '#a371f7' },
   { name: '输入组成', keys: ['system_prompt_total', 'user_message'], color: '#e3b341' },
@@ -148,8 +148,6 @@ const SECTION_GROUPS = [
 const SANKEY_TASK_LABELS = {
   response_generate: '主模型调用',
   cognition_analyze: '认知分析',
-  diary_generate: '日记生成',
-  diary_consolidate: '日记合并',
   persona_generate: '人格生成',
 };
 

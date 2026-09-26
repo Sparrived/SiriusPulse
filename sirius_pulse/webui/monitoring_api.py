@@ -143,17 +143,17 @@ def _read_token_usage(persona_dir: Path) -> dict[str, Any]:
     return empty
 
 
-def _count_diary_entries(persona_dir: Path) -> int:
-    """统计日记目录下所有 JSON 文件中的条目总数。"""
-    diary_dir = persona_dir / "diary"
-    if not diary_dir.exists():
+def _count_memory_units(persona_dir: Path) -> int:
+    """统计记忆单元目录下所有 JSON 文件中的单元总数。"""
+    units_dir = persona_dir / "memory_units"
+    if not units_dir.exists():
         return 0
     total = 0
     try:
-        for path in diary_dir.glob("*.json"):
+        for path in units_dir.glob("*.json"):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                total += len(data.get("entries", []))
+                total += len(data.get("units", []))
             except (OSError, json.JSONDecodeError):
                 continue
     except OSError:
@@ -186,7 +186,7 @@ def _check_config_files(persona_dir: Path) -> tuple[str, list[str]]:
 
 def _check_memory_system(persona_dir: Path) -> str:
     """检查记忆系统是否可访问（至少有一个记忆子目录存在）。"""
-    has_memory = any((persona_dir / d).exists() for d in ("memory", "diary", "token"))
+    has_memory = any((persona_dir / d).exists() for d in ("memory_units", "archive", "token"))
     if not has_memory:
         return "empty"
     return "ok"
@@ -243,7 +243,7 @@ async def api_monitoring_persona_metrics(
     pid = status_data.get("pid") if status_data else None
 
     token_usage = _read_token_usage(persona_dir)
-    diary_count = _count_diary_entries(persona_dir)
+    memory_unit_count = _count_memory_units(persona_dir)
     event_count = _count_cognition_events(persona_dir)
 
     return _json_response(
@@ -254,7 +254,7 @@ async def api_monitoring_persona_metrics(
             "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
             "token_usage": token_usage,
             "memory": {
-                "diary_count": diary_count,
+                "memory_unit_count": memory_unit_count,
             },
             "cognition": {
                 "event_count": event_count,

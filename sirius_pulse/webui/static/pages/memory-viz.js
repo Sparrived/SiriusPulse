@@ -15,12 +15,10 @@ const ROLE_COLORS = {
 
 const TABS = [
   { id: 'conversations', label: '基础记忆', hint: '近期对话', canCreate: false },
-  { id: 'diary', label: '日记记忆', hint: '长期总结', canCreate: true },
   { id: 'units', label: '记忆单元', hint: 'MemoryUnit', canCreate: true },
 ];
 
 const TAB_ENDPOINTS = {
-  diary: '/persona/diary?limit=200',
   units: '/persona/memory-units?limit=200',
 };
 
@@ -28,7 +26,7 @@ let state = {
   tab: 'conversations',
   search: '',
   group: '',
-  data: { diary: null, units: null },
+  data: { units: null },
   viz: null,
   loadedTabs: new Set(),
   loadingTabs: new Set(),
@@ -268,7 +266,7 @@ export async function init(container, params = {}) {
       <div>
         <div class="memory-kicker">新记忆模块 · CRUD</div>
         <div class="memory-title">记忆管理工作台</div>
-        <div class="memory-subtitle">面向当前运行中的记忆系统：统一检索基础记忆、记忆单元、日记和术语，并直接新增、编辑、删除可维护条目。</div>
+        <div class="memory-subtitle">面向当前运行中的记忆系统：统一检索基础记忆与记忆单元，并直接新增、编辑、删除可维护条目。</div>
       </div>
       <div class="memory-toolbar">
         <select id="memoryGroupFilter" style="width:160px"></select>
@@ -334,15 +332,6 @@ export async function init(container, params = {}) {
           </select>
         </div>
         <div id="timelineChart" class="chart-container" style="min-height:320px"></div>
-      </div>
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <div class="card-title">日记语义聚类</div>
-            <div class="card-subtitle">基于 embedding 的主题分布</div>
-          </div>
-        </div>
-        <div id="clusterChart" class="chart-container" style="min-height:320px"></div>
       </div>
     </div>
   `;
@@ -416,10 +405,8 @@ async function loadActiveTab({ force = false } = {}) {
 
 async function loadChartsForActiveTab(tab = state.tab, { force = false } = {}) {
   if (!scopedPage.isActive() || state.tab !== tab) return;
-  if (tab !== 'diary') return;
   if (!force && state.vizLoaded) {
     renderTimeline(state.viz?.basic_timeline || {});
-    renderCluster(state.viz?.diary_entries || []);
     return;
   }
   if (state.vizLoading) return;
@@ -429,7 +416,6 @@ async function loadChartsForActiveTab(tab = state.tab, { force = false } = {}) {
     if (!scopedPage.isActive() || state.tab !== tab) return;
     state.vizLoaded = true;
     renderTimeline(state.viz.basic_timeline || {});
-    renderCluster(state.viz.diary_entries || []);
   } catch (error) {
     if (error?.name === 'AbortError') return;
     if (!scopedPage.isActive()) return;
@@ -474,7 +460,6 @@ function renderStats() {
   const count = (tab, value) => state.loadingTabs.has(tab) ? '加载中' : state.loadedTabs.has(tab) ? (value || 0) : '未加载';
   el.innerHTML = [
     statCard('基础记忆', '按需', '打开后加载完整对话分析', '◲'),
-    statCard('日记条目', count('diary', data.diary?.total), '可新增、编辑、删除', '◫'),
     statCard('记忆单元', count('units', data.units?.total), '检查点提炼', '▣'),
   ].join('');
 }
@@ -483,7 +468,6 @@ function renderGroupFilter() {
   const select = $('memoryGroupFilter');
   if (!select) return;
   const groups = new Set();
-  if (state.tab === 'diary') (state.data.diary?.groups || []).forEach((g) => groups.add(g));
   if (state.tab === 'units') (state.data.units?.groups || []).forEach((g) => groups.add(g));
   const current = state.group;
   select.innerHTML = '<option value="">全部群组</option>' +
@@ -526,7 +510,7 @@ function renderDedupeStatus() {
 
 function updateConversationAnalysisView() {
   const isConversationsTab = state.tab === 'conversations';
-  const isDiaryTab = state.tab === 'diary';
+  const isUnitsTab = state.tab === 'units';
   const crudView = $('memoryCrudView');
   const analysisView = $('basicMemoryAnalysisView');
   const chartsView = $('memoryChartsView');
@@ -535,7 +519,7 @@ function updateConversationAnalysisView() {
 
   if (crudView) crudView.style.display = isConversationsTab ? 'none' : '';
   if (analysisView) analysisView.style.display = isConversationsTab ? '' : 'none';
-  if (chartsView) chartsView.style.display = isDiaryTab ? '' : 'none';
+  if (chartsView) chartsView.style.display = isUnitsTab ? '' : 'none';
   if (groupFilter) groupFilter.style.display = isConversationsTab ? 'none' : '';
   if (searchInput) searchInput.style.display = isConversationsTab ? 'none' : '';
   if (searchInput) searchInput.placeholder = '搜索记忆内容...';
@@ -577,7 +561,6 @@ function disposeConversationAnalysis() {
 }
 
 function getActiveItems() {
-  if (state.tab === 'diary') return state.data.diary?.entries || [];
   if (state.tab === 'units') return state.data.units?.units || [];
   return [];
 }
@@ -626,16 +609,6 @@ function matchesFilters(item) {
 }
 
 function renderItem(item, index) {
-  if (state.tab === 'diary') {
-    const title = item.summary || item.content?.slice(0, 80) || '未命名日记';
-    return renderItemShell({
-      title,
-      meta: [item.group_id, formatDate(item.created_at), ...(item.keywords || []).slice(0, 5)],
-      content: item.content || '',
-      index,
-      editable: true,
-    });
-  }
   if (state.tab === 'units') {
     return renderItemShell({
       title: item.summary || item.unit_id || '未命名记忆单元',
@@ -688,9 +661,7 @@ function openEditor(tab, item) {
   const isNew = !item;
   title.textContent = isNew ? '新增记忆' : '编辑记忆';
   subtitle.textContent = TABS.find((t) => t.id === tab)?.label || '';
-  if (tab === 'diary') {
-    form.innerHTML = diaryForm(item);
-  } else if (tab === 'units') {
+  if (tab === 'units') {
     form.innerHTML = unitForm(item);
   } else {
     form.innerHTML = '<div class="memory-empty">基础记忆来自运行窗口和归档，仅支持浏览检索。</div>';
@@ -707,21 +678,6 @@ function closeEditor() {
   if (title) title.textContent = '选择一条记忆';
   if (subtitle) subtitle.textContent = '可编辑的记忆会在这里打开';
   if (form) form.innerHTML = '<div class="memory-empty">从左侧选择条目，或点击新增创建长期记忆。</div>';
-}
-
-function diaryForm(item = {}) {
-  return `
-    <div class="memory-form-grid">
-      ${field('群组 ID', 'editGroupId', item.group_id || state.group || 'default')}
-      ${field('摘要', 'editSummary', item.summary || '')}
-      ${field('关键词', 'editKeywords', (item.keywords || []).join(', '), '逗号分隔')}
-      ${textarea('内容', 'editContent', item.content || '', 8)}
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary" id="memorySaveBtn">保存</button>
-        <button class="btn" id="memoryCancelBtn">取消</button>
-      </div>
-    </div>
-  `;
 }
 
 function unitForm(item = {}) {
@@ -771,16 +727,7 @@ function textarea(label, id, value, rows) {
 
 async function saveEditor(tab, item) {
   try {
-    if (tab === 'diary') {
-      const payload = {
-        group_id: $('editGroupId').value.trim() || 'default',
-        summary: $('editSummary').value.trim(),
-        keywords: splitList($('editKeywords').value),
-        content: $('editContent').value.trim(),
-      };
-      if (item?.entry_id) await put(`/persona/diary/${encodeURIComponent(item.entry_id)}`, payload);
-      else await post('/persona/diary', payload);
-    } else if (tab === 'units') {
+    if (tab === 'units') {
       const payload = {
         group_id: $('editGroupId').value.trim() || 'default',
         unit_type: $('editUnitType').value.trim() || 'event',
@@ -832,18 +779,14 @@ function conversationEntryKey(item) {
 }
 
 async function deleteItem(tab, item) {
-  const label = tab === 'diary'
-    ? (item.summary || item.entry_id)
-    : tab === 'units'
-      ? (item.summary || item.unit_id)
-      : tab === 'conversations'
-        ? (item.content || item.entry_id || item.timestamp || '\u8be5\u6d88\u606f').slice(0, 40)
-        : '';
+  const label = tab === 'units'
+    ? (item.summary || item.unit_id)
+    : tab === 'conversations'
+      ? (item.content || item.entry_id || item.timestamp || '\u8be5\u6d88\u606f').slice(0, 40)
+      : '';
   if (!confirmDanger(`确定删除「${label}」吗？此操作不可撤销。`)) return;
   try {
-    if (tab === 'diary') {
-      await del(`/persona/diary/${encodeURIComponent(item.entry_id)}`);
-    } else if (tab === 'units') {
+    if (tab === 'units') {
       await del(`/persona/memory-units/${encodeURIComponent(item.unit_id)}`);
     } else if (tab === 'conversations') {
       await del(buildConversationDeletePath(item));
@@ -945,44 +888,6 @@ function renderTimeline(timeline) {
       itemStyle: { color: role.color },
       emphasis: { focus: 'series' },
       data: days.map((day) => dailyData[day][role.key] || 0),
-    })),
-  });
-}
-
-function renderCluster(entries) {
-  const container = $('clusterChart');
-  if (!container) return;
-  const withEmbedding = entries.filter((entry) => entry.embedding && entry.embedding.length >= 2);
-  if (!withEmbedding.length) {
-    container.innerHTML = '<div class="memory-empty">暂无日记 embedding 数据</div>';
-    return;
-  }
-
-  const keywords = [...new Set(withEmbedding.flatMap((entry) => entry.keywords || []))].slice(0, 10);
-  const palette = ['#58a6ff', '#3fb950', '#a371f7', '#e3b341', '#f78166', '#d2a8ff', '#79c0ff', '#ffa657', '#ff7b72', '#56d4dd'];
-  const colorMap = Object.fromEntries(keywords.map((kw, idx) => [kw, palette[idx % palette.length]]));
-
-  getChart(container);
-  setChartOption(container, {
-    backgroundColor: 'transparent',
-    tooltip: {
-      formatter: (params) => {
-        const raw = params.data.raw;
-        return `<b>${escapeHtml(raw.summary || '')}</b><br/>${escapeHtml((raw.content || '').slice(0, 120))}`;
-      },
-    },
-    legend: { data: keywords, textStyle: { color: '#8b949e', fontSize: 11 }, top: 0, type: 'scroll' },
-    grid: { left: 8, right: 8, bottom: 8, top: 36, containLabel: true },
-    xAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
-    yAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#8b949e' }, splitLine: { lineStyle: { color: '#21262d' } } },
-    series: keywords.map((kw) => ({
-      name: kw,
-      type: 'scatter',
-      symbolSize: 10,
-      itemStyle: { color: colorMap[kw] },
-      data: withEmbedding
-        .filter((entry) => (entry.keywords || []).includes(kw))
-        .map((entry) => ({ value: [entry.embedding[0], entry.embedding[1]], raw: entry })),
     })),
   });
 }

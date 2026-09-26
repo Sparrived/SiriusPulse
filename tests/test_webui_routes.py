@@ -2811,13 +2811,12 @@ def test_webui_routes_when_registered_then_embedding_rebuild_replaces_restart():
 
 
 @pytest.mark.asyncio
-async def test_embedding_rebuild_when_rebuilt_then_reports_both_counts_and_wakes_worker(
+async def test_embedding_rebuild_when_rebuilt_then_reports_counts_and_wakes_worker(
     tmp_path, monkeypatch
 ):
-    """重建要同时覆盖日记与记忆单元，并唤醒人格进程丢弃旧向量缓存。"""
+    """重建要覆盖记忆单元，并唤醒人格进程丢弃旧向量缓存。"""
     (tmp_path / "personas" / "sirius").mkdir(parents=True)
     server = WebUIServer(data_dir=tmp_path)
-    monkeypatch.setattr(server, "_rebuild_diary_embeddings", lambda: (7, 0))
     monkeypatch.setattr(server, "_rebuild_memory_unit_embeddings", lambda: (3, 0))
     reloads: list[str] = []
     monkeypatch.setattr(server, "_notify_config_reload", reloads.append)
@@ -2828,7 +2827,7 @@ async def test_embedding_rebuild_when_rebuilt_then_reports_both_counts_and_wakes
     payload = json.loads(response.text)
 
     assert response.status == 200
-    assert payload == {"success": True, "entries": 7, "units": 3, "failed": 0}
+    assert payload == {"success": True, "units": 3, "failed": 0}
     assert reloads == ["memory"]
 
 
@@ -2841,7 +2840,6 @@ async def test_embedding_rebuild_when_some_vectors_fail_then_reports_failure(tmp
     """
     (tmp_path / "personas" / "sirius").mkdir(parents=True)
     server = WebUIServer(data_dir=tmp_path)
-    monkeypatch.setattr(server, "_rebuild_diary_embeddings", lambda: (7, 0))
     monkeypatch.setattr(server, "_rebuild_memory_unit_embeddings", lambda: (9026, 128))
 
     response = await server.api_embedding_rebuild(
@@ -2862,7 +2860,6 @@ async def test_embedding_rebuild_when_nothing_indexed_then_skips_worker_wakeup(
     """没有任何索引时可重建内容为空，不必打扰人格进程。"""
     (tmp_path / "personas" / "sirius").mkdir(parents=True)
     server = WebUIServer(data_dir=tmp_path)
-    monkeypatch.setattr(server, "_rebuild_diary_embeddings", lambda: (0, 0))
     monkeypatch.setattr(server, "_rebuild_memory_unit_embeddings", lambda: (0, 0))
     reloads: list[str] = []
     monkeypatch.setattr(server, "_notify_config_reload", reloads.append)
@@ -2884,7 +2881,7 @@ async def test_embedding_rebuild_when_rebuild_fails_then_reports_error(tmp_path,
     def boom() -> int:
         raise RuntimeError("AMKR 不可达")
 
-    monkeypatch.setattr(server, "_rebuild_diary_embeddings", boom)
+    monkeypatch.setattr(server, "_rebuild_memory_unit_embeddings", boom)
 
     response = await server.api_embedding_rebuild(
         make_mocked_request("POST", "/api/embedding/rebuild")
@@ -2893,123 +2890,6 @@ async def test_embedding_rebuild_when_rebuild_fails_then_reports_error(tmp_path,
 
     assert payload["success"] is False
     assert "AMKR 不可达" in payload["error"]
-
-
-def test_rebuild_diary_embeddings_when_group_is_empty_then_drops_orphan_collection(
-    tmp_path, monkeypatch
-):
-    """条目被删光的组必须删掉同名 collection。
-
-    只跳过错过的空组会留下旧维度的行与旧模型名，索引被永久判定为过期——重建就再也
-    修不好了。
-    """
-    import sirius_pulse.memory.diary.store as store_module
-    import sirius_pulse.memory.diary.vector_store as vs_module
-
-    persona_dir = tmp_path / "personas" / "sirius"
-    (persona_dir / "diary").mkdir(parents=True)
-    atomic_write_json(persona_dir / "persona.json", {"name": "sirius"})
-    # 磁盘上有这个组的文件，但没有任何条目。
-    atomic_write_json(
-        persona_dir / "diary" / "group_empty.json",
-        {"group_id": "group_empty", "entries": []},
-    )
-
-    dropped: list[str] = []
-    monkeypatch.setattr(
-        vs_module.DiaryVectorStore, "drop_group", lambda self, gid: dropped.append(gid)
-    )
-    monkeypatch.setattr(vs_module.DiaryVectorStore, "get_stats", lambda self: {"groups": []})
-    monkeypatch.setattr(store_module.DiaryFileStore, "load", lambda self, gid: [])
-    monkeypatch.setattr(
-        "sirius_pulse.embedding.client.create_embedding_client", lambda *a, **k: None
-    )
-
-    server = WebUIServer(data_dir=tmp_path)
-    total, failed = server._rebuild_diary_embeddings()
-
-    assert (total, failed) == (0, 0)
-    assert dropped == ["group_empty"]
-
-
-def test_rebuild_diary_embeddings_when_encode_fails_then_keeps_old_index_for_retry(
-    tmp_path, monkeypatch
-):
-    """某一组重算失败时保留它的旧 collection 并计入失败数。
-
-    失败即删会把唯一还能用的索引也删掉；而失败即静默成功则会让人以为检索已经可用。
-    """
-    import sirius_pulse.memory.diary.store as store_module
-    import sirius_pulse.memory.diary.vector_store as vs_module
-
-    persona_dir = tmp_path / "personas" / "sirius"
-    (persona_dir / "diary").mkdir(parents=True)
-    atomic_write_json(persona_dir / "persona.json", {"name": "sirius"})
-    atomic_write_json(
-        persona_dir / "diary" / "group_a.json",
-        {"group_id": "group_a", "entries": [{"entry_id": "e1", "content": "你好"}]},
-    )
-
-    class _Entry:
-        def __init__(self) -> None:
-            self.entry_id = "e1"
-            self.content = "你好"
-            self.embedding: list[float] = []
-            self.group_id = "group_a"
-
-    def _boom(texts):
-        raise RuntimeError("timed out")
-
-    dropped: list[str] = []
-    monkeypatch.setattr(
-        vs_module.DiaryVectorStore, "drop_group", lambda self, gid: dropped.append(gid)
-    )
-    monkeypatch.setattr(
-        vs_module.DiaryVectorStore,
-        "get_stats",
-        lambda self: {"groups": [{"group_id": "group_a", "count": 1}]},
-    )
-    monkeypatch.setattr(store_module.DiaryFileStore, "load", lambda self, gid: [_Entry()])
-    monkeypatch.setattr(
-        "sirius_pulse.embedding.client.create_embedding_client",
-        lambda *a, **k: type("C", (), {"encode": staticmethod(_boom)})(),
-    )
-
-    server = WebUIServer(data_dir=tmp_path)
-    total, failed = server._rebuild_diary_embeddings()
-
-    assert (total, failed) == (0, 1)
-    # 失败组的旧 collection 必须留着，且不能被当成孤儿清掉。
-    assert dropped == []
-
-
-def test_rebuild_diary_embeddings_when_collection_has_no_file_then_drops_it(tmp_path, monkeypatch):
-    """磁盘上没有对应文件的旧 collection（群被移除/人格改名）也要清掉。"""
-    import sirius_pulse.memory.diary.store as store_module
-    import sirius_pulse.memory.diary.vector_store as vs_module
-
-    persona_dir = tmp_path / "personas" / "sirius"
-    (persona_dir / "diary").mkdir(parents=True)
-    atomic_write_json(persona_dir / "persona.json", {"name": "sirius"})
-
-    dropped: list[str] = []
-    monkeypatch.setattr(
-        vs_module.DiaryVectorStore, "drop_group", lambda self, gid: dropped.append(gid)
-    )
-    monkeypatch.setattr(
-        vs_module.DiaryVectorStore,
-        "get_stats",
-        lambda self: {"groups": [{"group_id": "group_removed", "count": 6}]},
-    )
-    monkeypatch.setattr(store_module.DiaryFileStore, "load", lambda self, gid: [])
-    monkeypatch.setattr(
-        "sirius_pulse.embedding.client.create_embedding_client", lambda *a, **k: None
-    )
-
-    server = WebUIServer(data_dir=tmp_path)
-    server._rebuild_diary_embeddings()
-
-    assert "group_removed" in dropped
 
 
 @pytest.mark.asyncio

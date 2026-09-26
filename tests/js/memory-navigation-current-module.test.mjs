@@ -21,11 +21,13 @@ for (const oldPage of [
 }
 
 for (const apiPath of [
-  '/persona/diary',
+  '/persona/memory-units',
   '/persona/conversations',
 ]) {
   assert.match(memorySource, new RegExp(apiPath.replaceAll('/', '\\/')));
 }
+
+assert.doesNotMatch(memorySource, /\/persona\/diary|\/persona\/vector-store/);
 
 assert.doesNotMatch(memorySource, /glossary|名词解释|术语表/);
 assert.match(memorySource, /记忆管理工作台/);
