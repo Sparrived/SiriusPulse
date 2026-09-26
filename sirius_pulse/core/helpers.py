@@ -850,12 +850,11 @@ class Helpers:
             cache_creation_prompt_tokens=int(usage["cache_creation_prompt_tokens"]),
             cache_info_available=bool(usage["cache_info_available"]),
         )
-        engine.token_usage_records.append(record)
         if engine.token_store is not None:
             try:
                 engine.token_store.add(record)
             except Exception:
-                pass
+                logger.warning("token_store.add() 失败", exc_info=True)
 
     def classify_exception(self, exc: Exception) -> str:
         """Classify an LLM provider exception into a structured error type."""

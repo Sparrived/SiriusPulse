@@ -313,17 +313,12 @@ class EngineProxy:
                 conversation_depth=1,
             )
 
-            records = getattr(self._engine, "token_usage_records", None)
-            if records is not None:
-                records.append(record)
-
             token_store = getattr(self._engine, "token_store", None)
             if token_store is not None:
                 try:
                     token_store.add(record)
                 except Exception:
                     logger.warning("token_store.add() 失败", exc_info=True)
-                    pass
         except Exception as exc:
             logger.warning("generate_raw token 追踪异常（不阻断）: %s", exc)
 

@@ -224,7 +224,6 @@ class Brain:
         style_adapter: StyleAdapter | None = None,
         config: dict[str, Any] | None = None,
         token_store: Any | None = None,
-        token_usage_records: list[Any] | None = None,
         sticker_names: list[str] | None = None,
         other_ai_names: list[str] | None = None,
         tool_registry: Any | None = None,
@@ -236,7 +235,6 @@ class Brain:
         self.style_adapter = style_adapter or StyleAdapter()
         self.config = dict(config or {})
         self.token_store = token_store
-        self.token_usage_records: list[Any] = list(token_usage_records or [])
         self.sticker_names = list(sticker_names or [])
         self.other_ai_names = list(other_ai_names or [])
         self.tool_registry = tool_registry
@@ -785,6 +783,19 @@ class Brain:
         else:
             raise RuntimeError("配置的提供商未实现 generate/generate_async 方法。")
 
+    def _persist_token_record(self, record: Any) -> None:
+        """把一条 token 记录写入唯一的权威存储（persona.db.token_usage）。
+
+        引擎不再维护内存归档列表：`token_store` 是唯一写入目标，
+        WebUI 与监控端点都直接读该库。
+        """
+        if self.token_store is None:
+            return
+        try:
+            self.token_store.add(record)
+        except Exception:
+            logger.warning("token_store.add() 失败", exc_info=True)
+
     def _record_raw_tokens(
         self,
         gen_request: Any,
@@ -856,12 +867,7 @@ class Brain:
             cache_creation_prompt_tokens=int(usage["cache_creation_prompt_tokens"]),
             cache_info_available=bool(usage["cache_info_available"]),
         )
-        self.token_usage_records.append(record)
-        if self.token_store is not None:
-            try:
-                self.token_store.add(record)
-            except Exception:
-                pass
+        self._persist_token_record(record)
 
     def _record_chat_tokens(
         self,
@@ -923,13 +929,6 @@ class Brain:
             cache_creation_prompt_tokens=int(usage["cache_creation_prompt_tokens"]),
             cache_info_available=bool(usage["cache_info_available"]),
         )
-        self.token_usage_records.append(record)
-
-        if self.token_store is not None:
-            try:
-                self.token_store.add(record)
-            except Exception:
-                logger.warning("token_store.add() 失败", exc_info=True)
-                pass
+        self._persist_token_record(record)
 
         return record

@@ -4,7 +4,6 @@ import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
-from sirius_pulse.config import TokenUsageRecord
 from sirius_pulse.developer_profiles import metadata_declares_developer
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.user.unified_models import UnifiedUser
@@ -69,14 +68,10 @@ class Transcript:
     reply_runtime: ReplyRuntimeState = field(default_factory=ReplyRuntimeState)
     session_summary: str = ""
     orchestration_stats: dict[str, dict[str, int]] = field(default_factory=dict)
-    token_usage_records: list[TokenUsageRecord] = field(default_factory=list)
 
     def add(self, message: Message) -> None:
         message.content = Message._trim_content_tail(message.content)
         self.messages.append(message)
-
-    def add_token_usage_record(self, record: TokenUsageRecord) -> None:
-        self.token_usage_records.append(record)
 
     def remember_participant(
         self,
@@ -153,12 +148,11 @@ class Transcript:
         """Serialize to dict. Complex fields use custom logic; all other simple
         fields on Transcript are auto-included via reflection so any future
         addition is persisted without touching this method."""
-        _CUSTOM = frozenset({"messages", "user_memory", "reply_runtime", "token_usage_records"})
+        _CUSTOM = frozenset({"messages", "user_memory", "reply_runtime"})
         result: dict[str, Any] = {
             "messages": [msg.to_dict() for msg in self.messages],
             "user_memory": self.user_memory.to_dict(),  # type: ignore[attr-defined]
             "reply_runtime": self.reply_runtime.to_dict(),
-            "token_usage_records": [r.to_dict() for r in self.token_usage_records],
         }
         # Auto-include any simple fields not handled above (forward-compatible)
         for f in fields(self):
@@ -170,7 +164,7 @@ class Transcript:
     def from_dict(cls, payload: dict[str, Any]) -> "Transcript":
         """Deserialize from dict. Simple fields are loaded reflectively so any
         future field with a default value is picked up automatically."""
-        _CUSTOM = frozenset({"messages", "user_memory", "reply_runtime", "token_usage_records"})
+        _CUSTOM = frozenset({"messages", "user_memory", "reply_runtime"})
 
         # Auto-load simple fields using reflection
         simple_kwargs: dict[str, Any] = {}
@@ -194,9 +188,6 @@ class Transcript:
         transcript = cls(
             messages=[Message.from_dict(item) for item in payload.get("messages", [])],
             reply_runtime=reply_runtime,
-            token_usage_records=[
-                TokenUsageRecord.from_dict(item) for item in payload.get("token_usage_records", [])
-            ],
             **simple_kwargs,
         )
 

@@ -84,11 +84,6 @@ class EngineStateStore:
         path = self._base / "group_timestamps.json"
         _atomic_write(path, timestamps)
 
-    def save_token_usage_records(self, records: list[dict[str, Any]]) -> None:
-        """Save token usage records."""
-        path = self._base / "token_usage_records.json"
-        _atomic_write(path, {"records": records})
-
     def save_event_memory(self, state: dict[str, Any]) -> None:
         """Save event memory v2 state."""
         path = self._base / "event_memory.json"
@@ -111,7 +106,6 @@ class EngineStateStore:
         assistant_emotion: dict[str, Any],
         delayed_queue: list[dict[str, Any]],
         group_timestamps: dict[str, str],
-        token_usage_records: list[dict[str, Any]] | None = None,
         event_memory: dict[str, Any] | None = None,
         basic_memory: dict[str, Any] | None = None,
     ) -> None:
@@ -121,8 +115,6 @@ class EngineStateStore:
         self.save_assistant_emotion(assistant_emotion)
         self.save_delayed_queue(delayed_queue)
         self.save_group_timestamps(group_timestamps)
-        if token_usage_records is not None:
-            self.save_token_usage_records(token_usage_records)
         if event_memory is not None:
             self.save_event_memory(event_memory)
         if basic_memory is not None:
@@ -333,7 +325,6 @@ class EnginePersistence:
             assistant_emotion=dataclasses.asdict(engine.assistant_emotion),
             delayed_queue=[],
             group_timestamps=dict(engine._group_last_message_at),
-            token_usage_records=[r.to_dict() for r in engine.token_usage_records],
             basic_memory=engine.basic_memory.to_dict(),
         )
 
@@ -406,16 +397,6 @@ class EnginePersistence:
                 ),
                 memory_unit_retriever=getattr(engine, "memory_unit_manager", None),
             )
-
-            # Token usage records
-            from sirius_pulse.config import TokenUsageRecord
-
-            for rec_data in state.get("token_usage_records", []):
-                try:
-                    engine.token_usage_records.append(TokenUsageRecord.from_dict(rec_data))
-                except Exception:
-                    logger.warning("反序列化 token_usage_records 失败", exc_info=True)
-                    pass
 
             # Load persona
             from sirius_pulse.core.persona_store import PersonaStore
