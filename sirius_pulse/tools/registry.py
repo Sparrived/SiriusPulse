@@ -21,6 +21,7 @@ from sirius_pulse.tools.models import (
     ToolPassiveType,
     ToolSideEffect,
 )
+from sirius_pulse.tools.security import developer_gate_applies
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +444,7 @@ class ToolRegistry:
             if (
                 tool.developer_only
                 and invocation_context is not None
+                and developer_gate_applies(invocation_context)
                 and not invocation_context.caller_is_developer
             ):
                 continue

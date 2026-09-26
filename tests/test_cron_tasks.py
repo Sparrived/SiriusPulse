@@ -207,6 +207,7 @@ async def test_failed_cron_delivery_retries_same_occurrence_before_advancing(mon
             "command": "echo retry",
             "group_id": "100",
             "owner_user_id": "u1",
+            "owner_is_developer": True,
             "owner_name": "Alice",
             "adapter_type": "napcat",
             "last_run_key": "",
@@ -275,6 +276,7 @@ async def test_cron_restart_does_not_repeat_an_ambiguously_started_command(monke
             "command": "touch external-side-effect",
             "group_id": "100",
             "owner_user_id": "u1",
+            "owner_is_developer": True,
             "owner_name": "Alice",
             "adapter_type": "napcat",
             "last_run_key": "",
@@ -337,3 +339,42 @@ def test_cron_rejects_unsupported_expression():
         pass
     else:
         raise AssertionError("@daily should be rejected by the five-field parser")
+
+
+@pytest.mark.asyncio
+async def test_cron_drops_jobs_registered_by_non_owners(monkeypatch):
+    """普通成员登记的定时任务必须被移除。
+
+    cron 重放直接调 run()，不经过 ToolExecutor 的 developer 门禁；线上确实存在 3 个
+    由普通成员登记的 bash 定时任务，「谁都能执行 bash」修好之后它们必须一起停下。
+    """
+    store = _CronStore()
+    store.data["cron_jobs"] = [
+        {
+            "id": "cron-intruder",
+            "expression": "* * * * *",
+            "command": "echo pwned",
+            "group_id": "100",
+            "owner_user_id": "qq_3944787845",
+            "owner_name": "路人",
+            "owner_is_developer": False,
+            "adapter_type": "napcat",
+            "last_run_key": "",
+            "run_count": 0,
+        }
+    ]
+    command_runs = 0
+
+    monkeypatch.setattr(cron_tasks, "task_is_due", lambda _job, _now: (True, "cron:202608100800"))
+
+    async def run_command(*_args, **_kwargs):
+        nonlocal command_runs
+        command_runs += 1
+        return {"success": True, "text_blocks": ["ok"]}
+
+    ctx = SimpleNamespace(get_data_store=lambda _name: store)
+
+    await _bash_cron.check_tasks(ctx, run_command)
+
+    assert command_runs == 0, "越权任务不得执行"
+    assert store.data["cron_jobs"] == [], "越权任务应被移除，而不是每个 tick 失败一次"

@@ -203,11 +203,12 @@ def test_tool_registry_when_builtin_tools_load_then_napcat_tools_are_visible(
         "max_timeout_seconds",
         "max_output_chars",
     ]
-    assert bash.developer_only is False
+    # bash 是容器级命令执行，只应由人格 owner 触发；普通成员既看不到它也调不动它。
+    assert bash.developer_only is True
     assert (
         "max_timeout_seconds" not in bash.to_tool_schema()["function"]["parameters"]["properties"]
     )
-    assert any(tool["function"]["name"] == "bash" for tool in regular_user_tools)
+    assert not any(tool["function"]["name"] == "bash" for tool in regular_user_tools)
     assert any(tool["function"]["name"] == "interaction_with_master" for tool in tools)
     assert registry.get("container_admin") is None
     assert [param.name for param in tool.config_parameters] == [
