@@ -166,10 +166,8 @@ class _EmotionalGroupChatEngineBase:
 
         self.context_assembler = ContextAssembler(
             self.basic_memory,
-            self.diary_manager._retriever,
-            is_source_diarized=self.diary_manager.is_source_diarized,
-            memory_unit_retriever=self.memory_unit_manager,
             is_source_checkpointed=self.memory_unit_manager.is_source_checkpointed,
+            memory_unit_retriever=self.memory_unit_manager,
         )
 
     def _init_cognitive_layer(self) -> None:

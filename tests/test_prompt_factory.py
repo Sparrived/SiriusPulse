@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from sirius_pulse.core.prompt_factory import (
-    TAG_HISTORY_DIARY,
     PromptBundle,
     PromptFactory,
     StyleAdapter,
@@ -428,7 +427,7 @@ def test_assemble_chat_reply_spec_is_injected_once_after_context_assembly():
 
     assert bundle.system_prompt.count(marker) == 1
 
-    assembler = ContextAssembler(BasicMemoryManager(), _NoopDiaryRetriever())
+    assembler = ContextAssembler(BasicMemoryManager())
     messages = assembler.build_messages(
         group_id="group_a",
         current_query=bundle.user_content,
@@ -438,19 +437,6 @@ def test_assemble_chat_reply_spec_is_injected_once_after_context_assembly():
     )
 
     assert messages[0]["content"].count(marker) == 1
-
-
-class _NoopDiaryRetriever:
-    def retrieve(self, **kwargs):
-        return []
-
-
-class _StaticDiaryRetriever:
-    def __init__(self, entries):
-        self.entries = entries
-
-    def retrieve(self, **kwargs):
-        return self.entries
 
 
 class _StaticMemoryUnitRetriever:
@@ -463,48 +449,14 @@ class _StaticMemoryUnitRetriever:
         return self.units
 
 
-def test_context_assembler_when_diary_exists_then_injects_user_message_not_system():
-    diary_entry = SimpleNamespace(
-        created_at="2026-06-21T10:11:12",
-        content="Alice promised to deploy after lunch.",
-        summary="deployment promise",
-    )
-    assembler = ContextAssembler(
-        BasicMemoryManager(),
-        _StaticDiaryRetriever([diary_entry]),
-    )
-
-    messages = assembler.build_messages(
-        group_id="group_a",
-        current_query="What should I do next?",
-        system_prompt="system",
-    )
-
-    assert TAG_HISTORY_DIARY not in messages[0]["content"]
-    assert TAG_HISTORY_DIARY in messages[-1]["content"]
-    assert "Alice promised to deploy after lunch." in messages[-1]["content"]
-    assert "候选背景记忆" in messages[-1]["content"]
-    assert "直接相关才可显式使用" in messages[-1]["content"]
-    assert "不要主动说明" in messages[-1]["content"]
-    assert "近期已经提过" in messages[-1]["content"]
-    assert "What should I do next?" in messages[-1]["content"]
-
-
-def test_context_assembler_prefers_memory_units_over_diary_context():
-    diary_entry = SimpleNamespace(
-        created_at="2026-06-21T10:11:12",
-        content="Old diary text should not be injected.",
-        summary="old diary",
-    )
+def test_context_assembler_when_memory_units_exist_then_injects_user_message_not_system():
     memory_unit = SimpleNamespace(
         created_at="2026-06-28T10:11:12",
         unit_type="event",
         summary="Alice asked Sirius to use checkpoint memory units.",
-        keywords=["checkpoint", "memory"],
     )
     assembler = ContextAssembler(
         BasicMemoryManager(),
-        _StaticDiaryRetriever([diary_entry]),
         memory_unit_retriever=_StaticMemoryUnitRetriever([memory_unit]),
     )
 
@@ -514,15 +466,11 @@ def test_context_assembler_prefers_memory_units_over_diary_context():
         system_prompt="system",
     )
 
-    assert TAG_HISTORY_DIARY not in messages[-1]["content"]
+    assert "<memory_units>" not in messages[0]["content"]
     assert "<memory_units>" in messages[-1]["content"]
     assert "candidate background memory facts" in messages[-1]["content"]
-    assert "already mentioned recently" in messages[-1]["content"]
     assert "Alice asked Sirius to use checkpoint memory units." in messages[-1]["content"]
-    assert "1. " not in messages[-1]["content"]
-    assert "keywords=" not in messages[-1]["content"]
-    assert "checkpoint,memory" not in messages[-1]["content"]
-    assert "Old diary text should not be injected." not in messages[-1]["content"]
+    assert "What should I do next?" in messages[-1]["content"]
 
 
 def test_context_assembler_uses_memory_unit_top_k_when_present():
@@ -537,7 +485,6 @@ def test_context_assembler_uses_memory_unit_top_k_when_present():
     )
     assembler = ContextAssembler(
         BasicMemoryManager(),
-        None,
         memory_unit_retriever=retriever,
     )
 
@@ -545,11 +492,27 @@ def test_context_assembler_uses_memory_unit_top_k_when_present():
         group_id="group_a",
         current_query="What should I do next?",
         system_prompt="system",
-        diary_top_k=9,
         memory_unit_top_k=3,
     )
 
     assert retriever.last_kwargs["top_k"] == 3
+
+
+def test_context_assembler_forwards_memory_unit_token_budget_to_retriever():
+    retriever = _StaticMemoryUnitRetriever([])
+    assembler = ContextAssembler(
+        BasicMemoryManager(),
+        memory_unit_retriever=retriever,
+    )
+
+    assembler.build_messages(
+        group_id="group_a",
+        current_query="What should I do next?",
+        system_prompt="system",
+        memory_unit_token_budget=20_000,
+    )
+
+    assert retriever.last_kwargs["max_tokens_budget"] == 20_000
 
 
 def test_context_assembler_keeps_all_uncheckpointed_basic_memory():
@@ -562,7 +525,7 @@ def test_context_assembler_keeps_all_uncheckpointed_basic_memory():
             f"old message {index}",
             speaker_name="Alice",
         )
-    assembler = ContextAssembler(basic, _NoopDiaryRetriever())
+    assembler = ContextAssembler(basic)
 
     messages = assembler.build_messages(
         group_id="group_a",
@@ -588,7 +551,7 @@ def test_context_assembler_bounds_injected_history_by_token_budget():
             f"message {index} " + "填充" * 120,
             speaker_name="Alice",
         )
-    assembler = ContextAssembler(basic, _NoopDiaryRetriever())
+    assembler = ContextAssembler(basic)
 
     messages = assembler.build_messages(
         group_id="group_a",
@@ -610,7 +573,7 @@ def test_context_assembler_history_budget_zero_keeps_whole_window():
     basic = BasicMemoryManager(hard_limit=0)
     for index in range(40):
         basic.add_entry("group_a", "alice", "human", f"message {index}", speaker_name="Alice")
-    assembler = ContextAssembler(basic, _NoopDiaryRetriever())
+    assembler = ContextAssembler(basic)
 
     messages = assembler.build_messages(
         group_id="group_a",
@@ -624,6 +587,36 @@ def test_context_assembler_history_budget_zero_keeps_whole_window():
     assert "message 39" in joined
 
 
+def test_context_assembler_history_budget_bounds_the_rendered_payload():
+    """预算必须约束真正发出去的报文，而不只是 content 文本。
+
+    短消息下包装开销占比最高：每条消息还会带上 ``speaker`` / ``user_id`` /
+    ``msg_id`` 等属性，若裁剪只按 content 计费，最终注入的 token 会成倍超出预算
+    （线上实测约 2.4 倍）。
+    """
+    from sirius_pulse.token.utils import estimate_tokens
+
+    basic = BasicMemoryManager(hard_limit=0)
+    for index in range(400):
+        basic.add_entry(
+            "group_a",
+            f"user_{index}",
+            "human",
+            f"msg{index}",
+            speaker_name=f"Speaker{index}",
+        )
+    assembler = ContextAssembler(basic)
+
+    budget = 4_000
+    entries = basic.get_all("group_a")
+    kept = ContextAssembler._trim_history_to_token_budget(entries, budget)
+    rendered_tokens = estimate_tokens(ContextAssembler._entries_to_xml(kept))
+
+    assert rendered_tokens <= budget * 1.15, f"rendered={rendered_tokens} budget={budget}"
+    # 预算应当确实裁掉了大部分历史（按 content 计费则一条都裁不掉）。
+    assert len(kept) < len(entries)
+
+
 def test_context_assembler_builds_user_assistant_alternation():
     """历史对话以 user/assistant 交替形式构建，不再嵌入 system prompt。"""
     basic = BasicMemoryManager()
@@ -632,8 +625,6 @@ def test_context_assembler_builds_user_assistant_alternation():
     basic.add_entry("group_a", "bob", "human", "pending human", speaker_name="Bob")
     assembler = ContextAssembler(
         basic,
-        _NoopDiaryRetriever(),
-        is_source_diarized=lambda _group_id, _entry_id: False,
     )
 
     messages = assembler.build_messages(
@@ -682,8 +673,6 @@ def test_context_assembler_tagged_current_keeps_pending_messages():
     basic.add_entry("group_a", "alice", "human", "current message", speaker_name="Alice")
     assembler = ContextAssembler(
         basic,
-        _NoopDiaryRetriever(),
-        is_source_diarized=lambda _group_id, _entry_id: False,
     )
 
     messages = assembler.build_messages(
@@ -725,7 +714,7 @@ def test_context_assembler_puts_only_latest_message_gap_outside_xml_attributes()
         speaker_name="Alice",
         timestamp="2026-08-12T12:02:10+00:00",
     )
-    assembler = ContextAssembler(basic, _NoopDiaryRetriever())
+    assembler = ContextAssembler(basic)
 
     messages = assembler.build_messages(
         group_id="group_a",
@@ -741,28 +730,6 @@ def test_context_assembler_puts_only_latest_message_gap_outside_xml_attributes()
     assert first.content in messages[1]["content"]
 
 
-def test_context_assembler_removes_diarized_sources_from_system_prefix():
-    basic = BasicMemoryManager()
-    first = basic.add_entry("group_a", "alice", "human", "first human", speaker_name="Alice")
-    second = basic.add_entry("group_a", "assistant", "assistant", "first reply", speaker_name="Bot")
-    diarized = {first.entry_id, second.entry_id}
-    assembler = ContextAssembler(
-        basic,
-        _NoopDiaryRetriever(),
-        is_source_diarized=lambda _group_id, entry_id: entry_id in diarized,
-    )
-
-    messages = assembler.build_messages(
-        group_id="group_a",
-        current_query="current question",
-        system_prompt="system",
-    )
-
-    assert "【历史聊天信息】" not in messages[0]["content"]
-    assert "first human" not in messages[0]["content"]
-    assert "first reply" not in messages[0]["content"]
-
-
 def test_context_assembler_removes_checkpointed_sources_from_recent_history():
     basic = BasicMemoryManager()
     first = basic.add_entry("group_a", "alice", "human", "checkpointed human", speaker_name="Alice")
@@ -770,9 +737,8 @@ def test_context_assembler_removes_checkpointed_sources_from_recent_history():
 
     assembler = ContextAssembler(
         basic,
-        _NoopDiaryRetriever(),
-        memory_unit_retriever=_StaticMemoryUnitRetriever([]),
         is_source_checkpointed=lambda _group_id, entry_id: entry_id == first.entry_id,
+        memory_unit_retriever=_StaticMemoryUnitRetriever([]),
     )
 
     messages = assembler.build_messages(

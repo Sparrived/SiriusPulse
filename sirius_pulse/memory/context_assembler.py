@@ -1,4 +1,4 @@
-"""Context assembler: builds LLM messages from basic memory + diary RAG.
+"""Context assembler: builds LLM messages from basic memory + memory units.
 
 历史消息以 assistant 消息切分，构造 user-assistant 消息链。
 每个 assistant 回复前的 user/system 消息合并为一个 user 消息（XML 格式），
@@ -14,9 +14,12 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET
+from sirius_pulse.core.constants import (
+    DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+    DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
+    DEFAULT_MEMORY_UNIT_TOP_K,
+)
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
-from sirius_pulse.memory.diary.indexer import DiaryRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -26,20 +29,16 @@ class ContextAssembler:
 
     Combines:
     - Basic memory (immediate context, XML format)
-    - Diary entries (historical RAG)
+    - Memory units (long-term RAG summaries)
     """
 
     def __init__(
         self,
         basic_mgr: BasicMemoryManager,
-        diary_retriever: DiaryRetriever | None = None,
-        is_source_diarized: Callable[[str, str], bool] | None = None,
-        memory_unit_retriever: Any | None = None,
         is_source_checkpointed: Callable[[str, str], bool] | None = None,
+        memory_unit_retriever: Any | None = None,
     ) -> None:
         self._basic = basic_mgr
-        self._diary = diary_retriever
-        self._is_source_diarized = is_source_diarized
         self._memory_units = memory_unit_retriever
         self._is_source_checkpointed = is_source_checkpointed
 
@@ -55,9 +54,8 @@ class ContextAssembler:
         *,
         search_query: str = "",
         recent_n: int = 0,
-        diary_top_k: int = 12,
         memory_unit_top_k: int | None = None,
-        diary_token_budget: int = 800,
+        memory_unit_token_budget: int = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
         include_pending: bool = False,
@@ -75,7 +73,7 @@ class ContextAssembler:
         返回消息结构：
         1. system   -- 稳定系统指令（已由 PromptFactory 组装完成）
         2. user/assistant 交替 -- 历史对话
-        3. user     -- 当前用户消息（日记 + 动态上下文 + 消息内容）
+        3. user     -- 当前用户消息（记忆单元 + 动态上下文 + 消息内容）
 
         Args:
             content_is_tagged: 若 True 表示 current_query 已包含 <message> XML
@@ -84,20 +82,69 @@ class ContextAssembler:
             dynamic_context: 每轮变化的上下文（传记、关系、记忆等），
                 由 PromptFactory.assemble_chat 产出，注入到当前 user 消息中。
         """
+        messages, _ = self._assemble(
+            group_id=group_id,
+            current_query=current_query,
+            system_prompt=system_prompt,
+            search_query=search_query,
+            recent_n=recent_n,
+            memory_unit_top_k=memory_unit_top_k,
+            memory_unit_token_budget=memory_unit_token_budget,
+            cross_group_user_id=cross_group_user_id,
+            cross_group_enabled=cross_group_enabled,
+            include_pending=include_pending,
+            speaker_user_id=speaker_user_id,
+            speaker_name=speaker_name,
+            identity_aliases=identity_aliases,
+            mentioned_user_ids=mentioned_user_ids,
+            content_is_tagged=content_is_tagged,
+            platform_message_id=platform_message_id,
+            dynamic_context=dynamic_context,
+            history_token_budget=history_token_budget,
+        )
+        return messages
+
+    def _assemble(
+        self,
+        group_id: str,
+        current_query: str,
+        system_prompt: str,
+        *,
+        search_query: str = "",
+        recent_n: int = 0,
+        memory_unit_top_k: int | None = None,
+        memory_unit_token_budget: int = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
+        cross_group_user_id: str = "",
+        cross_group_enabled: bool = False,
+        include_pending: bool = False,
+        speaker_user_id: str = "",
+        speaker_name: str = "",
+        identity_aliases: list[str] | None = None,
+        mentioned_user_ids: list[str] | None = None,
+        content_is_tagged: bool = False,
+        platform_message_id: str = "",
+        dynamic_context: str = "",
+        history_token_budget: int = DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """构建消息链，并一并返回注入的记忆单元文本（供 breakdown 复用）。
+
+        检索只在这里发生一次；调用方需要统计时直接使用返回的 memory_context，
+        不要重新检索。
+        """
         # 1. Retrieve relevant long-term memory.
         enriched_query = search_query or current_query
 
         memory_context = ""
         memory_count = 0
         effective_memory_unit_top_k = (
-            diary_top_k if memory_unit_top_k is None else memory_unit_top_k
+            DEFAULT_MEMORY_UNIT_TOP_K if memory_unit_top_k is None else memory_unit_top_k
         )
         if self._memory_units is not None:
             memory_units = self._memory_units.retrieve(
                 query=enriched_query,
                 group_id=group_id,
                 top_k=effective_memory_unit_top_k,
-                max_tokens_budget=diary_token_budget,
+                max_tokens_budget=memory_unit_token_budget,
                 user_id=speaker_user_id,
                 identity_aliases=identity_aliases,
                 mentioned_user_ids=mentioned_user_ids,
@@ -105,15 +152,6 @@ class ContextAssembler:
             )
             memory_count = len(memory_units)
             memory_context = self._build_memory_unit_context(memory_units)
-        elif self._diary is not None:
-            diary_entries = self._diary.retrieve(
-                query=enriched_query,
-                group_id=group_id,
-                top_k=diary_top_k,
-                max_tokens_budget=diary_token_budget,
-            )
-            memory_count = len(diary_entries)
-            memory_context = self._build_diary_context(diary_entries)
 
         logger.info(
             "ContextAssembler: group=%s | %d memory items | query=%.30s...",
@@ -259,7 +297,7 @@ class ContextAssembler:
                         }
                     )
 
-        return messages
+        return messages, memory_context
 
     def build_messages_with_breakdown(
         self,
@@ -269,9 +307,8 @@ class ContextAssembler:
         *,
         search_query: str = "",
         recent_n: int = 0,
-        diary_top_k: int = 12,
         memory_unit_top_k: int | None = None,
-        diary_token_budget: int = 800,
+        memory_unit_token_budget: int = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
         cross_group_user_id: str = "",
         cross_group_enabled: bool = False,
         include_pending: bool = False,
@@ -284,16 +321,19 @@ class ContextAssembler:
         dynamic_context: str = "",
         history_token_budget: int = DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-        """构建消息链并返回 token 分布统计。"""
-        messages = self.build_messages(
+        """构建消息链并返回 token 分布统计。
+
+        记忆检索只在 ``build_messages`` 里做一次；这里复用它的结果做统计，
+        不再重复检索（重复检索会让每轮的 embedding 与向量查询翻倍）。
+        """
+        messages, memory_text = self._assemble(
             group_id=group_id,
             current_query=current_query,
             system_prompt=system_prompt,
             search_query=search_query,
             recent_n=recent_n,
-            diary_top_k=diary_top_k,
             memory_unit_top_k=memory_unit_top_k,
-            diary_token_budget=diary_token_budget,
+            memory_unit_token_budget=memory_unit_token_budget,
             cross_group_user_id=cross_group_user_id,
             cross_group_enabled=cross_group_enabled,
             include_pending=include_pending,
@@ -311,42 +351,8 @@ class ContextAssembler:
 
         breakdown: dict[str, int] = {}
         if messages:
-            enriched_query = search_query or current_query
-            memory_text = ""
-            effective_memory_unit_top_k = (
-                diary_top_k if memory_unit_top_k is None else memory_unit_top_k
-            )
-            if self._memory_units is not None:
-                memory_units = self._memory_units.retrieve(
-                    query=enriched_query,
-                    group_id=group_id,
-                    top_k=effective_memory_unit_top_k,
-                    max_tokens_budget=diary_token_budget,
-                    user_id=speaker_user_id,
-                    identity_aliases=identity_aliases,
-                    mentioned_user_ids=mentioned_user_ids,
-                    cross_group_enabled=cross_group_enabled,
-                )
-                memory_text = "\n".join(getattr(unit, "summary", "") for unit in memory_units[:12])
-            elif self._diary is not None:
-                diary_entries = self._diary.retrieve(
-                    query=enriched_query,
-                    group_id=group_id,
-                    top_k=diary_top_k,
-                    max_tokens_budget=diary_token_budget,
-                )
-                full_count = min(5, len(diary_entries))
-                memory_text = "\n".join(
-                    (
-                        f"{i}. [{(e.created_at or '')[:16].replace('T', ' ')}] "
-                        f"{e.content if (i <= full_count and e.content) else e.summary}"
-                        if e.created_at
-                        else f"{i}. {e.content if (i <= full_count and e.content) else e.summary}"
-                    )
-                    for i, e in enumerate(diary_entries[:12], 1)
-                )
             if memory_text:
-                breakdown["diary"] = estimate_tokens(memory_text)
+                breakdown["memory_units"] = estimate_tokens(memory_text)
 
             history_tokens = 0
             for msg in messages:
@@ -368,7 +374,7 @@ class ContextAssembler:
             if recent_n and recent_n > 0
             else self._basic.get_all(group_id)
         )
-        source_filter = self._is_source_checkpointed or self._is_source_diarized
+        source_filter = self._is_source_checkpointed
         if not entries or source_filter is None:
             return list(entries)
 
@@ -387,20 +393,35 @@ class ContextAssembler:
         return result
 
     @staticmethod
+    def _entry_rendered_cost(entry: Any) -> int:
+        """单条历史最终进入提示词时的 token 成本。
+
+        必须按 ``_entries_to_xml`` 实际产出的报文计费，而不是只算 ``content``：
+        每条消息外面还包着 ``<message speaker= user_id= msg_id=>``，图片条目还会
+        追加 ``<image .../>`` 行。只算 content 会让裁剪结果远超预算（线上实测
+        约 2.4 倍），预算也就失去了约束力。
+        """
+        from sirius_pulse.token.utils import estimate_tokens
+
+        return estimate_tokens(ContextAssembler._entries_to_xml([entry], include_wrapper=False))
+
+    @staticmethod
     def _trim_history_to_token_budget(entries: list[Any], budget: int) -> list[Any]:
         """保留最近 N token 内的历史消息，从最旧一端裁剪。
 
         活跃窗口保留的是"尚未被 checkpoint 覆盖"的原始消息，数量可能远超提示词所能
         承载；只有本预算内的最近消息才注入模型。budget <= 0 表示不限制。
+
+        计费口径与最终渲染保持一致（见 ``_entry_rendered_cost``）；至少保留一条，
+        否则最近一轮对话也会被裁掉。
         """
         if budget <= 0 or not entries:
             return entries
-        from sirius_pulse.token.utils import estimate_tokens
 
         kept: list[Any] = []
         used = 0
         for entry in reversed(entries):
-            cost = estimate_tokens(str(getattr(entry, "content", "") or ""))
+            cost = ContextAssembler._entry_rendered_cost(entry)
             if kept and used + cost > budget:
                 break
             used += cost
@@ -475,29 +496,6 @@ class ContextAssembler:
             return ""
         gap = max(0.0, (latest - previous).total_seconds())
         return f"【消息间隔】当前消息与上一条消息相隔{cls._format_message_gap(gap)}。"
-
-    @staticmethod
-    def _build_diary_context(diary_entries: list[Any]) -> str:
-        """构建日记上下文，作为 user 消息链的一部分注入。"""
-        if not diary_entries:
-            return ""
-
-        from sirius_pulse.core.prompt_factory import TAG_HISTORY_DIARY, TAG_HISTORY_DIARY_END
-
-        entries = diary_entries[:12]
-        full_text_count = min(5, len(entries))
-        lines = [
-            TAG_HISTORY_DIARY,
-            "以下是候选背景记忆，不是当前聊天消息。先判断相关性：直接相关才可显式使用，间接相关只影响语气，无关则忽略；不要主动说明你查看、翻阅或记得这些日记。不要复述与当前问题无关的旧事；同一事件、偏好或时间信息近期已经提过时，默认不要再次提及，除非用户主动问。",
-        ]
-        for i, entry in enumerate(entries, 1):
-            ts = (getattr(entry, "created_at", "") or "")[:16].replace("T", " ")
-            content = getattr(entry, "content", "")
-            summary = getattr(entry, "summary", "")
-            text = content if (i <= full_text_count and content) else summary
-            lines.append(f"{i}. [{ts}] {text}" if ts else f"{i}. {text}")
-        lines.append(TAG_HISTORY_DIARY_END)
-        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Internal helpers

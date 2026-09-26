@@ -44,12 +44,20 @@ DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TARGET = 20_000
 # the JSON response is generated.
 DEFAULT_BASIC_MEMORY_CHECKPOINT_BATCH_SIZE = 32
 
-# 注入聊天提示词的对话历史 token 上限。默认与压缩触发阈值一致：正常运行时整个原始
-# 窗口（约 2 万~8 万 token）都会进入提示词，与压缩设计保持一致；该预算只在窗口异常
-# 膨胀（例如后台归纳被长时间拖住）时兜底，避免再次把提示词和宿主内存推向失控。
-DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET = DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER
+# 注入聊天提示词的对话历史 token 上限。活跃窗口会保留远多于提示词所需的原始消息
+# （直到被 checkpoint 覆盖），因此这里限制**最近多少原文**进入提示词；更早的上下文
+# 交由记忆单元 RAG 提供摘要。计费口径与最终渲染一致（含 XML 包装，见
+# `ContextAssembler._entry_rendered_cost`）。
+DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET = 40_000
+
+# 每轮注入的记忆单元（摘要层）检索预算。与原文历史预算相互独立：原文负责最近几轮
+# 的逐字连贯性，记忆单元负责更早的长期上下文。
+DEFAULT_MEMORY_UNIT_TOKEN_BUDGET = 20_000
+# 每轮参与检索排序的记忆单元条数上限（budget 之外的第二个闸门）。沿用此前经
+# `diary_top_k`（默认 5）传入的取值，避免本次预算调整顺带改变召回广度。
+DEFAULT_MEMORY_UNIT_TOP_K = 5
+
 DEFAULT_DIARY_TOP_K = 5
-DEFAULT_DIARY_TOKEN_BUDGET = 800
 DEFAULT_DIARY_VOLUME_THRESHOLD = 8
 
 # 每群可参与检索注入的记忆单元上限。超出的按 显著度×置信度 与时间排序后软退休

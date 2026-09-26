@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.agent_turn import AgentTurn, AgentTurnPhase
-from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET
+from sirius_pulse.core.constants import (
+    DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+    DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
+    DEFAULT_MEMORY_UNIT_TOP_K,
+)
 from sirius_pulse.core.delayed_response_queue import _parse_iso
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
@@ -449,10 +453,11 @@ class DelayedQueueTasks:
             adapter_type=adapter_type,
         )
 
-        # Use ContextAssembler to build full messages with diary RAG + XML history
-        diary_top_k = engine.config.get("diary_top_k", 5)
-        memory_unit_top_k = engine.config.get("memory_unit_top_k", diary_top_k)
-        diary_token_budget = engine.config.get("diary_token_budget", 800)
+        # Use ContextAssembler to build full messages with memory-unit RAG + XML history
+        memory_unit_top_k = engine.config.get("memory_unit_top_k", DEFAULT_MEMORY_UNIT_TOP_K)
+        memory_unit_token_budget = int(
+            engine.config.get("memory_unit_token_budget", DEFAULT_MEMORY_UNIT_TOKEN_BUDGET)
+        )
         history_token_budget = int(
             engine.config.get(
                 "basic_memory_history_token_budget",
@@ -508,9 +513,8 @@ class DelayedQueueTasks:
             current_query=bundle.user_content,
             system_prompt=bundle.system_prompt,
             search_query=raw_chat_content,
-            diary_top_k=diary_top_k,
             memory_unit_top_k=memory_unit_top_k,
-            diary_token_budget=diary_token_budget,
+            memory_unit_token_budget=memory_unit_token_budget,
             include_pending=False,
             speaker_user_id=speaker_uid,
             speaker_name=speaker_display,

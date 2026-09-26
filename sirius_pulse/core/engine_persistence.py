@@ -435,14 +435,12 @@ class EnginePersistence:
 
             engine.context_assembler = ContextAssembler(
                 engine.basic_memory,
-                engine.diary_manager._retriever,
-                is_source_diarized=engine.diary_manager.is_source_diarized,
-                memory_unit_retriever=getattr(engine, "memory_unit_manager", None),
                 is_source_checkpointed=(
                     engine.memory_unit_manager.is_source_checkpointed
                     if hasattr(engine, "memory_unit_manager")
                     else None
                 ),
+                memory_unit_retriever=getattr(engine, "memory_unit_manager", None),
             )
 
             # Token usage records
