@@ -1347,8 +1347,64 @@ class _EmotionalGroupChatEngineBase:
         return str(group_id or "").strip() in self._work_mode_runs
 
     def end_work_mode(self, group_id: str) -> None:
-        """Release the work-mode run so normal replies resume."""
-        self._work_mode_runs.pop(str(group_id or "").strip(), None)
+        """Release the work-mode run so normal replies resume.
+
+        工作模式期间没被点名、因此始终没进上下文的群消息不能就这么丢掉：退出时把它们
+        重新排回延迟队列，等她手里的活干完接着回。否则"她在忙"就等于"她从此不理人"。
+        """
+        group_id = str(group_id or "").strip()
+        run = self._work_mode_runs.pop(group_id, None)
+        if run is None:
+            return
+        take_unanswered = getattr(run, "take_unanswered", None)
+        if not callable(take_unanswered):
+            return
+        replayed = 0
+        for payload in take_unanswered():
+            try:
+                message, user_id = payload
+            except (TypeError, ValueError):
+                continue
+            if self._requeue_after_work_mode(group_id, message, user_id):
+                replayed += 1
+        if replayed:
+            self._persist_group_state(group_id)
+            self._log_inner_thought(f"我忙完了，把工作期间攒下的 {replayed} 条消息排回来接着回～")
+
+    def _requeue_after_work_mode(self, group_id: str, message: Message, user_id: str) -> bool:
+        """把工作模式期间暂存的一条消息放回延迟队列。"""
+        queue = getattr(self, "delayed_queue", None)
+        if queue is None:
+            return False
+        from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
+
+        decision = StrategyDecision(
+            strategy=ResponseStrategy.DELAYED,
+            score=1.0,
+            threshold=0.0,
+            urgency=60.0,
+            relevance=1.0,
+            reason="work_mode_replay",
+        )
+        item = queue.enqueue(
+            group_id=group_id,
+            user_id=user_id or message.channel_user_id or "",
+            message_content=message.content,
+            strategy_decision=decision,
+            candidate_memories=[],
+            channel=message.channel,
+            channel_user_id=message.channel_user_id,
+            multimodal_inputs=message.multimodal_inputs,
+            adapter_type=message.adapter_type,
+            adapter_route_id=message.adapter_route_id,
+            heat_level="warm",
+            pace="steady",
+            speaker_name=message.speaker or "",
+            platform_message_id=message.message_id or "",
+        )
+        # 她刚忙完，不必再等一个去抖窗口：下个 tick 就回。
+        item.window_seconds = 0.0
+        return True
 
     def preview_dispatch(
         self,
@@ -1475,7 +1531,11 @@ class _EmotionalGroupChatEngineBase:
         work_run = self._work_mode_runs.get(group_id)
         if work_run is not None:
             mentioned = self._message_explicitly_mentions_current_bot(message)
-            work_run.stash_message(content, mentions_persona=mentioned)
+            work_run.stash_message(
+                content,
+                mentions_persona=mentioned,
+                replay=(message, user_id),
+            )
             self._background_update(group_id, message, None, None, user_id)
             self._log_inner_thought(
                 f"{speaker} 在我工作时说话，先替她记下来" + ("（点了我，下一轮就给她看）～" if mentioned else "～")

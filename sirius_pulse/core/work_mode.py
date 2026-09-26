@@ -151,14 +151,28 @@ class WorkModeRun:
     """这次工作模式用的任务名（AMKR 按它换真实模型）；空 = 沿用本回合原本的任务名。"""
     steps: list[dict[str, Any]] = field(default_factory=list)
     stash: list[str] = field(default_factory=list)
+    replay: list[Any] = field(default_factory=list)
+    """与 stash 一一对应的原始消息：退出时把还没进上下文的这批交回引擎重排。"""
     flush_pending: bool = False
 
-    def stash_message(self, text: str, *, mentions_persona: bool) -> None:
-        """Hold an inbound group message outside the model context."""
+    def stash_message(
+        self,
+        text: str,
+        *,
+        mentions_persona: bool,
+        replay: Any = None,
+    ) -> None:
+        """Hold an inbound group message outside the model context.
+
+        ``replay`` 是引擎给的原始消息载荷：这条消息如果一直没被点名、始终没进上下文，
+        退出工作模式时要靠它重新排队，而不是直接丢掉。
+        """
         text = (text or "").strip()
         if not text:
             return
         self.stash.append(text)
+        if replay is not None:
+            self.replay.append(replay)
         if mentions_persona:
             self.flush_pending = True
 
@@ -167,7 +181,16 @@ class WorkModeRun:
         if not self.flush_pending:
             return []
         self.flush_pending = False
+        # 这批消息马上就会进上下文，不必也不能再排回队列。
+        self.replay = []
         drained, self.stash = self.stash, []
+        return drained
+
+    def take_unanswered(self) -> list[Any]:
+        """Drain the messages that never made it into the model context."""
+        drained, self.replay = self.replay, []
+        self.stash = []
+        self.flush_pending = False
         return drained
 
     def add_step(self, **step: Any) -> None:

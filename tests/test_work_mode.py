@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
+from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.work_mode import (
     ENTER_WORK_MODE,
     QUIT_WORK_MODE,
@@ -17,6 +18,7 @@ from sirius_pulse.core.work_mode import (
     WorkModeRun,
     WorkModeStore,
 )
+from sirius_pulse.models.models import Message
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.models import ToolResult
@@ -93,7 +95,12 @@ def _work_mode_tasks(tmp_path, queue, chat_fn, *, max_tool_rounds: int = 4):
     engine._work_mode_runs = runs
     engine.begin_work_mode = lambda group_id, run: runs.__setitem__(group_id, run)
     engine.is_work_mode_active = lambda group_id: group_id in runs
-    engine.end_work_mode = lambda group_id: runs.pop(group_id, None)
+    # 退出路径用真实实现：它要负责把工作期间没进上下文的消息排回队列。
+    engine.end_work_mode = MethodType(_EmotionalGroupChatEngineBase.end_work_mode, engine)
+    engine._requeue_after_work_mode = MethodType(
+        _EmotionalGroupChatEngineBase._requeue_after_work_mode, engine
+    )
+    engine._persist_group_state = lambda group_id: None
     tasks = DelayedQueueTasks(engine)
     tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
         system_prompt="system",
@@ -411,3 +418,38 @@ async def test_work_mode_when_generation_fails_then_group_is_released(tmp_path):
         await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
 
     assert runs == {}
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_chatter_arrives_then_next_round_answers_it(tmp_path):
+    """工作期间没点名的消息：出了工作模式后由下一轮正常回复，而不是就此消失。"""
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    calls: list = []
+    holder: dict = {}
+    inbound = Message(role="user", content="你们聊什么呢", speaker="Alice")
+
+    async def chat(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return _round("", _call(ENTER_WORK_MODE, '{"goal": "整理群文件"}', "c-enter"))
+        if len(calls) == 2:
+            holder["engine"]._work_mode_runs["group-1"].stash_message(
+                "你们聊什么呢",
+                mentions_persona=False,
+                replay=(inbound, "u1"),
+            )
+            return _round("", _call(QUIT_WORK_MODE, '{"result": "整理完了"}', "c-quit"))
+        return _round("我在整理群文件，刚忙完——你们聊什么呢？")
+
+    tasks, engine, _ = _work_mode_tasks(tmp_path, queue, chat)
+    holder["engine"] = engine
+
+    first = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+    assert first[0]["reply"] == "整理完了"
+    pending = queue.get_pending("group-1")
+    assert [item for item in pending if "你们聊什么呢" in item.message_content]
+
+    second = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    assert second[0]["reply"] == "我在整理群文件，刚忙完——你们聊什么呢？"

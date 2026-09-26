@@ -295,6 +295,59 @@ async def test_engine_when_work_mode_message_names_persona_then_whole_stash_is_r
     assert engine.is_work_mode_active("group-1") is False
 
 
+@pytest.mark.asyncio
+async def test_engine_when_work_mode_ends_then_unanswered_messages_are_queued_again():
+    """工作模式里没被点名的消息不能就这么没了：退出时排回队列，让她忙完接着回。"""
+    engine, _, persisted = _engine_for_sending_window()
+    run = WorkModeRun(group_id="group-1", goal="整理资料")
+    engine.begin_work_mode("group-1", run)
+    await engine.process_message(
+        Message(role="user", content="你们聊什么呢", speaker="Alice"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+    await engine.process_message(
+        Message(role="user", content="顺便说一句", speaker="Bob"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+    assert engine.delayed_queue.get_pending("group-1") == []
+
+    engine.end_work_mode("group-1")
+
+    pending = engine.delayed_queue.get_pending("group-1")
+    assert len(pending) == 1
+    assert "你们聊什么呢" in pending[0].message_content
+    assert "顺便说一句" in pending[0].message_content
+    # 她刚忙完，不必再等一个去抖窗口。
+    assert pending[0].window_seconds == 0.0
+    assert persisted == ["group-1"]
+    assert engine.is_work_mode_active("group-1") is False
+
+
+@pytest.mark.asyncio
+async def test_engine_when_work_mode_messages_were_shown_then_they_are_not_queued_again():
+    """已经补进她上下文的那批消息不该出来之后再回一遍。"""
+    engine, _, _ = _engine_for_sending_window()
+    run = WorkModeRun(group_id="group-1", goal="整理资料")
+    engine.begin_work_mode("group-1", run)
+    await engine.process_message(
+        Message(role="user", content="你们聊什么呢", speaker="Alice"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+    await engine.process_message(
+        Message(role="user", content="Luna 你弄完没有", speaker="Alice"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+    assert run.take_flushed() == ["你们聊什么呢", "Luna 你弄完没有"]
+
+    engine.end_work_mode("group-1")
+
+    assert engine.delayed_queue.get_pending("group-1") == []
+
+
 def test_engine_tool_chain_injection_requires_explicit_persona_mention():
     engine, _, _ = _engine_for_sending_window()
     engine._active_tool_chain_groups = set()
