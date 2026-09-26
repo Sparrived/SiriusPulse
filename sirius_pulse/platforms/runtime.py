@@ -14,7 +14,7 @@ import inspect
 import logging
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_emotional_engine
 from sirius_pulse.core.persona_db import PersonaDatabase
@@ -121,7 +121,6 @@ async def _await_cleanup(awaitable: Any) -> bool:
 
 def _build_provider(
     settings: AmkrSettings,
-    task_names: Iterable[str] = (),
     workspace: str = "",
     inference_key: str = "",
 ) -> OpenAICompatibleProvider | None:
@@ -148,7 +147,6 @@ def _build_provider(
         api_key=inference_key,
         timeout_seconds=settings.timeout_seconds,
         workspace=workspace or settings.workspace,
-        task_names=task_names,
     )
 
 
@@ -248,22 +246,11 @@ class EngineRuntime:
             LOG.warning("引擎未就绪: 引擎初始化失败: %s", exc)
             return False
 
-    def _amkr_task_names(self) -> set[str]:
-        """本框架会当作 AMKR 任务名发送的模型名集合。
-
-        任务名与 AMKR 一致（``cognition_analyze``、``memory_extract`` …），因此
-        直接取任务注册表的键。
-        """
-        from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY
-
-        return set(_DEFAULT_TASK_REGISTRY)
-
     def _build_provider(self) -> OpenAICompatibleProvider | None:
         """按 AMKR 连接配置构建 provider。
 
-        配置来自 ``global_config.json``，环境变量优先。任务名集合取自编排配置，
-        用于决定采样参数是否交给 AMKR 的任务定义；工作空间取本 persona 的子空间，
-        与 ``register_amkr_tasks`` 写入的空间保持一致。
+        配置来自 ``global_config.json``，环境变量优先；工作空间取本 persona 的
+        子空间，与 ``register_amkr_tasks`` 写入的空间保持一致。
 
         凭据用该空间的**推理 key**（不是 ``settings.api_key``）。这把 key 被 AMKR
         钉死在这个空间上，因此它在模型调用路径上即使泄漏也换不来别的空间，更做不了
@@ -272,7 +259,7 @@ class EngineRuntime:
         settings = load_amkr_settings(self.global_data_path)
         workspace = workspace_for(settings, self.work_path.name)
         inference_key = load_inference_keys(self.global_data_path).get(workspace, "")
-        return _build_provider(settings, self._amkr_task_names(), workspace, inference_key)
+        return _build_provider(settings, workspace, inference_key)
 
     async def register_amkr_tasks(self) -> SyncResult:
         """建出本 persona 的工作空间并注册任务名。

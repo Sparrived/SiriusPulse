@@ -197,8 +197,6 @@ class PluginIntentVerifier:
             model=cfg.model_name,
             system_prompt=system_prompt,
             messages=[{"role": "user", "content": message}],
-            temperature=0.1,  # 低温度，确保输出稳定
-            max_tokens=512,
             timeout_seconds=10.0,  # 短超时
             purpose="plugin_intent_verify",
             response_format={"type": "json_object"},

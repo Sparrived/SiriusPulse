@@ -65,8 +65,8 @@ class ChatRequest:
     urgency: int = 0
 
     # ── 风格覆盖（可选） ──
-    temperature: float | None = None
-    max_tokens: int | None = None
+    # 采样参数（temperature / max_tokens）不在此列：它们由 AMKR 的任务定义持有。
+    # style_params 只承载语气与长度等**提示词层面**的风格，不再携带生成参数。
     style_params: StyleParams | None = None
     reasoning_effort: str | None = "low"
 
@@ -131,13 +131,13 @@ class RawRequest:
     """原生 API 调用请求 —— Brain raw_call() 通道的入口参数。
 
     用于 Cognition 等不注入人格、不组装上下文的场景。
+
+    **不含采样参数**：``temperature`` / ``max_tokens`` 由 AMKR 的任务定义持有。
     """
 
     model: str
     system_prompt: str
     messages: list[dict[str, Any]] = field(default_factory=list)
-    temperature: float = 0.2
-    max_tokens: int = 512
     timeout_seconds: float = 30.0
     purpose: str = "cognition_analyze"
     response_format: dict[str, object] | None = None
@@ -373,8 +373,6 @@ class Brain:
             model=request.model,
             system_prompt=request.system_prompt,
             messages=request.messages,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
             timeout_seconds=request.timeout_seconds,
             purpose=request.purpose,
             response_format=request.response_format,
@@ -452,18 +450,7 @@ class Brain:
                 heat_level=heat_level,
             )
 
-            # ── 默认 pre: 风格覆盖 ──
-            if request.style_params:
-                effective_max_tokens = min(cfg.max_tokens, request.style_params.max_tokens)
-                effective_temperature = request.style_params.temperature
-            elif request.temperature is not None or request.max_tokens is not None:
-                effective_max_tokens = request.max_tokens if request.max_tokens else cfg.max_tokens
-                effective_temperature = (
-                    request.temperature if request.temperature else cfg.temperature
-                )
-            else:
-                effective_max_tokens = cfg.max_tokens
-                effective_temperature = cfg.temperature
+            # 采样参数不在这里计算：AMKR 的任务定义持有权威取值。
 
             # ── 构建 tools 参数 ──
             tools = None
@@ -513,8 +500,6 @@ class Brain:
                 messages=messages_with_time,
                 tools=tools,
                 tool_choice=request.tool_choice,
-                temperature=effective_temperature,
-                max_tokens=effective_max_tokens,
                 timeout_seconds=cfg.timeout,
                 purpose=request.task_name,
                 reasoning_effort=request.reasoning_effort,
@@ -542,8 +527,6 @@ class Brain:
                     messages=fresh_messages,
                     tools=tools,
                     tool_choice=request.tool_choice,
-                    temperature=effective_temperature,
-                    max_tokens=effective_max_tokens,
                     timeout_seconds=cfg.timeout,
                     purpose=request.task_name,
                     reasoning_effort=request.reasoning_effort,
@@ -638,8 +621,6 @@ class Brain:
                     "messages": deepcopy(gen_request.messages),
                     "tools": deepcopy(gen_request.tools),
                     "tool_choice": deepcopy(gen_request.tool_choice),
-                    "temperature": gen_request.temperature,
-                    "max_tokens": gen_request.max_tokens,
                     "timeout_seconds": gen_request.timeout_seconds,
                     "purpose": gen_request.purpose,
                     "response_format": deepcopy(gen_request.response_format),

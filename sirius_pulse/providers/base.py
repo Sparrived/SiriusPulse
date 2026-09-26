@@ -189,13 +189,18 @@ class GenerationResult:
 
 @dataclass(slots=True)
 class GenerationRequest:
+    """一次生成的请求。
+
+    **不含采样参数**：``temperature`` / ``max_tokens`` 由 AMKR 的任务定义持有，
+    调用方不再传递。显式传一份与任务定义冲突的值会让 AMKR 回 400，而本地自行
+    决定采样参数则等于重开一套「本地真相」——两者都不是本框架该做的事。
+    """
+
     model: str
     system_prompt: str
     messages: list[dict[str, object]]
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | None = None
-    temperature: float = 0.7
-    max_tokens: int = 512
     timeout_seconds: float | None = None
     purpose: str = "chat_main"
     response_format: dict[str, object] | None = None
@@ -239,7 +244,6 @@ def build_generation_debug_context(
 ) -> dict[str, object]:
     """Build structured debug metadata for upstream provider calls."""
     estimated_input_tokens = estimate_generation_request_input_tokens(request)
-    estimated_total_upper = estimated_input_tokens + max(0, int(request.max_tokens))
 
     multimodal_message_count = 0
     multimodal_part_count = 0
@@ -264,8 +268,6 @@ def build_generation_debug_context(
         "timeout_seconds": timeout_seconds,
         "purpose": request.purpose,
         "model": request.model,
-        "temperature": request.temperature,
-        "max_tokens": request.max_tokens,
         "reasoning_effort": request.reasoning_effort,
         "input_message_count": len(request.messages),
         "total_message_count": len(request.messages) + (1 if request.system_prompt else 0),
@@ -275,7 +277,6 @@ def build_generation_debug_context(
         "has_system_prompt": bool(request.system_prompt),
         "system_prompt_chars": len(request.system_prompt),
         "estimated_input_tokens": estimated_input_tokens,
-        "estimated_total_token_upper_bound": estimated_total_upper,
     }
 
 
@@ -283,14 +284,14 @@ def build_chat_completion_payload(
     request: GenerationRequest,
     *,
     provider_name: str,
-    delegate_sampling_params: bool = False,
 ) -> dict[str, object]:
     """Build the OpenAI-compatible chat completion body.
 
-    采样参数（``temperature`` / ``max_tokens``）为 ``None`` 时**不写进载荷**：
-    请求最终由 AMKR 按任务名路由，任务定义里的固定值才是权威，调用方再传一份
-    会与任务冲突（AMKR 对「调用方显式传了任务已固定的参数」直接回 400，不做
-    静默覆盖）。``provider_name`` 仅用于日志与调试上下文。
+    **不包含采样参数**。请求由 AMKR 按任务名路由，任务定义里的
+    ``temperature`` / ``max_tokens`` 才是权威；调用方再传一份会与任务冲突
+    （AMKR 对「调用方显式传了任务已固定的参数」直接回 400，不做静默覆盖），
+    所以这里不写、也不保留任何本地回退分支。需要调整取值时改 AMKR 侧的固定值。
+    ``provider_name`` 仅用于日志与调试上下文。
     """
     payload: dict[str, object] = {
         "model": request.model,
@@ -299,10 +300,6 @@ def build_chat_completion_payload(
             *request.messages,
         ],
     }
-    if not delegate_sampling_params:
-        # 直连模式下由本框架决定采样参数；任务名路由下交给 AMKR 的任务定义。
-        payload["temperature"] = request.temperature
-        payload["max_tokens"] = request.max_tokens
     if request.response_format is not None:
         payload["response_format"] = request.response_format
     if request.tools is not None:

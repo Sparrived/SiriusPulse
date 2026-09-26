@@ -451,8 +451,6 @@ class CognitionAnalyzer:
             model=self.model_name,
             system_prompt="你是聊天机器人里的图像理解模块，只输出图片描述。",
             messages=[{"role": "user", "content": content}],
-            temperature=0.2,
-            max_tokens=160,
             timeout_seconds=45,
             purpose="image_caption",
         )

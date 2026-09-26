@@ -31,14 +31,11 @@ class MockProvider(AsyncLLMProvider):
         # 基础调用日志（INFO）
         msg_count = len(request.messages)
         estimated_input_tokens = estimate_generation_request_input_tokens(request)
-        estimated_total_upper = estimated_input_tokens + max(0, int(request.max_tokens))
 
         logger.info(
             f"正准备向模拟的 {request.model} 请教问题，"
             f"手头有 {msg_count} 条消息想说，"
-            f"温度调到 {request.temperature}，Token 上限设了 {request.max_tokens}，"
-            f"预计要花 {estimated_input_tokens} 个 Token，"
-            f"预计总 Token 上限 {estimated_total_upper}～"
+            f"预计要花 {estimated_input_tokens} 个 Token～"
         )
         debug_input = {
             "system_prompt": request.system_prompt,

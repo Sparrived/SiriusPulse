@@ -44,8 +44,6 @@ class PersonaGenerator:
             name=agent.name,
             source="roleplay_bridge",
             created_at=datetime.now(timezone.utc).isoformat(),
-            temperature_preference=agent.temperature,
-            max_tokens_preference=agent.max_tokens,
             full_system_prompt=prompt,
         )
         return profile

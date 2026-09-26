@@ -119,8 +119,6 @@ async def test_brain_chat_result_records_injected_tool_names():
         "messages": deepcopy(provider.last_request.messages),
         "tools": deepcopy(provider.last_request.tools),
         "tool_choice": provider.last_request.tool_choice,
-        "temperature": provider.last_request.temperature,
-        "max_tokens": provider.last_request.max_tokens,
         "timeout_seconds": provider.last_request.timeout_seconds,
         "purpose": provider.last_request.purpose,
         "response_format": provider.last_request.response_format,

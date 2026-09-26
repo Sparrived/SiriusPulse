@@ -81,8 +81,6 @@ def _snapshot_injected_request(request: dict[str, Any] | None) -> dict[str, Any]
         "purpose",
         "reasoning_effort",
         "tool_choice",
-        "temperature",
-        "max_tokens",
         "timeout_seconds",
     )
     return {field: deepcopy(request[field]) for field in fields if field in request}

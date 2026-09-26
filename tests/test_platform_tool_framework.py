@@ -161,8 +161,6 @@ async def test_mock_provider_when_responses_are_configured_then_requests_are_rec
         model="mock-model",
         system_prompt="system",
         messages=[{"role": "user", "content": "hello"}],
-        temperature=0.2,
-        max_tokens=12,
     )
 
     first = await provider.generate_async(request)

@@ -58,11 +58,13 @@ def test_model_router_when_override_tries_to_pick_model_then_it_is_ignored():
     assert router.resolve("response_generate").model_name == "response_generate"
 
 
-def test_model_router_when_memory_extraction_runs_then_json_budget_is_reserved():
+def test_model_router_when_memory_extraction_runs_then_transport_retries_are_disabled():
     config = ModelRouter().resolve("memory_extract")
 
-    assert config.max_tokens == 4096
+    assert config.model_name == "memory_extract"
     assert config.retries == 0
+    assert not hasattr(config, "max_tokens")
+    assert not hasattr(config, "temperature")
 
 
 def test_model_router_when_custom_business_task_is_registered_then_it_resolves():
@@ -70,8 +72,6 @@ def test_model_router_when_custom_business_task_is_registered_then_it_resolves()
         task_registry={
             "support_triage": TaskConfig(
                 model_name="support_triage",
-                temperature=0.1,
-                max_tokens=800,
                 timeout=12.0,
             )
         }

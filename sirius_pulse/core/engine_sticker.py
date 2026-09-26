@@ -179,8 +179,6 @@ class EngineSticker:
                             "content": json.dumps(user_payload, ensure_ascii=False),
                         }
                     ],
-                    temperature=0.0,
-                    max_tokens=512,
                     timeout_seconds=20.0,
                     purpose="sticker_opposition_bootstrap",
                     response_format={"type": "json_object"},

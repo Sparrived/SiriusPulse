@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterable, cast
+from typing import cast
 
 import httpx
 
@@ -44,18 +44,11 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         api_key: str,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         workspace: str = "",
-        task_names: Iterable[str] = (),
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
         self._workspace = workspace.strip()
-        # 采样参数交给 AMKR 的那些模型名（即任务名）。不在其中的名字按普通模型
-        # 直连，此时本框架仍自己决定 temperature / max_tokens。
-        self._task_names = frozenset(name for name in task_names if name)
-
-    def _delegates_sampling_params(self, request: GenerationRequest) -> bool:
-        return request.model in self._task_names
 
     def _build_url(self, request: GenerationRequest) -> str:
         return f"{self._base_url}/v1/chat/completions"
@@ -90,14 +83,12 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         logger.info(
             f"正准备向 {self._provider_name} 的 {request.model} 请教问题，"
             f"手头有 {debug_context['input_message_count']} 条消息想说，"
-            f"温度调到 {request.temperature}，Token 上限设了 {request.max_tokens}，"
             f"预计要花 {debug_context['estimated_input_tokens']} 个 Token，"
             f"超时 {timeout_seconds:.1f} 秒～"
         )
         payload = build_chat_completion_payload(
             request,
             provider_name=self._provider_name,
-            delegate_sampling_params=self._delegates_sampling_params(request),
         )
         wire_messages, transport_stats = prepare_openai_compatible_messages(
             cast(list[dict[str, object]], payload["messages"])
@@ -224,7 +215,6 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         payload = build_chat_completion_payload(
             request,
             provider_name=self._provider_name,
-            delegate_sampling_params=self._delegates_sampling_params(request),
         )
         wire_messages, _ = prepare_openai_compatible_messages(
             cast(list[dict[str, object]], payload["messages"])
