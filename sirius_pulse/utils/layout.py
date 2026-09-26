@@ -84,9 +84,6 @@ class WorkspaceLayout:
     def event_memory_path(self) -> Path:
         return self.event_memory_dir() / "events.json"
 
-    def self_memory_path(self) -> Path:
-        return self.memory_dir() / "self_memory.json"
-
     def token_dir(self) -> Path:
         return self.data_root / "token"
 

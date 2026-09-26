@@ -202,16 +202,6 @@ class OrchestrationPolicy:
     # Memory policy (centralized memory system configuration)
     memory: MemoryPolicy = field(default_factory=MemoryPolicy)
 
-    # Self-memory system (AI diary)
-    enable_self_memory: bool = True
-    self_memory_extract_batch_size: int = (
-        3  # AI replies between self-memory extractions (count-based trigger)
-    )
-    self_memory_min_chars: int = (
-        0  # Also trigger when AI reply ≥ N chars (0 = disabled; OR logic with batch_size)
-    )
-    self_memory_max_diary_prompt_entries: int = 6  # Max diary entries injected into prompt
-
     # Reply frequency limiter (global rate control independent of auto_reply)
     min_reply_interval_seconds: float = (
         0.0  # Minimum gap between two assistant replies; 0 = disabled
@@ -253,10 +243,6 @@ class OrchestrationPolicy:
             raise ValueError("memory_extract_min_content_length 不能小于 0。")
         if self.event_extract_batch_size <= 0:
             raise ValueError("event_extract_batch_size 必须大于 0。")
-        if self.self_memory_extract_batch_size <= 0:
-            raise ValueError("self_memory_extract_batch_size 必须大于 0。")
-        if self.self_memory_min_chars < 0:
-            raise ValueError("self_memory_min_chars 不能小于 0。")
 
         if not 0.0 <= self.engagement_sensitivity <= 1.0:
             raise ValueError("engagement_sensitivity 必须在 [0,1] 范围内。")
