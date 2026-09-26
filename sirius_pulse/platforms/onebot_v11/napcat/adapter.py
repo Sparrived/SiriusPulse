@@ -56,6 +56,8 @@ from sirius_pulse.tools.builtin._internal._markdown_image import to_image_refere
 LOG = logging.getLogger("sirius.platforms.napcat")
 _DISPATCH_EVENT_TIME_BUCKET_SECONDS = 5
 _FORWARD_NODE_CHARS = 800
+#: wait_event() 旁路队列上限：只服务配置向导，没有消费者时不该无界增长。
+_EVENT_QUEUE_MAX_SIZE = 512
 _ATOMIC_PROACTIVE_SEND: ContextVar[bool] = ContextVar("atomic_proactive_send", default=False)
 _PROACTIVE_DELIVERY_START: ContextVar[Callable[[], bool] | None] = ContextVar(
     "proactive_delivery_start",
@@ -215,7 +217,11 @@ class NapCatAdapter(BaseAdapter):
         self._last_offline_log: float = 0.0
         self._reconnect_exhausted = False
         self._reply_locks: dict[str, asyncio.Lock] = {}
-        self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # 事件旁路队列，只服务 wait_event()（配置向导）。它此前无上限且只在向导
+        # 里消费，长跑进程会一直往里堆事件。这里设上限并丢弃最旧的一条。
+        self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
+            maxsize=_EVENT_QUEUE_MAX_SIZE
+        )
         self._seen_message_ids: dict[str, float] = {}
         self._seen_message_ttl = 300.0
         self._group_member_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
@@ -1528,11 +1534,33 @@ class NapCatAdapter(BaseAdapter):
             return
         if self._detaching_engine or bool(getattr(self._engine, "_runtime_retiring", False)):
             return
-        self._event_queue.put_nowait(event)
+        self._enqueue_event_for_waiters(event)
         if msg_type == "group":
             await self._on_group_message(event)
         elif msg_type == "private":
             await self._on_private_message(event)
+
+    def _enqueue_event_for_waiters(self, event: dict[str, Any]) -> None:
+        """把事件放进 wait_event() 的旁路队列；满了就丢最旧的一条。
+
+        队列满说明没有消费者（向导没开），此时保留最新事件才有意义：等待者
+        要的是「接下来发生什么」，而不是历史。丢弃绝不阻塞入站消息处理。
+        """
+        if self._event_queue.full():
+            try:
+                dropped = self._event_queue.get_nowait()
+            except asyncio.QueueEmpty:  # pragma: no cover - 竞态兜底
+                dropped = None
+            if dropped is not None:
+                LOG.debug(
+                    "事件旁路队列已满(%d)，丢弃最旧事件: %s",
+                    _EVENT_QUEUE_MAX_SIZE,
+                    dropped.get("post_type", "?"),
+                )
+        try:
+            self._event_queue.put_nowait(event)
+        except asyncio.QueueFull:  # pragma: no cover - 竞态兜底
+            LOG.debug("事件旁路队列满且丢弃失败，忽略本次入队")
 
     async def _on_group_message(self, event: dict[str, Any]) -> None:
         uid = str(event.get("user_id", ""))

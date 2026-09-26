@@ -612,7 +612,13 @@ class _EmotionalGroupChatEngineBase:
                     if configured_groups is not None:
                         current_groups = _normalize_ids(configured_groups)
                 except Exception:
-                    pass
+                    # 回落用引擎启动时记下的群白名单；留痕以便定位「改了配置
+                    # 却不生效」的问题。
+                    logger.warning(
+                        "读取适配器群白名单失败，回落到引擎启动时的快照 (adapter=%s)",
+                        adapter_type,
+                        exc_info=True,
+                    )
             if callable(private_getter):
                 try:
                     configured_private_users = private_getter()
@@ -621,7 +627,11 @@ class _EmotionalGroupChatEngineBase:
                             configured_private_users, private=True
                         )
                 except Exception:
-                    pass
+                    logger.warning(
+                        "读取适配器私聊白名单失败，回落到引擎启动时的快照 (adapter=%s)",
+                        adapter_type,
+                        exc_info=True,
+                    )
 
             destination_checker = getattr(adapter, "is_proactive_destination_allowed", None)
             if callable(destination_checker):
@@ -1264,7 +1274,12 @@ class _EmotionalGroupChatEngineBase:
                 response_length=len(record_content),
             )
         except Exception:
-            pass
+            # 语义记忆只是辅助索引，写失败不该影响已经落库的回复记录。
+            logger.warning(
+                "语义记忆 record_ai_sent 失败 (group=%s)，已跳过",
+                group_id,
+                exc_info=True,
+            )
         self._persist_group_state(group_id)
 
     # ==================================================================
@@ -1776,7 +1791,13 @@ class _EmotionalGroupChatEngineBase:
                         reason="rule_match",
                     )
             except Exception:
-                pass
+                # 规则匹配失灵会静默降级到「没有插件命中」，用户只会觉得命令
+                # 突然不管用了；这里必须留下痕迹。
+                logger.warning(
+                    "插件规则匹配失败，本条消息按无插件处理 (group=%s)",
+                    group_id,
+                    exc_info=True,
+                )
 
         # 第二层：嵌入向量相似度（覆盖自然语言插件请求）
         matcher = getattr(self, "_plugin_intent_matcher", None)

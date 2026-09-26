@@ -250,7 +250,7 @@ class PersonaWorker:
                 try:
                     states.append(getter())
                 except Exception as exc:  # 状态读取失败不能拖垮心跳
-                    LOG.debug("读取适配器连接状态失败: %s", exc)
+                    LOG.warning("读取适配器连接状态失败: %s", exc, exc_info=True)
         if not states:
             return None
         return {
@@ -467,7 +467,9 @@ class PersonaWorker:
             tmp.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
             replace_with_retry(tmp, path)
         except Exception as exc:
-            LOG.debug("状态写入失败: %s", exc)
+            # 状态文件就是「进程还活着」的证据。写失败意味着 WebUI 会看到过期的
+            # running 状态——必须留 WARNING，否则又是「看起来在跑」的静默失效。
+            LOG.warning("worker 状态写入失败，WebUI 可能读到过期状态: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # 关闭与清理

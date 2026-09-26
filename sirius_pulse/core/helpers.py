@@ -524,7 +524,7 @@ class Helpers:
                 )
                 engine.basic_store.append(_entry)
             except Exception as exc:
-                logger.debug("Plugin 回复录入记忆失败: %s", exc)
+                logger.warning("Plugin 回复录入记忆失败: %s", exc, exc_info=True)
 
         return {
             "reply": final_reply,
@@ -682,7 +682,7 @@ class Helpers:
                     boost += 0.05
                     break
         except Exception:
-            pass
+            logger.debug("短期话题窗口加权失败，按基础分数继续", exc_info=True)
 
         return min(1.0, base_score + boost)
 

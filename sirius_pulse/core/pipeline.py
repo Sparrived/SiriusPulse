@@ -224,33 +224,52 @@ class Pipeline:
                 logger.warning("裁剪话题窗口失败", exc_info=True)
 
             # 持久化认知事件
-            try:
-                emotion = signal.emotion
-                engine.cognition_store.add(
-                    group_id=group_id or "",
-                    user_id=user_id or "",
-                    valence=getattr(emotion, "valence", 0.0) if emotion else 0.0,
-                    arousal=getattr(emotion, "arousal", 0.3) if emotion else 0.3,
-                    basic_emotion=(
-                        getattr(getattr(emotion, "basic_emotion", None), "name", "")
-                        if emotion and getattr(emotion, "basic_emotion", None)
-                        else ""
-                    ),
-                    intensity=getattr(emotion, "intensity", 0.5) if emotion else 0.5,
-                    social_intent=signal.social_intent,
-                    urgency_score=signal.urgency_score,
-                    relevance_score=signal.relevance_score,
-                    confidence=0.8,
-                    directed_score=signal.directed_score,
-                    sarcasm_score=signal.sarcasm_score,
-                    entitlement_score=signal.entitlement_score,
-                    turn_gap_readiness=signal.turn_gap_readiness,
-                    directed_signals={},
-                )
-            except Exception:
-                pass
+            self._persist_cognition_event(group_id, user_id, signal)
 
         return signal
+
+    def _persist_cognition_event(
+        self,
+        group_id: str | None,
+        user_id: str | None,
+        signal: SignalAnalysis,
+    ) -> None:
+        """把本轮信号写入认知事件表。
+
+        认知事件只用于事后分析，落库失败不该拖垮这一轮回复；但静默失败会让
+        「认知库为什么缺记录」变成无解之谜，所以失败必须留下 WARNING。
+        """
+        try:
+            engine = self._engine
+            emotion = signal.emotion
+            engine.cognition_store.add(
+                group_id=group_id or "",
+                user_id=user_id or "",
+                valence=getattr(emotion, "valence", 0.0) if emotion else 0.0,
+                arousal=getattr(emotion, "arousal", 0.3) if emotion else 0.3,
+                basic_emotion=(
+                    getattr(getattr(emotion, "basic_emotion", None), "name", "")
+                    if emotion and getattr(emotion, "basic_emotion", None)
+                    else ""
+                ),
+                intensity=getattr(emotion, "intensity", 0.5) if emotion else 0.5,
+                social_intent=signal.social_intent,
+                urgency_score=signal.urgency_score,
+                relevance_score=signal.relevance_score,
+                confidence=0.8,
+                directed_score=signal.directed_score,
+                sarcasm_score=signal.sarcasm_score,
+                entitlement_score=signal.entitlement_score,
+                turn_gap_readiness=signal.turn_gap_readiness,
+                directed_signals={},
+            )
+        except Exception:
+            logger.warning(
+                "认知事件落库失败 (group=%s user=%s)，本轮回复继续",
+                group_id,
+                user_id,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # 粗筛（硬性守卫 + 阈值）
