@@ -26,7 +26,6 @@ from sirius_pulse.tools.models import ToolDefinition, ToolInvocationContext
 from sirius_pulse.tools.security import (
     build_tool_invocation_context,
     collect_declared_developer_profiles,
-    developer_gate_applies,
     ensure_developer_access,
     validate_tool_access,
 )
@@ -221,83 +220,6 @@ def test_tool_security_when_developer_only_tool_is_validated_then_access_depends
             tool_name="server_shell",
             invocation_context=ToolInvocationContext(caller=user, developer_profiles=[developer]),
         )
-
-
-def test_developer_only_tool_is_blocked_for_ordinary_group_members():
-    """普通群成员不能借一句话让机器人执行特权工具。
-
-    线上遥测里 bash 有 22 个不同调用者，其中 21 个是普通 QQ 用户——容器内任意命令
-    执行原本对任何群成员开放。
-    """
-    shell = ToolDefinition(name="bash", description="", developer_only=True)
-    owner = UnifiedUser(user_id="2388389247", name="Owner", metadata={"is_developer": True})
-    member = UnifiedUser(user_id="qq_2940667688", name="路人", metadata={})
-
-    error = validate_tool_access(
-        tool=shell,
-        invocation_context=ToolInvocationContext(caller=member, developer_profiles=[owner]),
-    )
-
-    assert "路人" in error and "developer" in error
-
-
-def test_developer_only_tool_is_allowed_for_the_configured_owner():
-    shell = ToolDefinition(name="bash", description="", developer_only=True)
-    owner = UnifiedUser(user_id="2388389247", name="Owner", metadata={"is_developer": True})
-
-    assert (
-        validate_tool_access(
-            tool=shell,
-            invocation_context=ToolInvocationContext(caller=owner, developer_profiles=[owner]),
-        )
-        == ""
-    )
-
-
-def test_developer_only_tool_stays_available_on_self_initiated_turns():
-    """自主回合没有外部调用者，不能因此失去 bash 这类侦察能力。"""
-    shell = ToolDefinition(name="bash", description="", developer_only=True)
-    persona = UnifiedUser(user_id="autonomy", name="autonomy", metadata={})
-
-    context = ToolInvocationContext(caller=persona, self_initiated=True)
-
-    assert developer_gate_applies(context) is False
-    assert validate_tool_access(tool=shell, invocation_context=context) == ""
-
-
-def test_developer_gate_still_applies_when_no_caller_context_is_available():
-    """拿不到调用者身份时必须保守拒绝，而不是把门禁当成不适用。"""
-    shell = ToolDefinition(name="bash", description="", developer_only=True)
-
-    assert developer_gate_applies(None) is True
-    assert "developer" in validate_tool_access(tool=shell, invocation_context=None)
-
-
-def test_bash_is_not_offered_to_ordinary_members_but_is_offered_to_the_owner():
-    """特权工具不该出现在普通成员的模型工具表里——否则模型会一直尝试调用它。"""
-    from sirius_pulse.tools.registry import ToolRegistry
-
-    registry = ToolRegistry()
-    registry.register(ToolDefinition(name="bash", description="", developer_only=True))
-    registry.register(ToolDefinition(name="web_lookup", description=""))
-    owner = UnifiedUser(user_id="2388389247", name="Owner", metadata={"is_developer": True})
-    member = UnifiedUser(user_id="qq_2940667688", name="路人", metadata={})
-
-    def names(context):
-        return [
-            item["function"]["name"]
-            for item in registry.build_tools_list(invocation_context=context)
-        ]
-
-    assert names(ToolInvocationContext(caller=member, developer_profiles=[owner])) == ["web_lookup"]
-    assert names(ToolInvocationContext(caller=owner, developer_profiles=[owner])) == [
-        "bash",
-        "web_lookup",
-    ]
-    assert names(ToolInvocationContext(caller=member, self_initiated=True)) == [
-        "bash",
-        "web_lookup",
-    ]
 
 
 def test_tool_telemetry_when_records_are_written_then_query_filters_and_summary_are_stable(

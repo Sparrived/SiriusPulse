@@ -64,13 +64,8 @@ TOOL_META = {
         "它不会修改操作系统 crontab；任务由 Sirius 内部调度器持久化并执行，"
         "命令输出会作为上下文在原聊天中生成主动消息。"
     ),
-    "version": "1.6.0",
+    "version": "1.5.0",
     "side_effect": "unknown",
-    # 容器内任意命令执行（且可通过 docker socket 触达其他容器），只应由人格的
-    # owner 触发。线上遥测里曾有 22 个不同调用者，其中 21 个是普通 QQ 用户——
-    # 任何群成员都能借一句话让机器人执行任意命令。人格自主回合（self_initiated）
-    # 没有外部调用者，不受这道门禁限制，见 tools/security.py。
-    "developer_only": True,
     "tags": ["bash", "shell", "file", "system", "container", "cron", "schedule"],
     "parameters": _config.build(),
     "config": {

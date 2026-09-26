@@ -158,17 +158,6 @@ async def check_tasks(ctx: Any, run_command: CommandRunner) -> None:
         if not job.get("group_id") or not job.get("command"):
             changed = True
             continue
-        if not job.get("owner_is_developer"):
-            # cron 重放直接调 run()，不经过 ToolExecutor 的 developer 门禁，所以这里
-            # 必须自己把关。注册者是普通成员的任务是旧语义（谁都能执行 bash）下登记的，
-            # 现在不可能再合法执行：移除并留痕，而不是每个 tick 失败一次。
-            logger.warning(
-                "移除越权的内部 cron 任务 %s：注册者 %s 不是人格 owner",
-                job.get("id", "unknown"),
-                job.get("owner_user_id", "unknown"),
-            )
-            changed = True
-            continue
         pending_run_key = str(job.get("pending_run_key", "") or "")
         due, due_run_key = cron_tasks.task_is_due(job, now)
         run_key = pending_run_key or due_run_key
