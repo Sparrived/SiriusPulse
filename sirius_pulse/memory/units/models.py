@@ -41,3 +41,23 @@ class MemoryUnitGenerationResult(JsonSerializable):
     """Result of checkpoint memory unit generation."""
 
     units: list[MemoryUnit] = field(default_factory=list)
+
+
+def embedding_text(unit: MemoryUnit) -> str:
+    """单元被向量化时实际编码的文本。
+
+    它是**唯一**口径：``MemoryUnitIndexer._unit_text`` 与向量的持久化指纹都从这里
+    取。任何字段口径的分叉都会让指纹与向量失配，进而把过期向量当成当前向量复用。
+    """
+    return " ".join(
+        [
+            unit.summary,
+            " ".join(unit.participants),
+            " ".join(unit.topics),
+            " ".join(unit.keywords),
+            " ".join(unit.retrieval_terms),
+            " ".join(unit.identity_aliases),
+            unit.status,
+            unit.event_time,
+        ]
+    ).strip()

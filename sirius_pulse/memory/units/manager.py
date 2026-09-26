@@ -136,7 +136,14 @@ class MemoryUnitManager:
             return []
         async with self._mutation_lock:
             self.ensure_group_loaded(group_id)
+            # 去重的语义候选要覆盖全组（含退休单元）——退休只是不再注入，不代表
+            # 同一条事实可以被重新写一遍。所以这里按「带向量」读取，而不是沿用
+            # ensure_group_loaded 为省内存而做的只读元数据。
             existing = self._store.load(group_id)
+            # 索引里此刻只有「活跃单元带向量」（常驻路径为省内存故意如此），而语义去重
+            # 的候选必须覆盖全组含退休单元。先用带向量的全量刷新一次，别让退休单元
+            # 因为「内存里没有向量」而被漏判成 NEW。
+            self._indexer.replace_group(group_id, existing)
             accepted: dict[str, MemoryUnit] = {}
             for incoming in units:
                 verdict = await self._deduplicator.decide(
@@ -252,7 +259,8 @@ class MemoryUnitManager:
             return
         async with self._mutation_lock:
             self.ensure_group_loaded(group_id)
-            existing = self._store.load(group_id)
+            # 追加不需要现成向量，按元数据读取即可；真正要注入的单元在写盘前补一次。
+            existing = self._store.load(group_id, with_embeddings=False)
             existing_ids = {unit.unit_id for unit in existing}
             changed = False
             for unit in units:
@@ -265,6 +273,12 @@ class MemoryUnitManager:
                 changed = True
             if changed:
                 self.retire_overflow(group_id, existing)
+                # 只给会被注入的单元补向量；退休单元的向量留在磁盘，去重时再按需读。
+                self._store.hydrate_embeddings(
+                    group_id,
+                    existing,
+                    unit_ids={unit.unit_id for unit in existing if unit.should_prompt},
+                )
                 self._store.save(group_id, existing)
                 # 重新加载过的对象与索引里那一批不是同一批，退休标记必须同步进索引，
                 # 否则模型侧仍按旧标记召回。
@@ -273,20 +287,34 @@ class MemoryUnitManager:
     def ensure_group_loaded(self, group_id: str) -> None:
         if group_id in self._loaded_groups:
             return
-        units = self._store.load(group_id)
+        # 只读元数据，不带向量：向量占单条单元的 99% 体积，而线上 90.6% 的向量属于
+        # 永远不会被注入的退休单元（单群 7547/8047）。整组读向量是内存峰值的主因。
+        units = self._store.load(group_id, with_embeddings=False)
         # 存量分组可能早就超额或早已过期（限额是后加的），加载时立即生效，不必等
         # 下一次 checkpoint；否则要等到有新对话才会收敛。
         any_recomputed = bool(self.retire_overflow(group_id, units))
+        # 只给真正可能被注入的单元补向量；退休单元的向量由去重路径按需补。
+        self._store.hydrate_embeddings(
+            group_id, units, unit_ids={unit.unit_id for unit in units if unit.should_prompt}
+        )
         for unit in units:
             if self._indexer.add(unit):
                 any_recomputed = True
             self._checkpointed_sources.setdefault(group_id, set()).update(unit.source_ids)
-        if any_recomputed:
+        # 旧格式（向量内联在 JSON 里）必须落一次盘才会搬进 sidecar，否则这次「省内存
+        # 加载」省下的只是本次进程，几百 MB 的 JSON 会一直在每条消息的读路径上。
+        if any_recomputed or self._store.is_legacy_layout(group_id):
             self._store.save(group_id, units)
         self._loaded_groups.add(group_id)
         logger.info("Loaded %d checkpoint memory units for group %s", len(units), group_id)
 
     def _replace_loaded_group(self, group_id: str, units: list[MemoryUnit]) -> None:
+        # 退休单元的向量不留在索引里：它们永不参与注入，却占了线上 90.6% 的向量。
+        # 清掉不等于丢数据——磁盘那份原样保留（写盘时会按文本指纹沿用它），去重
+        # 需要时再按需读回。少了这一步，一次 checkpoint 就会把整组向量重新变常驻。
+        for unit in units:
+            if not unit.should_prompt:
+                unit.embedding = None
         self._indexer.replace_group(group_id, units)
         self._checkpointed_sources[group_id] = {
             source_id for unit in units for source_id in unit.source_ids
@@ -346,8 +374,9 @@ def rebuild_memory_unit_embeddings(
 ) -> tuple[int, int]:
     """按当前 embedding 模型重算全部记忆单元的向量并落盘。
 
-    记忆单元的向量内联存在 ``memory_units/*.json`` 里，换模型后维度失配，语义检索会
-    静默退化成纯关键词检索。每组的维度都从当前模型重新学，因此不需要预知具体维度。
+    记忆单元的向量存在 ``memory_units/vectors/`` 下的 sidecar 文件里，换模型后维度
+    失配，语义检索会静默退化成纯关键词检索。每组的维度都从当前模型重新学，因此不
+    需要预知具体维度。
 
     返回 ``(总条数, 仍失败的条数)``。失败的条目要如实报给调用方：整批超时会让那一批
     原样留在旧维度，只回一个「成功」会让人以为索引已经修好了。

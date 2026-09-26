@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.units.deduplicator import same_boundary
-from sirius_pulse.memory.units.models import MemoryUnit
+from sirius_pulse.memory.units.models import MemoryUnit, embedding_text
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,9 @@ class MemoryUnitIndexer:
             self.add(unit)
 
     def _ensure_embedding(self, unit: MemoryUnit) -> bool:
-        if not self.semantic_available or unit.embedding:
+        # 退休单元永远不进提示词，给它们算向量是纯浪费（线上单群 7547/8047 条是退休的）。
+        # 需要它们的向量时由去重路径显式从磁盘补齐（见 MemoryUnitManager.reconcile_units）。
+        if not self.semantic_available or unit.embedding or not unit.should_prompt:
             return False
         try:
             vec = self._embedding_client.encode_single(self._unit_text(unit))
@@ -316,18 +318,7 @@ class MemoryUnitIndexer:
 
     @classmethod
     def _unit_text(cls, unit: MemoryUnit) -> str:
-        return " ".join(
-            [
-                unit.summary,
-                " ".join(unit.participants),
-                " ".join(unit.topics),
-                " ".join(unit.keywords),
-                " ".join(unit.retrieval_terms),
-                " ".join(unit.identity_aliases),
-                unit.status,
-                unit.event_time,
-            ]
-        ).strip()
+        return embedding_text(unit)
 
     @classmethod
     def _keyword_score(cls, query: str, unit: MemoryUnit) -> float:

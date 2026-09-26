@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from sirius_pulse.memory.units import MemoryUnit, MemoryUnitFileStore, MemoryUnitManager
 
@@ -93,3 +94,107 @@ def test_webui_edit_does_not_resurrect_retired_unit():
     )
 
     assert normalized["should_prompt"] is False
+
+
+def test_retired_unit_still_counts_as_an_existing_fact(tmp_path):
+    """退休只是不再注入，不代表同一条事实可以被重新写一遍。
+
+    常驻加载为了省内存不给退休单元带向量；若去重因此看不到它，重复事实会被当作
+    全新单元再写一次，记忆库会缓慢长回 500 条上限之外。
+    """
+
+    class _StubEmbedding:
+        available = True
+        dimension = 4
+        model = "stub"
+
+        def encode(self, texts):
+            return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+        def encode_single(self, text):
+            return [1.0, 0.0, 0.0, 0.0]
+
+    class _DupBrain:
+        async def raw_call(self, request):
+            return json.dumps({"decision": "DUPLICATE", "target_unit_id": "mem-old"})
+
+    writer = MemoryUnitManager(tmp_path, embedding_client=_StubEmbedding())
+    asyncio.run(
+        writer.add_units(
+            "group-a",
+            [_unit("mem-old", "Alice 偏好简洁回复。", keywords=["简洁", "偏好"])],
+        )
+    )
+    loaded = writer.get_units_for_group("group-a")
+    for unit in loaded:
+        unit.should_prompt = False
+    writer._store.save("group-a", loaded)
+
+    # 新进程：常驻加载只带元数据，退休单元没有向量。
+    fresh = MemoryUnitManager(tmp_path, embedding_client=_StubEmbedding())
+    fresh.ensure_group_loaded("group-a")
+    assert {u.unit_id: u.embedding for u in fresh._indexer.list_all()}["mem-old"] is None
+
+    # 语义等价但文字不同的新单元必须仍被认出是「已存在的事实」。
+    asyncio.run(
+        fresh.reconcile_units(
+            "group-a",
+            [_unit("mem-new", "Alice 更喜欢简短的回答。", keywords=["简洁", "偏好"])],
+            brain=_DupBrain(),
+            model_name="stub",
+        )
+    )
+
+    on_disk = MemoryUnitFileStore(tmp_path).load("group-a")
+    assert len(on_disk) == 1, f"退休单元没有挡住重复事实: {[u.summary for u in on_disk]}"
+
+
+def test_checkpoint_releases_retired_vectors_from_the_index(tmp_path):
+    """一次 checkpoint 之后退休单元的向量必须离开内存索引。
+
+    去重路径会把全组向量读进索引才能比对；若写完就留在那里，整组向量又会重新常驻，
+    前面省下的内存等于白省。退休单元的向量留在磁盘即可，需要时按需读回。
+    """
+
+    class _StubEmbedding:
+        available = True
+        dimension = 4
+        model = "stub"
+
+        def encode(self, texts):
+            return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+        def encode_single(self, text):
+            return [1.0, 0.0, 0.0, 0.0]
+
+    class _NewBrain:
+        async def raw_call(self, request):
+            return json.dumps({"decision": "NEW"})
+
+    manager = MemoryUnitManager(tmp_path, embedding_client=_StubEmbedding())
+    active = _unit("mem-active", "活跃事实。", keywords=["活跃"], embedding=[1.0, 0, 0, 0])
+    retired = _unit(
+        "mem-retired",
+        "退休事实。",
+        keywords=["退休"],
+        should_prompt=False,
+        embedding=[0.5, 0, 0, 0],
+    )
+    asyncio.run(manager.add_units("group-a", [active, retired]))
+
+    asyncio.run(
+        manager.reconcile_units(
+            "group-a",
+            [_unit("mem-new", "另一条事实。", keywords=["新"])],
+            brain=_NewBrain(),
+            model_name="stub",
+        )
+    )
+
+    indexed = {unit.unit_id: unit for unit in manager._indexer.list_all()}
+    assert indexed["mem-retired"].embedding is None, "退休向量必须离开内存索引"
+    assert indexed["mem-active"].embedding is not None, "活跃单元仍要能语义检索"
+
+    # 磁盘那一份必须原样保留：真人追溯与后续去重都依赖它。
+    on_disk = {unit.unit_id: unit for unit in MemoryUnitFileStore(tmp_path).load("group-a")}
+    assert on_disk["mem-retired"].embedding is not None

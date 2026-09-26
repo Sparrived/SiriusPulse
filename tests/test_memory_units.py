@@ -146,6 +146,85 @@ def test_memory_unit_manager_loads_cross_group_persona_units_when_enabled(tmp_pa
     assert retrieved == [unit]
 
 
+def test_manager_loads_legacy_inline_vectors_and_migrates_them(tmp_path):
+    """存量文件是向量内联的：加载后必须仍能召回，并把向量搬进 sidecar。"""
+    from sirius_pulse.memory.units.store import VECTORS_DIR_NAME
+
+    base = tmp_path / "memory_units"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "group_a.json").write_text(
+        json.dumps(
+            {
+                "group_id": "group_a",
+                "units": [
+                    {
+                        "unit_id": "mem_legacy",
+                        "group_id": "group_a",
+                        "created_at": "2026-06-28T00:00:00+00:00",
+                        "summary": "Alice prefers concise replies.",
+                        "keywords": ["concise"],
+                        "salience": 0.9,
+                        "confidence": 0.9,
+                        "should_prompt": True,
+                        "embedding": [0.5] * 8,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = MemoryUnitManager(tmp_path)
+    manager.ensure_group_loaded("group_a")
+
+    assert [unit.unit_id for unit in manager.retrieve("concise", group_id="group_a")] == [
+        "mem_legacy"
+    ]
+
+    raw = json.loads((base / "group_a.json").read_text(encoding="utf-8"))
+    assert "embedding" not in raw["units"][0], "旧格式必须已迁移"
+    assert raw["vector_file"]
+    assert list((base / VECTORS_DIR_NAME).glob("*.bin")), "向量必须已落进 sidecar"
+
+
+def test_manager_loads_retired_units_without_their_vectors(tmp_path):
+    """退休单元的向量没有检索价值，不该常驻内存——线上 90.6% 的向量属于它们。"""
+    from sirius_pulse.memory.units import MemoryUnitFileStore
+
+    store = MemoryUnitFileStore(tmp_path)
+    active = MemoryUnit(
+        unit_id="mem_active",
+        group_id="group_a",
+        created_at="2026-06-28T00:00:00+00:00",
+        summary="Alice prefers concise replies.",
+        keywords=["concise"],
+        should_prompt=True,
+        embedding=[1.0] * 4,
+    )
+    retired = MemoryUnit(
+        unit_id="mem_retired",
+        group_id="group_a",
+        created_at="2026-06-28T00:00:00+00:00",
+        summary="Alice once mentioned an old plan.",
+        keywords=["plan"],
+        should_prompt=False,
+        embedding=[0.5] * 4,
+    )
+    store.save("group_a", [active, retired])
+
+    manager = MemoryUnitManager(tmp_path)
+    manager.ensure_group_loaded("group_a")
+
+    indexed = {unit.unit_id: unit for unit in manager._indexer.list_all()}
+    assert indexed["mem_active"].embedding is not None
+    assert indexed["mem_retired"].embedding is None
+
+    # 退休不删除：单元本身必须还在，且仍可从磁盘读回完整内容。
+    on_disk = MemoryUnitFileStore(tmp_path).load("group_a")
+    assert [unit.unit_id for unit in on_disk] == ["mem_active", "mem_retired"]
+    assert on_disk[1].embedding is not None
+
+
 def test_generation_collapses_exact_duplicate_and_tracks_new_source(tmp_path):
     manager = MemoryUnitManager(tmp_path)
     asyncio.run(
