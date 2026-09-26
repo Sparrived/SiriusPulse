@@ -36,6 +36,10 @@ from sirius_pulse.providers.base import GenerationResult, ToolCall
 
 logger = logging.getLogger(__name__)
 
+#: `max_concurrent_llm_calls = 0` 表示不限并发时给信号量的初值。
+#: asyncio.Semaphore 不接受无限，用一个足够大的数表达「不设限」。
+_UNLIMITED_CONCURRENCY = 1_000_000
+
 # 模型主动跳过本轮回复的控制标记：<skip/>、<SKIP>、[SKIP]、【SKIP】等写法均识别。
 _SKIP_REPLY_RE = re.compile(
     r"<\s*skip\s*/?\s*>|[\[［【]\s*skip\s*[\]］】]",
@@ -249,8 +253,13 @@ class Brain:
         self._pre_hooks: list[_PreHookEntry] = []
         self._post_hooks: list[_PostHookEntry] = []
 
-        # ── chat() 串行化锁 ──
-        self._chat_lock = asyncio.Lock()
+        # ── chat() 并发闸门 ──
+        # `max_concurrent_llm_calls` 早先只存在于配置模型里、没有任何运行时
+        # 消费者（死配置）。这里让它真正生效：0 表示不限制，默认 1 与旧行为
+        # （进程级单锁串行）完全一致。
+        self._chat_semaphore = asyncio.Semaphore(
+            self._max_concurrent_llm_calls() or _UNLIMITED_CONCURRENCY
+        )
         self._main_reply_last_finished_at: float = 0.0
 
     # ═══════════════════════════════════════════════════════════════════
@@ -409,7 +418,7 @@ class Brain:
 
         TOOL 反馈循环由调用方管理，chat() 只负责单轮生成。
         """
-        async with self._chat_lock:
+        async with self._chat_semaphore:
             ctx: dict[str, Any] = {}
             ctx["task_name"] = request.task_name
             system_prompt = request.system_prompt
@@ -461,7 +470,6 @@ class Brain:
                     name="caller",
                     metadata={"is_developer": request.caller_is_developer},
                 )
-                inv_ctx = ToolInvocationContext(caller=caller)
                 adapter_type = request.adapter_type
                 if adapter_type is None:
                     adapter_type = (
@@ -469,6 +477,11 @@ class Brain:
                         if self.current_adapter_type_fn is not None
                         else None
                     )
+                inv_ctx = ToolInvocationContext(
+                    caller=caller,
+                    group_id=request.group_id,
+                    adapter_type=adapter_type or "",
+                )
                 tool_kwargs = {
                     "invocation_context": inv_ctx,
                     "adapter_type": adapter_type,
@@ -686,6 +699,28 @@ class Brain:
             return max(0.0, float(raw))
         except (TypeError, ValueError):
             return 0.0
+
+    def _max_concurrent_llm_calls(self) -> int:
+        """每个引擎实例允许并发的 LLM 调用数（0 表示不限制）。
+
+        该配置历史上只在 config 模型里存在、没有运行时消费者，属于死配置。
+        现在它真正参与调度：默认 1，与旧的进程级单锁行为一致；调大后不同群
+        的生成可以并行，避免一个群的 30 秒生成阻塞其余群。
+        """
+        raw = self.config.get("max_concurrent_llm_calls", 1)
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            return 1
+
+    def set_concurrency_limit(self, limit: int | None = None) -> None:
+        """重建生成并发闸门（配置热重载用）。
+
+        在飞行的调用不会被中断，只是之后取号时按新上限排队。传 ``None`` 时从
+        当前 config 读取。
+        """
+        raw = self._max_concurrent_llm_calls() if limit is None else max(0, int(limit))
+        self._chat_semaphore = asyncio.Semaphore(raw or _UNLIMITED_CONCURRENCY)
 
     def _is_main_reply_task(self, request: ChatRequest) -> bool:
         return request.task_name == "response_generate"

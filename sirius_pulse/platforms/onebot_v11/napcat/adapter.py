@@ -227,8 +227,11 @@ class NapCatAdapter(BaseAdapter):
         self._api_send_lock = asyncio.Lock()
         self._event_bus_task: asyncio.Task | None = None
 
-        # 消息处理锁：防止并发进入引擎 process_message 导致字典迭代时修改错误
-        self._process_lock = asyncio.Lock()
+        # 消息处理锁：防止并发进入引擎 process_message 导致字典迭代时修改错误。
+        # 按会话（群/私聊）分锁而不是全局单锁——一次 process_message 会跨越整轮
+        # LLM 生成，全局锁意味着一个群 30 秒的生成会把其余所有群串行阻塞。
+        self._process_locks: dict[str, asyncio.Lock] = {}
+        self._process_locks_guard = asyncio.Lock()
         self._dispatcher: GroupDispatcher | None = None
         self._dispatch_leases: dict[str, str] = {}
         self._dispatch_delivery_active: set[str] = set()
@@ -1648,13 +1651,43 @@ class NapCatAdapter(BaseAdapter):
         raw = "|".join((parsed.group_id, parsed.user_id, parsed.prompt, parsed.message_type))
         return f"qq:{parsed.group_id}:hash:{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:24]}"
 
+    @staticmethod
+    def _conversation_key(event: dict[str, Any]) -> str:
+        """会话标识：群聊按群，私聊按人。同一会话内仍需串行。"""
+        group_id = str(event.get("group_id") or "")
+        if group_id:
+            return f"group:{group_id}"
+        user_id = str(event.get("user_id") or "")
+        return f"private:{user_id}" if user_id else "private:unknown"
+
+    async def _conversation_lock(self, key: str) -> asyncio.Lock:
+        """取出（必要时创建）某个会话的处理锁，并回收长期不用的条目。"""
+        async with self._process_locks_guard:
+            lock = self._process_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._process_locks[key] = lock
+            # 无人持有也无人等待的锁没有价值，顺手清掉，避免长跑进程里无界增长。
+            if len(self._process_locks) > 4096:
+                for stale_key, stale_lock in list(self._process_locks.items()):
+                    if len(self._process_locks) <= 2048:
+                        break
+                    if stale_key != key and not stale_lock.locked():
+                        self._process_locks.pop(stale_key, None)
+            return lock
+
     async def _process_event(self, event: dict[str, Any]) -> bool:
-        """统一消息处理：解析 → 引擎 → 发送。"""
-        async with self._process_lock:
+        """统一消息处理：解析 → 引擎 → 发送。
+
+        锁的粒度是**会话**：同一群的消息保持串行，不同群可以并行，这样一个群
+        的长生成不再阻塞其余群。
+        """
+        lock = await self._conversation_lock(self._conversation_key(event))
+        async with lock:
             return await self._process_event_impl(event)
 
     async def _process_event_impl(self, event: dict[str, Any]) -> bool:
-        """实际的消息处理逻辑，受 _process_lock 保护。"""
+        """实际的消息处理逻辑，受该会话的处理锁保护。"""
         parsed = await self.parse_event(event)
         if parsed is None:
             return True

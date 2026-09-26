@@ -11,6 +11,7 @@ import asyncio
 import logging
 import re
 import time
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -48,9 +49,34 @@ from sirius_pulse.tools.builtin._internal import _markdown_image
 
 logger = logging.getLogger(__name__)
 
+#: 当前正在处理的平台来源（如 ``napcat``），按 asyncio task 隔离。
+#: 它曾被存成引擎实例属性：两个群并发处理时后到的消息会覆盖先到的，工具随后
+#: 读到的是**别人的**适配器类型。放在 ContextVar 里，每个 task 各看各的。
+_CURRENT_ADAPTER_TYPE: ContextVar[str] = ContextVar("sirius_current_adapter_type", default="")
+
 
 class _EmotionalGroupChatEngineBase:
     """Next-generation engine for emotional group chat."""
+
+    @property
+    def _current_adapter_type(self) -> str:
+        """当前 task 的平台来源；未设置时回落到引擎级默认值。
+
+        引擎级默认值记录「最近一次入站消息来自哪个平台」，供那些不在任何入站
+        消息 task 里的后台任务（主动消息、提醒投递）沿用旧行为。
+        """
+        value = _CURRENT_ADAPTER_TYPE.get()
+        if value:
+            return value
+        return self.__dict__.get("_default_adapter_type", "") or ""
+
+    @_current_adapter_type.setter
+    def _current_adapter_type(self, value: str) -> None:
+        text = str(value or "")
+        _CURRENT_ADAPTER_TYPE.set(text)
+        if text:
+            # 后台任务拿不到 task-local 值，只能靠这个「最近一次」兜底。
+            self.__dict__["_default_adapter_type"] = text
 
     def __init__(
         self,
@@ -63,6 +89,8 @@ class _EmotionalGroupChatEngineBase:
         persona_db_conn: Any | None = None,
     ) -> None:
         self.config = dict(config or {})
+        # 构造时显式传入的键优先于 orchestration.json，并且热重载不得覆盖它们。
+        self._explicit_config_keys = set(self.config)
         self.provider_async = provider_async
         self.work_path = work_path
         self._embedding_client = embedding_client
@@ -128,6 +156,17 @@ class _EmotionalGroupChatEngineBase:
         orch = OrchestrationStore.load(self.work_path)
         self._orch_task_timeout = orch.get("task_timeout")
         self._orch_task_retries = orch.get("task_retries")
+        # 并发上限的权威来源是 orchestration.json；此前它只在 config 模型里
+        # 定义、没有任何运行时消费者，属于死配置。这里显式带进 engine.config，
+        # 供 Brain 建立并发闸门。构造时显式传入的键优先，且热重载时同样跳过，
+        # 免得一次重载把调用方写死的取值冲掉。
+        if "max_concurrent_llm_calls" not in getattr(self, "_explicit_config_keys", ()):
+            raw_concurrency = orch.get("max_concurrent_llm_calls")
+            if isinstance(raw_concurrency, (int, float)) and not isinstance(raw_concurrency, bool):
+                self.config["max_concurrent_llm_calls"] = int(raw_concurrency)
+            else:
+                # 热重载时该项被删掉要跟着回落到默认值，不能留着上一轮的旧值。
+                self.config.pop("max_concurrent_llm_calls", None)
 
     def _init_memory_system(self) -> None:
         # 共享同一个 SQLite 存储（persona.db）
@@ -278,7 +317,10 @@ class _EmotionalGroupChatEngineBase:
         self._work_mode_runs: dict[str, Any] = {}
 
         self._pending_reminders: dict[str, list[dict[str, Any]]] = {}
-        self._current_adapter_type: str = ""
+        # 注意：`_current_adapter_type` 是属性，见类上的 property。它存在
+        # task-local 的 ContextVar 里，避免两个群并发处理时互相覆盖。
+        # 后台任务不在任何入站消息的 task 里，读它只会拿到这个引擎级默认值。
+        self._default_adapter_type: str = ""
         # Adapter registrations are used by background/proactive messages.  A
         # single engine can have several platform connections, so the current
         # message's adapter is not a reliable routing hint for a background

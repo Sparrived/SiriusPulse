@@ -216,6 +216,11 @@ class OrchestrationPolicy:
     # LLM concurrency limiter: cap parallel LLM generation calls per session context.
     # Algorithm-only steps (heat, keyword intent) are unaffected.
     # Set to 0 to disable (unlimited). Recommended: 1~3.
+    #
+    # This is enforced by ``Brain``'s semaphore; ``1`` (the default) serializes
+    # generation exactly like the old process-wide lock did, so raising it is
+    # what lets one group's long generation stop blocking the other groups.
+    # The authoritative source at runtime is ``engine_state/orchestration.json``.
     max_concurrent_llm_calls: int = 1
 
     # Tool system: allow AI to invoke external code via function_call (tools)

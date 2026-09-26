@@ -390,6 +390,9 @@ class PersonaWorker:
         # 同步更新 brain 的 model_router
         if hasattr(engine, "brain") and engine.brain:
             engine.brain.router = engine.model_router
+            refresh_gate = getattr(engine.brain, "set_concurrency_limit", None)
+            if callable(refresh_gate):
+                refresh_gate()
 
         # 一并刷新 AMKR 连接，确保地址 / Key / 工作空间变更立即生效。
         self._reload_provider(engine)

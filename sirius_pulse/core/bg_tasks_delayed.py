@@ -887,7 +887,9 @@ class DelayedQueueTasks:
                 engine._tool_executor.set_chat_context(
                     group_id=group_id,
                     user_id=caller_user_id or "",
-                    adapter_type=getattr(engine, "_current_adapter_type", ""),
+                    # 用本条待发回复自己的平台来源：这是本次调用的权威取值，
+                    # 引擎级「当前适配器」可能已被并发的另一群覆盖。
+                    adapter_type=item.adapter_type or getattr(engine, "_current_adapter_type", ""),
                 )
 
                 # assistant 消息（含本轮的 tool_calls）已在流程控制工具处理前写入
@@ -961,6 +963,10 @@ class DelayedQueueTasks:
                     ctx = ToolInvocationContext(  # type: ignore[assignment]
                         caller=tool_caller,
                         developer_profiles=developer_profiles,
+                        group_id=group_id,
+                        adapter_type=item.adapter_type
+                        or getattr(engine, "_current_adapter_type", "")
+                        or "",
                     )
                     logger.info(
                         "Tool execute: %s(params=%s, caller=%s, group=%s)",
