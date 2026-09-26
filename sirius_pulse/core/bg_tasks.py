@@ -225,8 +225,6 @@ class BackgroundTasks:
                     persona_description=getattr(engine.persona, "full_system_prompt", ""),
                     brain=engine.brain,
                     model_name=cfg.model_name,
-                    temperature=float(getattr(cfg, "temperature", 0.2)),
-                    max_tokens=max(1, int(getattr(cfg, "max_tokens", 4096))),
                     transport_retries=max(0, int(getattr(cfg, "retries", 0))),
                     min_candidate_count=volume_threshold,
                     max_candidate_count=MEMORY_CHECKPOINT_BATCH_SIZE,

@@ -83,8 +83,6 @@ class MemoryUnitDeduplicator:
                     "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 }
             ],
-            temperature=0.0,
-            max_tokens=512,
             purpose="memory_unit_deduplicate",
             response_format={"type": "json_object"},
         )

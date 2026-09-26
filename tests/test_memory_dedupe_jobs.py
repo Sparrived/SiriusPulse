@@ -192,9 +192,7 @@ def test_checkpoint_pass_repeats_active_batches_until_token_target():
         memory_unit_manager=manager,
         cold_detector=ColdDetector(),
         model_router=SimpleNamespace(
-            resolve=lambda _: SimpleNamespace(
-                model_name="memory-model", temperature=0.4, max_tokens=777, retries=0
-            )
+            resolve=lambda _: SimpleNamespace(model_name="memory-model", retries=0)
         ),
         persona=SimpleNamespace(name="Sirius", full_system_prompt=""),
         brain=object(),
@@ -205,8 +203,8 @@ def test_checkpoint_pass_repeats_active_batches_until_token_target():
 
     assert promoted == 2
     assert [len(batch) for batch in manager.generated_batches] == [32, 32]
-    assert manager.generation_kwargs[0]["max_tokens"] == 777
-    assert manager.generation_kwargs[0]["temperature"] == 0.4
+    assert "max_tokens" not in manager.generation_kwargs[0]
+    assert "temperature" not in manager.generation_kwargs[0]
     assert manager.generation_kwargs[0]["transport_retries"] == 0
     assert BackgroundTasks(engine)._estimate_group_history_tokens("group_a") <= 100
 

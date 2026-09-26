@@ -58,8 +58,6 @@ class MemoryUnitManager:
         model_name: str,
         min_candidate_count: int = 8,
         max_candidate_count: int = 32,
-        temperature: float = 0.2,
-        max_tokens: int = 4096,
         max_retries: int = 1,
         transport_retries: int = 0,
         failure_backoff_seconds: float = 3600.0,
@@ -90,8 +88,6 @@ class MemoryUnitManager:
             persona_description=persona_description,
             brain=brain,
             model_name=model_name,
-            temperature=float(temperature),
-            max_tokens=max(1, int(max_tokens)),
             max_retries=max(0, int(max_retries)),
             transport_retries=max(0, int(transport_retries)),
         )

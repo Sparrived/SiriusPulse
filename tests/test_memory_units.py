@@ -274,14 +274,15 @@ def test_generation_caps_a_single_checkpoint_batch(tmp_path):
 
     request = next(item for item in brain.requests if item.purpose == "memory_unit_extract")
     content = request.messages[0]["content"]
-    assert request.max_tokens == 4096
+    assert not hasattr(request, "max_tokens")
     assert request.retry_max == 0
     assert "source_id=" + candidates[0].entry_id in content
     assert "source_id=" + candidates[31].entry_id in content
     assert "source_id=" + candidates[32].entry_id not in content
 
 
-def test_generation_passes_task_token_budget_to_raw_request(tmp_path):
+def test_generation_does_not_forward_sampling_params_to_raw_request(tmp_path):
+    """采样参数由 AMKR 的任务定义持有，引擎侧不再传递。"""
     manager = MemoryUnitManager(tmp_path)
     entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "message")
     brain = _FakeBrain()
@@ -295,16 +296,15 @@ def test_generation_passes_task_token_budget_to_raw_request(tmp_path):
             brain=brain,
             model_name="memory-model",
             min_candidate_count=1,
-            max_tokens=777,
-            temperature=0.4,
             max_retries=0,
         )
     )
 
     assert result is not None
     request = next(item for item in brain.requests if item.purpose == "memory_unit_extract")
-    assert request.max_tokens == 777
-    assert request.temperature == 0.4
+    assert request.model == "memory-model"
+    assert not hasattr(request, "max_tokens")
+    assert not hasattr(request, "temperature")
     assert request.retry_max == 0
 
 

@@ -89,8 +89,6 @@ class MemoryUnitGenerator:
         persona_description: str,
         brain: Any,
         model_name: str,
-        temperature: float = 0.2,
-        max_tokens: int = 4096,
         max_retries: int = 1,
         transport_retries: int = 0,
     ) -> MemoryUnitGenerationResult | None:
@@ -111,8 +109,6 @@ class MemoryUnitGenerator:
                 model=model_name,
                 system_prompt=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
-                temperature=temperature,
-                max_tokens=max_tokens,
                 purpose="memory_unit_extract",
                 response_format={"type": "json_object"},
                 # Keep transport retries task-configurable.  In particular, an
