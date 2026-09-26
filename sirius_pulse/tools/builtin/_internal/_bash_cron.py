@@ -254,16 +254,12 @@ async def _run_job_locked(
             name=user_name,
             metadata={"is_developer": bool(job.get("owner_is_developer", False))},
         )
-        invocation_context = ToolInvocationContext(caller=caller)
-        chat_context = {
-            "group_id": group_id,
-            "chat_id": group_id.replace("private_", "").replace("qq_", "")
-            if group_id.startswith("private_")
-            else group_id,
-            "chat_type": "private" if group_id.startswith("private_") else "group",
-            "user_id": user_id,
-            "adapter_type": adapter_type,
-        }
+        invocation_context = ToolInvocationContext(
+            caller=caller,
+            group_id=group_id,
+            adapter_type=adapter_type or "",
+        )
+        chat_context = dict(invocation_context.chat_context)
         result = await run_command(
             str(job["command"]),
             cwd=str(job.get("cwd") or "."),

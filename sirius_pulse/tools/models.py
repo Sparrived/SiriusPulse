@@ -549,6 +549,34 @@ class ToolEngineContext(Protocol):
         ...
 
 
+def build_chat_context(
+    *,
+    group_id: str = "",
+    user_id: str = "",
+    adapter_type: str = "",
+) -> dict[str, Any]:
+    """Build the tool-facing chat context from explicit call identity.
+
+    This is the single derivation used both by the executor's legacy setter and
+    by :attr:`ToolInvocationContext.chat_context`, so the two can never drift.
+    """
+    is_private = group_id.startswith("private_")
+    if is_private:
+        chat_id = group_id.replace("private_", "").replace("qq_", "")
+        chat_type = "private"
+    else:
+        chat_id = group_id
+        chat_type = "group"
+    return {
+        "group_id": group_id,
+        "user_id": user_id,
+        "chat_type": chat_type,
+        "chat_id": chat_id,
+        "is_private": is_private,
+        "adapter_type": adapter_type,
+    }
+
+
 @dataclass(slots=True)
 class ToolInvocationContext:
     """Per-call context injected into tools for authorization and auditing."""
@@ -561,6 +589,24 @@ class ToolInvocationContext:
     Autonomy produces material for herself; telling someone about it is a
     separate decision, so delivery-capable tools are refused on these turns.
     """
+    group_id: str = ""
+    """This call's group / private-chat id.
+
+    Carried per invocation so a tool's location and the group-level admin check
+    do not depend on a process-wide "last chat context" that a concurrent turn
+    for another group could have overwritten.
+    """
+    adapter_type: str = ""
+    """Platform adapter type this call arrived through (e.g. ``napcat``)."""
+
+    @property
+    def chat_context(self) -> dict[str, Any]:
+        """Derive the tool-facing chat context from this invocation."""
+        return build_chat_context(
+            group_id=self.group_id,
+            user_id=self.caller_user_id,
+            adapter_type=self.adapter_type,
+        )
 
     @property
     def caller_is_developer(self) -> bool:

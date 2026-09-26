@@ -112,6 +112,8 @@ class ToolEngineContextImpl:
         invocation_context = ToolInvocationContext(
             caller=caller,
             developer_profiles=[caller] if caller_is_developer else [],
+            group_id=group_id,
+            adapter_type=adapter_type or "",
         )
         goal = str(job.get("name") or job.get("command") or "").strip()
         result = await self._run_tool_loop(
@@ -345,7 +347,12 @@ class ToolEngineContextImpl:
             work_mode=True,
         )
         caller = self._build_caller("autonomy", "autonomy", False)
-        invocation_context = ToolInvocationContext(caller=caller, self_initiated=True)
+        invocation_context = ToolInvocationContext(
+            caller=caller,
+            self_initiated=True,
+            group_id=group_id,
+            adapter_type="",
+        )
         reason = str(why or seed or "").strip()
         goal = f"自主回合（{kind}）" + (f"：{reason}" if reason else "")
         result = await self._run_tool_loop(

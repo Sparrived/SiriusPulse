@@ -17,6 +17,7 @@ from sirius_pulse.tools.models import (
     ToolInvocationContext,
     ToolResult,
     ToolSideEffect,
+    build_chat_context,
 )
 from sirius_pulse.tools.security import validate_tool_access
 from sirius_pulse.tools.telemetry import ToolExecutionRecord, ToolTelemetry
@@ -52,22 +53,21 @@ class ToolExecutor:
     def set_chat_context(
         self, group_id: str = "", user_id: str = "", adapter_type: str = ""
     ) -> None:
-        """Set current chat context so tools know where they are being invoked from."""
-        is_private = group_id.startswith("private_")
-        if is_private:
-            chat_id = group_id.replace("private_", "").replace("qq_", "")
-            chat_type = "private"
-        else:
-            chat_id = group_id
-            chat_type = "group"
-        self._chat_context = {
-            "group_id": group_id,
-            "user_id": user_id,
-            "chat_type": chat_type,
-            "chat_id": chat_id,
-            "is_private": is_private,
-            "adapter_type": adapter_type,
-        }
+        """Set the fallback chat context for tools that lack an invocation context.
+
+        Prefer the per-invocation :attr:`ToolInvocationContext.chat_context`:
+        this setter writes a single shared dict, so a concurrent turn for another
+        group can overwrite it before the tool runs.
+        """
+        self._chat_context = build_chat_context(
+            group_id=group_id, user_id=user_id, adapter_type=adapter_type
+        )
+
+    def _chat_context_for(self, invocation_context: ToolInvocationContext | None) -> dict[str, Any]:
+        """Resolve the chat context for one call, preferring the call's own identity."""
+        if invocation_context is not None and invocation_context.group_id:
+            return invocation_context.chat_context
+        return self._chat_context or {}
 
     def set_bridge(self, adapter_type: str, bridge: Any) -> None:
         """Register a platform bridge for a given adapter type."""
@@ -125,7 +125,7 @@ class ToolExecutor:
         if access_error:
             return None, ToolResult(success=False, error=access_error)
 
-        admin_error = self._validate_admin_requirement(tool)
+        admin_error = self._validate_admin_requirement(tool, invocation_context)
         if admin_error:
             return None, ToolResult(success=False, error=admin_error)
 
@@ -163,8 +163,10 @@ class ToolExecutor:
         bridge = self.get_bridge_for_tool(tool)
         if bridge is not None and injection_plan.accepts("bridge"):
             call_params["bridge"] = bridge
-        if injection_plan.accepts("chat_context") and self._chat_context:
-            call_params["chat_context"] = dict(self._chat_context)
+        if injection_plan.accepts("chat_context"):
+            chat_context = self._chat_context_for(invocation_context)
+            if chat_context:
+                call_params["chat_context"] = dict(chat_context)
         if (
             self._engine_context is not None
             and _can_receive_engine_context(tool)
@@ -451,10 +453,20 @@ class ToolExecutor:
         for store in self._data_stores.values():
             store.save()
 
-    def _validate_admin_requirement(self, tool: ToolDefinition) -> str:
+    def _validate_admin_requirement(
+        self,
+        tool: ToolDefinition,
+        invocation_context: ToolInvocationContext | None = None,
+    ) -> str:
+        """Refuse admin-required tools unless the Bot is admin *of this group*.
+
+        The group comes from the invocation's own identity when available; using
+        the shared ``_chat_context`` fallback would let a concurrent turn for
+        another group decide which group gets checked.
+        """
         if not tool.admin_required:
             return ""
-        chat_context = self._chat_context or {}
+        chat_context = self._chat_context_for(invocation_context)
         if chat_context.get("chat_type") != "group":
             return f"TOOL '{tool.name}' 只能在群聊中由管理员 Bot 执行"
         group_id = str(chat_context.get("chat_id") or chat_context.get("group_id") or "")
