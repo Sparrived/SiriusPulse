@@ -858,6 +858,13 @@ class Helpers:
 
     def classify_exception(self, exc: Exception) -> str:
         """Classify an LLM provider exception into a structured error type."""
+        # 结构化异常直接按其 error_code 归类，不必再猜字符串。
+        error_code = str(getattr(exc, "error_code", "") or "")
+        if error_code == "PROVIDER_AUTH_ERROR":
+            return "auth_error"
+        if error_code == "PROVIDER_CONNECTION_ERROR":
+            return "network_timeout"
+
         msg = str(exc).lower()
 
         # 优先匹配中文 provider 包装异常

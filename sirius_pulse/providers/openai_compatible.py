@@ -6,6 +6,11 @@ from typing import cast
 
 import httpx
 
+from sirius_pulse.exceptions import (
+    ProviderAuthError,
+    ProviderConnectionError,
+    ProviderResponseError,
+)
 from sirius_pulse.providers.base import (
     DEFAULT_TIMEOUT_SECONDS,
     AsyncLLMProvider,
@@ -116,7 +121,11 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
                 f"| {type(exc).__name__}: {exc or '(无详细信息)'}",
                 exc_info=True,
             )
-            raise RuntimeError(f"提供商请求异常：{exc}") from exc
+            raise ProviderConnectionError(
+                self._provider_name,
+                f"提供商请求异常：{exc}",
+                original_error=exc,
+            ) from exc
 
         if status_code >= 400:
             logger.error(
@@ -130,20 +139,68 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
                     "且响应头包含 Content-Type 与 Content-Length；若传入的是本地图片路径，"
                     "请直接传本地文件路径让框架自动转换为 data URL，或自行传入 data:*;base64,...。"
                 )
-            raise RuntimeError(message)
+            # 401/403 是凭据问题，重试不会变好——显式标为不可重试，避免重试风暴烧配额。
+            if status_code in (401, 403):
+                raise ProviderAuthError(
+                    self._provider_name,
+                    message,
+                    http_status=status_code,
+                )
+            raise ProviderResponseError(
+                self._provider_name,
+                message,
+                http_status=status_code,
+                response_body=raw,
+            )
 
         logger.debug(
             f"[模型原始响应] {request.model} | Provider: {self._provider_name} | URL: {url} "
             f"| HTTP状态: {status_code} | Content-Type: {content_type or '(未知)'} | raw:\n{raw}"
         )
 
-        data = json.loads(raw)
+        if status_code >= 200 and status_code < 300 and raw.lstrip()[:1] not in ("{", "["):
+            # 200 但不是 JSON：通常是反代/网关返回了 HTML 错误页。
+            logger.error(
+                f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"| HTTP {status_code} 响应非 JSON: {raw[:200]}"
+            )
+            raise ProviderResponseError(
+                self._provider_name,
+                f"提供商返回了非 JSON 响应（HTTP {status_code}）：{raw[:200]}",
+                http_status=status_code,
+                response_body=raw,
+            )
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"| 响应 JSON 解析失败: {exc} | raw: {raw[:200]}"
+            )
+            raise ProviderResponseError(
+                self._provider_name,
+                f"提供商响应无法解析为 JSON：{exc}",
+                http_status=status_code,
+                response_body=raw,
+            ) from exc
+        if not isinstance(data, dict):
+            raise ProviderResponseError(
+                self._provider_name,
+                "提供商响应的顶层结构不是对象。",
+                http_status=status_code,
+                response_body=raw,
+            )
         choices = data.get("choices", [])
         if not choices:
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} | 无 choices"
             )
-            raise RuntimeError("提供商响应中没有 choices。")
+            raise ProviderResponseError(
+                self._provider_name,
+                "提供商响应中没有 choices。",
+                http_status=status_code,
+                response_body=raw,
+            )
 
         choice = choices[0]
         message = choice.get("message", {})
@@ -151,7 +208,12 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} | message 字段无效"
             )
-            raise RuntimeError("提供商响应中 message 字段无效。")
+            raise ProviderResponseError(
+                self._provider_name,
+                "提供商响应中 message 字段无效。",
+                http_status=status_code,
+                response_body=raw,
+            )
 
         # 解析 tool_calls
         tool_calls: list[ToolCall] | None = None
@@ -185,7 +247,12 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
                 f"| 响应为空 | message_keys={list(message.keys())}"
             )
-            raise RuntimeError("提供商响应内容为空。")
+            raise ProviderResponseError(
+                self._provider_name,
+                "提供商响应内容为空。",
+                http_status=status_code,
+                response_body=raw,
+            )
 
         usage = data.get("usage")
         if usage and isinstance(usage, dict):
@@ -229,7 +296,19 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             async with client.stream("POST", url, json=wire_payload, headers=headers) as response:
                 if response.status_code >= 400:
                     body = await response.aread()
-                    raise RuntimeError(f"提供商 HTTP 错误 {response.status_code}：{body[:200]}")  # type: ignore[str-bytes-safe]
+                    text = body.decode("utf-8", errors="replace")
+                    if response.status_code in (401, 403):
+                        raise ProviderAuthError(
+                            self._provider_name,
+                            f"提供商 HTTP 错误 {response.status_code}：{text[:200]}",
+                            http_status=response.status_code,
+                        )
+                    raise ProviderResponseError(
+                        self._provider_name,
+                        f"提供商 HTTP 错误 {response.status_code}：{text[:200]}",
+                        http_status=response.status_code,
+                        response_body=text,
+                    )
                 async for line in response.aiter_lines():
                     line = line.strip()
                     if not line or not line.startswith("data:"):

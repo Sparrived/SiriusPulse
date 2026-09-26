@@ -111,6 +111,20 @@ class ProviderAuthError(ProviderError):
         self.http_status = http_status
 
 
+def _http_status_is_retryable(http_status: int | None) -> bool:
+    """按 HTTP 状态判断重试价值。
+
+    - 429（限流）与 5xx（服务端/网关瞬时故障）值得重试；
+    - 其余 4xx 是请求本身的问题，重试不会变好；
+    - 没有状态码（响应格式错误等本地判定）按可重试处理，保持旧行为。
+    """
+    if http_status is None:
+        return True
+    if http_status == 429 or http_status >= 500:
+        return True
+    return False
+
+
 class ProviderResponseError(ProviderError):
     """Provider返回异常响应（HTTP错误、格式错误等）"""
 
@@ -131,7 +145,7 @@ class ProviderResponseError(ProviderError):
             message,
             error_code="PROVIDER_RESPONSE_ERROR",
             context=context,
-            is_retryable=http_status in (429, 503) if http_status else True,
+            is_retryable=_http_status_is_retryable(http_status),
         )
         self.provider_name = provider_name
         self.http_status = http_status

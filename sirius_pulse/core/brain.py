@@ -46,6 +46,36 @@ _SKIP_REPLY_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+#: 明显重试也不会变好的错误类别。凭据失效、请求非法、内容被拦截、上下文超限
+#: 都属于「再试一次也一样」；重试只会白烧配额并放大故障。
+_NON_RETRYABLE_ERROR_KINDS = frozenset(
+    {"auth_error", "context_exceeded", "content_filter", "empty_response"}
+)
+
+
+def _is_retryable_exception(
+    exc: Exception,
+    classify: Callable[[Exception], str] | None = None,
+) -> bool:
+    """判断一个 provider 异常是否值得重试。
+
+    优先采信异常自带的 ``is_retryable``（``SiriusException`` 及其子类按错误码
+    构造）：401/403 这类认证失败被显式标为不可重试，凭据失效时不该重试。
+    非结构化异常回落到 ``classify`` 的类别名。
+    """
+    retryable = getattr(exc, "is_retryable", None)
+    if isinstance(retryable, bool):
+        return retryable
+    if classify is not None:
+        try:
+            kind = classify(exc)
+        except Exception:
+            logger.debug("异常分类失败，按可重试处理: %r", exc, exc_info=True)
+            return True
+        if kind in _NON_RETRYABLE_ERROR_KINDS:
+            return False
+    return True
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # 参数类
@@ -781,6 +811,15 @@ class Brain:
                 return result, current, real_usage
             except Exception as exc:
                 last_exc = exc
+                # 认证失败这类错误重试多少次都一样，只会白烧配额。
+                if not _is_retryable_exception(exc, self._classify_exception_fn):
+                    logger.error(
+                        "%s LLM 调用遇到不可重试错误，立即放弃（原定重试 %d 次）: %s",
+                        purpose_desc,
+                        retry_max,
+                        exc,
+                    )
+                    break
                 if attempt < retry_max:
                     logger.warning(
                         "%s LLM 调用失败 (attempt=%d/%d): %s",
