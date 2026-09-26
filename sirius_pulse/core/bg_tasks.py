@@ -137,10 +137,7 @@ class BackgroundTasks:
             return 0
 
         volume_threshold = int(
-            engine.config.get(
-                "memory_unit_volume_threshold",
-                engine.config.get("diary_volume_threshold", 8),
-            )
+            engine.config.get("memory_unit_volume_threshold", 8)
         )
         idle_consolidation_seconds = float(
             engine.config.get("memory_idle_consolidation_seconds", 3600)
@@ -346,10 +343,6 @@ class BackgroundTasks:
             return False
         newest_timestamp = max(timestamps)
         return datetime.now(timezone.utc).timestamp() - newest_timestamp >= min_age_seconds
-
-    async def _diary_promoter(self) -> None:
-        """Backward-compatible alias for the old diary promotion task."""
-        await self._memory_unit_checkpointer()
 
     async def _memory_dedupe_job_worker(self) -> None:
         while self._engine._bg_running:

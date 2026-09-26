@@ -36,8 +36,6 @@ TAG_INTERACTION_SPEC = "【交互提示词】"
 TAG_RELATED_MEMORY = "【相关记忆】"
 TAG_CROSS_GROUP = "【跨群认知】"
 TAG_GROUP_MEMBERS = "【群成员区分】"
-TAG_HISTORY_DIARY = "【历史日记】"
-TAG_HISTORY_DIARY_END = "【历史日记结束】"
 
 TAG_CURRENT_TIME = "【当前时间】"
 TAG_PLUGIN_AWARENESS = "【插件能力】"

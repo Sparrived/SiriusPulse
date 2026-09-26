@@ -20,7 +20,6 @@ from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_
 from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.embedding.client import EmbeddingClient, create_embedding_client
-from sirius_pulse.memory.diary.vector_store import DiaryVectorStore
 from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
 from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings, load_inference_keys
 from sirius_pulse.providers.amkr_sync import (
@@ -636,11 +635,6 @@ class EngineRuntime:
 
     def _build_engine_runtime_config(self, exp: PersonaExperienceConfig) -> dict[str, Any]:
         return {
-            # v1.0 日记记忆配置
-            "diary_top_k": int(self.plugin_config.get("diary_top_k", exp.diary_top_k)),
-            "diary_token_budget": int(
-                self.plugin_config.get("diary_token_budget", exp.diary_token_budget)
-            ),
             "memory_unit_top_k": int(
                 self.plugin_config.get("memory_unit_top_k", exp.memory_unit_top_k)
             ),
@@ -716,13 +710,6 @@ class EngineRuntime:
         exp = self._load_experience_config()
         config = self._build_engine_runtime_config(exp)
 
-        # 创建向量存储（ChromaDB）
-        vector_store = DiaryVectorStore(self.work_path / "diary" / "vector_db")
-        if vector_store.available:
-            LOG.info("日记向量存储已启用: %s", vector_store._persist_dir)
-        else:
-            LOG.warning("日记向量存储未启用，将使用纯内存索引")
-
         # 创建共享 Embedding 客户端。向量化由 AMKR 提供，本框架不再自己拉起本地
         # 模型服务，因此这里没有「先启动再等就绪」这一步，只做一次可达性预检。
         embedding_client = create_embedding_client(self.global_data_path, self.work_path.name)
@@ -763,7 +750,6 @@ class EngineRuntime:
             work_path=self.work_path,
             provider=provider,
             config=config,
-            vector_store=vector_store,
             embedding_client=embedding_client,
             persona_db_conn=self.persona_db.conn,
         )

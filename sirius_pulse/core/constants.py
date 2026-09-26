@@ -25,7 +25,6 @@ HEARTBEAT_TIMEOUT_SECONDS = 30
 # ── Token 相关 ────────────────────────────────────────────
 DEFAULT_MAX_TOKENS = 512
 RESPONSE_MAX_TOKENS = 4096
-DIARY_GENERATION_MAX_TOKENS = 2048
 COGNITION_MAX_TOKENS = 1024
 
 # ── 记忆相关 ──────────────────────────────────────────────
@@ -54,11 +53,8 @@ DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET = 40_000
 # 的逐字连贯性，记忆单元负责更早的长期上下文。
 DEFAULT_MEMORY_UNIT_TOKEN_BUDGET = 20_000
 # 每轮参与检索排序的记忆单元条数上限（budget 之外的第二个闸门）。沿用此前经
-# `diary_top_k`（默认 5）传入的取值，避免本次预算调整顺带改变召回广度。
+# 已废弃的 diary_top_k 传入的默认取值，避免本次预算调整顺带改变召回广度。
 DEFAULT_MEMORY_UNIT_TOP_K = 5
-
-DEFAULT_DIARY_TOP_K = 5
-DEFAULT_DIARY_VOLUME_THRESHOLD = 8
 
 # 每群可参与检索注入的记忆单元上限。超出的按 显著度×置信度 与时间排序后软退休
 # （should_prompt=False），单元本身保留在磁盘与 WebUI 中，仍可被真人追溯和手动恢复。

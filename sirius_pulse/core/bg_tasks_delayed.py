@@ -508,7 +508,7 @@ class DelayedQueueTasks:
         )
         await self._emit_agent_turn(engine, agent_turn)
 
-        msgs, ca_breakdown = engine.context_assembler.build_messages_with_breakdown(
+        msgs, _ = engine.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
             current_query=bundle.user_content,
             system_prompt=bundle.system_prompt,
@@ -534,14 +534,6 @@ class DelayedQueueTasks:
         )
         system_prompt = msgs[0]["content"]
         messages = msgs[1:]
-
-        # Merge assembler breakdown into response-assembler breakdown
-        token_breakdown = bundle.token_breakdown.to_dict() if bundle.token_breakdown else {}
-        for key, val in ca_breakdown.items():
-            if key == "diary":
-                token_breakdown["memory"] = token_breakdown.get("memory", 0) + val
-            else:
-                token_breakdown[key] = token_breakdown.get(key, 0) + val
 
         # Collect multimodal inputs from triggered items AND recent messages, then
         # inject into the last user message. Recent-message images are needed because

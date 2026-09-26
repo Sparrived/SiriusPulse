@@ -194,9 +194,8 @@ class PersonaWorker:
             "group_reply_strategies": dict(experience.group_reply_strategies),
             "reply_cooldown_seconds": int(experience.min_reply_interval_seconds),
             "main_model_reply_cooldown_seconds": experience.main_model_reply_cooldown_seconds,
-            "diary_top_k": experience.diary_top_k,
-            "diary_token_budget": experience.diary_token_budget,
             "memory_unit_top_k": experience.memory_unit_top_k,
+            "memory_unit_token_budget": experience.memory_unit_token_budget,
             # 工具
             "max_tool_rounds": experience.max_tool_rounds,
             "auto_install_tool_deps": experience.auto_install_tool_deps,
@@ -385,16 +384,12 @@ class PersonaWorker:
         LOG.info("Global config reloaded")
 
     def _reload_memory_index(self, engine: Any) -> None:
-        """丢弃日记与记忆单元的内存缓存，下次检索时从磁盘重新加载。
+        """丢弃记忆单元的内存缓存，下次检索时从磁盘重新加载。
 
-        WebUI 的「重建索引」在另一个进程里重写了日记向量库与 ``memory_units/*.json``；
-        本进程缓存的是重建前的旧向量，不丢弃就会继续按旧维度检索。
+        WebUI 的「重建索引」在另一个进程里重写了 ``memory_units/*.json`` 与其中的
+        向量；本进程缓存的是重建前的旧向量，不丢弃就会继续按旧维度检索。
         """
         reloaded = []
-        diary = getattr(engine, "diary_manager", None)
-        if diary is not None:
-            diary.reload_from_disk()
-            reloaded.append("diary")
         units = getattr(engine, "memory_unit_manager", None)
         if units is not None:
             units.reload_from_disk()
@@ -402,7 +397,7 @@ class PersonaWorker:
         if reloaded:
             LOG.info("已清空 %s 的内存索引缓存，将按新向量重新加载", "、".join(reloaded))
         else:
-            LOG.debug("引擎无日记/记忆单元管理器，跳过记忆索引重载")
+            LOG.debug("引擎无记忆单元管理器，跳过记忆索引重载")
 
     def _reload_provider(self, engine: Any) -> None:
         """热重载 AMKR 连接配置。

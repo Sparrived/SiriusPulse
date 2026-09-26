@@ -191,7 +191,6 @@ class PromptTokenBreakdown:
     output_format: int = 0
 
     # ContextAssembler sections
-    diary: int = 0
     history_xml: int = 0
     cross_group_xml: int = 0
 
@@ -219,7 +218,6 @@ class PromptTokenBreakdown:
             "cross_group": self.cross_group,
             "tools": self.tools,
             "output_format": self.output_format,
-            "diary": self.diary,
             "history_xml": self.history_xml,
             "cross_group_xml": self.cross_group_xml,
             "user_message": self.user_message,

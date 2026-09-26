@@ -85,18 +85,6 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         model_name="passive_tool",
         timeout=20.0,
     ),
-    "diary_generate": TaskConfig(
-        model_name="diary_generate",
-        timeout=20.0,
-    ),
-    "topic_cluster": TaskConfig(
-        model_name="topic_cluster",
-        timeout=20.0,
-    ),
-    "diary_consolidate": TaskConfig(
-        model_name="diary_consolidate",
-        timeout=30.0,
-    ),
     # 自主时间（autonomy tick）的回合。单列一个任务名，是因为它和聊天回合的性格
     # 不同：她要在这里自己找事做、写点东西，可能想用更便宜或更强的模型，也可能
     # 想关掉它。**必须留在本表里**——本表同时就是向 AMKR 注册的任务名清单，

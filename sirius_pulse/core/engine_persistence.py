@@ -99,11 +99,6 @@ class EngineStateStore:
         path = self._base / "basic_memory.json"
         _atomic_write(path, state)
 
-    def save_diary_state(self, state: dict[str, Any]) -> None:
-        """Save diary manager state."""
-        path = self._base / "diary_state.json"
-        _atomic_write(path, state)
-
     def save_user_manager(self, state: dict[str, Any]) -> None:
         """Save user manager state."""
         path = self._base / "user_manager.json"
@@ -119,7 +114,6 @@ class EngineStateStore:
         token_usage_records: list[dict[str, Any]] | None = None,
         event_memory: dict[str, Any] | None = None,
         basic_memory: dict[str, Any] | None = None,
-        diary_state: dict[str, Any] | None = None,
     ) -> None:
         """Convenience: save all state in one call."""
         for group_id, entries in working_memories.items():
@@ -133,8 +127,6 @@ class EngineStateStore:
             self.save_event_memory(event_memory)
         if basic_memory is not None:
             self.save_basic_memory(basic_memory)
-        if diary_state is not None:
-            self.save_diary_state(diary_state)
         logger.info(
             "把现在的状态记下来啦，%d 个群的上下文都好好存着呢～",
             len(working_memories),
@@ -217,16 +209,6 @@ class EngineStateStore:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def load_diary_state(self) -> dict[str, Any] | None:
-        """Load diary manager state."""
-        path = self._base / "diary_state.json"
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-
     def load_user_manager(self) -> dict[str, Any] | None:
         """Load user manager state."""
         path = self._base / "user_manager.json"
@@ -242,8 +224,7 @@ class EngineStateStore:
 
         Returns dict with keys:
             working_memories, assistant_emotion, delayed_queue,
-            group_timestamps, event_memory, basic_memory, diary_state,
-            user_manager
+            group_timestamps, event_memory, basic_memory, user_manager
         """
         groups_dir = self._base / "groups"
         group_ids: set[str] = set()
@@ -266,7 +247,6 @@ class EngineStateStore:
             "group_timestamps": self.load_group_timestamps(),
             "event_memory": self.load_event_memory(),
             "basic_memory": self.load_basic_memory(),
-            "diary_state": self.load_diary_state(),
             "user_manager": self.load_user_manager(),
         }
 
@@ -355,11 +335,6 @@ class EnginePersistence:
             group_timestamps=dict(engine._group_last_message_at),
             token_usage_records=[r.to_dict() for r in engine.token_usage_records],
             basic_memory=engine.basic_memory.to_dict(),
-            diary_state={
-                "diarized_sources": {
-                    gid: list(sids) for gid, sids in engine.diary_manager._diarized_sources.items()
-                }
-            },
         )
 
         # Save persona
@@ -406,17 +381,6 @@ class EnginePersistence:
             now_iso = datetime.now(timezone.utc).isoformat()
             for gid in list(engine._group_last_message_at.keys()):
                 engine._group_last_message_at[gid] = now_iso
-
-            # Diary state
-            diary_state = state.get("diary_state")
-            if diary_state:
-                try:
-                    sources = diary_state.get("diarized_sources", {})
-                    engine.diary_manager._diarized_sources = {
-                        gid: set(sids) for gid, sids in sources.items()
-                    }
-                except Exception as exc:
-                    logger.warning("日记状态恢复失败: %s", exc)
 
             # User manager (with cross-group global profiles)
             user_mgr_data = state.get("user_manager")

@@ -13,7 +13,7 @@ class BasicMemoryEntry(JsonSerializable):
     """A single entry in the basic memory window.
 
     All messages (human, assistant, system) are stored verbatim
-    for full archival and later diary promotion.
+    for full archival and later memory-unit checkpointing.
     """
 
     entry_id: str

@@ -30,8 +30,7 @@ MODEL_FIELD = "embedding_model"
 
 #: 默认 embedding 模型。``bge-m3`` 支持中文且为多语种，1024 维。
 #:
-#: 改名等于换维度：``bge-small-zh`` 是 512 维，改回它会让已有向量库全部作废
-#: （见 :func:`sirius_pulse.memory.diary.vector_store.DiaryVectorStore.model_matches`）。
+#: 改名等于换维度：``bge-small-zh`` 是 512 维，改回它会让已有向量库全部作废。
 DEFAULT_MODEL = "BAAI/bge-m3"
 
 

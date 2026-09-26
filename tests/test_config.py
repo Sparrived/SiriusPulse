@@ -14,7 +14,7 @@ def test_experience_config_when_new_persona_starts_then_uses_safe_defaults(tmp_p
     assert config.expressiveness == 0.5
     assert config.max_tool_rounds == 3
     assert config.max_sentence_chars == 20
-    assert config.memory_unit_top_k == 8
+    assert config.memory_unit_top_k == 5
 
 
 def test_experience_config_when_admin_saves_changes_then_next_startup_reads_them(
@@ -69,8 +69,8 @@ def test_experience_config_when_webui_loads_form_then_all_user_options_are_seria
     assert "engagement_sensitivity" in payload
     assert "enable_tools" in payload
     assert payload["max_sentence_chars"] == 20
-    assert "diary_token_budget" in payload
-    assert payload["memory_unit_top_k"] == 8
+    assert payload["memory_unit_top_k"] == 5
+    assert payload["memory_unit_token_budget"] == 20_000
     assert "reply_time_curve_enabled" not in payload
     assert "reply_time_curve_points" in payload
     assert payload["group_reply_strategies"] == {}
@@ -89,14 +89,19 @@ def test_experience_config_when_webui_posts_partial_payload_then_missing_values_
     assert config.enable_tools is False
     assert config.expressiveness == 0.5
     assert config.max_sentence_chars == 20
-    assert config.diary_top_k == 5
-    assert config.memory_unit_top_k == 8
+    assert config.memory_unit_top_k == 5
+    assert config.memory_unit_token_budget == 20_000
 
 
 def test_experience_config_memory_unit_top_k_defaults_to_diary_top_k_for_old_payload():
-    config = PersonaExperienceConfig.from_dict({"diary_top_k": 7})
+    """老 experience.json 里的 diary_* 键仍被读取：diary 子系统已删除，但磁盘上的
+    数据不该让用户设置静默重置为默认值。"""
+    config = PersonaExperienceConfig.from_dict(
+        {"diary_top_k": 7, "diary_token_budget": 900}
+    )
 
     assert config.memory_unit_top_k == 7
+    assert config.memory_unit_token_budget == 900
 
 
 def test_experience_config_when_sentence_limit_is_out_of_range_then_clamps():

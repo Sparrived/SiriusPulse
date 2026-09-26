@@ -288,18 +288,16 @@ def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_p
     worker = PersonaWorker(tmp_path)
     experience = PersonaExperienceConfig(
         main_model_reply_cooldown_seconds=7.5,
-        diary_top_k=7,
-        diary_token_budget=900,
         memory_unit_top_k=4,
+        memory_unit_token_budget=1500,
         group_reply_strategies={"group-keyword": "keyword"},
     )
 
     plugin_config = worker._build_plugin_config(experience)
 
     assert plugin_config["main_model_reply_cooldown_seconds"] == 7.5
-    assert plugin_config["diary_top_k"] == 7
-    assert plugin_config["diary_token_budget"] == 900
     assert plugin_config["memory_unit_top_k"] == 4
+    assert plugin_config["memory_unit_token_budget"] == 1500
     assert plugin_config["group_reply_strategies"] == {"group-keyword": "keyword"}
 
 
@@ -310,9 +308,8 @@ def test_persona_worker_experience_reload_updates_runtime_config_keys(tmp_path):
         engagement_sensitivity=0.8,
         min_reply_interval_seconds=13,
         max_sentence_chars=31,
-        diary_top_k=6,
-        diary_token_budget=700,
         memory_unit_top_k=2,
+        memory_unit_token_budget=1300,
     ).save(tmp_path / "experience.json")
 
     class Brain:
@@ -329,9 +326,8 @@ def test_persona_worker_experience_reload_updates_runtime_config_keys(tmp_path):
     assert engine.config["sensitivity"] == 0.8
     assert engine.config["reply_cooldown_seconds"] == 13
     assert engine.config["max_sentence_chars"] == 31
-    assert engine.config["diary_top_k"] == 6
-    assert engine.config["diary_token_budget"] == 700
     assert engine.config["memory_unit_top_k"] == 2
+    assert engine.config["memory_unit_token_budget"] == 1300
     assert "engagement_sensitivity" not in engine.config
     assert engine.brain.config["memory_unit_top_k"] == 2
 

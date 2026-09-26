@@ -64,7 +64,6 @@ def test_prompt_breakdown_when_budget_panel_serializes_then_all_sections_are_pre
     assert {
         "identity",
         "tools",
-        "diary",
         "history_xml",
         "system_prompt_total",
         "output_total",

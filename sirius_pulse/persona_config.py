@@ -212,10 +212,9 @@ class PersonaExperienceConfig:
     max_tool_rounds: int = 3
     auto_install_tool_deps: bool = True
 
-    # 日记检索参数
-    diary_top_k: int = 5
-    diary_token_budget: int = 800
-    memory_unit_top_k: int = 8
+    # 记忆单元检索参数
+    memory_unit_top_k: int = 5
+    memory_unit_token_budget: int = 20_000
 
     # 群里其他 AI/Bot 的名字（手动指定，防止抢话和身份混淆）
     other_ai_names: list[str] = field(default_factory=list)
@@ -237,9 +236,8 @@ class PersonaExperienceConfig:
             "enable_tools": self.enable_tools,
             "max_tool_rounds": self.max_tool_rounds,
             "auto_install_tool_deps": self.auto_install_tool_deps,
-            "diary_top_k": self.diary_top_k,
-            "diary_token_budget": self.diary_token_budget,
             "memory_unit_top_k": self.memory_unit_top_k,
+            "memory_unit_token_budget": self.memory_unit_token_budget,
             "other_ai_names": list(self.other_ai_names),
             "message_prefixes": list(self.message_prefixes),
         }
@@ -269,9 +267,12 @@ class PersonaExperienceConfig:
             other_ai_names=[str(v) for v in data.get("other_ai_names", [])],
             max_tool_rounds=int(data.get("max_tool_rounds", 3)),
             auto_install_tool_deps=bool(data.get("auto_install_tool_deps", True)),
-            diary_top_k=int(data.get("diary_top_k", 5)),
-            diary_token_budget=int(data.get("diary_token_budget", 800)),
-            memory_unit_top_k=int(data.get("memory_unit_top_k", data.get("diary_top_k", 8))),
+            # 历史字段 diary_top_k / diary_token_budget 仍被读取：diary 子系统已删除，
+            # 但老 experience.json 里存的是数据，丢掉会让用户设置静默重置为默认值。
+            memory_unit_top_k=int(data.get("memory_unit_top_k", data.get("diary_top_k", 5))),
+            memory_unit_token_budget=int(
+                data.get("memory_unit_token_budget", data.get("diary_token_budget", 20_000))
+            ),
             message_prefixes=[str(v) for v in data.get("message_prefixes", [])],
         )
 

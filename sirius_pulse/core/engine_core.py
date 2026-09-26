@@ -38,7 +38,6 @@ from sirius_pulse.core.rhythm import RhythmAnalyzer
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager
 from sirius_pulse.memory.cold_detector import ColdDetector
 from sirius_pulse.memory.context_assembler import ContextAssembler
-from sirius_pulse.memory.diary import DiaryManager
 from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
 from sirius_pulse.memory.storage import MemoryStorage
 from sirius_pulse.memory.units import MemoryUnitManager
@@ -60,14 +59,12 @@ class _EmotionalGroupChatEngineBase:
         provider_async: Any | None = None,
         config: dict[str, Any] | None = None,
         persona: Any | None = None,
-        vector_store: Any | None = None,
         embedding_client: Any | None = None,
         persona_db_conn: Any | None = None,
     ) -> None:
         self.config = dict(config or {})
         self.provider_async = provider_async
         self.work_path = work_path
-        self._vector_store = vector_store
         self._embedding_client = embedding_client
         self._adapter: Any = None  # 由 add_tool_bridge() 注入，plugin 直接取用
         self._persona_db_conn = persona_db_conn
@@ -143,12 +140,6 @@ class _EmotionalGroupChatEngineBase:
 
         self.basic_memory = BasicMemoryManager()
         self.basic_store = BasicMemoryFileStore(self.work_path)
-        self.diary_manager = DiaryManager(
-            self.work_path,
-            vector_store=self._vector_store,
-            embedding_client=self._embedding_client,
-            memory_storage=self._memory_storage,
-        )
         self.memory_unit_manager = MemoryUnitManager(
             self.work_path,
             embedding_client=self._embedding_client,
@@ -687,7 +678,7 @@ class _EmotionalGroupChatEngineBase:
         duration_ms: float = 0.0,
         token_breakdown: dict[str, int] | None = None,
     ) -> None:
-        """Record token usage for a sub-task (cognition, diary, etc.)."""
+        """Record token usage for a sub-task (cognition, memory, etc.)."""
         self._helpers.record_subtask_tokens(
             task_name, model_name, group_id, request, duration_ms, token_breakdown
         )
@@ -1681,7 +1672,6 @@ class _EmotionalGroupChatEngineBase:
         )
 
         # 4. Generate (unified path through delayed queue, model decides whether to reply)
-        self.diary_manager.ensure_group_loaded(group_id)
         result = await self._generate(signal, message, group_id, user_id)
         await self.event_bus.emit(
             SessionEvent(

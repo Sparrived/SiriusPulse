@@ -35,7 +35,6 @@ def create_emotional_engine(
     provider: Any | None = None,
     persona: Any | None = None,
     config: dict[str, Any] | None = None,
-    vector_store: Any | None = None,
     embedding_client: Any | None = None,
     persona_db_conn: Any | None = None,
 ) -> "EmotionalGroupChatEngine":
@@ -46,7 +45,6 @@ def create_emotional_engine(
         provider: Optional LLM provider for async generation tasks.
         persona: Optional PersonaProfile or string archetype name.
         config: Optional engine configuration dict.
-        vector_store: Optional DiaryVectorStore for persistent embeddings.
         embedding_client: Optional EmbeddingClient for shared embedding service.
         persona_db_conn: Optional shared SQLite connection for unified persona.db.
     Returns:
@@ -58,7 +56,6 @@ def create_emotional_engine(
         provider_async=provider_async,
         persona=persona,
         config=config,
-        vector_store=vector_store,
         embedding_client=embedding_client,
         persona_db_conn=persona_db_conn,
     )

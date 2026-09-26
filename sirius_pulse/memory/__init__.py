@@ -5,13 +5,6 @@ from __future__ import annotations
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager, HeatCalculator
 from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
 from sirius_pulse.memory.context_assembler import ContextAssembler
-from sirius_pulse.memory.diary import (
-    DiaryEntry,
-    DiaryGenerator,
-    DiaryIndexer,
-    DiaryManager,
-    DiaryRetriever,
-)
 from sirius_pulse.memory.units import (
     MemoryUnit,
     MemoryUnitFileStore,
@@ -27,11 +20,6 @@ __all__ = [
     "BasicMemoryManager",
     "BasicMemoryFileStore",
     "HeatCalculator",
-    "DiaryManager",
-    "DiaryGenerator",
-    "DiaryIndexer",
-    "DiaryRetriever",
-    "DiaryEntry",
     "MemoryUnit",
     "MemoryUnitManager",
     "MemoryUnitGenerator",

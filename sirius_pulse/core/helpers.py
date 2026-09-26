@@ -783,7 +783,7 @@ class Helpers:
         duration_ms: float = 0.0,
         token_breakdown: dict[str, int] | None = None,
     ) -> None:
-        """Record token usage for a sub-task (cognition, diary, etc.)."""
+        """Record token usage for a sub-task (cognition, memory, etc.)."""
         engine = self._engine
         from sirius_pulse.config import TokenUsageRecord
         from sirius_pulse.providers.base import (

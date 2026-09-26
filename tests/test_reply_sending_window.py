@@ -159,7 +159,6 @@ def _engine_for_sending_window() -> (
     engine.basic_memory = SimpleNamespace(get_context=lambda group_id, n: [])
     engine.event_bus = SimpleNamespace(emit=AsyncMock(return_value=True))
     engine.delayed_queue = DelayedResponseQueue()
-    engine.diary_manager = SimpleNamespace(ensure_group_loaded=lambda group_id: None)
     engine.assistant_emotion = SimpleNamespace(
         update_from_interaction=lambda emotion, user_id: None
     )

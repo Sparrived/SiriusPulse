@@ -64,22 +64,3 @@ class ColdDetector:
             return ColdState.WARM
 
         return ColdState.HOT
-
-    @staticmethod
-    def should_generate_diary(
-        heat: float,
-        seconds_since_last: float,
-        candidate_count: int,
-        min_candidates: int = 12,
-    ) -> bool:
-        """判断是否应该触发日记生成。
-
-        条件：
-        1. 处于 COLD 状态（冷寂）
-        2. 未归档候选消息数 >= 最小阈值
-        """
-        if ColdDetector.check(heat, seconds_since_last) != ColdState.COLD:
-            return False
-        if candidate_count < min_candidates:
-            return False
-        return True
