@@ -53,7 +53,7 @@ def test_group_memory_when_messages_exceed_hard_limit_then_discards_old_entries(
     ]
 
 
-def test_diary_candidates_when_dialogue_outgrows_context_then_returns_older_turns_only():
+def test_archive_candidates_when_dialogue_outgrows_context_then_returns_older_turns_only():
     mgr = BasicMemoryManager(context_window=2)
 
     for index in range(5):
@@ -312,7 +312,7 @@ def test_group_heat_when_recent_people_are_chatting_then_group_is_not_cold():
     assert mgr.is_cold("group_a") is False
 
 
-def test_group_cold_signal_when_last_message_is_old_then_diary_can_be_promoted():
+def test_group_cold_signal_when_last_message_is_old_then_units_can_be_promoted():
     mgr = BasicMemoryManager()
     mgr.add_entry(
         "group_a",
