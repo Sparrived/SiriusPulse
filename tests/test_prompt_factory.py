@@ -80,15 +80,17 @@ def test_prompt_factory_when_rendering_multimodal_descriptions_then_appends_only
     assert PromptFactory.append_multimodal_descriptions("base", []) == "base"
 
 
-def test_style_adapter_when_persona_preferences_exist_then_applies_overrides():
+def test_style_adapter_ignores_persona_sampling_preferences():
+    """采样参数归 AMKR 的任务定义所有，人格侧的偏好不再被读取。"""
+
     class Persona:
         max_tokens_preference = 64
         temperature_preference = 0.2
 
     params = StyleAdapter().adapt(pace="accelerating", persona=Persona())
 
-    assert params.max_tokens == 64
-    assert params.temperature == 0.2
+    assert not hasattr(params, "max_tokens")
+    assert not hasattr(params, "temperature")
     assert params.length_instruction == ""
     assert params.tone_instruction
 

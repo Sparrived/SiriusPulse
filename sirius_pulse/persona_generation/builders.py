@@ -61,16 +61,16 @@ async def _agenerate_prompt(
     model: str,
     system_prompt: str,
     user_prompt: str,
-    temperature: float,
-    max_tokens: int,
     timeout_seconds: float | None,
 ) -> str:
+    """向 provider 发起一次生成。
+
+    采样参数不写进请求：由 AMKR 的任务定义持有，显式再传一份会与任务冲突。
+    """
     request_payload = GenerationRequest(
         model=model,
         system_prompt=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
-        temperature=float(temperature),
-        max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
         purpose="roleplay_prompt_generation",
     )
@@ -494,8 +494,6 @@ async def _agenerate_from_prepared_persona_input(
         model=model,
         system_prompt=prepared.system_prompt,
         user_prompt=prepared.user_prompt,
-        temperature=temperature,
-        max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
     )
     preset = _build_preset_from_response(

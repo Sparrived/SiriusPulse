@@ -20,7 +20,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from sirius_pulse.core.constants import RESPONSE_MAX_TOKENS
 from sirius_pulse.token.utils import PromptTokenBreakdown, estimate_tokens
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -92,22 +91,18 @@ class PromptBundle:
 
 @dataclass(slots=True)
 class StyleParams:
-    """单次回复生成的风格适配参数。"""
+    """单次回复生成的风格适配参数。
 
-    max_tokens: int
-    temperature: float
+    只有**提示词层面**的风格：语气与长度。采样参数（``temperature`` /
+    ``max_tokens``）由 AMKR 的任务定义持有，不在这里出现。
+    """
+
     tone_instruction: str
     length_instruction: str
 
 
 class StyleAdapter:
-    """根据用户偏好适配回复语气与生成参数。
-
-    max_tokens 由 ModelRouter 按任务类型决定，此处不再动态缩减，
-    避免在 TOOL 调用场景下因 token 预算不足导致工具标记被截断。
-    """
-
-    _DEFAULT_MAX_TOKENS: int = RESPONSE_MAX_TOKENS
+    """根据用户偏好适配回复语气。"""
 
     @staticmethod
     def build_length_instruction(max_sentence_chars: int) -> str:
@@ -127,24 +122,13 @@ class StyleAdapter:
         max_sentence_chars: int | None = None,
     ) -> StyleParams:
         """根据当前上下文计算风格参数。"""
-        max_tokens = self._DEFAULT_MAX_TOKENS
-        temperature = 0.7
         tone_instruction = "保持自然友好"
-
-        # 人格风格覆盖
-        if persona:
-            if persona.max_tokens_preference:
-                max_tokens = min(max_tokens, persona.max_tokens_preference)
-            if persona.temperature_preference:
-                temperature = persona.temperature_preference
 
         length_instruction = ""
         if max_sentence_chars is not None:
             length_instruction = self.build_length_instruction(max_sentence_chars)
 
         return StyleParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
             tone_instruction=tone_instruction,
             length_instruction=length_instruction,
         )

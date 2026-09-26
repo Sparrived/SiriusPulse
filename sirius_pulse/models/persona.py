@@ -16,8 +16,7 @@ class PersonaProfile:
     full_system_prompt: str = ""
 
     # Runtime controls are separate from the persona prompt.
-    max_tokens_preference: int = 128
-    temperature_preference: float = 0.7
+    # 采样参数（max_tokens / temperature）不在此处：它们由 AMKR 的任务定义持有。
     reply_frequency: str = "moderate"
 
     # ------------------------------------------------------------------
@@ -36,8 +35,6 @@ class PersonaProfile:
             "name": self.name,
             "aliases": list(self.aliases),
             "full_system_prompt": self.full_system_prompt,
-            "max_tokens_preference": self.max_tokens_preference,
-            "temperature_preference": self.temperature_preference,
             "reply_frequency": self.reply_frequency,
             "version": self.version,
             "created_at": self.created_at,
@@ -46,12 +43,15 @@ class PersonaProfile:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PersonaProfile":
+        """从磁盘/WebUI 的字典构造。
+
+        历史上写入的 ``max_tokens_preference`` / ``temperature_preference`` 会被
+        忽略：采样参数已归 AMKR 的任务定义所有，本框架不再持有。
+        """
         return cls(
             name=data.get("name", "小星"),
             aliases=list(data.get("aliases", [])),
             full_system_prompt=data.get("full_system_prompt", ""),
-            max_tokens_preference=int(data.get("max_tokens_preference", 128)),
-            temperature_preference=float(data.get("temperature_preference", 0.7)),
             reply_frequency=data.get("reply_frequency", "moderate"),
             version=data.get("version", "1.0"),
             created_at=data.get("created_at", ""),
