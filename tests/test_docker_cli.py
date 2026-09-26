@@ -96,22 +96,14 @@ def test_docker_cli_translates_native_safe_commands_to_fixed_proxy_requests(argu
         ["image", "rm", "nginx:latest"],
         ["volume", "rm", "data"],
         ["network", "rm", "bridge"],
-    ],
-)
-def test_docker_cli_preserves_general_commands_for_proxy_policy(arguments):
-    assert _docker_cli.build_request(arguments) == {"action": "docker", "arguments": arguments}
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    [
         ["logs", "--tail", "0", "nginx"],
         ["logs", "--follow", "nginx"],
         ["start", "nginx", "postgres"],
         ["ps", "--format", "{{json .}}"],
     ],
 )
-def test_docker_cli_preserves_nonstandard_options_for_proxy_policy(arguments):
+def test_docker_cli_preserves_untranslated_commands_for_proxy_policy(arguments):
+    """未被翻译的 docker 子命令/选项原样透传给代理策略，由代理侧决定是否放行。"""
     assert _docker_cli.build_request(arguments) == {"action": "docker", "arguments": arguments}
 
 
