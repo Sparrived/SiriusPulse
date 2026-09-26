@@ -33,6 +33,7 @@ from sirius_pulse.persona_config import (
 )
 from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
 from sirius_pulse.platforms.runtime import EngineRuntime
+from sirius_pulse.utils.json_io import replace_with_retry
 
 LOG = logging.getLogger("sirius.persona_worker")
 
@@ -431,7 +432,7 @@ class PersonaWorker:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(path)
+            replace_with_retry(tmp, path)
         except Exception as exc:
             LOG.debug("状态写入失败: %s", exc)
 

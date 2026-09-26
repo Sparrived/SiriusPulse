@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
-from sirius_pulse.utils.json_io import atomic_write_json, read_json
+from sirius_pulse.utils.json_io import atomic_write_json, read_json, replace_with_retry
 from sirius_pulse.utils.query_builder import QueryBuilder
 from sirius_pulse.utils.sqlite_base import (
     BaseSqliteStore,
@@ -39,6 +40,48 @@ def test_json_io_when_atomic_write_creates_parent_then_file_round_trips(tmp_path
     assert json.loads(target.read_text(encoding="utf-8")) == {"name": "alpha", "values": [1, 2]}
     assert read_json(target) == {"name": "alpha", "values": [1, 2]}
     assert not target.with_suffix(".json.tmp").exists()
+
+
+def test_replace_with_retry_when_target_is_briefly_locked_then_still_replaces(tmp_path):
+    """Windows 上 os.replace 会被索引/杀软短暂占用（WinError 5），必须自愈。
+
+    这条守护来自真实故障：测试套件里 intentions.json / memory_units / _config.json
+    的原子写盘会随机抛 PermissionError，同一条测试单跑必过、并跑必挂。
+    """
+    target = tmp_path / "data.json"
+    target.write_text("old", encoding="utf-8")
+    staged = tmp_path / "data.json.tmp"
+    staged.write_text("new", encoding="utf-8")
+
+    calls = {"n": 0}
+    real_replace = Path.replace
+
+    def flaky_replace(self, other):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(self, other)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "replace", flaky_replace)
+        replace_with_retry(staged, target)
+
+    assert calls["n"] == 2
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+def test_replace_with_retry_when_target_stays_locked_then_gives_up(tmp_path):
+    """占用持续存在时必须把错误抛出去，不能静默吞掉写盘失败。"""
+    staged = tmp_path / "data.json.tmp"
+    staged.write_text("new", encoding="utf-8")
+
+    def always_locked(self, other):
+        raise PermissionError(5, "Access is denied")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "replace", always_locked)
+        with pytest.raises(PermissionError):
+            replace_with_retry(staged, tmp_path / "data.json")
 
 
 def test_json_io_when_file_is_missing_or_invalid_then_default_is_returned(tmp_path):

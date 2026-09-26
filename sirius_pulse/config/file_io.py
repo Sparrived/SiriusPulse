@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.utils.json_io import replace_with_retry
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,4 +30,4 @@ def atomic_json_save(path: Path, data: dict[str, Any], *, indent: int = 2) -> No
         json.dumps(data, ensure_ascii=False, indent=indent),
         encoding="utf-8",
     )
-    tmp.replace(path)
+    replace_with_retry(tmp, path)

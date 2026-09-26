@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.adapters.base import DeliveryUncertainError
+from sirius_pulse.utils.json_io import replace_with_retry
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -141,7 +142,7 @@ class EngineSticker:
             "oppositions": oppositions,
         }
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        replace_with_retry(tmp, path)
 
     async def _build_opposition_cache(self) -> dict[str, list[str]]:
         """按当前词表调用一次 LLM，批量生成二元对立缓存。"""

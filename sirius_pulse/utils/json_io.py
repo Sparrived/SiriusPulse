@@ -7,10 +7,35 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Windows 上 os.replace 被索引/杀软短暂持有时会抛 WinError 5，通常在几十毫秒内自解。
+_REPLACE_ATTEMPTS = 5
+_REPLACE_BACKOFF_SECONDS = 0.05
+
+
+def replace_with_retry(tmp: Path | str, target: Path | str) -> None:
+    """原子替换目标文件，遇到瞬时占用时退避重试。
+
+    ``Path.replace`` 在 Windows 上并不总是瞬时成功：索引服务、杀毒软件或另一个
+    刚读过该文件的进程会短暂持有句柄，于是抛出 ``PermissionError``
+    （``WinError 5``）。这类冲突是可自愈的，退避重试即可，否则调用方会看到一次
+    没有真实语义的写盘失败。
+    """
+    source = Path(tmp)
+    destination = Path(target)
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            source.replace(destination)
+            return
+        except OSError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_BACKOFF_SECONDS * (attempt + 1))
 
 
 def atomic_write_json(path: Path | str, data: Any, *, indent: int | None = 2) -> None:
@@ -25,7 +50,7 @@ def atomic_write_json(path: Path | str, data: Any, *, indent: int | None = 2) ->
         json.dumps(data, ensure_ascii=False, indent=indent),
         encoding="utf-8",
     )
-    tmp.replace(p)
+    replace_with_retry(tmp, p)
 
 
 def read_json(path: Path | str, default: Any = None) -> Any:

@@ -1,6 +1,6 @@
 """Persona store: simple JSON persistence for PersonaProfile.
 
-Path: {work_path}/engine_state/persona.json
+Path: {work_path}/persona.json
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.models.persona import PersonaProfile
+from sirius_pulse.utils.json_io import replace_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -46,5 +47,5 @@ class PersonaStore:
             json.dumps(persona.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        tmp.replace(path)
+        replace_with_retry(tmp, path)
         logger.debug("Persona saved to %s", path)

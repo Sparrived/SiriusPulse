@@ -16,6 +16,7 @@ from aiohttp import web
 from sirius_pulse.memory.basic.file_lock import archive_file_lock
 from sirius_pulse.memory.units.deduplicator import normalize_summary
 from sirius_pulse.persona_config import PersonaConfigPaths
+from sirius_pulse.utils.json_io import replace_with_retry
 from sirius_pulse.webui.persona_manager_api import _is_persona_running
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
@@ -40,7 +41,7 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    replace_with_retry(tmp, path)
 
 
 def _memory_dedupe_dir(data_dir: Path) -> Path:
@@ -352,7 +353,7 @@ def _rewrite_jsonl_without_conversation_key(path: Path, group_id: str, key: str)
                 dst.flush()
                 os.fsync(dst.fileno())
             if deleted:
-                tmp.replace(path)
+                replace_with_retry(tmp, path)
             return deleted
         except OSError:
             return 0

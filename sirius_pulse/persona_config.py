@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.reply_time_curve import normalize_reply_time_curve_points
+from sirius_pulse.utils.json_io import replace_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,7 @@ class PersonaAdaptersConfig:
             json.dumps(self.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        tmp.replace(p)
+        replace_with_retry(tmp, p)
 
     @classmethod
     def default(cls) -> "PersonaAdaptersConfig":
@@ -420,7 +421,7 @@ class PersonaExperienceConfig:
             json.dumps(self.to_dict(include_updated_at=True), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        tmp.replace(p)
+        replace_with_retry(tmp, p)
 
 
 # ---------------------------------------------------------------------------

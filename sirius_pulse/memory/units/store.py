@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from sirius_pulse.memory.units.models import MemoryUnit
-from sirius_pulse.utils.json_io import atomic_write_json
+from sirius_pulse.utils.json_io import atomic_write_json, replace_with_retry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class MemoryUnitFileStore:
 
     @staticmethod
     def _replace_staged(staged: Path, destination: Path) -> None:
-        staged.replace(destination)
+        replace_with_retry(staged, destination)
 
     def load(self, group_id: str) -> list[MemoryUnit]:
         path = self._path(group_id)

@@ -23,6 +23,7 @@ from typing import Any
 
 from aiohttp import web
 
+from sirius_pulse.utils.json_io import replace_with_retry
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.persona_manager")
@@ -280,7 +281,7 @@ def _write_worker_status(persona_dir: Path, status: dict[str, Any]) -> None:
     status_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = status_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(status_path)
+    replace_with_retry(tmp, status_path)
 
 
 def _pid_exists(pid: Any) -> bool:

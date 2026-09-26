@@ -24,6 +24,7 @@ from sirius_pulse.providers.amkr_sync import (
     register_persona_tasks_async,
     rotate_persona_inference_key,
 )
+from sirius_pulse.utils.json_io import replace_with_retry
 from sirius_pulse.webui.amkr_proxy import AmkrProxy, setup_amkr_proxy_routes
 from sirius_pulse.webui.app_keys import AUTH_MANAGER_KEY, DATA_DIR_KEY, WS_MANAGER_KEY
 from sirius_pulse.webui.auth import AuthManager
@@ -308,7 +309,7 @@ class WebUIServer:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        replace_with_retry(tmp, path)
 
         # 通知当前运行中的人格热重载全局运行时配置
         self._notify_config_reload("global")

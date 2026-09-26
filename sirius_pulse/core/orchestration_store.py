@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.utils.json_io import replace_with_retry
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,5 +49,5 @@ class OrchestrationStore:
             json.dumps(config, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        tmp.replace(path)
+        replace_with_retry(tmp, path)
         logger.debug("Orchestration saved to %s", path)

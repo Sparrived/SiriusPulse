@@ -9,6 +9,7 @@ from typing import Callable
 
 from sirius_pulse.config import Agent, AgentPreset, OrchestrationPolicy, SessionConfig
 from sirius_pulse.config.jsonc import load_json_document
+from sirius_pulse.utils.json_io import replace_with_retry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 GENERATED_AGENTS_FILE_NAME = "generated_agents.json"
@@ -579,7 +580,7 @@ def _write_generation_trace_payload(
     serialized_payload["agent_key"] = _normalize_agent_key(agent_key)
     tmp = file_path.with_suffix(file_path.suffix + ".tmp")
     tmp.write_text(json.dumps(serialized_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(file_path)
+    replace_with_retry(tmp, file_path)
     return file_path
 
 
@@ -761,7 +762,7 @@ def _save_generated_agent_library(
         }
     tmp = file_path.with_suffix(file_path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(file_path)
+    replace_with_retry(tmp, file_path)
     return file_path
 
 
