@@ -96,9 +96,7 @@ def test_experience_config_when_webui_posts_partial_payload_then_missing_values_
 def test_experience_config_memory_unit_top_k_defaults_to_diary_top_k_for_old_payload():
     """老 experience.json 里的 diary_* 键仍被读取：diary 子系统已删除，但磁盘上的
     数据不该让用户设置静默重置为默认值。"""
-    config = PersonaExperienceConfig.from_dict(
-        {"diary_top_k": 7, "diary_token_budget": 900}
-    )
+    config = PersonaExperienceConfig.from_dict({"diary_top_k": 7, "diary_token_budget": 900})
 
     assert config.memory_unit_top_k == 7
     assert config.memory_unit_token_budget == 900
@@ -137,3 +135,84 @@ def test_experience_config_when_file_is_corrupted_then_runtime_falls_back_to_def
     config = PersonaExperienceConfig.load(config_path)
 
     assert config.engagement_sensitivity == 0.5
+
+
+def test_experience_config_when_one_field_is_garbage_then_other_fields_survive():
+    """单个坏字段不能让整份配置回退。
+
+    配置文件是手改的：把 engagement_sensitivity 写成 "high" 时，早先的实现会让
+    float() 抛异常、load() 吞掉异常返回默认值——用户同时改好的 max_tool_rounds
+    一并静默丢失。这里锁住「坏字段降级，好字段保留」。
+    """
+    config = PersonaExperienceConfig.from_dict(
+        {
+            "engagement_sensitivity": "high",
+            "max_tool_rounds": 25,
+            "max_sentence_chars": 33,
+            "memory_unit_top_k": 9,
+        }
+    )
+
+    assert config.engagement_sensitivity == 0.5  # 坏值 → 默认
+    assert config.max_tool_rounds == 25  # 好值保留
+    assert config.max_sentence_chars == 33
+    assert config.memory_unit_top_k == 9
+
+
+def test_experience_config_when_list_field_is_a_string_then_it_is_not_shredded():
+    """字符串名单不能被拆成单字符。
+
+    ``other_ai_names="小星"`` 经 ``list()`` 会变成 ``["小","星"]``——看起来有配置，
+    实际是两个单字名字，会污染抢话判定。宁可为空。
+    """
+    config = PersonaExperienceConfig.from_dict(
+        {"other_ai_names": "小星", "message_prefixes": "!", "max_tool_rounds": 4}
+    )
+
+    assert config.other_ai_names == []
+    assert config.message_prefixes == []
+    assert config.max_tool_rounds == 4
+
+
+def test_experience_config_when_numeric_fields_are_negative_then_they_are_clamped():
+    config = PersonaExperienceConfig.from_dict(
+        {"max_tool_rounds": -5, "memory_unit_top_k": -1, "memory_unit_token_budget": -100}
+    )
+
+    assert config.max_tool_rounds == 0
+    assert config.memory_unit_top_k == 0
+    assert config.memory_unit_token_budget == 0
+
+
+def test_experience_config_when_file_is_a_json_list_then_defaults_are_used(tmp_path: Path):
+    """JSON 合法但不是对象时也要走默认值，而不是抛 TypeError。"""
+    config_path = tmp_path / "experience.json"
+    config_path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    config = PersonaExperienceConfig.load(config_path)
+
+    assert config.engagement_sensitivity == 0.5
+    assert config.max_tool_rounds == 3
+
+
+def test_adapters_config_when_one_adapter_is_corrupt_then_others_still_load(tmp_path: Path):
+    """一个 adapter 坏掉不该让整个适配器列表消失。"""
+    from sirius_pulse.persona_config import PersonaAdaptersConfig
+
+    config_path = tmp_path / "adapters.json"
+    config_path.write_text(
+        '{"adapters": ['
+        '{"type": "napcat", "qq_number": "10001", "dispatch_priority": "urgent"},'
+        '{"type": "unknown-platform"},'
+        '"not-an-object",'
+        '{"type": "napcat", "qq_number": "10002"}'
+        "]}",
+        encoding="utf-8",
+    )
+
+    config = PersonaAdaptersConfig.load(config_path)
+
+    assert [a.qq_number for a in config.adapters] == ["10001", "10002"]
+    # 坏值降级为默认值，好字段（qq_number）保留。
+    assert config.adapters[0].dispatch_priority == 0.0
+    assert config.adapters[0].qq_number == "10001"

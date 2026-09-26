@@ -3277,3 +3277,115 @@ async def test_global_config_post_when_inference_keys_present_then_not_overwritt
 
     saved = json.loads((tmp_path / "global_config.json").read_text(encoding="utf-8"))
     assert saved["amkr_inference_keys"] == {"sp/sirius": "amkr_ik_secret"}
+
+
+@pytest.mark.asyncio
+async def test_persona_post_when_aliases_is_a_string_then_rejects_instead_of_shredding(
+    tmp_path: Path,
+):
+    """aliases 传字符串必须 400。
+
+    直接 setattr + to_dict 的 list() 会把 "月白" 变成 ["月","白"]——两次单字别名，
+    用户看到的是"保存成功"，实际人设已经被改坏。
+    """
+    from sirius_pulse.webui.persona_api import api_persona_post
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+
+    response = await api_persona_post(
+        _FakeJsonRequest({"aliases": "月白", "name": "月白"}), persona_dir
+    )
+
+    assert response.status == 400
+    assert not (persona_dir / "persona.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_persona_post_when_name_is_not_a_string_then_rejects(tmp_path: Path):
+    from sirius_pulse.webui.persona_api import api_persona_post
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+
+    response = await api_persona_post(_FakeJsonRequest({"name": ["月", "白"]}), persona_dir)
+
+    assert response.status == 400
+
+
+@pytest.mark.asyncio
+async def test_persona_post_when_payload_is_valid_then_persists(tmp_path: Path):
+    from sirius_pulse.webui.persona_api import api_persona_post
+    from sirius_pulse.core.persona_store import PersonaStore
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+
+    response = await api_persona_post(
+        _FakeJsonRequest(
+            {"name": "月白", "aliases": ["Sirius"], "full_system_prompt": "你是月白。"}
+        ),
+        persona_dir,
+    )
+
+    assert response.status == 200
+    saved = PersonaStore.load(persona_dir)
+    assert saved is not None
+    assert saved.name == "月白"
+    assert saved.aliases == ["Sirius"]
+
+
+@pytest.mark.asyncio
+async def test_adapters_post_when_body_has_unknown_keys_then_it_does_not_500(tmp_path: Path):
+    """带未知键的请求不能让适配器接口 500。
+
+    旧版页面或手写请求会多带字段，``AdapterConfig(**a)`` 遇到未知键直接 TypeError，
+    接口变成 500，而用户只是想保存一个连接配置。
+    """
+    from sirius_pulse.webui.persona_api import api_adapters_post
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+
+    response = await api_adapters_post(
+        _FakeJsonRequest(
+            {
+                "adapters": [
+                    {
+                        "type": "napcat",
+                        "qq_number": "10001",
+                        "ws_url": "ws://localhost:3001",
+                        "legacy_field_removed_long_ago": True,
+                        "dispatch_priority": "urgent",
+                    }
+                ]
+            }
+        ),
+        persona_dir,
+    )
+
+    assert response.status == 200
+    saved = json.loads((persona_dir / "adapters.json").read_text(encoding="utf-8"))
+    adapter = saved["adapters"][0]
+    assert adapter["qq_number"] == "10001"
+    assert "legacy_field_removed_long_ago" not in adapter
+    assert adapter["dispatch_priority"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_experience_post_when_field_is_garbage_then_other_fields_still_save(tmp_path: Path):
+    """一个坏字段不该让整份 experience 回退到默认值。"""
+    from sirius_pulse.persona_config import PersonaExperienceConfig
+    from sirius_pulse.webui.persona_api import api_experience_post
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+
+    response = await api_experience_post(
+        _FakeJsonRequest({"engagement_sensitivity": "high", "max_tool_rounds": 25}), persona_dir
+    )
+
+    assert response.status == 200
+    saved = PersonaExperienceConfig.load(persona_dir / "experience.json")
+    assert saved.engagement_sensitivity == 0.5
+    assert saved.max_tool_rounds == 25

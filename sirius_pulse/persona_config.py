@@ -23,6 +23,46 @@ logger = logging.getLogger(__name__)
 _GROUP_REPLY_STRATEGIES = {"smart", "keyword"}
 
 
+def _as_float(value: Any, default: float, *, field_name: str) -> float:
+    """把配置里的值转成 float；转不了就用默认值并记账。
+
+    不能直接 ``float(value)``：配置文件是用户手改的，一个笔误（``"high"``）会抛异常，
+    而 ``load()`` 会因此丢掉**整份**配置——用户其余正确的设置一起静默回退到默认值。
+    单字段降级 + 一条 warning，坏值可定位，好值留下来。
+    """
+    if isinstance(value, bool) or value is None:
+        logger.warning("experience 配置 %s=%r 不是数字，改用默认值 %r", field_name, value, default)
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("experience 配置 %s=%r 无法解析为数字，改用默认值 %r", field_name, value, default)
+        return default
+
+
+def _as_int(value: Any, default: int, *, field_name: str) -> int:
+    """把配置里的值转成 int；语义同 :func:`_as_float`。"""
+    if isinstance(value, bool) or value is None:
+        logger.warning("experience 配置 %s=%r 不是整数，改用默认值 %r", field_name, value, default)
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("experience 配置 %s=%r 无法解析为整数，改用默认值 %r", field_name, value, default)
+        return default
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """把配置里的值转成字符串列表；非列表（含字符串）一律视为空。
+
+    字符串会被 ``list()`` 拆成单字符，得到的名单看起来"有值"却全是碎片，
+    比直接当空更糟，所以这里明确拒绝。
+    """
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
 def normalize_group_reply_strategies(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
@@ -101,31 +141,77 @@ class NapCatAdapterConfig:
             ws_url=str(data.get("ws_url", "ws://localhost:3001")),
             token=str(data.get("token", "napcat_ws")),
             qq_number=str(data.get("qq_number", "")),
-            allowed_group_ids=[str(v) for v in data.get("allowed_group_ids", [])],
-            allowed_private_user_ids=[str(v) for v in data.get("allowed_private_user_ids", [])],
-            peer_ai_ids=[str(v) for v in data.get("peer_ai_ids", [])],
+            allowed_group_ids=_as_str_list(data.get("allowed_group_ids", [])),
+            allowed_private_user_ids=_as_str_list(data.get("allowed_private_user_ids", [])),
+            peer_ai_ids=_as_str_list(data.get("peer_ai_ids", [])),
             group_dispatch_enabled=bool(data.get("group_dispatch_enabled", True)),
             dispatch_db_path=str(data.get("dispatch_db_path", "")),
-            dispatch_priority=float(data.get("dispatch_priority", 0.0)),
+            dispatch_priority=_as_float(
+                data.get("dispatch_priority", 0.0), 0.0, field_name="dispatch_priority"
+            ),
             dispatch_min_reply_interval_seconds=max(
-                0.0, float(data.get("dispatch_min_reply_interval_seconds", 3.0))
+                0.0,
+                _as_float(
+                    data.get("dispatch_min_reply_interval_seconds", 3.0),
+                    3.0,
+                    field_name="dispatch_min_reply_interval_seconds",
+                ),
             ),
-            dispatch_lease_seconds=max(5.0, float(data.get("dispatch_lease_seconds", 120.0))),
+            dispatch_lease_seconds=max(
+                5.0,
+                _as_float(
+                    data.get("dispatch_lease_seconds", 120.0),
+                    120.0,
+                    field_name="dispatch_lease_seconds",
+                ),
+            ),
             dispatch_peer_cooldown_seconds=max(
-                0.0, float(data.get("dispatch_peer_cooldown_seconds", 5.0))
+                0.0,
+                _as_float(
+                    data.get("dispatch_peer_cooldown_seconds", 5.0),
+                    5.0,
+                    field_name="dispatch_peer_cooldown_seconds",
+                ),
             ),
-            dispatch_max_peer_turns=max(0, int(data.get("dispatch_max_peer_turns", 3))),
+            dispatch_max_peer_turns=max(
+                0,
+                _as_int(
+                    data.get("dispatch_max_peer_turns", 3),
+                    3,
+                    field_name="dispatch_max_peer_turns",
+                ),
+            ),
             dispatch_score_collection_seconds=max(
-                0.05, float(data.get("dispatch_score_collection_seconds", 0.15))
+                0.05,
+                _as_float(
+                    data.get("dispatch_score_collection_seconds", 0.15),
+                    0.15,
+                    field_name="dispatch_score_collection_seconds",
+                ),
             ),
             dispatch_activity_window_seconds=max(
-                30.0, float(data.get("dispatch_activity_window_seconds", 300.0))
+                30.0,
+                _as_float(
+                    data.get("dispatch_activity_window_seconds", 300.0),
+                    300.0,
+                    field_name="dispatch_activity_window_seconds",
+                ),
             ),
             dispatch_activity_penalty_per_reply=max(
-                0.0, float(data.get("dispatch_activity_penalty_per_reply", 0.12))
+                0.0,
+                _as_float(
+                    data.get("dispatch_activity_penalty_per_reply", 0.12),
+                    0.12,
+                    field_name="dispatch_activity_penalty_per_reply",
+                ),
             ),
             dispatch_max_activity_penalty=max(
-                0.0, float(data.get("dispatch_max_activity_penalty", 0.6))
+                0.0,
+                _as_float(
+                    data.get("dispatch_max_activity_penalty", 0.6),
+                    0.6,
+                    field_name="dispatch_max_activity_penalty",
+                ),
             ),
             enable_group_chat=bool(data.get("enable_group_chat", True)),
             enable_private_chat=bool(data.get("enable_private_chat", True)),
@@ -148,9 +234,13 @@ class PersonaAdaptersConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PersonaAdaptersConfig":
         raw_adapters = data.get("adapters", [])
+        if not isinstance(raw_adapters, list):
+            logger.warning("adapters 配置的 adapters 字段不是列表，已忽略")
+            return cls.default()
         adapters: list[AdapterConfig] = []
         for item in raw_adapters:
             if not isinstance(item, dict):
+                logger.warning("跳过非对象的 adapter 条目: %r", item)
                 continue
             t = str(item.get("type", "napcat"))
             if t == "napcat":
@@ -166,10 +256,14 @@ class PersonaAdaptersConfig:
             return cls.default()
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            return cls.from_dict(data)
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError) as exc:
             logger.warning("加载 adapters 配置失败 %s: %s", p, exc)
             return cls.default()
+        if not isinstance(data, dict):
+            logger.warning("adapters 配置不是对象，忽略 %s（实际为 %s）", p, type(data).__name__)
+            return cls.default()
+        # 单个 adapter 坏掉不再丢整份配置：from_dict 内部逐项跳过并记账。
+        return cls.from_dict(data)
 
     def save(self, path: Path | str) -> None:
         p = Path(path)
@@ -249,31 +343,57 @@ class PersonaExperienceConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PersonaExperienceConfig":
+        # 历史字段 diary_top_k / diary_token_budget 仍被读取：diary 子系统已删除，
+        # 但老 experience.json 里存的是数据，丢掉会让用户设置静默重置为默认值。
+        memory_unit_top_k = data.get("memory_unit_top_k", data.get("diary_top_k", 5))
+        memory_unit_token_budget = data.get(
+            "memory_unit_token_budget", data.get("diary_token_budget", 20_000)
+        )
         return cls(
-            engagement_sensitivity=float(data.get("engagement_sensitivity", 0.5)),
-            expressiveness=float(data.get("expressiveness", 0.5)),
+            engagement_sensitivity=_as_float(
+                data.get("engagement_sensitivity", 0.5), 0.5, field_name="engagement_sensitivity"
+            ),
+            expressiveness=_as_float(
+                data.get("expressiveness", 0.5), 0.5, field_name="expressiveness"
+            ),
             group_reply_strategies=normalize_group_reply_strategies(
                 data.get("group_reply_strategies", {})
             ),
-            min_reply_interval_seconds=float(data.get("min_reply_interval_seconds", 0.0)),
-            main_model_reply_cooldown_seconds=float(
-                data.get("main_model_reply_cooldown_seconds", 0.0)
+            min_reply_interval_seconds=_as_float(
+                data.get("min_reply_interval_seconds", 0.0),
+                0.0,
+                field_name="min_reply_interval_seconds",
+            ),
+            main_model_reply_cooldown_seconds=_as_float(
+                data.get("main_model_reply_cooldown_seconds", 0.0),
+                0.0,
+                field_name="main_model_reply_cooldown_seconds",
             ),
             reply_time_curve_points=normalize_reply_time_curve_points(
                 data.get("reply_time_curve_points", [])
             ),
-            max_sentence_chars=max(5, min(50, int(data.get("max_sentence_chars", 20)))),
-            enable_tools=bool(data.get("enable_tools", True)),
-            other_ai_names=[str(v) for v in data.get("other_ai_names", [])],
-            max_tool_rounds=int(data.get("max_tool_rounds", 3)),
-            auto_install_tool_deps=bool(data.get("auto_install_tool_deps", True)),
-            # 历史字段 diary_top_k / diary_token_budget 仍被读取：diary 子系统已删除，
-            # 但老 experience.json 里存的是数据，丢掉会让用户设置静默重置为默认值。
-            memory_unit_top_k=int(data.get("memory_unit_top_k", data.get("diary_top_k", 5))),
-            memory_unit_token_budget=int(
-                data.get("memory_unit_token_budget", data.get("diary_token_budget", 20_000))
+            max_sentence_chars=max(
+                5,
+                min(
+                    50,
+                    _as_int(
+                        data.get("max_sentence_chars", 20), 20, field_name="max_sentence_chars"
+                    ),
+                ),
             ),
-            message_prefixes=[str(v) for v in data.get("message_prefixes", [])],
+            enable_tools=bool(data.get("enable_tools", True)),
+            other_ai_names=_as_str_list(data.get("other_ai_names", [])),
+            # 0 是合法值（不允许工具续写），只挡负数。
+            max_tool_rounds=max(
+                0, _as_int(data.get("max_tool_rounds", 3), 3, field_name="max_tool_rounds")
+            ),
+            auto_install_tool_deps=bool(data.get("auto_install_tool_deps", True)),
+            memory_unit_top_k=max(0, _as_int(memory_unit_top_k, 5, field_name="memory_unit_top_k")),
+            memory_unit_token_budget=max(
+                0,
+                _as_int(memory_unit_token_budget, 20_000, field_name="memory_unit_token_budget"),
+            ),
+            message_prefixes=_as_str_list(data.get("message_prefixes", [])),
         )
 
     @classmethod
@@ -283,10 +403,14 @@ class PersonaExperienceConfig:
             return cls()
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            return cls.from_dict(data)
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError) as exc:
             logger.warning("加载 experience 配置失败 %s: %s", p, exc)
             return cls()
+        if not isinstance(data, dict):
+            logger.warning("experience 配置不是对象，忽略 %s（实际为 %s）", p, type(data).__name__)
+            return cls()
+        # 单个字段坏掉不再丢整份配置：from_dict 内部逐字段降级并记账。
+        return cls.from_dict(data)
 
     def save(self, path: Path | str) -> None:
         p = Path(path)

@@ -209,13 +209,29 @@ async def api_persona_post(request: web.Request, data_dir: Path) -> web.Response
         profile = PersonaProfile(name=data_dir.name)
 
     persona_data = body.get("persona", body)
-    for key in (
-        "name",
-        "aliases",
-        "full_system_prompt",
-    ):
-        if key in persona_data:
-            setattr(profile, key, persona_data[key])
+    if not isinstance(persona_data, dict):
+        return _json_response({"error": "persona 必须是对象"}, 400)
+
+    # 逐字段校验后再写。直接 setattr 会让类型悄悄跑偏：aliases 传字符串会被
+    # to_dict 的 list() 拆成单字符（"月白" → ["月","白"]），name 传数组则会让
+    # 下游的 f-string 拼出 "['x', 'y']"。写入前挡掉，比事后在 prompt 里排查便宜。
+    if "name" in persona_data:
+        name = persona_data["name"]
+        if not isinstance(name, str) or not name.strip():
+            return _json_response({"error": "name 必须是非空字符串"}, 400)
+        profile.name = name.strip()
+
+    if "aliases" in persona_data:
+        aliases = persona_data["aliases"]
+        if not isinstance(aliases, list) or any(not isinstance(a, str) for a in aliases):
+            return _json_response({"error": "aliases 必须是字符串数组"}, 400)
+        profile.aliases = [a for a in aliases if a.strip()]
+
+    if "full_system_prompt" in persona_data:
+        prompt = persona_data["full_system_prompt"]
+        if not isinstance(prompt, str):
+            return _json_response({"error": "full_system_prompt 必须是字符串"}, 400)
+        profile.full_system_prompt = prompt
 
     PersonaStore.save(paths.dir, profile)
     _request_config_reload("persona", data_dir)
@@ -256,7 +272,13 @@ async def api_experience_post(request: web.Request, data_dir: Path) -> web.Respo
 
     exp = PersonaExperienceConfig.load(paths.experience)
     experience_data = body.get("experience", body)
+    if not isinstance(experience_data, dict):
+        return _json_response({"error": "experience 必须是对象"}, 400)
 
+    # 只接受已知字段，并让 from_dict 统一做类型规整：先 setattr 再 to_dict 往返
+    # 会让 string 类型的 other_ai_names 被 list() 拆成单字符，而 from_dict 自己的
+    # 降级逻辑反而绕过了。这里直接把合并后的原生 dict 交给 from_dict。
+    merged = exp.to_dict()
     for key in (
         "engagement_sensitivity",
         "expressiveness",
@@ -274,9 +296,9 @@ async def api_experience_post(request: web.Request, data_dir: Path) -> web.Respo
         "message_prefixes",
     ):
         if key in experience_data:
-            setattr(exp, key, experience_data[key])
+            merged[key] = experience_data[key]
 
-    exp = PersonaExperienceConfig.from_dict(exp.to_dict())
+    exp = PersonaExperienceConfig.from_dict(merged)
     exp.save(paths.experience)
     _request_config_reload("experience", data_dir)
     return _json_response({"success": True})
@@ -299,7 +321,12 @@ async def api_adapters_post(request: web.Request, data_dir: Path) -> web.Respons
 
     adapters = PersonaAdaptersConfig.load(paths.adapters)
     if "adapters" in body and isinstance(body["adapters"], list):
-        adapters.adapters = [AdapterConfig(**a) for a in body["adapters"]]
+        # 用 from_dict 而不是 AdapterConfig(**a)：前端可能带来未知键（旧版页面残留、
+        # 手写请求），dataclass 构造会直接 TypeError 变成 500。from_dict 只取认识的字段，
+        # 未知键丢弃，并由 _as_float/_as_int 对坏值逐字段降级。
+        adapters.adapters = [
+            AdapterConfig.from_dict(item) for item in body["adapters"] if isinstance(item, dict)
+        ]
 
     adapters.save(paths.adapters)
     return _json_response({"success": True})
