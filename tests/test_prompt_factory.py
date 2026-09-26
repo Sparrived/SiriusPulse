@@ -249,6 +249,36 @@ def test_persona_prompt_keeps_identity_metadata_separate_from_custom_prompt():
     assert "你现在就是月白。保持角色，不要跳出角色解释设定" in prompt
 
 
+def test_turn_sections_do_not_carry_the_persona_anchor_themselves():
+    """人格段落只能由 Brain.chat() 注入一次。
+
+    定时任务与自主回合的 prompt 由 build_*_sections 产出后又经 Brain.chat()，后者
+    会无条件在最前面拼上 persona_base。若这些 builder 自己再带一份 identity，
+    最终 system prompt 里就会出现两份【身份锚定】。
+    """
+    identity = PromptFactory.build_persona_prompt(
+        name="月白",
+        aliases=["Sirius"],
+        full_system_prompt="你的名字是「月白」，代号「Sirius」。",
+    )
+
+    autonomous, _ = PromptFactory.build_autonomous_turn_sections(
+        kind="musing",
+        seed="seed",
+        free_time=True,
+    )
+    scheduled, _ = PromptFactory.build_scheduled_task_sections(
+        job={"expression": "* * * * *", "command": "echo hi"},
+        command_output="hi",
+    )
+
+    for sections in (autonomous, scheduled):
+        assert "【身份锚定】" not in sections
+        # 模拟 Brain.chat() 的默认 pre 步骤。
+        final = identity + "\n\n" + sections
+        assert final.count("【身份锚定】") == 1
+
+
 def test_persona_profile_when_loading_legacy_fields_then_only_prompt_is_persisted():
     profile = PersonaProfile.from_dict(
         {

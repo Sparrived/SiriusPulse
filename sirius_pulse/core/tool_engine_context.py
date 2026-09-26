@@ -95,13 +95,11 @@ class ToolEngineContextImpl:
         caller_is_developer: bool = False,
     ) -> dict[str, Any]:
         """Run a scheduled message through the same tool-call loop as chat."""
-        identity = self._engine.persona.build_system_prompt() if self._engine.persona else ""
         # 定时任务回合由框架自动进入工作模式，所以提示词里的工具清单也要按工作模式给。
         tool_desc = self.get_tool_descriptions(
             caller_is_developer=caller_is_developer, adapter_type=adapter_type, work_mode=True
         )
         system_prompt, messages = PromptFactory.build_scheduled_task_sections(
-            identity=identity,
             job=job,
             command_output=command_output,
             tool_desc=tool_desc,
@@ -329,14 +327,12 @@ class ToolEngineContextImpl:
         With ``free_time=True`` there is no intention behind the turn at all: it
         is time of her own and she may start something new, or nothing.
         """
-        identity = self._engine.persona.build_system_prompt() if self._engine.persona else ""
         tool_desc = self.get_tool_descriptions(work_mode=True)
         audiences = [
             item.to_dict() if hasattr(item, "to_dict") else dict(item)
             for item in self.list_audiences()
         ]
         system_prompt, messages = PromptFactory.build_autonomous_turn_sections(
-            identity=identity,
             kind=kind,
             seed=seed,
             tool_desc=tool_desc,

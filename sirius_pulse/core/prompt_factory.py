@@ -461,18 +461,20 @@ class PromptFactory:
     @staticmethod
     def build_scheduled_task_sections(
         *,
-        identity: str,
         job: dict[str, Any],
         command_output: str,
         tool_desc: str = "",
         work_mode: bool = False,
     ) -> tuple[str, list[dict[str, str]]]:
-        """Build a prompt for a Bash-registered proactive cron task."""
+        """Build a prompt for a Bash-registered proactive cron task.
+
+        人格段落由 ``Brain.chat()`` 的默认 pre 步骤统一注入，这里不再重复携带，
+        否则同一份【身份锚定】会在最终 system prompt 里出现两次。
+        """
         expression = str(job.get("expression", ""))
         command = str(job.get("command", ""))
         output = str(command_output or "").strip()
         sections = [
-            identity.strip(),
             "【定时任务触发】\n"
             f"一个由当前聊天注册的 cron 任务已到期。\n"
             f"Cron：{expression}\n"
@@ -493,7 +495,6 @@ class PromptFactory:
     @staticmethod
     def build_autonomous_turn_sections(
         *,
-        identity: str,
         kind: str,
         seed: str,
         tool_desc: str = "",
@@ -514,6 +515,8 @@ class PromptFactory:
 
         When *free_time* is set there is no intention at all: she has simply been
         left to herself and may start anything, or nothing.
+
+        人格段落由 ``Brain.chat()`` 的默认 pre 步骤统一注入，这里不再重复携带。
         """
         material = str(seed or "").strip()
         reason = str(why or "").strip()
@@ -521,13 +524,11 @@ class PromptFactory:
 
         if free_time:
             opening = [
-                identity.strip(),
                 "【自主时间】",
                 "没有人给你发消息，你手上也没有非做不可的事。接下来这段时间完全是你自己的。",
             ]
         else:
             opening = [
-                identity.strip(),
                 "【自主时间】",
                 "没有人给你发消息。现在是你的时间，你想起了一件自己惦记着的事。",
             ]
