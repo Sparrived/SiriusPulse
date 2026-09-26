@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from sirius_pulse.memory.units import MemoryUnit, MemoryUnitFileStore, MemoryUnitManager
 
 _PAST = "2020-01-01T00:00:00+00:00"
@@ -32,13 +34,15 @@ def _unit(unit_id: str, summary: str, **changes) -> MemoryUnit:
 def test_retired_units_stay_on_disk_and_loadable(tmp_path, monkeypatch):
     monkeypatch.setattr("sirius_pulse.memory.units.manager.DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT", 2)
     manager = MemoryUnitManager(tmp_path)
-    manager.add_units(
-        "group-a",
-        [
-            _unit("mem-1", "第一条部署记录。", keywords=["部署"], salience=0.9, confidence=0.9),
-            _unit("mem-2", "第二条部署记录。", keywords=["部署"], salience=0.8, confidence=0.8),
-            _unit("mem-3", "第三条部署记录。", keywords=["部署"], salience=0.1, confidence=0.1),
-        ],
+    asyncio.run(
+        manager.add_units(
+            "group-a",
+            [
+                _unit("mem-1", "第一条部署记录。", keywords=["部署"], salience=0.9, confidence=0.9),
+                _unit("mem-2", "第二条部署记录。", keywords=["部署"], salience=0.8, confidence=0.8),
+                _unit("mem-3", "第三条部署记录。", keywords=["部署"], salience=0.1, confidence=0.1),
+            ],
+        )
     )
 
     manager.retire_overflow("group-a", manager.get_units_for_group("group-a"))
@@ -52,9 +56,11 @@ def test_retired_units_stay_on_disk_and_loadable(tmp_path, monkeypatch):
 
 def test_expired_units_are_retired_but_retained(tmp_path):
     manager = MemoryUnitManager(tmp_path)
-    manager.add_units(
-        "group-a",
-        [_unit("mem-dead", "下周三开评审会。", valid_until=_PAST, keywords=["评审会"])],
+    asyncio.run(
+        manager.add_units(
+            "group-a",
+            [_unit("mem-dead", "下周三开评审会。", valid_until=_PAST, keywords=["评审会"])],
+        )
     )
 
     manager.ensure_group_loaded("group-a")
@@ -68,9 +74,11 @@ def test_expired_units_are_retired_but_retained(tmp_path):
 def test_add_units_syncs_retirement_into_index(tmp_path):
     """add_units 重新加载过对象，退休标记必须同步进索引，否则仍会被召回。"""
     manager = MemoryUnitManager(tmp_path)
-    manager.add_units(
-        "group-a",
-        [_unit("mem-dead", "下周三开评审会。", valid_until=_PAST, keywords=["评审会"])],
+    asyncio.run(
+        manager.add_units(
+            "group-a",
+            [_unit("mem-dead", "下周三开评审会。", valid_until=_PAST, keywords=["评审会"])],
+        )
     )
 
     assert manager.retrieve("评审会", group_id="group-a", top_k=5) == []

@@ -584,13 +584,13 @@ class ToolEngineContextImpl:
             return []
         return list(getter(group_id, n))
 
-    def add_memory_unit(self, unit: Any) -> bool:
+    async def add_memory_unit(self, unit: Any) -> bool:
         """把一条记忆单元写入人格记忆，供后续对话检索复用。"""
         manager = getattr(self._engine, "memory_unit_manager", None)
         if manager is None:
             return False
         group_id = str(getattr(unit, "group_id", "") or "")
-        manager.add_units(group_id, [unit])
+        await manager.add_units(group_id, [unit])
         return True
 
     def get_config_value(self, key: str, default: Any = None) -> Any:

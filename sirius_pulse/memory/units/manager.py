@@ -241,27 +241,34 @@ class MemoryUnitManager:
         async with self._mutation_lock:
             return await self._maintenance.apply(report)
 
-    def add_units(self, group_id: str, units: list[MemoryUnit]) -> None:
+    async def add_units(self, group_id: str, units: list[MemoryUnit]) -> None:
+        """把一批单元追加进某个群，与 checkpoint 路径共用同一把写锁。
+
+        这里必须持锁：`reconcile_units()` 在持锁期间会 await 去重判定，而本方法
+        做的是「读盘 → 追加 → 写盘」的读改写。不持锁时两者会在对方的 await
+        窗口里交错，后写的一方覆盖前一方，表现为静默丢单元。
+        """
         if not units:
             return
-        self.ensure_group_loaded(group_id)
-        existing = self._store.load(group_id)
-        existing_ids = {unit.unit_id for unit in existing}
-        changed = False
-        for unit in units:
-            if unit.unit_id in existing_ids:
-                continue
-            self._indexer.add(unit)
-            existing.append(unit)
-            existing_ids.add(unit.unit_id)
-            self._checkpointed_sources.setdefault(group_id, set()).update(unit.source_ids)
-            changed = True
-        if changed:
-            self.retire_overflow(group_id, existing)
-            self._store.save(group_id, existing)
-            # 重新加载过的对象与索引里那一批不是同一批，退休标记必须同步进索引，
-            # 否则模型侧仍按旧标记召回。
-            self._replace_loaded_group(group_id, existing)
+        async with self._mutation_lock:
+            self.ensure_group_loaded(group_id)
+            existing = self._store.load(group_id)
+            existing_ids = {unit.unit_id for unit in existing}
+            changed = False
+            for unit in units:
+                if unit.unit_id in existing_ids:
+                    continue
+                self._indexer.add(unit)
+                existing.append(unit)
+                existing_ids.add(unit.unit_id)
+                self._checkpointed_sources.setdefault(group_id, set()).update(unit.source_ids)
+                changed = True
+            if changed:
+                self.retire_overflow(group_id, existing)
+                self._store.save(group_id, existing)
+                # 重新加载过的对象与索引里那一批不是同一批，退休标记必须同步进索引，
+                # 否则模型侧仍按旧标记召回。
+                self._replace_loaded_group(group_id, existing)
 
     def ensure_group_loaded(self, group_id: str) -> None:
         if group_id in self._loaded_groups:

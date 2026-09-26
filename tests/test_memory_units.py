@@ -116,7 +116,7 @@ def test_memory_unit_manager_retrieves_and_tracks_checkpointed_sources(tmp_path)
         source_ids=["src_1"],
     )
 
-    manager.add_units("group_a", [unit])
+    asyncio.run(manager.add_units("group_a", [unit]))
 
     assert manager.is_source_checkpointed("group_a", "src_1") is True
     retrieved = manager.retrieve("deployment workflow", group_id="group_a", top_k=3)
@@ -134,7 +134,7 @@ def test_memory_unit_manager_loads_cross_group_persona_units_when_enabled(tmp_pa
         summary="Sirius prefers concise replies.",
         keywords=["concise"],
     )
-    manager.add_units("group_b", [unit])
+    asyncio.run(manager.add_units("group_b", [unit]))
 
     retrieved = manager.retrieve(
         "concise replies",
@@ -148,17 +148,19 @@ def test_memory_unit_manager_loads_cross_group_persona_units_when_enabled(tmp_pa
 
 def test_generation_collapses_exact_duplicate_and_tracks_new_source(tmp_path):
     manager = MemoryUnitManager(tmp_path)
-    manager.add_units(
-        "group_a",
-        [
-            MemoryUnit(
-                unit_id="mem-existing",
-                group_id="group_a",
-                created_at="2026-07-12T00:00:00+00:00",
-                summary="Alice agreed to redeploy after tests pass.",
-                source_ids=["src-existing"],
-            )
-        ],
+    asyncio.run(
+        manager.add_units(
+            "group_a",
+            [
+                MemoryUnit(
+                    unit_id="mem-existing",
+                    group_id="group_a",
+                    created_at="2026-07-12T00:00:00+00:00",
+                    summary="Alice agreed to redeploy after tests pass.",
+                    source_ids=["src-existing"],
+                )
+            ],
+        )
     )
     new_entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "redeploy")
 
@@ -185,16 +187,18 @@ def test_generation_collapses_exact_duplicate_and_tracks_new_source(tmp_path):
 
 def test_generation_keeps_conflicting_facts_with_reciprocal_links(tmp_path):
     manager = MemoryUnitManager(tmp_path, embedding_client=_Embedding())
-    manager.add_units(
-        "group_a",
-        [
-            MemoryUnit(
-                unit_id="mem-existing",
-                group_id="group_a",
-                created_at="2026-07-12T00:00:00+00:00",
-                summary="Alice prefers concise replies.",
-            )
-        ],
+    asyncio.run(
+        manager.add_units(
+            "group_a",
+            [
+                MemoryUnit(
+                    unit_id="mem-existing",
+                    group_id="group_a",
+                    created_at="2026-07-12T00:00:00+00:00",
+                    summary="Alice prefers concise replies.",
+                )
+            ],
+        )
     )
     entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "detailed replies")
     brain = _FakeBrain(
@@ -223,16 +227,18 @@ def test_generation_keeps_conflicting_facts_with_reciprocal_links(tmp_path):
 
 def test_generation_keeps_identical_summaries_in_separate_group_files(tmp_path):
     manager = MemoryUnitManager(tmp_path)
-    manager.add_units(
-        "group_a",
-        [
-            MemoryUnit(
-                unit_id="mem-a",
-                group_id="group_a",
-                created_at="2026-07-12T00:00:00+00:00",
-                summary="Alice agreed to redeploy after tests pass.",
-            )
-        ],
+    asyncio.run(
+        manager.add_units(
+            "group_a",
+            [
+                MemoryUnit(
+                    unit_id="mem-a",
+                    group_id="group_a",
+                    created_at="2026-07-12T00:00:00+00:00",
+                    summary="Alice agreed to redeploy after tests pass.",
+                )
+            ],
+        )
     )
     entry = BasicMemoryManager().add_entry("group_b", "alice", "human", "redeploy")
 

@@ -23,15 +23,19 @@ class _Brain:
 
 def _manager(tmp_path):
     manager = MemoryUnitManager(tmp_path)
-    manager.add_units(
-        "group-a",
-        [
-            _unit("one", "group-a", "Alice prefers concise replies."),
-            _unit("two", "group-a", "Alice prefers concise replies!"),
-            _unit("three", "group-a", "Alice prefers concise replies。"),
-        ],
+    asyncio.run(
+        manager.add_units(
+            "group-a",
+            [
+                _unit("one", "group-a", "Alice prefers concise replies."),
+                _unit("two", "group-a", "Alice prefers concise replies!"),
+                _unit("three", "group-a", "Alice prefers concise replies。"),
+            ],
+        )
     )
-    manager.add_units("group-b", [_unit("four", "group-b", "Alice prefers concise replies.")])
+    asyncio.run(
+        manager.add_units("group-b", [_unit("four", "group-b", "Alice prefers concise replies.")])
+    )
     return manager
 
 
@@ -54,7 +58,7 @@ def test_scan_is_dry_run_and_apply_creates_backup(tmp_path):
 def test_apply_rejects_stale_report_without_changing_files(tmp_path):
     manager = _manager(tmp_path)
     report = asyncio.run(manager.scan_duplicates(brain=_Brain(), model_name="memory-model"))
-    manager.add_units("group-a", [_unit("four", "group-a", "A separate fact.")])
+    asyncio.run(manager.add_units("group-a", [_unit("four", "group-a", "A separate fact.")]))
     before = manager.get_units_for_group("group-a")
 
     result = asyncio.run(manager.apply_duplicate_report(report))

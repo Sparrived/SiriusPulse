@@ -251,7 +251,7 @@ async def run_tick(ctx: Any) -> Episode | None:
         intentions.resolve(target.intention_id, outcome=episode.outcome, now=episode.ended_at)
     _save_intentions(ctx, intentions)
     _append_episode(ctx, episode)
-    _write_memory_unit(ctx, target.origin_group or _fallback_group(ctx), episode)
+    await _write_memory_unit(ctx, target.origin_group or _fallback_group(ctx), episode)
     _finish_tick(state, episode)
     _save_state(store, state)
 
@@ -308,7 +308,7 @@ async def _run_free_time(
         status="done",
     )
     _append_episode(ctx, episode)
-    _write_memory_unit(ctx, _fallback_group(ctx), episode)
+    await _write_memory_unit(ctx, _fallback_group(ctx), episode)
     state["last_free_time_at"] = episode.ended_at
     _finish_tick(state, episode)
     _save_state(store, state)
@@ -451,7 +451,7 @@ def _episodes_path(ctx: Any) -> Path:
     return layout.memory_dir() / "autonomy" / "episodes.json"
 
 
-def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
+async def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
     """Feed the outcome into existing memory so she *knows* it later.
 
     This makes the episode part of what she remembers; it is deliberately not a
@@ -480,7 +480,7 @@ def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
         },
     )
     try:
-        ctx.add_memory_unit(unit)
+        await ctx.add_memory_unit(unit)
     except Exception as exc:
         logger.warning("自主事件写入人格记忆失败: %s", exc)
 

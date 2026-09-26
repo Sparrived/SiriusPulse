@@ -496,7 +496,7 @@ class ToolEngineContext(Protocol):
         """把一条自主分享投递到指定会话；不可达时返回 False。"""
         ...
 
-    def add_memory_unit(self, unit: Any) -> bool:
+    async def add_memory_unit(self, unit: Any) -> bool:
         """把一条记忆单元写入人格记忆。"""
         ...
 
