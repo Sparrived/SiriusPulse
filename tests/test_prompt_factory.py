@@ -281,6 +281,20 @@ def test_turn_sections_do_not_carry_the_persona_anchor_themselves():
         assert final.count("【身份锚定】") == 1
 
 
+def test_work_mode_guidance_points_at_the_persistent_home():
+    """容器重建只保留挂载卷，她得知道成果该放哪儿，否则会一直放错地方。"""
+    system_prompt, _ = PromptFactory.build_autonomous_turn_sections(
+        kind="musing",
+        seed="继续读 CCSN 的数据",
+        free_time=True,
+        work_mode=True,
+    )
+
+    assert "$HOME" in system_prompt
+    assert "容器重建后依然在" in system_prompt
+    assert "/home/sirius" in system_prompt
+
+
 def test_autonomous_share_guidance_asks_for_a_friend_not_a_report():
     """她只发结论，收到的人看不懂前因后果——提示词必须要求带上"在忙什么"。"""
     system_prompt, _ = PromptFactory.build_autonomous_turn_sections(
