@@ -975,9 +975,24 @@ class _EmotionalGroupChatEngineBase:
                 else 1
             )
 
+        def _delivered_as_rich_image(_result: Any, _req: Any) -> bool:
+            """这条回复是否真的会走调度器的「整段转图片」通道。
+
+            ``should_send_as_image`` 只看内容，而真正渲染成图片的只有调度器里
+            「本轮没有工具调用」的那一条分支，它会在平台确认发送成功后自己写回历史。
+            所以去重与记忆 hook 必须按同一个前提让位：只按内容判断的话，那些仍按纯文本
+            投递的回复会被一起漏记，最典型的是撞到工具轮次上限后单独补出的最终回复——
+            那次请求带 ``tool_choice="none"``，不经过主循环，图片分支也到不了。
+            """
+            if getattr(_req, "tool_choice", None) == "none":
+                return False
+            if getattr(_result, "tool_calls", None):
+                return False
+            return _markdown_image.should_send_as_image(_result.clean_text)
+
         # ── priority 30: 回复去重（仅常规对话）──
         def _hook_dedup(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
-            if _markdown_image.should_send_as_image(_result.clean_text):
+            if _delivered_as_rich_image(_result, _req):
                 return
             if not _result.clean_text:
                 return
@@ -1004,8 +1019,8 @@ class _EmotionalGroupChatEngineBase:
         def _hook_memory(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             # 会转成图片投递的回复由调度器在平台确认发送成功时按实际顺序写回历史；
             # 其他任务（如 proactive_generate）仍按纯文本发送，必须在这里记录。
-            if getattr(_req, "task_name", "") == "response_generate" and (
-                _markdown_image.should_send_as_image(_result.clean_text)
+            if getattr(_req, "task_name", "") == "response_generate" and _delivered_as_rich_image(
+                _result, _req
             ):
                 return
             record_content = _result.clean_text

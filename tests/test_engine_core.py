@@ -2,9 +2,80 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from sirius_pulse.core import engine_core
+from sirius_pulse.core.brain import Brain, ChatRequest
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.memory.basic import BasicMemoryManager
+from sirius_pulse.providers.base import GenerationRequest, GenerationResult, ToolCall
+from sirius_pulse.providers.mock import MockProvider
+
+_LONG_REPLY = "第一段。\n第二段。\n第三段。\n第四段。"
+
+
+class _ToolCallingProvider(MockProvider):
+    """在普通文本之外再带上一个工具调用，复现「正文与工具同轮返回」。"""
+
+    def __init__(self, content: str, tool_calls: list[ToolCall]) -> None:
+        super().__init__([content])
+        self._tool_calls = tool_calls
+
+    async def generate_async(
+        self, request: GenerationRequest, return_reasoning: bool = False
+    ) -> GenerationResult:
+        result = await super().generate_async(request, return_reasoning)
+        result.tool_calls = self._tool_calls
+        return result
+
+
+def _engine_with_hooks(provider: MockProvider) -> _EmotionalGroupChatEngineBase:
+    """装上真实 post-hooks 的引擎外壳，用来观察去重与记忆两个 hook 的实际行为。"""
+    engine = _EmotionalGroupChatEngineBase.__new__(_EmotionalGroupChatEngineBase)
+    engine.persona = SimpleNamespace(name="月白", build_system_prompt=lambda: "")
+    engine.brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda *args, **kwargs: SimpleNamespace(
+                model_name="mock-model",
+                max_tokens=100,
+                temperature=0.1,
+                timeout=30,
+            )
+        ),
+        persona=engine.persona,
+    )
+    engine._last_reply_at = {}
+    engine._last_reply_depth = {}
+    engine._recent_sent_replies = {}
+    engine._qq_group_members = {}
+    engine._reply_dedup_window = 300
+    engine._reply_dedup_threshold = 0.85
+    engine.basic_memory = BasicMemoryManager()
+    stored = []
+    engine.basic_store = SimpleNamespace(append=stored.append)
+    engine.semantic_memory = SimpleNamespace(record_ai_sent=lambda **kwargs: None)
+    engine._persist_group_state = lambda group_id: None
+    engine._register_engine_hooks()
+    return engine
+
+
+async def _reply(
+    engine: _EmotionalGroupChatEngineBase,
+    content: str,
+    *,
+    tool_choice: str | None = None,
+):
+    return await engine.brain.chat(
+        ChatRequest(
+            group_id="group-1",
+            user_id="u1",
+            system_prompt="system",
+            messages=[{"role": "user", "content": "看看部署结果"}],
+            tool_choice=tool_choice,
+            post_process=True,
+        )
+    )
 
 
 def test_engine_when_pending_message_is_low_information_then_detects_filler():
@@ -118,3 +189,64 @@ def test_engine_records_delivered_markdown_card_in_basic_history():
     assert stored == [entry]
     assert semantic[0]["target_user_id"] == "1001"
     assert persisted == ["9001"]
+
+
+@pytest.mark.asyncio
+async def test_engine_when_long_reply_goes_out_as_text_then_it_is_still_recorded():
+    """超过三条的最终回复若仍走文本通道，必须照常写进记忆。"""
+    engine = _engine_with_hooks(MockProvider([_LONG_REPLY]))
+
+    result = await _reply(engine, "看看部署结果", tool_choice="none")
+
+    # 撞到工具轮次上限后单独补出的这一轮带 tool_choice="none"，调度器的图片分支到不了，
+    # 文本会被适配器原样发出，所以记忆必须由 hook 记下来，否则这段回复彻底丢失。
+    assert result.clean_text == _LONG_REPLY
+    entries = engine.basic_memory.get_all("group-1")
+    assert [entry.content for entry in entries] == [_LONG_REPLY]
+
+
+@pytest.mark.asyncio
+async def test_engine_when_long_reply_is_delivered_as_image_then_hook_leaves_it_to_scheduler():
+    """真正会转成图片的那一轮由调度器记录，hook 不能抢先记一遍。"""
+    engine = _engine_with_hooks(MockProvider([_LONG_REPLY]))
+
+    await _reply(engine, "看看部署结果")
+
+    assert engine.basic_memory.get_all("group-1") == []
+
+
+@pytest.mark.asyncio
+async def test_engine_when_reply_carries_a_tool_call_then_its_text_is_recorded():
+    """正文与工具调用同轮返回时，正文是当普通消息发出去的，不该按图片归档。"""
+    engine = _engine_with_hooks(
+        _ToolCallingProvider(
+            _LONG_REPLY,
+            [ToolCall(id="call-1", function_name="lookup", function_arguments="{}")],
+        )
+    )
+
+    await _reply(engine, "看看部署结果")
+
+    entries = engine.basic_memory.get_all("group-1")
+    assert [entry.content for entry in entries] == [_LONG_REPLY]
+
+
+@pytest.mark.asyncio
+async def test_engine_when_long_reply_is_sent_as_text_then_dedup_still_sees_it():
+    """走文本通道的长回复要进去重窗口，否则会被原样重复发第二遍。"""
+    engine = _engine_with_hooks(MockProvider([_LONG_REPLY, _LONG_REPLY]))
+
+    await _reply(engine, "看看部署结果", tool_choice="none")
+    second = await _reply(engine, "看看部署结果", tool_choice="none")
+
+    assert second.clean_text == ""
+
+
+@pytest.mark.asyncio
+async def test_engine_when_long_reply_is_delivered_as_image_then_dedup_leaves_it_alone():
+    """会转成图片的长回复不进去重窗口，避免恰好相似的两张卡片被吞掉一张。"""
+    engine = _engine_with_hooks(MockProvider([_LONG_REPLY]))
+
+    await _reply(engine, "看看部署结果")
+
+    assert engine._recent_sent_replies.get("group-1") in (None, [])
