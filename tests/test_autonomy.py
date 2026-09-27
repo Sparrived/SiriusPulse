@@ -660,6 +660,15 @@ def test_both_recording_tools_are_allowed_on_her_own_time():
     assert intend_pursue.TOOL_META["model_visible"] is True
 
 
+def test_master_interaction_is_allowed_on_her_own_time():
+    """自主时她想跟主人说句话，这是自主的一部分，不该被一律拦掉。"""
+    from sirius_pulse.tools.builtin import interaction_with_master
+
+    assert interaction_with_master.TOOL_META["allowed_when_self_initiated"] is True
+    # 可见性走注册表的默认值（registry 里 model_visible 缺省为 True）。
+    assert interaction_with_master.TOOL_META.get("model_visible", True) is True
+
+
 # --- 夜间：可以做事，但不可以发出去 -----------------------------------------------
 
 

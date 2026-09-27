@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
+from sirius_pulse.core.intent import RESOLUTION_TELL, IntentFileStore
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.builtin import interaction_with_master
 
@@ -123,6 +124,81 @@ async def test_message_action_when_root_is_missing_returns_clear_failure() -> No
 
     assert result["success"] is False
     assert "root QQ" in result["error"]
+    assert adapter.private_messages == []
+
+
+class _EngineContext:
+    def __init__(self, work_path: Path) -> None:
+        self._work_path = work_path
+
+    def get_work_path(self) -> str:
+        return str(self._work_path)
+
+
+@pytest.mark.asyncio
+async def test_night_message_on_her_own_time_waits_until_morning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """夜里她主动想到的话不能 03:00 砸过去，先存成意图，早上再走投递。"""
+    adapter = _FakeNapCatAdapter(root="10001")
+    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda: True)
+
+    result = await interaction_with_master.run(
+        action="message",
+        message="今天算出来一个挺有意思的东西，早上跟你讲。",
+        bridge=adapter,
+        engine_context=_EngineContext(tmp_path),
+        invocation_context=SimpleNamespace(self_initiated=True),
+    )
+
+    assert adapter.private_messages == []
+    assert result["success"] is True
+    assert result["deferred"] is True
+    store = IntentFileStore(tmp_path).load()
+    carried = store.all()[0]
+    assert carried.what == "今天算出来一个挺有意思的东西，早上跟你讲。"
+    assert carried.resolution == RESOLUTION_TELL
+    assert carried.audience == "private_10001"
+    assert carried.audience_label == "主人（私聊）"
+
+
+@pytest.mark.asyncio
+async def test_night_message_still_sends_when_it_is_a_live_reply(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """对话正在进行时她在回话，不是在自言自语：这条不该被压到早上。"""
+    adapter = _FakeNapCatAdapter(root="10001")
+    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda: True)
+
+    result = await interaction_with_master.run(
+        action="message",
+        message="在的，我马上看。",
+        bridge=adapter,
+        engine_context=_EngineContext(tmp_path),
+        invocation_context=SimpleNamespace(self_initiated=False),
+    )
+
+    assert result["success"] is True
+    assert adapter.private_messages == [("10001", "在的，我马上看。")]
+    assert IntentFileStore(tmp_path).load().all() == []
+
+
+@pytest.mark.asyncio
+async def test_night_message_without_engine_context_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """存不下来就不发——降级成"照发"正好违背了夜间静默本身。"""
+    adapter = _FakeNapCatAdapter(root="10001")
+    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda: True)
+
+    result = await interaction_with_master.run(
+        action="message",
+        message="夜里想到的事",
+        bridge=adapter,
+        invocation_context=SimpleNamespace(self_initiated=True),
+    )
+
+    assert result["success"] is False
     assert adapter.private_messages == []
 
 

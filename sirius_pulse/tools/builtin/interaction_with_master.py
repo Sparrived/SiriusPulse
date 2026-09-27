@@ -10,6 +10,11 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from sirius_pulse.config.config_builder import ConfigBuilder
+from sirius_pulse.core.intent import (
+    RESOLUTION_TELL,
+    IntentFileStore,
+    Intention,
+)
 from sirius_pulse.tools.builtin._internal._qq_ops import (
     bridge_error,
     failure_from_exception,
@@ -22,6 +27,11 @@ _MDS_TOKEN_ENV = "MDS_PUBLIC_STATUS_TOKEN"
 _MDS_BASE_URL_ENV = "MDS_API_BASE_URL"
 _MAX_RESPONSE_BYTES = 512 * 1024
 _DEFAULT_TIMEOUT_SECONDS = 10
+_MAX_MESSAGE_CHARS = 1200
+# Matches the label ``list_audiences()`` gives this conversation, so an intention
+# recorded here reads the same as one recorded through intend_share.
+_MASTER_AUDIENCE_LABEL = "主人（私聊）"
+_DEFERRED_URGENCY = 0.7
 
 _config = ConfigBuilder()
 _config.group("和主人互动").add(
@@ -51,8 +61,12 @@ TOOL_META = {
         "需要感知主人当前公开设备状态时使用 action=status。"
         "纯文字回复直接写在正文中，不要为了增强角色感而强行调用。"
     ),
-    "version": "1.0.0",
+    "version": "1.1.0",
     "side_effect": "external_write",
+    # Unlike most external writes, this one may run on a turn she started
+    # herself: telling the master something is one of the things autonomy is
+    # *for*.  It is still paced -- see ``_defer_until_morning``.
+    "allowed_when_self_initiated": True,
     "tags": ["napcat", "qq", "master", "chat", "status", "presence"],
     "silent": False,
     "retry_safe": True,
@@ -86,11 +100,19 @@ async def run(
     bridge: Any = None,
     chat_context: dict[str, Any] | None = None,
     data_store: Any = None,
+    engine_context: Any = None,
+    invocation_context: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     action_key = str(action or "").strip().lower()
     if action_key == "message":
-        return await _send_message(message, bridge, chat_context)
+        return await _send_message(
+            message,
+            bridge,
+            chat_context,
+            engine_context=engine_context,
+            self_initiated=bool(getattr(invocation_context, "self_initiated", False)),
+        )
     if action_key == "status":
         return _read_status(device_id, data_store)
     return {"success": False, "error": f"不支持的互动 action: {action}"}
@@ -100,6 +122,9 @@ async def _send_message(
     message: str,
     bridge: Any,
     chat_context: dict[str, Any] | None,
+    *,
+    engine_context: Any = None,
+    self_initiated: bool = False,
 ) -> dict[str, Any]:
     adapter = get_adapter(bridge)
     if adapter is None:
@@ -121,7 +146,21 @@ async def _send_message(
             "summary": "操作失败：私聊内容为空",
         }
 
-    body = _truncate(text, 1200)
+    body = _truncate(text, _MAX_MESSAGE_CHARS)
+
+    # On her own time, at night, the words wait instead of arriving at 03:00.
+    # Recording an intention is what makes that possible: it keeps the exact
+    # words and the destination, and the autonomy tick delivers it after the
+    # quiet window using the same paced path as any other share.  A reply to a
+    # live conversation is not deferred -- that person is already awake and
+    # waiting.
+    if self_initiated and _is_quiet_now():
+        return _defer_until_morning(
+            body,
+            master_qq=master_qq,
+            engine_context=engine_context,
+        )
+
     try:
         raw = await adapter.send_private_message(master_qq, body)
         return success_result(
@@ -132,6 +171,63 @@ async def _send_message(
         )
     except Exception as exc:
         return failure_from_exception("和主人私聊", exc)
+
+
+def _is_quiet_now() -> bool:
+    """Night window in local time; indirection point so tests can pin the clock."""
+    from datetime import datetime, timezone
+
+    from sirius_pulse.core.autonomy import is_quiet_hours
+
+    return is_quiet_hours(datetime.now(timezone.utc))
+
+
+def _defer_until_morning(
+    body: str,
+    *,
+    master_qq: str,
+    engine_context: Any,
+) -> dict[str, Any]:
+    """Hold a night-time message as a tell-intention aimed at the master."""
+    if engine_context is None:
+        # Without the engine we cannot persist the words, and sending at 03:00
+        # is exactly what this guard exists to prevent: fail closed.
+        return {
+            "success": False,
+            "error": "夜间暂存需要 engine_context，本次消息没有发出。",
+            "summary": "夜深了，这句话先没有发出去",
+        }
+
+    audience = f"private_{master_qq}"
+    try:
+        store = IntentFileStore(engine_context.get_work_path()).load()
+        intention = Intention.create(
+            what=body,
+            why="夜里想到的，等早上再说给主人听。",
+            resolution=RESOLUTION_TELL,
+            kind="share",
+            audience=audience,
+            audience_label=_MASTER_AUDIENCE_LABEL,
+            urgency=_DEFERRED_URGENCY,
+            source="interaction_with_master",
+        )
+        store.add(intention)
+        store.prune()
+        IntentFileStore(engine_context.get_work_path()).save(store)
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"夜间暂存失败，本次消息没有发出: {exc}",
+            "summary": "夜深了，这句话先没有发出去",
+        }
+
+    return {
+        "success": True,
+        "deferred": True,
+        "intention_id": intention.intention_id,
+        "audience": audience,
+        "summary": "现在是夜里，这句话先记下了，早上再发给他。",
+    }
 
 
 def _master_qq_from_adapter(adapter: Any, bridge: Any = None) -> str:
