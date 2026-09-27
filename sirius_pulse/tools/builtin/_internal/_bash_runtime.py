@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.persona_config import PersonaAccountsConfig
 from sirius_pulse.tools.builtin._internal import _docker_cli
 from sirius_pulse.tools.models import ToolInvocationContext
 
@@ -28,6 +29,7 @@ _RUNTIME_CACHE_DIR = "cache"
 # must not be ``/home/sirius``: that lives in the image layer and every rebuild
 # of the image takes it with it.
 _HOME_DIR_NAME = "home"
+_ACCOUNTS_FILENAME = "accounts.json"
 _DOCKER_FUNCTION_TEMPLATE = """docker() {{
     {python_executable} -m sirius_pulse.tools.builtin._internal._docker_cli \"$@\"
 }}
@@ -258,6 +260,20 @@ def home_root_path(data_store: Any) -> Path | None:
     """The persona's persistent home, or ``None`` when there is no workspace."""
     runtime_root = runtime_root_path(data_store)
     return None if runtime_root is None else runtime_root.parent / _HOME_DIR_NAME
+
+
+def account_environment(data_store: Any) -> dict[str, str]:
+    """Load the persona's own service credentials as environment variables.
+
+    Kept separate from :func:`runtime_exports`: these values must reach the child
+    process through ``env=`` only.  Exporting them inside the command prelude
+    would put the plaintext token into the ``bash -lc`` argument, where any other
+    process on the box could read it out of ``ps``.
+    """
+    runtime_root = runtime_root_path(data_store)
+    if runtime_root is None:
+        return {}
+    return PersonaAccountsConfig.load(runtime_root.parent / _ACCOUNTS_FILENAME).environment()
 
 
 def runtime_exports(environment: dict[str, str]) -> str:

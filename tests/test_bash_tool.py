@@ -263,3 +263,41 @@ async def test_bash_container_failures_provide_a_recovery_command_sequence(
     assert "docker ps -a" in result["error"]
     assert "docker logs --tail 200 <容器名称>" in result["error"]
     assert "/data/logs/latest.log" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_bash_injects_persona_account_token_through_env_not_command_line(
+    monkeypatch, tmp_path: Path
+):
+    """人格自己的凭据要能在命令里读到，但不能出现在命令行上。
+
+    ``safe_environment()`` 会把任何名字带 TOKEN 的环境变量滤掉（它防的是宿主机凭据
+    外泄），所以人格账号必须单独注入；同时只能走 ``env=``——写进 ``bash -lc`` 的
+    参数字符串里，同机器上任何进程都能从 ``ps`` 读到明文 token。
+    """
+    from sirius_pulse.persona_config import PersonaAccountsConfig
+
+    calls = _fake_bash(monkeypatch)
+    store = _Store(tmp_path)
+    PersonaAccountsConfig.from_dict(
+        {"accounts": [{"kind": "github", "name": "LiveSirius", "secret": "ghp_secret_value"}]}
+    ).save(tmp_path / "accounts.json")
+
+    result = await bash.run("gh auth status", data_store=store)
+
+    assert result["success"] is True
+    # 注入生效。
+    assert calls["env"]["GH_TOKEN"] == "ghp_secret_value"
+    # 但命令行里没有它（否则 ps 能看到）。
+    assert "ghp_secret_value" not in calls["args"][-1]
+
+
+@pytest.mark.asyncio
+async def test_bash_without_accounts_file_still_runs(monkeypatch, tmp_path: Path):
+    """没人格账号时不该报错，只是没有那组环境变量。"""
+    calls = _fake_bash(monkeypatch)
+
+    result = await bash.run("echo hi", data_store=_Store(tmp_path))
+
+    assert result["success"] is True
+    assert "GH_TOKEN" not in calls["env"]

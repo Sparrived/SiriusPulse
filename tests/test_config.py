@@ -216,3 +216,57 @@ def test_adapters_config_when_one_adapter_is_corrupt_then_others_still_load(tmp_
     # 坏值降级为默认值，好字段（qq_number）保留。
     assert config.adapters[0].dispatch_priority == 0.0
     assert config.adapters[0].qq_number == "10001"
+
+
+def test_accounts_config_round_trip_keeps_secret_out_of_api_shape(tmp_path: Path):
+    """账号存得住、读得出，但默认序列化不能带明文凭据。"""
+    from sirius_pulse.persona_config import (
+        MASKED_SECRET,
+        PersonaAccountConfig,
+        PersonaAccountsConfig,
+    )
+
+    path = tmp_path / "accounts.json"
+    PersonaAccountsConfig(
+        accounts=[
+            PersonaAccountConfig(
+                kind="github", name="LiveSirius", username="LiveSirius", secret="ghp_secret"
+            )
+        ]
+    ).save(path)
+
+    reloaded = PersonaAccountsConfig.load(path)
+
+    assert len(reloaded.accounts) == 1
+    # 落盘的是明文（工具要真的用它），但默认 to_dict 只吐掩码。
+    assert reloaded.accounts[0].secret == "ghp_secret"
+    assert reloaded.accounts[0].to_dict()["secret"] == MASKED_SECRET
+    assert reloaded.environment() == {"GH_TOKEN": "ghp_secret"}
+
+
+def test_accounts_config_when_kind_unknown_then_falls_back_to_github(tmp_path: Path):
+    """未知类型按 github 处理，而不是整条丢掉——凭据还能被注入。"""
+    from sirius_pulse.persona_config import PersonaAccountsConfig
+
+    path = tmp_path / "accounts.json"
+    path.write_text(
+        '{"accounts": [{"kind": "gitlab", "secret": "s"}, "not-an-object"]}',
+        encoding="utf-8",
+    )
+
+    config = PersonaAccountsConfig.load(path)
+
+    assert len(config.accounts) == 1
+    assert config.accounts[0].kind == "github"
+    assert config.accounts[0].resolved_env() == "GH_TOKEN"
+
+
+def test_accounts_config_when_secret_empty_then_not_injected(tmp_path: Path):
+    """没凭据的账号不该往环境里塞一个空值。"""
+    from sirius_pulse.persona_config import PersonaAccountsConfig
+
+    config = PersonaAccountsConfig.from_dict(
+        {"accounts": [{"kind": "github", "name": "no-token", "secret": ""}]}
+    )
+
+    assert config.environment() == {}

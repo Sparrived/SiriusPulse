@@ -113,6 +113,8 @@ async def run(
     try:
         command_text = _bash_runtime.validate_command(command, max_length=_MAX_COMMAND_LENGTH)
         environment = _bash_runtime.runtime_environment(data_store)
+        # 人格自己的服务凭据（如 GH_TOKEN）只经 env= 传下去，不进命令行。
+        environment.update(_bash_runtime.account_environment(data_store))
         cwd_path = _bash_runtime.resolve_cwd(cwd, home=_bash_runtime.home_root_path(data_store))
         timeout = _bash_runtime.bounded_number(
             timeout_seconds, default=10.0, minimum=0.1, maximum=policy["max_timeout_seconds"]

@@ -6,6 +6,7 @@
 - adapters.json        → 平台连接配置
 - experience.json      → 体验参数（参与决策、回复频率、主动行为等）
 - mcp.json             → MCP server 连接配置
+- accounts.json        → 人格自己的外部服务账号（如 GitHub）
 """
 
 from __future__ import annotations
@@ -22,6 +23,23 @@ from sirius_pulse.utils.json_io import replace_with_retry
 logger = logging.getLogger(__name__)
 
 _GROUP_REPLY_STRATEGIES = {"smart", "keyword"}
+
+# 目前只有 GitHub：她是用 gh 干活的，其它平台等真的要用时再加，
+# 免得为一个还没出现的账号类型先写出没人读的字段。
+_ACCOUNT_KINDS = {"github"}
+
+# 没显式配置环境变量名时按类型取默认。``gh`` 同时认 GH_TOKEN 和 GITHUB_TOKEN，
+# GH_TOKEN 优先，所以默认用它。
+_DEFAULT_ACCOUNT_ENV = {"github": "GH_TOKEN"}
+
+# 与 WebUI 插件密钥掩码保持一致的哨兵值：读接口送出它，写接口收到它就视为"没改"。
+MASKED_SECRET = "********"
+_MASKED_SECRET_VALUES = {MASKED_SECRET, "[已隐藏]", "••••••••"}
+
+
+def is_masked_secret(value: Any) -> bool:
+    """该值是不是"沿用原凭据"的掩码哨兵（空串不算，它表示清空）。"""
+    return isinstance(value, str) and value.strip() in _MASKED_SECRET_VALUES
 
 
 def _as_float(value: Any, default: float, *, field_name: str) -> float:
@@ -282,6 +300,118 @@ class PersonaAdaptersConfig:
 
 
 # ---------------------------------------------------------------------------
+# 社交账号配置
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class PersonaAccountConfig:
+    """人格自己的一个外部服务账号。
+
+    ``secret`` 是明文凭据（例如 GitHub Personal Access Token），只落在人格目录里，
+    读取接口一律以掩码返回。``env`` 是把它注入工具进程时用的环境变量名——命令行走
+    环境变量而不是命令行参数，``gh`` 也正好认 ``GH_TOKEN``/``GITHUB_TOKEN``。
+    """
+
+    kind: str = "github"
+    name: str = ""
+    username: str = ""
+    secret: str = ""
+    env: str = ""
+
+    def to_dict(self, *, reveal_secret: bool = False) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "kind": self.kind,
+            "name": self.name,
+            "username": self.username,
+            "env": self.env,
+        }
+        if reveal_secret:
+            data["secret"] = self.secret
+        else:
+            data["secret"] = MASKED_SECRET if self.secret else ""
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PersonaAccountConfig":
+        kind = str(data.get("kind", "github")).strip().lower() or "github"
+        if kind not in _ACCOUNT_KINDS:
+            logger.warning("未知的账号类型: %s，按 github 处理", kind)
+            kind = "github"
+        return cls(
+            kind=kind,
+            name=str(data.get("name", "")).strip(),
+            username=str(data.get("username", "")).strip(),
+            secret=str(data.get("secret", "")).strip(),
+            env=str(data.get("env", "")).strip(),
+        )
+
+    def resolved_env(self) -> str:
+        """实际注入时用的环境变量名；没填就按类型取默认。"""
+        if self.env:
+            return self.env
+        return _DEFAULT_ACCOUNT_ENV.get(self.kind, "")
+
+
+@dataclass(slots=True)
+class PersonaAccountsConfig:
+    """人格的社交账号列表。"""
+
+    accounts: list[PersonaAccountConfig] = field(default_factory=list)
+
+    def to_dict(self, *, reveal_secret: bool = False) -> dict[str, Any]:
+        """序列化账号。
+
+        默认走掩码形态（给 API / WebUI 用）。``reveal_secret=True`` 只在落盘时用：
+        磁盘上必须是真凭据，否则一次保存就把 token 写成了一串星号。
+        """
+        return {"accounts": [a.to_dict(reveal_secret=reveal_secret) for a in self.accounts]}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PersonaAccountsConfig":
+        raw = data.get("accounts", [])
+        if not isinstance(raw, list):
+            logger.warning("accounts 配置的 accounts 字段不是列表，已忽略")
+            return cls()
+        accounts = [PersonaAccountConfig.from_dict(item) for item in raw if isinstance(item, dict)]
+        return cls(accounts=accounts)
+
+    @classmethod
+    def load(cls, path: Path | str) -> "PersonaAccountsConfig":
+        p = Path(path)
+        if not p.exists():
+            return cls()
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("加载 accounts 配置失败 %s: %s", p, exc)
+            return cls()
+        if not isinstance(data, dict):
+            logger.warning("accounts 配置不是对象，忽略 %s（实际为 %s）", p, type(data).__name__)
+            return cls()
+        return cls.from_dict(data)
+
+    def save(self, path: Path | str) -> None:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(self.to_dict(reveal_secret=True), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        replace_with_retry(tmp, p)
+
+    def environment(self) -> dict[str, str]:
+        """把有凭据的账号摊平成环境变量，供工具进程注入。"""
+        result: dict[str, str] = {}
+        for account in self.accounts:
+            env_name = account.resolved_env()
+            if env_name and account.secret:
+                result[env_name] = account.secret
+        return result
+
+
+# ---------------------------------------------------------------------------
 # Experience 配置
 # ---------------------------------------------------------------------------
 
@@ -456,6 +586,10 @@ class PersonaConfigPaths:
         return self.dir / "mcp.json"
 
     @property
+    def accounts(self) -> Path:
+        return self.dir / "accounts.json"
+
+    @property
     def engine_state(self) -> Path:
         return self.dir / "engine_state"
 
@@ -468,6 +602,8 @@ __all__ = [
     "NapCatAdapterConfig",
     "AdapterConfig",
     "PersonaAdaptersConfig",
+    "PersonaAccountConfig",
+    "PersonaAccountsConfig",
     "PersonaExperienceConfig",
     "PersonaConfigPaths",
 ]
