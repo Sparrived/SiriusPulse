@@ -16,6 +16,57 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+try:  # Pygments 只服务代码块高亮；缺失时整块退化为纯转义文本。
+    from pygments import highlight as _pygments_highlight
+    from pygments.formatters import HtmlFormatter as _HtmlFormatter
+    from pygments.lexers import TextLexer as _TextLexer
+    from pygments.lexers import get_lexer_by_name as _get_lexer_by_name
+    from pygments.style import Style as _PygmentsStyle
+    from pygments.token import (
+        Comment,
+        Error,
+        Generic,
+        Keyword,
+        Name,
+        Number,
+        Operator,
+        Punctuation,
+        String,
+    )
+    from pygments.util import ClassNotFound as _PygmentsClassNotFound
+
+    class _CardCodeStyle(_PygmentsStyle):
+        """与卡片配色同源的代码高亮方案。"""
+
+        background_color = "#202d31"
+        default_style = "#e8f0e9"
+        styles = {
+            Comment: "italic #70827d",
+            Error: "#e36b52",
+            Generic.Deleted: "#e36b52",
+            Generic.Emph: "italic #e8f0e9",
+            Generic.Heading: "bold #f3f0e7",
+            Generic.Inserted: "#7bd7c6",
+            Generic.Prompt: "#70827d",
+            Generic.Strong: "bold #f3f0e7",
+            Generic.Subheading: "bold #7bd7c6",
+            Keyword: "bold #e36b52",
+            Name.Attribute: "#f0b85d",
+            Name.Builtin: "#7bd7c6",
+            Name.Class: "bold #7bd7c6",
+            Name.Decorator: "#7bd7c6",
+            Name.Function: "bold #7bd7c6",
+            Name.Tag: "bold #e36b52",
+            Number: "#f0b85d",
+            Operator: "#a8b8b5",
+            Punctuation: "#8fa3a0",
+            String: "#f0b85d",
+        }
+
+    _HIGHLIGHT_READY = True
+except ImportError:  # pragma: no cover - 只有没装 Pygments 的部署会走到
+    _HIGHLIGHT_READY = False
+
 LOG = logging.getLogger("sirius.tools.markdown_image")
 
 _MAX_CONTENT_CHARS = 12_000
@@ -31,6 +82,22 @@ _HORIZONTAL_RULE_RE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,}|—-+|—{2,}|－{3,}|
 _TABLE_ROW_PIPES = 2
 _MIN_TABLE_ROWS = 2
 _MIN_LIST_ITEMS = 2
+# 常见但 Pygments 认不出的围栏标签，映射到它支持的别名。
+_CODE_LEXER_ALIASES = {
+    "yml": "yaml",
+    "txt": "text",
+    "plaintext": "text",
+    "jsonc": "json",
+    "patch": "diff",
+    "kt": "kotlin",
+    "cmd": "batch",
+    "csv": "text",
+    "log": "text",
+    "textile": "text",
+    "mermaid": "text",
+    "svelte": "html",
+    "astro": "html",
+}
 _CUTE_FONT_PATH = Path(__file__).with_name("assets") / "ZCOOLKuaiLe-Regular.ttf"
 
 
@@ -90,6 +157,43 @@ def _is_horizontal_rule_line(line: str) -> bool:
 def _is_code_fence_line(line: str) -> bool:
     match = _FENCE_LINE_RE.match(str(line or "").rstrip())
     return bool(match and len(match.group(1)) >= 3)
+
+
+def _code_fence_language(line: str) -> str:
+    """取围栏行上的语言标签，例如 ```python 里的 python。"""
+    match = _FENCE_LINE_RE.match(str(line or "").rstrip())
+    if not match or len(match.group(1)) < 3:
+        return ""
+    return match.group(2).strip().split()[0].lower() if match.group(2).strip() else ""
+
+
+def _highlight_code_block(code: str, language: str) -> str:
+    """把代码块渲染成带语法高亮的 HTML，无法高亮时退回纯转义文本。
+
+    输出沿用 Pygments 的行内样式（``noclasses=True``），样式直接挂在 span 上，
+    既不用往卡片里注入额外 CSS，也不会污染卡片自己的 ``pre``/``code`` 规则。
+    """
+    if not _HIGHLIGHT_READY:
+        return html.escape(code)
+
+    name = _CODE_LEXER_ALIASES.get(language, language)
+    try:
+        lexer = _get_lexer_by_name(name, stripnl=False, ensurenl=False) if name else _TextLexer()
+    except _PygmentsClassNotFound:
+        lexer = _TextLexer()
+    except Exception:  # pragma: no cover - 防御异常 lexer
+        return html.escape(code)
+
+    try:
+        rendered = _pygments_highlight(
+            code,
+            lexer,
+            _HtmlFormatter(nowrap=True, noclasses=True, style=_CardCodeStyle),
+        )
+    except Exception:  # pragma: no cover - 高亮失败不应该拖垮整张卡片
+        return html.escape(code)
+    # Pygments 恒定在结尾补一个换行，卡片里由 CSS 控制间距，这里去掉。
+    return rendered.rstrip("\n") if rendered.endswith("\n") else rendered
 
 
 async def render_markdown_image(content: str, title: str, data_store: Any) -> Path:
@@ -264,6 +368,7 @@ def _markdown_body_html(content: str) -> str:
     list_tag = ""
     table_lines: list[str] = []
     code_lines: list[str] = []
+    code_language = ""
     in_code = False
 
     def flush_paragraph() -> None:
@@ -279,9 +384,12 @@ def _markdown_body_html(content: str) -> str:
         list_tag = ""
 
     def flush_code() -> None:
+        nonlocal code_language
         if code_lines:
-            blocks.append(f"<pre><code>{html.escape(chr(10).join(code_lines))}</code></pre>")
+            body = _highlight_code_block(chr(10).join(code_lines), code_language)
+            blocks.append(f"<pre><code>{body}</code></pre>")
             code_lines.clear()
+        code_language = ""
 
     def flush_table() -> None:
         if not table_lines:
@@ -331,6 +439,8 @@ def _markdown_body_html(content: str) -> str:
             flush_list()
             if in_code:
                 flush_code()
+            else:
+                code_language = _code_fence_language(line)
             in_code = not in_code
             continue
         if in_code:

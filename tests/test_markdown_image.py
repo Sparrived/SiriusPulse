@@ -1,4 +1,6 @@
 import base64
+import html
+import re
 from pathlib import Path
 from typing import Any
 
@@ -173,3 +175,39 @@ def test_markdown_card_renders_supported_horizontal_rule_variants():
 
     assert "<hr>" in rendered
     assert "—-" not in rendered
+
+
+def test_markdown_card_highlights_code_fences_by_language():
+    rendered = build_markdown_card_html(
+        "```python\ndef deploy(name):\n    return name  # 注释\n```", "部署"
+    )
+
+    assert '<span style="color: #E36B52; font-weight: bold">def</span>' in rendered
+    assert "font-style: italic" in rendered  # 注释行
+    assert "<pre><code>" in rendered
+
+
+def _code_block_text(rendered: str) -> str:
+    """去掉高亮 span 后还原代码块里的纯文本，用来校验没有被改动。"""
+    block = rendered.split("<pre><code>", 1)[1].split("</code></pre>", 1)[0]
+    return html.unescape(re.sub(r"</?span[^>]*>", "", block))
+
+
+@pytest.mark.parametrize(
+    "fence_tag",
+    ["yml", "yaml", "jsonc", "txt", "diff", "kt", "cmd", "完全未知的语言"],
+)
+def test_markdown_card_never_lets_odd_fence_tags_inject_html(fence_tag):
+    """Pygments 不认识的标签不能报错，认识的标签也不能放过转义。"""
+    code = "<script>alert(1)</script>"
+    rendered = build_markdown_card_html(f"```{fence_tag}\n{code}\n```")
+
+    assert "<pre><code>" in rendered
+    assert "<script>" not in rendered
+    assert _code_block_text(rendered) == code
+
+
+def test_markdown_card_escapes_plain_code_without_highlighting():
+    rendered = build_markdown_card_html("```完全未知的语言\n<script>alert(1)</script>\n```")
+
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered

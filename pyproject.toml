@@ -27,6 +27,7 @@ dependencies = [
 	"websockets>=11.0.0",
 	"textual>=0.89.0",
 	"playwright>=1.57.0",
+	"pygments>=2.17.0",  # 富文本卡片代码块语法高亮
 	"mcp>=2.0.0,<3.0.0",
 ]
 
