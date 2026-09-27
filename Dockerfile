@@ -20,6 +20,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# 缓存键必须盖在真正装系统包的这一层上。盖在 runtime 层时，标签取的是「本次构建
+# 传入的键」，也就是当前 Dockerfile 的哈希——于是每次构建完标签都等于当前哈希，
+# 判等永远成立，被复用的旧镜像再也不会被换掉（environment 阶段根本不会被构建）。
+ARG SIRIUS_ENV_CACHE_KEY
+LABEL org.sirius-pulse.environment-cache-key=$SIRIUS_ENV_CACHE_KEY
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends procps git gh \
     && rm -rf /var/lib/apt/lists/*
@@ -41,9 +47,6 @@ RUN useradd --create-home --uid 10001 sirius \
 USER sirius
 
 FROM ${SIRIUS_ENV_CACHE_IMAGE} AS runtime
-
-ARG SIRIUS_ENV_CACHE_KEY
-LABEL org.sirius-pulse.environment-cache-key=$SIRIUS_ENV_CACHE_KEY
 
 WORKDIR /app
 

@@ -82,8 +82,11 @@ if docker image inspect sirius-pulse:latest >/dev/null 2>&1; then
   fi
   current_environment_key="$(docker image inspect --format '{{ index .Config.Labels "org.sirius-pulse.environment-cache-key" }}' sirius-pulse:latest)"
   current_lock_hash="$(docker run --rm --entrypoint sha256sum sirius-pulse:latest /app/uv.lock 2>/dev/null | awk '{print $1}' || true)"
-  if [[ ( -z "$current_environment_key" || "$current_environment_key" == "<no value>" || "$current_environment_key" == "$SIRIUS_ENV_CACHE_KEY" ) \
-    && "$(sha256sum uv.lock | awk '{print $1}')" == "$current_lock_hash" ]]; then
+  # 空标签一律视为未命中。旧镜像没有这个标签，而"没标签"曾被当成"键相同"接受，
+  # 于是环境阶段永远不被构建——镜像里缺什么系统包都不会被补上。
+  if [[ -n "$current_environment_key" && "$current_environment_key" != "<no value>" \
+    && "$current_environment_key" == "$SIRIUS_ENV_CACHE_KEY" ]] \
+    && [[ -n "$current_lock_hash" && "$(sha256sum uv.lock | awk '{print $1}')" == "$current_lock_hash" ]]; then
     export SIRIUS_ENV_CACHE_IMAGE=sirius-pulse:latest
   fi
 fi
