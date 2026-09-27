@@ -15,6 +15,7 @@ const PAGE_META = {
   'persona': { title: '人格配置', breadcrumb: 'Configuration / Persona', icon: '◎' },
   'experience': { title: '体验参数', breadcrumb: 'Configuration / Experience', icon: '◇' },
   'adapters': { title: '适配器', breadcrumb: 'Configuration / Adapters', icon: '⟐' },
+  'accounts': { title: '人格账户', breadcrumb: 'Configuration / Accounts', icon: '⚿' },
   'tools': { title: 'Tools', breadcrumb: 'Extensions / Tools', icon: '⏣' },
   'token-tracker': { title: 'Token 追踪', breadcrumb: 'Analytics / Tokens', icon: '△' },
   'cognition': { title: '认知分析', breadcrumb: 'Analytics / Cognition', icon: '◎' },
@@ -39,6 +40,7 @@ const NAV_GROUPS = [
     { page: 'persona', icon: '◎', label: '人格' },
     { page: 'experience', icon: '◇', label: '体验参数' },
     { page: 'adapters', icon: '⟐', label: 'Adapter' },
+    { page: 'accounts', icon: '⚿', label: '人格账户' },
   ]},
   { id: 'operations', label: '运行', items: [
     { page: 'dispatcher', icon: '⇄', label: '群聊调度' },
@@ -61,7 +63,7 @@ const NAV_GROUPS = [
 ];
 
 const PERSONA_PAGES = new Set([
-  'persona', 'experience', 'adapters', 'tools',
+  'persona', 'experience', 'adapters', 'accounts', 'tools',
   'token-tracker', 'cognition', 'tools-tracker', 'conversation-history',
   'logs', 'autonomy', 'work-mode',
   'memory-viz', 'create-persona',

@@ -12,10 +12,15 @@ from aiohttp import web
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.models.persona import PersonaProfile
 from sirius_pulse.persona_config import (
+    _ACCOUNT_KINDS,
+    _DEFAULT_ACCOUNT_ENV,
     AdapterConfig,
+    PersonaAccountConfig,
+    PersonaAccountsConfig,
     PersonaAdaptersConfig,
     PersonaConfigPaths,
     PersonaExperienceConfig,
+    is_masked_secret,
 )
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
@@ -330,6 +335,57 @@ async def api_adapters_post(request: web.Request, data_dir: Path) -> web.Respons
 
     adapters.save(paths.adapters)
     return _json_response({"success": True})
+
+
+@handle_api_errors
+async def api_accounts_get(request: web.Request, data_dir: Path) -> web.Response:
+    """GET /api/persona/accounts — 人格自己的服务账号（凭据只回掩码）。"""
+    paths = PersonaConfigPaths(data_dir)
+    config = PersonaAccountsConfig.load(paths.accounts)
+    return _json_response(
+        {
+            "accounts": [a.to_dict() for a in config.accounts],
+            "kinds": sorted(_ACCOUNT_KINDS),
+            "default_env": dict(_DEFAULT_ACCOUNT_ENV),
+        }
+    )
+
+
+@handle_api_errors
+async def api_accounts_post(request: web.Request, data_dir: Path) -> web.Response:
+    """POST /api/persona/accounts — 保存账号列表。
+
+    前端拿到的是掩码，原样提交回来时必须保留磁盘上的旧凭据，否则一次保存就会把
+    token 抹成 ``********``。判断"这次没改"和插件设置用同一个哨兵值集合。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_response({"error": "Invalid JSON"}, 400)
+
+    paths = PersonaConfigPaths(data_dir)
+    existing = PersonaAccountsConfig.load(paths.accounts)
+    previous = {(a.kind, a.name): a.secret for a in existing.accounts}
+
+    raw_accounts = body.get("accounts") if isinstance(body, dict) else None
+    if not isinstance(raw_accounts, list):
+        return _json_response({"error": "accounts 必须是列表"}, 400)
+
+    accounts: list[PersonaAccountConfig] = []
+    for item in raw_accounts:
+        if not isinstance(item, dict):
+            continue
+        account = PersonaAccountConfig.from_dict(item)
+        if not is_masked_secret(item.get("secret")):
+            # 空串是"清空凭据"的明确表达，不是掩码，所以照收。
+            accounts.append(account)
+            continue
+        account.secret = previous.get((account.kind, account.name), "")
+        accounts.append(account)
+
+    PersonaAccountsConfig(accounts=accounts).save(paths.accounts)
+    _request_config_reload("experience", data_dir)
+    return _json_response({"success": True, "accounts": [a.to_dict() for a in accounts]})
 
 
 async def api_engine_reload(request: web.Request, data_dir: Path) -> web.Response:

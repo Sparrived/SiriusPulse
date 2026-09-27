@@ -50,6 +50,8 @@ from sirius_pulse.webui.monitoring_api import (
     api_monitoring_persona_metrics as _api_monitoring_persona_metrics,
 )
 from sirius_pulse.webui.persona_api import (
+    api_accounts_get,
+    api_accounts_post,
     api_adapters_get,
     api_adapters_post,
     api_config_post,
@@ -116,6 +118,8 @@ DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_experience_post": api_experience_post,
     "api_adapters_get": api_adapters_get,
     "api_adapters_post": api_adapters_post,
+    "api_accounts_get": api_accounts_get,
+    "api_accounts_post": api_accounts_post,
     "api_engine_reload": api_engine_reload,
     "api_tokens_get": api_tokens_get,
     "api_telemetry_get": api_telemetry_get,
@@ -177,6 +181,7 @@ _PERSONA_SCOPED_PREFIXES = (
     "api_engine_",
     "api_experience_",
     "api_adapters_",
+    "api_accounts_",
     "api_tokens_",
     "api_telemetry_",
     "api_cognition_",

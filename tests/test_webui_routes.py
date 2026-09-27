@@ -3373,6 +3373,63 @@ async def test_adapters_post_when_body_has_unknown_keys_then_it_does_not_500(tmp
 
 
 @pytest.mark.asyncio
+async def test_accounts_post_when_secret_is_masked_then_stored_token_is_retained(tmp_path: Path):
+    """把读回来的掩码原样提交，不能把已存的 token 覆盖成星号。
+
+    WebUI 只拿到掩码，"填了就保存"是所有表单的默认动作；如果保存时把 ``********``
+    直接落盘，用户从没碰过凭据却把她的 token 毁了。
+    """
+    from sirius_pulse.persona_config import MASKED_SECRET, PersonaAccountsConfig
+    from sirius_pulse.webui.persona_api import api_accounts_get, api_accounts_post
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    PersonaAccountsConfig.from_dict(
+        {"accounts": [{"kind": "github", "name": "LiveSirius", "secret": "ghp_real"}]}
+    ).save(persona_dir / "accounts.json")
+
+    # 读接口给的是掩码，不是明文。
+    listed = json.loads((await api_accounts_get(SimpleNamespace(), persona_dir)).body)
+    assert listed["accounts"][0]["secret"] == MASKED_SECRET
+    assert "ghp_real" not in json.dumps(listed)
+
+    # 用户什么都没改就保存。
+    response = await api_accounts_post(
+        _FakeJsonRequest(
+            {"accounts": [{"kind": "github", "name": "LiveSirius", "secret": MASKED_SECRET}]}
+        ),
+        persona_dir,
+    )
+
+    assert response.status == 200
+    saved_config = PersonaAccountsConfig.load(persona_dir / "accounts.json")
+    assert saved_config.accounts[0].secret == "ghp_real"
+
+
+@pytest.mark.asyncio
+async def test_accounts_post_when_secret_is_empty_then_credential_is_cleared(tmp_path: Path):
+    """空凭据是"删除"，不能被当成掩码而保留旧 token。"""
+    from sirius_pulse.persona_config import PersonaAccountsConfig
+    from sirius_pulse.webui.persona_api import api_accounts_post
+
+    persona_dir = tmp_path / "personas" / "sirius"
+    persona_dir.mkdir(parents=True)
+    PersonaAccountsConfig.from_dict(
+        {"accounts": [{"kind": "github", "name": "old", "secret": "ghp_old"}]}
+    ).save(persona_dir / "accounts.json")
+
+    response = await api_accounts_post(
+        _FakeJsonRequest({"accounts": [{"kind": "github", "name": "old", "secret": ""}]}),
+        persona_dir,
+    )
+
+    assert response.status == 200
+    config = PersonaAccountsConfig.load(persona_dir / "accounts.json")
+    assert config.accounts[0].secret == ""
+    assert config.environment() == {}
+
+
+@pytest.mark.asyncio
 async def test_experience_post_when_field_is_garbage_then_other_fields_still_save(tmp_path: Path):
     """一个坏字段不该让整份 experience 回退到默认值。"""
     from sirius_pulse.persona_config import PersonaExperienceConfig
