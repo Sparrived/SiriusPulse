@@ -154,6 +154,8 @@ class WorkModeRun:
     replay: list[Any] = field(default_factory=list)
     """与 stash 一一对应的原始消息：退出时把还没进上下文的这批交回引擎重排。"""
     flush_pending: bool = False
+    store: Any = field(default=None, repr=False, compare=False)
+    """这份轨迹的落盘视图；带上它，异常与取消路径也能把终态写下去。"""
 
     def stash_message(
         self,
@@ -203,6 +205,20 @@ class WorkModeRun:
         self.result = str(result or "").strip()
         self.status = status
         self.ended_at = _now_iso()
+
+    def finish_if_running(self, *, reason: str) -> bool:
+        """收尾一次没有走到出口的工作，并立刻落盘。
+
+        正常出口只有两条：``quit_work_mode`` 或轮次用尽。生成抛错、任务被取消、
+        进程重启这些路径不会经过它们，于是轨迹会永远停在 ``running``——页面上
+        看起来"还在干活"，实际上那段工作早就断了。返回是否真的收过尾。
+        """
+        if self.status != "running":
+            return False
+        self.finish(result=self.result or reason, status="aborted")
+        if self.store is not None:
+            self.store.save_run(self)
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -268,6 +284,26 @@ class WorkModeStore:
     def work_task_name(self) -> str:
         """工作模式该用哪个任务名；空字符串表示沿用本回合原本的任务名。"""
         return str(self.load_settings().get("task_name", "") or "").strip()
+
+    def reconcile_running(self, *, reason: str) -> int:
+        """把上次进程留下的 ``running`` 轨迹标成未完成，返回改动条数。
+
+        工作模式的运行态只活在内存里：进程一重启，写在盘上的 ``running`` 就一定是
+        残留。不清理的话，页面上会一直挂着若干"进行中"的工作，看起来像还在干活。
+        新进程只会调用它一次，因此这里不需要区分"是不是真的还在跑"。
+        """
+        sessions = self.load()
+        changed = 0
+        for session in sessions:
+            if session.get("status") != "running":
+                continue
+            session["status"] = "aborted"
+            session["ended_at"] = session.get("ended_at") or _now_iso()
+            session["result"] = str(session.get("result") or "").strip() or reason
+            changed += 1
+        if changed:
+            _write_json(self.path, {"sessions": sessions})
+        return changed
 
     def save_settings(self, *, task_name: str) -> None:
         """记住工作模式使用的任务名；每次开始工作时重新读取，改完即刻生效。"""

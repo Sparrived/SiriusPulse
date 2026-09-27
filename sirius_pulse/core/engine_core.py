@@ -315,6 +315,16 @@ class _EmotionalGroupChatEngineBase:
         # 工作模式：任务期间进来的群消息先暂存，只有点名当前人格时才补进上下文，
         # 这样工作期间的提示词前缀不动、缓存命中不被破坏。
         self._work_mode_runs: dict[str, Any] = {}
+        # 上一个进程留下的 running 轨迹一定是残留（运行态只在内存里），启动时收尾，
+        # 否则页面上会永远挂着几段"进行中"的工作。
+        try:
+            from sirius_pulse.core.work_mode import WorkModeStore
+
+            stale = WorkModeStore(self.work_path).reconcile_running(reason="人格进程重启，这次工作没有收尾。")
+            if stale:
+                logger.warning("工作模式：%d 次未收尾的轨迹已标记为未完成", stale)
+        except Exception:
+            logger.warning("工作模式残留轨迹清理失败", exc_info=True)
 
         self._pending_reminders: dict[str, list[dict[str, Any]]] = {}
         # 注意：`_current_adapter_type` 是属性，见类上的 property。它存在
@@ -1366,11 +1376,18 @@ class _EmotionalGroupChatEngineBase:
 
         工作模式期间没被点名、因此始终没进上下文的群消息不能就这么丢掉：退出时把它们
         重新排回延迟队列，等她手里的活干完接着回。否则"她在忙"就等于"她从此不理人"。
+
+        这里同样是轨迹的兜底出口：生成抛错或任务被取消时，收尾代码不会执行，于是
+        轨迹会永远停在 ``running``。释放窗口时顺手把它标成未完成。
         """
         group_id = str(group_id or "").strip()
         run = self._work_mode_runs.pop(group_id, None)
         if run is None:
             return
+        finish_if_running = getattr(run, "finish_if_running", None)
+        if callable(finish_if_running):
+            if finish_if_running(reason="这次工作被打断，没有收尾。"):
+                self._log_inner_thought("这次工作没走到收尾就被打断了，先把轨迹标成未完成～")
         take_unanswered = getattr(run, "take_unanswered", None)
         if not callable(take_unanswered):
             return

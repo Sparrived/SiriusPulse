@@ -213,6 +213,28 @@ async def test_work_mode_task_setting_unset_then_keeps_the_native_task_name(tmp_
 
 
 @pytest.mark.asyncio
+async def test_autonomous_turn_when_generation_raises_then_trace_is_unfinished(tmp_path):
+    """生成抛错（比如网络超时）时，轨迹要收尾成未完成，不能永远停在"进行中"。"""
+
+    class _RaisingBrain(_Brain):
+        async def chat(self, request):
+            self.requests.append(request)
+            raise RuntimeError("provider down")
+
+    context = _context(tmp_path, _RaisingBrain([]))
+    context.list_audiences = lambda: []
+    context._unaddressed_intentions = lambda: []
+
+    with pytest.raises(RuntimeError):
+        await context.run_autonomous_turn(kind="reading", seed="", group_id="group-1")
+
+    session = _sessions(tmp_path)[0]
+    assert session["status"] == "aborted"
+    assert session["ended_at"]
+    assert session["result"]
+
+
+@pytest.mark.asyncio
 async def test_a_turn_that_burns_every_tool_round_still_leaves_written_words(tmp_path):
     """轮次用完时必须再要一轮正文，否则她读了一堆东西却一个字都没留下。
 

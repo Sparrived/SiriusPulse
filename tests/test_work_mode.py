@@ -453,3 +453,51 @@ async def test_work_mode_when_chatter_arrives_then_next_round_answers_it(tmp_pat
     second = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
 
     assert second[0]["reply"] == "我在整理群文件，刚忙完——你们聊什么呢？"
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_generation_fails_then_trace_is_not_left_running(tmp_path):
+    """生成抛错的那次工作必须在轨迹里收尾成未完成，不能永远停在"进行中"。"""
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    calls: list = []
+
+    async def chat(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return _round("", _call(ENTER_WORK_MODE, '{"goal": "整理群文件"}', "c-enter"))
+        raise RuntimeError("provider down")
+
+    tasks, _, _ = _work_mode_tasks(tmp_path, queue, chat)
+
+    with pytest.raises(RuntimeError):
+        await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    session = _session(tmp_path)
+    assert session["status"] == "aborted"
+    assert session["ended_at"]
+    assert session["result"]
+
+
+def test_work_mode_store_when_runs_were_left_running_then_startup_marks_them_unfinished(tmp_path):
+    """上一个进程留下的 running 一定是残留：启动时收尾，别让页面一直挂着"进行中"。"""
+    store = WorkModeStore(tmp_path)
+    finished = WorkModeRun(group_id="group-1", goal="做完了的", session_id="s-done")
+    finished.finish(result="完成")
+    store.save_run(finished)
+    stale = WorkModeRun(group_id="group-1", goal="断了的", session_id="s-stale")
+    store.save_run(stale)
+    assert [item["status"] for item in store.load()] == ["completed", "running"]
+
+    changed = store.reconcile_running(reason="进程重启，没有收尾。")
+
+    assert changed == 1
+    sessions = {item["session_id"]: item for item in store.load()}
+    assert sessions["s-stale"]["status"] == "aborted"
+    assert sessions["s-stale"]["result"] == "进程重启，没有收尾。"
+    assert sessions["s-stale"]["ended_at"]
+    # 已经收过尾的不动。
+    assert sessions["s-done"]["status"] == "completed"
+    assert sessions["s-done"]["result"] == "完成"
+    # 幂等：再跑一次没有可改的。
+    assert store.reconcile_running(reason="进程重启，没有收尾。") == 0

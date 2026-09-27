@@ -721,6 +721,7 @@ class DelayedQueueTasks:
                     if work_run is None:
                         work_run = WorkModeRun(group_id=group_id, goal=goal)
                         work_store = WorkModeStore(engine.work_path)
+                        work_run.store = work_store
                         # 每次进入时重新读设置：改完设置不需要重启人格。
                         work_run.task_name = work_store.work_task_name()
                         engine.begin_work_mode(group_id, work_run)

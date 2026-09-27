@@ -158,8 +158,41 @@ class ToolEngineContextImpl:
             source=source,
             task_name=store.work_task_name() or task_name,
         )
+        run.store = store
         store.save_run(run)
         max_rounds = max(1, int(self.get_config_value("max_tool_rounds", 8)))
+
+        try:
+            return await self._run_work_mode_rounds(
+                run=run,
+                store=store,
+                system_prompt=system_prompt,
+                messages=messages,
+                group_id=group_id,
+                user_id=user_id,
+                adapter_type=adapter_type,
+                caller_is_developer=caller_is_developer,
+                invocation_context=invocation_context,
+                max_rounds=max_rounds,
+            )
+        finally:
+            # 生成抛错、任务被取消都不会走到收尾代码；轨迹不能因此停在 running。
+            run.finish_if_running(reason="这次工作被打断，没有收尾。")
+
+    async def _run_work_mode_rounds(
+        self,
+        *,
+        run: WorkModeRun,
+        store: WorkModeStore,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        group_id: str,
+        user_id: str,
+        adapter_type: str,
+        caller_is_developer: bool,
+        invocation_context: ToolInvocationContext,
+        max_rounds: int,
+    ) -> Any:
         last_result: Any = None
         ended_by_round_limit = True
 
