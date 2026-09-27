@@ -98,6 +98,7 @@ async def test_bash_tool_injects_a_persistent_persona_runtime_environment(
     result = await bash.run("python -c 'import example'", data_store=_Store(tmp_path))
 
     runtime = tmp_path / "runtime"
+    home = tmp_path / "home"
     assert result["success"] is True
     assert calls["env"]["SIRIUS_RUNTIME_ROOT"] == str(runtime)
     assert calls["env"]["SIRIUS_RUNTIME_BIN"] == str(runtime / "bin")
@@ -110,6 +111,42 @@ async def test_bash_tool_injects_a_persistent_persona_runtime_environment(
     assert calls["env"]["PYTHONPATH"].startswith(str(runtime / "python"))
     assert (runtime / "cache" / "pip").is_dir()
     assert (runtime / "cache" / "npm").is_dir()
+    # Home and the default working directory both live inside the mounted
+    # persona directory: an image rebuild replaces everything else.
+    assert calls["env"]["HOME"] == str(home)
+    assert home.is_dir()
+    assert calls["cwd"] == str(home)
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_reexports_the_runtime_path_after_profile(monkeypatch, tmp_path: Path):
+    """`bash -l` sources /etc/profile, which resets PATH and drops the runtime."""
+    calls = _fake_bash(monkeypatch)
+    runtime = tmp_path / "runtime"
+    home = tmp_path / "home"
+
+    await bash.run("python -c 'import example'", data_store=_Store(tmp_path))
+
+    prelude = calls["args"][-1]
+    assert f"export PATH={shlex.quote(calls['env']['PATH'])}" in prelude
+    assert f"export HOME={shlex.quote(str(home))}" in prelude
+    # The exports must run before the command, and the docker shim after the
+    # exports so a shadowed PATH cannot lose it.
+    assert prelude.index("export PATH=") < prelude.index("python -c 'import example'")
+    assert calls["env"]["PATH"].startswith(f"{runtime / 'bin'}{os.pathsep}")
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_expands_tilde_against_the_persistent_home(monkeypatch, tmp_path: Path):
+    """`~` must mean the same directory here as it does inside the container."""
+    calls = _fake_bash(monkeypatch)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = await bash.run("ls", cwd="~", data_store=_Store(tmp_path))
+
+    assert result["success"] is True
+    assert calls["cwd"] == str(home)
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,7 @@ _config.group("Bash 执行").add(
 _config.group("Bash 执行").add(
     "cwd",
     type="str",
-    description="容器内工作目录；可使用绝对路径，默认为当前进程目录。",
+    description=("容器内工作目录；可使用绝对路径。留空或填 . 表示你自己的家目录" "（$HOME，位于人格数据目录内，容器重建后依然存在）。"),
     default=".",
 )
 _config.group("Bash 执行").add(
@@ -112,7 +112,8 @@ async def run(
     )
     try:
         command_text = _bash_runtime.validate_command(command, max_length=_MAX_COMMAND_LENGTH)
-        cwd_path = _bash_runtime.resolve_cwd(cwd)
+        environment = _bash_runtime.runtime_environment(data_store)
+        cwd_path = _bash_runtime.resolve_cwd(cwd, home=_bash_runtime.home_root_path(data_store))
         timeout = _bash_runtime.bounded_number(
             timeout_seconds, default=10.0, minimum=0.1, maximum=policy["max_timeout_seconds"]
         )
@@ -126,6 +127,8 @@ async def run(
         )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
+    except OSError as exc:
+        return {"success": False, "error": f"准备人格运行时目录失败: {exc}"}
 
     if not kwargs.get("_skip_crontab", False):
         try:
@@ -152,11 +155,6 @@ async def run(
         }
 
     try:
-        environment = _bash_runtime.runtime_environment(data_store)
-    except OSError as exc:
-        return {"success": False, "error": f"准备人格运行时目录失败: {exc}"}
-
-    try:
         completed = await asyncio.to_thread(
             subprocess.run,
             [
@@ -164,6 +162,10 @@ async def run(
                 "-o",
                 "pipefail",
                 "-lc",
+                # ``-l`` has already sourced /etc/profile by the time this runs,
+                # and that file resets PATH, dropping the runtime directories.
+                # Re-exporting here is the only assignment that survives.
+                f"{_bash_runtime.runtime_exports(environment)}"
                 f"{_bash_runtime.docker_function()}\n{command_text}",
             ],
             cwd=str(cwd_path),

@@ -27,7 +27,7 @@ _config.group("图片与文件").add("image_path", type="str", description="acti
 _config.group("图片与文件").add(
     "file_path",
     type="str",
-    description="action=file 时要上传的本地文件路径；~ 展开为当前进程家目录。",
+    description="action=file 时要上传的本地文件路径；~ 展开为你自己的家目录（$HOME）。",
 )
 _config.group("图片与文件").add(
     "file_name",
@@ -71,14 +71,17 @@ async def run(
     download_dir: str = "",
     bridge: Any = None,
     chat_context: dict[str, Any] | None = None,
+    data_store: Any = None,
     invocation_context: ToolInvocationContext | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     action_key = str(action or "").strip().lower()
     if action_key == "image":
-        result = await _send_image(bridge, chat_context, image_path)
+        result = await _send_image(bridge, chat_context, image_path, data_store=data_store)
     elif action_key == "file":
-        result = await _upload_file(bridge, chat_context, file_path, file_name)
+        result = await _upload_file(
+            bridge, chat_context, file_path, file_name, data_store=data_store
+        )
     elif action_key == "list":
         result = await _list_group_files(bridge, chat_context, folder_id, file_count)
     elif action_key == "download":
@@ -98,6 +101,8 @@ async def _send_image(
     bridge: Any,
     chat_context: dict[str, Any] | None,
     image_path: str,
+    *,
+    data_store: Any = None,
 ) -> dict[str, Any]:
     if not bridge:
         return {
@@ -142,6 +147,10 @@ async def _send_image(
             except Exception as exc:
                 LOG.warning("远程图片缓存失败，直接使用原始 URL: %s | %s", exc, image_path[:80])
 
+    # ``~`` must mean the persona's own home here too, not the process home:
+    # the two are different once HOME is redirected into the mounted data dir.
+    image_path = _resolve_persona_path(image_path, data_store)
+
     display_path = image_path
     image_reference = _to_image_reference(image_path)
 
@@ -172,6 +181,8 @@ async def _upload_file(
     chat_context: dict[str, Any] | None,
     file_path: str,
     file_name: str,
+    *,
+    data_store: Any = None,
 ) -> dict[str, Any]:
     if not bridge:
         return {
@@ -207,6 +218,7 @@ async def _upload_file(
 
     # path.exists() raises (rather than returning False) on an unreadable parent,
     # so the bare errno must be turned into a hint the model can act on.
+    file_path = _resolve_persona_path(file_path, data_store)
     path = Path(file_path).expanduser()
     try:
         problem = "" if path.exists() else f"文件不存在: {file_path}（展开后 {path}）"
@@ -215,7 +227,7 @@ async def _upload_file(
     if problem:
         return {
             "success": False,
-            "error": f"{problem}；当前进程家目录是 {Path.home()}，请确认路径。",
+            "error": f"{problem}；你的家目录是 {_home_hint(data_store)}，请确认路径。",
             "summary": f"上传失败：{problem}",
         }
 
@@ -427,6 +439,32 @@ def _private_target_id(value: str) -> str:
     if target_id.startswith("qq_"):
         target_id = target_id.removeprefix("qq_")
     return target_id
+
+
+def _home_hint(data_store: Any) -> str:
+    """The home to name in an error message: hers when known, else the process's."""
+    from sirius_pulse.tools.builtin._internal import _bash_runtime
+
+    return str(_bash_runtime.home_root_path(data_store) or Path.home())
+
+
+def _resolve_persona_path(value: str, data_store: Any) -> str:
+    """Expand a model-supplied local path against the persona's own home.
+
+    URLs and non-local references are returned untouched.  ``~`` has to mean the
+    same thing to this tool as it does to Bash: the persona home inside the
+    mounted data directory, which survives a container rebuild, rather than the
+    process home baked into the image.
+    """
+    text = str(value or "").strip()
+    if not text or text.startswith(("http://", "https://", "base64://", "data:")):
+        return text
+    from sirius_pulse.tools.builtin._internal import _bash_runtime
+
+    home = _bash_runtime.home_root_path(data_store)
+    if home is None or not text.startswith("~"):
+        return text
+    return str(_bash_runtime.expand_persona_path(text, home=home))
 
 
 def _to_image_reference(image_path: str) -> str:

@@ -24,6 +24,10 @@ _RUNTIME_BIN_DIR = "bin"
 _RUNTIME_PYTHON_DIR = "python"
 _RUNTIME_NODE_DIR = "node"
 _RUNTIME_CACHE_DIR = "cache"
+# Her own place, beside the runtime, inside the mounted persona directory.  It
+# must not be ``/home/sirius``: that lives in the image layer and every rebuild
+# of the image takes it with it.
+_HOME_DIR_NAME = "home"
 _DOCKER_FUNCTION_TEMPLATE = """docker() {{
     {python_executable} -m sirius_pulse.tools.builtin._internal._docker_cli \"$@\"
 }}
@@ -72,12 +76,39 @@ def validate_command(command: str, *, max_length: int) -> str:
     return text
 
 
-def resolve_cwd(cwd: str) -> Path:
-    requested = str(cwd or ".").strip() or "."
-    resolved = Path(requested).expanduser().resolve()
+def resolve_cwd(cwd: str, *, home: Path | None = None) -> Path:
+    """Resolve the working directory, falling back to the persona's own home.
+
+    ``"."`` means "wherever she normally works", which is her persistent home
+    rather than the process directory: the process cwd is ``/app``, inside the
+    image layer, and a rebuild would take everything written there with it.
+
+    ``~`` is expanded against the *persona* home for the same reason — the
+    process home is ephemeral, and a ``~`` that means one thing to the Python
+    side and another to the bash side is how a file gets written to a place
+    nobody looks at again.
+    """
+    requested = str(cwd or "").strip() or "."
+    resolved = expand_persona_path(requested, home=home)
     if not resolved.is_dir():
         raise ValueError(f"cwd 不是目录: {cwd}")
     return resolved
+
+
+def expand_persona_path(value: str, *, home: Path | None = None) -> Path:
+    """Expand ``~`` against the persona home, then resolve to an absolute path.
+
+    Without a workspace (``home is None``) this is plain ``expanduser``, so
+    callers that have no persona context keep their previous behaviour.
+    """
+    text = str(value or "").strip()
+    if home is None:
+        return Path(text or ".").expanduser().resolve()
+    if text in {"", ".", "~", "~/"}:
+        return home
+    if text.startswith("~/"):
+        return (home / text[2:]).resolve()
+    return Path(text).expanduser().resolve()
 
 
 def find_bash() -> str | None:
@@ -186,6 +217,7 @@ def runtime_environment(data_store: Any) -> dict[str, str]:
     runtime_python = runtime_root / _RUNTIME_PYTHON_DIR
     runtime_node = runtime_root / _RUNTIME_NODE_DIR
     runtime_cache = runtime_root / _RUNTIME_CACHE_DIR
+    home = home_root_path(data_store)
     for directory in (
         runtime_bin,
         runtime_python,
@@ -195,6 +227,7 @@ def runtime_environment(data_store: Any) -> dict[str, str]:
         runtime_cache / "pip",
         runtime_cache / "npm",
         runtime_cache / "go",
+        *([home] if home is not None else []),
     ):
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -212,7 +245,34 @@ def runtime_environment(data_store: Any) -> dict[str, str]:
     environment["PYTHONPATH"] = prepend_environment_path(
         str(runtime_python), environment.get("PYTHONPATH", "")
     )
+    if home is not None:
+        # ``HOME`` also survives a rebuild only if it points into the mount.
+        # ``bash -lc`` keeps it, and ``~`` then expands to a directory that is
+        # still there after the next deploy.
+        environment["HOME"] = str(home)
+        environment["SIRIUS_HOME"] = str(home)
     return environment
+
+
+def home_root_path(data_store: Any) -> Path | None:
+    """The persona's persistent home, or ``None`` when there is no workspace."""
+    runtime_root = runtime_root_path(data_store)
+    return None if runtime_root is None else runtime_root.parent / _HOME_DIR_NAME
+
+
+def runtime_exports(environment: dict[str, str]) -> str:
+    """Re-export the runtime environment inside the command prelude.
+
+    ``bash -lc`` reads ``/etc/profile``, which unconditionally resets ``PATH``
+    (and would drop the runtime directories we put in front of it).  Exporting
+    again *after* profile processing is the only place that survives, because
+    the prelude is prepended to the command text and therefore runs last.
+    """
+    names = ("HOME", "PATH", "PYTHONPATH", "PIP_TARGET", "NPM_CONFIG_PREFIX", "GOBIN")
+    lines = [
+        f"export {name}={shlex.quote(environment[name])}" for name in names if environment.get(name)
+    ]
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def runtime_root_path(data_store: Any) -> Path | None:
