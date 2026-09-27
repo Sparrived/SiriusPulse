@@ -281,6 +281,38 @@ def test_turn_sections_do_not_carry_the_persona_anchor_themselves():
         assert final.count("【身份锚定】") == 1
 
 
+def test_autonomous_share_guidance_asks_for_a_friend_not_a_report():
+    """她只发结论，收到的人看不懂前因后果——提示词必须要求带上"在忙什么"。"""
+    system_prompt, _ = PromptFactory.build_autonomous_turn_sections(
+        kind="share",
+        seed="口径偏差扫完了",
+        audiences=[{"chat_id": "private_1", "label": "主人（私聊）"}],
+    )
+
+    assert "【说话的语气】" in system_prompt
+    assert "只有这一条消息" in system_prompt
+    assert "不要写成日报" in system_prompt
+    # 自由时间的回合没有 tell 意图，但一样可能开口，提示不能漏。
+    free_time, _ = PromptFactory.build_autonomous_turn_sections(
+        kind="musing",
+        seed="",
+        free_time=True,
+        audiences=[{"chat_id": "private_1", "label": "主人（私聊）"}],
+    )
+    assert "【说话的语气】" in free_time
+
+
+def test_autonomous_guidance_stays_out_of_the_way_when_she_has_nobody_to_talk_to():
+    """没人可说时不讲语气，免得提示词变成一份催她产出的写作说明。"""
+    system_prompt, _ = PromptFactory.build_autonomous_turn_sections(
+        kind="musing",
+        seed="想把 MESA 跑起来",
+        free_time=True,
+    )
+
+    assert "【说话的语气】" not in system_prompt
+
+
 def test_persona_profile_when_loading_legacy_fields_then_only_prompt_is_persisted():
     profile = PersonaProfile.from_dict(
         {

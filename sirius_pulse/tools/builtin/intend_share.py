@@ -23,7 +23,10 @@ from sirius_pulse.core.intent import (
 
 logger = logging.getLogger(__name__)
 
-_MAX_WHAT_CHARS = 300
+# 一条消息要能带上"在忙什么 + 这回怎么了 + 结论"，300 字只够放结论，于是她
+# 自然会把前因后果砍掉——那正是"只收到一个结论"的来源。放宽到 600 字，同时靠
+# SHARE_TONE_NOTE 和参数说明要求她写成人话，而不是把额度用在堆砌细节上。
+_MAX_WHAT_CHARS = 600
 _MAX_WHY_CHARS = 200
 _DEFAULT_URGENCY = 0.7
 
@@ -33,6 +36,8 @@ TOOL_META = {
         "当你心里有一件想告诉某人的事（一个想法、一个问题、一篇文章、一点情绪），"
         "用这个工具把它记下来，并说明想说给谁。它只登记，不会立刻发送；"
         "之后你会在合适的时机自己决定说不说。"
+        "收信人看不到你之前做过什么，所以 what 要写成一条能独立看懂的话："
+        "平常聊天的口气，先说你在弄什么，再说这回怎么了，结论放最后。"
     ),
     "version": "1.0.0",
     "model_visible": True,
@@ -42,7 +47,13 @@ TOOL_META = {
     "parameters": {
         "what": {
             "type": "str",
-            "description": "你想说的内容本身，尽量保留你原本的语气。已用 intention_id 指定旧意图时可留空。",
+            "description": (
+                "你想说的内容本身，像发 QQ 一样自然，尽量保留你原本的语气。"
+                "对方不知道你之前做了什么，所以要能独立看懂："
+                "先一句你在忙什么，再说这回怎么了，结论放最后；"
+                "别只写结论，也别写成汇报或总结。"
+                "已用 intention_id 指定旧意图时可留空。"
+            ),
             "required": False,
             "default": "",
         },
