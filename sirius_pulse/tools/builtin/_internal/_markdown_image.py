@@ -3,6 +3,9 @@
 当回复里出现行内符号之外的排版结构（代码块、表格、制表符、分隔线、标题、
 引用、列表块）时，纯文本已经无法还原排版，因此整段内容都会渲染成一张图片；
 同时通过平台适配器补发一条合并转发消息，保留可复制的原文。
+
+此外，回复按换行符会被拆成多条消息；一旦超过 ``_MAX_TEXT_MESSAGES`` 条，
+刷屏的代价比一张图片更大，同样改成「图片 + 合并转发」投递。
 """
 
 from __future__ import annotations
@@ -82,6 +85,8 @@ _HORIZONTAL_RULE_RE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,}|—-+|—{2,}|－{3,}|
 _TABLE_ROW_PIPES = 2
 _MIN_TABLE_ROWS = 2
 _MIN_LIST_ITEMS = 2
+# 平台按换行符把一段回复拆成多条消息；超过这个条数就该整段转图片，避免刷屏。
+_MAX_TEXT_MESSAGES = 3
 # 常见但 Pygments 认不出的围栏标签，映射到它支持的别名。
 _CODE_LEXER_ALIASES = {
     "yml": "yaml",
@@ -142,6 +147,18 @@ def has_rich_structure(text: str) -> bool:
     return False
 
 
+def should_send_as_image(text: str) -> bool:
+    """判断一段回复是否该整段转成图片投递。
+
+    两种情况：含有换行符之外的排版结构（表格、代码块、标题……），
+    或者按换行符会拆成超过 ``_MAX_TEXT_MESSAGES`` 条消息——后者刷屏的
+    阅读代价比一张图片更大。这里只决定"怎么投递"，不改动回复内容本身。
+    """
+    if has_rich_structure(text):
+        return True
+    return count_text_messages(text) > _MAX_TEXT_MESSAGES
+
+
 def _normalize_fence_chars(text: str) -> str:
     return str(text or "").replace("｀", "`").replace("～", "~")
 
@@ -165,6 +182,15 @@ def _code_fence_language(line: str) -> str:
     if not match or len(match.group(1)) < 3:
         return ""
     return match.group(2).strip().split()[0].lower() if match.group(2).strip() else ""
+
+
+def count_text_messages(text: str) -> int:
+    """按平台拆分规则估算这段文本会占几条消息。
+
+    适配器最终兜底是按换行符拆分并丢弃空行，这里保持一致，
+    让「会拆成几条」在投递前就能判定。
+    """
+    return len([line for line in str(text or "").splitlines() if line.strip()])
 
 
 def _highlight_code_block(code: str, language: str) -> str:

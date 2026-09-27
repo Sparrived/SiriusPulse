@@ -808,7 +808,7 @@ class DelayedQueueTasks:
                 agent_turn.advance(AgentTurnPhase.RESPOND)
                 await self._emit_agent_turn(engine, agent_turn)
                 rich_content = round_clean.strip()
-                if _markdown_image.has_rich_structure(rich_content):
+                if _markdown_image.should_send_as_image(rich_content):
                     try:
                         delivery = await _markdown_image.render_and_send_rich_reply(
                             rich_content,

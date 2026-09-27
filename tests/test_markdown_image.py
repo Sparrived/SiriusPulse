@@ -10,6 +10,7 @@ from sirius_pulse.tools.builtin._internal import _markdown_image
 from sirius_pulse.tools.builtin._internal._markdown_image import (
     build_markdown_card_html,
     has_rich_structure,
+    should_send_as_image,
 )
 
 
@@ -42,6 +43,22 @@ def test_has_rich_structure_detects_layout_beyond_inline_symbols(text):
 )
 def test_has_rich_structure_ignores_plain_text_and_inline_symbols(text):
     assert has_rich_structure(text) is False
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("只有一句话。", False),
+        ("第一行\n第二行\n第三行", False),
+        ("第一行\n第二行\n第三行\n第四行", True),
+        ("第一行\n\n第二行\n\n第三行\n\n第四行", True),
+        ("第一行\n第二行\n\n\n第三行", False),
+        ("| 项目 | 状态 |\n|------|------|\n| WebUI | 正常 |", True),
+    ],
+)
+def test_should_send_as_image_covers_long_and_structured_replies(text, expected):
+    """换行会变成多条消息：超过三条就整段转图片，顺带保留原有的结构判定。"""
+    assert should_send_as_image(text) is expected
 
 
 @pytest.mark.asyncio

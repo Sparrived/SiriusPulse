@@ -1323,6 +1323,100 @@ async def test_delayed_queue_when_reply_has_structure_then_sends_whole_content_a
 
 
 @pytest.mark.asyncio
+async def test_delayed_queue_when_reply_would_send_over_three_messages_then_sends_image(
+    monkeypatch,
+):
+    """回复按换行会拆成四条以上消息时，改用「图片 + 合并转发」投递，不再刷屏。"""
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "give me the full rundown",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    content = "第一段。\n第二段。\n第三段。\n第四段。"
+
+    async def send_rich_reply(content_arg: str, *, adapter, group_id: str, title: str = ""):
+        assert content_arg == content
+        assert group_id == "group-1"
+        return {"image_message_id": "99", "forward_message_id": "100"}
+
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="lookup", silent=False, developer_only=False),
+        [
+            SimpleNamespace(
+                raw_text=content,
+                clean_text=content,
+                tool_calls=[],
+                reply_references=[],
+                injected_request={},
+            )
+        ],
+        AsyncMock(),
+    )
+    engine._adapter = SimpleNamespace()
+    monkeypatch.setattr(
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        send_rich_reply,
+    )
+    delivered_cards: list[dict[str, object]] = []
+    engine._record_assistant_message = lambda **kwargs: delivered_cards.append(kwargs)
+    partials: list[str] = []
+
+    async def capture_partial(text: str) -> None:
+        partials.append(text)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
+
+    assert partials == []
+    assert results[0]["reply"] == ""
+    assert [card["platform_message_id"] for card in delivered_cards] == ["99"]
+    assert delivered_cards[0]["tags"] == [{"type": "image", "label": "富文本卡片"}]
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_reply_splits_into_three_messages_then_stays_text(monkeypatch):
+    """三条及以内还是按普通文本发，不因为多行就退化成图片。"""
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "quick question",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    content = "第一段。\n第二段。\n第三段。"
+
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="lookup", silent=False, developer_only=False),
+        [
+            SimpleNamespace(
+                raw_text=content,
+                clean_text=content,
+                tool_calls=[],
+                reply_references=[],
+                injected_request={},
+            )
+        ],
+        AsyncMock(),
+    )
+    engine._adapter = SimpleNamespace()
+    render_rich = AsyncMock()
+    monkeypatch.setattr(
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        render_rich,
+    )
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    render_rich.assert_not_awaited()
+    assert results[0]["reply"] == content
+
+
+@pytest.mark.asyncio
 async def test_delayed_queue_when_short_inline_markdown_stays_text(monkeypatch):
     queue = DelayedResponseQueue()
     item = queue.enqueue(

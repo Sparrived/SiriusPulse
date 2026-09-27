@@ -19,6 +19,7 @@
 
 ### Changed
 
+- **超过三条消息的回复改为「图片 + 合并转发」投递**：适配器的最终兜底是按换行符把一段回复拆成多条消息（每行一条，仅首条带引用）。这意味着模型写得越长，群里被刷的屏越多——一段分点说明就会变成四五条气泡。现在投递前先按同一套换行规则数一遍会拆成几条，**超过三条**就不再走文本通道，而是复用既有的富文本卡片路径：整段渲染成一张图片，再补发一条同内容的合并转发保住可复制的原文。判定集中在 `_markdown_image.should_send_as_image()`（结构判定 `has_rich_structure` 或行数超限），调度器、去重与记忆三处共用，避免出现「转成图片却仍按纯文本记一遍」的双写。这只是投递形态的选择，不改动回复内容本身。
 - **发送多段回复期间收到的消息恢复常规评分**：适配器原先在发送窗口内置位（`_reply_send_active_counts` 覆盖整段发送序列与段间停顿）并给入站事件打上 `_sirius_received_during_reply_send` 标记，最终落到 `Message.received_during_bot_send`；引擎据此对这批消息**整体短路**——未被点名的一律静默 `score=0.0`，被点名的则用写死的 `score=1.0 / urgency=60.0` 塞进延迟队列。这让「刚好在发送时到达」本身变成了一条独立的评分规则，而消息内容其实未被评估过。现在这层机制整套删除：消息照常走 `_compute_signal` → `_pre_filter` → 入队，够分的进延迟队列，不够分的正常静默；是否让出话轮仍由既有评分与跨人格调度（`GroupDispatcher.coordinate`）决定。多段发送本身的行为不变，段间按字数的人味停顿（`_sleep_before_reply_part`）与每会话回复锁（`_get_reply_lock`）保留。
 - **向量化改由 AMKR 提供**：`sirius_pulse/embedding/client.py` 直接调用 AMKR 的 `/v1/embeddings`，模型名取自 `global_config.json` 的 `embedding_model`（默认 `BAAI/bge-m3`，支持 `SIRIUS_EMBEDDING_MODEL` 覆盖），凭据用该人格工作空间的推理 key。响应按 OpenAI 契约的 `index` 归位，避免向量与文本错配。
 - **模型接入整体收敛到 AMKR**：本框架不再自带任何厂商实现，所有模型调用统一发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）。供应商、Key 池、模型选择、采样参数与故障切换全部由 AMKR 承担。
