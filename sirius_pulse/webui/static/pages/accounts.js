@@ -60,7 +60,10 @@ export async function init(container, params = {}) {
     render(data.accounts || []);
 
     autoSave = createAutoSave({
-      root: $('accountsForm'),
+      // 挂在 accountsBody 而不是表单上：增删账号会重建表单节点，而 autosave 只在
+      // 创建时绑定一次 listener，绑在会被换掉的节点上等于第一次增删后就再也不保存。
+      // input/change 会冒泡，所以挂在上层容器一样收得到。
+      root: $('accountsBody'),
       statusEl: $('accountsSaveStatus'),
       save,
       onError: (error) => toast('保存失败: ' + error.message, 'error'),
@@ -174,7 +177,8 @@ function render(accounts) {
 
 async function save() {
   const accounts = readRows();
-  const data = await post('/persona/accounts', { accounts });
-  // 服务端会把掩码还原成真实凭据再存；用它回填，页面不会停留在半掩码状态。
-  if (Array.isArray(data?.accounts) && scopedPage.isActive()) render(data.accounts);
+  // 不在这里回填服务端结果：render() 会换掉 innerHTML，既打断正在输入的光标，
+  // 也会让 autoSave 抓着已脱离文档的旧表单，从此再也监听不到改动。
+  // 掩码语义本来就幂等——原样再提交一次掩码，磁盘上的凭据不变。
+  await post('/persona/accounts', { accounts });
 }
