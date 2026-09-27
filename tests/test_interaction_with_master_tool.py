@@ -136,6 +136,42 @@ class _EngineContext:
 
 
 @pytest.mark.asyncio
+async def test_autonomous_turn_may_reach_the_tool_through_the_real_executor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """自主回合要真的能走到这一步：豁免标记、bridge 与 engine_context 都得在。"""
+    from sirius_pulse.memory.user.unified_models import UnifiedUser
+    from sirius_pulse.tools import ToolExecutor, ToolInvocationContext
+    from sirius_pulse.tools.registry import ToolRegistry
+
+    adapter = _FakeNapCatAdapter(root="10001")
+    # 注册表会重新加载模块，所以这里要打规范模块上的函数；直接改
+    # interaction_with_master._is_quiet_now 打不到那个新实例。
+    monkeypatch.setattr("sirius_pulse.core.autonomy.is_quiet_hours", lambda now: False)
+
+    registry = ToolRegistry()
+    registry.load_from_directory(tmp_path / "tools", auto_install_deps=False, include_builtin=True)
+    tool = registry.get("interaction_with_master")
+    assert tool is not None and tool.allowed_when_self_initiated is True
+
+    executor = ToolExecutor(work_path=tmp_path)
+    executor.set_bridge("napcat", adapter)
+    executor.set_engine_context(_EngineContext(tmp_path))
+
+    result = await executor.execute_async(
+        tool,
+        {"action": "message", "message": "想跟你说一声，今天那个数据我核完了。"},
+        invocation_context=ToolInvocationContext(
+            caller=UnifiedUser(user_id="autonomy", name="autonomy"),
+            self_initiated=True,
+        ),
+    )
+
+    assert result.success is True, result.error
+    assert adapter.private_messages == [("10001", "想跟你说一声，今天那个数据我核完了。")]
+
+
+@pytest.mark.asyncio
 async def test_night_message_on_her_own_time_waits_until_morning(
     tmp_path: Path, monkeypatch
 ) -> None:
