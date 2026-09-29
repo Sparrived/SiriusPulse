@@ -354,7 +354,7 @@ Sub2API 多站监控 `0.3.0`（需要框架 `1.3.0+`）可在 WebUI 中通过中
 
 #### Docker 中的外部插件
 
-Docker 只提供 Sirius Pulse 核心运行环境；`plugins/` 源码和插件配置保留在宿主机，并由 Compose 挂载到容器的 `/app/plugins`。首次部署或更新插件时在宿主机执行：
+Docker 只提供 Sirius Pulse 核心运行环境；`plugins/` 源码和插件配置保留在宿主机，并由 Compose 挂载到容器的 `/app/plugins`。核心源码 `sirius_pulse/` 同样以只读方式挂载到 `/app/sirius_pulse`（镜像里它是 editable install），因此改 Python 代码只需 `docker compose restart sirius-pulse`，无需重建镜像；依赖变更（`pyproject.toml` / `uv.lock`）仍需重新构建。首次部署或更新插件时在宿主机执行：
 
 ```bash
 git submodule update --init --recursive

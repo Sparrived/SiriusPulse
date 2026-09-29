@@ -21,6 +21,13 @@ services:
       SIRIUS_GITHUB_WEBHOOK_SECRET: ${SIRIUS_GITHUB_WEBHOOK_SECRET:-}
     volumes:
       - ./data:/app/data
+      # Application source lives on the host: the image installs it editable
+      # (`uv sync` maps `sirius_pulse` -> `/app/sirius_pulse`), so a plain host
+      # checkout is what Python imports. Mounting it read-only means source
+      # changes take effect with a container restart, no image rebuild, and the
+      # container can never rewrite the host working tree.
+      # Dependency changes (pyproject.toml / uv.lock) still need a rebuild.
+      - ./sirius_pulse:/app/sirius_pulse:ro
       # External plugin source and _config.json remain on the host.
       - ./plugins:/app/plugins:rw
       - ${SIRIUS_CONTAINER_ADMIN_SOCKET:-/dev/null}:/run/sirius-container-admin.sock:ro
