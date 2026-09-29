@@ -959,14 +959,22 @@ class CognitionAnalyzer:
 
         # --- Layer 2: Linguistic ---
         # name_match_score: nickname/name in text (word-boundary aware)
+        # 与 is_name_or_alias_mentioned / _text_mentions_name 保持同一套约定：
+        # 拉丁名按词边界匹配（"Luna" 不应命中 "lunatic"），中日韩名没有词边界，
+        # 子串出现即为命中。原先的 `\\b` 是双反斜杠，正则里成了字面量 "\b"，
+        # 该分支从不成立，拉丁别名只能退化成 0.6 的子串匹配。
         name_match = 0.0
         if self.ai_name:
-            for name in [self.ai_name] + self.ai_aliases:
+            for raw_name in [self.ai_name] + self.ai_aliases:
+                name = str(raw_name or "").strip().lower()
                 if not name:
                     continue
-                if re.search(rf"\\b{re.escape(name.lower())}\\b", text_lower):
+                if any("\u4e00" <= char <= "\u9fff" for char in name):
+                    if name in text_lower:
+                        name_match = max(name_match, 1.0)
+                elif re.search(rf"(?<![a-z0-9_]){re.escape(name)}(?![a-z0-9_])", text_lower):
                     name_match = max(name_match, 1.0)
-                elif name.lower() in text_lower:
+                elif name in text_lower:
                     name_match = max(name_match, 0.6)
         scores["name_match_score"] = name_match
 

@@ -357,3 +357,54 @@ def test_keyword_group_preview_does_not_promote_platform_only_mention():
 
     assert candidate["should_reply"] is False
     assert candidate["score"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("ai_name", "aliases", "content"),
+    [
+        ("月白", ["Sirius"], "Sirius 你怎么看？"),
+        ("月白", ["Sirius"], "sirius 帮我看看"),
+        ("月白", ["Sirius"], "月白，帮我看看"),
+        ("月白", ["Sirius"], "今天月白真好看"),
+        ("Luna", ["月白"], "Luna 你怎么看？"),
+    ],
+)
+def test_message_naming_persona_is_a_full_name_match(ai_name, aliases, content):
+    """点名（英文别名按词边界、中文名按子串）应记满分，而不是退化成弱子串匹配。"""
+    analyzer = CognitionAnalyzer(ai_name=ai_name, ai_aliases=aliases)
+
+    scores = analyzer._compute_directed_scores(content, "u1", None)
+
+    assert scores["name_match_score"] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("lunatic rambling", 0.6),  # 名字嵌在别的词里，只能算弱指向
+        ("aSiriusb", 0.6),
+        ("完全无关的闲聊", 0.0),
+    ],
+)
+def test_name_embedded_in_another_word_stays_a_weak_match(content, expected):
+    """词边界保护的业务含义：别人说 lunatic 不等于在叫 Luna。"""
+    analyzer = CognitionAnalyzer(ai_name="Luna", ai_aliases=["Sirius"])
+
+    scores = analyzer._compute_directed_scores(content, "u1", None)
+
+    assert scores["name_match_score"] == pytest.approx(expected)
+
+
+def test_peer_ai_naming_persona_by_alias_is_treated_as_addressed():
+    """同群另一个 AI 用别名点名她时，衰减后仍应认出这是在叫她。"""
+    engine = SimpleNamespace(
+        _helpers=SimpleNamespace(get_recent_messages=lambda group_id, n: []),
+        rhythm_analyzer=RhythmAnalyzer(),
+        cognition_analyzer=CognitionAnalyzer(ai_name="月白", ai_aliases=["Sirius"]),
+    )
+
+    signal = Pipeline(engine).compute_signal(
+        "Sirius 你怎么看？", "u1", "g1", persist=False, sender_type="other_ai"
+    )
+
+    assert signal.is_mentioned is True
