@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from sirius_pulse.core.group_dispatcher import GroupDispatcher
 
 
@@ -817,5 +819,92 @@ def test_group_dispatcher_penalizes_recently_active_worker(tmp_path: Path):
         assert not next_alpha.granted
         assert next_beta.granted
         assert next_beta.activity_penalty == 0.0
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "addressing",
+    [
+        pytest.param({"target_account_ids": ("200",)}, id="at_mention"),
+        pytest.param({"preferred_worker_id": "beta"}, id="text_name"),
+    ],
+)
+def test_group_dispatcher_defers_addressed_message_while_group_is_busy(
+    tmp_path: Path, addressing: dict
+):
+    """点名消息在群里已有发言时不能被静默丢弃，必须延后重试。
+
+    回归：此前 reason=group_busy 会把点名消息直接 observe 掉，导致
+    「带名字也不回」——线上约 40% 的点名消息是这样丢的。
+    """
+
+    async def run() -> None:
+        clock = _Clock()
+        db_path = tmp_path / "dispatcher.db"
+        first = _dispatcher(db_path, clock, "alpha", "100")
+        second = _dispatcher(db_path, clock, "beta", "200")
+
+        busy = await first.coordinate(
+            event_id="m1",
+            group_id="g1",
+            base_score=1.0,
+            should_reply=True,
+        )
+        assert busy.granted
+
+        named = await second.coordinate(
+            event_id="m2",
+            group_id="g1",
+            base_score=1.0,
+            should_reply=True,
+            message_text="beta，你看这个怎么办？",
+            **addressing,
+        )
+        assert named.deferred, "点名消息被静默丢弃了"
+        assert named.reason == "group_busy"
+
+        # 租约释放后，同一条消息重试必须能拿到发言权。
+        assert first.finish(busy.lease_id, sent=True)
+        resumed = await second.coordinate(
+            event_id="m2",
+            group_id="g1",
+            base_score=1.0,
+            should_reply=True,
+            message_text="beta，你看这个怎么办？",
+            **addressing,
+        )
+        assert resumed.granted
+        assert resumed.worker_id == "beta"
+
+    asyncio.run(run())
+
+
+def test_group_dispatcher_observes_undirected_chatter_while_group_is_busy(tmp_path: Path):
+    """未被点名的闲聊在群忙时保持静默，不因上面的修复变成全员排队。"""
+
+    async def run() -> None:
+        clock = _Clock()
+        db_path = tmp_path / "dispatcher.db"
+        first = _dispatcher(db_path, clock, "alpha", "100")
+        second = _dispatcher(db_path, clock, "beta", "200")
+
+        busy = await first.coordinate(
+            event_id="m1",
+            group_id="g1",
+            base_score=1.0,
+            should_reply=True,
+        )
+        assert busy.granted
+
+        chatter = await second.coordinate(
+            event_id="m2",
+            group_id="g1",
+            base_score=1.0,
+            should_reply=True,
+            message_text="今天天气不错。",
+        )
+        assert chatter.action == "observe"
+        assert chatter.reason == "group_busy"
 
     asyncio.run(run())

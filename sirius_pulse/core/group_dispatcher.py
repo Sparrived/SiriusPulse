@@ -618,9 +618,15 @@ class GroupDispatcher:
                     # A non-directed question keeps the topic open. The dispatcher
                     # selects a peer even when its local preview was initially silent.
                     eligible = list(candidates)
+            # A message that explicitly names a persona — by @-mention
+            # (known_targets) or by text (text_target_worker_id) — is
+            # "addressed" and must never be silently dropped.
+            addressed = bool(known_targets or text_target_worker_id)
             active_worker = str(state["active_worker_id"] or "")
             if active_worker:
-                if is_peer and eligible:
+                # Defer addressed messages so the adapter retries them once the
+                # lease frees; only undirected chatter is observed silently.
+                if eligible and (is_peer or addressed):
                     return self._mark_candidate_deferred(
                         conn, event_id, now, active_worker, "group_busy"
                     )
@@ -660,8 +666,10 @@ class GroupDispatcher:
                 if peer_reason:
                     return self._mark_candidate_observed(conn, event_id, now, "", peer_reason)
             elif is_human:
+                # The reply cooldown suppresses undirected chatter only; an
+                # explicit @-mention or text name always deserves a reply.
                 if (
-                    not known_targets
+                    not addressed
                     and float(state["last_reply_at"] or 0)
                     and now - float(state["last_reply_at"]) < self.min_reply_interval_seconds
                 ):
