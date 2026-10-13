@@ -39,7 +39,7 @@
 
 > 月白来介绍喵～(๑˃̵ᴗ˂̵)و
 
-**Sirius Pulse** 是一个**异步角色扮演聊天框架**，专门为 QQ 群聊等场景设计～它的特别之处在于支持**多人格同时运行**，每个人格都有自己的独立进程、独立配置、独立记忆，就像每个人格都住在自己的小房间里，互不打扰又能在群里一起玩耍喵！
+**Sirius Pulse** 是一个**异步角色扮演聊天框架**，专门为 QQ 群聊等场景设计～它的特别之处在于支持**多人格同时运行**，每个人格都有自己的独立配置、独立记忆与独立文件日志，就像每个人格都住在自己的小房间里，互不打扰又能在群里一起玩耍喵！
 
 ### 月白の推荐使用场景
 
@@ -55,21 +55,20 @@
 ## 🎯 核心特性
 
 ### ✨ **多人格异步架构**
-- **多人格管理**：每个人格独立进程、独立控制台窗口、独立文件日志，支持同时运行多个 AI 角色
+- **多人格管理**：每个人格独立配置、独立记忆、独立文件日志；`sirius-pulse run` 在同一进程内以 asyncio 任务并发运行多个人格，WebUI 也可为单个人格拉起独立 worker 进程
 - **人格隔离**：`data/personas/{name}/` 下独立配置与状态隔离
-- **NapCat 多实例**：每个人格可绑定独立 QQ 号与独立 WebSocket 端口，自动管理 NapCat 生命周期
+- **NapCat 多实例**：每个人格可绑定独立 QQ 号与独立 WebSocket 端口，通过正向 WebSocket 连接对应的 NapCat 实例
 - **WebUI 管理面板**：Dashboard 查看所有人格状态，支持启停、配置、群管理
 
 ### 🧠 **分层记忆系统**
 - **基础记忆**（Basic Memory）：按群保留原始消息直到被 checkpoint 记忆单元覆盖（硬限制 10000 条仅作内存兜底，上下文窗口 5 条）；原始窗口超过 80000 token 触发归纳、归纳到 20000 token 为止，被覆盖的原始条目改由记忆单元 RAG 提供摘要；注入提示词的历史预算默认 40000 token、记忆单元检索预算默认 20000 token，含热度计算与归档
 - **记忆单元**（Memory Units）：LLM 提取的结构化长期记忆片段，嵌入向量内联存放在各自的 JSON 文件中，以内存索引做 RAG 检索
 - **语义记忆**（Semantic Memory）：群级/用户级/全局级向量记忆，支持话题关联与兴趣学习
-- **人物传记**（Biography）：跨对话人物画像提取与注入
 
 ### 🧠 **5 阶段情感引擎**
 ```text
-Perception → Cognition → Decision → Execution → Background
-（感知）     （认知）     （决策）     （执行）     （后台更新）
+Perception → Signal → PreFilter → Generate → BackgroundUpdate
+（感知）     （信号）   （粗筛）     （生成）     （后台更新）
 ```
 - 情绪/意图联合分析 + 共情度计算
 - 动态阈值引擎：灵敏度 × 群聊热度 × 消息速率 × 用户画像
@@ -88,7 +87,7 @@ Perception → Cognition → Decision → Execution → Background
 - 详见 [扩展开发](#-扩展开发)
 
 ### 🎬 **更多特性**
-- 多模态输入（图片/视频）
+- 多模态输入（图片）
 - Token 消耗追踪与分析
 - `@command` 装饰器声明式插件开发
 - 被动工具：后台任务、事件触发器、生命周期回调
@@ -110,21 +109,21 @@ pip install sirius-pulse
 
 > 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 11 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
 
-### 2️⃣ 启动 CLI
+### 2️⃣ 启动运行
 
 ```bash
-sirius-pulse
+sirius-pulse run
 ```
 
-默认会进入交互式 CLI。可以在首页查看人格状态，并选择启动运行模式、后台 WebUI、查看日志或管理人格。
+在当前进程内启动所有活跃人格与 WebUI。CLI 没有交互式界面：不带子命令运行只打印帮助，人格的启动与管理统一由 `run` 与 WebUI 负责。
 
-如需启动 WebUI，也可以在 CLI 中选择 **WebUI 面板**，或运行后台服务命令：
+如需只启动 WebUI 后台服务：
 
 ```bash
 sirius-pulse webui
 ```
 
-命令会立即返回，不占用 CLI 终端。打开 `http://localhost:8080`，可视化配置通过管理面板完成：
+命令会立即返回，不占用当前终端。打开 `http://localhost:8080`，可视化配置通过管理面板完成：
 
 | WebUI 页面 | 做什么 |
 |-----------|------|
@@ -138,8 +137,9 @@ sirius-pulse webui
 ### 3️⃣ 后台运行
 
 `sirius-pulse run` 在当前进程内为每个活跃人格创建一个 `PersonaWorker` 并作为 asyncio 任务运行，
-WebUI 与 NapCat 则以后台子进程运行，不再弹出独立控制台窗口。日志可在 WebUI 的 **实时日志**
-页面查看。停止主进程会触发统一清理流程，终止后台 WebUI 以及所有运行中的人格。
+WebUI 也在同一进程内启动；仅当单独执行 `sirius-pulse webui` 时，WebUI 才以后台子进程方式运行。
+NapCat 需自行部署，框架通过正向 WebSocket 连接。日志可在 WebUI 的 **实时日志** 页面查看。
+停止主进程会触发统一清理流程，终止后台 WebUI 以及所有运行中的人格。
 
 ```bash
 sirius-pulse run              # 启动所有已配置人格 + WebUI
@@ -306,8 +306,6 @@ from sirius_pulse.token import TokenUsageStore
 store = TokenUsageStore(Path("data/token"))
 report = store.full_report("2026-01-01", "2026-06-01")
 ```
-
-更多示例见 [`examples/`](examples/) 目录。
 
 ---
 

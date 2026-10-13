@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Sirius Pulse (灵动月白) is an async roleplay chat framework for QQ group chats. It runs multiple AI personas, each with independent config, memory, and QQ identity. The core engine uses a 5-stage pipeline (Perception → Cognition → Decision → Execution → Background) with layered memory (basic/memory_units/semantic/user).
+Sirius Pulse (灵动月白) is an async roleplay chat framework for QQ group chats. It runs multiple AI personas, each with independent config, memory, and QQ identity. The core engine uses a 5-stage pipeline (Perception → Signal → PreFilter → Generate → BackgroundUpdate) with layered memory (basic/memory_units/semantic/user).
 
 All LLM traffic goes through **AMKR** (`auto-model-key-router`), an external local OpenAI-compatible router that owns vendors, API key pools, model selection and sampling parameters. Sirius Pulse sends **task names** (e.g. `response_generate`, `memory_extract`) as the `model` field and AMKR resolves them into real models.
 
