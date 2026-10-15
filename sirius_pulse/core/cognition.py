@@ -430,10 +430,14 @@ class CognitionAnalyzer:
         if not images or self.provider_async is None:
             return ""
 
-        for item in images:
-            cache_key = self._image_cache_key(str(item.get("value", "")))
-            if cache_key and cache_key in self._image_caption_cache:
-                return self._image_caption_cache[cache_key]
+        cached = [
+            self._image_caption_cache.get(self._image_cache_key(str(item.get("value", ""))), "")
+            for item in images
+        ]
+        if all(cached):
+            # 只有整条消息的图片都命中缓存才复用描述：一张没命中就得让读图模型
+            # 重看整条消息，否则新图会顶着旧图那句描述进历史（缓存键是图片内容）。
+            return "；".join(dict.fromkeys(cached))
 
         from sirius_pulse.providers.base import GenerationRequest
 

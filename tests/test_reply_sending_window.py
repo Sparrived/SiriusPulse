@@ -348,14 +348,15 @@ async def test_engine_when_work_mode_messages_were_shown_then_they_are_not_queue
     assert engine.delayed_queue.get_pending("group-1") == []
 
 
-def test_engine_tool_chain_injection_requires_explicit_persona_mention():
+@pytest.mark.asyncio
+async def test_engine_tool_chain_injection_requires_explicit_persona_mention():
     engine, _, _ = _engine_for_sending_window()
     engine._active_tool_chain_groups = set()
     engine._tool_chain_messages = {}
     engine.begin_tool_chain("group-1")
 
     assert (
-        engine.inject_tool_chain_message(
+        await engine.inject_tool_chain_message(
             Message(role="user", content="普通群聊文本", speaker="Alice"),
             [SimpleNamespace(is_developer=False)],
             "group-1",
@@ -363,7 +364,7 @@ def test_engine_tool_chain_injection_requires_explicit_persona_mention():
         is False
     )
     assert (
-        engine.inject_tool_chain_message(
+        await engine.inject_tool_chain_message(
             Message(role="user", content="月白看这里", speaker="Alice"),
             [SimpleNamespace(is_developer=False)],
             "group-1",
@@ -371,7 +372,7 @@ def test_engine_tool_chain_injection_requires_explicit_persona_mention():
         is True
     )
     assert (
-        engine.inject_tool_chain_message(
+        await engine.inject_tool_chain_message(
             Message(role="user", content="Luna 也确认一下", speaker="Alice"),
             [SimpleNamespace(is_developer=False)],
             "group-1",
@@ -379,7 +380,7 @@ def test_engine_tool_chain_injection_requires_explicit_persona_mention():
         is True
     )
     assert (
-        engine.inject_tool_chain_message(
+        await engine.inject_tool_chain_message(
             Message(
                 role="user",
                 content="再看一下",
@@ -411,12 +412,15 @@ async def test_napcat_injects_explicit_group_text_before_normal_processing():
         nickname="Alice",
     )
     injected: list[Message] = []
+
+    async def inject(message, participants, group_id):
+        injected.append(message)
+        return True
+
     adapter._engine = SimpleNamespace(
         is_ready=lambda: True,
         is_tool_chain_active=lambda group_id: group_id == "100",
-        inject_tool_chain_message=lambda message, participants, group_id: (
-            injected.append(message) or True
-        ),
+        inject_tool_chain_message=inject,
     )
 
     async def fake_parse_event(event):

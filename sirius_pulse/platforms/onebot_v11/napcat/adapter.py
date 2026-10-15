@@ -1634,7 +1634,7 @@ class NapCatAdapter(BaseAdapter):
             sender_type="other_ai" if is_peer_ai else "human",
             mentions_current_bot=mentions_current_bot,
         )
-        if not inject(message, [participant], group_id):
+        if not await inject(message, [participant], group_id):
             return False
         event["_sirius_tool_chain_injected"] = True
         LOG.info("[工具链] 注入群聊文本: group=%s sender=%s", group_id, uid)
@@ -1786,7 +1786,7 @@ class NapCatAdapter(BaseAdapter):
             observe = getattr(self._engine, "observe_message", None)
             if callable(observe):
                 if not bool(event.get("_sirius_peer_transcript_recorded")):
-                    observe(message, [participant], group_id)
+                    await observe(message, [participant], group_id)
                     event["_sirius_peer_transcript_recorded"] = True
                 message.transcript_recorded = True
 
@@ -1852,7 +1852,7 @@ class NapCatAdapter(BaseAdapter):
                     return False
                 observe = getattr(self._engine, "observe_message", None)
                 if callable(observe) and not message.transcript_recorded:
-                    observe(message, [participant], group_id)
+                    await observe(message, [participant], group_id)
                 LOG.info(
                     "[群调度] observe group=%s worker=%s selected=%s reason=%s",
                     group_id,

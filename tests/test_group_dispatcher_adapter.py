@@ -23,7 +23,7 @@ class _Engine:
         self.processed_participants.append(participants)
         return {"strategy": "silent", "reply": None}
 
-    def observe_message(self, message, participants, group_id):
+    async def observe_message(self, message, participants, group_id):
         self.observed.append(message.speaker or "")
 
 

@@ -55,6 +55,20 @@ logger = logging.getLogger(__name__)
 _CURRENT_ADAPTER_TYPE: ContextVar[str] = ContextVar("sirius_current_adapter_type", default="")
 
 
+def _entry_carries_image(entry: Any, values: set[str]) -> bool:
+    """条目里是否带着这批图片。
+
+    读图描述属于图片本身（缓存键就是图片内容哈希），所以写回目标该由「哪条记忆
+    带着这张图」决定，而不是「谁是最后一条」——消息已经记录过（群调度重试）或
+    已滑出窗口时，按位置回落等于把别人的消息改成这张图的描述。
+    """
+    return any(
+        str(item.get("value", "")) in values
+        for item in (entry.multimodal_inputs or [])
+        if item.get("type") == "image"
+    )
+
+
 class _EmotionalGroupChatEngineBase:
     """Next-generation engine for emotional group chat."""
 
@@ -1329,7 +1343,7 @@ class _EmotionalGroupChatEngineBase:
         """Return whether a group currently accepts mid-chain text."""
         return str(group_id or "").strip() in self._active_tool_chain_groups
 
-    def inject_tool_chain_message(
+    async def inject_tool_chain_message(
         self,
         message: Message,
         participants: list[UnifiedUser],
@@ -1347,6 +1361,9 @@ class _EmotionalGroupChatEngineBase:
             return False
 
         self._perception(group_id, message, participants)
+        # 这条消息不进 process_message / observe_message，读图描述只能在这里补，
+        # 否则工具链窗口里发来的表情包同样只剩「动画表情」。
+        await self._caption_message_images(group_id, message)
         message.transcript_recorded = True
         self._tool_chain_messages.setdefault(group_id, []).append(message)
         self._log_inner_thought(f"{message.speaker or '有人'} 在工具链中点名我，加入下一轮上下文～")
@@ -1509,7 +1526,7 @@ class _EmotionalGroupChatEngineBase:
             "is_mentioned": is_mentioned,
         }
 
-    def observe_message(
+    async def observe_message(
         self,
         message: Message,
         participants: list[UnifiedUser],
@@ -1518,6 +1535,72 @@ class _EmotionalGroupChatEngineBase:
         """Record a group message without running cognition or generation."""
         self._current_adapter_type = message.adapter_type or ""
         self._perception(group_id, message, participants)
+        await self._caption_message_images(group_id, message)
+
+    async def _caption_message_images(self, group_id: str, message: Message) -> str:
+        """给刚落进基础记忆的消息补读图描述，并写回条目与消息本身。
+
+        表情包不进视觉通道（``sub_type == "1"`` 在生成前被过滤），模型对它
+        唯一的可见通道就是历史 XML 里的 caption，所以描述必须跟着「消息被
+        记录」走：只放在纯图片分支里，排队合并、未拿到调度租约、图文同条这几
+        条路径的表情包就永远只有一句默认的「动画表情」。
+        """
+        inputs = [
+            item
+            for item in (message.multimodal_inputs or [])
+            if item.get("type") == "image" and str(item.get("value", "")).strip()
+        ]
+        if not inputs:
+            return ""
+
+        has_sticker = any(item.get("sub_type") == "1" for item in inputs)
+        caption = await self.cognition_analyzer.describe_image(inputs, is_sticker=has_sticker)
+        if not caption:
+            # 描述为空时历史里只会剩默认的「动画表情」，模型只能瞎猜；这类静默
+            # 退化（读图模型没绑、超时、返回空）必须留痕才能被发现。
+            logger.warning(
+                "读图描述为空，图片只能以默认占位进历史: group=%s images=%d",
+                group_id,
+                len(inputs),
+            )
+            return ""
+        for item in inputs:
+            item["caption"] = caption
+
+        entries = self.basic_memory.get_all(group_id)
+        entry = None
+        if message.message_id:
+            # 消息已经记录过（例如群调度重试）时它不再是最后一条，按平台消息号
+            # 找回自己的条目。
+            entry = next(
+                (
+                    candidate
+                    for candidate in reversed(entries)
+                    if candidate.platform_message_id == message.message_id
+                ),
+                None,
+            )
+        if entry is None:
+            values = {str(item.get("value", "")) for item in inputs}
+            entry = next((c for c in reversed(entries) if _entry_carries_image(c, values)), None)
+        if entry is None:
+            # 找不到这条记忆（不在窗口里）就只更新消息本身：下面的取图/视觉通道
+            # 仍然拿得到描述，而任何别人的消息都不会被改写。
+            return caption
+        for item in entry.multimodal_inputs or []:
+            if item.get("type") == "image":
+                item["caption"] = caption
+        if not self._is_pure_image_message(message.content):
+            # 图文同条时用户正文是有效信息，不能被描述覆盖。
+            return caption
+        if not has_sticker:
+            entry.content = f"[图片] [图片描述：{caption}]"
+            return caption
+        # 动画表情：去掉无意义的文件哈希，替换为描述
+        stripped = re.sub(r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)", "", entry.content or "").strip()
+        sticker_tag = f"[动画表情：{caption}]"
+        entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
+        return caption
 
     async def process_message(
         self,
@@ -1541,6 +1624,9 @@ class _EmotionalGroupChatEngineBase:
 
         # 1. Perception (resolves stable user_id for the sender)
         user_id = self._perception(group_id, message, participants)
+        # 读图描述紧跟记录发生：下面的任一短路（合并/丢弃/插件/静默）都不会
+        # 再回到这条消息，而表情包只能靠描述被模型看见。
+        await self._caption_message_images(group_id, message)
         speaker = message.speaker or "有人"
 
         # 多 AI 互动抑制：其他 AI 发言且未 @ 自己时
@@ -1673,80 +1759,21 @@ class _EmotionalGroupChatEngineBase:
                         "intent": {},
                     }
 
-        # Pure image message (no substantive text) -> generate caption via cognition,
-        # save to context, but skip decision/execution. The later text message will
-        # pull the caption from basic memory via XML history.
+        # Pure image message (no substantive text) -> the caption was already
+        # generated and written back at record time; skip decision/execution.
+        # The later text message pulls that caption from basic memory XML.
         if message.multimodal_inputs and self._is_pure_image_message(message.content):
             has_sticker = any(m.get("sub_type") == "1" for m in (message.multimodal_inputs or []))
             label = "动画表情" if has_sticker else "图片"
-
-            # 优化：对于纯动画表情消息，如果已有缓存，直接使用缓存的caption，
-            # 跳过 _cognition() 调用，避免不必要的LLM意图识别
-            cached_sticker_caption = ""
-            if has_sticker:
-                for m in message.multimodal_inputs or []:
-                    if m.get("type") == "image" and m.get("sub_type") == "1":
-                        path = str(m.get("value", ""))
-                        cache_key = self.cognition_analyzer._image_cache_key(path)
-                        cache = self.cognition_analyzer._image_caption_cache
-                        if cache_key and cache_key in cache:
-                            cached_sticker_caption = cache[cache_key]
-                            break
-
-            if cached_sticker_caption:
-                # 缓存命中：直接使用缓存的caption，跳过_cognition()
-                self._log_inner_thought(f"{speaker} 发了一张{label}，缓存命中，直接记录～")
-                caption = cached_sticker_caption
-                recent = self.basic_memory.get_context(group_id, n=1)
-                if recent:
-                    last_entry = recent[0]
-                    # 动画表情：去掉无意义的文件哈希，替换为描述
-                    stripped = re.sub(
-                        r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)",
-                        "",
-                        last_entry.content or "",
-                    ).strip()
-                    sticker_tag = f"[动画表情：{caption}]"
-                    last_entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
-                    if last_entry.multimodal_inputs:
-                        for m in last_entry.multimodal_inputs:
-                            if m.get("type") == "image":
-                                m["caption"] = caption
-                return {
-                    "strategy": "silent",
-                    "reply": None,
-                    "emotion": {},
-                    "intent": {},
-                }
-
-            self._log_inner_thought(f"{speaker} 发了一张{label}，我先默默记下来～")
-            caption = await self.cognition_analyzer.describe_image(
-                message.multimodal_inputs,
-                is_sticker=has_sticker,
+            caption = next(
+                (
+                    str(m.get("caption") or "")
+                    for m in message.multimodal_inputs
+                    if m.get("type") == "image" and m.get("caption")
+                ),
+                "",
             )
-            # 回写图片/表情描述到 basic_memory
-            # 优先使用 sticker_caption（动画表情缓存），否则使用 image_caption
-            if caption:
-                recent = self.basic_memory.get_context(group_id, n=1)
-                if recent:
-                    last_entry = recent[0]
-                    if has_sticker:
-                        # 动画表情：去掉无意义的文件哈希，替换为描述
-                        stripped = re.sub(
-                            r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)",
-                            "",
-                            last_entry.content or "",
-                        ).strip()
-                        sticker_tag = f"[动画表情：{caption}]"
-                        last_entry.content = (
-                            f"{stripped} {sticker_tag}" if stripped else sticker_tag
-                        )
-                    else:
-                        last_entry.content = f"[图片] [图片描述：{caption}]"
-                    if last_entry.multimodal_inputs:
-                        for m in last_entry.multimodal_inputs:
-                            if m.get("type") == "image":
-                                m["caption"] = caption
+            self._log_inner_thought(f"{speaker} 发了一张{label}，我先默默记下来～")
             return {
                 "strategy": "silent",
                 "reply": None,

@@ -185,6 +185,27 @@ class DelayedQueueTasks:
             logger.debug("外部投递回执写入失败: %s", exc)
 
     @staticmethod
+    def _tool_chain_message_text(message: Any) -> str:
+        """点名消息的注入文本：图片/表情包带上读图描述。
+
+        描述写在 ``multimodal_inputs`` 上（历史 XML 取的就是它），而工具链当轮注入
+        用的是 ``content`` 原文——纯图片消息的原文只有一个文件名哈希，模型在这一轮
+        看不出内容，要等下一轮重建 XML 才知道。
+        """
+        text = str(getattr(message, "content", "") or "")
+        images = [
+            item
+            for item in (getattr(message, "multimodal_inputs", None) or [])
+            if item.get("type") == "image"
+        ]
+        captions = [str(item.get("caption", "")).strip() for item in images]
+        caption = "；".join(dict.fromkeys(c for c in captions if c))
+        if not caption or caption in text:
+            return text
+        tag = "动画表情" if any(item.get("sub_type") == "1" for item in images) else "图片描述"
+        return f"{text} [{tag}：{caption}]".strip()
+
+    @staticmethod
     def _append_tool_chain_messages(
         engine: Any,
         messages: list[dict[str, Any]],
@@ -201,7 +222,7 @@ class DelayedQueueTasks:
                 {
                     "role": "user",
                     "content": PromptFactory.tag_message(
-                        str(getattr(message, "content", "") or ""),
+                        DelayedQueueTasks._tool_chain_message_text(message),
                         speaker=str(getattr(message, "speaker", "") or ""),
                         user_id=str(getattr(message, "channel_user_id", "") or ""),
                         platform_message_id=str(getattr(message, "message_id", "") or ""),
