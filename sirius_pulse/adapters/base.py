@@ -118,13 +118,17 @@ class BaseAdapter(ABC):
             if cache_path.exists():
                 return str(cache_path)
             cache_path.write_bytes(data)
-            (cache_dir / f"{content_hash}{ext}.url").write_text(url, encoding="utf-8")
+            if not is_sticker:
+                # 表情包原图是临时物（读图结束就删，见 engine 的 _discard_sticker_files），
+                # 给它留 URL 侧车只会变成一地垃圾文件；普通图片保留 URL 便于排查来源。
+                (cache_dir / f"{content_hash}{ext}.url").write_text(url, encoding="utf-8")
         except OSError as exc:
             logger.warning("图片写入缓存失败: %s | %s", exc, url[:80])
             return ""
 
-        if not is_sticker:
-            await self._cleanup_cache(cache_dir, max_files=200)
+        # 兜底保留上限：正常情况下表情包原图已被引擎删掉，这里只清理异常路径
+        # （进程在删除前退出等）留下的孤儿文件。
+        await self._cleanup_cache(cache_dir, max_files=200)
         return str(cache_path)
 
     def _downscale_image_bytes(

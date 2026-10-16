@@ -69,6 +69,22 @@ def _entry_carries_image(entry: Any, values: set[str]) -> bool:
     )
 
 
+def _image_input_available(value: str) -> bool:
+    """这个图片输入现在还能读吗。
+
+    本地路径必须还在：传输层遇到不存在的本地文件会**静默跳过**该图片，模型只剩
+    一句「请识别这条消息里的图片」的文字提示，然后凭空写出一句描述进历史。表情包
+    原图读完即删（只留描述），所以过期的路径不能再送去读图。判定复用传输层自己的
+    解析函数，``file://`` 与 ``~`` 因此和真正发送时的理解完全一致。
+    """
+    from sirius_pulse.providers.base import _resolve_local_file_reference
+
+    if value.lower().startswith(("http://", "https://", "data:")):
+        # 网络地址由上游自己取，本地无从探测，按可用放行。
+        return True
+    return _resolve_local_file_reference(value) is not None
+
+
 class _EmotionalGroupChatEngineBase:
     """Next-generation engine for emotional group chat."""
 
@@ -222,6 +238,7 @@ class _EmotionalGroupChatEngineBase:
             ai_aliases=self.persona.aliases,
             persona=self.persona,
             plugin_registry=None,  # 后续由 set_plugin_runtime 注入（v1.2+）
+            work_path=self.work_path,
         )
 
     def _init_decision_layer(self) -> None:
@@ -1553,8 +1570,28 @@ class _EmotionalGroupChatEngineBase:
         if not inputs:
             return ""
 
+        already = [str(item.get("caption", "")).strip() for item in inputs]
+        if all(already):
+            # 同一条消息被重复处理（群调度重试）时描述已经在手上：表情包原图此刻
+            # 已被删掉，重读只会拿到空描述、白烧一次调用。
+            self._discard_sticker_files(inputs)
+            return "；".join(dict.fromkeys(already))
+
+        inputs = [item for item in inputs if _image_input_available(str(item.get("value", "")))]
+        if not inputs:
+            # 本地图片已经不在了（表情包读完即删）又没有可复用的描述：没有可读的
+            # 东西。硬送进视觉通道会被传输层静默丢弃，模型只看到文字提示，然后
+            # 凭提示编出一句描述写进历史。
+            return ""
+
         has_sticker = any(item.get("sub_type") == "1" for item in inputs)
-        caption = await self.cognition_analyzer.describe_image(inputs, is_sticker=has_sticker)
+        try:
+            caption = await self.cognition_analyzer.describe_image(inputs, is_sticker=has_sticker)
+        finally:
+            # 表情包只留「内容哈希 + 描述」：视觉通道在生成前就按 sub_type 过滤掉了
+            # 表情包，历史 XML 取的是 caption，所以读图一结束原图就没有任何读者。
+            # 留在磁盘上只会让它无限堆积（线上曾攒到 639MB / 1524 张）。
+            self._discard_sticker_files(inputs)
         if not caption:
             # 描述为空时历史里只会剩默认的「动画表情」，模型只能瞎猜；这类静默
             # 退化（读图模型没绑、超时、返回空）必须留痕才能被发现。
@@ -1601,6 +1638,32 @@ class _EmotionalGroupChatEngineBase:
         sticker_tag = f"[动画表情：{caption}]"
         entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
         return caption
+
+    def _discard_sticker_files(self, inputs: list[dict[str, str]]) -> None:
+        """删掉本次消息里表情包的原图，只留描述（普通图片不受影响）。
+
+        只处理 ``sub_type == "1"`` 且确实落在自己缓存目录里的文件：data 地址、
+        外链、以及用户自己放进 ``stickers/`` 的表情包都不能碰。
+        """
+        work_path = getattr(self, "work_path", None)
+        if work_path is None:
+            # 只挂了一部分属性的引擎实例（测试里的 object.__new__ 用法）没有缓存目录。
+            return
+        sticker_dir = Path(work_path) / "sticker_cache"
+        for item in inputs:
+            if item.get("sub_type") != "1":
+                continue
+            value = str(item.get("value", "")).strip()
+            if not value:
+                continue
+            path = Path(value)
+            if path.parent != sticker_dir:
+                continue
+            for target in (path, path.parent / f"{path.name}.url"):
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning("表情包原图删除失败: %s | %s", exc, target)
 
     async def process_message(
         self,
