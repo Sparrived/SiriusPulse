@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -373,6 +374,7 @@ class CognitionAnalyzer:
         persona: Any | None = None,
         plugin_registry: Any | None = None,  # Plugin 注册表（v1.2+）
         brain: Any | None = None,  # Brain 实例（用于统一 LLM 调用）
+        work_path: Any | None = None,  # 人格工作目录（表情包描述落盘用）
     ) -> None:
         self.lexicon = lexicon or dict(_DEFAULT_LEXICON)
         self.provider_async = provider_async
@@ -382,6 +384,7 @@ class CognitionAnalyzer:
         self.persona = persona
         self.plugin_registry = plugin_registry  # Plugin 注册表引用（v1.2+）
         self.brain = brain  # Brain LLM 交互中枢（v1.2+）
+        self._work_path = Path(work_path) if work_path else None
 
         # Expose the last GenerationRequest for token recording
         self._last_request: Any | None = None
@@ -395,24 +398,74 @@ class CognitionAnalyzer:
         self.group_activity_history: dict[str, list[tuple[float, float]]] = {}
         self.user_response_prefs: dict[str, dict[str, Any]] = {}
         self._image_caption_cache: dict[str, str] = {}
+        # 表情包的原图用完即删（历史 XML 取 caption，视觉通道按 sub_type 过滤），
+        # 描述因此必须落盘，否则重启后同一张表情包会被重新读一遍图。
+        self._sticker_caption_store: dict[str, str] = self._load_sticker_captions()
+        self._image_caption_cache.update(self._sticker_caption_store)
+
+    def _sticker_captions_path(self) -> Path | None:
+        """表情包描述落盘位置；没有 work_path（测试、嵌入用法）时不落盘。"""
+        if self._work_path is None:
+            return None
+        return self._work_path / "sticker_captions.json"
+
+    def _load_sticker_captions(self) -> dict[str, str]:
+        """读取「图片内容哈希 → 描述」。文件缺失或损坏都按空缓存继续，不影响启动。"""
+        path = self._sticker_captions_path()
+        if path is None or not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("表情包描述缓存读取失败，按空缓存继续: %s | %s", path, exc)
+            return {}
+        if not isinstance(payload, dict):
+            logger.warning("表情包描述缓存格式异常，按空缓存继续: %s", path)
+            return {}
+        return {
+            str(key): str(value).strip()
+            for key, value in payload.items()
+            if str(key) and str(value).strip()
+        }
+
+    def _save_sticker_captions(self) -> None:
+        """原子写出描述缓存：先写同目录临时文件再 replace，避免半截 JSON。"""
+        path = self._sticker_captions_path()
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.parent / f"{path.name}.tmp"
+            tmp.write_text(
+                json.dumps(self._sticker_caption_store, ensure_ascii=False, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.replace(tmp, path)
+        except OSError as exc:
+            logger.warning("表情包描述缓存写入失败: %s | %s", path, exc)
 
     def _image_cache_key(self, path: str) -> str:
         """Return a stable cache key for an image path or URL."""
         value = str(path or "").strip()
         if not value:
             return ""
-        if value.startswith(("http://", "https://", "file://", "data:")):
-            return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
-        file_path = Path(value)
-        try:
-            if file_path.exists() and file_path.is_file():
-                digest = hashlib.sha256()
-                with file_path.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                return digest.hexdigest()
-        except OSError:
-            pass
+        if not value.lower().startswith(("http://", "https://", "data:")):
+            # 本地引用（普通路径、~/、file://）一律按**内容**取键：同一张图以本地路径
+            # 和 file:// 两种形式到达时才认得出来是同一张——这个键会写进持久化的表情
+            # 包描述库，键形式不一致等于给同一张图留两条账。解析复用传输层，跟真正
+            # 发送时的理解保持一致；文件不在时退回按字符串取键（见下方兜底）。
+            from sirius_pulse.providers.base import _resolve_local_file_reference
+
+            file_path = _resolve_local_file_reference(value)
+            if file_path is not None:
+                try:
+                    digest = hashlib.sha256()
+                    with file_path.open("rb") as handle:
+                        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    return digest.hexdigest()
+                except OSError:
+                    pass
         return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()
 
     async def describe_image(
@@ -472,6 +525,10 @@ class CognitionAnalyzer:
             cache_key = self._image_cache_key(str(item.get("value", "")))
             if cache_key:
                 self._image_caption_cache[cache_key] = caption
+                if is_sticker:
+                    self._sticker_caption_store[cache_key] = caption
+        if is_sticker:
+            self._save_sticker_captions()
         return caption
 
     # ------------------------------------------------------------------
