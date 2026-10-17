@@ -206,7 +206,8 @@ async def test_work_mode_when_send_midway_msg_then_group_sees_it_and_work_contin
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
-    assert partials == ["进展：名单列完了，人数对吗？"]
+    # 进入轮模型没写正文，框架补一句进展；随后的 send_midway_msg 照常送达。
+    assert partials == ["收到，开始处理：核对名单", "进展：名单列完了，人数对吗？"]
     assert results[0]["reply"] == "核对完成"
     midway_tool_messages = [
         message["content"]

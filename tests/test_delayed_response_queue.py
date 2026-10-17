@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -1658,3 +1659,331 @@ async def test_delayed_queue_when_group_file_action_is_local_then_records_no_rec
     await tasks.tick_delayed_queue("group-1")
 
     assert delivered == []
+
+
+def _work_mode_item(queue, message: str = "do the work"):
+    item = queue.enqueue("group-1", "u1", message, _decision(ResponseStrategy.IMMEDIATE))
+    item.enqueue_time = _past(item.window_seconds + 1)
+    return item
+
+
+def _work_mode_tasks(queue, chat, work_path):
+    """工作模式 harness：enter/quit 由循环直接处理，轨迹需要真实 work_path 落盘。"""
+    delivered: list[dict[str, object]] = []
+    profile = SimpleNamespace(name="Alice", is_developer=False)
+    engine = SimpleNamespace(
+        config={"max_tool_rounds": 4, "partial_reply_lead_seconds": 0},
+        delayed_queue=queue,
+        work_path=work_path,
+        _helpers=SimpleNamespace(
+            get_recent_messages=lambda group_id, n: [],
+            inject_multimodal_into_user_message=lambda messages, inputs: messages,
+        ),
+        rhythm_analyzer=SimpleNamespace(analyze=lambda group_id, recent: SimpleNamespace()),
+        identity_resolver=SimpleNamespace(
+            resolve_with_alias=lambda ctx, user_manager, group_id, **kwargs: SimpleNamespace(
+                user_id="u1"
+            )
+        ),
+        user_manager=SimpleNamespace(
+            get_user=lambda user_id, group_id: profile,
+            entries={"group-1": {"u1": profile}},
+        ),
+        semantic_memory=SimpleNamespace(
+            get_user_profile=lambda group_id, user_id: SimpleNamespace(engagement_rate=1.0)
+        ),
+        context_assembler=SimpleNamespace(
+            build_messages_with_breakdown=lambda **kwargs: (
+                [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": "do the work"},
+                ],
+                {},
+            )
+        ),
+        brain=SimpleNamespace(chat=chat),
+        _tool_registry=None,
+        _tool_executor=None,
+        _adapter=SimpleNamespace(),
+        _sticker_names=[],
+        _log_inner_thought=lambda text: None,
+        event_bus=SimpleNamespace(emit=AsyncMock()),
+        begin_work_mode=lambda group_id, run: None,
+        end_work_mode=lambda group_id: None,
+        _record_assistant_message=lambda **kwargs: delivered.append(kwargs),
+    )
+    tasks = DelayedQueueTasks(engine)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system",
+        user_content="do the work",
+        token_breakdown=None,
+        dynamic_context="",
+    )
+    return tasks, engine, delivered
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_work_mode_result_is_rich_then_sends_image(tmp_path, monkeypatch):
+    """quit_work_mode 的 result 是富文本时，也要整段转图片而不是拆成多条文本。"""
+    queue = DelayedResponseQueue()
+    _work_mode_item(queue)
+    markdown = "# 完成情况\n- 已完成 A\n- 未完成 B"
+    tasks, engine, delivered = _work_mode_tasks(
+        queue,
+        AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    raw_text="",
+                    clean_text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            function_name="enter_work_mode",
+                            function_arguments='{"goal": "整理结果"}',
+                        )
+                    ],
+                    reply_references=[],
+                ),
+                SimpleNamespace(
+                    raw_text="",
+                    clean_text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            function_name="quit_work_mode",
+                            function_arguments=json.dumps({"result": markdown}, ensure_ascii=False),
+                        )
+                    ],
+                    reply_references=[],
+                    injected_request={"system_prompt": "sys", "messages": [], "tools": []},
+                ),
+            ]
+        ),
+        tmp_path,
+    )
+    rendered: list[dict[str, object]] = []
+
+    async def send_rich_reply(content_arg: str, *, adapter, group_id: str, title: str = ""):
+        rendered.append(
+            {"content": content_arg, "adapter": adapter, "group_id": group_id, "title": title}
+        )
+        return {"image_message_id": "42", "forward_message_id": "77"}
+
+    monkeypatch.setattr(
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        send_rich_reply,
+    )
+
+    results = await tasks.tick_delayed_queue("group-1")
+
+    assert [entry["content"] for entry in rendered] == [markdown]
+    assert rendered[0]["adapter"] is engine._adapter
+    assert results[0]["reply"] == ""
+    assert delivered == [
+        {
+            "group_id": "group-1",
+            "target_user_id": "u1",
+            "content": markdown,
+            "system_prompt": "",
+            "tags": [{"type": "image", "label": "富文本卡片"}],
+            "injected_request": {"system_prompt": "sys", "messages": [], "tools": []},
+            "injected_tool_names": [],
+            "platform_message_id": "42",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "render_error",
+    [
+        ValueError("content 过长"),
+        RuntimeError("browser closed"),
+        # Playwright 的渲染/超时异常只继承 Exception，不能被漏掉。
+        Exception("playwright error"),
+    ],
+    ids=["value-error", "runtime-error", "generic-error"],
+)
+async def test_delayed_queue_when_work_mode_result_render_fails_then_keeps_text(
+    tmp_path, monkeypatch, render_error
+):
+    """工作模式结果的图片渲染失败时，原文按文本发出，并按文本补记历史。"""
+    queue = DelayedResponseQueue()
+    _work_mode_item(queue)
+    markdown = "# 完成情况\n- 已完成 A\n- 未完成 B"
+    tasks, _engine, delivered = _work_mode_tasks(
+        queue,
+        AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    raw_text="",
+                    clean_text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            function_name="enter_work_mode",
+                            function_arguments='{"goal": "整理结果"}',
+                        )
+                    ],
+                    reply_references=[],
+                ),
+                SimpleNamespace(
+                    raw_text="",
+                    clean_text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            function_name="quit_work_mode",
+                            function_arguments=json.dumps({"result": markdown}, ensure_ascii=False),
+                        )
+                    ],
+                    reply_references=[],
+                ),
+            ]
+        ),
+        tmp_path,
+    )
+
+    async def fail_to_render(*args, **kwargs):
+        raise render_error
+
+    monkeypatch.setattr(
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        fail_to_render,
+    )
+
+    results = await tasks.tick_delayed_queue("group-1")
+
+    assert results[0]["reply"] == markdown
+    # 文本回退也要进历史：hook 已因「可能转图片」让位，不能两边都不记。
+    assert len(delivered) == 1
+    assert delivered[0]["content"] == markdown
+    assert "tags" not in delivered[0]
+    assert "platform_message_id" not in delivered[0]
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_entering_work_mode_then_sends_round_text_and_reminds_silence(
+    tmp_path,
+):
+    """进入轮正文照常外发；正文为空时框架补一句进展，并提醒她可以先用 send_midway_msg。"""
+
+    async def run(entry_text: str):
+        queue = DelayedResponseQueue()
+        _work_mode_item(queue)
+        requests = []
+
+        async def capture_chat(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return SimpleNamespace(
+                    raw_text=entry_text,
+                    clean_text=entry_text,
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            function_name="enter_work_mode",
+                            function_arguments='{"goal": "查资料"}',
+                        )
+                    ],
+                    reply_references=[],
+                )
+            return SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        function_name="quit_work_mode",
+                        function_arguments='{"result": "做完了"}',
+                    )
+                ],
+                reply_references=[],
+            )
+
+        tasks, _engine, _delivered = _work_mode_tasks(queue, capture_chat, tmp_path)
+        partials: list[str] = []
+
+        async def capture_partial(text: str) -> None:
+            partials.append(text)
+
+        results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
+        return partials, requests, results
+
+    def enter_tool_message(requests) -> str:
+        return next(
+            message["content"]
+            for message in requests[1].messages
+            if message["role"] == "tool" and "已进入工作模式" in message["content"]
+        )
+
+    partials, requests, results = await run("我先查一下资料。")
+
+    assert partials == ["我先查一下资料。"]
+    assert results[0]["reply"] == "做完了"
+    assert "这一轮你没有对群里说话" not in enter_tool_message(requests)
+
+    silent_partials, silent_requests, _ = await run("")
+
+    assert silent_partials == ["收到，开始处理：查资料"]
+    assert "先用 send_midway_msg 简短说明你在做什么" in enter_tool_message(silent_requests)
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_max_round_fallback_reply_is_rich_then_sends_image(monkeypatch):
+    """轮次上限兜底补出的最终回复同样可能带排版结构，也要走图片通道。"""
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "check status",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    markdown = "# 检查结果\n- 第一项正常\n- 第二项失败"
+    tool_call = ToolCall(
+        id="call-1",
+        function_name="lookup",
+        function_arguments='{"query": "status"}',
+    )
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="lookup", silent=False, developer_only=False, retry_safe=False),
+        [
+            SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[tool_call],
+                reply_references=[],
+            ),
+            SimpleNamespace(
+                raw_text=markdown,
+                clean_text=markdown,
+                tool_calls=[],
+                reply_references=[],
+                injected_request={},
+            ),
+        ],
+        AsyncMock(return_value=ToolResult(success=True, data={"ok": True})),
+        max_tool_rounds=0,
+    )
+    engine._adapter = SimpleNamespace()
+    rendered: list[str] = []
+
+    async def send_rich_reply(content_arg: str, *, adapter, group_id: str, title: str = ""):
+        rendered.append(content_arg)
+        return {"image_message_id": "55", "forward_message_id": "66"}
+
+    monkeypatch.setattr(
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        send_rich_reply,
+    )
+    delivered: list[dict[str, object]] = []
+    engine._record_assistant_message = lambda **kwargs: delivered.append(kwargs)
+
+    results = await tasks.tick_delayed_queue("group-1")
+
+    assert rendered == [markdown]
+    assert results[0]["reply"] == ""
+    assert delivered[0]["tags"] == [{"type": "image", "label": "富文本卡片"}]
+    assert delivered[0]["platform_message_id"] == "55"

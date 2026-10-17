@@ -60,7 +60,10 @@ _ENTER_TOOL: dict[str, Any] = {
         "description": (
             "进入工作模式去完成一个需要多步工具协作的任务。"
             "只有工作模式里才能使用 bash、read_skill、workflow_state、group_file_exec。"
-            "进入后你输出的正文不会发给任何人，只有工具结果和 send_midway_msg 有效。"
+            "调用 enter_work_mode 的这一轮仍按普通回合处理，这一轮正文会正常发到群里，"
+            "所以先用一句话说明你要做什么，再调用 enter_work_mode；"
+            "真正进入之后的后续轮次正文才不会被发送，"
+            "只有工具结果和 send_midway_msg 有效。"
             "任务完成、或者卡住需要外部帮助时，用 quit_work_mode 退出。"
         ),
         "parameters": {

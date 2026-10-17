@@ -227,7 +227,9 @@ class PromptFactory:
             items.append(
                 "需要动手完成一个任务时，先调用 enter_work_mode 进入工作模式："
                 "只有工作模式里才能使用 bash、read_skill、workflow_state、group_file_exec 这些重工具。"
-                "工作模式里你输出的正文不会被发送给任何人，"
+                "调用 enter_work_mode 的那一轮仍然按普通回合处理：这一轮的正文会正常发到群里，"
+                "所以先用一句话告诉群里你准备做什么，再调用 enter_work_mode。"
+                "真正进入工作模式之后（后续轮次）你输出的正文才不会被发送给任何人，"
                 "只有工具执行结果、以及用 send_midway_msg 发出的内容才会对外产生效果——"
                 "想让人看到什么，就必须用 send_midway_msg 发出去。"
                 "任务途中有重要里程碑、需要对外确认、或者有疑问要向外界提问时，都用 send_midway_msg。"

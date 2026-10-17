@@ -7,6 +7,7 @@ from sirius_pulse.core.prompt_factory import (
     PromptFactory,
     StyleAdapter,
 )
+from sirius_pulse.core.work_mode import control_tools
 from sirius_pulse.memory.basic import BasicMemoryManager
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.models.persona import PersonaProfile
@@ -140,6 +141,32 @@ def test_reply_spec_when_function_call_enabled_then_states_the_work_mode_contrac
     assert "quit_work_mode" in spec
     assert "工作不一定必须做完" in spec
     assert "点名" in spec
+
+
+def test_reply_spec_when_function_call_enabled_then_enter_round_still_speaks_to_group():
+    """进入轮仍按普通回合外发：模型必须先说一句话，否则群里从指令到结果全程静默。"""
+    spec = PromptFactory.build_reply_spec(supports_function_call=True)
+
+    assert "enter_work_mode" in spec
+    assert "这一轮的正文" in spec
+    assert "正常发到群里" in spec
+    assert "先用一句话" in spec
+    # 进入之后的轮次才静默，对外只能靠工具结果与 send_midway_msg。
+    assert "后续轮次" in spec
+    assert "不会被发送" in spec
+    assert "send_midway_msg" in spec
+
+
+def test_work_mode_enter_tool_description_distinguishes_enter_round_and_later_rounds():
+    """工具描述与提示词同语义，否则模型仍会以为进入前也不该说话。"""
+    (enter_tool,) = control_tools(active=False)
+    description = enter_tool["function"]["description"]
+
+    assert "enter_work_mode" in description
+    assert "这一轮正文会正常发到群里" in description
+    assert "后续轮次" in description
+    assert "不会被发送" in description
+    assert "send_midway_msg" in description
 
 
 def test_reply_spec_without_function_call_then_has_no_work_mode_instructions():

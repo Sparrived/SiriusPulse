@@ -18,6 +18,7 @@ from sirius_pulse.providers.base import GenerationRequest, GenerationResult, Too
 from sirius_pulse.providers.mock import MockProvider
 
 _LONG_REPLY = "第一段。\n第二段。\n第三段。\n第四段。"
+_SHORT_REPLY = "部署完成，服务已恢复。"
 
 
 class _ToolCallingProvider(MockProvider):
@@ -198,25 +199,30 @@ def test_engine_records_delivered_markdown_card_in_basic_history():
 
 
 @pytest.mark.asyncio
-async def test_engine_when_long_reply_goes_out_as_text_then_it_is_still_recorded():
-    """超过三条的最终回复若仍走文本通道，必须照常写进记忆。"""
-    engine = _engine_with_hooks(MockProvider([_LONG_REPLY]))
+async def test_engine_when_short_final_reply_uses_tool_choice_none_then_it_is_recorded():
+    """轮次上限兜底补出的短回复按文本发出，记忆必须由 hook 记下来。"""
+    engine = _engine_with_hooks(MockProvider([_SHORT_REPLY]))
 
     result = await _reply(engine, "看看部署结果", tool_choice="none")
 
-    # 撞到工具轮次上限后单独补出的这一轮带 tool_choice="none"，调度器的图片分支到不了，
-    # 文本会被适配器原样发出，所以记忆必须由 hook 记下来，否则这段回复彻底丢失。
-    assert result.clean_text == _LONG_REPLY
+    assert result.clean_text == _SHORT_REPLY
     entries = engine.basic_memory.get_all("group-1")
-    assert [entry.content for entry in entries] == [_LONG_REPLY]
+    assert [entry.content for entry in entries] == [_SHORT_REPLY]
 
 
 @pytest.mark.asyncio
-async def test_engine_when_long_reply_is_delivered_as_image_then_hook_leaves_it_to_scheduler():
-    """真正会转成图片的那一轮由调度器记录，hook 不能抢先记一遍。"""
+@pytest.mark.parametrize("tool_choice", [None, "none"])
+async def test_engine_when_long_reply_is_delivered_as_image_then_hook_leaves_it_to_scheduler(
+    tool_choice,
+):
+    """真正会转成图片的那一轮由调度器记录，hook 不能抢先记一遍。
+
+    轮次上限兜底回复（``tool_choice="none"``）同样会走调度器的图片通道，
+    记忆与去重都必须让位给实际投递形态。
+    """
     engine = _engine_with_hooks(MockProvider([_LONG_REPLY]))
 
-    await _reply(engine, "看看部署结果")
+    await _reply(engine, "看看部署结果", tool_choice=tool_choice)
 
     assert engine.basic_memory.get_all("group-1") == []
 
@@ -238,9 +244,9 @@ async def test_engine_when_reply_carries_a_tool_call_then_its_text_is_recorded()
 
 
 @pytest.mark.asyncio
-async def test_engine_when_long_reply_is_sent_as_text_then_dedup_still_sees_it():
-    """走文本通道的长回复要进去重窗口，否则会被原样重复发第二遍。"""
-    engine = _engine_with_hooks(MockProvider([_LONG_REPLY, _LONG_REPLY]))
+async def test_engine_when_short_final_reply_is_sent_as_text_then_dedup_still_sees_it():
+    """走文本通道的兜底回复要进去重窗口，否则会被原样重复发第二遍。"""
+    engine = _engine_with_hooks(MockProvider([_SHORT_REPLY, _SHORT_REPLY]))
 
     await _reply(engine, "看看部署结果", tool_choice="none")
     second = await _reply(engine, "看看部署结果", tool_choice="none")
@@ -249,11 +255,14 @@ async def test_engine_when_long_reply_is_sent_as_text_then_dedup_still_sees_it()
 
 
 @pytest.mark.asyncio
-async def test_engine_when_long_reply_is_delivered_as_image_then_dedup_leaves_it_alone():
+@pytest.mark.parametrize("tool_choice", [None, "none"])
+async def test_engine_when_long_reply_is_delivered_as_image_then_dedup_leaves_it_alone(
+    tool_choice,
+):
     """会转成图片的长回复不进去重窗口，避免恰好相似的两张卡片被吞掉一张。"""
     engine = _engine_with_hooks(MockProvider([_LONG_REPLY]))
 
-    await _reply(engine, "看看部署结果")
+    await _reply(engine, "看看部署结果", tool_choice=tool_choice)
 
     assert engine._recent_sent_replies.get("group-1") in (None, [])
 

@@ -232,6 +232,48 @@ class DelayedQueueTasks:
             )
         return bool(injected)
 
+    async def _deliver_rich_reply(
+        self,
+        engine: Any,
+        *,
+        group_id: str,
+        item: Any,
+        chat_result: Any,
+        content: str,
+    ) -> bool:
+        """把整段富文本渲染成「图片 + 合并转发」投递。
+
+        成功时按实际投递形态把这张卡片写回历史并返回 True；渲染或发送失败只记
+        日志并返回 False，由调用方回退成纯文本——内容不能丢。这里的异常必须
+        捕获得足够宽：Playwright 的渲染/超时异常只继承 ``Exception``，漏掉它们
+        会让整轮回复投递失败，比按文本发出去更糟。
+        """
+        try:
+            delivery = await _markdown_image.render_and_send_rich_reply(
+                content,
+                adapter=getattr(engine, "_adapter", None),
+                group_id=group_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - 渲染失败必须回退文本，不能丢掉整轮结果
+            logger.warning(
+                "Rich reply image delivery failed for %s; falling back to text: %s",
+                group_id,
+                exc,
+            )
+            return False
+        engine._record_assistant_message(
+            group_id=group_id,
+            target_user_id=item.user_id,
+            content=content,
+            system_prompt=getattr(chat_result, "system_prompt", ""),
+            tags=[{"type": "image", "label": "富文本卡片"}],
+            injected_request=getattr(chat_result, "injected_request", {}),
+            injected_tool_names=getattr(chat_result, "injected_tool_names", []),
+            **_reasoning_memory_kwargs(chat_result),
+            platform_message_id=delivery["image_message_id"],
+        )
+        return True
+
     async def delayed_queue_ticker(self) -> None:
         """Smart-sleep ticker for the delayed queue.
 
@@ -754,15 +796,29 @@ class DelayedQueueTasks:
                             tool_chain_active = False
                         _save_work_run()
                         engine._log_inner_thought(f"进入工作模式：{goal}")
+                        if not round_clean.strip():
+                            # 模型调用工具时几乎不写正文（线上进入工作模式的 19 轮全是
+                            # 0 字，提示词劝不动），所以框架补一句进展，别让群里干等到
+                            # 结果才第一次看到她说话。
+                            goal_preview = goal if len(goal) <= 80 else goal[:80] + "…"
+                            status_text = (
+                                f"收到，开始处理：{goal_preview}" if goal_preview else "收到，开始处理，稍后汇报结果。"
+                            )
+                            if on_partial_reply is not None:
+                                await on_partial_reply(status_text)
+                                last_partial_sent_at = time.monotonic()
+                                engine._log_inner_thought(f"进入轮无正文，补发进展：{status_text[:40]}...")
+                    enter_notice = (
+                        "已进入工作模式：重工具已解锁，你的正文不会再被发送。"
+                        "完成后用 quit_work_mode 退出，需要对外说话用 send_midway_msg。"
+                    )
+                    if not round_clean.strip():
+                        # 进入轮一句话都没对群里说时，群里只会看到她突然开始做事。
+                        # 提醒她先用 send_midway_msg 报个方向，别让人干等。
+                        enter_notice += "（这一轮你没有对群里说话；如果这次工作要花一会儿，"
+                        enter_notice += "先用 send_midway_msg 简短说明你在做什么。）"
                     messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": (
-                                "已进入工作模式：重工具已解锁，你的正文不会再被发送。"
-                                "完成后用 quit_work_mode 退出，需要对外说话用 send_midway_msg。"
-                            ),
-                        }
+                        {"role": "tool", "tool_call_id": tc.id, "content": enter_notice}
                     )
                 elif tc.function_name == QUIT_WORK_MODE:
                     quit_result = str(params.get("result", "") or "").strip()
@@ -831,43 +887,30 @@ class DelayedQueueTasks:
                 await self._emit_agent_turn(engine, agent_turn)
                 rich_content = round_clean.strip()
                 if _markdown_image.should_send_as_image(rich_content):
-                    try:
-                        delivery = await _markdown_image.render_and_send_rich_reply(
-                            rich_content,
-                            adapter=getattr(engine, "_adapter", None),
-                            group_id=group_id,
-                        )
-                    except (RuntimeError, ValueError) as exc:
-                        logger.warning(
-                            "Rich reply image delivery failed for %s; falling back to text: %s",
-                            group_id,
-                            exc,
-                        )
-                        if on_partial_reply is None:
-                            raise
-                        await on_partial_reply(rich_content)
-                        engine._record_assistant_message(
-                            group_id=group_id,
-                            target_user_id=item.user_id,
-                            content=rich_content,
-                            system_prompt=getattr(chat_result, "system_prompt", ""),
-                            injected_request=getattr(chat_result, "injected_request", {}),
-                            injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                            **_reasoning_memory_kwargs(chat_result),
-                        )
-                        last_partial_sent_at = time.monotonic()
-                    else:
-                        engine._record_assistant_message(
-                            group_id=group_id,
-                            target_user_id=item.user_id,
-                            content=rich_content,
-                            system_prompt=getattr(chat_result, "system_prompt", ""),
-                            tags=[{"type": "image", "label": "富文本卡片"}],
-                            injected_request=getattr(chat_result, "injected_request", {}),
-                            injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                            **_reasoning_memory_kwargs(chat_result),
-                            platform_message_id=delivery["image_message_id"],
-                        )
+                    if await self._deliver_rich_reply(
+                        engine,
+                        group_id=group_id,
+                        item=item,
+                        chat_result=chat_result,
+                        content=rich_content,
+                    ):
+                        chat_result.clean_text = ""
+                        reply = ""
+                        break
+                    if on_partial_reply is None:
+                        raise RuntimeError("富文本回复渲染失败且没有可用的文本发送回调")
+                    # 渲染失败：整段文本照常发出去，内容不能丢。
+                    await on_partial_reply(rich_content)
+                    engine._record_assistant_message(
+                        group_id=group_id,
+                        target_user_id=item.user_id,
+                        content=rich_content,
+                        system_prompt=getattr(chat_result, "system_prompt", ""),
+                        injected_request=getattr(chat_result, "injected_request", {}),
+                        injected_tool_names=getattr(chat_result, "injected_tool_names", []),
+                        **_reasoning_memory_kwargs(chat_result),
+                    )
+                    last_partial_sent_at = time.monotonic()
                     chat_result.clean_text = ""
                     reply = ""
                     break
@@ -1182,6 +1225,30 @@ class DelayedQueueTasks:
             remaining = lead_seconds - (time.monotonic() - last_partial_sent_at)
             if remaining > 0:
                 await asyncio.sleep(remaining)
+
+        # 工作模式的 result 与轮次上限兜底回复绕过了上面「无工具调用」分支，
+        # 这里补一次同样的投递判定；渲染失败时 final_reply 保持原文按文本发送。
+        if final_reply and _markdown_image.should_send_as_image(final_reply):
+            if await self._deliver_rich_reply(
+                engine,
+                group_id=group_id,
+                item=item,
+                chat_result=chat_result,
+                content=final_reply,
+            ):
+                final_reply = ""
+            else:
+                # 渲染失败，适配器会按文本把原文发出去：历史里也要按文本记一次。
+                # hook 已因「可能转图片」让位，这里补记不会重复。
+                engine._record_assistant_message(
+                    group_id=group_id,
+                    target_user_id=item.user_id,
+                    content=final_reply,
+                    system_prompt=getattr(chat_result, "system_prompt", ""),
+                    injected_request=getattr(chat_result, "injected_request", {}),
+                    injected_tool_names=getattr(chat_result, "injected_tool_names", []),
+                    **_reasoning_memory_kwargs(chat_result),
+                )
 
         # 获取引用回复信息
         reply_references = chat_result.reply_references if chat_result else []
