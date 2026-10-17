@@ -383,6 +383,8 @@ class MyPlugin(PluginBase):
 
 三种输出模式：`direct`（直出）/ `llm`（AI 人格化）/ `silent`（静默）。
 
+外部插件 **AMKR 账号资源** 支持 `/amkr account` 查询全部 CPA 账号和订阅、`/amkr account <名称或完整ID>` 查询指定资源，以及 `/amkr status [小时]` 查询渠道健康矩阵与请求趋势，并向当前群发送包含全部匹配资源的霓虹科技感长图。一个账号一条横行，启用后复用全局 AMKR 管理连接；所有群成员均可查询，邮箱脱敏、无后台轮询，也不切换推理账号。详见 [配置与使用说明](docs/extensions/amkr-accounts.md)。
+
 完整扩展开发文档见 [扩展开发板块](https://sirius-pulse-docs.vercel.app/extensions/)。
 
 ---
