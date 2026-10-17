@@ -2114,16 +2114,16 @@ class _EmotionalGroupChatEngineBase:
                 group_id=group_id,
                 user_id=user_id,
             )
-            # 插件失败时 execute_plugin_command 会把错误文本放进 reply（如
-            # "[sub2api_monitor] 执行失败: ..."），同时 error 也非空。原逻辑
-            # 用 `reply and not error` 判断，导致 fail 场景 reply 被静默丢弃，
-            # 用户在群里看不到任何失败反馈。只要 reply 存在就返回它，错误
-            # 文本应展示给用户；仅当完全没有 reply 时才回退到 error。
-            if plugin_exec_result.get("reply"):
+            # 保留完整输出，避免快捷路径丢失图片、分段回复或可展示的失败文本。
+            if (
+                plugin_exec_result.get("reply")
+                or plugin_exec_result.get("message_group") is not None
+                or plugin_exec_result.get("partial_replies")
+            ):
                 self._log_inner_thought(f"轻量验证后直接执行了插件 {plugin_name}～")
                 return {
+                    **plugin_exec_result,
                     "strategy": "plugin_verified",
-                    "reply": plugin_exec_result["reply"],
                     "emotion": {},
                     "intent": {},
                     "plugin_intent": plugin_name,

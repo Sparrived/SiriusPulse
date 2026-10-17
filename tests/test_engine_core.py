@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
+from sirius_pulse.adapters.models import ImageSegment, MessageGroup, TextSegment
 from sirius_pulse.core import engine_core
 from sirius_pulse.core.brain import Brain, ChatRequest
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.memory.basic import BasicMemoryManager
+from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
+from sirius_pulse.plugins.dispatcher import OutputDispatcher
+from sirius_pulse.plugins.models import PluginDefinition, PluginResponse
+from sirius_pulse.plugins.registry import PluginRegistry
 from sirius_pulse.providers.base import GenerationRequest, GenerationResult, ToolCall
 from sirius_pulse.providers.mock import MockProvider
 
@@ -250,3 +256,131 @@ async def test_engine_when_long_reply_is_delivered_as_image_then_dedup_leaves_it
     await _reply(engine, "看看部署结果")
 
     assert engine._recent_sent_replies.get("group-1") in (None, [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "render_mode", "partials", "error", "expected_texts", "expect_image"),
+    [
+        pytest.param("", "direct", [], "", [], True, id="image-only"),
+        pytest.param("图已生成", "direct", [], "", ["图已生成"], True, id="image-and-text"),
+        pytest.param(
+            "",
+            "direct",
+            ["开始统计", "正在绘图"],
+            "",
+            ["开始统计", "正在绘图"],
+            True,
+            id="partials-before-image",
+        ),
+        pytest.param(
+            "",
+            "direct",
+            [],
+            "绘图失败",
+            ["[测试图表] 执行失败: 绘图失败"],
+            False,
+            id="failure-feedback",
+        ),
+        pytest.param("不应发送", "silent", [], "", [], False, id="silent-hides-image-and-text"),
+        pytest.param(
+            "不应发送",
+            "silent",
+            ["开始统计", "处理完毕"],
+            "",
+            ["开始统计", "处理完毕"],
+            False,
+            id="partials-before-silent",
+        ),
+    ],
+)
+async def test_plugin_shortcut_delivers_output_to_onebot(
+    tmp_path, text, render_mode, partials, error, expected_texts, expect_image
+):
+    """群友输入命令后，插件的图文、进度和失败反馈都到达真实 OneBot 发送边界。"""
+    image_ref = (
+        "base64://iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
+        "/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+    )
+    message_group = MessageGroup(([TextSegment(text)] if text else []) + [ImageSegment(image_ref)])
+    responses = [PluginResponse.ok(partial) for partial in partials]
+    responses.append(
+        PluginResponse.fail(error)
+        if error
+        else PluginResponse.ok(text, render_mode=render_mode, message_group=message_group)
+    )
+    executor = SimpleNamespace(execute=AsyncMock(return_value=responses))
+    registry = PluginRegistry()
+    registry.register(
+        PluginDefinition.from_dict(
+            {
+                "name": "test_chart",
+                "display_name": "测试图表",
+                "triggers": {"commands": [{"name": "chart", "patterns": ["/chart"]}]},
+            }
+        )
+    )
+    provider = MockProvider()
+    engine = _EmotionalGroupChatEngineBase(
+        work_path=tmp_path,
+        provider_async=provider,
+        persona={"name": "月白"},
+        config={"pending_message_threshold": 0},
+    )
+    engine.set_plugin_runtime(
+        plugin_registry=registry, plugin_executor=executor, plugin_dispatcher=OutputDispatcher()
+    )
+    adapter = NapCatAdapter(
+        "ws://example.invalid",
+        work_path=tmp_path,
+        config={"allowed_group_ids": ["100"], "human_reply_delay_enabled": False},
+    )
+    adapter._engine = engine
+    engine._adapter = adapter
+
+    async def call_api(action, params):
+        if action == "get_group_member_list":
+            return {"status": "ok", "data": [{"user_id": 300, "role": "member"}]}
+        return {"status": "ok", "data": {"message_id": 42}}
+
+    adapter.call_api = AsyncMock(side_effect=call_api)
+    try:
+        await adapter._process_event(
+            {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 100,
+                "user_id": 200,
+                "self_id": 300,
+                "message_id": 1,
+                "message": [{"type": "text", "data": {"text": "/chart"}}],
+                "sender": {"nickname": "Alice"},
+            }
+        )
+
+        executor.execute.assert_awaited_once()
+        assert executor.execute.await_args.args[0] == "test_chart"
+        assert executor.execute.await_args.args[1].command == "chart"
+        assert executor.execute.await_args.kwargs["caller_is_developer"] is False
+        assert provider.requests == []  # 快捷命令不调用主模型，也不启动记忆提取等后台任务。
+        sent = [
+            call.args[1]
+            for call in adapter.call_api.await_args_list
+            if call.args[0] == "send_group_msg"
+        ]
+        assert all(payload["group_id"] == 100 for payload in sent)
+        segments = [segment for payload in sent for segment in payload["message"]]
+        assert [segment["data"]["text"] for segment in segments if segment["type"] == "text"] == (
+            expected_texts
+        )
+        images = [segment["data"]["file"] for segment in segments if segment["type"] == "image"]
+        assert images == ([image_ref] if expect_image else [])
+        assert len(sent) == len(partials) + bool(error or expect_image)
+        if expect_image:
+            assert sent[-1]["message"][-1] == {"type": "image", "data": {"file": image_ref}}
+    finally:
+        await adapter.close()
+        await engine.event_bus.close()
+        engine.cognition_store.close()
+        engine.user_manager.close()
+        engine._memory_storage.close()
