@@ -209,10 +209,13 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
     async def generate_image_async(self, request: ImageGenerationRequest) -> ImageGenerationResult:
         """调用 AMKR 的图像端点，返回生成图片的原始字节。
 
-        ``model`` 仍是 AMKR 任务名；工作空间推理 key 同样适用于图像端点。带参考
-        图时走 ``/v1/images/edits`` 的 multipart 表单——AMKR 只从表单里读 model
-        做路由，其余字段原样转发；没有参考图时走 JSON 的 ``/v1/images/generations``。
-        图像请求固定携带浏览器 UA，原因见 ``_IMAGE_REQUEST_USER_AGENT``。
+        ``model`` 仍是 AMKR 任务名；工作空间推理 key 同样适用于图像端点。没有参考
+        图时走 ``/v1/images/generations``；带参考图时走 ``/v1/images/edits``，参考图
+        以 data URL 放进 JSON 的 ``images[].image_url``。**不能**用 OpenAI 经典的
+        multipart 表单：AMKR 只从表单里读 model 做路由，随后把字节原样转发给上游，
+        表单里的 model 仍是任务名，上游会以「requires an image model」400 拒绝；
+        JSON 形态则会被 AMKR 正常改写 model。图像请求固定携带浏览器 UA，原因见
+        ``_IMAGE_REQUEST_USER_AGENT``。
         """
         timeout_seconds = request.timeout_seconds or max(float(self._timeout_seconds), 120.0)
         has_references = bool(request.reference_images)
@@ -221,13 +224,9 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         headers = self._build_auth_headers()
         headers["User-Agent"] = _IMAGE_REQUEST_USER_AGENT
         payload: dict[str, Any] = {"model": request.model, "prompt": request.prompt}
-        files: list[tuple[str, tuple[str, bytes, str]]] | None = None
         if has_references:
-            # 多图按 OpenAI 的规范字段写 image[]；媒体类型按字节判定，避免文件名
-            # 后缀（缓存常把图片统一存成 .jpg）把上游的格式校验弄崩。
-            field_name = "image[]" if len(request.reference_images) > 1 else "image"
-            files = [
-                (field_name, (filename, data, self._guess_image_mime(filename, data)))
+            payload["images"] = [
+                {"image_url": self._image_data_url(filename, data)}
                 for filename, data in request.reference_images
             ]
         logger.info(
@@ -236,14 +235,11 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         )
         try:
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                if files is not None:
-                    response = await client.post(url, data=payload, files=files, headers=headers)
-                else:
-                    response = await client.post(
-                        url,
-                        json=payload,
-                        headers={**headers, "Content-Type": "application/json"},
-                    )
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={**headers, "Content-Type": "application/json"},
+                )
                 raw = response.text
                 if response.status_code >= 400:
                     self._raise_image_status(response.status_code, raw, request, url)
@@ -270,6 +266,12 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             return sniffed
         guessed, _ = mimetypes.guess_type(filename)
         return guessed or "image/png"
+
+    @classmethod
+    def _image_data_url(cls, filename: str, data: bytes) -> str:
+        """把参考图编成 data URL；媒体类型按字节判定，文件名后缀不作数。"""
+        encoded = base64.b64encode(data).decode("ascii")
+        return f"data:{cls._guess_image_mime(filename, data)};base64,{encoded}"
 
     def _parse_image_body(self, raw: str, url: str) -> dict[str, Any]:
         try:

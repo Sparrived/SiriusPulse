@@ -1,7 +1,7 @@
 """生图客户端：generations / edits 两条端点、b64 与 url 两种响应、错误映射。
 
 所有 HTTP 请求都由 ``httpx.MockTransport`` 拦下，测试只断言真实的
-``generate_image_async`` 发到线上的东西（路径、表单字段、媒体类型、请求头）以及
+``generate_image_async`` 发到线上的东西（路径、JSON 字段、媒体类型、请求头）以及
 返回的原始字节与媒体类型；不发起任何真实网络请求。
 """
 
@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import email
 import json
 from collections.abc import Callable
-from email.message import Message
 from io import BytesIO
 
 import httpx
@@ -89,30 +87,6 @@ def _generate(
     return asyncio.run(main())
 
 
-def _multipart_parts(request: httpx.Request) -> list[Message]:
-    """把 multipart 请求体交给 email 解析器拆成各个表单部件。"""
-    content_type = request.headers.get("content-type", "")
-    assert content_type.startswith("multipart/form-data; boundary="), content_type
-    raw = b"Content-Type: " + content_type.encode("latin-1") + b"\r\nMIME-Version: 1.0\r\n\r\n"
-    raw += request.content
-    message = email.message_from_bytes(raw)
-    parts = message.get_payload()
-    assert isinstance(parts, list), "请求体不是 multipart/form-data"
-    return parts
-
-
-def _form_fields(request: httpx.Request) -> dict[str, list[tuple[bytes, str]]]:
-    """字段名 -> [(原始字节, 该部件声明的 Content-Type)]，同一字段可重复出现。"""
-    fields: dict[str, list[tuple[bytes, str]]] = {}
-    for part in _multipart_parts(request):
-        name = part.get_param("name", header="content-disposition")
-        payload = part.get_payload(decode=True)
-        assert isinstance(name, str)
-        assert isinstance(payload, bytes)
-        fields.setdefault(name, []).append((payload, part.get_content_type()))
-    return fields
-
-
 def test_generations_request_uses_task_name_and_inference_headers(monkeypatch):
     """无参考图走 JSON 的 generations：路径、model 任务名、推理 key 与工作空间头。"""
     seen: dict[str, object] = {}
@@ -176,45 +150,54 @@ def test_url_response_is_downloaded(monkeypatch):
     assert result.mime_type == "image/png"
 
 
-def test_edits_single_reference_uses_image_field_and_byte_mime(monkeypatch):
-    """有参考图走 multipart edits；单图字段名 image，媒体类型看字节（后缀说谎也要纠正）。"""
+def test_edits_single_reference_is_sent_as_json_image_data_url(monkeypatch):
+    """有参考图走 JSON 的 edits：参考图放 images[].image_url，媒体类型看字节。"""
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["headers"] = dict(request.headers)
-        seen["fields"] = _form_fields(request)
+        seen["body"] = json.loads(request.content)
         return _b64_response(PNG_1PX)
 
-    # 文件名叫 .jpg，内容是 PNG —— 上游按字节校验，声明的类型必须是 image/png。
+    # 文件名叫 .jpg，内容是 PNG —— 上游按字节校验，data URL 必须声明 image/png。
     _generate(monkeypatch, _provider(), handler, _request([("cached.jpg", PNG_1PX)]))
 
-    fields = seen["fields"]
+    body = seen["body"]
     headers = seen["headers"]
     assert seen["path"] == "/v1/images/edits"
     assert headers["authorization"] == "Bearer amkr_ik_test"
-    assert headers["content-type"].startswith("multipart/form-data; boundary=")
+    assert headers["content-type"].startswith("application/json")
     assert headers["user-agent"].startswith("Mozilla/5.0")
-    assert fields["model"][0][0] == b"image_generate"
-    assert fields["prompt"][0][0] == PROMPT.encode("utf-8")
-    assert fields["image"] == [(PNG_1PX, "image/png")]
-    assert "image[]" not in fields
+    assert body["model"] == "image_generate"
+    assert body["prompt"] == PROMPT
+    images = body["images"]
+    assert len(images) == 1
+    data_url = images[0]["image_url"]
+    assert data_url.startswith("data:image/png;base64,")
+    assert base64.b64decode(data_url.split(",", 1)[1]) == PNG_1PX
 
 
-def test_edits_multiple_references_use_image_array_field(monkeypatch):
-    """多张参考图要用 image[] 重复字段，且每张各自按字节声明媒体类型。"""
+def test_edits_multiple_references_are_all_sent_with_byte_sniffed_mime(monkeypatch):
+    """多张参考图都放进 images[]，且每张各自按字节声明媒体类型。"""
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen["fields"] = _form_fields(request)
+        seen["body"] = json.loads(request.content)
         return _b64_response(PNG_1PX)
 
-    references = [("cat.png", PNG_1PX), ("photo.png", JPEG_2PX)]
+    references = [("cat.png", PNG_1PX), ("photo.jpg", JPEG_2PX)]
     _generate(monkeypatch, _provider(), handler, _request(references))
 
-    fields = seen["fields"]
-    assert "image" not in fields
-    assert fields["image[]"] == [(PNG_1PX, "image/png"), (JPEG_2PX, "image/jpeg")]
+    images = seen["body"]["images"]
+    assert [item["image_url"].split(";", 1)[0] for item in images] == [
+        "data:image/png",
+        "data:image/jpeg",
+    ]
+    assert [base64.b64decode(item["image_url"].split(",", 1)[1]) for item in images] == [
+        PNG_1PX,
+        JPEG_2PX,
+    ]
 
 
 @pytest.mark.parametrize("status_code", [401, 403])
