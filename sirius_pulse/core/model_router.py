@@ -4,8 +4,13 @@
 的任务定义决定，本框架只负责说明「这是哪个任务」。
 
 因此 ``resolve()`` 返回的 ``model_name`` 就是任务名本身：它作为 ``model`` 字段发往
-AMKR，由 AMKR 查表换成真实模型。这里保留的其余字段（``timeout`` / ``retries``）
-是**本地传输层**的关注点，与模型无关。
+AMKR，由 AMKR 查表换成真实模型。这里保留的其余字段（``timeout`` / ``retries`` /
+``fallback_model_name``）是**本地传输层**的关注点，与模型无关。
+
+唯一的例外是 ``fallback_model_name``：AMKR 的故障回退按 HTTP 状态触发，而 Gemini
+的内容策略拦截走的是「HTTP 200 + 拒绝文案当正文」，AMKR 看不到这种失败。因此由
+Brain 识别后改用备选**任务名**重发——备选名对应的仍是 AMKR 的任务定义，选哪个
+模型依旧由 AMKR 决定，本框架不碰具体模型。
 
 采样参数（``temperature`` / ``max_tokens``）**不属于本框架**。AMKR 的任务定义里
 已经固定了它们；调用方再显式传一份会与任务定义冲突，AMKR 对此直接回 400（而不是
@@ -24,13 +29,16 @@ class TaskConfig:
     """Configuration for a specific cognitive task.
 
     只承载本地传输层参数：``model_name`` 是发往 AMKR 的任务名，``timeout`` /
-    ``retries`` 是本地超时与重试。采样参数由 AMKR 的任务定义负责，这里不保存，
-    也就不可能被回传到请求里。
+    ``retries`` 是本地超时与重试，``fallback_model_name`` 是内容拦截时改用的
+    备选任务名。采样参数由 AMKR 的任务定义负责，这里不保存，也就不可能被回传
+    到请求里。
     """
 
     model_name: str
     timeout: float = 30.0
     retries: int = 1
+    #: 主任务命中「上游内容策略拦截」时改用的 AMKR 任务名；空串表示没有备选。
+    fallback_model_name: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -54,16 +62,26 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
     "response_generate": TaskConfig(
         model_name="response_generate",
         timeout=30.0,
+        fallback_model_name="fallback_generate",
+    ),
+    # 内容策略拦截时的兜底任务名。AMKR 侧把它指向一个不受 Gemini 内容过滤影响的
+    # 模型（生产是 deepseek-v4.1-flash）。它只在 Brain 识别到「200 + 拒绝文案」时
+    # 被使用，正常聊天不会走到；不绑定模型时命中拦截只会失败，不会发错内容。
+    "fallback_generate": TaskConfig(
+        model_name="fallback_generate",
+        timeout=30.0,
     ),
     # 工作模式专用任务名：多步工具协作一轮要读的上下文更多、也想用更强的模型，
     # 因此在 AMKR 面板里可以单独把它指向另一个模型，不影响普通聊天。
     "work_mode_generate": TaskConfig(
         model_name="work_mode_generate",
         timeout=60.0,
+        fallback_model_name="fallback_generate",
     ),
     "proactive_generate": TaskConfig(
         model_name="proactive_generate",
         timeout=20.0,
+        fallback_model_name="fallback_generate",
     ),
     "plugin_analyze": TaskConfig(
         model_name="plugin_analyze",
@@ -92,6 +110,7 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
     "autonomy_generate": TaskConfig(
         model_name="autonomy_generate",
         timeout=30.0,
+        fallback_model_name="fallback_generate",
     ),
     # 生图任务：发往 AMKR 的 /v1/images/* 端点，必须由运维在 AMKR 面板里绑定
     # 一个真正的生图模型（不绑就是 404）。超时给足，生图 30–300 秒都算正常。
@@ -159,6 +178,7 @@ class ModelRouter:
         ``model_name`` 始终用调用方给的任务名：AMKR 侧可能正是按这个名字建的任务，
         换成兜底名会让它查不到任务定义。未登记的任务名只借用兜底任务的本地
         超时/重试，不借用任何采样参数（本框架已不再持有它们）。
+        ``fallback_model_name`` 原样保留：它是命中上游内容拦截时的备选任务名。
         """
         base = self._registry.get(task_name) or self._registry.get(_FALLBACK_TASK)
         if base is None:

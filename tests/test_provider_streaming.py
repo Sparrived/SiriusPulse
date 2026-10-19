@@ -12,7 +12,10 @@ import json
 import httpx
 import pytest
 
-from sirius_pulse.exceptions import ProviderResponseError
+from sirius_pulse.exceptions import (
+    ProviderContentFilteredError,
+    ProviderResponseError,
+)
 from sirius_pulse.providers.base import (
     GenerationRequest,
     ToolCall,
@@ -208,3 +211,66 @@ def test_gateway_ignoring_stream_still_returns_json_completion(monkeypatch):
         "completion_tokens": 4,
         "total_tokens": 7,
     }
+
+
+#: Google 内容策略拦截的真实文案（生产上被 CPA 当成 200 正文流式吐回来的那段）。
+_GOOGLE_CONTENT_POLICY_TEXT = (
+    "The prompt could not be submitted. The prompt contains sensitive words that violate "
+    "Google's [Generative AI Prohibited Use policy](https://policies.google.com/terms/generative-ai/use-policy). "
+    "Try rephrasing the prompt. If you think this was an error, [send feedback](https://ai.google.dev/gemini-api/docs/troubleshooting)."
+)
+
+
+def test_stream_content_policy_block_is_a_failure_not_a_reply(monkeypatch):
+    """Gemini 的拒绝文案是 200 正文，不能当成模型回复，要抛结构化异常。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _stream_response(
+            {
+                "choices": [
+                    {"delta": {"content": _GOOGLE_CONTENT_POLICY_TEXT}, "finish_reason": "stop"}
+                ]
+            },
+        )
+
+    with pytest.raises(ProviderContentFilteredError) as info:
+        _call(monkeypatch, _provider(), handler)
+
+    assert info.value.is_retryable is False
+    assert "The prompt could not be submitted" in info.value.content_preview
+
+
+def test_stream_content_policy_block_clears_usage(monkeypatch):
+    """拦截响应没有产生任何输出，usage 必须清空，别把 0 用量当真实统计记下来。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _stream_response(
+            {"choices": [{"delta": {"content": _GOOGLE_CONTENT_POLICY_TEXT}}]},
+            {"usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}},
+        )
+
+    with pytest.raises(ProviderContentFilteredError):
+        _call(monkeypatch, _provider(), handler)
+
+    assert get_last_generation_usage() is None
+
+
+def test_buffered_json_content_policy_block_is_also_a_failure(monkeypatch):
+    """网关忽略 stream 时走 JSON 回退，同样要识别拦截文案。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": _GOOGLE_CONTENT_POLICY_TEXT},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            },
+        )
+
+    with pytest.raises(ProviderContentFilteredError):
+        _call(monkeypatch, _provider(), handler)

@@ -26,6 +26,7 @@ TASK_LABELS: dict[str, str] = {
     "cognition_analyze": "认知分析",
     "memory_extract": "记忆提取",
     "response_generate": "对话生成",
+    "fallback_generate": "内容拦截兜底",
     "work_mode_generate": "工作模式",
     "proactive_generate": "主动发言",
     "passive_tool": "被动技能",

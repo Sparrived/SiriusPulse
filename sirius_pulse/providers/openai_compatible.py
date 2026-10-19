@@ -12,6 +12,7 @@ import httpx
 from sirius_pulse.exceptions import (
     ProviderAuthError,
     ProviderConnectionError,
+    ProviderContentFilteredError,
     ProviderResponseError,
 )
 from sirius_pulse.providers.base import (
@@ -37,6 +38,28 @@ logger = logging.getLogger(__name__)
 #: 退回字符估算；AMKR 只在「非 native」转换路径自己补 stream_options，native
 #: 透传路径按原样转发，所以调用方必须带上。
 _STREAM_OPTIONS: dict[str, bool] = {"include_usage": True}
+
+#: 上游把「内容策略拦截」的说明文字当成正常正文返回时的识别标记。
+#:
+#: 目前观测到的是 Google/Gemini 经 CPA 的 antigravity 通道：prompt 命中
+#: Prohibited Use 策略后仍回 HTTP 200、没有 error 事件、usage 全 0，正文就是这句
+#: 拒绝文案。它形态上是一次成功完成，所以必须在聚合后显式认出来，否则会被当成
+#: 模型回复发到群里（历史故障）。标记只取拒绝文案里稳定出现的片段，不依赖完整
+#: 句子，避免 Google 改措辞后立刻失效。
+_CONTENT_POLICY_MARKERS: tuple[str, ...] = (
+    "the prompt could not be submitted",
+    "prompt contains sensitive words",
+    "generative ai prohibited use policy",
+)
+
+
+def is_content_policy_block(text: str) -> bool:
+    """判断一段模型输出是否是上游的内容策略拦截文案。"""
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+    return any(marker in normalized for marker in _CONTENT_POLICY_MARKERS)
+
 
 #: 图像端点的上游（sub2api）套了一层 Cloudflare 校验，会按 User-Agent 判断请求像不像
 #: 浏览器：默认的 httpx / python-urllib UA 直接被拦成 403（error code 1010）。AMKR 会把
@@ -375,6 +398,31 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
             response_body=raw,
         )
 
+    def _raise_if_content_policy_block(
+        self,
+        content: str,
+        *,
+        request: GenerationRequest,
+        url: str,
+    ) -> None:
+        """把「拒绝文案当正文」的上游响应转成明确的失败。
+
+        usage 一并清掉：这次调用没有产生任何可用输出，留着会让调用方把 0 用量
+        当成真实统计。
+        """
+        if not is_content_policy_block(content):
+            return
+        logger.error(
+            f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+            f"| 响应是上游内容策略拦截文案: {content[:200]}"
+        )
+        set_last_generation_usage(None)
+        raise ProviderContentFilteredError(
+            self._provider_name,
+            "提供商把内容策略拦截的说明文字当作正常回复返回。",
+            content_preview=content,
+        )
+
     async def _consume_event_stream(
         self,
         response: httpx.Response,
@@ -451,8 +499,10 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
                     finish_reason = str(choice_finish)
 
         set_last_generation_usage(dict(usage) if usage else None)
+        content = "".join(content_chunks)
+        self._raise_if_content_policy_block(content, request=request, url=url)
         return GenerationResult(
-            content="".join(content_chunks),
+            content=content,
             reasoning_content="".join(reasoning_chunks),
             tool_calls=self._finalize_tool_calls(tool_call_parts),
             finish_reason=finish_reason,
@@ -536,6 +586,7 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         reasoning_content = extract_assistant_text(
             {"content": message.get("reasoning_content")}, include_reasoning=False
         )
+        self._raise_if_content_policy_block(content, request=request, url=url)
         return GenerationResult(
             content=content,
             reasoning_content=reasoning_content,

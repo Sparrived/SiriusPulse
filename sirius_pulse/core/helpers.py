@@ -864,6 +864,9 @@ class Helpers:
             return "auth_error"
         if error_code == "PROVIDER_CONNECTION_ERROR":
             return "network_timeout"
+        if error_code == "PROVIDER_CONTENT_FILTERED":
+            # 上游把策略拦截文案当 200 正文返回：归类为内容过滤，不按瞬时故障重试。
+            return "content_filter"
 
         msg = str(exc).lower()
 

@@ -152,6 +152,37 @@ class ProviderResponseError(ProviderError):
         self.response_body = response_body
 
 
+class ProviderContentFilteredError(ProviderError):
+    """上游把内容策略拦截的说明文字当成正常回复返回。
+
+    CPA 的 Gemini 通道在 prompt 命中 Google 的 Prohibited Use 策略时，仍回 HTTP
+    200，并把拒绝文案当作 assistant 正文流式吐出来（没有 error 事件，usage 全 0）。
+    这种响应在形态上是一次成功完成，但内容不是回复：直接发出去等于把报错甩给群。
+    它也不该按原任务重试——同一段上下文大概率仍会被拦——所以标为不可重试，由上层
+    换成兜底任务名重答。
+    """
+
+    def __init__(
+        self,
+        provider_name: str,
+        message: str,
+        *,
+        content_preview: str = "",
+    ) -> None:
+        context = {
+            "provider": provider_name,
+            "content_preview": content_preview[:200],
+        }
+        super().__init__(
+            message,
+            error_code="PROVIDER_CONTENT_FILTERED",
+            context=context,
+            is_retryable=False,
+        )
+        self.provider_name = provider_name
+        self.content_preview = content_preview
+
+
 class TokenError(SiriusException):
     """Token相关错误的基类"""
 
@@ -388,6 +419,7 @@ __all__ = [
     "ProviderConnectionError",
     "ProviderAuthError",
     "ProviderResponseError",
+    "ProviderContentFilteredError",
     "TokenError",
     "TokenBudgetExceededError",
     "TokenEstimationError",

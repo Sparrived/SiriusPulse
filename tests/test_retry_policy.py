@@ -19,13 +19,14 @@ from sirius_pulse.core.brain import Brain, ChatRequest
 from sirius_pulse.exceptions import (
     ProviderAuthError,
     ProviderConnectionError,
+    ProviderContentFilteredError,
     ProviderResponseError,
 )
 from sirius_pulse.providers.base import GenerationResult
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 
 
-def _brain(provider, **config) -> Brain:
+def _brain(provider, fallback: str = "fallback_generate", **config) -> Brain:
     return Brain(
         provider_async=provider,
         model_router=SimpleNamespace(
@@ -35,6 +36,7 @@ def _brain(provider, **config) -> Brain:
                 temperature=0.1,
                 timeout=30,
                 retries=3,
+                fallback_model_name=fallback,
             )
         ),
         persona=SimpleNamespace(name="tester", build_system_prompt=lambda: ""),
@@ -122,6 +124,93 @@ def test_empty_response_is_not_retried():
     asyncio.run(main())
 
     # 200 状态不被 http_status 判为不可重试，但 classify 归类为 empty_response。
+    assert provider.calls == 1
+
+
+# ── 内容策略拦截：换兜底任务，不按原任务重试 ────────────────────────
+
+
+def test_content_filter_switches_to_fallback_task():
+    """Gemini 拦截文案被当 200 正文返回时，改发兜底任务名，把回复救回来。"""
+
+    class _BlockedThenFallbackOk:
+        def __init__(self) -> None:
+            self.models: list[str] = []
+
+        async def generate_async(self, request):
+            self.models.append(request.model)
+            if request.model != "fallback_generate":
+                raise ProviderContentFilteredError(
+                    "amkr",
+                    "提供商把内容策略拦截的说明文字当作正常回复返回。",
+                    content_preview="The prompt could not be submitted.",
+                )
+            return GenerationResult(content="兜底模型的回复")
+
+    provider = _BlockedThenFallbackOk()
+    outcome: dict[str, object] = {}
+
+    async def main() -> None:
+        brain = _brain(provider, task_retries={"response_generate": 3})
+        outcome["result"] = await brain.chat(_request())
+
+    asyncio.run(main())
+
+    assert provider.models == ["model", "fallback_generate"], "必须换成兜底任务，而不是原任务重试"
+    assert outcome["result"].clean_text == "兜底模型的回复"
+
+
+def test_when_fallback_is_blocked_too_then_gives_up_without_reply():
+    """兜底也被拦就放弃本轮：宁可沉默，也不能把报错文案当成回复发出去。"""
+
+    class _AlwaysBlocked:
+        def __init__(self) -> None:
+            self.models: list[str] = []
+
+        async def generate_async(self, request):
+            self.models.append(request.model)
+            raise ProviderContentFilteredError(
+                "amkr",
+                "提供商把内容策略拦截的说明文字当作正常回复返回。",
+                content_preview="The prompt could not be submitted.",
+            )
+
+    provider = _AlwaysBlocked()
+
+    async def main() -> None:
+        brain = _brain(provider, task_retries={"response_generate": 3})
+        with pytest.raises(ProviderContentFilteredError):
+            await brain.chat(_request())
+
+    asyncio.run(main())
+
+    assert provider.models == ["model", "fallback_generate"]
+
+
+def test_content_filter_without_fallback_is_not_retried():
+    """没配兜底任务时，拦截文案第一次就放弃——重试同一提示词只会再被拦。"""
+
+    class _Blocked:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_async(self, request):
+            self.calls += 1
+            raise ProviderContentFilteredError(
+                "amkr",
+                "提供商把内容策略拦截的说明文字当作正常回复返回。",
+                content_preview="The prompt could not be submitted.",
+            )
+
+    provider = _Blocked()
+
+    async def main() -> None:
+        brain = _brain(provider, fallback="", task_retries={"response_generate": 3})
+        with pytest.raises(ProviderContentFilteredError):
+            await brain.chat(_request())
+
+    asyncio.run(main())
+
     assert provider.calls == 1
 
 

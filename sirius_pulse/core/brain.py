@@ -25,13 +25,14 @@ import logging
 import re
 import time
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
 from sirius_pulse.core.utils import strip_conversation_history_xml
 from sirius_pulse.core.work_mode import WORK_MODE_ONLY_TOOL_NAMES
+from sirius_pulse.exceptions import ProviderContentFilteredError
 from sirius_pulse.providers.base import (
     GenerationResult,
     ImageGenerationRequest,
@@ -604,6 +605,7 @@ class Brain:
                         retry_delay=request.retry_delay,
                         purpose_desc=f"chat({request.task_name})",
                         rebuild_fn=_rebuild_gen_request,
+                        fallback_model=getattr(cfg, "fallback_model_name", "") or None,
                     )
                 finally:
                     self._mark_main_reply_cooldown(request)
@@ -809,6 +811,7 @@ class Brain:
         retry_delay: float,
         purpose_desc: str,
         rebuild_fn: Callable[[], Any] | None = None,
+        fallback_model: str | None = None,
     ) -> tuple[GenerationResult, Any, dict | None]:
         """调用 provider，在 transport 级异常时自动重试。
 
@@ -816,6 +819,11 @@ class Brain:
         如果提供 rebuild_fn，在每次重试前调用它以获取新的 gen_request，
         从而在重试时可以使用最新的上下文（如最新消息、当前时间等）。
         全部重试耗尽后抛出最后一次异常。
+
+        ``fallback_model`` 是内容拦截时改用的备选任务名：上游把策略拦截文案
+        当成 200 正文返回（``ProviderContentFilteredError``）时，按原任务重试
+        只会再次被拦，所以改用备选任务名重发一次；备选也失败就抛出，由调用方
+        丢弃本轮（拦截文案绝不能当回复发出去）。
 
         Returns:
             (GenerationResult, 最终使用的 gen_request, 真实 token 用量或 None)
@@ -832,6 +840,31 @@ class Brain:
                 return result, current, real_usage
             except Exception as exc:
                 last_exc = exc
+                # 上游内容策略拦截：换备选任务名重发一次。拦的是 prompt 本身，
+                # 不是瞬时故障，按原任务重试只会再被拦，所以这里不占重试计数。
+                if (
+                    fallback_model
+                    and isinstance(exc, ProviderContentFilteredError)
+                    and getattr(current, "model", None) != fallback_model
+                ):
+                    logger.warning(
+                        "%s 命中上游内容策略拦截，改用兜底任务 %s 重发一次",
+                        purpose_desc,
+                        fallback_model,
+                    )
+                    current = replace(current, model=fallback_model)
+                    fallback_model = None
+                    try:
+                        result = await self._provider_call(current)
+                    except Exception as fallback_exc:
+                        logger.error(
+                            "%s 兜底任务也失败，本轮放弃: %s",
+                            purpose_desc,
+                            fallback_exc,
+                        )
+                        raise fallback_exc from exc
+                    real_usage = get_last_generation_usage()
+                    return result, current, real_usage
                 # 认证失败这类错误重试多少次都一样，只会白烧配额。
                 if not _is_retryable_exception(exc, self._classify_exception_fn):
                     logger.error(
