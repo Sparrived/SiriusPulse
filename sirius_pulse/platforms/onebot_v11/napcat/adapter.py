@@ -2298,6 +2298,11 @@ class NapCatAdapter(BaseAdapter):
                             cancel_item = getattr(engine.delayed_queue, "cancel_item", None)
                             if callable(cancel_item) and item_id:
                                 cancel_item(item_id)
+                            # 取消的条目不会再被 ticker 触发；残留的已发射标记
+                            # 必须同时清掉，避免 item_id 在集合中永久滞留。
+                            emitted = getattr(engine, "_delayed_event_emitted", None)
+                            if item_id and isinstance(emitted, dict):
+                                emitted.setdefault(gid, set()).discard(item_id)
                             self._dispatch_delivery_active.discard(gid)
                             return
                         dispatch_lease_id = decision.lease_id

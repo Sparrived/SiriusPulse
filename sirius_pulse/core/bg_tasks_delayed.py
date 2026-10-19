@@ -398,16 +398,30 @@ class DelayedQueueTasks:
                         len(dropped),
                         dropped,
                     )
+            # 回队/放弃的条目必须清掉已发射标记。否则 ticker 的
+            # ``newly_expired`` 会一直把这条 item_id 当成「已通知过」而跳过，
+            # 群就再也不会触发 LLM 生成，后续消息只会被 merge_incoming 吞掉。
+            emitted = getattr(self._engine, "_delayed_event_emitted", None)
+            if isinstance(emitted, dict):
+                group_emitted = emitted.get(group_id)
+                if isinstance(group_emitted, set):
+                    for item_id in in_flight:
+                        group_emitted.discard(item_id)
             raise
         else:
             # 生成 + 外发成功，确认丢弃本轮在途引用（合并批次可能有多条）。
-            queue.commit_in_flight(
-                [
-                    item_id
-                    for item_id in queue.in_flight_ids(group_id)
-                    if item_id not in pre_existing
-                ]
-            )
+            completed = [
+                item_id for item_id in queue.in_flight_ids(group_id) if item_id not in pre_existing
+            ]
+            queue.commit_in_flight(completed)
+            # 成功外发后同样清理标记；条目已离开 pending，ticker 不会再选它，
+            # 残留的 item_id 只会在集合里无限累积。
+            emitted = getattr(self._engine, "_delayed_event_emitted", None)
+            if isinstance(emitted, dict):
+                group_emitted = emitted.get(group_id)
+                if isinstance(group_emitted, set):
+                    for item_id in completed:
+                        group_emitted.discard(item_id)
             return results
         finally:
             end_tool_chain = getattr(self._engine, "end_tool_chain", None)

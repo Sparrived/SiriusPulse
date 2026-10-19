@@ -304,6 +304,54 @@ async def test_tool_chain_injects_explicit_group_text_into_next_model_round():
 
 
 @pytest.mark.asyncio
+async def test_delayed_queue_when_generation_fails_then_requeues_and_ticker_retriggers(monkeypatch):
+    """失败回队后必须清掉已发射标记，否则 ticker 会永远跳过该条目导致群死锁。"""
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "hello",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="lookup", silent=False, developer_only=False),
+        [RuntimeError("提供商响应内容为空。")],
+        AsyncMock(),
+    )
+    # 模拟该条目此前已经 emit 过（失败重试前的残留标记）。
+    engine._delayed_event_emitted = {"group-1": {item.item_id}}
+    engine._group_last_message_at = {"group-1": datetime.now(timezone.utc).isoformat()}
+    engine._bg_running = True
+
+    with pytest.raises(RuntimeError):
+        await tasks.tick_delayed_queue("group-1")
+
+    # 条目回到队列，并且已发射标记被清理。
+    assert queue.get_pending("group-1") == [item]
+    assert item.retry_count == 1
+    assert item.item_id not in engine._delayed_event_emitted["group-1"]
+
+    # 下一轮 ticker 应重新把它当作 newly_expired 并再次投递触发事件。
+    emit = AsyncMock(return_value=True)
+    engine.event_bus.emit = emit
+    item.enqueue_time = _past(item.window_seconds + 1)
+
+    async def _fast_sleep(seconds):
+        engine._bg_running = False
+
+    monkeypatch.setattr("sirius_pulse.core.bg_tasks_delayed.asyncio.sleep", _fast_sleep)
+    await tasks.delayed_queue_ticker()
+
+    emit.assert_awaited_once()
+    event = emit.await_args.args[0]
+    assert event.type == SessionEventType.DELAYED_RESPONSE_TRIGGERED
+    assert event.data["item_id"] == item.item_id
+    assert item.item_id in engine._delayed_event_emitted["group-1"]
+
+
+@pytest.mark.asyncio
 async def test_tool_chain_window_closes_when_provider_fails_mid_chain():
     queue = DelayedResponseQueue()
     item = queue.enqueue(

@@ -1762,26 +1762,29 @@ class _EmotionalGroupChatEngineBase:
                 )
                 if merged and promoted is not None:
                     emitted = self._delayed_event_emitted.setdefault(group_id, set())
-                    if promoted.item_id not in emitted:
-                        event_data = {
-                            "group_id": group_id,
-                            "item_id": promoted.item_id,
-                            "adapter_type": promoted.adapter_type or "",
-                            "reason": "pending_promoted_by_explicit_mention",
-                        }
-                        if promoted.adapter_route_id:
-                            event_data["adapter_route_id"] = promoted.adapter_route_id
-                        accepted = await self.event_bus.emit(
-                            SessionEvent(
-                                type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
-                                data=event_data,
-                            )
+                    # 显式 @ 是用户在催唤醒：即使该条目此前已经 emit 过、或失败
+                    # 回队后标记还没清干净，也必须重新投递触发事件。否则这个
+                    # item_id 会一直留在 emitted 里，群会永远停在合并短路阶段。
+                    emitted.discard(promoted.item_id)
+                    event_data = {
+                        "group_id": group_id,
+                        "item_id": promoted.item_id,
+                        "adapter_type": promoted.adapter_type or "",
+                        "reason": "pending_promoted_by_explicit_mention",
+                    }
+                    if promoted.adapter_route_id:
+                        event_data["adapter_route_id"] = promoted.adapter_route_id
+                    accepted = await self.event_bus.emit(
+                        SessionEvent(
+                            type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
+                            data=event_data,
                         )
-                        # Keep an unaccepted promotion eligible for the ticker
-                        # rather than marking it as consumed before a listener
-                        # has accepted the trigger.
-                        if accepted:
-                            emitted.add(promoted.item_id)
+                    )
+                    # Keep an unaccepted promotion eligible for the ticker
+                    # rather than marking it as consumed before a listener
+                    # has accepted the trigger.
+                    if accepted:
+                        emitted.add(promoted.item_id)
                     self._background_update(group_id, message, None, None, user_id)
                     return {
                         "strategy": "promoted",
