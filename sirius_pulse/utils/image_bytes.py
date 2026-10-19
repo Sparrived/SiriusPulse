@@ -29,6 +29,25 @@ _SHRINK_FACTOR: float = 0.75
 #: 缩小的下限：再小就会丢失可辨识的细节，不如接受超限。
 _MIN_EDGE: int = 320
 
+#: 图片容器的魔数前缀。媒体类型必须按**字节**判定：缓存常把各种图片统一存成
+#: .jpg，内容却可能是 PNG；上游按字节校验声明，声明错了整个请求会被拒。
+_IMAGE_MAGIC_PREFIXES: tuple[tuple[bytes, str], ...] = (
+    (bytes.fromhex("89504e470d0a1a0a"), "image/png"),
+    (bytes.fromhex("ffd8ff"), "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def sniff_image_mime(data: bytes) -> str | None:
+    """按魔数返回图片媒体类型；认不出来返回 None，交由调用方决定兜底值。"""
+    for prefix, mime in _IMAGE_MAGIC_PREFIXES:
+        if data.startswith(prefix):
+            return mime
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
 
 def _lanczos() -> Any:
     """返回 Lanczos 重采样常量，兼容 Pillow 的两种暴露方式。

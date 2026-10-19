@@ -432,6 +432,39 @@ class ToolEngineContext(Protocol):
         """Generate a proactive message with the normal multi-round tool loop."""
         ...
 
+    async def generate_image(
+        self,
+        *,
+        prompt: str,
+        reference_images: list[tuple[str, bytes]] | None = None,
+        timeout_seconds: float = 300.0,
+    ) -> dict[str, Any]:
+        """后台生图：返回 ``{"image_bytes": bytes, "mime_type": str}``。"""
+        ...
+
+    async def generate_background_result_message(
+        self,
+        *,
+        tool_name: str,
+        outcome: str,
+        request_summary: str = "",
+        deliver_hint: str = "",
+        artifact_path: str = "",
+        error: str = "",
+        group_id: str,
+        user_id: str = "",
+        user_name: str = "",
+        adapter_type: str = "",
+        caller_is_developer: bool = False,
+    ) -> dict[str, Any]:
+        """为完成的后台工具跑一个通知回合，返回待投递的消息 payload。
+
+        ``outcome`` 取 ``"success"`` / ``"error"``；``deliver_hint`` 是给模型的
+        交付指引（例如用 ``group_file_exec`` 把图片发到原聊天）。返回值额外带
+        ``image_sent``：这一回合里模型是否真的用 ``group_file_exec`` 发出了图片。
+        """
+        ...
+
     def queue_pending_message(self, group_id: str, text: str, adapter_type: str = "") -> None:
         """将待发送消息放入引擎的待处理队列。"""
         ...

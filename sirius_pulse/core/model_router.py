@@ -93,6 +93,13 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         model_name="autonomy_generate",
         timeout=30.0,
     ),
+    # 生图任务：发往 AMKR 的 /v1/images/* 端点，必须由运维在 AMKR 面板里绑定
+    # 一个真正的生图模型（不绑就是 404）。超时给足，生图 30–300 秒都算正常。
+    "image_generate": TaskConfig(
+        model_name="image_generate",
+        timeout=300.0,
+        retries=0,
+    ),
 }
 
 # 兜底任务：未注册的任务名按它的超时/重试处理。

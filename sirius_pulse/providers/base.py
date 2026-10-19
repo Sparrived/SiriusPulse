@@ -4,7 +4,7 @@ import base64
 import logging
 import mimetypes
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import unquote, urlparse
@@ -207,6 +207,28 @@ class GenerationRequest:
     # Provider-neutral intent. Each adapter decides whether/how it maps this
     # to its wire format; None keeps raw/provider-specific calls unchanged.
     reasoning_effort: str | None = None
+
+
+@dataclass(slots=True)
+class ImageGenerationRequest:
+    """一次生图请求。
+
+    ``model`` 同样是 AMKR 任务名（本框架只发任务名，真实模型由 AMKR 决定）；
+    ``reference_images`` 非空时走图像编辑端点，元素是 (文件名, 原始字节)。
+    """
+
+    model: str
+    prompt: str
+    reference_images: list[tuple[str, bytes]] = field(default_factory=list)
+    timeout_seconds: float | None = None
+
+
+@dataclass(slots=True)
+class ImageGenerationResult:
+    """生图结果：只保留调用方真正需要的字节与媒体类型。"""
+
+    image_bytes: bytes
+    mime_type: str = "image/png"
 
 
 def estimate_generation_request_input_tokens(request: GenerationRequest) -> int:

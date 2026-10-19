@@ -34,6 +34,7 @@ TASK_LABELS: dict[str, str] = {
     "plugin_render": "插件渲染",
     "plugin_raw": "插件原生",
     "autonomy_generate": "自主行为",
+    "image_generate": "生图",
 }
 
 

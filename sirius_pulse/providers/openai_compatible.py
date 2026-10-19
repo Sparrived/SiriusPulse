@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
-from typing import NoReturn, cast
+import mimetypes
+from typing import Any, NoReturn, cast
 
 import httpx
 
@@ -16,6 +19,8 @@ from sirius_pulse.providers.base import (
     AsyncLLMProvider,
     GenerationRequest,
     GenerationResult,
+    ImageGenerationRequest,
+    ImageGenerationResult,
     ToolCall,
     build_chat_completion_payload,
     build_generation_debug_context,
@@ -24,6 +29,7 @@ from sirius_pulse.providers.base import (
     set_last_generation_usage,
 )
 from sirius_pulse.providers.response_utils import extract_assistant_text
+from sirius_pulse.utils.image_bytes import sniff_image_mime
 
 logger = logging.getLogger(__name__)
 
@@ -69,18 +75,21 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
     def _build_url(self, request: GenerationRequest) -> str:
         return f"{self._base_url}/v1/chat/completions"
 
-    def _build_headers(self) -> dict[str, str]:
-        """构造请求头。
+    def _build_auth_headers(self) -> dict[str, str]:
+        """只带凭据与工作空间的请求头；multipart 请求不能手工指定 Content-Type。
 
         ``X-AMKR-Workspace`` 是 AMKR 自己的路由状态，不会被转发给上游；空值
         时不发送，等价于 AMKR 的默认工作空间。
         """
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-        }
+        headers = {"Authorization": f"Bearer {self._api_key}"}
         if self._workspace:
             headers["X-AMKR-Workspace"] = self._workspace
+        return headers
+
+    def _build_headers(self) -> dict[str, str]:
+        """构造 JSON 请求头。"""
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
         return headers
 
     async def generate_async(
@@ -187,6 +196,171 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         if return_reasoning:
             return (result.reasoning_content, result)
         return result
+
+    async def generate_image_async(self, request: ImageGenerationRequest) -> ImageGenerationResult:
+        """调用 AMKR 的图像端点，返回生成图片的原始字节。
+
+        ``model`` 仍是 AMKR 任务名；工作空间推理 key 同样适用于图像端点。带参考
+        图时走 ``/v1/images/edits`` 的 multipart 表单——AMKR 只从表单里读 model
+        做路由，其余字段原样转发；没有参考图时走 JSON 的 ``/v1/images/generations``。
+        """
+        timeout_seconds = request.timeout_seconds or max(float(self._timeout_seconds), 120.0)
+        has_references = bool(request.reference_images)
+        endpoint = "edits" if has_references else "generations"
+        url = f"{self._base_url}/v1/images/{endpoint}"
+        headers = self._build_auth_headers()
+        payload: dict[str, Any] = {"model": request.model, "prompt": request.prompt}
+        files: list[tuple[str, tuple[str, bytes, str]]] | None = None
+        if has_references:
+            # 多图按 OpenAI 的规范字段写 image[]；媒体类型按字节判定，避免文件名
+            # 后缀（缓存常把图片统一存成 .jpg）把上游的格式校验弄崩。
+            field_name = "image[]" if len(request.reference_images) > 1 else "image"
+            files = [
+                (field_name, (filename, data, self._guess_image_mime(filename, data)))
+                for filename, data in request.reference_images
+            ]
+        logger.info(
+            f"正在向 {self._provider_name} 的 {request.model} 要一张图，"
+            f"参考图 {len(request.reference_images)} 张，超时 {timeout_seconds:.1f} 秒～"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                if files is not None:
+                    response = await client.post(url, data=payload, files=files, headers=headers)
+                else:
+                    response = await client.post(
+                        url,
+                        json=payload,
+                        headers={**headers, "Content-Type": "application/json"},
+                    )
+                raw = response.text
+                if response.status_code >= 400:
+                    self._raise_image_status(response.status_code, raw, request, url)
+                body = self._parse_image_body(raw, url)
+                result = await self._read_image_item(client, body, url)
+        except httpx.HTTPError as exc:
+            logger.error(
+                f"[生图失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"| {type(exc).__name__}: {exc or '(无详细信息)'}",
+                exc_info=True,
+            )
+            raise ProviderConnectionError(
+                self._provider_name,
+                f"生图请求异常：{exc}",
+                original_error=exc,
+            ) from exc
+        logger.info(f"{self._provider_name} 的画好了：{result.mime_type}，{len(result.image_bytes)} 字节")
+        return result
+
+    @staticmethod
+    def _guess_image_mime(filename: str, data: bytes) -> str:
+        sniffed = sniff_image_mime(data)
+        if sniffed is not None:
+            return sniffed
+        guessed, _ = mimetypes.guess_type(filename)
+        return guessed or "image/png"
+
+    def _parse_image_body(self, raw: str, url: str) -> dict[str, Any]:
+        try:
+            body = json.loads(raw)
+        except ValueError as exc:
+            raise ProviderResponseError(
+                self._provider_name,
+                f"生图接口返回的不是合法 JSON：{raw[:200]}",
+                response_body=raw,
+            ) from exc
+        if not isinstance(body, dict):
+            raise ProviderResponseError(
+                self._provider_name,
+                f"生图接口返回结构异常：{raw[:200]}",
+                response_body=raw,
+            )
+        return body
+
+    async def _read_image_item(
+        self,
+        client: httpx.AsyncClient,
+        body: dict[str, Any],
+        url: str,
+    ) -> ImageGenerationResult:
+        """从 data[0] 取图片：优先内联 b64_json，退化时下载 url。"""
+        items = body.get("data")
+        if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+            raise ProviderResponseError(
+                self._provider_name,
+                "生图接口没有返回任何图片数据。",
+                response_body=json.dumps(body, ensure_ascii=False)[:500],
+            )
+        item = items[0]
+        encoded = str(item.get("b64_json") or "").strip()
+        if encoded:
+            try:
+                image_bytes = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ProviderResponseError(
+                    self._provider_name,
+                    f"生图接口返回的 b64_json 无法解码：{exc}",
+                    response_body=encoded[:200],
+                ) from exc
+            if not image_bytes:
+                raise ProviderResponseError(
+                    self._provider_name,
+                    "生图接口返回了空图片。",
+                    response_body=encoded[:200],
+                )
+            return ImageGenerationResult(
+                image_bytes=image_bytes,
+                mime_type=sniff_image_mime(image_bytes) or "image/png",
+            )
+        image_url = str(item.get("url") or "").strip()
+        if not image_url:
+            raise ProviderResponseError(
+                self._provider_name,
+                "生图接口既没有 b64_json 也没有 url。",
+                response_body=json.dumps(body, ensure_ascii=False)[:500],
+            )
+        download = await client.get(image_url)
+        if download.status_code >= 400:
+            raise ProviderResponseError(
+                self._provider_name,
+                f"下载生成图片失败，HTTP {download.status_code}：{image_url}",
+                http_status=download.status_code,
+            )
+        image_bytes = download.content
+        if not image_bytes:
+            raise ProviderResponseError(
+                self._provider_name,
+                f"下载生成图片得到空内容：{image_url}",
+            )
+        return ImageGenerationResult(
+            image_bytes=image_bytes,
+            mime_type=self._guess_image_mime(image_url, image_bytes),
+        )
+
+    def _raise_image_status(
+        self,
+        status_code: int,
+        raw: str,
+        request: ImageGenerationRequest,
+        url: str,
+    ) -> NoReturn:
+        logger.error(
+            f"[生图失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+            f"| HTTP {status_code}: {raw[:500]}"
+        )
+        message = f"生图接口 HTTP 错误 {status_code}：{raw[:200]}"
+        if status_code in (401, 403):
+            raise ProviderAuthError(
+                self._provider_name,
+                message,
+                http_status=status_code,
+            )
+        raise ProviderResponseError(
+            self._provider_name,
+            message,
+            http_status=status_code,
+            response_body=raw,
+        )
 
     async def _consume_event_stream(
         self,

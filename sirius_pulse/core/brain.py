@@ -32,7 +32,12 @@ from typing import Any, Callable
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
 from sirius_pulse.core.utils import strip_conversation_history_xml
 from sirius_pulse.core.work_mode import WORK_MODE_ONLY_TOOL_NAMES
-from sirius_pulse.providers.base import GenerationResult, ToolCall
+from sirius_pulse.providers.base import (
+    GenerationResult,
+    ImageGenerationRequest,
+    ImageGenerationResult,
+    ToolCall,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -717,6 +722,22 @@ class Brain:
             )
         )
         return result.clean_text
+
+    async def generate_image_async(self, request: ImageGenerationRequest) -> ImageGenerationResult:
+        """把生图请求交给 provider；生图不经过 chat() 的上下文与人格注入。
+
+        它与聊天共用同一个 provider（同一 AMKR 工作空间、同一把推理 key），
+        只是换了端点；任务名仍由调用方填进 ``request.model``。
+        """
+        provider = self.provider_async
+        if provider is None or not hasattr(provider, "generate_image_async"):
+            from sirius_pulse.exceptions import ProviderConnectionError
+
+            raise ProviderConnectionError(
+                getattr(provider, "_provider_name", "unknown"),
+                "当前 provider 不支持生图（AMKR 连接未就绪）。",
+            )
+        return await provider.generate_image_async(request)
 
     # ═══════════════════════════════════════════════════════════════════
     # 内部方法

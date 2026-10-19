@@ -17,6 +17,7 @@ const SOURCE_LABELS = {
   chat: '她自己进去的',
   autonomy: '自主回合',
   scheduled: '定时任务',
+  passive_tool: '后台任务回执',
 };
 
 // 空值表示沿用本回合原本的任务名，也就是普通聊天用的那个模型。

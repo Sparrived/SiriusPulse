@@ -87,7 +87,7 @@ Perception → Signal → PreFilter → Generate → BackgroundUpdate
 - 详见 [扩展开发](#-扩展开发)
 
 ### 🎬 **更多特性**
-- 多模态输入（图片）
+- 多模态输入（图片），并支持在群内生成图片（后台异步，画完自动发回原群）
 - Token 消耗追踪与分析
 - `@command` 装饰器声明式插件开发
 - 被动工具：后台任务、事件触发器、生命周期回调
@@ -107,7 +107,7 @@ pip install sirius-pulse
 
 外部插件是独立维护的 Git submodule，不会打包进 PyPI wheel，也不会复制进 Docker 镜像。源码必须在运行目录的 `plugins/` 中由宿主机准备；详见下方的插件初始化和 Docker 挂载说明。
 
-> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 11 个认知任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
+> 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI 的「全局设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到「AMKR 运维」页点一次「注册任务名」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 12 个内置任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。其中 `image_generate` 是生图工具专用的任务，要在面板里给它单独绑一个生图模型（例如 `gpt-image-2.5-flare`），否则生图调用会 404。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接轮换一把。
 
 ### 2️⃣ 启动运行
 
@@ -332,7 +332,7 @@ def run(query: str = "", data_store=None, **kwargs) -> dict:
     return {"success": True, "text": result}
 ```
 
-内置工具包括：`bash`（含受限 Docker 命令和项目级 crontab 调度）、`web_lookup`、`qq_member_info`、`desktop_screenshot` 等。工具也可以通过后台任务、事件触发器和生命周期回调提供被动能力。
+内置工具包括：`bash`（含受限 Docker 命令和项目级 crontab 调度）、`web_lookup`、`qq_member_info`、`desktop_screenshot`、`image_generate`（生图，需在 AMKR 面板给它绑生图模型）等。工具也可以通过后台任务、事件触发器和生命周期回调提供被动能力。
 
 ### 插件系统（Plugins）
 

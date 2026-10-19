@@ -10,6 +10,7 @@ from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.work_mode import (
     WORK_MODE_SOURCE_AUTONOMY,
+    WORK_MODE_SOURCE_PASSIVE_TOOL,
     WORK_MODE_SOURCE_SCHEDULED,
     WorkModeRun,
     WorkModeStore,
@@ -130,6 +131,96 @@ class ToolEngineContextImpl:
         )
         return self._scheduled_result_payload(result) if result else {}
 
+    async def generate_image(
+        self,
+        *,
+        prompt: str,
+        reference_images: list[tuple[str, bytes]] | None = None,
+        timeout_seconds: float = 300.0,
+    ) -> dict[str, Any]:
+        """让 AMKR 生成一张图，返回原始字节与媒体类型。
+
+        任务名固定为 ``image_generate``（注册表里有它，AMKR 按任务定义换成真实
+        生图模型）；参考图同时决定走编辑端点还是文生图端点。
+        """
+        from sirius_pulse.providers.base import ImageGenerationRequest
+
+        request = ImageGenerationRequest(
+            model="image_generate",
+            prompt=prompt,
+            reference_images=list(reference_images or []),
+            timeout_seconds=timeout_seconds,
+        )
+        result = await self._engine.brain.generate_image_async(request)
+        return {"image_bytes": result.image_bytes, "mime_type": result.mime_type}
+
+    async def generate_background_result_message(
+        self,
+        *,
+        tool_name: str,
+        outcome: str,
+        request_summary: str = "",
+        deliver_hint: str = "",
+        artifact_path: str = "",
+        error: str = "",
+        group_id: str,
+        user_id: str = "",
+        user_name: str = "",
+        adapter_type: str = "",
+        caller_is_developer: bool = False,
+    ) -> dict[str, Any]:
+        """为完成的后台任务跑一个"结果通知"回合，返回待投递的 payload。
+
+        和定时任务回合同构：框架自动进入工作模式（工具循环里才能调用
+        ``group_file_exec`` 发图），最终正文由调用方经主动消息通道投递。
+        """
+        tool_desc = self.get_tool_descriptions(
+            caller_is_developer=caller_is_developer, adapter_type=adapter_type, work_mode=True
+        )
+        system_prompt, messages = PromptFactory.build_background_tool_result_sections(
+            tool_name=tool_name,
+            outcome=outcome,
+            request_summary=request_summary,
+            deliver_hint=deliver_hint,
+            artifact_path=artifact_path,
+            error=error,
+            tool_desc=tool_desc,
+            work_mode=True,
+        )
+        self._engine._tool_executor.set_chat_context(
+            group_id=group_id, user_id=user_id, adapter_type=adapter_type
+        )
+        caller = self._build_caller(user_id, user_name, caller_is_developer)
+        invocation_context = ToolInvocationContext(
+            caller=caller,
+            developer_profiles=[caller] if caller_is_developer else [],
+            group_id=group_id,
+            adapter_type=adapter_type or "",
+        )
+        tool_audit: list[dict[str, Any]] = []
+        result = await self._run_tool_loop(
+            system_prompt=system_prompt,
+            messages=messages,
+            group_id=group_id,
+            user_id=user_id,
+            task_name="proactive_generate",
+            adapter_type=adapter_type,
+            caller_is_developer=caller_is_developer,
+            invocation_context=invocation_context,
+            goal=f"后台任务：{tool_name}",
+            source=WORK_MODE_SOURCE_PASSIVE_TOOL,
+            tool_audit=tool_audit,
+        )
+        payload = self._scheduled_result_payload(result) if result else {}
+        # 回执回合不保证模型一定调用了发图工具；调用方据此决定要不要自己补发。
+        payload["image_sent"] = any(
+            item.get("tool") == "group_file_exec"
+            and item.get("success")
+            and str((item.get("params") or {}).get("action", "")).strip() == "image"
+            for item in tool_audit
+        )
+        return payload
+
     async def _run_tool_loop(
         self,
         *,
@@ -143,6 +234,7 @@ class ToolEngineContextImpl:
         invocation_context: ToolInvocationContext,
         goal: str = "",
         source: str = WORK_MODE_SOURCE_AUTONOMY,
+        tool_audit: list[dict[str, Any]] | None = None,
     ) -> Any:
         """Run the normal multi-round tool loop inside work mode.
 
@@ -174,6 +266,7 @@ class ToolEngineContextImpl:
                 caller_is_developer=caller_is_developer,
                 invocation_context=invocation_context,
                 max_rounds=max_rounds,
+                tool_audit=tool_audit,
             )
         finally:
             # 生成抛错、任务被取消都不会走到收尾代码；轨迹不能因此停在 running。
@@ -192,6 +285,7 @@ class ToolEngineContextImpl:
         caller_is_developer: bool,
         invocation_context: ToolInvocationContext,
         max_rounds: int,
+        tool_audit: list[dict[str, Any]] | None = None,
     ) -> Any:
         last_result: Any = None
         ended_by_round_limit = True
@@ -254,6 +348,17 @@ class ToolEngineContextImpl:
                         max_retries=2 if getattr(tool, "retry_safe", False) else 0,
                     )
                     tool_content = executed.to_model_text()
+                    if tool_audit is not None:
+                        # 后台回执回合需要知道模型到底有没有把产物发出去（例如图片
+                        # 有没有真的经 group_file_exec 发出），这里留一份结构化记录。
+                        tool_audit.append(
+                            {
+                                "tool": tool_name,
+                                "params": dict(params),
+                                "success": bool(executed.success),
+                                "text": tool_content,
+                            }
+                        )
                     tool_multimodal.extend(
                         {"type": "image_url", "image_url": {"url": block.value}}
                         for block in executed.multimodal_blocks

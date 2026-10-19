@@ -1,6 +1,6 @@
-"""自主回合与定时任务回合自动走工作模式：重工具可用、过程留轨迹。
+"""自主回合、定时任务回合与后台工具回归回合自动走工作模式：重工具可用、过程留轨迹。
 
-这两类回合本来就是"她独自做事"的时刻，以前框架把它们当普通回合发（重工具还被
+这几类回合本来就是"她独自做事"的时刻，以前框架把它们当普通回合发（重工具还被
 藏起来了），现在由框架直接替她进入工作模式，并且共享同一份工作模式设置——也就是
 在 AMKR 面板里配哪个模型。
 """
@@ -14,7 +14,7 @@ import pytest
 
 from sirius_pulse.core.tool_engine_context import ToolEngineContextImpl
 from sirius_pulse.core.work_mode import WorkModeStore
-from sirius_pulse.providers.base import ToolCall
+from sirius_pulse.providers.base import ImageGenerationResult, ToolCall
 from sirius_pulse.tools.models import ToolResult
 
 
@@ -287,3 +287,90 @@ async def test_the_wrap_up_keeps_the_earlier_text_when_it_fails(tmp_path):
     # 两轮工具都没写正文，所以结果仍是空的——但这一次是"如实为空"，不是崩溃。
     assert result["text"] == ""
     assert _sessions(tmp_path)[0]["status"] == "aborted"
+
+
+@pytest.mark.asyncio
+async def test_background_tool_result_turn_delivers_the_artifact_with_group_file_exec(tmp_path):
+    """后台生图完成后要主动提醒模型：这是工作模式回合，用 group_file_exec 把图发出去。"""
+    executor = _Executor()
+    brain = _Brain(
+        [
+            _tool_round(
+                tool="group_file_exec",
+                arguments='{"action":"image","image_path":"/data/images/cat.png"}',
+            ),
+            _final_round("画好啦。"),
+        ]
+    )
+    context = _context(tmp_path, brain, executor)
+
+    payload = await context.generate_background_result_message(
+        tool_name="image_generate",
+        outcome="success",
+        request_summary="画一只猫",
+        deliver_hint='先调用 group_file_exec，action="image"，image_path="/data/images/cat.png"',
+        artifact_path="/data/images/cat.png",
+        group_id="group-1",
+        user_id="u1",
+        user_name="Alice",
+        adapter_type="napcat",
+    )
+
+    assert payload["text"] == "画好啦。"
+    assert payload["image_sent"] is True
+    assert brain.requests[0].work_mode is True
+    assert brain.requests[0].task_name == "proactive_generate"
+    assert "【后台任务完成】" in brain.requests[0].system_prompt
+    assert "group_file_exec" in brain.requests[0].system_prompt
+    assert "cat.png" in brain.requests[0].system_prompt
+    assert executor.calls[0][0].name == "group_file_exec"
+    assert executor.calls[0][1] == {"action": "image", "image_path": "/data/images/cat.png"}
+    assert executor.context == {"group_id": "group-1", "user_id": "u1", "adapter_type": "napcat"}
+
+
+@pytest.mark.asyncio
+async def test_background_tool_result_turn_reports_when_the_artifact_was_not_sent(tmp_path):
+    """模型没调发图工具时，回执结果要显式告诉调用方，好让工具层补发。"""
+    brain = _Brain([_final_round("画好啦。")])
+    context = _context(tmp_path, brain)
+
+    payload = await context.generate_background_result_message(
+        tool_name="image_generate",
+        outcome="success",
+        deliver_hint="把生成好的图发到当前聊天",
+        artifact_path="/data/images/cat.png",
+        group_id="group-1",
+        adapter_type="napcat",
+    )
+
+    assert payload["text"] == "画好啦。"
+    assert payload["image_sent"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_image_sends_the_registered_task_name_and_reference_bytes(tmp_path):
+    """生图不掺本地模型选择：发出的是已登记的任务名，参考图按原始字节交给 provider。"""
+
+    class _ImageBrain:
+        def __init__(self):
+            self.requests = []
+
+        async def generate_image_async(self, request):
+            self.requests.append(request)
+            return ImageGenerationResult(image_bytes=b"png-bytes", mime_type="image/png")
+
+    brain = _ImageBrain()
+    context = _context(tmp_path, brain)
+
+    result = await context.generate_image(
+        prompt="画一只猫",
+        reference_images=[("ref.png", b"raw")],
+        timeout_seconds=120.0,
+    )
+
+    assert result == {"image_bytes": b"png-bytes", "mime_type": "image/png"}
+    request = brain.requests[0]
+    assert request.model == "image_generate"
+    assert request.prompt == "画一只猫"
+    assert request.reference_images == [("ref.png", b"raw")]
+    assert request.timeout_seconds == 120.0
