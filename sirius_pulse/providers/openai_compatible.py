@@ -38,6 +38,15 @@ logger = logging.getLogger(__name__)
 #: 透传路径按原样转发，所以调用方必须带上。
 _STREAM_OPTIONS: dict[str, bool] = {"include_usage": True}
 
+#: 图像端点的上游（sub2api）套了一层 Cloudflare 校验，会按 User-Agent 判断请求像不像
+#: 浏览器：默认的 httpx / python-urllib UA 直接被拦成 403（error code 1010）。AMKR 会把
+#: 客户端请求头原样转发给上游，所以图像请求必须自带一个常见的浏览器 UA；聊天链路不
+#: 经过这层校验，保持默认 UA，不要顺手改成同一个值。
+_IMAGE_REQUEST_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
+
 
 class OpenAICompatibleProvider(AsyncLLMProvider):
     """OpenAI-compatible provider backed by /v1/chat/completions.
@@ -203,12 +212,14 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         ``model`` 仍是 AMKR 任务名；工作空间推理 key 同样适用于图像端点。带参考
         图时走 ``/v1/images/edits`` 的 multipart 表单——AMKR 只从表单里读 model
         做路由，其余字段原样转发；没有参考图时走 JSON 的 ``/v1/images/generations``。
+        图像请求固定携带浏览器 UA，原因见 ``_IMAGE_REQUEST_USER_AGENT``。
         """
         timeout_seconds = request.timeout_seconds or max(float(self._timeout_seconds), 120.0)
         has_references = bool(request.reference_images)
         endpoint = "edits" if has_references else "generations"
         url = f"{self._base_url}/v1/images/{endpoint}"
         headers = self._build_auth_headers()
+        headers["User-Agent"] = _IMAGE_REQUEST_USER_AGENT
         payload: dict[str, Any] = {"model": request.model, "prompt": request.prompt}
         files: list[tuple[str, tuple[str, bytes, str]]] | None = None
         if has_references:
@@ -319,7 +330,7 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
                 "生图接口既没有 b64_json 也没有 url。",
                 response_body=json.dumps(body, ensure_ascii=False)[:500],
             )
-        download = await client.get(image_url)
+        download = await client.get(image_url, headers={"User-Agent": _IMAGE_REQUEST_USER_AGENT})
         if download.status_code >= 400:
             raise ProviderResponseError(
                 self._provider_name,

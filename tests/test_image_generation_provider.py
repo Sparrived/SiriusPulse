@@ -135,6 +135,9 @@ def test_generations_request_uses_task_name_and_inference_headers(monkeypatch):
     assert headers["authorization"] == "Bearer amkr_ik_test"
     assert headers["x-amkr-workspace"] == "persona-alpha"
     assert headers["content-type"].startswith("application/json")
+    # 上游有 Cloudflare 校验，默认 httpx UA 会被 1010 拦掉；图像请求必须带浏览器 UA。
+    assert headers["user-agent"].startswith("Mozilla/5.0")
+    assert "Chrome/" in headers["user-agent"]
     assert isinstance(result, ImageGenerationResult)
 
 
@@ -167,6 +170,8 @@ def test_url_response_is_downloaded(monkeypatch):
     assert "x-amkr-workspace" not in headers
     assert [str(item.url) for item in downloads] == ["http://amkr.test/files/result.png"]
     assert downloads[0].method == "GET"
+    # 结果图可能落在同样有 Cloudflare 校验的 CDN 上，下载也要带浏览器 UA。
+    assert downloads[0].headers["user-agent"].startswith("Mozilla/5.0")
     assert result.image_bytes == PNG_1PX
     assert result.mime_type == "image/png"
 
@@ -189,6 +194,7 @@ def test_edits_single_reference_uses_image_field_and_byte_mime(monkeypatch):
     assert seen["path"] == "/v1/images/edits"
     assert headers["authorization"] == "Bearer amkr_ik_test"
     assert headers["content-type"].startswith("multipart/form-data; boundary=")
+    assert headers["user-agent"].startswith("Mozilla/5.0")
     assert fields["model"][0][0] == b"image_generate"
     assert fields["prompt"][0][0] == PROMPT.encode("utf-8")
     assert fields["image"] == [(PNG_1PX, "image/png")]
