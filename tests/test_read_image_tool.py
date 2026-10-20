@@ -64,6 +64,21 @@ async def test_read_image_expands_tilde_against_persona_home(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_read_image_normalizes_misnamed_cache_image(tmp_path: Path):
+    persona_dir = tmp_path / "sirius"
+    misnamed = persona_dir / "home" / "image_cache" / "chat_002.jpg"
+    _write_png(misnamed)
+
+    result = await read_image.run(paths=[str(misnamed)], data_store=_store(persona_dir))
+
+    assert result["success"] is True
+    normalized = Path(result["multimodal_blocks"][0]["value"])
+    assert normalized.suffix == ".png"
+    assert normalized.is_file()
+    assert normalized != misnamed
+
+
+@pytest.mark.asyncio
 async def test_read_image_reports_missing_non_image_and_too_many(tmp_path: Path):
     persona_dir = tmp_path / "sirius"
     store = _store(persona_dir)

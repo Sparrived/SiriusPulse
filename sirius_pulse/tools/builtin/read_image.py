@@ -50,6 +50,13 @@ _EXTENSION_BY_MIME = {
     "image/webp": ".webp",
     "image/bmp": ".bmp",
 }
+_EXTENSIONS_BY_MIME = {
+    "image/png": {".png"},
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/gif": {".gif"},
+    "image/webp": {".webp"},
+    "image/bmp": {".bmp"},
+}
 
 _config = ConfigBuilder()
 _config.group("读图").add(
@@ -197,10 +204,20 @@ async def _resolve_source(source: str, data_store: Any) -> tuple[Path, str, int]
     size = path.stat().st_size
     if size > _MAX_IMAGE_BYTES:
         raise ValueError(f"图片过大（{size} 字节），单张最多 {_MAX_IMAGE_BYTES // 1024 // 1024}MB：{source}")
-    mime_type = _sniff_image_mime(path.read_bytes())
+    data = path.read_bytes()
+    mime_type = _sniff_image_mime(data)
     if not mime_type:
         raise ValueError(f"不是可识别的图片文件：{source}")
+    # 聊天缓存里常见 .jpg 实际是 PNG/GIF；传输层按后缀猜 MIME，会把错误格式发给上游。
+    # 按真实格式复制一份带正确后缀的文件，确保 read_image 自己返回的路径一定能用。
+    if not _suffix_matches_mime(path, mime_type):
+        path = _save_normalized(data, mime_type, data_store)
+        size = len(data)
     return path.resolve(), mime_type, size
+
+
+def _suffix_matches_mime(path: Path, mime_type: str) -> bool:
+    return path.suffix.lower() in _EXTENSIONS_BY_MIME.get(mime_type, set())
 
 
 def _resolve_local_path(source: str, data_store: Any) -> Path | None:
@@ -273,13 +290,29 @@ async def _download_image(url: str) -> bytes:
 
 def _save_download(data: bytes, mime_type: str, data_store: Any) -> Path:
     """按内容哈希保存下载的图片，重复读取同一 URL 时直接复用。"""
-    directory = _artifact_dir(data_store) / "downloads"
+    return _save_bytes(data, mime_type, data_store, "downloads", keep=_DOWNLOAD_KEEP_FILES)
+
+
+def _save_normalized(data: bytes, mime_type: str, data_store: Any) -> Path:
+    """把后缀与实际格式不一致的本地图片按真实格式另存一份。"""
+    return _save_bytes(data, mime_type, data_store, "normalized", keep=200)
+
+
+def _save_bytes(
+    data: bytes,
+    mime_type: str,
+    data_store: Any,
+    directory_name: str,
+    *,
+    keep: int,
+) -> Path:
+    directory = _artifact_dir(data_store) / directory_name
     directory.mkdir(parents=True, exist_ok=True)
     suffix = _EXTENSION_BY_MIME.get(mime_type, ".img")
     path = directory / f"{hashlib.sha1(data).hexdigest()[:20]}{suffix}"
     if not path.is_file():
         path.write_bytes(data)
-        _cleanup_downloads(directory)
+        _cleanup_downloads(directory, keep=keep)
     return path.resolve()
 
 
