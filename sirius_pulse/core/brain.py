@@ -267,6 +267,7 @@ class Brain:
         sticker_names: list[str] | None = None,
         other_ai_names: list[str] | None = None,
         tool_registry: Any | None = None,
+        persona_assets_dir: Any | None = None,
     ) -> None:
         self.provider_async = provider_async
         self.router = model_router
@@ -278,6 +279,8 @@ class Brain:
         self.sticker_names = list(sticker_names or [])
         self.other_ai_names = list(other_ai_names or [])
         self.tool_registry = tool_registry
+        # 人格自己的形象参考图目录（三视图/立绘）；每次对话重新扫描，不用重启。
+        self.persona_assets_dir = persona_assets_dir
 
         # 上下文函数（延迟注入，避免循环导入）
         self._recent_messages_fn: Callable[[str, int], list[dict[str, Any]]] | None = None
@@ -297,6 +300,17 @@ class Brain:
             self._max_concurrent_llm_calls() or _UNLIMITED_CONCURRENCY
         )
         self._main_reply_last_finished_at: float = 0.0
+
+    def _persona_system_prompt(self) -> str:
+        """人格 prompt + 自身形象参考图路径（三视图/立绘）。
+
+        参考图目录每次对话都重新扫描：补充或更换设定图后不用重启人格即可生效。
+        """
+        from sirius_pulse.utils.persona_assets import build_persona_assets_section
+
+        base = self.persona.build_system_prompt()
+        assets_section = build_persona_assets_section(self.persona_assets_dir)
+        return f"{base}\n\n{assets_section}" if assets_section else base
 
     # ═══════════════════════════════════════════════════════════════════
     # 上下文函数注入
@@ -468,7 +482,7 @@ class Brain:
                     entry.hook(self, request, ctx)
 
             # ── 2. 默认 pre: 人格注入（无条件，最高优先级）──
-            persona_base = self.persona.build_system_prompt()
+            persona_base = self._persona_system_prompt()
             system_prompt = persona_base + "\n\n" + system_prompt
 
             # 保存 prompt 基底，用于重试时刷新消息链里的当前时间

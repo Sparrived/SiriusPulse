@@ -332,7 +332,7 @@ def run(query: str = "", data_store=None, **kwargs) -> dict:
     return {"success": True, "text": result}
 ```
 
-内置工具包括：`bash`（含受限 Docker 命令和项目级 crontab 调度）、`web_lookup`、`qq_member_info`、`desktop_screenshot`、`image_generate`（生图，需在 AMKR 面板给它绑生图模型）等。工具也可以通过后台任务、事件触发器和生命周期回调提供被动能力。群聊里收到的图片/表情包会把本地缓存路径带进上下文，`image_generate` 可以直接把这些路径当作参考图，不需要用户重发。
+内置工具包括：`bash`（含受限 Docker 命令和项目级 crontab 调度）、`web_lookup`、`qq_member_info`、`desktop_screenshot`、`image_generate`（生图，需在 AMKR 面板给它绑生图模型）、`read_image`（把本地图片或图片 URL 读进视觉通道）等。工具也可以通过后台任务、事件触发器和生命周期回调提供被动能力。群聊里收到的图片/表情包会把本地缓存路径带进上下文，`image_generate` 可以直接把这些路径当作参考图，不需要用户重发。人格自己的三视图/立绘放在 `data/personas/<name>/assets/` 下即可被 prompt 自动列出，模型知道路径后可用 `read_image` 查看、也可直接作为生图参考图。
 
 ### 插件系统（Plugins）
 

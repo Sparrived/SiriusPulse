@@ -46,6 +46,7 @@ from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.models.emotion import AssistantEmotionState, EmotionState
 from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.tools.builtin._internal import _markdown_image
+from sirius_pulse.utils.persona_assets import ASSETS_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +277,7 @@ class _EmotionalGroupChatEngineBase:
             style_adapter=self.style_adapter,
             config=self.config,
             other_ai_names=self._other_ai_names,
+            persona_assets_dir=Path(self.work_path) / ASSETS_DIR_NAME,
         )
         self.brain.set_context_fns(
             recent_messages_fn=self._get_recent_messages,
