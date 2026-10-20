@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import email
 import json
 from collections.abc import Callable
+from email.message import Message
 from io import BytesIO
 
 import httpx
@@ -61,6 +63,26 @@ def _request(reference_images: list[tuple[str, bytes]] | None = None) -> ImageGe
 def _b64_response(image_bytes: bytes) -> httpx.Response:
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return httpx.Response(200, json={"data": [{"b64_json": encoded}]})
+
+
+def _multipart_fields(request: httpx.Request) -> dict[str, list[tuple[bytes, str]]]:
+    """multipart 请求体拆成 ``{字段名: [(原始字节, 该部件声明的 Content-Type)]}``。"""
+    content_type = request.headers.get("content-type", "")
+    assert content_type.startswith("multipart/form-data; boundary="), content_type
+    raw = b"Content-Type: " + content_type.encode("latin-1") + b"\r\nMIME-Version: 1.0\r\n\r\n"
+    raw += request.content
+    message = email.message_from_bytes(raw)
+    parts = message.get_payload()
+    assert isinstance(parts, list), "请求体不是 multipart/form-data"
+    fields: dict[str, list[tuple[bytes, str]]] = {}
+    for part in parts:
+        assert isinstance(part, Message)
+        name = part.get_param("name", header="content-disposition")
+        payload = part.get_payload(decode=True)
+        assert isinstance(name, str)
+        assert isinstance(payload, bytes)
+        fields.setdefault(name, []).append((payload, part.get_content_type()))
+    return fields
 
 
 def _generate(
@@ -150,54 +172,98 @@ def test_url_response_is_downloaded(monkeypatch):
     assert result.mime_type == "image/png"
 
 
-def test_edits_single_reference_is_sent_as_json_image_data_url(monkeypatch):
-    """有参考图走 JSON 的 edits：参考图放 images[].image_url，媒体类型看字节。"""
+def test_edits_single_reference_uses_multipart_image_field(monkeypatch):
+    """默认发 OpenAI 标准的 multipart 表单；媒体类型按字节判定，后缀说谎也要纠正。"""
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
         seen["headers"] = dict(request.headers)
-        seen["body"] = json.loads(request.content)
+        seen["fields"] = _multipart_fields(request)
         return _b64_response(PNG_1PX)
 
-    # 文件名叫 .jpg，内容是 PNG —— 上游按字节校验，data URL 必须声明 image/png。
+    # 文件名叫 .jpg，内容是 PNG —— 声明成 image/jpeg 会让上游 400。
     _generate(monkeypatch, _provider(), handler, _request([("cached.jpg", PNG_1PX)]))
 
-    body = seen["body"]
+    fields = seen["fields"]
     headers = seen["headers"]
     assert seen["path"] == "/v1/images/edits"
     assert headers["authorization"] == "Bearer amkr_ik_test"
-    assert headers["content-type"].startswith("application/json")
+    assert headers["content-type"].startswith("multipart/form-data; boundary=")
     assert headers["user-agent"].startswith("Mozilla/5.0")
-    assert body["model"] == "image_generate"
-    assert body["prompt"] == PROMPT
-    images = body["images"]
-    assert len(images) == 1
-    data_url = images[0]["image_url"]
-    assert data_url.startswith("data:image/png;base64,")
-    assert base64.b64decode(data_url.split(",", 1)[1]) == PNG_1PX
+    assert fields["model"][0][0] == b"image_generate"
+    assert fields["prompt"][0][0] == PROMPT.encode("utf-8")
+    assert fields["image"] == [(PNG_1PX, "image/png")]
+    assert "image[]" not in fields
 
 
-def test_edits_multiple_references_are_all_sent_with_byte_sniffed_mime(monkeypatch):
-    """多张参考图都放进 images[]，且每张各自按字节声明媒体类型。"""
+def test_edits_multiple_references_use_repeated_image_field(monkeypatch):
+    """多张参考图用重复的 image 字段（当前上游不认 image[]），各自按字节声明媒体类型。"""
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen["body"] = json.loads(request.content)
+        seen["fields"] = _multipart_fields(request)
         return _b64_response(PNG_1PX)
 
     references = [("cat.png", PNG_1PX), ("photo.jpg", JPEG_2PX)]
     _generate(monkeypatch, _provider(), handler, _request(references))
 
-    images = seen["body"]["images"]
-    assert [item["image_url"].split(";", 1)[0] for item in images] == [
-        "data:image/png",
-        "data:image/jpeg",
-    ]
-    assert [base64.b64decode(item["image_url"].split(",", 1)[1]) for item in images] == [
-        PNG_1PX,
-        JPEG_2PX,
-    ]
+    fields = seen["fields"]
+    assert "image[]" not in fields
+    assert fields["image"] == [(PNG_1PX, "image/png"), (JPEG_2PX, "image/jpeg")]
+
+
+def test_edits_falls_back_to_json_images_when_multipart_rejected(monkeypatch):
+    """multipart 被上游 4xx 拒绝时回退 JSON images[].image_url（sub2api 这类网关只认 JSON）。"""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            assert request.headers["content-type"].startswith("multipart/form-data")
+            return httpx.Response(
+                400, json={"error": {"message": "images endpoint requires an image model"}}
+            )
+        return _b64_response(PNG_1PX)
+
+    result = _generate(monkeypatch, _provider(), handler, _request([("cat.png", PNG_1PX)]))
+
+    assert len(requests) == 2
+    fallback = requests[1]
+    assert fallback.url.path == "/v1/images/edits"
+    assert fallback.headers["content-type"].startswith("application/json")
+    body = json.loads(fallback.content)
+    assert body["model"] == "image_generate"
+    assert body["prompt"] == PROMPT
+    image_url = body["images"][0]["image_url"]
+    assert image_url.startswith("data:image/png;base64,")
+    assert base64.b64decode(image_url.split(",", 1)[1]) == PNG_1PX
+    assert result.image_bytes == PNG_1PX
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_edits_auth_failure_is_not_retried_as_json(monkeypatch, status_code):
+    """凭据问题（401/403）不是形态不兼容，不该再发一次请求烧重试。"""
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status_code, json={"error": {"message": "invalid key"}})
+
+    with pytest.raises(ProviderAuthError):
+        _generate(monkeypatch, _provider(), handler, _request([("cat.png", PNG_1PX)]))
+
+    assert len(calls) == 1
+
+
+def test_edits_when_both_transports_fail_raises_response_error(monkeypatch):
+    """两种形态都被拒时抛出回退后的错误，让调用方看到最后一次的真实原因。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"detail": [{"msg": "prompt missing"}]})
+
+    with pytest.raises(ProviderResponseError):
+        _generate(monkeypatch, _provider(), handler, _request([("cat.png", PNG_1PX)]))
 
 
 @pytest.mark.parametrize("status_code", [401, 403])

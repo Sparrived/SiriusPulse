@@ -233,12 +233,12 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         """调用 AMKR 的图像端点，返回生成图片的原始字节。
 
         ``model`` 仍是 AMKR 任务名；工作空间推理 key 同样适用于图像端点。没有参考
-        图时走 ``/v1/images/generations``；带参考图时走 ``/v1/images/edits``，参考图
-        以 data URL 放进 JSON 的 ``images[].image_url``。**不能**用 OpenAI 经典的
-        multipart 表单：AMKR 只从表单里读 model 做路由，随后把字节原样转发给上游，
-        表单里的 model 仍是任务名，上游会以「requires an image model」400 拒绝；
-        JSON 形态则会被 AMKR 正常改写 model。图像请求固定携带浏览器 UA，原因见
-        ``_IMAGE_REQUEST_USER_AGENT``。
+        图时走 ``/v1/images/generations``（JSON）。
+
+        有参考图时走 ``/v1/images/edits``，但 AMKR 后面接着的上游并不统一，因此按
+        「先标准、后回退」发两次（详见 ``_post_image_edit``）：先发 OpenAI 标准的
+        multipart 表单，被 4xx 拒绝时再回退成 JSON 的 ``images[].image_url``。
+        图像请求固定携带浏览器 UA，原因见 ``_IMAGE_REQUEST_USER_AGENT``。
         """
         timeout_seconds = request.timeout_seconds or max(float(self._timeout_seconds), 120.0)
         has_references = bool(request.reference_images)
@@ -246,23 +246,20 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         url = f"{self._base_url}/v1/images/{endpoint}"
         headers = self._build_auth_headers()
         headers["User-Agent"] = _IMAGE_REQUEST_USER_AGENT
-        payload: dict[str, Any] = {"model": request.model, "prompt": request.prompt}
-        if has_references:
-            payload["images"] = [
-                {"image_url": self._image_data_url(filename, data)}
-                for filename, data in request.reference_images
-            ]
         logger.info(
             f"正在向 {self._provider_name} 的 {request.model} 要一张图，"
             f"参考图 {len(request.reference_images)} 张，超时 {timeout_seconds:.1f} 秒～"
         )
         try:
             async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-                response = await client.post(
-                    url,
-                    json=payload,
-                    headers={**headers, "Content-Type": "application/json"},
-                )
+                if has_references:
+                    response = await self._post_image_edit(client, url, request, headers)
+                else:
+                    response = await client.post(
+                        url,
+                        json={"model": request.model, "prompt": request.prompt},
+                        headers={**headers, "Content-Type": "application/json"},
+                    )
                 raw = response.text
                 if response.status_code >= 400:
                     self._raise_image_status(response.status_code, raw, request, url)
@@ -295,6 +292,62 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         """把参考图编成 data URL；媒体类型按字节判定，文件名后缀不作数。"""
         encoded = base64.b64encode(data).decode("ascii")
         return f"data:{cls._guess_image_mime(filename, data)};base64,{encoded}"
+
+    async def _post_image_edit(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        request: ImageGenerationRequest,
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        """按「multipart 标准形态 → JSON 回退」发参考图编辑请求。
+
+        AMKR 只是透明转发：multipart 表单里的 ``model`` 不会被改写成真实模型，但
+        JSON 体里的会。不同上游只接受其中一种形态：
+
+        - 本地部署的图像服务（如 qwen-image）按 OpenAI 标准只读 multipart 表单，
+          JSON 会 422 「prompt missing」；
+        - sub2api 这类网关只认 JSON 的 ``images[].image_url``，multipart 会被它以
+          「requires an image model」400 拒绝（它看到的是任务名）。
+
+        所以先发标准形态，4xx 再回退 JSON；401/403 是凭据问题，直接返回交给调用方
+        抛 ``ProviderAuthError``，不做无意义的重试。
+
+        多张参考图用**重复的 ``image`` 字段**，不用 ``image[]``：当前上游的本地
+        图像服务只把 ``image`` 认作文件字段，``image[]`` 会被当成「没收到图片」。
+        """
+        files = [
+            ("image", (filename, data, self._guess_image_mime(filename, data)))
+            for filename, data in request.reference_images
+        ]
+        response = await client.post(
+            url,
+            data={"model": request.model, "prompt": request.prompt},
+            files=files,
+            headers=headers,
+        )
+        if (
+            response.status_code < 400
+            or response.status_code >= 500
+            or response.status_code in (401, 403)
+        ):
+            return response
+        logger.info(
+            f"{self._provider_name} 的参考图表单形态被上游拒绝"
+            f"（HTTP {response.status_code}），回退 JSON images[].image_url"
+        )
+        return await client.post(
+            url,
+            json={
+                "model": request.model,
+                "prompt": request.prompt,
+                "images": [
+                    {"image_url": self._image_data_url(filename, data)}
+                    for filename, data in request.reference_images
+                ],
+            },
+            headers={**headers, "Content-Type": "application/json"},
+        )
 
     def _parse_image_body(self, raw: str, url: str) -> dict[str, Any]:
         try:
