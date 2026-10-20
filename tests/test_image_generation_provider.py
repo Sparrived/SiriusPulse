@@ -256,6 +256,21 @@ def test_edits_auth_failure_is_not_retried_as_json(monkeypatch, status_code):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("status_code", [408, 429])
+def test_edits_timeout_or_rate_limit_is_not_retried_as_json(monkeypatch, status_code):
+    """超时/限流不是形态不兼容：再发一次 JSON 只会再烧一次配额。"""
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(status_code, json={"error": {"message": "busy"}})
+
+    with pytest.raises(ProviderResponseError):
+        _generate(monkeypatch, _provider(), handler, _request([("cat.png", PNG_1PX)]))
+
+    assert len(calls) == 1
+
+
 def test_edits_when_both_transports_fail_raises_response_error(monkeypatch):
     """两种形态都被拒时抛出回退后的错误，让调用方看到最后一次的真实原因。"""
 

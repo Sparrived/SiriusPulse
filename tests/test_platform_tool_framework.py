@@ -113,7 +113,27 @@ async def test_base_adapter_when_optional_defaults_are_used_then_safe_empty_valu
     assert "User-Agent" in adapter._cache_image_headers()
     assert old_file.exists() is False
     assert new_file.exists() is True
-    assert url_file.exists() is True
+    assert url_file.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_cleanup_cache_when_evicting_image_then_its_url_sidecar_goes_too(tmp_path):
+    """侧车是图片的附属文件，图片淘汰后不应无限堆积在缓存目录里。"""
+    adapter = RecordingAdapter()
+    evicted = tmp_path / "old.jpg"
+    evicted.write_bytes(b"old")
+    sidecar = tmp_path / "old.jpg.url"
+    sidecar.write_text("https://example.test/old.jpg", encoding="utf-8")
+    kept = tmp_path / "new.jpg"
+    kept.write_bytes(b"new")
+    os.utime(evicted, (1, 1))
+    os.utime(kept, (2, 2))
+
+    await adapter._cleanup_cache(tmp_path, max_files=1)
+
+    assert evicted.exists() is False
+    assert sidecar.exists() is False
+    assert kept.exists() is True
 
 
 def test_onebot_protocol_when_segments_are_parsed_then_text_images_and_sender_fields_are_extracted():

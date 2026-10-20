@@ -84,17 +84,21 @@ def _tasks(engine, user_content: str) -> DelayedQueueTasks:
 
 
 @pytest.mark.asyncio
-async def test_recent_image_message_when_image_sent_separately_then_injected_as_vision_input():
+async def test_recent_image_message_when_image_sent_separately_then_injected_as_vision_input(
+    tmp_path,
+):
     """分开发的纯图片消息没有触发延迟队列，但模型仍应看到它。"""
     queue = DelayedResponseQueue()
     _pending_item(queue, "刚才那张图是什么")
     engine = _engine(queue, brain_chat=[_chat_ok()])
+    photo = tmp_path / "cat.png"
+    photo.write_bytes(b"cat-bytes")
     engine.basic_memory.add_entry(
         "group-1",
         "u2",
         "human",
         "[图片] [图片描述：一只橘猫]",
-        multimodal_inputs=[{"type": "image", "value": "cat.png", "file_path": "cat.png"}],
+        multimodal_inputs=[{"type": "image", "value": str(photo), "file_path": str(photo)}],
     )
 
     await _tasks(engine, "刚才那张图是什么").tick_delayed_queue("group-1")
@@ -102,21 +106,23 @@ async def test_recent_image_message_when_image_sent_separately_then_injected_as_
     content = _first_user_message(engine)
     assert isinstance(content, list)
     assert content[0]["type"] == "text"
-    assert [part["image_url"]["url"] for part in content[1:]] == ["cat.png"]
+    assert [part["image_url"]["url"] for part in content[1:]] == [str(photo)]
 
 
 @pytest.mark.asyncio
-async def test_recent_image_when_already_answered_then_not_reinjected():
+async def test_recent_image_when_already_answered_then_not_reinjected(tmp_path):
     """上一轮已回复过的图片不应反复占用视觉输入额度。"""
     queue = DelayedResponseQueue()
     _pending_item(queue, "继续说")
     engine = _engine(queue, brain_chat=[_chat_ok()])
+    photo = tmp_path / "old.png"
+    photo.write_bytes(b"old-bytes")
     engine.basic_memory.add_entry(
         "group-1",
         "u2",
         "human",
         "[图片]",
-        multimodal_inputs=[{"type": "image", "value": "old.png", "file_path": "old.png"}],
+        multimodal_inputs=[{"type": "image", "value": str(photo), "file_path": str(photo)}],
     )
     engine.basic_memory.add_entry("group-1", "assistant", "assistant", "我看过了")
 
@@ -126,24 +132,26 @@ async def test_recent_image_when_already_answered_then_not_reinjected():
 
 
 @pytest.mark.asyncio
-async def test_recent_images_when_repeated_then_deduplicated():
+async def test_recent_images_when_repeated_then_deduplicated(tmp_path):
     """同一张图在多条消息里出现时只注入一次。"""
     queue = DelayedResponseQueue()
+    photo = tmp_path / "same.png"
+    photo.write_bytes(b"same-bytes")
     item = _pending_item(queue, "再看看")
-    item.multimodal_inputs = [{"type": "image", "value": "same.png"}]
+    item.multimodal_inputs = [{"type": "image", "value": str(photo)}]
     engine = _engine(queue, brain_chat=[_chat_ok()])
     engine.basic_memory.add_entry(
         "group-1",
         "u2",
         "human",
         "[图片]",
-        multimodal_inputs=[{"type": "image", "value": "same.png", "file_path": "same.png"}],
+        multimodal_inputs=[{"type": "image", "value": str(photo), "file_path": str(photo)}],
     )
 
     await _tasks(engine, "再看看").tick_delayed_queue("group-1")
 
     content = _first_user_message(engine)
-    assert [part["image_url"]["url"] for part in content[1:]] == ["same.png"]
+    assert [part["image_url"]["url"] for part in content[1:]] == [str(photo)]
 
 
 @pytest.mark.asyncio

@@ -162,7 +162,7 @@ class BaseAdapter(ABC):
         }
 
     async def _cleanup_cache(self, cache_dir: Path, max_files: int = 200) -> None:
-        """清理缓存目录，保留最近 max_files 个图片文件（``.url`` 侧车不在计数内）。"""
+        """清理缓存目录，保留最近 max_files 张图片（``.url`` 来源侧车随图片一起淘汰）。"""
         if not cache_dir.exists():
             return
         files = sorted(
@@ -170,11 +170,12 @@ class BaseAdapter(ABC):
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-        if len(files) > max_files:
-            for old_file in files[max_files:]:
+        for old_file in files[max_files:]:
+            # 侧车只是排查来源用的附属文件：图片走了它也不该留下来占目录。
+            for target in (old_file, old_file.parent / f"{old_file.name}.url"):
                 try:
-                    old_file.unlink()
-                except Exception:
+                    target.unlink(missing_ok=True)
+                except OSError:
                     pass
 
     # ── 事件解析（平台 → 统一格式） ──

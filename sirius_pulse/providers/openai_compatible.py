@@ -310,8 +310,8 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         - sub2api 这类网关只认 JSON 的 ``images[].image_url``，multipart 会被它以
           「requires an image model」400 拒绝（它看到的是任务名）。
 
-        所以先发标准形态，4xx 再回退 JSON；401/403 是凭据问题，直接返回交给调用方
-        抛 ``ProviderAuthError``，不做无意义的重试。
+        所以先发标准形态，形态不兼容的 4xx 再回退 JSON；401/403（凭据）与
+        408/429（超时/限流）直接返回交给调用方，不做无意义的重试。
 
         多张参考图用**重复的 ``image`` 字段**，不用 ``image[]``：当前上游的本地
         图像服务只把 ``image`` 认作文件字段，``image[]`` 会被当成「没收到图片」。
@@ -329,7 +329,8 @@ class OpenAICompatibleProvider(AsyncLLMProvider):
         if (
             response.status_code < 400
             or response.status_code >= 500
-            or response.status_code in (401, 403)
+            # 401/403 是凭据问题；408/429 是超时/限流，立即重发只会再烧一次配额。
+            or response.status_code in (401, 403, 408, 429)
         ):
             return response
         logger.info(
