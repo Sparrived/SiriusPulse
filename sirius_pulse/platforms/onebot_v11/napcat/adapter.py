@@ -1270,7 +1270,7 @@ class NapCatAdapter(BaseAdapter):
             value = str(payload.get(key, "") or "").strip()
             if not value:
                 continue
-            adopted = self._adopt_local_image(value, is_sticker=is_sticker)
+            adopted = await self._adopt_local_image(value, is_sticker=is_sticker)
             if adopted:
                 return adopted
             if value.startswith(("http://", "https://")):
@@ -1279,7 +1279,7 @@ class NapCatAdapter(BaseAdapter):
                     return cached
         return ""
 
-    def _adopt_local_image(self, value: str, *, is_sticker: bool) -> str:
+    async def _adopt_local_image(self, value: str, *, is_sticker: bool) -> str:
         """把 NapCat 报出的本机图片文件收进人格图片缓存，失败返回空字符串。"""
         import hashlib
 
@@ -1302,6 +1302,7 @@ class NapCatAdapter(BaseAdapter):
             cache_path = cache_dir / f"{content_hash}{suffix}"
             if not cache_path.exists():
                 cache_path.write_bytes(data)
+            await self._cleanup_cache(cache_dir, max_files=200)
             return str(cache_path)
         except OSError as exc:
             LOG.debug("写入 NapCat 图片缓存失败 (%s): %s", source, exc)

@@ -724,6 +724,21 @@ class Helpers:
         cleaned = re.sub(r"[【\[](图片\d*|动画表情)[：:]\s*[^\]】]+[】\]]", "", content).strip()
         return not cleaned
 
+    #: 当轮消息里图片/表情包本地路径的提示头：路径放在文本里，而不是视觉 parts 里。
+    _IMAGE_REFERENCE_HEADER = (
+        "【本地图片路径】以下图片/表情包已缓存在本地，需要复用原图" "（例如作为 image_generate 的参考图）时可直接使用这些路径："
+    )
+
+    @staticmethod
+    def _format_image_reference_line(item: dict[str, str], local_path: str) -> str:
+        """把一条图片输入渲染成「类型（描述）：路径」，描述太长时截断。"""
+        kind = "动画表情" if item.get("sub_type") == "1" else "图片"
+        caption = " ".join(str(item.get("caption", "")).split())
+        if len(caption) > 40:
+            caption = caption[:39] + "…"
+        label = f"{kind}（{caption}）" if caption else kind
+        return f"- {label}：{local_path}"
+
     @staticmethod
     def inject_multimodal_into_user_message(
         messages: list[dict[str, Any]],
@@ -737,32 +752,51 @@ class Helpers:
         forwarded: they carry short-lived signatures and a Referer check, so the
         upstream model's own download fails and it reports "cannot see the image".
         That invariant also filters values persisted before this rule existed.
+
+        表情包不走视觉通道（原图会被读成描述），但它的本地缓存路径仍以文本形式列出：
+        模型能把表情包原图当参考图交给 ``image_generate``。普通图片的本地路径同理，
+        这样模型不用依赖「图片描述」去猜。
         """
         if not multimodal_inputs:
             return messages
         if not messages:
             return messages
 
+        from sirius_pulse.utils.image_paths import resolve_local_image_path
+
         usable: list[dict[str, str]] = []
+        reference_lines: list[str] = []
         for item in multimodal_inputs:
             if item.get("type") != "image":
                 continue
             value = str(item.get("value", "")).strip()
             if not value:
                 continue
+            local_path = resolve_local_image_path(value)
+            if local_path:
+                reference_lines.append(Helpers._format_image_reference_line(item, local_path))
+            if item.get("sub_type") == "1":
+                continue
             if value.startswith(("http://", "https://")):
                 logger.warning("跳过聊天图片的平台签名地址，避免上游下载失败: %s", value[:80])
                 continue
             usable.append(item)
-        if not usable:
+        if not usable and not reference_lines:
             return messages
 
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].get("role") == "user":
                 user_msg = dict(messages[i])
-                content: list[dict[str, Any]] = [
-                    {"type": "text", "text": str(user_msg.get("content", ""))}
-                ]
+                text = str(user_msg.get("content", ""))
+                if reference_lines:
+                    text = f"{text}\n\n{Helpers._IMAGE_REFERENCE_HEADER}\n" + "\n".join(
+                        reference_lines
+                    )
+                if not usable:
+                    user_msg["content"] = text
+                    messages[i] = user_msg
+                    break
+                content: list[dict[str, Any]] = [{"type": "text", "text": text}]
                 for item in usable:
                     content.append({"type": "image_url", "image_url": {"url": str(item["value"])}})
                 user_msg["content"] = content

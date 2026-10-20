@@ -1,12 +1,15 @@
-"""表情包「只留描述、原图用完即删」的持久化回归（用户视角）。
+"""表情包「描述落盘复用 + 原图保留为参考图」的持久化回归（用户视角）。
 
-线上那个人格目录攒到 639MB / 1524 张表情包的循环：表情包被下载进
+线上那个人格目录曾攒到 639MB / 1524 张表情包：表情包被下载进
 ``{work_path}/sticker_cache/``，读图拿到描述，原图却一直留在磁盘上；而描述只活在
 内存里，进程一重启，同一张表情包再到达还得重新读一遍图。
 
+现在的口径：描述照旧落盘复用，原图**保留**在缓存目录里（目录由 200 文件上限兜底），
+因为历史 XML 会把它的本地路径交给模型，模型能把这张表情包原图当生图参考图。
+
 这里只看三件用户可观察的事：
 
-1. 模型读到的会话历史里有没有真实描述，而不是默认占位「动画表情」；
+1. 模型读到的会话历史里有没有真实描述与可复用的本地路径；
 2. 磁盘上还剩什么（``sticker_cache`` / ``image_cache`` / ``sticker_captions.json``）；
 3. 读图模型被调用了几次（``MockProvider`` 计数）。
 
@@ -62,7 +65,7 @@ def _new_engine(
     """构造一个会真正写基础记忆、并且知道人格目录的引擎。
 
     参考 ``tests/test_sticker_caption_context.py::_engine_for_sticker_caption``，
-    区别是这里必须给引擎 ``work_path``：原图即删与描述落盘都以人格目录为根。
+    区别是这里必须给引擎 ``work_path``：原图保留与描述落盘都以人格目录为根。
     """
     engine = object.__new__(_EmotionalGroupChatEngineBase)
     provider = provider if provider is not None else MockProvider([])
@@ -130,15 +133,12 @@ def _arrive_sticker(
     *,
     name: str = "b1f2c3d4e5f6a7b8.gif",
     data: bytes = _STICKER_BYTES,
-    with_url_sidecar: bool = False,
 ) -> dict[str, str]:
     """NapCat 把一个表情包落到人格缓存目录后的多模态输入项。"""
     cache_dir = work_path / "sticker_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / name
     path.write_bytes(data)
-    if with_url_sidecar:
-        Path(f"{path}.url").write_text("https://example.test/sticker.gif", encoding="utf-8")
     return {"type": "image", "value": str(path), "file_path": str(path), "sub_type": "1"}
 
 
@@ -196,31 +196,51 @@ def _assert_model_sees_caption(xml: str, caption: str) -> None:
     assert f'caption="{_DEFAULT_STICKER_CAPTION}"' not in xml, xml
 
 
+def _assert_xml_exposes_path(xml: str, path: Path) -> None:
+    """历史 XML 必须带上可复用的本地路径，模型才能把这张图交给生图工具。"""
+    assert f'path="{path}"' in xml, xml
+
+
 def _persisted_captions(work_path: Path) -> dict[str, str]:
     return json.loads((work_path / "sticker_captions.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.asyncio
-async def test_sticker_leaves_only_its_caption_on_disk(tmp_path):
-    """群里发一张表情包：历史里有真实描述，缓存目录里什么都不剩。"""
+async def test_sticker_keeps_caption_and_original_for_reference(tmp_path):
+    """群里发一张表情包：历史里有真实描述和本地路径，原图留在缓存里。"""
     engine, provider = _new_engine(tmp_path, MockProvider([_STICKER_CAPTION]))
-    sticker = _arrive_sticker(tmp_path, with_url_sidecar=True)
+    sticker = _arrive_sticker(tmp_path)
     sticker_path = Path(sticker["value"])
 
     await engine.process_message(_incoming(sticker, message_id="msg-1"), _participants(), _GROUP_ID)
 
-    _assert_model_sees_caption(_model_visible_history(engine), _STICKER_CAPTION)
+    xml = _model_visible_history(engine)
+    _assert_model_sees_caption(xml, _STICKER_CAPTION)
+    _assert_xml_exposes_path(xml, sticker_path)
     assert len(provider.requests) == 1
 
-    # 原图与遗留的 .url 侧车都被清掉，sticker_cache 不再堆积。
-    assert not sticker_path.exists()
-    assert not Path(f"{sticker_path}.url").exists()
-    assert list((tmp_path / "sticker_cache").iterdir()) == []
+    # 原图不再读完即删：模型还要凭这个路径把表情包原图当参考图。
+    assert sticker_path.exists(), "表情包原图要留给 image_generate 当参考图"
+    assert list((tmp_path / "sticker_cache").iterdir()) == [sticker_path]
 
     # 描述以「图片内容 sha256 → 描述」落盘，重启后还能命中。
     assert _persisted_captions(tmp_path) == {
         hashlib.sha256(_STICKER_BYTES).hexdigest(): _STICKER_CAPTION
     }
+
+
+@pytest.mark.asyncio
+async def test_cleaned_up_sticker_path_is_not_promised_to_the_model(tmp_path):
+    """缓存清理掉原图后：历史里不能再出现读不到的路径，否则生图必然失败。"""
+    engine, provider = _new_engine(tmp_path, MockProvider([_STICKER_CAPTION]))
+    sticker = _arrive_sticker(tmp_path)
+    await engine.process_message(_incoming(sticker, message_id="msg-1"), _participants(), _GROUP_ID)
+
+    Path(sticker["value"]).unlink()
+    xml = _model_visible_history(engine)
+
+    _assert_model_sees_caption(xml, _STICKER_CAPTION)
+    assert "path=" not in xml, xml
 
 
 @pytest.mark.asyncio
@@ -263,8 +283,9 @@ async def test_restarted_persona_reuses_persisted_caption(tmp_path):
     )
 
     assert second_provider.requests == []
-    _assert_model_sees_caption(_model_visible_history(second_engine), _STICKER_CAPTION)
-    assert not Path(restarted_sticker["value"]).exists()
+    xml = _model_visible_history(second_engine)
+    _assert_model_sees_caption(xml, _STICKER_CAPTION)
+    assert Path(restarted_sticker["value"]).exists(), "重启后原图仍是可复用的参考图"
 
 
 @pytest.mark.asyncio
@@ -280,6 +301,7 @@ async def test_normal_photo_keeps_its_original(tmp_path):
 
     xml = _model_visible_history(engine)
     assert f'<image type="image" caption="{_PHOTO_CAPTION}"' in xml, xml
+    _assert_xml_exposes_path(xml, photo_path)
     assert len(provider.requests) == 1
     assert photo_path.exists()
     assert Path(f"{photo_path}.url").exists()
@@ -289,11 +311,12 @@ async def test_normal_photo_keeps_its_original(tmp_path):
 
 @pytest.mark.parametrize("failure", ["empty_caption", "provider_raises"])
 @pytest.mark.asyncio
-async def test_vision_failure_still_discards_sticker_and_keeps_placeholder(tmp_path, failure):
-    """读图失败（返回空 / 抛错）：原图照删、历史退回默认占位、不写脏缓存。"""
+async def test_vision_failure_keeps_sticker_file_and_placeholder(tmp_path, failure):
+    """读图失败（返回空 / 抛错）：原图仍保留、历史退回默认占位、不写脏缓存。"""
     provider = MockProvider([""]) if failure == "empty_caption" else _RaisingVisionProvider()
     engine, provider = _new_engine(tmp_path, provider)
-    sticker = _arrive_sticker(tmp_path, with_url_sidecar=True)
+    sticker = _arrive_sticker(tmp_path)
+    sticker_path = Path(sticker["value"])
 
     await engine.process_message(
         _incoming(sticker, message_id="msg-broken"), _participants(), _GROUP_ID
@@ -304,8 +327,8 @@ async def test_vision_failure_still_discards_sticker_and_keeps_placeholder(tmp_p
     assert f'caption="{_DEFAULT_STICKER_CAPTION}"' in xml, xml
     assert _STICKER_CAPTION not in xml
 
-    # 读图失败也要删原图：它对模型没有任何可见通道。
-    assert list((tmp_path / "sticker_cache").iterdir()) == []
+    # 读图失败也保留原图：下一轮还能重试描述，路径也仍然可复用。
+    assert list((tmp_path / "sticker_cache").iterdir()) == [sticker_path]
     # 失败不落盘：既没有脏描述，也没有半截 JSON / 残留临时文件。
     assert list(tmp_path.glob("sticker_captions.json*")) == []
 
@@ -324,7 +347,7 @@ async def test_vision_failure_keeps_existing_caption_cache_intact(tmp_path):
     )
 
     assert len(provider.requests) == 1
-    assert not Path(sticker["value"]).exists()
+    assert Path(sticker["value"]).exists()
     assert json.loads(captions_file.read_text(encoding="utf-8")) == existing
 
 

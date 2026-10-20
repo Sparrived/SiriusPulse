@@ -398,8 +398,7 @@ class CognitionAnalyzer:
         self.group_activity_history: dict[str, list[tuple[float, float]]] = {}
         self.user_response_prefs: dict[str, dict[str, Any]] = {}
         self._image_caption_cache: dict[str, str] = {}
-        # 表情包的原图用完即删（历史 XML 取 caption，视觉通道按 sub_type 过滤），
-        # 描述因此必须落盘，否则重启后同一张表情包会被重新读一遍图。
+        # 表情包描述要落盘：历史 XML 只带 caption，重启后同一张表情包不该被重新读一遍图。
         self._sticker_caption_store: dict[str, str] = self._load_sticker_captions()
         self._image_caption_cache.update(self._sticker_caption_store)
 

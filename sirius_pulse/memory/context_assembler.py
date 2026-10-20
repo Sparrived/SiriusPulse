@@ -559,24 +559,36 @@ class ContextAssembler:
                 for m in entry.multimodal_inputs:
                     if m.get("type") != "image":
                         continue
+                    # 本地缓存路径要进历史：模型能凭它把「刚才那张图」原样交给
+                    # image_generate 当参考图。平台签名 URL / data 地址则仍然不回显
+                    # （前者会过期、后者不是路径，都会诱使模型复述一个用不了的地址）。
+                    path_attr = ContextAssembler._image_local_path_attr(m)
                     if m.get("sub_type") == "1":
                         # 优先使用缓存的caption，否则使用默认值
                         sticker_caption = html.escape(str(m.get("caption", "动画表情")), quote=True)
                         lines.append(
-                            f'  <image type="sticker" caption="{sticker_caption}" '
+                            f'  <image type="sticker" caption="{sticker_caption}"{path_attr} '
                             f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
                         )
                         continue
                     caption = html.escape(str(m.get("caption", "")), quote=True)
-                    # 只暴露描述，不回显本地路径或平台签名 URL：两者对模型都没有
-                    # 视觉价值，反而会诱使它复述一个自己无法访问的地址。
                     lines.append(
-                        f'  <image type="image" caption="{caption}" '
+                        f'  <image type="image" caption="{caption}"{path_attr} '
                         f'speaker="{safe_speaker}" user_id="{safe_user_id}"/>'
                     )
         if include_wrapper:
             lines.append(f"</{tag}>")
         return "\n".join(lines)
+
+    @staticmethod
+    def _image_local_path_attr(item: dict[str, Any]) -> str:
+        """把图片输入里现存本地文件渲染成 `` path="…"``；没有可复用路径时返回空串。"""
+        from sirius_pulse.utils.image_paths import resolve_local_image_path
+
+        local_path = resolve_local_image_path(item.get("value", ""))
+        if not local_path:
+            return ""
+        return f' path="{html.escape(local_path, quote=True)}"'
 
     @staticmethod
     def _build_stable_system(base_prompt: str) -> str:

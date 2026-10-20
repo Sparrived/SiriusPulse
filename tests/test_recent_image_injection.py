@@ -144,3 +144,72 @@ async def test_recent_images_when_repeated_then_deduplicated():
 
     content = _first_user_message(engine)
     assert [part["image_url"]["url"] for part in content[1:]] == ["same.png"]
+
+
+@pytest.mark.asyncio
+async def test_recent_image_and_sticker_paths_are_listed_for_image_generate(tmp_path):
+    """当轮收到的图片/表情包都要给出可复用本地路径，表情包不占视觉 part。"""
+    queue = DelayedResponseQueue()
+    _pending_item(queue, "用刚才的图再画一张")
+    engine = _engine(queue, brain_chat=[_chat_ok()])
+    photo = tmp_path / "photo.png"
+    photo.write_bytes(b"photo-bytes")
+    sticker = tmp_path / "sticker.gif"
+    sticker.write_bytes(b"sticker-bytes")
+    engine.basic_memory.add_entry(
+        "group-1",
+        "u2",
+        "human",
+        "[图片] [动画表情]",
+        multimodal_inputs=[
+            {"type": "image", "value": str(photo), "file_path": str(photo)},
+            {
+                "type": "image",
+                "value": str(sticker),
+                "file_path": str(sticker),
+                "sub_type": "1",
+            },
+        ],
+    )
+
+    await _tasks(engine, "用刚才的图再画一张").tick_delayed_queue("group-1")
+
+    content = _first_user_message(engine)
+    assert isinstance(content, list)
+    text = content[0]["text"]
+    assert "【本地图片路径】" in text
+    assert str(photo) in text
+    assert str(sticker) in text
+    # 表情包原图仍然不进视觉通道，只有普通图片会变成 image_url。
+    assert [part["image_url"]["url"] for part in content[1:]] == [str(photo)]
+
+
+@pytest.mark.asyncio
+async def test_recent_sticker_alone_becomes_reference_text_only(tmp_path):
+    """只有表情包时：用户消息保持字符串形态，但路径必须给到模型。"""
+    queue = DelayedResponseQueue()
+    _pending_item(queue, "这个表情再画一版")
+    engine = _engine(queue, brain_chat=[_chat_ok()])
+    sticker = tmp_path / "sticker.gif"
+    sticker.write_bytes(b"sticker-bytes")
+    engine.basic_memory.add_entry(
+        "group-1",
+        "u2",
+        "human",
+        "[动画表情]",
+        multimodal_inputs=[
+            {
+                "type": "image",
+                "value": str(sticker),
+                "file_path": str(sticker),
+                "sub_type": "1",
+            }
+        ],
+    )
+
+    await _tasks(engine, "这个表情再画一版").tick_delayed_queue("group-1")
+
+    content = _first_user_message(engine)
+    assert isinstance(content, str)
+    assert str(sticker) in content
+    assert "【本地图片路径】" in content

@@ -186,24 +186,39 @@ class DelayedQueueTasks:
 
     @staticmethod
     def _tool_chain_message_text(message: Any) -> str:
-        """点名消息的注入文本：图片/表情包带上读图描述。
+        """点名消息的注入文本：图片/表情包带上读图描述和本地路径。
 
         描述写在 ``multimodal_inputs`` 上（历史 XML 取的就是它），而工具链当轮注入
         用的是 ``content`` 原文——纯图片消息的原文只有一个文件名哈希，模型在这一轮
-        看不出内容，要等下一轮重建 XML 才知道。
+        看不出内容，要等下一轮重建 XML 才知道。本地路径一并给出，模型才能在工具链
+        里把刚收到的图当参考图交给 ``image_generate``。
         """
+        from sirius_pulse.utils.image_paths import resolve_local_image_path
+
         text = str(getattr(message, "content", "") or "")
         images = [
             item
             for item in (getattr(message, "multimodal_inputs", None) or [])
             if item.get("type") == "image"
         ]
+        if not images:
+            return text
         captions = [str(item.get("caption", "")).strip() for item in images]
         caption = "；".join(dict.fromkeys(c for c in captions if c))
-        if not caption or caption in text:
+        local_paths: list[str] = []
+        for item in images:
+            local_path = resolve_local_image_path(item.get("value", ""))
+            if local_path and local_path not in local_paths:
+                local_paths.append(local_path)
+        suffix_parts: list[str] = []
+        if caption and caption not in text:
+            tag = "动画表情" if any(item.get("sub_type") == "1" for item in images) else "图片描述"
+            suffix_parts.append(f"[{tag}：{caption}]")
+        if local_paths:
+            suffix_parts.append("[本地图片路径：" + "；".join(local_paths) + "]")
+        if not suffix_parts:
             return text
-        tag = "动画表情" if any(item.get("sub_type") == "1" for item in images) else "图片描述"
-        return f"{text} [{tag}：{caption}]".strip()
+        return f"{text} {' '.join(suffix_parts)}".strip()
 
     @staticmethod
     def _append_tool_chain_messages(
@@ -650,7 +665,8 @@ class DelayedQueueTasks:
         # inject into the last user message. Recent-message images are needed because
         # an image sent on its own (or attached to an earlier text message) only
         # survives as a caption/XML placeholder otherwise, and pure-image messages
-        # never reach the delayed queue at all.
+        # never reach the delayed queue at all. 表情包也一并带上：它们不进视觉通道，
+        # 但本地路径要列进文本，模型才能把表情包原图当生图参考图。
         unanswered_from = 0
         for idx in range(len(recent) - 1, -1, -1):
             if recent[idx].get("role") == "assistant":
@@ -663,7 +679,7 @@ class DelayedQueueTasks:
             *[r.get("multimodal_inputs") for r in recent[unanswered_from:]],
         ):
             for m in source or []:
-                if m.get("type") != "image" or m.get("sub_type") == "1":
+                if m.get("type") != "image":
                     continue
                 value = str(m.get("value", ""))
                 if not value or value in seen_values:

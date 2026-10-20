@@ -322,7 +322,7 @@ async def test_repeated_sticker_reuses_caption_without_second_vision_call(tmp_pa
 
 @pytest.mark.asyncio
 async def test_sticker_is_never_offered_to_the_chat_vision_channel(tmp_path):
-    """表情包不进视觉通道：只有真图片会变成 image_url，表情包只以描述出现。"""
+    """表情包不进视觉通道：只有真图片会变成 image_url；表情包只以描述+本地路径出现。"""
     engine, provider = _engine_for_sticker_caption([_STICKER_CAPTION])
     sticker = _sticker_input(tmp_path)
     photo = _photo_input(tmp_path)
@@ -380,20 +380,23 @@ async def test_sticker_is_never_offered_to_the_chat_vision_channel(tmp_path):
     with pytest.raises(_VisionInjectionReached):
         await tasks._tick_delayed_queue_impl(_GROUP_ID)
 
-    visible_values = [entry["value"] for entry in offered[0]]
-    assert visible_values == [photo["value"]]
-    assert sticker["value"] not in visible_values
+    offered_values = [entry["value"] for entry in offered[0]]
+    # 表情包路径也要交给注入函数：它不进视觉通道，但路径要写进文本。
+    assert offered_values == [sticker["value"], photo["value"]]
 
-    # 真正发出去的多模态内容里也只有真图片，表情包只以描述形式存在于历史中。
     messages = Helpers.inject_multimodal_into_user_message(
         [{"role": "user", "content": "USER"}], offered[0]
     )
     parts = messages[0]["content"]
     assert isinstance(parts, list)
-    assert [part["image_url"]["url"] for part in parts if part["type"] == "image_url"] == [
-        photo["value"]
-    ]
-    assert sticker["value"] not in str(parts)
+    image_parts = [part for part in parts if part["type"] == "image_url"]
+    assert [part["image_url"]["url"] for part in image_parts] == [photo["value"]]
+    assert len(image_parts) == 1, "表情包不能被当成视觉输入发出去"
+
+    # 两个本地路径都以文本形式给了模型，模型能把它们交给生图工具当参考图。
+    text = parts[0]["text"]
+    assert sticker["value"] in text
+    assert photo["value"] in text
     assert len(provider.requests) == 0
 
 
@@ -411,11 +414,13 @@ async def test_tool_chain_round_text_carries_image_captions(tmp_path):
     messages = _render_tool_chain_round(engine)
 
     sticker_line, photo_line = (message["content"] for message in messages)
-    # 文件名标签之外多了真实描述，当轮就看得懂；不追加的话她只知道一个哈希。
+    # 文件名标签之外多了真实描述和本地路径，当轮就看得懂、也能直接拿去当参考图。
     assert f'[动画表情："{Path(sticker["value"]).name}"]' in sticker_line
     assert f"[动画表情：{_STICKER_CAPTION}]" in sticker_line
+    assert f"[本地图片路径：{sticker['value']}]" in sticker_line
     assert f'[图片："{Path(photo["value"]).name}"]' in photo_line
     assert f"[图片描述：{_PHOTO_CAPTION}]" in photo_line
+    assert f"[本地图片路径：{photo['value']}]" in photo_line
     # 两条消息各带各的描述，不会串味。
     assert _PHOTO_CAPTION not in sticker_line
     assert _STICKER_CAPTION not in photo_line
@@ -462,10 +467,11 @@ async def test_tool_chain_round_text_without_caption_adds_no_empty_tag(tmp_path)
 
     messages = _render_tool_chain_round(engine)
 
+    expected_text = f"{_image_content(sticker)} [本地图片路径：{sticker['value']}]"
     assert messages == [
         {
             "role": "user",
-            "content": _tagged(_image_content(sticker), message_id="msg-empty"),
+            "content": _tagged(expected_text, message_id="msg-empty"),
         }
     ]
     assert "图片描述" not in messages[0]["content"]
