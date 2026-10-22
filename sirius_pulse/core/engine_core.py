@@ -1359,8 +1359,21 @@ class _EmotionalGroupChatEngineBase:
         self._tool_chain_messages.pop(group_id, None)
 
     def is_tool_chain_active(self, group_id: str) -> bool:
-        """Return whether a group currently accepts mid-chain text."""
-        return str(group_id or "").strip() in self._active_tool_chain_groups
+        """Return whether a group currently accepts mid-chain text.
+
+        工作模式也是同一种状态：这一刻群里不该新起一轮回复，能进上下文的只有正在
+        跑的那段工作。它有自己的暂存窗口，``enter_work_mode`` 时还会主动关掉工具链
+        窗口，所以这里必须单独认它——否则适配器的快速注入入口会判定「没有窗口」，
+        把点名消息交给群调度，而群调度看见工作进程正持有该群租约只会 defer，
+        于是工作期间发来的修正指令要等她收工才被重放，那时早已没有意义。
+        """
+        gid = str(group_id or "").strip()
+        if not gid:
+            return False
+        if gid in getattr(self, "_active_tool_chain_groups", ()):
+            return True
+        is_work_mode_active = getattr(self, "is_work_mode_active", None)
+        return bool(callable(is_work_mode_active) and is_work_mode_active(gid))
 
     async def inject_tool_chain_message(
         self,
@@ -1417,6 +1430,12 @@ class _EmotionalGroupChatEngineBase:
         轨迹会永远停在 ``running``。释放窗口时顺手把它标成未完成。
         """
         group_id = str(group_id or "").strip()
+        # 工作模式期间 is_tool_chain_active 也返回 True，适配器会把点名消息写进
+        # 工具链窗口。退出时这个窗口必须一起关掉，否则残留的消息会在她下一段
+        # 无关的工具轮次里凭空冒出来。
+        tool_chain_messages = getattr(self, "_tool_chain_messages", None)
+        if isinstance(tool_chain_messages, dict):
+            tool_chain_messages.pop(group_id, None)
         run = self._work_mode_runs.pop(group_id, None)
         if run is None:
             return
@@ -1551,10 +1570,26 @@ class _EmotionalGroupChatEngineBase:
         participants: list[UnifiedUser],
         group_id: str,
     ) -> None:
-        """Record a group message without running cognition or generation."""
+        """Record a group message without running cognition or generation.
+
+        工作模式期间群调度会把未点名的闲聊判成 observe（该群的租约正被工作进程
+        持有），这条消息因此永远见不到 ``process_message``。若只记录不暂存，她忙完
+        退出时手里就没有这批消息可重放——群里那些话等于没说。所以这里按
+        ``process_message`` 的同一条规矩补进工作轨迹。
+        """
         self._current_adapter_type = message.adapter_type or ""
-        self._perception(group_id, message, participants)
+        user_id = self._perception(group_id, message, participants)
         await self._caption_message_images(group_id, message)
+
+        work_run = getattr(self, "_work_mode_runs", {}).get(group_id)
+        stash = getattr(work_run, "stash_message", None)
+        if callable(stash):
+            # 没被点名的闲聊不该打断她的工作：只暂存，不触发下一轮。
+            stash(
+                message.content,
+                mentions_persona=False,
+                replay=(message, user_id),
+            )
 
     async def _caption_message_images(self, group_id: str, message: Message) -> str:
         """给刚落进基础记忆的消息补读图描述，并写回条目与消息本身。

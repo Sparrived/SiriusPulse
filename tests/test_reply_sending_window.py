@@ -401,6 +401,49 @@ async def test_engine_tool_chain_injection_requires_explicit_persona_mention():
 
 
 @pytest.mark.asyncio
+async def test_engine_tool_chain_injection_active_during_work_mode():
+    """工作模式开着时也认工具链窗口：点名的消息进下一轮，闲聊只暂存。"""
+    engine, _, _ = _engine_for_sending_window()
+    engine._active_tool_chain_groups = set()
+    engine._tool_chain_messages = {}
+    run = WorkModeRun(group_id="group-1", goal="整理资料")
+    engine.begin_work_mode("group-1", run)
+
+    assert engine.is_tool_chain_active("group-1") is True
+
+    assert (
+        await engine.inject_tool_chain_message(
+            Message(role="user", content="月白看这里", speaker="Alice"),
+            [SimpleNamespace(is_developer=False)],
+            "group-1",
+        )
+        is True
+    )
+    assert [message.content for message in engine.pop_tool_chain_messages("group-1")] == [
+        "月白看这里"
+    ]
+    # 点名的消息进下一轮上下文，不留在退出时才重放的暂存里。
+    assert run.stash == []
+
+    await engine.observe_message(
+        Message(role="user", content="今天天气真好", speaker="Bob"),
+        [SimpleNamespace(is_developer=False)],
+        "group-1",
+    )
+
+    assert run.stash == ["今天天气真好"]
+    # 她正忙着，闲聊不该现在插一轮回复。
+    assert engine.delayed_queue.get_pending("group-1") == []
+
+    engine.end_work_mode("group-1")
+
+    pending = engine.delayed_queue.get_pending("group-1")
+    assert len(pending) == 1
+    assert "今天天气真好" in pending[0].message_content
+    assert engine.is_tool_chain_active("group-1") is False
+
+
+@pytest.mark.asyncio
 async def test_napcat_injects_explicit_group_text_before_normal_processing():
     adapter = NapCatAdapter("ws://example.invalid")
     parsed = ParsedEvent(
