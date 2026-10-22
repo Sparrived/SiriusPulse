@@ -144,45 +144,90 @@ class DelayedQueueTasks:
         params: dict[str, Any],
         result: Any,
     ) -> None:
-        """把已经发到群里的图片/文件写回历史，供下一轮模型自查。
+        """把已经投递到外部的静默动作写回历史，供下一轮模型自查。
 
-        group_file_exec 的 image/file 是静默投递：群里收到了内容，本轮却不产生
-        任何文本，``_record_assistant_message`` 因此不会留下记录。模型下一轮
-        看不到自己发过，只能重新找文件再发一次。这里按富文本卡片的既有做法，
-        用一条简短回执补上这条历史。只处理真正投递到外部的动作，list/download
-        等本地动作不写。
+        group_file_exec 的 image/file 与 interaction_with_master 的 message 都是
+        静默投递：外部确实收到了内容，本轮却不产生任何群聊文本，
+        ``_record_assistant_message`` 因此不会留下记录。模型下一轮看不到自己发过，
+        于是群里重发同一张图、或把同一段话反复私聊给主人。这里按富文本卡片的既有
+        做法，用一条简短回执补上这条历史。只处理真正投递到外部的动作，list/
+        download/status 等本地动作不写。
         """
-        if _composite_action(tool_call) not in {"image", "file"}:
-            return
-        metadata = getattr(result, "internal_metadata", {})
-        if not isinstance(metadata, dict):
-            return
-        if not (metadata.get("target_type") and metadata.get("target_id")):
-            return
         record = getattr(engine, "_record_assistant_message", None)
         if not callable(record):
             return
-        action = _composite_action(tool_call)
-        if action == "file":
-            label = str(metadata.get("file_name") or params.get("file_path") or "").strip()
-            subject = f"文件「{label}」" if label else "文件"
+
+        content: str
+        tags: list[dict[str, str]]
+        platform_message_id: str
+
+        if tool_call.function_name == "interaction_with_master":
+            content = DelayedQueueTasks._master_private_receipt(tool_call, params, result)
+            if not content:
+                return
+            tags = [{"type": "private", "label": "主人"}]
+            platform_message_id = ""
         else:
-            label = str(params.get("image_path") or "").strip()
-            subject = f"图片 {label}" if label else "图片"
+            action = _composite_action(tool_call)
+            if action not in {"image", "file"}:
+                return
+            metadata = getattr(result, "internal_metadata", {})
+            if not isinstance(metadata, dict):
+                return
+            if not (metadata.get("target_type") and metadata.get("target_id")):
+                return
+            if action == "file":
+                label = str(metadata.get("file_name") or params.get("file_path") or "").strip()
+                subject = f"文件「{label}」" if label else "文件"
+            else:
+                label = str(params.get("image_path") or "").strip()
+                subject = f"图片 {label}" if label else "图片"
+            content = f"（已发送{subject}；除非用户明确要求重发，否则不要再发）"
+            tags = [{"type": action, "label": label}]
+            platform_message_id = str(metadata.get("message_id") or "")
+
         try:
             record(
                 group_id=group_id,
                 target_user_id=getattr(item, "user_id", "") or "",
-                content=f"（已发送{subject}；除非用户明确要求重发，否则不要再发）",
+                content=content,
                 system_prompt=getattr(chat_result, "system_prompt", ""),
-                tags=[{"type": action, "label": label}],
+                tags=tags,
                 injected_request=getattr(chat_result, "injected_request", {}),
                 injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                platform_message_id=str(metadata.get("message_id") or ""),
+                platform_message_id=platform_message_id,
                 **_reasoning_memory_kwargs(chat_result),
             )
         except Exception as exc:  # 回执只是辅助信息，不能拖垮本轮回复
             logger.debug("外部投递回执写入失败: %s", exc)
+
+    # 回执里引用的私聊原文上限：够模型认出「这段话已经发过」即可，太长会把回执
+    # 本身变成一条挤占历史预算的噪声消息。
+    _MASTER_RECEIPT_SNIPPET_CHARS = 40
+
+    @staticmethod
+    def _master_private_receipt(
+        tool_call: ToolCall,
+        params: dict[str, Any],
+        result: Any,
+    ) -> str:
+        """生成「已私聊给主人」的回执文本；本次没有真正投递时返回空串。"""
+        if _tool_action(tool_call) != "message":
+            return ""
+        # 夜间暂存只把话写进意图，主人还没收到：写成已投递会让她以为发过了。
+        for source in (getattr(result, "internal_metadata", {}), getattr(result, "data", None)):
+            if isinstance(source, dict) and source.get("deferred"):
+                return ""
+        snippet = " ".join(str(params.get("message", "") or "").split())
+        if not snippet:
+            return ""
+        limit = DelayedQueueTasks._MASTER_RECEIPT_SNIPPET_CHARS
+        if len(snippet) > limit:
+            snippet = snippet[: limit - 3].rstrip() + "..."
+        return (
+            f"（已私聊发给主人：「{snippet}」；"
+            "已完成私聊投递，除非主人明确要求重发，否则不要重复私聊）"
+        )
 
     @staticmethod
     def _tool_chain_message_text(message: Any) -> str:
