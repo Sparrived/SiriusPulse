@@ -403,6 +403,12 @@ async def _deliver_notification(
     """跑通知回合并把模型正文投递到原群；失败时最多重试三次后降级发图。"""
     job_id = str(job.get("id", ""))
     attempts = _int_value(job.get("notify_attempts", 0))
+    if job.get("notify_turn_done"):
+        # 回执回合只跑一次：它跑完后图通常已经由模型用 group_file_exec 发进群，
+        # 再跑一遍就会把同一张图重新发一次（线上就是这样连发好几张的）。
+        await _redeliver_notification(ctx, data_store, job, group_id, attempts)
+        return
+
     if attempts >= _NOTIFY_MAX_ATTEMPTS:
         await _deliver_image_only(ctx, data_store, job, group_id)
         return
@@ -442,6 +448,14 @@ async def _deliver_notification(
 
     text = str(payload.get("text") or "").strip() if isinstance(payload, dict) else ""
     image_sent = bool(payload.get("image_sent")) if isinstance(payload, dict) else False
+    # 先落盘再投递：正文投递失败时只能补投这篇正文，不能再跑一个会重新发图的回合。
+    job = _update_job(
+        data_store,
+        job_id,
+        notify_turn_done=True,
+        result_text=text,
+        image_sent=image_sent,
+    ) or {**job, "notify_turn_done": True, "result_text": text, "image_sent": image_sent}
     if succeeded and image_path and not image_sent:
         # 模型回了话却没按提示把图发出去（漏调工具、路径写错）。不能只把图留在
         # 磁盘上：这里由框架把文案和图片一起补发，用户至少能收到图。
@@ -464,6 +478,50 @@ async def _deliver_notification(
         return
     _update_job(data_store, job_id, notify_attempts=attempts + 1)
     logger.warning("生图结果通知投递失败（第 %d 次）: %s", attempts + 1, job_id)
+
+
+async def _redeliver_notification(
+    ctx: Any,
+    data_store: Any,
+    job: dict[str, Any],
+    group_id: str,
+    attempts: int,
+) -> None:
+    """重投递回执回合已产出的正文，绝不重跑回合（重跑会让模型再发一次图）。"""
+    job_id = str(job.get("id", ""))
+    text = str(job.get("result_text") or "").strip()
+    image_sent = bool(job.get("image_sent", False))
+    image_path = str(job.get("image_path") or "")
+
+    if attempts >= _NOTIFY_MAX_ATTEMPTS:
+        if image_sent or not image_path:
+            # 图已经在回执回合发出去了，降级"仅发图"只会再发一张同样的图。
+            _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
+            logger.warning("生图结果通知重试已用尽，图片已在回执回合发出: %s", job_id)
+            return
+        await _deliver_image_only(ctx, data_store, job, group_id)
+        return
+
+    if image_sent:
+        if not text:
+            _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
+            return
+        if await _dispatch(ctx, job, group_id, text=text):
+            _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
+            return
+        _update_job(data_store, job_id, notify_attempts=attempts + 1)
+        logger.warning("生图结果通知投递失败（第 %d 次）: %s", attempts + 1, job_id)
+        return
+
+    # 模型没把图发出去：正文和图片一起补发；失败重试也只重发这一份。
+    if not text and not image_path:
+        _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
+        return
+    if await _dispatch(ctx, job, group_id, text=text, image_path=image_path):
+        _update_job(data_store, job_id, notified=True, fallback=True, notified_at=_now_iso())
+        return
+    _update_job(data_store, job_id, notify_attempts=attempts + 1)
+    logger.warning("生图结果补发失败（第 %d 次）: %s", attempts + 1, job_id)
 
 
 async def _deliver_image_only(

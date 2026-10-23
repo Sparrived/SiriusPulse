@@ -4,6 +4,7 @@
 - 模型调用 ``image_generate`` 只拿到“已提交”，不必等几分钟的生图；
 - 后台任务把图画好、落盘，再让模型在完成回合里用 ``group_file_exec`` 把图发回原群；
 - 生成失败要如实通知；通知回合连续失败时至少把图片送达；
+- 通知正文投递失败只重试文案，不重跑会发图的回合（同一张图不能连发多次）；
 - 进程重启不会让中断的任务永远悬着，也不会丢掉通知。
 """
 
@@ -202,6 +203,52 @@ async def test_generation_failure_is_reported_honestly(tmp_path: Path):
 
     assert ctx.dispatch_calls[0]["text"] == "抱歉，这次没画成"
     assert job["notified"] is True
+
+
+@pytest.mark.asyncio
+async def test_notification_retry_after_image_sent_only_resends_the_text(tmp_path: Path):
+    """回执回合已经把图发出去了，正文投递失败重试时不能再让模型发一次图。"""
+    store = _store(tmp_path)
+    await image_generate.run(prompt="画一张海边日落", data_store=store, chat_context=_GROUP_CONTEXT)
+    ctx = _FakeCtx(
+        notify_payload={"text": "日落画好了，看看", "image_sent": True},
+        dispatch_results=[False, True],
+    )
+
+    await image_generate._process_once(ctx, store)
+    assert _jobs(store)[0]["notify_attempts"] == 1
+    assert _jobs(store)[0]["notified"] is False
+
+    await image_generate._process_once(ctx, store)
+
+    job = _jobs(store)[0]
+    assert job["notified"] is True
+    assert len(ctx.notify_calls) == 1, "重试不能再跑一次会发图的回执回合"
+    assert len(ctx.dispatch_calls) == 2
+    assert all(call["image_path"] == "" for call in ctx.dispatch_calls), "图已经发过，不能再补发"
+    assert ctx.dispatch_calls[1]["text"] == "日落画好了，看看"
+
+
+@pytest.mark.asyncio
+async def test_notification_retry_exhausted_after_image_sent_does_not_resend_image(tmp_path: Path):
+    """图已发出而正文一直投不出去时，只放弃文案，不能再降级发一次图。"""
+    store = _store(tmp_path)
+    await image_generate.run(prompt="画一张海边日落", data_store=store, chat_context=_GROUP_CONTEXT)
+    ctx = _FakeCtx(
+        notify_payload={"text": "日落画好了，看看", "image_sent": True},
+        dispatch_results=[False] * image_generate._NOTIFY_MAX_ATTEMPTS,
+    )
+
+    for _ in range(image_generate._NOTIFY_MAX_ATTEMPTS + 1):
+        await image_generate._process_once(ctx, store)
+
+    job = _jobs(store)[0]
+    assert job["notified"] is True
+    assert job["notify_attempts"] == image_generate._NOTIFY_MAX_ATTEMPTS
+    assert len(ctx.notify_calls) == 1
+    assert len(ctx.dispatch_calls) == image_generate._NOTIFY_MAX_ATTEMPTS
+    assert all(call["image_path"] == "" for call in ctx.dispatch_calls)
+    assert job.get("fallback") is not True
 
 
 @pytest.mark.asyncio
