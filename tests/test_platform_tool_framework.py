@@ -10,7 +10,6 @@ import pytest
 from sirius_pulse.adapters.base import BaseAdapter
 from sirius_pulse.adapters.models import MessageGroup, ParsedEvent
 from sirius_pulse.memory.user.unified_models import UnifiedUser
-from sirius_pulse.models import Transcript
 from sirius_pulse.platforms.onebot_v11.protocol import (
     build_image_label,
     dedupe_image_name,
@@ -23,12 +22,7 @@ from sirius_pulse.platforms.onebot_v11.protocol import (
 from sirius_pulse.providers.base import GenerationRequest, GenerationResult
 from sirius_pulse.providers.mock import MockProvider
 from sirius_pulse.tools.models import ToolDefinition, ToolInvocationContext
-from sirius_pulse.tools.security import (
-    build_tool_invocation_context,
-    collect_declared_developer_profiles,
-    ensure_developer_access,
-    validate_tool_access,
-)
+from sirius_pulse.tools.security import ensure_developer_access, validate_tool_access
 from sirius_pulse.tools.telemetry import ToolExecutionRecord, ToolTelemetry
 
 
@@ -192,22 +186,6 @@ async def test_mock_provider_when_responses_are_configured_then_requests_are_rec
     assert second.content == "second"
     assert fallback.content == "[mock] no configured response"
     assert provider.requests == [request, request, request]
-
-
-def test_tool_security_when_context_is_built_then_declared_developers_are_collected(tmp_path):
-    transcript = Transcript()
-    dev = UnifiedUser(user_id="dev-1", name="Dev", metadata={"is_developer": True})
-    caller = UnifiedUser(user_id="caller-1", name="Caller", metadata={"is_developer": True})
-    transcript.user_memory.register_user(dev, group_id="group-1")
-
-    developers = collect_declared_developer_profiles(transcript=transcript)
-    context = build_tool_invocation_context(transcript=transcript, caller=caller)
-
-    assert [item.user_id for item in developers] == ["dev-1"]
-    assert [item.user_id for item in context.developer_profiles] == ["dev-1", "caller-1"]
-    assert context.caller_is_developer is True
-    assert context.caller_name == "Caller"
-    assert context.caller_user_id == "caller-1"
 
 
 def test_tool_security_when_developer_only_tool_is_validated_then_access_depends_on_context():

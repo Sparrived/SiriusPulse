@@ -99,17 +99,6 @@ def build_default_orchestration_payload() -> dict[str, Any]:
     }
 
 
-def build_default_session_config_payload() -> dict[str, Any]:
-    return {
-        "generated_agent_key": "",
-        "history_max_messages": 24,
-        "history_max_chars": 6000,
-        "max_recent_participant_messages": 5,
-        "enable_auto_compression": True,
-        "orchestration": build_default_orchestration_payload(),
-    }
-
-
 def strip_json_comments(content: str) -> str:
     """Strip JSONC-style comments while preserving quoted strings."""
 

@@ -448,11 +448,6 @@ class ToolExecutor:
             logger.error("Tool async execute exception: %s -> %s", tool.name, exc)
             return ToolResult(success=False, error=str(exc))
 
-    def save_all_stores(self) -> None:
-        """Persist all dirty data stores."""
-        for store in self._data_stores.values():
-            store.save()
-
     def _validate_admin_requirement(
         self,
         tool: ToolDefinition,

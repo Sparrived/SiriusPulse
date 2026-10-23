@@ -127,16 +127,6 @@ class PluginCommandGroupMeta:
             return list(self.patterns)
         return [self.prefix + p for p in self.patterns]
 
-    @property
-    def group_path(self) -> list[str]:
-        """获取指令组的完整路径。
-
-        如果有 parent，返回 [parent, name]，否则返回 [name]。
-        """
-        if self.parent:
-            return [self.parent, self.name]
-        return [self.name]
-
 
 @dataclass(slots=True)
 class GroupCommandMeta:
@@ -670,7 +660,6 @@ async def dispatch_command_stream(
             if len(sub_path) > 1:
                 # 递归查找嵌套组
                 current_group_name = cmd.command
-                current_sub_commands = sub_commands
 
                 for i, sub_name in enumerate(sub_path[:-1]):
                     # 构建当前层级的组名
@@ -692,7 +681,6 @@ async def dispatch_command_stream(
                             return await _dispatch_group_command(instance, cmd, sub_meta)
                         # 继续下一层
                         current_group_name = nested_group_name
-                        current_sub_commands = nested_sub_commands
                     else:
                         break
 

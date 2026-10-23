@@ -17,11 +17,10 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sirius_pulse.models.emotion import BasicEmotion, EmotionState, EmpathyStrategy
+from sirius_pulse.models.emotion import EmotionState, EmpathyStrategy
 
 logger = logging.getLogger(__name__)
 from sirius_pulse.models.intent_v3 import (
@@ -32,40 +31,8 @@ from sirius_pulse.models.intent_v3 import (
     SocialSubtype,
 )
 
-logger = logging.getLogger(__name__)
-
-
-_LENGTH_BIAS_KEYWORDS = (
-    "简短",
-    "短句",
-    "短回复",
-    "详细",
-    "细说",
-    "长篇",
-    "长句",
-    "字数",
-    "篇幅",
-    "回复长度",
-    "多说",
-    "少说",
-    "话多",
-    "话少",
-    "少解释",
-    "多解释",
-    "concise",
-    "detailed",
-    "long-form",
-)
-
-
-def _drop_length_biased_text(text: str | None) -> str:
-    if not text:
-        return ""
-    normalized = text.strip()
-    lowered = normalized.lower()
-    if any(keyword in lowered for keyword in _LENGTH_BIAS_KEYWORDS):
-        return ""
-    return normalized
+if TYPE_CHECKING:
+    from sirius_pulse.models.signal import SignalAnalysis
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -386,17 +353,12 @@ class CognitionAnalyzer:
         self.brain = brain  # Brain LLM 交互中枢（v1.2+）
         self._work_path = Path(work_path) if work_path else None
 
-        # Expose the last GenerationRequest for token recording
-        self._last_request: Any | None = None
-
         # Emotion state tracking
         self.trajectories: dict[str, list[tuple[str, EmotionState]]] = {}
         self.group_cache: dict[str, EmotionState] = {}
         self.empathy_prefs: dict[str, dict[str, Any]] = {}
 
         # Intent state tracking
-        self.group_activity_history: dict[str, list[tuple[float, float]]] = {}
-        self.user_response_prefs: dict[str, dict[str, Any]] = {}
         self._image_caption_cache: dict[str, str] = {}
         # 表情包描述要落盘：历史 XML 只带 caption，重启后同一张表情包不该被重新读一遍图。
         self._sticker_caption_store: dict[str, str] = self._load_sticker_captions()
@@ -510,7 +472,6 @@ class CognitionAnalyzer:
             timeout_seconds=45,
             purpose="image_caption",
         )
-        self._last_request = request
         try:
             result = await self.provider_async.generate_async(request)
         except Exception:
@@ -815,17 +776,6 @@ class CognitionAnalyzer:
     # ------------------------------------------------------------------
     # Intent classification (rule-based)
     # ------------------------------------------------------------------
-
-    def _detect_directed_at_ai(self, message: str) -> bool:
-        """Check if message directly addresses the current AI by name or alias.
-
-        Deprecated: use directed_score >= 0.6 instead.
-        """
-        if not self.ai_name:
-            return False
-        text = message.lower()
-        names = [self.ai_name.lower()] + self.ai_aliases
-        return any(name in text for name in names if name)
 
     def is_name_or_alias_mentioned(self, message: str) -> bool:
         """Return whether text explicitly contains the configured name or alias."""
@@ -1409,11 +1359,3 @@ class CognitionAnalyzer:
             0.8 if social_intent in (SocialIntent.HELP_SEEKING, SocialIntent.EMOTIONAL) else 0.1
         )
         return min(1.0, 0.22 + role_match * 0.4)
-
-    @staticmethod
-    def _intent_type_from_social(social_intent: SocialIntent, message: str) -> str:
-        if social_intent == SocialIntent.HELP_SEEKING:
-            return "question" if "?" in message or "？" in message else "request"
-        if social_intent in (SocialIntent.EMOTIONAL, SocialIntent.SOCIAL):
-            return "chat"
-        return "chat"

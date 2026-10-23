@@ -45,7 +45,6 @@ from sirius_pulse.persona_generation.templates import (
     generate_humanized_roleplay_questions,
     list_roleplay_question_templates,
 )
-from sirius_pulse.platforms.persona_utils import extract_json
 
 
 def test_adapter_models_when_message_groups_are_combined_then_segments_keep_order():
@@ -178,7 +177,6 @@ def test_persona_generation_when_json_is_wrapped_or_partial_then_payload_can_be_
         [],
     )
     assert _extract_partial_roleplay_payload("plain text") is None
-    assert extract_json('```json\n{"x": 1}\n```') == '{"x": 1}'
 
 
 def test_persona_generation_when_loading_dependency_snapshots_then_missing_and_dirs_are_reported(

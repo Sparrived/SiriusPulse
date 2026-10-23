@@ -61,13 +61,6 @@ class PluginScheduler:
             task.interval_seconds,
         )
 
-    def remove_task(self, name: str) -> None:
-        """移除一个定时任务，并请求取消正在运行的回调。"""
-        for scheduled_task in self._tasks:
-            if scheduled_task.name == name and scheduled_task.runtime_task:
-                scheduled_task.runtime_task.cancel()
-        self._tasks = [t for t in self._tasks if t.name != name]
-
     def remove_plugin_tasks(self, plugin_name: str) -> None:
         """移除指定插件的所有定时任务，并请求取消正在运行的回调。"""
         before = len(self._tasks)

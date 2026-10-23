@@ -582,50 +582,6 @@ class TokenUsageStore(BaseSqliteStore):
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_hourly_summary(
-        self,
-        *,
-        start_ts: float | None = None,
-        end_ts: float | None = None,
-    ) -> list[dict[str, Any]]:
-        """Aggregate token usage by hour bucket.
-
-        Returns a list of dicts ordered chronologically, each containing:
-        ``hour_ts`` (unix timestamp floored to hour), ``calls``,
-        ``prompt_tokens``, ``completion_tokens``, ``total_tokens``.
-        """
-        clauses: list[str] = []
-        params: list[object] = []
-        if start_ts is not None:
-            clauses.append("timestamp >= ?")
-            params.append(start_ts)
-        if end_ts is not None:
-            clauses.append("timestamp <= ?")
-            params.append(end_ts)
-        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        cache_columns = (
-            "COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN cached_prompt_tokens ELSE 0 END), 0)"
-            " AS cached_prompt_tokens, "
-            "COALESCE(SUM(CASE WHEN cache_info_available != 0 THEN uncached_prompt_tokens ELSE 0 END), 0)"
-            " AS uncached_prompt_tokens"
-            if self.cache_columns_available
-            else "0 AS cached_prompt_tokens, 0 AS uncached_prompt_tokens"
-        )
-        rows = self.execute(
-            f"""SELECT
-                CAST(timestamp / 3600 AS INTEGER) * 3600 as hour_ts,
-                COUNT(*) as calls,
-                COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
-                COALESCE(SUM(completion_tokens), 0) as completion_tokens,
-                COALESCE(SUM(total_tokens), 0) as total_tokens,
-                {cache_columns}
-            FROM token_usage{where}
-            GROUP BY hour_ts
-            ORDER BY hour_ts""",
-            params,
-        ).fetchall()
-        return [dict(row) for row in rows]
-
     def get_retry_stats(
         self,
         *,

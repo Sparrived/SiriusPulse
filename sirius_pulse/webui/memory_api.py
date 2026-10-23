@@ -102,11 +102,6 @@ def _iter_tail_lines(path: Path, n: int) -> Iterator[str]:
             yield stripped.decode("utf-8", errors="replace")
 
 
-def _read_tail_lines(path: Path, n: int) -> list[str]:
-    """Backward-compatible list wrapper for small callers."""
-    return list(_iter_tail_lines(path, n))
-
-
 def _conversation_entry_key(entry: dict[str, Any]) -> str:
     entry_id = str(entry.get("entry_id") or "").strip()
     if entry_id:
@@ -191,25 +186,6 @@ def _load_runtime_basic_memory_messages(paths: Any, group_id: str = "") -> list[
                 item["tags"] = []
             messages.append(item)
     return messages
-
-
-def _merge_conversation_messages(
-    archive_messages: list[dict[str, Any]],
-    runtime_messages: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    merged: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-
-    for source in (archive_messages, runtime_messages):
-        for message in source:
-            key = _conversation_entry_key(message)
-            if key not in merged:
-                order.append(key)
-                merged[key] = message
-            else:
-                merged[key] = {**merged[key], **message}
-
-    return [merged[key] for key in order]
 
 
 def _load_compressed_memory_source_index(

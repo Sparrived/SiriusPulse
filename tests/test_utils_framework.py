@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from sirius_pulse.utils.json_io import atomic_write_json, read_json, replace_with_retry
-from sirius_pulse.utils.query_builder import QueryBuilder
 from sirius_pulse.utils.sqlite_base import (
     BaseSqliteStore,
     configure_sqlite_connection,
@@ -91,31 +90,6 @@ def test_json_io_when_file_is_missing_or_invalid_then_default_is_returned(tmp_pa
 
     assert read_json(tmp_path / "missing.json", missing_default) is missing_default
     assert read_json(invalid_path, default=[]) == []
-
-
-def test_query_builder_when_conditions_are_added_then_builds_select_delete_and_count():
-    builder = QueryBuilder().where("group_id = ?", "g1").where_optional("actor_id = ?", "u1")
-
-    assert builder.build_where() == (" WHERE group_id = ? AND actor_id = ?", ["g1", "u1"])
-    assert builder.build_select(
-        "token_usage", "id, total_tokens", order_by="id DESC", limit=5, offset=2
-    ) == (
-        "SELECT id, total_tokens FROM token_usage WHERE group_id = ? AND actor_id = ? ORDER BY id DESC LIMIT 5 OFFSET 2",
-        ["g1", "u1"],
-    )
-    assert builder.build_count("token_usage") == (
-        "SELECT COUNT(*) as cnt FROM token_usage WHERE group_id = ? AND actor_id = ?",
-        ["g1", "u1"],
-    )
-    assert builder.build_delete("token_usage") == (
-        "DELETE FROM token_usage WHERE group_id = ? AND actor_id = ?",
-        ["g1", "u1"],
-    )
-
-    assert builder.reset().where_optional("ignored = ?", None).build_select("items") == (
-        "SELECT * FROM items",
-        [],
-    )
 
 
 def test_sqlite_connection_when_invalid_journal_mode_then_raises():

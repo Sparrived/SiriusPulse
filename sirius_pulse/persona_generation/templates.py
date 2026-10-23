@@ -12,8 +12,6 @@ from sirius_pulse.config.jsonc import load_json_document
 from sirius_pulse.utils.json_io import replace_with_retry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
-GENERATED_AGENTS_FILE_NAME = "generated_agents.json"
-GENERATED_AGENT_TRACE_DIR_NAME = "generated_agent_traces"
 PENDING_PERSONA_SPECS_FIELD_NAME = "pending_persona_specs"
 PENDING_GENERATION_TRACE_FIELD_NAME = "pending_trace"
 

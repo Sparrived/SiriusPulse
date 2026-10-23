@@ -58,23 +58,3 @@ def build_model_catalog(data_path: Any = None) -> ModelCatalog:
             for name in task_names
         ],
     }
-
-
-def format_model_choice_value(provider_name: str, model_id: str) -> str:
-    """兼容旧调用点：任务名没有 provider 前缀。"""
-    return model_id
-
-
-def parse_model_choice_value(value: str) -> tuple[str, str] | None:
-    """兼容旧调用点：任务名没有 provider 前缀，始终返回 ``None``。"""
-    return None
-
-
-def enrich_model_choices(
-    data_path: Any = None,
-    model_choices: list[ModelChoice] | None = None,
-    provider_models: dict[str, list[str]] | None = None,
-    provider_types: dict[str, str] | None = None,
-) -> None:
-    """兼容旧调用点：任务名不带能力标签，无需补全。"""
-    return None

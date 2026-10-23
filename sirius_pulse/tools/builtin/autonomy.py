@@ -321,21 +321,6 @@ async def _run_free_time(
     return episode
 
 
-async def run_share_tick(ctx: Any) -> bool:
-    """Deliver one pending share out of band.  Used by tests and manual nudges."""
-    store = ctx.get_data_store("autonomy")
-    state = _load_state(store)
-    now = _now()
-    intentions = _load_intentions(ctx)
-    share = _next_share(intentions, now)
-    if share is None:
-        return False
-    delivered = await _deliver_share(ctx, share, state, now)
-    if delivered:
-        _record_share(ctx, state, share, now)
-    return delivered
-
-
 async def _deliver_share(ctx: Any, share: Intention, state: dict[str, Any], now: datetime) -> bool:
     """Say what she wanted to say, to the audience she picked."""
     audience = share.audience.strip()

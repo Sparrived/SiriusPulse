@@ -11,15 +11,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from sirius_pulse.memory.storage import MemoryStorage
-from sirius_pulse.memory.user.unified_models import (
-    RelationshipAnchor,
-    UnifiedUser,
-)
+from sirius_pulse.memory.user.unified_models import UnifiedUser
 
 logger = logging.getLogger(__name__)
 

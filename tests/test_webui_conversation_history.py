@@ -8,7 +8,6 @@ from sirius_pulse.webui.memory_api import (
     _compact_history_entry,
     _load_compressed_memory_source_index,
     _load_runtime_basic_memory_messages,
-    _merge_conversation_messages,
     _rewrite_jsonl_without_conversation_key,
 )
 
@@ -91,54 +90,6 @@ def test_history_entry_compaction_drops_duplicate_request_and_bounds_chain():
     assert len(entry["conversation_chain"]) == 12
     assert len(entry["conversation_chain"][0]["content"]) < 8_100
     assert len(entry["content"]) < 8_100
-
-
-def test_conversation_merge_prefers_runtime_chain_for_same_entry_id():
-    archive = [
-        {
-            "entry_id": "assistant_1",
-            "role": "assistant",
-            "content": "reply",
-            "conversation_chain": [],
-        }
-    ]
-    runtime = [
-        {
-            "entry_id": "assistant_1",
-            "role": "assistant",
-            "content": "reply",
-            "conversation_chain": [{"role": "system", "content": "full prompt"}],
-        }
-    ]
-
-    merged = _merge_conversation_messages(archive, runtime)
-
-    assert len(merged) == 1
-    assert merged[0]["conversation_chain"] == [{"role": "system", "content": "full prompt"}]
-
-
-def test_conversation_merge_keeps_archive_intent_scores_when_runtime_lacks_them():
-    archive = [
-        {
-            "entry_id": "human_1",
-            "role": "human",
-            "content": "hello",
-            "intent_scores": {"social_intent": "social", "directed_score": 0.75},
-        }
-    ]
-    runtime = [
-        {
-            "entry_id": "human_1",
-            "role": "human",
-            "content": "hello",
-            "conversation_chain": [],
-        }
-    ]
-
-    merged = _merge_conversation_messages(archive, runtime)
-
-    assert len(merged) == 1
-    assert merged[0]["intent_scores"] == {"social_intent": "social", "directed_score": 0.75}
 
 
 def test_conversation_history_marks_memory_compressed_sources(tmp_path):

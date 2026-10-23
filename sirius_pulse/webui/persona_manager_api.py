@@ -398,11 +398,6 @@ def _get_active_persona_names(data_dir: Path) -> list[str]:
     return []
 
 
-def _get_active_persona_name(data_dir: Path) -> str:
-    names = _get_active_persona_names(data_dir)
-    return names[0] if names else ""
-
-
 def _set_active_persona_names(data_dir: Path, names: list[str]) -> None:
     """写入运行人格列表，并同步旧单人格字段作为主选人格。"""
     config_path = data_dir / "global_config.json"

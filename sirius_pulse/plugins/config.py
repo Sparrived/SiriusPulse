@@ -310,10 +310,3 @@ def get_config_manager(plugins_dir: Path | None = None) -> PluginConfigManager:
     if _global_config_manager is None:
         _global_config_manager = manager
     return manager
-
-
-def set_config_manager(manager: PluginConfigManager) -> None:
-    """设置指定插件目录的配置管理器（用于测试或依赖注入）。"""
-    global _global_config_manager
-    _global_config_manager = manager
-    _config_managers[str(manager.plugins_dir.resolve())] = manager

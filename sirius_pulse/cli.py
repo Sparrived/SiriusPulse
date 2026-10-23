@@ -32,7 +32,6 @@ from typing import Any
 from sirius_pulse.logging_config import (
     add_filtered_file_handler,
     configure_logging,
-    setup_log_archival,
 )
 
 REPO_ROOT = Path(os.environ.get("SIRIUS_PULSE_HOME", Path.cwd())).expanduser().resolve()
@@ -149,12 +148,6 @@ def _get_active_persona_names(config: dict[str, Any]) -> list[str]:
             return list(dict.fromkeys(names))
     name = str(config.get("active_persona", "default")).strip()
     return [name] if name else []
-
-
-def _get_active_persona_dir() -> Path:
-    names = _get_active_persona_names(_load_global_config())
-    name = names[0] if names else "default"
-    return DATA_DIR / "personas" / name
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +665,7 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
 
     # run
-    run_parser = subparsers.add_parser("run", help="启动活跃人格引擎 + WebUI")
+    subparsers.add_parser("run", help="启动活跃人格引擎 + WebUI")
 
     # webui
     webui_parser = subparsers.add_parser("webui", help="启动 WebUI 管理服务")

@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sirius_pulse.core.cognition import extract_keywords
-from sirius_pulse.models.emotion import EmotionState
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,6 @@ class RhythmAnalysis:
     gap_since_last_message: float = 0.0  # seconds
     topic_stability: float = 0.5  # 0~1
     topic_drift: float = 0.0  # v1.3+: 0~1, 窗口内话题漂移度，高值=发生了话题转换
-    collective_mood: EmotionState | None = None
     attention_window_open: bool = False
     burst_detected: bool = False
     conversation_flows: int = 1

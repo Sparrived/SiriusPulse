@@ -18,11 +18,6 @@ def _json_response(data: dict[str, Any], status: int = 200) -> web.Response:
     )
 
 
-def _get_name(request: web.Request) -> str:
-    """从 URL 路径参数获取人格名称。"""
-    return str(request.match_info.get("name", "")).strip()
-
-
 def handle_api_errors(func: Callable) -> Callable:
     """WebUI API 错误处理装饰器。
 

@@ -292,11 +292,6 @@ def _raw_parameter_fields(parameter: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _duplicate_parameter_field_names(parameter: Any) -> set[str]:
-    names = [str(field.get("name")) for field in _declared_parameter_fields(parameter)]
-    return {name for name in names if names.count(name) > 1}
-
-
 def _validate_parameter_metadata(
     parameter: Any,
     *,

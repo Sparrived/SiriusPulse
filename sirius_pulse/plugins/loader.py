@@ -638,32 +638,6 @@ class PluginLoader:
 
     # ── 依赖安装 ──
 
-    def _parse_dependencies_from_source(self, plugin_path: Path) -> list[str]:
-        """从 .py 文件 AST 中提取 _plugin_dependencies，无需导入代码。
-
-        这样可以在依赖安装之前就发现插件需要哪些库。
-        """
-        for py_file in sorted(self._python_files(plugin_path), key=lambda path: path.name):
-            if py_file.name.startswith("_") and py_file.name != "__init__.py":
-                continue
-            try:
-                tree = ast.parse(py_file.read_text(encoding="utf-8"))
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Assign):
-                        for target in node.targets:
-                            if isinstance(target, ast.Name) and target.id == "_plugin_dependencies":
-                                if isinstance(node.value, ast.List):
-                                    return [
-                                        elt.value
-                                        for elt in node.value.elts
-                                        if isinstance(elt, ast.Constant)
-                                        and isinstance(elt.value, str)
-                                    ]
-            except Exception:
-                logger.warning("从 AST 提取依赖列表失败", exc_info=True)
-                pass
-        return []
-
     @staticmethod
     def install_dependencies(dependencies: list[str]) -> tuple[int, int]:
         """自动安装插件依赖，优先使用 uv pip install，回退到 pip install。

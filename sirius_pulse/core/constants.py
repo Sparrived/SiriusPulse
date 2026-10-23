@@ -6,10 +6,6 @@
 from __future__ import annotations
 
 # ── 时间相关 ──────────────────────────────────────────────
-SECONDS_PER_MINUTE = 60
-SECONDS_PER_HOUR = 3600
-SECONDS_PER_DAY = 86400
-
 # 回复去重窗口（秒）
 REPLY_DEDUP_WINDOW_SECONDS = 300
 
@@ -21,11 +17,6 @@ COLD_HEAT_THRESHOLD = 0.25
 
 # 心跳超时（秒）
 HEARTBEAT_TIMEOUT_SECONDS = 30
-
-# ── Token 相关 ────────────────────────────────────────────
-DEFAULT_MAX_TOKENS = 512
-RESPONSE_MAX_TOKENS = 4096
-COGNITION_MAX_TOKENS = 1024
 
 # ── 记忆相关 ──────────────────────────────────────────────
 # 原始消息保留到被 checkpoint 记忆单元覆盖为止（见提交 0866054）。保留量由下面的
@@ -60,14 +51,5 @@ DEFAULT_MEMORY_UNIT_TOP_K = 5
 # （should_prompt=False），单元本身保留在磁盘与 WebUI 中，仍可被真人追溯和手动恢复。
 DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT = 500
 
-# ── 传记相关 ──────────────────────────────────────────────
-BIOGRAPHY_TOKEN_BUDGET = 500
-BIOGRAPHY_MAX_MESSAGE_CHARS = 2000
-
 # ── 反馈相关 ──────────────────────────────────────────────
 FEEDBACK_TIMEOUT_SECONDS = 120
-FEEDBACK_DIRECTED_THRESHOLD = 0.3
-
-# ── 后台任务相关 ──────────────────────────────────────────
-DEFAULT_MEMORY_PROMOTE_INTERVAL_SECONDS = 180
-DEFAULT_CONSOLIDATION_INTERVAL_SECONDS = 600

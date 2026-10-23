@@ -710,8 +710,6 @@ def test_context_assembler_history_budget_bounds_the_rendered_payload():
             f"msg{index}",
             speaker_name=f"Speaker{index}",
         )
-    assembler = ContextAssembler(basic)
-
     budget = 4_000
     entries = basic.get_all("group_a")
     kept = ContextAssembler._trim_history_to_token_budget(entries, budget)

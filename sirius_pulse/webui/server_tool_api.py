@@ -26,12 +26,6 @@ _tool_registry_cache: dict[str, tuple[float, ToolRegistry]] = {}
 _CACHE_TTL = 60.0  # 秒
 
 
-def _invalidate_tool_cache(persona_dir: Path) -> None:
-    """清除指定人格的 tool 缓存。"""
-    key = str(persona_dir)
-    _tool_registry_cache.pop(key, None)
-
-
 def _load_tool_registry(persona_dir: Path) -> ToolRegistry:
     """从人格目录加载所有 tool（内置 + 人格级），带模块级缓存。"""
     key = str(persona_dir)

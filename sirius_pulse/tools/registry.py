@@ -18,7 +18,6 @@ from sirius_pulse.tools.models import (
     ToolDefinition,
     ToolInvocationContext,
     ToolParameter,
-    ToolPassiveType,
     ToolSideEffect,
 )
 
@@ -74,10 +73,6 @@ class ToolRegistry:
     def passive_tools(self) -> list[ToolDefinition]:
         """Return all passive tools (those with background tasks or triggers)."""
         return [s for s in self._tools.values() if s.is_passive]
-
-    def passive_tools_by_type(self, passive_type: ToolPassiveType) -> list[ToolDefinition]:
-        """Return passive tools matching the given type."""
-        return [s for s in self._tools.values() if s.passive_type == passive_type]
 
     def register(self, tool: ToolDefinition) -> None:
         """Manually register a tool definition."""
@@ -163,55 +158,6 @@ class ToolRegistry:
             except Exception as exc:
                 logger.warning("加载TOOL文件失败 (%s): %s", py_file.name, exc)
         return max(0, len(self._tools) - baseline)
-
-    def reload_from_directory(
-        self,
-        tools_dir: Path,
-        *,
-        auto_install_deps: bool = True,
-        include_builtin: bool = False,
-    ) -> int:
-        """Reload all tool files from a directory, replacing removed entries too."""
-        self.ensure_tools_directory(tools_dir)
-
-        loaded_tools: list[ToolDefinition] = []
-        if include_builtin:
-            builtin_dir = self.builtin_tools_dir()
-            if builtin_dir.exists():
-                for py_file in sorted(builtin_dir.glob("*.py")):
-                    if py_file.name.startswith("_"):
-                        continue
-                    try:
-                        self._install_tool_dependencies(
-                            py_file, auto_install_deps=auto_install_deps
-                        )
-                        tool = self._load_tool_file(py_file)
-                        if tool is not None:
-                            loaded_tools.append(tool)
-                            logger.info(
-                                "内置工具 %s v%s 已重新加载（来源：%s）",
-                                tool.name,
-                                tool.version,
-                                py_file.name,
-                            )
-                    except Exception as exc:
-                        logger.warning("重载内置TOOL失败 (%s): %s", py_file.name, exc)
-
-        for py_file in sorted(tools_dir.glob("*.py")):
-            if py_file.name.startswith("_"):
-                continue
-            try:
-                self._install_tool_dependencies(py_file, auto_install_deps=auto_install_deps)
-
-                tool = self._load_tool_file(py_file)
-                if tool is not None:
-                    loaded_tools.append(tool)
-                    logger.info("工具 %s v%s 刷新完毕（来源：%s）", tool.name, tool.version, py_file.name)
-            except Exception as exc:
-                logger.warning("重载TOOL文件失败 (%s): %s", py_file.name, exc)
-
-        self.replace_all(loaded_tools)
-        return len(self._tools)
 
     @staticmethod
     def _load_tool_file(file_path: Path) -> ToolDefinition | None:

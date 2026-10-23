@@ -131,7 +131,7 @@ def test_workflow_state_claim_prevents_duplicate_side_effects(tmp_path: Path):
     )
     assert claim.success is True
     assert claim.data["claimed"] is True
-    claim_token = claim.data["claim_token"]
+    assert claim.data["claim_token"]
     assert claim.data["revision"] == 1
     assert claim.data["next_step"] == "like"
     visible = ToolResult.from_raw_result(claim.data).to_model_text(max_chars=500)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sirius_pulse.embedding.client import EmbeddingClient
@@ -195,15 +195,3 @@ class PluginIntentMatcher:
             )
 
         return candidates
-
-    def is_plugin_intent(self, message: str) -> bool:
-        """检测用户消息是否可能是自然语言插件请求。
-
-        Args:
-            message: 用户输入文本
-
-        Returns:
-            True 表示可能是插件请求（应走完整管线），
-            False 表示不太可能是插件请求（可安全短路合并）。
-        """
-        return len(self.match_plugin_candidates(message)) > 0

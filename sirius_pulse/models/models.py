@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import uuid
 from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
-from sirius_pulse.developer_profiles import metadata_declares_developer
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 from sirius_pulse.mixins import JsonSerializable

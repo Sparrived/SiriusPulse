@@ -33,29 +33,9 @@ class ExpressivenessConfig:
         return self.overrides.get("directed_threshold", 0.8 - self.expressiveness * 0.4)
 
     @property
-    def weak_directed_threshold(self) -> float:
-        """0.0→0.6, 0.5→0.4, 1.0→0.2"""
-        return self.overrides.get("weak_directed_threshold", 0.6 - self.expressiveness * 0.4)
-
-    @property
-    def gap_readiness_threshold(self) -> float:
-        """0.0→0.45, 0.5→0.25, 1.0→0.05"""
-        return self.overrides.get("gap_readiness_threshold", 0.45 - self.expressiveness * 0.4)
-
-    @property
     def entitlement_threshold(self) -> float:
         """0.0→0.5, 0.5→0.3, 1.0→0.1"""
         return self.overrides.get("entitlement_threshold", 0.5 - self.expressiveness * 0.4)
-
-    @property
-    def redundancy_threshold(self) -> float:
-        """0.0→0.75, 0.5→0.55, 1.0→0.35"""
-        return self.overrides.get("redundancy_threshold", 0.75 - self.expressiveness * 0.4)
-
-    @property
-    def sarcasm_boost(self) -> float:
-        """0.0→0.05, 0.5→0.15, 1.0→0.25"""
-        return self.overrides.get("sarcasm_boost", 0.05 + self.expressiveness * 0.2)
 
     @property
     def cooldown_seconds(self) -> float:

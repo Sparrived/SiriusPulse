@@ -30,7 +30,6 @@ from sirius_pulse.providers.amkr_sync import (
     persona_panel_url,
     register_persona_tasks,
     register_persona_tasks_async,
-    register_tasks,
     rotate_persona_inference_key,
     workspace_for,
 )
