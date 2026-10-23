@@ -66,7 +66,6 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("POST", "/api/persona/memory-units/dedupe/scan", "api_persona_memory_dedupe_scan"),
     RouteSpec("GET", "/api/persona/memory-units/dedupe/status", "api_persona_memory_dedupe_status"),
     RouteSpec("POST", "/api/persona/memory-units/dedupe/apply", "api_persona_memory_dedupe_apply"),
-    RouteSpec("GET", "/api/persona/memory-units/dedupe/report", "api_persona_memory_dedupe_report"),
     RouteSpec("POST", "/api/persona/config", "api_config_post"),
     RouteSpec("GET", "/api/persona/tools", "api_persona_tools_get"),
     RouteSpec("POST", "/api/persona/tools/{tool_name}/toggle", "api_persona_tool_toggle"),

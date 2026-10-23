@@ -59,24 +59,11 @@ def test_tool_registry_when_user_installs_tool_file_then_tool_becomes_callable(
     assert tool.parameters[0].default == "世界"
 
 
-def test_tool_registry_when_model_prompt_is_built_then_public_tools_are_described():
-    registry = ToolRegistry()
-    registry.register(_tool("search_web", description="搜索公开资料"))
-    registry.register(_tool("read_file", description="读取工作区文件"))
-
-    descriptions = registry.build_tool_descriptions(adapter_type="napcat")
-
-    assert "search_web" in descriptions
-    assert "搜索公开资料" in descriptions
-    assert "read_file" in descriptions
-
-
 def test_tool_registry_when_caller_is_not_developer_then_developer_tool_is_hidden():
     registry = ToolRegistry()
     registry.register(_tool("server_shell", developer_only=True))
     user_context = ToolInvocationContext(caller=UnifiedUser(user_id="u1", name="普通用户"))
 
-    assert registry.build_tool_descriptions(invocation_context=user_context) == ""
     assert registry.build_tools_list(invocation_context=user_context) == []
 
 
@@ -87,24 +74,9 @@ def test_tool_registry_when_caller_is_developer_then_developer_tool_is_available
         caller=UnifiedUser(user_id="dev", name="开发者", metadata={"is_developer": True})
     )
 
-    descriptions = registry.build_tool_descriptions(invocation_context=developer_context)
     tools = registry.build_tools_list(invocation_context=developer_context)
 
-    assert "server_shell" in descriptions
     assert tools[0]["function"]["name"] == "server_shell"
-
-
-def test_tool_registry_when_adapter_is_limited_then_only_matching_tools_are_visible():
-    registry = ToolRegistry()
-    registry.register(_tool("qq_image", adapter_types=["napcat"]))
-    registry.register(_tool("discord_image", adapter_types=["discord"]))
-    registry.register(_tool("plain_note"))
-
-    descriptions = registry.build_tool_descriptions(adapter_type="napcat")
-
-    assert "qq_image" in descriptions
-    assert "plain_note" in descriptions
-    assert "discord_image" not in descriptions
 
 
 def test_tool_registry_when_adapter_is_unknown_then_adapter_limited_tools_are_hidden():
@@ -112,11 +84,8 @@ def test_tool_registry_when_adapter_is_unknown_then_adapter_limited_tools_are_hi
     registry.register(_tool("qq_image", adapter_types=["napcat"]))
     registry.register(_tool("plain_note"))
 
-    descriptions = registry.build_tool_descriptions()
     tools = registry.build_tools_list()
 
-    assert "qq_image" not in descriptions
-    assert "plain_note" in descriptions
     assert [tool["function"]["name"] for tool in tools] == ["plain_note"]
 
 
@@ -125,11 +94,8 @@ def test_tool_registry_when_tool_is_not_model_visible_then_tool_is_hidden():
     registry.register(_tool("social_tool"))
     registry.register(_tool("list_stickers", model_visible=False))
 
-    descriptions = registry.build_tool_descriptions()
     tools = registry.build_tools_list()
 
-    assert "social_tool" in descriptions
-    assert "list_stickers" not in descriptions
     assert [tool["function"]["name"] for tool in tools] == ["social_tool"]
 
 

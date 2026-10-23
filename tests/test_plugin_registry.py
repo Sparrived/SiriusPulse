@@ -309,7 +309,7 @@ def test_plugin_registry_when_keyword_plugin_exists_then_natural_language_can_ma
     assert match.confidence == 0.9
 
 
-def test_plugin_registry_when_plugin_is_hidden_from_intent_then_description_excludes_it():
+def test_plugin_registry_when_plugin_is_hidden_from_intent_then_rule_still_matches():
     registry = PluginRegistry()
     registry.register(
         _plugin(
@@ -321,24 +321,7 @@ def test_plugin_registry_when_plugin_is_hidden_from_intent_then_description_excl
         instance=None,
     )
 
-    assert registry.get_plugin_descriptions(caller_is_developer=True) == ""
     assert registry.match_message("/admin reload") is not None
-
-
-def test_plugin_registry_when_plugin_is_developer_only_then_normal_users_do_not_see_it():
-    registry = PluginRegistry()
-    registry.register(
-        _plugin(
-            "debug_plugin",
-            [PluginCommandDef(name="debug", patterns=["/debug"], pattern_type="prefix")],
-            description="调试工具",
-            permissions=PluginPermissionDef(developer_only=True),
-        ),
-        instance=None,
-    )
-
-    assert registry.get_plugin_descriptions(caller_is_developer=False) == ""
-    assert "debug_plugin" in registry.get_plugin_descriptions(caller_is_developer=True)
 
 
 def test_plugin_registry_when_duplicate_plugin_name_is_loaded_then_registry_rejects_it():

@@ -1017,17 +1017,6 @@ async def api_persona_memory_dedupe_apply(request: web.Request, data_dir: Path) 
 
 
 @handle_api_errors
-async def api_persona_memory_dedupe_report(request: web.Request, data_dir: Path) -> web.Response:
-    job_id = str(_dedupe_status(data_dir).get("job_id") or "")
-    if not job_id:
-        return _json_response({"error": "暂无扫描报告"}, 404)
-    report = _read_json_dict(data_dir / "logs" / "memory-dedupe" / f"{job_id}.json")
-    if not report:
-        return _json_response({"error": "扫描报告不存在"}, 404)
-    return _json_response(report)
-
-
-@handle_api_errors
 async def api_persona_memory_viz(request: web.Request, data_dir: Path) -> web.Response:
     """GET /api/persona/memory-viz — 记忆可视化数据聚合接口。
 

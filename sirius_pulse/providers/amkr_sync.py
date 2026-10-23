@@ -195,20 +195,6 @@ class AmkrAdminClient:
         revision = data.get("config_revision")
         return tasks, str(revision) if isinstance(revision, str) and revision else None
 
-    def list_workspaces(self) -> list[dict[str, Any]]:
-        """列出 AMKR 上全部有任务的工作空间。"""
-        response = self._request("GET", "/api/workspaces")
-        if response.status_code != 200:
-            raise AmkrError(self._error_message(response))
-        try:
-            data = response.json()
-        except Exception as exc:
-            raise AmkrError(f"AMKR 工作空间列表不是合法 JSON：{exc}") from exc
-        if not isinstance(data, dict):
-            return []
-        raw = data.get("workspaces")
-        return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
-
     # ── 写入 ──────────────────────────────────────────────
 
     def create_task(self, name: str, revision: str | None) -> str | None:
@@ -289,14 +275,6 @@ class AmkrAdminClient:
         if not key:
             raise AmkrError("AMKR 轮换推理 key 成功但没有返回新 key")
         return key
-
-    def delete_task(self, name: str, revision: str | None) -> str | None:
-        """删除任务，返回新的 config_revision。"""
-        payload: dict[str, object] = {"config_revision": revision}
-        response = self._request("DELETE", f"/api/tasks/{quote(name, safe='')}", json_body=payload)
-        if response.status_code in (200, 204):
-            return self._revision_of(response)
-        raise AmkrError(self._error_message(response))
 
     @staticmethod
     def _revision_of(response: httpx.Response) -> str | None:

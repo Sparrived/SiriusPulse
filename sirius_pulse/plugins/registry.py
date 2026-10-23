@@ -2,7 +2,6 @@
 
 数据结构：
     - _commands_index: [(pattern, pattern_type, plugin_name, command_name), ...]
-    - _events_index: {event_type: [plugin_name, ...]}
     - _definitions: {plugin_name: PluginDefinition}
 
 使用 PluginMatcher 进行文本级匹配。
@@ -27,17 +26,11 @@ class PluginRegistry:
         # 每个条目: (pattern, pattern_type, plugin_name, command_name)
         self._commands_index: list[tuple[str, str, str, str]] = []
 
-        # 事件索引：{event_type: [plugin_name, ...]}
-        self._events_index: dict[str, list[str]] = {}
-
         # 插件定义存储：{plugin_name: PluginDefinition}
         self._definitions: dict[str, "PluginDefinition"] = {}
 
         # 插件实例存储：{plugin_name: PluginBase instance}
         self._instances: dict[str, object] = {}
-
-        # 自然语言触发索引：用于 CognitionAnalyzer 融合
-        self._nl_examples: dict[str, list[str]] = {}
 
     # ── 属性 ──
 
@@ -85,18 +78,6 @@ class PluginRegistry:
         # 构建指令索引（从 plugin.json 的 triggers.commands）
         for cmd_name, pattern, pat_type in definition.all_patterns:
             self._commands_index.append((pattern, pat_type, definition.name, cmd_name))
-
-        # 构建事件索引
-        for evt in definition.events:
-            evt_type = evt.type
-            if evt_type not in self._events_index:
-                self._events_index[evt_type] = []
-            self._events_index[evt_type].append(definition.name)
-
-        # 构建自然语言示例索引（跳过 hidden_from_intent 插件）
-        if not definition.permissions.hidden_from_intent:
-            if definition.natural_language and definition.natural_language.examples:
-                self._nl_examples[definition.name] = list(definition.natural_language.examples)
 
         logger.info(
             "注册 Plugin: %s v%s（%d 指令, %d 事件）",
@@ -163,15 +144,6 @@ class PluginRegistry:
     def get_all_definitions(self) -> list["PluginDefinition"]:
         """获取所有已注册的 PluginDefinition。"""
         return list(self._definitions.values())
-
-    def get_command_plugins(self) -> list["PluginDefinition"]:
-        """获取所有包含指令触发器的插件。"""
-        return [d for d in self._definitions.values() if d.commands]
-
-    def get_event_plugins(self, event_type: str) -> list["PluginDefinition"]:
-        """获取所有绑定到特定事件类型的插件。"""
-        names = self._events_index.get(event_type, [])
-        return [self._definitions[n] for n in names if n in self._definitions]
 
     # ── 文本匹配（使用 lexer.PluginMatcher） ──
 
@@ -271,65 +243,6 @@ class PluginRegistry:
 
         return None
 
-    def get_plugin_descriptions(self, caller_is_developer: bool = False) -> str:
-        """生成 Plugin 指令描述文本（用于 LLM Cognition Prompt）。
-
-        注意：LLM 兜底只在规则匹配未命中时触发，因此不输出触发词（前缀/关键词/正则），
-        只输出语义理解所需信息：插件名、功能描述、参数和 NL 示例。
-
-        Args:
-            caller_is_developer: 调用者是否为开发者。如果为 False，则不返回
-                developer_only=True 的插件描述，避免向普通用户暴露开发者专用插件。
-
-        Returns:
-            格式化的 Plugin 描述文本，如：
-            - weather: 查询城市天气
-              参数: city (str, 必填) - 城市名称
-              NL示例: "帮我查一下{city}的天气"
-        """
-        lines: list[str] = []
-        for definition in self._definitions.values():
-            if not definition.commands:
-                continue
-            # developer_only 插件仅对开发者可见
-            if definition.permissions.developer_only and not caller_is_developer:
-                continue
-            # hidden_from_intent 插件对意图识别隐藏
-            if definition.permissions.hidden_from_intent:
-                continue
-            # 检查是否所有指令都被隐藏了
-            visible_commands = [c for c in definition.commands if not c.hidden_from_intent]
-            if not visible_commands:
-                continue
-            desc = definition.display_name or definition.name
-            if definition.description:
-                # 只取第一句话（到第一个句号），避免长描述诱导 LLM 误判
-                short_desc = definition.description.split("。")[0].split("，")[0]
-                desc = f"{short_desc}（{definition.name}）"
-            lines.append(f"- {definition.name}: {desc}")
-
-            # 参数信息（帮助 LLM 知道有哪些参数及类型）
-            if definition.parameters:
-                param_parts: list[str] = []
-                for p in definition.parameters:
-                    required = "必填" if p.required else "可选"
-                    param_info = f"{p.name} ({required})"
-                    param_parts.append(param_info)
-                lines.append(f"  参数: {'; '.join(param_parts)}")
-
-        return "\n".join(lines)
-
-    def get_nl_examples(self) -> dict[str, list[str]]:
-        """获取所有插件的自然语言触发示例（跳过 hidden_from_intent 插件）。"""
-        # 过滤掉 hidden_from_intent 的插件
-        result: dict[str, list[str]] = {}
-        for name, examples in self._nl_examples.items():
-            definition = self._definitions.get(name)
-            if definition is not None and definition.permissions.hidden_from_intent:
-                continue
-            result[name] = examples
-        return result
-
     def get_plugin_prompt_injections(self, caller_is_developer: bool = False) -> list[str]:
         """收集所有已注册插件的 prompt_inject 文本。
 
@@ -356,21 +269,14 @@ class PluginRegistry:
         """注销一个插件。"""
         self._definitions.pop(name, None)
         self._instances.pop(name, None)
-        self._nl_examples.pop(name, None)
         # 清理索引
         self._commands_index = [
             (p, pt, pn, cn) for p, pt, pn, cn in self._commands_index if pn != name
         ]
-        for evt_type in list(self._events_index.keys()):
-            self._events_index[evt_type] = [n for n in self._events_index[evt_type] if n != name]
-            if not self._events_index[evt_type]:
-                del self._events_index[evt_type]
         logger.info("注销 Plugin: %s", name)
 
     def clear(self) -> None:
         """清空注册表。"""
         self._commands_index.clear()
-        self._events_index.clear()
         self._definitions.clear()
         self._instances.clear()
-        self._nl_examples.clear()

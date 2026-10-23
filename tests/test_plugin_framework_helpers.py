@@ -397,7 +397,6 @@ def test_plugin_context_and_base_when_setup_is_missing_or_present_then_helpers_u
         _ = plugin.ctx
     with pytest.raises(RuntimeError):
         plugin.get_data_store()
-    assert plugin.render_template("missing.txt", {}).startswith("[")
 
     data_store = PluginDataStore(tmp_path, "demo")
     adapter = object()
@@ -411,17 +410,12 @@ def test_plugin_context_and_base_when_setup_is_missing_or_present_then_helpers_u
     )
     plugin._setup("demo", context)
     source = tmp_path / "plugin"
-    templates = source / "templates"
-    templates.mkdir(parents=True)
-    (templates / "hello.txt").write_text("Hello {name}", encoding="utf-8")
     plugin._set_source_path(source)
 
     assert plugin.name == "demo"
     assert plugin.ctx is context
     assert plugin.get_adapter() is adapter
     assert plugin.get_data_store() is data_store
-    assert plugin.render_template("hello.txt", {"name": "Ada"}) == "Hello Ada"
-    assert plugin.render_template("missing.txt", {}).startswith("[")
     assert plugin.source_path == source
 
 

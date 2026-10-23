@@ -37,7 +37,6 @@ from sirius_pulse.plugins.decorators import (
     dispatch_command,
 )
 from sirius_pulse.plugins.dispatcher import DispatchedOutput, OutputDispatcher
-from sirius_pulse.plugins.events import EngineEvent, PluginEvent, PluginEventType, TimerEvent
 from sirius_pulse.plugins.executor import PluginExecutor
 from sirius_pulse.plugins.lexer import (
     CommandParser,
@@ -98,11 +97,6 @@ __all__ = [
     # 输出调度
     "OutputDispatcher",
     "DispatchedOutput",
-    # 事件系统
-    "PluginEvent",
-    "PluginEventType",
-    "TimerEvent",
-    "EngineEvent",
     # 调度器
     "PluginScheduler",
     "ScheduledTask",

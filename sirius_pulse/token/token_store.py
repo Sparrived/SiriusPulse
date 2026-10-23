@@ -154,43 +154,6 @@ class TokenUsageStore(BaseSqliteStore):
         if len(self._buffer) >= self._batch_size:
             self.flush()
 
-    def add_many(self, records: list[TokenUsageRecord], *, timestamp: float | None = None) -> None:
-        """暂存多条记录到缓冲区，满时自动 flush。"""
-        if not records:
-            return
-        ts = timestamp if timestamp is not None else time.time()
-        for r in records:
-            self._buffer.append(
-                (
-                    self._session_id,
-                    ts,
-                    r.actor_id,
-                    r.task_name,
-                    r.model,
-                    r.prompt_tokens,
-                    r.completion_tokens,
-                    r.total_tokens,
-                    r.input_chars,
-                    r.output_chars,
-                    r.estimation_method,
-                    r.retries_used,
-                    r.persona_name,
-                    r.group_id,
-                    r.provider_name,
-                    r.breakdown_json,
-                    r.duration_ms,
-                    r.error_type,
-                    r.error_message,
-                    r.conversation_depth,
-                    r.cached_prompt_tokens,
-                    r.uncached_prompt_tokens,
-                    r.cache_creation_prompt_tokens,
-                    int(r.cache_info_available),
-                )
-            )
-        if len(self._buffer) >= self._batch_size:
-            self.flush()
-
     def flush(self) -> None:
         """将缓冲区中的所有记录批量写入数据库并提交事务。"""
         if not self._buffer:
@@ -210,23 +173,6 @@ class TokenUsageStore(BaseSqliteStore):
         self._buffer.clear()
         self.commit()
 
-    def cleanup_old_records(self, days: int = 30) -> int:
-        """清理超过指定天数的旧记录，返回删除的行数。
-
-        Parameters
-        ----------
-        days:
-            保留最近多少天的数据，默认 30 天。
-        """
-        self.flush()
-        cutoff = time.time() - days * 86400
-        cursor = self.execute("DELETE FROM token_usage WHERE timestamp < ?", (cutoff,))
-        self.commit()
-        removed = cursor.rowcount or 0
-        if removed:
-            logger.info("清理了 %d 条超过 %d 天的旧 token 使用记录", removed, days)
-        return removed
-
     # ------------------------------------------------------------------
     # Read helpers
     # ------------------------------------------------------------------
@@ -240,43 +186,6 @@ class TokenUsageStore(BaseSqliteStore):
         else:
             row = self.execute("SELECT COUNT(*) FROM token_usage").fetchone()
         return int(row[0])
-
-    def list_sessions(self) -> list[str]:
-        rows = self.execute(
-            "SELECT DISTINCT session_id FROM token_usage ORDER BY session_id"
-        ).fetchall()
-        return [row[0] for row in rows]
-
-    def fetch_records(
-        self,
-        *,
-        session_id: str | None = None,
-        actor_id: str | None = None,
-        task_name: str | None = None,
-        model: str | None = None,
-    ) -> list[dict[str, object]]:
-        """Return raw rows matching the given filters."""
-        clauses: list[str] = []
-        params: list[object] = []
-        if session_id is not None:
-            clauses.append("session_id = ?")
-            params.append(session_id)
-        if actor_id is not None:
-            clauses.append("actor_id = ?")
-            params.append(actor_id)
-        if task_name is not None:
-            clauses.append("task_name = ?")
-            params.append(task_name)
-        if model is not None:
-            clauses.append("model = ?")
-            params.append(model)
-
-        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        rows = self.execute(
-            f"SELECT * FROM token_usage{where} ORDER BY timestamp",
-            params,
-        ).fetchall()
-        return [dict(row) for row in rows]
 
     def fetch_records_filtered(
         self,
@@ -424,22 +333,6 @@ class TokenUsageStore(BaseSqliteStore):
     # Analytics helpers
     # ------------------------------------------------------------------
 
-    def get_summary(self) -> dict[str, Any]:
-        """Return aggregated token usage summary."""
-        row = self.execute(
-            """SELECT
-                COUNT(*) as total_calls,
-                COALESCE(SUM(prompt_tokens), 0) as total_prompt_tokens,
-                COALESCE(SUM(completion_tokens), 0) as total_completion_tokens,
-                COALESCE(SUM(total_tokens), 0) as total_tokens,
-                COALESCE(SUM(input_chars), 0) as total_input_chars,
-                COALESCE(SUM(output_chars), 0) as total_output_chars
-            FROM token_usage"""
-        ).fetchone()
-        result = dict(row) if row else {}
-        result.update(self.get_cache_stats())
-        return result
-
     def get_cache_stats(
         self,
         *,
@@ -569,16 +462,6 @@ class TokenUsageStore(BaseSqliteStore):
             GROUP BY {column}
             ORDER BY total_tokens DESC""",
             params,
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def get_recent_records(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return the most recent token usage records."""
-        rows = self.execute(
-            """SELECT * FROM token_usage
-            ORDER BY timestamp DESC
-            LIMIT ?""",
-            (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
 

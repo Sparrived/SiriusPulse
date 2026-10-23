@@ -65,8 +65,6 @@ def test_token_store_when_batch_size_reached_then_flushes_records(tmp_path):
     store.add(_record(actor="a2"))
 
     assert store.count() == 2
-    assert store.list_sessions() == ["default"]
-    assert [row["actor_id"] for row in store.fetch_records()] == ["a1", "a2"]
 
 
 def test_token_store_when_filters_are_used_then_returns_matching_rows(tmp_path):
@@ -96,7 +94,7 @@ def test_token_store_when_breakdown_is_present_then_aggregates_sections(tmp_path
     assert store.get_recent_records_with_breakdown()[0]["breakdown"] == {"memory": 3, "tools": 9}
 
 
-def test_token_store_when_records_span_tasks_then_summary_and_breakdowns_are_available(tmp_path):
+def test_token_store_when_records_span_tasks_then_stats_and_breakdowns_are_available(tmp_path):
     store = TokenUsageStore(tmp_path / "token.db")
     store.add(
         _record(
@@ -110,14 +108,11 @@ def test_token_store_when_records_span_tasks_then_summary_and_breakdowns_are_ava
     )
     store.flush()
 
-    summary = store.get_summary()
     task_breakdown = store.get_breakdown_by("task_name")
     model_breakdown = store.get_breakdown_by("model")
     retry_stats = store.get_retry_stats()
     duration_stats = store.get_duration_stats()
 
-    assert summary["total_calls"] == 2
-    assert summary["total_tokens"] == 30
     assert {row["name"] for row in task_breakdown} == {"response_generate", "cognition_analyze"}
     assert model_breakdown[0]["name"] == "test-model"
     assert retry_stats["total_retries"] == 1
@@ -155,33 +150,21 @@ def test_token_store_when_cache_usage_is_recorded_then_stats_and_rows_are_availa
 
 def test_token_store_when_failures_and_empty_replies_exist_then_stats_are_reported(tmp_path):
     store = TokenUsageStore(tmp_path / "token.db")
-    store.add_many(
-        [
-            _record(
-                task_name="response_generate",
-                prompt=8,
-                completion=0,
-                error_type="timeout",
-                conversation_depth=3,
-            ),
-            _record(task_name="cognition_analyze", prompt=8, completion=4),
-        ]
+    store.add(
+        _record(
+            task_name="response_generate",
+            prompt=8,
+            completion=0,
+            error_type="timeout",
+            conversation_depth=3,
+        )
     )
+    store.add(_record(task_name="cognition_analyze", prompt=8, completion=4))
     store.flush()
 
     assert store.get_empty_reply_stats()["empty_calls"] == 1
     assert store.get_failure_stats()["failure_calls"] == 1
     assert store.get_conversation_depth_stats()["max_depth"] == 3
-
-
-def test_token_store_when_old_records_are_cleaned_then_only_recent_rows_remain(tmp_path):
-    store = TokenUsageStore(tmp_path / "token.db")
-    store.add(_record(actor="old"), timestamp=1.0)
-    store.add(_record(actor="new"), timestamp=10_000_000_000.0)
-    store.flush()
-
-    assert store.cleanup_old_records(days=30) == 1
-    assert [row["actor_id"] for row in store.get_recent_records()] == ["new"]
 
 
 def test_token_store_for_workspace_when_layout_is_supplied_then_uses_token_db_path(tmp_path):

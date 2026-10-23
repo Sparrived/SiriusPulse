@@ -79,10 +79,6 @@ class MemoryUnitFileStore:
     def base_dir(self) -> Path:
         return self._base_dir
 
-    @property
-    def vectors_dir(self) -> Path:
-        return self._vectors_dir
-
     def list_group_ids(self) -> list[str]:
         """Return every group that has units, reading each file at most once.
 

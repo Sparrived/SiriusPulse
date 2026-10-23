@@ -280,33 +280,6 @@ class PluginBase:
         """获取平台适配器实例（BaseAdapter）。"""
         return self.ctx.adapter
 
-    def render_template(self, template_name: str, data: dict[str, Any]) -> str:
-        """渲染 Plugin 目录下的模板文件。
-
-        Args:
-            template_name: 模板文件名（相对于 templates/ 目录）
-            data: 模板变量
-
-        Returns:
-            渲染后的字符串
-        """
-        if not self._source_path:
-            return f"[模板不可用: {template_name}]"
-
-        template_path = self._source_path / "templates" / template_name
-        if not template_path.exists():
-            logger.warning("模板不存在: %s", template_path)
-            return f"[模板不存在: {template_name}]"
-
-        try:
-            template_text = template_path.read_text(encoding="utf-8")
-            for key, value in data.items():
-                template_text = template_text.replace(f"{{{key}}}", str(value))
-            return template_text
-        except Exception as exc:
-            logger.error("渲染模板失败: %s", exc)
-            return f"[模板渲染失败: {template_name}]"
-
     def _setup(self, name: str, ctx: "PluginContext") -> None:
         """由框架调用：设置 Plugin 名称和上下文。"""
         self._name = name

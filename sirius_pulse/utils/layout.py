@@ -63,15 +63,6 @@ class WorkspaceLayout:
             file_name = _DEFAULT_SESSION_FILENAME_JSON
         return self.session_dir(session_id) / file_name
 
-    def session_participants_path(self, session_id: str) -> Path:
-        return self.session_dir(session_id) / "participants.json"
-
-    def primary_user_path(self) -> Path:
-        return self.data_root / "primary_user.json"
-
-    def persisted_session_bundle_path(self) -> Path:
-        return self.config_root / "session_config.persisted.json"
-
     def memory_dir(self) -> Path:
         return self.data_root / "memory"
 
@@ -80,9 +71,6 @@ class WorkspaceLayout:
 
     def event_memory_dir(self) -> Path:
         return self.memory_dir() / "events"
-
-    def event_memory_path(self) -> Path:
-        return self.event_memory_dir() / "events.json"
 
     def token_dir(self) -> Path:
         return self.data_root / "token"

@@ -48,11 +48,10 @@ WORK_MODE_CONTROL_TOOL_NAMES = frozenset({ENTER_WORK_MODE, QUIT_WORK_MODE, SEND_
 #: 保留最近多少次工作模式轨迹（WebUI 只需要近期记录）。
 MAX_RECORDED_SESSIONS = 50
 
-#: 轨迹来源：模型自己进的工作模式，还是框架为自主/定时任务/后台工具回执回合自动开的。
+#: 轨迹来源：模型自己进的工作模式，还是框架为自主/定时任务回合自动开的。
 WORK_MODE_SOURCE_CHAT = "chat"
 WORK_MODE_SOURCE_AUTONOMY = "autonomy"
 WORK_MODE_SOURCE_SCHEDULED = "scheduled"
-WORK_MODE_SOURCE_PASSIVE_TOOL = "passive_tool"
 
 _ENTER_TOOL: dict[str, Any] = {
     "type": "function",

@@ -314,65 +314,6 @@ class ToolRegistry:
             )
         ]
 
-    def build_tool_descriptions(
-        self,
-        *,
-        invocation_context: ToolInvocationContext | None = None,
-        compact: bool = False,
-        adapter_type: str | None = None,
-        chat_type: str | None = None,
-        admin_allowed: bool = False,
-        exclude_names: Collection[str] | None = None,
-    ) -> str:
-        """Build a formatted text block describing all available tools.
-
-        This is injected into the system prompt so the AI knows what tools
-        are available and how to call them.
-
-        Args:
-            invocation_context: Optional context for developer-only filtering.
-            compact: If True, use a condensed one-line-per-tool format to
-                save tokens when many tools are registered.
-            adapter_type: If provided, only include tools whose adapter_types
-                is empty or contains this adapter type.
-            exclude_names: Tool names to leave out of the description block.
-        """
-        if not self._tools:
-            return ""
-
-        lines: list[str] = []
-        for tool in self._available_model_tools(
-            invocation_context=invocation_context,
-            adapter_type=adapter_type,
-            chat_type=chat_type,
-            admin_allowed=admin_allowed,
-            exclude_names=exclude_names,
-        ):
-            security_notes: list[str] = []
-            if tool.developer_only:
-                security_notes.append("仅 developer 可调用")
-            if tool.admin_required:
-                security_notes.append("需要 Bot 是当前群管理员")
-            security_note = f"（{'，'.join(security_notes)}）" if security_notes else ""
-            if compact:
-                param_sig = _build_compact_param_signature(tool.parameters)
-                sig = f"{tool.name}{param_sig}" if param_sig else tool.name
-                lines.append(f"- {sig}: {tool.description}{security_note}")
-            else:
-                lines.append(f"- {tool.name}: {tool.description}{security_note}")
-                if tool.parameters:
-                    param_parts: list[str] = []
-                    for p in tool.parameters:
-                        required_tag = "必填" if p.required else "可选"
-                        default_tag = (
-                            f", 默认={p.default}" if not p.required and p.default is not None else ""
-                        )
-                        param_parts.append(
-                            f"    - {p.name} ({p.type}, {required_tag}{default_tag}): {p.description}"
-                        )
-                    lines.extend(param_parts)
-        return "\n".join(lines)
-
     def _available_model_tools(
         self,
         *,
@@ -414,22 +355,3 @@ class ToolRegistry:
         installed = resolve_tool_dependencies(py_file, auto_install=True)
         if installed:
             logger.info("顺手帮 '%s' 把依赖 %s 装好啦", py_file.stem, ", ".join(installed))
-
-
-def _build_compact_param_signature(parameters: list[ToolParameter]) -> str:
-    """Build a compact `(name:type=default desc, ...)` signature string.
-
-    Keeps parameter descriptions so the model still understands semantics,
-    while dropping redundant Chinese labels like "必填/可选/默认=".
-    """
-    if not parameters:
-        return ""
-    parts: list[str] = []
-    for p in parameters:
-        piece = f"{p.name}:{p.type}"
-        if not p.required and p.default is not None:
-            piece += f"={p.default}"
-        if p.description:
-            piece += f" {p.description.strip()}"
-        parts.append(piece)
-    return f"({', '.join(parts)})"
