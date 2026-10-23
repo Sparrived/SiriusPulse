@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from PIL import Image
 
 from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
+from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.work_mode import (
@@ -18,9 +22,12 @@ from sirius_pulse.core.work_mode import (
     WorkModeRun,
     WorkModeStore,
 )
+from sirius_pulse.exceptions import ProviderAuthError
 from sirius_pulse.models.models import Message
 from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 from sirius_pulse.providers.base import ToolCall
+from sirius_pulse.providers.mock import MockProvider
+from sirius_pulse.tools import ToolDefinition, ToolRegistry
 from sirius_pulse.tools.models import ToolResult
 
 
@@ -114,6 +121,47 @@ def _work_mode_tasks(tmp_path, queue, chat_fn, *, max_tool_rounds: int = 4):
 TOOL = SimpleNamespace(name="bash", silent=False, developer_only=False, retry_safe=False)
 
 
+class _ToolRoundProvider(MockProvider):
+    """MockProvider 的文字与请求记录照用，只补预设的 function-call 回合。"""
+
+    def __init__(self, rounds):
+        super().__init__([getattr(result, "raw_text", "") for result in rounds])
+        self.rounds = rounds
+
+    async def generate_async(self, request, return_reasoning=False):
+        index = len(self.requests)
+        assert index < len(self.rounds), "工作循环发起了未预期的模型调用"
+        result = await super().generate_async(request, return_reasoning=return_reasoning)
+        if isinstance(self.rounds[index], BaseException):
+            raise self.rounds[index]
+        result.tool_calls = self.rounds[index].tool_calls
+        return result
+
+
+def _provider_work_mode_tasks(tmp_path, queue, rounds, *, max_tool_rounds=8):
+    provider = _ToolRoundProvider(rounds)
+    registry = ToolRegistry()
+    for name in ("group_file_exec", "interaction_with_master", "silent_notice", "bash"):
+        registry.register(
+            ToolDefinition(name=name, description=name, silent=name == "silent_notice")
+        )
+    brain = Brain(
+        provider_async=provider,
+        model_router=SimpleNamespace(
+            resolve=lambda task_name, **kwargs: SimpleNamespace(model_name=task_name, timeout=1)
+        ),
+        persona=SimpleNamespace(name="Luna", build_system_prompt=lambda: ""),
+        tool_registry=registry,
+    )
+    # 只跑回复路径，不启动抽取任务或后台服务。
+    tasks, engine, runs = _work_mode_tasks(
+        tmp_path, queue, brain.chat, max_tool_rounds=max_tool_rounds
+    )
+    engine.config["pending_message_threshold"] = 0
+    engine._tool_registry = registry
+    return tasks, engine, runs, provider
+
+
 def _queued_job(queue) -> None:
     item = queue.enqueue("group-1", "u1", "整理一下", _decision(ResponseStrategy.IMMEDIATE))
     item.enqueue_time = _past(item.window_seconds + 1)
@@ -179,6 +227,189 @@ async def test_work_mode_when_entered_then_heavy_tools_unlock_and_text_stops_goi
     assert "[Tool result: success]" in bash_step["results"][0]["output"]
     # 退出后群里恢复正常回复。
     assert runs == {}
+
+
+@pytest.mark.asyncio
+async def test_work_mode_when_first_avatar_is_sent_then_second_and_confirmation_reach_quit(
+    tmp_path,
+):
+    """用户要两张头像并尝试更换：发出第一张不是整个目标完成。"""
+    queue = DelayedResponseQueue()
+    request = "帮我裁剪两张闺蜜头像，分别发给我，再尝试更换头像并确认结果。"
+    item = queue.enqueue("group-1", "u1", request, _decision(ResponseStrategy.IMMEDIATE))
+    item.enqueue_time = _past(item.window_seconds + 1)
+    source = tmp_path / "pair.png"
+    Image.new("RGB", (8, 4), "coral").save(source)
+    avatars = [tmp_path / "avatar-left.png", tmp_path / "avatar-right.png"]
+    confirmation = tmp_path / "avatar-confirmation.json"
+    final_reply = "两张头像已分别发送；已尝试更换，确认需要你在客户端手动设置。"
+    rounds = [
+        _round("", _call(ENTER_WORK_MODE, json.dumps({"goal": request}), "enter")),
+        _round("内部：先裁剪。", _call("bash", '{"command": "crop-pair"}', "crop")),
+        *[
+            _round(
+                "",
+                _call(
+                    "group_file_exec",
+                    json.dumps({"action": "image", "image_path": str(path)}),
+                    f"send-{index}",
+                ),
+            )
+            for index, path in enumerate(avatars)
+        ],
+        _round(
+            "内部：两张发完再核实更换结果。",
+            _call("bash", '{"command": "confirm-avatar-change"}', "confirm"),
+        ),
+        _round("", _call(QUIT_WORK_MODE, json.dumps({"result": final_reply}), "quit")),
+    ]
+    tasks, engine, runs, provider = _provider_work_mode_tasks(tmp_path, queue, rounds)
+    tasks._build_delayed_prompt = lambda *args, **kwargs: SimpleNamespace(
+        system_prompt="system", user_content=request, token_breakdown=None, dynamic_context=""
+    )
+    sent = []
+    midway_statuses = []
+
+    async def fake_tool(tool, params, **kwargs):
+        midway_statuses.append(_session(tmp_path)["status"])
+        if tool.name == "group_file_exec":
+            path = next(path for path in avatars if str(path) == params["image_path"])
+            with Image.open(path) as avatar:
+                assert avatar.size == (4, 4)
+            sent.append(path.name)
+        elif params["command"] == "crop-pair":
+            with Image.open(source) as image:
+                image.crop((0, 0, 4, 4)).save(avatars[0])
+                image.crop((4, 0, 8, 4)).save(avatars[1])
+        else:
+            assert params["command"] == "confirm-avatar-change"
+            assert sent == [path.name for path in avatars]
+            confirmation.write_text(
+                json.dumps({"attempted": True, "requires_manual_change": True}), encoding="utf-8"
+            )
+        return ToolResult(success=True, data={"ok": True})
+
+    engine._tool_executor.execute_async.side_effect = fake_tool
+    partial = AsyncMock()
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=partial)
+
+    session = _session(tmp_path)
+    assert session["status"] == "completed", session
+    assert session["result"] == results[0]["reply"] == final_reply
+    assert session["ended_at"]
+    assert sent == [path.name for path in avatars]  # 每张只发送一次，没有重放第一张。
+    assert json.loads(confirmation.read_text(encoding="utf-8")) == {
+        "attempted": True,
+        "requires_manual_change": True,
+    }
+    assert midway_statuses == ["running"] * 4
+    assert len(provider.requests) == len(rounds)
+    assert session["steps"][-1]["tools"][0]["name"] == QUIT_WORK_MODE
+    assert all("内部：" not in call.args[0] for call in partial.await_args_list)
+    assert runs == {}
+    assert not engine.is_work_mode_active("group-1")
+    assert queue.get_pending("group-1") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["work", "enter_same_round", "chat"])
+@pytest.mark.parametrize(
+    "tool_name,arguments,silent",
+    [
+        ("group_file_exec", '{"action": "image", "image_path": "avatar.png"}', True),
+        ("interaction_with_master", '{"action": "message", "message": "进展"}', True),
+        ("silent_notice", "{}", True),
+        ("group_file_exec", '{"action": "file", "file_path": "avatar.png"}', False),
+    ],
+    ids=["image", "master-message", "custom-silent", "file-nonsilent"],
+)
+async def test_silent_delivery_when_working_then_reaches_quit_but_chat_keeps_its_exit(
+    tmp_path, mode, tool_name, arguments, silent
+):
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    enter = _call(ENTER_WORK_MODE, '{"goal": "投递后确认"}', "enter")
+    send = _call(tool_name, arguments, "send")
+    rounds = [_round("", send)]
+    if mode == "work":
+        rounds.insert(0, _round("", enter))
+    elif mode == "enter_same_round":
+        rounds[0] = _round("", enter, send)
+    rounds.append(
+        _round("确认完成")
+        if mode == "chat"
+        else _round("", _call(QUIT_WORK_MODE, '{"result": "投递后确认完成"}', "quit"))
+    )
+    tasks, engine, runs, provider = _provider_work_mode_tasks(tmp_path, queue, rounds)
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    engine._tool_executor.execute_async.assert_awaited_once()
+    if mode == "chat":
+        assert results[0]["reply"] == ("" if silent else "确认完成")
+        assert len(provider.requests) == (1 if silent else 2)
+        assert WorkModeStore(tmp_path).load() == []
+    else:
+        session = _session(tmp_path)
+        assert session["status"] == "completed"
+        assert session["result"] == results[0]["reply"] == "投递后确认完成"
+        assert session["steps"][-1]["tools"][0]["name"] == QUIT_WORK_MODE
+        assert session["ended_at"]
+        assert len(provider.requests) == len(rounds)
+        assert any(
+            message.get("tool_call_id") == "send"
+            and "[Tool result: success]" in str(message.get("content"))
+            for message in provider.requests[-1].messages
+        )
+    assert runs == {}
+    assert not engine.is_work_mode_active("group-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["round_limit", "provider_error", "cancelled"])
+async def test_work_mode_when_interrupted_after_silent_success_then_stays_aborted(tmp_path, ending):
+    """单次投递成功不会自动完成目标；预算、异常、取消仍要如实收尾。"""
+    queue = DelayedResponseQueue()
+    _queued_job(queue)
+    rounds = [
+        _round("", _call(ENTER_WORK_MODE, '{"goal": "发送两张头像"}', "enter")),
+        _round(
+            "",
+            _call("group_file_exec", '{"action": "image", "image_path": "first.png"}', "send"),
+        ),
+    ]
+    if ending == "round_limit":
+        rounds.append(_round("只发了第一张，预算已用尽。"))
+    else:
+        error = (
+            ProviderAuthError("mock", "provider unavailable")
+            if ending == "provider_error"
+            else asyncio.CancelledError()
+        )
+        rounds.append(error)
+    tasks, engine, runs, provider = _provider_work_mode_tasks(
+        tmp_path, queue, rounds, max_tool_rounds=1 if ending == "round_limit" else 8
+    )
+
+    if ending == "round_limit":
+        results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+        assert results[0]["reply"] == "只发了第一张，预算已用尽。"
+        assert provider.requests[-1].tool_choice == "none"
+    else:
+        with pytest.raises(type(error)):
+            await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    session = _session(tmp_path)
+    assert session["status"] == "aborted"
+    assert session["result"]
+    assert session["ended_at"]
+    assert session["steps"][-1]["tools"][0]["name"] == "group_file_exec"
+    assert "[Tool result: success]" in session["steps"][-1]["results"][0]["output"]
+    assert len(provider.requests) == 3
+    engine._tool_executor.execute_async.assert_awaited_once()
+    assert runs == {}
+    assert not engine.is_work_mode_active("group-1")
 
 
 @pytest.mark.asyncio
