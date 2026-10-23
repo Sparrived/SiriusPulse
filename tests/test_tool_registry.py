@@ -180,10 +180,9 @@ def test_tool_registry_when_builtin_tools_load_then_napcat_tools_are_visible(
     tool = registry.get("interaction_with_master")
     bash = registry.get("bash")
     group_file_exec = registry.get("group_file_exec")
-    group_management = registry.get("group_management")
     web_lookup = registry.get("web_lookup")
     read_skill = registry.get("read_skill")
-    qq_like = registry.get("qq_like")
+    napcat_call = registry.get("napcat_call")
     workflow_state = registry.get("workflow_state")
     tools = registry.build_tools_list(adapter_type="napcat")
     regular_user_tools = registry.build_tools_list(
@@ -222,14 +221,13 @@ def test_tool_registry_when_builtin_tools_load_then_napcat_tools_are_visible(
     assert registry.get("chat_with_developer") is None
     assert registry.get("developer_status") is None
     assert group_file_exec is not None
-    assert group_management is not None
+    assert napcat_call is not None
     assert web_lookup is not None
     assert read_skill is not None
     assert read_skill.retry_safe is True
     assert read_skill.side_effect is ToolSideEffect.READ_ONLY
-    assert qq_like is not None
-    assert qq_like.adapter_types == ["napcat"]
-    assert qq_like.side_effect is ToolSideEffect.EXTERNAL_WRITE
+    assert napcat_call.adapter_types == ["napcat"]
+    assert napcat_call.side_effect is ToolSideEffect.EXTERNAL_WRITE
     assert workflow_state is not None
     assert workflow_state.side_effect is ToolSideEffect.EXTERNAL_WRITE
     assert "list" in workflow_state.parameters[0].choices
@@ -262,16 +260,18 @@ def test_tool_registry_when_builtin_tools_load_then_napcat_tools_are_visible(
         "mute_member",
         "mute_all",
         "set_group_card",
+        "group_management",
+        "qq_member_info",
+        "qq_like",
     ):
         assert registry.get(old_name) is None
     assert registry.get("user_profile") is None
     assert web_lookup.retry_safe is True
     assert web_lookup.side_effect is ToolSideEffect.READ_ONLY
-    assert group_management.side_effect is ToolSideEffect.DESTRUCTIVE
     assert not any(tool["function"]["name"] == "interaction" for tool in tools)
     assert [tool["function"]["name"] for tool in tools].count("group_file_exec") == 1
     assert not any(tool["function"]["name"] == "send_sticker" for tool in tools)
     assert not any(tool["function"]["name"] == "send_image" for tool in tools)
     assert not any(tool["function"]["name"] == "upload_file" for tool in tools)
-    assert any(tool["function"]["name"] == "group_management" for tool in admin_tools)
-    assert not any(tool["function"]["name"] == "kick_member" for tool in admin_tools)
+    assert any(tool["function"]["name"] == "napcat_call" for tool in tools)
+    assert not any(tool["function"]["name"] == "group_management" for tool in admin_tools)

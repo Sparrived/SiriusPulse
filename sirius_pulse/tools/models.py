@@ -283,6 +283,9 @@ class ToolDefinition:
             "boolean": "boolean",
             "list": "array",
             "array": "array",
+            "dict": "object",
+            "object": "object",
+            "json": "object",
         }
         return mapping.get(type_str.lower(), "string")
 

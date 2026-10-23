@@ -34,7 +34,7 @@ def _tool(tmp_path: Path):
         auto_install_deps=False,
         include_builtin=True,
     )
-    tool = registry.get("qq_like")
+    tool = registry.get("napcat_call")
     assert tool is not None
     return tool
 
@@ -49,12 +49,12 @@ async def test_qq_like_calls_napcat_and_reuses_last_success(tmp_path: Path):
 
     first = await executor.execute_async(
         tool,
-        {"user_id": 1703967297, "times": 2},
+        {"action": "send_like", "user_id": 1703967297, "times": 2},
         invocation_context=_context(),
     )
     repeated = await executor.execute_async(
         tool,
-        {"reuse_last": True},
+        {"action": "send_like", "reuse_last": True},
         invocation_context=_context("20002"),
     )
 
@@ -76,12 +76,12 @@ async def test_qq_like_does_not_persist_failed_target(tmp_path: Path):
 
     result = await executor.execute_async(
         _tool(tmp_path),
-        {"user_id": 1703967297},
+        {"action": "send_like", "user_id": 1703967297},
         invocation_context=_context(),
     )
 
     assert result.success is False
-    assert executor.get_data_store("qq_like").get("last_success:group:group-1") is None
+    assert executor.get_data_store("napcat_call").get("last_success:group:group-1") is None
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_qq_like_normalizes_napcat_internal_caller_id(tmp_path: Path):
 
     result = await executor.execute_async(
         _tool(tmp_path),
-        {},
+        {"action": "send_like"},
         invocation_context=_context("qq_10001"),
     )
 
