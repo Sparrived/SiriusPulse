@@ -399,22 +399,3 @@ class BasicMemoryManager:
             mgr._trim_window(gid)
             mgr._update_heat(gid)
         return mgr
-
-    def restore_from_snapshot(self, group_id: str, entries: list[dict[str, Any]]) -> None:
-        """从工作记忆快照恢复一个群的上下文。
-
-        Args:
-            group_id: 群组 ID。
-            entries: 快照条目列表，每条包含 user_id, role, content, timestamp。
-        """
-        if not entries:
-            return
-        window: deque[BasicMemoryEntry] = deque()
-        source_entries = list(entries)
-        if self.hard_limit > 0:
-            source_entries = source_entries[-self.hard_limit :]
-        for e in source_entries:
-            if isinstance(e, dict):
-                window.append(BasicMemoryEntry.from_dict(e))
-        self._windows[group_id] = window
-        self._update_heat(group_id)

@@ -364,9 +364,6 @@ class PersonaWorker:
             engine.brain.persona = persona
 
         # 更新依赖 persona 的组件
-        if hasattr(engine, "biography_manager"):
-            engine.biography_manager._persona_name = persona.name
-            engine.biography_manager._persona_aliases = persona.aliases
         if hasattr(engine, "cognition_analyzer"):
             engine.cognition_analyzer.ai_name = persona.name
             engine.cognition_analyzer.ai_aliases = persona.aliases

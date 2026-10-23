@@ -9,7 +9,6 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
 
 from sirius_pulse.memory.basic.file_lock import archive_file_lock
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
@@ -83,17 +82,6 @@ class BasicMemoryFileStore:
             with path.open("a", encoding="utf-8") as f:
                 f.write(line)
 
-    def append_batch(self, group_id: str, entries: list[BasicMemoryEntry]) -> None:
-        """Atomically append multiple entries."""
-        if not entries:
-            return
-        path = self._path(group_id)
-        lines = "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in entries) + "\n"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock_for(path), archive_file_lock(path):
-            with path.open("a", encoding="utf-8") as f:
-                f.write(lines)
-
     def update_entry(self, entry: BasicMemoryEntry) -> bool:
         """Rewrite one archived entry without loading the whole JSONL file."""
         if not entry.entry_id:
@@ -157,24 +145,6 @@ class BasicMemoryFileStore:
     def _path(self, group_id: str) -> Path:
         safe = self._safe_name(group_id)
         return self._base_dir / f"{safe}.jsonl"
-
-    def restore_archive(self, group_id: str, entries: list[dict[str, Any]]) -> None:
-        """从远程快照恢复归档消息（覆盖写入）。"""
-        if not entries:
-            return
-        path = self._path(group_id)
-        lines = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock_for(path), archive_file_lock(path):
-            tmp = self._tmp_path(path)
-            try:
-                tmp.write_text(lines, encoding="utf-8")
-                self._atomic_replace(tmp, path)
-            finally:
-                try:
-                    tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass
 
     @staticmethod
     def _safe_name(name: str) -> str:

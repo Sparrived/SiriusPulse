@@ -223,7 +223,6 @@ class _EmotionalGroupChatEngineBase:
         )
         self.identity_resolver = IdentityResolver()
 
-        self.biography_view = None
         self.cold_detector = ColdDetector()
 
         self.context_assembler = ContextAssembler(
