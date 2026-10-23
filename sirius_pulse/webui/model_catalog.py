@@ -30,10 +30,7 @@ TASK_LABELS: dict[str, str] = {
     "work_mode_generate": "工作模式",
     "proactive_generate": "主动发言",
     "passive_tool": "被动技能",
-    "plugin_analyze": "插件分析",
     "plugin_generate": "插件生成",
-    "plugin_render": "插件渲染",
-    "plugin_raw": "插件原生",
     "autonomy_generate": "自主行为",
     "image_generate": "生图",
 }

@@ -533,7 +533,7 @@ def test_the_model_router_and_webui_catalog_register_the_drawing_task():
 
     catalog = build_model_catalog()
     assert catalog["available_models"] == list(_DEFAULT_TASK_REGISTRY)
-    assert len(catalog["available_models"]) == 13
+    assert len(catalog["available_models"]) == 10
     assert "image_generate" in catalog["available_models"]
     labels = {choice["value"]: choice["label"] for choice in catalog["model_choices"]}
     assert labels["image_generate"] == f"{TASK_LABELS['image_generate']}（image_generate）"

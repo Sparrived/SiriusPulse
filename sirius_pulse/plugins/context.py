@@ -72,16 +72,16 @@ class EngineProxy:
     async def generate_text_analysis(
         self, prompt: str, *, group_id: str = "", **kwargs: Any
     ) -> str:
-        """调用 Brain.generate_text() 使用分析小模型生成结构化分析文本。
+        """调用 Brain.generate_text() 生成结构化分析文本。
 
         用于 Plugin 内部的轻量分析任务（如事件链摘要、话题标签提取），
-        走 plugin_analyze 任务路由，使用更快/更便宜的 analysis_model。
+        与插件其他生成共用 plugin_generate 任务路由。
         """
         return await self._engine.brain.generate_text(
             system_prompt=prompt,
             messages=[],
             group_id=group_id,
-            task_name="plugin_analyze",
+            task_name="plugin_generate",
         )
 
     async def dispatch_proactive_message(
@@ -173,7 +173,7 @@ class EngineProxy:
         system_prompt: str = "",
         messages: list[dict] | None = None,
         inject_persona: bool = False,
-        task_name: str = "plugin_raw",
+        task_name: str = "plugin_generate",
         model: str | None = None,
         json_mode: bool = False,
         return_reasoning: bool = False,

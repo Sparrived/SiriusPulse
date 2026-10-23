@@ -97,7 +97,7 @@ class OutputDispatcher:
                 system_prompt=system_prompt,
                 messages=[],
                 group_id=group_id,
-                task_name="plugin_render",
+                task_name="plugin_generate",
             )
             text = generated if generated else result.text
             return DispatchedOutput(text=text, message_group=result.message_group)
