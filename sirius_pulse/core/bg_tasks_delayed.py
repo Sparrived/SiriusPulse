@@ -1092,6 +1092,8 @@ class DelayedQueueTasks:
                             f"Tool '{tool_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
                         )
                         logger.warning(err_msg)
+                        agent_turn.deny_action(tc.id, tool_name, side_effect, err_msg)
+                        await self._emit_agent_turn(engine, agent_turn)
                         send_next_tool_output = True
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue
@@ -1099,6 +1101,8 @@ class DelayedQueueTasks:
                     if tool.developer_only and not caller_is_developer:
                         err_msg = f"Tool '{tool_name}' 被拒绝：caller 不是 developer"
                         logger.warning(err_msg)
+                        agent_turn.deny_action(tc.id, tool_name, side_effect, err_msg)
+                        await self._emit_agent_turn(engine, agent_turn)
                         send_next_tool_output = True
                         messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
                         continue

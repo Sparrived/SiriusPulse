@@ -777,6 +777,51 @@ async def test_delayed_queue_when_tool_call_has_text_then_sends_part_before_fina
 
 
 @pytest.mark.asyncio
+async def test_delayed_queue_when_developer_tool_is_denied_then_agent_turn_records_it():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "check status",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    tool_call = ToolCall(id="call-denied", function_name="lookup", function_arguments="{}")
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="lookup", silent=False, developer_only=True, retry_safe=False),
+        [
+            SimpleNamespace(
+                raw_text="I will check.",
+                clean_text="I will check.",
+                tool_calls=[tool_call],
+                reply_references=[],
+            ),
+            SimpleNamespace(
+                raw_text="Denied.",
+                clean_text="Denied.",
+                tool_calls=[],
+                reply_references=[],
+            ),
+        ],
+        AsyncMock(),
+    )
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    assert results[0]["reply"] == "Denied."
+    engine._tool_executor.execute_async.assert_not_awaited()
+    turn_events = [
+        call.args[0].data
+        for call in engine.event_bus.emit.await_args_list
+        if call.args[0].type.value == "agent_turn_updated"
+    ]
+    denied = turn_events[-1]["tool_attempts"]
+    assert [attempt["status"] for attempt in denied] == ["denied"]
+    assert "不是 developer" in denied[0]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_delayed_queue_when_tool_chain_has_many_statuses_then_sends_each_status():
     queue = DelayedResponseQueue()
     item = queue.enqueue(
