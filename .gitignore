@@ -21,6 +21,11 @@ test_data/
 logs/
 null
 napcat_instance_registry.json
+
+# 仓库根目录的运行期残留（监控库 / WebUI 后台进程日志）
+metrics.sqlite3*
+server.log
+server.pid
 .pytest_cache/
 .pytest_tmp/
 .coverage
@@ -65,6 +70,9 @@ intent_analysis_report.json
 
 # .trae/ 与 .github/skills/ 均已废弃（SKILL 文档统一维护在 docs/），整体忽略
 .trae/
+
+# Agent 临时 worktree（内部另有 .gitignore）
+.agents/
 
 # Hy-Memory 分析文档（非代码）
 hy-memory-research/
