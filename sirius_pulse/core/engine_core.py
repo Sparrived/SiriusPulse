@@ -1004,7 +1004,8 @@ class _EmotionalGroupChatEngineBase:
         _engine = self
 
         _TASKS_CHAT = {"response_generate"}
-        _TASKS_CHAT_ALL = {"response_generate", "proactive_generate"}
+        # 主动发言已并入对话生成，两套过滤条件不再有区别；保留别名少改调用点。
+        _TASKS_CHAT_ALL = _TASKS_CHAT
 
         # ── priority 0: 对话深度追踪 ──
         def _hook_depth(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
@@ -1061,7 +1062,7 @@ class _EmotionalGroupChatEngineBase:
         # ── priority 40: 记忆记录 ──
         def _hook_memory(_brain: Any, _req: Any, _result: Any, ctx: dict[str, Any]) -> None:
             # 会转成图片投递的回复由调度器在平台确认发送成功时按实际顺序写回历史；
-            # 其他任务（如 proactive_generate）仍按纯文本发送，必须在这里记录。
+            # 其他任务（如 plugin_generate）仍按纯文本发送，必须在这里记录。
             if getattr(_req, "task_name", "") == "response_generate" and _delivered_as_rich_image(
                 _result, _req
             ):

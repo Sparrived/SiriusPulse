@@ -287,7 +287,7 @@ async def test_a_user_asking_for_an_image_gets_it_delivered_to_the_group(harness
     first_round = harness.brain.chat_requests[0]
     assert first_round.work_mode is True
     assert first_round.enable_tools is True
-    assert first_round.task_name == "proactive_generate"
+    assert first_round.task_name == "response_generate"
     system_prompt = first_round.system_prompt
     assert "【后台任务完成】" in system_prompt
     assert "这不是用户的新消息" in system_prompt
@@ -533,7 +533,7 @@ def test_the_model_router_and_webui_catalog_register_the_drawing_task():
 
     catalog = build_model_catalog()
     assert catalog["available_models"] == list(_DEFAULT_TASK_REGISTRY)
-    assert len(catalog["available_models"]) == 10
+    assert len(catalog["available_models"]) == 9
     assert "image_generate" in catalog["available_models"]
     labels = {choice["value"]: choice["label"] for choice in catalog["model_choices"]}
     assert labels["image_generate"] == f"{TASK_LABELS['image_generate']}（image_generate）"

@@ -78,11 +78,6 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=60.0,
         fallback_model_name="fallback_generate",
     ),
-    "proactive_generate": TaskConfig(
-        model_name="proactive_generate",
-        timeout=20.0,
-        fallback_model_name="fallback_generate",
-    ),
     # 插件侧的一切生成（分析、人格化渲染、绕过管线的原生调用）共用一个任务名：
     # 它们原先各留一个名字只是为了分开调模型，实际运维里从来绑的是同一个。
     "plugin_generate": TaskConfig(

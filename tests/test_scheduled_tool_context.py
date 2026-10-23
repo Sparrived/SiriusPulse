@@ -319,7 +319,7 @@ async def test_background_tool_result_turn_delivers_the_artifact_with_group_file
     assert payload["text"] == "画好啦。"
     assert payload["image_sent"] is True
     assert brain.requests[0].work_mode is True
-    assert brain.requests[0].task_name == "proactive_generate"
+    assert brain.requests[0].task_name == "response_generate"
     assert "【后台任务完成】" in brain.requests[0].system_prompt
     assert "group_file_exec" in brain.requests[0].system_prompt
     assert "cat.png" in brain.requests[0].system_prompt
