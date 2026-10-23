@@ -41,6 +41,18 @@ _ACTION_ALIASES = {
     "like": "send_like",
     "list_members": "get_group_member_list",
     "get_member": "get_group_member_info",
+    "poke": "group_poke",
+    "poke_member": "group_poke",
+    "poke_friend": "friend_poke",
+    "notice": "send_group_notice",
+    "get_notice": "get_group_notice",
+    "essence": "set_essence_msg",
+    "remove_essence": "delete_essence_msg",
+    "album_list": "get_qun_album_list",
+    "avatar": "set_qq_avatar",
+    "set_avatar": "set_qq_avatar",
+    "emoji_like": "set_msg_emoji_like",
+    "history": "get_group_msg_history",
 }
 
 #: 只有开发者（管理员）可以执行的管理动作。
@@ -49,15 +61,38 @@ _ADMIN_ACTIONS = frozenset(
         "set_group_ban",
         "set_group_whole_ban",
         "set_group_kick",
+        "set_group_kick_members",
         "set_group_card",
         "set_group_name",
         "set_group_admin",
         "set_group_special_title",
+        "set_special_title",
         "delete_msg",
+        "set_group_leave",
+        "send_group_notice",
+        "set_essence_msg",
+        "delete_essence_msg",
+        "set_group_add_request",
+        "delete_group_file",
+        "del_group_album_media",
     }
 )
 
 _GROUP_ACTION_PREFIXES = ("get_group_", "set_group_")
+_EXPLICIT_GROUP_ACTIONS = frozenset(
+    {
+        "group_poke",
+        "send_group_msg",
+        "send_group_notice",
+        "_get_group_notice",
+        "get_qun_album_list",
+        "upload_group_file",
+        "upload_image_to_qun_album",
+        "get_group_album_media_list",
+        "set_group_sign",
+        "get_essence_msg_list",
+    }
+)
 
 _INT_FIELDS = ("user_id", "group_id", "duration", "times", "message_id")
 _ID_FIELDS = ("user_id", "group_id")
@@ -217,7 +252,7 @@ def _merge_params(
 
 
 def _is_group_action(action: str) -> bool:
-    return action.startswith(_GROUP_ACTION_PREFIXES)
+    return action.startswith(_GROUP_ACTION_PREFIXES) or action in _EXPLICIT_GROUP_ACTIONS
 
 
 def _inject_group_id(params: dict[str, Any], chat_context: dict[str, Any] | None) -> None:
