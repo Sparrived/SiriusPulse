@@ -7,12 +7,20 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
 from sirius_pulse.utils.json_io import replace_with_retry
 
 logger = logging.getLogger(__name__)
+
+
+def _finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"Non-finite orchestration number: {value}")
+    return parsed
 
 
 class OrchestrationStore:
@@ -24,18 +32,29 @@ class OrchestrationStore:
         return p / "engine_state" / "orchestration.json"
 
     @classmethod
-    def load(cls, work_path: Any) -> dict[str, Any]:
-        """Load orchestration config from disk. Returns empty dict if not found."""
+    def load(cls, work_path: Any, *, strict: bool = False) -> dict[str, Any]:
+        """Load config, retaining the legacy empty-dict fallback unless strict.
+
+        Strict reads distinguish a saved empty config from a missing/unreadable
+        or invalid file, so a failed hot reload cannot reset live settings.
+        """
         path = cls._path(work_path)
-        if not path.exists():
-            return {}
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
-            logger.warning("Invalid orchestration.json format at %s", path)
+            data = json.loads(
+                path.read_text(encoding="utf-8"),
+                parse_float=_finite_json_float if strict else float,
+                parse_constant=_finite_json_float if strict else float,
+            )
+            if not isinstance(data, dict):
+                raise ValueError(f"Invalid orchestration.json format at {path}: expected object")
+            return data
+        except FileNotFoundError:
+            if strict:
+                raise
             return {}
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:
+            if strict:
+                raise
             logger.warning("Failed to load orchestration from %s: %s", path, exc)
             return {}
 

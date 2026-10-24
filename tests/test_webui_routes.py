@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from sirius_pulse.config import TokenUsageRecord
 from sirius_pulse.plugins.models import PluginDefinition, PluginParameterDef, PluginPermissionDef
 from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.utils.json_io import atomic_write_json
+from sirius_pulse.webui import monitoring_api
 from sirius_pulse.webui import persona_manager_api as persona_manager
 from sirius_pulse.webui.app_keys import DATA_DIR_KEY
 from sirius_pulse.webui.memory_api import api_persona_tokens_get
@@ -2625,6 +2627,151 @@ async def test_webui_monitoring_overview_includes_all_personas(tmp_path):
     assert payload["total_personas"] == 2
     assert payload["running_personas"] == 2
     assert {item["name"] for item in payload["personas"]} == {"first", "second"}
+
+
+def _monitoring_persona(tmp_path):
+    persona_dir = tmp_path / "personas" / "sirius"
+    for name in ("persona.json", "adapters.json", "experience.json"):
+        atomic_write_json(persona_dir / name, {})
+    (persona_dir / "memory_units").mkdir()
+    atomic_write_json(tmp_path / "global_config.json", {"active_persona": "sirius"})
+    return persona_dir, WebUIServer(data_dir=tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "heartbeat_age", "connection", "running", "healthy", "heartbeat_status"),
+    [
+        pytest.param("running", 0, {"adapter_online": True}, True, True, "ok", id="fresh"),
+        pytest.param("running", 30, {}, True, True, "ok", id="legacy-adapter-at-boundary"),
+        pytest.param("running", 31, {}, True, False, "stale", id="stale-running-file"),
+        pytest.param("running", -1, {}, True, False, "stale", id="future-heartbeat"),
+        pytest.param("running", None, {}, True, False, "missing", id="missing-heartbeat"),
+        pytest.param("running", "invalid", {}, True, False, "invalid", id="bad-heartbeat"),
+        pytest.param("running", 0, {"adapter_online": False}, True, False, "ok", id="offline"),
+        pytest.param(
+            "running",
+            0,
+            {"adapter_online": True, "degraded": True},
+            True,
+            False,
+            "ok",
+            id="degraded",
+        ),
+        pytest.param("legacy", 0, {}, True, True, "ok", id="legacy-running-boolean"),
+        pytest.param("starting", 0, {}, True, False, "ok", id="not-ready"),
+        pytest.param("stopped", 0, {}, False, False, "ok", id="stopped"),
+    ],
+)
+async def test_webui_monitoring_separates_running_from_healthy_across_endpoints(
+    tmp_path, monkeypatch, state, heartbeat_age, connection, running, healthy, heartbeat_status
+):
+    """同一人格在概览、指标和健康接口不能出现互相冲突的健康结论。"""
+    persona_dir, server = _monitoring_persona(tmp_path)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(monitoring_api, "datetime", Clock)
+    status = {"pid": 31001, **connection}
+    status.update({"running": True} if state == "legacy" else {"status": state})
+    if heartbeat_age is not None:
+        status["heartbeat_at"] = (
+            "invalid"
+            if heartbeat_age == "invalid"
+            else (now - timedelta(seconds=heartbeat_age)).isoformat()
+        )
+    atomic_write_json(persona_dir / "engine_state" / "worker_status.json", status)
+
+    health_response = await server.api_monitoring_health(SimpleNamespace())
+    metrics_response = await server.api_monitoring_persona_metrics(SimpleNamespace())
+    overview_response = await server.api_monitoring_overview(SimpleNamespace())
+    assert [r.status for r in (health_response, metrics_response, overview_response)] == [200] * 3
+    health = json.loads(health_response.text)
+    metrics = json.loads(metrics_response.text)
+    overview = json.loads(overview_response.text)
+    for result in (health, metrics, overview["personas"][0]):
+        assert result["running"] is running
+        assert result["healthy"] is healthy
+    assert overview["running_personas"] == int(running)
+    assert overview["healthy_personas"] == int(healthy)
+    assert health["checks"]["heartbeat"]["status"] == heartbeat_status
+    assert health["checks"]["process"]["status"] == (
+        "down" if not running else "ok" if healthy else "warning"
+    )
+    assert health["checks"]["config"] == {"status": "ok", "files": []}
+    assert not (persona_dir / "engine_state" / "orchestration.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("live_content", "expected_status"),
+    [
+        (None, "ok"),
+        ("{}", "ok"),
+        ('{"task_timeout": {}}', "ok"),
+        ("{broken", "invalid"),
+        ("[]", "invalid"),
+        ('{"task_timeout": {"response_generate": NaN}}', "invalid"),
+        ('{"task_timeout": {"response_generate": Infinity}}', "invalid"),
+        ('{"task_timeout": {"response_generate": -Infinity}}', "invalid"),
+        ('{"task_timeout": {"response_generate": 1e309}}', "invalid"),
+        ('{"task_timeout": {"response_generate": -1e309}}', "invalid"),
+        ('{"task_timeout": {"response_generate": 1.5e1}}', "ok"),
+    ],
+)
+async def test_webui_monitoring_checks_live_orchestration_without_requiring_defaults(
+    tmp_path, live_content, expected_status
+):
+    persona_dir, server = _monitoring_persona(tmp_path)
+    atomic_write_json(
+        persona_dir / "engine_state" / "worker_status.json",
+        {"status": "running", "heartbeat_at": datetime.now(timezone.utc).isoformat()},
+    )
+    # A stale legacy file must neither be required nor mask a broken live file.
+    (persona_dir / "orchestration.json").write_text("{legacy-broken", encoding="utf-8")
+    if live_content is not None:
+        (persona_dir / "engine_state" / "orchestration.json").write_text(
+            live_content, encoding="utf-8"
+        )
+
+    response = await server.api_monitoring_health(SimpleNamespace())
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["running"] is True
+    assert payload["healthy"] is (expected_status == "ok")
+    assert payload["checks"]["config"] == {
+        "status": expected_status,
+        "files": [] if expected_status == "ok" else ["engine_state/orchestration.json"],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [None, "{broken", "[]", "null"])
+async def test_webui_monitoring_invalid_worker_file_is_unhealthy_not_an_api_error(
+    tmp_path, content
+):
+    persona_dir, server = _monitoring_persona(tmp_path)
+    if content is not None:
+        path = persona_dir / "engine_state" / "worker_status.json"
+        path.parent.mkdir()
+        path.write_text(content, encoding="utf-8")
+
+    for handler in (
+        server.api_monitoring_health,
+        server.api_monitoring_persona_metrics,
+        server.api_monitoring_overview,
+    ):
+        response = await handler(SimpleNamespace())
+        assert response.status == 200
+        payload = json.loads(response.text)
+        result = payload["personas"][0] if "personas" in payload else payload
+        assert result["running"] is False
+        assert result["healthy"] is False
 
 
 @pytest.mark.asyncio

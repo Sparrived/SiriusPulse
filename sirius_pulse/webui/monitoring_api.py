@@ -15,10 +15,14 @@ from typing import Any
 
 from aiohttp import web
 
+from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.persona_config import PersonaConfigPaths
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui.monitoring")
+
+# Worker writes every 10 seconds; allow three missed beats before reporting stale.
+_HEARTBEAT_MAX_AGE_SECONDS = 30
 
 
 # ======================================================================
@@ -27,13 +31,12 @@ LOG = logging.getLogger("sirius.webui.monitoring")
 
 
 def _read_worker_status(persona_dir: Path) -> dict[str, Any] | None:
-    """读取子进程心跳状态文件，返回原始字典或 None。"""
+    """读取 Worker 心跳状态文件，返回原始字典或 None。"""
     path = persona_dir / "engine_state" / "worker_status.json"
-    if not path.exists():
-        return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        status = json.loads(path.read_text(encoding="utf-8"))
+        return status if isinstance(status, dict) else None
+    except (OSError, ValueError):
         return None
 
 
@@ -41,7 +44,25 @@ def _worker_is_running(status: dict[str, Any] | None) -> bool:
     """Accept both the current status field and the legacy boolean field."""
     if not status:
         return False
-    return status.get("status") in {"starting", "running"} or status.get("running") is True
+    return status.get("status") in ("starting", "running") or status.get("running") is True
+
+
+def _check_heartbeat(status: dict[str, Any] | None) -> dict[str, Any]:
+    heartbeat_at = (status or {}).get("heartbeat_at")
+    check: dict[str, Any] = {"status": "missing", "heartbeat_at": heartbeat_at, "age_seconds": None}
+    if heartbeat_at is None:
+        return check
+    try:
+        heartbeat = datetime.fromisoformat(heartbeat_at)
+        if heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        check["status"] = "invalid"
+        return check
+    check["age_seconds"] = age
+    check["status"] = "ok" if 0 <= age <= _HEARTBEAT_MAX_AGE_SECONDS else "stale"
+    return check
 
 
 def _iter_persona_dirs(data_dir: Path) -> list[Path]:
@@ -178,10 +199,19 @@ def _count_cognition_events(persona_dir: Path) -> int:
 
 
 def _check_config_files(persona_dir: Path) -> tuple[str, list[str]]:
-    """检查关键配置文件是否存在，返回 (status, missing_list)。"""
-    required = ["persona.json", "orchestration.json", "adapters.json", "experience.json"]
-    missing = [f for f in required if not (persona_dir / f).exists()]
-    return ("ok" if not missing else "missing"), missing
+    """检查必需文件与可选的实时编排配置，返回 (status, affected_files)。"""
+    required = ["persona.json", "adapters.json", "experience.json"]
+    missing = [f for f in required if not (persona_dir / f).is_file()]
+    if missing:
+        return "missing", missing
+    try:
+        OrchestrationStore.load(persona_dir, strict=True)
+    except FileNotFoundError:
+        # The live file is optional: first-time/default setups use engine defaults.
+        pass
+    except (OSError, ValueError):
+        return "invalid", ["engine_state/orchestration.json"]
+    return "ok", []
 
 
 def _check_memory_system(persona_dir: Path) -> str:
@@ -190,6 +220,38 @@ def _check_memory_system(persona_dir: Path) -> str:
     if not has_memory:
         return "empty"
     return "ok"
+
+
+def _persona_health(persona_dir: Path, status: dict[str, Any] | None) -> dict[str, Any]:
+    """Share one health definition across health, metrics and overview responses."""
+    status = status or {}
+    running = _worker_is_running(status)
+    heartbeat = _check_heartbeat(status)
+    adapter_online = status.get("adapter_online")
+    degraded = status.get("degraded") is True or adapter_online is False
+    ready = running and status.get("status") != "starting" and heartbeat["status"] == "ok"
+    config_status, config_files = _check_config_files(persona_dir)
+    memory_status = _check_memory_system(persona_dir)
+    healthy = ready and not degraded and config_status == "ok" and memory_status == "ok"
+    return {
+        # running retains the legacy lifecycle declaration, not a health guarantee.
+        "running": running,
+        "healthy": healthy,
+        "checks": {
+            "process": {
+                "status": "down" if not running else "ok" if ready and not degraded else "warning",
+                "pid": status.get("pid"),
+            },
+            "heartbeat": heartbeat,
+            "adapter": {
+                "status": "degraded" if degraded else "ok" if adapter_online is True else "unknown",
+                "online": adapter_online,
+                "degraded": degraded,
+            },
+            "config": {"status": config_status, "files": config_files},
+            "memory": {"status": memory_status},
+        },
+    }
 
 
 # ======================================================================
@@ -209,13 +271,14 @@ async def api_monitoring_overview(
     personas = []
     for persona_dir in _iter_persona_dirs(data_dir):
         status_data = _read_worker_status(persona_dir)
-        running = _worker_is_running(status_data)
+        health = _persona_health(persona_dir, status_data)
         personas.append(
             {
                 "name": persona_dir.name,
-                "running": running,
+                "running": health["running"],
+                "healthy": health["healthy"],
                 "pid": status_data.get("pid") if status_data else None,
-                "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
+                "uptime_seconds": _calc_uptime_seconds(status_data) if health["running"] else 0.0,
             }
         )
 
@@ -223,6 +286,7 @@ async def api_monitoring_overview(
         {
             "total_personas": len(personas),
             "running_personas": sum(1 for persona in personas if persona["running"]),
+            "healthy_personas": sum(1 for persona in personas if persona["healthy"]),
             "personas": personas,
             "total_connections": 0,
         }
@@ -239,7 +303,7 @@ async def api_monitoring_persona_metrics(
     persona_dir = paths.dir
 
     status_data = _read_worker_status(persona_dir)
-    running = _worker_is_running(status_data)
+    health = _persona_health(persona_dir, status_data)
     pid = status_data.get("pid") if status_data else None
 
     token_usage = _read_token_usage(persona_dir)
@@ -249,9 +313,10 @@ async def api_monitoring_persona_metrics(
     return _json_response(
         {
             "persona": data_dir.name,
-            "running": running,
+            "running": health["running"],
+            "healthy": health["healthy"],
             "pid": pid,
-            "uptime_seconds": _calc_uptime_seconds(status_data) if running else 0.0,
+            "uptime_seconds": _calc_uptime_seconds(status_data) if health["running"] else 0.0,
             "token_usage": token_usage,
             "memory": {
                 "memory_unit_count": memory_unit_count,
@@ -273,36 +338,4 @@ async def api_monitoring_health(
     persona_dir = paths.dir
 
     status_data = _read_worker_status(persona_dir)
-    running = _worker_is_running(status_data)
-    pid = status_data.get("pid") if status_data else None
-
-    # 进程检查
-    process_status = "ok" if running else "down"
-
-    # 配置文件检查
-    config_status, missing_files = _check_config_files(persona_dir)
-
-    # 记忆系统检查
-    memory_status = _check_memory_system(persona_dir)
-
-    healthy = running and config_status == "ok" and memory_status == "ok"
-
-    return _json_response(
-        {
-            "persona": data_dir.name,
-            "healthy": healthy,
-            "checks": {
-                "process": {
-                    "status": process_status,
-                    "pid": pid,
-                },
-                "config": {
-                    "status": config_status,
-                    "files": missing_files,
-                },
-                "memory": {
-                    "status": memory_status,
-                },
-            },
-        }
-    )
+    return _json_response({"persona": data_dir.name, **_persona_health(persona_dir, status_data)})

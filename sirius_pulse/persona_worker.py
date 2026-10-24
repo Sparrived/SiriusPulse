@@ -303,11 +303,14 @@ class PersonaWorker:
         engine = self._runtime.engine
 
         try:
+            # Fail before any other mutation/rebuild: startup's permissive load
+            # would otherwise replace the preserved live config with defaults.
+            if reload_types & {"orchestration", "all"}:
+                if self._reload_orchestration(engine) is False:
+                    return
+
             if reload_types & {"persona", "all"}:
                 self._reload_persona(engine)
-
-            if reload_types & {"orchestration", "all"}:
-                self._reload_orchestration(engine)
 
             if reload_types & {"experience", "all"}:
                 self._reload_experience(engine)
@@ -371,22 +374,30 @@ class PersonaWorker:
 
         LOG.info("Persona 配置已热重载: %s", persona.name)
 
-    def _reload_orchestration(self, engine: Any) -> None:
-        """热重载编排配置（orchestration.json 中的 task_timeout / task_retries）。"""
+    def _reload_orchestration(self, engine: Any) -> bool:
+        """热重载 engine_state/orchestration.json；合法空对象恢复本地默认值。"""
         from sirius_pulse.core.orchestration_store import OrchestrationStore
 
-        orch = OrchestrationStore.load(self.persona_dir)
-        if not orch:
-            LOG.warning("Orchestration 配置加载失败，跳过重载")
-            return
+        try:
+            orch = OrchestrationStore.load(self.persona_dir, strict=True)
+        except (OSError, ValueError) as exc:
+            LOG.warning("Orchestration 配置加载失败，保留旧配置: %s", exc)
+            return False
 
-        # 重新读取本地任务参数并重建模型路由器（任务名 → AMKR 任务定义）。
-        engine._init_orchestration_and_task_models()
+        # 使用同一次成功读取的快照，避免二次读取失败把旧值误清空。
+        engine._init_orchestration_and_task_models(orchestration=orch)
         engine._init_model_router()
 
         # 同步更新 brain 的 model_router
         if hasattr(engine, "brain") and engine.brain:
             engine.brain.router = engine.model_router
+            # Brain owns a config copy; deleted overrides must reset there too.
+            if "max_concurrent_llm_calls" in engine.config:
+                engine.brain.config["max_concurrent_llm_calls"] = engine.config[
+                    "max_concurrent_llm_calls"
+                ]
+            else:
+                engine.brain.config.pop("max_concurrent_llm_calls", None)
             refresh_gate = getattr(engine.brain, "set_concurrency_limit", None)
             if callable(refresh_gate):
                 refresh_gate()
@@ -395,6 +406,7 @@ class PersonaWorker:
         self._reload_provider(engine)
 
         LOG.info("Orchestration 配置已热重载")
+        return True
 
     def _reload_experience(self, engine: Any) -> None:
         """热重载 Experience 配置（experience.json）。"""

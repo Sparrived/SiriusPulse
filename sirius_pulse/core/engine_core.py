@@ -177,7 +177,9 @@ class _EmotionalGroupChatEngineBase:
                     "Please create a persona first (via PersonaStore.save)."
                 )
 
-    def _init_orchestration_and_task_models(self) -> None:
+    def _init_orchestration_and_task_models(
+        self, orchestration: dict[str, Any] | None = None
+    ) -> None:
         """读取人格的编排配置中属于本地的部分。
 
         模型与采样参数不再由本框架决定——它们属于 AMKR 的任务定义。这里只保留
@@ -185,7 +187,8 @@ class _EmotionalGroupChatEngineBase:
         """
         from sirius_pulse.core.orchestration_store import OrchestrationStore
 
-        orch = OrchestrationStore.load(self.work_path)
+        # 热重载使用已校验的同一份快照，避免第二次读取失败把运行中配置清空。
+        orch = OrchestrationStore.load(self.work_path) if orchestration is None else orchestration
         self._orch_task_timeout = orch.get("task_timeout")
         self._orch_task_retries = orch.get("task_retries")
         # 并发上限的权威来源是 orchestration.json；此前它只在 config 模型里

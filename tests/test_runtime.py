@@ -3,16 +3,22 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from sirius_pulse.core.brain import Brain, ChatRequest
+from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
+from sirius_pulse.core.model_router import ModelRouter
+from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.persona_config import PersonaExperienceConfig
 from sirius_pulse.persona_worker import PersonaWorker
 from sirius_pulse.platforms.runtime import EngineRuntime, _wait_for_embedding_health
 from sirius_pulse.plugins.models import PluginDefinition, PluginPermissionDef
 from sirius_pulse.providers.amkr import load_inference_keys, load_panel_keys
+from sirius_pulse.providers.mock import MockProvider
 from sirius_pulse.utils.json_io import atomic_write_json
 
 
@@ -349,6 +355,235 @@ def test_persona_worker_config_reload_consumes_experience_flag(tmp_path):
     assert engine.brain.config["memory_unit_top_k"] == 15
 
 
+def _worker_with_orchestration(tmp_path, explicit_limit=None, provider=None):
+    OrchestrationStore.save(
+        tmp_path,
+        {
+            "task_timeout": {"response_generate": 7},
+            "task_retries": {"memory_extract": 5},
+            "max_concurrent_llm_calls": 3,
+        },
+    )
+    engine = _EmotionalGroupChatEngineBase.__new__(_EmotionalGroupChatEngineBase)
+    engine.work_path = tmp_path
+    engine.config = {} if explicit_limit is None else {"max_concurrent_llm_calls": explicit_limit}
+    engine._explicit_config_keys = set(engine.config)
+    engine._init_orchestration_and_task_models()
+    engine._init_model_router()
+    engine.brain = Brain(
+        provider_async=provider or MockProvider(),
+        model_router=engine.model_router,
+        persona=SimpleNamespace(name="月白", build_system_prompt=lambda: ""),
+        config=engine.config,
+    )
+    worker = PersonaWorker(tmp_path)
+    worker._runtime = SimpleNamespace(
+        engine=engine, _build_provider=lambda: engine.brain.provider_async
+    )
+    return worker, engine
+
+
+def _request_orchestration_reload(worker):
+    flag = worker.paths.engine_state / "reload_requested"
+    flag.write_text("orchestration", encoding="utf-8")
+    os.utime(flag, (0, 0))
+    worker._check_config_reload()
+    assert not flag.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_limit", [None, 2])
+async def test_persona_worker_empty_orchestration_restores_defaults(tmp_path, explicit_limit):
+    """用户清空编排后，后续模型请求使用默认路由与并发；显式参数仍优先。"""
+
+    class ConcurrentMockProvider(MockProvider):
+        active = 0
+        peak = 0
+
+        async def generate_async(self, request, return_reasoning=False):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                await asyncio.sleep(0)
+                return await super().generate_async(request, return_reasoning)
+            finally:
+                self.active -= 1
+
+    provider = ConcurrentMockProvider(["收到"] * 3)
+    worker, engine = _worker_with_orchestration(tmp_path, explicit_limit, provider)
+    OrchestrationStore.save(tmp_path, {})
+
+    _request_orchestration_reload(worker)
+
+    defaults = ModelRouter()
+    assert engine.model_router.resolve("response_generate").timeout == (
+        defaults.resolve("response_generate").timeout
+    )
+    assert engine.brain.router.resolve("memory_extract").retries == (
+        defaults.resolve("memory_extract").retries
+    )
+    assert engine.config.get("max_concurrent_llm_calls") == explicit_limit
+    assert engine.brain.config.get("max_concurrent_llm_calls") == explicit_limit
+    results = await asyncio.gather(
+        *(
+            engine.brain.chat(
+                ChatRequest(
+                    group_id=f"group-{i}",
+                    user_id="u1",
+                    system_prompt="system",
+                    messages=[{"role": "user", "content": "清空配置后的回复"}],
+                )
+            )
+            for i in range(3)
+        )
+    )
+    assert [result.clean_text for result in results] == ["收到"] * 3
+    assert provider.peak == (explicit_limit or 1)
+
+
+def test_persona_worker_all_reload_allows_empty_orchestration_before_rebuild(tmp_path, monkeypatch):
+    worker, engine = _worker_with_orchestration(tmp_path)
+    OrchestrationStore.save(tmp_path, {})
+    actions = []
+    for method in (
+        "_reload_persona",
+        "_reload_experience",
+        "_reload_provider",
+        "_reload_global_config",
+        "_reload_memory_index",
+    ):
+        monkeypatch.setattr(worker, method, lambda _engine: None)
+    monkeypatch.setattr(worker, "_schedule_engine_rebuild", lambda: actions.append("rebuild"))
+    flag = worker.paths.engine_state / "reload_requested"
+    flag.write_text("all", encoding="utf-8")
+    os.utime(flag, (0, 0))
+
+    worker._check_config_reload()
+
+    assert actions == ["rebuild"]
+    assert engine.config.get("max_concurrent_llm_calls") is None
+    assert engine.brain.config.get("max_concurrent_llm_calls") is None
+    assert engine.model_router.resolve("response_generate").timeout == (
+        ModelRouter().resolve("response_generate").timeout
+    )
+
+
+@pytest.mark.parametrize("content", [None, "{broken", '{"max_concurrent_llm_calls": NaN}'])
+def test_persona_worker_all_reload_aborts_before_other_changes_when_orchestration_fails(
+    tmp_path, monkeypatch, content
+):
+    worker, engine = _worker_with_orchestration(tmp_path)
+    previous_router = engine.model_router
+    path = OrchestrationStore._path(tmp_path)
+    if content is None:
+        path.unlink()
+    else:
+        path.write_text(content, encoding="utf-8")
+    actions = []
+    for method in (
+        "_reload_persona",
+        "_reload_experience",
+        "_reload_provider",
+        "_reload_global_config",
+        "_reload_memory_index",
+    ):
+        monkeypatch.setattr(worker, method, lambda _engine, name=method: actions.append(name))
+    monkeypatch.setattr(worker, "_schedule_engine_rebuild", lambda: actions.append("rebuild"))
+    flag = worker.paths.engine_state / "reload_requested"
+    flag.write_text("all", encoding="utf-8")
+    os.utime(flag, (0, 0))
+
+    worker._check_config_reload()
+
+    assert actions == []
+    assert worker._runtime.engine is engine
+    assert engine.model_router is previous_router
+    assert engine.config["max_concurrent_llm_calls"] == 3
+    assert engine.brain.config["max_concurrent_llm_calls"] == 3
+    assert engine.model_router.resolve("response_generate").timeout == 7
+
+
+@pytest.mark.parametrize("failure", ["missing", "broken-json", "non-object", "io", "encoding"])
+def test_persona_worker_failed_orchestration_reload_preserves_live_settings(
+    tmp_path, monkeypatch, caplog, failure
+):
+    worker, engine = _worker_with_orchestration(tmp_path)
+    previous_router = engine.model_router
+    path = OrchestrationStore._path(tmp_path)
+    if failure == "missing":
+        path.unlink()
+    elif failure == "broken-json":
+        path.write_text("{broken", encoding="utf-8")
+    elif failure == "non-object":
+        path.write_text("[]", encoding="utf-8")
+    elif failure == "encoding":
+        path.write_bytes(b"\xff")
+    else:
+        read_text = type(path).read_text
+
+        def denied_read(self, *args, **kwargs):
+            if self == path:
+                raise PermissionError("orchestration read denied")
+            return read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(type(path), "read_text", denied_read)
+
+    _request_orchestration_reload(worker)
+
+    assert engine.model_router is previous_router
+    assert engine.brain.router is previous_router
+    assert engine.model_router.resolve("response_generate").timeout == 7
+    assert engine.model_router.resolve("memory_extract").retries == 5
+    assert engine.brain.config["max_concurrent_llm_calls"] == 3
+    assert engine.config["max_concurrent_llm_calls"] == 3
+    assert "保留旧配置" in caplog.text
+    # Existing startup callers still get the default fallback, including missing files.
+    assert OrchestrationStore.load(tmp_path) == {}
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e309", "-1e309"])
+def test_persona_worker_nonfinite_orchestration_rejected_before_mutating_settings(
+    tmp_path, caplog, number
+):
+    worker, engine = _worker_with_orchestration(tmp_path)
+    previous_router = engine.model_router
+    OrchestrationStore._path(tmp_path).write_text(
+        '{"task_timeout": {"response_generate": 19}, "max_concurrent_llm_calls": ' + number + "}",
+        encoding="utf-8",
+    )
+
+    _request_orchestration_reload(worker)
+
+    assert engine.model_router is previous_router
+    assert engine.brain.router is previous_router
+    assert engine._orch_task_timeout == {"response_generate": 7}
+    assert engine._orch_task_retries == {"memory_extract": 5}
+    assert engine.config["max_concurrent_llm_calls"] == 3
+    assert engine.brain.config["max_concurrent_llm_calls"] == 3
+    assert "保留旧配置" in caplog.text
+
+
+def test_persona_worker_orchestration_reload_uses_one_validated_snapshot(tmp_path, monkeypatch):
+    worker, engine = _worker_with_orchestration(tmp_path)
+    OrchestrationStore.save(tmp_path, {"task_timeout": {"response_generate": 12}})
+    load = OrchestrationStore.load
+    reads = []
+
+    def load_then_remove(cls, work_path, *, strict=False):
+        reads.append(strict)
+        config = load(work_path, strict=strict)
+        cls._path(work_path).unlink()
+        return config
+
+    monkeypatch.setattr(OrchestrationStore, "load", classmethod(load_then_remove))
+
+    _request_orchestration_reload(worker)
+
+    assert reads == [True]
+    assert engine.brain.router.resolve("response_generate").timeout == 12
+    assert engine.brain.config.get("max_concurrent_llm_calls") is None
+
+
 @pytest.mark.asyncio
 async def test_embedding_health_wait_does_not_block_persona_event_loop():
     entered = threading.Event()
@@ -660,6 +895,7 @@ def _heartbeat_status_for(worker: PersonaWorker, adapter: object) -> dict:
 
         async def _fake_sleep(_seconds: float) -> None:
             nonlocal sleeps
+            assert _seconds == 10
             sleeps += 1
             if sleeps >= 1:
                 worker._running = False
@@ -672,6 +908,7 @@ def _heartbeat_status_for(worker: PersonaWorker, adapter: object) -> dict:
             asyncio.sleep = original  # type: ignore[assignment]
 
     asyncio.run(_once())
+    assert datetime.fromisoformat(written["heartbeat_at"]).tzinfo is not None
     return written
 
 

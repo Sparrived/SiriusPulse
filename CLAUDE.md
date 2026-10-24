@@ -114,9 +114,10 @@ data/
 └── adapter_port_registry.json
 ```
 
-A legacy `personas/{name}/orchestration.json` is still written by `persona_config.py` for
-`task_timeout` / `task_retries`, but the engine's live read path is
-`engine_state/orchestration.json` via `OrchestrationStore`.
+The engine's only live orchestration path is `engine_state/orchestration.json` via
+`OrchestrationStore`; health checks do not require the old persona-root file.
+A valid empty object resets local overrides on hot reload; a missing, unreadable,
+or invalid file preserves the running configuration instead.
 
 AMKR itself lives outside this repo; the framework creates the AMKR workspace
 `<amkr_workspace>/<persona>` (the only moment its two credentials are returned, so both are
