@@ -1178,7 +1178,8 @@ class DelayedQueueTasks:
             if work_step is not None:
                 _save_work_run()
 
-            if all_silent and not send_next_tool_output:
+            # 静默只免去普通聊天的后续回复，工作模式仍须继续剩余动作并显式收尾。
+            if work_run is None and all_silent and not send_next_tool_output:
                 if not self._append_tool_chain_messages(engine, messages, group_id):
                     delivery_complete = True
                     chat_result.clean_text = ""
