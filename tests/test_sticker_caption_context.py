@@ -32,7 +32,7 @@ from sirius_pulse.core.rhythm import RhythmAnalyzer
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.models.models import Message
-from sirius_pulse.models.response_strategy import DelayedResponseItem
+from sirius_pulse.models.response_strategy import ResponseStrategy, StrategyDecision
 from sirius_pulse.providers.mock import MockProvider
 
 _GROUP_ID = "123456"
@@ -354,19 +354,17 @@ async def test_sticker_is_never_offered_to_the_chat_vision_channel(tmp_path):
         )
     )
     photo["caption"] = _PHOTO_CAPTION
-    item = DelayedResponseItem(
-        item_id="item-1",
+    engine.delayed_queue.enqueue(
         group_id=_GROUP_ID,
         user_id="u1",
         channel="group",
         channel_user_id="200",
         message_content=f"{_image_content(sticker)}这个表情笑死我了",
+        strategy_decision=StrategyDecision(strategy=ResponseStrategy.IMMEDIATE),
         speaker_name="Alice",
-        related_user_ids=["u1"],
         multimodal_inputs=[sticker, photo],
         adapter_type="napcat",
     )
-    engine.delayed_queue = SimpleNamespace(tick=lambda *args, **kwargs: [item])
 
     # 走到「把多模态塞进最后一条用户消息」这一步就停：这里正好能看清引擎决定
     # 把哪些图片交给视觉通道，而不用把整轮生成跑完。

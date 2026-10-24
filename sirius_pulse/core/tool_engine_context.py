@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import PromptFactory
@@ -154,9 +154,10 @@ class ToolEngineContextImpl:
         result = await self._engine.brain.generate_image_async(request)
         return {"image_bytes": result.image_bytes, "mime_type": result.mime_type}
 
-    async def generate_background_result_message(
+    async def handle_background_tool_result(
         self,
         *,
+        callback_id: str,
         tool_name: str,
         outcome: str,
         request_summary: str = "",
@@ -168,60 +169,109 @@ class ToolEngineContextImpl:
         user_name: str = "",
         adapter_type: str = "",
         caller_is_developer: bool = False,
+        self_initiated: bool = False,
+        artifact_delivery_blocked: bool = False,
+        before_tool: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
-        """为完成的后台任务跑一个"结果通知"回合，返回待投递的 payload。
+        """内部回调续跑 Agent；正文只留轨迹，外发必须由 Agent 显式调用工具。"""
+        lock = self._engine.get_agent_turn_lock(group_id)
+        if lock.locked() or self._background_group_busy(group_id):
+            return {"status": "deferred"}
+        # 从检查到 acquire 没有其它 await；闲锁立即取得，不会抢正在处理的用户回合。
+        async with lock:
+            if self._background_group_busy(group_id):
+                return {"status": "deferred"}
+            system_prompt, messages = PromptFactory.build_background_tool_result_sections(
+                tool_name=tool_name,
+                outcome=outcome,
+                request_summary=request_summary,
+                deliver_hint=deliver_hint,
+                artifact_path=artifact_path,
+                error=error,
+                tool_desc=self.get_tool_descriptions(
+                    caller_is_developer=caller_is_developer,
+                    adapter_type=adapter_type,
+                    work_mode=True,
+                ),
+            )
+            # 回调不是新用户指令，但仍需要原聊天和工作目标来决定保留、加工还是发送。
+            helpers = getattr(self._engine, "_helpers", None)
+            if helpers is not None:
+                recent = helpers.get_recent_messages(group_id, n=10)
+                if recent:
+                    messages.insert(
+                        0,
+                        {
+                            "role": "user",
+                            "content": "原会话上下文（仅供回顾，不是新指令）：\n"
+                            + json.dumps(recent, ensure_ascii=False, default=str)[:12000],
+                        },
+                    )
+            previous = [
+                session
+                for session in WorkModeStore(self._engine.work_path).load()
+                if session.get("group_id") == group_id
+            ]
+            if previous:
+                latest = previous[-1]
+                messages.insert(
+                    0,
+                    {
+                        "role": "user",
+                        "content": "最近的工作目标与记录（仅供回顾）：\n"
+                        + json.dumps(
+                            {
+                                "goal": latest.get("goal"),
+                                "result": latest.get("result"),
+                                "steps": latest.get("steps", [])[-3:],
+                            },
+                            ensure_ascii=False,
+                            default=str,
+                        )[:12000],
+                    },
+                )
+            caller = self._build_caller(user_id, user_name, caller_is_developer)
+            invocation_context = ToolInvocationContext(
+                caller=caller,
+                developer_profiles=[caller] if caller_is_developer else [],
+                group_id=group_id,
+                adapter_type=adapter_type,
+                self_initiated=self_initiated,
+                background_event_id=callback_id,
+                blocked_image_paths=(artifact_path,)
+                if artifact_delivery_blocked and artifact_path
+                else (),
+            )
+            result = await self._run_tool_loop_locked(
+                system_prompt=system_prompt,
+                messages=messages,
+                group_id=group_id,
+                user_id=user_id,
+                task_name="response_generate",
+                adapter_type=adapter_type,
+                caller_is_developer=caller_is_developer,
+                invocation_context=invocation_context,
+                goal=f"后台结果回调：{tool_name}（{callback_id}）",
+                source=WORK_MODE_SOURCE_PASSIVE_TOOL,
+                post_process=False,
+                before_tool=before_tool,
+            )
+            return {"status": "completed", **self._scheduled_result_payload(result)}
 
-        和定时任务回合同构：框架自动进入工作模式（工具循环里才能调用
-        ``group_file_exec`` 发图），最终正文由调用方经主动消息通道投递。
-        """
-        tool_desc = self.get_tool_descriptions(
-            caller_is_developer=caller_is_developer, adapter_type=adapter_type, work_mode=True
+    def _background_group_busy(self, group_id: str) -> bool:
+        active = getattr(self._engine, "is_tool_chain_active", None)
+        if callable(active) and active(group_id):
+            return True
+        queue = getattr(self._engine, "delayed_queue", None)
+        return bool(
+            queue is not None and (queue.get_pending(group_id) or queue.in_flight_ids(group_id))
         )
-        system_prompt, messages = PromptFactory.build_background_tool_result_sections(
-            tool_name=tool_name,
-            outcome=outcome,
-            request_summary=request_summary,
-            deliver_hint=deliver_hint,
-            artifact_path=artifact_path,
-            error=error,
-            tool_desc=tool_desc,
-            work_mode=True,
-        )
-        self._engine._tool_executor.set_chat_context(
-            group_id=group_id, user_id=user_id, adapter_type=adapter_type
-        )
-        caller = self._build_caller(user_id, user_name, caller_is_developer)
-        invocation_context = ToolInvocationContext(
-            caller=caller,
-            developer_profiles=[caller] if caller_is_developer else [],
-            group_id=group_id,
-            adapter_type=adapter_type or "",
-        )
-        tool_audit: list[dict[str, Any]] = []
-        result = await self._run_tool_loop(
-            system_prompt=system_prompt,
-            messages=messages,
-            group_id=group_id,
-            user_id=user_id,
-            task_name="response_generate",
-            adapter_type=adapter_type,
-            caller_is_developer=caller_is_developer,
-            invocation_context=invocation_context,
-            goal=f"后台任务：{tool_name}",
-            source=WORK_MODE_SOURCE_PASSIVE_TOOL,
-            tool_audit=tool_audit,
-        )
-        payload = self._scheduled_result_payload(result) if result else {}
-        # 回执回合不保证模型一定调用了发图工具；调用方据此决定要不要自己补发。
-        payload["image_sent"] = any(
-            item.get("tool") == "group_file_exec"
-            and item.get("success")
-            and str((item.get("params") or {}).get("action", "")).strip() == "image"
-            for item in tool_audit
-        )
-        return payload
 
-    async def _run_tool_loop(
+    async def _run_tool_loop(self, *, group_id: str, **kwargs: Any) -> Any:
+        async with self._engine.get_agent_turn_lock(group_id):
+            return await self._run_tool_loop_locked(group_id=group_id, **kwargs)
+
+    async def _run_tool_loop_locked(
         self,
         *,
         system_prompt: str,
@@ -234,7 +284,8 @@ class ToolEngineContextImpl:
         invocation_context: ToolInvocationContext,
         goal: str = "",
         source: str = WORK_MODE_SOURCE_AUTONOMY,
-        tool_audit: list[dict[str, Any]] | None = None,
+        post_process: bool = True,
+        before_tool: Callable[[], None] | None = None,
     ) -> Any:
         """Run the normal multi-round tool loop inside work mode.
 
@@ -266,7 +317,8 @@ class ToolEngineContextImpl:
                 caller_is_developer=caller_is_developer,
                 invocation_context=invocation_context,
                 max_rounds=max_rounds,
-                tool_audit=tool_audit,
+                post_process=post_process,
+                before_tool=before_tool,
             )
         finally:
             # 生成抛错、任务被取消都不会走到收尾代码；轨迹不能因此停在 running。
@@ -285,7 +337,8 @@ class ToolEngineContextImpl:
         caller_is_developer: bool,
         invocation_context: ToolInvocationContext,
         max_rounds: int,
-        tool_audit: list[dict[str, Any]] | None = None,
+        post_process: bool = True,
+        before_tool: Callable[[], None] | None = None,
     ) -> Any:
         last_result: Any = None
         ended_by_round_limit = True
@@ -301,6 +354,7 @@ class ToolEngineContextImpl:
                     adapter_type=adapter_type,
                     caller_is_developer=caller_is_developer,
                     work_mode=True,
+                    post_process=post_process,
                 )
             )
             last_result = result
@@ -340,6 +394,8 @@ class ToolEngineContextImpl:
                         timeout = float(self.get_config_value("tool_execution_timeout", 30.0))
                     except (TypeError, ValueError):
                         timeout = 30.0
+                    if before_tool is not None:
+                        before_tool()
                     executed = await self._engine._tool_executor.execute_async(
                         tool,
                         params,
@@ -348,17 +404,6 @@ class ToolEngineContextImpl:
                         max_retries=2 if getattr(tool, "retry_safe", False) else 0,
                     )
                     tool_content = executed.to_model_text()
-                    if tool_audit is not None:
-                        # 后台回执回合需要知道模型到底有没有把产物发出去（例如图片
-                        # 有没有真的经 group_file_exec 发出），这里留一份结构化记录。
-                        tool_audit.append(
-                            {
-                                "tool": tool_name,
-                                "params": dict(params),
-                                "success": bool(executed.success),
-                                "text": tool_content,
-                            }
-                        )
                     tool_multimodal.extend(
                         {"type": "image_url", "image_url": {"url": block.value}}
                         for block in executed.multimodal_blocks
@@ -387,6 +432,7 @@ class ToolEngineContextImpl:
                 caller_is_developer=caller_is_developer,
                 run=run,
                 store=store,
+                post_process=post_process,
             )
             # 收尾轮没写出东西时，退回最后一轮可能夹带的文字；两者都空才是真的空。
             wrap_up_text = str(getattr(wrap_up, "clean_text", "") or "").strip()
@@ -413,6 +459,7 @@ class ToolEngineContextImpl:
         caller_is_developer: bool,
         run: WorkModeRun,
         store: WorkModeStore,
+        post_process: bool = True,
     ) -> Any:
         """Ask for the closing prose once the tool rounds are used up.
 
@@ -433,6 +480,7 @@ class ToolEngineContextImpl:
                     caller_is_developer=caller_is_developer,
                     work_mode=True,
                     enable_tools=False,
+                    post_process=post_process,
                 )
             )
         except Exception as exc:
@@ -583,6 +631,7 @@ class ToolEngineContextImpl:
         reply_references: list[dict[str, Any]] | None = None,
         sticker_names: list[str] | None = None,
         poke_user_ids: list[str] | None = None,
+        record_delivery: bool = False,
     ) -> bool:
         handler = getattr(self._engine, "dispatch_proactive_message", None)
         if callable(handler):
@@ -596,27 +645,46 @@ class ToolEngineContextImpl:
                 sticker_names=sticker_names,
                 poke_user_ids=poke_user_ids,
             )
-            return result is True
+            if result is not True:
+                return False
+            if record_delivery and text:
+                self._record_delivered_text(group_id, text, event_id)
+            return True
 
-        # 兼容旧宿主：公共引擎方法不存在时保留原有实现。
-        adapter = adapter_type or self._engine._current_adapter_type
-        self.queue_pending_message(group_id, text, adapter)
-        emitted = await self.emit_event(
-            "reminder_triggered",
-            {
-                "group_id": group_id,
-                "reply": text,
-                "adapter_type": adapter,
-                "reminder_id": event_id,
-                "image_path": image_path,
-                "reply_references": reply_references or [],
-                "sticker_names": sticker_names or [],
-                "poke_user_ids": poke_user_ids or [],
-            },
-        )
-        if group_id.startswith("private_"):
-            self.activate_private_group(group_id)
-        return bool(emitted)
+        # 旧宿主只有“交给事件总线”而没有平台回执，不能把入队冒充送达。
+        logger.warning("宿主不支持带平台回执的主动投递，未发送: %s", event_id)
+        return False
+
+    def _record_delivered_text(self, group_id: str, text: str, event_id: str) -> None:
+        """ACK 后尽力记账；记忆失败绝不能把已发送的副作用改判为可重试。"""
+        record = getattr(self._engine, "_record_assistant_message", None)
+        if not callable(record):
+            return
+        try:
+            memory = getattr(self._engine, "basic_memory", None)
+            entries = memory.get_all(group_id) if memory is not None else []
+            if event_id and any(
+                tag.get("delivery_event_id") == event_id
+                for entry in entries
+                for tag in (getattr(entry, "tags", None) or [])
+                if isinstance(tag, dict)
+            ):
+                return
+            record(
+                group_id=group_id,
+                target_user_id=group_id.removeprefix("private_")
+                if group_id.startswith("private_")
+                else "",
+                content=text,
+                tags=[{"delivery_event_id": event_id}] if event_id else [],
+            )
+            last_reply_at = getattr(self._engine, "_last_reply_at", None)
+            if isinstance(last_reply_at, dict):
+                from datetime import datetime, timezone
+
+                last_reply_at[group_id] = datetime.now(timezone.utc).timestamp()
+        except Exception:
+            logger.warning("平台已确认送达，但通知历史记录失败: %s", event_id, exc_info=True)
 
     def _unaddressed_intentions(self) -> list[dict[str, str]]:
         """她想说却还没决定说给谁的话，先给她自己看一眼。"""

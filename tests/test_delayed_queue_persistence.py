@@ -239,6 +239,54 @@ def test_restore_skips_corrupt_entries_without_losing_the_rest():
     assert good.item_id in ids
 
 
+@pytest.mark.parametrize("phase", ["ready", "sending", "generating"])
+def test_restore_preserves_payload_or_quarantines_possible_side_effects(phase):
+    import json
+
+    source = DelayedResponseQueue()
+    item = source.enqueue("group-1", "u1", "retain result", _decision())
+    source.tick("group-1", [])
+    source.mark_generation_started([item.item_id])
+    if phase != "generating":
+        source.stage_delivery([item.item_id], [{"reply": "retained", "delivery_cursor": 1}])
+    else:
+        source.mark_generation_unsafe([item.item_id])
+    if phase == "sending":
+        source.begin_delivery([item.item_id])
+    restored = DelayedResponseQueue()
+    restored.restore(json.loads(json.dumps(source.snapshot())))
+    if phase == "ready":
+        result = restored.take_prepared_delivery("group-1", item_id=item.item_id)
+        assert result[0]["reply"] == "retained"
+        assert result[0]["delivery_cursor"] == 1
+    else:
+        assert restored.take_prepared_delivery("group-1", item_id=item.item_id) is None
+        assert restored.snapshot()[0]["status"] == "uncertain"
+
+
+def test_merged_batch_restores_one_shared_cursor_for_all_item_ids():
+    import json
+
+    source = DelayedResponseQueue()
+    first = source.enqueue("group-1", "u1", "first", _decision())
+    source.tick("group-1", [])
+    second = source.enqueue("group-1", "u2", "second", _decision())
+    source.tick("group-1", [])
+    ids = [first.item_id, second.item_id]
+    source.stage_delivery(ids, [{"reply": "first\nsecond", "delivery_cursor": 0}])
+    restored = DelayedResponseQueue()
+    restored.restore(json.loads(json.dumps(source.snapshot())))
+    result = restored.take_prepared_delivery("group-1", item_id=first.item_id)
+    result[0]["delivery_cursor"] = 1
+    restored.fail_delivery(ids)
+    rebooted = DelayedResponseQueue()
+    rebooted.restore(json.loads(json.dumps(restored.snapshot())))
+    assert (
+        rebooted.take_prepared_delivery("group-1", item_id=second.item_id)[0]["delivery_cursor"]
+        == 1
+    )
+
+
 def test_restore_empty_payload_is_a_noop():
     assert DelayedResponseQueue().restore([]) == 0
     assert DelayedResponseQueue().restore(None) == 0
@@ -349,8 +397,8 @@ async def test_generation_failure_requeues_the_message_instead_of_losing_it():
 
 
 @pytest.mark.asyncio
-async def test_successful_generation_does_not_leave_the_item_queued():
-    """成功生成后条目不应回队，否则会重复回复。"""
+async def test_successful_generation_waits_for_delivery_ack():
+    """生成不是送达：保留产物直到适配器确认，失败只重投。"""
     queue = DelayedResponseQueue()
     item = queue.enqueue("group-1", "u1", "在吗", _decision())
     item.enqueue_time = _past(item.window_seconds + 1)
@@ -360,6 +408,12 @@ async def test_successful_generation_does_not_leave_the_item_queued():
 
     assert results and results[0]["reply"] == "好了"
     assert queue.get_pending("group-1") == []
+    assert queue.in_flight_ids() == [item.item_id]
+    queue.fail_delivery([item.item_id])
+    retried = await tasks.tick_delayed_queue("group-1")
+    assert retried == results
+    _engine.brain.chat.assert_awaited_once()
+    queue.commit_in_flight([item.item_id])
     assert queue.in_flight_ids() == []
 
 

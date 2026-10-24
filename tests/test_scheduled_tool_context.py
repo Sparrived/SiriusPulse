@@ -1,17 +1,15 @@
-"""自主回合、定时任务回合与后台工具回归回合自动走工作模式：重工具可用、过程留轨迹。
-
-这几类回合本来就是"她独自做事"的时刻，以前框架把它们当普通回合发（重工具还被
-藏起来了），现在由框架直接替她进入工作模式，并且共享同一份工作模式设置——也就是
-在 AMKR 面板里配哪个模型。
-"""
+"""自主/定时与内部结果回调共用 Agent 工具循环；内部正文不自动对外发送。"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
 
+from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
+from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
 from sirius_pulse.core.tool_engine_context import ToolEngineContextImpl
 from sirius_pulse.core.work_mode import WorkModeStore
 from sirius_pulse.providers.base import ImageGenerationResult, ToolCall
@@ -72,7 +70,11 @@ def _context(tmp_path, brain, executor=None):
         _tool_executor=executor or _Executor(),
         _tool_registry=_Registry(),
         brain=brain,
+        delayed_queue=DelayedResponseQueue(),
         config={"max_tool_rounds": 2, "tool_execution_timeout": 5},
+    )
+    engine.get_agent_turn_lock = lambda group_id: EmotionalGroupChatEngine.get_agent_turn_lock(
+        engine, group_id
     )
     context = ToolEngineContextImpl.__new__(ToolEngineContextImpl)
     context._engine = engine
@@ -113,6 +115,27 @@ async def test_scheduled_dispatch_only_accepts_explicit_true(handler_result, exp
     )
 
     assert accepted is expected
+
+
+@pytest.mark.asyncio
+async def test_legacy_host_without_receipt_dispatcher_cannot_claim_delivery(tmp_path):
+    context = _context(tmp_path, _Brain([]))
+    emitted = []
+
+    async def emit_event(*args, **kwargs):
+        emitted.append((args, kwargs))
+        return True
+
+    context.emit_event = emit_event
+    accepted = await context.dispatch_proactive_message(
+        group_id="group-1",
+        text="通知正文",
+        event_id="image_generate:legacy:text",
+        record_delivery=True,
+    )
+
+    assert accepted is False
+    assert emitted == [], "入队不是平台回执，不得从旧event接口伪装成功"
 
 
 @pytest.mark.asyncio
@@ -289,62 +312,122 @@ async def test_the_wrap_up_keeps_the_earlier_text_when_it_fails(tmp_path):
     assert _sessions(tmp_path)[0]["status"] == "aborted"
 
 
-@pytest.mark.asyncio
-async def test_background_tool_result_turn_delivers_the_artifact_with_group_file_exec(tmp_path):
-    """后台生图完成后要主动提醒模型：这是工作模式回合，用 group_file_exec 把图发出去。"""
-    executor = _Executor()
-    brain = _Brain(
-        [
-            _tool_round(
-                tool="group_file_exec",
-                arguments='{"action":"image","image_path":"/data/images/cat.png"}',
-            ),
-            _final_round("画好啦。"),
-        ]
-    )
-    context = _context(tmp_path, brain, executor)
-
-    payload = await context.generate_background_result_message(
+async def _callback(context, **kwargs):
+    return await context.handle_background_tool_result(
+        callback_id="image_generate:img_callback",
         tool_name="image_generate",
         outcome="success",
-        request_summary="画一只猫",
-        deliver_hint='先调用 group_file_exec，action="image"，image_path="/data/images/cat.png"',
         artifact_path="/data/images/cat.png",
         group_id="group-1",
         user_id="u1",
         user_name="Alice",
         adapter_type="napcat",
+        **kwargs,
     )
-
-    assert payload["text"] == "画好啦。"
-    assert payload["image_sent"] is True
-    assert brain.requests[0].work_mode is True
-    assert brain.requests[0].task_name == "response_generate"
-    assert "【后台任务完成】" in brain.requests[0].system_prompt
-    assert "group_file_exec" in brain.requests[0].system_prompt
-    assert "cat.png" in brain.requests[0].system_prompt
-    assert executor.calls[0][0].name == "group_file_exec"
-    assert executor.calls[0][1] == {"action": "image", "image_path": "/data/images/cat.png"}
-    assert executor.context == {"group_id": "group-1", "user_id": "u1", "adapter_type": "napcat"}
 
 
 @pytest.mark.asyncio
-async def test_background_tool_result_turn_reports_when_the_artifact_was_not_sent(tmp_path):
-    """模型没调发图工具时，回执结果要显式告诉调用方，好让工具层补发。"""
-    brain = _Brain([_final_round("画好啦。")])
+@pytest.mark.parametrize("text", ["", "三个草稿先保留，不对外发。"])
+async def test_background_result_allows_silent_completion_and_internal_summary(tmp_path, text):
+    executor = _Executor()
+    WorkModeStore(tmp_path).save_settings(task_name="work_mode_generate")
+    brain = _Brain([_final_round(text)])
+    context = _context(tmp_path, brain, executor)
+    dispatched = []
+
+    async def dispatch(**kwargs):
+        dispatched.append(kwargs)
+        return True
+
+    context._engine.dispatch_proactive_message = dispatch
+    payload = await _callback(context, request_summary="画一只猫")
+    assert payload["status"] == "completed"
+    assert payload["text"] == text
+    assert len(brain.requests) == 1
+    request = brain.requests[0]
+    assert request.enable_tools is True
+    assert request.post_process is False
+    assert request.work_mode is True
+    assert request.task_name == "work_mode_generate"
+    assert "cat.png" in request.system_prompt
+    assert executor.calls == dispatched == []
+    assert len(_sessions(tmp_path)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("self_initiated", [False, True])
+async def test_callback_tool_loop_fences_every_action_and_keeps_origin_permissions(
+    tmp_path,
+    self_initiated,
+):
+    events = []
+
+    class CheckingExecutor(_Executor):
+        async def execute_async(self, tool, params, **kwargs):
+            assert events[-1] == "fence", "工具执行之前必须同步持久化unsafe"
+            events.append("execute")
+            invocation = kwargs["invocation_context"]
+            assert invocation.background_event_id == "image_generate:img_callback"
+            assert invocation.self_initiated is self_initiated
+            assert invocation.caller_is_developer is False
+            assert invocation.group_id == "group-1"
+            assert invocation.caller_user_id == "u1"
+            return await super().execute_async(tool, params, **kwargs)
+
+    brain = _Brain(
+        [
+            _tool_round(tool="image_generate", arguments='{"prompt":"改成水彩"}'),
+            _tool_round(
+                tool="group_file_exec", arguments='{"action":"image","image_path":"cat.png"}'
+            ),
+            _final_round("内部总结，不自动外发"),
+        ]
+    )
+    executor = CheckingExecutor()
+    context = _context(tmp_path, brain, executor)
+    context._engine.config["max_tool_rounds"] = 3
+    payload = await _callback(
+        context,
+        self_initiated=self_initiated,
+        before_tool=lambda: events.append("fence"),
+    )
+    assert payload["status"] == "completed"
+    assert events == ["fence", "execute", "fence", "execute"]
+    assert [call[0].name for call in executor.calls] == ["image_generate", "group_file_exec"]
+    assert all(request.work_mode and not request.post_process for request in brain.requests)
+    assert all(request.enable_tools for request in brain.requests)
+    assert not context._engine.get_agent_turn_lock("group-1").locked()
+
+
+@pytest.mark.asyncio
+async def test_busy_group_defers_callback_without_model_or_tool_activity(tmp_path):
+    brain = _Brain([_final_round("")])
+    context = _context(tmp_path, brain)
+    lock = context._engine.get_agent_turn_lock("group-1")
+    await lock.acquire()
+    try:
+        payload = await asyncio.wait_for(_callback(context), timeout=0.5)
+        assert payload["status"] == "deferred"
+        assert brain.requests == []
+        assert context._engine._tool_executor.calls == []
+        assert _sessions(tmp_path) == []
+    finally:
+        lock.release()
+    assert (await _callback(context))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_callback_fence_error_stops_executor_and_releases_group_lock(tmp_path):
+    brain = _Brain([_tool_round(tool="group_file_exec")])
     context = _context(tmp_path, brain)
 
-    payload = await context.generate_background_result_message(
-        tool_name="image_generate",
-        outcome="success",
-        deliver_hint="把生成好的图发到当前聊天",
-        artifact_path="/data/images/cat.png",
-        group_id="group-1",
-        adapter_type="napcat",
-    )
+    def failed_fence():
+        raise OSError("cannot persist callback fence")
 
-    assert payload["text"] == "画好啦。"
-    assert payload["image_sent"] is False
+    with pytest.raises(OSError, match="callback fence"):
+        await _callback(context, before_tool=failed_fence)
+    assert context._engine._tool_executor.calls == []
+    assert not context._engine.get_agent_turn_lock("group-1").locked()
 
 
 @pytest.mark.asyncio

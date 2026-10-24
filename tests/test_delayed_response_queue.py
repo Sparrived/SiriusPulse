@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -226,6 +225,38 @@ def test_delayed_queue_keeps_same_type_adapter_instances_independent():
     )
     assert legacy_triggered == [legacy]
     assert queue.get_pending("group-1", adapter_route_id="napcat:200") == [second]
+
+
+@pytest.mark.asyncio
+async def test_successful_tool_then_llm_failure_is_visible_unknown_not_replayed():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue("group-1", "u1", "perform action", _decision(ResponseStrategy.IMMEDIATE))
+    executor = AsyncMock(return_value=ToolResult(success=True, data={"ok": True}))
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="action", silent=False, developer_only=False),
+        [
+            SimpleNamespace(
+                raw_text="",
+                clean_text="",
+                tool_calls=[
+                    ToolCall(id="action-1", function_name="action", function_arguments="{}")
+                ],
+                reply_references=[],
+            ),
+            RuntimeError("second LLM failed"),
+        ],
+        executor,
+    )
+    with pytest.raises(RuntimeError, match="second LLM"):
+        await tasks.tick_delayed_queue("group-1")
+    assert await tasks.tick_delayed_queue("group-1") == []
+    executor.assert_awaited_once()
+    assert queue.snapshot()[0]["status"] == "uncertain"
+    assert any(
+        call.args[0].data.get("delivery_status") == "uncertain"
+        for call in engine.event_bus.emit.await_args_list
+    )
 
 
 @pytest.mark.asyncio
@@ -773,7 +804,8 @@ async def test_delayed_queue_when_tool_call_has_text_then_sends_part_before_fina
         for call in engine.event_bus.emit.await_args_list
         if call.args[0].type.value == "agent_turn_updated"
     ]
-    assert turn_events[-1]["phase"] == "complete"
+    assert turn_events[-1]["phase"] == "respond"
+    assert queue.in_flight_ids() == [item.item_id]
 
 
 @pytest.mark.asyncio
@@ -1393,27 +1425,13 @@ async def test_delayed_queue_when_reply_has_structure_then_sends_whole_content_a
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
     assert partials == []
-    assert order == ["image"]
+    assert order == []  # Generation must not perform platform I/O.
     assert engine.brain.chat.await_count == 1
     execute_tool.assert_not_awaited()
-    assert results[0]["reply"] == ""
-    assert delivered_cards == [
-        {
-            "group_id": "group-1",
-            "target_user_id": "u1",
-            "content": content,
-            "system_prompt": "",
-            "tags": [{"type": "image", "label": "富文本卡片"}],
-            "injected_request": {
-                "system_prompt": "system",
-                "messages": [{"role": "user", "content": "question"}],
-                "tools": [],
-                "tool_choice": None,
-            },
-            "injected_tool_names": [],
-            "platform_message_id": "42",
-        }
-    ]
+    assert results[0]["reply"] == content
+    assert results[0]["rich_reply"] is True
+    assert results[0]["rich_history"]["target_user_id"] == "u1"
+    assert delivered_cards == []
 
 
 @pytest.mark.asyncio
@@ -1465,9 +1483,9 @@ async def test_delayed_queue_when_reply_would_send_over_three_messages_then_send
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
     assert partials == []
-    assert results[0]["reply"] == ""
-    assert [card["platform_message_id"] for card in delivered_cards] == ["99"]
-    assert delivered_cards[0]["tags"] == [{"type": "image", "label": "富文本卡片"}]
+    assert results[0]["reply"] == content
+    assert results[0]["rich_reply"] is True
+    assert delivered_cards == []
 
 
 @pytest.mark.asyncio
@@ -1600,10 +1618,10 @@ async def test_delayed_queue_when_rich_reply_render_fails_then_falls_back_to_tex
 
     results = await tasks.tick_delayed_queue("group-1", on_partial_reply=capture_partial)
 
-    assert partials == [content]
-    assert results[0]["reply"] == ""
-    assert delivered[0]["content"] == content
-    assert "tags" not in delivered[0]
+    assert partials == []
+    assert results[0]["reply"] == content
+    assert results[0]["rich_reply"] is True
+    assert delivered == []
 
 
 @pytest.mark.asyncio
@@ -1869,21 +1887,10 @@ async def test_delayed_queue_when_work_mode_result_is_rich_then_sends_image(tmp_
 
     results = await tasks.tick_delayed_queue("group-1")
 
-    assert [entry["content"] for entry in rendered] == [markdown]
-    assert rendered[0]["adapter"] is engine._adapter
-    assert results[0]["reply"] == ""
-    assert delivered == [
-        {
-            "group_id": "group-1",
-            "target_user_id": "u1",
-            "content": markdown,
-            "system_prompt": "",
-            "tags": [{"type": "image", "label": "富文本卡片"}],
-            "injected_request": {"system_prompt": "sys", "messages": [], "tools": []},
-            "injected_tool_names": [],
-            "platform_message_id": "42",
-        }
-    ]
+    assert rendered == []
+    assert results[0]["reply"] == markdown
+    assert results[0]["rich_reply"] is True
+    assert delivered == []
 
 
 @pytest.mark.asyncio
@@ -1948,11 +1955,9 @@ async def test_delayed_queue_when_work_mode_result_render_fails_then_keeps_text(
     results = await tasks.tick_delayed_queue("group-1")
 
     assert results[0]["reply"] == markdown
-    # 文本回退也要进历史：hook 已因「可能转图片」让位，不能两边都不记。
-    assert len(delivered) == 1
-    assert delivered[0]["content"] == markdown
-    assert "tags" not in delivered[0]
-    assert "platform_message_id" not in delivered[0]
+    # The adapter, not generation, records history only after delivery.
+    assert results[0]["rich_reply"] is True
+    assert delivered == []
 
 
 @pytest.mark.asyncio
@@ -2076,7 +2081,7 @@ async def test_delayed_queue_when_max_round_fallback_reply_is_rich_then_sends_im
 
     results = await tasks.tick_delayed_queue("group-1")
 
-    assert rendered == [markdown]
-    assert results[0]["reply"] == ""
-    assert delivered[0]["tags"] == [{"type": "image", "label": "富文本卡片"}]
-    assert delivered[0]["platform_message_id"] == "55"
+    assert rendered == []
+    assert results[0]["reply"] == markdown
+    assert results[0]["rich_reply"] is True
+    assert delivered == []

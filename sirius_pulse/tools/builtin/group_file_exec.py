@@ -73,11 +73,19 @@ async def run(
     chat_context: dict[str, Any] | None = None,
     data_store: Any = None,
     invocation_context: ToolInvocationContext | None = None,
+    engine_context: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     action_key = str(action or "").strip().lower()
     if action_key == "image":
-        result = await _send_image(bridge, chat_context, image_path, data_store=data_store)
+        result = await _send_image(
+            bridge,
+            chat_context,
+            image_path,
+            data_store=data_store,
+            invocation_context=invocation_context,
+            engine_context=engine_context,
+        )
     elif action_key == "file":
         result = await _upload_file(
             bridge, chat_context, file_path, file_name, data_store=data_store
@@ -103,6 +111,8 @@ async def _send_image(
     image_path: str,
     *,
     data_store: Any = None,
+    invocation_context: ToolInvocationContext | None = None,
+    engine_context: Any = None,
 ) -> dict[str, Any]:
     if not bridge:
         return {
@@ -149,14 +159,46 @@ async def _send_image(
 
     # ``~`` must mean the persona's own home here too, not the process home:
     # the two are different once HOME is redirected into the mounted data dir.
-    image_path = _resolve_persona_path(image_path, data_store)
+    image_path = _resolve_persona_path(image_path.removeprefix("file://"), data_store)
+    blocked = getattr(invocation_context, "blocked_image_paths", ())
+    if blocked and Path(image_path).resolve() in {
+        Path(_resolve_persona_path(path.removeprefix("file://"), data_store)).resolve()
+        for path in blocked
+    }:
+        return {
+            "success": False,
+            "error": "旧产物已发送或投递状态无法确认，禁止本次回调重复发送；可继续加工新产物",
+            "summary": "旧产物不重复发送",
+        }
 
     display_path = image_path
     image_reference = _to_image_reference(image_path)
 
     message = [{"type": "image", "data": {"file": image_reference}}]
     try:
-        if target_type == "group":
+        callback_id = getattr(invocation_context, "background_event_id", "")
+        if callback_id:
+            # 同一回调明确选中的同一图片复用回执；未知 ACK 不因模型再次调用而重发。
+            import hashlib
+
+            if engine_context is None:
+                raise RuntimeError("后台回调缺少带回执的发送上下文")
+            image_key = hashlib.sha256(image_reference.encode("utf-8")).hexdigest()[:20]
+            accepted = await engine_context.dispatch_proactive_message(
+                group_id=invocation_context.group_id,
+                text="",
+                adapter_type=invocation_context.adapter_type,
+                event_id=f"{callback_id}:image:{image_key}",
+                image_path=image_path,
+            )
+            if accepted is not True:
+                return {
+                    "success": False,
+                    "error": "图片未确认送达；可能被拒收或回执未知，不要声称发送成功",
+                    "summary": "图片未确认送达",
+                }
+            result = {}
+        elif target_type == "group":
             result = await adapter.send_group_msg(target_id, message)
         else:
             result = await adapter.send_private_msg(target_id, message)

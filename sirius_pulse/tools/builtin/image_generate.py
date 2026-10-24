@@ -5,11 +5,11 @@
 注册的轮询任务完成：
 
 1. 调 ``ctx.generate_image`` 生成图片，把字节落到本地文件；
-2. 跑一个"后台任务完成"回合，提示词推荐模型用 ``group_file_exec`` 发图到原群；
-3. 把该回合的正文用 ``ctx.dispatch_proactive_message`` 发到原群。
+2. 把产物路径或错误回调给 Agent，恢复内部工具回合；
+3. Agent 自己决定保留、继续加工或显式发送，框架不自动发图或通知文案。
 
 图片始终以本地绝对路径交付，不塞进模型上下文：大图会挤爆 token，模型也没法把字节
-直接发给聊天平台。这就是为什么通知回合只拿到一个路径，而不是图片本身。
+直接发给聊天平台。这就是为什么结果回调只拿到一个路径，而不是图片本身。
 """
 
 from __future__ import annotations
@@ -44,15 +44,11 @@ _MAX_REFERENCE_IMAGES = 4
 _MAX_REFERENCE_BYTES = 20 * 1024 * 1024
 _REFERENCE_DOWNLOAD_TIMEOUT_SECONDS = 30.0
 
-_NOTIFY_MAX_ATTEMPTS = 3
-# 通知回合失败后只剩"仅发图"这一条降级路径。它若一直失败（适配器掉线、群不可达），
-# 不能无限重试：队首任务会永远卡在待通知，后面的任务全被饿死。
-_FALLBACK_MAX_ATTEMPTS = 10
+_CALLBACK_MAX_ATTEMPTS = 3
 _REQUEST_SUMMARY_MAX_CHARS = 500
 _ERROR_MAX_CHARS = 1_000
 
-# 队列很长时只裁掉最早的"已通知"任务。未完成/待通知的一条都不能丢，否则那张图
-# 就永远没人知道它画好了。
+# 队列很长时只裁掉最早的投递终态任务；仍可执行/重试的任务不能丢。
 _MAX_RETAINED_JOBS = 100
 
 _PENDING_STATUSES = {"pending", "running"}
@@ -88,8 +84,8 @@ TOOL_META = {
         "你自己的三视图/立绘路径见 system prompt 的「你自己的形象参考图」，"
         "要画自己时可以直接填进来。"
         "生图很慢（可能要几十秒到几分钟），调用后立刻返回“已提交”，不会阻塞当前回复。"
-        "完成时会收到一条结果通知，里面给出图片的绝对路径；"
-        "届时用 group_file_exec（action=“image”）把图发到当前聊天。"
+        "完成后只把产物路径回调给你，不会自动发到聊天。"
+        "由你决定保留、继续加工或用 group_file_exec 发送选中的图片；中间产物不必逐张通知。"
         "不要重复提交同一个请求，也不要在完成通知之前假装已经画好。"
     ),
     "version": "1.0.0",
@@ -219,8 +215,11 @@ async def run(
             "adapter_type": adapter_type,
             "caller_is_developer": caller_is_developer,
             "created_at": _now_iso(),
+            "delivery_version": 3,
+            "self_initiated": bool(invocation_context and invocation_context.self_initiated),
+            "callback_state": "pending",
+            "callback_attempts": 0,
             "notified": False,
-            "notify_attempts": 0,
         }
     )
     _save_jobs(data_store, jobs)
@@ -232,9 +231,8 @@ async def run(
         "text_blocks": [
             (
                 f"已提交后台生图任务（{job_id}）。图片生成需要一点时间，完成后会收到结果通知；"
-                "通知里会给出图片的绝对路径，届时用 group_file_exec"
-                '（action="image"，image_path=通知中的绝对路径）把图发到当前聊天，'
-                "再用一两句话自然地说一声。现在不要重复提交同一个请求，也不要假装已经画好。"
+                "这是给你的内部回调，不会自动发到聊天；是否发送、发哪些、何时发送由你决定。"
+                "现在不要重复提交同一个请求，也不要假装已经画好。"
             )
         ],
         "data": {"job_id": job_id, "status": "pending"},
@@ -272,7 +270,7 @@ async def _process_once(
     *,
     recover_interrupted: bool = True,
 ) -> None:
-    """跑一次轮询：最多生成一张图、最多发一条完成通知。
+    """跑一次轮询：最多生成一张图、最多处理一个内部结果回调。
 
     单 tick 只做一张图，避免把人/账号的并发生图额度打满；处理时间再长也只是
     这个 tick 变长，``BackgroundTaskSpec.run_loop`` 会在它返回后再等下一个间隔。
@@ -293,7 +291,7 @@ async def _process_once(
         await _notify_one(ctx, data_store)
     except asyncio.CancelledError:
         # 关停时正常向上抛，让 run_loop 结束这个任务；running 状态留在磁盘上，
-        # 下次进程启动的第一次 tick 会把它恢复成 failed 并补发通知。
+        # 下次进程启动的第一次 tick 会把它恢复成 failed 并回调 Agent。
         raise
     except Exception:
         logger.exception("生图后台任务本轮处理失败")
@@ -309,7 +307,7 @@ async def _generate_one(ctx: Any, data_store: Any) -> None:
     job_id = str(job.get("id", ""))
     # 先落盘 running 再开始慢操作：进程若在此期间被杀，下次启动能凭这个状态认出
     # 任务被中断，而不是永远停在队列里。
-    _update_job(data_store, job_id, status="running", started_at=_now_iso())
+    _update_job(data_store, job_id, status="running", started_at=_now_iso(), delivery_version=3)
 
     timeout = _config_int(
         data_store,
@@ -372,26 +370,21 @@ async def _generate_image_for_job(
 
 
 async def _notify_one(ctx: Any, data_store: Any) -> None:
-    """取最早一个已生成但未通知的任务，交付到原聊天。"""
+    """只回调 Agent；繁忙会话让位，不阻塞其它会话的已完成任务。"""
     _reload_store(data_store)
-    job = _first_unnotified_finished(_load_jobs(data_store))
-    if job is None:
-        return
-
-    job_id = str(job.get("id", ""))
-    group_id = str(job.get("group_id") or "").strip()
-    if not group_id:
-        # 没有会话上下文就没有可送达的地方（例如测试直接调用）。图片路径留在
-        # 任务里供排查；标记已通知只是让队列能继续往前走，不代表有人看到过。
-        _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-        logger.info(
-            "生图任务 %s 没有群上下文，跳过通知；图片: %s",
-            job_id,
-            job.get("image_path", ""),
-        )
-        return
-
-    await _deliver_notification(ctx, data_store, job, group_id)
+    for job in _load_jobs(data_store):
+        if (
+            _delivery_finished(job)
+            or job.get("status") not in _FINISHED_STATUSES
+            or job.get("callback_state") == "running"
+        ):
+            continue
+        group_id = str(job.get("group_id") or "").strip()
+        if not group_id:
+            _update_job(data_store, str(job.get("id", "")), callback_state="skipped")
+            continue
+        if await _deliver_notification(ctx, data_store, job, group_id):
+            return
 
 
 async def _deliver_notification(
@@ -399,184 +392,83 @@ async def _deliver_notification(
     data_store: Any,
     job: dict[str, Any],
     group_id: str,
-) -> None:
-    """跑通知回合并把模型正文投递到原群；失败时最多重试三次后降级发图。"""
+) -> bool:
+    """持久化回调边界；Agent 已执行工具后绝不整轮重放。"""
     job_id = str(job.get("id", ""))
-    attempts = _int_value(job.get("notify_attempts", 0))
-    if job.get("notify_turn_done"):
-        # 回执回合只跑一次：它跑完后图通常已经由模型用 group_file_exec 发进群，
-        # 再跑一遍就会把同一张图重新发一次（线上就是这样连发好几张的）。
-        await _redeliver_notification(ctx, data_store, job, group_id, attempts)
-        return
-
-    if attempts >= _NOTIFY_MAX_ATTEMPTS:
-        await _deliver_image_only(ctx, data_store, job, group_id)
-        return
-
+    attempts = _int_value(job.get("callback_attempts"))
+    if attempts >= _CALLBACK_MAX_ATTEMPTS:
+        _update_job(data_store, job_id, callback_state="failed")
+        return True
     succeeded = job.get("status") == "done"
-    image_path = str(job.get("image_path") or "")
-    error = str(job.get("error") or "")
-    if succeeded:
-        deliver_hint = (
-            '先调用 group_file_exec，参数 action="image"、'
-            f'image_path="{image_path}"，把这张图发到当前聊天，'
-            "再用你自己的口吻说一两句，不要重复解释整个请求。"
-        )
+    if job.get("image_sent"):
+        hint = "旧版本已确认这张图片发送成功，不要再次发送；旧缓存通知不会自动补发。"
+    elif _int_value(job.get("delivery_version")) < 3:
+        hint = "旧版本产物的对外投递状态不能确认，不要盲目重发；先核对原任务和发送记录。"
     else:
-        deliver_hint = "如实告诉对方这次没画成，不要假装成功。"
+        hint = "框架未向聊天发送产物或结果通知；由你决定如何继续，不必逐张发图。"
+    if _update_job(data_store, job_id, callback_state="running", callback_unsafe=False) is None:
+        return True
+    unsafe = False
+
+    def before_tool() -> None:
+        nonlocal unsafe
+        # 先落盘再允许动作，磁盘写失败时不能继续执行有副作用的工具。
+        if _update_job(data_store, job_id, callback_unsafe=True) is None:
+            raise RuntimeError("生图任务丢失，停止回调工具执行")
+        unsafe = True
 
     try:
-        payload = await ctx.generate_background_result_message(
+        payload = await ctx.handle_background_tool_result(
+            callback_id=f"image_generate:{job_id}",
             tool_name=TOOL_META["name"],
             outcome="success" if succeeded else "error",
             request_summary=str(job.get("prompt") or "")[:_REQUEST_SUMMARY_MAX_CHARS],
-            deliver_hint=deliver_hint,
-            artifact_path=image_path if succeeded else "",
-            error="" if succeeded else error,
+            deliver_hint=hint,
+            artifact_path=str(job.get("image_path") or "") if succeeded else "",
+            error="" if succeeded else str(job.get("error") or ""),
             group_id=group_id,
             user_id=str(job.get("user_id") or ""),
             user_name=str(job.get("user_name") or ""),
             adapter_type=str(job.get("adapter_type") or ""),
             caller_is_developer=bool(job.get("caller_is_developer", False)),
+            self_initiated=bool(job.get("self_initiated", False)),
+            artifact_delivery_blocked=bool(
+                succeeded and (job.get("image_sent") or _int_value(job.get("delivery_version")) < 3)
+            ),
+            before_tool=before_tool,
         )
+        if isinstance(payload, dict) and payload.get("status") == "deferred":
+            _update_job(data_store, job_id, callback_state="pending")
+            return False
+        if not isinstance(payload, dict) or payload.get("status") != "completed":
+            raise ValueError("后台回调未确认处理完成")
     except asyncio.CancelledError:
+        _update_job(data_store, job_id, callback_state="uncertain" if unsafe else "pending")
         raise
-    except Exception:
-        _update_job(data_store, job_id, notify_attempts=attempts + 1)
-        logger.warning("生图完成通知回合失败（第 %d 次）: %s", attempts + 1, job_id, exc_info=True)
-        return
-
-    text = str(payload.get("text") or "").strip() if isinstance(payload, dict) else ""
-    image_sent = bool(payload.get("image_sent")) if isinstance(payload, dict) else False
-    # 先落盘再投递：正文投递失败时只能补投这篇正文，不能再跑一个会重新发图的回合。
-    job = _update_job(
+    except Exception as exc:
+        attempts += 1
+        state = (
+            "uncertain" if unsafe else "failed" if attempts >= _CALLBACK_MAX_ATTEMPTS else "pending"
+        )
+        _update_job(
+            data_store,
+            job_id,
+            callback_state=state,
+            callback_attempts=attempts,
+            callback_error=str(exc)[:_ERROR_MAX_CHARS],
+        )
+        logger.warning("生图内部回调失败 (%s, %s): %s", job_id, state, exc)
+        return True
+    # notified 仅表示 Agent 已处理结果，不是图片或文案已送达聊天。
+    _update_job(
         data_store,
         job_id,
-        notify_turn_done=True,
-        result_text=text,
-        image_sent=image_sent,
-    ) or {**job, "notify_turn_done": True, "result_text": text, "image_sent": image_sent}
-    if succeeded and image_path and not image_sent:
-        # 模型回了话却没按提示把图发出去（漏调工具、路径写错）。不能只把图留在
-        # 磁盘上：这里由框架把文案和图片一起补发，用户至少能收到图。
-        if await _dispatch(ctx, job, group_id, text=text, image_path=image_path):
-            _update_job(data_store, job_id, notified=True, fallback=True, notified_at=_now_iso())
-            logger.info("通知回合没有发出图片，已由框架补发: %s", job_id)
-            return
-        _update_job(data_store, job_id, notify_attempts=attempts + 1)
-        logger.warning("生图结果补发失败（第 %d 次）: %s", attempts + 1, job_id)
-        return
-
-    if not text:
-        # 模型这一回合没留下正文（可能主动选择沉默），没有可投递的内容。图片已经
-        # 由回执回合发出（image_sent）或本就落盘，不能让任务永远卡在待通知状态。
-        _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-        return
-
-    if await _dispatch(ctx, job, group_id, text=text):
-        _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-        return
-    _update_job(data_store, job_id, notify_attempts=attempts + 1)
-    logger.warning("生图结果通知投递失败（第 %d 次）: %s", attempts + 1, job_id)
-
-
-async def _redeliver_notification(
-    ctx: Any,
-    data_store: Any,
-    job: dict[str, Any],
-    group_id: str,
-    attempts: int,
-) -> None:
-    """重投递回执回合已产出的正文，绝不重跑回合（重跑会让模型再发一次图）。"""
-    job_id = str(job.get("id", ""))
-    text = str(job.get("result_text") or "").strip()
-    image_sent = bool(job.get("image_sent", False))
-    image_path = str(job.get("image_path") or "")
-
-    if attempts >= _NOTIFY_MAX_ATTEMPTS:
-        if image_sent or not image_path:
-            # 图已经在回执回合发出去了，降级"仅发图"只会再发一张同样的图。
-            _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-            logger.warning("生图结果通知重试已用尽，图片已在回执回合发出: %s", job_id)
-            return
-        await _deliver_image_only(ctx, data_store, job, group_id)
-        return
-
-    if image_sent:
-        if not text:
-            _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-            return
-        if await _dispatch(ctx, job, group_id, text=text):
-            _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-            return
-        _update_job(data_store, job_id, notify_attempts=attempts + 1)
-        logger.warning("生图结果通知投递失败（第 %d 次）: %s", attempts + 1, job_id)
-        return
-
-    # 模型没把图发出去：正文和图片一起补发；失败重试也只重发这一份。
-    if not text and not image_path:
-        _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-        return
-    if await _dispatch(ctx, job, group_id, text=text, image_path=image_path):
-        _update_job(data_store, job_id, notified=True, fallback=True, notified_at=_now_iso())
-        return
-    _update_job(data_store, job_id, notify_attempts=attempts + 1)
-    logger.warning("生图结果补发失败（第 %d 次）: %s", attempts + 1, job_id)
-
-
-async def _deliver_image_only(
-    ctx: Any,
-    data_store: Any,
-    job: dict[str, Any],
-    group_id: str,
-) -> None:
-    """通知回合连续失败后的降级：只把图片送到原群，不编造人格文案。"""
-    job_id = str(job.get("id", ""))
-    image_path = str(job.get("image_path") or "")
-    if not image_path:
-        # 生成失败的任务没有图片可发，降级也就没有意义；记一条日志收尾，避免每
-        # 个 tick 都重试同一条通知。
-        _update_job(data_store, job_id, notified=True, notified_at=_now_iso())
-        logger.warning("生图任务 %s 生成失败且无图片，放弃完成通知: %s", job_id, job.get("error", ""))
-        return
-    if await _dispatch(ctx, job, group_id, text="", image_path=image_path):
-        _update_job(data_store, job_id, notified=True, fallback=True, notified_at=_now_iso())
-        logger.info("生图结果已降级为仅发图: %s", job_id)
-        return
-    attempts = _int_value(job.get("notify_attempts", 0)) + 1
-    _update_job(data_store, job_id, notify_attempts=attempts)
-    if attempts >= _FALLBACK_MAX_ATTEMPTS:
-        # 队首任务一直发不出去会饿死后面所有已完成任务的通知；写一条错误日志后
-        # 放弃它，让队列能继续往前走。
-        _update_job(data_store, job_id, notified=True, fallback_failed=True, notified_at=_now_iso())
-        logger.error("生图结果降级发图连续失败 %d 次，放弃通知: %s", attempts, job_id)
-        return
-    logger.warning("生图结果降级发图仍失败（第 %d 次）: %s", attempts, job_id)
-
-
-async def _dispatch(
-    ctx: Any,
-    job: dict[str, Any],
-    group_id: str,
-    *,
-    text: str,
-    image_path: str = "",
-) -> bool:
-    """通过统一主动消息管线投递；异常按投递失败处理，不打断后台循环。"""
-    try:
-        accepted = await ctx.dispatch_proactive_message(
-            group_id=group_id,
-            text=text,
-            adapter_type=str(job.get("adapter_type") or ""),
-            event_id=f"image_generate:{job.get('id', '')}",
-            image_path=image_path,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.warning("生图结果投递异常: %s", job.get("id"), exc_info=True)
-        return False
-    return bool(accepted)
+        callback_state="completed",
+        notified=True,
+        notified_at=_now_iso(),
+        callback_result=str(payload.get("text") or ""),
+    )
+    return True
 
 
 def _normalize_references(raw: Any) -> list[str]:
@@ -722,18 +614,24 @@ def _extension_for_mime(mime_type: str) -> str:
 
 
 def _recover_interrupted_jobs(jobs: list[dict[str, Any]]) -> bool:
-    """把上个进程留下的 running 任务标成失败，并重新纳入待通知。"""
+    """生成中断不重新扣费；回调中断按已落盘的副作用边界恢复。"""
     changed = False
     for job in jobs:
-        if job.get("status") != "running":
-            continue
-        job["status"] = "failed"
-        job["error"] = "进程重启，任务中断"
-        job["finished_at"] = _now_iso()
-        job["notified"] = False
-        job["notify_attempts"] = 0
-        changed = True
-        logger.warning("生图任务 %s 因进程重启被标记失败", job.get("id"))
+        if job.get("status") == "running":
+            job.update(
+                status="failed",
+                error="进程重启，任务中断",
+                finished_at=_now_iso(),
+                notified=False,
+                callback_state="pending",
+                callback_attempts=0,
+            )
+            changed = True
+            logger.warning("生图任务 %s 因进程重启被标记失败", job.get("id"))
+        elif job.get("callback_state") == "running":
+            job["callback_state"] = "uncertain" if job.get("callback_unsafe") else "pending"
+            changed = True
+            logger.warning("恢复生图回调 %s: %s", job.get("id"), job["callback_state"])
     return changed
 
 
@@ -783,14 +681,24 @@ def _update_job(data_store: Any, job_id: str, **fields: Any) -> dict[str, Any] |
     return None
 
 
+def _delivery_finished(job: dict[str, Any]) -> bool:
+    """旧已通知任务不重开；新终态只描述内部回调，不暗示平台送达。"""
+    return bool(job.get("notified")) or job.get("callback_state") in {
+        "completed",
+        "failed",
+        "uncertain",
+        "skipped",
+    }
+
+
 def _trim_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """任务很多时按顺序丢掉最早的已通知任务，未通知的一条都不删。"""
+    """只裁掉最早的投递终态任务，尚可重试的任务不丢弃。"""
     overflow = len(jobs) - _MAX_RETAINED_JOBS
     if overflow <= 0:
         return jobs
     kept: list[dict[str, Any]] = []
     for job in jobs:
-        if overflow > 0 and job.get("notified"):
+        if overflow > 0 and _delivery_finished(job):
             overflow -= 1
             continue
         kept.append(job)
@@ -805,14 +713,6 @@ def _first_with_status(jobs: list[dict[str, Any]], status: str) -> dict[str, Any
     for job in jobs:
         if job.get("status") == status:
             return job
-    return None
-
-
-def _first_unnotified_finished(jobs: list[dict[str, Any]]) -> dict[str, Any] | None:
-    for job in jobs:
-        if job.get("notified") or job.get("status") not in _FINISHED_STATUSES:
-            continue
-        return job
     return None
 
 

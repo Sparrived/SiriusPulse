@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
 from sirius_pulse.config.models import ConfigParameter
-from sirius_pulse.extension_runtime import BackgroundTaskSpec
+
+# Public compatibility export used by tools/__init__ and built-in task factories.
+from sirius_pulse.extension_runtime import BackgroundTaskSpec as BackgroundTaskSpec
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 
 # Pre-compiled regex for tool-chain template placeholders (${tool_name} / ${tool_name.field})
@@ -445,9 +447,10 @@ class ToolEngineContext(Protocol):
         """后台生图：返回 ``{"image_bytes": bytes, "mime_type": str}``。"""
         ...
 
-    async def generate_background_result_message(
+    async def handle_background_tool_result(
         self,
         *,
+        callback_id: str,
         tool_name: str,
         outcome: str,
         request_summary: str = "",
@@ -459,12 +462,13 @@ class ToolEngineContext(Protocol):
         user_name: str = "",
         adapter_type: str = "",
         caller_is_developer: bool = False,
+        self_initiated: bool = False,
+        artifact_delivery_blocked: bool = False,
+        before_tool: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
-        """为完成的后台工具跑一个通知回合，返回待投递的消息 payload。
+        """把结果交回 Agent 的内部工具回合，不自动向聊天发送产物或正文。
 
-        ``outcome`` 取 ``"success"`` / ``"error"``；``deliver_hint`` 是给模型的
-        交付指引（例如用 ``group_file_exec`` 把图片发到原聊天）。返回值额外带
-        ``image_sent``：这一回合里模型是否真的用 ``group_file_exec`` 发出了图片。
+        返回 status=completed/deferred；before_tool 在任何工具执行前保存重放边界。
         """
         ...
 
@@ -487,8 +491,9 @@ class ToolEngineContext(Protocol):
         reply_references: list[dict[str, Any]] | None = None,
         sticker_names: list[str] | None = None,
         poke_user_ids: list[str] | None = None,
+        record_delivery: bool = False,
     ) -> bool:
-        """Deliver a generated proactive message through the platform event bus."""
+        """Return True only for confirmed delivery; optionally record ACKed text in history."""
         ...
 
     def get_active_groups(self) -> list[str]:
@@ -634,6 +639,10 @@ class ToolInvocationContext:
     """
     adapter_type: str = ""
     """Platform adapter type this call arrived through (e.g. ``napcat``)."""
+    background_event_id: str = ""
+    """Stable internal callback identity, used only for explicitly selected delivery."""
+    blocked_image_paths: tuple[str, ...] = ()
+    """Legacy artifacts already sent or ambiguous; never resend them from this callback."""
 
     @property
     def chat_context(self) -> dict[str, Any]:

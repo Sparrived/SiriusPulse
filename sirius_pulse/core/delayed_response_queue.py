@@ -65,6 +65,104 @@ class DelayedResponseQueue:
         # 旧实现只剩一行 warning，消息就永久消失了。这里额外留一份引用，
         # 让失败可以回队、成功可以确认丢弃。
         self._in_flight: dict[str, DelayedResponseItem] = {}
+        # Batch payloads live with the existing queue, never in a second outbox.
+        self._deliveries: dict[str, dict[str, Any]] = {}
+
+    def mark_generation_started(self, item_ids: Iterable[str]) -> None:
+        ids = list(item_ids)
+        state = {"item_ids": ids, "state": "generating", "replay_safe": True}
+        for item_id in ids:
+            self._deliveries[item_id] = state
+
+    def mark_generation_unsafe(self, item_ids: Iterable[str]) -> None:
+        """Fence tool/partial-output side effects before they can escape."""
+        for item_id in item_ids:
+            state = self._deliveries.get(item_id)
+            if state is not None:
+                state["replay_safe"] = False
+
+    def generation_retry_safe(self, item_id: str) -> bool:
+        state = self._deliveries.get(item_id, {})
+        return state.get("replay_safe", True) is True and state.get("state") != "sending"
+
+    def stage_delivery(self, item_ids: Iterable[str], results: list[dict[str, Any]]) -> None:
+        ids = list(item_ids)
+        if not ids:
+            return
+        if not results:
+            results.append({"item_id": ids[0], "reply": "", "delivery_status": "no_output"})
+        state = {"item_ids": ids, "state": "ready", "results": results}
+        for result in results:
+            result["delivery_item_ids"] = ids
+        for item_id in ids:
+            self._deliveries[item_id] = state
+
+    def take_prepared_delivery(
+        self,
+        group_id: str,
+        *,
+        item_id: str | None = None,
+        adapter_type: str | None = None,
+        adapter_route_id: str | None = None,
+    ) -> list[dict[str, Any]] | None:
+        """Take one retry batch without merging new input or rerunning tools."""
+        for item in self.get_pending(
+            group_id, adapter_type=adapter_type, adapter_route_id=adapter_route_id
+        ):
+            state = self._deliveries.get(item.item_id, {})
+            if item_id is not None and item.item_id != item_id:
+                continue
+            if "results" not in state:
+                continue
+            ids = set(state["item_ids"])
+            remaining = []
+            for queued in self._queues.get(group_id, []):
+                if queued.item_id in ids:
+                    queued.status = "triggered"
+                    self._in_flight[queued.item_id] = queued
+                else:
+                    remaining.append(queued)
+            self._queues[group_id] = remaining
+            return state["results"]
+        return None
+
+    def begin_delivery(self, item_ids: Iterable[str]) -> None:
+        for item_id in item_ids:
+            state = self._deliveries.get(item_id)
+            if state is not None:
+                state["state"] = "sending"
+
+    def acknowledge_delivery_part(self, item_ids: Iterable[str]) -> None:
+        for item_id in item_ids:
+            state = self._deliveries.get(item_id)
+            if state is not None:
+                state["state"] = "ready" if "results" in state else "generating"
+
+    def fail_delivery(self, item_ids: Iterable[str], *, uncertain: bool = False) -> None:
+        ids = list(item_ids)
+        if uncertain:
+            for item_id in ids:
+                item = self._in_flight.get(item_id)
+                if item is not None:
+                    item.status = "uncertain"
+                state = self._deliveries.get(item_id)
+                if state is not None:
+                    state["state"] = "uncertain"
+            logger.error("延迟回复结果未确认，禁止自动重放: %s", ids)
+        else:
+            self.acknowledge_delivery_part(ids)
+            self.requeue_in_flight(ids)
+
+    def delivery_status(self, item_ids: Iterable[str]) -> str:
+        states = {self._deliveries.get(item_id, {}).get("state") for item_id in item_ids}
+        if "uncertain" in states:
+            return "uncertain"
+        if "failed" in states:
+            return "failed"
+        return "pending"
+
+    def _has_payload(self, item_id: str) -> bool:
+        return "results" in self._deliveries.get(item_id, {})
 
     @staticmethod
     def _matches_source(
@@ -123,12 +221,16 @@ class DelayedResponseQueue:
         # shared item to a zero-second window.
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if item.status == "pending" and self._matches_source(
-                item,
-                adapter_type=adapter_type,
-                # Enqueue never merges an unrouted legacy source into a
-                # concrete same-type adapter instance partition.
-                adapter_route_id=str(adapter_route_id or ""),
+            if (
+                item.status == "pending"
+                and not self._has_payload(item.item_id)
+                and self._matches_source(
+                    item,
+                    adapter_type=adapter_type,
+                    # Enqueue never merges an unrouted legacy source into a
+                    # concrete same-type adapter instance partition.
+                    adapter_route_id=str(adapter_route_id or ""),
+                )
             ):
                 item.message_content += f"\n{tagged}"
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
@@ -206,6 +308,7 @@ class DelayedResponseQueue:
         rhythm: RhythmAnalysis | None = None,
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
+        item_id: str | None = None,
     ) -> list[DelayedResponseItem]:
         """Process queue for a group based on recent conversation.
 
@@ -234,6 +337,9 @@ class DelayedResponseQueue:
 
         for item in clean_queue:
             if item.status != "pending":
+                continue
+            if self._has_payload(item.item_id) or (item_id is not None and item.item_id != item_id):
+                remaining.append(item)
                 continue
             # A group can be served by more than one adapter instance/type.
             # A delivery event must only destructively consume the partition
@@ -343,12 +449,21 @@ class DelayedResponseQueue:
             item = self._in_flight.pop(str(item_id), None)
             if item is None:
                 continue
+            if item.status in {"failed", "uncertain"}:
+                self._in_flight[item_id] = item
+                continue
             if self.requeue_after_failure(
                 item,
                 max_retries=max_retries,
                 reset_window_seconds=reset_window_seconds,
             ):
                 requeued.append(item.item_id)
+                if not self._has_payload(item.item_id):
+                    self._deliveries.pop(item.item_id, None)
+            else:
+                item.status = "failed"
+                self._in_flight[item.item_id] = item
+                self._deliveries.setdefault(item.item_id, {})["state"] = "failed"
         return requeued
 
     def commit_in_flight(self, item_ids: Iterable[str]) -> None:
@@ -357,26 +472,41 @@ class DelayedResponseQueue:
             item = self._in_flight.pop(str(item_id), None)
             if item is not None:
                 item.status = "sent"
+            self._deliveries.pop(str(item_id), None)
 
-    def in_flight_ids(self, group_id: str | None = None) -> list[str]:
-        """列出正在生成/投递中的条目 id，可按群过滤。"""
+    def in_flight_ids(
+        self,
+        group_id: str | None = None,
+        *,
+        adapter_type: str | None = None,
+        adapter_route_id: str | None = None,
+    ) -> list[str]:
+        """列出正在生成/投递中的条目 id，可按源路由过滤。"""
         return [
             item_id
             for item_id, item in self._in_flight.items()
-            if group_id is None or item.group_id == group_id
+            if item.status == "triggered"
+            and (group_id is None or item.group_id == group_id)
+            and self._matches_source(
+                item,
+                adapter_type=adapter_type,
+                adapter_route_id=adapter_route_id,
+                query_all_when_unspecified=True,
+            )
         ]
 
     def snapshot(self) -> list[dict[str, Any]]:
-        """导出所有待触发条目，用于进程重启后恢复。
-
-        只导出 ``pending`` 项：``triggered`` 表示已经被生成流程取走，
-        ``cancelled`` 已作废，两者都不该在重启后复活。
-        """
-        return [
-            item.to_dict()
+        """Persist input, prepared payload and the pre-I/O fence together."""
+        items = {
+            item.item_id: item
             for queue in self._queues.values()
             for item in queue
             if item.status == "pending"
+        }
+        items.update(self._in_flight)
+        return [
+            {**item.to_dict(), "delivery": self._deliveries.get(item.item_id, {})}
+            for item in items.values()
         ]
 
     def restore(self, payload: list[dict[str, Any]]) -> int:
@@ -389,6 +519,7 @@ class DelayedResponseQueue:
         为已过期（或反之）的错位。这里统一按「现在就该重新评估」处理。
         """
         restored = 0
+        batches: dict[tuple[Any, ...], dict[str, Any]] = {}
         for raw in payload or []:
             if not isinstance(raw, dict):
                 continue
@@ -397,11 +528,45 @@ class DelayedResponseQueue:
             except Exception as exc:  # 恢复期不能让单条坏数据炸掉整轮启动
                 logger.warning("延迟队列条目恢复失败，已跳过: %s", exc)
                 continue
-            if not item.item_id or not item.group_id or item.status != "pending":
+            if (
+                not item.item_id
+                or not item.group_id
+                or item.status not in {"pending", "triggered", "uncertain", "failed"}
+            ):
                 continue
-            item.window_seconds = 0.0
-            item.enqueue_time = datetime.now(timezone.utc).isoformat()
-            self._queues.setdefault(item.group_id, []).append(item)
+            delivery = raw.get("delivery")
+            if isinstance(delivery, dict) and delivery:
+                ids = delivery.get("item_ids", [item.item_id])
+                if (
+                    not isinstance(ids, list)
+                    or not all(isinstance(value, str) and value for value in ids)
+                    or item.item_id not in ids
+                ):
+                    delivery = {"item_ids": [item.item_id], "state": "uncertain"}
+                    ids = [item.item_id]
+                batch_key = (item.group_id, item.adapter_type, item.adapter_route_id, *ids)
+                delivery = batches.setdefault(batch_key, delivery)
+                self._deliveries[item.item_id] = delivery
+                state = delivery.get("state")
+                if state == "sending" or (
+                    state == "generating" and not delivery.get("replay_safe", True)
+                ):
+                    delivery["state"] = "uncertain"
+                    item.status = "uncertain"
+                elif state in {"uncertain", "failed"}:
+                    item.status = state
+                else:
+                    item.status = "pending"
+            elif item.status == "triggered":
+                # Older snapshots have no proof that tool execution never began.
+                item.status = "uncertain"
+            if item.status in {"uncertain", "failed"}:
+                self._in_flight[item.item_id] = item
+                logger.error("恢复延迟条目 %s: %s，禁止自动重放", item.item_id, item.status)
+            else:
+                item.window_seconds = 0.0
+                item.enqueue_time = datetime.now(timezone.utc).isoformat()
+                self._queues.setdefault(item.group_id, []).append(item)
             restored += 1
         if restored:
             logger.info("已从磁盘恢复 %d 条延迟队列条目", restored)
@@ -464,10 +629,14 @@ class DelayedResponseQueue:
         """Shorten the wait window for one source-adapter pending item."""
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if item.status != "pending" or not self._matches_source(
-                item,
-                adapter_type=adapter_type,
-                adapter_route_id=str(adapter_route_id or ""),
+            if (
+                item.status != "pending"
+                or self._has_payload(item.item_id)
+                or not self._matches_source(
+                    item,
+                    adapter_type=adapter_type,
+                    adapter_route_id=str(adapter_route_id or ""),
+                )
             ):
                 continue
             item.window_seconds = min(item.window_seconds, max(0.0, max_window_seconds))
@@ -508,10 +677,14 @@ class DelayedResponseQueue:
         """
         queue = self._queues.get(group_id, [])
         for item in queue:
-            if item.status != "pending" or not self._matches_source(
-                item,
-                adapter_type=adapter_type,
-                adapter_route_id=str(adapter_route_id or ""),
+            if (
+                item.status != "pending"
+                or self._has_payload(item.item_id)
+                or not self._matches_source(
+                    item,
+                    adapter_type=adapter_type,
+                    adapter_route_id=str(adapter_route_id or ""),
+                )
             ):
                 continue
             # 使用统一的 tag_message 生成 <message> 标签
@@ -673,6 +846,13 @@ class DelayedResponseQueue:
                 pace_mult = 1.0
             base *= pace_mult
         return max(3.0, base)  # Minimum 3-second gap
+
+
+def persist_delayed_queue(engine: Any) -> None:
+    """Save delivery boundaries without flushing unrelated engine state."""
+    store = getattr(engine, "_state_store", None)
+    if store is not None:
+        store.save_delayed_queue(engine.delayed_queue.snapshot())
 
 
 def _parse_iso(ts: str) -> datetime | None:

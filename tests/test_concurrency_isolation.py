@@ -355,3 +355,75 @@ def test_current_adapter_type_falls_back_to_the_engine_default():
 
     assert asyncio.run(inbound()) == "other_platform"
     assert engine._default_adapter_type == "other_platform"
+
+
+@pytest.mark.asyncio
+async def test_delayed_turn_and_background_callback_share_ownership_until_tools_finish():
+    """A completed LLM call must not release the chat while its tool is running."""
+    engine = _bare_engine()
+    tool_started = asyncio.Event()
+    release_tool = asyncio.Event()
+    callback_waiting = asyncio.Event()
+    order: list[str] = []
+
+    async def delayed(group_id, on_partial_reply, **kwargs):
+        assert kwargs == {"adapter_type": "napcat", "adapter_route_id": "r1", "item_id": "i1"}
+        order.append("model_done")
+        tool_started.set()
+        await release_tool.wait()
+        order.append("tool_done")
+        return [{"reply": "done"}]
+
+    async def callback():
+        callback_waiting.set()
+        async with engine.get_agent_turn_lock("group-1"):
+            order.append("callback")
+
+    engine._bg_tasks_mgr = SimpleNamespace(tick_delayed_queue=delayed)
+    pending = asyncio.create_task(
+        engine.tick_delayed_queue(
+            "group-1", adapter_type="napcat", adapter_route_id="r1", item_id="i1"
+        )
+    )
+    await asyncio.wait_for(tool_started.wait(), timeout=1)
+    waiting = asyncio.create_task(callback())
+    try:
+        await asyncio.wait_for(callback_waiting.wait(), timeout=1)
+        assert order == ["model_done"]
+        assert engine.get_agent_turn_lock(" group-1 ") is engine.get_agent_turn_lock("group-1")
+    finally:
+        release_tool.set()
+        await asyncio.wait_for(asyncio.gather(pending, waiting), timeout=1)
+    assert order == ["model_done", "tool_done", "callback"]
+    assert pending.result() == [{"reply": "done"}]
+    assert not engine.get_agent_turn_lock("group-1").locked()
+
+
+@pytest.mark.asyncio
+async def test_busy_callback_delays_its_group_but_not_other_group_generation():
+    """Same-chat output waits for callback ownership; unrelated chats can proceed."""
+    engine = _bare_engine()
+    generated: list[str] = []
+    same_group_waiting = asyncio.Event()
+
+    async def delayed(group_id, on_partial_reply, **kwargs):
+        generated.append(group_id)
+        return [{"reply": group_id}]
+
+    async def same_group():
+        same_group_waiting.set()
+        return await engine.tick_delayed_queue("group-1")
+
+    engine._bg_tasks_mgr = SimpleNamespace(tick_delayed_queue=delayed)
+    waiting = None
+    try:
+        async with engine.get_agent_turn_lock("group-1"):
+            waiting = asyncio.create_task(same_group())
+            await asyncio.wait_for(same_group_waiting.wait(), timeout=1)
+            result = await asyncio.wait_for(engine.tick_delayed_queue("group-2"), timeout=1)
+            assert result == [{"reply": "group-2"}]
+            assert generated == ["group-2"]
+    finally:
+        if waiting is not None:
+            await asyncio.wait_for(waiting, timeout=1)
+    assert generated == ["group-2", "group-1"]

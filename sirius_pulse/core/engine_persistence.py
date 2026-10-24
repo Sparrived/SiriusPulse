@@ -301,6 +301,7 @@ class EnginePersistence:
             ],
         )
         engine._state_store.save_group_timestamps(dict(engine._group_last_message_at))
+        engine._state_store.save_delayed_queue(engine.delayed_queue.snapshot())
 
     def persist_full_state(self) -> None:
         """Persist all runtime state to disk (used on graceful shutdown)."""
@@ -373,6 +374,8 @@ class EnginePersistence:
             if delayed_items:
                 try:
                     engine.delayed_queue.restore(delayed_items)
+                    for item in engine.delayed_queue.snapshot():
+                        engine._group_last_message_at.setdefault(item["group_id"], "")
                 except Exception as exc:
                     logger.warning("延迟队列恢复失败，跳过: %s", exc)
 

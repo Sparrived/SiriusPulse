@@ -19,7 +19,7 @@ from sirius_pulse.core.constants import (
     DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
     DEFAULT_MEMORY_UNIT_TOP_K,
 )
-from sirius_pulse.core.delayed_response_queue import _parse_iso
+from sirius_pulse.core.delayed_response_queue import _parse_iso, persist_delayed_queue
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import PromptFactory
@@ -224,10 +224,7 @@ class DelayedQueueTasks:
         limit = DelayedQueueTasks._MASTER_RECEIPT_SNIPPET_CHARS
         if len(snippet) > limit:
             snippet = snippet[: limit - 3].rstrip() + "..."
-        return (
-            f"（已私聊发给主人：「{snippet}」；"
-            "已完成私聊投递，除非主人明确要求重发，否则不要重复私聊）"
-        )
+        return f"（已私聊发给主人：「{snippet}」；" "已完成私聊投递，除非主人明确要求重发，否则不要重复私聊）"
 
     @staticmethod
     def _tool_chain_message_text(message: Any) -> str:
@@ -291,48 +288,6 @@ class DelayedQueueTasks:
                 }
             )
         return bool(injected)
-
-    async def _deliver_rich_reply(
-        self,
-        engine: Any,
-        *,
-        group_id: str,
-        item: Any,
-        chat_result: Any,
-        content: str,
-    ) -> bool:
-        """把整段富文本渲染成「图片 + 合并转发」投递。
-
-        成功时按实际投递形态把这张卡片写回历史并返回 True；渲染或发送失败只记
-        日志并返回 False，由调用方回退成纯文本——内容不能丢。这里的异常必须
-        捕获得足够宽：Playwright 的渲染/超时异常只继承 ``Exception``，漏掉它们
-        会让整轮回复投递失败，比按文本发出去更糟。
-        """
-        try:
-            delivery = await _markdown_image.render_and_send_rich_reply(
-                content,
-                adapter=getattr(engine, "_adapter", None),
-                group_id=group_id,
-            )
-        except Exception as exc:  # noqa: BLE001 - 渲染失败必须回退文本，不能丢掉整轮结果
-            logger.warning(
-                "Rich reply image delivery failed for %s; falling back to text: %s",
-                group_id,
-                exc,
-            )
-            return False
-        engine._record_assistant_message(
-            group_id=group_id,
-            target_user_id=item.user_id,
-            content=content,
-            system_prompt=getattr(chat_result, "system_prompt", ""),
-            tags=[{"type": "image", "label": "富文本卡片"}],
-            injected_request=getattr(chat_result, "injected_request", {}),
-            injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-            **_reasoning_memory_kwargs(chat_result),
-            platform_message_id=delivery["image_message_id"],
-        )
-        return True
 
     async def delayed_queue_ticker(self) -> None:
         """Smart-sleep ticker for the delayed queue.
@@ -419,6 +374,7 @@ class DelayedQueueTasks:
         *,
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
+        item_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Process a delayed queue partition and always close its tool-chain window.
 
@@ -433,24 +389,55 @@ class DelayedQueueTasks:
         message entirely. Items already taken are therefore re-queued here.
         """
         queue = self._engine.delayed_queue
+        prepared = queue.take_prepared_delivery(
+            group_id, item_id=item_id, adapter_type=adapter_type, adapter_route_id=adapter_route_id
+        )
+        if prepared is not None:
+            persist_delayed_queue(self._engine)
+            return prepared
         # 记录调用前已在途的条目，避免把并发/上一轮的在途条目误判为本轮产物。
-        pre_existing = set(queue.in_flight_ids(group_id))
+        pre_existing = set(
+            queue.in_flight_ids(
+                group_id, adapter_type=adapter_type, adapter_route_id=adapter_route_id
+            )
+        )
         try:
             results = await self._tick_delayed_queue_impl(
                 group_id,
                 on_partial_reply,
                 adapter_type=adapter_type,
                 adapter_route_id=adapter_route_id,
+                item_id=item_id,
             )
         except BaseException:
-            # 生成/投递失败：把本群刚触发但未成功外发的条目放回队列。
-            # 用 BaseException 是为了连取消也回队——被取消的条目同样还没外发。
+            # Only retry generation with no escaped actions, including cancellation.
+            # A completed/running tool or partial output forbids whole-turn replay.
             in_flight = [
-                item_id for item_id in queue.in_flight_ids(group_id) if item_id not in pre_existing
+                item_id
+                for item_id in queue.in_flight_ids(
+                    group_id, adapter_type=adapter_type, adapter_route_id=adapter_route_id
+                )
+                if item_id not in pre_existing
             ]
-            if in_flight:
-                requeued = queue.requeue_in_flight(in_flight)
-                dropped = [item_id for item_id in in_flight if item_id not in requeued]
+            unsafe = [item_id for item_id in in_flight if not queue.generation_retry_safe(item_id)]
+            if unsafe:
+                queue.fail_delivery(unsafe, uncertain=True)
+                await self._engine.event_bus.emit(
+                    SessionEvent(
+                        type=SessionEventType.AGENT_TURN_UPDATED,
+                        data={
+                            "group_id": group_id,
+                            "item_ids": unsafe,
+                            "phase": "verify",
+                            "delivery_status": "uncertain",
+                            "error": "生成中断，已执行动作结果未确认；禁止自动重跑整轮",
+                        },
+                    )
+                )
+            retryable = [item_id for item_id in in_flight if item_id not in unsafe]
+            if retryable:
+                requeued = queue.requeue_in_flight(retryable)
+                dropped = [item_id for item_id in retryable if item_id not in requeued]
                 if dropped:
                     logger.error(
                         "群 %s 有 %d 条延迟回复已达重试上限被放弃: %s",
@@ -467,15 +454,20 @@ class DelayedQueueTasks:
                 if isinstance(group_emitted, set):
                     for item_id in in_flight:
                         group_emitted.discard(item_id)
+            persist_delayed_queue(self._engine)
             raise
         else:
-            # 生成 + 外发成功，确认丢弃本轮在途引用（合并批次可能有多条）。
+            # Generation is not delivery: retain payload until the adapter observes ACKs.
             completed = [
-                item_id for item_id in queue.in_flight_ids(group_id) if item_id not in pre_existing
+                item_id
+                for item_id in queue.in_flight_ids(
+                    group_id, adapter_type=adapter_type, adapter_route_id=adapter_route_id
+                )
+                if item_id not in pre_existing
             ]
-            queue.commit_in_flight(completed)
-            # 成功外发后同样清理标记；条目已离开 pending，ticker 不会再选它，
-            # 残留的 item_id 只会在集合里无限累积。
+            queue.stage_delivery(completed, results)
+            persist_delayed_queue(self._engine)
+            # Generated items remain in flight for the adapter, not the ticker.
             emitted = getattr(self._engine, "_delayed_event_emitted", None)
             if isinstance(emitted, dict):
                 group_emitted = emitted.get(group_id)
@@ -499,6 +491,7 @@ class DelayedQueueTasks:
         *,
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
+        item_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Process delayed response queue for a group.
 
@@ -527,9 +520,20 @@ class DelayedQueueTasks:
             rhythm,
             adapter_type=adapter_type,
             adapter_route_id=adapter_route_id,
+            item_id=item_id,
         )
         if not triggered:
             return []
+        item_ids = [item.item_id for item in triggered]
+        engine.delayed_queue.mark_generation_started(item_ids)
+        persist_delayed_queue(engine)
+        if on_partial_reply is not None:
+            send_partial = on_partial_reply
+
+            async def on_partial_reply(text: str) -> None:
+                engine.delayed_queue.mark_generation_unsafe(item_ids)
+                persist_delayed_queue(engine)
+                await send_partial(text)
 
         # Determine caller from the first triggered item
         caller_profile = None
@@ -755,6 +759,7 @@ class DelayedQueueTasks:
         work_run: WorkModeRun | None = None
         work_store: WorkModeStore | None = None
         work_final_reply: str | None = None
+        delivery_complete = False
 
         def _save_work_run() -> None:
             """轨迹落盘；没有开始过工作模式就没有可写的东西。"""
@@ -960,35 +965,6 @@ class DelayedQueueTasks:
                     continue
                 agent_turn.advance(AgentTurnPhase.RESPOND)
                 await self._emit_agent_turn(engine, agent_turn)
-                rich_content = round_clean.strip()
-                if _markdown_image.should_send_as_image(rich_content):
-                    if await self._deliver_rich_reply(
-                        engine,
-                        group_id=group_id,
-                        item=item,
-                        chat_result=chat_result,
-                        content=rich_content,
-                    ):
-                        chat_result.clean_text = ""
-                        reply = ""
-                        break
-                    if on_partial_reply is None:
-                        raise RuntimeError("富文本回复渲染失败且没有可用的文本发送回调")
-                    # 渲染失败：整段文本照常发出去，内容不能丢。
-                    await on_partial_reply(rich_content)
-                    engine._record_assistant_message(
-                        group_id=group_id,
-                        target_user_id=item.user_id,
-                        content=rich_content,
-                        system_prompt=getattr(chat_result, "system_prompt", ""),
-                        injected_request=getattr(chat_result, "injected_request", {}),
-                        injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                        **_reasoning_memory_kwargs(chat_result),
-                    )
-                    last_partial_sent_at = time.monotonic()
-                    chat_result.clean_text = ""
-                    reply = ""
-                    break
                 break
 
             def _tool_is_silent(tool_call: ToolCall) -> bool:
@@ -1138,6 +1114,9 @@ class DelayedQueueTasks:
                         caller_user_id,
                         group_id,
                     )
+                    # Tool retry_safe describes executor retries, not replaying an entire turn.
+                    engine.delayed_queue.mark_generation_unsafe(item_ids)
+                    persist_delayed_queue(engine)
                     try:
                         result = await engine._tool_executor.execute_async(
                             tool,
@@ -1201,6 +1180,8 @@ class DelayedQueueTasks:
 
             if all_silent and not send_next_tool_output:
                 if not self._append_tool_chain_messages(engine, messages, group_id):
+                    delivery_complete = True
+                    chat_result.clean_text = ""
                     break
 
             # 如果有多模态内容，作为 user 消息注入
@@ -1305,59 +1286,27 @@ class DelayedQueueTasks:
             if remaining > 0:
                 await asyncio.sleep(remaining)
 
-        # 工作模式的 result 与轮次上限兜底回复绕过了上面「无工具调用」分支，
-        # 这里补一次同样的投递判定；渲染失败时 final_reply 保持原文按文本发送。
-        if final_reply and _markdown_image.should_send_as_image(final_reply):
-            if await self._deliver_rich_reply(
-                engine,
-                group_id=group_id,
-                item=item,
-                chat_result=chat_result,
-                content=final_reply,
-            ):
-                final_reply = ""
-            else:
-                # 渲染失败，适配器会按文本把原文发出去：历史里也要按文本记一次。
-                # hook 已因「可能转图片」让位，这里补记不会重复。
-                engine._record_assistant_message(
-                    group_id=group_id,
-                    target_user_id=item.user_id,
-                    content=final_reply,
-                    system_prompt=getattr(chat_result, "system_prompt", ""),
-                    injected_request=getattr(chat_result, "injected_request", {}),
-                    injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                    **_reasoning_memory_kwargs(chat_result),
-                )
+        rich_reply = bool(final_reply and _markdown_image.should_send_as_image(final_reply))
+        rich_history = (
+            {
+                "target_user_id": item.user_id,
+                "system_prompt": getattr(chat_result, "system_prompt", ""),
+                "injected_request": getattr(chat_result, "injected_request", {}),
+                "injected_tool_names": getattr(chat_result, "injected_tool_names", []),
+                **_reasoning_memory_kwargs(chat_result),
+            }
+            if rich_reply
+            else {}
+        )
 
         # 获取引用回复信息
         reply_references = chat_result.reply_references if chat_result else []
         sticker_names = dedupe_sticker_names(sticker_names_accumulated)
         poke_user_ids = list(dict.fromkeys(poke_user_ids_accumulated))[:1]
 
-        # Emit event with full reply data for external delivery
+        # The caller owns platform delivery; do not emit a second consumptive trigger.
         agent_turn.advance(AgentTurnPhase.RESPOND)
         await self._emit_agent_turn(engine, agent_turn)
-        agent_turn.advance(AgentTurnPhase.COMPLETE)
-        await self._emit_agent_turn(engine, agent_turn)
-        event_data = {
-            "group_id": group_id,
-            "item_id": triggered[0].item_id,
-            "adapter_type": getattr(triggered[0], "adapter_type", None) or "",
-            "reply": final_reply,
-            "partial_replies": partial_replies,
-            "sticker_names": sticker_names,
-            "poke_user_ids": poke_user_ids,
-            "agent_turn_id": agent_turn.turn_id,
-        }
-        triggered_route = getattr(triggered[0], "adapter_route_id", None)
-        if triggered_route:
-            event_data["adapter_route_id"] = triggered_route
-        await engine.event_bus.emit(
-            SessionEvent(
-                type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
-                data=event_data,
-            )
-        )
 
         return [
             {
@@ -1369,6 +1318,10 @@ class DelayedQueueTasks:
                 "sticker_names": sticker_names,
                 "poke_user_ids": poke_user_ids,
                 "agent_turn_id": agent_turn.turn_id,
+                "agent_turn": agent_turn.to_event_data(),
+                "delivery_complete": delivery_complete,
+                "rich_reply": rich_reply,
+                "rich_history": rich_history,
             }
         ]
 

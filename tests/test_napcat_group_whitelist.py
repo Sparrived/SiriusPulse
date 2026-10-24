@@ -541,7 +541,7 @@ async def test_lost_onebot_ack_does_not_replay_stable_proactive_event(tmp_path):
         await consumer
 
     assert first is False
-    assert duplicate is True
+    assert duplicate is False, "未知 ACK 不能因去重而升级为送达成功"
     assert len(physical_requests) == 1
 
 
@@ -607,7 +607,7 @@ async def test_poke_only_lost_ack_is_not_physically_replayed(tmp_path):
         await consumer
 
     assert first is False
-    assert duplicate is True
+    assert duplicate is False, "未知 ACK 不能因去重而升级为送达成功"
     assert len(physical_requests) == 1
     assert '"action": "group_poke"' in physical_requests[0]
 

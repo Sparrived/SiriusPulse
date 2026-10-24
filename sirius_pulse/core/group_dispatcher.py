@@ -242,7 +242,8 @@ class GroupDispatcher:
                 INSERT OR IGNORE INTO dispatcher_delivery_receipts(event_id, status, created_at)
                 SELECT event_id, status, updated_at
                 FROM dispatcher_events
-                WHERE event_id LIKE 'reminder:%' AND status IN ('sent', 'uncertain')
+                WHERE (event_id LIKE 'reminder:%' OR event_id LIKE 'delayed:%')
+                    AND status IN ('sent', 'uncertain')
                 """
             )
 
@@ -917,7 +918,7 @@ class GroupDispatcher:
             if existing is not None:
                 retryable_reminder = (
                     sender_type == "system"
-                    and event_id.startswith("reminder:")
+                    and event_id.startswith(("reminder:", "delayed:"))
                     and str(existing["group_id"]) == group_id
                     and existing["status"] in {"silent", "observed", "expired"}
                 )
@@ -929,7 +930,7 @@ class GroupDispatcher:
                     pass
                 elif (
                     sender_type == "system"
-                    and event_id.startswith("reminder:")
+                    and event_id.startswith(("reminder:", "delayed:"))
                     and existing["status"] == "granted"
                 ):
                     return DispatchDecision(
@@ -969,7 +970,10 @@ class GroupDispatcher:
                     conn, event_id, group_id, "", "observed", now, reason="group_busy"
                 )
                 return DispatchDecision(
-                    "observe", event_id, worker_id=active_worker, reason="group_busy"
+                    "defer" if sender_type == "system" else "observe",
+                    event_id,
+                    worker_id=active_worker,
+                    reason="group_busy",
                 )
 
             workers = conn.execute(
@@ -1292,6 +1296,15 @@ class GroupDispatcher:
             )
             return True
 
+    def acknowledge_delivery(self, lease_id: str) -> None:
+        """Return to pre-I/O only after the caller persists a known part outcome."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE dispatcher_events SET status='granted', updated_at=? "
+                "WHERE lease_id=? AND worker_id=? AND status='sending'",
+                (self._clock(), lease_id, self.worker_id),
+            )
+
     def renew(self, lease_id: str) -> bool:
         """Extend a live owned lease while platform delivery is in progress."""
         lease_id = str(lease_id or "").strip()
@@ -1575,7 +1588,10 @@ class GroupDispatcher:
         status: str,
         now: float,
     ) -> None:
-        if not event_id.startswith("reminder:") or status not in {"sent", "uncertain"}:
+        if not event_id.startswith(("reminder:", "delayed:")) or status not in {
+            "sent",
+            "uncertain",
+        }:
             return
         conn.execute(
             """

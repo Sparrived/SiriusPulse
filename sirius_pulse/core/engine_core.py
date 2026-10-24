@@ -341,6 +341,7 @@ class _EmotionalGroupChatEngineBase:
         self._bg_running = False
 
         self._delayed_event_emitted: dict[str, set[str]] = {}
+        self._agent_turn_locks: dict[str, asyncio.Lock] = {}
 
         # New group messages can be offered to an active tool chain between
         # tool rounds.  The adapter owns the platform parsing; the engine owns
@@ -805,6 +806,16 @@ class _EmotionalGroupChatEngineBase:
         """Cancel all background tasks."""
         self._bg_tasks_mgr.stop()
 
+    def get_agent_turn_lock(self, group_id: str) -> asyncio.Lock:
+        """Share ownership of a whole Agent/tool turn, not just one LLM call."""
+        locks = getattr(self, "_agent_turn_locks", None)
+        if locks is None:
+            locks = self._agent_turn_locks = {}
+        key = str(group_id or "").strip()
+        if key not in locks:
+            locks[key] = asyncio.Lock()
+        return locks[key]
+
     async def tick_delayed_queue(
         self,
         group_id: str,
@@ -812,14 +823,17 @@ class _EmotionalGroupChatEngineBase:
         *,
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
+        item_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Process a delayed queue partition for one source adapter."""
-        return await self._bg_tasks_mgr.tick_delayed_queue(
-            group_id,
-            on_partial_reply,
-            adapter_type=adapter_type,
-            adapter_route_id=adapter_route_id,
-        )
+        """Serialize generation and its tools with other Agent turns for this chat."""
+        async with self.get_agent_turn_lock(group_id):
+            return await self._bg_tasks_mgr.tick_delayed_queue(
+                group_id,
+                on_partial_reply,
+                adapter_type=adapter_type,
+                adapter_route_id=adapter_route_id,
+                **({"item_id": item_id} if item_id is not None else {}),
+            )
 
     def pop_reminders(self, group_id: str, adapter_type: str | None = None) -> list[str]:
         """Pop pending reminder messages for a group."""

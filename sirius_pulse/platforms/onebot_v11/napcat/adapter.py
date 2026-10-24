@@ -47,10 +47,12 @@ from sirius_pulse.adapters.models import (
     TextSegment,
     VoiceSegment,
 )
+from sirius_pulse.core.delayed_response_queue import persist_delayed_queue
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.group_dispatcher import GroupDispatcher
 from sirius_pulse.core.qq_mentions import parse_qq_at_mentions
 from sirius_pulse.models.models import Message, UnifiedUser
+from sirius_pulse.tools.builtin._internal import _markdown_image
 from sirius_pulse.tools.builtin._internal._markdown_image import to_image_reference
 
 LOG = logging.getLogger("sirius.platforms.napcat")
@@ -239,11 +241,13 @@ class NapCatAdapter(BaseAdapter):
         self._process_locks: dict[str, asyncio.Lock] = {}
         self._process_locks_guard = asyncio.Lock()
         self._dispatcher: GroupDispatcher | None = None
+        self._delivery_dispatcher: GroupDispatcher | None = None
+        self._has_work_path = work_path is not None
         self._dispatch_leases: dict[str, str] = {}
         self._dispatch_delivery_active: set[str] = set()
         self._dispatch_retry_tasks: dict[str, asyncio.Task] = {}
         self._proactive_event_locks: dict[str, asyncio.Lock] = {}
-        self._proactive_event_results: dict[str, float] = {}
+        self._proactive_event_results: dict[str, tuple[float, bool]] = {}
         # Keep fire-and-forget event handlers so stop/rebind can cancel work
         # that still owns an old engine.
         self._event_handler_tasks: set[asyncio.Task[Any]] = set()
@@ -315,6 +319,9 @@ class NapCatAdapter(BaseAdapter):
             if self._dispatcher is not None:
                 self._dispatcher.close()
                 self._dispatcher = None
+            if self._delivery_dispatcher is not None:
+                self._delivery_dispatcher.close()
+                self._delivery_dispatcher = None
             LOG.info("NapCatAdapter 平台集成已停止")
 
     async def _detach_engine_locked(self, engine: Any | None) -> None:
@@ -405,6 +412,22 @@ class NapCatAdapter(BaseAdapter):
             ),
         )
         return self._dispatcher
+
+    def _get_delivery_dispatcher(self) -> GroupDispatcher | None:
+        """Keep delivery receipts even when public-turn arbitration is disabled."""
+        dispatcher = self._get_dispatcher()
+        if dispatcher is not None:
+            return dispatcher
+        if not self._has_work_path:
+            # Legacy in-memory adapters have no authorized persistence root.
+            return None
+        if self._delivery_dispatcher is None:
+            self._delivery_dispatcher = GroupDispatcher(
+                self._work_path / "engine_state" / "delivery_receipts.db",
+                worker_id="delivery",
+                min_reply_interval_seconds=0,
+            )
+        return self._delivery_dispatcher
 
     async def _connect_once(self) -> bool:
         headers: dict[str, str] = {}
@@ -649,7 +672,9 @@ class NapCatAdapter(BaseAdapter):
         self._pending[echo] = future
 
         payload = {"action": action, "params": params, "echo": echo}
-        atomic_irreversible = self._is_irreversible_action(action) and _ATOMIC_PROACTIVE_SEND.get()
+        atomic_irreversible = self._is_irreversible_action(action) and (
+            _ATOMIC_PROACTIVE_SEND.get() or callable(_PROACTIVE_DELIVERY_START.get())
+        )
         try:
             delivery_start = _PROACTIVE_DELIVERY_START.get()
             if atomic_irreversible and callable(delivery_start):
@@ -687,6 +712,8 @@ class NapCatAdapter(BaseAdapter):
             if not future.done():
                 future.cancel()
 
+        if atomic_irreversible and resp.get("status") not in {"ok", "failed"}:
+            raise _OneBotDeliveryUncertain(f"No final platform acknowledgement: {action}")
         if resp.get("status") not in {"ok", "async"}:
             retcode = resp.get("retcode", -1)
             wording = resp.get("wording", "unknown error")
@@ -2182,9 +2209,9 @@ class NapCatAdapter(BaseAdapter):
         cutoff = time.monotonic() - 30 * 86400.0
         keep = sorted(
             (
-                (key, seen_at)
-                for key, seen_at in self._proactive_event_results.items()
-                if seen_at >= cutoff
+                (key, result)
+                for key, result in self._proactive_event_results.items()
+                if result[0] >= cutoff
             ),
             key=lambda item: item[1],
             reverse=True,
@@ -2201,9 +2228,9 @@ class NapCatAdapter(BaseAdapter):
             if key not in retained_results and not lock.locked() and not has_waiters:
                 self._proactive_event_locks.pop(key, None)
 
-    def _remember_local_proactive_event(self, event_key: str) -> None:
-        """Bound same-process fallback reminder deduplication to thirty days."""
-        self._proactive_event_results[event_key] = time.monotonic()
+    def _remember_local_proactive_event(self, event_key: str, *, accepted: bool) -> None:
+        """Keep confirmed and uncertain receipts distinct, including duplicates."""
+        self._proactive_event_results[event_key] = (time.monotonic(), accepted)
         self._prune_local_proactive_events()
 
     def _ack_proactive_delivery(self, event: SessionEvent, accepted: bool) -> None:
@@ -2251,6 +2278,280 @@ class NapCatAdapter(BaseAdapter):
                 future.set_result(False)
                 return
 
+    @staticmethod
+    def _record_delayed_rich_history(
+        engine: Any, gid: str, result: dict[str, Any], message_id: str = ""
+    ) -> None:
+        record = getattr(engine, "_record_assistant_message", None)
+        if not callable(record) or result.get("rich_recorded"):
+            return
+        result["rich_recorded"] = True
+        try:
+            record(
+                group_id=gid,
+                content=result.get("reply", ""),
+                **result.get("rich_history", {}),
+                **(
+                    {
+                        "tags": [{"type": "image", "label": "富文本卡片"}],
+                        "platform_message_id": message_id,
+                    }
+                    if result.get("rich_sent")
+                    else {}
+                ),
+            )
+        except Exception as exc:
+            LOG.warning("已确认富文本历史记录失败，不重发: %s", exc)
+
+    async def _deliver_delayed_event(
+        self, event: SessionEvent, engine: Any, gid: str, source_route: str
+    ) -> None:
+        get_turn_lock = getattr(engine, "get_agent_turn_lock", None)
+        if callable(get_turn_lock) and get_turn_lock(gid).locked():
+            # Waiting here with a platform lease would block the active callback's send.
+            previous = self._dispatch_leases.pop(gid, "")
+            if previous:
+                dispatcher = self._get_delivery_dispatcher()
+                if dispatcher is not None:
+                    dispatcher.finish(previous, sent=False)
+            return
+        queue = getattr(engine, "delayed_queue", None)
+        item_id = str(event.data.get("item_id", "") or "")
+        dispatcher = self._get_delivery_dispatcher()
+        lease_id = ""
+        heartbeat: asyncio.Task[Any] | None = None
+        complete = False
+        uncertain = False
+        io_pending = False
+        results: list[dict[str, Any]] = []
+        response_parts: list[str] = []
+        active_ids: list[str] = []
+        sent_count = 0
+
+        if dispatcher is not None:
+            # Inbound admission has already chosen this persona. Transfer that
+            # lease to the durable item identity before generation or delivery.
+            previous = self._dispatch_leases.pop(gid, "")
+            if previous:
+                dispatcher.finish(previous, sent=False)
+            decision = dispatcher.admit(
+                event_id=f"delayed:{self.adapter_route_id}:{gid}:{item_id or 'unknown'}",
+                group_id=gid,
+                sender_type="system",
+                preferred_worker_id=dispatcher.worker_id,
+            )
+            if not decision.granted:
+                if decision.reason in {"event_sent", "event_uncertain"} and queue is not None:
+                    prepared = queue.take_prepared_delivery(
+                        gid,
+                        item_id=item_id or None,
+                        adapter_type=self.adapter_type,
+                        adapter_route_id=source_route,
+                    )
+                    ids = [
+                        i
+                        for result in (prepared or [])
+                        for i in result.get("delivery_item_ids", [])
+                    ]
+                    if decision.reason == "event_sent":
+                        queue.commit_in_flight(ids)
+                    else:
+                        queue.fail_delivery(ids, uncertain=True)
+                    persist_delayed_queue(engine)
+                # Busy or another live claimant is a defer, never cancellation.
+                return
+            lease_id = decision.lease_id
+            heartbeat = asyncio.create_task(self._keep_dispatch_lease_alive(dispatcher, lease_id))
+
+        def start_delivery() -> bool:
+            nonlocal io_pending
+            if io_pending:
+                return True
+            if dispatcher is not None and not dispatcher.begin_delivery(lease_id):
+                return False
+            if queue is not None:
+                queue.begin_delivery(
+                    active_ids
+                    or queue.in_flight_ids(
+                        gid, adapter_type=self.adapter_type, adapter_route_id=source_route
+                    )
+                )
+                persist_delayed_queue(engine)
+            io_pending = True
+            return True
+
+        def known_outcome() -> None:
+            nonlocal io_pending
+            if queue is not None:
+                queue.acknowledge_delivery_part(
+                    active_ids
+                    or queue.in_flight_ids(
+                        gid, adapter_type=self.adapter_type, adapter_route_id=source_route
+                    )
+                )
+                persist_delayed_queue(engine)
+            if dispatcher is not None:
+                dispatcher.acknowledge_delivery(lease_id)
+            io_pending = False
+
+        async def send_text(text: str, refs: Any = None) -> bool:
+            nonlocal sent_count
+            if sent_count:
+                await self._sleep_before_reply_part(text)
+            if gid.startswith("private_"):
+                uid = gid.removeprefix("private_").removeprefix("qq_")
+                sent = await self._send_private_text(uid, text, refs)
+            elif gid in self._get_allowed_group_ids():
+                sent = await self._send_group_text(gid, text, refs)
+            else:
+                sent = False
+            if sent:
+                sent_count += 1
+                response_parts.append(text)
+            return bool(sent)
+
+        async def send_partial(text: str) -> None:
+            # Preserve ordinary multiline output but never retry generation once
+            # a partial has escaped; a later LLM failure is explicitly unknown.
+            for line in [line for line in text.splitlines() if line.strip()]:
+                sent = await send_text(line)
+                known_outcome()
+                if not sent:
+                    raise RuntimeError(f"Failed to send partial reply: {gid}")
+
+        token = _PROACTIVE_DELIVERY_START.set(start_delivery)
+        try:
+            results = await engine.tick_delayed_queue(
+                gid,
+                on_partial_reply=send_partial,
+                adapter_type=self.adapter_type,
+                adapter_route_id=source_route,
+                **({"item_id": item_id} if item_id and queue is not None else {}),
+            )
+            for result in results:
+                active_ids = list(result.get("delivery_item_ids", []))
+                if (
+                    result.get("rich_reply")
+                    and not result.get("rich_sent")
+                    and not result.get("rich_fallback")
+                ):
+                    try:
+                        delivery = await _markdown_image.render_and_send_rich_reply(
+                            result["reply"], adapter=self, group_id=gid
+                        )
+                    except DeliveryUncertainError:
+                        raise
+                    except Exception as exc:
+                        LOG.warning("富文本发送失败，改为缓存正文投递: %s", exc)
+                        result["rich_fallback"] = True
+                        known_outcome()
+                    else:
+                        result["rich_sent"] = True
+                        result["delivery_complete"] = True
+                        known_outcome()
+                        self._record_delayed_rich_history(
+                            engine, gid, result, str(delivery.get("image_message_id", ""))
+                        )
+                # Keep the original payload and a cursor, so ACKed lines are not
+                # sent again when a later line gets an explicit rejection.
+                parts = result.setdefault(
+                    "delivery_parts",
+                    [
+                        {"kind": "text", "value": line}
+                        for line in str(result.get("reply", "")).splitlines()
+                        if line.strip() and not result.get("rich_sent")
+                    ]
+                    + [
+                        {"kind": "sticker", "value": name}
+                        for name in result.get("sticker_names", [])
+                    ]
+                    + (
+                        [{"kind": "poke", "value": uid} for uid in result.get("poke_user_ids", [])]
+                        if not gid.startswith("private_")
+                        else []
+                    ),
+                )
+                cursor = int(result.get("delivery_cursor", 0))
+                persist_delayed_queue(engine)
+                for index in range(cursor, len(parts)):
+                    part = parts[index]
+                    if part["kind"] == "text":
+                        sent = await send_text(
+                            part["value"], result.get("reply_references", []) if index == 0 else []
+                        )
+                    elif part["kind"] == "sticker":
+                        sent = await self._send_stickers_after_reply(gid, [part["value"]])
+                    else:
+                        sent = await self._send_pokes_after_reply(gid, [part["value"]])
+                    if sent:
+                        result["delivery_cursor"] = index + 1
+                    known_outcome()
+                    if not sent:
+                        return
+                if not parts and not result.get("delivery_complete") and not sent_count:
+                    result["delivery_status"] = "no_output"
+                    if queue is not None:
+                        queue.requeue_in_flight(active_ids, max_retries=0)
+                    return
+                if result.get("rich_fallback"):
+                    self._record_delayed_rich_history(engine, gid, result)
+            complete = bool(results)
+        except DeliveryUncertainError as exc:
+            uncertain = True
+            LOG.error("延迟回复平台确认丢失，禁止重放 (%s): %s", gid, exc)
+        except asyncio.CancelledError:
+            uncertain = io_pending
+            raise
+        except Exception:
+            uncertain = io_pending
+            raise
+        finally:
+            _PROACTIVE_DELIVERY_START.reset(token)
+            if heartbeat is not None:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
+            ids = list(
+                dict.fromkeys(i for result in results for i in result.get("delivery_item_ids", []))
+            )
+            try:
+                if queue is not None and ids:
+                    if complete:
+                        queue.commit_in_flight(ids)
+                    elif queue.delivery_status(ids) not in {"failed", "uncertain"}:
+                        queue.fail_delivery(ids, uncertain=uncertain)
+                    persist_delayed_queue(engine)
+                delivery_status = (
+                    "sent"
+                    if complete
+                    else (
+                        queue.delivery_status(ids)
+                        if queue is not None and ids
+                        else ("uncertain" if uncertain else "pending")
+                    )
+                )
+                bus = getattr(engine, "event_bus", None)
+                if bus is not None:
+                    for result in results:
+                        data = dict(result.get("agent_turn", {}))
+                        data.update(
+                            group_id=gid,
+                            phase="complete" if complete else "verify",
+                            delivery_status=result.get("delivery_status", delivery_status),
+                        )
+                        if complete:
+                            data["phases"] = [*data.get("phases", []), "complete"]
+                        await bus.emit(
+                            SessionEvent(type=SessionEventType.AGENT_TURN_UPDATED, data=data)
+                        )
+            finally:
+                if dispatcher is not None and lease_id:
+                    dispatcher.finish(
+                        lease_id,
+                        sent=complete,
+                        uncertain=uncertain,
+                        response_text="\n".join(response_parts),
+                    )
+
     async def _handle_event(self, event: SessionEvent, *, engine: Any | None = None) -> None:
         engine = self._engine if engine is None else engine
         if (
@@ -2280,113 +2581,12 @@ class NapCatAdapter(BaseAdapter):
                     return
                 self._dispatch_delivery_active.add(gid)
                 try:
-                    dispatcher = self._get_dispatcher() if not gid.startswith("private_") else None
-                    dispatch_lease_id = self._dispatch_leases.get(gid, "")
-                    if dispatcher is not None and dispatch_lease_id != dispatcher.active_lease(gid):
-                        dispatch_lease_id = ""
-                        self._dispatch_leases.pop(gid, None)
-                    if dispatcher is not None and not dispatch_lease_id:
-                        item_id = str(
-                            event.data.get("item_id", "") or event.data.get("agent_turn_id", "")
-                        )
-                        decision = dispatcher.admit(
-                            event_id=f"delayed:{gid}:{item_id or 'unknown'}",
-                            group_id=gid,
-                            sender_type="system",
-                            preferred_worker_id=dispatcher.worker_id,
-                        )
-                        if not decision.granted:
-                            cancel_item = getattr(engine.delayed_queue, "cancel_item", None)
-                            if callable(cancel_item) and item_id:
-                                cancel_item(item_id)
-                            # 取消的条目不会再被 ticker 触发；残留的已发射标记
-                            # 必须同时清掉，避免 item_id 在集合中永久滞留。
-                            emitted = getattr(engine, "_delayed_event_emitted", None)
-                            if item_id and isinstance(emitted, dict):
-                                emitted.setdefault(gid, set()).discard(item_id)
-                            self._dispatch_delivery_active.discard(gid)
-                            return
-                        dispatch_lease_id = decision.lease_id
-                        self._dispatch_leases[gid] = dispatch_lease_id
-                except Exception:
-                    self._dispatch_delivery_active.discard(gid)
-                    raise
-                partial_sent_count = 0
-                dispatch_sent = False
-                response_parts: list[str] = []
-
-                async def _send_partial(text: str) -> None:
-                    nonlocal dispatch_sent, partial_sent_count
-                    if partial_sent_count > 0:
-                        await self._sleep_before_reply_part(text)
-                    if gid.startswith("private_"):
-                        uid = gid.replace("private_", "").replace("qq_", "")
-                        sent = await self._send_private_text(uid, text)
-                    elif gid in self._get_allowed_group_ids():
-                        sent = await self._send_group_text(gid, text)
-                    else:
-                        raise RuntimeError(f"Partial reply target is not allowed: {gid}")
-                    if not sent:
-                        raise RuntimeError(f"Failed to send partial reply: {gid}")
-                    dispatch_sent = True
-                    response_parts.append(str(text))
-                    partial_sent_count += 1
-
-                try:
-                    try:
-                        results = await engine.tick_delayed_queue(
-                            gid,
-                            on_partial_reply=_send_partial,
-                            adapter_type=self.adapter_type,
-                            # Empty string explicitly selects old, unrouted
-                            # queue items; None would mean every same-type item.
-                            adapter_route_id=source_route,
-                        )
-                    except Exception as exc:
-                        LOG.warning("Delayed queue tick failed (%s): %s", gid, exc)
-                        results = []
-                    for result in results:
-                        reply = result.get("reply", "")
-                        reply_refs = result.get("reply_references", [])
-                        sticker_names = result.get("sticker_names", [])
-                        poke_user_ids = result.get("poke_user_ids", [])
-                        if gid.startswith("private_"):
-                            uid = gid.replace("private_", "").replace("qq_", "")
-                            if reply:
-                                if partial_sent_count > 0:
-                                    await self._sleep_before_reply_part(reply)
-                                if reply:
-                                    sent = await self._send_private_text(uid, reply, reply_refs)
-                                    dispatch_sent = bool(sent) or dispatch_sent
-                                    if sent:
-                                        response_parts.append(str(reply))
-                            sticker_sent = await self._send_stickers_after_reply(gid, sticker_names)
-                            poke_sent = await self._send_pokes_after_reply(gid, poke_user_ids)
-                            dispatch_sent = sticker_sent or poke_sent or dispatch_sent
-                        elif gid in self._get_allowed_group_ids():
-                            if reply:
-                                if partial_sent_count > 0:
-                                    await self._sleep_before_reply_part(reply)
-                                if reply:
-                                    sent = await self._send_group_text(gid, reply, reply_refs)
-                                    dispatch_sent = bool(sent) or dispatch_sent
-                                    if sent:
-                                        response_parts.append(str(reply))
-                            sticker_sent = await self._send_stickers_after_reply(gid, sticker_names)
-                            poke_sent = await self._send_pokes_after_reply(gid, poke_user_ids)
-                            dispatch_sent = sticker_sent or poke_sent or dispatch_sent
+                    await self._deliver_delayed_event(event, engine, gid, source_route)
                 finally:
-                    # Clear the guard before lease finalization; even a
-                    # dispatcher storage error must not wedge this group.
                     self._dispatch_delivery_active.discard(gid)
-                    if dispatch_lease_id and dispatcher is not None:
-                        dispatcher.finish(
-                            dispatch_lease_id,
-                            sent=dispatch_sent,
-                            response_text="\n".join(response_parts),
-                        )
-                        if self._dispatch_leases.get(gid) == dispatch_lease_id:
-                            self._dispatch_leases.pop(gid, None)
+                    emitted = getattr(engine, "_delayed_event_emitted", None)
+                    if isinstance(emitted, dict):
+                        emitted.setdefault(gid, set()).discard(str(event.data.get("item_id", "")))
             elif event.type == SessionEventType.REMINDER_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 reply = event.data.get("reply", "")
@@ -2470,9 +2670,11 @@ class NapCatAdapter(BaseAdapter):
                     )
                     async with event_lock:
                         if local_event_key in self._proactive_event_results:
-                            self._ack_proactive_delivery(event, True)
+                            self._ack_proactive_delivery(
+                                event, self._proactive_event_results[local_event_key][1]
+                            )
                             return
-                        dispatcher = self._get_dispatcher()
+                        dispatcher = self._get_delivery_dispatcher()
                         dispatch_lease_id = ""
                         heartbeat: asyncio.Task[Any] | None = None
                         accepted = False
@@ -2490,9 +2692,12 @@ class NapCatAdapter(BaseAdapter):
                                     "event_sent",
                                     "event_uncertain",
                                 }
-                                self._ack_proactive_delivery(event, terminal)
+                                confirmed = decision.reason == "event_sent"
+                                self._ack_proactive_delivery(event, confirmed)
                                 if terminal:
-                                    self._remember_local_proactive_event(local_event_key)
+                                    self._remember_local_proactive_event(
+                                        local_event_key, accepted=confirmed
+                                    )
                                 return
                             dispatch_lease_id = decision.lease_id
 
@@ -2546,7 +2751,9 @@ class NapCatAdapter(BaseAdapter):
                             if terminal:
                                 # Keep a same-process guard even if durable
                                 # finalization itself encounters storage trouble.
-                                self._remember_local_proactive_event(local_event_key)
+                                self._remember_local_proactive_event(
+                                    local_event_key, accepted=accepted and not delivery_uncertain
+                                )
                             if dispatch_lease_id and dispatcher is not None:
                                 dispatcher.finish(
                                     dispatch_lease_id,

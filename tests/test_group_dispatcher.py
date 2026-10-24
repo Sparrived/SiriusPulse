@@ -55,12 +55,14 @@ def test_group_dispatcher_selects_one_worker_and_releases_turn(tmp_path: Path):
     assert next_turn.worker_id == "beta"
 
 
+@pytest.mark.parametrize("prefix", ["reminder", "delayed"])
 def test_group_dispatcher_retries_failed_reminders_but_deduplicates_sent_ones(
     tmp_path: Path,
+    prefix: str,
 ):
     clock = _Clock()
     dispatcher = _dispatcher(tmp_path / "dispatcher.db", clock, "alpha", "100")
-    event_id = "reminder:g1:sub2api-event"
+    event_id = f"{prefix}:g1:sub2api-event"
 
     first = dispatcher.admit(
         event_id=event_id,

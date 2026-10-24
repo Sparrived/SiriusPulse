@@ -465,6 +465,7 @@ class BackgroundTasks:
         *,
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
+        item_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Process one source-adapter partition of a delayed response queue."""
         return await self.delayed.tick_delayed_queue(
@@ -472,6 +473,7 @@ class BackgroundTasks:
             on_partial_reply,
             adapter_type=adapter_type,
             adapter_route_id=adapter_route_id,
+            **({"item_id": item_id} if item_id is not None else {}),
         )
 
     def pop_reminders(self, group_id: str, adapter_type: str | None = None) -> list[str]:
