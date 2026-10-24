@@ -509,6 +509,7 @@ class PromptFactory:
         error: str = "",
         tool_desc: str = "",
         work_mode: bool = False,
+        can_speak: bool = True,
     ) -> tuple[str, list[dict[str, str]]]:
         """后台结果是 Agent 的内部输入，不是必须对外通知的新消息。"""
         succeeded = outcome == "success"
@@ -532,11 +533,20 @@ class PromptFactory:
             "结合原任务决定：保留中间产物、继续加工或生成下一张、等待其它结果，或者分享选中的最终产物。"
             "可以静默结束，不必逐张通知，也不要因回调再次提交同一个已完成请求。"
         )
-        lines.append(
-            "本轮工具已按工作模式开放。只有你明确决定分享时才调用发送工具，"
-            "例如 group_file_exec(action=image, image_path=选中的文件路径)。"
-            "普通正文仅作为内部工作记录，不代表对外发言；工具未确认成功不能声称已送达。"
-        )
+        if can_speak:
+            lines.append(
+                "本轮工具已按工作模式开放，普通正文只留在工作轨迹里、群里看不到。"
+                "要分享图片或文件就调用 group_file_exec(action=image, image_path=选中的文件路径)；"
+                "要对群里说话（告诉他们画好了、说明结果或询问意见）必须调用 "
+                "send_midway_msg(message=要说的话)。"
+                "不想说话就什么都别发，安静结束也没关系；工具未确认成功不能声称已送达。"
+            )
+        else:
+            lines.append(
+                "本轮工具已按工作模式开放，但产物和正文都只留作你自己的素材："
+                "这是你自己产出的东西，不要对外发送，也没有对外发言的入口。"
+                "整理进本地或工作轨迹就可以，安静结束也没关系。"
+            )
         sections = ["\n".join(lines)]
         if tool_desc:
             sections.append(tool_desc)

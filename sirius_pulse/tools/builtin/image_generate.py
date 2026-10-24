@@ -405,7 +405,7 @@ async def _deliver_notification(
     elif _int_value(job.get("delivery_version")) < 3:
         hint = "旧版本产物的对外投递状态不能确认，不要盲目重发；先核对原任务和发送记录。"
     else:
-        hint = "框架未向聊天发送产物或结果通知；由你决定如何继续，不必逐张发图。"
+        hint = "框架未向聊天发送产物或结果通知；由你决定如何继续，不必逐张发图。想让群里看到一句话就调用 send_midway_msg。"
     if _update_job(data_store, job_id, callback_state="running", callback_unsafe=False) is None:
         return True
     unsafe = False

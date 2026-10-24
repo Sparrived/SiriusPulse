@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any, Callable
@@ -9,11 +10,14 @@ from typing import Any, Callable
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.work_mode import (
+    SEND_MIDWAY_MSG,
     WORK_MODE_SOURCE_AUTONOMY,
     WORK_MODE_SOURCE_PASSIVE_TOOL,
     WORK_MODE_SOURCE_SCHEDULED,
     WorkModeRun,
     WorkModeStore,
+    midway_message_tool,
+    parse_arguments,
 )
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.models import ToolInvocationContext
@@ -173,7 +177,12 @@ class ToolEngineContextImpl:
         artifact_delivery_blocked: bool = False,
         before_tool: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
-        """内部回调续跑 Agent；正文只留轨迹，外发必须由 Agent 显式调用工具。"""
+        """内部回调续跑 Agent；正文只留轨迹，外发必须由 Agent 显式调用工具。
+
+        回调回合按工作模式跑：图片/文件用 ``group_file_exec`` 显式发，要对群里
+        说话用 ``send_midway_msg``（自主回合不带这个入口）。两条路都以平台回执
+        为准，未确认送达不会当成已发送。
+        """
         lock = self._engine.get_agent_turn_lock(group_id)
         if lock.locked() or self._background_group_busy(group_id):
             return {"status": "deferred"}
@@ -193,6 +202,7 @@ class ToolEngineContextImpl:
                     adapter_type=adapter_type,
                     work_mode=True,
                 ),
+                can_speak=not self_initiated,
             )
             # 回调不是新用户指令，但仍需要原聊天和工作目标来决定保留、加工还是发送。
             helpers = getattr(self._engine, "_helpers", None)
@@ -342,6 +352,15 @@ class ToolEngineContextImpl:
     ) -> Any:
         last_result: Any = None
         ended_by_round_limit = True
+        # 回调回合的正文只留工作轨迹，框架不会替她发到聊天里。聊天里的工作模式靠
+        # send_midway_msg 对外说话，这里必须给出同一个入口，否则「画好啦」这类话
+        # 只能烂在轨迹里、群里永远收不到。自主回合仍然禁止对外发送：产物先留作她
+        # 自己的东西，要分享得走 intend_share。
+        allow_midway = run.source == WORK_MODE_SOURCE_PASSIVE_TOOL and not bool(
+            getattr(invocation_context, "self_initiated", False)
+        )
+        callback_id = str(getattr(invocation_context, "background_event_id", "") or "")
+        extra_tools = [midway_message_tool()] if allow_midway else None
 
         for _ in range(max_rounds):
             result = await self._engine.brain.chat(
@@ -355,6 +374,7 @@ class ToolEngineContextImpl:
                     caller_is_developer=caller_is_developer,
                     work_mode=True,
                     post_process=post_process,
+                    extra_tools=extra_tools,
                 )
             )
             last_result = result
@@ -372,10 +392,28 @@ class ToolEngineContextImpl:
                 ended_by_round_limit = False
                 break
 
+            # 持有本轮轨迹的引用：中途发言会往 run.steps 里再插一条，不能让工具结果
+            # 挂到那条中途记录上。
+            round_step = run.steps[-1]
             messages.append(self._assistant_tool_message(result.raw_text, tool_calls))
             tool_multimodal: list[dict[str, Any]] = []
             for tool_call in tool_calls:
                 tool_name = tool_call.function_name
+                if tool_name == SEND_MIDWAY_MSG:
+                    tool_content = await self._handle_midway_message(
+                        tool_call=tool_call,
+                        allow=allow_midway,
+                        run=run,
+                        group_id=group_id,
+                        adapter_type=adapter_type,
+                        callback_id=callback_id,
+                        before_tool=before_tool,
+                    )
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tool_call.id, "content": tool_content}
+                    )
+                    round_step["results"].append({"tool": tool_name, "output": tool_content})
+                    continue
                 tool = (
                     self._engine._tool_registry.get(tool_name)
                     if self._engine._tool_registry
@@ -411,11 +449,10 @@ class ToolEngineContextImpl:
                 messages.append(
                     {"role": "tool", "tool_call_id": tool_call.id, "content": tool_content}
                 )
-                run.steps[-1]["results"].append({"tool": tool_name, "output": tool_content})
+                round_step["results"].append({"tool": tool_name, "output": tool_content})
             if tool_multimodal:
                 messages.append({"role": "user", "content": tool_multimodal})
             store.save_run(run)
-
         final_text = str(getattr(last_result, "clean_text", "") or "").strip()
 
         # 撞上限说明最后一轮仍是工具调用，带回来的正文是空的：她刚读了一堆东西，
@@ -563,6 +600,45 @@ class ToolEngineContextImpl:
             "sticker_names": list(getattr(result, "sticker_names", []) or []),
             "poke_user_ids": list(getattr(result, "poke_user_ids", []) or []),
         }
+
+    async def _handle_midway_message(
+        self,
+        *,
+        tool_call: Any,
+        allow: bool,
+        run: WorkModeRun,
+        group_id: str,
+        adapter_type: str,
+        callback_id: str,
+        before_tool: Callable[[], None] | None,
+    ) -> str:
+        """回调回合里的 ``send_midway_msg``：真把这句话交给平台，并按回执说话。
+
+        事件 ID 用「回调 ID + 内容摘要」：模型把同一句话再发一次不会变成两条群
+        消息；回执未知也只算「没确认」，不会因为重跑而重复喊话。
+        """
+        if not allow:
+            return "当前回合不允许对外发言，这句话没有发出去。"
+        params = parse_arguments(getattr(tool_call, "function_arguments", ""))
+        text = str(params.get("message") or "").strip()
+        if not text:
+            return "message 为空，没有发送。"
+        # 发送前先落"不可重放"边界：消息已发出但进程中断时，重跑整轮会再喊一遍。
+        if before_tool is not None:
+            before_tool()
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
+        event_id = f"{callback_id}:text:{digest}" if callback_id else ""
+        accepted = await self.dispatch_proactive_message(
+            group_id=group_id,
+            text=text,
+            adapter_type=adapter_type,
+            event_id=event_id,
+            record_delivery=True,
+        )
+        run.add_step(kind="midway", text=text)
+        if accepted is not True:
+            return "消息未确认送达，不要声称已经发出；可以稍后重试。"
+        return "消息已发送给群里。"
 
     def _chat_request(self, **kwargs: Any) -> Any:
         from sirius_pulse.core.brain import ChatRequest

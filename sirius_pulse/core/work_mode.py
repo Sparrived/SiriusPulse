@@ -121,6 +121,17 @@ def control_tools(*, active: bool) -> list[dict[str, Any]]:
     return [dict(schema) for schema in schemas]
 
 
+def midway_message_tool() -> dict[str, Any]:
+    """只提供「中途发言」这一个控制工具。
+
+    框架自动开的回合（后台工具回调、定时任务、自主回合）不需要模型再调
+    ``enter_work_mode`` / ``quit_work_mode``：回合本身就在工作模式里，不调工具
+    就是结束。但回调回合的正文不外发，模型仍需要一个真正对外说话的入口，否则
+    「画好啦」这类话只能烂在工作轨迹里。
+    """
+    return dict(_MIDWAY_TOOL)
+
+
 def is_control_tool(name: str) -> bool:
     """Return whether a tool name is handled by the AgentLoop itself."""
     return (name or "").strip() in WORK_MODE_CONTROL_TOOL_NAMES

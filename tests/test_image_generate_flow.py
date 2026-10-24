@@ -65,6 +65,20 @@ def _call(name, arguments):
     )
 
 
+def _tool_names(request):
+    """模型在这一轮请求里实际能看到的工具名。"""
+    return [schema.get("function", {}).get("name", "") for schema in (request.tools or [])]
+
+
+def _sent_text(request):
+    """平台收到的群消息里的文字内容（多段拼接，媒体段忽略）。"""
+    return "".join(
+        str(segment.get("data", {}).get("text", ""))
+        for segment in request["params"]["message"]
+        if segment.get("type") == "text"
+    )
+
+
 class _AgentProvider(MockProvider):
     def __init__(self):
         super().__init__([])
@@ -514,6 +528,110 @@ async def test_self_initiated_callback_does_not_gain_delivery_permission(harness
     )
     assert result.success is False
     assert harness.platform.requests == []
+
+
+@pytest.mark.asyncio
+async def test_callback_turn_can_speak_in_group_without_publishing_internal_summary(harness):
+    spoken = "画好啦，猫在群相册里，看看喜不喜欢。"
+    internal = "图片已生成。只在群里说一句，这段总结只留工作轨迹。"
+    harness.provider.steps = [
+        _call("send_midway_msg", {"message": spoken}),
+        internal,
+    ]
+    await harness.submit("画一只猫")
+    await harness.tick()
+
+    assert "send_midway_msg" in _tool_names(harness.provider.requests[0])
+    assert len(harness.platform.accepted) == len(harness.platform.requests) == 1
+    assert _sent_text(harness.platform.accepted[0]) == spoken
+    assert harness.job()["callback_state"] == "completed"
+    assert harness.job()["callback_result"] == internal
+    followup = harness.provider.requests[1].messages
+    assert any(
+        message.get("role") == "tool" and "消息已发送给群里。" in str(message.get("content"))
+        for message in followup
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ack", ["failed", None], ids=["rejected", "lost"])
+async def test_midway_message_reports_unconfirmed_delivery_without_replaying_turn(harness, ack):
+    spoken = "画好啦。"
+    internal = "平台没有确认，这句先记着。"
+    harness.provider.steps = [
+        _call("send_midway_msg", {"message": spoken}),
+        internal,
+    ]
+    harness.platform.outcomes = [ack]
+    await harness.submit("画一只猫")
+    await harness.tick()
+
+    assert harness.platform.accepted == []
+    assert len(harness.platform.requests) == 1
+    assert harness.job()["callback_state"] == "completed"
+    assert harness.job()["callback_result"] == internal
+    followup = harness.provider.requests[1].messages
+    tool_messages = [
+        str(message.get("content")) for message in followup if message.get("role") == "tool"
+    ]
+    assert any("未确认送达" in content for content in tool_messages)
+    assert not any("消息已发送给群里。" in content for content in tool_messages)
+
+    image_count = len(harness.provider.image_requests)
+    model_count = len(harness.provider.requests)
+    await harness.tick()
+    assert len(harness.provider.image_requests) == image_count
+    assert len(harness.provider.requests) == model_count
+    assert len(harness.platform.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_repeating_same_midway_message_sends_only_one_group_message(harness):
+    spoken = "马上就好，稍等。"
+    harness.provider.steps = [
+        _call("send_midway_msg", {"message": spoken}),
+        _call("send_midway_msg", {"message": spoken}),
+        "重复喊话没有意义，图已经画完了。",
+    ]
+    await harness.submit("画一只猫")
+    await harness.tick()
+
+    assert len(harness.platform.requests) == len(harness.platform.accepted) == 1
+    assert _sent_text(harness.platform.accepted[0]) == spoken
+    assert harness.job()["callback_state"] == "completed"
+    followup = harness.provider.requests[2].messages
+    tool_messages = [
+        str(message.get("content")) for message in followup if message.get("role") == "tool"
+    ]
+    assert len(tool_messages) == 2
+    assert all("消息已发送给群里。" in content for content in tool_messages)
+
+
+@pytest.mark.asyncio
+async def test_self_initiated_callback_has_no_midway_speaking_channel(harness):
+    await harness.submit("我想自己画一只猫")
+    store = harness.executor.get_data_store("image_generate")
+    jobs = harness.jobs()
+    jobs[0]["self_initiated"] = True
+    store.set("jobs", jobs)
+    store.save()
+    internal = "这张猫只留作自己的素材。"
+    harness.provider.steps = [
+        _call("send_midway_msg", {"message": "我画好了一只猫。"}),
+        internal,
+    ]
+    await harness.tick()
+
+    assert "send_midway_msg" not in _tool_names(harness.provider.requests[0])
+    assert harness.platform.requests == []
+    assert harness.platform.accepted == []
+    assert harness.job()["callback_state"] == "completed"
+    assert harness.job()["callback_result"] == internal
+    followup = harness.provider.requests[1].messages
+    assert any(
+        message.get("role") == "tool" and "当前回合不允许对外发言" in str(message.get("content"))
+        for message in followup
+    )
 
 
 @pytest.mark.asyncio

@@ -468,6 +468,8 @@ class ToolEngineContext(Protocol):
     ) -> dict[str, Any]:
         """把结果交回 Agent 的内部工具回合，不自动向聊天发送产物或正文。
 
+        回合按工作模式跑：产物用 ``group_file_exec`` 显式发送，对群里说话用
+        ``send_midway_msg``（``self_initiated=True`` 的回合不提供该入口）。
         返回 status=completed/deferred；before_tool 在任何工具执行前保存重放边界。
         """
         ...
