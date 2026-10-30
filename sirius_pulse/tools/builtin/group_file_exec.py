@@ -88,7 +88,13 @@ async def run(
         )
     elif action_key == "file":
         result = await _upload_file(
-            bridge, chat_context, file_path, file_name, data_store=data_store
+            bridge,
+            chat_context,
+            file_path,
+            file_name,
+            data_store=data_store,
+            invocation_context=invocation_context,
+            engine_context=engine_context,
         )
     elif action_key == "list":
         result = await _list_group_files(bridge, chat_context, folder_id, file_count)
@@ -157,14 +163,34 @@ async def _send_image(
             except Exception as exc:
                 LOG.warning("远程图片缓存失败，直接使用原始 URL: %s | %s", exc, image_path[:80])
 
+    if image_path.startswith(("http://", "https://")):
+        service, access = _visual_context(engine_context, invocation_context)
+        if service is not None and access is not None:
+            # 外链也核验实际字节，不能在缓存失败时退回不受管的 URL 转发。
+            import base64
+
+            from sirius_pulse.tools.builtin.read_image import _download_image
+
+            try:
+                image_path = "base64://" + base64.b64encode(
+                    await _download_image(image_path)
+                ).decode("ascii")
+            except Exception:
+                return {"success": False, "error": "远程图片无法验证，未向平台发送"}
+
     # ``~`` must mean the persona's own home here too, not the process home:
     # the two are different once HOME is redirected into the mounted data dir.
     image_path = _resolve_persona_path(image_path.removeprefix("file://"), data_store)
     blocked = getattr(invocation_context, "blocked_image_paths", ())
-    if blocked and Path(image_path).resolve() in {
-        Path(_resolve_persona_path(path.removeprefix("file://"), data_store)).resolve()
-        for path in blocked
-    }:
+    if (
+        blocked
+        and not image_path.startswith(("base64://", "data:"))
+        and Path(image_path).resolve()
+        in {
+            Path(_resolve_persona_path(path.removeprefix("file://"), data_store)).resolve()
+            for path in blocked
+        }
+    ):
         return {
             "success": False,
             "error": "旧产物已发送或投递状态无法确认，禁止本次回调重复发送；可继续加工新产物",
@@ -173,6 +199,17 @@ async def _send_image(
 
     display_path = image_path
     image_reference = _to_image_reference(image_path)
+    visual_guard = await _guard_managed_path(
+        engine_context, invocation_context, image_path, data_store
+    )
+    if visual_guard is not None and not visual_guard[2].get("allowed"):
+        code = str(visual_guard[2].get("code") or "consent_required")
+        return {
+            "success": False,
+            "error": "这张受管素材不可用或不在当前对话可见范围内",
+            "summary": "发送失败：素材不可用或超出范围",
+            "data": {"code": code},
+        }
 
     message = [{"type": "image", "data": {"file": image_reference}}]
     try:
@@ -192,6 +229,11 @@ async def _send_image(
                 image_path=image_path,
             )
             if accepted is not True:
+                await _record_visual_delivery(
+                    visual_guard,
+                    success=False,
+                    target=f"{target_type}:{target_id}",
+                )
                 return {
                     "success": False,
                     "error": "图片未确认送达；可能被拒收或回执未知，不要声称发送成功",
@@ -204,6 +246,13 @@ async def _send_image(
             result = await adapter.send_private_msg(target_id, message)
 
         data = result.get("data", {}) if isinstance(result, dict) else {}
+        message_id = data.get("message_id") if isinstance(data, dict) else None
+        await _record_visual_delivery(
+            visual_guard,
+            success=True,
+            target=f"{target_type}:{target_id}",
+            message_id=str(message_id or ""),
+        )
         return {
             "success": True,
             "summary": f"图片已发送到 {target_type} {target_id}",
@@ -211,10 +260,13 @@ async def _send_image(
             "internal_metadata": {
                 "target_type": target_type,
                 "target_id": target_id,
-                "message_id": data.get("message_id") if isinstance(data, dict) else None,
+                "message_id": message_id,
             },
         }
     except Exception as exc:
+        await _record_visual_delivery(
+            visual_guard, success=False, target=f"{target_type}:{target_id}"
+        )
         return {"success": False, "error": str(exc), "summary": f"图片发送失败: {exc}"}
 
 
@@ -225,6 +277,8 @@ async def _upload_file(
     file_name: str,
     *,
     data_store: Any = None,
+    invocation_context: ToolInvocationContext | None = None,
+    engine_context: Any = None,
 ) -> dict[str, Any]:
     if not bridge:
         return {
@@ -275,6 +329,17 @@ async def _upload_file(
 
     resolved_path = str(path.resolve())
     display_name = (file_name or "").strip() or path.name
+    visual_guard = await _guard_managed_path(
+        engine_context, invocation_context, resolved_path, data_store
+    )
+    if visual_guard is not None and not visual_guard[2].get("allowed"):
+        code = str(visual_guard[2].get("code") or "consent_required")
+        return {
+            "success": False,
+            "error": "这个受管文件不可用或不在当前对话可见范围内",
+            "summary": "上传失败：素材不可用或超出范围",
+            "data": {"code": code},
+        }
     try:
         if target_type == "group":
             result = await adapter.upload_group_file(target_id, resolved_path, display_name)
@@ -282,6 +347,13 @@ async def _upload_file(
             result = await adapter.upload_private_file(target_id, resolved_path, display_name)
 
         data = result.get("data", {}) if isinstance(result, dict) else {}
+        message_id = data.get("message_id") if isinstance(data, dict) else None
+        await _record_visual_delivery(
+            visual_guard,
+            success=True,
+            target=f"{target_type}:{target_id}",
+            message_id=str(message_id or ""),
+        )
         return {
             "success": True,
             "summary": f"文件「{display_name}」已上传到 {target_type} {target_id}",
@@ -290,11 +362,76 @@ async def _upload_file(
                 "target_type": target_type,
                 "target_id": target_id,
                 "file_name": display_name,
-                "message_id": data.get("message_id") if isinstance(data, dict) else None,
+                "message_id": message_id,
             },
         }
     except Exception as exc:
+        await _record_visual_delivery(
+            visual_guard, success=False, target=f"{target_type}:{target_id}"
+        )
         return {"success": False, "error": str(exc), "summary": f"文件上传失败: {exc}"}
+
+
+def _visual_context(engine_context: Any, invocation_context: Any) -> tuple[Any, Any]:
+    service = None
+    getter = getattr(engine_context, "get_visual_service", None)
+    if callable(getter):
+        service = getter()
+    access = None
+    getter = getattr(engine_context, "get_person_access", None)
+    if callable(getter) and invocation_context is not None:
+        access = getter(invocation_context)
+    return service, access
+
+
+async def _guard_managed_path(
+    engine_context: Any,
+    invocation_context: Any,
+    path: str,
+    data_store: Any,
+) -> tuple[Any, Any, dict[str, Any]] | None:
+    """受管人物素材外发前按实际能力校验；普通文件路径保持原行为。"""
+    service, access = _visual_context(engine_context, invocation_context)
+    if service is None or access is None:
+        return None
+    text = str(path or "").strip()
+    if not text or text.startswith(("http://", "https://")):
+        return None
+    resolved = _resolve_persona_path(text, data_store)
+    try:
+        guard = await service.guard_path(resolved, access, "external_send", consume=True)
+    except Exception as exc:  # noqa: BLE001 - 守卫异常按拒绝处理更安全
+        LOG.warning("受管路径校验失败: %s", exc)
+        return service, access, {"managed": True, "allowed": False, "code": "service_unavailable"}
+    if not guard.get("managed"):
+        return None
+    return service, access, guard
+
+
+async def _record_visual_delivery(
+    context: tuple[Any, Any, dict[str, Any]] | None,
+    *,
+    success: bool,
+    target: str,
+    message_id: str = "",
+) -> None:
+    """独立送达回执：只有平台确认或回调 ACK 后才记成功。"""
+    if context is None:
+        return
+    service, access, guard = context
+    try:
+        await service.record_delivery(
+            access=access,
+            asset_id=str(guard.get("asset_id") or ""),
+            job_id=str(guard.get("job_id") or ""),
+            channel="napcat",
+            target=target,
+            message_id=message_id,
+            success=success,
+            code="" if success else "delivery_failed",
+        )
+    except Exception as exc:  # noqa: BLE001 - 回执失败不能反过来阻断已完成的发送
+        LOG.warning("记录视觉资产送达回执失败: %s", exc)
 
 
 async def _list_group_files(

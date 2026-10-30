@@ -28,6 +28,7 @@ from sirius_pulse.tools.builtin._internal._bash_runtime import (
     home_root_path,
 )
 from sirius_pulse.tools.models import ToolInvocationContext
+from sirius_pulse.visual.errors import VisualError
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,17 @@ _config = ConfigBuilder()
 _config.group("读图").add(
     "paths",
     type="list",
-    required=True,
     description=("要查看的图片，1-4 张。每项是本地绝对路径或 http(s) 图片 URL；" "本地路径支持 ~（人格 home），也支持聊天图片缓存路径。"),
+)
+_config.group("读图").add(
+    "assets",
+    type="list",
+    description=(
+        "受管人物视觉资产 ID 数组（可选，与 paths 合计最多 4 张）。"
+        "用 visual_asset_manage 或人物资料摘要里给出的 asset_id；"
+        "当前可见的共享素材可直接读取；私有会话范围、停用和删除仍会阻断。"
+    ),
+    default=[],
 )
 _config.group("读图").add(
     "focus",
@@ -75,10 +85,11 @@ _config.group("读图").add(
 TOOL_META = {
     "name": "read_image",
     "description": (
-        "查看图片的实际画面：把本地图片或图片 URL 读进你的视觉通道。"
+        "查看图片的实际画面：把本地图片、受管人物资产或图片 URL 读进你的视觉通道。"
         "用于看自己的三视图/设定图（路径见 system prompt 的「你自己的形象参考图」）、"
         "看聊天图片的原图、确认某个本地图片文件的内容。一次最多 4 张，"
-        "返回的图片会作为随附图片给你；只能读图片，不要用它读文本或其它文件。"
+        "可直接读取人格内当前可见的共享素材；返回的图片会作为随附图片给你。"
+        "只能读图片，不要用它读文本或其它文件。"
     ),
     "version": "1.0.0",
     "side_effect": "read_only",
@@ -91,36 +102,73 @@ TOOL_META = {
 async def run(
     paths: list[str] | None = None,
     focus: str = "",
+    assets: list[str] | None = None,
+    *,
     data_store: Any = None,
     invocation_context: ToolInvocationContext | None = None,
+    engine_context: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """读取图片并返回多模态结果，让模型真正看到图片内容。"""
-    del invocation_context, kwargs
+    del kwargs
     try:
         sources = _normalize_sources(paths)
+        asset_ids = _normalize_sources(assets)
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
-    if not sources:
+    if not sources and not asset_ids:
         return {
             "success": False,
-            "error": "paths 不能为空：请给出至少一张图片的本地绝对路径或 http(s) URL。",
+            "error": "paths / assets 不能为空：请给出至少一张图片的本地绝对路径、资产 ID 或 http(s) URL。",
         }
-    if len(sources) > _MAX_IMAGES:
+    if len(sources) + len(asset_ids) > _MAX_IMAGES:
         return {
             "success": False,
-            "error": f"一次最多读 {_MAX_IMAGES} 张图片，这次给了 {len(sources)} 张。",
+            "error": (f"一次最多读 {_MAX_IMAGES} 张图片，这次给了 {len(sources) + len(asset_ids)} 张。"),
+        }
+
+    service, access = _visual_context(engine_context, invocation_context)
+    if asset_ids and (service is None or access is None):
+        return {
+            "success": False,
+            "error": "读取受管资产需要视觉资产服务与逐调用权限上下文，当前引擎未接入",
+            "code": "service_unavailable",
         }
 
     resolved: list[tuple[Path, str, int, str]] = []
     total_bytes = 0
     try:
         for index, source in enumerate(sources, start=1):
+            if service is not None and access is not None:
+                guard = await _guard_local_source(service, access, source, data_store)
+                if guard is not None:
+                    return guard
             path, mime_type, size = await _resolve_source(source, data_store)
+            if (
+                service is not None
+                and access is not None
+                and source.lower().startswith(("http://", "https://"))
+            ):
+                guard = await _guard_local_source(service, access, str(path), data_store)
+                if guard is not None:
+                    return guard
             total_bytes += size
             if total_bytes > _MAX_TOTAL_BYTES:
                 raise ValueError(f"图片总大小超过 {_MAX_TOTAL_BYTES // 1024 // 1024}MB，请分几次读。")
             resolved.append((path, mime_type, size, _image_label(source, index)))
+        for asset_id in asset_ids:
+            opened = await service.open_asset_for_read(asset_id, access)
+            data = opened["bytes"]
+            total_bytes += len(data)
+            if total_bytes > _MAX_TOTAL_BYTES:
+                raise ValueError(f"图片总大小超过 {_MAX_TOTAL_BYTES // 1024 // 1024}MB，请分几次读。")
+            mime_type = str(opened.get("mime") or "") or _sniff_image_mime(data)
+            if not mime_type:
+                raise ValueError(f"受管资产不是可识别的图片：{asset_id}")
+            path = _save_normalized(data, mime_type, data_store)
+            resolved.append((path, mime_type, len(data), f"资产 {asset_id}"))
+    except VisualError as exc:
+        return {"success": False, "error": exc.message, "code": exc.code}
     except (OSError, ValueError, httpx.HTTPError) as exc:
         return {"success": False, "error": str(exc)}
 
@@ -163,10 +211,49 @@ async def run(
             for path, mime_type, _size, label in resolved
         ],
         "internal_metadata": {
-            "sources": [source for source in sources],
+            "sources": [*sources, *(f"asset:{asset_id}" for asset_id in asset_ids)],
             "resolved_paths": [str(path) for path, _mime, _size, _label in resolved],
             "focus": focus_text,
         },
+    }
+
+
+def _visual_context(engine_context: Any, invocation_context: Any) -> tuple[Any, Any]:
+    """旧引擎没有视觉服务时返回 (None, None)，原有读图路径保持不变。"""
+    service = None
+    getter = getattr(engine_context, "get_visual_service", None)
+    if callable(getter):
+        service = getter()
+    access = None
+    getter = getattr(engine_context, "get_person_access", None)
+    if callable(getter) and invocation_context is not None:
+        access = getter(invocation_context)
+    return service, access
+
+
+async def _guard_local_source(
+    service: Any,
+    access: Any,
+    source: str,
+    data_store: Any,
+) -> dict[str, Any] | None:
+    """受管人物素材走实际查看能力校验；普通聊天缓存/临时图不受影响。"""
+    lowered = str(source or "").lower()
+    if lowered.startswith(("http://", "https://")):
+        return None
+    target = source
+    if lowered.startswith("file://"):
+        path = _resolve_local_path(source, data_store)
+        target = str(path) if path is not None else source
+    guard = await service.guard_path(target, access, "vision_read", consume=True)
+    if not guard.get("managed"):
+        return None
+    if guard.get("allowed"):
+        return None
+    return {
+        "success": False,
+        "error": "这张受管素材不可用或不在当前对话可见范围内",
+        "code": str(guard.get("code") or "consent_required"),
     }
 
 
