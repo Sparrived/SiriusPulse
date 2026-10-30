@@ -35,6 +35,7 @@ from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.rhythm import RhythmAnalyzer
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
+from sirius_pulse.memory.basic.store import BasicMemoryFileStore
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.models.models import Message
 from sirius_pulse.providers.mock import MockProvider
@@ -89,7 +90,7 @@ def _new_engine(
     engine._topic_window_max_size = 10
     engine._delayed_event_emitted = {}
     engine.basic_memory = BasicMemoryManager()
-    engine.basic_store = SimpleNamespace(append=lambda entry: None)
+    engine.basic_store = BasicMemoryFileStore(work_path)
     engine.event_bus = SimpleNamespace(emit=AsyncMock(return_value=True))
     engine.delayed_queue = DelayedResponseQueue()
     engine.assistant_emotion = SimpleNamespace(
@@ -305,6 +306,10 @@ async def test_normal_photo_keeps_its_original(tmp_path):
     assert len(provider.requests) == 1
     assert photo_path.exists()
     assert Path(f"{photo_path}.url").exists()
+    archived = BasicMemoryFileStore(tmp_path).read_all(_GROUP_ID)
+    assert len(archived) == 1
+    assert archived[0].multimodal_inputs[0]["caption"] == _PHOTO_CAPTION
+    assert "[图片描述：" + _PHOTO_CAPTION + "]" in archived[0].content
     # 描述缓存只有表情包会写。
     assert not (tmp_path / "sticker_captions.json").exists()
 

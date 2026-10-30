@@ -256,6 +256,63 @@ async def test_collect_image_inputs_when_get_image_returns_remote_url_then_cache
 
 
 @pytest.mark.asyncio
+async def test_collect_image_inputs_when_napcat_returns_readable_local_path_then_caches_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """NapCat 给出可读本地文件时，返回人格 image_cache 中的可复用副本。"""
+    adapter = _napcat(tmp_path)
+    source = tmp_path / "napcat" / "incoming.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    image_bytes = _png_bytes()
+    source.write_bytes(image_bytes)
+
+    async def unexpected_get_image(action: str, params: dict) -> dict:
+        raise AssertionError(f"readable local image should not call {action}: {params}")
+
+    monkeypatch.setattr(adapter, "call_api", unexpected_get_image)
+
+    inputs = await adapter._collect_image_inputs(
+        [{"type": "image", "data": {"file": str(source)}}]
+    )
+
+    assert len(inputs) == 1
+    cached = Path(inputs[0]["value"])
+    assert cached.parent == adapter._image_cache_dir
+    assert cached.is_file()
+    assert cached.resolve() != source.resolve()
+    assert cached.read_bytes() == image_bytes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_ref",
+    [
+        "base64://iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        "missing-image-from-napcat.png",
+    ],
+    ids=["base64-reference", "missing-local-file"],
+)
+async def test_collect_image_inputs_when_reference_is_not_readable_then_does_not_expose_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_ref: str
+):
+    """base64 引用或失效本地文件不能原样冒充可读路径进入视觉输入。"""
+    adapter = _napcat(tmp_path)
+
+    async def fake_get_image(action: str, params: dict) -> dict:
+        assert action == "get_image"
+        return {"data": {}}
+
+    monkeypatch.setattr(adapter, "call_api", fake_get_image)
+
+    inputs = await adapter._collect_image_inputs(
+        [{"type": "image", "data": {"file": file_ref}}]
+    )
+
+    assert inputs == []
+    assert file_ref not in {item.get("value", "") for item in inputs}
+
+
+@pytest.mark.asyncio
 async def test_collect_image_inputs_keeps_sticker_subtype(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

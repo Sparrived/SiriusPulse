@@ -221,3 +221,29 @@ async def test_recent_sticker_alone_becomes_reference_text_only(tmp_path):
     assert isinstance(content, str)
     assert str(sticker) in content
     assert "【本地图片路径】" in content
+
+
+@pytest.mark.asyncio
+async def test_pending_image_older_than_recent_window_still_reaches_follow_up(tmp_path):
+    """图片先发后，间隔消息超过节奏窗口时，后续文字仍能复用图片。"""
+    queue = DelayedResponseQueue()
+    _pending_item(queue, "用刚才那张图再画一版")
+    engine = _engine(queue, brain_chat=[_chat_ok()])
+    photo = tmp_path / "earlier.png"
+    photo.write_bytes(b"earlier-bytes")
+    engine.basic_memory.add_entry(
+        "group-1",
+        "u2",
+        "human",
+        "[图片]",
+        multimodal_inputs=[{"type": "image", "value": str(photo), "file_path": str(photo)}],
+    )
+    for index in range(11):
+        engine.basic_memory.add_entry("group-1", "u2", "human", f"中间消息 {index}")
+
+    await _tasks(engine, "用刚才那张图再画一版").tick_delayed_queue("group-1")
+
+    content = _first_user_message(engine)
+    assert isinstance(content, list)
+    assert str(photo) in content[0]["text"]
+    assert [part["image_url"]["url"] for part in content[1:]] == [str(photo)]
