@@ -33,6 +33,8 @@ class Message(JsonSerializable):
     dispatch_response_delay_seconds: float = 0.0
     # 同类型多实例的稳定来源路由键；不参与 Tool 能力过滤。
     adapter_route_id: str | None = None
+    # 仅由入站感知层签发；平台消息 ID 或引用文本不能代替此受控来源。
+    evidence_ref: str = ""
 
     @staticmethod
     def _trim_content_tail(content: str) -> str:

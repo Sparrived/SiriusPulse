@@ -119,6 +119,30 @@ class Pipeline:
         sender_user = engine.user_manager.get_user(resolved_user_id, group_id)
         resolved_speaker_name = sender_user.name if sender_user else message.speaker or "unknown"
 
+        people = getattr(engine, "person_service", None)
+        message.evidence_ref = ""
+        if (
+            people is not None
+            and message.sender_type == "human"
+            and message.channel
+            and message.channel_user_id
+            and message.message_id
+        ):
+            try:
+                message.evidence_ref = people.record_evidence(
+                    group_id=group_id,
+                    user_id=resolved_user_id,
+                    platform=message.channel or "",
+                    platform_uid=message.channel_user_id or "",
+                    message_id=message.message_id or "",
+                    content=message.content,
+                    attachments=[dict(item) for item in message.multimodal_inputs],
+                    adapter_route_id=message.adapter_route_id or "",
+                )
+            except Exception:
+                # 人物模块故障不阻塞普通聊天，但不能制造可写来源作为降级。
+                logger.warning("人物指令来源暂不可用，继续普通聊天并拒绝人物写入")
+
         # 构建用户消息的标签
         entry_tags: list[dict[str, str]] = []
         mm_inputs = (
@@ -546,6 +570,7 @@ class Pipeline:
             pace=signal.pace,
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
+            evidence_ref=message.evidence_ref,
         )
         if message.dispatch_coordinated:
             item.window_seconds = 0.0
@@ -649,6 +674,7 @@ class Pipeline:
             pace=rhythm.pace,
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
+            evidence_ref=message.evidence_ref,
         )
         engine._persist_group_state(group_id)
         result = {

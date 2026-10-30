@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +20,19 @@ from sirius_pulse.tools.models import (
     ToolSideEffect,
     build_chat_context,
 )
+from sirius_pulse.tools.pending_sources import identity_tool_needs_source
 from sirius_pulse.tools.security import validate_tool_access
 from sirius_pulse.tools.telemetry import ToolExecutionRecord, ToolTelemetry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
+
+_PERSON_TOOLS = {"person_query", "person_update", "visual_asset_manage"}
+
+
+def _logged_params(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    # 人物声明与私有资产不是通用工具诊断日志，完整内容只留在受控领域审计。
+    return {key: "<redacted>" for key in params} if tool_name in _PERSON_TOOLS else params
 
 
 def _should_retry(exc: Exception) -> bool:
@@ -108,30 +117,42 @@ class ToolExecutor:
         params: dict[str, Any],
         chain_context: ToolChainContext | None,
         invocation_context: ToolInvocationContext | None,
-    ) -> tuple[dict[str, Any] | None, ToolResult | None]:
+    ) -> tuple[dict[str, Any] | None, ToolInvocationContext | None, ToolResult | None]:
         """Apply the same validation contract to sync and async tools."""
         if tool._run_func is None:
-            return None, ToolResult(success=False, error=f"TOOL '{tool.name}' 没有可执行的 run() 函数")
+            return (
+                None,
+                invocation_context,
+                ToolResult(success=False, error=f"TOOL '{tool.name}' 没有可执行的 run() 函数"),
+            )
 
         if invocation_context is not None and getattr(invocation_context, "self_initiated", False):
             blocked = _self_initiated_block_reason(tool)
             if blocked:
-                return None, ToolResult(success=False, error=blocked)
+                return None, invocation_context, ToolResult(success=False, error=blocked)
 
         if chain_context is not None:
             params = chain_context.resolve_templates(params)
 
+        invocation_context, source_error = _bind_pending_source(tool, params, invocation_context)
+        if source_error:
+            return None, invocation_context, ToolResult(success=False, error=source_error)
+
         access_error = validate_tool_access(tool=tool, invocation_context=invocation_context)
         if access_error:
-            return None, ToolResult(success=False, error=access_error)
+            return None, invocation_context, ToolResult(success=False, error=access_error)
 
         admin_error = self._validate_admin_requirement(tool, invocation_context)
         if admin_error:
-            return None, ToolResult(success=False, error=admin_error)
+            return None, invocation_context, ToolResult(success=False, error=admin_error)
 
         for param_def in tool.parameters:
             if param_def.required and param_def.name not in params:
-                return None, ToolResult(success=False, error=f"缺少必填参数: {param_def.name}")
+                return (
+                    None,
+                    invocation_context,
+                    ToolResult(success=False, error=f"缺少必填参数: {param_def.name}"),
+                )
 
         call_params: dict[str, Any] = {}
         for param_def in tool.parameters:
@@ -142,7 +163,7 @@ class ToolExecutor:
         if tool.allow_extra_parameters:
             for name, value in params.items():
                 call_params.setdefault(name, value)
-        return call_params, None
+        return call_params, invocation_context, None
 
     def _inject_runtime_params(
         self,
@@ -201,12 +222,12 @@ class ToolExecutor:
         logger.info(
             "Tool execute start: %s(params=%s, caller=%s)",
             tool.name,
-            params,
-            getattr(invocation_context, "caller", None) if invocation_context else None,
+            _logged_params(tool.name, params),
+            getattr(invocation_context, "caller_user_id", "") if invocation_context else "",
         )
 
         try:
-            call_params, tool_result = self._prepare_call_params(
+            call_params, invocation_context, tool_result = self._prepare_call_params(
                 tool, params, chain_context, invocation_context
             )
             if tool_result is not None:
@@ -216,7 +237,11 @@ class ToolExecutor:
             self._inject_runtime_params(tool, call_params, invocation_context)
             data_store = self._get_data_store(tool.name)
 
-            logger.info("Tool execute calling: %s(final_params=%s)", tool.name, call_params)
+            logger.info(
+                "Tool execute calling: %s(final_params=%s)",
+                tool.name,
+                _logged_params(tool.name, call_params),
+            )
 
             # Run with optional retry for transient failures
             for attempt in range(max_retries + 1):
@@ -236,7 +261,9 @@ class ToolExecutor:
                         "multimodal_blocks=%d",
                         tool.name,
                         tool_result.success,
-                        tool_result.to_display_text()[:200],
+                        "<redacted>"
+                        if tool.name in _PERSON_TOOLS
+                        else tool_result.to_display_text()[:200],
                         len(tool_result.text_blocks),
                         len(tool_result.multimodal_blocks),
                     )
@@ -261,7 +288,11 @@ class ToolExecutor:
                     caller_id = ""
                     if invocation_context is not None:
                         caller_id = getattr(invocation_context, "caller_user_id", "") or ""
-                    summary = tool_result.to_display_text()[:500] if tool_result.success else ""
+                    summary = (
+                        tool_result.to_display_text()[:500]
+                        if tool_result.success and tool.name not in _PERSON_TOOLS
+                        else ""
+                    )
                     self._telemetry.record(
                         ToolExecutionRecord(
                             tool_name=tool.name,
@@ -270,7 +301,7 @@ class ToolExecutor:
                             duration_ms=round(duration_ms, 2),
                             error=tool_result.error if not tool_result.success else "",
                             caller_user_id=caller_id,
-                            params=params if params else None,
+                            params=_logged_params(tool.name, params) if params else None,
                             result_summary=summary,
                         )
                     )
@@ -363,11 +394,11 @@ class ToolExecutor:
         logger.info(
             "Tool async execute start: %s(params=%s, caller=%s)",
             tool.name,
-            params,
-            getattr(invocation_context, "caller", None) if invocation_context else None,
+            _logged_params(tool.name, params),
+            getattr(invocation_context, "caller_user_id", "") if invocation_context else "",
         )
         try:
-            call_params, rejected = self._prepare_call_params(
+            call_params, invocation_context, rejected = self._prepare_call_params(
                 tool, params, chain_context, invocation_context
             )
             if rejected is not None:
@@ -377,7 +408,11 @@ class ToolExecutor:
             self._inject_runtime_params(tool, call_params, invocation_context)
             data_store = self._get_data_store(tool.name)
 
-            logger.info("Tool async execute calling: %s(final_params=%s)", tool.name, call_params)
+            logger.info(
+                "Tool async execute calling: %s(final_params=%s)",
+                tool.name,
+                _logged_params(tool.name, call_params),
+            )
 
             tool_result: ToolResult | None = None
             for attempt in range(max_retries + 1):
@@ -391,7 +426,9 @@ class ToolExecutor:
                         "multimodal_blocks=%d",
                         tool.name,
                         tool_result.success,
-                        tool_result.to_display_text()[:200],
+                        "<redacted>"
+                        if tool.name in _PERSON_TOOLS
+                        else tool_result.to_display_text()[:200],
                         len(tool_result.text_blocks),
                         len(tool_result.multimodal_blocks),
                     )
@@ -421,7 +458,11 @@ class ToolExecutor:
                             or getattr(invocation_context, "caller", "")
                             or ""
                         )
-                    summary = tool_result.to_display_text()[:500] if tool_result.success else ""
+                    summary = (
+                        tool_result.to_display_text()[:500]
+                        if tool_result.success and tool.name not in _PERSON_TOOLS
+                        else ""
+                    )
                     self._telemetry.record(
                         ToolExecutionRecord(
                             tool_name=tool.name,
@@ -430,7 +471,7 @@ class ToolExecutor:
                             duration_ms=elapsed_ms,
                             error=tool_result.error if not tool_result.success else "",
                             caller_user_id=caller_id,
-                            params=params if params else None,
+                            params=_logged_params(tool.name, params) if params else None,
                             result_summary=summary,
                         )
                     )
@@ -490,7 +531,30 @@ def _coerce_type(value: Any, type_hint: str) -> Any:
         if isinstance(value, str):
             return value.lower() in ("true", "1", "yes")
         return bool(value)
-    if type_lower in ("list[str]", "list"):
+    if type_lower in {"integer"}:
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return value
+    if type_lower in {"number"}:
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return value
+    if type_lower in {"boolean"}:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ("true", "1", "yes")
+        return bool(value)
+    if type_lower in {"dict", "object", "json"}:
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
+    if type_lower in {"array", "list[str]", "list"}:
         if isinstance(value, list):
             return value
         if isinstance(value, str):
@@ -518,6 +582,46 @@ def _self_initiated_block_reason(tool: ToolDefinition) -> str:
     if tool.side_effect in {ToolSideEffect.EXTERNAL_WRITE, ToolSideEffect.DESTRUCTIVE}:
         return f"TOOL '{tool.name}' 会向外部发送内容；自主产出的内容先留作她自己的素材。"
     return ""
+
+
+def _bind_pending_source(
+    tool: ToolDefinition,
+    params: dict[str, Any],
+    context: ToolInvocationContext | None,
+) -> tuple[ToolInvocationContext | None, str]:
+    """Select only an already admitted pending instruction, never arbitrary readable history."""
+    if (
+        context is None
+        or context.self_initiated
+        or context.evidence_callers is None
+        or not identity_tool_needs_source(tool, params)
+        or not _can_receive_engine_context(tool)
+    ):
+        return context, ""
+    target = params.get("target")
+    refs = [str(params.get(key) or "") for key in ("evidence_ref", "source_ref")]
+    if isinstance(target, dict):
+        refs.append(str(target.get("evidence_ref") or ""))
+    selected = list(dict.fromkeys(ref for ref in refs if ref))
+    authors = dict(context.evidence_callers)
+    if not authors:
+        return context, "evidence_invalid: 本回合来源作者无法验证"
+    if any(ref not in context.evidence_refs or ref not in authors for ref in selected):
+        return context, "evidence_invalid: 只能使用本回合已接纳的真实指令来源"
+    if not selected:
+        if tool.name == "person_query" and isinstance(target, dict):
+            ref = str(target.get("ref") or "")
+            if ref in {"person_id", "name", "persona"}:
+                # Keep the actor for scope checks, but never manufacture write
+                # authority from a read-only profile lookup.
+                return replace(context, evidence_refs=()), ""
+        selected = list(authors)
+    identities = {authors[ref].user_id for ref in selected}
+    if len(identities) != 1:
+        return context, "source_ambiguous: 多人请求必须明确选择本次操作的指令来源"
+    selected_ref = selected[0]
+    caller = authors[selected_ref]
+    return replace(context, caller=caller, evidence_refs=(selected_ref,)), ""
 
 
 def _can_receive_engine_context(tool: ToolDefinition) -> bool:

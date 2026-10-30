@@ -80,6 +80,9 @@ WEBUI_ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("POST", "/api/persona/work-mode", "api_persona_work_mode_post"),
     RouteSpec("GET", "/api/persona/conversations", "api_persona_conversation_history_get"),
     RouteSpec("DELETE", "/api/persona/conversations", "api_persona_conversation_history_delete"),
+    # 人物管理只允许应用管理员；GET 也不能向 viewer 暴露私人资料。
+    RouteSpec("GET", "/api/persona/people/{person_id}", "api_persona_people"),
+    RouteSpec("POST", "/api/persona/people/{operation}", "api_persona_people"),
     # ── 插件 API（全局） ──
     RouteSpec("GET", "/api/plugins", "api_plugins_get"),
     RouteSpec("GET", "/api/plugins/{plugin_name}", "api_plugin_detail_get"),

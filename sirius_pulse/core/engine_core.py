@@ -222,9 +222,16 @@ class _EmotionalGroupChatEngineBase:
             self.work_path,
             persona_name=self.persona.name,
             persona_aliases=self.persona.aliases,
-            conn=self._persona_db_conn,
+            conn=self._memory_storage.conn,
         )
         self.identity_resolver = IdentityResolver()
+        self.person_service = self.user_manager.people
+        self.person_service.memory_units = self.memory_unit_manager
+        from sirius_pulse.visual import VisualService
+
+        self.visual_service = VisualService(
+            self.work_path, people=self.person_service, conn=self.person_service.conn
+        )
 
         self.cold_detector = ColdDetector()
 
@@ -1505,6 +1512,7 @@ class _EmotionalGroupChatEngineBase:
             pace="steady",
             speaker_name=message.speaker or "",
             platform_message_id=message.message_id or "",
+            evidence_ref=message.evidence_ref,
         )
         # 她刚忙完，不必再等一个去抖窗口：下个 tick 就回。
         item.window_seconds = 0.0
@@ -1776,6 +1784,7 @@ class _EmotionalGroupChatEngineBase:
                     channel_user_id=message.channel_user_id,
                     multimodal_inputs=message.multimodal_inputs,
                     platform_message_id=getattr(message, "message_id", "") or "",
+                    evidence_ref=message.evidence_ref,
                     adapter_type=message.adapter_type,
                     adapter_route_id=message.adapter_route_id,
                 )
@@ -1837,6 +1846,7 @@ class _EmotionalGroupChatEngineBase:
                     channel_user_id=message.channel_user_id,
                     multimodal_inputs=message.multimodal_inputs,
                     platform_message_id=getattr(message, "message_id", "") or "",
+                    evidence_ref=message.evidence_ref,
                     adapter_type=message.adapter_type,
                     adapter_route_id=message.adapter_route_id,
                 )

@@ -199,6 +199,7 @@ class DelayedResponseQueue:
         pace: str = "steady",
         speaker_name: str = "",
         platform_message_id: str = "",
+        evidence_ref: str = "",
     ) -> DelayedResponseItem:
         """Add an item to the delayed queue.
 
@@ -214,6 +215,7 @@ class DelayedResponseQueue:
             speaker=speaker_name,
             user_id=channel_user_id or "",
             platform_message_id=platform_message_id,
+            evidence_ref=evidence_ref,
         )
 
         # Merge with any existing pending item in the same group. DELAYED
@@ -233,6 +235,8 @@ class DelayedResponseQueue:
                 )
             ):
                 item.message_content += f"\n{tagged}"
+                if evidence_ref and evidence_ref not in item.evidence_refs:
+                    item.evidence_refs.append(evidence_ref)
                 if strategy_decision.strategy == ResponseStrategy.IMMEDIATE:
                     item.window_seconds = 0.0
                     item.strategy_decision = strategy_decision
@@ -286,6 +290,7 @@ class DelayedResponseQueue:
             heat_level=heat_level,
             pace=pace,
             related_user_ids=[user_id] if user_id else [],
+            evidence_refs=[evidence_ref] if evidence_ref else [],
         )
         if group_id not in self._queues:
             self._queues[group_id] = []
@@ -666,6 +671,7 @@ class DelayedResponseQueue:
         platform_message_id: str = "",
         adapter_type: str | None = None,
         adapter_route_id: str | None = None,
+        evidence_ref: str = "",
     ) -> bool:
         """轻量合并：将新消息合并进已有 pending 项，跳过完整管线。
 
@@ -693,8 +699,11 @@ class DelayedResponseQueue:
                 speaker=speaker_name,
                 user_id=channel_user_id or "",
                 platform_message_id=platform_message_id,
+                evidence_ref=evidence_ref,
             )
             item.message_content += f"\n{tagged}"
+            if evidence_ref and evidence_ref not in item.evidence_refs:
+                item.evidence_refs.append(evidence_ref)
             if multimodal_inputs:
                 item.multimodal_inputs.extend(multimodal_inputs)
             if user_id and user_id not in item.related_user_ids:

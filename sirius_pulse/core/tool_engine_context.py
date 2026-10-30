@@ -20,17 +20,52 @@ from sirius_pulse.core.work_mode import (
     parse_arguments,
 )
 from sirius_pulse.providers.base import ToolCall
-from sirius_pulse.tools.models import ToolInvocationContext
+from sirius_pulse.tools.executor import _bind_pending_source
+from sirius_pulse.tools.models import ToolInvocationContext, ToolResult
+from sirius_pulse.tools.pending_sources import pending_evidence_callers
 
 logger = logging.getLogger(__name__)
 
 _EVENT_TYPE_MAP: dict[str, SessionEventType] = {v.value: v for v in SessionEventType}
+
 
 # 工具循环撞到轮次上限时，必须再要一轮"只说话"的收尾。模型很容易把全部轮次花在
 # 侦察上（读文件、翻目录、查记录），最后一轮仍然是工具调用，于是循环带回来的正文
 # 是空的——她做了一堆事却一个字都没留下。聊天通道早已用同样的收尾解决过这个问题
 # （见 bg_tasks_delayed 的 final reply），这里让自主回合与定时任务回合也走这一步。
 # 这一轮不带工具：正文不能再被一次工具调用顶掉，所以不依赖模型自觉。
+def _job_admitted_evidence_refs(
+    engine: Any, group_id: str, tool_name: str, job_id: str
+) -> list[str]:
+    """Bind a callback to the exact image job, not whichever chat is latest.
+
+    Only this tool's own pending/completed queue entries are consulted; arbitrary
+    chat history and other groups can never supply authorization to a callback.
+    """
+    try:
+        executor = getattr(engine, "_tool_executor", None)
+        store = executor.get_data_store(tool_name) if executor is not None else None
+        jobs = store.get("jobs", []) if store is not None else []
+        expected = job_id.removeprefix(f"{tool_name}:")
+        if not expected or "/" in expected or "\\" in expected:
+            return []
+        for job in reversed(jobs if isinstance(jobs, list) else []):
+            if (
+                isinstance(job, dict)
+                and str(job.get("id") or "") == expected
+                and str(job.get("group_id") or "") == group_id
+            ):
+                visual = job.get("visual") if isinstance(job.get("visual"), dict) else {}
+                manifest = (
+                    visual.get("manifest") if isinstance(visual.get("manifest"), dict) else {}
+                )
+                ref = str(manifest.get("source_ref") or "")
+                return [ref] if ref else []
+    except Exception:
+        logger.warning("后台任务来源不可用，回调不授予人物资料写权限", exc_info=True)
+    return []
+
+
 _TOOL_LIMIT_WRAP_UP = (
     "【工具链控制信息】本轮已经达到工具调用轮次上限，工具不再可用。"
     "请直接用你自己的话写下这次做了什么、看到了什么、想到了什么，这就是这次的结果。"
@@ -241,12 +276,20 @@ class ToolEngineContextImpl:
                     },
                 )
             caller = self._build_caller(user_id, user_name, caller_is_developer)
+            evidence_refs = (
+                _job_admitted_evidence_refs(self._engine, group_id, tool_name, callback_id)
+                if not self_initiated
+                else []
+            )
+            evidence_callers = pending_evidence_callers(self._engine, group_id, evidence_refs)
             invocation_context = ToolInvocationContext(
                 caller=caller,
                 developer_profiles=[caller] if caller_is_developer else [],
                 group_id=group_id,
                 adapter_type=adapter_type,
                 self_initiated=self_initiated,
+                evidence_refs=() if self_initiated else evidence_refs,
+                evidence_callers=() if self_initiated else evidence_callers,
                 background_event_id=callback_id,
                 blocked_image_paths=(artifact_path,)
                 if artifact_delivery_blocked and artifact_path
@@ -428,6 +471,21 @@ class ToolEngineContextImpl:
                         params = {}
                     if not isinstance(params, dict):
                         params = {}
+                    call_context, source_error = _bind_pending_source(
+                        tool, params, invocation_context
+                    )
+                    if source_error:
+                        executed = ToolResult(success=False, error=source_error)
+                        tool_content = executed.to_model_text()
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": tool_content,
+                            }
+                        )
+                        round_step["results"].append({"tool": tool_name, "output": tool_content})
+                        continue
                     try:
                         timeout = float(self.get_config_value("tool_execution_timeout", 30.0))
                     except (TypeError, ValueError):
@@ -438,7 +496,7 @@ class ToolEngineContextImpl:
                         tool,
                         params,
                         timeout=timeout,
-                        invocation_context=invocation_context,
+                        invocation_context=call_context,
                         max_retries=2 if getattr(tool, "retry_safe", False) else 0,
                     )
                     tool_content = executed.to_model_text()
@@ -892,6 +950,34 @@ class ToolEngineContextImpl:
 
     def get_persona(self) -> Any:
         return self._engine.persona
+
+    def get_person_service(self) -> Any:
+        return self._engine.person_service
+
+    def get_visual_service(self) -> Any:
+        return self._engine.visual_service
+
+    def get_person_access(self, invocation_context: ToolInvocationContext | None) -> Any:
+        from sirius_pulse.people import PersonAccess
+
+        people = self.get_person_service()
+        if invocation_context is None:
+            return PersonAccess()
+        autonomous = invocation_context.self_initiated
+        actor_id = (
+            people.persona_id
+            if autonomous
+            else people.person_id_for_user(invocation_context.caller_user_id) or ""
+        )
+        authors = {user.user_id for _, user in invocation_context.evidence_callers or ()}
+        ambiguous = len(invocation_context.evidence_refs) > 1 and len(authors) != 1
+        return PersonAccess(
+            actor_id="" if ambiguous else actor_id,
+            group_id=invocation_context.group_id,
+            evidence_refs=() if autonomous else tuple(invocation_context.evidence_refs),
+            is_admin=not autonomous and not ambiguous and invocation_context.caller_is_developer,
+            self_initiated=autonomous,
+        )
 
     def log_inner_thought(self, text: str) -> None:
         self._engine._log_inner_thought(text)

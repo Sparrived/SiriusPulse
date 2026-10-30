@@ -60,6 +60,8 @@ PERSONA_LOGGER_PREFIXES = (
     "sirius_pulse.plugins.",
     "sirius_pulse.providers.",
     "sirius_pulse.tools.",
+    "sirius_pulse.people.",
+    "sirius_pulse.visual.",
     "sirius_pulse.token.",
     # 引擎运行时本身（后台任务循环）也必须进 persona.log。它此前不在任何前缀里，
     # 于是「Background task 'autonomy_tick' failed」这类最该被看见的失败只落在

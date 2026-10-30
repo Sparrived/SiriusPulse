@@ -224,6 +224,11 @@ class WebUIServer(_WebUIServer):
         delegated.__name__ = name
         return delegated
 
+    async def api_persona_people(self, request):
+        from sirius_pulse.webui.people_api import people_request
+
+        return await people_request(request, self)
+
     async def api_persona_activate(self, request):
         response = await api_persona_activate(request, self.data_dir)
         if response.status < 400:

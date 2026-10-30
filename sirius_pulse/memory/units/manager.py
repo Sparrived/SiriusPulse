@@ -353,6 +353,69 @@ class MemoryUnitManager:
             cross_group_enabled=cross_group_enabled,
         )
 
+    def retrieve_for_person(
+        self,
+        *,
+        group_id: str,
+        identity_keys: list[str],
+        query: str = "",
+        include_user_scope: bool = False,
+        limit: int = 3,
+    ) -> list[MemoryUnit]:
+        """Read-only exact-identity memory lookup, without loading or computing vectors.
+
+        ``identity_keys`` are verified UUIDs, legacy user IDs or platform UIDs supplied
+        by PersonService, never display names. The ephemeral index cannot affect the
+        resident index or persist a retired unit back to disk. Participant membership
+        links shared group facts; user facts are owned only by their exact scope_id.
+        """
+        if not group_id or not identity_keys:
+            return []
+        limit = max(1, min(int(limit), 3))
+        keys = {str(key).strip() for key in identity_keys if str(key).strip()}
+
+        def exact_owner(scope_id: str) -> bool:
+            return bool(scope_id and scope_id in keys)
+
+        units = []
+        for unit in self._store.load(group_id, with_embeddings=False):
+            if (
+                unit.group_id != group_id
+                or not unit.should_prompt
+                or MemoryUnitIndexer._is_expired(unit)
+            ):
+                continue
+            if unit.scope == "user":
+                if include_user_scope and exact_owner(unit.scope_id):
+                    units.append(unit)
+                continue
+            if unit.scope in {"group", "persona", "global"} and any(
+                exact_owner(participant) for participant in unit.participants
+            ):
+                # Aliases are retrieval hints, not ownership or identity evidence.
+                units.append(unit)
+        indexer = MemoryUnitIndexer(embedding_client=None)
+        indexer.replace_group(group_id, units)
+        retriever = MemoryUnitRetriever(indexer)
+        if not query.strip():
+            units.sort(
+                key=lambda unit: (
+                    unit.salience * unit.confidence,
+                    unit.event_time or unit.created_at,
+                ),
+                reverse=True,
+            )
+            return units[:limit]
+        return retriever.retrieve(
+            query,
+            group_id=group_id,
+            top_k=limit,
+            max_tokens_budget=180,
+            user_id=identity_keys[0],
+            identity_aliases=identity_keys,
+            cross_group_enabled=False,
+        )
+
     def get_units_for_group(self, group_id: str) -> list[MemoryUnit]:
         self.ensure_group_loaded(group_id)
         return [unit for unit in self._indexer.list_all() if unit.group_id == group_id]

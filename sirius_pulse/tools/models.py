@@ -31,12 +31,9 @@ class ToolContentBlock:
 
 @dataclass(slots=True)
 class ToolParameter(ConfigParameter):
-    """Tool 参数定义 —— 继承 ConfigParameter，完全复用公共字段。
+    """工具参数；保留旧式 fields，同时支持标准数组 items Schema。"""
 
-    参数结构由 TOOL_META["parameters"] 在 ToolRegistry 中解析生成。
-    """
-
-    pass
+    items: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -264,6 +261,8 @@ class ToolDefinition:
                 entry["default"] = param.default
             if param.choices:
                 entry["choices"] = param.choices
+            if param.items is not None:
+                entry["items"] = deepcopy(param.items)
             if param.fields:
                 entry["fields"] = param.fields
             if param.group:
@@ -338,8 +337,10 @@ class ToolDefinition:
                 "type": self._map_type_to_json_schema(param.type),
                 "description": param.description,
             }
-            # 处理数组类型的子字段定义
-            if param.type in ("list", "array") and param.fields:
+            # 兼容内置工具已有的标准 items，同时保留旧式 fields 配置表单。
+            if param.type in ("list", "array") and param.items is not None:
+                prop["items"] = deepcopy(param.items)
+            elif param.type in ("list", "array") and param.fields:
                 prop["items"] = self._build_array_items_schema(param.fields)
             if param.choices:
                 prop["enum"] = param.choices
@@ -559,6 +560,18 @@ class ToolEngineContext(Protocol):
         """获取当前人格实例。"""
         ...
 
+    def get_person_service(self) -> Any:
+        """人格内统一人物领域服务。"""
+        ...
+
+    def get_visual_service(self) -> Any:
+        """人格内受管视觉资产服务。"""
+        ...
+
+    def get_person_access(self, invocation_context: Any) -> Any:
+        """从可信逐调用来源创建权限上下文，不接受模型自报操作者。"""
+        ...
+
     def log_inner_thought(self, text: str) -> None:
         """记录引擎内部日志（内心活动）。"""
         ...
@@ -645,6 +658,10 @@ class ToolInvocationContext:
     """Stable internal callback identity, used only for explicitly selected delivery."""
     blocked_image_paths: tuple[str, ...] = ()
     """Legacy artifacts already sent or ambiguous; never resend them from this callback."""
+    evidence_refs: tuple[str, ...] = ()
+    """Framework-issued sources for this turn's actual pending instructions, not readable history."""
+    evidence_callers: tuple[tuple[str, UnifiedUser], ...] | None = None
+    """Trusted pending-source authors; selection never inherits another author's admin role."""
 
     @property
     def chat_context(self) -> dict[str, Any]:

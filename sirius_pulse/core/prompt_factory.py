@@ -370,6 +370,7 @@ class PromptFactory:
         user_id: str = "",
         platform_message_id: str = "",
         group_id: str = "",
+        evidence_ref: str = "",
     ) -> str:
         """统一生成 <message> XML 标签。
 
@@ -402,6 +403,8 @@ class PromptFactory:
             safe_msg_id = _html_mod.escape(str(platform_message_id), quote=True)
             attrs += f' msg_id="{safe_msg_id}"'
 
+        if evidence_ref:
+            attrs += f' evidence_ref="{_html_mod.escape(evidence_ref, quote=True)}"'
         return f"<message {attrs}>{safe_content}</message>"
 
     @staticmethod

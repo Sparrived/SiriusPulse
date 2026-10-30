@@ -61,6 +61,15 @@ class UnifiedUserManager:
         self._global_users: dict[str, UnifiedUser] = {}
         self._speaker_index: dict[str, str] = {}
         self._identity_index: dict[str, str] = {}
+        from sirius_pulse.people import PersonService
+
+        self.people = PersonService(
+            self._work_path,
+            user_manager=self,
+            persona_name=persona_name,
+            persona_aliases=persona_aliases,
+            conn=self._storage.conn,
+        )
 
         # 懒加载标记
         self._users_loaded = False
@@ -138,7 +147,9 @@ class UnifiedUserManager:
         """更新索引。"""
         for label in (user.name, user.user_id):
             if label:
-                self._speaker_index[self._normalize(label)] = user.user_id
+                # A name is multi-valued; never let the last registrant overwrite another.
+                key = self._normalize(label)
+                self._speaker_index.setdefault(key, user.user_id)
         for platform, external_uid in user.identities.items():
             if platform and external_uid:
                 self._identity_index[self._identity_key(platform, external_uid)] = user.user_id

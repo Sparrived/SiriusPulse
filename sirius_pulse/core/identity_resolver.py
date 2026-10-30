@@ -80,33 +80,33 @@ class IdentityResolver:
         """
         group = user_manager._ensure_group(group_id)
 
-        # 1. Exact user_id match
-        if ctx.user_id and ctx.user_id in group:
-            return group[ctx.user_id]
-
-        # 2. Platform identity match
+        # Exact account identity is stable across groups; seed the resolved user locally.
         if ctx.platform and ctx.platform_uid:
             resolved = user_manager.resolve_user_id(
                 platform=ctx.platform,
                 external_uid=ctx.platform_uid,
             )
-            if resolved and resolved in group:
-                return group[resolved]
+            if resolved:
+                user = user_manager.get_user(resolved, group_id)
+                if user is not None:
+                    return user
 
-        # 3. Speaker name match
-        resolved = user_manager.resolve_user_id(speaker=ctx.speaker_name)
-        if resolved and resolved in group:
-            return group[resolved]
+        # Existing framework IDs are exact only; names are never identity credentials.
+        if ctx.user_id:
+            user = user_manager.get_user(ctx.user_id, group_id)
+            if user is not None:
+                return user
 
-        # 4. Create new user
+        # Unknown labels are observations, never credentials that attach to a prior record.
         from sirius_pulse.memory.user.unified_models import UnifiedUser
+        import uuid
 
         identities: dict[str, str] = {}
         if ctx.platform and ctx.platform_uid:
             identities[ctx.platform] = ctx.platform_uid
 
         user = UnifiedUser(
-            user_id=ctx.user_id or ctx.speaker_name,
+            user_id=ctx.user_id or (str(uuid.uuid4()) if identities else ctx.speaker_name),
             name=ctx.speaker_name,
             identities=identities,
             metadata={"is_developer": ctx.is_developer},
@@ -147,14 +147,13 @@ class IdentityResolver:
                 external_uid=ctx.platform_uid,
             )
             if resolved:
-                group = user_manager._ensure_group(group_id)
-                if resolved in group:
-                    return IdentityResolution(
-                        user_id=resolved,
-                        confidence=1.0,
-                        source="platform_id",
-                        display_name=speaker,
-                    )
+                user_manager.get_user(resolved, group_id)
+                return IdentityResolution(
+                    user_id=resolved,
+                    confidence=1.0,
+                    source="platform_id",
+                    display_name=speaker,
+                )
 
         # L1.5: Bot 自身检测
         if self._is_bot_identity(ctx):
@@ -165,29 +164,17 @@ class IdentityResolver:
                 display_name=speaker,
             )
 
-        # L2: 显示名模糊匹配
-        if speaker:
-            fuzzy_result = self._fuzzy_match(speaker, group_id, user_manager)
-            if fuzzy_result:
-                return fuzzy_result
-
-        # L3: 上下文推断
-        if recent_speakers and speaker:
-            context_result = self._context_inference(
-                speaker, recent_speakers, group_id, user_manager
-            )
-            if context_result:
-                return context_result
-
-        # Fallback: 创建新用户
+        # Names and conversational proximity cannot establish an account identity.
+        # Fallback: create an isolated legacy user record.
         from sirius_pulse.memory.user.unified_models import UnifiedUser
+        import uuid
 
         identities: dict[str, str] = {}
         if ctx.platform and ctx.platform_uid:
             identities[ctx.platform] = ctx.platform_uid
 
         user = UnifiedUser(
-            user_id=ctx.user_id or speaker,
+            user_id=ctx.user_id or (str(uuid.uuid4()) if identities else speaker),
             name=speaker,
             identities=identities,
             metadata={"is_developer": ctx.is_developer},

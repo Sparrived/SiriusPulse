@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.utils.json_io import atomic_write_json, read_json
 from sirius_pulse.utils.layout import WorkspaceLayout
 
@@ -166,9 +167,11 @@ class WorkModeRun:
     """这次工作模式用的任务名（AMKR 按它换真实模型）；空 = 沿用本回合原本的任务名。"""
     steps: list[dict[str, Any]] = field(default_factory=list)
     stash: list[str] = field(default_factory=list)
+    _model_stash: list[str] = field(default_factory=list, repr=False)
     replay: list[Any] = field(default_factory=list)
     """与 stash 一一对应的原始消息：退出时把还没进上下文的这批交回引擎重排。"""
     flush_pending: bool = False
+    flushed_evidence_refs: list[str] = field(default_factory=list)
     store: Any = field(default=None, repr=False, compare=False)
     """这份轨迹的落盘视图；带上它，异常与取消路径也能把终态写下去。"""
 
@@ -187,26 +190,53 @@ class WorkModeRun:
         text = (text or "").strip()
         if not text:
             return
+        model_text = text
+        if isinstance(replay, tuple) and replay:
+            message = replay[0]
+            model_text = PromptFactory.tag_message(
+                str(getattr(message, "content", "") or text),
+                speaker=str(getattr(message, "speaker", "") or ""),
+                user_id=str(getattr(message, "channel_user_id", "") or ""),
+                platform_message_id=str(getattr(message, "message_id", "") or ""),
+                evidence_ref=str(getattr(message, "evidence_ref", "") or ""),
+            )
         self.stash.append(text)
+        self._model_stash.append(model_text)
         if replay is not None:
             self.replay.append(replay)
         if mentions_persona:
             self.flush_pending = True
 
     def take_flushed(self) -> list[str]:
-        """Drain the stash, but only once a message named the persona."""
+        """Drain original plaintext while the model view is drained separately."""
         if not self.flush_pending:
             return []
         self.flush_pending = False
+        # 只有实际补进本轮上下文的入站指令才能扩大来源集合。
+        self.flushed_evidence_refs = list(
+            dict.fromkeys(
+                str(getattr(payload[0], "evidence_ref", "") or "")
+                for payload in self.replay
+                if isinstance(payload, tuple)
+                and payload
+                and getattr(payload[0], "evidence_ref", "")
+            )
+        )
         # 这批消息马上就会进上下文，不必也不能再排回队列。
         self.replay = []
         drained, self.stash = self.stash, []
+        return drained
+
+    def take_flushed_for_model(self) -> list[str]:
+        """Drain the tagged view that preserves each admitted evidence_ref."""
+        drained, self._model_stash = self._model_stash, []
         return drained
 
     def take_unanswered(self) -> list[Any]:
         """Drain the messages that never made it into the model context."""
         drained, self.replay = self.replay, []
         self.stash = []
+        self._model_stash = []
         self.flush_pending = False
         return drained
 

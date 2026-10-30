@@ -277,8 +277,9 @@ class ToolRegistry:
                     description=str(raw.get("description", "")),
                     required=bool(raw.get("required", False)),
                     default=raw.get("default"),
-                    choices=raw.get("choices"),
+                    choices=raw.get("choices", raw.get("enum")),
                     fields=raw.get("fields"),
+                    items=raw.get("items") if isinstance(raw.get("items"), dict) else None,
                     group=str(raw.get("group", "")),
                 )
             )

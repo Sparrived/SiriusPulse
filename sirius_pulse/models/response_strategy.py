@@ -82,6 +82,7 @@ class DelayedResponseItem:
         default_factory=list
     )  # merged messages may involve multiple users
     retry_count: int = 0  # 生成/投递失败后重新入队的次数，用于封顶避免死循环
+    evidence_refs: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         # StrategyDecision 是 slots=True 的 dataclass，没有 __dict__；早先这里直接
@@ -106,6 +107,7 @@ class DelayedResponseItem:
             "pace": self.pace,
             "related_user_ids": list(self.related_user_ids),
             "retry_count": self.retry_count,
+            "evidence_refs": list(self.evidence_refs),
         }
 
     @classmethod
@@ -177,4 +179,5 @@ class DelayedResponseItem:
             pace=str(data.get("pace", "steady") or "steady"),
             related_user_ids=[str(u) for u in _list("related_user_ids") if u],
             retry_count=retry_count,
+            evidence_refs=[str(ref) for ref in _list("evidence_refs") if ref],
         )
