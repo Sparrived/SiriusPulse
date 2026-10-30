@@ -535,6 +535,9 @@ class DelayedQueueTasks:
         if callable(is_work_mode_active) and is_work_mode_active(group_id):
             return []
         recent = engine._helpers.get_recent_messages(group_id, n=10)
+        # 节奏和队列判定只需要短窗口；未被 assistant 回复切断的图片则要从整段
+        # 未完成对话里收集，否则图片先发、文字后发且中间消息较多时会丢失参考路径。
+        pending_history = engine._helpers.get_recent_messages(group_id, n=0)
         rhythm = engine.rhythm_analyzer.analyze(group_id, recent)
         triggered = engine.delayed_queue.tick(
             group_id,
@@ -744,15 +747,15 @@ class DelayedQueueTasks:
         # never reach the delayed queue at all. 表情包也一并带上：它们不进视觉通道，
         # 但本地路径要列进文本，模型才能把表情包原图当生图参考图。
         unanswered_from = 0
-        for idx in range(len(recent) - 1, -1, -1):
-            if recent[idx].get("role") == "assistant":
+        for idx in range(len(pending_history) - 1, -1, -1):
+            if pending_history[idx].get("role") == "assistant":
                 unanswered_from = idx + 1
                 break
         all_multimodal: list[dict[str, str]] = []
         seen_values: set[str] = set()
         for source in (
             *[getattr(i, "multimodal_inputs", None) for i in triggered],
-            *[r.get("multimodal_inputs") for r in recent[unanswered_from:]],
+            *[r.get("multimodal_inputs") for r in pending_history[unanswered_from:]],
         ):
             for m in source or []:
                 if m.get("type") != "image":

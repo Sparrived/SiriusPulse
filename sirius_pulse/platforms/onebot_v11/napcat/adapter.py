@@ -1258,9 +1258,14 @@ class NapCatAdapter(BaseAdapter):
         primary = str(data.get("url", "") or data.get("file", "")).strip()
         file_ref = str(data.get("file", "")).strip()
 
-        # 非网络地址（本地路径/数据地址）已经是可用输入，无需下载或兜底。
+        # NapCat 可能只给出自身容器里的 file 路径；只有当前进程确实能读到时，
+        # 才把它复制进人格缓存。base64/data 或失效路径不能原样暴露给模型。
         if primary and not primary.startswith(("http://", "https://")):
-            return primary
+            local_path = _normalize_local_path(primary)
+            if local_path is not None and local_path.is_file():
+                adopted = await self._adopt_local_image(primary, is_sticker=is_sticker)
+                if adopted:
+                    return adopted
 
         candidates: list[str] = []
         for candidate in (primary, file_ref):

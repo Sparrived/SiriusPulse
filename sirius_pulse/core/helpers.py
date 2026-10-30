@@ -631,8 +631,10 @@ class Helpers:
                 logger.warning("被动TOOL触发器执行失败 (%s): %s", spec.name, exc)
 
     def get_recent_messages(self, group_id: str, n: int = 10) -> list[dict[str, Any]]:
-        """获取最近n条消息。"""
-        entries = self._engine.basic_memory.get_all(group_id)[-n:]
+        """获取最近 n 条消息；n <= 0 表示返回当前会话的全部活动消息。"""
+        entries = self._engine.basic_memory.get_all(group_id)
+        if n > 0:
+            entries = entries[-n:]
         return [
             {
                 "user_id": e.user_id,

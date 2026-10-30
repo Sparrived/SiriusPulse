@@ -1686,16 +1686,26 @@ class _EmotionalGroupChatEngineBase:
         for item in entry.multimodal_inputs or []:
             if item.get("type") == "image":
                 item["caption"] = caption
-        if not self._is_pure_image_message(message.content):
-            # 图文同条时用户正文是有效信息，不能被描述覆盖。
-            return caption
-        if not has_sticker:
-            entry.content = f"[图片] [图片描述：{caption}]"
-            return caption
-        # 动画表情：去掉无意义的文件哈希，替换为描述
-        stripped = re.sub(r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)", "", entry.content or "").strip()
-        sticker_tag = f"[动画表情：{caption}]"
-        entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
+        if self._is_pure_image_message(message.content):
+            if not has_sticker:
+                entry.content = f"[图片] [图片描述：{caption}]"
+            else:
+                # 动画表情：去掉无意义的文件哈希，替换为描述
+                stripped = re.sub(
+                    r"(?:\[动画表情[：:][^\]]*\]|【动画表情：[^】]+】)",
+                    "",
+                    entry.content or "",
+                ).strip()
+                sticker_tag = f"[动画表情：{caption}]"
+                entry.content = f"{stripped} {sticker_tag}" if stripped else sticker_tag
+
+        # 描述和纯图片正文会在记录后补写；同步 archive，重启后仍能看到图片上下文。
+        update_entry = getattr(getattr(self, "basic_store", None), "update_entry", None)
+        if callable(update_entry):
+            try:
+                update_entry(entry)
+            except Exception:
+                logger.warning("图片描述写回基础记忆归档失败: group=%s", group_id, exc_info=True)
         return caption
 
     async def process_message(
