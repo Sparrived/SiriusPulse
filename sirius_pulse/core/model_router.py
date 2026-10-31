@@ -84,6 +84,13 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         model_name="plugin_generate",
         timeout=30.0,
     ),
+    # 超长合并转发只把未展示部分压成一段概要，避免几十条聊天记录直接顶爆
+    # 提示词。单独一个任务名，运维可以把它绑到便宜的小模型上。
+    "forward_summarize": TaskConfig(
+        model_name="forward_summarize",
+        timeout=15.0,
+        retries=0,
+    ),
     "passive_tool": TaskConfig(
         model_name="passive_tool",
         timeout=20.0,

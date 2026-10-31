@@ -3,10 +3,26 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
+
+
+class _FakeBrain:
+    """记录 raw_call 请求的假 Brain，用来验证压缩只调用一次。"""
+
+    def __init__(self, result: str = "", error: Exception | None = None) -> None:
+        self.requests: list = []
+        self.result = result
+        self.error = error
+
+    async def raw_call(self, request):
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
 def _group_event(message: list[dict]) -> dict:
@@ -221,6 +237,145 @@ async def test_forward_message_is_truncated_to_budget(
     assert "第40条内容" in parsed.prompt
     assert "第41条内容" not in parsed.prompt
     assert len(parsed.prompt) < 4000
+    assert "[未展开内容概要]" not in parsed.prompt
+
+
+@pytest.mark.asyncio
+async def test_overflow_is_compressed_by_one_llm_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """超出预算的转发正文应额外压成概要，且只调用一次 LLM。"""
+    nodes = [
+        {
+            "type": "node",
+            "data": {
+                "nickname": f"用户{index}",
+                "content": [{"type": "text", "data": {"text": f"第{index}条内容"}}],
+            },
+        }
+        for index in range(1, 46)
+    ]
+    adapter = _adapter(
+        monkeypatch,
+        {"fwd-long": {"status": "ok", "data": {"messages": nodes}}},
+        work_path=tmp_path,
+    )
+    brain = _FakeBrain("第41到45条：大家在约周末聚餐，地点定在南门。")
+    adapter._engine = SimpleNamespace(brain=brain)  # type: ignore[assignment]
+
+    parsed = await adapter.parse_event(
+        _group_event([{"type": "forward", "data": {"id": "fwd-long"}}])
+    )
+
+    assert parsed is not None
+    assert "[未展开内容概要] 第41到45条" in parsed.prompt
+    assert parsed.prompt.index("[未展开内容概要]") < parsed.prompt.index("[/合并转发]")
+    assert "第41条内容" not in parsed.prompt
+    assert len(brain.requests) == 1
+    request = brain.requests[0]
+    assert request.model == "forward_summarize"
+    assert "第41条内容" in request.messages[0]["content"]
+    assert "第1条内容" not in request.messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_forward_summary_failure_keeps_truncation_note(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """压缩失败不能影响消息本身，原有省略说明仍然保留。"""
+    nodes = [
+        {
+            "type": "node",
+            "data": {
+                "nickname": f"用户{index}",
+                "content": [{"type": "text", "data": {"text": f"第{index}条内容"}}],
+            },
+        }
+        for index in range(1, 46)
+    ]
+    adapter = _adapter(
+        monkeypatch,
+        {"fwd-long": {"status": "ok", "data": {"messages": nodes}}},
+        work_path=tmp_path,
+    )
+    brain = _FakeBrain(error=RuntimeError("AMKR 404: forward_summarize"))
+    adapter._engine = SimpleNamespace(brain=brain)  # type: ignore[assignment]
+
+    parsed = await adapter.parse_event(
+        _group_event([{"type": "forward", "data": {"id": "fwd-long"}}])
+    )
+
+    assert parsed is not None
+    assert "第40条内容" in parsed.prompt
+    assert "后续 5 条未展开" in parsed.prompt
+    assert "[未展开内容概要]" not in parsed.prompt
+    assert len(brain.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_clipped_node_tail_is_sent_to_summary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """单条节点被截断时，截掉的尾部也要进入压缩输入，而不是直接丢弃。"""
+    tail = "尾部关键结论" * 100
+    node = {
+        "type": "node",
+        "data": {
+            "nickname": "张三",
+            "content": [{"type": "text", "data": {"text": "开头" * 400 + tail}}],
+        },
+    }
+    adapter = _adapter(
+        monkeypatch,
+        {"fwd-clip": {"status": "ok", "data": {"messages": [node]}}},
+        work_path=tmp_path,
+    )
+    brain = _FakeBrain("张三说了一段很长的内容，结论在最后。")
+    adapter._engine = SimpleNamespace(brain=brain)  # type: ignore[assignment]
+
+    parsed = await adapter.parse_event(
+        _group_event([{"type": "forward", "data": {"id": "fwd-clip"}}])
+    )
+
+    assert parsed is not None
+    assert "[未展开内容概要]" in parsed.prompt
+    assert "尾部关键结论" not in parsed.prompt
+    assert "尾部关键结论" in brain.requests[0].messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_short_forward_does_not_call_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """预算内的转发不应产生额外的 LLM 调用。"""
+    adapter = _adapter(
+        monkeypatch,
+        {
+            "fwd-short": {
+                "status": "ok",
+                "data": {
+                    "messages": [
+                        {
+                            "type": "node",
+                            "data": {
+                                "nickname": "张三",
+                                "content": [{"type": "text", "data": {"text": "一句话"}}],
+                            },
+                        }
+                    ]
+                },
+            }
+        },
+        work_path=tmp_path,
+    )
+    brain = _FakeBrain("不应该被调用")
+    adapter._engine = SimpleNamespace(brain=brain)  # type: ignore[assignment]
+
+    parsed = await adapter.parse_event(
+        _group_event([{"type": "forward", "data": {"id": "fwd-short"}}])
+    )
+
+    assert parsed is not None
+    assert "一句话" in parsed.prompt
+    assert brain.requests == []
 
 
 @pytest.mark.asyncio
