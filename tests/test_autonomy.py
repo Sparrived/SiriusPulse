@@ -260,6 +260,7 @@ async def test_pursuing_happens_in_the_group_she_was_in(tmp_path):
         kind="reading",
         urgency=0.9,
         origin_group="group-new",
+        notebook_origin_group="group-new",
     )
     ctx = _make_ctx(tmp_path, groups={"group-old": [{"role": "user", "content": "旧的"}]})
 
@@ -267,6 +268,7 @@ async def test_pursuing_happens_in_the_group_she_was_in(tmp_path):
 
     assert episode is not None
     assert ctx.recorded[0]["group_id"] == "group-new"
+    assert ctx.recorded[0]["notebook_enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -279,6 +281,7 @@ async def test_pursuing_falls_back_when_origin_group_is_gone(tmp_path):
 
     assert episode is not None
     assert ctx.recorded[0]["group_id"] == "group-1"
+    assert ctx.recorded[0]["notebook_enabled"] is False
 
 
 # --- 动机从哪来 -------------------------------------------------------------------

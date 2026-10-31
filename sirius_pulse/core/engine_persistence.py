@@ -409,6 +409,10 @@ class EnginePersistence:
                     else None
                 ),
                 memory_unit_retriever=getattr(engine, "memory_unit_manager", None),
+                persona_notebook_work_path=engine.work_path,
+                persona_notebook_budget_getter=lambda: engine.config.get(
+                    "persona_notebook_token_budget", 2048
+                ),
             )
 
             # Load persona

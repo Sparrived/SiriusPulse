@@ -239,6 +239,10 @@ class _EmotionalGroupChatEngineBase:
             self.basic_memory,
             is_source_checkpointed=self.memory_unit_manager.is_source_checkpointed,
             memory_unit_retriever=self.memory_unit_manager,
+            persona_notebook_work_path=self.work_path,
+            persona_notebook_budget_getter=lambda: self.config.get(
+                "persona_notebook_token_budget", 2048
+            ),
         )
 
     def _init_cognitive_layer(self) -> None:
@@ -813,6 +817,29 @@ class _EmotionalGroupChatEngineBase:
         """Cancel all background tasks."""
         self._bg_tasks_mgr.stop()
 
+    def is_notebook_maintenance_busy(self, group_id: str) -> bool:
+        """Do not start notebook inference while this persona has chat work."""
+        del group_id
+        if getattr(self.brain, "_active_chat_calls", 0):
+            return True
+        if any(lock.locked() for lock in getattr(self, "_agent_turn_locks", {}).values()):
+            return True
+        queue = getattr(self, "delayed_queue", None)
+        if queue is not None:
+            if queue.in_flight_ids():
+                return True
+            groups = set(getattr(self, "_group_last_message_at", {}))
+            groups.update(getattr(queue, "_queues", {}))
+            if any(queue.get_pending(group) for group in groups):
+                return True
+        return False
+
+    def _notify_notebook_message(self, group_id: str) -> None:
+        manager = getattr(self, "_bg_tasks_mgr", None)
+        maintenance = getattr(manager, "notebook_maintenance", None)
+        if maintenance is not None:
+            maintenance.on_message(group_id)
+
     def get_agent_turn_lock(self, group_id: str) -> asyncio.Lock:
         """Share ownership of a whole Agent/tool turn, not just one LLM call."""
         locks = getattr(self, "_agent_turn_locks", None)
@@ -833,6 +860,7 @@ class _EmotionalGroupChatEngineBase:
         item_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Serialize generation and its tools with other Agent turns for this chat."""
+        _EmotionalGroupChatEngineBase._notify_notebook_message(self, group_id)
         async with self.get_agent_turn_lock(group_id):
             return await self._bg_tasks_mgr.tick_delayed_queue(
                 group_id,
@@ -857,6 +885,7 @@ class _EmotionalGroupChatEngineBase:
         participants: Any,
     ) -> str:
         """Perception layer: normalize, register participants, update transcript."""
+        _EmotionalGroupChatEngineBase._notify_notebook_message(self, group_id)
         return self._pipeline.perception(group_id, message, participants)
 
     def _compute_signal(

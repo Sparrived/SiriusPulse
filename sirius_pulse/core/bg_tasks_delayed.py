@@ -36,6 +36,7 @@ from sirius_pulse.core.work_mode import (
 )
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.builtin._internal import _markdown_image
+from sirius_pulse.tools.executor import _is_builtin_tool
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -45,14 +46,6 @@ logger = logging.getLogger(__name__)
 _AUTONOMOUS_MESSAGE_TOOLS = {
     "interaction_with_master",
 }
-
-
-def _is_builtin_tool(tool: Any, name: str) -> bool:
-    source = getattr(tool, "source_path", None)
-    if source is None:
-        return False
-    expected = Path(__file__).resolve().parents[1] / "tools" / "builtin" / f"{name}.py"
-    return Path(source).resolve() == expected.resolve()
 
 
 def _pending_evidence_callers(
@@ -784,6 +777,7 @@ class DelayedQueueTasks:
         poke_user_ids_accumulated: list[str] = []
         pending_chat_result: Any = None
         ended_because_max_rounds = False
+        force_notebook_final = False
         max_round_reply: Any | None = None
         tool_chain_active = False
         work_run: WorkModeRun | None = None
@@ -816,7 +810,7 @@ class DelayedQueueTasks:
                 chat_result = pending_chat_result
                 pending_chat_result = None
             else:
-                if _round > max_tool_rounds:
+                if _round > max_tool_rounds or (force_notebook_final and _round > 0):
                     ended_because_max_rounds = bool(
                         tool_calls
                         and engine._tool_registry is not None
@@ -842,6 +836,13 @@ class DelayedQueueTasks:
                         caller_is_developer=caller_is_developer,
                         post_process=True,
                         work_mode=work_run is not None,
+                        defer_notebook_tool_text=(
+                            work_run is None
+                            and engine._tool_registry is not None
+                            and _is_builtin_tool(
+                                engine._tool_registry.get("persona_notebook"), "persona_notebook"
+                            )
+                        ),
                         extra_tools=control_tools(active=work_run is not None),
                     )
                 )
@@ -1014,7 +1015,20 @@ class DelayedQueueTasks:
 
             non_tool_text = round_clean
             all_silent = bool(regular_tools) and all(_tool_is_silent(tc) for tc in regular_tools)
-            if non_tool_text and was_in_work_mode:
+            notebook_only = (
+                not was_in_work_mode
+                and not control_calls
+                and bool(regular_tools)
+                and all(tc.function_name == "persona_notebook" for tc in regular_tools)
+                and engine._tool_registry is not None
+                and _is_builtin_tool(
+                    engine._tool_registry.get("persona_notebook"), "persona_notebook"
+                )
+            )
+            if non_tool_text and notebook_only:
+                # 它可能也是对用户的回答：留作草稿让下一轮完整作答，不先发整理播报。
+                pass
+            elif non_tool_text and was_in_work_mode:
                 # 工作模式内模型正文一律不外发，只有工具结果和 send_midway_msg 有效。
                 engine._log_inner_thought(f"工作模式内正文不外发，留在自己的上下文里：{non_tool_text[:40]}...")
             elif non_tool_text and (report_next_tool_output or not all_silent):
@@ -1092,7 +1106,9 @@ class DelayedQueueTasks:
                         logger.warning(
                             "tool_call 参数解析失败: %s, arguments=%s",
                             tool_name,
-                            tc.function_arguments,
+                            "<redacted>"
+                            if tool_name == "persona_notebook"
+                            else tc.function_arguments,
                         )
 
                     tool = engine._tool_registry.get(tool_name)
@@ -1112,7 +1128,13 @@ class DelayedQueueTasks:
                         and not caller_is_developer
                         and not self._is_autonomous_message_tool(tool, params)
                         and not (
-                            tool_name in {"person_query", "person_update", "visual_asset_manage"}
+                            tool_name
+                            in {
+                                "person_query",
+                                "person_update",
+                                "visual_asset_manage",
+                                "persona_notebook",
+                            }
                             and _is_builtin_tool(tool, tool_name)
                         )
                     ):
@@ -1152,7 +1174,13 @@ class DelayedQueueTasks:
                         and not call_is_developer
                         and not self._is_autonomous_message_tool(tool, params)
                         and not (
-                            tool_name in {"person_query", "person_update", "visual_asset_manage"}
+                            tool_name
+                            in {
+                                "person_query",
+                                "person_update",
+                                "visual_asset_manage",
+                                "persona_notebook",
+                            }
                             and _is_builtin_tool(tool, tool_name)
                         )
                     ):
@@ -1201,7 +1229,7 @@ class DelayedQueueTasks:
                     logger.info(
                         "Tool execute: %s(params=%s, caller=%s, group=%s)",
                         tool_name,
-                        params,
+                        "<redacted>" if tool_name == "persona_notebook" else params,
                         caller_user_id,
                         group_id,
                     )
@@ -1219,9 +1247,9 @@ class DelayedQueueTasks:
                         agent_turn.finish_action(
                             tc.id,
                             success=result.success,
-                            summary=(
-                                result.error if not result.success else result.to_display_text()
-                            ),
+                            summary=("小本操作已处理" if result.success else "小本操作未确认")
+                            if tool_name == "persona_notebook"
+                            else (result.error if not result.success else result.to_display_text()),
                         )
                         agent_turn.advance(AgentTurnPhase.VERIFY)
                         await self._emit_agent_turn(engine, agent_turn)
@@ -1232,6 +1260,21 @@ class DelayedQueueTasks:
                         )
                         tool_content = result.to_model_text()
                         if result.success:
+                            if (
+                                tool_name == "persona_notebook"
+                                and isinstance(result.data, dict)
+                                and result.data.get("status")
+                                in {"pending", "maintenance_requested"}
+                            ):
+                                manager = getattr(engine, "_bg_tasks_mgr", None)
+                                maintenance = getattr(manager, "notebook_maintenance", None)
+                                if maintenance is not None and _is_builtin_tool(
+                                    tool, "persona_notebook"
+                                ):
+                                    maintenance.schedule(
+                                        group_id,
+                                        force=result.data.get("status") == "maintenance_requested",
+                                    )
                             self._note_external_delivery(
                                 engine, group_id, item, chat_result, tc, params, result
                             )
@@ -1262,15 +1305,30 @@ class DelayedQueueTasks:
                     if work_step is not None:
                         work_step["results"].append({"tool": tool_name, "output": tool_content})
 
-                    # 链式调用中间增加延迟，避免回复过快
-                    if idx < len(regular_tools) - 1:
+                    # 内部小本无需发送节奏延迟；其他工具保留原有间隔。
+                    if idx < len(regular_tools) - 1 and not notebook_only:
                         await asyncio.sleep(2)
 
             if work_step is not None:
                 _save_work_run()
 
+            if notebook_only:
+                # 一次工具轮后直接回复，避免小本整理占用多轮聊天。
+                force_notebook_final = True
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "【内部控制信息】刚才小本工具同轮的正文尚未发送，"
+                            "只是你的草稿。请继续自然回应用户的问题；"
+                            "一般不必主动播报整理小本，若对方明确询问则按工具结果如实回答，"
+                            "待整理不等于已写入。"
+                        ),
+                    }
+                )
+
             # 静默只免去普通聊天的后续回复，工作模式仍须继续剩余动作并显式收尾。
-            if work_run is None and all_silent and not send_next_tool_output:
+            if work_run is None and all_silent and not notebook_only and not send_next_tool_output:
                 if not self._append_tool_chain_messages(
                     engine, messages, group_id, pending_evidence_refs
                 ):
@@ -1307,9 +1365,13 @@ class DelayedQueueTasks:
                 {
                     "role": "user",
                     "content": (
-                        "【工具链控制信息】本轮已经达到工具调用轮次上限。"
-                        "请停止调用工具，直接给出最终回复；根据上方工具结果说明已完成、"
-                        "未完成的内容及原因，不要声称未经验证的操作已经完成。"
+                        "【内部控制信息】请停止调用工具，直接自然回应用户；" "不用主动汇报小本整理，若被明确询问则按工具回执如实回答。"
+                        if force_notebook_final
+                        else (
+                            "【工具链控制信息】本轮已经达到工具调用轮次上限。"
+                            "请停止调用工具，直接给出最终回复；根据上方工具结果说明已完成、"
+                            "未完成的内容及原因，不要声称未经验证的操作已经完成。"
+                        )
                     ),
                 }
             )
@@ -1354,7 +1416,9 @@ class DelayedQueueTasks:
             strategy = "immediate"
 
         if ended_because_max_rounds:
-            final_reply = clean_reply or "本轮工具调用上限已到，部分操作尚未完成。"
+            final_reply = clean_reply or (
+                "抱歉，我刚才没能组织好回复，可以再说一次吗？" if force_notebook_final else "本轮工具调用上限已到，部分操作尚未完成。"
+            )
         else:
             final_reply = clean_reply
 

@@ -27,7 +27,7 @@ from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
 
-_PERSON_TOOLS = {"person_query", "person_update", "visual_asset_manage"}
+_PERSON_TOOLS = {"person_query", "person_update", "visual_asset_manage", "persona_notebook"}
 
 
 def _logged_params(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -299,7 +299,11 @@ class ToolExecutor:
                             timestamp=time.time(),
                             success=tool_result.success,
                             duration_ms=round(duration_ms, 2),
-                            error=tool_result.error if not tool_result.success else "",
+                            error=(
+                                tool_result.error
+                                if not tool_result.success and tool.name not in _PERSON_TOOLS
+                                else ""
+                            ),
                             caller_user_id=caller_id,
                             params=_logged_params(tool.name, params) if params else None,
                             result_summary=summary,
@@ -469,7 +473,11 @@ class ToolExecutor:
                             timestamp=time.time(),
                             success=tool_result.success,
                             duration_ms=elapsed_ms,
-                            error=tool_result.error if not tool_result.success else "",
+                            error=(
+                                tool_result.error
+                                if not tool_result.success and tool.name not in _PERSON_TOOLS
+                                else ""
+                            ),
                             caller_user_id=caller_id,
                             params=_logged_params(tool.name, params) if params else None,
                             result_summary=summary,
@@ -622,6 +630,18 @@ def _bind_pending_source(
     selected_ref = selected[0]
     caller = authors[selected_ref]
     return replace(context, caller=caller, evidence_refs=(selected_ref,)), ""
+
+
+def _is_builtin_tool(tool: Any, name: str) -> bool:
+    """Require the exact packaged built-in, not a user tool with the same name."""
+    source = getattr(tool, "source_path", None)
+    if source is None:
+        return False
+    try:
+        expected = Path(__file__).resolve().parent / "builtin" / f"{name}.py"
+        return Path(source).resolve() == expected.resolve()
+    except (OSError, ValueError):
+        return False
 
 
 def _can_receive_engine_context(tool: ToolDefinition) -> bool:

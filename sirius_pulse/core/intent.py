@@ -75,6 +75,8 @@ class Intention:
     urgency: float = _DEFAULT_URGENCY
     source: str = ""
     origin_group: str = ""
+    notebook_origin_group: str = ""
+    """仅框架可信聊天来源，可为私聊；旧意图不凭 fallback 推断。"""
     resolved_at: str = ""
     shared_at: str = ""
     share_count: int = 0
@@ -131,6 +133,7 @@ class Intention:
             "urgency": round(self.urgency, 4),
             "source": self.source,
             "origin_group": self.origin_group,
+            "notebook_origin_group": self.notebook_origin_group,
             "resolved_at": self.resolved_at,
             "shared_at": self.shared_at,
             "share_count": int(self.share_count),
@@ -155,6 +158,7 @@ class Intention:
             urgency=_clamp(data.get("urgency", _DEFAULT_URGENCY)),
             source=str(data.get("source", "")),
             origin_group=str(data.get("origin_group", "")),
+            notebook_origin_group=str(data.get("notebook_origin_group", "")),
             resolved_at=str(data.get("resolved_at", "")),
             shared_at=str(data.get("shared_at", "")),
             share_count=int(data.get("share_count", 0) or 0),
@@ -177,6 +181,7 @@ class Intention:
         urgency: float = _DEFAULT_URGENCY,
         source: str = "",
         origin_group: str = "",
+        notebook_origin_group: str = "",
         refs: list[str] | None = None,
     ) -> "Intention":
         return cls(
@@ -193,6 +198,7 @@ class Intention:
             urgency=_clamp(urgency),
             source=str(source or ""),
             origin_group=str(origin_group or ""),
+            notebook_origin_group=str(notebook_origin_group or ""),
             refs=list(refs or []),
         )
 

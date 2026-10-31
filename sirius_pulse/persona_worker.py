@@ -30,6 +30,7 @@ from sirius_pulse.persona_config import (
     PersonaAdaptersConfig,
     PersonaConfigPaths,
     PersonaExperienceConfig,
+    normalize_persona_notebook_token_budget,
 )
 from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
 from sirius_pulse.platforms.runtime import EngineRuntime
@@ -197,6 +198,9 @@ class PersonaWorker:
             "main_model_reply_cooldown_seconds": experience.main_model_reply_cooldown_seconds,
             "memory_unit_top_k": experience.memory_unit_top_k,
             "memory_unit_token_budget": experience.memory_unit_token_budget,
+            "persona_notebook_token_budget": normalize_persona_notebook_token_budget(
+                experience.persona_notebook_token_budget
+            ),
             # 工具
             "max_tool_rounds": experience.max_tool_rounds,
             "auto_install_tool_deps": experience.auto_install_tool_deps,
@@ -415,6 +419,10 @@ class PersonaWorker:
         # 更新 engine.config 中的 experience 相关字段
         runtime_config = self._build_plugin_config(exp)
         engine.config.update(runtime_config)
+        # 引擎重建时同样从 runtime.plugin_config 取值；同步保存热重载快照，
+        # 避免重建后回退到启动时的旧体验配置。
+        if self._runtime is not None and hasattr(self._runtime, "plugin_config"):
+            self._runtime.plugin_config.update(runtime_config)
 
         # 同步更新 brain 的 config
         if hasattr(engine, "brain") and engine.brain:
