@@ -39,7 +39,8 @@ tmp-skill-check/
 # IDE & Editor
 .vscode/
 .idea/
-.claude/settings.local.json
+# 本地 Agent 工作台配置：launch.json 里是本机绝对路径，不入库
+.claude/
 *.swp
 *.swo
 *~
