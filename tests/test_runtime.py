@@ -296,6 +296,7 @@ def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_p
         main_model_reply_cooldown_seconds=7.5,
         memory_unit_top_k=4,
         memory_unit_token_budget=1500,
+        persona_notebook_token_budget=4096,
         group_reply_strategies={"group-keyword": "keyword"},
     )
 
@@ -304,6 +305,7 @@ def test_persona_worker_passes_main_model_reply_cooldown_to_runtime_config(tmp_p
     assert plugin_config["main_model_reply_cooldown_seconds"] == 7.5
     assert plugin_config["memory_unit_top_k"] == 4
     assert plugin_config["memory_unit_token_budget"] == 1500
+    assert plugin_config["persona_notebook_token_budget"] == 2048
     assert plugin_config["group_reply_strategies"] == {"group-keyword": "keyword"}
 
 
@@ -316,6 +318,7 @@ def test_persona_worker_experience_reload_updates_runtime_config_keys(tmp_path):
         max_sentence_chars=31,
         memory_unit_top_k=2,
         memory_unit_token_budget=1300,
+        persona_notebook_token_budget=1024,
     ).save(tmp_path / "experience.json")
 
     class Brain:
@@ -326,6 +329,7 @@ def test_persona_worker_experience_reload_updates_runtime_config_keys(tmp_path):
         brain = Brain()
 
     engine = Engine()
+    worker._runtime = SimpleNamespace(plugin_config={})
 
     worker._reload_experience(engine)
 
@@ -334,8 +338,12 @@ def test_persona_worker_experience_reload_updates_runtime_config_keys(tmp_path):
     assert engine.config["max_sentence_chars"] == 31
     assert engine.config["memory_unit_top_k"] == 2
     assert engine.config["memory_unit_token_budget"] == 1300
+    assert engine.config["persona_notebook_token_budget"] == 1024
     assert "engagement_sensitivity" not in engine.config
     assert engine.brain.config["memory_unit_top_k"] == 2
+    assert engine.brain.config["persona_notebook_token_budget"] == 1024
+    assert worker._runtime.plugin_config["memory_unit_token_budget"] == 1300
+    assert worker._runtime.plugin_config["persona_notebook_token_budget"] == 1024
 
 
 def test_persona_worker_config_reload_consumes_experience_flag(tmp_path):
@@ -725,6 +733,38 @@ def test_engine_runtime_includes_main_model_reply_cooldown_in_engine_config(tmp_
     config = runtime._build_engine_runtime_config(PersonaExperienceConfig())
 
     assert config["main_model_reply_cooldown_seconds"] == 7.5
+
+
+def test_engine_runtime_forwards_memory_budgets_from_plugin_config_and_experience(tmp_path):
+    runtime = EngineRuntime(
+        tmp_path,
+        plugin_config={
+            "memory_unit_token_budget": 1500,
+            "persona_notebook_token_budget": 4096,
+        },
+    )
+
+    config = runtime._build_engine_runtime_config(
+        PersonaExperienceConfig(memory_unit_token_budget=3000, persona_notebook_token_budget=4096)
+    )
+
+    assert config["memory_unit_token_budget"] == 1500
+    assert config["persona_notebook_token_budget"] == 2048
+
+    fallback = EngineRuntime(tmp_path / "fallback")._build_engine_runtime_config(
+        PersonaExperienceConfig(memory_unit_token_budget=3000, persona_notebook_token_budget=4096)
+    )
+    assert fallback["memory_unit_token_budget"] == 3000
+    assert fallback["persona_notebook_token_budget"] == 2048
+
+    default = EngineRuntime(tmp_path / "default")._build_engine_runtime_config(
+        PersonaExperienceConfig()
+    )
+    assert default["persona_notebook_token_budget"] == 2048
+    disabled = EngineRuntime(tmp_path / "disabled")._build_engine_runtime_config(
+        PersonaExperienceConfig(persona_notebook_token_budget=0)
+    )
+    assert disabled["persona_notebook_token_budget"] == 0
 
 
 def test_engine_runtime_includes_group_reply_strategies_in_engine_config(tmp_path):

@@ -88,6 +88,7 @@ def run(
     urgency: float = _DEFAULT_URGENCY,
     chat_context: dict[str, Any] | None = None,
     engine_context: Any = None,
+    invocation_context: Any = None,
 ) -> dict[str, Any]:
     """Record one do-intention she formed while actually thinking."""
     if engine_context is None:
@@ -109,6 +110,12 @@ def run(
         urgency=_clamp(urgency),
         source="intend_pursue",
         origin_group=_origin_group(chat_context),
+        notebook_origin_group=(
+            str(invocation_context.group_id or "").strip()
+            if invocation_context is not None
+            and getattr(invocation_context, "notebook_context_trusted", False)
+            else ""
+        ),
     )
     store = IntentFileStore(engine_context.get_work_path()).load()
     store.add(intention)

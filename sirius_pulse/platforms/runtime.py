@@ -20,7 +20,11 @@ from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_
 from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.embedding.client import EmbeddingClient, create_embedding_client
-from sirius_pulse.persona_config import PersonaConfigPaths, PersonaExperienceConfig
+from sirius_pulse.persona_config import (
+    PersonaConfigPaths,
+    PersonaExperienceConfig,
+    normalize_persona_notebook_token_budget,
+)
 from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings, load_inference_keys
 from sirius_pulse.providers.amkr_sync import (
     AmkrError,
@@ -638,6 +642,14 @@ class EngineRuntime:
             "memory_unit_top_k": int(
                 self.plugin_config.get("memory_unit_top_k", exp.memory_unit_top_k)
             ),
+            "memory_unit_token_budget": int(
+                self.plugin_config.get("memory_unit_token_budget", exp.memory_unit_token_budget)
+            ),
+            "persona_notebook_token_budget": normalize_persona_notebook_token_budget(
+                self.plugin_config.get(
+                    "persona_notebook_token_budget", exp.persona_notebook_token_budget
+                )
+            ),
             # 行为控制
             "sensitivity": float(self.plugin_config.get("sensitivity", 0.5)),
             "group_reply_strategies": dict(exp.group_reply_strategies),
@@ -937,6 +949,15 @@ class EngineRuntime:
                 engine.stop_background_tasks()
             except Exception as exc:
                 LOG.warning("停止后台任务失败: %s", exc)
+            manager = getattr(engine, "_bg_tasks_mgr", None)
+            maintenance = getattr(manager, "notebook_maintenance", None)
+            if maintenance is not None:
+                try:
+                    cleanup_cancelled = (
+                        await _await_cleanup(maintenance.wait_closed()) or cleanup_cancelled
+                    )
+                except Exception as exc:
+                    LOG.warning("等待聊天小本整理收尾失败: %s", type(exc).__name__)
             event_bus = getattr(engine, "event_bus", None)
             close_event_bus = getattr(event_bus, "close", None)
             if callable(close_event_bus):

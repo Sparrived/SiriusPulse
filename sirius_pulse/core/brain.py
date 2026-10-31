@@ -118,6 +118,10 @@ class ChatRequest:
     tool_choice: str | None = None
     work_mode: bool = False
     """True 时才暴露工作模式专属的重工具（bash/read_skill/workflow_state/group_file_exec）。"""
+    exclude_tool_names: tuple[str, ...] = ()
+    """由可信调用方隐藏当前回合不可用的工具。"""
+    defer_notebook_tool_text: bool = False
+    """纯小本工具轮正文尚未发出，不运行面向对外回复的后处理。"""
 
     # ── 对话深度 ──
     last_reply_at: float = 0.0
@@ -300,6 +304,7 @@ class Brain:
             self._max_concurrent_llm_calls() or _UNLIMITED_CONCURRENCY
         )
         self._main_reply_last_finished_at: float = 0.0
+        self._active_chat_calls = 0
 
     def _persona_system_prompt(self) -> str:
         """人格 prompt + 自身形象参考图路径（三视图/立绘）。
@@ -454,6 +459,14 @@ class Brain:
     # ═══════════════════════════════════════════════════════════════════
 
     async def chat(self, request: ChatRequest) -> ChatResult:
+        """Track waiting and running foreground work for the idle notebook worker."""
+        self._active_chat_calls += 1
+        try:
+            return await self._chat(request)
+        finally:
+            self._active_chat_calls -= 1
+
+    async def _chat(self, request: ChatRequest) -> ChatResult:
         """执行一次上下文感知的对话生成（串行执行）。
 
         chat() 调用之间串行化，保证消息处理顺序与接收顺序一致。
@@ -542,7 +555,8 @@ class Brain:
                         else False
                     ),
                     # 重工具只在工作模式里可见，普通聊天只能看到 enter_work_mode。
-                    "exclude_names": None if request.work_mode else WORK_MODE_ONLY_TOOL_NAMES,
+                    "exclude_names": set(request.exclude_tool_names)
+                    | (set() if request.work_mode else WORK_MODE_ONLY_TOOL_NAMES),
                 }
                 tools = self.tool_registry.build_tools_list(**tool_kwargs)
                 if not tools:
@@ -696,8 +710,23 @@ class Brain:
                 tool_calls=tool_calls,
             )
 
+            # 纯小本轮的正文是未送出的草稿，不能被当成已回复写入历史或去重。
+            from sirius_pulse.tools.executor import _is_builtin_tool
+
+            notebook_draft = (
+                request.defer_notebook_tool_text
+                and bool(tool_calls)
+                and self.tool_registry is not None
+                and all(
+                    call.function_name == "persona_notebook"
+                    and _is_builtin_tool(
+                        self.tool_registry.get(call.function_name), call.function_name
+                    )
+                    for call in tool_calls
+                )
+            )
             # ── 5. 用户 post-hooks（post_process 总闸 + task_filter 过滤）──
-            if request.post_process:
+            if request.post_process and not notebook_draft:
                 for entry in self._post_hooks:  # type: ignore[assignment]
                     if entry.task_filter is not None and task_name not in entry.task_filter:
                         continue

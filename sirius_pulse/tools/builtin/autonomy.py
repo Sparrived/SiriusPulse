@@ -215,7 +215,8 @@ async def run_tick(ctx: Any) -> Episode | None:
     result = await ctx.run_autonomous_turn(
         kind=decision.kind,
         seed=decision.seed,
-        group_id=target.origin_group or _fallback_group(ctx),
+        group_id=target.notebook_origin_group or target.origin_group or _fallback_group(ctx),
+        notebook_enabled=bool(target.notebook_origin_group),
         why=target.why,
         intention_id=target.intention_id,
         resolution=target.resolution,
@@ -285,6 +286,7 @@ async def _run_free_time(
             seed="",
             group_id=_fallback_group(ctx),
             free_time=True,
+            notebook_enabled=False,
         )
     except Exception:
         # 在这里就地记一条带堆栈的日志再吞掉：否则它只会以「后台任务失败」的形式

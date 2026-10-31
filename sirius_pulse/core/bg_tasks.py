@@ -42,6 +42,7 @@ class BackgroundTasks:
         self._engine = engine
         # 延迟初始化子任务组件
         self._delayed: Any = None
+        self.notebook_maintenance: Any = None
 
     @property
     def delayed(self) -> Any:
@@ -65,6 +66,10 @@ class BackgroundTasks:
             return
         engine._bg_running = True
 
+        from sirius_pulse.core.notebook_maintenance import NotebookMaintenance
+
+        self.notebook_maintenance = NotebookMaintenance(engine)
+        self.notebook_maintenance.start()
         tasks = [
             asyncio.create_task(self.delayed.delayed_queue_ticker(), name="delayed_queue"),
             asyncio.create_task(self._memory_unit_checkpointer(), name="memory_checkpoint"),
@@ -79,6 +84,8 @@ class BackgroundTasks:
         """Cancel all background tasks and run passive TOOL unload hooks."""
         engine = self._engine
         engine._bg_running = False
+        if self.notebook_maintenance is not None:
+            self.notebook_maintenance.stop()
         for t in list(engine._bg_tasks):
             t.cancel()
         engine._bg_tasks.clear()

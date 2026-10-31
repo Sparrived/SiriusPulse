@@ -20,7 +20,7 @@ from sirius_pulse.core.work_mode import (
     parse_arguments,
 )
 from sirius_pulse.providers.base import ToolCall
-from sirius_pulse.tools.executor import _bind_pending_source
+from sirius_pulse.tools.executor import _bind_pending_source, _is_builtin_tool
 from sirius_pulse.tools.models import ToolInvocationContext, ToolResult
 from sirius_pulse.tools.pending_sources import pending_evidence_callers
 
@@ -339,6 +339,7 @@ class ToolEngineContextImpl:
         source: str = WORK_MODE_SOURCE_AUTONOMY,
         post_process: bool = True,
         before_tool: Callable[[], None] | None = None,
+        notebook_enabled: bool = True,
     ) -> Any:
         """Run the normal multi-round tool loop inside work mode.
 
@@ -347,6 +348,16 @@ class ToolEngineContextImpl:
         进出的决定权仍在她自己手上的，只有聊天里的工作模式（那要她调
         ``enter_work_mode``）；这里的入口是回合本身。
         """
+        notebook_context = ""
+        assembler = getattr(self._engine, "context_assembler", None)
+        render_notebook = getattr(assembler, "build_persona_notebook_context", None)
+        if notebook_enabled and callable(render_notebook):
+            notebook_context = render_notebook(group_id)
+        if notebook_context:
+            from sirius_pulse.core.brain import Brain
+
+            messages = Brain._inject_user_context_message(messages, notebook_context)
+
         store = WorkModeStore(self._engine.work_path)
         run = WorkModeRun(
             group_id=group_id,
@@ -372,6 +383,7 @@ class ToolEngineContextImpl:
                 max_rounds=max_rounds,
                 post_process=post_process,
                 before_tool=before_tool,
+                notebook_enabled=notebook_enabled,
             )
         finally:
             # 生成抛错、任务被取消都不会走到收尾代码；轨迹不能因此停在 running。
@@ -392,6 +404,7 @@ class ToolEngineContextImpl:
         max_rounds: int,
         post_process: bool = True,
         before_tool: Callable[[], None] | None = None,
+        notebook_enabled: bool = True,
     ) -> Any:
         last_result: Any = None
         ended_by_round_limit = True
@@ -418,6 +431,7 @@ class ToolEngineContextImpl:
                     work_mode=True,
                     post_process=post_process,
                     extra_tools=extra_tools,
+                    exclude_tool_names=() if notebook_enabled else ("persona_notebook",),
                 )
             )
             last_result = result
@@ -462,7 +476,9 @@ class ToolEngineContextImpl:
                     if self._engine._tool_registry
                     else None
                 )
-                if tool is None:
+                if tool_name == "persona_notebook" and not notebook_enabled:
+                    tool_content = "当前自主回合没有明确的聊天来源，不能读写任何聊天的小本。"
+                elif tool is None:
                     tool_content = f"Tool '{tool_name}' not found"
                 else:
                     try:
@@ -500,6 +516,19 @@ class ToolEngineContextImpl:
                         max_retries=2 if getattr(tool, "retry_safe", False) else 0,
                     )
                     tool_content = executed.to_model_text()
+                    if (
+                        tool_name == "persona_notebook"
+                        and executed.success
+                        and isinstance(executed.data, dict)
+                        and executed.data.get("status") in {"pending", "maintenance_requested"}
+                    ):
+                        manager = getattr(self._engine, "_bg_tasks_mgr", None)
+                        maintenance = getattr(manager, "notebook_maintenance", None)
+                        if maintenance is not None and _is_builtin_tool(tool, "persona_notebook"):
+                            maintenance.schedule(
+                                group_id,
+                                force=executed.data.get("status") == "maintenance_requested",
+                            )
                     tool_multimodal.extend(
                         {"type": "image_url", "image_url": {"url": block.value}}
                         for block in executed.multimodal_blocks
@@ -597,6 +626,7 @@ class ToolEngineContextImpl:
         intention_id: str = "",
         resolution: str = "",
         free_time: bool = False,
+        notebook_enabled: bool = True,
     ) -> dict[str, Any]:
         """Run one self-initiated turn with no chat session context.
 
@@ -610,7 +640,10 @@ class ToolEngineContextImpl:
         With ``free_time=True`` there is no intention behind the turn at all: it
         is time of her own and she may start something new, or nothing.
         """
-        tool_desc = self.get_tool_descriptions(work_mode=True)
+        tool_desc = self.get_tool_descriptions(
+            work_mode=True,
+            exclude_names=() if notebook_enabled else ("persona_notebook",),
+        )
         audiences = [
             item.to_dict() if hasattr(item, "to_dict") else dict(item)
             for item in self.list_audiences()
@@ -633,6 +666,7 @@ class ToolEngineContextImpl:
             self_initiated=True,
             group_id=group_id,
             adapter_type="",
+            notebook_context_trusted=notebook_enabled,
         )
         reason = str(why or seed or "").strip()
         goal = f"自主回合（{kind}）" + (f"：{reason}" if reason else "")
@@ -647,6 +681,7 @@ class ToolEngineContextImpl:
             invocation_context=invocation_context,
             goal=goal,
             source=WORK_MODE_SOURCE_AUTONOMY,
+            notebook_enabled=notebook_enabled,
         )
         return self._scheduled_result_payload(result) if result else {}
 
@@ -1008,6 +1043,7 @@ class ToolEngineContextImpl:
         adapter_type: str | None = None,
         *,
         work_mode: bool = False,
+        exclude_names: tuple[str, ...] = (),
     ) -> str:
         """获取工具描述文本（用于被动工具的 prompt 注入）。"""
         if self._engine._tool_registry is None:
@@ -1025,7 +1061,7 @@ class ToolEngineContextImpl:
         tools = self._engine._tool_registry.build_tools_list(
             invocation_context=ctx,
             adapter_type=adapter_type or self._engine._current_adapter_type or None,
-            exclude_names=None if work_mode else WORK_MODE_ONLY_TOOL_NAMES,
+            exclude_names=set(exclude_names) | (set() if work_mode else WORK_MODE_ONLY_TOOL_NAMES),
         )
         if not tools:
             return ""

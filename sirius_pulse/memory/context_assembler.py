@@ -12,6 +12,7 @@ import html
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sirius_pulse.core.constants import (
@@ -20,6 +21,7 @@ from sirius_pulse.core.constants import (
     DEFAULT_MEMORY_UNIT_TOP_K,
 )
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
+from sirius_pulse.memory.persona_notebook import PersonaNotebookStore
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +39,14 @@ class ContextAssembler:
         basic_mgr: BasicMemoryManager,
         is_source_checkpointed: Callable[[str, str], bool] | None = None,
         memory_unit_retriever: Any | None = None,
+        persona_notebook_work_path: Path | str | None = None,
+        persona_notebook_budget_getter: Callable[[], Any] | None = None,
     ) -> None:
         self._basic = basic_mgr
         self._memory_units = memory_unit_retriever
         self._is_source_checkpointed = is_source_checkpointed
+        self._persona_notebook_work_path = persona_notebook_work_path
+        self._persona_notebook_budget_getter = persona_notebook_budget_getter
 
     # ------------------------------------------------------------------
     # Public API
@@ -67,6 +73,7 @@ class ContextAssembler:
         platform_message_id: str = "",
         dynamic_context: str = "",
         history_token_budget: int = DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+        persona_notebook_token_budget: int | None = None,
     ) -> list[dict[str, Any]]:
         """构建消息链（user/assistant 交替）。
 
@@ -101,6 +108,7 @@ class ContextAssembler:
             platform_message_id=platform_message_id,
             dynamic_context=dynamic_context,
             history_token_budget=history_token_budget,
+            persona_notebook_token_budget=persona_notebook_token_budget,
         )
         return messages
 
@@ -125,6 +133,7 @@ class ContextAssembler:
         platform_message_id: str = "",
         dynamic_context: str = "",
         history_token_budget: int = DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+        persona_notebook_token_budget: int | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
         """构建消息链，并一并返回注入的记忆单元文本（供 breakdown 复用）。
 
@@ -136,6 +145,9 @@ class ContextAssembler:
 
         memory_context = ""
         memory_count = 0
+        persona_notebook_context = self.build_persona_notebook_context(
+            group_id, persona_notebook_token_budget
+        )
         effective_memory_unit_top_k = (
             DEFAULT_MEMORY_UNIT_TOP_K if memory_unit_top_k is None else memory_unit_top_k
         )
@@ -205,6 +217,8 @@ class ContextAssembler:
         def _with_user_context(content: str) -> str:
             """Prefix long-term memory and dynamic context to the user message."""
             parts: list[str] = []
+            if persona_notebook_context:
+                parts.append(persona_notebook_context)
             if memory_context:
                 parts.append(memory_context)
             if dynamic_context:
@@ -320,6 +334,7 @@ class ContextAssembler:
         platform_message_id: str = "",
         dynamic_context: str = "",
         history_token_budget: int = DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+        persona_notebook_token_budget: int | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """构建消息链并返回 token 分布统计。
 
@@ -345,6 +360,7 @@ class ContextAssembler:
             platform_message_id=platform_message_id,
             dynamic_context=dynamic_context,
             history_token_budget=history_token_budget,
+            persona_notebook_token_budget=persona_notebook_token_budget,
         )
 
         from sirius_pulse.token.utils import estimate_tokens
@@ -428,6 +444,38 @@ class ContextAssembler:
             kept.append(entry)
         kept.reverse()
         return kept
+
+    def build_persona_notebook_context(self, group_id: str, budget: int | None = None) -> str:
+        """Render only the current chat's bounded notebook as background data."""
+        from sirius_pulse.token.utils import estimate_tokens
+
+        if self._persona_notebook_work_path is None:
+            return ""
+        try:
+            if budget is None:
+                budget = (
+                    self._persona_notebook_budget_getter()
+                    if self._persona_notebook_budget_getter is not None
+                    else 2048
+                )
+            if isinstance(budget, bool):
+                return ""
+            effective_budget = min(2048, int(budget or 0))
+            if effective_budget <= 0:
+                return ""
+            store = PersonaNotebookStore.for_chat(
+                self._persona_notebook_work_path, group_id, budget=effective_budget
+            )
+            rendered = store.render()
+        except Exception:
+            logger.warning("当前聊天便签读取失败，跳过本轮注入", exc_info=True)
+            return ""
+        if not rendered:
+            return ""
+        if not isinstance(rendered, str) or estimate_tokens(rendered) > effective_budget:
+            logger.warning("当前聊天便签渲染结果超出预算，跳过本轮注入")
+            return ""
+        return rendered
 
     @staticmethod
     def _build_memory_unit_context(memory_units: list[Any]) -> str:

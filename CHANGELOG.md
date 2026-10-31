@@ -6,6 +6,7 @@
 
 ### Added
 
+- **聊天随身便签**：月白可在每个群聊/私聊独立记录即时线索、约定和近期状态，最多 2048 估算 token；满额操作进入有界持久暂存，聊天空闲时静默整理，并以修订号 CAS 保护并发改动，不依赖长期记忆检索命中。
 - **人格可以有自己的外部服务账号，凭据自动注入 Bash**：此前框架里没有任何"人格自己的账号"概念，她要用自己的 GitHub 身份做事时只能把 token 贴进聊天记录，而凭据又恰恰是唯一没法从对话里安全取用的东西。现在人格目录下新增 `accounts.json`（与 `adapters.json` / `experience.json` 同级，随 `./data` 卷持久化，容器重建不丢），WebUI「配置 → 人格账户」页可增删改；Bash 工具执行时把有凭据的账号摊平成环境变量交给子进程（GitHub 默认 `GH_TOKEN`），`gh` 因此开箱即用。凭据只经 `subprocess` 的 `env=` 传递、绝不拼进 `bash -lc` 的命令文本——写进命令行等于同机器上任何进程都能从 `ps` 读到明文。读接口一律返回掩码，保存时用与插件设置相同的哨兵值区分"没改"（沿用磁盘旧值）与"清空"（空串），否则页面每保存一次就会把她的 token 覆写成 `********`。
 - **镜像内安装 `gh` 与 `git`**：`environment` 阶段直接 `apt-get install`（Debian trixie 自带 `gh` 2.46.0），不引外部源。只有凭据没有工具，她依然什么都做不了；`git` 一并装上是因为 `gh` 的仓库操作需要它。该文件哈希本身就是 `SIRIUS_ENV_CACHE_KEY`，改动会让环境阶段缓存正常失效。
 - **Gemini 内容策略拦截有了兜底任务**：`response_generate`、`work_mode_generate`、`proactive_generate`、`autonomy_generate` 四个跑 Gemini 的任务新增 `fallback_generate` 备选任务名。provider 识别到上游把「拒绝文案当正文」返回时抛不可重试的 `ProviderContentFilteredError`，`Brain` 随即改发兜底任务重答一次；该任务在 AMKR 侧绑定 `deepseek-v4.1-flash`，因此内容被拦时这一轮仍能正常回复。兜底也失败就丢弃本轮，绝不把拦截文案发出去。

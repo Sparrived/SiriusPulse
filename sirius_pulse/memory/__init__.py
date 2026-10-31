@@ -5,6 +5,11 @@ from __future__ import annotations
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager, HeatCalculator
 from sirius_pulse.memory.cold_detector import ColdDetector, ColdState
 from sirius_pulse.memory.context_assembler import ContextAssembler
+from sirius_pulse.memory.persona_notebook import (
+    PersonaNotebookBudgetError,
+    PersonaNotebookDataError,
+    PersonaNotebookStore,
+)
 from sirius_pulse.memory.units import (
     MemoryUnit,
     MemoryUnitFileStore,
@@ -27,6 +32,9 @@ __all__ = [
     "MemoryUnitRetriever",
     "MemoryUnitFileStore",
     "ContextAssembler",
+    "PersonaNotebookStore",
+    "PersonaNotebookBudgetError",
+    "PersonaNotebookDataError",
     "UnifiedUser",
     "UnifiedUserManager",
     "ColdDetector",

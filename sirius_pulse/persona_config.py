@@ -32,6 +32,9 @@ _ACCOUNT_KINDS = {"github"}
 # GH_TOKEN 优先，所以默认用它。
 _DEFAULT_ACCOUNT_ENV = {"github": "GH_TOKEN"}
 
+# 每个聊天的随身便签默认启用；0 可关闭，硬上限避免上下文膨胀。
+_PERSONA_NOTEBOOK_TOKEN_BUDGET_MAX = 2048
+
 # 与 WebUI 插件密钥掩码保持一致的哨兵值：读接口送出它，写接口收到它就视为"没改"。
 MASKED_SECRET = "********"
 _MASKED_SECRET_VALUES = {MASKED_SECRET, "[已隐藏]", "••••••••"}
@@ -66,9 +69,20 @@ def _as_int(value: Any, default: int, *, field_name: str) -> int:
         return default
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         logger.warning("experience 配置 %s=%r 无法解析为整数，改用默认值 %r", field_name, value, default)
         return default
+
+
+def normalize_persona_notebook_token_budget(value: Any) -> int:
+    """解析当前聊天便签预算，并限制在 0~2048。"""
+    return min(
+        _PERSONA_NOTEBOOK_TOKEN_BUDGET_MAX,
+        max(
+            0,
+            _as_int(value, 0, field_name="persona_notebook_token_budget"),
+        ),
+    )
 
 
 def _as_str_list(value: Any) -> list[str]:
@@ -440,12 +454,19 @@ class PersonaExperienceConfig:
     # 记忆单元检索参数
     memory_unit_top_k: int = 5
     memory_unit_token_budget: int = 20_000
+    # 每个聊天的随身便签预算；默认启用，显式 0 关闭。
+    persona_notebook_token_budget: int = 2048
 
     # 群里其他 AI/Bot 的名字（手动指定，防止抢话和身份混淆）
     other_ai_names: list[str] = field(default_factory=list)
 
     # 消息前缀过滤——以这些前缀开头的消息不进入引擎
     message_prefixes: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.persona_notebook_token_budget = normalize_persona_notebook_token_budget(
+            self.persona_notebook_token_budget
+        )
 
     def to_dict(self, *, include_updated_at: bool = False) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -463,6 +484,9 @@ class PersonaExperienceConfig:
             "auto_install_tool_deps": self.auto_install_tool_deps,
             "memory_unit_top_k": self.memory_unit_top_k,
             "memory_unit_token_budget": self.memory_unit_token_budget,
+            "persona_notebook_token_budget": normalize_persona_notebook_token_budget(
+                self.persona_notebook_token_budget
+            ),
             "other_ai_names": list(self.other_ai_names),
             "message_prefixes": list(self.message_prefixes),
         }
@@ -480,6 +504,7 @@ class PersonaExperienceConfig:
         memory_unit_token_budget = data.get(
             "memory_unit_token_budget", data.get("diary_token_budget", 20_000)
         )
+        persona_notebook_token_budget = data.get("persona_notebook_token_budget", 2048)
         return cls(
             engagement_sensitivity=_as_float(
                 data.get("engagement_sensitivity", 0.5), 0.5, field_name="engagement_sensitivity"
@@ -523,6 +548,9 @@ class PersonaExperienceConfig:
             memory_unit_token_budget=max(
                 0,
                 _as_int(memory_unit_token_budget, 20_000, field_name="memory_unit_token_budget"),
+            ),
+            persona_notebook_token_budget=normalize_persona_notebook_token_budget(
+                persona_notebook_token_budget
             ),
             message_prefixes=_as_str_list(data.get("message_prefixes", [])),
         )
@@ -606,4 +634,5 @@ __all__ = [
     "PersonaAccountsConfig",
     "PersonaExperienceConfig",
     "PersonaConfigPaths",
+    "normalize_persona_notebook_token_budget",
 ]

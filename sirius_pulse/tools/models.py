@@ -518,6 +518,7 @@ class ToolEngineContext(Protocol):
         intention_id: str = "",
         resolution: str = "",
         free_time: bool = False,
+        notebook_enabled: bool = True,
     ) -> dict[str, Any]:
         """执行一次无会话上下文的自主回合，返回人格自述的产出。
 
@@ -654,6 +655,8 @@ class ToolInvocationContext:
     """
     adapter_type: str = ""
     """Platform adapter type this call arrived through (e.g. ``napcat``)."""
+    notebook_context_trusted: bool = True
+    """自主回合的 fallback 聊天不是小本可信来源。"""
     background_event_id: str = ""
     """Stable internal callback identity, used only for explicitly selected delivery."""
     blocked_image_paths: tuple[str, ...] = ()

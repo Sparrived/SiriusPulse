@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sirius_pulse.persona_config import PersonaExperienceConfig
 
 
@@ -15,6 +17,7 @@ def test_experience_config_when_new_persona_starts_then_uses_safe_defaults(tmp_p
     assert config.max_tool_rounds == 3
     assert config.max_sentence_chars == 20
     assert config.memory_unit_top_k == 5
+    assert config.persona_notebook_token_budget == 2048
 
 
 def test_experience_config_when_admin_saves_changes_then_next_startup_reads_them(
@@ -26,6 +29,7 @@ def test_experience_config_when_admin_saves_changes_then_next_startup_reads_them
     config.expressiveness = 0.7
     config.max_sentence_chars = 35
     config.memory_unit_top_k = 8
+    config.persona_notebook_token_budget = 2048
     config.other_ai_names = ["HelperBot"]
 
     config.save(config_path)
@@ -35,6 +39,7 @@ def test_experience_config_when_admin_saves_changes_then_next_startup_reads_them
     assert reloaded.expressiveness == 0.7
     assert reloaded.max_sentence_chars == 35
     assert reloaded.memory_unit_top_k == 8
+    assert reloaded.persona_notebook_token_budget == 2048
     assert reloaded.other_ai_names == ["HelperBot"]
 
 
@@ -71,6 +76,7 @@ def test_experience_config_when_webui_loads_form_then_all_user_options_are_seria
     assert payload["max_sentence_chars"] == 20
     assert payload["memory_unit_top_k"] == 5
     assert payload["memory_unit_token_budget"] == 20_000
+    assert payload["persona_notebook_token_budget"] == 2048
     assert "reply_time_curve_enabled" not in payload
     assert "reply_time_curve_points" in payload
     assert payload["group_reply_strategies"] == {}
@@ -91,6 +97,7 @@ def test_experience_config_when_webui_posts_partial_payload_then_missing_values_
     assert config.max_sentence_chars == 20
     assert config.memory_unit_top_k == 5
     assert config.memory_unit_token_budget == 20_000
+    assert config.persona_notebook_token_budget == 2048
 
 
 def test_experience_config_memory_unit_top_k_defaults_to_diary_top_k_for_old_payload():
@@ -176,12 +183,42 @@ def test_experience_config_when_list_field_is_a_string_then_it_is_not_shredded()
 
 def test_experience_config_when_numeric_fields_are_negative_then_they_are_clamped():
     config = PersonaExperienceConfig.from_dict(
-        {"max_tool_rounds": -5, "memory_unit_top_k": -1, "memory_unit_token_budget": -100}
+        {
+            "max_tool_rounds": -5,
+            "memory_unit_top_k": -1,
+            "memory_unit_token_budget": -100,
+            "persona_notebook_token_budget": -2048,
+        }
     )
 
     assert config.max_tool_rounds == 0
     assert config.memory_unit_top_k == 0
     assert config.memory_unit_token_budget == 0
+    assert config.persona_notebook_token_budget == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, 0),
+        (True, 0),
+        ("invalid", 0),
+        (float("inf"), 0),
+        (-1, 0),
+        (0, 0),
+        ("2048", 2048),
+        (4096, 2048),
+    ],
+)
+def test_experience_config_when_notebook_budget_is_loaded_then_it_is_safe(value, expected):
+    config = PersonaExperienceConfig.from_dict({"persona_notebook_token_budget": value})
+
+    assert config.persona_notebook_token_budget == expected
+    assert config.to_dict()["persona_notebook_token_budget"] == expected
+    assert (
+        PersonaExperienceConfig(persona_notebook_token_budget=value).persona_notebook_token_budget
+        == expected
+    )
 
 
 def test_experience_config_when_file_is_a_json_list_then_defaults_are_used(tmp_path: Path):
