@@ -17,3 +17,7 @@ sirius_pulse/memory/basic/manager.py whitespace=cr-at-eol
 sirius_pulse/memory/basic/store.py whitespace=cr-at-eol
 tests/test_basic_memory.py whitespace=cr-at-eol
 tests/test_webui_conversation_history.py whitespace=cr-at-eol
+
+# 新版 WebUI：源码固定 LF、构建产物原样入库，Windows 与 CI 重建的结果才能逐字节一致。
+frontend/** text=auto eol=lf
+sirius_pulse/webui/app/** -text
