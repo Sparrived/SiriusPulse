@@ -58,6 +58,15 @@ from sirius_pulse.tools.builtin._internal._markdown_image import to_image_refere
 LOG = logging.getLogger("sirius.platforms.napcat")
 _DISPATCH_EVENT_TIME_BUCKET_SECONDS = 5
 _FORWARD_NODE_CHARS = 800
+#: 入站合并转发的读取预算。QQ 的合并转发可以是几十条、层层嵌套，
+#: 不设上限会把聊天提示词顶爆，也会为一张转发里的图触发几十次下载。
+_FORWARD_READ_MAX_NODES = 40
+_FORWARD_READ_MAX_CHARS = 3000
+_FORWARD_READ_MAX_DEPTH = 3
+_FORWARD_READ_MAX_IMAGES = 9
+_FORWARD_READ_MAX_FETCHES = 8
+_FORWARD_READ_NODE_CHARS = 600
+_FORWARD_READ_TIMEOUT = 6.0
 #: wait_event() 旁路队列上限：只服务配置向导，没有消费者时不该无界增长。
 _EVENT_QUEUE_MAX_SIZE = 512
 _ATOMIC_PROACTIVE_SEND: ContextVar[bool] = ContextVar("atomic_proactive_send", default=False)
@@ -113,6 +122,227 @@ def _split_forward_node_texts(text: str, limit: int = _FORWARD_NODE_CHARS) -> li
     if current:
         chunks.append(current)
     return chunks or [""]
+
+
+def _extract_forward_nodes(payload: Any) -> list[Any]:
+    """从 ``get_forward_msg`` 响应里取出节点列表，兼容各版本 NapCat 的层级。"""
+    data = payload
+    for _ in range(4):
+        if isinstance(data, list):
+            return data
+        if not isinstance(data, dict):
+            return []
+        nested = None
+        for key in ("messages", "message", "content", "data"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict) and nested is None:
+                nested = value
+        if nested is None:
+            return []
+        data = nested
+    return []
+
+
+def _is_forward_node(item: Any) -> bool:
+    """判断列表元素是转发节点还是普通消息段。"""
+    if not isinstance(item, dict):
+        return False
+    return bool(
+        isinstance(item.get("message"), list)
+        or isinstance(item.get("sender"), dict)
+        or item.get("type") == "node"
+        or item.get("nickname")
+        or item.get("user_id")
+        or item.get("uin")
+    )
+
+
+def _forward_segment_id(data: dict[str, Any]) -> str:
+    return str(data.get("id", "") or data.get("message_id", "") or "").strip()
+
+
+class _ForwardReader:
+    """读取一条合并转发：递归展开嵌套转发，节点里的图片留给适配器做视觉输入。
+
+    节点数、总字符数、嵌套层数、图片数和 API 调用次数都有上限，超出的部分
+    以省略说明收尾，这样模型仍知道「后面还有内容」，而提示词不会被撑爆。
+    """
+
+    def __init__(self, adapter: "NapCatAdapter") -> None:
+        self._adapter = adapter
+        self._node_count = 0
+        self._char_count = 0
+        self._fetch_count = 0
+        self._image_index = 1
+        self._image_names: dict[str, int] = {}
+        self._node_cache: dict[str, list[Any]] = {}
+        self._expanding: set[str] = set()
+        self.image_segments: list[dict[str, Any]] = []
+
+    async def read(self, data: dict[str, Any]) -> str:
+        root_id = _forward_segment_id(data)
+        if root_id:
+            self._expanding.add(root_id)
+        try:
+            nodes = await self._load_nodes(data)
+            if not nodes:
+                return ""
+            return await self._render_nodes(nodes, depth=0)
+        finally:
+            self._expanding.discard(root_id)
+
+    async def _load_nodes(self, data: dict[str, Any]) -> list[Any]:
+        """先取内联节点，再按 id 调 get_forward_msg；NapCat 的参数名按版本兜底。"""
+        content = data.get("content")
+        if isinstance(content, dict):
+            content = content.get("messages") or content.get("message") or content.get("content")
+        if isinstance(content, str) and content.strip():
+            # 少数版本把节点正文直接给成 CQ 字符串，当作一个节点渲染。
+            return [data]
+        if isinstance(content, list) and content:
+            if all(_is_forward_node(item) for item in content):
+                return content
+            # content 本身就是消息段数组（内联转发），整段属于当前节点。
+            return [data]
+
+        forward_id = _forward_segment_id(data)
+        if not forward_id:
+            return []
+        cached = self._node_cache.get(forward_id)
+        if cached is not None:
+            return cached
+        if self._fetch_count >= _FORWARD_READ_MAX_FETCHES:
+            return []
+        self._fetch_count += 1
+        for params in (
+            {"message_id": forward_id},
+            {"id": forward_id},
+            {"forward_id": forward_id},
+        ):
+            try:
+                resp = await self._adapter.call_api("get_forward_msg", params)
+            except Exception as exc:
+                LOG.debug("读取合并转发失败 (%s, %s): %s", forward_id, params, exc)
+                continue
+            nodes = _extract_forward_nodes(resp)
+            if nodes:
+                self._node_cache[forward_id] = nodes
+                return nodes
+        return []
+
+    async def _render_nodes(self, nodes: list[Any], *, depth: int) -> str:
+        indent = "  " * depth
+        lines = [f"{indent}[合并转发：共{len(nodes)}条]"]
+        for index, node in enumerate(nodes, 1):
+            if (
+                self._node_count >= _FORWARD_READ_MAX_NODES
+                or self._char_count >= _FORWARD_READ_MAX_CHARS
+            ):
+                lines.append(f"{indent}…（内容过长，后续 {len(nodes) - index + 1} 条未展开）")
+                break
+            sender, content = self._node_parts(node)
+            body = self._clip(await self._render_segments(content, depth=depth))
+            line = f"{indent}{index}. {sender}：{body}"
+            lines.append(line)
+            self._node_count += 1
+            self._char_count += len(line)
+        lines.append(f"{indent}[/合并转发]")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _node_parts(node: Any) -> tuple[str, Any]:
+        data = node
+        if isinstance(node, dict) and node.get("type") in {"node", "forward"}:
+            data = node.get("data")
+        if isinstance(data, str):
+            return "未知", data
+        if not isinstance(data, dict):
+            return "未知", []
+        sender = data.get("sender")
+        name = ""
+        if isinstance(sender, dict):
+            name = str(sender.get("card") or sender.get("nickname") or "").strip()
+        if not name:
+            name = str(
+                data.get("nickname")
+                or data.get("name")
+                or data.get("user_id")
+                or data.get("uin")
+                or "未知"
+            ).strip()
+        content = data.get("content")
+        if content is None:
+            content = data.get("message") or data.get("raw_message") or []
+        return name or "未知", content
+
+    @staticmethod
+    def _clip(text: str) -> str:
+        # 嵌套块必须整体保留，截断会把 [/合并转发] 切掉、让模型误读层级。
+        if len(text) <= _FORWARD_READ_NODE_CHARS or "[/合并转发]" in text:
+            return text
+        return text[:_FORWARD_READ_NODE_CHARS] + "…"
+
+    async def _render_segments(self, segments: Any, *, depth: int) -> str:
+        from ..protocol import _face_to_text, build_image_label
+
+        if isinstance(segments, str):
+            return segments
+        if isinstance(segments, dict):
+            segments = [segments]
+        if not isinstance(segments, list):
+            return ""
+
+        parts: list[str] = []
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            seg_type = str(seg.get("type") or "").lower()
+            raw_data = seg.get("data")
+            data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
+            if seg_type == "text":
+                parts.append(str(data.get("text", "")))
+            elif seg_type == "at":
+                parts.append(f"@{data.get('name') or data.get('qq') or '未知'}")
+            elif seg_type == "face":
+                parts.append(_face_to_text(data))
+            elif seg_type in {"image", "mface"}:
+                is_sticker = seg_type == "mface" or str(data.get("sub_type", "")) == "1"
+                label = "动画表情" if is_sticker else "图片"
+                parts.append(build_image_label(seg, self._image_index, label, self._image_names))
+                self._image_index += 1
+                if len(self.image_segments) < _FORWARD_READ_MAX_IMAGES:
+                    self.image_segments.append(seg)
+            elif seg_type in {"forward", "node"}:
+                if depth >= _FORWARD_READ_MAX_DEPTH:
+                    parts.append("[嵌套合并转发：层级过深未展开]")
+                    continue
+                forward_id = _forward_segment_id(data)
+                if forward_id and forward_id in self._expanding:
+                    parts.append("[嵌套合并转发：循环引用]")
+                    continue
+                if forward_id:
+                    self._expanding.add(forward_id)
+                try:
+                    nodes = await self._load_nodes(data)
+                    if not nodes:
+                        parts.append("[嵌套合并转发：内容读取失败]")
+                        continue
+                    nested = await self._render_nodes(nodes, depth=depth + 1)
+                finally:
+                    self._expanding.discard(forward_id)
+                parts.append(("\n" if parts else "") + nested)
+            elif seg_type == "record":
+                parts.append("[语音]")
+            elif seg_type == "video":
+                parts.append("[视频]")
+            elif seg_type in {"file", "onlinefile"}:
+                name = data.get("name") or data.get("fileName") or "文件"
+                parts.append(f"[文件：{name}]")
+            elif seg_type:
+                parts.append(f"[{seg_type}]")
+        return "".join(parts).strip()
 
 
 def _download_url(url: str, destination: Path) -> int:
@@ -1049,14 +1279,14 @@ class NapCatAdapter(BaseAdapter):
 
         nickname, card = self.extract_sender_names(raw_event)
 
-        # 被引用消息携带的图片（引用回复场景下模型也需要看到）
-        quote_images: list[dict[str, str]] = []
+        # 引用消息与合并转发里的图片段，按它们在正文中出现的顺序收集
+        vision_segments: list[dict[str, Any]] = []
         if is_poke:
             prompt = self._render_poke_prompt(raw_event, self_id)
         elif msg_type == "group":
-            prompt = await self._render_group_prompt(raw_event, self_id, gid, quote_images)
+            prompt = await self._render_group_prompt(raw_event, self_id, gid, vision_segments)
         elif msg_type == "private":
-            prompt = await self._render_private_prompt(raw_event, quote_images)
+            prompt = await self._render_private_prompt(raw_event, vision_segments)
         else:
             return None
 
@@ -1074,9 +1304,7 @@ class NapCatAdapter(BaseAdapter):
                 elif at_qq:
                     at_user_ids.append(at_qq)
 
-        multimodal_inputs = quote_images + await self._collect_image_inputs(
-            raw_event.get("message", [])
-        )
+        multimodal_inputs = await self._collect_image_inputs(vision_segments)
 
         try:
             event_time = int(raw_event.get("time", 0) or 0)
@@ -1116,7 +1344,7 @@ class NapCatAdapter(BaseAdapter):
         event: dict[str, Any],
         self_id: str,
         group_id: str,
-        quote_images: list[dict[str, str]] | None = None,
+        vision_segments: list[dict[str, Any]] | None = None,
     ) -> str:
         """将群聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
         from ..protocol import _face_to_text, build_image_label
@@ -1131,7 +1359,7 @@ class NapCatAdapter(BaseAdapter):
             data = seg.get("data", {})
             if seg_type == "reply":
                 # 引用消息：尝试获取被引用消息内容并注入 prompt
-                quote_text = await self._resolve_quote_content(data, quote_images)
+                quote_text = await self._resolve_quote_content(data, vision_segments)
                 if quote_text:
                     parts.append(quote_text)
             elif seg_type == "text":
@@ -1164,18 +1392,25 @@ class NapCatAdapter(BaseAdapter):
                 label = "动画表情" if str(data.get("sub_type", "")) == "1" else "图片"
                 parts.append(build_image_label(seg, image_index, label, image_names))
                 image_index += 1
+                if vision_segments is not None:
+                    vision_segments.append(seg)
+            elif seg_type in {"forward", "node"}:
+                forward_text, forward_segments = await self._read_forward_message(data)
+                parts.append(("\n" if parts else "") + forward_text + "\n")
+                if vision_segments is not None:
+                    vision_segments.extend(forward_segments)
 
         return "".join(parts).strip()
 
     async def _resolve_quote_content(
         self,
         data: dict[str, Any],
-        quote_images: list[dict[str, str]] | None = None,
+        vision_segments: list[dict[str, Any]] | None = None,
     ) -> str:
         """解析引用消息段，通过 get_msg API 获取被引用消息内容。
 
-        被引用消息中的图片会缓存到本地并追加进 ``quote_images``，使其作为真实
-        视觉输入进入多模态通道（仅文本注入时模型无法「看到」引用的图）。
+        被引用消息中的图片段会按正文顺序追加进 ``vision_segments``，由调用方
+        统一缓存成视觉输入；仅文本注入时模型无法「看到」引用的图。
 
         Returns:
             格式化的引用文本，如 ``[引用消息 msg_id="123" speaker="张三"] 内容 [/引用消息]``
@@ -1202,8 +1437,15 @@ class NapCatAdapter(BaseAdapter):
                     label = "动画表情" if is_sticker else "图片"
                     text_parts.append(build_image_label(seg, image_index, label, image_names))
                     image_index += 1
-            if quote_images is not None:
-                quote_images.extend(await self._collect_image_inputs(raw_segments))
+                    if vision_segments is not None:
+                        vision_segments.append(seg)
+                elif seg.get("type") in {"forward", "node"}:
+                    forward_text, forward_segments = await self._read_forward_message(
+                        seg.get("data", {})
+                    )
+                    text_parts.append(forward_text)
+                    if vision_segments is not None:
+                        vision_segments.extend(forward_segments)
             quote_text = "".join(text_parts).strip()
             if not quote_text:
                 return ""
@@ -1212,8 +1454,8 @@ class NapCatAdapter(BaseAdapter):
             nickname = sender.get("nickname", "") or sender.get("card", "") or ""
             safe_nick = html.escape(nickname, quote=True) if nickname else ""
             safe_msg_id = html.escape(msg_id, quote=True)
-            # 截断过长的引用内容
-            if len(quote_text) > 200:
+            # 引用的是合并转发时不再截断，避免把嵌套块截成半个标签
+            if "[合并转发" not in quote_text and len(quote_text) > 200:
                 quote_text = quote_text[:200] + "..."
             safe_quote = html.escape(quote_text, quote=False)
             if safe_nick:
@@ -1222,6 +1464,26 @@ class NapCatAdapter(BaseAdapter):
         except Exception as exc:
             LOG.debug("获取引用消息失败 (msg_id=%s): %s", msg_id, exc)
             return ""
+
+    async def _read_forward_message(self, data: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+        """读取合并转发：递归展开嵌套节点，并返回节点内的图片段供统一缓存。"""
+        reader = _ForwardReader(self)
+        try:
+            async with asyncio.timeout(_FORWARD_READ_TIMEOUT):
+                text = await reader.read(data)
+        except TimeoutError:
+            LOG.warning("读取合并转发超时: id=%s", _forward_segment_id(data))
+            text = ""
+        except Exception:
+            LOG.exception("读取合并转发失败: id=%s", _forward_segment_id(data))
+            text = ""
+        if not text:
+            forward_id = _forward_segment_id(data)
+            placeholder = "[合并转发：内容读取失败]"
+            if forward_id:
+                placeholder = f'[合并转发：id="{html.escape(forward_id, quote=True)}" 内容读取失败]'
+            return placeholder, []
+        return text, reader.image_segments
 
     async def _collect_image_inputs(self, segments: list[dict[str, Any]]) -> list[dict[str, str]]:
         """把 OneBot 消息段中的图片缓存到本地并转换为多模态输入项。
@@ -1232,13 +1494,14 @@ class NapCatAdapter(BaseAdapter):
         """
         inputs: list[dict[str, str]] = []
         for seg in segments:
-            if seg.get("type") != "image":
+            seg_type = str(seg.get("type", "")).lower()
+            if seg_type not in {"image", "mface"}:
                 continue
             data = seg.get("data", {})
             url = data.get("url", "") or data.get("file", "")
             if not url:
                 continue
-            is_sticker = str(data.get("sub_type", "")) == "1"
+            is_sticker = seg_type == "mface" or str(data.get("sub_type", "")) == "1"
             local_path = await self._resolve_segment_image(data, is_sticker=is_sticker)
             if not local_path:
                 LOG.warning("图片无法本地化，已跳过视觉输入: %s", str(url)[:80])
@@ -1343,7 +1606,7 @@ class NapCatAdapter(BaseAdapter):
     async def _render_private_prompt(
         self,
         event: dict[str, Any],
-        quote_images: list[dict[str, str]] | None = None,
+        vision_segments: list[dict[str, Any]] | None = None,
     ) -> str:
         """将私聊 OneBot 消息段渲染为引擎可读的 prompt 文本。"""
         from ..protocol import _face_to_text, build_image_label
@@ -1356,7 +1619,7 @@ class NapCatAdapter(BaseAdapter):
             seg_type = seg.get("type")
             data = seg.get("data", {})
             if seg_type == "reply":
-                quote_text = await self._resolve_quote_content(data, quote_images)
+                quote_text = await self._resolve_quote_content(data, vision_segments)
                 if quote_text:
                     parts.append(quote_text)
             elif seg_type == "text":
@@ -1367,6 +1630,13 @@ class NapCatAdapter(BaseAdapter):
                 label = "动画表情" if str(data.get("sub_type", "")) == "1" else "图片"
                 parts.append(build_image_label(seg, image_index, label, image_names))
                 image_index += 1
+                if vision_segments is not None:
+                    vision_segments.append(seg)
+            elif seg_type in {"forward", "node"}:
+                forward_text, forward_segments = await self._read_forward_message(data)
+                parts.append(("\n" if parts else "") + forward_text + "\n")
+                if vision_segments is not None:
+                    vision_segments.extend(forward_segments)
 
         return "".join(parts).strip()
 
