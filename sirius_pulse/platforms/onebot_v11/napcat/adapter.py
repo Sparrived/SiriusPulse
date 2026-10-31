@@ -1540,7 +1540,7 @@ class NapCatAdapter(BaseAdapter):
         return text, reader.image_segments
 
     async def _summarize_forward_overflow(self, overflow: str) -> str:
-        """把超出读取预算的转发正文压成一段概要；没有引擎或失败时放弃。"""
+        """复用工作模式模型压缩超预算正文；没有引擎或失败时放弃。"""
         engine = self._engine
         brain = getattr(engine, "brain", None) if engine is not None else None
         if brain is None:
@@ -1550,7 +1550,8 @@ class NapCatAdapter(BaseAdapter):
         try:
             raw = await brain.raw_call(
                 RawRequest(
-                    model="forward_summarize",
+                    # 不新增模型绑定：直接复用工作模式任务。
+                    model="work_mode_generate",
                     system_prompt=_FORWARD_SUMMARY_PROMPT,
                     messages=[{"role": "user", "content": overflow}],
                     timeout_seconds=_FORWARD_SUMMARY_TIMEOUT,

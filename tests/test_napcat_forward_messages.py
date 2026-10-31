@@ -273,7 +273,7 @@ async def test_overflow_is_compressed_by_one_llm_call(
     assert "第41条内容" not in parsed.prompt
     assert len(brain.requests) == 1
     request = brain.requests[0]
-    assert request.model == "forward_summarize"
+    assert request.model == "work_mode_generate"
     assert "第41条内容" in request.messages[0]["content"]
     assert "第1条内容" not in request.messages[0]["content"]
 
@@ -298,7 +298,7 @@ async def test_forward_summary_failure_keeps_truncation_note(
         {"fwd-long": {"status": "ok", "data": {"messages": nodes}}},
         work_path=tmp_path,
     )
-    brain = _FakeBrain(error=RuntimeError("AMKR 404: forward_summarize"))
+    brain = _FakeBrain(error=RuntimeError("AMKR 404: work_mode_generate"))
     adapter._engine = SimpleNamespace(brain=brain)  # type: ignore[assignment]
 
     parsed = await adapter.parse_event(

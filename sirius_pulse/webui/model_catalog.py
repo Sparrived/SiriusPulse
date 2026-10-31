@@ -30,7 +30,6 @@ TASK_LABELS: dict[str, str] = {
     "work_mode_generate": "工作模式",
     "passive_tool": "被动技能",
     "plugin_generate": "插件生成",
-    "forward_summarize": "合并转发压缩",
     "autonomy_generate": "自主行为",
     "image_generate": "生图",
 }
