@@ -63,11 +63,11 @@ export interface Health {
   running: boolean;
   healthy: boolean;
   checks: {
-    process?: boolean;
-    heartbeat?: boolean;
-    adapter?: { online?: boolean; degraded?: boolean } | boolean;
-    config?: boolean;
-    memory?: boolean;
+    process?: { status?: string; pid?: number | null };
+    heartbeat?: { status?: string; heartbeat_at?: string | null; age_seconds?: number | null };
+    adapter?: { status?: string; online?: boolean | null; degraded?: boolean };
+    config?: { status?: string; files?: string[] };
+    memory?: { status?: string };
   };
 }
 
