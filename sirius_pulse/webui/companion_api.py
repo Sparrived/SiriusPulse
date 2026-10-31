@@ -215,6 +215,11 @@ async def api_avatar_get(request: web.Request, data_dir: Path) -> web.StreamResp
             return _json_response({"error": "尚未设置立绘"}, 404)
         path = fallback
     response = web.FileResponse(path)
+    # aiohttp 自带的类型表在 Windows 上不认 .webp，会当成 octet-stream 下发；
+    # 立绘接口一律声明成图片类型。
+    response.headers["Content-Type"] = (
+        "image/webp" if path.suffix.lower() == ".webp" else "image/png"
+    )
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Avatar-Custom"] = "1" if custom else "0"
     return response

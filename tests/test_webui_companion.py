@@ -190,6 +190,8 @@ async def test_persona_avatar_can_be_uploaded_capped_and_reset(tmp_path):
         default = await client.get("/api/personas/sirius/avatar", headers=auth)
         assert default.status == 200
         assert default.headers["X-Avatar-Custom"] == "0"
+        # 内置立绘是 webp：Windows 自带的 mimetypes 不认这个后缀，得由服务端补上
+        assert default.headers["Content-Type"] == "image/webp"
 
         rejected = await client.post(
             "/api/personas/sirius/avatar", data=b"not an image", headers=auth
