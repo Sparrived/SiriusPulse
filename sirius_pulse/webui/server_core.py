@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -37,19 +38,60 @@ from sirius_pulse.webui.ws_server import WebSocketManager, WebUIFileEventBridge,
 
 LOG = logging.getLogger("sirius.webui")
 
+WEBUI_DIR = Path(__file__).parent
+# 新版前端（frontend/ 构建产物，随包提交）与旧版运维控制台（迁移期保留在 /legacy/）。
+APP_DIR = WEBUI_DIR / "app"
+LEGACY_DIR = WEBUI_DIR / "static"
+
+# 请求级人格选择：新版前端每个标签页通过该请求头声明自己正在看哪个人格，
+# 不再依赖进程级的 ``_active_persona_name``——否则一个标签页切人格，
+# 其它标签页的 /api/persona/* 会被悄悄改到另一个人格上。
+PERSONA_HEADER = "X-Sirius-Persona"
+_REQUEST_PERSONA_DIR: ContextVar[Path | None] = ContextVar("sirius_request_persona", default=None)
+
 
 @web.middleware
 async def _no_cache_middleware(
     request: web.Request,
     handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
 ) -> web.StreamResponse:
-    """为静态文件禁用浏览器缓存。"""
+    """为静态文件禁用浏览器缓存；新版前端带哈希的资源允许长期缓存。"""
     response = await handler(request)
-    if request.path.startswith("/static/"):
+    if request.path.startswith("/app/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif request.path.startswith("/static/") or request.path in ("/", "/legacy/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+
+def _persona_scope_middleware(data_dir: Path) -> Callable[..., Awaitable[web.StreamResponse]]:
+    personas_dir = (data_dir / "personas").resolve()
+
+    @web.middleware
+    async def middleware(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        name = request.headers.get(PERSONA_HEADER, "").strip()
+        if not name or not request.path.startswith("/api/"):
+            return await handler(request)
+        target = (personas_dir / name).resolve()
+        # 只接受单纯的目录名：带路径分隔符或 .. 的写法即使最终落在 personas/ 下也拒绝
+        if (
+            target.name != name
+            or target.parent != personas_dir
+            or not (target / "persona.json").is_file()
+        ):
+            return _json_response({"error": f"人格不存在: {name}"}, 404)
+        token = _REQUEST_PERSONA_DIR.set(target)
+        try:
+            return await handler(request)
+        finally:
+            _REQUEST_PERSONA_DIR.reset(token)
+
+    return middleware
 
 
 class WebUIServer:
@@ -77,7 +119,13 @@ class WebUIServer:
         # AMKR 同源反代：AMKR 不发 CORS 头，面板必须与它同源，因此挂在 WebUI
         # 自己的源上（运维用哪个地址打开本页，面板就在哪个源上）。
         self.amkr_proxy = AmkrProxy(self.data_dir)
-        self.app = web.Application(middlewares=[auth_middleware, _no_cache_middleware])
+        self.app = web.Application(
+            middlewares=[
+                auth_middleware,
+                _persona_scope_middleware(self.data_dir),
+                _no_cache_middleware,
+            ]
+        )
         self.app[DATA_DIR_KEY] = self.data_dir
         self.app[AUTH_MANAGER_KEY] = self.auth_manager
         self.app[WS_MANAGER_KEY] = self.ws_manager
@@ -103,7 +151,10 @@ class WebUIServer:
 
     @property
     def persona_dir(self) -> Path:
-        """当前活跃人格的目录路径。"""
+        """当前请求所指人格的目录：优先请求头 ``X-Sirius-Persona``，否则进程级活跃人格。"""
+        scoped = _REQUEST_PERSONA_DIR.get()
+        if scoped is not None:
+            return scoped
         name = getattr(self, "_active_persona_name", "")
         if not name:
             # 兼容旧格式：如果没有 active_persona，直接用 data_dir
@@ -151,7 +202,11 @@ class WebUIServer:
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
-        self.app.router.add_static("/static/", Path(__file__).parent / "static", show_index=False)
+        self.app.router.add_get("/legacy", self.legacy_redirect)
+        self.app.router.add_get("/legacy/", self.legacy_index)
+        if APP_DIR.is_dir():
+            self.app.router.add_static("/app/", APP_DIR, show_index=False)
+        self.app.router.add_static("/static/", LEGACY_DIR, show_index=False)
         # 反代路由先于 WEBUI_ROUTES 注册：它的通配尾巴会吃掉 /amkr 下的一切，
         # 而本框架自己的接口全在 /api/ 下，两者不重叠。
         setup_amkr_proxy_routes(self.app, self.amkr_proxy)
@@ -220,10 +275,20 @@ class WebUIServer:
     # ─── 静态页面 ─────────────────────────────────────────
 
     async def index(self, request: web.Request) -> web.StreamResponse:
-        html_path = Path(__file__).parent / "static" / "index.html"
+        """新版前端；未构建时退回旧版控制台，保证源码用户总有页面可用。"""
+        app_index = APP_DIR / "index.html"
+        if app_index.is_file():
+            return web.FileResponse(app_index)
+        return await self.legacy_index(request)
+
+    async def legacy_index(self, request: web.Request) -> web.StreamResponse:
+        html_path = LEGACY_DIR / "index.html"
         if html_path.exists():
             return web.FileResponse(html_path)
         return web.Response(text="WebUI not found", status=404)
+
+    async def legacy_redirect(self, request: web.Request) -> web.StreamResponse:
+        raise web.HTTPFound("/legacy/")
 
     # ─── 全局 API: 全局配置 ───────────────────────────────
 

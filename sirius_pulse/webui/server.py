@@ -25,6 +25,12 @@ from typing import Any
 from aiohttp import web
 
 from sirius_pulse.webui.autonomy_api import api_persona_autonomy_get
+from sirius_pulse.webui.companion_api import (
+    api_avatar_delete,
+    api_avatar_get,
+    api_avatar_post,
+    api_persona_glance_get,
+)
 from sirius_pulse.webui.dispatcher_api import api_dispatcher_overview as _api_dispatcher_overview
 from sirius_pulse.webui.memory_api import (
     api_persona_cognition_analysis_get,
@@ -108,6 +114,10 @@ DelegatedHandler = Callable[[web.Request, Any], Awaitable[web.Response]]
 
 DELEGATED_HANDLERS: dict[str, DelegatedHandler] = {
     "api_persona_get_single": api_persona_get_single,
+    "api_persona_glance_get": api_persona_glance_get,
+    "api_avatar_get": api_avatar_get,
+    "api_avatar_post": api_avatar_post,
+    "api_avatar_delete": api_avatar_delete,
     "api_persona_status_get": api_persona_status_get,
     "api_system_logs_get": api_system_logs_get,
     "api_persona_logs_get": api_persona_logs_get,

@@ -226,7 +226,7 @@
 
   <script>
     if (localStorage.getItem('sirius_token')) {
-      window.location.href = '/';
+      window.location.href = '/legacy/';
     }
 
     const canvas = document.getElementById('starfield');
@@ -360,7 +360,7 @@
 
         if (data.success && data.token) {
           localStorage.setItem('sirius_token', data.token);
-          window.location.href = '/';
+          window.location.href = '/legacy/';
         } else {
           errEl.textContent = data.error || '登录失败';
           errEl.style.display = 'block';

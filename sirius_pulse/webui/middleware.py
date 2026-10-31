@@ -27,6 +27,7 @@ LOG = logging.getLogger("sirius.webui.middleware")
 # 的那几条路径。
 _WHITELIST_PREFIXES: tuple[str, ...] = (
     "/static/",
+    "/app/",
     "/api/auth/login",
     "/api/auth/status",
     f"{AMKR_PROXY_PREFIX}/",
@@ -42,6 +43,8 @@ _VALID_ROLES: frozenset[str] = frozenset({"admin", "viewer"})
 _WHITELIST_EXACT: tuple[str, ...] = (
     "/",
     "/index.html",
+    "/legacy",
+    "/legacy/",
 )
 
 # 只读 HTTP 方法
