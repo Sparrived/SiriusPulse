@@ -47,9 +47,7 @@ logger = logging.getLogger(__name__)
 # 区间内既不能 100% 认定在叫自己（会抢别人的话），也不该直接静默（会漏掉真正找自己的消息）。
 _GREY_ZONE_DIRECTED_MIN = 0.45
 _GREY_ZONE_DIRECTED_MAX = 0.70
-_GREY_ZONE_SKIP_HINT = (
-    "（这条消息不一定是在叫你；如果你判断它其实是在叫别人，就只输出 [SKIP]，系统不会发送任何内容）"
-)
+_GREY_ZONE_SKIP_HINT = "（这条消息不一定是在叫你；如果你判断它其实是在叫别人，就只输出 [SKIP]，系统不会发送任何内容）"
 
 
 def _grey_zone_directed_score(item: Any) -> float | None:
@@ -65,6 +63,7 @@ def _grey_zone_directed_score(item: Any) -> float | None:
         return float(participation.get("directed_score"))
     except (TypeError, ValueError):
         return None
+
 
 def _apply_grey_zone_hint(message_content: str, score: float | None) -> str:
     """灰色区间补一句"拿不准就跳过"的提示；不在区间原样返回。"""

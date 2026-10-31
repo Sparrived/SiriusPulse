@@ -1206,7 +1206,6 @@ class CognitionAnalyzer:
         if rule_scores.get("other_ai_score", 0.0) >= 0.5:
             base = min(base, 0.35)
 
-
         if base >= 0.5:
             score = min(1.0, base + semantic * 0.15 + contextual)
         elif semantic >= 0.6:
