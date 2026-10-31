@@ -43,6 +43,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# C 方案：指向性落在灰色区间时，把“要不要接话”交回模型判断。
+# 区间内既不能 100% 认定在叫自己（会抢别人的话），也不该直接静默（会漏掉真正找自己的消息）。
+_GREY_ZONE_DIRECTED_MIN = 0.45
+_GREY_ZONE_DIRECTED_MAX = 0.70
+_GREY_ZONE_SKIP_HINT = (
+    "（这条消息不一定是在叫你；如果你判断它其实是在叫别人，就只输出 [SKIP]，系统不会发送任何内容）"
+)
+
+
+def _grey_zone_directed_score(item: Any) -> float | None:
+    """取出触发这条队列项时的 directed_score（历史数据可能没有）。"""
+    decision = getattr(item, "strategy_decision", None)
+    context = getattr(decision, "context", None)
+    if not isinstance(context, dict):
+        return None
+    participation = context.get("participation")
+    if not isinstance(participation, dict):
+        return None
+    try:
+        return float(participation.get("directed_score"))
+    except (TypeError, ValueError):
+        return None
+
+def _apply_grey_zone_hint(message_content: str, score: float | None) -> str:
+    """灰色区间补一句"拿不准就跳过"的提示；不在区间原样返回。"""
+    if score is not None and _GREY_ZONE_DIRECTED_MIN <= score < _GREY_ZONE_DIRECTED_MAX:
+        return f"{message_content}\n{_GREY_ZONE_SKIP_HINT}"
+    return message_content
+
+
 _AUTONOMOUS_MESSAGE_TOOLS = {
     "interaction_with_master",
 }
@@ -1503,6 +1533,13 @@ class DelayedQueueTasks:
             message_content = "\n".join(parts)
             speaker_name = items[-1].speaker_name
             channel_user_id = getattr(items[-1], "channel_user_id", "") or ""
+        # C 方案：灰色区间里补一句提示，让模型自己判断是否该接话
+        _score = _grey_zone_directed_score(items[-1])
+        _hinted = _apply_grey_zone_hint(message_content, _score)
+        if _hinted != message_content:
+            message_content = _hinted
+            logger.info("[参与] 灰色区间提示已注入 group=%s directed=%.2f", group_id, _score)
+
         # 收集触发批次中所有用户的语义画像
         related_uids: set[str] = set()
         for item in items:
