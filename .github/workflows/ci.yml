@@ -116,6 +116,38 @@ jobs:
       - name: Build documentation
         run: npm run build --prefix docs
 
+  webui:
+    name: WebUI build is committed and fresh
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install WebUI dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Type-check and build WebUI
+        run: pnpm --dir frontend build
+
+      # 构建产物随包提交（源码与 Docker 用户无需 Node）：改了 frontend/ 却忘了重新构建，
+      # 线上跑的就会是旧页面。这里重建一遍，必须与提交的一致。
+      - name: Committed build matches sources
+        run: |
+          git status --porcelain sirius_pulse/webui/app
+          test -z "$(git status --porcelain sirius_pulse/webui/app)"
+
   lint:
     name: Linting & Type Checking
     runs-on: ubuntu-latest
@@ -222,6 +254,7 @@ jobs:
           sdist_names = tarfile.open(sdist, "r:gz").getnames()
           assert any(name.endswith("entry_points.txt") for name in wheel_names)
           assert any(name.endswith("sirius_pulse/webui/static/index.html") for name in wheel_names)
+          assert any(name.endswith("sirius_pulse/webui/app/index.html") for name in wheel_names)
           forbidden = (
               "plugins/github_monitor/",
               "sirius_pulse/github/",
