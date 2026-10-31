@@ -3462,16 +3462,14 @@ async def test_persona_post_when_name_is_not_a_string_then_rejects(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_persona_post_when_payload_is_valid_then_persists(tmp_path: Path):
-    from sirius_pulse.webui.persona_api import api_persona_post
     from sirius_pulse.core.persona_store import PersonaStore
+    from sirius_pulse.webui.persona_api import api_persona_post
 
     persona_dir = tmp_path / "personas" / "sirius"
     persona_dir.mkdir(parents=True)
 
     response = await api_persona_post(
-        _FakeJsonRequest(
-            {"name": "月白", "aliases": ["Sirius"], "full_system_prompt": "你是月白。"}
-        ),
+        _FakeJsonRequest({"name": "月白", "aliases": ["Sirius"], "full_system_prompt": "你是月白。"}),
         persona_dir,
     )
 

@@ -136,9 +136,7 @@ class BackgroundTasks:
         if engine.provider_async is None:
             return 0
 
-        volume_threshold = int(
-            engine.config.get("memory_unit_volume_threshold", 8)
-        )
+        volume_threshold = int(engine.config.get("memory_unit_volume_threshold", 8))
         idle_consolidation_seconds = float(
             engine.config.get("memory_idle_consolidation_seconds", 3600)
         )

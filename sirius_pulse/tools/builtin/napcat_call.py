@@ -129,8 +129,7 @@ _config.group("NapCat API").add(
     "params",
     type="dict",
     description=(
-        "该 action 的参数字典，例如 {\"user_id\": 123456, \"times\": 3}；"
-        "也可以直接给 JSON 字符串。也可以把参数平铺在顶层传参，两者会合并。"
+        '该 action 的参数字典，例如 {"user_id": 123456, "times": 3}；' "也可以直接给 JSON 字符串。也可以把参数平铺在顶层传参，两者会合并。"
     ),
     default={},
 )
@@ -361,9 +360,7 @@ def _format_result(action: str, params: dict[str, Any], raw: Any) -> dict[str, A
     return _generic_result(action, params, payload)
 
 
-def _format_member_list(
-    params: dict[str, Any], payload: Any, raw: Any
-) -> dict[str, Any]:
+def _format_member_list(params: dict[str, Any], payload: Any, raw: Any) -> dict[str, Any]:
     if not isinstance(payload, list):
         return _generic_result("get_group_member_list", params, payload)
     group_id = str(params.get("group_id", "")).strip()
@@ -386,9 +383,7 @@ def _format_member_list(
     }
 
 
-def _format_member_info(
-    params: dict[str, Any], payload: Any, raw: Any
-) -> dict[str, Any]:
+def _format_member_info(params: dict[str, Any], payload: Any, raw: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return _generic_result("get_group_member_info", params, payload)
     group_id = str(params.get("group_id", "")).strip()

@@ -98,8 +98,9 @@ class IdentityResolver:
                 return user
 
         # Unknown labels are observations, never credentials that attach to a prior record.
-        from sirius_pulse.memory.user.unified_models import UnifiedUser
         import uuid
+
+        from sirius_pulse.memory.user.unified_models import UnifiedUser
 
         identities: dict[str, str] = {}
         if ctx.platform and ctx.platform_uid:
@@ -166,8 +167,9 @@ class IdentityResolver:
 
         # Names and conversational proximity cannot establish an account identity.
         # Fallback: create an isolated legacy user record.
-        from sirius_pulse.memory.user.unified_models import UnifiedUser
         import uuid
+
+        from sirius_pulse.memory.user.unified_models import UnifiedUser
 
         identities: dict[str, str] = {}
         if ctx.platform and ctx.platform_uid:

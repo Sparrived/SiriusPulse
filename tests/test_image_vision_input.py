@@ -271,9 +271,7 @@ async def test_collect_image_inputs_when_napcat_returns_readable_local_path_then
 
     monkeypatch.setattr(adapter, "call_api", unexpected_get_image)
 
-    inputs = await adapter._collect_image_inputs(
-        [{"type": "image", "data": {"file": str(source)}}]
-    )
+    inputs = await adapter._collect_image_inputs([{"type": "image", "data": {"file": str(source)}}])
 
     assert len(inputs) == 1
     cached = Path(inputs[0]["value"])
@@ -304,9 +302,7 @@ async def test_collect_image_inputs_when_reference_is_not_readable_then_does_not
 
     monkeypatch.setattr(adapter, "call_api", fake_get_image)
 
-    inputs = await adapter._collect_image_inputs(
-        [{"type": "image", "data": {"file": file_ref}}]
-    )
+    inputs = await adapter._collect_image_inputs([{"type": "image", "data": {"file": file_ref}}])
 
     assert inputs == []
     assert file_ref not in {item.get("value", "") for item in inputs}

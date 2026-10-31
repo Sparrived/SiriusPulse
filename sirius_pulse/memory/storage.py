@@ -405,4 +405,3 @@ class MemoryStorage(BaseSqliteStore):
             "group_name": row["group_name"],
             "pending_ai_responses": pending_ai_responses,
         }
-

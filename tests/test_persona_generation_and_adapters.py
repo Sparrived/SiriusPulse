@@ -14,12 +14,7 @@ from sirius_pulse.adapters.models import (
     at,
 )
 from sirius_pulse.adapters.models import file as file_segment
-from sirius_pulse.adapters.models import (
-    image,
-    reply,
-    text,
-    voice,
-)
+from sirius_pulse.adapters.models import image, reply, text, voice
 from sirius_pulse.persona_generation.builders import (
     _decode_json_string_fragment,
     _extract_json_number_field,

@@ -419,9 +419,7 @@ async def test_engine_tool_chain_injection_active_during_work_mode():
         )
         is True
     )
-    assert [message.content for message in engine.pop_tool_chain_messages("group-1")] == [
-        "月白看这里"
-    ]
+    assert [message.content for message in engine.pop_tool_chain_messages("group-1")] == ["月白看这里"]
     # 点名的消息进下一轮上下文，不留在退出时才重放的暂存里。
     assert run.stash == []
 
