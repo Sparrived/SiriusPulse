@@ -1,0 +1,129 @@
+.door {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  align-items: center;
+  justify-items: start;
+  padding: 0 clamp(20px, 10vw, 160px);
+  z-index: 30;
+}
+
+.door__card {
+  width: min(400px, calc(100vw - 40px));
+  padding: 38px 34px 26px;
+  transform-origin: 50% 0%;
+}
+
+.door__lamp {
+  position: absolute;
+  top: -26px;
+  left: 34px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff6d8 0%, #ffd98f 35%, rgba(255, 210, 140, 0) 70%);
+  filter: blur(0.5px);
+  animation: lamp 4s ease-in-out infinite;
+}
+
+@keyframes lamp {
+  50% {
+    opacity: 0.75;
+    transform: scale(0.94);
+  }
+}
+
+.door__eyebrow {
+  margin: 0;
+  font-family: var(--font-num);
+  font-style: italic;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.door__title {
+  margin: 6px 0 8px;
+  font-size: 36px;
+  font-weight: 400;
+}
+
+.door__sub {
+  margin: 0 0 24px;
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+.door__field input {
+  width: 100%;
+  padding: 13px 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(79, 111, 216, 0.22);
+  background: rgba(255, 255, 255, 0.85);
+  font-size: 17px;
+  letter-spacing: 0.2em;
+  outline: none;
+  transition:
+    border-color 0.25s,
+    box-shadow 0.25s;
+}
+
+.door__field input:focus {
+  border-color: var(--ribbon);
+  box-shadow: 0 0 0 4px rgba(79, 111, 216, 0.14);
+}
+
+.door__field input::placeholder {
+  letter-spacing: 0.08em;
+  font-family: var(--font-hand);
+  color: var(--ink-faint);
+}
+
+.door__knock {
+  margin-top: 16px;
+  width: 100%;
+  justify-content: center;
+  padding: 0.85em 1.35em;
+  font-size: 16px;
+}
+
+.door__reply {
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+  margin-top: 10px;
+  font-size: 18px;
+  color: var(--ribbon);
+}
+
+.door__nope {
+  color: #d0607f;
+  font-size: 16px;
+}
+
+.door__help {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+.door__light {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 70vmax;
+  height: 70vmax;
+  margin: -35vmax 0 0 -35vmax;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fffdf6 0%, #fff4dc 40%, rgba(255, 244, 220, 0) 70%);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .door {
+    justify-items: center;
+    align-items: end;
+    padding-bottom: 8vh;
+  }
+}

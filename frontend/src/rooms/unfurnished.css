@@ -1,0 +1,56 @@
+.unfurnished {
+  position: fixed;
+  top: 50%;
+  right: clamp(16px, 8vw, 140px);
+  transform: translateY(-55%);
+  width: min(440px, calc(100vw - 32px));
+  padding: 32px 32px 28px;
+  z-index: 10;
+}
+
+.unfurnished__icon {
+  color: var(--ribbon);
+}
+
+.unfurnished h1 {
+  margin: 10px 0 4px;
+  font-size: 34px;
+  font-weight: 400;
+}
+
+.unfurnished__hint {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.unfurnished__note {
+  margin: 22px 0 6px;
+  font-size: 18px;
+}
+
+.unfurnished__lead {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--ink-faint);
+}
+
+.unfurnished__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.unfurnished__links a {
+  text-decoration: none;
+  font-size: 14px;
+  padding: 0.55em 1.1em;
+}
+
+@media (max-width: 900px) {
+  .unfurnished {
+    top: auto;
+    bottom: 110px;
+    right: 16px;
+    transform: none;
+  }
+}

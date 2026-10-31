@@ -1,0 +1,122 @@
+.palette-trigger {
+  position: fixed;
+  top: max(18px, env(safe-area-inset-top));
+  right: 20px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--paper-edge);
+  font-size: 16px;
+  color: var(--ink-soft);
+  transition:
+    transform 0.4s var(--ease-soft),
+    color 0.2s;
+}
+
+.palette-trigger:hover {
+  color: var(--ribbon);
+  transform: translateY(-1px) rotate(1deg);
+}
+
+.palette-trigger kbd,
+.palette__hint {
+  font-family: var(--font-ui);
+}
+
+.palette-trigger kbd {
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(223, 230, 255, 0.9);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.palette-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: start center;
+  padding-top: 14vh;
+  background: rgba(14, 18, 44, 0.35);
+  backdrop-filter: blur(3px);
+}
+
+.palette {
+  width: min(560px, calc(100vw - 32px));
+  padding: 10px;
+  overflow: hidden;
+}
+
+.palette__input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 12px 14px 14px;
+  font-size: 22px;
+  border-bottom: 1px dashed rgba(79, 111, 216, 0.25);
+}
+
+.palette__input::placeholder {
+  color: var(--ink-faint);
+}
+
+.palette__list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.palette__group {
+  padding: 10px 14px 4px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+}
+
+.palette__item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  font-size: 17px;
+}
+
+.palette__item.is-on {
+  background: linear-gradient(90deg, rgba(223, 230, 255, 0.95), rgba(255, 225, 234, 0.6));
+}
+
+.palette__hint {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette__empty {
+  padding: 22px 14px;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 720px) {
+  .palette-trigger kbd {
+    display: none;
+  }
+  .palette-trigger {
+    font-size: 14px;
+    padding: 10px 16px;
+  }
+}

@@ -1,0 +1,67 @@
+.thoughts {
+  position: fixed;
+  left: var(--her-x, 30vw);
+  top: var(--her-y, 30vh);
+  transform: translate(0, -100%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  z-index: 12;
+  pointer-events: none;
+  max-width: min(320px, 40vw);
+}
+
+.thoughts--room {
+  transform: translate(0, -100%) scale(0.88);
+  transform-origin: left bottom;
+}
+
+.thought {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 15px 9px 12px;
+  border-radius: 18px 18px 18px 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  font-size: 15px;
+  box-shadow: 0 10px 26px -12px rgba(22, 26, 64, 0.55);
+  backdrop-filter: blur(10px);
+}
+
+.thought__glyph {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--mist);
+  color: var(--ribbon);
+  font-size: 12px;
+  flex: none;
+}
+
+.thought--feel .thought__glyph,
+.thought--self .thought__glyph {
+  background: var(--blush-soft);
+  color: #e0668a;
+}
+
+.thought--reply {
+  background: linear-gradient(180deg, #f2f5ff, #e3eaff);
+}
+
+.thought--quiet {
+  opacity: 0.75;
+}
+
+@media (max-width: 720px) {
+  .thoughts {
+    left: 16px;
+    top: 96px;
+    transform: none;
+    max-width: calc(100vw - 32px);
+  }
+}
