@@ -1,67 +1,11 @@
 """Python API 文档自动生成脚本."""
 
-import ast
 import importlib
 import inspect
 import sys
 import json
 from pathlib import Path
 from typing import Any
-
-
-def extract_docstring(node: ast.AST) -> str | None:
-    """从 AST 节点提取 docstring."""
-    return ast.get_docstring(node) or None
-
-
-def extract_function_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict:
-    """提取函数签名信息."""
-    args = node.args
-    params = []
-
-    # 基础参数
-    for arg in args.args:
-        annotation = None
-        if arg.annotation:
-            try:
-                annotation = ast.unparse(arg.annotation)
-            except (AttributeError, ValueError):
-                annotation = None
-        params.append({
-            "name": arg.arg,
-            "annotation": annotation,
-            "kind": "positional"
-        })
-
-    # Keyword-only 参数
-    for arg in args.kwonlyargs:
-        annotation = None
-        if arg.annotation:
-            try:
-                annotation = ast.unparse(arg.annotation)
-            except (AttributeError, ValueError):
-                annotation = None
-        params.append({
-            "name": arg.arg,
-            "annotation": annotation,
-            "kind": "keyword-only"
-        })
-
-    # 返回类型
-    return_type = None
-    if node.returns:
-        try:
-            return_type = ast.unparse(node.returns)
-        except (AttributeError, ValueError):
-            return_type = None
-
-    return {
-        "name": node.name,
-        "is_async": isinstance(node, ast.AsyncFunctionDef),
-        "params": params,
-        "return_type": return_type,
-        "docstring": extract_docstring(node),
-    }
 
 
 def extract_runtime_function_signature(name: str, obj: Any) -> dict:

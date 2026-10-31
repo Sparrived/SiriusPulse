@@ -352,6 +352,30 @@ def _resolve_local_file_reference(value: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+#: 图片格式的魔数前缀。媒体类型必须按**字节**判定：文件名后缀会骗人
+#: （缓存常把各种图片统一存成 .jpg，内容却可能是 PNG），而 Anthropic 会校验
+#: 声明与实际是否一致，不匹配直接 400：
+#:   messages.N.content.M.image.source.base64: The image was specified using the
+#:   image/jpeg media type, but the image appears to be a image/png image
+_IMAGE_MAGIC_PREFIXES: tuple[tuple[bytes, str], ...] = (
+    # PNG 魔数 89 50 4E 47 0D 0A 1A 0A —— 用 fromhex 写，避免字节转义在编辑链路里被吃掉
+    (bytes.fromhex("89504e470d0a1a0a"), "image/png"),
+    (bytes.fromhex("ffd8ff"), "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _sniff_image_mime(data: bytes) -> str | None:
+    """按魔数返回图片媒体类型；认不出来返回 None，调用方保留原有判定。"""
+    for prefix, mime in _IMAGE_MAGIC_PREFIXES:
+        if data.startswith(prefix):
+            return mime
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def _file_to_data_url(file_path: Path, *, default_mime: str) -> str:
     mime_type, _ = mimetypes.guess_type(file_path.name)
     resolved_mime = str(mime_type or default_mime).strip() or default_mime
@@ -367,6 +391,11 @@ def _file_to_data_url(file_path: Path, *, default_mime: str) -> str:
         if shrunk is not None:
             data = shrunk
             resolved_mime = "image/jpeg"
+    if default_mime.startswith("image/"):
+        # 内容优先于后缀：上游按字节校验媒体类型，声明错了整个请求会被 400 拒掉。
+        sniffed = _sniff_image_mime(data)
+        if sniffed is not None:
+            resolved_mime = sniffed
     encoded = base64.b64encode(data).decode("ascii")
     return f"data:{resolved_mime};base64,{encoded}"
 

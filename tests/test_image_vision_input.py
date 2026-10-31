@@ -436,3 +436,56 @@ def test_prepare_messages_when_local_image_exceeds_limit_then_data_url_is_downsc
 def test_downscale_image_bytes_when_undecodable_then_returns_none():
     """无法解码时返回 None，让调用方明确放弃内联而不是猜测。"""
     assert downscale_image_bytes(b"not-an-image") is None
+
+
+# ── 传输层：媒体类型按字节判定（后缀会骗人，声明错上游直接 400） ──
+
+
+def test_prepare_messages_when_png_saved_as_jpg_then_media_type_follows_bytes(tmp_path: Path):
+    """缓存常把图片统一存成 .jpg；内容仍是 PNG 时必须声明 image/png。
+
+    回归背景：换到真 Claude API 后出现
+    `messages.N.content.M.image.source.base64: The image was specified using
+    the image/jpeg media type, but the image appears to be a image/png image`
+    —— 上游按字节校验媒体类型，按后缀猜出来的类型会让整个请求 400。
+    """
+    image_path = tmp_path / "cached.jpg"
+    image_path.write_bytes(_png_bytes((16, 16)))
+
+    prepared, stats = prepare_openai_compatible_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "看图"},
+                    {"type": "image_url", "image_url": {"url": str(image_path)}},
+                ],
+            }
+        ]
+    )
+
+    assert stats["local_image_path_conversions"] == 1
+    data_url = prepared[0]["content"][1]["image_url"]["url"]
+    assert data_url.startswith("data:image/png;base64,"), data_url[:40]
+
+
+def test_prepare_messages_when_jpeg_saved_as_png_then_media_type_follows_bytes(tmp_path: Path):
+    """反向同样成立：真 JPEG 存成 .png 时不得声明成 image/png。"""
+    from PIL import Image
+
+    image_path = tmp_path / "cached.png"
+    buffer = io.BytesIO()
+    Image.new("RGB", (16, 16), (10, 120, 200)).save(buffer, format="JPEG")
+    image_path.write_bytes(buffer.getvalue())
+
+    prepared, _ = prepare_openai_compatible_messages(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "image_url", "image_url": {"url": str(image_path)}}],
+            }
+        ]
+    )
+
+    data_url = prepared[0]["content"][0]["image_url"]["url"]
+    assert data_url.startswith("data:image/jpeg;base64,"), data_url[:40]
