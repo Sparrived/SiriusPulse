@@ -275,6 +275,12 @@ _URGENCY_KEYWORDS = {
 # ------------------------------------------------------------------
 
 # 主观题/观点询问关键词 —— 被点名时出现这些词应触发 IMMEDIATE
+# 群里其他 Bot 的名字 —— 消息点名别人且没提自己时，不能把“给我/帮你”这类祈使句
+# 当成在叫自己（历史上 yuki 的请求会被误判为在点名月白）。
+_OTHER_BOT_NAMES: tuple[str, ...] = (
+    "yuki", "日暮", "雪奈", "柚子", "幽夜", "diana", "kk", "deepseek",
+)
+
 _SUBJECTIVE_KEYWORDS: tuple[str, ...] = (
     "你觉得",
     "你认为",
@@ -1021,7 +1027,7 @@ class CognitionAnalyzer:
             r"帮我",
             r"给我",
             r"替我",
-            r"为?我",
+            r"为我",
             r"翻译[一下]?",
             r"想[要个]?[ ]?.*[吧吗]?",
             r"来[ ]?.*[吧吗]?",
@@ -1033,6 +1039,14 @@ class CognitionAnalyzer:
         ]
         i_count = sum(1 for p in imperative_markers if re.search(p, text_lower))
         scores["imperative_score"] = min(1.0, i_count * 0.3)
+        # other_ai_score: 消息点名了别的 Bot（且没有点名自己）→ 说明是冲别人说的
+        other_ai = 0.0
+        if name_match < 0.5 and mention < 0.5:
+            for other_name in _OTHER_BOT_NAMES:
+                if other_name and other_name in text_lower:
+                    other_ai = 1.0
+                    break
+        scores["other_ai_score"] = other_ai
 
         # --- Layer 3: Semantic ---
         # topic_relevance_score: keyword overlap with AI persona interests
@@ -1191,6 +1205,10 @@ class CognitionAnalyzer:
         )
 
         base = max(structural, strong_linguistic)
+        # 点名别的 Bot（且没点名自己）时，祈使句不构成“在叫我”
+        if rule_scores.get("other_ai_score", 0.0) >= 0.5:
+            base = min(base, 0.35)
+
 
         if base >= 0.5:
             score = min(1.0, base + semantic * 0.15 + contextual)
