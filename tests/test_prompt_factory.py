@@ -99,7 +99,7 @@ def test_style_adapter_ignores_persona_sampling_preferences():
 def test_style_adapter_when_sentence_limit_present_then_builds_group_chat_guidance():
     params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
 
-    assert "每句话不超过12个字，多句话可以分行输出（不超过3行）" in params.length_instruction
+    assert "每句话不超过12个字，多句话分行输出，前后语句连贯（不超过3行）" in params.length_instruction
 
 
 def test_style_adapter_clamps_sentence_limit_for_guidance():
@@ -470,7 +470,7 @@ def test_assemble_chat_injects_configured_group_chat_length_guidance():
         other_ai_names=[],
     )
 
-    assert "每句话不超过12个字，多句话可以分行输出（不超过3行）" in bundle.system_prompt
+    assert "每句话不超过12个字，多句话分行输出，前后语句连贯（不超过3行）" in bundle.system_prompt
 
 
 def test_assemble_chat_injects_interaction_spec_without_legacy_guidance():

@@ -128,7 +128,7 @@ class StyleAdapter:
     def build_length_instruction(max_sentence_chars: int) -> str:
         """Build concise group-chat length guidance from configured sentence limit."""
         max_sentence_chars = max(5, min(50, int(max_sentence_chars)))
-        return f"每句话不超过{max_sentence_chars}个字，多句话可以分行输出（不超过3行）"
+        return f"每句话不超过{max_sentence_chars}个字，多句话分行输出，前后语句连贯（不超过3行）"
 
     def adapt(
         self,
