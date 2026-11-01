@@ -51,6 +51,51 @@ async def test_memory_dedupe_scan_lifecycle(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ready_dedupe_report_shows_what_would_change_before_applying(tmp_path):
+    """扫描好了，要先让人看清哪些回忆会合在一起，再决定应用——而不是盲点「确定」。"""
+    job_id = "dedupe_" + "a" * 32
+    status_dir = tmp_path / "engine_state" / "memory_dedupe"
+    status_dir.mkdir(parents=True)
+    (status_dir / "status.json").write_text(
+        json.dumps({"job_id": job_id, "status": "ready", "report_path": "/etc/passwd"}),
+        encoding="utf-8",
+    )
+    report_dir = tmp_path / "logs" / "memory-dedupe"
+    report_dir.mkdir(parents=True)
+    operations = [
+        {"decision": "NEW", "incoming_summary": "独立的事"},
+        {
+            "decision": "MERGE",
+            "incoming_summary": "临雀喜欢猫",
+            "target_summary": "临雀养了一只猫",
+            "result_summary": "临雀养了一只猫，也很喜欢猫",
+            "reason": "兼容补充",
+        },
+        {"decision": "DUPLICATE", "incoming_summary": "又说了一遍", "target_summary": "说过"},
+    ]
+    (report_dir / f"{job_id}.json").write_text(
+        json.dumps(
+            {
+                "summary": {"new": 1, "merge": 1, "duplicate": 1},
+                "total": 3,
+                "groups": {"10086": {"operations": operations}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    status = _payload(await api_persona_memory_dedupe_status(_request(), tmp_path))
+
+    assert "report_path" not in status
+    report = status["report"]
+    assert report["changes_total"] == 2
+    assert [c["decision"] for c in report["changes"]] == ["MERGE", "DUPLICATE"]
+    assert report["changes"][0]["result_summary"] == "临雀养了一只猫，也很喜欢猫"
+    assert report["summary"]["merge"] == 1
+
+
+@pytest.mark.asyncio
 async def test_editing_a_unit_keeps_the_groups_vectors(tmp_path):
     """人工编辑只改元数据，不能把该群向量变成没人引用的孤儿文件。
 

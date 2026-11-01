@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from heapq import heappush, heapreplace
 from pathlib import Path
@@ -58,6 +59,44 @@ def _read_json_dict(path: Path) -> dict[str, Any]:
 
 def _dedupe_status(data_dir: Path) -> dict[str, Any]:
     return _read_json_dict(_memory_dedupe_dir(data_dir) / "status.json")
+
+
+_DEDUPE_JOB_RE = re.compile(r"^dedupe_[0-9a-f]{32}$")
+_DEDUPE_PREVIEW_LIMIT = 60
+_DEDUPE_CHANGING = ("DUPLICATE", "MERGE", "CONFLICT")
+
+
+def _dedupe_report_preview(data_dir: Path, job_id: str) -> dict[str, Any] | None:
+    """扫描完成后，把报告里「会变的那些」摘给前端，让人先看清再决定要不要应用。
+
+    报告路径由人格目录和 job_id 推出，不信任 status.json 里写的 report_path。
+    """
+    if not _DEDUPE_JOB_RE.fullmatch(job_id):
+        return None
+    report = _read_json_dict(data_dir / "logs" / "memory-dedupe" / f"{job_id}.json")
+    if not report:
+        return None
+    changes: list[dict[str, Any]] = []
+    for group_id, group in (report.get("groups") or {}).items():
+        for op in group.get("operations") or [] if isinstance(group, dict) else []:
+            if not isinstance(op, dict) or op.get("decision") not in _DEDUPE_CHANGING:
+                continue
+            changes.append(
+                {
+                    "group_id": str(group_id),
+                    "decision": op.get("decision"),
+                    "incoming_summary": str(op.get("incoming_summary") or ""),
+                    "target_summary": str(op.get("target_summary") or ""),
+                    "result_summary": str(op.get("result_summary") or ""),
+                    "reason": str(op.get("reason") or ""),
+                }
+            )
+    return {
+        "summary": report.get("summary") or {},
+        "total": report.get("total") or 0,
+        "changes_total": len(changes),
+        "changes": changes[:_DEDUPE_PREVIEW_LIMIT],
+    }
 
 
 def _memory_units_applying(data_dir: Path) -> bool:
@@ -994,7 +1033,11 @@ async def api_persona_memory_dedupe_scan(request: web.Request, data_dir: Path) -
 @handle_api_errors
 async def api_persona_memory_dedupe_status(request: web.Request, data_dir: Path) -> web.Response:
     status = _dedupe_status(data_dir) or {"status": "idle"}
-    return _json_response({**status, "worker_running": _is_persona_running(data_dir)})
+    payload = {**status, "worker_running": _is_persona_running(data_dir)}
+    payload.pop("report_path", None)
+    if status.get("status") == "ready":
+        payload["report"] = _dedupe_report_preview(data_dir, str(status.get("job_id") or ""))
+    return _json_response(payload)
 
 
 @handle_api_errors
