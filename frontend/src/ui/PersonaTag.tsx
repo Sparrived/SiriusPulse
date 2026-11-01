@@ -6,7 +6,7 @@ import { usePersonaStore } from '@/state/persona';
 import './persona-tag.css';
 
 export function Face({ persona, size = 38 }: { persona: PersonaSummary; size?: number }) {
-  const { data: url } = useAvatar(persona.name);
+  const url = useAvatar(persona.name).data?.url;
   return (
     <span className="face" style={{ width: size, height: size }}>
       <span className="face__clip">{url && <img src={url} alt="" />}</span>

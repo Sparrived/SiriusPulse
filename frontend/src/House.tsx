@@ -83,7 +83,7 @@ function useSceneSync(path: string) {
   }, [glance, set]);
 
   useEffect(() => {
-    if (avatar) set({ avatarUrl: avatar });
+    if (avatar) set({ avatarUrl: avatar.url });
   }, [avatar, set]);
 
   // 换了伙伴，旧的念头就不要再挂着了

@@ -78,3 +78,120 @@ export interface EngineEvent {
   resources?: string[];
   data?: Record<string, any>;
 }
+
+export interface Profile {
+  name: string;
+  aliases: string[];
+  full_system_prompt: string;
+}
+
+export interface CurvePoint {
+  time: string;
+  coefficient: number;
+}
+
+export interface Experience {
+  engagement_sensitivity: number;
+  expressiveness: number;
+  group_reply_strategies: Record<string, 'smart' | 'keyword'>;
+  min_reply_interval_seconds: number;
+  main_model_reply_cooldown_seconds: number;
+  reply_time_curve_points: CurvePoint[];
+  max_sentence_chars: number;
+  memory_unit_top_k: number;
+  memory_unit_token_budget: number;
+  persona_notebook_token_budget: number;
+  enable_tools: boolean;
+  max_tool_rounds: number;
+  auto_install_tool_deps: boolean;
+  other_ai_names: string[];
+  message_prefixes: string[];
+}
+
+export interface NapCatAdapter {
+  type: 'napcat';
+  enabled: boolean;
+  ws_url: string;
+  token: string;
+  qq_number: string;
+  allowed_group_ids: string[];
+  allowed_private_user_ids: string[];
+  peer_ai_ids: string[];
+  group_dispatch_enabled: boolean;
+  dispatch_db_path: string;
+  dispatch_priority: number;
+  dispatch_min_reply_interval_seconds: number;
+  dispatch_lease_seconds: number;
+  dispatch_peer_cooldown_seconds: number;
+  dispatch_max_peer_turns: number;
+  dispatch_score_collection_seconds: number;
+  dispatch_activity_window_seconds: number;
+  dispatch_activity_penalty_per_reply: number;
+  dispatch_max_activity_penalty: number;
+  enable_group_chat: boolean;
+  enable_private_chat: boolean;
+  root: string;
+}
+
+export interface Account {
+  kind: string;
+  name: string;
+  username: string;
+  secret: string;
+  env: string;
+}
+
+export interface AccountsResponse {
+  accounts: Account[];
+  kinds: string[];
+  default_env: Record<string, string>;
+}
+
+export interface DispatchWorker {
+  worker_id: string;
+  account_id?: string;
+  online: boolean;
+  priority?: number;
+  last_seen?: number;
+  last_reply_at?: number;
+  reply_count?: number;
+  recent_reply_count?: number;
+}
+
+export interface DispatchGroup {
+  group_id: string;
+  active: boolean;
+  active_worker_id?: string;
+  active_remaining_seconds?: number;
+  last_human_at?: number;
+  last_reply_at?: number;
+  peer_turns?: number;
+}
+
+export interface DispatchEvent {
+  event_id: string;
+  group_id: string;
+  worker_id?: string;
+  status: string;
+  reason?: string;
+  response_strategy?: string;
+  base_score?: number;
+  final_score?: number;
+  updated_at: number;
+}
+
+export interface DispatchOverview {
+  available: boolean;
+  workers?: DispatchWorker[];
+  groups?: DispatchGroup[];
+  events?: DispatchEvent[];
+  summary?: {
+    workers_total: number;
+    workers_online: number;
+    groups_total: number;
+    active_turns: number;
+    decisions_24h: number;
+    sent_24h: number;
+  };
+  policy?: { dispatch_enabled: boolean; adapters_enabled: number };
+}
