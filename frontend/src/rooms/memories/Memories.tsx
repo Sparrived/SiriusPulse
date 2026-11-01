@@ -7,6 +7,7 @@ import { useMemories } from '@/lib/queries-journal';
 import type { MemoryUnit } from '@/lib/types-journal';
 import { ago } from '@/lib/time';
 import { useScene } from '@/state/scene';
+import { tipX, tipY } from '@/state/tip';
 import { blankMemory, MemoryEditor } from './MemoryEditor';
 import { Tidy } from './Tidy';
 import './memories.css';
@@ -222,10 +223,12 @@ export function Memories() {
       {hovered &&
         fromJar &&
         createPortal(
-          <div className="firefly-tip paper" role="tooltip">
-            <i style={{ background: memoryColor(hovered.unit_type) }} />
-            <span>{hovered.summary}</span>
-          </div>,
+          <motion.div className="firefly-tip" style={{ x: tipX, y: tipY }} role="tooltip">
+            <div className="firefly-tip__card paper">
+              <i style={{ background: memoryColor(hovered.unit_type) }} />
+              <span>{hovered.summary}</span>
+            </div>
+          </motion.div>,
           document.body,
         )}
     </motion.div>

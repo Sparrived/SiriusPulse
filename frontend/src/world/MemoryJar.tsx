@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { memoryColor } from '@/lib/memory-kinds';
 import { useScene } from '@/state/scene';
+import { tipX, tipY } from '@/state/tip';
 import { useShader } from './shader';
 import { glowTexture } from './textures';
 
@@ -239,9 +240,11 @@ export function MemoryJar() {
           const f = pick(e);
           if (useScene.getState().hoverMemory !== (f?.id ?? null))
             useScene.getState().set({ hoverMemory: f?.id ?? null, hoverFromJar: !!f });
-          document.body.style.cursor = f ? 'pointer' : '';
-          document.documentElement.style.setProperty('--tip-x', `${e.nativeEvent.clientX}px`);
-          document.documentElement.style.setProperty('--tip-y', `${e.nativeEvent.clientY}px`);
+          const cursor = f ? 'pointer' : '';
+          if (document.body.style.cursor !== cursor) document.body.style.cursor = cursor;
+          // 只动提示框自己的 transform：写根节点的 CSS 变量会让整页重算样式，画布会掉帧发黑
+          tipX.set(e.nativeEvent.clientX);
+          tipY.set(e.nativeEvent.clientY);
         }}
         onPointerOut={() => {
           useScene.getState().set({ hoverMemory: null });

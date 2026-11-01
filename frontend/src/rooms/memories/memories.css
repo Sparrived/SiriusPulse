@@ -185,13 +185,16 @@
   font-size: 13.5px;
 }
 
-/* 跟着鼠标的小纸条 */
+/* 跟着鼠标的小纸条：位置由 motion 直接改外层 transform，不经过根节点的 CSS 变量 */
 .firefly-tip {
   position: fixed;
-  left: var(--tip-x);
-  top: var(--tip-y);
-  transform: translate(14px, -50%);
+  left: 0;
+  top: 0;
   z-index: 40;
+  pointer-events: none;
+}
+
+.firefly-tip__card {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -199,7 +202,7 @@
   padding: 8px 14px;
   border-radius: 14px;
   font-size: 14px;
-  pointer-events: none;
+  transform: translate(14px, -50%);
 }
 
 .firefly-tip i {
