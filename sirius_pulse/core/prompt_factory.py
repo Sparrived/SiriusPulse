@@ -142,7 +142,7 @@ class StyleAdapter:
     def build_length_instruction(max_sentence_chars: int) -> str:
         """Build concise group-chat length guidance from configured sentence limit."""
         max_sentence_chars = max(5, min(50, int(max_sentence_chars)))
-        return f"每句话不超过{max_sentence_chars}个字，多句话分行输出，前后语句连贯（不超过3行）"
+        return f"每句话不超过{max_sentence_chars}个字，多句话分行输出，前后内容连贯（不超过2行）"
 
     def adapt(
         self,
@@ -198,8 +198,6 @@ class PromptFactory:
 
         identity_parts.append("角色一致性检查：每次回复前，你都要检查现在是否适合接话，是否保持角色气质，是否需要工具，回复要自然、简洁、贴合群聊氛围。")
 
-        identity_parts.append(f"你现在就是{name}。保持角色，不要跳出角色解释设定。")
-
         return f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
 
     @staticmethod
@@ -245,13 +243,10 @@ class PromptFactory:
     ) -> str:
         """回复规范，防止模型添加多余前缀。"""
         items = [
-            "不要输出 ``<message>`` XML 标签，不要添加说话者前缀或系统标记。",
+            "不输出 ``<message>`` XML 标签，不添加说话者前缀或系统标记。",
             "群聊里同时有很多人：当这条消息是在叫别人（点名、@、称呼别人的名字或昵称），"
-            "或者话题明显与你无关时，不要接话，也不要替别人回答，"
-            f"直接只输出 {TAG_SKIP_REPLY} 表示跳过本轮回复，系统不会发送任何内容。"
-            f"输出 {TAG_SKIP_REPLY} 时不要附加任何其他文字，也不要解释跳过原因。"
-            "禁止用「我是某某，不是某某」「你叫错人了」「这不是在叫我」这类话澄清身份，也不要用纠正称呼的方式参与对话；"
-            "只有确实该你回应时才正常回复。",
+            f'或者话题明显与你无关时，只输出 "{TAG_SKIP_REPLY}" 跳过本轮回复。'
+            f'禁止用「我是某某，不是某某」、「叫的是某某，我不插话」这类话澄清身份，这种情况应当输出"{TAG_SKIP_REPLY}" 跳过回复。'
             "记忆只在和当前话题直接相关时自然使用，同一事件、偏好或时间信息近期已经提过时，不要再次显式提及，除非用户主动问。",
         ]
         length_instruction = length_instruction.strip()
@@ -260,12 +255,12 @@ class PromptFactory:
         if supports_function_call:
             items.append("本轮调用工具后，在工具完成前正文只能表示正在处理；不能声称操作已完成，也不能编造工具结果。")
             items.append(
-                "【工作模式规范】执行多步工具任务时须调用 enter_work_mode 进入工作模式"
+                "【工作模式规范】执行多步工具任务时须调用 `enter_work_mode` 进入工作模式"
                 "（解锁 bash、read_skill、workflow_state、group_file_exec 等重工具）。"
-                "调用 enter_work_mode 这一轮的正文会正常发到群里，先用一句话说明行动计划；"
-                "进入后的后续轮次正文作为内部记录、不会被发送，对外通信必须使用 send_midway_msg；"
-                "他人消息在被点名时才会补入上下文；任务完成或受阻时调用 quit_work_mode 退出，其 result 作为对外回复；"
-                "工作不一定必须做完，遇阻可在 result 中说明卡点并求助；"
+                "调用 `enter_work_mode` 这一轮的正文会正常发到群里，先用一句话说明行动计划；"
+                "善用 `send_midway_msg` 将你的进展、过程发送到触发工作的群聊/饲料中；"
+                "任务完成或受阻时调用 `quit_work_mode` 退出，其 `result` 会作为对外回复；"
+                "工作不一定必须做完，遇阻可在 `result` 中说明卡点并求助；"
                 "工作模式内 Bash 可以连续串行调用：一次只推进一个可验证步骤，先读取工具结果再决定下一步，"
                 "禁止盲目并行或臆测结果；任务完成后停止调用工具。"
             )
@@ -292,8 +287,8 @@ class PromptFactory:
     ) -> str:
         """Build the single system section for model-emitted interaction markers."""
         items = [
-            "下面的交互标记是系统控制语法，不要改成 JSON、XML、函数调用、中文括号、中文冒号、自然语言说明或自创标签。",
-            "交互标记必须写在正文最前面，标记与正文之间用空格或换行分隔；不要放进 Markdown 代码块，不要在标记中添加引号、参数名或额外文字。没有对应交互时不要输出标记。",
+            "下面的交互标记是系统控制语法，不要改成 JSON、XML、函数调用、自然语言说明或自创标签。",
+            "交互标记必须写在正文最前面，标记与正文之间用空格或换行分隔；不要放进 Markdown 代码块，不要在标记中添加引号、参数名或额外文字。",
             "引用回复使用 [REPLY:msg_id]，例如 [REPLY:123]；msg_id 必须是最近消息中真实出现的消息 ID，只在确实针对某条消息时使用，最多使用一个。",
         ]
         if supports_poke:
@@ -562,9 +557,7 @@ class PromptFactory:
             "你在之前的一轮对话里把一个任务交给后台执行，现在结果回来了，详情附在最后。" "这不是用户的新消息，不需要重新理解请求，也不要重复提交同一个任务。",
         ]
         rules.append(
-            "这是发给你的内部回调，不会自动把图片或你的正文发给群友。"
-            "结合原任务决定：保留中间产物、继续加工或生成下一张、等待其它结果，或者分享选中的最终产物。"
-            "可以静默结束，不必逐张通知，也不要因回调再次提交同一个已完成请求。"
+            "结合原任务决定：保留中间产物、继续加工或生成下一张、等待其它结果，或者分享选中的最终产物。" "可以静默结束，不必逐张通知，也不要因回调再次提交同一个已完成请求。"
         )
         if can_speak:
             rules.append(
@@ -622,7 +615,7 @@ class PromptFactory:
         if free_time:
             opening = [
                 "【自主时间】",
-                "没有人给你发消息，你手上也没有非做不可的事。接下来这段时间完全是你自己的。",
+                "接下来这段时间是你自己的，你可以做任何你想做的事情。",
             ]
         else:
             opening = [
