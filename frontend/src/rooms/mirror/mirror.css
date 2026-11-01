@@ -1,0 +1,236 @@
+.mirror__tabs {
+  padding: 0 4px;
+}
+
+.mirror__pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mirror__loading,
+.mirror__error {
+  margin: 0;
+  padding: 16px 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.mirror__error {
+  color: #c4506f;
+  background: #fff0f4;
+}
+
+.mirror__count {
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+/* ── 性格罗盘 ── */
+.pad__field {
+  position: relative;
+  aspect-ratio: 1.6;
+  border-radius: 20px;
+  cursor: crosshair;
+  touch-action: none;
+  overflow: hidden;
+  background:
+    radial-gradient(70% 90% at 100% 0%, rgba(255, 159, 184, 0.45), transparent 60%),
+    radial-gradient(70% 90% at 0% 100%, rgba(120, 140, 220, 0.35), transparent 60%),
+    radial-gradient(60% 80% at 100% 100%, rgba(255, 214, 160, 0.35), transparent 60%),
+    radial-gradient(60% 80% at 0% 0%, rgba(160, 200, 255, 0.4), transparent 60%), #fbfbff;
+  box-shadow: inset 0 0 0 1px rgba(79, 111, 216, 0.15);
+}
+
+.pad__axis {
+  position: absolute;
+  background: rgba(79, 111, 216, 0.18);
+}
+
+.pad__axis--x {
+  left: 12px;
+  right: 12px;
+  top: 50%;
+  height: 1px;
+}
+
+.pad__axis--y {
+  top: 12px;
+  bottom: 12px;
+  left: 50%;
+  width: 1px;
+}
+
+.pad__corner {
+  position: absolute;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
+.pad__corner--01 {
+  left: 14px;
+  top: 12px;
+}
+.pad__corner--11 {
+  right: 14px;
+  top: 12px;
+}
+.pad__corner--00 {
+  left: 14px;
+  bottom: 12px;
+}
+.pad__corner--10 {
+  right: 14px;
+  bottom: 12px;
+}
+
+.pad__star {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 18px;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ffb6c8, #f0789c);
+  box-shadow:
+    0 0 0 6px rgba(255, 159, 184, 0.25),
+    0 8px 18px -6px rgba(240, 120, 156, 0.8);
+  pointer-events: none;
+}
+
+.pad__field:focus-visible .pad__star {
+  box-shadow:
+    0 0 0 6px rgba(79, 111, 216, 0.35),
+    0 8px 18px -6px rgba(240, 120, 156, 0.8);
+}
+
+.pad__legend {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.pad__desc {
+  font-size: 19px;
+  color: #d65b80;
+}
+
+.pad__nums {
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.pad__nums b {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.pad__labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin-top: 2px;
+}
+
+/* ── 一天的精神曲线 ── */
+.curve__svg {
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+  cursor: copy;
+}
+
+.curve__axis {
+  font-size: 11px;
+  fill: var(--ink-faint);
+  font-family: var(--font-hand);
+}
+
+.curve__now {
+  font-size: 11px;
+  fill: #e8628a;
+  font-family: var(--font-hand);
+}
+
+.curve__tip {
+  font-size: 12px;
+  fill: var(--ink);
+  font-family: var(--font-hand);
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 4px;
+}
+
+.curve__point {
+  fill: #fff;
+  stroke: #e8628a;
+  stroke-width: 3;
+  cursor: grab;
+  transition: r 0.15s;
+}
+
+.curve__point:hover {
+  fill: #ffe1ea;
+}
+
+.rhythm__presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rhythm__presets .soft-btn {
+  padding: 0.4em 0.9em;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── 立绘 ── */
+.avatar-drop {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 300px;
+  border-radius: 20px;
+  border: 2px dashed rgba(79, 111, 216, 0.28);
+  background: radial-gradient(circle at 50% 40%, #fff, #e8edff);
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.avatar-drop.is-over {
+  border-color: #f0789c;
+  background: radial-gradient(circle at 50% 40%, #fff, #ffe1ea);
+}
+
+.avatar-drop img {
+  max-width: 100%;
+  max-height: 380px;
+  object-fit: contain;
+  -webkit-mask-image: linear-gradient(180deg, #000 80%, transparent);
+  mask-image: linear-gradient(180deg, #000 80%, transparent);
+}
+
+.avatar-drop__hint {
+  position: absolute;
+  bottom: 14px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  font-size: 14px;
+}
+
+.avatar-reset {
+  align-self: flex-start;
+}
