@@ -26,7 +26,6 @@ LOG = logging.getLogger("sirius.webui.middleware")
 # 静态资源本就不需要凭据，而取数接口仍要一把面板 key，且反代只放行面板用得到
 # 的那几条路径。
 _WHITELIST_PREFIXES: tuple[str, ...] = (
-    "/static/",
     "/app/",
     "/api/auth/login",
     "/api/auth/status",
@@ -43,8 +42,6 @@ _VALID_ROLES: frozenset[str] = frozenset({"admin", "viewer"})
 _WHITELIST_EXACT: tuple[str, ...] = (
     "/",
     "/index.html",
-    "/legacy",
-    "/legacy/",
 )
 
 # 只读 HTTP 方法
@@ -101,7 +98,7 @@ async def auth_middleware(
     """认证中间件。
 
     规则：
-    1. 白名单路径（/static/, /, /api/auth/login, /api/auth/status）免认证
+    1. 白名单路径（/, /app/, /api/auth/login, /api/auth/status）免认证
     2. REST 与 /ws/ upgrade 都需要有效的 JWT；WebSocket 使用受控
        Sec-WebSocket-Protocol 协商项而非 URL 参数
     3. GET/HEAD/OPTIONS 请求：admin 或 viewer 角色均可访问

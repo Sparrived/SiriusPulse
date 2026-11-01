@@ -20,6 +20,12 @@ jobs:
           # External plugin tests live in the plugins submodule.
           submodules: recursive
       
+      - name: Set up Node.js
+        # pytest 直接用 Node 跑前端的插件 ui_schema 校验（frontend/src/ui/params/schema.ts），需要原生 TS 支持
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
@@ -253,7 +259,6 @@ jobs:
           wheel_names = zipfile.ZipFile(wheel).namelist()
           sdist_names = tarfile.open(sdist, "r:gz").getnames()
           assert any(name.endswith("entry_points.txt") for name in wheel_names)
-          assert any(name.endswith("sirius_pulse/webui/static/index.html") for name in wheel_names)
           assert any(name.endswith("sirius_pulse/webui/app/index.html") for name in wheel_names)
           forbidden = (
               "plugins/github_monitor/",

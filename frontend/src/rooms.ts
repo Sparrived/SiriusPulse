@@ -19,9 +19,6 @@ export interface Room {
   /** 一句话说明，同时是命令面板的搜索词 */
   hint: string;
   Icon: ComponentType<SVGProps<SVGSVGElement>>;
-  /** 搬进新家之前，先指向旧版控制台里对应的页面 */
-  legacy?: { page: string; label: string }[];
-  ready?: boolean;
   /** 3D 世界的镜头：home 她站在左边、room 她退到角落、sky 抬头看星星 */
   scene?: 'home' | 'room' | 'sky' | 'jar';
 }
@@ -33,7 +30,6 @@ export const ROOMS: Room[] = [
     name: '客厅',
     hint: '她在这里 · 此刻的心情和动静',
     Icon: HomeIcon,
-    ready: true,
     scene: 'home',
   },
   {
@@ -42,7 +38,6 @@ export const ROOMS: Room[] = [
     name: '星图',
     hint: '伙伴们 · 迎接新伙伴',
     Icon: StarsIcon,
-    ready: true,
     scene: 'sky',
   },
   {
@@ -51,7 +46,6 @@ export const ROOMS: Room[] = [
     name: '镜子',
     hint: '她的样子 · 人设与性格调音',
     Icon: MirrorIcon,
-    ready: true,
     scene: 'home',
   },
   {
@@ -60,7 +54,6 @@ export const ROOMS: Room[] = [
     name: '日记',
     hint: '她的一天 · 对话、自主行为、工作记录',
     Icon: DiaryIcon,
-    ready: true,
   },
   {
     id: 'memories',
@@ -68,7 +61,6 @@ export const ROOMS: Room[] = [
     name: '回忆',
     hint: '记忆瓶 · 她记住的事',
     Icon: JarIcon,
-    ready: true,
     scene: 'jar',
   },
   {
@@ -77,7 +69,6 @@ export const ROOMS: Room[] = [
     name: '心事',
     hint: '情绪天气 · 她怎么感受大家',
     Icon: WeatherIcon,
-    ready: true,
   },
   {
     id: 'bag',
@@ -85,7 +76,6 @@ export const ROOMS: Room[] = [
     name: '背包',
     hint: '本领 · 工具、MCP、插件',
     Icon: BagIcon,
-    ready: true,
   },
   {
     id: 'mailbox',
@@ -93,7 +83,6 @@ export const ROOMS: Room[] = [
     name: '信箱',
     hint: '联络方式 · QQ、账户、群聊排班',
     Icon: MailIcon,
-    ready: true,
   },
   {
     id: 'ledger',
@@ -101,7 +90,6 @@ export const ROOMS: Room[] = [
     name: '小账本',
     hint: '她吃了多少星光 · Token 用量',
     Icon: LedgerIcon,
-    ready: true,
   },
   {
     id: 'attic',
@@ -109,7 +97,6 @@ export const ROOMS: Room[] = [
     name: '阁楼',
     hint: '维护 · 全局设置、AMKR、日志',
     Icon: AtticIcon,
-    ready: true,
   },
 ];
 

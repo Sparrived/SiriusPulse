@@ -144,7 +144,7 @@ def _response_headers(headers: "httpx.Headers", *, upstream_path: str) -> dict[s
     if upstream_path.startswith("/ui/") or upstream_path == "/ui":
         # AMKR 对 /ui/* 不发任何缓存头。没有验证器时浏览器会**启发式**缓存，AMKR
         # 升级后面板可能还跑着旧脚本，症状是面板行为与新版本对不上却看不出原因。
-        # 这些资源很小，直接禁掉缓存最省心（与本框架 /static/ 的处理一致）。
+        # 这些资源很小，直接禁掉缓存最省心（与本框架入口页的处理一致）。
         forwarded["cache-control"] = "no-store"
     return forwarded
 

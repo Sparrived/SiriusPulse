@@ -143,16 +143,19 @@ export function Ritual({ taken, onClose }: { taken: string[]; onClose: (created?
     </div>,
     <div key="3" className="ritual__done">
       <h2 className="hand">欢迎你，{display.trim()}</h2>
-      <p>
-        她的星星亮了。不过要真正开口说话，她还需要：在阁楼里为她登记 AMKR 任务（搬好之前在
-        <a href="/legacy/#amkr" target="_blank" rel="noreferrer">
-          旧版的 AMKR 运维
-        </a>
-        ），再去信箱接上她的 QQ。
-      </p>
+      <p>她的星星亮了。不过要真正开口说话，她还需要去阁楼为她登记 AMKR 任务，再去信箱接上她的 QQ。</p>
       <div className="ritual__nav">
         <button className="soft-btn ghost" onClick={() => onClose(id)}>
           留在星图
+        </button>
+        <button
+          className="soft-btn ghost"
+          onClick={() => {
+            onClose(id);
+            navigate('/attic');
+          }}
+        >
+          去阁楼登记
         </button>
         <button
           className="soft-btn"

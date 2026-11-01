@@ -40,9 +40,8 @@ from sirius_pulse.webui.ws_server import WebSocketManager, WebUIFileEventBridge,
 LOG = logging.getLogger("sirius.webui")
 
 WEBUI_DIR = Path(__file__).parent
-# 新版前端（frontend/ 构建产物，随包提交）与旧版运维控制台（迁移期保留在 /legacy/）。
+# 前端「月白的小屋」：frontend/ 的构建产物，随包提交。
 APP_DIR = WEBUI_DIR / "app"
-LEGACY_DIR = WEBUI_DIR / "static"
 
 # 请求级人格选择：新版前端每个标签页通过该请求头声明自己正在看哪个人格，
 # 不再依赖进程级的 ``_active_persona_name``——否则一个标签页切人格，
@@ -56,11 +55,11 @@ async def _no_cache_middleware(
     request: web.Request,
     handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
 ) -> web.StreamResponse:
-    """为静态文件禁用浏览器缓存；新版前端带哈希的资源允许长期缓存。"""
+    """入口页禁用浏览器缓存；带哈希的前端资源允许长期缓存。"""
     response = await handler(request)
     if request.path.startswith("/app/assets/"):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    elif request.path.startswith("/static/") or request.path in ("/", "/legacy/"):
+    elif request.path == "/":
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -205,11 +204,8 @@ class WebUIServer:
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
-        self.app.router.add_get("/legacy", self.legacy_redirect)
-        self.app.router.add_get("/legacy/", self.legacy_index)
         if APP_DIR.is_dir():
             self.app.router.add_static("/app/", APP_DIR, show_index=False)
-        self.app.router.add_static("/static/", LEGACY_DIR, show_index=False)
         # 反代路由先于 WEBUI_ROUTES 注册：它的通配尾巴会吃掉 /amkr 下的一切，
         # 而本框架自己的接口全在 /api/ 下，两者不重叠。
         setup_amkr_proxy_routes(self.app, self.amkr_proxy)
@@ -278,20 +274,14 @@ class WebUIServer:
     # ─── 静态页面 ─────────────────────────────────────────
 
     async def index(self, request: web.Request) -> web.StreamResponse:
-        """新版前端；未构建时退回旧版控制台，保证源码用户总有页面可用。"""
+        """前端入口。构建产物随包提交；缺失时提示如何重新构建。"""
         app_index = APP_DIR / "index.html"
         if app_index.is_file():
             return web.FileResponse(app_index)
-        return await self.legacy_index(request)
-
-    async def legacy_index(self, request: web.Request) -> web.StreamResponse:
-        html_path = LEGACY_DIR / "index.html"
-        if html_path.exists():
-            return web.FileResponse(html_path)
-        return web.Response(text="WebUI not found", status=404)
-
-    async def legacy_redirect(self, request: web.Request) -> web.StreamResponse:
-        raise web.HTTPFound("/legacy/")
+        return web.Response(
+            text="WebUI 前端尚未构建：请在仓库根目录执行 cd frontend && pnpm install && pnpm build",
+            status=503,
+        )
 
     # ─── 全局 API: 全局配置 ───────────────────────────────
 

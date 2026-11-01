@@ -43,10 +43,6 @@
   color: var(--ribbon-deep);
 }
 
-.dock__item.is-unfurnished .dock__icon {
-  opacity: 0.62;
-}
-
 .dock__glow {
   position: absolute;
   inset: 0;

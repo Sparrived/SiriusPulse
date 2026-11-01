@@ -3,7 +3,7 @@
 - 每个标签页用 ``X-Sirius-Persona`` 声明自己在看哪个人格，互不串台；
 - 首页一瞥能说出她的心情和最近 24 小时的动静；
 - 每个人格可以有自己的立绘，没有时给出内置默认图；
-- 新前端在 ``/``，旧控制台在 ``/legacy/``，没构建新前端时 ``/`` 退回旧版。
+- 前端在 ``/``，旧控制台已经拆掉；没构建前端时 ``/`` 说明怎么构建，而不是给一个空页面。
 """
 
 from __future__ import annotations
@@ -231,7 +231,7 @@ async def test_persona_avatar_can_be_uploaded_capped_and_reset(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_new_home_at_root_and_old_console_kept_at_legacy(tmp_path, monkeypatch):
+async def test_home_at_root_and_old_console_is_gone(tmp_path, monkeypatch):
     app_dir = tmp_path / "app"
     app_dir.mkdir()
     (app_dir / "index.html").write_text("<title>月白的小屋</title>", encoding="utf-8")
@@ -243,21 +243,17 @@ async def test_new_home_at_root_and_old_console_kept_at_legacy(tmp_path, monkeyp
     try:
         home = await client.get("/")
         assert "月白的小屋" in await home.text()
-        legacy = await client.get("/legacy/")
-        assert legacy.status == 200
-        assert "月白的小屋" not in await legacy.text()
-        assert (await client.get("/legacy", allow_redirects=False)).headers[
-            "Location"
-        ] == "/legacy/"
+        for gone in ("/legacy/", "/legacy", "/static/index.html"):
+            assert (await client.get(gone, allow_redirects=False)).status in (401, 404), gone
     finally:
         await client.close()
 
-    # 源码用户还没构建新前端时，根路径退回旧控制台而不是 404
+    # 源码用户还没构建前端时，根路径说明怎么构建
     monkeypatch.setattr(server_core, "APP_DIR", tmp_path / "missing")
     client, _auth = await _client(data_dir)
     try:
-        fallback = await client.get("/")
-        assert fallback.status == 200
-        assert "月白的小屋" not in await fallback.text()
+        missing = await client.get("/")
+        assert missing.status == 503
+        assert "pnpm build" in await missing.text()
     finally:
         await client.close()

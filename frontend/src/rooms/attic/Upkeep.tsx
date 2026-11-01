@@ -60,13 +60,6 @@ export function Upkeep() {
         {rebuild.isError && <p className="star-card__error">{(rebuild.error as Error).message}</p>}
       </Sheet>
 
-      <Sheet title="旧版控制台">
-        <p className="field__hint">搬家期间旧版还留着，功能齐全；所有房间都搬好以后就会拆掉。</p>
-        <a className="soft-btn ghost" href="/legacy/" target="_blank" rel="noreferrer">
-          去旧版看看 ↗
-        </a>
-      </Sheet>
-
       <Sheet title="出门">
         <p className="field__hint">退出登录，下次回来要重新敲门。</p>
         <button className="soft-btn ghost" onClick={() => setToken(null)}>

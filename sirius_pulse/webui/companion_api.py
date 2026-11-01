@@ -192,10 +192,8 @@ def _avatar_persona_dir(request: web.Request, data_dir: Path) -> Path | None:
 
 def _default_avatar() -> Path | None:
     webui_dir = Path(__file__).parent
-    for candidate in (webui_dir / "app" / "yuebai.webp", webui_dir / "static" / "yuebai.png"):
-        if candidate.is_file():
-            return candidate
-    return None
+    candidate = webui_dir / "app" / "yuebai.webp"
+    return candidate if candidate.is_file() else None
 
 
 @handle_api_errors

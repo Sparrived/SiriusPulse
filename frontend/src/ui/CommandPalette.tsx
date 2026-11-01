@@ -103,13 +103,6 @@ export function CommandPalette() {
         run: () => prefs.toggle('lowPower'),
       },
       {
-        id: 'legacy',
-        group: '其它',
-        label: '去旧版控制台',
-        hint: '搬家期间保留，功能齐全',
-        run: () => window.open('/legacy/', '_blank'),
-      },
-      {
         id: 'leave',
         group: '其它',
         label: '出门（退出登录）',

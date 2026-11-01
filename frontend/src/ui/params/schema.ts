@@ -1,7 +1,7 @@
-// 插件 UI 元数据的浏览器端二次校验——逐行移植自旧版 static/plugin-ui-schema.js。
+// 插件 UI 元数据的浏览器端二次校验——逐行移植自已删除的旧版控制台 plugin-ui-schema.js。
 // 服务端已经清洗过一遍；这里在浏览器边界再验一次，任何一处不合规就整体返回 null，
 // 退回朴素的分组表单，而不是半信半疑地套用一部分布局（fail closed）。
-// 修改规则时请同步旧版文件与后端 _safe_plugin_ui_schema，三处必须一致。
+// 修改规则时请同步后端 _safe_plugin_ui_schema，两处必须一致。
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const UNSAFE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const TOP_KEYS = new Set(['version', 'layout', 'title', 'description', 'sections', 'parameters']);

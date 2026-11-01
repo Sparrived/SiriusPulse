@@ -8,7 +8,6 @@ sirius_pulse/plugins/lexer.py whitespace=cr-at-eol
 sirius_pulse/plugins/loader.py whitespace=cr-at-eol
 sirius_pulse/plugins/models.py whitespace=cr-at-eol
 sirius_pulse/plugins/registry.py whitespace=cr-at-eol
-sirius_pulse/webui/static/components.js whitespace=cr-at-eol
 tests/test_plugin_framework_helpers.py whitespace=cr-at-eol
 tests/test_plugin_registry.py whitespace=cr-at-eol
 tests/test_engine_sticker.py whitespace=cr-at-eol

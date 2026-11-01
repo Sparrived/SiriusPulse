@@ -59,203 +59,22 @@ def _route_snapshot(app: web.Application) -> set[tuple[str, str]]:
     return routes
 
 
-def test_webui_form_constructor_clones_settings_and_keeps_stable_object_row_identity():
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is not installed")
-    source_path = (
-        Path(__file__).resolve().parents[1] / "sirius_pulse" / "webui" / "static" / "components.js"
-    )
-    script = f"""
-      import assert from 'node:assert/strict';
-      import {{
-        DynamicConfigForm,
-      }} from {json.dumps(source_path.as_uri())};
-
-      // Settings are cloned immediately; later caller mutations must not leak.
-      const original = {{ tags: ['a'], options: {{ flags: [true] }} }};
-      const form = new DynamicConfigForm({{
-        parameters: [
-          {{ name: 'tags', type: 'list' }},
-          {{ name: 'options', type: 'json' }},
-          {{ name: 'schedules', type: 'schedule' }},
-          {{
-            name: 'sources',
-            type: 'object_array',
-            fields: [
-              {{ name: 'id', type: 'str', identity: true, default: '' }},
-              {{ name: 'secret_key', type: 'password' }},
-            ],
-          }},
-        ],
-        settings: {{
-          ...original,
-          schedules: [{{ time: '08:00', duration: 90 }}],
-          sources: [{{ id: 'a', secret_key: 'must-be-dropped' }}],
-        }},
-      }});
-      original.tags.push('b');
-      original.options.flags.push(false);
-      assert.deepEqual(JSON.parse(JSON.stringify(form.settings.tags)), ['a']);
-      assert.deepEqual(JSON.parse(JSON.stringify(form.settings.options)), {{ flags: [true] }});
-
-      // Declared schedule parameters are copied without aliasing the input.
-      const declared = form._scheduleData.schedules;
-      declared[0].time = '23:59';
-      assert.equal(form.settings.schedules[0].time, '08:00');
-
-      // Legacy schedule-shaped settings still initialize the schedule editor.
-      const legacy = new DynamicConfigForm({{
-        parameters: [],
-        settings: {{ schedule: [{{ time: '22:00', duration: 1440 }}] }},
-      }});
-      assert.deepEqual(JSON.parse(JSON.stringify(legacy._scheduleData.schedule)), [
-        {{ time: '22:00', duration: 1440 }},
-      ]);
-
-      // Object-array rows are normalized against the executable field
-      // contract: secret fields drop, stable row identity survives rerenders.
-      const rows = form.settings.sources;
-      assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{{ id: 'a' }}]);
-      const firstId = form._objectRowStateId(rows[0], 0);
-      assert.equal(form._objectRowStateId(rows[0], 0), firstId);
-      assert.equal(form._objectRowIndex('sources', firstId, 99), 0);
-    """
-
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=5,
-    )
-    assert completed.returncode == 0, completed.stderr
-
-
-def test_webui_object_array_defaults_are_safe_independent_and_persistable():
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("Node.js is not installed")
-    source_path = (
-        Path(__file__).resolve().parents[1] / "sirius_pulse" / "webui" / "static" / "components.js"
-    )
-    script = f"""
-      import assert from 'node:assert/strict';
-      import {{
-        createObjectArrayItem,
-        DynamicConfigForm,
-        parseConfigNumber,
-      }} from {json.dumps(source_path.as_uri())};
-
-      const fields = [
-        {{ name: 'name', type: 'str', default: '' }},
-        {{ name: 'enabled', type: 'bool', default: true }},
-        {{ name: 'disabled', type: 'boolean', default: false }},
-        {{ name: 'timeout', type: 'number', default: 0 }},
-        {{ name: 'nullable', type: 'number' }},
-        {{ name: 'groups', type: 'list', default: ['base'] }},
-        {{ name: 'options', type: 'json', default: {{ flags: [false] }} }},
-        {{ name: 'repository_token', type: 'password', default: 'row-secret' }},
-        {{ name: 'clientSecret', type: 'str', default: 'mislabeled-secret' }},
-        {{ name: '__proto__', type: 'json', default: {{ polluted: true }} }},
-        {{ name: 'prototype', type: 'str', default: 'bad' }},
-        {{ name: 'constructor', type: 'str', default: 'bad' }},
-      ];
-      const first = createObjectArrayItem(fields);
-      const second = createObjectArrayItem(fields);
-      first.groups.push('changed');
-      first.options.flags.push(true);
-
-      assert.equal(Object.getPrototypeOf(first), null);
-      assert.deepEqual(JSON.parse(JSON.stringify(first)), {{
-        name: '',
-        enabled: true,
-        disabled: false,
-        timeout: 0,
-        groups: ['base', 'changed'],
-        options: {{ flags: [false, true] }},
-      }});
-      assert.deepEqual(JSON.parse(JSON.stringify(second)), {{
-        name: '',
-        enabled: true,
-        disabled: false,
-        timeout: 0,
-        groups: ['base'],
-        options: {{ flags: [false] }},
-      }});
-      assert.equal(Object.prototype.polluted, undefined);
-      assert.equal(parseConfigNumber(''), undefined);
-      assert.equal(parseConfigNumber('0'), 0);
-
-      globalThis.document = {{
-        getElementById: () => ({{ querySelectorAll: () => [] }}),
-      }};
-      const form = new DynamicConfigForm({{
-        containerId: 'plugin-form',
-        parameters: [{{
-          name: 'repos',
-          type: 'object_array',
-          fields,
-          default: [{{
-            name: 'starter',
-            enabled: false,
-            repository_token: '********',
-          }}],
-        }}],
-        settings: {{}},
-      }});
-      const collected = form.collectValues();
-      assert.equal(collected.repos[0].name, 'starter');
-      assert.equal(collected.repos[0].enabled, false);
-      assert.equal(collected.repos[0].timeout, 0);
-      assert.equal('nullable' in collected.repos[0], false);
-      assert.equal('repository_token' in collected.repos[0], false);
-      assert.equal('clientSecret' in collected.repos[0], false);
-      assert.equal('__proto__' in collected.repos[0], false);
-      assert.equal(Object.getPrototypeOf(collected.repos[0]), null);
-
-      const emptyDefaultForm = new DynamicConfigForm({{
-        containerId: 'plugin-form',
-        parameters: [{{ name: 'sources', type: 'object_array', fields, default: [] }}],
-        settings: {{}},
-      }});
-      const emptyCollected = emptyDefaultForm.collectValues();
-      assert.equal('sources' in emptyCollected, false);
-
-      const mixedCaseForm = new DynamicConfigForm({{
-        containerId: 'plugin-form',
-        parameters: [{{
-          name: 'sources',
-          type: 'OBJECT_ARRAY',
-          fields: [{{ name: 'id', type: 'str' }}],
-        }}],
-        settings: {{ sources: [{{ id: 'alpha' }}] }},
-      }});
-      const mixedCaseCollected = mixedCaseForm.collectValues();
-      assert.deepEqual(JSON.parse(JSON.stringify(mixedCaseCollected.sources)), [{{ id: 'alpha' }}]);
-    """
-
-    completed = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=5,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-
-
 def test_webui_plugin_ui_schema_browser_boundary_fails_closed():
+    """前端在浏览器边界再校验一次插件 ui_schema：任何不合规都整体退回 null。"""
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is not installed")
+    supports_ts = subprocess.run(
+        [node, "-p", "Boolean(process.features.typescript)"],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
+    if supports_ts != "true":
+        pytest.skip("Node.js cannot run TypeScript directly (needs 22.18+)")
     source_path = (
-        Path(__file__).resolve().parents[1]
-        / "sirius_pulse"
-        / "webui"
-        / "static"
-        / "plugin-ui-schema.js"
+        Path(__file__).resolve().parents[1] / "frontend" / "src" / "ui" / "params" / "schema.ts"
     )
     script = f"""
       import assert from 'node:assert/strict';

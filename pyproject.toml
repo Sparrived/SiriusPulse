@@ -93,5 +93,5 @@ include-package-data = true
 include = ["sirius_pulse*"]
 
 [tool.setuptools.package-data]
-"sirius_pulse.webui" = ["static/*", "static/pages/*", "app/*", "app/assets/*"]
+"sirius_pulse.webui" = ["app/*", "app/assets/*"]
 "sirius_pulse.tools.builtin" = ["_default_skills/*/SKILL.md"]

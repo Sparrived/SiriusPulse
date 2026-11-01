@@ -22,7 +22,6 @@ import { Mailbox } from '@/rooms/mailbox/Mailbox';
 import { Memories } from '@/rooms/memories/Memories';
 import { Mirror } from '@/rooms/mirror/Mirror';
 import { Stars } from '@/rooms/stars/Stars';
-import { Unfurnished } from '@/rooms/Unfurnished';
 import { useLive } from '@/state/live';
 import { usePersonaStore } from '@/state/persona';
 import { useScene } from '@/state/scene';
@@ -127,8 +126,9 @@ export function House() {
       <Thoughts />
       <AnimatePresence mode="wait">
         {(() => {
-          const Room = FURNISHED[room?.id ?? 'home'];
-          return Room ? <Room key={room?.id ?? 'home'} /> : <Unfurnished key={room!.id} room={room!} />;
+          const id = room && FURNISHED[room.id] ? room.id : 'home';
+          const Room = FURNISHED[id];
+          return <Room key={id} />;
         })()}
       </AnimatePresence>
       <Dock />

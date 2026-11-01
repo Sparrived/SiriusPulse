@@ -13,7 +13,7 @@ export function Dock() {
         return (
           <button
             key={room.id}
-            className={`dock__item${here ? ' is-here' : ''}${room.ready ? '' : ' is-unfurnished'}`}
+            className={`dock__item${here ? ' is-here' : ''}`}
             onClick={() => navigate(room.path)}
             aria-current={here ? 'page' : undefined}
             title={room.hint}
