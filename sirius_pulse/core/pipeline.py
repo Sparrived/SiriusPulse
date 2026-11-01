@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.core import life_bridge
 from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
@@ -390,6 +391,8 @@ class Pipeline:
             reply_frequency=engine.persona.reply_frequency,
             affinity_score=affinity,
             reply_time_coefficient=reply_time_coefficient,
+            # 她自己的作息：睡着时只有真正叫到她的消息才回应，累了也少插几句。
+            life_factor=life_bridge.reply_factor(engine),
         )
         signal.participation = decision.to_dict()
 

@@ -290,17 +290,14 @@ def test_turn_sections_do_not_carry_the_persona_anchor_themselves():
         full_system_prompt="你的名字是「月白」，代号「Sirius」。",
     )
 
-    autonomous, _ = PromptFactory.build_autonomous_turn_sections(
-        kind="musing",
-        seed="seed",
-        free_time=True,
-    )
+    autonomous, _ = PromptFactory.build_autonomous_turn_sections(kind="musing", seed="seed")
+    life_work, _ = _life_work()
     scheduled, _ = PromptFactory.build_scheduled_task_sections(
         job={"expression": "* * * * *", "command": "echo hi"},
         command_output="hi",
     )
 
-    for sections in (autonomous, scheduled):
+    for sections in (autonomous, life_work, scheduled):
         assert "【身份锚定】" not in sections
         # 模拟 Brain.chat() 的默认 pre 步骤。
         final = identity + "\n\n" + sections
@@ -309,12 +306,7 @@ def test_turn_sections_do_not_carry_the_persona_anchor_themselves():
 
 def test_work_mode_guidance_points_at_the_persistent_home():
     """容器重建只保留挂载卷，她得知道成果该放哪儿，否则会一直放错地方。"""
-    system_prompt, _ = PromptFactory.build_autonomous_turn_sections(
-        kind="musing",
-        seed="继续读 CCSN 的数据",
-        free_time=True,
-        work_mode=True,
-    )
+    system_prompt, _ = _life_work(work_mode=True)
 
     assert "$HOME" in system_prompt
     assert "容器重建后依然在" in system_prompt
@@ -332,25 +324,46 @@ def test_autonomous_share_guidance_asks_for_a_friend_not_a_report():
     assert "【说话的语气】" in system_prompt
     assert "只有这一条消息" in system_prompt
     assert "不要写成日报" in system_prompt
-    # 自由时间的回合没有 tell 意图，但一样可能开口，提示不能漏。
-    free_time, _ = PromptFactory.build_autonomous_turn_sections(
-        kind="musing",
-        seed="",
-        free_time=True,
-        audiences=[{"chat_id": "private_1", "label": "主人（私聊）"}],
-    )
-    assert "【说话的语气】" in free_time
+    # 做自己项目的段落没有 tell 意图，但一样可能开口，提示不能漏。
+    life_work, _ = _life_work(audiences=[{"chat_id": "private_1", "label": "主人（私聊）"}])
+    assert "【说话的语气】" in life_work
 
 
 def test_autonomous_guidance_stays_out_of_the_way_when_she_has_nobody_to_talk_to():
     """没人可说时不讲语气，免得提示词变成一份催她产出的写作说明。"""
-    system_prompt, _ = PromptFactory.build_autonomous_turn_sections(
-        kind="musing",
-        seed="想把 MESA 跑起来",
-        free_time=True,
-    )
+    system_prompt, _ = _life_work()
 
     assert "【说话的语气】" not in system_prompt
+
+
+def test_life_work_prompt_puts_her_progress_in_front_of_her():
+    """她自己的段落要接着上次做：下一步、最近的进度和作品末尾都得在眼前，不想做要说原因。"""
+    system_prompt, messages = _life_work()
+
+    assert "读第二章" in system_prompt
+    assert "读完第一章" in system_prompt
+    assert "岛村与驹子" in system_prompt
+    assert "life_project" in system_prompt
+    assert "先不做了" in system_prompt
+    assert "读《雪国》第二章" in messages[0]["content"]
+
+
+def _life_work(**kwargs):
+    return PromptFactory.build_life_work_sections(
+        activity="读《雪国》第二章",
+        block_end="16:00",
+        project={
+            "project_id": "p-0000abcd",
+            "title": "读《雪国》并写读书笔记",
+            "kind_label": "阅读",
+            "why": "冬天到了",
+            "next_step": "读第二章",
+        },
+        recent_steps=["03-01 读完第一章"],
+        work_tail="第一章：岛村与驹子。",
+        state_line="精力还行，心情满足",
+        **kwargs,
+    )
 
 
 def test_persona_profile_when_loading_legacy_fields_then_only_prompt_is_persisted():

@@ -37,6 +37,7 @@ export const RESOURCE_QUERIES: Record<string, readonly string[][]> = {
   conversations: [['glance'], ['diary']],
   memory: [['glance'], ['memories'], ['dedupe']],
   autonomy: [['glance'], ['autonomy']],
+  life: [['glance'], ['life'], ['life-work']],
   'work-mode': [['work-mode']],
   'tool-history': [['tool-history']],
   cognition: [['glance'], ['metrics'], ['cognition'], ['cognition-analysis']],

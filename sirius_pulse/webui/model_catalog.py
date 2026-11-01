@@ -31,6 +31,8 @@ TASK_LABELS: dict[str, str] = {
     "passive_tool": "被动技能",
     "plugin_generate": "插件生成",
     "autonomy_generate": "自主行为",
+    "life_plan": "晨间计划",
+    "life_reflect": "夜间回顾",
     "image_generate": "生图",
 }
 

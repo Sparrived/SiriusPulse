@@ -407,27 +407,34 @@
   font-size: 13.5px;
 }
 
-/* 独处时光 */
-.solitude ol {
+/* 她的一天 */
+.daylife {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.daylife__note {
+  margin: 0 0 14px;
+  font-size: 18px;
+  color: var(--ink-soft);
+}
+
+.daylife__list {
   list-style: none;
   margin: 0;
   padding: 0 0 0 10px;
   border-left: 2px dashed rgba(79, 111, 216, 0.2);
 }
 
-.solitude li {
+.daylife__list li {
   position: relative;
+  display: flex;
+  gap: 14px;
   padding: 0 0 16px 18px;
 }
 
-.solitude__day {
-  display: block;
-  margin: 4px 0 8px -28px;
-  font-size: 15px;
-  color: var(--ink-soft);
-}
-
-.solitude__dot {
+.daylife__dot {
   position: absolute;
   left: -7px;
   top: 6px;
@@ -438,32 +445,202 @@
   border: 3px solid #a9bdf5;
 }
 
-.solitude li.is-today .solitude__dot {
+.daylife__list li.is-work .daylife__dot {
+  border-color: #6cc5a5;
+}
+
+.daylife__list li.is-doing .daylife__dot {
   border-color: #f78aa8;
+  box-shadow: 0 0 0 4px rgba(247, 138, 168, 0.18);
 }
 
-.solitude li .solitude__day + .solitude__dot {
-  top: 40px;
+.daylife__list li.is-skipped,
+.daylife__list li.is-missed {
+  opacity: 0.6;
 }
 
-.solitude__kind {
-  font-size: 12.5px;
+.daylife__time {
+  flex: none;
+  width: 92px;
+  padding-top: 3px;
+  font-size: 13px;
   color: var(--ink-faint);
 }
 
-.solitude__body p {
-  margin: 3px 0 0;
+.daylife__body p {
+  margin: 0;
   font-size: 17px;
 }
 
-.solitude__body .solitude__outcome {
+.daylife__project {
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.daylife__status {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.daylife__status.is-done {
+  color: #3f9c7c;
+}
+
+.daylife__status.is-doing {
+  color: #e0668a;
+}
+
+.daylife__body .daylife__outcome {
+  margin-top: 4px;
   font-family: var(--font-ui);
   font-size: 14px;
   color: var(--ink-soft);
 }
 
-.solitude__empty p {
+.daylife__empty p {
   margin: 0 0 6px;
+}
+
+.daylife__shares h3,
+.daylife__self h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.daylife__shares ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.daylife__shares li {
+  display: flex;
+  gap: 14px;
+}
+
+.daylife__shares li p,
+.daylife__self p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+
+.daylife__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 6px;
+}
+
+/* 她的作品 */
+.works {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.works__card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+}
+
+.works__card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.works__card h3 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.works__card.is-done,
+.works__card.is-dropped {
+  opacity: 0.75;
+}
+
+.works__status {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.works__status.is-active {
+  color: #3f9c7c;
+}
+
+.works__why,
+.works__step {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.works__step em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.works__open {
+  align-self: flex-start;
+  margin-top: 6px;
+}
+
+.works__reader {
+  position: relative;
+}
+
+.works__back {
+  margin-bottom: 8px;
+}
+
+.works__doc {
+  max-width: 68ch;
+  margin: 0 auto;
+  font-size: 15.5px;
+  line-height: 1.85;
+}
+
+.works__doc h2 {
+  font-family: var(--font-hand, inherit);
+  font-size: 26px;
+  font-weight: 400;
+  margin: 6px 0 18px;
+}
+
+.works__doc h3 {
+  margin: 26px 0 8px;
+  font-size: 15px;
+  color: var(--ink-faint);
+  font-weight: 600;
+  border-bottom: 1px dashed rgba(79, 111, 216, 0.2);
+  padding-bottom: 4px;
+}
+
+.works__doc blockquote {
+  margin: 10px 0;
+  padding: 4px 14px;
+  border-left: 3px solid var(--blush);
+  color: var(--ink-soft);
+}
+
+.works__doc code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(79, 111, 216, 0.08);
+  font-size: 0.92em;
 }
 
 /* 认真工作 */

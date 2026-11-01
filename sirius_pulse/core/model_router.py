@@ -97,6 +97,18 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=30.0,
         fallback_model_name="fallback_generate",
     ),
+    # 她的生活：早上排今天的日程、晚上回顾这一天。各一天一次，输出都是结构化 JSON，
+    # 适合绑一个守格式、便宜的模型。与 autonomy_generate 一样**必须留在本表里**。
+    "life_plan": TaskConfig(
+        model_name="life_plan",
+        timeout=45.0,
+        fallback_model_name="fallback_generate",
+    ),
+    "life_reflect": TaskConfig(
+        model_name="life_reflect",
+        timeout=45.0,
+        fallback_model_name="fallback_generate",
+    ),
     # 生图任务：发往 AMKR 的 /v1/images/* 端点，必须由运维在 AMKR 面板里绑定
     # 一个真正的生图模型（不绑就是 404）。超时给足，生图 30–300 秒都算正常。
     "image_generate": TaskConfig(

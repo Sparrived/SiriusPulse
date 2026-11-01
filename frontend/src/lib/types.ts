@@ -1,3 +1,4 @@
+import type { LifeNow } from './types-journal';
 export interface PersonaSummary {
   name: string;
   persona_name: string;
@@ -45,6 +46,7 @@ export interface Glance {
   };
   memory: { total: number; new: number };
   episodes: { kind: string; outcome: string; seed: string; at: string }[];
+  life?: LifeNow;
 }
 
 export interface Metrics {

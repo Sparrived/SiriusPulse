@@ -17,6 +17,7 @@ from typing import Any
 from aiohttp import web
 
 from sirius_pulse.models.emotion import EmotionState
+from sirius_pulse.webui.life_api import life_now
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui.companion")
@@ -175,6 +176,7 @@ async def api_persona_glance_get(request: web.Request, data_dir: Path) -> web.Re
             "conversation": _recent_conversation(data_dir, since),
             "memory": _memory_counts(data_dir, since),
             "episodes": _recent_episodes(data_dir, since),
+            "life": life_now(Path(data_dir)),
         }
     )
 

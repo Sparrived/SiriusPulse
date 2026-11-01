@@ -8,6 +8,8 @@ import type {
   ConversationsResponse,
   DayTimeline,
   DedupeStatus,
+  LifeResponse,
+  LifeWorkResponse,
   MemoryUnit,
   MemoryUnitsResponse,
   WorkModeResponse,
@@ -81,6 +83,24 @@ function useScoped<T>(name: string, path: string, refetchInterval?: number) {
 }
 
 export const useAutonomy = () => useScoped<AutonomyResponse>('autonomy', '/api/persona/autonomy', 30_000);
+export function useLife(day?: string) {
+  const persona = usePersonaStore((s) => s.current);
+  const query = day ? `?date=${encodeURIComponent(day)}` : '';
+  return useQuery({
+    queryKey: ['life', persona, day ?? ''],
+    queryFn: () => api.get<LifeResponse>(`/api/persona/life${query}`),
+    enabled: !!persona,
+    refetchInterval: 60_000,
+  });
+}
+export function useWork(projectId: string | null) {
+  const persona = usePersonaStore((s) => s.current);
+  return useQuery({
+    queryKey: ['life-work', persona, projectId],
+    queryFn: () => api.get<LifeWorkResponse>(`/api/persona/life/works/${projectId}`),
+    enabled: !!persona && !!projectId,
+  });
+}
 export const useWorkMode = () => useScoped<WorkModeResponse>('work-mode', '/api/persona/work-mode');
 export const useMemories = () =>
   useScoped<MemoryUnitsResponse>('memories', '/api/persona/memory-units?limit=2000');

@@ -66,6 +66,11 @@
 - **语义记忆**（Semantic Memory）：群级/用户级/全局级向量记忆，支持话题关联与兴趣学习
 - **聊天随身便签**：每个群聊/私聊各自一本，由月白通过 `persona_notebook` 工具自主记录即时线索、约定、待办和近期状态，补足 RAG 未召回的信息。默认启用，完整注入块最多 2048 token；满额操作进入有界暂存，聊天空闲时由她静默整理，不跨聊天共享，配置 `"persona_notebook_token_budget": 0` 可关闭，详见[记忆系统](docs/guide/memory-system.md#聊天随身便签)。
 
+### 🌙 **她自己的生活**
+- **作息与精力**：每个人格有自己的起床/睡觉时间；精力随一天起伏，做事、聊天、半夜被吵醒都会累。睡着时只有真正叫她的人能把她叫醒
+- **日程与项目**：每天醒来她给自己排日程，按时推进自己的长期项目（读书写笔记、学东西、写小文、收集整理……），成果写进真正的作品文件
+- **睡前回顾**：每晚回想一天，改写近况与兴趣、调整项目；聊天时她知道自己此刻在做什么、心情如何，WebUI「日记 → 她的一天 / 她的作品」里看得见，详见[内置 Tool](docs/extensions/tool-builtin.md)
+
 ### 🧠 **5 阶段情感引擎**
 ```text
 Perception → Signal → PreFilter → Generate → BackgroundUpdate
@@ -79,7 +84,7 @@ Perception → Signal → PreFilter → Generate → BackgroundUpdate
 ### 🔌 **AMKR 统一模型接入**
 - 所有模型调用统一交给本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)（OpenAI 兼容路由）处理
 - 供应商、Key 池、故障切换与采样参数都由 AMKR 维护，本框架不再内置任何厂商实现
-- 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 自主行为…），模型选择与采样参数下沉到 AMKR 的任务定义
+- 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 自主行为 / 晨间计划 / 睡前回顾…），模型选择与采样参数下沉到 AMKR 的任务定义
 - 模型调用只用该人格工作空间的**推理 key**（建空间时自动签发），管理员 Key 仅用于建空间与注册任务
 
 ### 🎯 **双重扩展机制**
@@ -209,7 +214,8 @@ sirius_pulse/
 │   ├── cognition.py         # 统一认知分析器（情绪 + 意图）
 │   ├── participation.py     # 参与度策略评分
 │   ├── group_dispatcher.py  # 群调度与投递回执
-│   ├── autonomy.py          # 自主行为（Episode / Intention）
+│   ├── autonomy.py          # 自主行为记录（Episode）与不外发时段
+│   ├── life_bridge.py       # 她的生活与聊天的接口（此刻的你、睡眠时的参与度）
 │   ├── intent.py            # 意图与 IntentStore
 │   ├── work_mode.py         # 工作模式
 │   ├── delayed_response_queue.py
@@ -217,6 +223,8 @@ sirius_pulse/
 │   ├── model_router.py      # 任务名 → AMKR 任务定义解析
 │   ├── brain.py             # LLM 调用层（含 Post-Hooks 链）
 │   └── ...
+│
+├── life/                    # 她自己的一天：作息、日程、项目与作品、睡前回顾
 │
 ├── memory/                  # 分层记忆系统
 │   ├── basic/               # 基础记忆（保留原始尾部）

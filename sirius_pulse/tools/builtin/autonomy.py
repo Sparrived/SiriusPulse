@@ -1,37 +1,33 @@
-"""Built-in autonomous-life TOOL.
+"""Built-in autonomous-life TOOL: the heartbeat of her own day.
 
-This TOOL gives a persona a life of her own.  On a slow tick it looks at the
-*intentions* she is already carrying and decides by pure rule whether one is
-worth acting on now.  The tick never invents a reason to act: no intentions means
-she does nothing, however long she has been idle.
+She has a day of her own, shaped like a person's:
 
-Intentions are formed in real turns, not here — ``intend_share`` for something she
-wants to say, ``intend_pursue`` for something she wants to work out.  That is what
-keeps the reason behind each one genuine: she decided it while actually thinking,
-so the recorded ``why`` is hers rather than a constant.  A background job scanning
-the chat log cannot know what she has already handled, so it would mostly queue up
-material she has already read.
+- **Morning** -- on the first heartbeat after she wakes up, she plans the day in
+  one structured call (``life_plan``): a few blocks, some spent on her projects,
+  some just routine.  With no project yet, the plan starts one, drawn from her
+  persona, her interests and what she wrote down wanting to look into.
+- **Day** -- when a project block comes due she spends one focused turn on it
+  (``autonomy_generate`` with tools) and writes the result into that project's
+  work file.  A routine block (a nap, a walk) costs no model call at all; it only
+  sets what she is doing, so a chat during it can feel it.
+- **Night** -- on the first heartbeat after bedtime she looks back on the day in
+  one structured call (``life_reflect``), which rewrites her short self-note,
+  updates her projects and nudges her baseline mood.  While asleep she does no
+  work and sends nothing.
 
-Intentions cannot be the *only* entry point, though, or the whole thing is a closed
-loop: every intention would have to come from a reply, so she could never start
-anything by herself and a quiet group would leave her permanently silent.  So when
-she is carrying nothing and has been left alone for a long while, the tick offers
-her **free time** with no material at all ("your time, do as you like").  She may
-still decline.  This is the one place a self-initiated turn begins from nothing,
-and it is paced by ``free_time_interval_seconds`` so it cannot become a job.
+Why it is built this way: the previous design offered her open "free time" with
+no context and explicitly allowed "nothing", and a model nearly always took that
+option, so autonomy produced almost nothing.  Now each turn continues something
+she committed to herself, with its progress in front of her, and leaves an
+artifact behind.  She can still skip a block, but skipping is a decision with a
+reason (and it shows on her mood), not the default.
 
-Two things can happen when an intention is picked:
+Sharing is unchanged: a tell-intention with an audience is delivered by rule (no
+model call), at most once per cooldown and never while she is asleep; one whose
+audience is undecided gets one turn to decide, within its attempt budget.
 
-``do``
-    She works something out (reads it, tries it, writes it down).  This costs one
-    LLM turn, and the result is material for herself.
-``tell``
-    She says what she wanted to say, to the audience she chose.  The words were
-    already written down when the intention formed, so this costs nothing and is
-    delivered through the normal proactive-message pipeline.
-
-Making and telling stay separate decisions, and telling is never a broadcast: the
-audience is part of the intention itself.
+Cost per day is bounded: one plan, at most ``max_work_blocks_per_day`` work
+blocks, one reflection -- plus audience decisions, each capped per intention.
 """
 
 from __future__ import annotations
@@ -43,54 +39,111 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.core.autonomy import AutonomyPolicy, Episode, is_quiet_hours
-from sirius_pulse.core.intent import (
-    IntentFileStore,
-    Intention,
-    IntentStore,
-)
+from sirius_pulse.core.autonomy import Episode, is_quiet_hours
+from sirius_pulse.core.intent import IntentFileStore, Intention, IntentStore
+from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.extension_runtime import BackgroundTaskSpec
+from sirius_pulse.life import life_dir, schedule_from_config
+from sirius_pulse.life.agenda import (
+    BLOCK_DOING,
+    BLOCK_DONE,
+    BLOCK_SKIPPED,
+    AgendaStore,
+    Block,
+    DayAgenda,
+)
+from sirius_pulse.life.clock import DaySchedule, to_local
+from sirius_pulse.life.projects import (
+    MAX_ACTIVE_PROJECTS,
+    STATUS_ACTIVE,
+    STATUS_DONE,
+    ProjectLimitError,
+    ProjectStore,
+)
+from sirius_pulse.life.reflection import (
+    SelfNoteStore,
+    parse_plan,
+    parse_reflection,
+)
+from sirius_pulse.life.state import LifeStateStore, energy_at, energy_word
 from sirius_pulse.memory.units.models import MemoryUnit
 from sirius_pulse.utils.json_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_INTERVAL_SECONDS = 900
+_DEFAULT_INTERVAL_SECONDS = 600
 _MIN_INTERVAL_SECONDS = 60
 
 _MAX_EPISODES = 200
 _OUTCOME_MAX_CHARS = 600
 
-# How long she must have been left to herself before free time is offered.  This
-# is the only path that starts from nothing, so it is paced separately from the
-# heartbeat: at 900s heartbeats a 1h interval means at most a handful of free-time
-# turns a day, not one per beat.
-_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 60 * 60
-
 # A tell-intention is cheap to deliver, so it gets its own, much tighter gate:
 # one share per hour per persona, on top of the normal reply cooldown.
 _DEFAULT_SHARE_COOLDOWN_SECONDS = 3600
 
-# The persona is explicitly allowed to decline.  A declined turn is not an
-# episode: autonomy that must always produce something is just a cron job.
-_DECLINE_RE = re.compile(r"^\s*(什么也不做|什么都不做|无事可做|没有想做的|没什么想做的)")
+_DEFAULT_MAX_WORK_BLOCKS = 3
+_MAX_WORK_BLOCKS_CEILING = 8
+
+# A morning plan gets two tries a day, half an hour apart: enough to survive one
+# transient upstream failure without turning a broken task binding into a loop.
+_PLAN_MAX_TRIES = 2
+_PLAN_RETRY_GAP_SECONDS = 30 * 60
+# Not worth planning a day that is nearly over.
+_PLAN_MIN_REMAINING_MINUTES = 60
+
+# Below this she is too worn out to start a project block.
+_TOO_TIRED = 0.2
+
+# How she declines a block.  Skipping must come with a reason, so the reason is
+# whatever follows the marker.
+_DECLINE_RE = re.compile(
+    r"^\s*(?:先不做了|今天不做了|什么也不做|什么都不做|不想做|没什么想做的)[:：,，。\s]*(.*)",
+    re.DOTALL,
+)
+
+# Mood nudges from her own life (valence, arousal).
+_MOOD_PLANNED = (0.03, 0.02)
+_MOOD_STEP = (0.03, 0.0)
+_MOOD_WROTE = (0.05, 0.02)
+_MOOD_FINISHED = (0.15, 0.05)
+_MOOD_SKIPPED = (-0.03, 0.0)
 
 TOOL_META = {
     "name": "autonomy",
     "description": (
-        "【适用场景】后台被动工具，管理人格自主思考与意图推进调度（系统心跳触发，模型不可见）。\n"
-        "【使用方法】由后台定时心跳驱动，扫描持久化意图列表，按预设规则决定推进自主探究或主动分享。\n"
-        "【注意事项】模型不可主动调用；受共享冷却限制与夜间静默期（23:00-08:00 仅推进不外发）约束。"
+        "【适用场景】后台被动工具，驱动人格自己的一天：早上排日程、白天按日程推进自己的项目、"
+        "晚上回顾这一天（系统心跳触发，模型不可见）。\n"
+        "【使用方法】由后台定时心跳驱动；项目段落会跑一次专注的工作回合并把成果写进作品，"
+        "日常段落不调用模型；有对象的分享按规则投递。\n"
+        "【注意事项】模型不可主动调用；睡眠时段内不工作也不外发；每天的工作段数受上限约束。"
     ),
-    "version": "2.0.0",
+    "version": "3.0.0",
     "model_visible": False,
     "side_effect": "external_write",
-    "tags": ["autonomy", "intent", "persona", "memory", "background"],
+    "tags": ["autonomy", "life", "intent", "persona", "background"],
     "config": {
         "check_interval_seconds": {
             "type": "int",
-            "description": "自主思考的检查间隔秒数，最少 60，默认 900。",
+            "description": "心跳间隔秒数，最少 60，默认 600。日程段最短 20 分钟，心跳不宜超过它。",
             "default": _DEFAULT_INTERVAL_SECONDS,
+            "group": "节奏",
+        },
+        "wake_time": {
+            "type": "str",
+            "description": "她每天几点起床（本地时间 HH:MM），默认 07:30。",
+            "default": "07:30",
+            "group": "作息",
+        },
+        "sleep_time": {
+            "type": "str",
+            "description": "她每天几点睡觉（本地时间 HH:MM，可以过午夜），默认 23:30。睡着时不工作也不外发。",
+            "default": "23:30",
+            "group": "作息",
+        },
+        "max_work_blocks_per_day": {
+            "type": "int",
+            "description": "她每天最多花几段时间推进自己的项目（每段一次模型回合），默认 3，设为 0 表示只过日常不做项目。",
+            "default": _DEFAULT_MAX_WORK_BLOCKS,
             "group": "节奏",
         },
         "share_cooldown_seconds": {
@@ -99,20 +152,12 @@ TOOL_META = {
             "default": _DEFAULT_SHARE_COOLDOWN_SECONDS,
             "group": "节奏",
         },
-        "free_time_interval_seconds": {
-            "type": "int",
-            "description": (
-                "她无事惦记且长时间没人找她时，隔多久给她一段完全空白的自主时间。" "设为 0 表示关闭（她只会在已经惦记着什么时才行动）。默认 3600。"
-            ),
-            "default": _DEFAULT_FREE_TIME_INTERVAL_SECONDS,
-            "group": "节奏",
-        },
     },
 }
 
 
 def create_background_tasks(ctx: Any) -> list[BackgroundTaskSpec]:
-    """Register the autonomy ticker."""
+    """Register the life heartbeat."""
 
     async def _tick() -> None:
         await run_tick(ctx)
@@ -133,191 +178,346 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# ---------------------------------------------------------------------------
+# Heartbeat
+# ---------------------------------------------------------------------------
+
+
 async def run_tick(ctx: Any) -> Episode | None:
-    """Run one autonomy tick.  Returns the episode, or None when she did nothing."""
+    """Run one heartbeat.  Returns the episode, or None when nothing was recorded."""
     store = ctx.get_data_store("autonomy")
     reload_store = getattr(store, "reload", None)
     if callable(reload_store):
         reload_store()
-
     if store.get("_enabled", True) is False:
         return None
 
-    state = _load_state(store)
     now = _now()
+    schedule = schedule_from_config(store)
+    _settle_mood(ctx)
 
-    # First sight of a fresh state: start the free-time clock now rather than
-    # leaving it absent.  ``_parse_time("")`` reads as 1970, which would hand her
-    # a free-time turn on the first tick of every restart.
-    if not state.get("last_free_time_at"):
-        state["last_free_time_at"] = now.isoformat()
-        _save_state(store, state)
+    if schedule.is_asleep(now):
+        await _reflect_if_due(ctx, schedule, now)
+        return None
 
-    # This tick is a checkpoint, not a source of motivation: it reads what she is
-    # already carrying.  Forming intentions happens in real turns (intend_pursue /
-    # intend_share), where the conversation is in front of her.
-    intentions = _load_intentions(ctx)
+    agenda = await _ensure_today_plan(ctx, schedule, now)
 
-    # Sharing is cheap and does not spend an LLM turn, so it is gated separately
-    # from model pacing and can happen even while a model turn is cooling down.
+    state = _load_state(store)
+    # Sharing does not spend a model turn, so it is gated by its own cooldown and
+    # goes first: words she already chose should not wait behind a work block.
     if _share_ready(state, now, ctx):
-        share = _next_share(intentions, now)
-        if share is not None and await _deliver_share(ctx, share, state, now):
+        share = _next_share(_load_intentions(ctx), now)
+        if share is not None and await _deliver_share(ctx, share, state, now, schedule):
             return _record_share(ctx, state, share, now)
 
-    # No model-call cooldown either: if she is still carrying something, she may
-    # act now.  The real pace limit is the heartbeat interval itself, so an empty
-    # intention set (not a timer) is what keeps her quiet.
-    # Only two kinds of intention are worth a model turn: something to work out,
-    # and something she wants to say but has not decided who to tell.  A tell that
-    # already has an audience is delivered mechanically, so it must never be
-    # re-litigated here — that would rewrite words she has already chosen.
-    actionable = [
-        item
-        for item in intentions.open_items(now=now.isoformat())
-        if not (item.is_tell and item.audience.strip())
-    ]
-    decision = AutonomyPolicy(
-        free_time_interval_seconds=_option_seconds(
-            ctx, "free_time_interval_seconds", _DEFAULT_FREE_TIME_INTERVAL_SECONDS, minimum=0
-        )
-    ).evaluate(
-        seconds_since_episode=(now - _parse_time(state.get("last_episode_at", ""))).total_seconds(),
-        intentions=actionable,
-        recent_kinds=list(state.get("recent_kinds", [])),
-        expressiveness=ctx.get_expressiveness(),
-        now=now.isoformat(),
-        # Idle since free time was last *offered*, not since she last acted: a
-        # declined offer must not be re-offered on the very next heartbeat.
-        seconds_since_free_time=(
-            now - _parse_time(state.get("last_free_time_at", ""))
-        ).total_seconds(),
-    )
-    logger.debug("自主性评估: %s", decision.to_dict())
-    if not decision.should_act:
-        return None
+    if agenda is not None:
+        agendas = AgendaStore(_life(ctx))
+        if agenda.settle(schedule, now):
+            agendas.save(agenda)
+        block = agenda.due(schedule, now)
+        if block is not None:
+            return await _run_block(ctx, schedule, agenda, block, now)
 
-    target = intentions.get(decision.intention_id)
-    if decision.intention_id and target is None:
-        return None
-
-    # Free time carries no intention: there is nothing to book an attempt against
-    # and nothing to resolve afterwards.  It is recorded like an episode so the
-    # next offer is paced, nothing more.
-    if target is None:
-        return await _run_free_time(ctx, state, store, decision, now)
-
-    # From here on a model turn happens, so book the attempt against *this*
-    # intention before running it.  That is what bounds the cost now that there is
-    # no pacing cooldown: she can always act on something new, but she cannot
-    # re-decide the same unfinishable thing on every heartbeat.
-    intentions.record_attempt(target.intention_id, now=now.isoformat())
-    _save_intentions(ctx, intentions)
-
-    result = await ctx.run_autonomous_turn(
-        kind=decision.kind,
-        seed=decision.seed,
-        group_id=target.notebook_origin_group or target.origin_group or _fallback_group(ctx),
-        notebook_enabled=bool(target.notebook_origin_group),
-        why=target.why,
-        intention_id=target.intention_id,
-        resolution=target.resolution,
-    )
-    outcome = str(result.get("text", "") or "").strip()
-
-    # The turn may itself have written to the intention store (e.g. she finally
-    # decided who to tell).  Re-read before touching it, or that decision would be
-    # overwritten by this stale copy — and the words would never be delivered.
-    intentions = _load_intentions(ctx)
-
-    if not outcome or _DECLINE_RE.match(outcome):
-        logger.info("自主回合未产出内容，保留意图: %s", decision.reason)
-        return None
-
-    episode = Episode(
-        episode_id=uuid.uuid4().hex,
-        started_at=now.isoformat(),
-        ended_at=datetime.now(timezone.utc).isoformat(),
-        kind=decision.kind,
-        seed=decision.seed,
-        outcome=outcome[:_OUTCOME_MAX_CHARS],
-        intention_id=target.intention_id,
-        resolution=target.resolution,
-        refs=_extract_refs(decision.seed),
-        intensity=decision.score,
-        status="done",
-    )
-    # A `tell` is only finished once it has actually been said, so this turn must
-    # not close it: if she still has not picked who to tell, the intention stays
-    # open and gets asked again instead of silently disappearing.
-    if not target.is_tell:
-        intentions.resolve(target.intention_id, outcome=episode.outcome, now=episode.ended_at)
-    _save_intentions(ctx, intentions)
-    _append_episode(ctx, episode)
-    await _write_memory_unit(ctx, target.origin_group or _fallback_group(ctx), episode)
-    _finish_tick(state, episode)
-    _save_state(store, state)
-
-    ctx.log_inner_thought(f"我自己去{episode.kind}了：{episode.outcome[:60]}")
-    await ctx.emit_event(
-        "agent_turn_updated",
-        {"origin": "self_initiated", "phase": "complete", "episode": episode.to_dict()},
-    )
-    return episode
+    await _decide_audience(ctx, now)
+    return None
 
 
-async def _run_free_time(
-    ctx: Any, state: dict[str, Any], store: Any, decision: Any, now: datetime
-) -> Episode | None:
-    """Give her a stretch of time with nothing in it.
+def _life(ctx: Any) -> Path:
+    return life_dir(ctx.get_work_path() or ".")
 
-    Her own time in the truest sense: no material, no reason, nobody waiting.  She
-    may do something or answer 「什么也不做」.  A decline still counts as the offer
-    being spent, so the interval — not the outcome — is what paces this path.
-    """
-    # 这次机会在**开始**时就记下，而不是等回合结束：回合可能抛异常（供应商不可用、
-    # 任务名没绑模型……）。旧写法把记录放在成功之后，于是失败时这个间隔永远是过期
-    # 的，下一个心跳立刻再提供一次——自主行为曾以每 900 秒一次的速度空转，两天里
-    # 空烧了 142 次回合，正是这个形状。宁可少做一次，也不要每个心跳都重试。
-    state["last_free_time_at"] = now.isoformat()
-    _save_state(store, state)
 
+def _settle_mood(ctx: Any) -> None:
+    settle = getattr(ctx, "settle_mood", None)
+    if callable(settle):
+        try:
+            settle()
+        except Exception:
+            logger.debug("心情回落失败", exc_info=True)
+
+
+def _nudge(ctx: Any, delta: tuple[float, float], reason: str) -> None:
+    nudge = getattr(ctx, "nudge_mood", None)
+    if callable(nudge):
+        try:
+            nudge(delta[0], delta[1], reason)
+        except Exception:
+            logger.debug("心情变化失败", exc_info=True)
+
+
+def _mood_label(ctx: Any) -> str:
+    label = getattr(ctx, "mood_label", None)
     try:
-        result = await ctx.run_autonomous_turn(
-            kind=decision.kind,
-            seed="",
-            group_id=_fallback_group(ctx),
-            free_time=True,
-            notebook_enabled=False,
+        return str(label() or "") if callable(label) else ""
+    except Exception:
+        return ""
+
+
+def _state_line(ctx: Any, schedule: DaySchedule, now: datetime, work_done: int) -> str:
+    state = LifeStateStore(_life(ctx)).load()
+    energy = energy_at(
+        schedule,
+        now,
+        work_done_today=work_done,
+        woken_last_night=state.woken_count(now, within_seconds=12 * 3600),
+    )
+    mood = _mood_label(ctx)
+    return f"精力{energy_word(energy)}" + (f"，心情{mood}" if mood else "")
+
+
+# ---------------------------------------------------------------------------
+# Morning: plan the day
+# ---------------------------------------------------------------------------
+
+
+async def _ensure_today_plan(ctx: Any, schedule: DaySchedule, now: datetime) -> DayAgenda | None:
+    life = _life(ctx)
+    today = schedule.life_date(now)
+    agendas = AgendaStore(life)
+    agenda = agendas.load(today)
+    if agenda is not None:
+        return agenda
+
+    states = LifeStateStore(life)
+    state = states.load()
+    if not state.can_try_plan(
+        today, now, max_tries=_PLAN_MAX_TRIES, gap_seconds=_PLAN_RETRY_GAP_SECONDS
+    ):
+        return None
+    elapsed = schedule.minutes_since_wake(now)
+    if schedule.awake_span - elapsed < _PLAN_MIN_REMAINING_MINUTES:
+        return None
+    # Booked before the call: a failing call must not be retried every heartbeat.
+    states.update(lambda s: s.record_plan_try(today, now))
+
+    projects = ProjectStore(life)
+    active = projects.active()
+    intentions = _load_intentions(ctx)
+    do_items = [item for item in intentions.open_items(now=now.isoformat()) if not item.is_tell]
+    max_blocks = _option_int(
+        ctx, "max_work_blocks_per_day", _DEFAULT_MAX_WORK_BLOCKS, ceiling=_MAX_WORK_BLOCKS_CEILING
+    )
+    free_slots = max(0, MAX_ACTIVE_PROJECTS - len(active))
+    note = SelfNoteStore(life).load()
+    yesterday = agendas.load(schedule.life_date(now - timedelta(days=1)))
+
+    system_prompt, messages = PromptFactory.build_life_plan_prompt(
+        wake=schedule.wake,
+        sleep=schedule.sleep,
+        state_line=_state_line(ctx, schedule, now, 0),
+        self_note=note.to_dict(),
+        projects=[
+            {
+                "project_id": p.project_id,
+                "title": p.title,
+                "kind_label": p.kind_label,
+                "next_step": p.next_step,
+                "last_step": p.steps[-1]["did"] if p.steps else "",
+            }
+            for p in active
+        ],
+        intentions=[
+            {"intention_id": item.intention_id, "what": item.what, "why": item.why}
+            for item in do_items
+        ],
+        yesterday=_agenda_lines(yesterday),
+        max_work_blocks=max_blocks,
+        free_project_slots=free_slots,
+    )
+    try:
+        text = await ctx.generate_text(
+            system_prompt, messages, _fallback_group(ctx), task_name="life_plan"
         )
     except Exception:
-        # 在这里就地记一条带堆栈的日志再吞掉：否则它只会以「后台任务失败」的形式
-        # 冒到后台循环，看不出是哪一段自主工作出的问题。机会已经花掉，不再重试。
-        logger.warning("自由时间回合失败，这次机会已消耗", exc_info=True)
-        return None
-    outcome = str(result.get("text", "") or "").strip()
-
-    if not outcome or _DECLINE_RE.match(outcome):
+        logger.warning("晨间计划调用失败，稍后可能再试一次", exc_info=True)
         return None
 
+    plan = parse_plan(
+        text,
+        schedule=schedule,
+        project_ids={p.project_id for p in active},
+        intention_ids={item.intention_id for item in do_items},
+        max_work_blocks=max_blocks,
+        free_project_slots=free_slots,
+        not_before=elapsed,
+    )
+    if plan is None:
+        logger.warning("晨间计划无法解析，今天先不排: %s", str(text)[:200])
+        return None
+
+    keys: dict[str, str] = {}
+    for new in plan.new_projects:
+        try:
+            project = projects.start(
+                title=new.title, kind=new.kind, why=new.why, next_step=new.next_step, now=now
+            )
+        except (ProjectLimitError, ValueError):
+            continue
+        keys[new.key] = project.project_id
+    blocks: list[Block] = []
+    for block in plan.blocks:
+        if block.project_id in keys:
+            block.project_id = keys[block.project_id]
+        elif block.project_id and not projects.get(block.project_id):
+            block.project_id = ""
+        blocks.append(block)
+
+    agenda = DayAgenda(date=today, blocks=blocks, note=plan.note, made_at=now.isoformat())
+    agenda.sort(schedule)
+    agendas.save(agenda)
+    states.update(lambda s: setattr(s, "last_plan_date", today))
+
+    if plan.used_intentions:
+        intentions = _load_intentions(ctx)
+        for intention_id in plan.used_intentions:
+            intentions.resolve(intention_id, outcome="排进了日程", now=now.isoformat())
+        _save_intentions(ctx, intentions)
+
+    _nudge(ctx, _MOOD_PLANNED, "排好了今天的日程")
+    ctx.log_inner_thought(f"今天想：{plan.note or '照着日程过'}")
+    await ctx.emit_event(
+        "agent_turn_updated",
+        {"origin": "self_initiated", "phase": "planned", "agenda": agenda.to_dict()},
+    )
+    return agenda
+
+
+def _agenda_lines(agenda: DayAgenda | None) -> list[str]:
+    if agenda is None:
+        return []
+    labels = {"done": "做了", "skipped": "没做", "missed": "错过", "planned": "没轮到"}
+    lines = []
+    for block in agenda.blocks:
+        line = f"{block.start} {block.activity}（{labels.get(block.status, block.status)}"
+        if block.reason and block.status != BLOCK_DONE:
+            line += f"：{block.reason}"
+        lines.append(line + "）")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Day: run the block that is due
+# ---------------------------------------------------------------------------
+
+
+async def _run_block(
+    ctx: Any, schedule: DaySchedule, agenda: DayAgenda, block: Block, now: datetime
+) -> Episode | None:
+    life = _life(ctx)
+    agendas = AgendaStore(life)
+    states = LifeStateStore(life)
+    until = schedule.moment(agenda.date, block.end_minutes)
+
+    if not block.is_work:
+        states.update(lambda s: s.set_activity(block.activity, until))
+        block.status = BLOCK_DONE
+        agendas.save(agenda)
+        return None
+
+    def _skip(reason: str) -> None:
+        block.status = BLOCK_SKIPPED
+        block.reason = reason[:300]
+        agendas.save(agenda)
+
+    max_blocks = _option_int(
+        ctx, "max_work_blocks_per_day", _DEFAULT_MAX_WORK_BLOCKS, ceiling=_MAX_WORK_BLOCKS_CEILING
+    )
+    work_done = agenda.work_done()
+    if work_done >= max_blocks:
+        _skip("今天已经做得够多了")
+        return None
+    projects = ProjectStore(life)
+    project = projects.get(block.project_id)
+    if project is None or project.status != STATUS_ACTIVE:
+        _skip("这件事已经放下了")
+        return None
+    state = states.load()
+    energy = energy_at(
+        schedule,
+        now,
+        work_done_today=work_done,
+        woken_last_night=state.woken_count(now, within_seconds=12 * 3600),
+    )
+    if energy < _TOO_TIRED:
+        _skip("太累了，歇一会儿")
+        states.update(lambda s: s.set_activity("歇一会儿", until))
+        _nudge(ctx, _MOOD_SKIPPED, "累得做不动了")
+        return None
+
+    # Booked before the turn: a turn that fails must not run again next heartbeat.
+    # If it never comes back, ``settle`` closes the block as not done.
+    block.status = BLOCK_DOING
+    agendas.save(agenda)
+    states.update(lambda s: s.set_activity(block.activity, until))
+    work_before = len(projects.read_work(project.project_id))
+    steps_before = len(project.steps)
+
+    try:
+        result = await ctx.run_life_work_turn(
+            activity=block.activity,
+            block_end=block.end,
+            project={
+                "project_id": project.project_id,
+                "title": project.title,
+                "kind_label": project.kind_label,
+                "why": project.why,
+                "next_step": project.next_step,
+            },
+            recent_steps=[f"{_local_day(step['at'])} {step['did']}" for step in project.steps[-5:]],
+            work_tail=projects.work_tail(project.project_id),
+            state_line=_state_line(ctx, schedule, now, work_done),
+            group_id=_fallback_group(ctx),
+        )
+    except Exception:
+        logger.warning("项目段落的工作回合失败，这一段算没做成", exc_info=True)
+        _skip("没做成")
+        return None
+    text = str(result.get("text", "") or "").strip()
+
+    declined = _DECLINE_RE.match(text) if text else None
+    after = projects.get(project.project_id) or project
+    wrote = len(projects.read_work(project.project_id)) > work_before
+    stepped = len(after.steps) > steps_before
+    if declined and not wrote:
+        _skip(declined.group(1).strip() or "不想做")
+        _nudge(ctx, _MOOD_SKIPPED, "跳过了自己排的事")
+        return None
+    if not text and not wrote and not stepped:
+        _skip("没做成")
+        return None
+
+    outcome = text or (after.steps[-1]["did"] if after.steps else block.activity)
+    if not stepped:
+        # Her progress log must move even if she forgot to record the step.
+        projects.record_step(project.project_id, did=outcome[:200], now=now)
+    block.status = BLOCK_DONE
+    block.reason = ""
+    block.outcome = outcome[:300]
+    agendas.save(agenda)
+
+    after = projects.get(project.project_id) or after
+    if after.status == STATUS_DONE:
+        _nudge(ctx, _MOOD_FINISHED, f"做完了「{project.title}」")
+    elif wrote:
+        _nudge(ctx, _MOOD_WROTE, f"「{project.title}」有了新进展")
+    else:
+        _nudge(ctx, _MOOD_STEP, f"推进了「{project.title}」")
+
+    ended = datetime.now(timezone.utc)
     episode = Episode(
         episode_id=uuid.uuid4().hex,
         started_at=now.isoformat(),
-        ended_at=datetime.now(timezone.utc).isoformat(),
-        kind=decision.kind,
-        seed="",
+        ended_at=ended.isoformat(),
+        kind=project.kind,
+        seed=block.activity,
         outcome=outcome[:_OUTCOME_MAX_CHARS],
         refs=_extract_refs(outcome),
-        intensity=decision.score,
+        intensity=0.6 if wrote else 0.4,
         status="done",
+        project_id=project.project_id,
     )
     _append_episode(ctx, episode)
-    await _write_memory_unit(ctx, _fallback_group(ctx), episode)
-    state["last_free_time_at"] = episode.ended_at
-    _finish_tick(state, episode)
-    _save_state(store, state)
-
-    ctx.log_inner_thought(f"我自己的时间：{episode.outcome[:60]}")
+    await _write_memory_unit(ctx, _fallback_group(ctx), episode, title=project.title)
+    ctx.log_inner_thought(f"{block.activity}：{episode.outcome[:60]}")
     await ctx.emit_event(
         "agent_turn_updated",
         {"origin": "self_initiated", "phase": "complete", "episode": episode.to_dict()},
@@ -325,19 +525,116 @@ async def _run_free_time(
     return episode
 
 
-async def _deliver_share(ctx: Any, share: Intention, state: dict[str, Any], now: datetime) -> bool:
+def _local_day(value: str) -> str:
+    try:
+        return to_local(datetime.fromisoformat(value)).strftime("%m-%d")
+    except (TypeError, ValueError):
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Night: look back on the day
+# ---------------------------------------------------------------------------
+
+
+async def _reflect_if_due(ctx: Any, schedule: DaySchedule, now: datetime) -> None:
+    life = _life(ctx)
+    day = schedule.life_date(now)
+    states = LifeStateStore(life)
+    if states.load().last_reflect_date == day:
+        return
+    # Booked before the call, like the plan: one try per night.
+    states.update(lambda s: setattr(s, "last_reflect_date", day))
+    agenda = AgendaStore(life).load(day)
+    if agenda is None:
+        return
+
+    projects = ProjectStore(life)
+    all_projects = projects.load()
+    steps = [
+        f"「{p.title}」{step['did']}"
+        for p in all_projects
+        for step in p.steps
+        if _life_date_of(schedule, step.get("at", "")) == day
+    ]
+    shares = [
+        str(item.get("outcome", ""))[:120]
+        for item in _read_episodes(_episodes_path(ctx))
+        if item.get("kind") == "share"
+        and _life_date_of(schedule, str(item.get("ended_at", ""))) == day
+    ]
+    notes = SelfNoteStore(life)
+    note = notes.load()
+    active = [p for p in all_projects if p.status == STATUS_ACTIVE]
+    system_prompt, messages = PromptFactory.build_life_reflect_prompt(
+        plan_note=agenda.note,
+        blocks=_agenda_lines(agenda),
+        steps=steps,
+        shares=shares,
+        mood=_mood_label(ctx),
+        self_note=note.to_dict(),
+        projects=[
+            {"project_id": p.project_id, "title": p.title, "next_step": p.next_step} for p in active
+        ],
+    )
+    try:
+        text = await ctx.generate_text(
+            system_prompt, messages, _fallback_group(ctx), task_name="life_reflect"
+        )
+    except Exception:
+        logger.warning("夜间回顾调用失败，今晚跳过", exc_info=True)
+        return
+    result = parse_reflection(text, project_ids={p.project_id for p in active})
+    if result is None:
+        logger.warning("夜间回顾无法解析，保留原来的近况: %s", str(text)[:200])
+        return
+
+    result.note.updated_at = now.isoformat()
+    notes.save(result.note)
+    for update in result.project_updates:
+        if update.next_step:
+            projects.set_next_step(update.project_id, update.next_step, now=now)
+        if update.status:
+            try:
+                projects.set_status(update.project_id, update.status, now=now)
+            except (ProjectLimitError, ValueError):
+                pass
+    settle = getattr(ctx, "settle_mood", None)
+    if callable(settle):
+        settle(baseline_shift=result.mood_shift)
+    ctx.log_inner_thought(f"睡前想了想今天：{result.note.recent[:60]}")
+
+
+def _life_date_of(schedule: DaySchedule, stamp: str) -> str:
+    try:
+        return schedule.life_date(datetime.fromisoformat(stamp))
+    except (TypeError, ValueError):
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Sharing
+# ---------------------------------------------------------------------------
+
+
+async def _deliver_share(
+    ctx: Any,
+    share: Intention,
+    state: dict[str, Any],
+    now: datetime,
+    schedule: DaySchedule | None = None,
+) -> bool:
     """Say what she wanted to say, to the audience she picked."""
     audience = share.audience.strip()
     if not audience:
-        # She never picked anyone.  Ask her once, on a model turn, rather than
-        # guessing a destination on her behalf.
+        # She never picked anyone.  Ask her on a model turn rather than guessing a
+        # destination on her behalf.
         return False
-    # Quiet hours gate *sending* only, and deliberately not ``last_share_at``:
-    # the intention stays pending so it goes out after the window ends instead of
-    # being dropped or silently marked as said.  She is still free to think and
-    # work during the night -- only the message waits.
-    if is_quiet_hours(now):
-        logger.debug("夜间静默期，暂不投递分享: %s", audience)
+    # Sleep gates *sending* only, and deliberately not ``last_share_at``: the
+    # intention stays pending so it goes out after she wakes up instead of being
+    # dropped or silently marked as said.
+    if is_quiet_hours(now, schedule):
+        logger.debug("睡眠时段，暂不投递分享: %s", audience)
         return False
     try:
         delivered = await ctx.deliver_share(
@@ -375,15 +672,41 @@ def _record_share(ctx: Any, state: dict[str, Any], share: Intention, now: dateti
         status="done",
     )
     _append_episode(ctx, episode)
-    _finish_tick(state, episode)
+    state["last_episode_at"] = episode.ended_at
     _save_state(ctx.get_data_store("autonomy"), state)
     ctx.log_inner_thought(f"我把想说的话告诉了{share.audience_label or share.audience}")
     return episode
 
 
-def _finish_tick(state: dict[str, Any], episode: Episode) -> None:
-    state["last_episode_at"] = episode.ended_at
-    state["recent_kinds"] = [episode.kind, *list(state.get("recent_kinds", []))][:5]
+async def _decide_audience(ctx: Any, now: datetime) -> None:
+    """Give one undecided tell-intention a turn to pick who to tell.
+
+    Each attempt is booked against the intention before the turn runs, so one
+    she never decides on cannot buy a model turn on every heartbeat.
+    """
+    intentions = _load_intentions(ctx)
+    undecided = [
+        item
+        for item in intentions.open_items(now=now.isoformat())
+        if item.is_tell and not item.audience.strip()
+    ]
+    if not undecided:
+        return
+    target = max(undecided, key=lambda item: item.effective_urgency(now=now.isoformat()))
+    intentions.record_attempt(target.intention_id, now=now.isoformat())
+    _save_intentions(ctx, intentions)
+    try:
+        await ctx.run_autonomous_turn(
+            kind=target.kind,
+            seed=target.what,
+            group_id=target.notebook_origin_group or target.origin_group or _fallback_group(ctx),
+            notebook_enabled=bool(target.notebook_origin_group),
+            why=target.why,
+            intention_id=target.intention_id,
+            resolution=target.resolution,
+        )
+    except Exception:
+        logger.warning("决定分享对象的回合失败，这次尝试已记下", exc_info=True)
 
 
 def _share_ready(state: dict[str, Any], now: datetime, ctx: Any) -> bool:
@@ -396,6 +719,11 @@ def _share_ready(state: dict[str, Any], now: datetime, ctx: Any) -> bool:
 def _next_share(intentions: IntentStore, now: datetime) -> Intention | None:
     ready = intentions.pending_shares(now=now.isoformat())
     return ready[0] if ready else None
+
+
+# ---------------------------------------------------------------------------
+# Storage helpers
+# ---------------------------------------------------------------------------
 
 
 def _fallback_group(ctx: Any) -> str:
@@ -440,13 +768,15 @@ def _episodes_path(ctx: Any) -> Path:
     return layout.memory_dir() / "autonomy" / "episodes.json"
 
 
-async def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
+async def _write_memory_unit(ctx: Any, group_id: str, episode: Episode, *, title: str = "") -> None:
     """Feed the outcome into existing memory so she *knows* it later.
 
     This makes the episode part of what she remembers; it is deliberately not a
     delivery channel.  Whether she mentions it is decided elsewhere.
     """
     persona = ctx.get_persona()
+    subject = f"「{title}」" if title else episode.kind
+    terms = [episode.kind, *([title] if title else []), *episode.refs]
     unit = MemoryUnit(
         unit_id=f"autonomy-{episode.episode_id}",
         group_id=group_id,
@@ -454,10 +784,10 @@ async def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
         unit_type="event",
         scope="persona",
         scope_id=str(getattr(persona, "name", "") or ""),
-        summary=f"（我自己的时间）我{episode.kind}了：{episode.outcome}",
-        topics=[episode.kind],
-        keywords=[episode.kind],
-        retrieval_terms=[episode.kind, *episode.refs],
+        summary=f"（我自己的时间）我在做{subject}：{episode.outcome}",
+        topics=[episode.kind, *([title] if title else [])],
+        keywords=terms[:6],
+        retrieval_terms=terms,
         event_time=episode.ended_at or episode.started_at,
         salience=_clamp(0.4 + episode.intensity * 0.4),
         lifespan="long",
@@ -465,6 +795,7 @@ async def _write_memory_unit(ctx: Any, group_id: str, episode: Episode) -> None:
         metadata={
             "origin": "self_initiated",
             "episode_id": episode.episode_id,
+            "project_id": episode.project_id,
             "first_person_experience": True,
         },
     )
@@ -499,6 +830,14 @@ def _option_seconds(
         return max(minimum, float(raw))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _option_int(ctx: Any, key: str, default: int, *, ceiling: int) -> int:
+    store = ctx.get_data_store("autonomy")
+    try:
+        return max(0, min(ceiling, int(store.get(key, default))))
+    except (TypeError, ValueError):
+        return default
 
 
 def _parse_time(value: Any) -> datetime:

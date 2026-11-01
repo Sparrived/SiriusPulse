@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -645,7 +646,6 @@ class ToolEngineContextImpl:
         why: str = "",
         intention_id: str = "",
         resolution: str = "",
-        free_time: bool = False,
         notebook_enabled: bool = True,
     ) -> dict[str, Any]:
         """Run one self-initiated turn with no chat session context.
@@ -656,18 +656,11 @@ class ToolEngineContextImpl:
         later decision taken by the autonomy tick with an explicit audience.
         No shared executor state is mutated, so this is safe to run while a
         normal reply is in flight.
-
-        With ``free_time=True`` there is no intention behind the turn at all: it
-        is time of her own and she may start something new, or nothing.
         """
         tool_desc = self.get_tool_descriptions(
             work_mode=True,
             exclude_names=() if notebook_enabled else ("persona_notebook",),
         )
-        audiences = [
-            item.to_dict() if hasattr(item, "to_dict") else dict(item)
-            for item in self.list_audiences()
-        ]
         system_prompt, messages = PromptFactory.build_autonomous_turn_sections(
             kind=kind,
             seed=seed,
@@ -675,11 +668,70 @@ class ToolEngineContextImpl:
             why=why,
             intention_id=intention_id,
             resolution=resolution,
-            audiences=audiences,
+            audiences=self._audience_dicts(),
             unaddressed=self._unaddressed_intentions(),
-            free_time=free_time,
             work_mode=True,
         )
+        reason = str(why or seed or "").strip()
+        goal = f"自主回合（{kind}）" + (f"：{reason}" if reason else "")
+        return await self._run_self_initiated(
+            system_prompt=system_prompt,
+            messages=messages,
+            group_id=group_id,
+            task_name=task_name,
+            goal=goal,
+            notebook_enabled=notebook_enabled,
+        )
+
+    async def run_life_work_turn(
+        self,
+        *,
+        activity: str,
+        block_end: str,
+        project: dict[str, str],
+        recent_steps: list[str],
+        work_tail: str,
+        state_line: str,
+        group_id: str,
+        task_name: str = "autonomy_generate",
+    ) -> dict[str, Any]:
+        """Run one block of her day spent on one of her projects.
+
+        Same safety envelope as :meth:`run_autonomous_turn` (self-initiated, no
+        delivery tools), with the project's progress and the end of her work
+        file in front of her instead of an open-ended "do anything".
+        """
+        tool_desc = self.get_tool_descriptions(work_mode=True, exclude_names=("persona_notebook",))
+        system_prompt, messages = PromptFactory.build_life_work_sections(
+            activity=activity,
+            block_end=block_end,
+            project=project,
+            recent_steps=recent_steps,
+            work_tail=work_tail,
+            state_line=state_line,
+            tool_desc=tool_desc,
+            audiences=self._audience_dicts(),
+            work_mode=True,
+        )
+        return await self._run_self_initiated(
+            system_prompt=system_prompt,
+            messages=messages,
+            group_id=group_id,
+            task_name=task_name,
+            goal=f"自己的事：{activity}",
+            notebook_enabled=False,
+        )
+
+    async def _run_self_initiated(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        group_id: str,
+        task_name: str,
+        goal: str,
+        notebook_enabled: bool,
+    ) -> dict[str, Any]:
         caller = self._build_caller("autonomy", "autonomy", False)
         invocation_context = ToolInvocationContext(
             caller=caller,
@@ -688,8 +740,6 @@ class ToolEngineContextImpl:
             adapter_type="",
             notebook_context_trusted=notebook_enabled,
         )
-        reason = str(why or seed or "").strip()
-        goal = f"自主回合（{kind}）" + (f"：{reason}" if reason else "")
         result = await self._run_tool_loop(
             system_prompt=system_prompt,
             messages=messages,
@@ -704,6 +754,55 @@ class ToolEngineContextImpl:
             notebook_enabled=notebook_enabled,
         )
         return self._scheduled_result_payload(result) if result else {}
+
+    def _audience_dicts(self) -> list[dict[str, str]]:
+        return [
+            item.to_dict() if hasattr(item, "to_dict") else dict(item)
+            for item in self.list_audiences()
+        ]
+
+    def nudge_mood(
+        self, valence_delta: float, arousal_delta: float = 0.0, reason: str = ""
+    ) -> None:
+        """Let something in her own life move her mood, and persist it."""
+        emotion = getattr(self._engine, "assistant_emotion", None)
+        if emotion is None:
+            return
+        if valence_delta or arousal_delta:
+            emotion.apply_event(valence_delta, arousal_delta)
+            logger.info("心情因生活事件变化 dv=%+.2f da=%+.2f：%s", valence_delta, arousal_delta, reason)
+        self._save_emotion()
+
+    def settle_mood(self, baseline_shift: float = 0.0) -> None:
+        """Drift back toward her baseline (and optionally move the baseline itself)."""
+        emotion = getattr(self._engine, "assistant_emotion", None)
+        if emotion is None:
+            return
+        if baseline_shift:
+            emotion.shift_baseline(baseline_shift)
+        emotion.tick_recovery()
+        self._save_emotion()
+
+    def mood_label(self) -> str:
+        """Her current mood as a short Chinese word (e.g. 「满足」)."""
+        from sirius_pulse.models.emotion import EmotionState
+
+        emotion = getattr(self._engine, "assistant_emotion", None)
+        if emotion is None:
+            return ""
+        state = EmotionState(valence=emotion.valence, arousal=emotion.arousal)
+        basic = state.basic_emotion
+        return basic.name_cn if basic else ""
+
+    def _save_emotion(self) -> None:
+        persistence = getattr(self._engine, "_persistence", None)
+        emotion = getattr(self._engine, "assistant_emotion", None)
+        if persistence is None or emotion is None:
+            return
+        try:
+            persistence.save_assistant_emotion(dataclasses.asdict(emotion))
+        except Exception:
+            logger.warning("保存心情状态失败", exc_info=True)
 
     @staticmethod
     def _scheduled_result_payload(result: Any) -> dict[str, Any]:

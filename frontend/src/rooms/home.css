@@ -177,6 +177,22 @@
   font-size: 15px;
 }
 
+.home__life {
+  margin-bottom: 12px;
+}
+
+.home__life p {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.home__life .home__next {
+  margin: 6px 0 0;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
 .home__self em {
   font-style: normal;
   font-size: 12.5px;

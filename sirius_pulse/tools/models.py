@@ -517,13 +517,38 @@ class ToolEngineContext(Protocol):
         why: str = "",
         intention_id: str = "",
         resolution: str = "",
-        free_time: bool = False,
         notebook_enabled: bool = True,
     ) -> dict[str, Any]:
-        """执行一次无会话上下文的自主回合，返回人格自述的产出。
+        """执行一次无会话上下文的自主回合，返回人格自述的产出。"""
+        ...
 
-        ``free_time`` 表示这次回合背后没有任何意图，只是她有一段自己的时间。
-        """
+    async def run_life_work_turn(
+        self,
+        *,
+        activity: str,
+        block_end: str,
+        project: dict[str, str],
+        recent_steps: list[str],
+        work_tail: str,
+        state_line: str,
+        group_id: str,
+        task_name: str = "autonomy_generate",
+    ) -> dict[str, Any]:
+        """在她自己排的日程段里推进一个项目，返回人格自述的产出。"""
+        ...
+
+    def nudge_mood(
+        self, valence_delta: float, arousal_delta: float = 0.0, reason: str = ""
+    ) -> None:
+        """让她自己生活里的事改变心情（完成一步、被吵醒……），并持久化。"""
+        ...
+
+    def settle_mood(self, baseline_shift: float = 0.0) -> None:
+        """心情向基线回落；可选地把基线本身微调一点（仅夜间回顾使用）。"""
+        ...
+
+    def mood_label(self) -> str:
+        """她此刻的心情，一个中文词（如「满足」）。"""
         ...
 
     def list_audiences(self) -> list[Any]:

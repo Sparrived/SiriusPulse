@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.core import life_bridge
 from sirius_pulse.core.bg_tasks import BackgroundTasks
 from sirius_pulse.core.brain import Brain
 from sirius_pulse.core.cognition import CognitionAnalyzer
@@ -1170,6 +1171,7 @@ class _EmotionalGroupChatEngineBase:
                 return
             _engine._last_reply_at[_req.group_id] = datetime.now(timezone.utc).timestamp()
             _engine._persist_group_state(_req.group_id)
+            life_bridge.record_reply(_engine)
 
         # ── priority 10: [REPLY:xxx] 引用回复解析 ──
         def _hook_reply_reference(

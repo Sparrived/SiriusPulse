@@ -5,11 +5,12 @@ import { useCurrentPersona } from '@/lib/queries';
 import { Segmented } from '@/ui/form/fields';
 import { Calendar } from './Calendar';
 import { ChatLog } from './ChatLog';
-import { Solitude } from './Solitude';
+import { DayLife } from './DayLife';
 import { WorkLog } from './WorkLog';
+import { Works } from './Works';
 import './diary.css';
 
-type Tab = 'chat' | 'alone' | 'work';
+type Tab = 'chat' | 'day' | 'works' | 'work';
 
 const WEEK = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
@@ -27,7 +28,7 @@ function dayTitle(day: string) {
   return `${year}${m}月${d}日 ${WEEK[date.getDay()]}${rel}`;
 }
 
-/** 日记：她的一天。聊过什么、独处时做了什么、认真工作时怎么一步步做完的。 */
+/** 日记：她的一天。聊过什么、给自己排了什么、写下了什么、认真工作时怎么一步步做完的。 */
 export function Diary() {
   const persona = useCurrentPersona();
   const [tab, setTab] = useState<Tab>('chat');
@@ -65,7 +66,7 @@ export function Diary() {
       <div className="room-title">
         <div>
           <h1 className="hand">日记</h1>
-          <p>{persona.persona_name || persona.name}的一天：聊过的话、独处的时光、认真做完的事。</p>
+          <p>{persona.persona_name || persona.name}的一天：聊过的话、自己的日程和作品、认真做完的事。</p>
         </div>
       </div>
 
@@ -96,7 +97,8 @@ export function Diary() {
           onChange={setTab}
           options={[
             { value: 'chat', label: '聊天' },
-            { value: 'alone', label: '独处时光' },
+            { value: 'day', label: '她的一天' },
+            { value: 'works', label: '她的作品' },
             { value: 'work', label: '认真工作' },
           ]}
         />
@@ -132,7 +134,8 @@ export function Diary() {
               jumpLabel={latestBefore ? dayTitle(latestBefore) : undefined}
             />
           )}
-          {tab === 'alone' && <Solitude day={day} />}
+          {tab === 'day' && <DayLife day={day} />}
+          {tab === 'works' && <Works />}
           {tab === 'work' && <WorkLog persona={persona.name} />}
         </motion.div>
       </AnimatePresence>

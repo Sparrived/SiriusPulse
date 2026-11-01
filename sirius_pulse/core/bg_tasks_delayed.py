@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.core import life_bridge
 from sirius_pulse.core.agent_turn import AgentTurn, AgentTurnPhase
 from sirius_pulse.core.constants import (
     DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
@@ -1613,6 +1614,11 @@ class DelayedQueueTasks:
                 else []
             ),
         )
+        presence = life_bridge.presence_context(engine)
+        if presence:
+            bundle.dynamic_context = (
+                f"{bundle.dynamic_context}\n\n{presence}" if bundle.dynamic_context else presence
+            )
         people = getattr(engine, "person_service", None)
         if people is not None:
             from sirius_pulse.people import PersonAccess

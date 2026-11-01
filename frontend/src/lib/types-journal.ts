@@ -75,6 +75,7 @@ export interface Episode {
   resolution: string;
   audience: string;
   status: string;
+  project_id?: string;
 }
 
 export interface AutonomyResponse {
@@ -86,6 +87,74 @@ export interface AutonomyResponse {
   };
   intentions: Intention[];
   episodes: Episode[];
+}
+
+export interface LifeNow {
+  phase: 'asleep' | 'morning' | 'day' | 'evening' | string;
+  asleep: boolean;
+  wake_time: string;
+  sleep_time: string;
+  energy: number;
+  energy_word: string;
+  activity: string;
+  next_block: LifeBlock | null;
+  life_date: string;
+}
+
+export interface LifeBlock {
+  start: string;
+  end: string;
+  activity: string;
+  project_id: string;
+  kind: 'work' | 'routine';
+  status: 'planned' | 'doing' | 'done' | 'skipped' | 'missed' | string;
+  outcome: string;
+  reason: string;
+}
+
+export interface LifeAgenda {
+  date: string;
+  note: string;
+  made_at: string;
+  blocks: LifeBlock[];
+}
+
+export interface LifeProject {
+  project_id: string;
+  title: string;
+  kind: string;
+  kind_label: string;
+  why: string;
+  next_step: string;
+  steps: { at: string; did: string }[];
+  status: 'active' | 'paused' | 'done' | 'dropped' | string;
+  started_at: string;
+  touched_at: string;
+  finished_at: string;
+  outcome: string;
+}
+
+export interface LifeWorkRow {
+  project_id: string;
+  title: string;
+  kind: string;
+  status: string;
+  chars: number;
+  updated_at: string;
+}
+
+export interface LifeResponse {
+  now: LifeNow;
+  self_note: { recent: string; interests: string[]; tomorrow: string; updated_at: string };
+  date: string;
+  agenda: LifeAgenda | null;
+  projects: LifeProject[];
+  works: LifeWorkRow[];
+}
+
+export interface LifeWorkResponse {
+  project: LifeProject;
+  markdown: string;
 }
 
 export interface WorkStep {

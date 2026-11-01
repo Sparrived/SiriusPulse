@@ -42,7 +42,8 @@ _DEFAULT_KIND = "musing"
 TOOL_META = {
     "name": "intend_pursue",
     "description": (
-        "【适用场景】记录后续待探究的长期意图（如待读文章、待验证方案、未解疑问），交由后台自主调度推进。\n"
+        "【适用场景】记下之后想弄明白的事（如待读文章、待验证方案、未解疑问）；"
+        "之后早上排日程时你会考虑把它排进去，或者为它开一个项目。\n"
         "【使用方法】what 填写探究目标事项；可选 why 说明关注原因；可选 kind 标注类型（reading/building/note/musing）；"
         "可选 urgency 指定紧迫度（0.0-1.0）。\n"
         "【注意事项】仅登记意图，不立即执行；当轮对话中已查证或已解答的事项不要重复登记。"
@@ -125,7 +126,7 @@ def run(
     return {
         "success": True,
         "intention_id": intention.intention_id,
-        "summary": "记下了。之后你自己的时间里会决定要不要去做这件事。",
+        "summary": "记下了。之后排日程时你会考虑把它排进去。",
     }
 
 

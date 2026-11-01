@@ -152,6 +152,30 @@ class AssistantEmotionState:
         self.arousal = max(0.0, min(1.0, self.arousal))
         self.last_updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+    def apply_event(self, valence_delta: float, arousal_delta: float = 0.0) -> None:
+        """Nudge her mood from something in her own life (finished a step, got woken up).
+
+        Interactions pull her toward a target; life events push her by a small,
+        bounded amount instead, so a good afternoon can lift her mood without any
+        conversation at all.  Each push is clamped to ±0.2.
+        """
+        import datetime
+
+        dv = max(-0.2, min(0.2, float(valence_delta)))
+        da = max(-0.2, min(0.2, float(arousal_delta)))
+        self.valence = max(-1.0, min(1.0, self.valence + dv))
+        self.arousal = max(0.0, min(1.0, self.arousal + da))
+        self.last_updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    def shift_baseline(self, valence_delta: float, *, limit: float = 0.05) -> None:
+        """Move the mood she recovers toward, by at most *limit* per call.
+
+        The baseline is her temperament, so it only ever drifts slowly (one
+        nightly reflection at a time) and stays within a moderate band.
+        """
+        dv = max(-limit, min(limit, float(valence_delta)))
+        self.baseline_valence = round(max(-0.4, min(0.6, self.baseline_valence + dv)), 4)
+
     def tick_recovery(self) -> None:
         """Gradually drift back to baseline (call periodically)."""
         for attr, base in (("valence", self.baseline_valence), ("arousal", self.baseline_arousal)):

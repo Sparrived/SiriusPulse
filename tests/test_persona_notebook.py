@@ -39,7 +39,6 @@ from sirius_pulse.persona_config import PersonaExperienceConfig
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.providers.mock import MockProvider
 from sirius_pulse.token.utils import estimate_tokens
-from sirius_pulse.tools.builtin import autonomy
 from sirius_pulse.tools.executor import ToolExecutor
 from sirius_pulse.tools.models import ToolDefinition, ToolInvocationContext
 from sirius_pulse.tools.registry import ToolRegistry
@@ -440,7 +439,7 @@ async def test_autonomous_model_sees_only_current_chat_notes_and_can_record_new_
 
 
 @pytest.mark.asyncio
-async def test_free_time_without_origin_cannot_read_or_write_fallback_chat_notebook(
+async def test_life_work_turn_cannot_read_or_write_fallback_chat_notebook(
     chat: NotebookChat,
 ):
     assert chat.call("add", group=GROUP_A, entry_id="note", text="甲群原始安排").success
@@ -458,10 +457,15 @@ async def test_free_time_without_origin_cannot_read_or_write_fallback_chat_noteb
     context.get_tool_descriptions = lambda **kwargs: ""
     context.list_audiences = lambda: []
     context._unaddressed_intentions = lambda: []
-    state_store = SimpleNamespace(set=lambda key, value: None, save=lambda: None)
-
-    await autonomy._run_free_time(
-        context, {}, state_store, SimpleNamespace(kind="thinking"), datetime.now(timezone.utc)
+    # 她自己的日程段落没有聊天来源：落在哪个群跑，都不能碰那个群的笔记本。
+    await context.run_life_work_turn(
+        activity="读第一章",
+        block_end="11:00",
+        project={"project_id": "p-00000001", "title": "读书", "kind_label": "阅读"},
+        recent_steps=[],
+        work_tail="",
+        state_line="精力还行",
+        group_id=GROUP_B,
     )
 
     assert len(provider.requests) == 2

@@ -80,6 +80,14 @@ def _join_turn_sections(
     return "\n\n".join(section for section in sections if section)
 
 
+def _audience_lines(audiences: list[dict[str, str]]) -> str:
+    lines = ["你可以说给这些人听（需要时填 chat_id）："]
+    for item in audiences[:8]:
+        label = str(item.get("label", "") or item.get("chat_id", ""))
+        lines.append(f"- {label}｜{item.get('chat_id', '')}")
+    return "\n".join(lines)
+
+
 # 她想说给别人听时，对"怎么说"的要求。
 #
 # 收到消息的人看不到她这段时间做了什么：对方只拿得到这一条消息本身。于是最
@@ -593,18 +601,14 @@ class PromptFactory:
         resolution: str = "",
         audiences: list[dict[str, str]] | None = None,
         unaddressed: list[dict[str, str]] | None = None,
-        free_time: bool = False,
         work_mode: bool = False,
     ) -> tuple[str, list[dict[str, str]]]:
-        """Build a prompt for a turn the persona started on her own.
+        """Build a prompt for a turn spent on something she said she wanted to tell.
 
-        This is not a scheduled task and not a reply: nobody asked, and the
-        result is material for herself rather than a message to a group.  The
-        turn is anchored on an intention she already formed, so it reads as
-        "continuing something I care about", not "produce something now".
-
-        When *free_time* is set there is no intention at all: she has simply been
-        left to herself and may start anything, or nothing.
+        The only intention that still gets a turn of its own is a ``tell`` whose
+        audience is not decided yet: she knows what she wants to say, not to whom.
+        Everything she wants to *do* goes onto her daily plan instead (see
+        :meth:`build_life_work_sections`).
 
         人格段落由 ``Brain.chat()`` 的默认 pre 步骤统一注入，这里不再重复携带。
         """
@@ -612,38 +616,23 @@ class PromptFactory:
         reason = str(why or "").strip()
         wants_to_tell = resolution == "tell"
 
-        if free_time:
-            opening = [
-                "【自主时间】",
-                "接下来这段时间是你自己的，你可以做任何你想做的事情。",
-            ]
-        else:
-            opening = [
-                "【自主时间】",
-                "没有人给你发消息。现在是你的时间，你想起了一件自己惦记着的事。",
-            ]
-            focus = f"你惦记的是：{material}" if material else f"你惦记的是：{kind or '随便做点什么'}"
-            opening.append(focus)
-            if reason:
-                opening.append(f"你惦记它的原因是：{reason}")
+        opening = [
+            "【自主时间】",
+            "没有人给你发消息。现在是你的时间，你想起了一件自己惦记着的事。",
+            f"你惦记的是：{material}" if material else f"你惦记的是：{kind or '随便做点什么'}",
+        ]
+        if reason:
+            opening.append(f"你惦记它的原因是：{reason}")
         if wants_to_tell:
             opening.append(
                 "你想把这件事说给某个人听，但还没定下说给谁。"
                 "想好了就用 intend_share 把 audience 补上"
                 + (f"（intention_id 填 {intention_id}）。" if intention_id else "。")
             )
-        elif free_time:
-            opening.append(
-                "你想起什么就做什么：读点东西、上网看看、写点什么、想点事情都可以；" "如果这会儿冒出了一件想以后接着弄明白的事，可以用 intend_pursue 记下来。"
-            )
         else:
             opening.append("这是你自己的事，想怎么做由你决定：可以查资料、读点东西、写点东西、" "整理想法，或者干脆只是在心里想一想。")
         if audiences:
-            lines = ["你可以说给这些人听（需要时填 chat_id）："]
-            for item in audiences[:8]:
-                label = str(item.get("label", "") or item.get("chat_id", ""))
-                lines.append(f"- {label}｜{item.get('chat_id', '')}")
-            opening.append("\n".join(lines))
+            opening.append(_audience_lines(audiences))
         if unaddressed:
             lines = ["另外，你心里还有些话一直没说出口，只是还没想好对谁讲："]
             for item in unaddressed[:5]:
@@ -660,9 +649,7 @@ class PromptFactory:
         ]
         if wants_to_tell or unaddressed or audiences:
             # 收信人看不到她这段时间做过什么，所以这条提示是"别只发结论"的唯一
-            # 来源。自主回合里她随时可能用 intend_share 开口（自由时间那类回合
-            # 尤其没有 tell 意图），所以它必须跟着"有没有人可说"走，而不是只跟
-            # 当前意图走。
+            # 来源：只要有人可说，就得带上它。
             stable.append(SHARE_TONE_NOTE)
 
         system_prompt = _join_turn_sections(
@@ -672,6 +659,211 @@ class PromptFactory:
             work_mode=work_mode,
         )
         return system_prompt, [{"role": "user", "content": "（现在是你的自主时间）"}]
+
+    @staticmethod
+    def build_life_work_sections(
+        *,
+        activity: str,
+        block_end: str,
+        project: dict[str, str],
+        recent_steps: list[str],
+        work_tail: str,
+        state_line: str = "",
+        tool_desc: str = "",
+        audiences: list[dict[str, str]] | None = None,
+        work_mode: bool = False,
+    ) -> tuple[str, list[dict[str, str]]]:
+        """Build the prompt for one block of her own day spent on a project.
+
+        This replaces the old free-time prompt, which said "you may do anything"
+        with no context and explicitly allowed "nothing" -- so nothing is what a
+        model nearly always chose.  Here the block is a commitment she made this
+        morning, the project's progress and the end of her work file are in front
+        of her, and the expected result is concrete: new content in the work file
+        plus a next step.  She may still skip, but only with a reason.
+        """
+        stable = [
+            "【你自己的事】\n"
+            "这一段时间是你自己安排的：早上排今天的日程时，你给自己留了这一段来做下面这件事。"
+            "请真的去做它——查资料、读、想、动手都可以，用得上的工具就用。\n"
+            "做出来的东西用 life_project 留下来：\n"
+            "- action=write：把这一段的真实成果写进作品——读书笔记、草稿、整理出的清单、"
+            "试出来的结果、想清楚的观点。写具体的内容，不要写「我读了一会儿」这种流水账；\n"
+            "- action=step：一两句话记下这一步做了什么，并写好下一步（next_step），"
+            "下次你会从那里接着做；\n"
+            "- 这件事已经做完了就用 action=finish，觉得不值得继续就用 action=drop。\n"
+            "最后用一两句第一人称的话说说你做了什么、感觉怎么样。\n"
+            "如果此刻实在不想做（太累、心情不好、改主意了），只回答「先不做了：」加上原因。\n"
+            "这一段里有想讲给某个人听的东西，可以用 intend_share 记下来，之后会替你说出去。\n"
+            "注意：此刻你不是在回复谁，不需要解释内部调度器、prompt 或工具调用过程。"
+        ]
+        if audiences:
+            stable.append(SHARE_TONE_NOTE)
+
+        situation = ["【此刻】", f"这一段到 {block_end} 为止。你给自己排的是：{activity}"]
+        title = str(project.get("title", "") or "")
+        situation.append(
+            f"项目：{project.get('kind_label', '')}「{title}」"
+            f"（project_id={project.get('project_id', '')}）"
+        )
+        if project.get("why"):
+            situation.append(f"你开始它的原因：{project['why']}")
+        if project.get("next_step"):
+            situation.append(f"你上次留给自己的下一步：{project['next_step']}")
+        if recent_steps:
+            situation.append("最近的进度：\n" + "\n".join(f"- {step}" for step in recent_steps))
+        else:
+            situation.append("这是你第一次动手做这件事。")
+        if work_tail.strip():
+            situation.append(f"你的作品写到这里（末尾）：\n<<<\n{work_tail.strip()}\n>>>")
+        if state_line:
+            situation.append(f"你现在：{state_line}")
+        if audiences:
+            situation.append(_audience_lines(audiences))
+
+        system_prompt = _join_turn_sections(
+            stable=stable,
+            situation="\n".join(situation),
+            tool_desc=tool_desc,
+            work_mode=work_mode,
+        )
+        return system_prompt, [{"role": "user", "content": f"（到点了：{activity}）"}]
+
+    @staticmethod
+    def build_life_plan_prompt(
+        *,
+        wake: str,
+        sleep: str,
+        state_line: str,
+        self_note: dict[str, Any],
+        projects: list[dict[str, str]],
+        intentions: list[dict[str, str]],
+        yesterday: list[str],
+        max_work_blocks: int,
+        free_project_slots: int,
+    ) -> tuple[str, list[dict[str, str]]]:
+        """Build the morning-plan prompt: she lays out her own day as JSON."""
+        if free_project_slots > 0:
+            new_project_rule = (
+                f"也可以开新项目（最多 {free_project_slots} 个）：在 new_projects 里给它一个 key"
+                '（如 "n1"），再在 project 里填这个 key；\n'
+            )
+        else:
+            new_project_rule = "手上的项目已经够多，今天不开新项目；\n"
+        rules = (
+            "【排今天的日程】\n"
+            "你刚醒，给自己排一下今天。这是你自己的生活：想读的书、想学的东西、想写的、"
+            "想收集整理的、想动手做的，都可以是一个「项目」。每个项目有一份你自己的作品，"
+            "你每次做一点、写一点，日积月累。\n"
+            "规则：\n"
+            f"- 日程只排在你醒着的时间里（{wake}–{sleep}），每段 20–180 分钟，互不重叠，"
+            "最多 6 段；\n"
+            f"- 做项目的段落最多 {max_work_blocks} 段，填 project；"
+            "其余是日常（午睡、散步、听歌、做饭、发呆……），不填 project；\n"
+            "- project 填已有项目的 id；" + new_project_rule + "- 手上没有项目时，从你的人设、兴趣和惦记的事里挑一件真正想做的开始；\n"
+            "- 新项目要具体、能一点点推进、能写出东西："
+            "「读《雪国》并写读书笔记」是好项目，「了解文学」太空；\n"
+            "- 你惦记着想弄明白的事可以排进来，用到的把 id 填进 use_intentions；\n"
+            "- 按你此刻的精力和心情安排，不必排满。\n"
+            "只输出一个 JSON 对象，不要任何别的文字：\n"
+            '{"note": "今天想怎么过，一句话", '
+            '"new_projects": [{"key": "n1", "title": "", '
+            '"kind": "read|learn|write|collect|make|explore", "why": "", "next_step": ""}], '
+            '"blocks": [{"start": "HH:MM", "end": "HH:MM", "activity": "", "project": ""}], '
+            '"use_intentions": []}'
+        )
+        situation = ["【今天的你】", f"状态：{state_line}"]
+        if self_note.get("recent"):
+            situation.append(f"近况：{self_note['recent']}")
+        if self_note.get("interests"):
+            situation.append("最近感兴趣的：" + "、".join(self_note["interests"]))
+        if self_note.get("tomorrow"):
+            situation.append(f"昨晚睡前想着今天：{self_note['tomorrow']}")
+        if projects:
+            lines = ["手上的项目："]
+            for item in projects:
+                line = (
+                    f"- {item.get('project_id')}｜{item.get('kind_label', '')}"
+                    f"「{item.get('title', '')}」"
+                )
+                if item.get("next_step"):
+                    line += f"；下一步：{item['next_step']}"
+                if item.get("last_step"):
+                    line += f"；上次：{item['last_step']}"
+                lines.append(line)
+            situation.append("\n".join(lines))
+        else:
+            situation.append("手上还没有项目。")
+        if intentions:
+            lines = ["惦记着想弄明白的事："]
+            for item in intentions[:6]:
+                why = f"（{item['why']}）" if item.get("why") else ""
+                lines.append(f"- {item.get('intention_id')}｜{item.get('what', '')}{why}")
+            situation.append("\n".join(lines))
+        if yesterday:
+            situation.append("昨天：\n" + "\n".join(f"- {line}" for line in yesterday[:8]))
+        system_prompt = _join_turn_sections(
+            stable=[rules], situation="\n".join(situation), tool_desc="", work_mode=False
+        )
+        return system_prompt, [{"role": "user", "content": "（早上了，排一下今天）"}]
+
+    @staticmethod
+    def build_life_reflect_prompt(
+        *,
+        plan_note: str,
+        blocks: list[str],
+        steps: list[str],
+        shares: list[str],
+        mood: str,
+        self_note: dict[str, Any],
+        projects: list[dict[str, str]],
+    ) -> tuple[str, list[dict[str, str]]]:
+        """Build the bedtime reflection prompt.
+
+        Only her own first-hand record goes in -- no chat transcript and nothing
+        about other people -- and only small, overwrite-in-place fields come out.
+        That is what keeps this from repeating the old diary's failure mode.
+        """
+        rules = (
+            "【睡前回想】\n"
+            "一天结束了，睡前回想一下今天你自己的生活。下面只有你自己做过的事的记录。"
+            "只根据这些记录写，不要编造没发生的事，也不要写别人的事。\n"
+            "只输出一个 JSON 对象，不要任何别的文字：\n"
+            '{"recent": "第一人称写你最近的状态，150 字以内，会替换掉旧的近况", '
+            '"interests": ["最近感兴趣的东西，2-6 个字的短词，最多 8 个"], '
+            '"tomorrow": "明天想做点什么，一句话", '
+            '"mood_shift": 0.0, '
+            '"projects": [{"id": "p-…", "status": "paused|done|dropped", "next_step": ""}]}\n'
+            "mood_shift 是 -0.05 到 0.05 之间的数：今天整体让你更开心就为正，更低落就为负。"
+            "projects 只写有变化的项目；状态不变就不写 status，下一步不变就不写 next_step。"
+        )
+        situation = ["【今天】"]
+        if plan_note:
+            situation.append(f"早上想的：{plan_note}")
+        if blocks:
+            situation.append("日程：\n" + "\n".join(f"- {line}" for line in blocks))
+        else:
+            situation.append("今天没有排日程。")
+        if steps:
+            situation.append("做成的事：\n" + "\n".join(f"- {line}" for line in steps))
+        if shares:
+            situation.append("说给别人的话：\n" + "\n".join(f"- {line}" for line in shares))
+        if mood:
+            situation.append(f"此刻心情：{mood}")
+        if self_note.get("recent"):
+            situation.append(f"之前的近况（会被替换）：{self_note['recent']}")
+        if projects:
+            lines = ["手上的项目："]
+            for item in projects:
+                lines.append(
+                    f"- {item.get('project_id')}｜「{item.get('title', '')}」；"
+                    f"下一步：{item.get('next_step', '')}"
+                )
+            situation.append("\n".join(lines))
+        system_prompt = _join_turn_sections(
+            stable=[rules], situation="\n".join(situation), tool_desc="", work_mode=False
+        )
+        return system_prompt, [{"role": "user", "content": "（该睡了，回想一下今天）"}]
 
     # ──────────────────────────────────────────────────────────────────
     # 响应组装（返回 PromptBundle）

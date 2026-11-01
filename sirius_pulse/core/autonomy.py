@@ -1,116 +1,61 @@
-"""Rule-based autonomy policy.
+"""What she does on her own: the episode record, and when she may not send.
 
-This is the deliberate twin of :mod:`sirius_pulse.core.participation`: a pure
-rule, explainable, non-LLM gate.  ``ParticipationPolicy`` answers "should I react
-to someone else's message"; ``AutonomyPolicy`` answers "should I start doing
-something of my own accord, and what".
-
-Design invariant: the default outcome is *do nothing*.  A tick that cannot
-answer "do nothing" is a cron job, not motivation.  Only when this policy
-returns ``should_act`` is an LLM turn worth paying for.
+The decision of *what* to do on her own no longer lives here.  It used to be a
+scoring gate over intentions plus an open-ended "free time" offer -- and an
+open-ended offer with no context is something a model nearly always declines.
+Her days are now driven by her own morning plan (see :mod:`sirius_pulse.life`
+and the ``autonomy`` tool); this module keeps the two shared pieces: the
+:class:`Episode` timeline entry and the no-sending window.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
-from sirius_pulse.core.intent import (
-    RESOLUTION_DO,
-    RESOLUTION_TELL,
-    Intention,
-    IntentStore,
-)
+from sirius_pulse.life.clock import DaySchedule, to_local
 
-# Restlessness reaches its maximum after this much idle time since the last
-# self-initiated episode.  It only ever *adds* to an intention's urgency.
-_RESTLESSNESS_FULL_SECONDS = 6 * 60 * 60
-
-# Size of the recent-kind memory used for the novelty term.
-_RECENT_KIND_WINDOW = 3
-
-# Free time: when she is carrying nothing and nobody has needed her, she still
-# gets a stretch of her own to start something new.  This is the one entry point
-# that does not require someone else to speak first.
-_FREE_TIME_KIND = "musing"
-_DEFAULT_FREE_TIME_INTERVAL_SECONDS = 60 * 60
-
-# Quiet hours, in local (China) time: she may still *work on* things, but nothing
-# may be *sent*.  A message that arrives at 03:00 is read in the morning at best
-# and resented at worst, so the window gates delivery only.  It never cancels
-# what she wanted to say -- the intention stays pending and goes out after 08:00.
-#
-# Fixed UTC+8 rather than a tz database lookup: China has no DST, and the project
-# already pins its local time this way in ``tools/cron_tasks.py``.  It lives here
-# rather than being imported from there because core must not depend on tools.
-_LOCAL_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+# Without a configured schedule, nothing may be *sent* between 23:00 and 08:00 local
+# time.  She may still work on things; a message that arrives at 03:00 is read in
+# the morning at best and resented at worst, so the window gates delivery only.
 _QUIET_HOURS_START = 23
 _QUIET_HOURS_END = 8
 
 
-def is_quiet_hours(now: datetime) -> bool:
+def is_quiet_hours(now: datetime, schedule: DaySchedule | None = None) -> bool:
     """Whether ``now`` falls inside the no-sending window, in local time.
 
-    The window wraps midnight (23:00-08:00), so it is a union of two ranges
-    rather than a single ``start <= hour < end`` comparison.  A naive timestamp
-    is read as UTC, matching how the autonomy tick parses its own state.
+    With a *schedule*, the window is simply when she is asleep.  Without one it is
+    the fixed 23:00-08:00 range, which wraps midnight (so it is a union of two
+    ranges rather than a single comparison).  A naive timestamp is read as UTC.
 
     Args:
         now: The moment to test.
+        schedule: Her sleep schedule, when known.
 
     Returns:
-        True when sending must be deferred to the morning.
+        True when sending must be deferred until she is up.
     """
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    local_hour = now.astimezone(_LOCAL_TIMEZONE).hour
+    if schedule is not None:
+        return schedule.is_asleep(now)
+    local_hour = to_local(now).hour
     return local_hour >= _QUIET_HOURS_START or local_hour < _QUIET_HOURS_END
 
 
-@dataclass(slots=True)
-class AutonomyDecision:
-    """A non-LLM decision about whether to pursue an intention right now."""
-
-    should_act: bool
-    reason: str
-    score: float
-    threshold: float
-    kind: str = ""
-    seed: str = ""
-    resolution: str = ""
-    intention_id: str = ""
-    audience: str = ""
-    is_share: bool = False
-    urgency: float = 0.0
-    restlessness_score: float = 0.0
-    novelty_score: float = 0.0
-    context: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "should_act": self.should_act,
-            "reason": self.reason,
-            "score": round(self.score, 4),
-            "threshold": round(self.threshold, 4),
-            "kind": self.kind,
-            "seed": self.seed,
-            "resolution": self.resolution,
-            "intention_id": self.intention_id,
-            "audience": self.audience,
-            "is_share": self.is_share,
-            "urgency": round(self.urgency, 4),
-            "restlessness_score": round(self.restlessness_score, 4),
-            "novelty_score": round(self.novelty_score, 4),
-            "context": dict(self.context),
-        }
+def _clamp(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, number))
 
 
 @dataclass(slots=True)
 class Episode:
     """One thing the persona did on her own initiative.
 
-    ``kind`` is a free-form label (reading / note / draft / share / musing ...),
+    ``kind`` is a free-form label (a project kind, ``routine``, ``share`` ...),
     not an enum: autonomy is not restricted to producing "works".
     """
 
@@ -126,6 +71,7 @@ class Episode:
     refs: list[str] = field(default_factory=list)
     intensity: float = 0.5
     status: str = "done"
+    project_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +87,7 @@ class Episode:
             "refs": list(self.refs),
             "intensity": round(self.intensity, 4),
             "status": self.status,
+            "project_id": self.project_id,
         }
 
     @classmethod
@@ -158,252 +105,5 @@ class Episode:
             refs=[str(item) for item in data.get("refs", []) or []],
             intensity=_clamp(data.get("intensity", 0.5)),
             status=str(data.get("status", "done")),
+            project_id=str(data.get("project_id", "")),
         )
-
-
-class AutonomyPolicy:
-    """Pure-rule autonomy policy for a persona acting on her own.
-
-    The policy is an *intention gate*, not a motivation generator: it scores the
-    intentions she already formed and picks at most one to pursue.  Nothing in
-    here invents a *reason*, and an intention set that is empty or fully faded
-    never revives itself just because time passed.
-
-    But a gate alone is a closed loop: every intention has to come from somewhere,
-    and if the only source is a reply turn, she can never start anything by
-    herself.  So when she is carrying nothing *and* has been left alone for long
-    enough, the policy hands her free time with no material at all — an open
-    "your time, do as you like" turn that she may also decline.  That is the one
-    place a self-initiated turn can begin from nothing, and it is deliberately
-    gated by its own idle interval so it cannot degenerate into a cron job.
-    """
-
-    def __init__(self, *, free_time_interval_seconds: float = _DEFAULT_FREE_TIME_INTERVAL_SECONDS):
-        """Configure the free-time gate.
-
-        Args:
-            free_time_interval_seconds: How long she must have been left to herself
-                before she is offered free time with no material.  A non-positive
-                value disables free time entirely, leaving a pure intention gate.
-        """
-        self._free_time_interval_seconds = float(free_time_interval_seconds)
-
-    def evaluate(
-        self,
-        *,
-        seconds_since_episode: float,
-        intentions: IntentStore | list[Intention] | None = None,
-        recent_kinds: list[str] | None = None,
-        expressiveness: float = 0.5,
-        now: str = "",
-        seconds_since_free_time: float = 0.0,
-    ) -> AutonomyDecision:
-        """Decide whether to pursue one intention, without calling an LLM.
-
-        There is no daily quota: she may act whenever she is actually carrying
-        something.  What limits her is not a counter but the intentions
-        themselves — an empty or faded set yields "do nothing" on its own, unless
-        she has been idle long enough to earn free time.
-
-        Args:
-            seconds_since_episode: Idle time since the last self-initiated episode.
-            intentions: The intentions she is carrying.
-            recent_kinds: Kinds of the most recent episodes, newest first.
-            expressiveness: Persona trait (0-1) shifting the threshold.
-            now: Reference timestamp for urgency decay.
-            seconds_since_free_time: Idle time since her last free-time turn was
-                offered.  Passing 0 means free time is not currently on offer.
-        """
-        restlessness = self._restlessness_score(seconds_since_episode)
-        threshold = self._threshold(expressiveness)
-        open_items = self._open_intentions(intentions, now=now)
-
-        if not open_items:
-            # Nothing is being carried.  She does not act out of boredom — but if
-            # nobody has needed her for a long while she gets time of her own,
-            # with no material and no reason attached.
-            return self._free_time_decision(
-                seconds_since_free_time=seconds_since_free_time,
-                threshold=threshold,
-                restlessness=restlessness,
-                open_intentions=len(open_items),
-            )
-
-        best = max(
-            open_items,
-            key=lambda item: self._intention_score(item, restlessness=restlessness, now=now),
-        )
-        urgency = best.effective_urgency(now=now)
-        novelty = self._novelty_score(best.kind, recent_kinds or [])
-        # Motivation comes from her own urgency; idleness only nudges it.  A
-        # stale intention cannot be revived by waiting alone.
-        score = _clamp(0.70 * urgency + 0.20 * restlessness + 0.10 * novelty)
-        should_act = score >= threshold and not best.is_expired(now=now)
-        reason = (
-            "pursuing_intention"
-            if should_act
-            else self._suppression_reason(urgency, threshold, score)
-        )
-        return self._decision(
-            should_act,
-            reason,
-            score,
-            threshold,
-            kind=best.kind,
-            seed=best.what,
-            resolution=best.resolution,
-            intention_id=best.intention_id,
-            audience=best.audience,
-            is_share=best.resolution == RESOLUTION_TELL,
-            urgency=urgency,
-            restlessness=restlessness,
-            novelty=novelty,
-            context={"open_intentions": len(open_items)},
-        )
-
-    @staticmethod
-    def _open_intentions(
-        intentions: IntentStore | list[Intention] | None, *, now: str
-    ) -> list[Intention]:
-        if intentions is None:
-            return []
-        if isinstance(intentions, IntentStore):
-            return intentions.open_items(now=now)
-        return [item for item in intentions if item.is_open and not item.is_expired(now=now)]
-
-    def _free_time_decision(
-        self,
-        *,
-        seconds_since_free_time: float,
-        threshold: float,
-        restlessness: float,
-        open_intentions: int,
-    ) -> AutonomyDecision:
-        """Offer free time when nothing is carried and she has been left alone.
-
-        This is the only path that starts from nothing, so it is gated by its own
-        interval rather than by an intention.  Without that gate it would either
-        be a dead end (never offer) or a cron job (offer on every heartbeat, and
-        keep paying for a decline forever) — the interval is what makes "act
-        whenever you like" bounded.  Note the turn may still end in "do nothing".
-
-        This deliberately makes idleness a trigger, which the intention path
-        forbids.  The two are not in conflict: an intention's urgency must never
-        be inflated by waiting, but a persona who can only ever start something
-        because someone spoke to her has no autonomy at all.
-        """
-        # A non-positive interval means "free time off": she then acts only on
-        # intentions.  Without this check 0 would mean the opposite (always offer).
-        if self._free_time_interval_seconds <= 0:
-            return self._decision(
-                False,
-                "no_intention",
-                0.0,
-                threshold,
-                restlessness=restlessness,
-                context={"open_intentions": open_intentions, "free_time_disabled": True},
-            )
-        if seconds_since_free_time < self._free_time_interval_seconds:
-            return self._decision(
-                False,
-                "no_intention",
-                0.0,
-                threshold,
-                restlessness=restlessness,
-                context={"open_intentions": open_intentions},
-            )
-        return self._decision(
-            True,
-            "free_time",
-            _clamp(0.5 + 0.5 * restlessness),
-            threshold,
-            kind=_FREE_TIME_KIND,
-            resolution=RESOLUTION_DO,
-            restlessness=restlessness,
-            context={"open_intentions": open_intentions, "free_time": True},
-        )
-
-    @classmethod
-    def _intention_score(cls, intention: Intention, *, restlessness: float, now: str) -> float:
-        return _clamp(0.70 * intention.effective_urgency(now=now) + 0.20 * restlessness)
-
-    def _decision(
-        self,
-        should_act: bool,
-        reason: str,
-        score: float,
-        threshold: float,
-        *,
-        kind: str = "",
-        seed: str = "",
-        resolution: str = "",
-        intention_id: str = "",
-        audience: str = "",
-        is_share: bool = False,
-        urgency: float = 0.0,
-        restlessness: float = 0.0,
-        novelty: float = 0.0,
-        context: dict[str, Any] | None = None,
-    ) -> AutonomyDecision:
-        return AutonomyDecision(
-            should_act=should_act,
-            reason=reason,
-            score=score,
-            threshold=threshold,
-            kind=kind,
-            seed=seed,
-            resolution=resolution,
-            intention_id=intention_id,
-            audience=audience,
-            is_share=is_share,
-            urgency=urgency,
-            restlessness_score=restlessness,
-            novelty_score=novelty,
-            context=dict(context or {}),
-        )
-
-    @staticmethod
-    def _restlessness_score(seconds_since_episode: float) -> float:
-        try:
-            idle = max(0.0, float(seconds_since_episode))
-        except (TypeError, ValueError):
-            idle = 0.0
-        return _clamp(idle / _RESTLESSNESS_FULL_SECONDS)
-
-    @staticmethod
-    def _novelty_score(kind: str, recent_kinds: list[str]) -> float:
-        window = [str(item) for item in recent_kinds[:_RECENT_KIND_WINDOW]]
-        return 0.35 if kind in window else 1.0
-
-    @staticmethod
-    def _threshold(expressiveness: float) -> float:
-        value = _clamp(expressiveness)
-        if value >= 0.65:
-            return 0.42
-        if value <= 0.35:
-            return 0.58
-        return 0.50
-
-    @staticmethod
-    def _suppression_reason(urgency: float, threshold: float, score: float) -> str:
-        if urgency < 0.15:
-            return "intention_faded"
-        if score < threshold:
-            return "below_autonomy_threshold"
-        return "suppressed"
-
-
-def _clamp(value: Any) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, min(1.0, number))
-
-
-__all__ = [
-    "AutonomyDecision",
-    "AutonomyPolicy",
-    "Episode",
-    "is_quiet_hours",
-]

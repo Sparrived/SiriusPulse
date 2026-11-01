@@ -89,10 +89,19 @@ class ParticipationPolicy:
         reply_frequency: str = "moderate",
         affinity_score: float = 0.0,
         reply_time_coefficient: float = 1.0,
+        life_factor: float = 1.0,
     ) -> ParticipationDecision:
+        """Decide whether to take part in a message.
+
+        ``life_factor`` comes from her own state (asleep, worn out).  Unlike the
+        time-of-day coefficient it only damps *volunteering* -- answering a need
+        or joining in.  Someone calling her directly, or messaging her in
+        private, still gets through: that is what waking someone up looks like.
+        """
         text = content or ""
         text_len = len(text.strip())
         coefficient = _clamp_coefficient(reply_time_coefficient)
+        volunteer = _clamp_coefficient(coefficient * max(0.0, float(life_factor)))
         addressing = self._addressing_score(signal, directed_gate)
         reply_need = self._reply_need_score(signal, text)
         social = self._social_opportunity_score(signal, text, seconds_since_reply, affinity_score)
@@ -182,8 +191,8 @@ class ParticipationPolicy:
             )
 
         need_score = reply_need * 0.75 + fit * 0.25 - suppression * 0.25
-        final_reply_need = _scale_reply_score(reply_need, coefficient)
-        final_need_score = _scale_reply_score(need_score, coefficient)
+        final_reply_need = _scale_reply_score(reply_need, volunteer)
+        final_need_score = _scale_reply_score(need_score, volunteer)
         if (
             final_reply_need >= need_threshold
             and final_need_score >= need_threshold
@@ -212,11 +221,11 @@ class ParticipationPolicy:
                 fit,
                 suppression,
                 raw_score=need_score,
-                reply_time_coefficient=coefficient,
+                reply_time_coefficient=volunteer,
             )
 
         join_score = social * 0.45 + fit * 0.35 + reply_need * 0.20 - suppression * 0.35
-        final_join_score = _scale_reply_score(join_score, coefficient)
+        final_join_score = _scale_reply_score(join_score, volunteer)
         can_join = (
             text_len >= 4
             and social >= 0.42
@@ -238,7 +247,7 @@ class ParticipationPolicy:
                 fit,
                 suppression,
                 raw_score=join_score,
-                reply_time_coefficient=coefficient,
+                reply_time_coefficient=volunteer,
             )
 
         score = max(addressing, need_score, join_score)

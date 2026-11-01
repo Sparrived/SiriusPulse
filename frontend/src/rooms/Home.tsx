@@ -3,6 +3,7 @@ import { Link } from 'wouter';
 import { EMOTION_CN, moodLine } from '@/lib/mood';
 import { useCurrentPersona, useGlance, useHealth, useMetrics, useWakeSleep } from '@/lib/queries';
 import { ago, duration, greeting } from '@/lib/time';
+import type { LifeNow } from '@/lib/types-journal';
 import { useLive } from '@/state/live';
 import { CountUp, MoodCompass } from '@/ui/bits';
 import { MoonIcon, SunIcon } from '@/ui/icons';
@@ -21,6 +22,12 @@ function groupName(id: string) {
   return id.length > 6 ? `群 …${id.slice(-4)}` : `群 ${id}`;
 }
 
+function lifeLine(name: string, life: LifeNow) {
+  if (life.asleep) return `${name}睡着了（${life.sleep_time} 睡，${life.wake_time} 起）`;
+  if (life.activity) return `${name}在${life.activity}`;
+  return `${name}这会儿闲着`;
+}
+
 /** 客厅：推门进来，她就在这里。 */
 export function Home() {
   const persona = useCurrentPersona();
@@ -33,6 +40,7 @@ export function Home() {
   if (!persona) return null;
   const name = persona.persona_name || persona.name;
   const mood = glance?.mood;
+  const life = glance?.life;
   const convo = glance?.conversation;
   const adapter = health?.checks?.adapter;
   const adapterOffline =
@@ -142,17 +150,35 @@ export function Home() {
         </motion.article>
       )}
 
-      {!!glance?.episodes.length && (
+      {(life || !!glance?.episodes.length) && (
         <motion.article className="home__self paper" variants={card}>
-          <h2 className="home__h hand">她自己做的事</h2>
-          <ul>
-            {glance.episodes.slice(0, 3).map((ep, i) => (
-              <li key={`${ep.at}-${i}`}>
-                <span className="hand">{ep.seed || ep.kind}</span>
-                <em>{ago(ep.at)}</em>
-              </li>
-            ))}
-          </ul>
+          <h2 className="home__h hand">她这会儿</h2>
+          {life && persona.running && (
+            <div className="home__life">
+              <p className="hand">{lifeLine(name, life)}</p>
+              <span className="chip">{life.asleep ? '睡着了' : `精力 · ${life.energy_word}`}</span>
+              {!life.asleep && life.next_block && (
+                <p className="home__next">
+                  待会儿 {life.next_block.start}：{life.next_block.activity}
+                </p>
+              )}
+            </div>
+          )}
+          {!!glance?.episodes.length && (
+            <ul>
+              {glance.episodes.slice(0, 3).map((ep, i) => (
+                <li key={`${ep.at}-${i}`}>
+                  <span className="hand">
+                    {ep.kind === 'share' ? `说给别人：${ep.outcome}` : ep.seed || ep.kind}
+                  </span>
+                  <em>{ago(ep.at)}</em>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Link href="/diary" className="home__more hand">
+            看看她今天的安排 →
+          </Link>
         </motion.article>
       )}
     </motion.section>
