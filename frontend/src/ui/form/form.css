@@ -418,3 +418,47 @@
 .room-title .whisper--error {
   color: #ffc2d1;
 }
+
+/* ── 滑杆 ── */
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.slider input {
+  flex: 1;
+  appearance: none;
+  height: 8px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f78aa8 var(--fill), #dfe4f7 var(--fill));
+  outline: none;
+}
+
+.slider input::-webkit-slider-thumb {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid #f78aa8;
+  box-shadow: 0 3px 8px rgba(240, 120, 156, 0.4);
+  cursor: grab;
+}
+
+.slider input::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid #f78aa8;
+}
+
+.slider b {
+  min-width: 28px;
+  text-align: right;
+  font-size: 14px;
+  color: var(--ink);
+}

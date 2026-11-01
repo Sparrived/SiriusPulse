@@ -386,3 +386,33 @@ export function Sheet({
     </section>
   );
 }
+
+/** 0–1 的柔和滑杆：两端写着人话 */
+export function Slider({
+  value,
+  onChange,
+  low,
+  high,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  low: string;
+  high: string;
+}) {
+  return (
+    <span className="slider">
+      <span className="slider__end">{low}</span>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.05}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ '--fill': `${value * 100}%` } as React.CSSProperties}
+      />
+      <span className="slider__end">{high}</span>
+      <b className="num">{Math.round(value * 100)}</b>
+    </span>
+  );
+}
