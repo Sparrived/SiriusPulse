@@ -85,11 +85,7 @@ export const ROOMS: Room[] = [
     name: '背包',
     hint: '本领 · 工具、MCP、插件',
     Icon: BagIcon,
-    legacy: [
-      { page: 'tools', label: 'Tools 与 MCP' },
-      { page: 'plugins', label: '插件' },
-      { page: 'tools-tracker', label: 'Tool 追踪' },
-    ],
+    ready: true,
   },
   {
     id: 'mailbox',
@@ -105,7 +101,7 @@ export const ROOMS: Room[] = [
     name: '小账本',
     hint: '她吃了多少星光 · Token 用量',
     Icon: LedgerIcon,
-    legacy: [{ page: 'token-tracker', label: 'Token 追踪' }],
+    ready: true,
   },
   {
     id: 'attic',
@@ -113,11 +109,7 @@ export const ROOMS: Room[] = [
     name: '阁楼',
     hint: '维护 · 全局设置、AMKR、日志',
     Icon: AtticIcon,
-    legacy: [
-      { page: 'global-settings', label: '全局设置' },
-      { page: 'amkr', label: 'AMKR 运维' },
-      { page: 'logs', label: '实时日志' },
-    ],
+    ready: true,
   },
 ];
 
