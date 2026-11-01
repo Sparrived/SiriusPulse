@@ -792,7 +792,7 @@ class DelayedQueueTasks:
         messages = engine._helpers.inject_multimodal_into_user_message(messages, all_multimodal)
 
         # Multi-round generation with function_call support
-        from sirius_pulse.core.brain import ChatRequest
+        from sirius_pulse.core.brain import Brain, ChatRequest
         from sirius_pulse.tools.models import ToolInvocationContext, ToolResult
 
         max_tool_rounds = engine.config.get("max_tool_rounds", 8)
@@ -819,6 +819,10 @@ class DelayedQueueTasks:
             """轨迹落盘；没有开始过工作模式就没有可写的东西。"""
             if work_run is not None and work_store is not None:
                 work_store.save_run(work_run)
+
+        # 一个回合只取一次时间：每轮重写会改掉这条 user 消息，后面累积的工具
+        # 调用与结果就全部错过前缀缓存。
+        Brain.pin_current_time(messages)
 
         while True:
             # 本轮开始时的工作模式状态：本轮才调用 enter_work_mode 的话，本轮正文
@@ -865,6 +869,7 @@ class DelayedQueueTasks:
                         enable_tools=enable_tools_for_round,
                         caller_is_developer=caller_is_developer,
                         post_process=True,
+                        inject_current_time=False,
                         work_mode=work_run is not None,
                         defer_notebook_tool_text=(
                             work_run is None
@@ -1429,6 +1434,11 @@ class DelayedQueueTasks:
                         enable_tools=bool(engine.config.get("enable_tools", True)),
                         caller_is_developer=caller_is_developer,
                         post_process=True,
+                        inject_current_time=False,
+                        # 工具清单与前面各轮逐字一致才接得上前缀缓存，
+                        # 用 tool_choice 禁止调用而不是摘掉工具。
+                        work_mode=work_run is not None,
+                        extra_tools=control_tools(active=work_run is not None),
                         tool_choice="none",
                     )
                 )

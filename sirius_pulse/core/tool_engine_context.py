@@ -421,6 +421,13 @@ class ToolEngineContextImpl:
         )
         callback_id = str(getattr(invocation_context, "background_event_id", "") or "")
         extra_tools = [midway_message_tool()] if allow_midway else None
+        exclude_tool_names = () if notebook_enabled else ("persona_notebook",)
+
+        # 一个回合只取一次时间：每轮重写会改掉这条 user 消息，后面累积的工具
+        # 调用与结果就全部错过前缀缓存。
+        from sirius_pulse.core.brain import Brain
+
+        Brain.pin_current_time(messages)
 
         for _ in range(max_rounds):
             result = await self._engine.brain.chat(
@@ -434,8 +441,9 @@ class ToolEngineContextImpl:
                     caller_is_developer=caller_is_developer,
                     work_mode=True,
                     post_process=post_process,
+                    inject_current_time=False,
                     extra_tools=extra_tools,
-                    exclude_tool_names=() if notebook_enabled else ("persona_notebook",),
+                    exclude_tool_names=exclude_tool_names,
                 )
             )
             last_result = result
@@ -561,6 +569,8 @@ class ToolEngineContextImpl:
                 run=run,
                 store=store,
                 post_process=post_process,
+                extra_tools=extra_tools,
+                exclude_tool_names=exclude_tool_names,
             )
             # 收尾轮没写出东西时，退回最后一轮可能夹带的文字；两者都空才是真的空。
             wrap_up_text = str(getattr(wrap_up, "clean_text", "") or "").strip()
@@ -588,11 +598,14 @@ class ToolEngineContextImpl:
         run: WorkModeRun,
         store: WorkModeStore,
         post_process: bool = True,
+        extra_tools: list[dict[str, Any]] | None = None,
+        exclude_tool_names: tuple[str, ...] = (),
     ) -> Any:
         """Ask for the closing prose once the tool rounds are used up.
 
-        工具被显式摘掉（``enable_tools=False``），而不是靠提示词请求模型别调用：
-        只要工具还在，这一轮就可能又被一次工具调用占满，收尾就白做了。失败不该
+        工具清单与前面各轮逐字一致（它是前缀的第一段，摘掉就整段错过缓存），
+        用 ``tool_choice="none"`` 禁止调用，而不是靠提示词请求模型别调用。
+        个别上游无视 ``none`` 仍回了工具调用时，只取正文、不执行。失败不该
         让整次工作消失，所以异常只记一条日志，返回 ``None`` 交给调用方退回原文。
         """
         messages.append({"role": "user", "content": _TOOL_LIMIT_WRAP_UP})
@@ -607,8 +620,11 @@ class ToolEngineContextImpl:
                     adapter_type=adapter_type,
                     caller_is_developer=caller_is_developer,
                     work_mode=True,
-                    enable_tools=False,
                     post_process=post_process,
+                    inject_current_time=False,
+                    extra_tools=extra_tools,
+                    exclude_tool_names=exclude_tool_names,
+                    tool_choice="none",
                 )
             )
         except Exception as exc:
@@ -740,8 +756,7 @@ class ToolEngineContextImpl:
     def _chat_request(self, **kwargs: Any) -> Any:
         from sirius_pulse.core.brain import ChatRequest
 
-        # 用 setdefault 而不是直接写死：收尾轮要显式传 enable_tools=False 把工具摘掉，
-        # 硬编码会让那个参数变成"重复传参"而报 TypeError。
+        # 用 setdefault 而不是直接写死：调用方显式传同名参数时不会变成重复传参。
         kwargs.setdefault("enable_tools", True)
         kwargs.setdefault("post_process", True)
         return ChatRequest(**kwargs)

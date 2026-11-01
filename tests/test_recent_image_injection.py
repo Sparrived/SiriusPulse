@@ -69,7 +69,19 @@ def _chat_ok(text: str = "好的"):
 
 def _first_user_message(engine) -> object:
     request = engine.brain.chat.await_args_list[0].args[0]
-    return next(m for m in request.messages if m["role"] == "user")["content"]
+    content = next(m for m in request.messages if m["role"] == "user")["content"]
+    # 回合开头钉进来的当前时间不是本组用例关心的内容。
+    if isinstance(content, str):
+        return _strip_pinned_time(content)
+    first = dict(content[0])
+    first["text"] = _strip_pinned_time(first.get("text", ""))
+    return [first, *content[1:]]
+
+
+def _strip_pinned_time(text: str) -> str:
+    if text.startswith("【当前时间】"):
+        return text.split("\n\n", 1)[1] if "\n\n" in text else ""
+    return text
 
 
 def _tasks(engine, user_content: str) -> DelayedQueueTasks:

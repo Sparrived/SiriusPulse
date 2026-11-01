@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 from sirius_pulse.core.prompt_factory import (
@@ -668,6 +669,47 @@ def test_context_assembler_bounds_injected_history_by_token_budget():
     assert "message 0 " not in joined
     history_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
     assert len(history_messages) < 20
+
+
+def test_context_assembler_history_window_keeps_a_stable_prefix_while_chat_grows():
+    """新消息不断进来时，历史开头保持不变，直到超出预算才整块前移。
+
+    逐条滑动会让紧跟 system 的那段历史每轮都变，上游的前缀缓存一次都命中不了。
+    """
+    from sirius_pulse.token.utils import estimate_tokens
+
+    basic = BasicMemoryManager(hard_limit=0)
+    assembler = ContextAssembler(basic)
+    budget = 600
+
+    def first_history_and_tokens() -> tuple[str, int]:
+        messages = assembler.build_messages(
+            group_id="group_a",
+            current_query="current question",
+            system_prompt="system",
+            history_token_budget=budget,
+            include_pending=True,
+        )
+        history = messages[1:-1]
+        assert history, "超出预算后仍应保留最近的历史"
+        rendered = sum(estimate_tokens(str(m["content"])) for m in history)
+        first = re.search(r"message \d+ ", str(history[0]["content"]))
+        assert first is not None
+        return first.group(0), rendered
+
+    for index in range(60):
+        basic.add_entry("group_a", "alice", "human", f"message {index} " + "填充" * 20)
+
+    starts: list[str] = []
+    for index in range(60, 120):
+        basic.add_entry("group_a", "alice", "human", f"message {index} " + "填充" * 20)
+        start, rendered = first_history_and_tokens()
+        assert rendered <= budget * 1.15
+        starts.append(start)
+
+    shifts = sum(1 for prev, cur in zip(starts, starts[1:]) if prev != cur)
+    # 预算只够十来条时，每次前移后都能稳住好几轮，而不是每条新消息都移一次。
+    assert 1 <= shifts <= len(starts) // 3
 
 
 def test_context_assembler_history_budget_zero_keeps_whole_window():

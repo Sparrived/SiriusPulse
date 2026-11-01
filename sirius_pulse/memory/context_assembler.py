@@ -25,6 +25,11 @@ from sirius_pulse.memory.persona_notebook import PersonaNotebookStore
 
 logger = logging.getLogger(__name__)
 
+#: 历史超出预算时一次裁到预算的这个比例，之后窗口起点固定不动，直到再次超出。
+#: 逐条滑动会让紧跟 system 的第一条历史每轮都变，整段历史都吃不到前缀缓存；
+#: 按块推进时，连续几十轮请求共享同一段历史前缀。
+_HISTORY_TRIM_LOW_WATERMARK = 0.6
+
 
 class ContextAssembler:
     """Assembles conversation context for LLM generation.
@@ -47,6 +52,8 @@ class ContextAssembler:
         self._is_source_checkpointed = is_source_checkpointed
         self._persona_notebook_work_path = persona_notebook_work_path
         self._persona_notebook_budget_getter = persona_notebook_budget_getter
+        # (group_id, budget) → 当前历史窗口第一条消息的 entry_id
+        self._history_anchors: dict[tuple[str, int], str] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -180,7 +187,7 @@ class ContextAssembler:
         # 活跃窗口会保留远多于提示词所需的原始消息（直到被 checkpoint 覆盖），
         # 因此这里必须按 token 预算裁剪，只有最近预算内的消息进入提示词。
         recent = self._cacheable_history_entries(group_id, recent_n=recent_n)
-        recent = self._trim_history_to_token_budget(recent, history_token_budget)
+        recent = self._anchored_history_window(group_id, recent, history_token_budget)
         pending_entries: list[Any] = []
 
         if recent and not include_pending:
@@ -443,6 +450,42 @@ class ContextAssembler:
             used += cost
             kept.append(entry)
         kept.reverse()
+        return kept
+
+    def _anchored_history_window(self, group_id: str, entries: list[Any], budget: int) -> list[Any]:
+        """按块推进的历史窗口：起点锚定在某条消息上，超出预算才整块前移。
+
+        锚点消息被 checkpoint 移出窗口（或进程重启丢了锚点）时重新定锚，
+        只有那一轮会错过缓存。
+        """
+        key = (group_id, budget)
+        if budget <= 0 or not entries:
+            self._history_anchors.pop(key, None)
+            return entries
+
+        anchor = self._history_anchors.get(key)
+        if anchor:
+            for index, entry in enumerate(entries):
+                if getattr(entry, "entry_id", "") == anchor:
+                    window = entries[index:]
+                    if sum(self._entry_rendered_cost(item) for item in window) <= budget:
+                        return window
+                    break
+            else:
+                anchor = None
+
+        if not anchor and sum(self._entry_rendered_cost(item) for item in entries) <= budget:
+            self._history_anchors.pop(key, None)
+            return entries
+
+        kept = self._trim_history_to_token_budget(
+            entries, max(1, int(budget * _HISTORY_TRIM_LOW_WATERMARK))
+        )
+        first_id = getattr(kept[0], "entry_id", "") if kept else ""
+        if first_id:
+            self._history_anchors[key] = first_id
+        else:
+            self._history_anchors.pop(key, None)
         return kept
 
     def build_persona_notebook_context(self, group_id: str, budget: int | None = None) -> str:

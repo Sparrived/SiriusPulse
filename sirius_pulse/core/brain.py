@@ -122,6 +122,12 @@ class ChatRequest:
     """由可信调用方隐藏当前回合不可用的工具。"""
     defer_notebook_tool_text: bool = False
     """纯小本工具轮正文尚未发出，不运行面向对外回复的后处理。"""
+    inject_current_time: bool = True
+    """False 表示调用方已用 ``Brain.pin_current_time`` 把时间钉进消息链。
+
+    多轮工具循环必须这样做：每轮重新写入精确到秒的时间会改掉那条 user 消息，
+    它之后累积的工具调用与结果全部吃不到前缀缓存。
+    """
 
     # ── 对话深度 ──
     last_reply_at: float = 0.0
@@ -369,11 +375,26 @@ class Brain:
         item = copied[last_user_idx]
         content = item.get("content", "")
         if isinstance(content, list):
-            item["content"] = [{"type": "text", "text": context}, *content]
+            first = content[0] if content else None
+            if isinstance(first, dict) and first.get("type") == "text":
+                # 并进开头的文字段，不改变多模态消息「文字 + 图片」的形状。
+                merged = {**first, "text": f"{context}\n\n{first.get('text', '')}"}
+                item["content"] = [merged, *content[1:]]
+            else:
+                item["content"] = [{"type": "text", "text": context}, *content]
         else:
             text = "" if content is None else str(content)
             item["content"] = f"{context}\n\n{text}" if text else context
         return copied
+
+    @classmethod
+    def pin_current_time(cls, messages: list[dict[str, Any]]) -> None:
+        """把当前时间原地写进最近一条 user 消息，供整个回合复用。
+
+        配合 ``ChatRequest(inject_current_time=False)``：一个回合只取一次时间，
+        之后追加的消息不再带时间，前面的消息链逐字不变。
+        """
+        messages[:] = cls._inject_user_context_message(messages, cls._build_current_time_context())
 
     # ═══════════════════════════════════════════════════════════════════
     # Hook 注册 API
@@ -502,10 +523,7 @@ class Brain:
             base_system_prompt = system_prompt
 
             # ── 默认 pre: 当前时间注入到 user/assistant 消息链 ──
-            messages_with_time = self._inject_user_context_message(
-                request.messages,
-                self._build_current_time_context(),
-            )
+            messages_with_time = self._messages_with_current_time(request)
 
             # ── 默认 pre: 模型路由 ──
             heat_level = "warm"
@@ -592,10 +610,7 @@ class Brain:
                         if entry.task_filter is not None and task_name not in entry.task_filter:
                             continue
                         entry.hook(self, request, ctx)
-                fresh_messages = self._inject_user_context_message(
-                    request.messages,
-                    self._build_current_time_context(),
-                )
+                fresh_messages = self._messages_with_current_time(request)
                 return GenerationRequest(
                     model=cfg.model_name,
                     system_prompt=base_system_prompt.strip(),
@@ -787,6 +802,14 @@ class Brain:
     # ═══════════════════════════════════════════════════════════════════
     # 内部方法
     # ═══════════════════════════════════════════════════════════════════
+
+    def _messages_with_current_time(self, request: ChatRequest) -> list[dict[str, Any]]:
+        if not request.inject_current_time:
+            return [dict(message) for message in request.messages]
+        return self._inject_user_context_message(
+            request.messages,
+            self._build_current_time_context(),
+        )
 
     def _main_reply_cooldown_seconds(self) -> float:
         """Return the configured cooldown between main reply model calls."""

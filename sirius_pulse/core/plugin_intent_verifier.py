@@ -143,17 +143,18 @@ class PluginIntentVerifier:
         Returns:
             PluginIntentResult 包含判断结果和提取的参数。
         """
-        plugin_desc = self._build_plugin_description(candidate_plugins)
+        if candidate_plugins is not None:
+            candidate_desc = self._build_plugin_description(candidate_plugins)
+            if not candidate_desc or candidate_desc == "（无可用插件）":
+                return PluginIntentResult(is_plugin=False, reason="无可用插件")
+        # system prompt 始终描述全部插件、逐字不变，才能吃到上游的前缀缓存；
+        # 每条消息都不同的候选范围和上下文放进 user 消息。
+        plugin_desc = self._build_plugin_description(None)
         if not plugin_desc or plugin_desc == "（无可用插件）":
             return PluginIntentResult(is_plugin=False, reason="无可用插件")
 
         # 获取模型配置（使用 cognition_analyze 任务，通常配置较快的模型）
         cfg = self._model_router.resolve("cognition_analyze")
-
-        # 构建上下文部分（复用 ContextAssembler 的 XML 格式）
-        context_section = ""
-        if context_xml:
-            context_section = f"\n## 最近对话上下文\n{context_xml}\n"
 
         # 构建身份信息
         aliases_str = "、".join(persona_aliases) if persona_aliases else "无"
@@ -184,19 +185,29 @@ class PluginIntentVerifier:
             "\n"
             "## 可用插件\n"
             f"{plugin_desc}\n"
-            f"{context_section}\n"
+            "\n"
             "## 输出格式\n"
+            "用户消息里会给出最近对话上下文、本次候选插件和待判断的消息；"
+            "plugin_name 只能从本次候选插件中选择。\n"
             "严格返回 JSON，不要添加其他文本：\n"
             '{"is_plugin": true/false, "plugin_name": "插件名或空字符串", '
             '"confidence": 0.0-1.0, "slots": {"参数名": "值"}, "reason": "一句话说明判断依据"}'
         )
+
+        # 上下文复用 ContextAssembler 的 XML 格式
+        user_parts: list[str] = []
+        if context_xml:
+            user_parts.append(f"## 最近对话上下文\n{context_xml}")
+        if candidate_plugins is not None:
+            user_parts.append(f"## 本次候选插件\n{'、'.join(candidate_plugins)}")
+        user_parts.append(f"## 待判断的消息\n{message}")
 
         from sirius_pulse.core.brain import RawRequest
 
         request = RawRequest(
             model=cfg.model_name,
             system_prompt=system_prompt,
-            messages=[{"role": "user", "content": message}],
+            messages=[{"role": "user", "content": "\n\n".join(user_parts)}],
             timeout_seconds=10.0,  # 短超时
             purpose="plugin_intent_verify",
             response_format={"type": "json_object"},
@@ -204,13 +215,24 @@ class PluginIntentVerifier:
 
         try:
             raw = await self._brain.raw_call(request)
-            return self._parse_result(raw)
+            result = self._parse_result(raw)
         except Exception as exc:
             logger.warning("插件意图验证失败: %s", exc)
             return PluginIntentResult(
                 is_plugin=False,
                 reason=f"LLM 调用失败: {exc}",
             )
+        if (
+            result.is_plugin
+            and candidate_plugins is not None
+            and result.plugin_name not in candidate_plugins
+        ):
+            # 模型看得到全部插件，越过候选范围选中的不算数。
+            return PluginIntentResult(
+                is_plugin=False,
+                reason=f"插件 {result.plugin_name} 不在本次候选范围内",
+            )
+        return result
 
     def _parse_result(self, raw: str) -> PluginIntentResult:
         """解析 LLM 输出。"""

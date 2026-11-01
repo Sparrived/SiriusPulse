@@ -262,8 +262,8 @@ async def test_a_turn_that_burns_every_tool_round_still_leaves_written_words(tmp
     """轮次用完时必须再要一轮正文，否则她读了一堆东西却一个字都没留下。
 
     这正是自主行为"调用了但没产出"的原因：模型把全部轮次花在侦察上，最后一轮
-    仍是工具调用，循环带回来的正文是空的，整次工作就此消失。收尾轮不带工具，
-    所以正文不会再被一次工具调用顶掉。
+    仍是工具调用，循环带回来的正文是空的，整次工作就此消失。收尾轮用
+    ``tool_choice="none"`` 禁止调用，所以正文不会再被一次工具调用顶掉。
     """
     brain = _Brain([_tool_round(), _tool_round(), _final_round("读完了两回，接着往下写。")])
     context = _context(tmp_path, brain)
@@ -271,8 +271,10 @@ async def test_a_turn_that_burns_every_tool_round_still_leaves_written_words(tmp
     result = await context.run_autonomous_turn(kind="reading", seed="读一下连载写到哪了", group_id="group-1")
 
     assert result["text"] == "读完了两回，接着往下写。"
-    # 前两轮带工具，收尾轮必须把工具摘掉。
-    assert [request.enable_tools for request in brain.requests] == [True, True, False]
+    # 收尾轮禁止调用工具，但工具清单与前两轮一致，才接得上前两轮的前缀缓存。
+    assert [request.tool_choice for request in brain.requests] == [None, None, "none"]
+    assert all(request.enable_tools for request in brain.requests)
+    assert len({repr((r.extra_tools, r.exclude_tool_names)) for r in brain.requests}) == 1
     session = _sessions(tmp_path)[0]
     assert session["result"] == "读完了两回，接着往下写。"
     # 撞到上限仍是"未完成"：收尾只是把已有结果写下来，不代表事情做完了。
@@ -298,7 +300,7 @@ async def test_the_wrap_up_keeps_the_earlier_text_when_it_fails(tmp_path):
 
     class _BrainThatFailsOnWrapUp(_Brain):
         async def chat(self, request):
-            if not request.enable_tools:
+            if request.tool_choice == "none":
                 raise RuntimeError("provider down")
             return await super().chat(request)
 

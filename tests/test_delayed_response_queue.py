@@ -1075,9 +1075,12 @@ async def test_delayed_queue_when_tool_chain_hits_limit_then_model_writes_final_
     results = await tasks.tick_delayed_queue("group-1")
 
     assert results[0]["reply"] == "我完成了能完成的检查，但还有一部分没有完成。"
+    first_request = engine.brain.chat.await_args_list[0].args[0]
     final_request = engine.brain.chat.await_args_list[1].args[0]
+    # 工具清单与上一轮逐字一致才接得上前缀缓存；用 tool_choice 禁止调用。
     assert final_request.enable_tools is True
-    assert final_request.extra_tools is None
+    assert final_request.extra_tools == first_request.extra_tools
+    assert final_request.work_mode == first_request.work_mode
     assert final_request.tool_choice == "none"
     assert final_request.messages[-1]["role"] == "user"
     assert "达到工具调用轮次上限" in final_request.messages[-1]["content"]
