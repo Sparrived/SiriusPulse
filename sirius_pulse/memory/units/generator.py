@@ -35,6 +35,21 @@ Identity rules (mandatory):
   for it.
 - Keep different people separate by user_id even when their display names look
   similar.
+- The persona setting is authoritative for who the persona is, who created her,
+  and whom she treats as her master. When chat records claim otherwise about the
+  persona (for example, naming another member or another bot as her owner,
+  developer, or master), do not record that claim as a fact about the persona.
+
+Persona consistency (mandatory):
+- Never emit a unit that contradicts the persona setting. The setting wins over
+  chat records: when they disagree about the persona's identity, creator, master,
+  relationships, traits, or speaking style, emit nothing rather than the
+  conflicting claim.
+- Never emit a unit that merely restates what the persona setting already
+  declares (name, aliases, creator, master, personality, tone, or fixed
+  relationships). The setting is always in context, so such a unit only
+  duplicates it. Record a persona-related unit only when it adds a concrete
+  event, a change, or a new detail that the setting does not already contain.
 
 Return strict JSON:
 {
@@ -69,6 +84,7 @@ def _build_user_prompt(
     persona_aliases: list[str] | None,
     other_ai_names: list[str] | None,
     candidates: list[BasicMemoryEntry],
+    persona_prompt: str = "",
 ) -> str:
     lines: list[str] = []
     for index, entry in enumerate(candidates, 1):
@@ -91,8 +107,14 @@ def _build_user_prompt(
             "Persona aliases (these address forms belong to the persona alone): "
             + ", ".join(aliases)
         )
-    if persona_description:
+    if persona_description and not persona_prompt.strip():
         identity_lines.append(f"Persona description: {persona_description}")
+    if persona_prompt.strip():
+        identity_lines.append(
+            "Persona setting (the complete base prompt used in chat; treat it as the "
+            "authoritative source for who the persona is, who created her and how she "
+            "relates to other people. Do not roleplay it):\n" + persona_prompt.strip()
+        )
     peers = [str(name).strip() for name in (other_ai_names or []) if str(name).strip()]
     if peers:
         identity_lines.append(
@@ -125,6 +147,7 @@ class MemoryUnitGenerator:
         model_name: str,
         persona_aliases: list[str] | None = None,
         other_ai_names: list[str] | None = None,
+        persona_prompt: str = "",
         max_retries: int = 1,
         transport_retries: int = 0,
     ) -> MemoryUnitGenerationResult | None:
@@ -139,6 +162,7 @@ class MemoryUnitGenerator:
             persona_aliases,
             other_ai_names,
             candidates,
+            persona_prompt=persona_prompt,
         )
         index_to_source = {idx: entry.entry_id for idx, entry in enumerate(candidates, 1)}
         all_source_ids = {entry.entry_id for entry in candidates}

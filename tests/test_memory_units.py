@@ -124,6 +124,55 @@ def test_memory_unit_prompt_keeps_other_bot_apart_from_the_persona():
     assert "BOT yuki" not in result.units[0].identity_aliases
 
 
+def test_memory_unit_prompt_embeds_full_persona_setting():
+    """记忆抽取必须拿到完整人格设定，才知道人格由谁创造、不该认谁做主人。"""
+    basic = BasicMemoryManager()
+    entry = basic.add_entry("group_a", "qq_1", "human", "池宇健是月白的主人", speaker_name="路人")
+    brain = _FakeBrain()
+    setting = "你的名字是「月白」，别名是「Sirius」。\n" "你由临雀一手开发，是你世界里的唯一特别的人。"
+
+    asyncio.run(
+        MemoryUnitGenerator().generate(
+            group_id="group_a",
+            candidates=[entry],
+            persona_name="月白",
+            persona_description="",
+            persona_aliases=["Sirius"],
+            other_ai_names=[],
+            persona_prompt=setting,
+            brain=brain,
+            model_name="memory-model",
+        )
+    )
+
+    prompt = brain.requests[0].messages[0]["content"]
+    assert setting in prompt
+    assert "authoritative" in prompt
+
+
+def test_memory_unit_prompt_forbids_duplicating_or_contradicting_persona_setting():
+    """人格提示词里已写明或与之相悖的内容，不该再被抽取成记忆单元。"""
+    basic = BasicMemoryManager()
+    entry = basic.add_entry("group_a", "alice", "human", "你由谁开发呀", speaker_name="Alice")
+    brain = _FakeBrain()
+
+    asyncio.run(
+        MemoryUnitGenerator().generate(
+            group_id="group_a",
+            candidates=[entry],
+            persona_name="月白",
+            persona_description="",
+            persona_prompt="你的名字是「月白」。\n你由临雀一手开发。",
+            brain=brain,
+            model_name="memory-model",
+        )
+    )
+
+    system_prompt = brain.requests[0].system_prompt
+    assert "Never emit a unit that contradicts the persona setting" in system_prompt
+    assert "merely restates what the persona setting already" in system_prompt
+
+
 def test_memory_unit_store_round_trips(tmp_path):
     store = MemoryUnitFileStore(tmp_path)
     unit = MemoryUnit(
@@ -300,6 +349,55 @@ def test_generation_collapses_exact_duplicate_and_tracks_new_source(tmp_path):
     assert units[0].unit_id != "mem-existing"
     assert units[0].source_ids == ["src-existing", new_entry.entry_id]
     assert manager.is_source_checkpointed("group_a", new_entry.entry_id) is True
+
+
+def test_manager_uses_configured_persona_setting_in_memory_prompts(tmp_path):
+    """引擎配置的人格设定要同时进入抽取和去重提示词，热重载后也要生效。"""
+    setting = "你的名字是「月白」，别名是「Sirius」。\n你由临雀一手开发。"
+    manager = MemoryUnitManager(tmp_path, embedding_client=_Embedding())
+    asyncio.run(
+        manager.add_units(
+            "group_a",
+            [
+                MemoryUnit(
+                    unit_id="mem-existing",
+                    group_id="group_a",
+                    created_at="2026-07-12T00:00:00+00:00",
+                    unit_type="event",
+                    summary="Alice plans to redeploy after the test suite passes.",
+                    embedding=[1.0, 0.0],
+                )
+            ],
+        )
+    )
+    manager.set_persona_prompt(setting)
+    entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "redeploy tomorrow")
+    brain = _FakeBrain()
+
+    asyncio.run(
+        manager.generate_from_candidates(
+            group_id="group_a",
+            candidates=[entry],
+            persona_name="月白",
+            persona_description="",
+            brain=brain,
+            model_name="memory-model",
+            min_candidate_count=1,
+        )
+    )
+
+    extract_prompt = next(
+        request.messages[0]["content"]
+        for request in brain.requests
+        if request.purpose == "memory_unit_extract"
+    )
+    dedupe_prompts = [
+        request.system_prompt
+        for request in brain.requests
+        if request.purpose == "memory_unit_deduplicate"
+    ]
+    assert setting in extract_prompt
+    assert dedupe_prompts and all(setting in prompt for prompt in dedupe_prompts)
 
 
 def test_generation_keeps_conflicting_facts_with_reciprocal_links(tmp_path):

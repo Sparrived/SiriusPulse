@@ -61,6 +61,22 @@ class DedupVerdict:
 class MemoryUnitDeduplicator:
     """Uses deterministic shortcuts and strict model validation for deduplication."""
 
+    def __init__(self, persona_context: str = "") -> None:
+        self._persona_context = persona_context.strip()
+
+    def set_persona_context(self, persona_context: str) -> None:
+        """更新人格设定（persona.json 热重载后调用）。"""
+        self._persona_context = persona_context.strip()
+
+    def _system_prompt(self) -> str:
+        """把人格设定附在去重规则后面，作为判断实体身份的基准。"""
+        if not self._persona_context:
+            return _DEDUP_SYSTEM_PROMPT
+        return (
+            _DEDUP_SYSTEM_PROMPT + "\n\n人格设定（事实基准，只用于判断实体身份，不要扮演；"
+            "与设定冲突的身份、主人或开发者归属不得并成肯定事实）：\n" + self._persona_context
+        )
+
     async def adjudicate(
         self,
         incoming: MemoryUnit,
@@ -77,7 +93,7 @@ class MemoryUnitDeduplicator:
         }
         request = RawRequest(
             model=model_name,
-            system_prompt=_DEDUP_SYSTEM_PROMPT,
+            system_prompt=self._system_prompt(),
             messages=[
                 {
                     "role": "user",

@@ -32,13 +32,15 @@ class MemoryUnitManager:
         work_path: Any,
         *,
         embedding_client: EmbeddingClient | None = None,
+        persona_prompt: str = "",
     ) -> None:
         self._store = MemoryUnitFileStore(work_path)
         self._embedding_client = embedding_client
         self._indexer = MemoryUnitIndexer(embedding_client=embedding_client)
         self._retriever = MemoryUnitRetriever(self._indexer)
+        self._persona_prompt = persona_prompt.strip()
         self._generator = MemoryUnitGenerator()
-        self._deduplicator = MemoryUnitDeduplicator()
+        self._deduplicator = MemoryUnitDeduplicator(persona_context=self._persona_prompt)
         self._maintenance = MemoryUnitDedupeMaintenance(
             self, self._store, embedding_client, self._deduplicator
         )
@@ -46,6 +48,11 @@ class MemoryUnitManager:
         self._checkpointed_sources: dict[str, set[str]] = {}
         self._loaded_groups: set[str] = set()
         self._generation_backoff: dict[str, tuple[tuple[str, ...], float]] = {}
+
+    def set_persona_prompt(self, persona_prompt: str) -> None:
+        """更新记忆任务使用的人格设定（persona.json 热重载后调用）。"""
+        self._persona_prompt = persona_prompt.strip()
+        self._deduplicator.set_persona_context(self._persona_prompt)
 
     async def generate_from_candidates(
         self,
@@ -58,6 +65,7 @@ class MemoryUnitManager:
         model_name: str,
         persona_aliases: list[str] | None = None,
         other_ai_names: list[str] | None = None,
+        persona_prompt: str | None = None,
         min_candidate_count: int = 8,
         max_candidate_count: int = 32,
         max_retries: int = 1,
@@ -90,6 +98,7 @@ class MemoryUnitManager:
             persona_description=persona_description,
             persona_aliases=persona_aliases,
             other_ai_names=other_ai_names,
+            persona_prompt=(persona_prompt if persona_prompt is not None else self._persona_prompt),
             brain=brain,
             model_name=model_name,
             max_retries=max(0, int(max_retries)),

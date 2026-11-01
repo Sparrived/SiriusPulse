@@ -32,7 +32,7 @@ from sirius_pulse.core.identity_resolver import IdentityResolver
 from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY, ModelRouter
 from sirius_pulse.core.participation import get_group_reply_strategy
 from sirius_pulse.core.pipeline import Pipeline
-from sirius_pulse.core.prompt_factory import StyleAdapter
+from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
 from sirius_pulse.core.rhythm import RhythmAnalyzer
 
 # New v2 memory system (refactor)
@@ -217,6 +217,11 @@ class _EmotionalGroupChatEngineBase:
         self.memory_unit_manager = MemoryUnitManager(
             self.work_path,
             embedding_client=self._embedding_client,
+            persona_prompt=PromptFactory.build_persona_setting(
+                name=self.persona.name,
+                aliases=list(getattr(self.persona, "aliases", []) or []),
+                full_system_prompt=getattr(self.persona, "full_system_prompt", ""),
+            ),
         )
         self.user_manager = UnifiedUserManager(
             self.work_path,

@@ -247,6 +247,24 @@ async def test_adjudicator_accepts_only_valid_candidate_target():
 
 
 @pytest.mark.asyncio
+async def test_adjudicator_gets_full_persona_setting_as_identity_baseline():
+    """去重也要带上完整人格设定，避免把别人的主人并到人格身上。"""
+    brain = _Brain({"decision": "NEW"})
+    setting = "你的名字是「月白」，别名是「Sirius」。\n你由临雀一手开发，是你世界里的唯一特别的人。"
+
+    await MemoryUnitDeduplicator(persona_context=setting).adjudicate(
+        _unit("mem-new", "池宇健是月白的主人。"),
+        [_unit("mem-old", "临雀是月白的主人。")],
+        brain=brain,
+        model_name="memory-model",
+    )
+
+    system_prompt = brain.requests[0].system_prompt
+    assert setting in system_prompt
+    assert "人格设定" in system_prompt
+
+
+@pytest.mark.asyncio
 async def test_adjudicator_omits_large_provenance_fields_from_model_payload():
     brain = _Brain({"decision": "NEW"})
     old = _unit(

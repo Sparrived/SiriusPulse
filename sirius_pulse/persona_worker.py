@@ -375,6 +375,16 @@ class PersonaWorker:
             engine.cognition_analyzer.ai_name = persona.name
             engine.cognition_analyzer.ai_aliases = persona.aliases
             engine.cognition_analyzer.persona = persona
+        if hasattr(engine, "memory_unit_manager"):
+            from sirius_pulse.core.prompt_factory import PromptFactory
+
+            engine.memory_unit_manager.set_persona_prompt(
+                PromptFactory.build_persona_setting(
+                    name=persona.name,
+                    aliases=list(getattr(persona, "aliases", []) or []),
+                    full_system_prompt=getattr(persona, "full_system_prompt", ""),
+                )
+            )
 
         LOG.info("Persona 配置已热重载: %s", persona.name)
 
