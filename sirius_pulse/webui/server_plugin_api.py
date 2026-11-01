@@ -23,6 +23,13 @@ from aiohttp import web
 from sirius_pulse.plugins.config import get_config_manager
 from sirius_pulse.plugins.loader import PluginLoader
 from sirius_pulse.plugins.models import PluginDefinition, normalize_plugin_ui_schema
+from sirius_pulse.webui.secret_settings import (
+    MASKED_SECRET_VALUES,
+    SECRET_MASK,
+    SECRET_PARAMETER_TYPES,
+    is_masked_secret_value,
+    is_secret_setting_name,
+)
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
@@ -30,8 +37,6 @@ LOG = logging.getLogger("sirius.webui")
 # ── 模块级缓存，避免每次 API 请求都重新扫描磁盘和执行 importlib ──
 _plugin_definitions_cache: dict[str, tuple[float, list[PluginDefinition]]] = {}
 _CACHE_TTL = 60.0  # 秒
-_SECRET_MASK = "********"
-_MASKED_SECRET_VALUES = {"", _SECRET_MASK, "[已隐藏]", "••••••••"}
 _MISSING = object()
 _UNSAFE_OBJECT_FIELD_NAMES = {"__proto__", "prototype", "constructor"}
 _SECRET_TREE_MAX_DEPTH = 16
@@ -42,28 +47,6 @@ class MaskedSecretUpdateError(ValueError):
     """Raised when a nested secret cannot be preserved without guessing."""
 
 
-_SECRET_SUFFIXES = (
-    "_token",
-    "_tokens",
-    "_key",
-    "_keys",
-    "_secret",
-    "_secrets",
-    "_password",
-    "_passwords",
-    "_credential",
-    "_credentials",
-    "_auth",
-    "_session",
-)
-
-
-def _normalize_setting_key(key: Any) -> str:
-    text = str(key)
-    text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", text)
-    return re.sub(r"[^a-z0-9]+", "_", text.casefold()).strip("_")
-
-
 def _is_secret_setting_key(
     key: Any,
     definition: PluginDefinition | None = None,
@@ -71,40 +54,13 @@ def _is_secret_setting_key(
     name = str(key)
     if definition is not None:
         for parameter in definition.parameters:
-            if parameter.name == name and parameter.type.casefold() in {"password", "secret"}:
+            if parameter.name == name and parameter.type.casefold() in SECRET_PARAMETER_TYPES:
                 return True
-    normalized = _normalize_setting_key(name)
-    return normalized in {
-        "password",
-        "passwords",
-        "secret",
-        "secrets",
-        "token",
-        "tokens",
-        "key",
-        "keys",
-        "api_key",
-        "api_keys",
-        "access_token",
-        "refresh_token",
-        "authorization",
-        "auth",
-        "authentication",
-        "bearer",
-        "client_secret",
-        "credential",
-        "credentials",
-        "session",
-        "session_id",
-    } or normalized.endswith(_SECRET_SUFFIXES)
-
-
-def _is_masked_secret_value(value: Any) -> bool:
-    return isinstance(value, str) and value.strip() in _MASKED_SECRET_VALUES
+    return is_secret_setting_name(name)
 
 
 def _is_explicit_secret_mask(value: Any) -> bool:
-    return isinstance(value, str) and value.strip() in _MASKED_SECRET_VALUES and bool(value.strip())
+    return isinstance(value, str) and value.strip() in MASKED_SECRET_VALUES and bool(value.strip())
 
 
 def _url_contains_plaintext_secret(value: Any) -> bool:
@@ -171,7 +127,7 @@ def _contains_plaintext_secret(
         # 环境变量或受支持的 Secret 管理器提供。
         if _parameter_value(parameter, "persist_secret", False):
             return False
-        return bool(value) and not _is_masked_secret_value(value)
+        return bool(value) and not is_masked_secret_value(value)
     if _url_contains_plaintext_secret(value):
         return True
     seen = _seen if _seen is not None else set()
@@ -633,19 +589,19 @@ def _mask_secret_value(
 ) -> Any:
     """Mask a settings tree defensively, including malformed in-memory trees."""
     if _depth > _SECRET_TREE_MAX_DEPTH:
-        return _SECRET_MASK
+        return SECRET_MASK
     nodes = _nodes if _nodes is not None else [0]
     nodes[0] += 1
     if nodes[0] > _SECRET_TREE_MAX_NODES:
-        return _SECRET_MASK
+        return SECRET_MASK
     parameter = parameter or _parameter_for(definition, key)
     if _is_secret_parameter(key, definition, parameter) or _url_contains_plaintext_secret(value):
-        return _SECRET_MASK
+        return SECRET_MASK
     seen = _seen if _seen is not None else set()
     if isinstance(value, (dict, list)):
         value_id = id(value)
         if value_id in seen:
-            return _SECRET_MASK
+            return SECRET_MASK
         seen.add(value_id)
     if isinstance(value, dict):
         field_parameters = {
@@ -767,7 +723,7 @@ def _settings_update_without_masked_secrets(
         preserve_masked = _is_secret_parameter(key, definition, parameter) or (
             old_value is not _MISSING and _url_contains_plaintext_secret(old_value)
         )
-        if preserve_masked and _is_masked_secret_value(value):
+        if preserve_masked and is_masked_secret_value(value):
             return old_value if old_value is not _MISSING else _MISSING
         if isinstance(value, dict):
             old_mapping = old_value if isinstance(old_value, dict) else {}
@@ -929,7 +885,7 @@ def _masked_parameter(parameter: Any, *, nested: bool = False) -> dict[str, Any]
         parameter,
     )
     if is_secret and not nested:
-        result["default"] = _SECRET_MASK
+        result["default"] = SECRET_MASK
     elif parameter_default is not _MISSING:
         result["default"] = parameter_default
 

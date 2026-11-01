@@ -12,9 +12,10 @@ from sirius_pulse.config.file_io import atomic_json_save
 from sirius_pulse.persona_config import PersonaConfigPaths
 from sirius_pulse.tools.mcp_client import load_mcp_config
 from sirius_pulse.webui.persona_api import _request_config_reload
+from sirius_pulse.webui.secret_settings import SECRET_MASK
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
-MCP_SECRET_MASK = "********"
+MCP_SECRET_MASK = SECRET_MASK
 _MCP_TRANSPORTS = {"stdio", "streamable_http", "sse"}
 _SERVER_NAME_RE = re.compile(r"^[^/\\\x00\r\n]{1,80}$")
 
