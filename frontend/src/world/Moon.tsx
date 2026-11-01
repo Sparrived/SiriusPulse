@@ -41,6 +41,7 @@ const MOON_SPOT: Record<SceneMode, [number, number]> = {
   home: [-0.6, 5.3],
   room: [-4.6, 4.4],
   sky: [-12.5, 13],
+  jar: [-11, 6.4],
 };
 
 export function Moon() {

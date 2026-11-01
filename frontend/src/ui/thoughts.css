@@ -12,7 +12,8 @@
   max-width: min(320px, 40vw);
 }
 
-.thoughts--room {
+.thoughts--room,
+.thoughts--jar {
   transform: translate(0, -100%) scale(0.88);
   transform-origin: left bottom;
 }

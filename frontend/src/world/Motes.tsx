@@ -99,8 +99,11 @@ export function Hearts() {
     () =>
       useScene.subscribe((s, prev) => {
         if (s.pats === prev.pats || !group.current) return;
+        // 她在角落时（普通房间、记忆瓶旁）爱心从角落冒出来
         const origin =
-          s.mode === 'room' ? new THREE.Vector3(-5.2, 0.2, 0) : new THREE.Vector3(-1.75, 2.1, 0.3);
+          s.mode === 'room' || s.mode === 'jar'
+            ? new THREE.Vector3(-5.4, 0.1, 0)
+            : new THREE.Vector3(-1.75, 2.1, 0.3);
         for (let i = 0; i < 5; i++) {
           const material = new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false });
           const sprite = new THREE.Sprite(material);

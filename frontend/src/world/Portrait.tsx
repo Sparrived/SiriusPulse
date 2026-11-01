@@ -16,6 +16,7 @@ const POSES: Record<SceneMode, { pos: [number, number, number]; scale: number; b
   home: { pos: [-1.75, -0.4, 0], scale: 0.94, bright: 1 },
   room: { pos: [-5.2, -1.95, -0.6], scale: 0.62, bright: 0.95 },
   sky: { pos: [-3.6, -6.5, 0], scale: 0.8, bright: 0.8 },
+  jar: { pos: [-5.6, -2.35, -0.6], scale: 0.55, bright: 0.95 },
 };
 
 const vertex = /* glsl */ `

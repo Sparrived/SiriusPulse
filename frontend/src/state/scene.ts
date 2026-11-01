@@ -1,7 +1,20 @@
 import { create } from 'zustand';
 
-/** 世界的「镜头位置」：首页她站在中间，其它房间她退到角落陪着你，星图镜头抬向夜空。 */
-export type SceneMode = 'door' | 'home' | 'room' | 'sky';
+/**
+ * 世界的「镜头位置」：首页她站在中间，其它房间她退到角落陪着你，星图镜头抬向夜空，
+ * 回忆里镜头对着一只装满萤火的玻璃瓶。
+ */
+export type SceneMode = 'door' | 'home' | 'room' | 'sky' | 'jar';
+
+/** 记忆瓶里的一只萤火：一条记忆单元 */
+export interface Firefly {
+  id: string;
+  type: string;
+  salience: number;
+  confidence: number;
+  /** 不符合当前筛选时变暗 */
+  dim: boolean;
+}
 
 /** 星图里的一颗星：一位伙伴 */
 export interface StarInfo {
@@ -22,6 +35,14 @@ interface SceneState {
   pats: number;
   stars: StarInfo[];
   focusStar: string | null;
+  fireflies: Firefly[];
+  /** 选中/悬停的记忆 */
+  focusMemory: string | null;
+  hoverMemory: string | null;
+  /** 悬停来自瓶子里的萤火（才显示跟着鼠标的小纸条），而不是右边的列表 */
+  hoverFromJar: boolean;
+  /** 正在整理回忆：瓶子会轻轻发亮 */
+  jarBusy: boolean;
   set: (patch: Partial<Omit<SceneState, 'set' | 'pat'>>) => void;
   pat: () => void;
 }
@@ -35,6 +56,11 @@ export const useScene = create<SceneState>((set) => ({
   pats: 0,
   stars: [],
   focusStar: null,
+  fireflies: [],
+  focusMemory: null,
+  hoverMemory: null,
+  hoverFromJar: false,
+  jarBusy: false,
   set: (patch) => set(patch),
   pat: () => set((s) => ({ pats: s.pats + 1 })),
 }));

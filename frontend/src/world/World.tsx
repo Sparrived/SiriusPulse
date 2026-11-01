@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { usePrefs } from '@/state/prefs';
 import { useScene, type SceneMode } from '@/state/scene';
 import { Constellation } from './Constellation';
+import { MemoryJar } from './MemoryJar';
 import { Mist } from './Mist';
 import { Moon } from './Moon';
 import { Hearts, Motes } from './Motes';
@@ -17,6 +18,7 @@ const CAMERA: Record<SceneMode, { pos: [number, number, number]; look: [number, 
   home: { pos: [0, 0.15, 8], look: [0, 0.35, 0] },
   room: { pos: [0.4, 0.4, 8.6], look: [0.2, 0.6, 0] },
   sky: { pos: [0, 1.5, 7], look: [0, 6, -10] },
+  jar: { pos: [0.4, 0.5, 8.6], look: [0.2, 0.5, 0] },
 };
 
 /** 镜头在各个房间之间平滑移动；鼠标带来一点点景深视差。 */
@@ -58,6 +60,7 @@ export function World() {
       <Stars count={lowPower ? 500 : 1400} />
       <Moon />
       <Constellation />
+      <MemoryJar />
       <Mist />
       <Portrait />
       <Motes count={lowPower ? 24 : 70} />
