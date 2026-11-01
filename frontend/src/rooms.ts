@@ -22,20 +22,28 @@ export interface Room {
   /** 搬进新家之前，先指向旧版控制台里对应的页面 */
   legacy?: { page: string; label: string }[];
   ready?: boolean;
+  /** 3D 世界的镜头：home 她站在左边、room 她退到角落、sky 抬头看星星 */
+  scene?: 'home' | 'room' | 'sky';
 }
 
 export const ROOMS: Room[] = [
-  { id: 'home', path: '/', name: '客厅', hint: '她在这里 · 此刻的心情和动静', Icon: HomeIcon, ready: true },
+  {
+    id: 'home',
+    path: '/',
+    name: '客厅',
+    hint: '她在这里 · 此刻的心情和动静',
+    Icon: HomeIcon,
+    ready: true,
+    scene: 'home',
+  },
   {
     id: 'stars',
     path: '/stars',
     name: '星图',
     hint: '伙伴们 · 迎接新伙伴',
     Icon: StarsIcon,
-    legacy: [
-      { page: 'create-persona', label: '新建人格' },
-      { page: 'dashboard', label: '人格总览' },
-    ],
+    ready: true,
+    scene: 'sky',
   },
   {
     id: 'mirror',
@@ -43,10 +51,8 @@ export const ROOMS: Room[] = [
     name: '镜子',
     hint: '她的样子 · 人设与性格调音',
     Icon: MirrorIcon,
-    legacy: [
-      { page: 'persona', label: '人格配置' },
-      { page: 'experience', label: '体验参数' },
-    ],
+    ready: true,
+    scene: 'home',
   },
   {
     id: 'diary',
@@ -94,11 +100,7 @@ export const ROOMS: Room[] = [
     name: '信箱',
     hint: '联络方式 · QQ、账户、群聊排班',
     Icon: MailIcon,
-    legacy: [
-      { page: 'adapters', label: 'Adapter' },
-      { page: 'accounts', label: '人格账户' },
-      { page: 'dispatcher', label: '群聊调度' },
-    ],
+    ready: true,
   },
   {
     id: 'ledger',

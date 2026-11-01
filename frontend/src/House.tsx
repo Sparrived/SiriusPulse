@@ -1,5 +1,5 @@
 import { AnimatePresence } from 'motion/react';
-import { useEffect } from 'react';
+import { useEffect, type ComponentType } from 'react';
 import { useLocation } from 'wouter';
 import {
   RESOURCE_QUERIES,
@@ -13,6 +13,9 @@ import { eventToThought } from '@/lib/thoughts';
 import { onEngineEvent, startEvents } from '@/lib/ws';
 import { roomByPath } from '@/rooms';
 import { Home } from '@/rooms/Home';
+import { Mailbox } from '@/rooms/mailbox/Mailbox';
+import { Mirror } from '@/rooms/mirror/Mirror';
+import { Stars } from '@/rooms/stars/Stars';
 import { Unfurnished } from '@/rooms/Unfurnished';
 import { useLive } from '@/state/live';
 import { usePersonaStore } from '@/state/persona';
@@ -71,7 +74,7 @@ function useSceneSync(path: string) {
   const set = useScene((s) => s.set);
 
   useEffect(() => {
-    set({ mode: path === '/' ? 'home' : path === '/stars' ? 'sky' : 'room' });
+    set({ mode: roomByPath(path)?.scene ?? 'room' });
   }, [path, set]);
 
   useEffect(() => {
@@ -90,6 +93,14 @@ function useSceneSync(path: string) {
   useEffect(() => useLive.getState().clear(), [persona?.name]);
 }
 
+/** 已经搬进新家的房间 */
+const FURNISHED: Record<string, ComponentType> = {
+  home: Home,
+  mirror: Mirror,
+  stars: Stars,
+  mailbox: Mailbox,
+};
+
 export function House() {
   const [location] = useLocation();
   useEnsurePersona();
@@ -103,7 +114,10 @@ export function House() {
       <CommandPalette />
       <Thoughts />
       <AnimatePresence mode="wait">
-        {room?.ready || !room ? <Home key="home" /> : <Unfurnished key={room.id} room={room} />}
+        {(() => {
+          const Room = FURNISHED[room?.id ?? 'home'];
+          return Room ? <Room key={room?.id ?? 'home'} /> : <Unfurnished key={room!.id} room={room!} />;
+        })()}
       </AnimatePresence>
       <Dock />
     </>
