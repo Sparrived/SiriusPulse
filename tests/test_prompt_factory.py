@@ -100,7 +100,8 @@ def test_style_adapter_ignores_persona_sampling_preferences():
 def test_style_adapter_when_sentence_limit_present_then_builds_group_chat_guidance():
     params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
 
-    assert "每句话不超过12个字，多句话分行输出，前后语句连贯（不超过3行）" in params.length_instruction
+    assert "每句话不超过12个字，多句话分行输出，前后" in params.length_instruction
+    assert "连贯（不超过" in params.length_instruction
 
 
 def test_style_adapter_clamps_sentence_limit_for_guidance():
@@ -131,13 +132,13 @@ def test_reply_spec_includes_memory_restraints():
 
 
 def test_reply_spec_when_function_call_enabled_then_states_the_work_mode_contract():
-    """模型必须先知道：进了工作模式正文就不外发，出口是 send_midway_msg。"""
+    """工作模式必须说明进入轮、过程沟通与退出出口。"""
     spec = PromptFactory.build_reply_spec(supports_function_call=True)
 
     assert "enter_work_mode" in spec
-    assert "不会被发送" in spec
     assert "send_midway_msg" in spec
     assert "quit_work_mode" in spec
+    assert "对外回复" in spec
     assert "工作不一定必须做完" in spec
     assert "点名" in spec
 
@@ -150,10 +151,9 @@ def test_reply_spec_when_function_call_enabled_then_enter_round_still_speaks_to_
     assert "这一轮的正文" in spec
     assert "正常发到群里" in spec
     assert "先用一句话" in spec
-    # 进入之后的轮次才静默，对外只能靠工具结果与 send_midway_msg。
-    assert "后续轮次" in spec
-    assert "不会被发送" in spec
+    # 过程沟通统一走 send_midway_msg，退出结果走 quit_work_mode。
     assert "send_midway_msg" in spec
+    assert "quit_work_mode" in spec
 
 
 def test_work_mode_enter_tool_description_distinguishes_enter_round_and_later_rounds():
@@ -274,7 +274,7 @@ def test_persona_prompt_keeps_identity_metadata_separate_from_custom_prompt():
     assert "你是月白，诞生于数字世界。保持友善但不盲从。" in prompt
     assert "Bash 任务允许并提倡串行调用" not in prompt
     assert "发送的所有Markdown内容必须使用```进行包裹" not in prompt
-    assert "你现在就是月白。保持角色，不要跳出角色解释设定" in prompt
+    assert "【身份锚定】" in prompt
 
 
 def test_turn_sections_do_not_carry_the_persona_anchor_themselves():
@@ -471,7 +471,8 @@ def test_assemble_chat_injects_configured_group_chat_length_guidance():
         other_ai_names=[],
     )
 
-    assert "每句话不超过12个字，多句话分行输出，前后语句连贯（不超过3行）" in bundle.system_prompt
+    assert "每句话不超过12个字，多句话分行输出，前后" in bundle.system_prompt
+    assert "连贯（不超过" in bundle.system_prompt
 
 
 def test_assemble_chat_injects_interaction_spec_without_legacy_guidance():

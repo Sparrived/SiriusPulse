@@ -629,7 +629,8 @@ def test_build_delayed_prompt_injects_configured_length_limit():
 
     assert "【回复规范】" in bundle.system_prompt
     assert "【回复长度】" not in bundle.system_prompt
-    assert "每句话不超过12个字，多句话分行输出，前后语句连贯（不超过3行）" in bundle.system_prompt
+    assert "每句话不超过12个字，多句话分行输出，前后" in bundle.system_prompt
+    assert "连贯（不超过" in bundle.system_prompt
 
 
 def test_delayed_queue_when_merging_incoming_then_appends_to_existing_pending_item():

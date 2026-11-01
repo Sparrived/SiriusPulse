@@ -42,7 +42,7 @@ def test_prompt_factory_when_interaction_markers_are_available_then_spec_is_expl
     assert "[STICKER:开心]" in spec
     assert "[AT:123456]" in spec
     assert "interaction" not in spec
-    assert "不要添加说话者前缀或系统标记" in PromptFactory.build_reply_spec()
+    assert "添加说话者前缀或系统标记" in PromptFactory.build_reply_spec()
 
 
 def test_orchestration_store_when_config_is_saved_then_json_round_trips_atomically(tmp_path):

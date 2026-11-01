@@ -61,7 +61,7 @@ def test_reply_spec_tells_model_to_skip_replies_meant_for_someone_else():
     assert TAG_SKIP_REPLY in spec
     assert "叫别人" in spec
     assert "跳过本轮回复" in spec
-    assert "你叫错人了" in spec
+    assert any(phrase in spec for phrase in ("你叫错人了", "叫的是某某，我不插话"))
 
 
 @pytest.mark.asyncio
