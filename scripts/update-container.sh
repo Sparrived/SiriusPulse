@@ -4,8 +4,9 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [[ ! -d data ]]; then
-  if docker container inspect sirius-pulse-v2-test >/dev/null 2>&1; then
-    echo "检测到旧容器但缺少 ./data，拒绝更新以保护持久化数据。请先按部署指南完成迁移。" >&2
+  if docker container inspect sirius-pulse >/dev/null 2>&1 \
+    || docker container inspect sirius-pulse-v2-test >/dev/null 2>&1; then
+    echo "检测到已有容器但缺少 ./data，拒绝更新以保护持久化数据。请先按部署指南完成迁移。" >&2
     exit 2
   fi
   install -d -m 700 -o 10001 -g 10001 data

@@ -72,8 +72,8 @@ from sirius_pulse.tools.builtin._internal import _docker_cli
             },
         ),
         (
-            ["restart", "sirius-pulse-v2-test"],
-            {"action": "restart", "container": "sirius-pulse-v2-test", "tail_lines": 100},
+            ["restart", "sirius-pulse"],
+            {"action": "restart", "container": "sirius-pulse", "tail_lines": 100},
         ),
         (
             ["stats", "--no-stream", "minecraft"],

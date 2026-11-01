@@ -23,9 +23,22 @@ def test_dockerfile_reuses_the_complete_environment_before_application_source():
     ) < dockerfile.index("sirius_pulse ./sirius_pulse")
 
 
+def test_compose_keeps_the_persistent_data_mount():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "update-container.sh").read_text(encoding="utf-8")
+
+    assert "container_name: sirius-pulse" in compose
+    assert "container_name: sirius-pulse-v2-test" not in compose
+    assert "./data:/app/data" in compose
+    assert "./sirius_pulse:/app/sirius_pulse:ro" in compose
+    assert "./plugins:/app/plugins:rw" in compose
+    assert "down -v" not in script
+
+
 def test_update_script_refuses_to_replace_an_unmigrated_container_data_directory():
     script = (ROOT / "scripts" / "update-container.sh").read_text(encoding="utf-8")
 
+    assert "docker container inspect sirius-pulse" in script
     assert "docker container inspect sirius-pulse-v2-test" in script
     assert "docker image inspect sirius-pulse:latest" in script
     assert "export SIRIUS_ENV_CACHE_KEY=" in script

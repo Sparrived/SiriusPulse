@@ -163,7 +163,7 @@ def test_proxy_accepts_docker_exec_user_option(tmp_path, monkeypatch):
     result = proxy.handle(
         {
             "action": "docker",
-            "arguments": ["exec", "--user", "root", "sirius-pulse-v2-test", "id"],
+            "arguments": ["exec", "--user", "root", "sirius-pulse", "id"],
         }
     )
 
@@ -172,7 +172,7 @@ def test_proxy_accepts_docker_exec_user_option(tmp_path, monkeypatch):
         "exec",
         "--user",
         "root",
-        "sirius-pulse-v2-test",
+        "sirius-pulse",
         "id",
     ]
 
