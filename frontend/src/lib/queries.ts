@@ -33,11 +33,12 @@ export const RESOURCE_QUERIES: Record<string, readonly string[][]> = {
   personas: [['personas']],
   monitoring: [['personas'], ['metrics'], ['health']],
   dashboard: [['metrics'], ['health']],
-  tokens: [['metrics']],
+  tokens: [['metrics'], ['tokens']],
   conversations: [['glance'], ['diary']],
   memory: [['glance'], ['memories'], ['dedupe']],
   autonomy: [['glance'], ['autonomy']],
   'work-mode': [['work-mode']],
+  'tool-history': [['tool-history']],
   cognition: [['glance'], ['metrics'], ['cognition'], ['cognition-analysis']],
 };
 
