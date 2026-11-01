@@ -1267,7 +1267,8 @@ class _EmotionalGroupChatEngineBase:
         ) -> None:
             """Parse model-emitted reply/poke/sticker markers before delivery."""
             raw_text = str(getattr(_result, "raw_text", "") or "")
-            if not raw_text:
+            clean_text = str(getattr(_result, "clean_text", "") or "")
+            if not raw_text and not clean_text:
                 return
 
             available_stickers = set(getattr(_engine, "_sticker_names", []) or [])
@@ -1286,28 +1287,30 @@ class _EmotionalGroupChatEngineBase:
                 allowed_poke_ids=allowed_poke_ids,
             )
             clean_markers = parse_interaction_markers(
-                str(getattr(_result, "clean_text", "") or ""),
+                clean_text,
                 available_stickers=available_stickers,
                 allowed_poke_ids=allowed_poke_ids,
+            )
+            sticker_names = list(
+                dict.fromkeys([*markers.sticker_names, *clean_markers.sticker_names])
+            )
+            poke_user_ids = list(
+                dict.fromkeys([*markers.poke_user_ids, *clean_markers.poke_user_ids])
             )
 
             _result.raw_text = markers.text
             _result.clean_text = clean_markers.text
             _result.sticker_names = list(
-                dict.fromkeys(
-                    [*(getattr(_result, "sticker_names", []) or []), *markers.sticker_names]
-                )
+                dict.fromkeys([*(getattr(_result, "sticker_names", []) or []), *sticker_names])
             )[:3]
             _result.poke_user_ids = list(
-                dict.fromkeys(
-                    [*(getattr(_result, "poke_user_ids", []) or []), *markers.poke_user_ids]
-                )
+                dict.fromkeys([*(getattr(_result, "poke_user_ids", []) or []), *poke_user_ids])
             )[:1]
-            if markers.sticker_names or markers.poke_user_ids:
+            if sticker_names or poke_user_ids:
                 logger.info(
                     "交互标记解析完成: stickers=%s pokes=%s",
-                    markers.sticker_names,
-                    markers.poke_user_ids,
+                    sticker_names,
+                    poke_user_ids,
                 )
 
         # task_filter 交给 Brain 调度时检查，hook 闭包不关心

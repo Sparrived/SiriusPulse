@@ -140,3 +140,18 @@ def test_chat_reply_hook_sends_sticker_for_fullwidth_variants(marker: str) -> No
     assert result.clean_text == "正文"
     assert result.raw_text == "正文"
     assert result.sticker_names == ["开心"]
+
+
+def test_chat_reply_hook_parses_clean_text_when_raw_text_is_empty() -> None:
+    hook, _engine = _interaction_marker_hook()
+    result = SimpleNamespace(
+        raw_text="",
+        clean_text="[STICKER：开心] 正文",
+        sticker_names=[],
+        poke_user_ids=[],
+    )
+
+    hook(None, SimpleNamespace(group_id="group_a", user_id="caller"), result, {})
+
+    assert result.clean_text == "正文"
+    assert result.sticker_names == ["开心"]

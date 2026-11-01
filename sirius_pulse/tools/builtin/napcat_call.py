@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
+from sirius_pulse.core.interaction_markers import strip_interaction_markers
 from sirius_pulse.tools.builtin._internal._qq_ops import (
     bridge_error,
     current_group_id,
@@ -181,6 +182,7 @@ async def run(
     if _is_group_action(normalized_action):
         _inject_group_id(merged_params, chat_context)
     _coerce_int_fields(merged_params)
+    _strip_markers_from_text_params(merged_params)
 
     if normalized_action in _ADMIN_ACTIONS and not _caller_is_developer(invocation_context):
         return {
@@ -284,6 +286,26 @@ def _coerce_int_fields(params: dict[str, Any]) -> None:
             params[field] = int(text)
         except ValueError:
             continue
+
+
+def _strip_markers_from_text_params(params: dict[str, Any]) -> None:
+    """发送类参数里的正文同样可能带交互标记，直发会原样进聊天。"""
+    for key in ("message", "content"):
+        value = params.get(key)
+        if isinstance(value, str):
+            params[key] = strip_interaction_markers(value)
+        elif isinstance(value, list):
+            segments: list[Any] = []
+            for segment in value:
+                if isinstance(segment, dict) and segment.get("type") == "text":
+                    data = segment.get("data")
+                    if isinstance(data, dict) and isinstance(data.get("text"), str):
+                        cleaned = strip_interaction_markers(data["text"])
+                        if not cleaned:
+                            continue
+                        segment = {**segment, "data": {**data, "text": cleaned}}
+                segments.append(segment)
+            params[key] = segments
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:

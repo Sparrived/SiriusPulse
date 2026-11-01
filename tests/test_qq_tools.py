@@ -144,3 +144,18 @@ async def test_qq_send_like_reaches_napcat_send_like_api():
 
     assert result["success"] is True
     assert adapter.calls == [("send_like", {"user_id": 1703967297, "times": 3})]
+
+
+@pytest.mark.asyncio
+async def test_qq_send_message_strips_interaction_markers():
+    adapter = FakeNapcatAdapter()
+
+    result = await napcat_call.run(
+        action="send_group_msg",
+        params={"message": "[STICKER：得意] 画好啦"},
+        bridge=adapter,
+        chat_context=GROUP_CONTEXT,
+    )
+
+    assert result["success"] is True
+    assert adapter.calls == [("send_group_msg", {"message": "画好啦", "group_id": 9001})]
