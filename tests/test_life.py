@@ -4,7 +4,8 @@
 - 作息决定她哪天、是不是醒着；凌晨还没睡也仍算"昨天"；
 - 模型给的日程和回顾都要经过校验：越界、重叠、超量的内容被丢掉，乱写的整份作废；
 - 聊天时她知道自己此刻在做什么、累不累；睡着时只回应真正叫她的人，被吵醒会记得；
-- 心情会被她自己的生活推动，但基线只会被轻轻挪一点。
+- 心情会被她自己的生活推动，但基线只会被轻轻挪一点；
+- 她认识的人按"一个人"来记：在哪儿聊过、多久没出现、有多亲近。
 """
 
 from __future__ import annotations
@@ -322,3 +323,39 @@ def test_a_missing_life_never_breaks_a_chat_reply():
     assert life_bridge.presence_context(engine) == ""
     assert life_bridge.reply_factor(engine) == 1.0
     life_bridge.record_reply(engine)
+
+
+# --- 她认识的人 -------------------------------------------------------------------
+
+
+def test_someone_she_talks_with_in_several_places_is_one_person_to_her(tmp_path):
+    """群里和私聊都聊过的人只算一个人：最近聊过的地方排前面，她的好感也让对方更亲近。"""
+    from sirius_pulse.core.tool_engine_context import ToolEngineContextImpl
+    from sirius_pulse.memory.semantic.manager import SemanticMemoryManager
+
+    semantic = SemanticMemoryManager(None)
+    for i in range(20):
+        semantic.record_interaction("group-1", "u-1", _cn(10, i, day=1).isoformat())
+    semantic.set_user_profile_fields("group-1", "u-1", name="阿青")
+    semantic.record_interaction("private_10001", "u-1", _cn(9, day=3).isoformat())
+    semantic.record_interaction("group-1", "u-2", _cn(9, day=3).isoformat())
+    semantic.set_user_profile_fields("group-1", "u-2", name="小林")
+
+    def people(bias):
+        engine = SimpleNamespace(
+            identity_resolver=None,
+            user_manager=SimpleNamespace(get_user=lambda *_a: None),
+            semantic_memory=semantic,
+            assistant_emotion=AssistantEmotionState(user_bias=bias),
+        )
+        return {p.user_id: p for p in ToolEngineContextImpl(engine).list_acquaintances()}
+
+    plain = people({})
+    warm = people({"u-1": (0.8, 0.5)})
+
+    qing = plain["u-1"]
+    assert qing.name == "阿青" and qing.interaction_count == 21
+    assert qing.chats == ["private_10001", "group-1"]
+    assert round(qing.days_away(_cn(9, day=8))) == 5
+    assert qing.closeness > plain["u-2"].closeness
+    assert warm["u-1"].closeness > qing.closeness

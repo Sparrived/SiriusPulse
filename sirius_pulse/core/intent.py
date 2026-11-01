@@ -84,6 +84,12 @@ class Intention:
     last_attempt_at: str = ""
     refs: list[str] = field(default_factory=list)
     outcome: str = ""
+    draft: bool = False
+    """``what`` is only her thought (e.g. 想找某人聊聊), not words to send yet.
+
+    A draft is never delivered as-is: the words are written when she picks who
+    to tell (see :meth:`IntentStore.attach_audience`).
+    """
 
     @property
     def is_open(self) -> bool:
@@ -141,6 +147,7 @@ class Intention:
             "last_attempt_at": self.last_attempt_at,
             "refs": list(self.refs),
             "outcome": self.outcome,
+            "draft": bool(self.draft),
         }
 
     @classmethod
@@ -166,6 +173,7 @@ class Intention:
             last_attempt_at=str(data.get("last_attempt_at", "")),
             refs=[str(item) for item in data.get("refs", []) or []],
             outcome=str(data.get("outcome", "")),
+            draft=bool(data.get("draft", False)),
         )
 
     @classmethod
@@ -183,6 +191,7 @@ class Intention:
         origin_group: str = "",
         notebook_origin_group: str = "",
         refs: list[str] | None = None,
+        draft: bool = False,
     ) -> "Intention":
         return cls(
             intention_id=uuid.uuid4().hex,
@@ -200,6 +209,7 @@ class Intention:
             origin_group=str(origin_group or ""),
             notebook_origin_group=str(notebook_origin_group or ""),
             refs=list(refs or []),
+            draft=bool(draft),
         )
 
 
@@ -263,17 +273,26 @@ class IntentStore:
         return item
 
     def attach_audience(
-        self, intention_id: str, *, audience: str, label: str = ""
+        self, intention_id: str, *, audience: str, label: str = "", what: str = ""
     ) -> Intention | None:
         """Decide who to tell, without rewriting what she wanted to say.
 
         This is a separate step from forming the intention: she may want to say
         something long before she knows who to say it to.  Attaching an audience
         must not create a second copy, or the same words would be delivered twice.
+
+        A draft is the one exception: its ``what`` is only a thought, so the words
+        she means to send come with the audience, and without them nothing changes.
         """
         item = self.get(intention_id)
         if item is None or item.shared_at:
             return None
+        words = str(what or "").strip()
+        if item.draft:
+            if not words:
+                return None
+            item.what = words
+            item.draft = False
         item.audience = str(audience or "").strip()
         item.audience_label = str(label or "")
         return item
@@ -298,6 +317,7 @@ class IntentStore:
             for item in self._items
             if item.is_tell
             and not item.shared_at
+            and not item.draft
             and bool(item.what.strip())
             and bool(item.audience.strip())
         ]

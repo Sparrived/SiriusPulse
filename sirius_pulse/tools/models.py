@@ -555,6 +555,10 @@ class ToolEngineContext(Protocol):
         """列出她可以主动说给谁听的候选会话。"""
         ...
 
+    def list_acquaintances(self) -> list[Any]:
+        """她认识的人（``life.missing.Acquaintance``）：最后出现时间、亲近程度与聊过的会话。"""
+        ...
+
     async def deliver_share(
         self,
         *,

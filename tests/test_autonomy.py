@@ -4,7 +4,8 @@
 - 她醒来会给自己排今天的日程；睡着时不排、不做、不发；
 - 到点的项目段落会真的推进项目，并在作品里留下东西；日常段落不花模型调用；
 - 她可以不做，但要说出原因；
-- 想说的话只按她指定的对象说一次，睡着时等到醒来再发，天亮不会一次轰炸。
+- 想说的话只按她指定的对象说一次，睡着时等到醒来再发，天亮不会一次轰炸；
+- 亲近的人很久没出现，她会自己惦记、想去问候；说什么由她写，规则只管节奏。
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from sirius_pulse.core.autonomy import is_quiet_hours
 from sirius_pulse.core.intent import RESOLUTION_TELL, IntentFileStore, Intention
 from sirius_pulse.life import life_dir
 from sirius_pulse.life.agenda import AgendaStore, Block, DayAgenda
+from sirius_pulse.life.missing import gather
 from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.reflection import SelfNoteStore
 from sirius_pulse.life.state import LifeStateStore
@@ -677,3 +679,183 @@ async def test_a_night_of_backlog_drains_one_per_cooldown(tmp_path, monkeypatch)
     assert delivered_after_first_hour == 1
     assert len(ctx.delivered) == 3
     assert ctx.delivered[0]["text"] == "夜里第1件想说的"
+
+
+# --- 想念 -------------------------------------------------------------------------
+
+
+def _friend(
+    user_id="u-1",
+    name="阿青",
+    *,
+    last_seen=None,
+    count=40,
+    engagement=0.6,
+    chat="group-1",
+):
+    """一个她认识的人：在 chat 里聊过 count 次，最后一次出现在 last_seen。"""
+    seen = last_seen if last_seen is not None else _cn(12) - timedelta(days=10)
+    rows = [
+        {
+            "group_id": chat,
+            "user_id": user_id,
+            "name": name,
+            "interaction_count": count,
+            "engagement_rate": engagement,
+            "last_interaction_at": seen.isoformat(),
+        }
+    ]
+    return gather(rows)[0]
+
+
+def _with_people(ctx, *people, chats=("group-1",)):
+    ctx.list_acquaintances = lambda: list(people)
+    ctx.list_audiences = lambda: [SimpleNamespace(chat_id=c, label=f"群{c}") for c in chats]
+    return ctx
+
+
+def _miss_thoughts(tmp_path):
+    return [item for item in IntentFileStore(tmp_path).load().all() if item.kind == "miss"]
+
+
+@pytest.mark.asyncio
+async def test_she_starts_missing_a_close_friend_who_has_been_away(tmp_path):
+    """亲近的人十天没出现：她心里冒出一个想去问候的念头，自己决定说什么、说给谁。"""
+    ctx = _with_people(_make_ctx(tmp_path), _friend())
+
+    await autonomy.run_tick(ctx)
+
+    thoughts = _miss_thoughts(tmp_path)
+    assert len(thoughts) == 1
+    assert "阿青" in thoughts[0].what and thoughts[0].audience == ""
+    assert ctx.delivered == []
+    # 念头本身不会被当成要发出去的话：她得到一次自己决定的回合。
+    turn = next(t for t in ctx.turns if t.get("autonomous"))
+    assert turn["kind"] == "miss" and turn["intention_id"] == thoughts[0].intention_id
+    assert "group-1" in turn["why"]
+
+    intend_share.run(
+        intention_id=thoughts[0].intention_id,
+        what="阿青！好久没见你冒泡了，上次说的那家面馆去了没？",
+        audience="group-1",
+        engine_context=ctx,
+    )
+    await autonomy.run_tick(ctx)
+
+    assert [d["text"] for d in ctx.delivered] == ["阿青！好久没见你冒泡了，上次说的那家面馆去了没？"]
+    assert [d["audience"] for d in ctx.delivered] == ["group-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_thought_of_someone_is_never_sent_without_her_own_words(tmp_path):
+    """只挑了地方、没写想说的话：不算数，那句念头也不会被原样发出去。"""
+    ctx = _with_people(_make_ctx(tmp_path), _friend())
+    await autonomy.run_tick(ctx)
+    thought = _miss_thoughts(tmp_path)[0]
+
+    result = intend_share.run(
+        intention_id=thought.intention_id, audience="group-1", engine_context=ctx
+    )
+    await autonomy.run_tick(ctx)
+
+    assert result["success"] is False
+    assert ctx.delivered == []
+
+
+@pytest.mark.parametrize(
+    "person",
+    [
+        pytest.param(_friend(count=3, engagement=0.0), id="not-close"),
+        pytest.param(_friend(last_seen=_cn(9)), id="just-chatted"),
+        pytest.param(_friend(chat="group-gone"), id="unreachable"),
+        pytest.param(_friend(name=""), id="nameless"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_she_does_not_miss_someone_she_is_not_close_to_or_just_saw(tmp_path, person):
+    """不熟的人、刚聊过的人、已经找不到的人、叫不出名字的人，都不会被惦记。"""
+    ctx = _with_people(_make_ctx(tmp_path), person)
+
+    await autonomy.run_tick(ctx)
+
+    assert _miss_thoughts(tmp_path) == []
+    assert not [t for t in ctx.turns if t.get("kind") == "miss"]
+
+
+@pytest.mark.asyncio
+async def test_she_does_not_miss_anyone_while_asleep(tmp_path, monkeypatch):
+    """睡着时不会冒出念头；醒来之后才会想起。"""
+    monkeypatch.setattr(autonomy, "_now", lambda: _cn(2, 0, day=2))
+    ctx = _with_people(_make_ctx(tmp_path), _friend())
+    await autonomy.run_tick(ctx)
+    assert _miss_thoughts(tmp_path) == []
+
+    monkeypatch.setattr(autonomy, "_now", lambda: _cn(9, 0, day=2))
+    await autonomy.run_tick(ctx)
+    assert len(_miss_thoughts(tmp_path)) == 1
+
+
+@pytest.mark.asyncio
+async def test_she_does_not_think_of_the_same_person_twice_within_days(tmp_path, monkeypatch):
+    """同一个人，想过一次之后要隔 miss_again_after_days 天才会再想起。"""
+    clock = [_cn(12)]
+    monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
+    ctx = _with_people(
+        _make_ctx(tmp_path, config={"miss_again_after_days": 7}),
+        _friend(last_seen=_cn(12) - timedelta(days=10)),
+    )
+    await autonomy.run_tick(ctx)
+    first = _miss_thoughts(tmp_path)
+    assert len(first) == 1
+    # 她问候过了（或者决定不打扰），这件事就了结了。
+    intentions = IntentFileStore(tmp_path).load()
+    intentions.resolve(first[0].intention_id, outcome="问候过了")
+    IntentFileStore(tmp_path).save(intentions)
+
+    for day in (2, 4, 7):
+        clock[0] = _cn(12, day=day)
+        await autonomy.run_tick(ctx)
+    assert len(_miss_thoughts(tmp_path)) == 1
+
+    clock[0] = _cn(12, day=9)
+    await autonomy.run_tick(ctx)
+    assert len(_miss_thoughts(tmp_path)) == 2
+
+
+@pytest.mark.parametrize(("limit", "expected"), [(None, 1), (2, 2), (5, 2), (0, 0)])
+@pytest.mark.asyncio
+async def test_she_misses_only_a_few_people_a_day(tmp_path, monkeypatch, limit, expected):
+    """一天惦记的人有上限（默认 1，最多 2），最亲近的人先被想起；第二天才轮到下一个。"""
+    clock = [_cn(10)]
+    monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
+    config = {} if limit is None else {"max_miss_per_day": limit}
+    friends = [
+        _friend("u-1", "阿青", count=10, engagement=0.5),
+        _friend("u-2", "小林", count=60, engagement=0.9),
+        _friend("u-3", "老周", count=30, engagement=0.6),
+    ]
+    ctx = _with_people(_make_ctx(tmp_path, config=config), *friends)
+
+    for hour in (10, 13, 16, 19):
+        clock[0] = _cn(hour)
+        await autonomy.run_tick(ctx)
+
+    thoughts = _miss_thoughts(tmp_path)
+    assert len(thoughts) == expected
+    if expected:
+        assert "小林" in thoughts[0].what
+
+    if limit is None:
+        clock[0] = _cn(10, day=2)
+        await autonomy.run_tick(ctx)
+        assert len(_miss_thoughts(tmp_path)) == 2
+
+
+@pytest.mark.asyncio
+async def test_missing_people_can_be_turned_off(tmp_path):
+    """miss_after_days 设为 0：她不再主动惦记谁。"""
+    ctx = _with_people(_make_ctx(tmp_path, config={"miss_after_days": 0}), _friend())
+
+    await autonomy.run_tick(ctx)
+
+    assert _miss_thoughts(tmp_path) == []

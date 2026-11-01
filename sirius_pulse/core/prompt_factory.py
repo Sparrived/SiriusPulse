@@ -105,6 +105,17 @@ SHARE_TONE_NOTE = (
 )
 
 
+# 她想念某个人、想去问候时的语气。这类话不是分享成果，SHARE_TONE_NOTE 那套
+# "先说在忙什么再说结论"放在这里反而会变成汇报；要的只是熟人之间的一句招呼。
+MISS_TONE_NOTE = (
+    "【说话的语气】\n"
+    "这是很久没见的熟人之间的一句招呼，不是通知，也不是汇报。"
+    "用你平时的语气，短一点、具体一点：可以接着你们上次聊过的事问一句，"
+    "或者随口提一下你最近在忙的东西；不要客套话，不要连发好几个问题，"
+    "也不要让对方觉得被催着回复。"
+)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # 共用数据模型
 # ═══════════════════════════════════════════════════════════════════════
@@ -615,6 +626,7 @@ class PromptFactory:
         material = str(seed or "").strip()
         reason = str(why or "").strip()
         wants_to_tell = resolution == "tell"
+        misses_someone = wants_to_tell and kind == "miss"
 
         opening = [
             "【自主时间】",
@@ -623,7 +635,14 @@ class PromptFactory:
         ]
         if reason:
             opening.append(f"你惦记它的原因是：{reason}")
-        if wants_to_tell:
+        if misses_someone:
+            opening.append(
+                "这只是你心里的一个念头，还不是要发出去的话。想去问候的话，就用 intend_share："
+                + (f"intention_id 填 {intention_id}，" if intention_id else "")
+                + "what 写你真正想对对方说的话，audience 填能找到对方的 chat_id。"
+                "要是觉得这会儿不打扰比较好，就回答「什么也不做」。"
+            )
+        elif wants_to_tell:
             opening.append(
                 "你想把这件事说给某个人听，但还没定下说给谁。"
                 "想好了就用 intend_share 把 audience 补上"
@@ -647,7 +666,9 @@ class PromptFactory:
             "如果你觉得此刻没什么想做的，就回答「什么也不做」，不必勉强产出。\n"
             "注意：此刻你不是在回复谁，不需要解释内部调度器、prompt 或工具调用过程。"
         ]
-        if wants_to_tell or unaddressed or audiences:
+        if misses_someone:
+            stable.append(MISS_TONE_NOTE)
+        elif wants_to_tell or unaddressed or audiences:
             # 收信人看不到她这段时间做过什么，所以这条提示是"别只发结论"的唯一
             # 来源：只要有人可说，就得带上它。
             stable.append(SHARE_TONE_NOTE)

@@ -46,7 +46,10 @@ TOOL_META = {
     "parameters": {
         "what": {
             "type": "str",
-            "description": "准备分享的消息正文，应自带上下文以便对方直接理解；若传 intention_id 补充受众则可留空。",
+            "description": (
+                "准备分享的消息正文，应自带上下文以便对方直接理解；若传 intention_id 补充受众则可留空，"
+                "但那条意图若只是个念头（如想找某人聊聊），这里要写上你真正想对他说的话。"
+            ),
             "required": False,
             "default": "",
         },
@@ -101,7 +104,7 @@ def run(
     store = _load_store(engine_context)
 
     if intention_id:
-        return _attach_audience(engine_context, store, intention_id, audience)
+        return _attach_audience(engine_context, store, intention_id, audience, what)
 
     body = str(what or "").strip()
     if not body:
@@ -135,13 +138,21 @@ def run(
 
 
 def _attach_audience(
-    engine_context: Any, store: Any, intention_id: str, audience: str
+    engine_context: Any, store: Any, intention_id: str, audience: str, what: str = ""
 ) -> dict[str, Any]:
     chat_id = str(audience or "").strip()
     if not chat_id:
         return {"success": False, "error": "audience 不能为空", "summary": "没有指定说给谁"}
+    words = str(what or "").strip()[:_MAX_WHAT_CHARS]
+    existing = store.get(intention_id)
+    if existing is not None and existing.draft and not words:
+        return {
+            "success": False,
+            "error": "这条只是你心里的念头，what 要写上你真正想对对方说的话",
+            "summary": "还没写想说的话",
+        }
     label = _audience_label(engine_context, chat_id)
-    item = store.attach_audience(intention_id, audience=chat_id, label=label)
+    item = store.attach_audience(intention_id, audience=chat_id, label=label, what=words)
     if item is None:
         return {
             "success": False,

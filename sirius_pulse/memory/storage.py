@@ -315,6 +315,11 @@ class MemoryStorage(BaseSqliteStore):
         ).fetchall()
         return [self._row_to_semantic_profile(r) for r in rows]
 
+    def list_all_semantic_profiles(self) -> list[dict[str, Any]]:
+        """列出所有会话里的语义画像（含 group_id），供按人汇总。"""
+        rows = self.execute("SELECT * FROM semantic_profiles").fetchall()
+        return [self._row_to_semantic_profile(r) for r in rows]
+
     def _row_to_semantic_profile(self, row: sqlite3.Row) -> dict[str, Any]:
         """将数据库行转换为语义画名字典。"""
         return {

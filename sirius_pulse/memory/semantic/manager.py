@@ -102,6 +102,10 @@ class SemanticMemoryManager:
         profiles_data = self._storage.list_semantic_profiles(group_id)
         return [UserSemanticProfile.from_dict(d) for d in profiles_data]
 
+    def list_all_user_profiles(self) -> list[dict[str, Any]]:
+        """Every (chat, user) profile row, each carrying its ``group_id``."""
+        return self._storage.list_all_semantic_profiles()
+
     def record_interaction(self, group_id: str, user_id: str, timestamp: str) -> None:
         profile = self.get_user_profile(group_id, user_id)
         profile.record_interaction(timestamp)

@@ -1026,6 +1026,36 @@ class ToolEngineContextImpl:
             audiences.append(Audience(chat_id=master, label="主人（私聊）", kind="private"))
         return audiences
 
+    def list_acquaintances(self) -> list[Any]:
+        """她认识的人：每人最后一次出现的时间、亲近程度，以及在哪些会话里聊过。
+
+        按人汇总各会话的语义画像，并带上她自己对这个人的情绪偏向（user_bias）。
+        画像里没有名字时退回用户档案里的名字；仍然叫不出名字的人照常返回，
+        由调用方决定要不要理会。
+        """
+        from sirius_pulse.life.missing import gather
+
+        manager = getattr(self._engine, "semantic_memory", None)
+        lister = getattr(manager, "list_all_user_profiles", None)
+        if not callable(lister):
+            return []
+        try:
+            rows = list(lister())
+        except Exception:
+            logger.debug("读取语义画像失败", exc_info=True)
+            return []
+        emotion = getattr(self._engine, "assistant_emotion", None)
+        people = gather(rows, bias=getattr(emotion, "user_bias", None) or {})
+        for person in people:
+            if person.name:
+                continue
+            try:
+                info = self.get_user_info(person.user_id)
+            except Exception:
+                info = None
+            person.name = str((info or {}).get("name", "") or "").strip()
+        return people
+
     async def deliver_share(
         self,
         *,
