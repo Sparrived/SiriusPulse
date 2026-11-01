@@ -617,16 +617,35 @@ class TokenUsageStore(BaseSqliteStore):
         ).fetchone()
         return dict(row) if row else {"total_calls": 0, "empty_calls": 0, "empty_rate_pct": 0.0}
 
-    def get_hourly_distribution(self) -> list[dict[str, Any]]:
-        """Return token usage distribution by hour-of-day (0-23)."""
+    def get_hourly_distribution(
+        self,
+        *,
+        start_ts: float | None = None,
+        end_ts: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return token usage distribution by hour-of-day (0-23, server timezone).
+
+        与认知事件的小时分布一致按服务器本地时间分桶；按 UTC 分桶时，东八区的
+        「晚上九点最热闹」会被画成「下午一点」。
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if start_ts is not None:
+            clauses.append("timestamp >= ?")
+            params.append(start_ts)
+        if end_ts is not None:
+            clauses.append("timestamp <= ?")
+            params.append(end_ts)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = self.execute(
-            """SELECT
-                CAST(strftime('%H', datetime(timestamp, 'unixepoch')) AS INTEGER) as hour,
+            f"""SELECT
+                CAST(strftime('%H', timestamp, 'unixepoch', 'localtime') AS INTEGER) as hour,
                 COUNT(*) as calls,
                 COALESCE(SUM(total_tokens), 0) as total_tokens
-            FROM token_usage
+            FROM token_usage{where}
             GROUP BY hour
-            ORDER BY hour"""
+            ORDER BY hour""",
+            params,
         ).fetchall()
         return [dict(row) for row in rows]
 

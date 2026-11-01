@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -2332,6 +2333,29 @@ async def test_persona_tokens_when_cache_usage_exists_then_returns_cache_stats(t
     assert payload["cache_stats"]["uncached_prompt_tokens"] == 25
     assert payload["cache_stats"]["cache_hit_rate_pct"] == 75.0
     assert payload["recent_with_breakdown"][0]["cache_info_available"] == 1
+
+
+@pytest.mark.asyncio
+async def test_persona_tokens_when_usage_happens_in_evening_then_hourly_uses_local_time(tmp_path):
+    store = TokenUsageStore(tmp_path / "persona.db", batch_size=1)
+    nine_pm = datetime.now().replace(hour=21, minute=5, second=0, microsecond=0)
+    store.add(
+        TokenUsageRecord(
+            actor_id="assistant",
+            task_name="response_generate",
+            model="test-model",
+            prompt_tokens=100,
+            completion_tokens=10,
+            total_tokens=110,
+        ),
+        timestamp=time.mktime(nine_pm.timetuple()),
+    )
+    store.close()
+
+    response = await api_persona_tokens_get(SimpleNamespace(query={}), tmp_path)
+    payload = json.loads(response.text)
+
+    assert payload["hourly_distribution"] == [{"hour": 21, "calls": 1}]
 
 
 def test_webui_routes_when_declared_then_handler_names_are_available(tmp_path):

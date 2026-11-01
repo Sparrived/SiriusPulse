@@ -172,3 +172,18 @@ def test_token_store_for_workspace_when_layout_is_supplied_then_uses_token_db_pa
 
     assert store.session_id == "workspace-session"
     assert store.db_path == tmp_path / "token" / "token_usage.db"
+
+
+def test_token_store_when_calls_happen_at_local_evening_then_hourly_shows_local_hour(tmp_path):
+    """「饭点」钟按服务器本地时间显示：晚上九点吃的饭不能画到 UTC 的那个钟点上。"""
+    import time
+    from datetime import datetime
+
+    store = TokenUsageStore(tmp_path / "token.db")
+    nine_pm = datetime.now().replace(hour=21, minute=5, second=0, microsecond=0)
+    store.add(_record(), timestamp=time.mktime(nine_pm.timetuple()))
+    store.flush()
+
+    hours = {row["hour"]: row["calls"] for row in store.get_hourly_distribution()}
+
+    assert hours == {21: 1}

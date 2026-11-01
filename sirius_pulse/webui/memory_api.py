@@ -630,13 +630,12 @@ async def api_persona_tokens_get(request: web.Request, data_dir: Path) -> web.Re
             }
         )
 
-    # hourly_distribution: 按小时聚合的调用分布
-    hourly_distribution: dict[int, int] = {}
-    for h in hourly:
-        hour = h["hour"]
-        hourly_distribution[hour] = hourly_distribution.get(hour, 0) + h["calls"]
+    # hourly_distribution: 按服务器本地时间聚合的调用分布。hourly 的桶以 UTC
+    # 整点切分，直接取 dt.hour 会把东八区的晚饭画到下午；这里复用 TokenUsageStore
+    # 的 localtime 分桶，并保持与 hourly 相同的时间范围。
     hourly_distribution_list = [
-        {"hour": h, "calls": c} for h, c in sorted(hourly_distribution.items())
+        {"hour": row["hour"], "calls": row["calls"]}
+        for row in store.get_hourly_distribution(start_ts=start_ts, end_ts=end_ts)
     ]
 
     # by_model 转换为前端期望的格式
