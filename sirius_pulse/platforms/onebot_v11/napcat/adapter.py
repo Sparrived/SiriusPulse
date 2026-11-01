@@ -2787,7 +2787,8 @@ class NapCatAdapter(BaseAdapter):
         async def send_partial(text: str) -> None:
             # Preserve ordinary multiline output but never retry generation once
             # a partial has escaped; a later LLM failure is explicitly unknown.
-            for line in [line for line in text.splitlines() if line.strip()]:
+            partial_text = _markdown_image.merge_short_plain_text(text)
+            for line in [line for line in partial_text.splitlines() if line.strip()]:
                 sent = await send_text(line)
                 known_outcome()
                 if not sent:
@@ -2828,11 +2829,14 @@ class NapCatAdapter(BaseAdapter):
                         )
                 # Keep the original payload and a cursor, so ACKed lines are not
                 # sent again when a later line gets an explicit rejection.
+                reply_for_delivery = _markdown_image.merge_short_plain_text(
+                    str(result.get("reply", ""))
+                )
                 parts = result.setdefault(
                     "delivery_parts",
                     [
                         {"kind": "text", "value": line}
-                        for line in str(result.get("reply", "")).splitlines()
+                        for line in reply_for_delivery.splitlines()
                         if line.strip() and not result.get("rich_sent")
                     ]
                     + [
@@ -3177,6 +3181,7 @@ class NapCatAdapter(BaseAdapter):
         self, group_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
         key = str(group_id)
+        text = _markdown_image.merge_short_plain_text(text)
         async with self._get_reply_lock(key):
             if _ATOMIC_PROACTIVE_SEND.get():
                 return await self._send_group_text_single_locked(
@@ -3317,6 +3322,7 @@ class NapCatAdapter(BaseAdapter):
         self, user_id: str, text: str, reply_refs: list[dict[str, str]] | None = None
     ) -> bool:
         key = f"private_{user_id}"
+        text = _markdown_image.merge_short_plain_text(text)
         async with self._get_reply_lock(key):
             if _ATOMIC_PROACTIVE_SEND.get():
                 return await self._send_private_text_single_locked(user_id, text)

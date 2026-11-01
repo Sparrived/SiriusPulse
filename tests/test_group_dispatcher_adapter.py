@@ -498,7 +498,10 @@ async def test_delayed_ack_failure_retries_only_remaining_lines_after_restart(
     )
     engine.brain.chat.side_effect = [
         SimpleNamespace(
-            raw_text="first\nsecond", clean_text="first\nsecond", tool_calls=[], reply_references=[]
+            raw_text="first" * 10 + "\n" + "second" * 10,
+            clean_text="first" * 10 + "\n" + "second" * 10,
+            tool_calls=[],
+            reply_references=[],
         )
     ]
     item = _delivery_item(queue, gid, adapter)

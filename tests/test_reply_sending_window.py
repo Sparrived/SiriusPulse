@@ -23,6 +23,9 @@ _DELAY_CONFIG = {
     "human_reply_max_delay_seconds": 2.0,
 }
 
+# 总字数超过 50，仍按换行拆成两条消息；第二行固定 10 个字符，等待 1 秒。
+_LONG_MULTILINE_REPLY = "这是第一段比较长的回复内容，专门用来验证分段发送之间会等待一段时间，所以字数一定要足够多才行。" "\n" "1234567890"
+
 
 @pytest.mark.asyncio
 async def test_napcat_multiline_reply_waits_between_parts(monkeypatch):
@@ -43,11 +46,45 @@ async def test_napcat_multiline_reply_waits_between_parts(monkeypatch):
         fake_sleep,
     )
 
-    ok = await adapter._send_group_text("100", "短\n1234567890")
+    ok = await adapter._send_group_text("100", _LONG_MULTILINE_REPLY)
 
     assert ok is True
     assert len(sent) == 2
     assert slept == [pytest.approx(1.0)]
+
+
+@pytest.mark.asyncio
+async def test_napcat_short_plain_multiline_reply_becomes_single_message():
+    adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))
+    sent: list[object] = []
+
+    async def fake_send_group_msg(group_id, message):
+        sent.append(message)
+        return {"ok": True}
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+
+    ok = await adapter._send_group_text("100", "第一行\n第二行\n第三行")
+
+    assert ok is True
+    assert sent == [[{"type": "text", "data": {"text": "第一行第二行第三行"}}]]
+
+
+@pytest.mark.asyncio
+async def test_napcat_markdown_reply_still_sends_line_by_line():
+    adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))
+    sent: list[object] = []
+
+    async def fake_send_group_msg(group_id, message):
+        sent.append(message)
+        return {"ok": True}
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+
+    ok = await adapter._send_group_text("100", "# 标题\n正文")
+
+    assert ok is True
+    assert len(sent) == 2
 
 
 @pytest.mark.asyncio
@@ -97,6 +134,39 @@ async def test_napcat_delayed_partials_wait_between_each_sent_message(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_napcat_delayed_short_multiline_reply_is_merged():
+    adapter = NapCatAdapter(
+        "ws://example.invalid",
+        config={"allowed_group_ids": ["100"], **_DELAY_CONFIG},
+    )
+    sent: list[object] = []
+
+    async def fake_send_group_msg(group_id, message):
+        sent.append(message)
+        return {"ok": True}
+
+    async def fake_tick_delayed_queue(
+        group_id, on_partial_reply, *, adapter_type=None, adapter_route_id=None
+    ):
+        return [{"reply": "第一行\n第二行", "reply_references": [], "sticker_names": []}]
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+    adapter._engine = SimpleNamespace(
+        tick_delayed_queue=fake_tick_delayed_queue,
+        _send_stickers_by_names=AsyncMock(),
+    )
+
+    await adapter._handle_event(
+        SessionEvent(
+            type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
+            data={"group_id": "100"},
+        )
+    )
+
+    assert sent == [[{"type": "text", "data": {"text": "第一行第二行"}}]]
+
+
+@pytest.mark.asyncio
 async def test_napcat_forwards_inbound_message_while_multi_part_reply_is_sending(monkeypatch):
     """发送多段回复期间收到的新消息照常交给引擎，不再被发送窗口拦截或打标。"""
     adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))
@@ -127,7 +197,7 @@ async def test_napcat_forwards_inbound_message_while_multi_part_reply_is_sending
         fake_sleep,
     )
 
-    ok = await adapter._send_group_text("100", "短\n1234567890")
+    ok = await adapter._send_group_text("100", _LONG_MULTILINE_REPLY)
 
     assert ok is True
     assert len(sent) == 2

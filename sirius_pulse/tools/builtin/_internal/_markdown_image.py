@@ -87,6 +87,8 @@ _MIN_TABLE_ROWS = 2
 _MIN_LIST_ITEMS = 2
 # 平台按换行符把一段回复拆成多条消息；超过这个条数就该整段转图片，避免刷屏。
 _MAX_TEXT_MESSAGES = 3
+# 三行以内的普通文本不足这个字数时，删掉换行合并成一条消息，避免碎片化。
+_SHORT_TEXT_MERGE_WEIGHT = 50.0
 # 常见但 Pygments 认不出的围栏标签，映射到它支持的别名。
 _CODE_LEXER_ALIASES = {
     "yml": "yaml",
@@ -157,6 +159,49 @@ def should_send_as_image(text: str) -> bool:
     if has_rich_structure(text):
         return True
     return count_text_messages(text) > _MAX_TEXT_MESSAGES
+
+
+def merge_short_plain_text(text: str) -> str:
+    """把三行以内的普通短文本合并成一条消息。
+
+    平台会按换行把一段回复拆成多条消息。回复本身没有 Markdown 排版需求、
+    总字数又不足 50 时（ASCII 字母、数字、符号按半个字计），逐行发送只会
+    制造碎片；这里删除换行符后再交给发送层，其余正文保持不变。
+    """
+    source = str(text or "")
+    lines = [line.strip() for line in source.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return text
+    if should_send_as_image(source):
+        return text
+    if _weighted_text_length(source) >= _SHORT_TEXT_MERGE_WEIGHT:
+        return text
+
+    merged = lines[0]
+    for line in lines[1:]:
+        if _needs_join_separator(merged, line):
+            merged += " "
+        merged += line
+    return merged
+
+
+def _weighted_text_length(text: str) -> float:
+    """按中文一字、ASCII 半字估算回复字数，空白不计。"""
+    total = 0.0
+    for char in str(text or ""):
+        if not char.isspace():
+            total += 0.5 if ord(char) < 128 else 1.0
+    return total
+
+
+def _needs_join_separator(left: str, right: str) -> bool:
+    """删除换行时是否要补空格，避免英文单词、URL 或 @昵称粘连。"""
+    if not left or not right:
+        return False
+    if left[-1].isascii():
+        return True
+    # @昵称 后面直接接正文会让昵称匹配吞掉下一行，补一个空格保住边界。
+    return bool(re.search(r"@[^\s@]+$", left))
 
 
 def _normalize_fence_chars(text: str) -> str:
