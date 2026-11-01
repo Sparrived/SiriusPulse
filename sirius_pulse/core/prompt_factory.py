@@ -258,7 +258,7 @@ class PromptFactory:
                 "【工作模式规范】执行多步工具任务时须调用 `enter_work_mode` 进入工作模式"
                 "（解锁 bash、read_skill、workflow_state、group_file_exec 等重工具）。"
                 "调用 `enter_work_mode` 这一轮的正文会正常发到群里，先用一句话说明行动计划；"
-                "善用 `send_midway_msg` 将你的进展、过程发送到触发工作的群聊/饲料中；"
+                "善用 `send_midway_msg` 将你的进展、过程发送到触发工作的群聊/私聊中；"
                 "任务完成或受阻时调用 `quit_work_mode` 退出，其 `result` 会作为对外回复；"
                 "工作不一定必须做完，遇阻可在 `result` 中说明卡点并求助；"
                 "工作模式内 Bash 可以连续串行调用：一次只推进一个可验证步骤，先读取工具结果再决定下一步，"
