@@ -17,6 +17,12 @@ from aiohttp import web
 
 from sirius_pulse.persona_config import PersonaConfigPaths
 from sirius_pulse.tools.registry import ToolRegistry
+from sirius_pulse.webui.secret_settings import (
+    SECRET_MASK,
+    SECRET_PARAMETER_TYPES,
+    is_masked_secret_value,
+    is_secret_setting_name,
+)
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
 LOG = logging.getLogger("sirius.webui")
@@ -24,6 +30,7 @@ LOG = logging.getLogger("sirius.webui")
 # ── 模块级缓存，避免每次 API 请求都重新扫描磁盘和执行 importlib ──
 _tool_registry_cache: dict[str, tuple[float, ToolRegistry]] = {}
 _CACHE_TTL = 60.0  # 秒
+_MISSING = object()
 
 
 def _load_tool_registry(persona_dir: Path) -> ToolRegistry:
@@ -67,12 +74,77 @@ def _save_tool_data_store(persona_dir: Path, tool_name: str, data: dict[str, Any
     atomic_json_save(store_path, data)
 
 
+def _declared_parameters(tool: Any) -> list[Any]:
+    if tool is None:
+        return []
+    return [*tool.parameters, *getattr(tool, "config_parameters", [])]
+
+
+def _is_secret_tool_key(key: str, tool: Any) -> bool:
+    """声明为 password/secret 的参数，或名称像密钥的键（含未声明的额外键）。"""
+    for p in _declared_parameters(tool):
+        if p.name == key and str(p.type).casefold() in SECRET_PARAMETER_TYPES:
+            return True
+    return is_secret_setting_name(key)
+
+
+def _mask_value(value: Any, secret: bool) -> Any:
+    """遮罩密钥；嵌套对象按键名递归遮罩。空值原样返回，便于前端区分「未设置」。"""
+    if secret:
+        return SECRET_MASK if value not in (None, "", [], {}) else value
+    if isinstance(value, dict):
+        return {k: _mask_value(v, is_secret_setting_name(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_value(item, False) for item in value]
+    return value
+
+
+def _masked_config(config: dict[str, Any], tool: Any) -> dict[str, Any]:
+    return {k: _mask_value(v, _is_secret_tool_key(k, tool)) for k, v in config.items()}
+
+
+def _merge_value(incoming: Any, existing: Any, secret: bool) -> Any:
+    """合并一项提交值：原样回传的掩码（或 GET 给出的遮罩结果）表示保留已保存的值。"""
+    if existing is not _MISSING and incoming == _mask_value(existing, secret):
+        return existing
+    if secret and is_masked_secret_value(incoming):
+        return existing
+    if isinstance(incoming, dict):
+        old = existing if isinstance(existing, dict) else {}
+        merged = {
+            k: _merge_value(v, old.get(k, _MISSING), is_secret_setting_name(k))
+            for k, v in incoming.items()
+        }
+        return {k: v for k, v in merged.items() if v is not _MISSING}
+    return incoming
+
+
+def _merge_config(data: dict[str, Any], incoming: dict[str, Any], tool: Any) -> None:
+    """把提交的配置合并进 data_store；遮罩的密钥保持原值，不会把掩码写回磁盘。"""
+    for key, value in incoming.items():
+        key = str(key)
+        merged = _merge_value(value, data.get(key, _MISSING), _is_secret_tool_key(key, tool))
+        if merged is not _MISSING:
+            data[key] = merged
+
+
+def _config_parameter_meta(tool: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": p.name,
+            "type": p.type,
+            "description": p.description,
+            "required": p.required,
+            "default": _mask_value(p.default, _is_secret_tool_key(p.name, tool)),
+        }
+        for p in getattr(tool, "config_parameters", [])
+    ]
+
+
 def _extract_config(data: dict[str, Any], tool: Any) -> dict[str, Any]:
-    """从 data_store 数据中提取配置字段（过滤掉 _ 前缀的元数据和运行时字段）。"""
-    config_keys: set[str] = {
-        p.name for p in [*tool.parameters, *getattr(tool, "config_parameters", [])]
-    }
-    return {k: v for k, v in data.items() if k in config_keys}
+    """从 data_store 数据中提取配置字段（过滤掉 _ 前缀的元数据和运行时字段），密钥已遮罩。"""
+    config_keys: set[str] = {p.name for p in _declared_parameters(tool)}
+    return _masked_config({k: v for k, v in data.items() if k in config_keys}, tool)
 
 
 @handle_api_errors
@@ -104,16 +176,7 @@ async def api_persona_tools_get(request: web.Request, data_dir: Path) -> web.Res
                     }
                     for p in tool.parameters
                 ],
-                "config_parameters": [
-                    {
-                        "name": p.name,
-                        "type": p.type,
-                        "description": p.description,
-                        "required": p.required,
-                        "default": p.default,
-                    }
-                    for p in getattr(tool, "config_parameters", [])
-                ],
+                "config_parameters": _config_parameter_meta(tool),
                 "config": _extract_config(data, tool),
             }
         )
@@ -166,16 +229,7 @@ async def api_persona_tool_config_get(request: web.Request, data_dir: Path) -> w
             "name": tool.name,
             "description": tool.description,
             "parameters": tool.get_parameter_schema(),
-            "config_parameters": [
-                {
-                    "name": p.name,
-                    "type": p.type,
-                    "description": p.description,
-                    "required": p.required,
-                    "default": p.default,
-                }
-                for p in getattr(tool, "config_parameters", [])
-            ],
+            "config_parameters": _config_parameter_meta(tool),
         }
 
     return _json_response(
@@ -260,10 +314,11 @@ async def api_persona_tool_config_post(request: web.Request, data_dir: Path) -> 
     # 读取现有 data_store（保留运行时字段如 _last_poll_at）
     data = _load_tool_data_store(paths.dir, tool_name)
 
-    # 合并配置：新配置覆盖同名键，运行时字段保留
+    # 合并配置：新配置覆盖同名键，运行时字段保留；回传掩码的密钥保持原值
     tool_cfg = body.get("config", {})
     if isinstance(tool_cfg, dict):
-        data.update(tool_cfg)
+        tool = _load_tool_registry(paths.dir).get(tool_name)
+        _merge_config(data, tool_cfg, tool)
 
     if "enabled" in body:
         data["_enabled"] = bool(body["enabled"])
