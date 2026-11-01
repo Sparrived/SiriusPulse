@@ -12,6 +12,7 @@ import io
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -53,6 +54,7 @@ def _png(width: int, height: int) -> bytes:
 async def test_each_tab_reads_the_persona_it_names_without_switching_others(tmp_path):
     _persona(tmp_path, "alice", "爱丽丝")
     _persona(tmp_path, "sirius", "月白")
+    _persona(tmp_path, "小雪", "小雪酱")
     (tmp_path / "global_config.json").write_text(
         json.dumps({"active_persona": "alice"}), encoding="utf-8"
     )
@@ -68,7 +70,13 @@ async def test_each_tab_reads_the_persona_it_names_without_switching_others(tmp_
         default = await client.get("/api/persona/persona", headers=auth)
         assert (await default.json())["name"] == "爱丽丝"
 
-        for bad in ("nobody", "../alice", "..", "alice/../sirius"):
+        # 请求头只能是 Latin-1：中文目录名由前端 URL 编码后传来
+        chinese = await client.get(
+            "/api/persona/persona", headers={**auth, "X-Sirius-Persona": quote("小雪")}
+        )
+        assert (await chinese.json())["name"] == "小雪酱"
+
+        for bad in ("nobody", "../alice", "..", "alice/../sirius", quote("../alice")):
             response = await client.get(
                 "/api/persona/persona", headers={**auth, "X-Sirius-Persona": bad}
             )

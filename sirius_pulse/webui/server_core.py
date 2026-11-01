@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from aiohttp import web
 
@@ -74,7 +75,9 @@ def _persona_scope_middleware(data_dir: Path) -> Callable[..., Awaitable[web.Str
         request: web.Request,
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
-        name = request.headers.get(PERSONA_HEADER, "").strip()
+        # 请求头只能是 Latin-1，中文目录名由前端 URL 编码后传来；人格名里不允许出现 %，
+        # 所以对纯 ASCII 的旧写法解码也是原样。
+        name = unquote(request.headers.get(PERSONA_HEADER, "")).strip()
         if not name or not request.path.startswith("/api/"):
             return await handler(request)
         target = (personas_dir / name).resolve()

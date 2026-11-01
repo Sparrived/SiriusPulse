@@ -18,7 +18,11 @@ interface RequestOptions {
   signal?: AbortSignal;
   /** 不带 X-Sirius-Persona（全局接口，或显式按名字操作的接口） */
   global?: boolean;
+  /** 指定作用的人格（默认是这个标签页正在看的那位） */
+  persona?: string;
   raw?: boolean;
+  /** 原样透传的请求头，如上传图片时的 Content-Type */
+  headers?: Record<string, string>;
 }
 
 function isPlainBody(body: Body): body is Record<string, unknown> | unknown[] {
@@ -33,11 +37,12 @@ function isPlainBody(body: Body): body is Record<string, unknown> | unknown[] {
 }
 
 export async function request<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...opts.headers };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const persona = usePersonaStore.getState().current;
-  if (!opts.global && persona) headers['X-Sirius-Persona'] = persona;
+  const persona = opts.persona ?? usePersonaStore.getState().current;
+  // 请求头只能是 Latin-1，人格目录名却可以是中文：统一做 URL 编码，服务端解码
+  if (!opts.global && persona) headers['X-Sirius-Persona'] = encodeURIComponent(persona);
 
   let body: BodyInit | undefined;
   if (isPlainBody(opts.body)) {
