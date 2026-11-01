@@ -1,0 +1,151 @@
+.ledger__head {
+  transition: opacity 0.2s;
+}
+
+.ledger__head.is-busy {
+  opacity: 0.75;
+}
+
+.ledger__kicker {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.ledger__big {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 2px 0 4px;
+}
+
+.ledger__n {
+  font-size: 48px;
+  line-height: 1.1;
+  color: #d9892a;
+  font-weight: 500;
+}
+
+.ledger__big .hand {
+  font-size: 20px;
+}
+
+.ledger__sub {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.ledger__sub .up {
+  color: #d9892a;
+}
+
+.ledger__sub .down {
+  color: #3f9e7c;
+}
+
+.ledger__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.ledger__tiles span {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.65);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.ledger__tiles b {
+  font-size: 20px;
+  color: var(--ink);
+}
+
+.ledger__tiles .is-warn b {
+  color: #cf4f73;
+}
+
+.trend__svg {
+  width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
+
+.trend__axis {
+  font-size: 11px;
+  fill: var(--ink-faint);
+}
+
+.trend__tip {
+  margin: 4px 0 0;
+}
+
+.donut {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.donut ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.donut li {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.donut i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.donut b {
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.ledger__recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ledger__recent li {
+  display: grid;
+  grid-template-columns: 110px 80px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.55);
+  font-size: 13.5px;
+}
+
+.ledger__recent li.is-fail {
+  background: #fff3f5;
+}
+
+.ledger__recent em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-align: right;
+}
