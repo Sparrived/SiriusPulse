@@ -34,10 +34,11 @@ export const RESOURCE_QUERIES: Record<string, readonly string[][]> = {
   monitoring: [['personas'], ['metrics'], ['health']],
   dashboard: [['metrics'], ['health']],
   tokens: [['metrics']],
-  conversations: [['glance']],
-  memory: [['glance']],
-  autonomy: [['glance']],
-  cognition: [['glance'], ['metrics']],
+  conversations: [['glance'], ['diary']],
+  memory: [['glance'], ['memories'], ['dedupe']],
+  autonomy: [['glance'], ['autonomy']],
+  'work-mode': [['work-mode']],
+  cognition: [['glance'], ['metrics'], ['cognition'], ['cognition-analysis']],
 };
 
 export function usePersonas() {

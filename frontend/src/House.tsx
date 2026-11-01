@@ -12,8 +12,11 @@ import {
 import { eventToThought } from '@/lib/thoughts';
 import { onEngineEvent, startEvents } from '@/lib/ws';
 import { roomByPath } from '@/rooms';
+import { Diary } from '@/rooms/diary/Diary';
+import { Heart } from '@/rooms/heart/Heart';
 import { Home } from '@/rooms/Home';
 import { Mailbox } from '@/rooms/mailbox/Mailbox';
+import { Memories } from '@/rooms/memories/Memories';
 import { Mirror } from '@/rooms/mirror/Mirror';
 import { Stars } from '@/rooms/stars/Stars';
 import { Unfurnished } from '@/rooms/Unfurnished';
@@ -99,6 +102,9 @@ const FURNISHED: Record<string, ComponentType> = {
   mirror: Mirror,
   stars: Stars,
   mailbox: Mailbox,
+  diary: Diary,
+  memories: Memories,
+  heart: Heart,
 };
 
 export function House() {

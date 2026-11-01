@@ -23,7 +23,7 @@ export interface Room {
   legacy?: { page: string; label: string }[];
   ready?: boolean;
   /** 3D 世界的镜头：home 她站在左边、room 她退到角落、sky 抬头看星星 */
-  scene?: 'home' | 'room' | 'sky';
+  scene?: 'home' | 'room' | 'sky' | 'jar';
 }
 
 export const ROOMS: Room[] = [
@@ -60,11 +60,7 @@ export const ROOMS: Room[] = [
     name: '日记',
     hint: '她的一天 · 对话、自主行为、工作记录',
     Icon: DiaryIcon,
-    legacy: [
-      { page: 'conversation-history', label: '对话分析' },
-      { page: 'autonomy', label: '自主行为' },
-      { page: 'work-mode', label: '工作模式' },
-    ],
+    ready: true,
   },
   {
     id: 'memories',
@@ -72,7 +68,8 @@ export const ROOMS: Room[] = [
     name: '回忆',
     hint: '记忆瓶 · 她记住的事',
     Icon: JarIcon,
-    legacy: [{ page: 'memory-viz', label: '记忆管理' }],
+    ready: true,
+    scene: 'jar',
   },
   {
     id: 'heart',
@@ -80,7 +77,7 @@ export const ROOMS: Room[] = [
     name: '心事',
     hint: '情绪天气 · 她怎么感受大家',
     Icon: WeatherIcon,
-    legacy: [{ page: 'cognition', label: '认知分析' }],
+    ready: true,
   },
   {
     id: 'bag',
