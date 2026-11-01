@@ -47,8 +47,11 @@
 - **全局配置改为 AMKR 连接配置**：`global_config.json` 用 `amkr_base_url`（默认 `http://127.0.0.1:8000`）、`amkr_local_api_key`、`amkr_workspace`（默认 `sirius-pulse`）、`amkr_ui_enabled` 取代原 Provider 注册表；支持 `SIRIUS_AMKR_BASE_URL` / `SIRIUS_AMKR_API_KEY` / `SIRIUS_AMKR_WORKSPACE` 环境变量覆盖。`amkr_local_api_key` 是 AMKR 管理员凭据，WebUI 接口只回显掩码。
 - **WebUI 改用只读的 AMKR 运维页替换模型编排页**：新增 `GET /api/amkr/status`（连接状态、版本、各人格任务缺口、AMKR 面板外链）与 `POST /api/amkr/register`（补齐缺失任务名）。模型与参数不再由本框架编辑。`GET /api/models` 保留，但返回的是任务名列表。
 - **多个人格共用一个 AMKR**：通过 `X-AMKR-Workspace` 请求头按人格隔离，同名任务在不同人格下可指向不同模型。
+- **WebUI 重做为「月白的小屋」**：不再是运维控制台，而是去她家串门——3D 夜空里站着会呼吸、会看你鼠标的立绘，引擎的实时事件变成她头顶的小念头；功能分在十个房间（客厅、星图、镜子、信箱、日记、回忆、心事、背包、小账本、阁楼），底部码头或 `Ctrl/⌘ + K` 切换，表单全部自动保存。前端源码在 `frontend/`（React 19 + Vite + TypeScript + React Three Fiber），构建产物随包提交到 `sirius_pulse/webui/app/`，CI 校验产物与源码一致；每个标签页用 `X-Sirius-Persona` 请求头各看各的人格，不再共用进程级活跃人格。Token 用量的小时分布改按服务器本地时间分桶，与认知事件一致。
 
 ### Removed
+
+- **旧版运维控制台**：`sirius_pulse/webui/static/`（原生 JS 控制台）、`/legacy/` 与 `/static/` 路由、`tests/js/` 及只针对旧控制台的测试。插件 `ui_schema` 的浏览器端校验随前端移植到 `frontend/src/ui/params/schema.ts`，原有的失败即拒绝用例改为直接对它运行。前端产物缺失时 `/` 返回 503 并提示 `pnpm build`，不再退回旧版。
 
 - **本地 Embedding 服务**：删除 `sirius_pulse/embedding/server.py` 与 `__main__.py`（含 aiohttp 服务、`_BatchProcessor`、SentenceTransformer 加载），以及 WebUI 拉起该子进程的整套逻辑（`_start_embedding_service` / `_stop_embedding_service` / `_run_embedding_server_process` / 端口探测）与 CLI 的就绪等待。`sentence-transformers` 依赖随之删除，连带移除 `torch` / `triton` / `nvidia-*` 约 4.4GB 的镜像体积；`EMBEDDING_DEFAULT_PORT`、`SIRIUS_EMBEDDING_URL`、`embedding_port` 与 Compose 的 Hugging Face 缓存挂载一并失效。`POST /api/embedding/restart` 由 `POST /api/embedding/rebuild` 取代——本地服务已无可重启，需要处理的是换模型后的索引重建。
 - **遗留的「任务 → 模型」配置面**：`OrchestrationPolicy` 的 `unified_model` / `task_models` / `task_temperatures` / `task_max_tokens` 字段、`resolve_model_for_task()`、`MultiModelConfig`，以及 `config/helpers.py` 里对应的构造与改写函数（`configure_orchestration_models`、`configure_orchestration_temperatures`、`create_multimodel_config`、`setup_multimodel_config`，`configure_full_orchestration` 的 `task_models` / `task_temperatures` 入参）。写在这些键上的值现在会被直接忽略，因此不再存在「某个任务直连某个真实模型名」的路径：发往 AMKR 的 `model` 只可能是任务名。`configure_orchestration_retries` 与 `configure_full_orchestration` 的 `task_retries` / `**extra_fields` 保留（本地传输层参数）。

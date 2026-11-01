@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="sirius_pulse/webui/static/yuebai.png" alt="月白" width="200" style="border-radius: 16px; margin-bottom: 12px;">
+<img src="frontend/public/yuebai.webp" alt="月白" width="200" style="border-radius: 16px; margin-bottom: 12px;">
 
 <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
@@ -139,8 +139,6 @@ sirius-pulse webui
 | **背包** | 小工具、插件、MCP 外援的启停与配置，以及她用过工具的记录 |
 | **小账本** | 她吃了多少星光（token）：趋势、什么时候最能吃、花在哪些环节 |
 | **阁楼** | 整座房子共用的设置与 AMKR 连接、AMKR 任务登记与推理 key、实时日志、重建回忆索引、关闭程序 |
-
-旧版控制台暂时仍在 `http://localhost:8080/legacy/`，确认新版没有遗漏后会删除。
 
 ### 3️⃣ 后台运行
 
