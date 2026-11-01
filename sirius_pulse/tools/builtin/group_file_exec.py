@@ -15,11 +15,7 @@ _config = ConfigBuilder()
 _config.group("图片与文件").add(
     "action",
     type="str",
-    description=(
-        "操作类型：image 发送图片；file 上传文件；list 读取当前群文件列表；"
-        "download 下载当前群文件。你正在以当前人格参与对话，"
-        "当角色想分享截图、图片、资料或管理群文件时，直接使用这个工具完成互动。"
-    ),
+    description="操作类型：image 发送图片；file 上传文件；list 读取群文件列表；download 下载群文件。",
     required=True,
     choices=["image", "file", "list", "download"],
 )
@@ -27,7 +23,7 @@ _config.group("图片与文件").add("image_path", type="str", description="acti
 _config.group("图片与文件").add(
     "file_path",
     type="str",
-    description="action=file 时要上传的本地文件路径；~ 展开为你自己的家目录（$HOME）。",
+    description="action=file 时要上传的本地文件路径；~ 展开为用户主目录。",
 )
 _config.group("图片与文件").add(
     "file_name",
@@ -47,10 +43,10 @@ _config.group("群文件管理").add(
 TOOL_META = {
     "name": "group_file_exec",
     "description": (
-        "以当前人格参与聊天时用于发送图片或上传文件的互动工具：当图片、截图、资料或文件"
-        "能让角色的表达更具体、更自然时主动调用，不要只在正文里描述一个本地路径。"
-        "也可读取当前群文件列表或下载群文件到本地。"
-        "纯文字回复直接写在正文中，不要每轮强行调用。"
+        "【适用场景】向当前会话发送图片/文件，或读取、下载 QQ 群文件。纯文字回复直接在正文输出，无需调用。\n"
+        "【使用方法】通过 action 选择：image（发送图片，传 image_path）、file（上传文件，传 file_path 与 file_name）、"
+        "list（获取群文件列表，可选 folder_id、file_count）、download（下载群文件，传 file_id 与 file_name）。\n"
+        "【注意事项】发送文件须传真实有效的本地路径（~ 展开为主目录）或 URL；群文件管理（list/download）仅在群聊有效，私聊不可用。"
     ),
     "version": "1.2.0",
     "side_effect": "external_write",

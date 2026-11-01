@@ -118,19 +118,15 @@ _config.group("NapCat API").add(
     "action",
     type="str",
     description=(
-        "要调用的 NapCat / OneBot action，例如 send_like、get_group_member_list、"
-        "get_group_member_info、set_group_ban、set_group_whole_ban、set_group_kick、"
-        "set_group_card。也接受别名 kick / mute_member / mute_all / like / "
-        "list_members / get_member。"
+        "目标 NapCat / OneBot action 接口名称（如 send_like、get_group_member_list、"
+        "get_group_member_info、set_group_ban、set_group_whole_ban、set_group_kick、set_group_card 等）。"
     ),
     required=True,
 )
 _config.group("NapCat API").add(
     "params",
     type="dict",
-    description=(
-        '该 action 的参数字典，例如 {"user_id": 123456, "times": 3}；' "也可以直接给 JSON 字符串。也可以把参数平铺在顶层传参，两者会合并。"
-    ),
+    description="接口参数字典（或 JSON 字符串），也可直接在顶层以具名参数传递。",
     default={},
 )
 
@@ -138,11 +134,14 @@ _config.group("NapCat API").add(
 TOOL_META = {
     "name": "napcat_call",
     "description": (
-        "调用 NapCat / OneBot API 的统一操作工具。常用 action：send_like(点赞, user_id, times), "
-        "get_group_member_list(群成员列表), get_group_member_info(群成员信息, user_id), "
-        "set_group_ban(禁言, user_id, duration), set_group_whole_ban(全员禁言, enable), "
-        "set_group_kick(移出群, user_id), set_group_card(改群名片, user_id, card)。"
-        "在工作模式下可使用 read_skill('napcat-cookbook') 查看完整接口列表与高级功能示例。"
+        "【适用场景】执行 QQ 平台底层交互与群管理操作（如点赞、查群成员、禁言、移出群、改群名片等）。\n"
+        "【使用方法】传入 action 目标接口名，并通过 params 字典（或顶层参数）传递所需参数。"
+        "常用接口：send_like(点赞, user_id, times)、get_group_member_list(群成员列表)、"
+        "get_group_member_info(群成员信息, user_id)、set_group_ban(禁言, user_id, duration)、"
+        "set_group_whole_ban(全员禁言, enable)、set_group_kick(移出群, user_id)、"
+        "set_group_card(改群名片, user_id, card)。\n"
+        "【注意事项】管理操作需自身具备管理权限；群聊调用会自动注入 group_id；"
+        "可查阅 read_skill('napcat-cookbook') 获取完整接口规范。"
     ),
     "version": "1.0.0",
     "side_effect": "external_write",

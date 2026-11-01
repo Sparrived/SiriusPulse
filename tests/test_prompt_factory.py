@@ -99,17 +99,15 @@ def test_style_adapter_ignores_persona_sampling_preferences():
 def test_style_adapter_when_sentence_limit_present_then_builds_group_chat_guidance():
     params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
 
-    assert "每句话尽量不超过 12 个字" in params.length_instruction
-    assert "少于 40 字保持单段" in params.length_instruction
-    assert "不要用换行制造停顿" in params.length_instruction
+    assert "每句话不超过12个字，多句话可以分行输出（不超过3行）" in params.length_instruction
 
 
 def test_style_adapter_clamps_sentence_limit_for_guidance():
     low = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=2)
     high = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=99)
 
-    assert "每句话尽量不超过 5 个字" in low.length_instruction
-    assert "每句话尽量不超过 50 个字" in high.length_instruction
+    assert "每句话不超过5个字" in low.length_instruction
+    assert "每句话不超过50个字" in high.length_instruction
 
 
 def test_reply_spec_no_newline_split_instruction():
@@ -221,7 +219,7 @@ def test_persona_prompt_does_not_rebuild_removed_structured_persona_fields():
 
     assert "这是自定义人格。" in custom_prompt
     assert custom_prompt.count("【身份锚定】") == 1
-    assert "【不可覆盖的运行约束】" in custom_prompt
+    assert "【不可覆盖的运行约束】" not in custom_prompt
 
 
 def test_reply_spec_when_function_call_enabled_then_requires_verified_tool_progress():
@@ -273,7 +271,7 @@ def test_persona_prompt_keeps_identity_metadata_separate_from_custom_prompt():
 
     assert "你的名字是「月白」，别名是「Sirius」" in prompt
     assert "你是月白，诞生于数字世界。保持友善但不盲从。" in prompt
-    assert "Bash 任务允许并提倡串行调用" in prompt
+    assert "Bash 任务允许并提倡串行调用" not in prompt
     assert "发送的所有Markdown内容必须使用```进行包裹" not in prompt
     assert "你现在就是月白。保持角色，不要跳出角色解释设定" in prompt
 
@@ -472,9 +470,7 @@ def test_assemble_chat_injects_configured_group_chat_length_guidance():
         other_ai_names=[],
     )
 
-    assert "每句话尽量不超过 12 个字" in bundle.system_prompt
-    assert "少于 40 字保持单段" in bundle.system_prompt
-    assert "不要用换行制造停顿" in bundle.system_prompt
+    assert "每句话不超过12个字，多句话可以分行输出（不超过3行）" in bundle.system_prompt
 
 
 def test_assemble_chat_injects_interaction_spec_without_legacy_guidance():

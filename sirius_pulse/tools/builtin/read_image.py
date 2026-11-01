@@ -63,33 +63,27 @@ _config = ConfigBuilder()
 _config.group("读图").add(
     "paths",
     type="list",
-    description=("要查看的图片，1-4 张。每项是本地绝对路径或 http(s) 图片 URL；" "本地路径支持 ~（人格 home），也支持聊天图片缓存路径。"),
+    description="要查看的图片路径或 URL 列表（1-4 张），支持本地绝对路径、~ 主目录及 http(s) URL。",
 )
 _config.group("读图").add(
     "assets",
     type="list",
-    description=(
-        "受管人物视觉资产 ID 数组（可选，与 paths 合计最多 4 张）。"
-        "用 visual_asset_manage 或人物资料摘要里给出的 asset_id；"
-        "当前可见的共享素材可直接读取；私有会话范围、停用和删除仍会阻断。"
-    ),
+    description="受管人物视觉资产 ID 列表（可选，与 paths 合计最多 4 张）。",
     default=[],
 )
 _config.group("读图").add(
     "focus",
     type="str",
     default="",
-    description="可选：这次想重点看什么（例如发色、服装花纹、画面里的文字），帮助你把注意力放在细节上。",
+    description="可选的视觉关注点说明（如文字、服饰特征、颜色等）。",
 )
 
 TOOL_META = {
     "name": "read_image",
     "description": (
-        "查看图片的实际画面：把本地图片、受管人物资产或图片 URL 读进你的视觉通道。"
-        "用于看自己的三视图/设定图（路径见 system prompt 的「你自己的形象参考图」）、"
-        "看聊天图片的原图、确认某个本地图片文件的内容。一次最多 4 张，"
-        "可直接读取人格内当前可见的共享素材；返回的图片会作为随附图片给你。"
-        "只能读图片，不要用它读文本或其它文件。"
+        "【适用场景】需要查看或分析具体图片内容时使用（如核对聊天原图、形象设定图、本地图片文件）。\n"
+        "【使用方法】paths 传入 1-4 个本地文件路径或 http(s) URL，或 assets 传入视觉资产 ID；可选 focus 指定关注焦点。\n"
+        "【注意事项】仅支持标准图像格式（PNG/JPEG/GIF/WebP/BMP），单张不超过 20MB、合计不超过 32MB；不可用于读取文本或非图像文件。"
     ),
     "version": "1.0.0",
     "side_effect": "read_only",

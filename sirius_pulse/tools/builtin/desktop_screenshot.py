@@ -15,19 +15,23 @@ _config = ConfigBuilder()
 _config.group("截图设置").add(
     "all_screens",
     type="bool",
-    description="是否尽量捕获所有显示器；部分平台可能只支持主屏幕",
+    description="是否捕获所有显示器（默认 True，部分平台仅支持主屏幕）。",
     default=True,
 )
 _config.group("截图设置").add(
     "focus",
     type="str",
-    description="本次截图关注点，例如 判断主机当前在做什么、确认前台窗口、查看当前页面",
+    description="截图关注目标说明（如前台窗口、报错对话框等）。",
     default="",
 )
 
 TOOL_META = {
     "name": "desktop_screenshot",
-    "description": "开发者让你看看电脑屏幕、当前窗口、报错画面或“现在发生了什么”时使用；截图只供你分析后再在群里说明。",
+    "description": (
+        "【适用场景】开发者请求查看计算机桌面、当前应用窗口、系统报错或前台状态时使用。\n"
+        "【使用方法】all_screens 指定是否多屏捕获（默认 True）；focus 传入关注目标说明。\n"
+        "【注意事项】仅限开发者权限调用；返回本地截图路径供视觉分析，不直接公开发送原始图片。"
+    ),
     "version": "1.1.0",
     "side_effect": "read_only",
     "tags": ["system", "image"],

@@ -17,7 +17,13 @@ _ACTIONS = [
 
 TOOL_META = {
     "name": "person_update",
-    "description": "按当前原消息维护本人称呼、声明纠错与确认，或登记原创角色。不能改账号绑定、权限或任意画像字段。",
+    "description": (
+        "【适用场景】依据当前原消息指令维护人物称谓、更正属性声明、确认画像变更或登记原创角色。\n"
+        "【使用方法】action 选择操作（set_names/propose_claim/correct_claim/"
+        "retire_claim/confirm_change/create_character）；"
+        "target 传入主体引用；evidence_ref 传入来源消息证据引用。\n"
+        "【注意事项】必须具备有效证据引用；仅能维护授权范围内的资料，严禁篡改账号绑定、系统权限或任意画像字段。"
+    ),
     "version": "1.1.0",
     "side_effect": "external_write",
     "tags": ["person", "profile", "update"],

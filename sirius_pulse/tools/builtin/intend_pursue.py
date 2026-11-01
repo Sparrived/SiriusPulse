@@ -42,10 +42,10 @@ _DEFAULT_KIND = "musing"
 TOOL_META = {
     "name": "intend_pursue",
     "description": (
-        "当你遇到一件想自己弄清楚的事（一个没看明白的说法、一篇想读进去的文章、"
-        "一个想动手试试的想法），用这个工具把它记下来：写下你想弄明白的是什么、"
-        "为什么在意。它只登记，不会立刻去做；之后你会在自己的时间里决定做不做。"
-        "这次回复里已经读过、查过、弄明白的事不要再登记。"
+        "【适用场景】记录后续待探究的长期意图（如待读文章、待验证方案、未解疑问），交由后台自主调度推进。\n"
+        "【使用方法】what 填写探究目标事项；可选 why 说明关注原因；可选 kind 标注类型（reading/building/note/musing）；"
+        "可选 urgency 指定紧迫度（0.0-1.0）。\n"
+        "【注意事项】仅登记意图，不立即执行；当轮对话中已查证或已解答的事项不要重复登记。"
     ),
     "version": "1.0.0",
     "model_visible": True,
@@ -55,19 +55,19 @@ TOOL_META = {
     "parameters": {
         "what": {
             "type": "str",
-            "description": "你想弄明白的是什么，用你自己的话写（例如「潮汐为什么一天有两次」）。",
+            "description": "具体探究事项的主题或问题描述。",
             "required": True,
             "default": "",
         },
         "why": {
             "type": "str",
-            "description": "你为什么在意这件事，比如好奇、觉得和之前聊到的有关、想弄懂再讲给别人听。",
+            "description": "关注该事项的原因或背景背景。",
             "required": False,
             "default": "",
         },
         "kind": {
             "type": "str",
-            "description": "这件事属于哪类：reading 想读进去 / building 想动手做 / note 想记下来 / musing 只是在想。不确定就留空。",
+            "description": "事项分类：reading（阅读）/ building（动手实践）/ note（整理笔记）/ musing（思考构想）。",
             "required": False,
             "default": "",
         },

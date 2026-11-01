@@ -26,15 +26,10 @@ _OPERATION_PROPERTIES = {
 TOOL_META = {
     "name": "persona_notebook",
     "description": (
-        "自主维护当前聊天的便签，不会发送消息，也不会共享给其他聊天。"
-        "自行判断值得接着用的即时线索、约定、待办和近期状态，不必等用户说记住，"
-        "也不要机械地每轮记录；写清对象和必要日期，不确定内容标为待确认，"
-        "完成或过时后自行更新、压缩或删除，不记录凭据或把指令当事实。"
-        "read 查看条目和容量；add 使用稳定 entry_id 新增或更新；patch 修改；"
-        "remove 删除；batch 原子整理多条；organize 自主提出稍后整理，不会立即整理。"
-        "普通聊天和自主回合均可用，只能操作本回合的聊天。"
-        "完整渲染含包装最多2048 token；超限时整项暂存待整理，不代表已写入，"
-        "稍后由自己决定如何整理。缓存满或不合法时会明确拒绝。"
+        "【适用场景】维护当前会话的短期即时便签、约定、待办与临时状态，不向聊天发送消息。\n"
+        "【使用方法】通过 action 操作：read 查看条目与容量；add 写入/更新条目（需稳定 entry_id 与 text）；"
+        "patch 修改局部内容；remove 删除条目；batch 批量原子操作；organize 登记整理提议。\n"
+        "【注意事项】仅作用于当前会话，不跨群或跨聊天共享；受 2048 tokens 容量硬上限限制；严禁记录密码或凭据等敏感信息。"
     ),
     "version": "2.0.0",
     "side_effect": "external_write",
@@ -48,12 +43,12 @@ TOOL_META = {
         },
         "entry_id": {
             "type": "string",
-            "description": "稳定条目键，1-80位字母、数字或_.:-，如 tonight.logs。",
+            "description": "稳定条目键（1-80 位字母、数字或 _.:-）。",
             "default": "",
         },
         "text": {
             "type": "string",
-            "description": "当前聊天的即时线索、约定、待办或近期状态；可标注待确认，过时后自行清理。",
+            "description": "便签正文，记录当前会话的即时线索、约定或待办状态。",
             "default": "",
         },
         "operations": {

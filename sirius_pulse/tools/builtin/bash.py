@@ -54,15 +54,12 @@ _config.group("Bash 执行").add(
 TOOL_META = {
     "name": "bash",
     "description": (
-        "在当前容器中启动 Bash，用于文件处理、系统状态查询和自动化。优先使用该工具操作系统。"
-        "支持标准 Bash 语法与容器内任意工作目录。访问其他容器时，docker/docker-compose 仍经宿主机 Unix Socket 代理，支持常规 Docker 命令和完整 docker exec；"
-        "Bash 不在宿主机，不能使用 systemctl 或宿主机 /var/log；"
-        "docker inspect 会在当前 QQ 会话发送容器状态卡片。"
-        "Bash 还提供项目级 crontab 兼容调度：crontab -l 查看当前聊天任务，"
-        "crontab -r 删除当前聊天任务，使用 echo/printf '五字段 cron + 命令' | crontab - 注册任务。"
-        "表达式严格按 Linux crontab 五字段解释，不支持秒字段；"
-        "它不会修改操作系统 crontab；任务由 Sirius 内部调度器持久化并执行，"
-        "命令输出会作为上下文在原聊天中生成主动消息。"
+        "【适用场景】执行容器内文件处理、系统状态探测、脚本自动化，或管理项目级定时任务。\n"
+        "【使用方法】传入 command 执行标准 Bash 命令，支持常规 Linux 命令及代理访问外部容器的 docker 命令；"
+        "支持标准五字段 crontab 调度命令（crontab -l 查看任务、crontab -r 删除任务、"
+        "printf '五字段cron 命令' | crontab - 注册任务）。\n"
+        "【注意事项】命令运行在容器内而非宿主机，不支持 systemctl 或直接访问宿主机文件；"
+        "定时任务由内部调度器托管（不支持秒级字段）；执行 docker inspect 会向当前会话发送容器状态卡片。"
     ),
     "version": "1.5.0",
     "side_effect": "unknown",

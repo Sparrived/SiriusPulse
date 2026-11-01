@@ -19,7 +19,12 @@ _SECTIONS = {
 }
 TOOL_META = {
     "name": "person_query",
-    "description": "查询当前可见人物资料。重名返回最多5个候选及受控游标；不返回原始聊天、账号列表或文件路径。",
+    "description": (
+        "【适用场景】查询当前会话可见范围内的人物资料、画像设定、别名称谓及视觉信息。\n"
+        "【使用方法】target 指定查询主体（支持 requester/persona/person_id/name/mention_ref 等键值对）；"
+        "sections 筛选信息模块；detail 指定 summary 或 detail 级别。\n"
+        "【注意事项】只读工具；同名主体最多返回 5 个候选对象；不暴露底层账号、原始聊天或内部文件路径。"
+    ),
     "version": "1.1.0",
     "side_effect": "read_only",
     "tags": ["person", "profile", "identity"],

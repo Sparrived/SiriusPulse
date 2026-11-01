@@ -15,11 +15,10 @@ _MAX_FILE_BYTES = 512 * 1024
 TOOL_META = {
     "name": "read_skill",
     "description": (
-        "读取当前人格 skills 目录和框架内置默认目录中的 Agent Skill。人格 Skill 优先覆盖同名默认 Skill；"
-        "skill_name 留空时列出可用 Skill；"
-        "指定 skill_name 后默认读取完整 SKILL.md，内容过长时使用 offset 分段读取。"
-        "也可以用 relative_path 读取该 Skill 目录内的 reference 或脚本文本；本工具只读文件，"
-        "不会执行脚本，脚本需要执行时使用 bash Tool。"
+        "【适用场景】执行特定专业任务前，查阅操作规范（Agent Skill 文档）及附带的参考说明或脚本模板。\n"
+        "【使用方法】skill_name 留空时列出可用 Skill 列表；传入 skill_name 默认读取 SKILL.md；"
+        "通过 relative_path 读取 Skill 目录内的其他参考文件；长文档支持 offset 与 max_chars 分段读取。\n"
+        "【注意事项】只读工具，不执行脚本；如需执行 Skill 中的脚本，应在工作模式下使用 bash 工具运行。"
     ),
     "version": "1.0.0",
     "retry_safe": True,

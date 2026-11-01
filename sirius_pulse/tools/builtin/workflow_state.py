@@ -138,10 +138,11 @@ _config.group("流程数据").add(
 TOOL_META = {
     "name": "workflow_state",
     "description": (
-        "可靠复用当前聊天中的外部操作。固定顺序：先 list 检查目录，再 resume；找不到时 begin 并登记；claim；"
-        "仅 claimed=true 才调用专用 Tool；成功 checkpoint，失败 fail；next_step 为空时自动完成。"
-        "already_done 表示不要再次调用，in_progress 表示不要抢占；复制 revision、claim_token 和幂等键，"
-        "不要猜测、随机生成或用 bash/curl 绕过流程。"
+        "【适用场景】多步骤外部操作的状态持久化与幂等执行，防止重复执行外部副作用。\n"
+        "【使用方法】按生命周期顺序调用：① list 查询当前会话流程；② resume 恢复流程；③ 未命中时 begin 登记新流程；"
+        "④ claim 获取步骤租约；⑤ claimed=true 后执行目标专用工具；⑥ 成功调用 checkpoint（next_step 为空时自动完成），失败调用 fail。\n"
+        "【注意事项】严格遵循状态机约束：already_done=true 必须跳过重复执行；in_progress=true 不得并发抢占；"
+        "必须原样传递 revision、claim_token 与幂等键，严禁绕过流程直接执行副作用。"
     ),
     "version": "2.2.0",
     "retry_safe": False,

@@ -33,11 +33,10 @@ _DEFAULT_URGENCY = 0.7
 TOOL_META = {
     "name": "intend_share",
     "description": (
-        "当你心里有一件想告诉某人的事（一个想法、一个问题、一篇文章、一点情绪），"
-        "用这个工具把它记下来，并说明想说给谁。它只登记，不会立刻发送；"
-        "之后你会在合适的时机自己决定说不说。"
-        "收信人看不到你之前做过什么，所以 what 要写成一条能独立看懂的话："
-        "平常聊天的口气，先说你在弄什么，再说这回怎么了，结论放最后。"
+        "【适用场景】记录后续计划主动分享给他人的想法、话题或见闻，交由后台自主调度推进。\n"
+        "【使用方法】what 填写待分享消息正文（语意须完整，便于收件人独立理解）；audience 填写候选受众的 chat_id；"
+        "可选 why 说明分享动机；已有旧意图需补充受众时传 intention_id。\n"
+        "【注意事项】仅登记意图，不立即发送；投递受自主节奏及夜间静默规则（23:00-08:00 暂存）约束。"
     ),
     "version": "1.0.0",
     "model_visible": True,
@@ -47,31 +46,25 @@ TOOL_META = {
     "parameters": {
         "what": {
             "type": "str",
-            "description": (
-                "你想说的内容本身，像发 QQ 一样自然，尽量保留你原本的语气。"
-                "对方不知道你之前做了什么，所以要能独立看懂："
-                "先一句你在忙什么，再说这回怎么了，结论放最后；"
-                "别只写结论，也别写成汇报或总结。"
-                "已用 intention_id 指定旧意图时可留空。"
-            ),
+            "description": "准备分享的消息正文，应自带上下文以便对方直接理解；若传 intention_id 补充受众则可留空。",
             "required": False,
             "default": "",
         },
         "why": {
             "type": "str",
-            "description": "为什么想说出来，比如想听听对方怎么看、只是想分享。",
+            "description": "分享动机说明。",
             "required": False,
             "default": "",
         },
         "audience": {
             "type": "str",
-            "description": "想说给谁听。填候选受众里的 chat_id；留空表示还没想好，稍后再定。",
+            "description": "目标受众的会话 chat_id；留空表示受众待定。",
             "required": False,
             "default": "",
         },
         "intention_id": {
             "type": "str",
-            "description": "你之前已经记下、只是还没想好说给谁的那件事，填它的 id 来补上受众，不要重复登记同样的内容。",
+            "description": "已有待定受众意图的 ID，用于直接补全受众而无需重复登记内容。",
             "required": False,
             "default": "",
         },

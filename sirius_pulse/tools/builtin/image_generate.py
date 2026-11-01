@@ -61,53 +61,38 @@ _config = ConfigBuilder()
 _config.group("生图").add(
     "prompt",
     type="str",
-    description=("要画的画面描述。写清主体、风格、构图和想要的情绪；" "参考图能把角色或场景固定下来。"),
+    description="画面生成提示词，描述画面主体、风格、构图与视觉细节。",
     required=True,
 )
 _config.group("生图").add(
     "subjects",
     type="list",
     description=(
-        "人物生图的主体列表（需要画出具体人物时使用）。每项是主体引用对象："
-        '{"ref": "persona"} 画你自己；{"ref": "requester"} 画当前请求者；'
-        '{"ref": "person_id", "value": "<UUID>"} 画已登记人物；也可加 '
-        '"revision"/"profile_id"/"outfit"。提供 subjects 时由框架绑定人物正式形象、'
-        "图序及素材状态；可见共享素材不需逐人物许可，reference_images 只作为额外参考。"
+        "人物主体引用列表：支持 {'ref': 'persona'}（自身）、{'ref': 'requester'}（请求者）、"
+        "{'ref': 'person_id', 'value': '<UUID>'}（已登记人物），由系统自动绑定人物设定与正式形象。"
     ),
     default=[],
 )
 _config.group("生图").add(
     "source_ref",
     type="str",
-    description="本次创作对应的当轮用户指令来源（框架注入的 evidence_ref），用于核对请求作者和 requester，不是图中人物的同意凭证。",
+    description="本次生图指令的来源消息引用（系统注入的 evidence_ref），用于校验请求者身份。",
 )
 _config.group("生图").add(
     "reference_images",
     type="list",
-    description=(
-        "可选参考图数组：每项是本地绝对路径或 http(s) 图片 URL。"
-        "聊天里收到的图片/表情包会把本地缓存路径写进上下文"
-        "（历史 XML 的 <image path=…> 或用户消息里的「本地图片路径」列表），"
-        "把这些路径直接填进来就能以原图为参考，不要让用户重发。"
-        "画具体人物时优先用 subjects 绑定其正式形象，这里的额外参考最多 4 张，"
-        "单张不超过 20MB。"
-    ),
+    description="可选参考图列表（最多 4 张，单张不超过 20MB），支持本地文件路径或 http(s) URL。",
     default=[],
 )
 
 TOOL_META = {
     "name": "image_generate",
     "description": (
-        "让后台画一张图：传入提示词，可选参考图（本地路径或图片 URL）。"
-        "聊天里收到的图片/表情包会带出本地缓存路径，"
-        "可直接作为 reference_images 复用原图，不用让用户重发；"
-        "你自己的三视图/立绘路径见 system prompt 的「你自己的形象参考图」，"
-        "要画自己时可以直接填进来。"
-        "生图很慢（可能要几十秒到几分钟），调用后立刻返回“已提交”，不会阻塞当前回复。"
-        "完成后只把产物路径回调给你，不会自动发到聊天。"
-        "由你决定保留、继续加工或用 group_file_exec 发送选中的图片；中间产物不必逐张通知。"
-        "要画具体人物时用 subjects 绑定其正式形象，不要用历史里的图片路径猜。"
-        "不要重复提交同一个请求，也不要在完成通知之前假装已经画好。"
+        "【适用场景】根据文本描述或参考图像生成新图片。\n"
+        "【使用方法】传入 prompt 描述画面主体与构图风格；可选 subjects 绑定人物设定（如 {'ref': 'persona'} 画自己）；"
+        "可选 reference_images 提供参考图路径或 URL。\n"
+        "【注意事项】异步任务，调用后仅返回任务 ID，不阻塞当前回复；生成完成后仅向内部回调产物路径，不自动外发；"
+        "需发送产物至群聊/私聊时须在回调轮次显式调用 group_file_exec；禁止重复提交相同请求，未收到完成回调前不得谎称已画完。"
     ),
     "version": "1.0.0",
     "side_effect": "external_write",

@@ -60,20 +60,19 @@ _ENTER_TOOL: dict[str, Any] = {
     "function": {
         "name": ENTER_WORK_MODE,
         "description": (
-            "进入工作模式去完成一个需要多步工具协作的任务。"
-            "只有工作模式里才能使用 bash、read_skill、workflow_state、group_file_exec。"
-            "调用 enter_work_mode 的这一轮仍按普通回合处理，这一轮正文会正常发到群里，"
-            "所以先用一句话说明你要做什么，再调用 enter_work_mode；"
-            "真正进入之后的后续轮次正文才不会被发送，"
-            "只有工具结果和 send_midway_msg 有效。"
-            "任务完成、或者卡住需要外部帮助时，用 quit_work_mode 退出。"
+            "【适用场景】需要执行多步工具协作或重型任务（bash、read_skill、workflow_state、"
+            "group_file_exec）时进入工作模式。\n"
+            "【使用方法】传入 goal 明确执行目标与验收标准。调用 enter_work_mode 的这一轮正文会正常发到群里，"
+            "应先用一句话向会话同步行动计划。\n"
+            "【注意事项】进入工作模式后的后续轮次正文为内部工作记录、不会被发送，"
+            "对外交互必须使用 send_midway_msg；任务完成或遇阻需协助时调用 quit_work_mode 退出。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "goal": {
                     "type": "string",
-                    "description": "这次准备干什么：一句话说明目标和完成标准。",
+                    "description": "任务目标与完成标准描述。",
                 }
             },
             "required": ["goal"],
@@ -85,13 +84,18 @@ _QUIT_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": QUIT_WORK_MODE,
-        "description": ("退出工作模式，返回普通聊天。result 会作为对外回复发送。" "任务没做完也可以退出：说明卡在哪里、需要外界提供什么，好向群里求助。"),
+        "description": (
+            "【适用场景】工作模式任务执行完毕，或遭遇阻塞需要向外界求助并返回普通聊天模式时调用。\n"
+            "【使用方法】传入 result 总结任务执行结果（已完成项、未完成项或卡点说明），"
+            "该内容将作为最终对外回复发送。\n"
+            "【注意事项】退出时必须提供明确详实的 result；若任务受阻应如实说明卡点与所需支持，严禁虚报完成状态。"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "result": {
                     "type": "string",
-                    "description": "这次工作的结果：做完了什么、没做完什么、需要什么帮助。",
+                    "description": "工作结果汇报（已完成项、未完成项或卡点与求助信息）。",
                 }
             },
             "required": ["result"],
@@ -103,10 +107,14 @@ _MIDWAY_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": SEND_MIDWAY_MSG,
-        "description": ("在工作模式里向群里发一条消息。" "遇到重要里程碑、需要公开确认、或者有疑问要向外界提问时使用；" "问完可以继续工作，不需要退出工作模式。"),
+        "description": (
+            "【适用场景】处于工作模式中，需要向会话同步关键里程碑、发起必要确认或提出疑问时调用。\n"
+            "【使用方法】传入 message 作为向会话公开发送的消息正文；调用后继续停留在工作模式执行后续步骤。\n"
+            "【注意事项】仅在确需与用户沟通或同步关键进度时调用，普通内部思考与中间过程无需频繁外发。"
+        ),
         "parameters": {
             "type": "object",
-            "properties": {"message": {"type": "string", "description": "要发给群里的内容。"}},
+            "properties": {"message": {"type": "string", "description": "向当前会话公开发送的消息正文。"}},
             "required": ["message"],
         },
     },
