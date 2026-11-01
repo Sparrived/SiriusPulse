@@ -362,6 +362,11 @@
   border-radius: 999px;
   font-size: 15px;
   color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.room-title .segmented {
+  flex-shrink: 0;
 }
 
 .segmented--sm button {

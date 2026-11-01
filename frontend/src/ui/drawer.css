@@ -1,0 +1,74 @@
+.drawer-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(10, 14, 40, 0.32);
+}
+
+.drawer {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  width: min(600px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.drawer--wide {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.drawer__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 22px 26px 10px;
+}
+
+.drawer__head h2 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 400;
+}
+
+.drawer__kicker {
+  margin: 0 0 2px;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.drawer__head .star-card__close {
+  position: static;
+}
+
+.drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 26px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.drawer__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 26px;
+  border-top: 1px dashed rgba(79, 111, 216, 0.2);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.drawer__foot .drawer__spacer {
+  flex: 1;
+}
+
+/* 抽屉里的字多，纸要厚一点，别让后面的房间透过来 */
+.drawer.paper {
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgba(255, 255, 255, 0.7), transparent 60%), rgba(250, 249, 255, 0.97);
+}
