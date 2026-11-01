@@ -251,6 +251,7 @@ class _EmotionalGroupChatEngineBase:
             model_name="cognition_analyze",
             ai_name=self.persona.name,
             ai_aliases=self.persona.aliases,
+            other_ai_names=list(self.config.get("other_ai_names", []) or []),
             persona=self.persona,
             plugin_registry=None,  # 后续由 set_plugin_runtime 注入（v1.2+）
             work_path=self.work_path,

@@ -395,6 +395,23 @@ def test_name_embedded_in_another_word_stays_a_weak_match(content, expected):
     assert scores["name_match_score"] == pytest.approx(expected)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "yuki 帮我画一张壁纸",
+        "yuki，你觉得呢？",
+    ],
+)
+def test_message_naming_another_bot_does_not_wake_persona(content):
+    """群里另一个 Bot 被点名时，不能把「帮我/你觉得」算成在叫月白。"""
+    analyzer = CognitionAnalyzer(ai_name="月白", ai_aliases=["Sirius"], other_ai_names=["yuki"])
+
+    scores = analyzer._compute_directed_scores(content, "u1", None)
+
+    assert scores["other_ai_score"] == pytest.approx(1.0)
+    assert analyzer._synthesize_directed_score(scores, None) < 0.5
+
+
 def test_peer_ai_naming_persona_by_alias_is_treated_as_addressed():
     """同群另一个 AI 用别名点名她时，衰减后仍应认出这是在叫她。"""
     engine = SimpleNamespace(

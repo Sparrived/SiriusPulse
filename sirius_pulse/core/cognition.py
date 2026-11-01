@@ -275,8 +275,8 @@ _URGENCY_KEYWORDS = {
 # ------------------------------------------------------------------
 
 # 主观题/观点询问关键词 —— 被点名时出现这些词应触发 IMMEDIATE
-# 群里其他 Bot 的名字 —— 消息点名别人且没提自己时，不能把“给我/帮你”这类祈使句当成在叫自己
-_OTHER_BOT_NAMES: tuple[str, ...] = ()
+# 群里其他 Bot 的名字来自人格配置 other_ai_names，不再硬编码在这里：
+# 消息点名别人且没提自己时，不能把“给我/帮你”这类祈使句当成在叫自己。
 
 _SUBJECTIVE_KEYWORDS: tuple[str, ...] = (
     "你觉得",
@@ -341,6 +341,7 @@ class CognitionAnalyzer:
         model_name: str = "gpt-4o-mini",
         ai_name: str = "",
         ai_aliases: list[str] | None = None,
+        other_ai_names: list[str] | None = None,
         persona: Any | None = None,
         plugin_registry: Any | None = None,  # Plugin 注册表（v1.2+）
         brain: Any | None = None,  # Brain 实例（用于统一 LLM 调用）
@@ -351,6 +352,9 @@ class CognitionAnalyzer:
         self.model_name = model_name
         self.ai_name = ai_name
         self.ai_aliases = [a.lower() for a in (ai_aliases or []) if a]
+        self.other_ai_names = [
+            str(name).strip().lower() for name in (other_ai_names or []) if str(name).strip()
+        ]
         self.persona = persona
         self.plugin_registry = plugin_registry  # Plugin 注册表引用（v1.2+）
         self.brain = brain  # Brain LLM 交互中枢（v1.2+）
@@ -1039,7 +1043,7 @@ class CognitionAnalyzer:
         # other_ai_score: 消息点名了别的 Bot（且没有点名自己）→ 说明是冲别人说的
         other_ai = 0.0
         if name_match < 0.5 and mention < 0.5:
-            for other_name in _OTHER_BOT_NAMES:
+            for other_name in self.other_ai_names:
                 if other_name and other_name in text_lower:
                     other_ai = 1.0
                     break
