@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import { usePrefs } from '@/state/prefs';
 import { useScene, type SceneMode } from '@/state/scene';
+import { Constellation } from './Constellation';
 import { Mist } from './Mist';
 import { Moon } from './Moon';
 import { Hearts, Motes } from './Motes';
@@ -56,6 +57,7 @@ export function World() {
       <Sky />
       <Stars count={lowPower ? 500 : 1400} />
       <Moon />
+      <Constellation />
       <Mist />
       <Portrait />
       <Motes count={lowPower ? 24 : 70} />

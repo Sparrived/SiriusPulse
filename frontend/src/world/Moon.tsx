@@ -2,7 +2,7 @@ import { useFrame } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { daylight } from '@/lib/time';
-import { useScene } from '@/state/scene';
+import { useScene, type SceneMode } from '@/state/scene';
 import { useShader } from './shader';
 import { glowTexture } from './textures';
 
@@ -36,6 +36,13 @@ const fragment = /* glsl */ `
   }
 `;
 
+const MOON_SPOT: Record<SceneMode, [number, number]> = {
+  door: [5.6, 3.5],
+  home: [-0.6, 5.3],
+  room: [-4.6, 4.4],
+  sky: [-12.5, 13],
+};
+
 export function Moon() {
   const group = useRef<THREE.Group>(null);
   const halo = useRef<THREE.SpriteMaterial>(null);
@@ -50,9 +57,12 @@ export function Moon() {
     const { sleeping, mode } = useScene.getState();
     const night = sleeping || mode === 'door' ? 1 : 1 - daylight();
     const k = 1 - Math.exp(-dt * 0.8);
-    // 白天月亮淡成天上的一枚白影；她睡着时月亮升得更高、更亮
-    const targetY = sleeping ? 4.6 : 3.4 + night * 0.6;
+    // 月亮挂在不被纸页挡住的地方：门口在她头后当光环，屋里挂在她耳朵边；
+    // 白天淡成天上的一枚白影，她睡着时升得更高、更亮
+    const [baseX, baseY] = MOON_SPOT[mode];
+    const targetY = baseY + (sleeping ? 0.6 : night * 0.3);
     if (group.current) {
+      group.current.position.x += (baseX - group.current.position.x) * k;
       group.current.position.y += (targetY - group.current.position.y) * k;
       group.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.05) * 0.05;
     }

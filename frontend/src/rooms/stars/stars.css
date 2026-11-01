@@ -1,0 +1,291 @@
+.stars__title {
+  position: fixed;
+  top: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 2px 16px rgba(8, 10, 40, 0.7);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.stars__title h1 {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+}
+
+.stars__title p {
+  margin: 6px 0 0;
+  font-size: 14.5px;
+  opacity: 0.85;
+}
+
+/* 名字牌：位置由 3D 场景每帧写入 transform，这里只负责相对星星的偏移 */
+.star-label {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 26px 0 0 -40px;
+  padding: 4px 14px 4px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(20, 26, 70, 0.45);
+  color: #fff;
+  font-size: 16px;
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  white-space: nowrap;
+  transition:
+    background 0.25s,
+    box-shadow 0.25s;
+  will-change: transform;
+}
+
+.star-label:hover,
+.star-label.is-focused {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  box-shadow: 0 10px 28px -12px rgba(255, 220, 170, 0.9);
+}
+
+.star-label--new {
+  padding-left: 12px;
+  border-style: dashed;
+  background: rgba(20, 26, 70, 0.25);
+}
+
+.star-label__plus {
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* ── 星星卡片 ── */
+.star-card {
+  position: fixed;
+  right: clamp(16px, 4vw, 64px);
+  bottom: 120px;
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px 24px;
+  z-index: 20;
+}
+
+.star-card__close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  border: none;
+  background: none;
+  font-size: 22px;
+  color: var(--ink-faint);
+}
+
+.star-card__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.star-card__head h2 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 400;
+}
+
+.star-card__head p {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.star-card code,
+.ritual code {
+  font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  font-size: 12.5px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(223, 230, 255, 0.8);
+}
+
+.star-card__glance {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.star-card__glance p {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+}
+
+.star-card__glance .star-card__stats {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.star-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.star-card__farewell {
+  margin-left: auto;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.star-card__farewell:hover {
+  color: #c4506f;
+}
+
+.star-card__danger {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fff1f4;
+  font-size: 13.5px;
+  line-height: 1.6;
+  overflow: hidden;
+}
+
+.star-card__danger p {
+  margin: 0 0 10px;
+}
+
+.star-card__goodbye {
+  margin-top: 10px;
+  background: linear-gradient(180deg, #e98aa2, #c95b7b);
+}
+
+.star-card__error {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #c4506f;
+}
+
+/* ── 迎接新伙伴 ── */
+.ritual-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 240, 220, 0.12), rgba(8, 10, 34, 0.55));
+  backdrop-filter: blur(2px);
+}
+
+.ritual {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 30px 32px 26px;
+}
+
+.ritual h2 {
+  margin: 4px 0 18px;
+  font-size: 30px;
+  font-weight: 400;
+}
+
+.ritual > div > div {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ritual__kicker {
+  margin: 0;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.ritual__name {
+  width: 100%;
+  border: none;
+  border-bottom: 2px dashed rgba(79, 111, 216, 0.3);
+  background: transparent;
+  font-size: 34px;
+  padding: 4px 2px 8px;
+  outline: none;
+}
+
+.ritual__name:focus {
+  border-bottom-color: var(--blush);
+}
+
+.ritual__file {
+  font-size: 13px;
+}
+
+.ritual__nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.ritual__dots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.ritual__dots span {
+  width: 26px;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(79, 111, 216, 0.15);
+  transition: background 0.4s;
+}
+
+.ritual__dots span.is-on {
+  background: var(--blush);
+}
+
+.ritual__summary {
+  margin: 0;
+  line-height: 1.8;
+  color: var(--ink-soft);
+}
+
+.ritual__go {
+  font-size: 16px;
+  padding: 0.85em 1.6em;
+}
+
+.ritual__done p {
+  margin: 0;
+  line-height: 1.8;
+  color: var(--ink-soft);
+}
+
+.ritual__done a {
+  color: var(--ribbon);
+}
+
+@media (max-width: 720px) {
+  .star-card {
+    bottom: 104px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+}
