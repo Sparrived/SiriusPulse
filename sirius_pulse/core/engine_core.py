@@ -1366,6 +1366,7 @@ class _EmotionalGroupChatEngineBase:
             group_id=group_id,
             user_id="assistant",
             role="assistant",
+            sender_type="self_ai",
             content=record_content,
             speaker_name=speaker_name or (self.persona.name if self.persona else "assistant"),
             system_prompt=record_system_prompt,

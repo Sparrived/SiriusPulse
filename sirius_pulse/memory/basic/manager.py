@@ -159,6 +159,7 @@ class BasicMemoryManager:
         content: str,
         *,
         speaker_name: str = "",
+        sender_type: str = "",
         system_prompt: str = "",
         timestamp: str | None = None,
         channel_user_id: str = "",
@@ -174,12 +175,17 @@ class BasicMemoryManager:
         gid = group_id or "default"
         from sirius_pulse.core.utils import now_iso
 
+        normalized_sender = (sender_type or "").strip().lower()
+        if not normalized_sender:
+            normalized_sender = {"assistant": "self_ai", "system": "system"}.get(role, "human")
+
         entry = BasicMemoryEntry(
             entry_id=f"bme_{uuid.uuid4().hex[:12]}",
             group_id=gid,
             user_id=user_id,
             speaker_name=speaker_name,
             role=role,
+            sender_type=normalized_sender,
             content=content,
             timestamp=timestamp or now_iso(),
             system_prompt=_truncate_text(system_prompt, _SNAPSHOT_MAX_SYSTEM_PROMPT_CHARS),

@@ -165,6 +165,7 @@ class Pipeline:
                 user_id=resolved_user_id,
                 speaker_name=resolved_speaker_name,
                 role="human",
+                sender_type=message.sender_type or "human",
                 content=message.content,
                 channel_user_id=message.channel_user_id or "",
                 platform_message_id=message.message_id or "",

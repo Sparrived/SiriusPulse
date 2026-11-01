@@ -86,6 +86,44 @@ def test_memory_unit_generator_maps_source_indices_to_entry_ids():
     assert unit.event_time == first.timestamp
 
 
+def test_memory_unit_prompt_keeps_other_bot_apart_from_the_persona():
+    """群里另一个 Bot 被点名后人格接话，记忆抽取不能把两者当成同一个人。"""
+    basic = BasicMemoryManager()
+    peer = basic.add_entry(
+        "group_a",
+        "qq_3580583831",
+        "human",
+        "yuki 帮我画一张壁纸",
+        speaker_name="BOT yuki",
+        channel_user_id="3580583831",
+        sender_type="other_ai",
+    )
+    persona = basic.add_entry("group_a", "assistant", "assistant", "好呀喵", speaker_name="月白")
+    brain = _FakeBrain()
+
+    result = asyncio.run(
+        MemoryUnitGenerator().generate(
+            group_id="group_a",
+            candidates=[peer, persona],
+            persona_name="月白",
+            persona_description="",
+            persona_aliases=["Sirius"],
+            other_ai_names=["yuki"],
+            brain=brain,
+            model_name="memory-model",
+        )
+    )
+
+    prompt = brain.requests[0].messages[0]["content"]
+    assert "sender_type=other_ai" in prompt
+    assert "Persona aliases" in prompt and "Sirius" in prompt
+    assert "Other bots in this group" in prompt and "yuki" in prompt
+    assert result is not None
+    # 另一个 Bot 的 QQ/昵称不能挂到这条单元上，否则检索会用 yuki 的名字召回月白。
+    assert "qq_3580583831" not in result.units[0].identity_aliases
+    assert "BOT yuki" not in result.units[0].identity_aliases
+
+
 def test_memory_unit_store_round_trips(tmp_path):
     store = MemoryUnitFileStore(tmp_path)
     unit = MemoryUnit(

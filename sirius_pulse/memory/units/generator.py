@@ -21,6 +21,21 @@ reading history, checking logs, remembering, or looking back. Keep only facts
 that may affect future replies: events, preferences, relationships, boundaries,
 group norms, terminology, unresolved plans, and durable context.
 
+Identity rules (mandatory):
+- The persona block names the character these memories belong to. Entries with
+  role=assistant are that persona's own words and are never evidence about
+  anyone else.
+- sender_type=other_ai marks another bot in the same group. Another bot is
+  neither the persona nor a human member: never move its name, nickname,
+  aliases, speech, relationships, or habits onto the persona.
+- Never infer that a nickname, alias, or form of address belongs to the persona
+  merely because the persona replied right after someone used it, was mentioned
+  nearby, or because an earlier memory says so. Record an identity fact only
+  when the records state it explicitly about the persona; otherwise emit no unit
+  for it.
+- Keep different people separate by user_id even when their display names look
+  similar.
+
 Return strict JSON:
 {
   "units": [
@@ -51,29 +66,48 @@ Return strict JSON:
 def _build_user_prompt(
     persona_name: str,
     persona_description: str,
+    persona_aliases: list[str] | None,
+    other_ai_names: list[str] | None,
     candidates: list[BasicMemoryEntry],
 ) -> str:
     lines: list[str] = []
     for index, entry in enumerate(candidates, 1):
         name = entry.speaker_name or entry.user_id or "unknown"
         role = entry.role or "human"
+        sender_type = entry.sender_type or ("self_ai" if role == "assistant" else "human")
         content = (entry.content or "").replace("\n", " ").strip()
         if len(content) > 500:
             content = content[:500] + "..."
         lines.append(
             f"{index}. source_id={entry.entry_id} timestamp={entry.timestamp} "
             f"user_id={entry.user_id} channel_user_id={entry.channel_user_id} "
-            f"speaker={name} role={role}: {content}"
+            f"speaker={name} role={role} sender_type={sender_type}: {content}"
         )
 
-    persona_line = f"Persona: {persona_name}. {persona_description}".strip()
+    identity_lines = [f"Persona: {persona_name}."]
+    aliases = [str(alias).strip() for alias in (persona_aliases or []) if str(alias).strip()]
+    if aliases:
+        identity_lines.append(
+            "Persona aliases (these address forms belong to the persona alone): "
+            + ", ".join(aliases)
+        )
+    if persona_description:
+        identity_lines.append(f"Persona description: {persona_description}")
+    peers = [str(name).strip() for name in (other_ai_names or []) if str(name).strip()]
+    if peers:
+        identity_lines.append(
+            "Other bots in this group (NOT the persona, NOT human members): " + ", ".join(peers)
+        )
     return (
-        f"{persona_line}\n\n"
+        "\n".join(identity_lines) + "\n\n"
         "Chat records:\n"
         + "\n".join(lines)
         + "\n\nExtract memory units. Prefer fewer high-signal units over many vague units. "
         "For every person, preserve all identity forms visible in the source records "
-        "(QQ number, qq_<number>, nickname, group card, and QQ name) in identity_aliases."
+        "(QQ number, qq_<number>, nickname, group card, and QQ name) in identity_aliases. "
+        "Do not attach another speaker's identity forms to a unit about a different person, "
+        "and do not record a form of address as the persona's own name unless the records "
+        "state it explicitly."
     )
 
 
@@ -89,6 +123,8 @@ class MemoryUnitGenerator:
         persona_description: str,
         brain: Any,
         model_name: str,
+        persona_aliases: list[str] | None = None,
+        other_ai_names: list[str] | None = None,
         max_retries: int = 1,
         transport_retries: int = 0,
     ) -> MemoryUnitGenerationResult | None:
@@ -97,7 +133,13 @@ class MemoryUnitGenerator:
 
         from sirius_pulse.core.brain import RawRequest
 
-        user_prompt = _build_user_prompt(persona_name, persona_description, candidates)
+        user_prompt = _build_user_prompt(
+            persona_name,
+            persona_description,
+            persona_aliases,
+            other_ai_names,
+            candidates,
+        )
         index_to_source = {idx: entry.entry_id for idx, entry in enumerate(candidates, 1)}
         all_source_ids = {entry.entry_id for entry in candidates}
         source_by_id = {entry.entry_id: entry for entry in candidates}
@@ -272,7 +314,9 @@ class MemoryUnitGenerator:
             return len(result) >= 16
 
         for entry in sources:
-            if entry.role in {"assistant", "system"}:
+            if entry.role in {"assistant", "system"} or entry.sender_type == "other_ai":
+                # 人格本人和其他 Bot 都不是「群成员身份别名」的采集对象：把别人的
+                # QQ/昵称挂到这条单元上，后续检索就会用 yuki 的名字召回月白的记忆。
                 continue
             aliases = [entry.user_id, entry.channel_user_id, entry.speaker_name]
             for alias in aliases:

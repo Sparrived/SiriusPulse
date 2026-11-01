@@ -225,6 +225,8 @@ class BackgroundTasks:
                     candidates=checkpoint_batch,
                     persona_name=engine.persona.name,
                     persona_description=getattr(engine.persona, "full_system_prompt", ""),
+                    persona_aliases=list(getattr(engine.persona, "aliases", []) or []),
+                    other_ai_names=list(getattr(engine, "_other_ai_names", []) or []),
                     brain=engine.brain,
                     model_name=cfg.model_name,
                     transport_retries=max(0, int(getattr(cfg, "retries", 0))),

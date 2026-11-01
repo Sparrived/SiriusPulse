@@ -23,6 +23,10 @@ class BasicMemoryEntry(JsonSerializable):
     content: str
     timestamp: str  # ISO 8601
     speaker_name: str = ""  # display name (nickname, card, or persona name)
+    # 发送者类型：human / self_ai / other_ai / system。role 只有三态，装不下「群里
+    # 另一个 bot」——它既不是人格本人，也不是人。记忆单元生成必须能看见这个区别，
+    # 否则会把别的 bot 的称呼、关系、发言并到人格头上。
+    sender_type: str = "human"
     system_prompt: str = ""  # system prompt used for this assistant turn
     channel_user_id: str = ""  # platform raw id (e.g. QQ number) for name constraints
     platform_message_id: str = ""  # platform message_id (e.g. OneBot message_id)
