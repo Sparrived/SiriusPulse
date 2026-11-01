@@ -241,8 +241,10 @@ async def test_home_at_root_and_old_console_is_gone(tmp_path, monkeypatch):
 
     client, _auth = await _client(data_dir)
     try:
-        home = await client.get("/")
-        assert "月白的小屋" in await home.text()
+        for path in ("/", "/app", "/app/"):
+            home = await client.get(path)
+            assert home.status == 200, path
+            assert "月白的小屋" in await home.text(), path
         for gone in ("/legacy/", "/legacy", "/static/index.html"):
             assert (await client.get(gone, allow_redirects=False)).status in (401, 404), gone
     finally:

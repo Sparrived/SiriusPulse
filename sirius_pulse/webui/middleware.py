@@ -42,6 +42,7 @@ _VALID_ROLES: frozenset[str] = frozenset({"admin", "viewer"})
 _WHITELIST_EXACT: tuple[str, ...] = (
     "/",
     "/index.html",
+    "/app",
 )
 
 # 只读 HTTP 方法

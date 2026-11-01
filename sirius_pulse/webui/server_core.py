@@ -204,6 +204,10 @@ class WebUIServer:
 
     def _setup_routes(self) -> None:
         self.app.router.add_get("/", self.index)
+        # /app/ 是 Vite 的开发入口，也可能被用户直接收藏；它应和小屋根入口
+        # 返回同一张入口页，而不是静态目录在没有 index 时给出的 403。
+        self.app.router.add_get("/app", self.index)
+        self.app.router.add_get("/app/", self.index)
         if APP_DIR.is_dir():
             self.app.router.add_static("/app/", APP_DIR, show_index=False)
         # 反代路由先于 WEBUI_ROUTES 注册：它的通配尾巴会吃掉 /amkr 下的一切，
