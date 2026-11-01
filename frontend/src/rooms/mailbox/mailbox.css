@@ -1,0 +1,284 @@
+.mailbox__add {
+  align-self: flex-start;
+}
+
+/* 信封：左上角一道红蓝相间的航空信边 */
+.envelope {
+  position: relative;
+  overflow: hidden;
+}
+
+.envelope::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 5px;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f78aa8 0 12px,
+    #fff 12px 20px,
+    #6d88e6 20px 32px,
+    #fff 32px 40px
+  );
+  opacity: 0.7;
+}
+
+.envelope__qq {
+  margin-left: 10px;
+  font-size: 15px;
+  color: var(--ink-faint);
+}
+
+.envelope__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(79, 111, 216, 0.18);
+}
+
+.envelope .envelope__fold {
+  padding: 14px 16px;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: none;
+}
+
+.envelope .envelope__fold h2 {
+  font-size: 16.5px;
+}
+
+.envelope__remove {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+/* 邮戳：连接状态 */
+.stamp {
+  flex: none;
+  padding: 3px 12px;
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  font-size: 13.5px;
+  transform: rotate(-4deg);
+  opacity: 0.85;
+}
+
+.stamp--ok {
+  color: #3f9e7c;
+}
+.stamp--weak {
+  color: #d08a3c;
+}
+.stamp--down {
+  color: #cf4f73;
+}
+.stamp--off,
+.stamp--sleep {
+  color: var(--ink-faint);
+}
+
+/* 群名单 */
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.groups__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.groups__id {
+  flex: 1;
+  font-size: 15px;
+}
+
+.groups__remove {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 16px;
+}
+
+.groups__remove:hover {
+  background: #fff0f4;
+  color: #cf4f73;
+}
+
+.groups__add .input {
+  max-width: 260px;
+}
+
+/* 账号 */
+.account {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.account__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.account__add {
+  align-self: flex-start;
+}
+
+/* 排班看板 */
+.board__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.board__summary b {
+  font-size: 18px;
+  color: var(--ink);
+}
+
+.board__groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.board__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+}
+
+.board__group.is-live {
+  background: linear-gradient(135deg, #fff, #ffe9ef);
+  box-shadow: inset 0 0 0 1px rgba(247, 138, 168, 0.4);
+}
+
+.board__gid {
+  color: var(--ink-faint);
+  font-size: 12.5px;
+}
+
+.board__mic {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  color: #c9587b;
+}
+
+.board__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f78aa8;
+}
+
+.board__quiet,
+.board__turns {
+  color: var(--ink-faint);
+}
+
+.board__workers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.board__worker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 13.5px;
+  color: var(--ink-faint);
+}
+
+.board__worker.is-on {
+  color: var(--ink);
+}
+
+.board__worker em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.board__wdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sleep);
+}
+
+.board__worker.is-on .board__wdot {
+  background: var(--ok);
+}
+
+.board__events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+}
+
+.board__events li {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  gap: 2px 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
+.board__events li:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.board__who {
+  font-size: 15px;
+}
+
+.board__events em {
+  font-style: normal;
+  color: var(--ink-faint);
+}
+
+.board__where {
+  color: var(--ink-faint);
+  font-size: 12.5px;
+}
+
+.board__reason {
+  grid-column: 2 / -1;
+  color: var(--ink-faint);
+  font-size: 12.5px;
+}
