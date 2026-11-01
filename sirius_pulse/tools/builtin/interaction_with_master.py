@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,12 +16,15 @@ from sirius_pulse.core.intent import (
     IntentFileStore,
     Intention,
 )
+from sirius_pulse.core.interaction_markers import parse_interaction_markers
 from sirius_pulse.tools.builtin._internal._qq_ops import (
     bridge_error,
     failure_from_exception,
     get_adapter,
     success_result,
 )
+
+logger = logging.getLogger(__name__)
 
 _MDS_BASE_URL = "https://sparrived.xyz/mds"
 _MDS_TOKEN_ENV = "MDS_PUBLIC_STATUS_TOKEN"
@@ -144,6 +148,16 @@ async def _send_message(
             "summary": "操作失败：私聊内容为空",
         }
 
+    # 工具参数是模型原样给出的文本，可能夹带 [STICKER:名称]；先剥离再发送。
+    markers = parse_interaction_markers(text, available_stickers=_sticker_names(engine_context))
+    text = markers.text
+    if not text:
+        return {
+            "success": False,
+            "error": "message 不能为空",
+            "summary": "操作失败：私聊内容为空",
+        }
+
     body = _truncate(text, _MAX_MESSAGE_CHARS)
 
     # On her own time, at night, the words wait instead of arriving at 03:00.
@@ -161,6 +175,7 @@ async def _send_message(
 
     try:
         raw = await adapter.send_private_message(master_qq, body)
+        await _send_stickers(engine_context, master_qq, markers.sticker_names)
         return success_result(
             "已发给主人",
             master_qq=master_qq,
@@ -169,6 +184,30 @@ async def _send_message(
         )
     except Exception as exc:
         return failure_from_exception("和主人私聊", exc)
+
+
+def _sticker_names(engine_context: Any) -> list[str]:
+    """当前人格可用的表情包名称；缺少上下文时返回空表。"""
+    lister = getattr(engine_context, "list_sticker_names", None)
+    if not callable(lister):
+        return []
+    try:
+        return list(lister() or [])
+    except Exception:
+        return []
+
+
+async def _send_stickers(engine_context: Any, master_qq: str, names: list[str]) -> None:
+    """把文本里解析出的表情包补发到主人私聊，失败只记日志。"""
+    if not names or engine_context is None:
+        return
+    sender = getattr(engine_context, "send_sticker_by_names", None)
+    if not callable(sender):
+        return
+    try:
+        await sender(f"private_{master_qq}", list(names))
+    except Exception:
+        logger.warning("私聊表情包发送失败: %s", names, exc_info=True)
 
 
 def _is_quiet_now() -> bool:

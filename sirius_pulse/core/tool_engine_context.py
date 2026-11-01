@@ -8,6 +8,10 @@ import logging
 from typing import Any, Callable
 
 from sirius_pulse.core.events import SessionEvent, SessionEventType
+from sirius_pulse.core.interaction_markers import (
+    collect_allowed_poke_user_ids,
+    parse_interaction_markers,
+)
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.work_mode import (
     SEND_MIDWAY_MSG,
@@ -803,6 +807,15 @@ class ToolEngineContextImpl:
         record_delivery: bool = False,
     ) -> bool:
         handler = getattr(self._engine, "dispatch_proactive_message", None)
+        # 工具参数里的文本同样可能带交互标记，先统一剥离再投递/记账。
+        markers = parse_interaction_markers(
+            text,
+            available_stickers=getattr(self._engine, "_sticker_names", []) or [],
+            allowed_poke_ids=collect_allowed_poke_user_ids(self._engine, group_id),
+        )
+        text = markers.text
+        sticker_names = [*(sticker_names or []), *markers.sticker_names]
+        poke_user_ids = [*(poke_user_ids or []), *markers.poke_user_ids]
         if callable(handler):
             result = await handler(
                 group_id=group_id,

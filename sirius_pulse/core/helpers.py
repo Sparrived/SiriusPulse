@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.core.identity_resolver import IdentityContext
+from sirius_pulse.core.interaction_markers import (
+    collect_allowed_poke_user_ids,
+    parse_interaction_markers,
+)
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -128,6 +132,16 @@ class Helpers:
         group_id = str(group_id or "").strip()
         if not group_id:
             return False
+        # 主动消息的文本来自工具参数或后台任务，同样可能夹带交互标记；
+        # 出口统一解析，否则 [STICKER:名称] 会原样发到聊天里。
+        markers = parse_interaction_markers(
+            text,
+            available_stickers=getattr(self._engine, "_sticker_names", []) or [],
+            allowed_poke_ids=collect_allowed_poke_user_ids(self._engine, group_id),
+        )
+        text = markers.text
+        sticker_names = [*(sticker_names or []), *markers.sticker_names]
+        poke_user_ids = [*(poke_user_ids or []), *markers.poke_user_ids]
         requested_adapter = str(adapter_type or "").strip()
         resolved_adapter_types: list[str] = []
         resolver = getattr(self._engine, "resolve_adapter_types", None)
@@ -512,6 +526,25 @@ class Helpers:
             else:
                 partial_replies.append(rendered)
 
+        # 插件正文同样可能夹带交互标记：统一剥离，避免标记原文发到群里。
+        available_stickers = getattr(engine, "_sticker_names", []) or []
+        sticker_names: list[str] = []
+        if final_reply:
+            plugin_markers = parse_interaction_markers(
+                final_reply, available_stickers=available_stickers
+            )
+            final_reply = plugin_markers.text or None
+            sticker_names = plugin_markers.sticker_names
+        if partial_replies:
+            partial_replies = [
+                cleaned
+                for cleaned in (
+                    parse_interaction_markers(text, available_stickers=available_stickers).text
+                    for text in partial_replies
+                )
+                if cleaned
+            ]
+
         # 将最终回复录入记忆链（与正常 Pipeline 回复一致，仅成功时记录）
         if final_reply and any_success:
             try:
@@ -529,6 +562,7 @@ class Helpers:
         return {
             "reply": final_reply,
             "partial_replies": partial_replies,
+            "sticker_names": sticker_names,
             "strategy": "plugin",
             "message_group": final_message_group,
             "error": (

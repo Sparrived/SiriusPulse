@@ -22,6 +22,7 @@ from sirius_pulse.core.constants import (
 from sirius_pulse.core.delayed_response_queue import _parse_iso, persist_delayed_queue
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
+from sirius_pulse.core.interaction_markers import parse_interaction_markers
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
 from sirius_pulse.core.work_mode import (
@@ -911,12 +912,20 @@ class DelayedQueueTasks:
                 params = parse_arguments(tc.function_arguments)
                 if tc.function_name == SEND_MIDWAY_MSG:
                     midway_text = str(params.get("message", "") or "").strip()
+                    midway_markers = parse_interaction_markers(
+                        midway_text,
+                        available_stickers=getattr(engine, "_sticker_names", []) or [],
+                    )
+                    midway_text = midway_markers.text
+                    sticker_names_accumulated.extend(midway_markers.sticker_names)
                     if midway_text and on_partial_reply is not None:
                         await on_partial_reply(midway_text)
                         last_partial_sent_at = time.monotonic()
                         if work_run is not None:
                             work_run.add_step(kind="midway", text=midway_text)
                         midway_result = "消息已发送给群里。"
+                    elif not midway_text and midway_markers.sticker_names:
+                        midway_result = "表情包已记录，会随本轮结果发出。"
                     elif not midway_text:
                         midway_result = "message 为空，没有发送。"
                     else:
@@ -1003,11 +1012,16 @@ class DelayedQueueTasks:
                 _save_work_run()
 
             if quit_result is not None:
-                work_final_reply = quit_result
+                quit_markers = parse_interaction_markers(
+                    quit_result,
+                    available_stickers=getattr(engine, "_sticker_names", []) or [],
+                )
+                sticker_names_accumulated.extend(quit_markers.sticker_names)
+                work_final_reply = quit_markers.text
                 if work_run is not None:
-                    work_run.finish(result=quit_result)
+                    work_run.finish(result=work_final_reply)
                     _save_work_run()
-                engine._log_inner_thought(f"退出工作模式，结果：{quit_result[:40]}...")
+                engine._log_inner_thought(f"退出工作模式，结果：{work_final_reply[:40]}...")
                 break
 
             # 没有调用任何工具 → 文本作为最终回复

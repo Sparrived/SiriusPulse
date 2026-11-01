@@ -29,6 +29,10 @@ from sirius_pulse.core.engine_sticker import EngineSticker
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
 from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
+from sirius_pulse.core.interaction_markers import (
+    collect_allowed_poke_user_ids,
+    parse_interaction_markers,
+)
 from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY, ModelRouter
 from sirius_pulse.core.participation import get_group_reply_strategy
 from sirius_pulse.core.pipeline import Pipeline
@@ -1266,68 +1270,44 @@ class _EmotionalGroupChatEngineBase:
             if not raw_text:
                 return
 
-            poke_pattern = re.compile(r"\[POKE:\s*(\d+)\s*\]", re.IGNORECASE)
-            sticker_pattern = re.compile(r"\[STICKER:\s*([^\[\]\r\n]+?)\s*\]", re.IGNORECASE)
-            legacy_sticker_pattern = re.compile(
-                r"\[STICKERS[：:]\s*([^\[\]\r\n]+?)\s*\]", re.IGNORECASE
+            available_stickers = set(getattr(_engine, "_sticker_names", []) or [])
+            group_id = str(getattr(_req, "group_id", "") or "")
+            current_user_id = str(getattr(_req, "user_id", "") or "").strip()
+            extra_poke_ids = (
+                (current_user_id,) if group_id and not group_id.startswith("private_") else ()
+            )
+            allowed_poke_ids = collect_allowed_poke_user_ids(
+                _engine, group_id, extra=extra_poke_ids
             )
 
-            available_stickers = set(getattr(_engine, "_sticker_names", []) or [])
-            sticker_names: list[str] = []
-            for match in sticker_pattern.findall(raw_text):
-                name = match.strip().strip("'\"“”‘’「」『』")
-                if name in available_stickers:
-                    sticker_names.append(name)
-            for match in legacy_sticker_pattern.findall(raw_text):
-                for name in re.split(r"[,，、]", match):
-                    name = name.strip().strip("'\"“”‘’「」『』")
-                    if name in available_stickers:
-                        sticker_names.append(name)
+            markers = parse_interaction_markers(
+                raw_text,
+                available_stickers=available_stickers,
+                allowed_poke_ids=allowed_poke_ids,
+            )
+            clean_markers = parse_interaction_markers(
+                str(getattr(_result, "clean_text", "") or ""),
+                available_stickers=available_stickers,
+                allowed_poke_ids=allowed_poke_ids,
+            )
 
-            allowed_poke_ids: set[str] = set()
-            group_id = str(getattr(_req, "group_id", "") or "")
-            if group_id and not group_id.startswith("private_"):
-                for member in _engine.get_qq_group_members_for_prompt(group_id):
-                    if isinstance(member, dict):
-                        user_id = str(member.get("user_id", "")).strip()
-                        if user_id.isdigit():
-                            allowed_poke_ids.add(user_id)
-                current_user_id = str(getattr(_req, "user_id", "") or "").strip()
-                if current_user_id.isdigit():
-                    allowed_poke_ids.add(current_user_id)
-                try:
-                    entries = _engine.basic_memory.get_all(group_id)
-                except Exception:
-                    entries = []
-                for entry in entries:
-                    for field in ("channel_user_id", "user_id"):
-                        user_id = str(getattr(entry, field, "") or "").strip()
-                        if user_id.isdigit():
-                            allowed_poke_ids.add(user_id)
-
-            poke_user_ids = [
-                user_id for user_id in poke_pattern.findall(raw_text) if user_id in allowed_poke_ids
-            ]
-            marker_patterns = (poke_pattern, sticker_pattern, legacy_sticker_pattern)
-
-            def _strip_markers(text: str) -> str:
-                for pattern in marker_patterns:
-                    text = pattern.sub("", text)
-                return text.strip()
-
-            _result.raw_text = _strip_markers(raw_text)
-            _result.clean_text = _strip_markers(str(getattr(_result, "clean_text", "") or ""))
+            _result.raw_text = markers.text
+            _result.clean_text = clean_markers.text
             _result.sticker_names = list(
-                dict.fromkeys([*(getattr(_result, "sticker_names", []) or []), *sticker_names])
+                dict.fromkeys(
+                    [*(getattr(_result, "sticker_names", []) or []), *markers.sticker_names]
+                )
             )[:3]
             _result.poke_user_ids = list(
-                dict.fromkeys([*(getattr(_result, "poke_user_ids", []) or []), *poke_user_ids])
+                dict.fromkeys(
+                    [*(getattr(_result, "poke_user_ids", []) or []), *markers.poke_user_ids]
+                )
             )[:1]
-            if sticker_names or poke_user_ids:
+            if markers.sticker_names or markers.poke_user_ids:
                 logger.info(
                     "交互标记解析完成: stickers=%s pokes=%s",
-                    sticker_names,
-                    poke_user_ids,
+                    markers.sticker_names,
+                    markers.poke_user_ids,
                 )
 
         # task_filter 交给 Brain 调度时检查，hook 闭包不关心
