@@ -39,31 +39,31 @@ try:  # Pygments 只服务代码块高亮；缺失时整块退化为纯转义文
     from pygments.util import ClassNotFound as _PygmentsClassNotFound
 
     class _CardCodeStyle(_PygmentsStyle):
-        """与卡片配色同源的代码高亮方案。"""
+        """与卡片配色同源的浅色代码高亮方案（月白底、墨蓝字、樱粉关键字）。"""
 
-        background_color = "#202d31"
-        default_style = "#e8f0e9"
+        background_color = "#f7f6ff"
+        default_style = "#2d3154"
         styles = {
-            Comment: "italic #70827d",
-            Error: "#e36b52",
-            Generic.Deleted: "#e36b52",
-            Generic.Emph: "italic #e8f0e9",
-            Generic.Heading: "bold #f3f0e7",
-            Generic.Inserted: "#7bd7c6",
-            Generic.Prompt: "#70827d",
-            Generic.Strong: "bold #f3f0e7",
-            Generic.Subheading: "bold #7bd7c6",
-            Keyword: "bold #e36b52",
-            Name.Attribute: "#f0b85d",
-            Name.Builtin: "#7bd7c6",
-            Name.Class: "bold #7bd7c6",
-            Name.Decorator: "#7bd7c6",
-            Name.Function: "bold #7bd7c6",
-            Name.Tag: "bold #e36b52",
-            Number: "#f0b85d",
-            Operator: "#a8b8b5",
-            Punctuation: "#8fa3a0",
-            String: "#f0b85d",
+            Comment: "italic #8b8fae",
+            Error: "#d1477a",
+            Generic.Deleted: "#d1477a",
+            Generic.Emph: "italic #2d3154",
+            Generic.Heading: "bold #232849",
+            Generic.Inserted: "#23866a",
+            Generic.Prompt: "#8b8fae",
+            Generic.Strong: "bold #232849",
+            Generic.Subheading: "bold #3a5bc7",
+            Keyword: "bold #d1477a",
+            Name.Attribute: "#b86e12",
+            Name.Builtin: "#7a52c7",
+            Name.Class: "bold #3a5bc7",
+            Name.Decorator: "#7a52c7",
+            Name.Function: "bold #3a5bc7",
+            Name.Tag: "bold #d1477a",
+            Number: "#b86e12",
+            Operator: "#6a6f96",
+            Punctuation: "#7c80a3",
+            String: "#23866a",
         }
 
     _HIGHLIGHT_READY = True
@@ -106,6 +106,10 @@ _CODE_LEXER_ALIASES = {
     "astro": "html",
 }
 _CUTE_FONT_PATH = Path(__file__).with_name("assets") / "ZCOOLKuaiLe-Regular.ttf"
+# 卡片按手机阅读设计：版心窄、字号大，再以 2 倍像素截图保证放大后依旧清晰。
+_CARD_VIEWPORT_WIDTH = 800
+_CARD_SCALE = 2
+_MAX_IMAGE_PIXEL_HEIGHT = 14_000
 
 
 def has_rich_structure(text: str) -> bool:
@@ -284,14 +288,27 @@ async def render_markdown_image(content: str, title: str, data_store: Any) -> Pa
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"markdown_{uuid4().hex}.png"
 
+    card_html = build_markdown_card_html(text, title)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
         try:
             page = await browser.new_page(
-                viewport={"width": 960, "height": 800}, device_scale_factor=1
+                viewport={"width": _CARD_VIEWPORT_WIDTH, "height": 800},
+                device_scale_factor=_CARD_SCALE,
             )
-            await page.set_content(build_markdown_card_html(text, title), wait_until="load")
-            await page.locator("#markdown-card").screenshot(path=str(output_path))
+            await page.set_content(card_html, wait_until="load")
+            card = page.locator("#markdown-card")
+            box = await card.bounding_box()
+            if box and box["height"] * _CARD_SCALE > _MAX_IMAGE_PIXEL_HEIGHT:
+                # 超长卡片按 2 倍截图会超出 Chromium 与聊天平台的尺寸上限，退回 1 倍。
+                await page.close()
+                page = await browser.new_page(
+                    viewport={"width": _CARD_VIEWPORT_WIDTH, "height": 800},
+                    device_scale_factor=1,
+                )
+                await page.set_content(card_html, wait_until="load")
+                card = page.locator("#markdown-card")
+            await card.screenshot(path=str(output_path))
         finally:
             await browser.close()
     return output_path
@@ -370,52 +387,74 @@ def to_image_reference(image_path: str) -> str:
 def build_markdown_card_html(content: str, title: str = "") -> str:
     """Build escaped HTML for the small Markdown subset used in chat replies."""
     clean_title = str(title or "").strip()[:_MAX_TITLE_CHARS]
-    heading = f"<h1>{_inline_html(clean_title)}</h1>" if clean_title else ""
+    heading = (
+        f"<h1>{_inline_html(clean_title)}</h1>"
+        if clean_title
+        else '<span class="note-label">小纸条</span>'
+    )
     font_face = _cute_font_face_css()
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><style>
 {font_face}
 * {{ box-sizing: border-box; }}
-html {{ background: #dfe4df; }}
-body {{ margin: 0; padding: 24px; background: #dfe4df; color: #202a2b; font-family: "Sirius Cute", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }}
-#markdown-card {{ width: 900px; background: #f7f7f2; border: 1px solid #1c2b2e; border-radius: 8px; box-shadow: 8px 8px 0 #b8c4bc; overflow: hidden; }}
-.masthead {{ display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; min-height: 132px; padding: 25px 36px 24px; background: #18252a; color: #f3f0e7; }}
-.identity {{ display: flex; align-items: center; gap: 16px; }}
-.signal-mark {{ display: grid; grid-template-columns: repeat(3, 7px); gap: 4px; width: 38px; padding: 7px; border: 1px solid #7bd7c6; background: #26383b; }}
-.signal-mark span {{ display: block; height: 7px; background: #7bd7c6; }}
-.signal-mark span:nth-child(2), .signal-mark span:nth-child(5), .signal-mark span:nth-child(8) {{ background: #f0b85d; }}
-.signal-mark span:nth-child(3), .signal-mark span:nth-child(7) {{ background: #e36b52; }}
-.eyebrow, .telemetry-label, .footer {{ font-family: "Cascadia Mono", Consolas, monospace; letter-spacing: 1.4px; text-transform: uppercase; }}
-.eyebrow {{ color: #7bd7c6; font-size: 11px; font-weight: 700; }}
-.wordmark {{ margin-top: 5px; color: #f3f0e7; font-size: 27px; font-weight: 800; letter-spacing: 1px; }}
-.telemetry {{ min-width: 160px; padding-left: 16px; border-left: 1px solid #536467; }}
-.telemetry-label {{ color: #a8b8b5; font-size: 10px; }}
-.telemetry-value {{ margin-top: 8px; color: #f0b85d; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; font-weight: 700; }}
-.accent {{ height: 8px; background: #e36b52; position: relative; }}
-.accent::after {{ content: ""; position: absolute; top: 0; right: 0; width: 34%; height: 100%; background: #f0b85d; }}
-.content {{ padding: 34px 42px 37px; }}
-h1 {{ color: #18252a; font-size: 30px; line-height: 1.3; margin: 0 0 24px; overflow-wrap: anywhere; }}
-h2 {{ color: #18252a; font-size: 24px; line-height: 1.35; margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 2px solid #b8c4bc; }}
-h3 {{ color: #b34e3d; font-size: 19px; line-height: 1.4; margin: 24px 0 10px; }}
-h4 {{ color: #55716c; font-size: 16px; line-height: 1.4; margin: 20px 0 8px; }}
-p, li, blockquote {{ font-size: 17px; line-height: 1.75; overflow-wrap: anywhere; }}
-p {{ margin: 0 0 15px; overflow-wrap: anywhere; }}
-ul, ol {{ margin: 8px 0 18px; padding-left: 28px; }}
-li {{ margin: 4px 0; padding-left: 4px; }}
-blockquote {{ border-left: 5px solid #e36b52; background: #e8eeea; color: #4a605e; margin: 18px 0; padding: 7px 15px; }}
-hr {{ height: 1px; margin: 29px 0; border: 0; background: #b8c4bc; position: relative; }}
-hr::after {{ content: ""; position: absolute; top: -2px; left: 0; width: 36px; height: 5px; background: #7bd7c6; }}
-pre {{ background: #202d31; border: 0; border-left: 5px solid #7bd7c6; border-radius: 3px; color: #e8f0e9; font-family: "Cascadia Mono", Consolas, monospace; font-size: 14px; line-height: 1.65; margin: 18px 0; overflow-wrap: anywhere; padding: 16px; white-space: pre-wrap; }}
-code {{ background: #e4ebe5; border-radius: 3px; color: #b34e3d; font-family: "Cascadia Mono", Consolas, monospace; font-size: .9em; padding: 2px 4px; }}
-pre code {{ background: transparent; color: inherit; padding: 0; }}
-strong {{ color: #18252a; }} em {{ color: #55716c; }}
-table {{ width: 100%; border-collapse: collapse; margin: 18px 0 22px; table-layout: fixed; }}
-th, td {{ border: 1px solid #c9d2cb; padding: 9px 11px; vertical-align: top; text-align: left; overflow-wrap: anywhere; }}
-th {{ background: #e8eeea; color: #18252a; font-weight: 800; }}
-tbody tr:nth-child(even) td {{ background: #f1f4ef; }}
-.table-line {{ background: #edf1eb; border-left: 3px solid #f0b85d; font-family: "Cascadia Mono", Consolas, monospace; font-size: 14px; padding: 7px 10px; white-space: pre-wrap; }}
-.footer {{ display: flex; justify-content: space-between; gap: 20px; border-top: 1px solid #c9d2cb; color: #70827d; font-size: 10px; margin-top: 30px; padding-top: 14px; }}
-</style></head><body><article id="markdown-card"><header class="masthead"><div class="identity"><div class="signal-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><div><div class="eyebrow">SIRIUS / RESPONSE ARCHIVE</div><div class="wordmark">FIELD NOTE</div></div></div><div class="telemetry"><div class="telemetry-label">Output mode</div><div class="telemetry-value">MERGED RESPONSE</div></div></header><div class="accent"></div><div class="content">{heading}{_markdown_body_html(content)}<div class="footer"><span>SIRIUS CHAT</span><span>ONE REPLY / MANY SIGNALS</span></div></div></article></body></html>"""
+html, body {{ margin: 0; padding: 0; background: #f1efff; }}
+body {{ color: #2d3154; font-family: "Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "WenQuanYi Zen Hei", sans-serif; -webkit-font-smoothing: antialiased; }}
+#markdown-card {{ position: relative; width: 760px; padding: 38px 26px 26px; background-color: #f1efff; background-image: radial-gradient(circle at 12% 8%, rgba(255, 210, 225, .75), transparent 42%), radial-gradient(circle at 92% 96%, rgba(214, 226, 255, .9), transparent 46%), radial-gradient(rgba(150, 140, 220, .16) 1.4px, transparent 1.6px); background-size: 100% 100%, 100% 100%, 22px 22px; }}
+.paper {{ position: relative; background: #fffdfe; border: 2px solid #ebe7fb; border-radius: 28px; box-shadow: 0 10px 0 -4px #e3defa, 0 18px 36px -18px rgba(79, 70, 160, .28); padding: 30px 38px 22px; }}
+.tape {{ position: absolute; top: -17px; left: 50%; width: 132px; height: 32px; margin-left: -66px; transform: rotate(-3deg); border-radius: 4px; background: repeating-linear-gradient(135deg, rgba(255, 170, 196, .72) 0 9px, rgba(255, 196, 214, .72) 9px 18px); box-shadow: 0 2px 4px rgba(200, 120, 150, .18); }}
+.sparkle {{ position: absolute; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); }}
+.sparkle.s1 {{ top: 14px; left: 30px; width: 22px; height: 22px; background: #ffc85c; }}
+.sparkle.s2 {{ bottom: 9px; left: 46px; width: 12px; height: 12px; background: #ff9fb8; }}
+.sparkle.s3 {{ top: 12px; right: 44px; width: 15px; height: 15px; background: #9fb4ff; }}
+.note-head {{ display: flex; align-items: center; gap: 12px; margin: 0 0 20px; padding-bottom: 16px; border-bottom: 2px dashed #ece8fb; }}
+.moon {{ flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: #eef0ff; box-shadow: inset 0 0 0 2px #dfe4ff; }}
+.moon svg {{ width: 24px; height: 24px; }}
+h1, h2, h3, .note-label, .note-foot {{ font-family: "Sirius Cute", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; font-weight: 400; }}
+h1 {{ margin: 0; color: #232849; font-size: 28px; line-height: 1.3; overflow-wrap: anywhere; }}
+.note-label {{ color: #6a6f9c; font-size: 20px; letter-spacing: 2px; }}
+.content {{ font-size: 18px; line-height: 1.8; }}
+.content > :first-child {{ margin-top: 0; }}
+h2 {{ display: table; margin: 26px 0 12px; padding: 0 6px; color: #232849; font-size: 25px; line-height: 1.4; overflow-wrap: anywhere; background: linear-gradient(transparent 58%, #ffe1ea 58%, #ffe1ea 90%, transparent 90%); }}
+h3 {{ position: relative; margin: 22px 0 10px; padding-left: 24px; color: #3a52b0; font-size: 21px; line-height: 1.45; overflow-wrap: anywhere; }}
+h3::before {{ content: ""; position: absolute; left: 2px; top: .42em; width: 13px; height: 13px; background: #9fb4ff; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); }}
+h4 {{ margin: 18px 0 8px; color: #5b6188; font-size: 18px; font-weight: 700; line-height: 1.5; }}
+p, li, blockquote {{ overflow-wrap: anywhere; }}
+p {{ margin: 0 0 14px; }}
+ul, ol {{ list-style: none; margin: 6px 0 16px; padding: 0; }}
+li {{ position: relative; margin: 6px 0; padding-left: 30px; }}
+ul > li::before {{ content: ""; position: absolute; left: 8px; top: .62em; width: 10px; height: 10px; border-radius: 50%; background: #ff9fb8; }}
+ul > li:nth-child(3n+2)::before {{ background: #9fb4ff; }}
+ul > li:nth-child(3n)::before {{ background: #ffc85c; }}
+ol {{ counter-reset: item; }}
+ol > li {{ counter-increment: item; padding-left: 36px; }}
+ol > li::before {{ content: counter(item); position: absolute; left: 0; top: .28em; width: 25px; height: 25px; border-radius: 50%; background: #e7ecff; color: #3a52b0; font: 700 14px/25px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; text-align: center; }}
+blockquote {{ margin: 16px 0; padding: 12px 18px 12px 20px; border-radius: 16px; background: #f5f3ff; box-shadow: inset 4px 0 0 #c9c1f5; color: #4f5580; }}
+hr {{ position: relative; height: 0; margin: 26px 0; border: 0; border-top: 2px dashed #e4e0f8; overflow: visible; }}
+hr::after {{ content: ""; position: absolute; top: -8px; left: 50%; width: 14px; height: 14px; margin-left: -7px; background: #ffb5c8; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); box-shadow: 0 0 0 6px #fffdfe; }}
+code {{ border-radius: 7px; background: #fff0f5; color: #c2416f; font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei", monospace; font-size: .86em; padding: 2px 6px; }}
+.code {{ margin: 16px 0 18px; border: 2px solid #e8e5fb; border-radius: 18px; background: #f7f6ff; overflow: hidden; }}
+.code-head {{ display: flex; align-items: center; justify-content: space-between; padding: 9px 14px; background: #efedff; }}
+.code-dots {{ display: flex; gap: 7px; }}
+.code-dots i {{ display: block; width: 11px; height: 11px; border-radius: 50%; background: #ff9fb8; }}
+.code-dots i:nth-child(2) {{ background: #ffc85c; }}
+.code-dots i:nth-child(3) {{ background: #8fd9b8; }}
+.code-lang {{ color: #7c80a3; font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; letter-spacing: .5px; }}
+pre {{ margin: 0; padding: 14px 18px 16px; color: #2d3154; font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK SC", "Microsoft YaHei", monospace; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; }}
+pre code {{ background: transparent; color: inherit; font-size: inherit; padding: 0; border-radius: 0; }}
+strong {{ color: #232849; font-weight: 700; background: linear-gradient(transparent 62%, #ffe1ea 62%); padding: 0 1px; }}
+em {{ color: #6a4fc0; font-style: normal; }}
+table {{ width: 100%; margin: 16px 0 20px; border: 2px solid #e8e5fb; border-radius: 16px; border-collapse: separate; border-spacing: 0; overflow: hidden; table-layout: fixed; font-size: 16px; line-height: 1.6; }}
+th, td {{ padding: 10px 13px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid #efedfb; }}
+th + th, td + td {{ border-left: 1px solid #efedfb; }}
+tbody tr:last-child td {{ border-bottom: 0; }}
+th {{ background: #eef0ff; color: #232849; font-weight: 700; }}
+tbody tr:nth-child(even) td {{ background: #fbfaff; }}
+th[align="center"], td[align="center"] {{ text-align: center; }}
+th[align="right"], td[align="right"] {{ text-align: right; }}
+.table-line {{ margin: 0 0 6px; padding: 8px 12px; border-radius: 10px; background: #f7f6ff; font-family: "Cascadia Mono", Consolas, "Microsoft YaHei", monospace; font-size: 15px; white-space: pre-wrap; }}
+.note-foot {{ display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 22px; padding-top: 14px; border-top: 2px dashed #ece8fb; color: #a3a6c6; font-size: 14px; letter-spacing: 1px; }}
+.note-foot .code-dots i {{ width: 8px; height: 8px; }}
+</style></head><body><article id="markdown-card"><span class="sparkle s1"></span><span class="sparkle s2"></span><span class="sparkle s3"></span><div class="paper"><span class="tape" aria-hidden="true"></span><header class="note-head"><span class="moon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M15.2 2.6a9.6 9.6 0 1 0 6.3 14.6A8 8 0 0 1 15.2 2.6z" fill="#ffc85c"/><circle cx="19" cy="6" r="1.3" fill="#ff9fb8"/></svg></span>{heading}</header><div class="content">{_markdown_body_html(content)}</div><footer class="note-foot"><span class="code-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>sirius pulse</span></footer></div></article></body></html>"""
 
 
 def _cute_font_face_css() -> str:
@@ -441,6 +480,7 @@ def _markdown_body_html(content: str) -> str:
     code_lines: list[str] = []
     code_language = ""
     in_code = False
+    quote_open = False
 
     def flush_paragraph() -> None:
         if paragraph:
@@ -458,7 +498,13 @@ def _markdown_body_html(content: str) -> str:
         nonlocal code_language
         if code_lines:
             body = _highlight_code_block(chr(10).join(code_lines), code_language)
-            blocks.append(f"<pre><code>{body}</code></pre>")
+            label = f'<span class="code-lang">{html.escape(code_language)}</span>'
+            blocks.append(
+                '<figure class="code"><div class="code-head">'
+                '<span class="code-dots" aria-hidden="true"><i></i><i></i><i></i></span>'
+                f"{label if code_language else ''}</div>"
+                f"<pre><code>{body}</code></pre></figure>"
+            )
             code_lines.clear()
         code_language = ""
 
@@ -504,6 +550,8 @@ def _markdown_body_html(content: str) -> str:
 
     for raw_line in str(content or "").strip().splitlines():
         line = raw_line.rstrip()
+        # 只有紧挨着的引用行才合并；其余任何一行都会结束当前引用。
+        quote_open, was_quote = False, quote_open
         if _is_code_fence_line(line):
             flush_table()
             flush_paragraph()
@@ -543,7 +591,13 @@ def _markdown_body_html(content: str) -> str:
             flush_table()
             flush_paragraph()
             flush_list()
-            blocks.append(f"<blockquote>{_inline_html(clean_line[1:].lstrip())}</blockquote>")
+            quote = _inline_html(clean_line[1:].lstrip())
+            if was_quote:
+                # 连续的引用行属于同一段引用，合进上一个气泡里。
+                blocks[-1] = blocks[-1].removesuffix("</blockquote>") + f"<br>{quote}</blockquote>"
+            else:
+                blocks.append(f"<blockquote>{quote}</blockquote>")
+            quote_open = True
             continue
 
         ordered_match = _ORDERED_ITEM_RE.match(clean_line)

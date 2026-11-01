@@ -219,9 +219,17 @@ def test_markdown_card_highlights_code_fences_by_language():
         "```python\ndef deploy(name):\n    return name  # 注释\n```", "部署"
     )
 
-    assert '<span style="color: #E36B52; font-weight: bold">def</span>' in rendered
+    assert '<span style="color: #D1477A; font-weight: bold">def</span>' in rendered
     assert "font-style: italic" in rendered  # 注释行
     assert "<pre><code>" in rendered
+    assert '<span class="code-lang">python</span>' in rendered
+
+
+def test_markdown_card_merges_consecutive_quote_lines_into_one_quote():
+    rendered = build_markdown_card_html("> 第一句\n> 第二句\n\n> 另一段")
+
+    assert "<blockquote>第一句<br>第二句</blockquote>" in rendered
+    assert "<blockquote>另一段</blockquote>" in rendered
 
 
 def _code_block_text(rendered: str) -> str:
