@@ -29,6 +29,7 @@ from sirius_pulse.tools.builtin._internal._bash_runtime import (
 )
 from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.visual.errors import VisualError
+from sirius_pulse.visual.images import optimize_image_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,22 @@ async def run(
             total_bytes += size
             if total_bytes > _MAX_TOTAL_BYTES:
                 raise ValueError(f"图片总大小超过 {_MAX_TOTAL_BYTES // 1024 // 1024}MB，请分几次读。")
+            # 大图先压一份给视觉模型：减少传输与解码耗时，细节仍然够看。
+            if size > 1_200_000:
+                try:
+                    optimized = optimize_image_bytes(path.read_bytes(), max_side=1536)
+                    optimized_mime = _sniff_image_mime(optimized) or mime_type
+                    if optimized_mime and len(optimized) < size:
+                        path = _save_bytes(
+                            optimized,
+                            optimized_mime,
+                            data_store,
+                            "optimized_for_read",
+                            keep=200,
+                        )
+                        mime_type, size = optimized_mime, len(optimized)
+                except OSError:
+                    pass
             resolved.append((path, mime_type, size, _image_label(source, index)))
         for asset_id in asset_ids:
             opened = await service.open_asset_for_read(asset_id, access)

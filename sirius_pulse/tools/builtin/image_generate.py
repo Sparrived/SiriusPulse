@@ -35,7 +35,7 @@ from sirius_pulse.tools.builtin._internal._bash_runtime import (
 from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.visual import policies as visual_policies
 from sirius_pulse.visual.errors import VisualError
-from sirius_pulse.visual.images import sha256_bytes
+from sirius_pulse.visual.images import optimize_image_bytes, sha256_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +327,20 @@ def _normalize_subjects(raw: Any) -> list[dict[str, Any]]:
             try:
                 parsed = json.loads(text)
             except json.JSONDecodeError:
-                parsed = None
+                # 模型偶尔会写成 Python 字面量（单引号），这里兼容一下。
+                try:
+                    import ast
+
+                    candidate = ast.literal_eval(text)
+                    if isinstance(candidate, (dict, list)):
+                        parsed = candidate
+                except (ValueError, SyntaxError):
+                    parsed = None
+            if parsed is None and text.startswith(("{", "[")):
+                raise ValueError(
+                    'subjects 必须是 JSON 对象数组，例如 [{"ref": "persona"}]'
+                    ' 或 [{"ref": "person_id", "value": "<UUID>"}]'
+                )
         raw = parsed if parsed is not None else [{"ref": "name", "value": text}]
     if isinstance(raw, dict):
         return [dict(raw)]
@@ -478,9 +491,11 @@ async def _submit_person_job(
         "summary": f"已提交人物生图任务（{job_id}），完成后会收到结果通知",
         "text_blocks": [
             (
-                f"已提交人物生图任务（{job_id}），已绑定人物：{subject_names or '（未命名）'}。"
-                "生成需要一点时间，完成后只回调产物路径，不会自动发到聊天；"
-                "是否发送由你决定。不要重复提交，也不要提前声称已经画好。" + preview_note
+                f"已提交人物生图任务（{job_id}）"
+                + (f"，已绑定人物：{subject_names}" if subject_names else "")
+                + "。生成需要一点时间，完成后只回调产物路径，不会自动发到聊天；"
+                "是否发送由你决定。不要重复提交，也不要提前声称已经画好。"
+                + preview_note
             )
         ],
         "data": {
@@ -1111,7 +1126,8 @@ def _read_reference_images(
             for image, digest in zip(images, expected)
         ):
             raise ValueError("人物生图参考图快照哈希或图序不一致，已拒绝计费请求")
-    return images
+    # 哈希校验针对原始快照；真正上传时用轻量副本，减少 multipart 体积与上游解码耗时。
+    return [(name, optimize_image_bytes(data)) for name, data in images]
 
 
 def _write_generated_image(
