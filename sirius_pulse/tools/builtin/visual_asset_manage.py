@@ -51,6 +51,7 @@ _config.group("主体").add(
         '{"ref": "persona"}、{"ref": "person_id", "value": "<UUID>"}、'
         '{"ref": "name", "value": "<名称>"}。省略时默认 requester；'
         "为其他人投稿须明确选定可见人物，投稿者不必是图中人物。"
+        "自主回合不能省略 target，请显式指定 persona 或 person_id。"
     ),
 )
 _config.group("素材").add(
@@ -58,7 +59,9 @@ _config.group("素材").add(
     type="str",
     description=(
         '入库素材来源：默认 {"kind": "attachment"}（本回合聊天图片，可用 index 选第几张）；'
-        '或 {"kind": "asset", "asset_id": "<受管资产ID>"}。远程 URL 与任意本地路径会被拒绝。'
+        '或 {"kind": "asset", "asset_id": "<受管资产ID>"}；'
+        '自主回合维护自己或虚构角色时可用 {"kind": "path", "path": "人格目录内相对路径"}。'
+        '远程 URL 与人格目录外的本地路径会被拒绝。'
     ),
 )
 _config.group("素材").add("view", type="str", description="参考图视角/用途说明，如 正视图、侧视图、背面、立绘。")
@@ -120,7 +123,8 @@ _config.group("来源").add(
 TOOL_META = {
     "name": "visual_asset_manage",
     "description": (
-        "【适用场景】维护受管人物的共享视觉素材库（立绘、三视图、外观参考草稿等）。仅在用户当前轮次发出明确指令时调用。\n"
+        "【适用场景】维护受管人物的共享视觉素材库（立绘、三视图、外观参考草稿等）。用户明确指令时调用；"
+        "自主回合也允许维护自己或虚构角色（卡咔、柚子、yuki、幽夜、池宇健等）的视觉资料。\n"
         "【使用方法】通过 action 执行操作（如 stage 投稿草稿、activate 启用版本、retire 停用版本）；"
         "target 传入目标主体；evidence_ref 传入用户授权证据引用。\n"
         "【注意事项】普通投稿为草稿态，正式启用、停用或删除必须拥有目标人物维护权；投稿不改变目标身份资料；生成素材不自动启用或发送。"

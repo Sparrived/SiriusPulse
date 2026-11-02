@@ -23,6 +23,7 @@ class PersonAccess:
     evidence_refs: tuple[str, ...] = ()
     is_admin: bool = False
     self_initiated: bool = False
+    self_service: bool = False
 
 
 class PersonError(ValueError):
@@ -668,7 +669,12 @@ class PersonService:
         ):
             raise PersonError("permission_denied")
         if not access.is_admin and row["kind"] == "persona":
-            raise PersonError("permission_denied")
+            # 人格自己的自主维护：允许月白在自主回合登记/更新自己的形象资料。
+            if not (
+                getattr(access, "self_service", False)
+                and person_id == evidence["actor_id"]
+            ):
+                raise PersonError("permission_denied")
         evidence["person_id"] = person_id
         return evidence
 

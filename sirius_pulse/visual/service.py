@@ -26,6 +26,7 @@ from sirius_pulse.visual.access import (
     controller_of,
     is_persona,
     person_for,
+    person_kind,
     persona_id_of,
     require_capability,
     require_evidence,
@@ -309,7 +310,14 @@ class VisualService:
             if handler is None or action.startswith("_"):
                 raise VisualError("unsupported_action", f"不支持的视觉资产动作: {action}")
             if bool(getattr(access, "self_initiated", False)) and action not in {"get_summary"}:
-                raise VisualError("permission_denied", "自主回合不能修改正式视觉资产；请在用户明确指令下操作")
+                if not (
+                    bool(getattr(access, "self_service", False))
+                    and action in {"stage", "derive", "activate"}
+                ):
+                    raise VisualError(
+                        "permission_denied",
+                        "自主回合不能修改正式视觉资产；请在用户明确指令下操作",
+                    )
             return await handler(
                 access=access,
                 evidence_ref=evidence_ref,
@@ -396,7 +404,21 @@ class VisualService:
         person_id = resolve_person(self.people, target, access, source_ref or evidence_ref)
         person = person_for(self.people, person_id, access)
         self.store.require_subject_active(person_id)
-        evidence = require_evidence(self.people, access, evidence_ref)
+        if getattr(access, "self_service", False) and person_kind(person) not in {
+            "persona",
+            "character",
+        }:
+            raise VisualError(
+                "permission_denied", "自主回合只能维护自己或虚构角色的视觉资料"
+            )
+        if getattr(access, "self_service", False):
+            evidence = {
+                "actor_id": str(getattr(access, "actor_id", "")),
+                "attachments": [],
+                "self_service": True,
+            }
+        else:
+            evidence = require_evidence(self.people, access, evidence_ref)
         attachments = evidence.get("attachments")
         if not attachments:
             try:
@@ -694,7 +716,8 @@ class VisualService:
                 raise VisualError("quota_exceeded", "该授权次数已用尽或被撤回")
             budget_flags = {"auto_reserved": True, "deployment_charged": False}
         else:
-            require_evidence(self.people, access, evidence_ref)
+            if not getattr(access, "self_service", False):
+                require_evidence(self.people, access, evidence_ref)
             # 手动共享使用只计部署额度，不占用后台自动候选的限定许可。
             grant_id = ""
             if not policies.consume_deployment(self.store):
@@ -864,9 +887,17 @@ class VisualService:
         person_id = resolve_person(self.people, target, access, evidence_ref)
         person = person_for(self.people, person_id, access)
         self.store.require_subject_active(person_id)
+        if getattr(access, "self_service", False) and person_kind(person) not in {
+            "persona",
+            "character",
+        }:
+            raise VisualError(
+                "permission_denied", "自主回合只能维护自己或虚构角色的视觉资料"
+            )
         if not can_maintain(self.store, self.people, person, access):
             raise VisualError("permission_denied", "只有本人或角色控制者可以启用正式形象")
-        require_evidence_or_admin(self.people, access, evidence_ref)
+        if not getattr(access, "self_service", False):
+            require_evidence_or_admin(self.people, access, evidence_ref)
         profile_id = str(fields.get("profile_id") or "").strip()
         revision = fields.get("revision")
         if not profile_id or revision is None:
@@ -2453,10 +2484,28 @@ class VisualService:
                 "为避免 SSRF 与任意外链入库，视觉资产不接受远程 URL；请先把图片作为聊天附件发送，" "或引用当前可见的受管素材",
             )
         if kind == "path":
-            raise VisualError(
-                "asset_invalid",
-                "不能按任意本地路径入库；请使用本回合聊天附件或当前可见的受管素材",
-            )
+            if not bool(getattr(access, "self_service", False)):
+                raise VisualError(
+                    "asset_invalid",
+                    "不能按任意本地路径入库；请使用本回合聊天附件或当前可见的受管素材",
+                )
+            raw_path = str(spec.get("path") or "").strip()
+            if not raw_path:
+                raise VisualError("invalid_argument", "path 来源需要 path 参数")
+            root = self.work_path.resolve()
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                path = root / path
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(root)
+            except (OSError, ValueError) as exc:
+                raise VisualError("permission_denied", "只能导入人格目录内的图片") from exc
+            if not resolved.is_file():
+                raise VisualError("asset_invalid", "本地图片不存在")
+            if resolved.stat().st_size > MAX_IMAGE_BYTES:
+                raise VisualError("asset_invalid", "图片超过单张 20MB 限制")
+            return resolved.read_bytes(), {"kind": "path", "path": str(resolved)}
         raise VisualError("invalid_argument", f"不支持的素材来源类型: {kind}")
 
     def _resolve_generation_revision(
@@ -2723,7 +2772,14 @@ class VisualService:
 class _Access:
     """后台/内部路径使用的轻量访问身份（字段与 PersonAccess 对齐）。"""
 
-    __slots__ = ("actor_id", "group_id", "evidence_refs", "is_admin", "self_initiated")
+    __slots__ = (
+        "actor_id",
+        "group_id",
+        "evidence_refs",
+        "is_admin",
+        "self_initiated",
+        "self_service",
+    )
 
     def __init__(
         self,
@@ -2733,12 +2789,14 @@ class _Access:
         evidence_refs: tuple[str, ...] = (),
         is_admin: bool = False,
         self_initiated: bool = False,
+        self_service: bool = False,
     ) -> None:
         self.actor_id = actor_id
         self.group_id = group_id
         self.evidence_refs = evidence_refs
         self.is_admin = is_admin
         self.self_initiated = self_initiated
+        self.self_service = self_service
 
 
 def access_group(access: Any) -> str:

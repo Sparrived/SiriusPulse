@@ -1040,6 +1040,7 @@ class ToolEngineContextImpl:
             evidence_refs=() if autonomous else tuple(invocation_context.evidence_refs),
             is_admin=not autonomous and not ambiguous and invocation_context.caller_is_developer,
             self_initiated=autonomous,
+            self_service=autonomous,
         )
 
     def log_inner_thought(self, text: str) -> None:
