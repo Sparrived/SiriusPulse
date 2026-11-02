@@ -317,11 +317,23 @@ class Brain:
 
         参考图目录每次对话都重新扫描：补充或更换设定图后不用重启人格即可生效。
         """
-        from sirius_pulse.utils.persona_assets import build_persona_assets_section
+        from pathlib import Path
+
+        from sirius_pulse.utils.persona_assets import (
+            BOT_ASSETS_DIR_NAME,
+            build_partner_assets_section,
+            build_persona_assets_section,
+        )
 
         base = self.persona.build_system_prompt()
-        assets_section = build_persona_assets_section(self.persona_assets_dir)
-        return f"{base}\n\n{assets_section}" if assets_section else base
+        sections = [build_persona_assets_section(self.persona_assets_dir)]
+        if self.persona_assets_dir:
+            partner_dir = Path(self.persona_assets_dir).parent / BOT_ASSETS_DIR_NAME
+            sections.append(build_partner_assets_section(partner_dir))
+        for section in sections:
+            if section:
+                base = base + "\n\n" + section
+        return base
 
     # ═══════════════════════════════════════════════════════════════════
     # 上下文函数注入
