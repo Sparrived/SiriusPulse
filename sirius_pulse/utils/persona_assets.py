@@ -192,7 +192,7 @@ def build_partner_assets_section(bot_assets_dir: Path | str | None) -> str:
         "【群内伙伴形象参考图】以下角色的立绘/三视图也保存在本地，画多人合照时要保持他们的长相与服装一致：",
         *lines[:_MAX_LISTED_PARTNERS],
         "",
-        '画多人时：月白自己用 subjects={"ref": "persona"}；伙伴把这些路径填进 image_generate 的 reference_images（一次最多 4 张，优先选最容易被画错的人）。',
+        '画多人时：月白自己用 subjects={"ref": "persona"}；伙伴把这些路径填进 image_generate 的 reference_images（一次最多 8 张，优先选最容易被画错的人）。',
     ]
     return "\n".join(head)
 

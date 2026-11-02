@@ -43,7 +43,7 @@ _DEFAULT_TIMEOUT_SECONDS = 300
 _DEFAULT_MAX_PENDING_JOBS = 3
 _INTERVAL_SECONDS = 2.0
 
-_MAX_REFERENCE_IMAGES = 4
+_MAX_REFERENCE_IMAGES = 8
 _MAX_REFERENCE_BYTES = 20 * 1024 * 1024
 _REFERENCE_DOWNLOAD_TIMEOUT_SECONDS = 30.0
 
@@ -81,7 +81,7 @@ _config.group("生图").add(
 _config.group("生图").add(
     "reference_images",
     type="list",
-    description="可选参考图列表（最多 4 张，单张不超过 20MB），支持本地文件路径或 http(s) URL。",
+    description="可选参考图列表（最多 8 张，单张不超过 20MB），支持本地文件路径或 http(s) URL。",
     default=[],
 )
 
@@ -135,7 +135,7 @@ async def run(
 
     Args:
         prompt: 画面描述，不能为空。
-        reference_images: 参考图来源（本地绝对路径或 http(s) URL），最多 4 张。
+        reference_images: 参考图来源（本地绝对路径或 http(s) URL），最多 8 张。
         data_store: 框架注入的持久化数据存储。
         chat_context: 框架注入的聊天上下文，用于记住结果要发回哪个群。
         invocation_context: 框架注入的调用者信息。
