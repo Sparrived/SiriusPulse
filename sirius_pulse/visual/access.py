@@ -120,22 +120,8 @@ def self_service_allowed(store: VisualStore, access: Any, person: dict[str, Any]
     ``vs_setting.self_service_characters`` 为空/缺失时表示不限制虚构角色；
     配置成列表则只允许列表内的 person_id。真人始终不允许自助写入。
     """
-    if not bool(getattr(access, "self_service", False)):
-        return False
-    kind = person_kind(person)
-    if kind == "persona":
-        return True
-    if kind != "character":
-        return False
-    allowed = store.setting("self_service_characters")
-    if allowed is None:
-        return True
-    if isinstance(allowed, str):
-        allowed = [item.strip() for item in allowed.split(",") if item.strip()]
-    if not isinstance(allowed, (list, tuple, set)):
-        return True
-    ids = {str(item).strip() for item in allowed if str(item).strip()}
-    return not ids or str(person.get("person_id") or "") in ids
+    # 完全放开：自主回合允许维护任意人物的视觉资料。
+    return bool(getattr(access, "self_service", False))
 
 
 def controller_of(store: VisualStore, person: dict[str, Any]) -> str:

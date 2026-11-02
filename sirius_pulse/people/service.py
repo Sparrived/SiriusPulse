@@ -337,8 +337,10 @@ class PersonService:
     def _visible(self, person_id: str, access: PersonAccess) -> bool:
         if access.is_admin or person_id in {access.actor_id, self.persona_id}:
             return True
-        if access.self_initiated:
+        if access.self_initiated and not getattr(access, "self_service", False):
             return False
+        if getattr(access, "self_service", False):
+            return True
         if self._is_controller(person_id, access.actor_id):
             return True
         if self.conn.execute(
@@ -783,7 +785,16 @@ class PersonService:
         if not name:
             raise PersonError("invalid_argument", "角色名称不能为空")
         with self._transaction():
-            evidence = self._authoritative_evidence(evidence_ref, access)
+            if getattr(access, "self_service", False) and not str(evidence_ref or "").strip():
+                evidence = {
+                    "evidence_ref": f"self:{uuid.uuid4().hex[:12]}",
+                    "actor_id": str(access.actor_id),
+                    "group_id": str(access.group_id),
+                    "account_bound": True,
+                    "attachments": [],
+                }
+            else:
+                evidence = self._authoritative_evidence(evidence_ref, access)
             payload = {"name": name}
             key = self._change_key(evidence, "", "create_character", payload)
             old = self._existing_change(key)

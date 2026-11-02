@@ -26,7 +26,6 @@ from sirius_pulse.visual.access import (
     controller_of,
     is_persona,
     person_for,
-    person_kind,
     persona_id_of,
     require_capability,
     require_evidence,
@@ -312,7 +311,7 @@ class VisualService:
             if bool(getattr(access, "self_initiated", False)) and action not in {"get_summary"}:
                 if not (
                     bool(getattr(access, "self_service", False))
-                    and action in {"stage", "derive", "activate"}
+                    and action in {"create_character", "stage", "derive", "activate"}
                 ):
                     raise VisualError(
                         "permission_denied",
@@ -346,7 +345,8 @@ class VisualService:
         name = compiler.clean_text(fields.get("name"), 80)
         if not name:
             raise VisualError("invalid_argument", "创建角色需要明确名称")
-        require_evidence(self.people, access, evidence_ref)
+        if not getattr(access, "self_service", False):
+            require_evidence(self.people, access, evidence_ref)
         key = _hash_parts(
             ["create_character", str(getattr(access, "actor_id", "")), evidence_ref, name]
         )
@@ -404,13 +404,6 @@ class VisualService:
         person_id = resolve_person(self.people, target, access, source_ref or evidence_ref)
         person = person_for(self.people, person_id, access)
         self.store.require_subject_active(person_id)
-        if getattr(access, "self_service", False) and person_kind(person) not in {
-            "persona",
-            "character",
-        }:
-            raise VisualError(
-                "permission_denied", "自主回合只能维护自己或虚构角色的视觉资料"
-            )
         if getattr(access, "self_service", False):
             evidence = {
                 "actor_id": str(getattr(access, "actor_id", "")),
@@ -887,13 +880,6 @@ class VisualService:
         person_id = resolve_person(self.people, target, access, evidence_ref)
         person = person_for(self.people, person_id, access)
         self.store.require_subject_active(person_id)
-        if getattr(access, "self_service", False) and person_kind(person) not in {
-            "persona",
-            "character",
-        }:
-            raise VisualError(
-                "permission_denied", "自主回合只能维护自己或虚构角色的视觉资料"
-            )
         if not can_maintain(self.store, self.people, person, access):
             raise VisualError("permission_denied", "只有本人或角色控制者可以启用正式形象")
         if not getattr(access, "self_service", False):
@@ -2492,15 +2478,13 @@ class VisualService:
             raw_path = str(spec.get("path") or "").strip()
             if not raw_path:
                 raise VisualError("invalid_argument", "path 来源需要 path 参数")
-            root = self.work_path.resolve()
             path = Path(raw_path).expanduser()
             if not path.is_absolute():
-                path = root / path
+                path = self.work_path / path
             try:
                 resolved = path.resolve()
-                resolved.relative_to(root)
-            except (OSError, ValueError) as exc:
-                raise VisualError("permission_denied", "只能导入人格目录内的图片") from exc
+            except OSError as exc:
+                raise VisualError("asset_invalid", "本地图片路径无效") from exc
             if not resolved.is_file():
                 raise VisualError("asset_invalid", "本地图片不存在")
             if resolved.stat().st_size > MAX_IMAGE_BYTES:
