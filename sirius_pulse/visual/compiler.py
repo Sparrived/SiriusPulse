@@ -10,7 +10,7 @@ from typing import Any
 
 from sirius_pulse.visual.errors import VisualError
 
-PERSON_REFERENCE_LIMIT: int = 4
+PERSON_REFERENCE_LIMIT: int = 8
 PERSON_RECIPE: str = "person_image_v1"
 TURNAROUND_RECIPE: str = "turnaround_v1"
 TURNAROUND_RECIPE_VERSION: str = "1"
@@ -79,7 +79,7 @@ def build_prompt(
 
 
 def apply_reference_budget(entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
-    """按 4 张总额裁剪参考图，绝不丢某个必需人物。
+    """按 8 张总额裁剪参考图，绝不丢某个必需人物。
 
     Raises:
         VisualError: ``reference_limit_exceeded`` —— 必需图自身已超限。

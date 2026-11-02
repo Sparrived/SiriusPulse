@@ -343,7 +343,7 @@ _HINTS = {
     "consent_required": "需要本人或角色控制者明确授权",
     "revision_conflict": "请重新查询当前修订后再确认，不要沿用旧预期值",
     "required_asset_missing": "缺少可用正式参考图，请先保存形象原图",
-    "reference_limit_exceeded": "参考图超过 4 张，需精简或分次生成",
+    "reference_limit_exceeded": "参考图超过 8 张，需精简或分次生成",
     "quota_exceeded": "生成额度不足，停止重复提交",
     "already_pending": "已有同类任务在进行，等它完成即可",
     "cancelled_by_revocation": "授权已撤回，任务已取消或结果被隔离",
