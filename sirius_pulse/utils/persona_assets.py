@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -129,3 +130,69 @@ def build_persona_assets_section(assets_dir: Path | str | None) -> str:
         "reference_images；想仔细看清图中细节时，用 read_image 读取这些路径。"
     )
     return "\n".join(lines)
+
+BOT_ASSETS_DIR_NAME = "bot_assets"
+_MAX_LISTED_PARTNERS = 8
+
+
+def build_partner_assets_section(bot_assets_dir: Path | str | None) -> str:
+    """构建「群内伙伴形象参考图」段落。
+
+    伙伴角色的三视图/立绘放在 ``{persona}/bot_assets/<key>/`` 下，
+    由 ``bot_assets/index.json`` 提供名称与外观描述。这里把它们列进 system prompt，
+    模型才知道“有这些人、图在哪”，画多人合照时不用临时翻目录。
+    """
+    if bot_assets_dir is None:
+        return ""
+    root = Path(bot_assets_dir).expanduser()
+    if not root.is_dir():
+        return ""
+
+    index: dict = {}
+    index_file = root / "index.json"
+    if index_file.is_file():
+        try:
+            loaded = json.loads(index_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                index = loaded
+        except Exception as exc:  # noqa: BLE001 - 索引坏了只是少列几个人
+            logger.debug("读取 bot_assets/index.json 失败: %s", exc)
+
+    lines: list[str] = []
+    for key in sorted(index):
+        item = index.get(key)
+        if not isinstance(item, dict) or item.get("hidden"):
+            continue
+        name = str(item.get("name") or key).strip()
+        identity = item.get("identity") if isinstance(item.get("identity"), dict) else {}
+        traits = [str(identity.get(f) or "").strip() for f in ("hair", "features", "outfit")]
+        description = "；".join(t for t in traits if t)
+
+        folder = root / key
+        picked = None
+        if folder.is_dir():
+            files = [
+                f
+                for f in sorted(folder.iterdir())
+                if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES
+            ]
+            for token in ("turnaround", "standing", "full", "portrait", "avatar"):
+                picked = next((f for f in files if token in f.name.lower()), None)
+                if picked:
+                    break
+            picked = picked or (files[0] if files else None)
+        if picked is None:
+            continue
+        lines.append(f"- {name}：{description} -> {picked.resolve()}")
+
+    if not lines:
+        return ""
+
+    head = [
+        "【群内伙伴形象参考图】以下角色的立绘/三视图也保存在本地，画多人合照时要保持他们的长相与服装一致：",
+        *lines[:_MAX_LISTED_PARTNERS],
+        "",
+        '画多人时：月白自己用 subjects={"ref": "persona"}；伙伴把这些路径填进 image_generate 的 reference_images（一次最多 8 张，优先选最容易被画错的人）。',
+    ]
+    return "\n".join(head)
+

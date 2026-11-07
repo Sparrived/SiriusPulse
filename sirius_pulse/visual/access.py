@@ -114,6 +114,16 @@ def person_kind(person: dict[str, Any]) -> str:
     return str(person.get("kind") or "human").strip().lower()
 
 
+def self_service_allowed(store: VisualStore, access: Any, person: dict[str, Any]) -> bool:
+    """自主回合是否可维护该人物：人格自己，或配置允许的虚构角色。
+
+    ``vs_setting.self_service_characters`` 为空/缺失时表示不限制虚构角色；
+    配置成列表则只允许列表内的 person_id。真人始终不允许自助写入。
+    """
+    # 完全放开：自主回合允许维护任意人物的视觉资料。
+    return bool(getattr(access, "self_service", False))
+
+
 def controller_of(store: VisualStore, person: dict[str, Any]) -> str:
     """人格采用可信部署配置；角色采用已登记的控制关系。"""
     person_id = str(person.get("person_id") or "")
@@ -126,6 +136,8 @@ def can_maintain(store: VisualStore, people: Any, person: dict[str, Any], access
     """是否拥有正式资料/形象的控制权（启用、授权、停用、删除）。"""
     person_id = str(person.get("person_id") or "")
     if is_self(access, person_id):
+        return True
+    if self_service_allowed(store, access, person):
         return True
     if is_persona(people, person_id) and bool(getattr(access, "is_admin", False)):
         return True
@@ -213,7 +225,9 @@ def authorize_with_grant(
     """
     person_id = str(person.get("person_id") or "")
     if bool(getattr(access, "self_initiated", False)):
-        return False, "permission_denied", None
+        # 自主回合默认禁止外部写入；仅允许人格维护自己或虚构角色的视觉资料。
+        if not self_service_allowed(store, access, person):
+            return False, "permission_denied", None
     if not person_id or store.subject_deleted(person_id):
         return False, "not_found_or_not_visible", None
     if asset is not None and str(asset.get("status") or "") != "available":

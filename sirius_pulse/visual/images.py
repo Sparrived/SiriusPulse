@@ -104,6 +104,46 @@ def inspect_image(data: bytes, *, max_bytes: int = MAX_IMAGE_BYTES) -> dict[str,
     }
 
 
+def optimize_image_bytes(
+    data: bytes,
+    *,
+    max_side: int = 1280,
+    quality: int = 88,
+    min_bytes: int = 600_000,
+) -> bytes:
+    """生成给模型/上游传输用的轻量副本。
+
+    超过 ``max_side`` 或 ``min_bytes`` 的图会等比缩小；有 alpha 的存 PNG，
+    其余存 JPEG。压缩后反而更大或解码失败时原样返回，绝不破坏调用方数据。
+    """
+    try:
+        from PIL import Image
+    except ImportError:  # pragma: no cover - 项目声明依赖 Pillow
+        return data
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+            if max(width, height) <= max_side and len(data) <= min_bytes:
+                return data
+            image.load()
+            if max(width, height) > max_side:
+                scale = max_side / float(max(width, height))
+                size = (max(1, int(width * scale)), max(1, int(height * scale)))
+                image = image.resize(size, Image.LANCZOS)
+            buffer = io.BytesIO()
+            has_alpha = image.mode in {"RGBA", "LA"} or (
+                image.mode == "P" and "transparency" in image.info
+            )
+            if has_alpha:
+                image.save(buffer, format="PNG", optimize=True)
+            else:
+                image.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
+            optimized = buffer.getvalue()
+            return optimized if 0 < len(optimized) < len(data) else data
+    except Exception:  # noqa: BLE001 - 优化失败不影响原图传输
+        return data
+
+
 def safe_segment(value: str, fallback: str = "x") -> str:
     cleaned = _SAFE_SEGMENT.sub("_", str(value or "").strip())[:64].strip("._-")
     return cleaned or fallback
