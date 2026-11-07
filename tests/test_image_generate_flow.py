@@ -33,6 +33,7 @@ from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
 from sirius_pulse.platforms.runtime import EngineRuntime
 from sirius_pulse.providers.base import GenerationResult, ImageGenerationResult, ToolCall
 from sirius_pulse.providers.mock import MockProvider
+from sirius_pulse.tools.builtin import image_generate
 from sirius_pulse.tools.data_store import ToolDataStore
 from sirius_pulse.tools.executor import ToolExecutor
 from sirius_pulse.tools.models import ToolEngineContext, ToolInvocationContext, ToolPassiveType
@@ -724,7 +725,10 @@ def test_the_real_registry_exposes_a_model_visible_periodic_tool(registry):
     parameters = {param.name: param for param in tool.parameters}
     assert parameters["prompt"].required is True
     assert parameters["reference_images"].required is False
-    assert "最多 4 张" in parameters["reference_images"].description
+    # 模型看到的参数说明必须与工具自己的上限一致，改上限时不能只说一半。
+    assert (
+        f"最多 {image_generate._MAX_REFERENCE_IMAGES} 张" in parameters["reference_images"].description
+    )
     config = {param.name: param for param in tool.config_parameters}
     assert config["timeout_seconds"].default == 300
     assert config["max_pending_jobs"].default == 3

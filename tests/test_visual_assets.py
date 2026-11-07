@@ -22,6 +22,7 @@ from sirius_pulse.tools.builtin.visual_asset_manage import run as manage_tool_ru
 from sirius_pulse.tools.data_store import ToolDataStore
 from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.visual import VisualError, VisualService, policies
+from sirius_pulse.visual.compiler import PERSON_REFERENCE_LIMIT
 
 pytestmark = pytest.mark.asyncio
 
@@ -148,6 +149,29 @@ class Env:
         asset = self.service.store.asset(asset_id)
         assert asset is not None
         return self.work / "visual_assets" / str(asset["rel_path"])
+
+
+# 同一个资产可以挂多个视角，用来把某个主体的「必需参考」凑到指定张数。
+_REQUIRED_VIEWS = ("侧面", "背面", "坐姿", "站姿", "侧背", "特写", "远景")
+
+
+def _add_required_views(env: Env, staged: dict, person_id: str, total: int) -> None:
+    """把刚登记的参考集补到 ``total`` 张必需图（登记时已自带 1 张正视主图）。"""
+    asset = env.service.store.asset(staged["data"]["asset_id"])
+    for idx, view in enumerate(_REQUIRED_VIEWS[: total - 1], start=2):
+        env.service.store.add_reference_item(
+            staged["data"]["reference_set_id"],
+            {
+                "idx": idx,
+                "asset_id": asset["asset_id"],
+                "person_id": person_id,
+                "revision": 1,
+                "purpose": "identity",
+                "view": view,
+                "required": True,
+                "sha256": asset["sha256"],
+            },
+        )
 
 
 class FakeEngine:
@@ -302,8 +326,9 @@ async def test_compile_two_subjects_with_outfit_and_reference_budget(env, tmp_pa
     self_stage = await env.stage(user, ref, description="黑发红围巾")
     assert self_stage["success"]
 
+    # 附加参考给到「单次上限 - 必需图 2 张 + 1 张」，好让裁剪真的发生一次。
     extras = []
-    for index in range(3):
+    for index in range(PERSON_REFERENCE_LIMIT - 1):
         extra = tmp_path / f"extra_{index}.png"
         extra.write_bytes(_png((index * 20, 100, 100)))
         extras.append(str(extra))
@@ -324,15 +349,16 @@ async def test_compile_two_subjects_with_outfit_and_reference_budget(env, tmp_pa
     # 每个人物都必须保留，可选附加图先被裁掉，不允许偷偷少一个人。
     required = [image for image in plan["images"] if image["purpose"] != "extra"]
     assert len(required) == 2
-    assert len(plan["images"]) == 4
+    assert len(plan["images"]) == PERSON_REFERENCE_LIMIT
     assert plan["dropped_optional"] == 1
 
     persona_summary = await env.service.get_summary(env.people.persona_id, user)
     persona_active = persona_summary["visual"]["active"][0]
     assert persona_active["default_outfit"] == "白色长裙"  # 本次换装不写回正式形象
 
-    five: list[dict] = [{"ref": "requester"}]
-    for index in range(4):
+    # 人数给到「单次上限 + 1」，必需参考必然超过上限，不能静默少画一个人。
+    crowd: list[dict] = [{"ref": "requester"}]
+    for index in range(PERSON_REFERENCE_LIMIT):
         created = await env.service.manage(
             "create_character",
             access=user,
@@ -350,12 +376,12 @@ async def test_compile_two_subjects_with_outfit_and_reference_budget(env, tmp_pa
             target={"ref": "person_id", "value": character_id},
         )
         assert staged_char["success"], staged_char
-        five.append({"ref": "person_id", "value": character_id})
+        crowd.append({"ref": "person_id", "value": character_id})
     with pytest.raises(VisualError) as excinfo:
         await env.service.compile_generation(
             access=user,
-            subjects=five,
-            prompt="五个人的合影",
+            subjects=crowd,
+            prompt="所有人的合影",
         )
     assert excinfo.value.code == "reference_limit_exceeded"
 
@@ -1723,21 +1749,9 @@ async def test_two_subject_required_reference_limit_is_not_swallowed(env):
     user, ref, person_id = env.access("u1", attachments=[env.photo("self")])
     staged = await env.stage(user, ref)
     assert staged["success"]
-    asset = env.service.store.asset(staged["data"]["asset_id"])
-    for idx, view in enumerate(["侧面", "背面", "坐姿"], start=2):
-        env.service.store.add_reference_item(
-            staged["data"]["reference_set_id"],
-            {
-                "idx": idx,
-                "asset_id": asset["asset_id"],
-                "person_id": person_id,
-                "revision": 1,
-                "purpose": "identity",
-                "view": view,
-                "required": True,
-                "sha256": asset["sha256"],
-            },
-        )
+    # 两个主体各给「上限一半 + 1」张必需参考，加起来必然超过单次上限。
+    per_subject = PERSON_REFERENCE_LIMIT // 2 + 1
+    _add_required_views(env, staged, person_id, per_subject)
 
     created = await env.service.manage(
         "create_character",
@@ -1754,6 +1768,7 @@ async def test_two_subject_required_reference_limit_is_not_swallowed(env):
         char_access, char_ref, target={"ref": "person_id", "value": character_id}
     )
     assert staged_char["success"], staged_char
+    _add_required_views(env, staged_char, character_id, per_subject)
 
     subjects = [
         {"ref": "requester"},
