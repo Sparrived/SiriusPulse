@@ -494,8 +494,7 @@ async def _submit_person_job(
                 f"已提交人物生图任务（{job_id}）"
                 + (f"，已绑定人物：{subject_names}" if subject_names else "")
                 + "。生成需要一点时间，完成后只回调产物路径，不会自动发到聊天；"
-                "是否发送由你决定。不要重复提交，也不要提前声称已经画好。"
-                + preview_note
+                "是否发送由你决定。不要重复提交，也不要提前声称已经画好。" + preview_note
             )
         ],
         "data": {

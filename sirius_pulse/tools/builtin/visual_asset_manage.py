@@ -61,7 +61,7 @@ _config.group("素材").add(
         '入库素材来源：默认 {"kind": "attachment"}（本回合聊天图片，可用 index 选第几张）；'
         '或 {"kind": "asset", "asset_id": "<受管资产ID>"}；'
         '自主回合可直接用 {"kind": "path", "path": "任意本地图片路径"} 导入（相对路径按人格目录解析）。'
-        '远程 URL 仍会被拒绝。'
+        "远程 URL 仍会被拒绝。"
     ),
 )
 _config.group("素材").add("view", type="str", description="参考图视角/用途说明，如 正视图、侧视图、背面、立绘。")

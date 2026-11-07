@@ -131,6 +131,7 @@ def build_persona_assets_section(assets_dir: Path | str | None) -> str:
     )
     return "\n".join(lines)
 
+
 BOT_ASSETS_DIR_NAME = "bot_assets"
 _MAX_LISTED_PARTNERS = 8
 
@@ -195,4 +196,3 @@ def build_partner_assets_section(bot_assets_dir: Path | str | None) -> str:
         '画多人时：月白自己用 subjects={"ref": "persona"}；伙伴把这些路径填进 image_generate 的 reference_images（一次最多 8 张，优先选最容易被画错的人）。',
     ]
     return "\n".join(head)
-
