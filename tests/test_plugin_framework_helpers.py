@@ -141,7 +141,7 @@ def test_plugin_definition_when_built_from_class_then_metadata_and_schedule_are_
     assert definition.display_name == "Demo"
     assert [event.type for event in definition.events] == ["engine.started", "timer.schedule"]
     assert definition.events[1].cron == "05 08 * * *"
-    assert definition.events[1].interval_seconds == 1800.0
+    assert definition.events[1].interval_seconds == 0.0
     assert definition.natural_language is not None
     assert definition.parameters[0].name == "topic"
     assert definition.permissions.developer_only is True

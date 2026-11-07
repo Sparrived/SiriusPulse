@@ -5,6 +5,7 @@
     - interval：固定间隔秒数
 
 注意：完整 cron 解析需要安装 croniter 库。当前实现使用简化的分钟级轮询。
+cron 一律按本地（中国）时间解读，与宿主机时区无关；星期字段 0 和 7 都表示周日。
 """
 
 from __future__ import annotations
@@ -13,7 +14,10 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Awaitable, Callable
+
+from sirius_pulse.life.clock import LOCAL_TIMEZONE
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +48,14 @@ class PluginScheduler:
     使用 asyncio 事件循环周期性检查并触发到期的定时任务。
     """
 
-    def __init__(self, check_interval: float = 10.0) -> None:
+    def __init__(
+        self,
+        check_interval: float = 10.0,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self._tasks: list[ScheduledTask] = []
         self._check_interval = check_interval  # 检查粒度（秒）
+        self._clock = clock
         self._running = False
         self._task: asyncio.Task[Any] | None = None
         self._callback_tasks: set[asyncio.Task[Any]] = set()
@@ -115,28 +124,34 @@ class PluginScheduler:
         logger.info("Plugin 定时调度器已停止")
 
     async def _run_loop(self) -> None:
-        """调度器主循环：周期性检查到期任务（带失败退避）。"""
+        """调度器主循环：周期性检查到期任务。"""
         while self._running:
-            now = time.time()
-            for task in self._tasks:
-                if task.disabled or task.running:
-                    continue
-                if not self._should_run(task, now):
-                    continue
-                if task.consecutive_failures > 0 and self._is_in_backoff(task, now):
-                    continue
-
-                task.last_run = now
-                if task.callback:
-                    task.running = True
-                    callback_task = asyncio.create_task(
-                        self._run_callback(task),
-                        name=f"plugin_schedule:{task.name}",
-                    )
-                    task.runtime_task = callback_task
-                    self._callback_tasks.add(callback_task)
-                    callback_task.add_done_callback(self._callback_tasks.discard)
+            self.run_due(self._clock())
             await asyncio.sleep(self._check_interval)
+
+    def run_due(self, now: float) -> list[asyncio.Task[Any]]:
+        """检查一次并触发 *now* 时刻到期的任务（带失败退避），返回本次启动的回调。"""
+        started: list[asyncio.Task[Any]] = []
+        for task in self._tasks:
+            if task.disabled or task.running:
+                continue
+            if not self._should_run(task, now):
+                continue
+            if task.consecutive_failures > 0 and self._is_in_backoff(task, now):
+                continue
+
+            task.last_run = now
+            if task.callback:
+                task.running = True
+                callback_task = asyncio.create_task(
+                    self._run_callback(task),
+                    name=f"plugin_schedule:{task.name}",
+                )
+                task.runtime_task = callback_task
+                self._callback_tasks.add(callback_task)
+                callback_task.add_done_callback(self._callback_tasks.discard)
+                started.append(callback_task)
+        return started
 
     async def _run_callback(self, task: ScheduledTask) -> None:
         """运行单个定时回调；不阻塞 Scheduler 主循环。"""
@@ -187,24 +202,23 @@ class PluginScheduler:
 
     @staticmethod
     def _check_simple_cron(cron: str, now: float, last_run: float) -> bool:
-        """简化 cron 检查（仅支持分钟级粒度）。
+        """简化 cron 检查（仅支持分钟级粒度，按本地时间）。
 
         支持格式：
             "* * * * *"（每分钟）
             "0 8 * * *"（每天 8:00）
             "*/5 * * * *"（每 5 分钟）
+            "0 9 * * 0"（每周日 9:00，周日写 0 或 7 均可）
         """
-        now_struct = time.localtime(now)
-        last_struct = time.localtime(last_run) if last_run > 0 else None
+        now_local = datetime.fromtimestamp(now, LOCAL_TIMEZONE)
 
         # 如果上次运行在同一分钟，跳过
-        if (
-            last_struct
-            and now_struct.tm_min == last_struct.tm_min
-            and now_struct.tm_hour == last_struct.tm_hour
-            and now_struct.tm_mday == last_struct.tm_mday
-        ):
-            return False
+        if last_run > 0:
+            last_local = datetime.fromtimestamp(last_run, LOCAL_TIMEZONE)
+            if last_local.replace(second=0, microsecond=0) == now_local.replace(
+                second=0, microsecond=0
+            ):
+                return False
 
         try:
             parts = cron.strip().split()
@@ -214,22 +228,24 @@ class PluginScheduler:
             minute, hour, day, month, weekday = parts
 
             # 检查分钟
-            if minute != "*" and not _match_field(minute, now_struct.tm_min):
+            if minute != "*" and not _match_field(minute, now_local.minute):
                 return False
             # 检查小时
-            if hour != "*" and not _match_field(hour, now_struct.tm_hour):
+            if hour != "*" and not _match_field(hour, now_local.hour):
                 return False
             # 检查日
-            if day != "*" and not _match_field(day, now_struct.tm_mday):
+            if day != "*" and not _match_field(day, now_local.day):
                 return False
             # 检查月
-            if month != "*" and not _match_field(month, now_struct.tm_mon):
+            if month != "*" and not _match_field(month, now_local.month):
                 return False
-            # 检查星期
-            if weekday != "*" and not _match_field(
-                weekday, now_struct.tm_wday + 1
-            ):  # tm_wday: 0=Mon, cron: 0=Sun
-                return False
+            # 检查星期：Python 周一=0，cron 周日=0（7 也表示周日）
+            if weekday != "*":
+                cron_weekday = (now_local.weekday() + 1) % 7
+                if not _match_field(weekday, cron_weekday) and not (
+                    cron_weekday == 0 and _match_field(weekday, 7)
+                ):
+                    return False
 
             return True
         except Exception:

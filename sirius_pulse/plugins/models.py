@@ -1079,8 +1079,9 @@ class PluginDefinition:
         _plugin_schedule 格式:
             [{"time": "08:00", "duration": 1440}, ...]
 
-        每个条目转换为一个定时事件（timer.schedule），
-        time 字段映射为 daily cron 表达式，duration 作为间隔秒数。
+        每个条目转换为一个定时事件（timer.schedule），time 字段映射为按本地时间
+        每日触发的 cron 表达式。只生成 cron、不生成 interval：两者同时存在时调度器
+        会按间隔触发（启动即跑一次），time 就被忽略了。duration 只写进描述。
         """
         events: list[PluginEventDef] = []
         for entry in schedule:
@@ -1101,7 +1102,6 @@ class PluginDefinition:
                 PluginEventDef(
                     type="timer.schedule",
                     cron=cron,
-                    interval_seconds=float(duration_minutes * 60),
                     description=f"每日 {time_str} 定时触发（持续 {duration_minutes} 分钟）",
                 )
             )
