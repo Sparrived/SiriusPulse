@@ -5,7 +5,7 @@
 <img src="frontend/public/yuebai.webp" alt="月白" width="200" style="border-radius: 16px; margin-bottom: 12px;">
 
 <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-blue?style=flat-square&logo=python&logoColor=white" alt="Python 3.12+"></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square" alt="License"></a>
 <a href="https://pypi.org/project/sirius-pulse/"><img src="https://img.shields.io/badge/PyPI-sirius--pulse-blueviolet?style=flat-square" alt="PyPI"></a>
 <a href="https://github.com/Sparrived/SiriusPulse/actions/workflows/ci.yml"><img src="https://github.com/Sparrived/SiriusPulse/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://sirius-pulse-docs.vercel.app/"><img src="https://img.shields.io/badge/Docs-VitePress-646cff?style=flat-square&logo=vitepress" alt="VitePress Docs"></a>
@@ -471,7 +471,7 @@ python scripts/ci_check.py
 
 ## 📄 许可证
 
-MIT License © 2025-2026 Sparrived. 详见 [LICENSE](LICENSE)。
+GNU AGPLv3 License © 2025-2026 Sparrived. 详见 [LICENSE](LICENSE)。
 
 ---
 

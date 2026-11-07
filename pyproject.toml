@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 authors = [
     {name = "Sparrived", email = "sparrived@example.com"}
 ]
-license = "MIT"
+license = "AGPL-3.0"
 keywords = ["llm", "dialogue", "multi-user", "roleplay", "framework"]
 classifiers = [
     "Programming Language :: Python :: 3",
