@@ -53,7 +53,9 @@ def _replies_today(engine: Any, schedule: DaySchedule, now: datetime) -> int:
     return int(counter.get("count", 0) or 0)
 
 
-def _snapshot(engine: Any, now: datetime) -> tuple[LifeSnapshot, DaySchedule] | None:
+def _snapshot(
+    engine: Any, now: datetime, chat_id: str = ""
+) -> tuple[LifeSnapshot, DaySchedule] | None:
     work_path = _work_path(engine)
     if not work_path:
         return None
@@ -63,6 +65,7 @@ def _snapshot(engine: Any, now: datetime) -> tuple[LifeSnapshot, DaySchedule] | 
         schedule,
         now,
         replies_today=_replies_today(engine, schedule, now),
+        chat_id=chat_id,
     )
     return snap, schedule
 
@@ -85,11 +88,11 @@ def _mood_label(engine: Any) -> str:
     return basic.name_cn if basic else ""
 
 
-def presence_context(engine: Any, now: datetime | None = None) -> str:
-    """The 【此刻的你】 block, or an empty string when unavailable."""
+def presence_context(engine: Any, now: datetime | None = None, *, chat_id: str = "") -> str:
+    """The 【此刻的你】 block for a turn in *chat_id*, or "" when unavailable."""
     now = now or datetime.now(timezone.utc)
     try:
-        result = _snapshot(engine, now)
+        result = _snapshot(engine, now, chat_id)
         if result is None:
             return ""
         snap, schedule = result

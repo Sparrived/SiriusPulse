@@ -53,6 +53,7 @@ class LifeState:
     activity_until: str = ""
     last_plan_date: str = ""
     last_reflect_date: str = ""
+    last_dream_date: str = ""
     plan_try_date: str = ""
     plan_tries: int = 0
     plan_tried_at: str = ""
@@ -102,6 +103,7 @@ class LifeState:
             "activity_until": self.activity_until,
             "last_plan_date": self.last_plan_date,
             "last_reflect_date": self.last_reflect_date,
+            "last_dream_date": self.last_dream_date,
             "plan_try_date": self.plan_try_date,
             "plan_tries": self.plan_tries,
             "plan_tried_at": self.plan_tried_at,
@@ -118,6 +120,7 @@ class LifeState:
             activity_until=str(data.get("activity_until", "") or ""),
             last_plan_date=str(data.get("last_plan_date", "") or ""),
             last_reflect_date=str(data.get("last_reflect_date", "") or ""),
+            last_dream_date=str(data.get("last_dream_date", "") or ""),
             plan_try_date=str(data.get("plan_try_date", "") or ""),
             plan_tries=_int(data.get("plan_tries")),
             plan_tried_at=str(data.get("plan_tried_at", "") or ""),

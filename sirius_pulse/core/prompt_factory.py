@@ -886,6 +886,46 @@ class PromptFactory:
         )
         return system_prompt, [{"role": "user", "content": "（该睡了，回想一下今天）"}]
 
+    @staticmethod
+    def build_life_dream_prompt(
+        *,
+        name: str,
+        day: list[str],
+        fragments: list[str],
+        mood: str,
+        recent: str,
+    ) -> tuple[str, list[dict[str, str]]]:
+        """Build the dream prompt: tonight's dream, made from the day's leftovers.
+
+        A dream is allowed -- expected -- to be untrue, which is exactly why its
+        output never goes back into memory.  The input is still bounded: her own
+        day and a handful of fragments from a single chat.
+        """
+        who = f"你是{name}。" if name else ""
+        rules = (
+            "【做梦】\n"
+            f"{who}你已经睡着了，正在做一个梦。梦是白天的碎片被打乱、变形、拼在一起的样子："
+            "地点会突然换掉，人会变成别的东西，小事会被放得很大，逻辑说不通也没关系。\n"
+            "从下面的碎片里挑一两样当引子，用梦的方式把它们串起来，不要照搬原话，"
+            "也不要解释这个梦有什么含义。第一人称，像醒来后跟人复述梦那样，"
+            "60 到 150 字，有一两个具体又古怪的细节。\n"
+            "只输出一个 JSON 对象，不要任何别的文字：\n"
+            '{"dream": "梦的内容", "feeling": "醒来时的感觉，一句话，20 字以内"}'
+        )
+        situation = ["【白天留下的碎片】"]
+        if day:
+            situation.append("你自己的一天：\n" + "\n".join(f"- {line}" for line in day[:8]))
+        if fragments:
+            situation.append("聊天里的片段：\n" + "\n".join(f"- {line}" for line in fragments))
+        if mood:
+            situation.append(f"睡前的心情：{mood}")
+        if recent:
+            situation.append(f"你最近：{recent}")
+        system_prompt = _join_turn_sections(
+            stable=[rules], situation="\n".join(situation), tool_desc="", work_mode=False
+        )
+        return system_prompt, [{"role": "user", "content": "（夜深了，你在做梦）"}]
+
     # ──────────────────────────────────────────────────────────────────
     # 响应组装（返回 PromptBundle）
     # ──────────────────────────────────────────────────────────────────

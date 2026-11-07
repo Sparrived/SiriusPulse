@@ -1614,7 +1614,7 @@ class DelayedQueueTasks:
                 else []
             ),
         )
-        presence = life_bridge.presence_context(engine)
+        presence = life_bridge.presence_context(engine, chat_id=group_id)
         if presence:
             bundle.dynamic_context = (
                 f"{bundle.dynamic_context}\n\n{presence}" if bundle.dynamic_context else presence

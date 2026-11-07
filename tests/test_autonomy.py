@@ -5,7 +5,8 @@
 - 到点的项目段落会真的推进项目，并在作品里留下东西；日常段落不花模型调用；
 - 她可以不做，但要说出原因；
 - 想说的话只按她指定的对象说一次，睡着时等到醒来再发，天亮不会一次轰炸；
-- 亲近的人很久没出现，她会自己惦记、想去问候；说什么由她写，规则只管节奏。
+- 亲近的人很久没出现，她会自己惦记、想去问候；说什么由她写，规则只管节奏；
+- 睡着一阵后她每晚做一个梦，素材只取她自己的一天和一个群的片段，梦永远不进记忆。
 """
 
 from __future__ import annotations
@@ -20,10 +21,13 @@ from sirius_pulse.core.autonomy import is_quiet_hours
 from sirius_pulse.core.intent import RESOLUTION_TELL, IntentFileStore, Intention
 from sirius_pulse.life import life_dir
 from sirius_pulse.life.agenda import AgendaStore, Block, DayAgenda
+from sirius_pulse.life.dreams import DreamStore
 from sirius_pulse.life.missing import gather
 from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.reflection import SelfNoteStore
 from sirius_pulse.life.state import LifeStateStore
+from sirius_pulse.memory.units.models import MemoryUnit
+from sirius_pulse.memory.units.store import MemoryUnitFileStore
 from sirius_pulse.models.persona import PersonaProfile
 from sirius_pulse.tools.builtin import autonomy, intend_pursue, intend_share, life_project
 from sirius_pulse.tools.executor import _self_initiated_block_reason
@@ -68,6 +72,7 @@ def _make_ctx(
     config: dict | None = None,
     plan: str = "",
     reflection: str = "",
+    dream: str = "",
     work=None,
 ) -> SimpleNamespace:
     data: dict = {"state": dict(state or {})}
@@ -80,8 +85,10 @@ def _make_ctx(
     memories: list = []
 
     async def generate_text(system_prompt, messages, group_id, task_name="", **_):
-        calls.append({"task": task_name, "system": system_prompt})
-        return {"life_plan": plan, "life_reflect": reflection}.get(task_name, "")
+        calls.append({"task": task_name, "system": system_prompt, "group": group_id})
+        return {"life_plan": plan, "life_reflect": reflection, "life_dream": dream}.get(
+            task_name, ""
+        )
 
     async def run_life_work_turn(**kwargs):
         turns.append(kwargs)
@@ -411,8 +418,11 @@ async def test_she_looks_back_on_her_day_once_at_bedtime(tmp_path, monkeypatch):
     )
     clock = [_cn(23, 40)]
     monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
+    # 只看回想本身；做梦另有用例。
     ctx = _make_ctx(
-        tmp_path, reflection=_reflection(projects=[{"id": project.project_id, "next_step": "读第二章"}])
+        tmp_path,
+        config={"dream_enabled": False},
+        reflection=_reflection(projects=[{"id": project.project_id, "next_step": "读第二章"}]),
     )
 
     await autonomy.run_tick(ctx)
@@ -471,6 +481,97 @@ async def test_her_sleep_schedule_is_configurable(tmp_path, monkeypatch):
     await autonomy.run_tick(ctx)
 
     assert len(ctx.turns) == 1
+
+
+# --- 夜里：做梦 -------------------------------------------------------------------
+
+
+def _dream(**overrides) -> str:
+    data = {
+        "dream": "梦见雪国的车站变成了一口火锅，大家排着队往里面扔书签，我怎么也挤不进去。",
+        "feeling": "有点饿",
+    }
+    data.update(overrides)
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _chat_memory(tmp_path, group_id: str, *summaries: str, at=None) -> None:
+    """某个群当天整理出来的记忆片段。"""
+    stamp = (at or _cn(20)).isoformat()
+    MemoryUnitFileStore(tmp_path).save(
+        group_id,
+        [
+            MemoryUnit(unit_id=f"{group_id}-{i}", group_id=group_id, created_at=stamp, summary=text)
+            for i, text in enumerate(summaries)
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_she_dreams_once_a_night_from_her_day_and_one_chat(tmp_path, monkeypatch):
+    """睡下一阵之后做一个梦：素材是她的一天加上当天最热闹的那个群，别的群的事不会混进来。"""
+    _agenda(tmp_path, Block(start="10:00", end="11:00", activity="读第一章", status="done"))
+    _chat_memory(tmp_path, "group-A", "阿明说周末想去吃火锅", "大家在争论书签该不该折角")
+    _chat_memory(tmp_path, "group-B", "小红偷偷说她要辞职了")
+    # 片段最多的群却是前一天的事：不算今天的碎片。
+    yesterday = _cn(20) - timedelta(days=1)
+    _chat_memory(tmp_path, "group-C", "前一天的旧事", "另一件旧事", "第三件旧事", at=yesterday)
+    clock = [_cn(23, 40)]
+    monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
+    ctx = _make_ctx(tmp_path, reflection=_reflection(), dream=_dream())
+
+    await autonomy.run_tick(ctx)  # 刚躺下：只回想，不做梦
+    clock[0] = _cn(1, 30, day=2)
+    await autonomy.run_tick(ctx)
+    clock[0] = _cn(4, 0, day=2)
+    await autonomy.run_tick(ctx)
+
+    assert [c["task"] for c in ctx.calls] == ["life_reflect", "life_dream"]
+    prompt = ctx.calls[1]["system"]
+    assert "读第一章" in prompt and "阿明说周末想去吃火锅" in prompt
+    assert "辞职" not in prompt and "旧事" not in prompt
+    dream = DreamStore(_life(tmp_path)).get(_DAY)
+    assert dream is not None and dream.text.startswith("梦见雪国的车站")
+    assert dream.feeling == "有点饿" and dream.chat_id == "group-A"
+    # 梦是假的：它不会被写成她的记忆。
+    assert ctx.memories == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("config", "reply", "calls"),
+    [
+        ({"dream_enabled": False}, _dream(), ["life_reflect"]),
+        ({}, "梦到了什么来着……", ["life_reflect", "life_dream"]),
+    ],
+    ids=["dreaming-turned-off", "garbled-dream-is-not-retried"],
+)
+async def test_no_dream_is_kept_when_off_or_unreadable(tmp_path, monkeypatch, config, reply, calls):
+    _agenda(tmp_path, Block(start="18:00", end="19:00", activity="做饭", status="done"))
+    clock = [_cn(23, 40)]
+    monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
+    ctx = _make_ctx(tmp_path, config=config, reflection=_reflection(), dream=reply)
+
+    for moment in (_cn(23, 40), _cn(2, 0, day=2), _cn(3, 0, day=2)):
+        clock[0] = moment
+        await autonomy.run_tick(ctx)
+
+    assert [c["task"] for c in ctx.calls] == calls
+    assert DreamStore(_life(tmp_path)).get(_DAY) is None
+
+
+@pytest.mark.asyncio
+async def test_a_dream_of_only_her_own_day_belongs_to_no_chat(tmp_path, monkeypatch):
+    _agenda(tmp_path, Block(start="18:00", end="19:00", activity="做饭", status="done"))
+    clock = [_cn(23, 40)]
+    monkeypatch.setattr(autonomy, "_now", lambda: clock[0])
+    ctx = _make_ctx(tmp_path, reflection=_reflection(), dream=_dream())
+
+    await autonomy.run_tick(ctx)
+    clock[0] = _cn(2, 0, day=2)
+    await autonomy.run_tick(ctx)
+
+    assert DreamStore(_life(tmp_path)).get(_DAY).chat_id == ""
 
 
 # --- 项目工具 ----------------------------------------------------------------------

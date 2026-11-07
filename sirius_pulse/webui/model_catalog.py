@@ -33,6 +33,7 @@ TASK_LABELS: dict[str, str] = {
     "autonomy_generate": "自主行为",
     "life_plan": "晨间计划",
     "life_reflect": "夜间回顾",
+    "life_dream": "夜里的梦",
     "image_generate": "生图",
 }
 

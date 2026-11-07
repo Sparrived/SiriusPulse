@@ -109,6 +109,13 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=45.0,
         fallback_model_name="fallback_generate",
     ),
+    # 夜里的梦：睡着后一次，短短一段带点荒诞的文字。想要梦更有想象力，可以在
+    # AMKR 里单独给它绑一个更「放得开」的模型。同样**必须留在本表里**。
+    "life_dream": TaskConfig(
+        model_name="life_dream",
+        timeout=45.0,
+        fallback_model_name="fallback_generate",
+    ),
     # 生图任务：发往 AMKR 的 /v1/images/* 端点，必须由运维在 AMKR 面板里绑定
     # 一个真正的生图模型（不绑就是 404）。超时给足，生图 30–300 秒都算正常。
     "image_generate": TaskConfig(

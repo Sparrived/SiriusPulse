@@ -34,7 +34,7 @@ function BlockLine({ block, title }: { block: LifeBlock; title?: string }) {
   );
 }
 
-/** 她的一天：早上给自己排的日程、每一段做了没有，以及这一天里她主动说给别人的话。 */
+/** 她的一天：早上给自己排的日程、每一段做了没有、这一天里她主动说给别人的话，以及这天夜里的梦。 */
 export function DayLife({ day }: { day: string }) {
   const { data, isLoading } = useLife(day);
   const { data: autonomy } = useAutonomy();
@@ -46,6 +46,7 @@ export function DayLife({ day }: { day: string }) {
     (ep) => ep.kind === 'share' && localDay(new Date(ep.ended_at || ep.started_at)) === day,
   );
   const note = data?.self_note;
+  const dream = data?.dream;
   const isToday = day === localDay();
 
   return (
@@ -94,6 +95,14 @@ export function DayLife({ day }: { day: string }) {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {dream && (
+        <section className="sheet paper daylife__dream">
+          <h3 className="hand">这天夜里，她梦见</h3>
+          <p className="hand">{dream.text}</p>
+          {dream.feeling && <p className="field__hint">醒来时{dream.feeling}</p>}
         </section>
       )}
 

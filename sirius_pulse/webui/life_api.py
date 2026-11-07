@@ -4,8 +4,8 @@ Read-only, like the autonomy view: the plan and the projects are hers, so the
 WebUI shows them rather than editing them.
 
 - ``GET /api/persona/life`` -- what she is doing now, her energy, her self-note,
-  the plan for a day (``?date=YYYY-MM-DD``, default today), her projects and the
-  list of works.
+  the plan for a day (``?date=YYYY-MM-DD``, default today), the dream of that
+  day's night, her projects and the list of works.
 - ``GET /api/persona/life/works/{project_id}`` -- one work file as Markdown.
 """
 
@@ -20,6 +20,7 @@ from aiohttp import web
 
 from sirius_pulse.life import life_dir, schedule_from_config
 from sirius_pulse.life.agenda import AgendaStore
+from sirius_pulse.life.dreams import DreamStore
 from sirius_pulse.life.projects import PROJECT_ID_RE, PROJECT_KINDS, ProjectStore
 from sirius_pulse.life.reflection import SelfNoteStore
 from sirius_pulse.life.state import LifeStateStore, energy_at, energy_word
@@ -85,6 +86,7 @@ async def api_persona_life_get(request: web.Request, data_dir: Path) -> web.Resp
         return _json_response({"error": "date 不是有效日期"}, status=400)
 
     agenda = AgendaStore(life).load(day)
+    dream = DreamStore(life).get(day)
     projects = ProjectStore(life)
     all_projects = projects.load()
     active_first = [p for p in all_projects if p.status == "active"] + sorted(
@@ -98,6 +100,7 @@ async def api_persona_life_get(request: web.Request, data_dir: Path) -> web.Resp
             "self_note": SelfNoteStore(life).load().to_dict(),
             "date": day,
             "agenda": agenda.to_dict() if agenda else None,
+            "dream": dream.to_dict() if dream else None,
             "projects": [_project_row(p) for p in active_first],
             "works": projects.works_summary(),
         }

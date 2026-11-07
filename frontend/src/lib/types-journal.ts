@@ -143,11 +143,21 @@ export interface LifeWorkRow {
   updated_at: string;
 }
 
+/** 某一天夜里她做的梦（只存在她的生活目录里，不进记忆）。 */
+export interface LifeDream {
+  date: string;
+  text: string;
+  feeling: string;
+  chat_id: string;
+  dreamt_at: string;
+}
+
 export interface LifeResponse {
   now: LifeNow;
   self_note: { recent: string; interests: string[]; tomorrow: string; updated_at: string };
   date: string;
   agenda: LifeAgenda | null;
+  dream?: LifeDream | null;
   projects: LifeProject[];
   works: LifeWorkRow[];
 }

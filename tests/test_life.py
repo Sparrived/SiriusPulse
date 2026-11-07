@@ -4,6 +4,7 @@
 - 作息决定她哪天、是不是醒着；凌晨还没睡也仍算"昨天"；
 - 模型给的日程和回顾都要经过校验：越界、重叠、超量的内容被丢掉，乱写的整份作废；
 - 聊天时她知道自己此刻在做什么、累不累；睡着时只回应真正叫她的人，被吵醒会记得；
+- 昨晚的梦她早上还记得，只在梦的素材来源的那个群里提，过了上午就忘了；
 - 心情会被她自己的生活推动，但基线只会被轻轻挪一点；
 - 她认识的人按"一个人"来记：在哪儿聊过、多久没出现、有多亲近。
 """
@@ -21,6 +22,7 @@ from sirius_pulse.core.participation import ParticipationPolicy
 from sirius_pulse.life import life_dir
 from sirius_pulse.life.agenda import AgendaStore, Block, DayAgenda
 from sirius_pulse.life.clock import DaySchedule
+from sirius_pulse.life.dreams import Dream, DreamStore, is_dream_time, parse_dream
 from sirius_pulse.life.projects import WORK_MAX_CHARS, ProjectStore
 from sirius_pulse.life.reflection import parse_plan, parse_reflection
 from sirius_pulse.life.state import LifeStateStore, energy_at
@@ -316,6 +318,44 @@ def test_asleep_she_answers_only_someone_who_really_calls_for_her(tmp_path):
     assert decide(chatter, awake) != ResponseStrategy.SILENT
     assert decide(chatter, asleep) == ResponseStrategy.SILENT
     assert decide(called, asleep) != ResponseStrategy.SILENT
+
+
+@pytest.mark.parametrize(
+    ("dream_chat", "chat", "moment", "remembered"),
+    [
+        ("group-A", "group-A", _cn(8, 30, day=2), True),
+        ("group-A", "group-B", _cn(8, 30, day=2), False),
+        ("", "group-B", _cn(8, 30, day=2), True),
+        ("group-A", "group-A", _cn(15, 0, day=2), False),
+        ("group-A", "group-A", _cn(8, 30, day=3), False),
+    ],
+    ids=["morning-same-chat", "other-chat", "own-day-dream", "afternoon", "next-morning"],
+)
+def test_she_remembers_last_nights_dream_only_in_the_morning_and_its_chat(
+    tmp_path, dream_chat, chat, moment, remembered
+):
+    DreamStore(life_dir(tmp_path)).save(
+        Dream(date="2026-03-01", text="梦见图书馆漂在海上", feeling="很安静", chat_id=dream_chat)
+    )
+
+    text = life_bridge.presence_context(_engine(tmp_path), moment, chat_id=chat)
+
+    assert ("梦见图书馆漂在海上" in text) is remembered
+    if remembered:
+        assert "梦是假的" in text
+
+
+@pytest.mark.parametrize(
+    ("moment", "due"),
+    [(_cn(23, 45), False), (_cn(1, 30, day=2), True), (_cn(15), False)],
+)
+def test_she_dreams_only_after_she_has_been_asleep_a_while(moment, due):
+    assert is_dream_time(_SCHEDULE, moment) is due
+
+
+@pytest.mark.parametrize("text", ["", "做了个梦", '{"dream": "嗯"}', '{"feeling": "开心"}'])
+def test_an_unusable_dream_is_dropped(text):
+    assert parse_dream(text, date="2026-03-01") is None
 
 
 def test_a_missing_life_never_breaks_a_chat_reply():

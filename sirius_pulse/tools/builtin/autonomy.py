@@ -14,6 +14,10 @@ She has a day of her own, shaped like a person's:
   one structured call (``life_reflect``), which rewrites her short self-note,
   updates her projects and nudges her baseline mood.  While asleep she does no
   work and sends nothing.
+- **Dream** -- a while after she falls asleep she dreams once (``life_dream``),
+  out of her own day and a few fragments from one chat.  The dream is kept only
+  in ``memory/life/dreams.json`` and never becomes memory; she remembers it in
+  the morning, in that chat only (see :mod:`sirius_pulse.life.dreams`).
 
 Why it is built this way: the previous design offered her open "free time" with
 no context and explicitly allowed "nothing", and a model nearly always took that
@@ -34,7 +38,8 @@ thought per person per ``miss_again_after_days`` and ``max_miss_per_day`` a day,
 only toward people she can actually reach, and never while she is asleep.
 
 Cost per day is bounded: one plan, at most ``max_work_blocks_per_day`` work
-blocks, one reflection -- plus audience decisions, each capped per intention.
+blocks, one reflection, one dream -- plus audience decisions, each capped per
+intention.
 """
 
 from __future__ import annotations
@@ -60,6 +65,7 @@ from sirius_pulse.life.agenda import (
     DayAgenda,
 )
 from sirius_pulse.life.clock import DaySchedule, to_local
+from sirius_pulse.life.dreams import DreamStore, is_dream_time, parse_dream
 from sirius_pulse.life.missing import MissLedger, people_to_miss
 from sirius_pulse.life.projects import (
     MAX_ACTIVE_PROJECTS,
@@ -75,6 +81,7 @@ from sirius_pulse.life.reflection import (
 )
 from sirius_pulse.life.state import LifeStateStore, energy_at, energy_word
 from sirius_pulse.memory.units.models import MemoryUnit
+from sirius_pulse.memory.units.store import MemoryUnitFileStore
 from sirius_pulse.utils.json_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
@@ -109,6 +116,10 @@ _DEFAULT_MISS_MIN_CLOSENESS = 0.5
 _MISS_URGENCY = 0.7
 _MISS_KIND = "miss"
 _MISS_STORE_KEY = "missing"
+
+# A dream draws on at most this many fragments of the busiest chat of her day.
+_DREAM_MAX_FRAGMENTS = 6
+_DREAM_FRAGMENT_CHARS = 80
 
 # Below this she is too worn out to start a project block.
 _TOO_TIRED = 0.2
@@ -195,6 +206,12 @@ TOOL_META = {
             "default": _DEFAULT_MISS_MIN_CLOSENESS,
             "group": "想念",
         },
+        "dream_enabled": {
+            "type": "bool",
+            "description": "睡着后会不会做梦（每晚一次模型调用），第二天早上她可能会顺口提起。梦不会写进记忆，默认开。",
+            "default": True,
+            "group": "梦",
+        },
     },
 }
 
@@ -241,6 +258,7 @@ async def run_tick(ctx: Any) -> Episode | None:
 
     if schedule.is_asleep(now):
         await _reflect_if_due(ctx, schedule, now)
+        await _dream_if_due(ctx, schedule, now)
         return None
 
     agenda = await _ensure_today_plan(ctx, schedule, now)
@@ -647,6 +665,82 @@ async def _reflect_if_due(ctx: Any, schedule: DaySchedule, now: datetime) -> Non
     if callable(settle):
         settle(baseline_shift=result.mood_shift)
     ctx.log_inner_thought(f"睡前想了想今天：{result.note.recent[:60]}")
+
+
+async def _dream_if_due(ctx: Any, schedule: DaySchedule, now: datetime) -> None:
+    """Dream once a night, after the reflection and past the first stretch of sleep."""
+    store = ctx.get_data_store("autonomy")
+    if store.get("dream_enabled", True) is False or not is_dream_time(schedule, now):
+        return
+    life = _life(ctx)
+    day = schedule.life_date(now)
+    states = LifeStateStore(life)
+    state = states.load()
+    if state.last_reflect_date != day or state.last_dream_date == day:
+        return
+    agenda = AgendaStore(life).load(day)
+    chat_id, fragments = _dream_fragments(ctx, schedule, day)
+    if agenda is None and not fragments:
+        # Nothing happened to her today; there is nothing to dream about.
+        return
+    # Booked before the call, like the reflection: one try per night.
+    states.update(lambda s: setattr(s, "last_dream_date", day))
+
+    persona = ctx.get_persona()
+    system_prompt, messages = PromptFactory.build_life_dream_prompt(
+        name=str(getattr(persona, "name", "") or ""),
+        day=_agenda_lines(agenda),
+        fragments=fragments,
+        mood=_mood_label(ctx),
+        recent=SelfNoteStore(life).load().recent,
+    )
+    try:
+        text = await ctx.generate_text(
+            system_prompt, messages, chat_id or _fallback_group(ctx), task_name="life_dream"
+        )
+    except Exception:
+        logger.warning("做梦的调用失败，今晚无梦", exc_info=True)
+        return
+    dream = parse_dream(text, date=day, chat_id=chat_id if fragments else "")
+    if dream is None:
+        logger.info("梦的内容无法解析，今晚无梦: %s", str(text)[:200])
+        return
+    dream.dreamt_at = now.isoformat()
+    # Deliberately not ``_write_memory_unit``: a dream must never be recalled as fact.
+    DreamStore(life).save(dream)
+    ctx.log_inner_thought(f"做了个梦：{dream.text[:60]}")
+
+
+def _dream_fragments(ctx: Any, schedule: DaySchedule, day: str) -> tuple[str, list[str]]:
+    """The busiest chat of her day and its most salient memory fragments.
+
+    Read-only.  Only one chat goes into a dream, so the dream can be told in that
+    chat without carrying anything said elsewhere.  Her own self-initiated units
+    are skipped: her day already comes in through the agenda.
+    """
+    try:
+        store = MemoryUnitFileStore(Path(ctx.get_work_path() or "."))
+        by_chat: dict[str, list[MemoryUnit]] = {}
+        for group_id in store.list_group_ids():
+            for unit in store.load(group_id, with_embeddings=False):
+                if (unit.metadata or {}).get("origin") == "self_initiated":
+                    continue
+                if not unit.summary.strip():
+                    continue
+                if _life_date_of(schedule, unit.created_at or unit.event_time) != day:
+                    continue
+                by_chat.setdefault(str(unit.group_id or group_id), []).append(unit)
+    except Exception:
+        logger.debug("读取当天的记忆碎片失败，只用她自己的一天做梦", exc_info=True)
+        return "", []
+    if not by_chat:
+        return "", []
+    chat_id, units = max(by_chat.items(), key=lambda item: len(item[1]))
+    units.sort(key=lambda unit: unit.salience, reverse=True)
+    return chat_id, [
+        " ".join(unit.summary.split())[:_DREAM_FRAGMENT_CHARS]
+        for unit in units[:_DREAM_MAX_FRAGMENTS]
+    ]
 
 
 def _life_date_of(schedule: DaySchedule, stamp: str) -> str:

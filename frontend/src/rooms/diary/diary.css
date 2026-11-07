@@ -505,7 +505,8 @@
 }
 
 .daylife__shares h3,
-.daylife__self h3 {
+.daylife__self h3,
+.daylife__dream h3 {
   margin: 0 0 10px;
   font-size: 18px;
   font-weight: 400;
@@ -526,10 +527,21 @@
 }
 
 .daylife__shares li p,
-.daylife__self p {
+.daylife__self p,
+.daylife__dream p {
   margin: 0;
   font-size: 14.5px;
   line-height: 1.7;
+}
+
+/* 梦：字迹淡一点，像醒来后匆匆记下的 */
+.daylife__dream p.hand {
+  font-size: 16.5px;
+  color: var(--ink-soft);
+}
+
+.daylife__dream .field__hint {
+  margin-top: 8px;
 }
 
 .daylife__tags {

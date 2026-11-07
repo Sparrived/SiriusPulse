@@ -1,7 +1,7 @@
 """WebUI 里看她的生活：某天的日程、她的项目、读她的作品、首页一瞥里的此刻。
 
 业务视角：
-- 能看到她这天给自己排了什么、做了没有、为什么没做；
+- 能看到她这天给自己排了什么、做了没有、为什么没做，以及这天夜里的梦；
 - 能翻开她写下的作品；不合法的项目 id 被拒绝，读不到别的文件；
 - 新人格没有任何生活数据时得到空结构，而且查看不会凭空创建文件。
 """
@@ -15,6 +15,7 @@ import pytest
 
 from sirius_pulse.life import life_dir
 from sirius_pulse.life.agenda import AgendaStore, Block, DayAgenda
+from sirius_pulse.life.dreams import Dream, DreamStore
 from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.reflection import SelfNote, SelfNoteStore
 from sirius_pulse.webui.companion_api import api_persona_glance_get
@@ -62,6 +63,7 @@ async def test_she_can_be_seen_planning_and_working_on_her_day(tmp_path):
         )
     )
     SelfNoteStore(life).save(SelfNote(recent="最近在读川端。", interests=["雪"]))
+    DreamStore(life).save(Dream(date="2026-03-01", text="梦见雪落进了书页里", feeling="很轻"))
 
     day = json.loads((await api_persona_life_get(_FakeRequest({"date": "2026-03-01"}), work)).text)
     opened = json.loads(
@@ -78,6 +80,7 @@ async def test_she_can_be_seen_planning_and_working_on_her_day(tmp_path):
     assert day["projects"][0]["kind_label"] == "阅读"
     assert day["works"][0]["project_id"] == project.project_id
     assert day["self_note"]["recent"] == "最近在读川端。"
+    assert day["dream"]["text"] == "梦见雪落进了书页里"
     assert "岛村来到雪国" in opened["markdown"]
 
 

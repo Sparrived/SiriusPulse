@@ -4,7 +4,8 @@ Two outputs, both cheap and rule-based:
 
 - :func:`render_presence` -- the 【此刻的你】 block appended to a chat turn's
   reference context: time of day, energy, mood, what she was just doing, what is
-  left on today's plan, how she has been lately.  This is what makes everything
+  left on today's plan, how she has been lately, and -- in the morning, in the
+  chat it came from -- last night's dream.  This is what makes everything
   she does on her own *visible*; without it the rest of the life loop would be
   invisible to the people she talks to.
 - :func:`reply_factor` -- a multiplier on the participation score, so a sleeping
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from sirius_pulse.life.agenda import AgendaStore
 from sirius_pulse.life.clock import PHASE_LABELS, DaySchedule, to_local
+from sirius_pulse.life.dreams import Dream, DreamStore, last_nights_dream
 from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.reflection import SelfNoteStore
 from sirius_pulse.life.state import LifeStateStore, energy_at, energy_word
@@ -44,11 +46,19 @@ class LifeSnapshot:
     recent: str
     woken_last_night: bool
     work_done: int
+    dream: Dream | None = None
 
 
 def snapshot(
-    life_dir: Path | str, schedule: DaySchedule, now: datetime, *, replies_today: int = 0
+    life_dir: Path | str,
+    schedule: DaySchedule,
+    now: datetime,
+    *,
+    replies_today: int = 0,
+    chat_id: str = "",
 ) -> LifeSnapshot:
+    """Read her life once.  *chat_id* is the chat she is talking in; last night's
+    dream only shows up there if that is where the dream came from."""
     life_dir = Path(life_dir)
     state = LifeStateStore(life_dir).load()
     agenda = AgendaStore(life_dir).load(schedule.life_date(now))
@@ -66,6 +76,7 @@ def snapshot(
         if agenda
         else []
     )
+    dream = last_nights_dream(DreamStore(life_dir), schedule, now)
     return LifeSnapshot(
         phase=schedule.phase(now),
         asleep=schedule.is_asleep(now),
@@ -75,6 +86,7 @@ def snapshot(
         recent=SelfNoteStore(life_dir).load().recent,
         woken_last_night=woken > 0,
         work_done=work_done,
+        dream=dream if dream is not None and dream.can_tell_in(chat_id) else None,
     )
 
 
@@ -121,5 +133,12 @@ def render_presence(
             lines.append("- 最近手上的事：" + "、".join(f"{p.kind_label}「{p.title}」" for p in active) + "。")
     if snap.recent:
         lines.append(f"- 近况：{snap.recent}")
+    if snap.dream is not None and not snap.asleep:
+        feeling = f"醒来时{snap.dream.feeling}" if snap.dream.feeling else ""
+        lines.append(
+            f"- 昨晚做了个梦，还记得一点：{snap.dream.text}"
+            + (f"（{feeling}）" if feeling else "")
+            + "。梦是假的，里面的事没有真的发生过；想起来可以随口提一句，别当真事讲。"
+        )
     lines.append("这些是你自己的生活，合适的时候可以自然带出来，不必每次都提，也别像汇报待办一样念出来。")
     return "\n".join(lines)

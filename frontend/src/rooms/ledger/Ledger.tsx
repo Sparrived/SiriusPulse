@@ -21,6 +21,7 @@ const TASK: Record<string, string> = {
   autonomy_generate: '自己的事',
   life_plan: '排今天的日程',
   life_reflect: '睡前回想这一天',
+  life_dream: '做梦',
   image_caption: '看图',
   image_generate: '画画',
   event_extract: '记下发生的事',
