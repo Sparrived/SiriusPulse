@@ -163,6 +163,8 @@ class ChatResult:
     tool_calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     # 引用回复信息（由 _hook_reply_reference 填充）
     reply_references: list[dict[str, str]] = field(default_factory=list)
+    # 模型本轮主动输出跳过标记：没有正文是预期结果，投递层不能按失败去重试。
+    skipped: bool = False
 
 
 def _tool_names_from_schemas(tools: list[dict[str, Any]] | None) -> list[str]:
@@ -735,6 +737,7 @@ class Brain:
                 reasoning_content=gen_result.reasoning_content,
                 has_tool_call=bool(tool_calls),
                 tool_calls=tool_calls,
+                skipped=bool(ctx.get("skip_reply")),
             )
 
             # 纯小本轮的正文是未送出的草稿，不能被当成已回复写入历史或去重。

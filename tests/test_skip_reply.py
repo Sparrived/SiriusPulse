@@ -75,6 +75,7 @@ async def test_engine_when_model_skips_then_nothing_is_sent_and_turn_is_not_coun
     result = await _reply_to(engine, "@阿离 帮我看下这个报错")
 
     assert result.clean_text == ""
+    assert result.skipped is True
     assert engine._last_reply_at == {}
     assert engine._last_reply_depth == {}
     assert persisted == []
@@ -87,6 +88,7 @@ async def test_engine_when_reply_is_normal_then_turn_is_counted_as_a_reply():
     result = await _reply_to(engine, "月白在吗")
 
     assert result.clean_text == "在的，怎么了？"
+    assert result.skipped is False
     assert engine._last_reply_at
     assert engine._last_reply_depth == {"group-1": 1}
     assert persisted == ["group-1"]

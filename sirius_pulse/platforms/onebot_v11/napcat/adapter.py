@@ -2868,6 +2868,12 @@ class NapCatAdapter(BaseAdapter):
                     if not sent:
                         return
                 if not parts and not result.get("delivery_complete") and not sent_count:
+                    if result.get("skip_reply"):
+                        # 模型这一轮主动 [SKIP]：本来就没有正文要发，这不是投递失败，
+                        # 回队重试只会让她再跳过一次，还会留一条 ERROR 假警报。
+                        result["delivery_complete"] = True
+                        result["delivery_status"] = "skipped"
+                        continue
                     result["delivery_status"] = "no_output"
                     if queue is not None:
                         queue.requeue_in_flight(active_ids, max_retries=0)

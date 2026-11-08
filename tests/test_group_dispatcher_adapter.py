@@ -530,6 +530,70 @@ async def test_delayed_ack_failure_retries_only_remaining_lines_after_restart(
 
 
 @pytest.mark.asyncio
+async def test_delayed_skip_reply_is_consumed_instead_of_requeued(tmp_path, monkeypatch):
+    """模型主动 [SKIP]：没有正文是预期结果，不回队重试、不记 ERROR。"""
+    from types import SimpleNamespace
+
+    queue, _, engine, adapter, socket = _delivery_harness(tmp_path)
+    item = _delivery_item(queue, "100", adapter)
+    engine.brain.chat.side_effect = [
+        SimpleNamespace(
+            raw_text="",
+            clean_text="",
+            tool_calls=[],
+            reply_references=[],
+            skipped=True,
+        )
+    ]
+    errors: list[tuple] = []
+    monkeypatch.setattr(
+        "sirius_pulse.core.delayed_response_queue.logger.error",
+        lambda *args, **kwargs: errors.append(args),
+    )
+
+    await adapter._handle_event(_delivery_event(item))
+
+    assert socket.requests == []
+    assert item.status == "sent"
+    assert errors == []
+    assert queue.get_pending("100") == []
+    assert queue.in_flight_ids("100") == []
+    assert any(
+        call.args[0].data.get("delivery_status") == "skipped"
+        for call in engine.event_bus.emit.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_delayed_empty_reply_without_skip_still_reports_no_output(tmp_path, monkeypatch):
+    """没有跳过标记却是空正文，仍按投递失败收尾，别把真故障也一起放过。"""
+    from types import SimpleNamespace
+
+    queue, _, engine, adapter, socket = _delivery_harness(tmp_path)
+    item = _delivery_item(queue, "100", adapter)
+    engine.brain.chat.side_effect = [
+        SimpleNamespace(
+            raw_text="",
+            clean_text="",
+            tool_calls=[],
+            reply_references=[],
+        )
+    ]
+    errors: list[tuple] = []
+    monkeypatch.setattr(
+        "sirius_pulse.core.delayed_response_queue.logger.error",
+        lambda *args, **kwargs: errors.append(args),
+    )
+
+    await adapter._handle_event(_delivery_event(item))
+
+    assert socket.requests == []
+    assert item.status == "failed"
+    assert len(errors) == 1
+    assert queue.get_pending("100") == []
+
+
+@pytest.mark.asyncio
 async def test_delayed_unknown_ack_survives_restart_without_replay(tmp_path):
     from sirius_pulse.core.delayed_response_queue import DelayedResponseQueue
 

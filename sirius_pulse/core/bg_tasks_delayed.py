@@ -1615,6 +1615,9 @@ class DelayedQueueTasks:
                 "strategy": strategy,
                 "item_id": triggered[0].item_id,
                 "reply": final_reply,
+                # 模型主动 [SKIP]：没有正文是预期结果，投递层按「已出结果」收尾，
+                # 不再当成生成失败去回队重试。
+                "skip_reply": bool(getattr(chat_result, "skipped", False)),
                 "partial_replies": partial_replies,
                 "reply_references": reply_references,
                 "sticker_names": sticker_names,
