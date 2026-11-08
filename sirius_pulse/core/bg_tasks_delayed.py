@@ -150,6 +150,39 @@ class DelayedQueueTasks:
         )
 
     @staticmethod
+    def _scene_context(engine: Any, group_id: str, adapter_type: str | None) -> str:
+        """群里刚出现、她可以借来用的表情包，以及「最近的回复在套模板」的提醒。"""
+        memory = getattr(engine, "basic_memory", None)
+        get_context = getattr(memory, "get_context", None)
+        if not callable(get_context):
+            return ""
+        try:
+            from sirius_pulse.core.borrowed_images import (
+                recent_reusable_images,
+                remember,
+                render_block,
+            )
+            from sirius_pulse.core.style_drift import template_hint
+
+            entries = list(get_context(group_id, n=60))
+            parts: list[str] = []
+            if adapter_type == "napcat" and not str(group_id).startswith("private_"):
+                images = recent_reusable_images(entries)
+                remember(engine, group_id, images)
+                block = render_block(images)
+                if block:
+                    parts.append(block)
+            hint = template_hint(
+                [str(e.content or "") for e in entries if getattr(e, "role", "") == "assistant"]
+            )
+            if hint:
+                parts.append(hint)
+            return "\n\n".join(parts)
+        except Exception:
+            logger.warning("群内情景提示暂不可用，本轮不注入", exc_info=True)
+            return ""
+
+    @staticmethod
     def _impressions_context(engine: Any, items: list[Any], message_content: str) -> str:
         """这一轮说话的人、以及消息里点到名字的人，她心里对他们的印象。"""
         if not getattr(engine, "work_path", None):
@@ -1653,6 +1686,13 @@ class DelayedQueueTasks:
         if presence:
             bundle.dynamic_context = (
                 f"{bundle.dynamic_context}\n\n{presence}" if bundle.dynamic_context else presence
+            )
+        scene_context = self._scene_context(engine, group_id, adapter_type)
+        if scene_context:
+            bundle.dynamic_context = (
+                f"{bundle.dynamic_context}\n\n{scene_context}"
+                if bundle.dynamic_context
+                else scene_context
             )
         people_context = self._impressions_context(engine, items, message_content)
         if people_context:

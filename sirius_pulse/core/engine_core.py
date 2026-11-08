@@ -1130,7 +1130,15 @@ class _EmotionalGroupChatEngineBase:
                 _result, _req
             ):
                 return
-            record_content = _result.clean_text
+            # 她发的表情包和戳一戳也写进历史（用她输出时的同一种标记）：否则她在上下文里
+            # 永远只看到自己的文字，学不会「说完甩张图」「只戳一下」这样的节奏。
+            actions = [
+                *(f"[STICKER:{name}]" for name in (getattr(_result, "sticker_names", None) or [])),
+                *(f"[POKE:{uid}]" for uid in (getattr(_result, "poke_user_ids", None) or [])),
+            ]
+            record_content = "\n".join(
+                part for part in (_result.clean_text, " ".join(actions)) if part
+            )
             if not record_content:
                 return
 
@@ -1273,8 +1281,13 @@ class _EmotionalGroupChatEngineBase:
             if not raw_text and not clean_text:
                 return
 
-            available_stickers = set(getattr(_engine, "_sticker_names", []) or [])
+            from sirius_pulse.core.borrowed_images import names_for
+
             group_id = str(getattr(_req, "group_id", "") or "")
+            # 她自己的表情库，加上这一轮群里刚出现、可以借来用的那几张。
+            available_stickers = set(getattr(_engine, "_sticker_names", []) or []) | set(
+                names_for(_engine, group_id)
+            )
             current_user_id = str(getattr(_req, "user_id", "") or "").strip()
             extra_poke_ids = (
                 (current_user_id,) if group_id and not group_id.startswith("private_") else ()

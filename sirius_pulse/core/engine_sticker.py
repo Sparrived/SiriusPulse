@@ -85,10 +85,20 @@ class EngineSticker:
             len(sticker_files),
         )
 
-    def _pick_sticker_choice(self, names: list[str]) -> StickerChoice | None:
-        """从模型选择的名称列表中随机选一个，再匹配对应的图片文件。"""
+    def _pick_sticker_choice(self, names: list[str], group_id: str = "") -> StickerChoice | None:
+        """从模型选择的名称列表中随机选一个，再匹配对应的图片文件。
+
+        ``刚才1`` 这类名字指的是群里刚出现、她借来用的那张原图，优先按编号查回。
+        """
         if not names:
             return None
+
+        from sirius_pulse.core.borrowed_images import lookup
+
+        for name in names[:3]:
+            borrowed = lookup(self._engine, group_id, name) if group_id else None
+            if borrowed is not None and borrowed.is_file():
+                return StickerChoice(name=name, file_path=borrowed)
 
         chosen_name = random.choice(names[:3])
         candidates = [
@@ -309,7 +319,7 @@ class EngineSticker:
     ) -> dict[str, Any]:
         """从模型选中的名称中随机挑一个表情包发送（sub_type=1）。"""
         engine = self._engine
-        intended = self._pick_sticker_choice(names)
+        intended = self._pick_sticker_choice(names, group_id)
         if intended is None:
             return {"success": False, "error": "没有匹配的表情包文件"}
 
@@ -317,9 +327,13 @@ class EngineSticker:
         if adapter is None:
             return {"success": False, "error": "没有可用的 adapter"}
 
+        from sirius_pulse.core.borrowed_images import lookup
+
+        borrowed = lookup(engine, group_id, intended.name) is not None
         try:
             wrong = None
-            if random.random() < STICKER_MISSEND_PROBABILITY:
+            # 借来的图是在接别人的梗，「手滑发错」只属于她自己的表情库。
+            if not borrowed and random.random() < STICKER_MISSEND_PROBABILITY:
                 wrong = self._pick_wrong_sticker_choice(intended.name)
 
             if wrong is None:
