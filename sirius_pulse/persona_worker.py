@@ -194,6 +194,8 @@ class PersonaWorker:
             # 参与决策
             "sensitivity": experience.engagement_sensitivity,
             "group_reply_strategies": dict(experience.group_reply_strategies),
+            "initiative_level": experience.initiative_level,
+            "group_initiative_levels": dict(experience.group_initiative_levels),
             "reply_cooldown_seconds": int(experience.min_reply_interval_seconds),
             "main_model_reply_cooldown_seconds": experience.main_model_reply_cooldown_seconds,
             "memory_unit_top_k": experience.memory_unit_top_k,

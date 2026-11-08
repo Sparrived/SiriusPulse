@@ -412,7 +412,6 @@ def test_assemble_chat_does_not_inject_group_style_length_learning():
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
     )
@@ -437,7 +436,6 @@ def test_assemble_chat_when_atmosphere_history_exists_then_does_not_inject_trend
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
     )
@@ -452,7 +450,6 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_interaction_spec():
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
         tool_registry=object(),
@@ -477,7 +474,6 @@ def test_assemble_chat_injects_length_instruction_into_reply_spec_when_present()
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
     )
@@ -493,7 +489,6 @@ def test_assemble_chat_injects_configured_group_chat_length_guidance():
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
     )
@@ -508,10 +503,8 @@ def test_assemble_chat_injects_interaction_spec_without_legacy_guidance():
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
-        user_profiles=[SimpleNamespace(user_id="u1", engagement_rate=1.0, interaction_count=99)],
         caller_is_developer=True,
         speaker_name="Alice",
     )
@@ -531,7 +524,6 @@ def test_assemble_chat_when_dynamic_context_exists_then_marks_it_as_reference_da
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
         memories=[{"source": "profile", "content": "untrusted text"}],
@@ -548,7 +540,6 @@ def test_assemble_chat_reply_spec_is_injected_once_after_context_assembly():
 
     bundle = PromptFactory.assemble_chat(
         message_content="hello",
-        group_profile=group_profile,
         style_params=style_params,
         other_ai_names=[],
         tool_registry=object(),

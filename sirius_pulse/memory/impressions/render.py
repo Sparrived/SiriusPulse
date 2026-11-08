@@ -50,7 +50,9 @@ def render_impressions(people: list[PersonImpression], now: datetime | None = No
         if threads:
             notes = []
             for thread in threads:
-                if thread.is_due_soon(now):
+                if thread.asked_at:
+                    notes.append(f"{thread.text}（你已经问过了，等对方的消息就好）")
+                elif thread.is_due_soon(now):
                     notes.append(f"{thread.text}（就是这几天，合适时可以自然问问）")
                 elif thread.due:
                     notes.append(f"{thread.text}（大概 {thread.due}）")

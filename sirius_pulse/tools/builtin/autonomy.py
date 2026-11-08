@@ -117,6 +117,16 @@ _MISS_URGENCY = 0.7
 _MISS_KIND = "miss"
 _MISS_STORE_KEY = "missing"
 
+# Missing her master: he is the one person who is glad to be bothered, so the bar is
+# hours, not days -- but still bounded, and never while she is asleep.
+_DEFAULT_MASTER_MISS_AFTER_HOURS = 6
+_DEFAULT_MAX_MASTER_PER_DAY = 2
+_MAX_MASTER_PER_DAY_CEILING = 4
+_MASTER_MISS_GAP_HOURS = 4
+_MASTER_MISS_KIND = "miss_master"
+_MASTER_MISS_STORE_KEY = "missing_master"
+_MASTER_MISS_URGENCY = 0.75
+
 # A dream draws on at most this many fragments of the busiest chat of her day.
 _DREAM_MAX_FRAGMENTS = 6
 _DREAM_FRAGMENT_CHARS = 80
@@ -206,6 +216,18 @@ TOOL_META = {
             "default": _DEFAULT_MISS_MIN_CLOSENESS,
             "group": "想念",
         },
+        "master_miss_after_hours": {
+            "type": "int",
+            "description": "主人多少小时没来找她（任何会话），她醒着时会想找主人说说话，默认 6，设为 0 表示不主动找。",
+            "default": _DEFAULT_MASTER_MISS_AFTER_HOURS,
+            "group": "想念",
+        },
+        "max_master_per_day": {
+            "type": "int",
+            "description": "她一天最多主动找主人几次（每次一个决定说什么的模型回合），默认 2，最多 4；两次之间至少隔 4 小时。",
+            "default": _DEFAULT_MAX_MASTER_PER_DAY,
+            "group": "想念",
+        },
         "dream_enabled": {
             "type": "bool",
             "description": "睡着后会不会做梦（每晚一次模型调用），第二天早上她可能会顺口提起。梦不会写进记忆，默认开。",
@@ -263,6 +285,7 @@ async def run_tick(ctx: Any) -> Episode | None:
 
     agenda = await _ensure_today_plan(ctx, schedule, now)
     _miss_people(ctx, schedule, now)
+    _miss_master(ctx, schedule, now)
 
     state = _load_state(store)
     # Sharing does not spend a model turn, so it is gated by its own cooldown and
@@ -918,6 +941,112 @@ def _miss_people(ctx: Any, schedule: DaySchedule, now: datetime) -> list[Intenti
         if callable(save):
             save()
     return created
+
+
+def _master_audience(ctx: Any) -> Any | None:
+    lister = getattr(ctx, "list_audiences", None)
+    if not callable(lister):
+        return None
+    try:
+        audiences = list(lister())
+    except Exception:
+        return None
+    return next((a for a in audiences if getattr(a, "kind", "") == "private"), None)
+
+
+def _miss_master(ctx: Any, schedule: DaySchedule, now: datetime) -> Intention | None:
+    """主人好几个小时没来找她：起一个想找他说说话的念头。
+
+    和想念别人一样只是规则：念头是一条没有受众的草稿，真正说什么、发到私聊还是
+    去群里叫他，由之后的受众回合决定，她也可以决定不打扰。主人是唯一乐意被她
+    打扰的人，所以门槛按小时算，但每天次数与间隔都有上限，睡着时不起念头。
+    """
+    after_hours = _option_int(
+        ctx, "master_miss_after_hours", _DEFAULT_MASTER_MISS_AFTER_HOURS, ceiling=24 * 7
+    )
+    if after_hours <= 0:
+        return None
+    master = _master_audience(ctx)
+    if master is None:
+        return None
+    master_uid = "qq_" + str(master.chat_id).removeprefix("private_")
+    store = ctx.get_data_store("autonomy")
+    ledger = store.get(_MASTER_MISS_STORE_KEY, {}) or {}
+    today = schedule.life_date(now)
+    count = int(ledger.get("count", 0) or 0) if ledger.get("day") == today else 0
+    max_per_day = _option_int(
+        ctx, "max_master_per_day", _DEFAULT_MAX_MASTER_PER_DAY, ceiling=_MAX_MASTER_PER_DAY_CEILING
+    )
+    if count >= max_per_day:
+        return None
+    if now - _parse_time(ledger.get("last_at", "")) < timedelta(hours=_MASTER_MISS_GAP_HOURS):
+        return None
+    intentions = _load_intentions(ctx)
+    if any(item.kind == _MASTER_MISS_KIND for item in intentions.open_items(now=now.isoformat())):
+        return None
+    lister = getattr(ctx, "list_acquaintances", None)
+    try:
+        people = list(lister()) if callable(lister) else []
+    except Exception:
+        people = []
+    person = next((p for p in people if p.user_id == master_uid), None)
+    last = _parse_time(getattr(person, "last_active_at", "") if person else "")
+    if last == _parse_time("") or now - last < timedelta(hours=after_hours):
+        return None
+    hours = int((now - last).total_seconds() // 3600)
+    why = [f"主人已经{hours}个小时没来找你了"]
+    busy_group = _lively_group(ctx, getattr(person, "chats", []) or [], now)
+    if busy_group:
+        why.append(f"群「{busy_group[0]}」这会儿正热闹，大家在聊：{busy_group[1]}")
+    intention = Intention.create(
+        what="有点想主人了，想去找他说说话",
+        why="；".join(why),
+        resolution=RESOLUTION_TELL,
+        kind=_MASTER_MISS_KIND,
+        urgency=_MASTER_MISS_URGENCY,
+        source="missing_master",
+        origin_group=master.chat_id,
+        refs=[f"user:{master_uid}"],
+        draft=True,
+    )
+    intentions.add(intention)
+    _save_intentions(ctx, intentions)
+    store.set(
+        _MASTER_MISS_STORE_KEY, {"day": today, "count": count + 1, "last_at": now.isoformat()}
+    )
+    save = getattr(store, "save", None)
+    if callable(save):
+        save()
+    ctx.log_inner_thought("主人好久没来找我了，有点想他")
+    return intention
+
+
+def _lively_group(ctx: Any, chats: list[str], now: datetime) -> tuple[str, str] | None:
+    """主人常待的群里最近半小时在聊什么；给她一个「叫他来群里」的理由。"""
+    getter = getattr(ctx, "get_recent_messages", None)
+    if not callable(getter):
+        return None
+    for chat in chats:
+        if str(chat).startswith("private_"):
+            continue
+        try:
+            recent = list(getter(chat, 6))
+        except Exception:
+            continue
+        lines = []
+        for message in recent:
+            stamp = _parse_time(message.get("timestamp", ""))
+            content = str(message.get("content", "") or "").strip()
+            if (
+                content
+                and now - stamp <= timedelta(minutes=30)
+                and message.get("role") != "assistant"
+            ):
+                lines.append(content[:40])
+        if len(lines) >= 3:
+            labels = {str(a.chat_id): str(a.label or a.chat_id) for a in ctx.list_audiences()}
+            return labels.get(str(chat), str(chat)), "；".join(lines[-3:])
+    return None
 
 
 def _share_ready(state: dict[str, Any], now: datetime, ctx: Any) -> bool:

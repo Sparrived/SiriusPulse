@@ -329,6 +329,7 @@ class PersonImpressionUpdater:
                     text=text,
                     due=due_match.group(0) if due_match else "",
                     created_at=previous.created_at if previous else now.isoformat(),
+                    asked_at=previous.asked_at if previous else "",
                 )
             )
         try:

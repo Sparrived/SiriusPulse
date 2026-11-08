@@ -960,3 +960,75 @@ async def test_missing_people_can_be_turned_off(tmp_path):
     await autonomy.run_tick(ctx)
 
     assert _miss_thoughts(tmp_path) == []
+
+
+# --- 想主人 -----------------------------------------------------------------------
+
+
+def _with_master(ctx, *, hours_away, recent=None):
+    master = _friend(user_id="qq_10001", name="临雀", last_seen=_cn(12) - timedelta(hours=hours_away))
+    ctx.list_acquaintances = lambda: [master]
+    ctx.list_audiences = lambda: [
+        SimpleNamespace(chat_id="group-1", label="群group-1", kind="group"),
+        SimpleNamespace(chat_id="private_10001", label="主人（私聊）", kind="private"),
+    ]
+    ctx.get_recent_messages = lambda _chat, _n=10: list(recent or [])
+    return ctx
+
+
+def _master_thoughts(tmp_path):
+    return [i for i in IntentFileStore(tmp_path).load().all() if i.kind == "miss_master"]
+
+
+@pytest.mark.asyncio
+async def test_she_wants_to_find_her_master_after_hours_without_him(tmp_path):
+    """主人几个小时没来找她：她想去找他，并且知道群里这会儿在热闹地聊什么。"""
+    now = _cn(12)
+    chat = [
+        {
+            "role": "human",
+            "content": f"第{i}句关于新显卡的讨论",
+            "timestamp": (now - timedelta(minutes=5 + i)).isoformat(),
+        }
+        for i in range(4)
+    ]
+    ctx = _with_master(_make_ctx(tmp_path), hours_away=8, recent=chat)
+
+    await autonomy.run_tick(ctx)
+
+    thoughts = _master_thoughts(tmp_path)
+    assert len(thoughts) == 1 and thoughts[0].audience == ""
+    assert "8个小时" in thoughts[0].why and "显卡" in thoughts[0].why
+    turn = next(t for t in ctx.turns if t.get("autonomous"))
+    assert turn["kind"] == "miss_master"
+    assert ctx.delivered == [], "念头只是念头：说什么、发到哪由她自己决定"
+
+
+@pytest.mark.parametrize("hours_away", [1, 5])
+@pytest.mark.asyncio
+async def test_she_does_not_chase_a_master_who_was_just_around(tmp_path, hours_away):
+    ctx = _with_master(_make_ctx(tmp_path), hours_away=hours_away)
+
+    await autonomy.run_tick(ctx)
+
+    assert _master_thoughts(tmp_path) == []
+
+
+@pytest.mark.asyncio
+async def test_missing_master_is_bounded_per_day_and_can_be_turned_off(tmp_path, monkeypatch):
+    ctx = _with_master(_make_ctx(tmp_path, config={"max_master_per_day": 1}), hours_away=8)
+    await autonomy.run_tick(ctx)
+    for item in _master_thoughts(tmp_path):
+        store = IntentFileStore(tmp_path).load()
+        store.mark_shared(item.intention_id, now=_cn(12).isoformat())
+        IntentFileStore(tmp_path).save(store)
+    monkeypatch.setattr(autonomy, "_now", lambda: _cn(18))
+    await autonomy.run_tick(ctx)
+
+    assert len(_master_thoughts(tmp_path)) == 1, "一天只主动找一次"
+
+    off = _with_master(
+        _make_ctx(tmp_path / "off", config={"master_miss_after_hours": 0}), hours_away=8
+    )
+    await autonomy.run_tick(off)
+    assert _master_thoughts(tmp_path / "off") == []

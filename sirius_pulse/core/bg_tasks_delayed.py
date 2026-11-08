@@ -1621,25 +1621,6 @@ class DelayedQueueTasks:
             message_content = _hinted
             logger.info("[参与] 灰色区间提示已注入 group=%s directed=%.2f", group_id, _score)
 
-        # 收集触发批次中所有用户的语义画像
-        related_uids: set[str] = set()
-        for item in items:
-            for uid in getattr(item, "related_user_ids", []):
-                if uid:
-                    related_uids.add(uid)
-        delayed_user_profiles: list[Any] = []
-        for uid in related_uids:
-            prof = engine.semantic_memory.get_user_profile(group_id, uid)
-            if prof:
-                delayed_user_profiles.append(prof)
-
-        # 收集候选记忆
-        candidate_memories: list[dict[str, Any]] = []
-        for item in items:
-            for cm in getattr(item, "candidate_memories", []) or []:
-                if cm:
-                    candidate_memories.append({"source": "working_memory", "content": cm})
-
         try:
             max_sentence_chars = int(engine.config.get("max_sentence_chars", 20))
         except (TypeError, ValueError):
@@ -1655,11 +1636,8 @@ class DelayedQueueTasks:
             speaker_name=speaker_name,
             channel_user_id=channel_user_id,
             content_is_tagged=True,
-            memories=candidate_memories or None,
-            group_profile=engine.semantic_memory.get_group_profile(group_id),
             style_params=style_params,
             other_ai_names=engine._other_ai_names,
-            user_profiles=delayed_user_profiles,
             tool_registry=engine._tool_registry,
             plugin_registry=getattr(engine, "_plugin_registry", None),
             caller_is_developer=caller_is_developer,

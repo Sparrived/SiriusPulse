@@ -102,6 +102,25 @@ def _as_str_list(value: Any) -> list[str]:
     return [str(item) for item in value if item is not None]
 
 
+_INITIATIVE_LEVELS = ("off", "quiet", "normal")
+
+
+def normalize_initiative_level(value: Any, default: str = "normal") -> str:
+    """群里主动档位：off / quiet / normal，未知值回到默认。"""
+    text = str(value or "").strip().lower()
+    return text if text in _INITIATIVE_LEVELS else default
+
+
+def normalize_group_initiative_levels(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(group_id).strip(): str(level).strip().lower()
+        for group_id, level in value.items()
+        if str(group_id).strip() and str(level).strip().lower() in _INITIATIVE_LEVELS
+    }
+
+
 def normalize_group_reply_strategies(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
@@ -445,6 +464,9 @@ class PersonaExperienceConfig:
     expressiveness: float = 0.5  # 0.0~1.0 单旋钮活泼度
     # 群级回复策略；未配置的群使用 smart
     group_reply_strategies: dict[str, str] = field(default_factory=dict)
+    # 群里主动（她自己找人说话）的档位：off / quiet / normal；群级设置优先
+    initiative_level: str = "normal"
+    group_initiative_levels: dict[str, str] = field(default_factory=dict)
 
     # 回复频率限制
     min_reply_interval_seconds: float = 0.0
@@ -479,6 +501,10 @@ class PersonaExperienceConfig:
             "engagement_sensitivity": self.engagement_sensitivity,
             "expressiveness": self.expressiveness,
             "group_reply_strategies": normalize_group_reply_strategies(self.group_reply_strategies),
+            "initiative_level": normalize_initiative_level(self.initiative_level),
+            "group_initiative_levels": normalize_group_initiative_levels(
+                self.group_initiative_levels
+            ),
             "min_reply_interval_seconds": self.min_reply_interval_seconds,
             "main_model_reply_cooldown_seconds": self.main_model_reply_cooldown_seconds,
             "reply_time_curve_points": normalize_reply_time_curve_points(
@@ -528,6 +554,10 @@ class PersonaExperienceConfig:
             ),
             group_reply_strategies=normalize_group_reply_strategies(
                 data.get("group_reply_strategies", {})
+            ),
+            initiative_level=normalize_initiative_level(data.get("initiative_level", "normal")),
+            group_initiative_levels=normalize_group_initiative_levels(
+                data.get("group_initiative_levels", {})
             ),
             min_reply_interval_seconds=_as_float(
                 data.get("min_reply_interval_seconds", 0.0),

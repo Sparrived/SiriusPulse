@@ -650,48 +650,6 @@ class Pipeline:
             return 24.0
         return 18.0
 
-    def _queue_response(
-        self,
-        *,
-        decision: StrategyDecision,
-        message: Message,
-        intent: Any,
-        emotion: EmotionState,
-        memories: list[dict[str, Any]],
-        group_id: str,
-        user_id: str,
-        rhythm: Any,
-    ) -> dict[str, Any]:
-        engine = self._engine
-        engine.delayed_queue.enqueue(
-            group_id=group_id,
-            user_id=user_id,
-            message_content=message.content,
-            strategy_decision=decision,
-            candidate_memories=[m.get("content", "") for m in memories],
-            channel=message.channel,
-            channel_user_id=message.channel_user_id,
-            multimodal_inputs=message.multimodal_inputs,
-            adapter_type=message.adapter_type,
-            adapter_route_id=message.adapter_route_id,
-            heat_level=rhythm.heat_level,
-            pace=rhythm.pace,
-            speaker_name=message.speaker or "",
-            platform_message_id=message.message_id or "",
-            evidence_ref=message.evidence_ref,
-        )
-        engine._persist_group_state(group_id)
-        result = {
-            "strategy": decision.strategy.value,
-            "reply": None,
-            "emotion": {},
-            "intent": {},
-        }
-        if decision.strategy == ResponseStrategy.IMMEDIATE:
-            result["thought"] = ""
-            result["partial_replies"] = []
-        return result
-
     def background_update(
         self,
         group_id: str,

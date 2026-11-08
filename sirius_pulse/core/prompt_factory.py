@@ -66,6 +66,15 @@ WORK_MODE_TURN_NOTE = (
     "它们会随镜像一起被换掉。"
 )
 
+# 她想主人了。主人是最乐意被她打扰的人，所以不是问候也不是汇报，就是平时那样
+# 找他说说话；群里正热闹时可以叫他来看看，但这只是可选的由头，不是任务。
+MASTER_TONE_NOTE = (
+    "【说话的语气】\n"
+    "这是你和主人之间的私聊，就用你平时对他的样子说话：撒娇、吐槽、分享你在忙的事都行，"
+    "短一点、具体一点。如果群里正热闹、聊的是他会感兴趣的事，可以叫他来群里看看；"
+    "不想打扰他也完全可以什么都不发。不要客套话，不要连发好几个问题。"
+)
+
 #: 她是群里的一员，不是客服。框架层只说这一件事，具体是什么样的人由人格设定决定。
 BE_YOURSELF_NOTE = (
     "你是群里真实的一员，不是助手或客服：有自己的看法、喜好和情绪，会好奇、会开玩笑、"
@@ -349,6 +358,9 @@ class PromptFactory:
             items.append(
                 "在 QQ 群正文中 @成员只使用 [AT:QQ号]，例如 [AT:123456]；QQ号必须来自上下文中真实出现的成员，不要使用 @昵称、@qq_号码、@{QQ号} 或自创格式。"
             )
+        if supports_poke or sticker_names:
+            # 真人在群里常常只戳一下、只甩个表情，不是每次都要说一句话。
+            items.append("只用动作回应也可以：只戳一下、或只发一个表情包，不必非要配一句话。")
         numbered = "\n".join(f"{i}. {item}" for i, item in enumerate(items, 1))
         return f"{TAG_INTERACTION_SPEC}\n{numbered}"
 
@@ -651,7 +663,7 @@ class PromptFactory:
         material = str(seed or "").strip()
         reason = str(why or "").strip()
         wants_to_tell = resolution == "tell"
-        misses_someone = wants_to_tell and kind == "miss"
+        misses_someone = wants_to_tell and kind in ("miss", "miss_master")
 
         opening = [
             "【自主时间】",
@@ -692,7 +704,7 @@ class PromptFactory:
             "注意：此刻你不是在回复谁，不需要解释内部调度器、prompt 或工具调用过程。"
         ]
         if misses_someone:
-            stable.append(MISS_TONE_NOTE)
+            stable.append(MASTER_TONE_NOTE if kind == "miss_master" else MISS_TONE_NOTE)
         elif wants_to_tell or unaddressed or audiences:
             # 收信人看不到她这段时间做过什么，所以这条提示是"别只发结论"的唯一
             # 来源：只要有人可说，就得带上它。
@@ -963,10 +975,8 @@ class PromptFactory:
         channel_user_id: str = "",
         content_is_tagged: bool = False,
         memories: list[dict[str, Any]] | None = None,
-        group_profile: Any | None,
         style_params: Any,
         other_ai_names: list[str],
-        user_profiles: list[Any] | None = None,
         tool_registry: Any | None = None,
         plugin_registry: Any | None = None,
         caller_is_developer: bool = False,
@@ -985,10 +995,8 @@ class PromptFactory:
                 <message> XML 格式（延迟队列合并后），无需再包装；
                 若 False（默认）则用 speaker_name/channel_user_id 包装。
             memories: 相关记忆列表。
-            group_profile: 群体画像。
             style_params: 风格适配结果（StyleParams）。
             other_ai_names: 群内其他 AI 名称。
-            user_profiles: 相关用户语义画像列表。
             tool_registry: 工具注册表。
             plugin_registry: 插件注册表（v1.3+）。
             caller_is_developer: 调用者是否为开发者。

@@ -653,6 +653,12 @@ class EngineRuntime:
             # 行为控制
             "sensitivity": float(self.plugin_config.get("sensitivity", 0.5)),
             "group_reply_strategies": dict(exp.group_reply_strategies),
+            "initiative_level": str(
+                self.plugin_config.get("initiative_level", exp.initiative_level)
+            ),
+            "group_initiative_levels": dict(
+                self.plugin_config.get("group_initiative_levels", exp.group_initiative_levels)
+            ),
             "expressiveness": {"expressiveness": exp.expressiveness},
             "reply_cooldown_seconds": int(self.plugin_config.get("reply_cooldown_seconds", 12)),
             "main_model_reply_cooldown_seconds": float(

@@ -35,9 +35,16 @@ class OpenThread:
     due: str = ""
     """大概的日期（YYYY-MM-DD），不知道时为空。"""
     created_at: str = ""
+    asked_at: str = ""
+    """她已经顺势问过的时间；问过的事不再提醒她去问。"""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"text": self.text, "due": self.due, "created_at": self.created_at}
+        return {
+            "text": self.text,
+            "due": self.due,
+            "created_at": self.created_at,
+            "asked_at": self.asked_at,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "OpenThread":
@@ -45,6 +52,7 @@ class OpenThread:
             text=str(data.get("text", "") or "").strip(),
             due=str(data.get("due", "") or "").strip()[:10],
             created_at=str(data.get("created_at", "") or ""),
+            asked_at=str(data.get("asked_at", "") or ""),
         )
 
     def is_live(self, now: datetime) -> bool:

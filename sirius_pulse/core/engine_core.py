@@ -1773,6 +1773,10 @@ class _EmotionalGroupChatEngineBase:
                 self._log_inner_thought(f"{speaker} 是另一个 AI，让我先按自己的参与评分判断...")
 
         self._log_inner_thought(f"{speaker} 在群里说话了，让我仔细听听看～")
+        # 群里的主动只在这里记账/安排，绝不阻塞这条消息本身的处理。
+        from sirius_pulse.core.initiative import service_for
+
+        service_for(self).on_message(group_id, user_id, message)
         await self.event_bus.emit(
             SessionEvent(
                 type=SessionEventType.PERCEPTION_COMPLETED,
@@ -1801,9 +1805,7 @@ class _EmotionalGroupChatEngineBase:
                     confidence=1.0,
                     reason="rule_match_work_mode",
                 )
-                self._log_inner_thought(
-                    f"工作模式下收到插件命令，直接执行 {plugin_match.plugin_name}～"
-                )
+                self._log_inner_thought(f"工作模式下收到插件命令，直接执行 {plugin_match.plugin_name}～")
                 self._background_update(group_id, message, None, None, user_id)
                 return await self._execute_verified_plugin(
                     plugin_result, message, group_id, user_id
