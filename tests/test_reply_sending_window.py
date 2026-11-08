@@ -134,6 +134,24 @@ async def test_napcat_delayed_partials_wait_between_each_sent_message(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_napcat_four_short_lines_are_merged_into_one_message():
+    """超过三条的短句按句合并后仍是一条消息，不再碎成四个气泡。"""
+    adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))
+    sent: list[object] = []
+
+    async def fake_send_group_msg(group_id, message):
+        sent.append(message)
+        return {"ok": True}
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+
+    ok = await adapter._send_group_text("100", "第一行\n第二行\n第三行\n第四行")
+
+    assert ok is True
+    assert sent == [[{"type": "text", "data": {"text": "第一行第二行第三行第四行"}}]]
+
+
+@pytest.mark.asyncio
 async def test_napcat_delayed_short_multiline_reply_is_merged():
     adapter = NapCatAdapter(
         "ws://example.invalid",

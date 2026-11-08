@@ -9,6 +9,7 @@ import pytest
 from sirius_pulse.tools.builtin._internal import _markdown_image
 from sirius_pulse.tools.builtin._internal._markdown_image import (
     build_markdown_card_html,
+    count_text_messages,
     has_rich_structure,
     merge_short_plain_text,
     should_send_as_image,
@@ -51,14 +52,16 @@ def test_has_rich_structure_ignores_plain_text_and_inline_symbols(text):
     [
         ("只有一句话。", False),
         ("第一行\n第二行\n第三行", False),
-        ("第一行\n第二行\n第三行\n第四行", True),
-        ("第一行\n\n第二行\n\n第三行\n\n第四行", True),
+        ("第一行\n第二行\n第三行\n第四行", False),
+        ("第一行\n\n第二行\n\n第三行\n\n第四行", False),
         ("第一行\n第二行\n\n\n第三行", False),
+        ("甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15, True),
+        ("abcdefghijklmnopqrstuvwxyz\n" * 4, True),
         ("| 项目 | 状态 |\n|------|------|\n| WebUI | 正常 |", True),
     ],
 )
 def test_should_send_as_image_covers_long_and_structured_replies(text, expected):
-    """换行会变成多条消息：超过三条就整段转图片，顺带保留原有的结构判定。"""
+    """换行会变成多条消息：短句先合并成 1–3 句，压不进才整段转图片。"""
     assert should_send_as_image(text) is expected
 
 
@@ -72,13 +75,45 @@ def test_should_send_as_image_covers_long_and_structured_replies(text, expected)
         ("@小明\n你好", "@小明 你好"),
         ("a" * 49 + "\n" + "b" * 49, "a" * 49 + " " + "b" * 49),
         ("a" * 50 + "\n" + "b" * 50, "a" * 50 + "\n" + "b" * 50),
-        ("第一行\n第二行\n第三行\n第四行", "第一行\n第二行\n第三行\n第四行"),
+        ("第一行\n第二行\n第三行\n第四行", "第一行第二行第三行第四行"),
         ("# 标题\n正文", "# 标题\n正文"),
         ("甲" * 30 + "\n" + "乙" * 30, "甲" * 30 + "\n" + "乙" * 30),
     ],
 )
 def test_merge_short_plain_text_only_joins_short_plain_replies(text, expected):
     assert merge_short_plain_text(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # 四条十字的短句：20 + 20 刚好压进两句
+        (
+            "甲" * 10 + "\n" + "乙" * 10 + "\n" + "丙" * 10 + "\n" + "丁" * 10,
+            "甲" * 10 + "乙" * 10 + "\n" + "丙" * 10 + "丁" * 10,
+        ),
+        # 单句 20 字算压得下，21 字就断开
+        (
+            "甲" * 11 + "\n" + "乙" * 10 + "\n" + "丙" * 10 + "\n" + "丁" * 10,
+            "甲" * 11 + "\n" + "乙" * 10 + "丙" * 10 + "\n" + "丁" * 10,
+        ),
+        # ASCII 按半个字计：四行各一个字重，合并后仍要补空格
+        ("OK\n收到\n明白\n好的", "OK 收到明白好的"),
+        # 四行各 15 字，两两相加都超过 20，只能原样交给图片通道
+        (
+            "甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15,
+            "甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15,
+        ),
+        # 三条以内的短文本仍走整体合并
+        ("第一行\n第二行\n第三行", "第一行第二行第三行"),
+    ],
+)
+def test_merge_short_plain_text_packs_adjacent_lines_into_up_to_three_sentences(text, expected):
+    """超过三条消息的普通文本按加权字数逐句前后合并，最多三句。"""
+    merged = merge_short_plain_text(text)
+    assert merged == expected
+    if not should_send_as_image(text):
+        assert count_text_messages(merged) <= 3
 
 
 @pytest.mark.asyncio

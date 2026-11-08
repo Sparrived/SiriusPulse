@@ -1449,7 +1449,12 @@ async def test_delayed_queue_when_reply_would_send_over_three_messages_then_send
         _decision(ResponseStrategy.IMMEDIATE),
     )
     item.enqueue_time = _past(item.window_seconds + 1)
-    content = "第一段。\n第二段。\n第三段。\n第四段。"
+    content = (
+        "第一段回复的内容要多到压不进三条消息里。\n"
+        "第二段同样拖长，逐句合并也放不下这一段。\n"
+        "第三段继续拉长，让图片通道接手这一次投递。\n"
+        "第四段收尾，四行里每一行都超过二十个字了。"
+    )
 
     async def send_rich_reply(content_arg: str, *, adapter, group_id: str, title: str = ""):
         assert content_arg == content
@@ -1488,6 +1493,49 @@ async def test_delayed_queue_when_reply_would_send_over_three_messages_then_send
     assert results[0]["reply"] == content
     assert results[0]["rich_reply"] is True
     assert delivered_cards == []
+
+
+@pytest.mark.asyncio
+async def test_delayed_queue_when_four_short_segments_fit_into_three_messages_then_stays_text(
+    monkeypatch,
+):
+    """四段短句能前后合并成 1–3 句，就不为了行数整段转图片。"""
+    queue = DelayedResponseQueue()
+    item = queue.enqueue(
+        "group-1",
+        "u1",
+        "status please",
+        _decision(ResponseStrategy.IMMEDIATE),
+    )
+    item.enqueue_time = _past(item.window_seconds + 1)
+    content = "第一段。\n第二段。\n第三段。\n第四段。"
+
+    tasks, engine = _agent_tool_tasks(
+        queue,
+        SimpleNamespace(name="lookup", silent=False, developer_only=False),
+        [
+            SimpleNamespace(
+                raw_text=content,
+                clean_text=content,
+                tool_calls=[],
+                reply_references=[],
+                injected_request={},
+            )
+        ],
+        AsyncMock(),
+    )
+    engine._adapter = SimpleNamespace()
+    render_rich = AsyncMock()
+    monkeypatch.setattr(
+        "sirius_pulse.core.bg_tasks_delayed._markdown_image.render_and_send_rich_reply",
+        render_rich,
+    )
+
+    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
+
+    render_rich.assert_not_awaited()
+    assert results[0]["reply"] == content
+    assert results[0]["rich_reply"] is False
 
 
 @pytest.mark.asyncio

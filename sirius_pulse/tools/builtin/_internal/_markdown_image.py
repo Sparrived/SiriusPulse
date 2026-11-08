@@ -5,7 +5,8 @@
 同时通过平台适配器补发一条合并转发消息，保留可复制的原文。
 
 此外，回复按换行符会被拆成多条消息；一旦超过 ``_MAX_TEXT_MESSAGES`` 条，
-刷屏的代价比一张图片更大，同样改成「图片 + 合并转发」投递。
+先把相邻的短句前后合并成 1–3 句，仍然压不进这几条时，刷屏的代价比一张
+图片更大，同样改成「图片 + 合并转发」投递。
 """
 
 from __future__ import annotations
@@ -85,8 +86,10 @@ _HORIZONTAL_RULE_RE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,}|—-+|—{2,}|－{3,}|
 _TABLE_ROW_PIPES = 2
 _MIN_TABLE_ROWS = 2
 _MIN_LIST_ITEMS = 2
-# 平台按换行符把一段回复拆成多条消息；超过这个条数就该整段转图片，避免刷屏。
+# 平台按换行符把一段回复拆成多条消息；超过这个条数就该合并或整段转图片，避免刷屏。
 _MAX_TEXT_MESSAGES = 3
+# 逐句合并时单句允许的最大字数（ASCII 字母、数字、符号按半个字计）。
+_SENTENCE_WEIGHT_LIMIT = 20.0
 # 三行以内的普通文本不足这个字数时，删掉换行合并成一条消息，避免碎片化。
 _SHORT_TEXT_MERGE_WEIGHT = 50.0
 # 常见但 Pygments 认不出的围栏标签，映射到它支持的别名。
@@ -157,36 +160,83 @@ def should_send_as_image(text: str) -> bool:
     """判断一段回复是否该整段转成图片投递。
 
     两种情况：含有换行符之外的排版结构（表格、代码块、标题……），
-    或者按换行符会拆成超过 ``_MAX_TEXT_MESSAGES`` 条消息——后者刷屏的
-    阅读代价比一张图片更大。这里只决定"怎么投递"，不改动回复内容本身。
+    或者按换行符会拆成超过 ``_MAX_TEXT_MESSAGES`` 条消息，而这些普通短句
+    又压不进 ``_MAX_TEXT_MESSAGES`` 句——后者刷屏的阅读代价比一张图片更大。
+    这里只决定"怎么投递"，不改动回复内容本身。
     """
     if has_rich_structure(text):
         return True
-    return count_text_messages(text) > _MAX_TEXT_MESSAGES
+    lines = _plain_text_lines(text)
+    if len(lines) <= _MAX_TEXT_MESSAGES:
+        return False
+    return _pack_sentences(lines) is None
 
 
 def merge_short_plain_text(text: str) -> str:
-    """把三行以内的普通短文本合并成一条消息。
+    """把普通纯文本合并成更少的几条消息。
 
-    平台会按换行把一段回复拆成多条消息。回复本身没有 Markdown 排版需求、
-    总字数又不足 50 时（ASCII 字母、数字、符号按半个字计），逐行发送只会
-    制造碎片；这里删除换行符后再交给发送层，其余正文保持不变。
+    平台会按换行把一段回复拆成多条消息。回复本身没有 Markdown 排版需求时：
+
+    - 超过三条的短句按 ``_SENTENCE_WEIGHT_LIMIT`` 前后逐句合并，最多
+      ``_MAX_TEXT_MESSAGES`` 句；压不进就保持原样，交给图片通道。
+    - 三行以内且总字数不足 50 时（ASCII 字母、数字、符号按半个字计）整体
+      合成一条消息，避免碎片化。
+
+    其余的正文保持不变，这里只决定"怎么投递"。
     """
     source = str(text or "")
-    lines = [line.strip() for line in source.splitlines() if line.strip()]
+    lines = _plain_text_lines(source)
     if len(lines) < 2:
         return text
-    if should_send_as_image(source):
+    if has_rich_structure(source):
         return text
+    if len(lines) > _MAX_TEXT_MESSAGES:
+        packed = _pack_sentences(lines)
+        return "\n".join(packed) if packed is not None else text
     if _weighted_text_length(source) >= _SHORT_TEXT_MERGE_WEIGHT:
         return text
+    return _join_text_lines(lines)
 
+
+def _plain_text_lines(text: str) -> list[str]:
+    """按平台的拆分口径取出非空行（适配器丢弃空行，这里顺手去掉行首尾空白）。"""
+    return [line.strip() for line in str(text or "").splitlines() if line.strip()]
+
+
+def _join_text_lines(lines: list[str]) -> str:
+    """删掉行间换行，必要时补空格避免英文单词、URL 或 @昵称粘连。"""
     merged = lines[0]
     for line in lines[1:]:
         if _needs_join_separator(merged, line):
             merged += " "
         merged += line
     return merged
+
+
+def _pack_sentences(lines: list[str]) -> list[str] | None:
+    """把相邻行前后合并成句子，单句不超过 ``_SENTENCE_WEIGHT_LIMIT``。
+
+    合并后仍需超过 ``_MAX_TEXT_MESSAGES`` 句时返回 ``None``，说明这段文本
+    压不进有限的几条消息，应该交给「图片 + 合并转发」通道。
+    """
+    if not lines:
+        return None
+    packed: list[str] = []
+    current = ""
+    for line in lines:
+        if not current:
+            current = line
+            continue
+        candidate = _join_text_lines([current, line])
+        if _weighted_text_length(candidate) > _SENTENCE_WEIGHT_LIMIT:
+            packed.append(current)
+            if len(packed) >= _MAX_TEXT_MESSAGES:
+                return None
+            current = line
+        else:
+            current = candidate
+    packed.append(current)
+    return packed if len(packed) <= _MAX_TEXT_MESSAGES else None
 
 
 def _weighted_text_length(text: str) -> float:
@@ -239,7 +289,7 @@ def count_text_messages(text: str) -> int:
     适配器最终兜底是按换行符拆分并丢弃空行，这里保持一致，
     让「会拆成几条」在投递前就能判定。
     """
-    return len([line for line in str(text or "").splitlines() if line.strip()])
+    return len(_plain_text_lines(text))
 
 
 def _highlight_code_block(code: str, language: str) -> str:
