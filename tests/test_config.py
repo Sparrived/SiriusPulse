@@ -16,7 +16,8 @@ def test_experience_config_when_new_persona_starts_then_uses_safe_defaults(tmp_p
     assert config.expressiveness == 0.5
     assert config.max_tool_rounds == 3
     assert config.max_sentence_chars == 20
-    assert config.memory_unit_top_k == 5
+    assert config.memory_unit_top_k == 10
+    assert config.memory_unit_token_budget == 2000
     assert config.persona_notebook_token_budget == 2048
 
 
@@ -74,8 +75,8 @@ def test_experience_config_when_webui_loads_form_then_all_user_options_are_seria
     assert "engagement_sensitivity" in payload
     assert "enable_tools" in payload
     assert payload["max_sentence_chars"] == 20
-    assert payload["memory_unit_top_k"] == 5
-    assert payload["memory_unit_token_budget"] == 20_000
+    assert payload["memory_unit_top_k"] == 10
+    assert payload["memory_unit_token_budget"] == 2000
     assert payload["persona_notebook_token_budget"] == 2048
     assert "reply_time_curve_enabled" not in payload
     assert "reply_time_curve_points" in payload
@@ -95,8 +96,8 @@ def test_experience_config_when_webui_posts_partial_payload_then_missing_values_
     assert config.enable_tools is False
     assert config.expressiveness == 0.5
     assert config.max_sentence_chars == 20
-    assert config.memory_unit_top_k == 5
-    assert config.memory_unit_token_budget == 20_000
+    assert config.memory_unit_top_k == 10
+    assert config.memory_unit_token_budget == 2000
     assert config.persona_notebook_token_budget == 2048
 
 
@@ -307,3 +308,18 @@ def test_accounts_config_when_secret_empty_then_not_injected(tmp_path: Path):
     )
 
     assert config.environment() == {}
+
+
+@pytest.mark.parametrize(
+    ("saved", "expected"),
+    [
+        ({"memory_unit_top_k": 5, "memory_unit_token_budget": 20_000}, (10, 2000)),
+        ({"memory_unit_top_k": 5, "memory_unit_token_budget": 900}, (5, 900)),
+        ({"memory_unit_top_k": 3, "memory_unit_token_budget": 20_000}, (3, 20_000)),
+    ],
+    ids=["untouched-old-defaults-upgrade", "custom-budget-kept", "custom-top-k-kept"],
+)
+def test_experience_config_upgrades_only_untouched_memory_retrieval_defaults(saved, expected):
+    config = PersonaExperienceConfig.from_dict(saved)
+
+    assert (config.memory_unit_top_k, config.memory_unit_token_budget) == expected

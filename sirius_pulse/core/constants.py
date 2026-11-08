@@ -40,12 +40,13 @@ DEFAULT_BASIC_MEMORY_CHECKPOINT_BATCH_SIZE = 32
 # `ContextAssembler._entry_rendered_cost`）。
 DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET = 40_000
 
-# 每轮注入的记忆单元（摘要层）检索预算。与原文历史预算相互独立：原文负责最近几轮
-# 的逐字连贯性，记忆单元负责更早的长期上下文。
-DEFAULT_MEMORY_UNIT_TOKEN_BUDGET = 20_000
-# 每轮参与检索排序的记忆单元条数上限（budget 之外的第二个闸门）。沿用此前经
-# 已废弃的 diary_top_k 传入的默认取值，避免本次预算调整顺带改变召回广度。
-DEFAULT_MEMORY_UNIT_TOP_K = 5
+# 每轮注入的记忆单元（摘要层）token 预算。与原文历史预算相互独立：原文负责最近几轮
+# 的逐字连贯性，记忆单元负责更早的长期上下文。按每行摘要 + 前缀的估算 token 计费；
+# 10 条 180 字摘要约 1500 token，2000 留有余量。
+DEFAULT_MEMORY_UNIT_TOKEN_BUDGET = 2_000
+# 每轮注入的记忆单元条数上限。实际条数由相关度决定：低于本轮最高分 60% 的单元不注入
+# （见 ``indexer.RELATIVE_SCORE_CUTOFF``），所以这里只是上限，不再固定注入 5 条。
+DEFAULT_MEMORY_UNIT_TOP_K = 10
 
 # 每群可参与检索注入的记忆单元上限。超出的按 显著度×置信度 与时间排序后软退休
 # （should_prompt=False），单元本身保留在磁盘与 WebUI 中，仍可被真人追溯和手动恢复。

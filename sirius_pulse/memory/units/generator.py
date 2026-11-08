@@ -199,11 +199,18 @@ class MemoryUnitGenerator:
 
         now_iso = datetime.now(timezone.utc).isoformat()
         units: list[MemoryUnit] = []
-        for item in parsed.get("units", []):
+        dropped = 0
+        raw_units = parsed.get("units", [])
+        if not isinstance(raw_units, list):
+            # 不是列表就不能当成「模型看过、判定无事可记」，否则整批原文会被当作已处理。
+            return None
+        for item in raw_units:
             if not isinstance(item, dict):
+                dropped += 1
                 continue
             summary = str(item.get("summary") or "").strip()
             if not summary:
+                dropped += 1
                 continue
 
             source_ids = self._resolve_source_ids(item, index_to_source, all_source_ids)
@@ -211,6 +218,7 @@ class MemoryUnitGenerator:
                 # 摘要已经生成好，仅因模型没给出可解析的 source_indices 就被丢弃。这是
                 # 纯召回损失且此前完全不可观测，所以留痕以便判断实际丢弃率。
                 logger.warning("丢弃无溯源的记忆单元: %s", summary[:60])
+                dropped += 1
                 continue
 
             participants = self._clean_list(item.get("participants"), limit=8)
@@ -242,9 +250,12 @@ class MemoryUnitGenerator:
                 should_prompt=bool(item.get("should_prompt", True)),
                 source_ids=source_ids,
             )
+            if not unit.should_prompt:
+                # 模型明确说不该进提示词：与「超额退休」区分开，冷层检索不会再把它捞回来。
+                unit.metadata["retired"] = "model"
             units.append(unit)
 
-        return MemoryUnitGenerationResult(units=units)
+        return MemoryUnitGenerationResult(units=units, dropped=dropped)
 
     @staticmethod
     def _parse_response(raw: str) -> dict[str, Any] | None:

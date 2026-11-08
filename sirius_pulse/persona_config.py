@@ -17,6 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.core.constants import (
+    DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
+    DEFAULT_MEMORY_UNIT_TOP_K,
+)
 from sirius_pulse.reply_time_curve import normalize_reply_time_curve_points
 from sirius_pulse.utils.json_io import replace_with_retry
 
@@ -34,6 +38,8 @@ _DEFAULT_ACCOUNT_ENV = {"github": "GH_TOKEN"}
 
 # 每个聊天的随身便签默认启用；0 可关闭，硬上限避免上下文膨胀。
 _PERSONA_NOTEBOOK_TOKEN_BUDGET_MAX = 2048
+#: 旧版默认的 (memory_unit_top_k, memory_unit_token_budget)，用于识别「从没改过」的配置。
+_LEGACY_MEMORY_UNIT_DEFAULTS = (5, 20_000)
 
 # 与 WebUI 插件密钥掩码保持一致的哨兵值：读接口送出它，写接口收到它就视为"没改"。
 MASKED_SECRET = "********"
@@ -452,8 +458,8 @@ class PersonaExperienceConfig:
     auto_install_tool_deps: bool = True
 
     # 记忆单元检索参数
-    memory_unit_top_k: int = 5
-    memory_unit_token_budget: int = 20_000
+    memory_unit_top_k: int = DEFAULT_MEMORY_UNIT_TOP_K
+    memory_unit_token_budget: int = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET
     # 每个聊天的随身便签预算；默认启用，显式 0 关闭。
     persona_notebook_token_budget: int = 2048
 
@@ -500,10 +506,18 @@ class PersonaExperienceConfig:
     def from_dict(cls, data: dict[str, Any]) -> "PersonaExperienceConfig":
         # 历史字段 diary_top_k / diary_token_budget 仍被读取：diary 子系统已删除，
         # 但老 experience.json 里存的是数据，丢掉会让用户设置静默重置为默认值。
-        memory_unit_top_k = data.get("memory_unit_top_k", data.get("diary_top_k", 5))
-        memory_unit_token_budget = data.get(
-            "memory_unit_token_budget", data.get("diary_token_budget", 20_000)
+        memory_unit_top_k = data.get(
+            "memory_unit_top_k", data.get("diary_top_k", DEFAULT_MEMORY_UNIT_TOP_K)
         )
+        memory_unit_token_budget = data.get(
+            "memory_unit_token_budget",
+            data.get("diary_token_budget", DEFAULT_MEMORY_UNIT_TOKEN_BUDGET),
+        )
+        if (memory_unit_top_k, memory_unit_token_budget) == _LEGACY_MEMORY_UNIT_DEFAULTS:
+            # 两项都还是旧默认值（固定 5 条、实际不起作用的 2 万 token），说明从没被
+            # 改过，只是被 to_dict 原样存了下来；升级到新的相关度截断默认值。
+            memory_unit_top_k = DEFAULT_MEMORY_UNIT_TOP_K
+            memory_unit_token_budget = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET
         persona_notebook_token_budget = data.get("persona_notebook_token_budget", 2048)
         return cls(
             engagement_sensitivity=_as_float(
@@ -544,10 +558,19 @@ class PersonaExperienceConfig:
                 0, _as_int(data.get("max_tool_rounds", 3), 3, field_name="max_tool_rounds")
             ),
             auto_install_tool_deps=bool(data.get("auto_install_tool_deps", True)),
-            memory_unit_top_k=max(0, _as_int(memory_unit_top_k, 5, field_name="memory_unit_top_k")),
+            memory_unit_top_k=max(
+                0,
+                _as_int(
+                    memory_unit_top_k, DEFAULT_MEMORY_UNIT_TOP_K, field_name="memory_unit_top_k"
+                ),
+            ),
             memory_unit_token_budget=max(
                 0,
-                _as_int(memory_unit_token_budget, 20_000, field_name="memory_unit_token_budget"),
+                _as_int(
+                    memory_unit_token_budget,
+                    DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
+                    field_name="memory_unit_token_budget",
+                ),
             ),
             persona_notebook_token_budget=normalize_persona_notebook_token_budget(
                 persona_notebook_token_budget

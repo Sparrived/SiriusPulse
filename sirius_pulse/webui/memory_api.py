@@ -861,6 +861,23 @@ def _normalize_memory_unit(data: dict[str, Any], group_id: str = "") -> dict[str
     return normalized
 
 
+def _apply_manual_prompt_flag(
+    unit: dict[str, Any], body: dict[str, Any], previous: bool | None = None
+) -> None:
+    """真人在 WebUI 里显式开关 should_prompt 时记下原因。
+
+    关掉的单元标为 ``manual``，冷层检索永远不会把它捞回来；重新打开则清掉退休原因。
+    表单回传了原值（没有真正切换）时不动，免得编辑一条超额退休的摘要就把它判成手动隐藏。
+    """
+    if "should_prompt" not in body or unit["should_prompt"] == previous:
+        return
+    metadata = unit.setdefault("metadata", {})
+    if unit["should_prompt"]:
+        metadata.pop("retired", None)
+    else:
+        metadata["retired"] = "manual"
+
+
 @handle_api_errors
 async def api_persona_memory_units_get(request: web.Request, data_dir: Path) -> web.Response:
     """Return checkpoint MemoryUnit records for the current persona."""
@@ -908,6 +925,7 @@ async def api_persona_memory_units_post(request: web.Request, data_dir: Path) ->
         return _json_response({"error": "Invalid JSON"}, 400)
 
     unit = _normalize_memory_unit(body)
+    _apply_manual_prompt_flag(unit, body)
     if not unit["summary"]:
         return _json_response({"error": "摘要不能为空"}, 400)
     group_id = unit["group_id"]
@@ -973,6 +991,9 @@ async def api_persona_memory_unit_put(request: web.Request, data_dir: Path) -> w
 
     updated = _normalize_memory_unit(
         {**old_units[old_index], **body, "unit_id": unit_id}, old_group
+    )
+    _apply_manual_prompt_flag(
+        updated, body, previous=bool(old_units[old_index].get("should_prompt", True))
     )
     if not updated["summary"]:
         return _json_response({"error": "摘要不能为空"}, 400)

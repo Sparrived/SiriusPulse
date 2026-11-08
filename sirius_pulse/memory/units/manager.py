@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -16,7 +17,13 @@ from sirius_pulse.memory.units.deduplicator import (
     apply_verdict,
 )
 from sirius_pulse.memory.units.generator import MemoryUnitGenerator
-from sirius_pulse.memory.units.indexer import MemoryUnitIndexer, MemoryUnitRetriever
+from sirius_pulse.memory.units.indexer import (
+    ColdVectors,
+    MemoryUnitIndexer,
+    MemoryUnitRetriever,
+    is_cold_eligible,
+    normalize_rows,
+)
 from sirius_pulse.memory.units.maintenance import MemoryUnitDedupeMaintenance
 from sirius_pulse.memory.units.models import MemoryUnit, MemoryUnitGenerationResult
 from sirius_pulse.memory.units.store import MemoryUnitFileStore
@@ -48,6 +55,12 @@ class MemoryUnitManager:
         self._checkpointed_sources: dict[str, set[str]] = {}
         self._loaded_groups: set[str] = set()
         self._generation_backoff: dict[str, tuple[tuple[str, ...], float]] = {}
+        #: 冷层（超额退休单元）的向量矩阵，按群缓存；在后台线程里构建，检索时只读。
+        self._cold: dict[str, ColdVectors] = {}
+        #: 每次某群单元被替换就加一，防止后台线程把旧快照写回冷层缓存。
+        self._group_versions: dict[str, int] = {}
+        self._cold_lock = threading.Lock()
+        self._indexer.cold_source = self._cold.get
 
     def set_persona_prompt(self, persona_prompt: str) -> None:
         """更新记忆任务使用的人格设定（persona.json 热重载后调用）。"""
@@ -104,12 +117,17 @@ class MemoryUnitManager:
             max_retries=max(0, int(max_retries)),
             transport_retries=max(0, int(transport_retries)),
         )
-        if result is None or not result.units:
+        if result is None or (not result.units and result.dropped):
             self._generation_backoff[group_id] = (
                 candidate_key,
                 time.monotonic() + max(0.0, float(failure_backoff_seconds)),
             )
             return None
+        if not result.units:
+            # 模型看过这批记录、判定没有值得记的内容：这是正常结论而不是失败。调用方
+            # 据此把整批标为已处理；当成失败退避的话，这批闲聊会永远堵在队首。
+            self._generation_backoff.pop(group_id, None)
+            return result
 
         canonical_results = await self.reconcile_units(
             group_id,
@@ -147,6 +165,8 @@ class MemoryUnitManager:
         """Reconcile generated units against the current group under one write lock."""
         if not units:
             return []
+        # 新单元的向量一次请求补齐，且放到线程里：逐条同步请求会卡住聊天主循环。
+        await asyncio.to_thread(self._indexer.encode_missing, units)
         async with self._mutation_lock:
             self.ensure_group_loaded(group_id)
             # 去重的语义候选要覆盖全组（含退休单元）——退休只是不再注入，不代表
@@ -190,6 +210,7 @@ class MemoryUnitManager:
         for unit in units:
             if unit.should_prompt and MemoryUnitIndexer._is_expired(unit):
                 unit.should_prompt = False
+                unit.metadata["retired"] = "expired"
                 retired += 1
 
         active = [unit for unit in units if unit.should_prompt]
@@ -203,6 +224,8 @@ class MemoryUnitManager:
             )
             for unit in active[DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT:]:
                 unit.should_prompt = False
+                # 超额退休的单元进冷层：不常驻注入，但语义足够接近时仍能被检索到。
+                unit.metadata["retired"] = "overflow"
                 retired += 1
 
         if retired:
@@ -310,6 +333,8 @@ class MemoryUnitManager:
         self._store.hydrate_embeddings(
             group_id, units, unit_ids={unit.unit_id for unit in units if unit.should_prompt}
         )
+        if self._indexer.encode_missing(units):
+            any_recomputed = True
         for unit in units:
             if self._indexer.add(unit):
                 any_recomputed = True
@@ -319,6 +344,7 @@ class MemoryUnitManager:
         if any_recomputed or self._store.is_legacy_layout(group_id):
             self._store.save(group_id, units)
         self._loaded_groups.add(group_id)
+        self._invalidate_cold(group_id)
         logger.info("Loaded %d checkpoint memory units for group %s", len(units), group_id)
 
     def _replace_loaded_group(self, group_id: str, units: list[MemoryUnit]) -> None:
@@ -333,6 +359,57 @@ class MemoryUnitManager:
             source_id for unit in units for source_id in unit.source_ids
         }
         self._loaded_groups.add(group_id)
+        self._invalidate_cold(group_id)
+
+    # ------------------------------------------------------------------
+    # 冷层与检索准备
+    # ------------------------------------------------------------------
+
+    def _invalidate_cold(self, group_id: str) -> None:
+        with self._cold_lock:
+            self._group_versions[group_id] = self._group_versions.get(group_id, 0) + 1
+            self._cold.pop(group_id, None)
+
+    def build_cold_vectors(self, group_id: str) -> ColdVectors | None:
+        """读出某群冷层单元的向量矩阵并缓存。会读盘，应在后台线程里调用。"""
+        if not group_id or not self._indexer.semantic_available:
+            return None
+        with self._cold_lock:
+            cached = self._cold.get(group_id)
+            version = self._group_versions.get(group_id, 0)
+        if cached is not None:
+            return cached
+        units = [
+            unit
+            for unit in self._indexer.list_all()
+            if unit.group_id == group_id and is_cold_eligible(unit)
+        ]
+        ids, matrix = self._store.read_vector_matrix(group_id, units)
+        by_id = {unit.unit_id: unit for unit in units}
+        cold = ColdVectors(
+            unit_ids=ids,
+            matrix=normalize_rows(matrix).astype("float16") if ids else matrix,
+            units=[by_id[unit_id] for unit_id in ids],
+        )
+        with self._cold_lock:
+            if self._group_versions.get(group_id, 0) != version:
+                return None
+            self._cold[group_id] = cold
+        return cold
+
+    def prepare_retrieval(self, query: str, *, group_id: str = "", context: str = "") -> None:
+        """把检索里会发网络请求、读大文件的部分提前做完。
+
+        在 ``asyncio.to_thread`` 里调用：查询向量进缓存、冷层矩阵读进内存，之后
+        聊天主循环里的 ``retrieve`` 只剩内存里的矩阵运算。任何失败都只让这一轮
+        少一路召回，不会抛给聊天回合。
+        """
+        try:
+            self._indexer.prepare_queries(query, context)
+            if group_id and group_id in self._loaded_groups:
+                self.build_cold_vectors(group_id)
+        except Exception as exc:
+            logger.warning("记忆检索预取失败，本轮退化为同步检索: %s", exc)
 
     def is_source_checkpointed(self, group_id: str, entry_id: str) -> bool:
         self.ensure_group_loaded(group_id)
@@ -349,6 +426,7 @@ class MemoryUnitManager:
         identity_aliases: list[str] | None = None,
         mentioned_user_ids: list[str] | None = None,
         cross_group_enabled: bool = False,
+        context: str = "",
     ) -> list[MemoryUnit]:
         if group_id is not None:
             self.ensure_group_loaded(group_id)
@@ -364,6 +442,7 @@ class MemoryUnitManager:
             identity_aliases=identity_aliases,
             mentioned_user_ids=mentioned_user_ids,
             cross_group_enabled=cross_group_enabled,
+            context=context,
         )
 
     def retrieve_for_person(
@@ -442,6 +521,10 @@ class MemoryUnitManager:
         self._loaded_groups.clear()
         self._checkpointed_sources.clear()
         self._indexer.reset()
+        with self._cold_lock:
+            for group_id in list(self._group_versions):
+                self._group_versions[group_id] += 1
+            self._cold.clear()
 
 
 def rebuild_memory_unit_embeddings(

@@ -150,6 +150,27 @@ class DelayedQueueTasks:
         )
 
     @staticmethod
+    def _recent_search_context(engine: Any, group_id: str, current_texts: list[str]) -> str:
+        """当前消息之前的最近几句对话，供记忆检索补全短追问的指代。"""
+        basic = getattr(engine, "basic_memory", None)
+        get_context = getattr(basic, "get_context", None)
+        if not callable(get_context):
+            return ""
+        current = {text.strip() for text in current_texts if text.strip()}
+        lines: list[str] = []
+        try:
+            entries = get_context(group_id, n=8)
+        except Exception:
+            return ""
+        for entry in entries:
+            content = str(getattr(entry, "content", "") or "").strip()
+            if not content or content in current:
+                continue
+            speaker = getattr(entry, "speaker_name", "") or getattr(entry, "user_id", "") or ""
+            lines.append(f"{speaker}: {content[:120]}" if speaker else content[:120])
+        return "\n".join(lines[-3:])
+
+    @staticmethod
     def _side_effect_name(tool: Any, params: dict[str, Any] | None = None) -> str:
         if (
             getattr(tool, "name", "") == "interaction_with_master"
@@ -730,6 +751,14 @@ class DelayedQueueTasks:
             )
         ]
         raw_chat_content = "\n".join(raw_parts) if raw_parts else bundle.user_content
+        search_context = self._recent_search_context(engine, group_id, raw_parts)
+        # 查询编码要发网络请求、冷层向量要读盘：放到线程里提前做完，聊天主循环里的
+        # 检索只剩内存运算。预取失败只会让这一轮少一路召回。
+        prepare = getattr(getattr(engine, "memory_unit_manager", None), "prepare_retrieval", None)
+        if callable(prepare):
+            await asyncio.to_thread(
+                prepare, raw_chat_content, group_id=group_id, context=search_context
+            )
         agent_turn = AgentTurn(
             group_id=group_id,
             item_ids=[triggered_item.item_id for triggered_item in triggered],
@@ -742,6 +771,7 @@ class DelayedQueueTasks:
             current_query=bundle.user_content,
             system_prompt=bundle.system_prompt,
             search_query=raw_chat_content,
+            search_context=search_context,
             memory_unit_top_k=memory_unit_top_k,
             memory_unit_token_budget=memory_unit_token_budget,
             include_pending=False,

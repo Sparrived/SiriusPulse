@@ -41,6 +41,9 @@ class MemoryUnitGenerationResult(JsonSerializable):
     """Result of checkpoint memory unit generation."""
 
     units: list[MemoryUnit] = field(default_factory=list)
+    #: 模型给出、却因无法溯源被丢弃的单元数。为 0 且 ``units`` 为空，说明模型看过
+    #: 这批记录并判定没有值得记的内容；大于 0 则是生成本身出了问题，需要退避重试。
+    dropped: int = 0
 
 
 def embedding_text(unit: MemoryUnit) -> str:

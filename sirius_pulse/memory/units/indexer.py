@@ -5,14 +5,93 @@ from __future__ import annotations
 import logging
 import math
 import re
+import threading
 import unicodedata
+from collections import OrderedDict
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
+from typing import Any, Callable
+
+import numpy as np
 
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.units.deduplicator import same_boundary
 from sirius_pulse.memory.units.models import MemoryUnit, embedding_text
 
 logger = logging.getLogger(__name__)
+
+#: 聊天回合里给查询编码的超时。查询向量在回合开始时于后台线程预取，超时只会让
+#: 这一轮退化成关键词检索，不该把整轮回复拖住 30 秒。
+QUERY_ENCODE_TIMEOUT_SECONDS = 8.0
+_QUERY_CACHE_SIZE = 256
+#: 上下文变体（最近几条消息 + 当前消息）的权重：它补足「那后来呢」这类短追问的
+#: 指代，但不能盖过当前消息本身。
+CONTEXT_SEMANTIC_WEIGHT = 0.85
+CONTEXT_KEYWORD_WEIGHT = 0.6
+#: 冷层（超额退休的单元）参与检索的门槛：只有语义上足够近才捞回来，且同分时让位
+#: 给热层，免得几千条旧单元把当前活跃的记忆挤出去。
+COLD_MIN_SEMANTIC = 0.5
+COLD_SCORE_FACTOR = 0.9
+COLD_SEMANTIC_CANDIDATES = 20
+#: 相对截断：分数低于本轮最高分这个比例的单元不注入。top_k 只是上限，真正决定
+#: 注入几条的是与问题的相关度。
+RELATIVE_SCORE_CUTOFF = 0.6
+#: 不会被冷层捞回的退休原因：模型或真人明确说过「不要进提示词」，以及已过期。
+_NEVER_COLD_REASONS = frozenset({"model", "manual", "expired"})
+
+
+#: 单元的关键词特征：(归一化文本, 字符 n-gram 集合, [(检索词, 权重)])。
+_UnitFeatures = tuple[str, set[str], list[tuple[str, float]]]
+
+
+@dataclass(slots=True)
+class ColdVectors:
+    """某个群冷层单元的向量矩阵（已归一化、float16 存放以省内存）。"""
+
+    unit_ids: list[str]
+    matrix: np.ndarray
+    rows: dict[str, int] = dataclass_field(default_factory=dict)
+    #: 与矩阵行一一对应的单元对象；该群单元一被替换，整份缓存就作废重建。
+    units: list[MemoryUnit] = dataclass_field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.rows:
+            self.rows = {unit_id: row for row, unit_id in enumerate(self.unit_ids)}
+
+
+def is_cold_eligible(unit: MemoryUnit) -> bool:
+    """超额退休、未过期、且没被明确禁止进提示词的单元属于冷层。"""
+    if unit.should_prompt:
+        return False
+    metadata = unit.metadata if isinstance(unit.metadata, dict) else {}
+    if str(metadata.get("retired") or "") in _NEVER_COLD_REASONS:
+        return False
+    return not MemoryUnitIndexer._is_expired(unit)
+
+
+def normalize_rows(matrix: np.ndarray) -> np.ndarray:
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0.0] = 1.0
+    return matrix / norms
+
+
+def call_encode(
+    client: Any, texts: list[str], *, timeout: float | None = None
+) -> list[list[float]]:
+    """兼容只实现了 ``encode_single`` 或不接受 ``timeout`` 的客户端。"""
+    if not texts:
+        return []
+    encode = getattr(client, "encode", None)
+    if callable(encode):
+        if timeout is not None:
+            try:
+                return encode(texts, timeout=timeout)
+            except TypeError:
+                pass
+        return encode(texts)
+    return [client.encode_single(text) for text in texts]
+
 
 _QUERY_SPLIT_RE = re.compile(r"[\r\n]+|(?<=[。！？!?])")
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -61,6 +140,16 @@ class MemoryUnitIndexer:
     def __init__(self, embedding_client: EmbeddingClient | None = None) -> None:
         self._units: list[MemoryUnit] = []
         self._embedding_client = embedding_client
+        #: 查询文本 → 归一化向量。回合开始时在后台线程预取，检索时直接命中。
+        self._query_cache: OrderedDict[tuple[str, str], np.ndarray] = OrderedDict()
+        #: 预取在后台线程写缓存，检索在事件循环里读，读写都过这把锁。
+        self._query_lock = threading.Lock()
+        #: unit_id → (原始向量列表, 归一化 numpy 向量)。用列表的身份判断是否失效。
+        self._vector_cache: dict[str, tuple[list[float], np.ndarray]] = {}
+        #: unit_id → (单元文本, 关键词特征)。文本变了就重算，免得每轮对每条单元重新切词。
+        self._feature_cache: dict[str, tuple[str, _UnitFeatures]] = {}
+        #: 冷层向量来源，由 MemoryUnitManager 注入；为 None 时不检索冷层。
+        self.cold_source: Callable[[str], ColdVectors | None] | None = None
 
     @property
     def semantic_available(self) -> bool:
@@ -82,13 +171,22 @@ class MemoryUnitIndexer:
         self._ensure_embedding(incoming)
         if not incoming.embedding:
             return []
-        candidates = [
-            (unit, self._cosine_sim(incoming.embedding, unit.embedding))
+        query = self._unit_vector(incoming)
+        pool = [
+            unit
             for unit in self._units
-            if unit.embedding and unit.unit_id != incoming.unit_id and same_boundary(unit, incoming)
+            if unit.embedding
+            and len(unit.embedding) == len(incoming.embedding)
+            and unit.unit_id != incoming.unit_id
+            and same_boundary(unit, incoming)
         ]
-        candidates = [item for item in candidates if item[1] >= min_similarity]
-        candidates.sort(key=lambda item: item[1], reverse=True)
+        if not pool or query is None:
+            return []
+        sims = self._unit_matrix(pool) @ query
+        order = np.argsort(-sims)
+        candidates = [
+            (pool[index], float(sims[index])) for index in order if sims[index] >= min_similarity
+        ]
         return candidates[:top_k]
 
     def search(
@@ -101,50 +199,64 @@ class MemoryUnitIndexer:
         identity_aliases: list[str] | None = None,
         mentioned_user_ids: list[str] | None = None,
         cross_group_enabled: bool = False,
+        context: str = "",
     ) -> list[tuple[MemoryUnit, float]]:
-        """Search with semantic, lexical, identity, scope, and time signals."""
-        units = [
-            unit
-            for unit in self._units
-            if unit.should_prompt
-            and not self._is_expired(unit)
-            and self._scope_allowed(
+        """Search with semantic, lexical, identity, scope, and time signals.
+
+        ``context`` 是当前消息之前的几句对话，作为降权的额外查询变体，用来补全
+        「那后来呢」这类短追问的指代。热层之外，语义足够接近的冷层（超额退休）
+        单元也会被捞回来，但同分时让位给热层。
+        """
+        aliases = [*(identity_aliases or []), *(mentioned_user_ids or [])]
+
+        def allowed(unit: MemoryUnit) -> bool:
+            return self._scope_allowed(
                 unit,
                 query=query,
                 group_id=group_id,
                 user_id=user_id,
-                identity_aliases=[*(identity_aliases or []), *(mentioned_user_ids or [])],
+                identity_aliases=aliases,
                 cross_group_enabled=cross_group_enabled,
             )
+
+        units = [
+            unit
+            for unit in self._units
+            if unit.should_prompt and not self._is_expired(unit) and allowed(unit)
         ]
-        if not units:
+        variants = self.query_variants(query, context)
+        query_matrix, weights = self._query_matrix(variants)
+        cold_hits = self._cold_hits(group_id, query_matrix, weights, allowed)
+        if not units and not cold_hits:
             return []
 
-        queries = self._query_variants(query)
         semantic_scores: dict[str, float] = {}
-        if self.semantic_available and queries:
-            try:
-                vectors = self._encode_queries(queries)
-            except Exception as exc:
-                logger.warning("Memory unit semantic search failed: %s", exc)
-                vectors = []
-            for unit in units:
-                if not unit.embedding:
-                    continue
-                scores = [self._cosine_sim(vector, unit.embedding) for vector in vectors]
-                if scores:
-                    semantic_scores[unit.unit_id] = max(scores)
+        if query_matrix is not None:
+            pool = [
+                unit
+                for unit in units
+                if unit.embedding and len(unit.embedding) == query_matrix.shape[1]
+            ]
+            if pool:
+                sims = (self._unit_matrix(pool) @ query_matrix.T) * weights
+                for unit, best in zip(pool, sims.max(axis=1)):
+                    semantic_scores[unit.unit_id] = float(best)
+        cold_ids = set()
+        for unit, similarity in cold_hits:
+            semantic_scores[unit.unit_id] = similarity
+            cold_ids.add(unit.unit_id)
+        candidates = [*units, *(unit for unit, _ in cold_hits)]
 
+        keyword_queries = self._keyword_queries(variants)
         keyword_scores = {
-            unit.unit_id: max((self._keyword_score(item, unit) for item in queries), default=0.0)
-            for unit in units
+            unit.unit_id: self._weighted_keyword_score(keyword_queries, unit) for unit in candidates
         }
         semantic_rank = self._rank(semantic_scores, reverse=True)
         keyword_rank = self._rank(keyword_scores, reverse=True)
         temporal_query = any(term in query.casefold() for term in _TEMPORAL_TERMS)
 
         scored: list[tuple[MemoryUnit, float]] = []
-        for unit in units:
+        for unit in candidates:
             semantic = semantic_scores.get(unit.unit_id, 0.0)
             keyword = keyword_scores.get(unit.unit_id, 0.0)
             if semantic <= 0.12 and keyword <= 0.0:
@@ -160,6 +272,8 @@ class MemoryUnitIndexer:
                 + 0.05 * quality
                 + 0.05 * temporal
             )
+            if unit.unit_id in cold_ids:
+                score *= COLD_SCORE_FACTOR
             scored.append((unit, score))
 
         scored.sort(
@@ -172,9 +286,127 @@ class MemoryUnitIndexer:
         scored = [
             (unit, score) for unit, score in scored if not self._superseded_within(unit, present)
         ]
-        # ponytail: in-memory O(n) scoring is enough for the current unit volume;
-        # add a persistent ANN index only when this scan becomes measurable.
+        if scored:
+            floor = scored[0][1] * RELATIVE_SCORE_CUTOFF
+            scored = [item for item in scored if item[1] >= floor]
         return scored[:top_k]
+
+    # ------------------------------------------------------------------
+    # 向量与查询
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def query_variants(cls, query: str, context: str = "") -> list[tuple[str, float]]:
+        """检索用的查询文本及其权重。预取与检索必须用同一份，才能命中缓存。"""
+        variants = [(text, 1.0) for text in cls._query_variants(query)]
+        context_text = re.sub(
+            r"\s+", " ", _TAG_RE.sub(" ", unicodedata.normalize("NFKC", str(context or "")))
+        ).strip()
+        if context_text and variants:
+            combined = f"{context_text[-300:]} {variants[0][0]}"
+            variants.append((combined, CONTEXT_SEMANTIC_WEIGHT))
+        return variants
+
+    def prepare_queries(self, query: str, context: str = "") -> None:
+        """在后台线程里预先编码查询变体，聊天主循环里的检索就不再发网络请求。"""
+        variants = self.query_variants(query, context)
+        if not variants or not self.semantic_available:
+            return
+        model = self._model_key()
+        with self._query_lock:
+            missing = [text for text, _ in variants if (model, text) not in self._query_cache]
+        if missing:
+            self._encode_into_cache(missing)
+
+    def _model_key(self) -> str:
+        return str(getattr(self._embedding_client, "model", "") or "")
+
+    def _encode_into_cache(self, texts: list[str]) -> None:
+        try:
+            vectors = call_encode(
+                self._embedding_client, texts, timeout=QUERY_ENCODE_TIMEOUT_SECONDS
+            )
+        except Exception as exc:
+            logger.warning("Memory unit semantic search failed: %s", exc)
+            return
+        if len(vectors) != len(texts):
+            return
+        model = self._model_key()
+        with self._query_lock:
+            for text, vector in zip(texts, vectors):
+                if not vector:
+                    continue
+                array = np.asarray(vector, dtype=np.float32)
+                norm = float(np.linalg.norm(array))
+                self._query_cache[(model, text)] = array / norm if norm else array
+                self._query_cache.move_to_end((model, text))
+            while len(self._query_cache) > _QUERY_CACHE_SIZE:
+                self._query_cache.popitem(last=False)
+
+    def _query_matrix(
+        self, variants: list[tuple[str, float]]
+    ) -> tuple[np.ndarray | None, np.ndarray]:
+        """返回 (查询向量矩阵, 各变体权重)；语义不可用时矩阵为 None。"""
+        if not variants or not self.semantic_available:
+            return None, np.zeros(0, dtype=np.float32)
+        model = self._model_key()
+        with self._query_lock:
+            missing = [text for text, _ in variants if (model, text) not in self._query_cache]
+        if missing:
+            # 没有预取（例如直接调用检索的路径）时才同步编码。
+            self._encode_into_cache(missing)
+        rows, weights = [], []
+        with self._query_lock:
+            for text, weight in variants:
+                vector = self._query_cache.get((model, text))
+                if vector is not None:
+                    rows.append(vector)
+                    weights.append(weight)
+        if not rows or len({row.shape[0] for row in rows}) != 1:
+            return None, np.zeros(0, dtype=np.float32)
+        return np.vstack(rows), np.asarray(weights, dtype=np.float32)
+
+    def _unit_vector(self, unit: MemoryUnit) -> np.ndarray | None:
+        embedding = unit.embedding
+        if not embedding:
+            return None
+        cached = self._vector_cache.get(unit.unit_id)
+        if cached is not None and cached[0] is embedding:
+            return cached[1]
+        array = np.asarray(embedding, dtype=np.float32)
+        norm = float(np.linalg.norm(array))
+        vector = array / norm if norm else array
+        self._vector_cache[unit.unit_id] = (embedding, vector)
+        return vector
+
+    def _unit_matrix(self, units: list[MemoryUnit]) -> np.ndarray:
+        return np.vstack([self._unit_vector(unit) for unit in units])
+
+    def _cold_hits(
+        self,
+        group_id: str,
+        query_matrix: np.ndarray | None,
+        weights: np.ndarray,
+        allowed: Callable[[MemoryUnit], bool],
+    ) -> list[tuple[MemoryUnit, float]]:
+        """在冷层里找语义足够接近的单元；冷层向量没准备好时这一轮直接跳过。"""
+        if query_matrix is None or self.cold_source is None or not group_id:
+            return []
+        cold = self.cold_source(group_id)
+        if cold is None or not cold.unit_ids or cold.matrix.shape[1] != query_matrix.shape[1]:
+            return []
+        sims = (cold.matrix.astype(np.float32) @ query_matrix.T) * weights
+        best = sims.max(axis=1)
+        hits: list[tuple[MemoryUnit, float]] = []
+        for row in np.argsort(-best):
+            similarity = float(best[row])
+            if similarity < COLD_MIN_SEMANTIC or len(hits) >= COLD_SEMANTIC_CANDIDATES:
+                break
+            unit = cold.units[row] if row < len(cold.units) else None
+            # 只对排在前面的几条复查资格（可能刚过期）与可见范围，不扫整组。
+            if unit is not None and is_cold_eligible(unit) and allowed(unit):
+                hits.append((unit, similarity))
+        return hits
 
     def list_all(self) -> list[MemoryUnit]:
         return list(self._units)
@@ -182,9 +414,32 @@ class MemoryUnitIndexer:
     def reset(self) -> None:
         """丢弃全部已索引单元，供向量重建后强制重新加载。"""
         self._units = []
+        self._vector_cache.clear()
+        self._feature_cache.clear()
+        with self._query_lock:
+            self._query_cache.clear()
 
     def clear_group(self, group_id: str) -> None:
+        for unit in self._units:
+            if unit.group_id == group_id:
+                self._vector_cache.pop(unit.unit_id, None)
+                self._feature_cache.pop(unit.unit_id, None)
         self._units = [u for u in self._units if u.group_id != group_id]
+
+    def encode_missing(self, units: list[MemoryUnit]) -> int:
+        """一次请求补齐一批可注入单元的向量（逐条请求会在加载时发出几百次网络调用）。"""
+        if not self.semantic_available:
+            return 0
+        pending = [unit for unit in units if unit.should_prompt and not unit.embedding]
+        if not pending:
+            return 0
+        vectors = self._encode_texts([self._unit_text(unit) for unit in pending])
+        done = 0
+        for unit, vector in zip(pending, vectors):
+            if vector:
+                unit.embedding = vector
+                done += 1
+        return done
 
     def replace_group(self, group_id: str, units: list[MemoryUnit]) -> None:
         """Replace every indexed unit in a group after persistence changes."""
@@ -287,7 +542,7 @@ class MemoryUnitIndexer:
         if not self._embedding_client or not texts:
             return []
         try:
-            vectors = self._embedding_client.encode(texts)
+            vectors = call_encode(self._embedding_client, texts)
         except Exception as exc:
             logger.warning("Memory unit embedding failed: %s", exc)
             return []
@@ -295,13 +550,6 @@ class MemoryUnitIndexer:
             logger.warning("Embedding 返回数量与请求不一致，跳过本次重算")
             return []
         return vectors
-
-    def _encode_queries(self, queries: list[str]) -> list[list[float]]:
-        if not self._embedding_client:
-            return []
-        if hasattr(self._embedding_client, "encode"):
-            return [vector for vector in self._embedding_client.encode(queries) if vector]
-        return [self._embedding_client.encode_single(query) for query in queries]
 
     @classmethod
     def _query_variants(cls, query: str) -> list[str]:
@@ -321,28 +569,70 @@ class MemoryUnitIndexer:
         return embedding_text(unit)
 
     @classmethod
-    def _keyword_score(cls, query: str, unit: MemoryUnit) -> float:
-        query_text = cls._normalize_text(query)
-        text = cls._normalize_text(cls._unit_text(unit))
-        if not query_text or not text:
-            return 0.0
-        score = 1.5 if query_text in text else 0.0
-        query_tokens = cls._tokens(query_text)
-        text_tokens = cls._tokens(text)
-        if query_tokens:
-            score += min(len(query_tokens & text_tokens) * 0.18, 1.2)
-        for field in (
+    def _keyword_queries(
+        cls, variants: list[tuple[str, float]]
+    ) -> list[tuple[str, set[str], float]]:
+        """每个查询变体只归一化、切词一次，而不是对每条单元各做一遍。"""
+        prepared = []
+        for text, weight in variants:
+            normalized = cls._normalize_text(text)
+            factor = 1.0 if weight >= 1.0 else CONTEXT_KEYWORD_WEIGHT
+            prepared.append((normalized, cls._tokens(normalized), factor))
+        return prepared
+
+    def _weighted_keyword_score(
+        self, queries: list[tuple[str, set[str], float]], unit: MemoryUnit
+    ) -> float:
+        features = self._unit_features(unit)
+        best = 0.0
+        for query_text, query_tokens, factor in queries:
+            best = max(best, factor * self._score_features(query_text, query_tokens, features))
+        return best
+
+    def _unit_features(self, unit: MemoryUnit) -> _UnitFeatures:
+        text = self._unit_text(unit)
+        cached = self._feature_cache.get(unit.unit_id)
+        if cached is not None and cached[0] == text:
+            return cached[1]
+        features = self._build_features(text, unit)
+        self._feature_cache[unit.unit_id] = (text, features)
+        return features
+
+    @classmethod
+    def _build_features(cls, text: str, unit: MemoryUnit) -> _UnitFeatures:
+        normalized = cls._normalize_text(text)
+        terms: list[tuple[str, float]] = []
+        for values in (
             unit.identity_aliases,
             unit.keywords,
             unit.retrieval_terms,
             unit.topics,
             unit.participants,
         ):
-            for value in field:
+            for value in values:
                 value = cls._normalize_text(value)
-                if value and value in query_text:
-                    score += 1.0 if value in unit.identity_aliases else 0.65
+                if value:
+                    terms.append((value, 1.0 if value in unit.identity_aliases else 0.65))
+        return normalized, cls._tokens(normalized), terms
+
+    @staticmethod
+    def _score_features(query_text: str, query_tokens: set[str], features: _UnitFeatures) -> float:
+        text, text_tokens, terms = features
+        if not query_text or not text:
+            return 0.0
+        score = 1.5 if query_text in text else 0.0
+        if query_tokens:
+            score += min(len(query_tokens & text_tokens) * 0.18, 1.2)
+        for value, weight in terms:
+            if value in query_text:
+                score += weight
         return score
+
+    @classmethod
+    def _keyword_score(cls, query: str, unit: MemoryUnit) -> float:
+        query_text = cls._normalize_text(query)
+        features = cls._build_features(cls._unit_text(unit), unit)
+        return cls._score_features(query_text, cls._tokens(query_text), features)
 
     @staticmethod
     def _normalize_text(value: str) -> str:
@@ -498,7 +788,10 @@ class MemoryUnitRetriever:
         identity_aliases: list[str] | None = None,
         mentioned_user_ids: list[str] | None = None,
         cross_group_enabled: bool = False,
+        context: str = "",
     ) -> list[MemoryUnit]:
+        from sirius_pulse.token.utils import estimate_tokens
+
         results = self._indexer.search(
             query,
             group_id=group_id,
@@ -507,17 +800,18 @@ class MemoryUnitRetriever:
             identity_aliases=identity_aliases,
             mentioned_user_ids=mentioned_user_ids,
             cross_group_enabled=cross_group_enabled,
+            context=context,
         )
         if not results:
             return []
 
         selected: list[MemoryUnit] = []
-        total_chars = 0
-        char_budget = int(max_tokens_budget * 1.5)
+        used = 0
         for unit, _score in results:
-            added_chars = len(unit.summary)
-            if total_chars + added_chars > char_budget and selected:
+            # 每行注入时还带时间、类型和状态前缀，按约 12 token 计。
+            cost = estimate_tokens(unit.summary) + 12
+            if used + cost > max_tokens_budget and selected:
                 continue
             selected.append(unit)
-            total_chars += added_chars
+            used += cost
         return selected

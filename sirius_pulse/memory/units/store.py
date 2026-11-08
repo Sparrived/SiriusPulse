@@ -12,6 +12,8 @@ from array import array
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from sirius_pulse.memory.units.models import MemoryUnit, embedding_text
 from sirius_pulse.utils.json_io import atomic_write_json, replace_with_retry
 from sirius_pulse.utils.layout import WorkspaceLayout
@@ -194,6 +196,41 @@ class MemoryUnitFileStore:
         except OSError as exc:
             logger.warning("Failed to hydrate memory unit vectors for group %s: %s", group_id, exc)
             return 0
+
+    def read_vector_matrix(
+        self, group_id: str, units: list[MemoryUnit]
+    ) -> tuple[list[str], np.ndarray]:
+        """一次性读出 ``units`` 的向量矩阵（float32），不把它们挂回单元对象上。
+
+        冷层检索要的是一块矩阵而不是几千个 Python 浮点列表：列表每维 32 字节，
+        float32 只要 4 字节。指纹不符（文本改过但向量没重算）的单元直接跳过。
+        """
+        _name, bin_path, index, inline = self._read_vector_index(group_id)
+        ids: list[str] = []
+        rows: list[np.ndarray] = []
+        blob: np.ndarray | None = None
+        if bin_path is not None:
+            try:
+                blob = np.fromfile(bin_path, dtype=np.float32)
+            except OSError as exc:
+                logger.warning("Failed to read memory unit vectors %s: %s", bin_path, exc)
+                blob = None
+        for unit in units:
+            entry = index.get(unit.unit_id)
+            vector: np.ndarray | None = None
+            if blob is not None and entry is not None:
+                offset, dim, fingerprint = entry
+                start = offset // _VECTOR_ITEM_BYTES
+                if fingerprint == _text_fingerprint(unit) and start + dim <= blob.shape[0]:
+                    vector = blob[start : start + dim]
+            elif inline.get(unit.unit_id):
+                vector = np.asarray(inline[unit.unit_id], dtype=np.float32)
+            if vector is not None and vector.size:
+                ids.append(unit.unit_id)
+                rows.append(vector)
+        if not rows or len({row.shape[0] for row in rows}) != 1:
+            return [], np.zeros((0, 0), dtype=np.float32)
+        return ids, np.vstack(rows)
 
     def _attach_embeddings(
         self,

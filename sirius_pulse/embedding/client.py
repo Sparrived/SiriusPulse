@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 #: AMKR 的默认地址（与 ``providers/amkr.py`` 的默认值一致）。
 DEFAULT_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT = 30.0
+
+#: 一次失败后多久再重新探测。失败只是「暂时不可用」：一次超时就永久关掉语义检索，
+#: 记忆召回会静默退化成纯关键词，直到人格重启才恢复。
+UNAVAILABLE_RETRY_SECONDS = 30.0
 
 #: 全局配置里指定 embedding 模型名的字段。
 MODEL_FIELD = "embedding_model"
@@ -54,6 +59,7 @@ class EmbeddingClient:
         self._api_key = api_key.strip()
         self._model = model.strip()
         self._available: bool | None = None  # None = 未检测
+        self._retry_after = 0.0
         self._dimension: int | None = None
 
     @property
@@ -73,20 +79,29 @@ class EmbeddingClient:
     @property
     def available(self) -> bool:
         """服务是否可用（首次调用时会尝试健康检查）。"""
-        if self._available is None:
-            self._available = self._check_health()
-        return self._available
+        if self._available is None or (
+            self._available is False and time.monotonic() >= self._retry_after
+        ):
+            self._set_available(self._check_health())
+        return bool(self._available)
 
     def check_health(self) -> bool:
         """强制重新检查服务健康状态并更新缓存。"""
-        self._available = self._check_health()
-        return self._available
+        self._set_available(self._check_health())
+        return bool(self._available)
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    def _set_available(self, value: bool) -> None:
+        self._available = value
+        if not value:
+            self._retry_after = time.monotonic() + UNAVAILABLE_RETRY_SECONDS
+
+    def encode(self, texts: list[str], *, timeout: float | None = None) -> list[list[float]]:
         """调用 AMKR 的 ``/v1/embeddings``，返回嵌入向量列表。
 
         Args:
             texts: 要编码的文本列表。
+            timeout: 覆盖默认超时。聊天回合里的查询编码要用短超时，免得一次慢请求
+                把整轮回复拖住。
 
         Returns:
             与 texts 等长、顺序一致的嵌入向量列表。
@@ -103,10 +118,10 @@ class EmbeddingClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout or self._timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            self._available = False
+            self._set_available(False)
             detail = ""
             try:
                 detail = exc.read().decode("utf-8", errors="replace")[:200]
@@ -114,7 +129,7 @@ class EmbeddingClient:
                 pass
             raise RuntimeError(f"Embedding 请求失败: HTTP {exc.code} {detail or exc.reason}") from exc
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-            self._available = False
+            self._set_available(False)
             raise RuntimeError(f"Embedding 服务请求失败: {exc}") from exc
 
         items = data.get("data")

@@ -22,6 +22,7 @@ from sirius_pulse.core.constants import (
 from sirius_pulse.core.constants import (
     DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER as MEMORY_CHECKPOINT_TOKEN_TRIGGER,
 )
+from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET
 from sirius_pulse.memory.cold_detector import ColdState
 from sirius_pulse.utils.json_io import atomic_write_json
 
@@ -187,7 +188,14 @@ class BackgroundTasks:
             conversation_tokens = self._latest_conversation_tokens(group_id)
             history_tokens = max(raw_history_tokens, conversation_tokens)
             repeat_until_target = history_tokens > token_trigger
-            if cold_state != ColdState.COLD and not repeat_until_target:
+            # 已经滑出提示词历史窗口、又还没变成记忆单元的原文，模型哪条路都看不到。
+            # 不必等群冷下来或攒到 token 阈值，立刻整理它们。
+            outside_window = self._entries_outside_prompt_window(group_id)
+            if (
+                cold_state != ColdState.COLD
+                and not repeat_until_target
+                and len(outside_window) < volume_threshold
+            ):
                 continue
 
             batches_processed = 0
@@ -203,14 +211,19 @@ class BackgroundTasks:
                 if not candidates or len(candidates) < volume_threshold:
                     break
                 if repeat_until_target and history_tokens <= token_target:
-                    break
+                    # token 已降到目标以下，只剩窗口外的原文还需要整理。
+                    repeat_until_target = False
 
                 if cold_state != ColdState.COLD:
                     checkpoint_batch = [
                         entry
                         for entry in candidates
-                        if self._candidates_are_old_enough(
-                            [entry], min_age_seconds=idle_consolidation_seconds
+                        if entry.entry_id in outside_window
+                        or (
+                            repeat_until_target
+                            and self._candidates_are_old_enough(
+                                [entry], min_age_seconds=idle_consolidation_seconds
+                            )
                         )
                     ][:MEMORY_CHECKPOINT_BATCH_SIZE]
                 else:
@@ -242,7 +255,18 @@ class BackgroundTasks:
                     covered_source_ids.update(
                         source_id for source_id in unit.source_ids if source_id in candidate_ids
                     )
-                removed = engine.basic_memory.remove_entries_by_ids(group_id, covered_source_ids)
+                if result.units and not covered_source_ids:
+                    # 生成了单元却一条都对不上本批来源：不算看过，按无进展退避。
+                    reviewed_ids: set[str] = set()
+                else:
+                    # 模型看过整批：没被单元引用的多是闲聊，同样算处理完。只移除被覆盖
+                    # 的那几条的话，闲聊会越积越多地堵在候选队首，最后整组再也整理不动。
+                    # 最近的上下文窗口除外：它们还要接着给当前对话用。
+                    recent_ids = {
+                        entry.entry_id for entry in engine.basic_memory.get_context(group_id)
+                    }
+                    reviewed_ids = covered_source_ids | (candidate_ids - recent_ids)
+                removed = engine.basic_memory.remove_entries_by_ids(group_id, reviewed_ids)
                 if not removed:
                     # Do not call the same failed batch on every background tick
                     # when the model returned no usable provenance.
@@ -272,10 +296,34 @@ class BackgroundTasks:
                     removed,
                     history_tokens,
                 )
-                if not repeat_until_target or history_tokens <= token_target:
+                if repeat_until_target and history_tokens <= token_target:
+                    repeat_until_target = False
+                if cold_state != ColdState.COLD and not repeat_until_target:
+                    outside_window -= reviewed_ids
+                    if len(outside_window) < volume_threshold:
+                        break
+                elif not repeat_until_target:
                     break
 
         return promoted_total
+
+    def _entries_outside_prompt_window(self, group_id: str) -> set[str]:
+        """返回已滑出提示词历史窗口、尚未被记忆单元覆盖的原文 ID。"""
+        engine = self._engine
+        assembler = getattr(engine, "context_assembler", None)
+        outside = getattr(assembler, "entries_outside_history_window", None)
+        if not callable(outside):
+            return set()
+        budget = int(
+            engine.config.get(
+                "basic_memory_history_token_budget", DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET
+            )
+        )
+        try:
+            return {entry.entry_id for entry in outside(group_id, budget)}
+        except Exception as exc:
+            logger.debug("计算提示词窗口外的原文失败: %s", exc)
+            return set()
 
     def _get_uncheckpointed_candidates(self, group_id: str, *, include_context: bool) -> list[Any]:
         engine = self._engine

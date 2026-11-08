@@ -66,6 +66,7 @@ class ContextAssembler:
         system_prompt: str,
         *,
         search_query: str = "",
+        search_context: str = "",
         recent_n: int = 0,
         memory_unit_top_k: int | None = None,
         memory_unit_token_budget: int = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
@@ -101,6 +102,7 @@ class ContextAssembler:
             current_query=current_query,
             system_prompt=system_prompt,
             search_query=search_query,
+            search_context=search_context,
             recent_n=recent_n,
             memory_unit_top_k=memory_unit_top_k,
             memory_unit_token_budget=memory_unit_token_budget,
@@ -126,6 +128,7 @@ class ContextAssembler:
         system_prompt: str,
         *,
         search_query: str = "",
+        search_context: str = "",
         recent_n: int = 0,
         memory_unit_top_k: int | None = None,
         memory_unit_token_budget: int = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
@@ -168,6 +171,7 @@ class ContextAssembler:
                 identity_aliases=identity_aliases,
                 mentioned_user_ids=mentioned_user_ids,
                 cross_group_enabled=cross_group_enabled,
+                context=search_context,
             )
             memory_count = len(memory_units)
             memory_context = self._build_memory_unit_context(memory_units)
@@ -327,6 +331,7 @@ class ContextAssembler:
         system_prompt: str,
         *,
         search_query: str = "",
+        search_context: str = "",
         recent_n: int = 0,
         memory_unit_top_k: int | None = None,
         memory_unit_token_budget: int = DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
@@ -353,6 +358,7 @@ class ContextAssembler:
             current_query=current_query,
             system_prompt=system_prompt,
             search_query=search_query,
+            search_context=search_context,
             recent_n=recent_n,
             memory_unit_top_k=memory_unit_top_k,
             memory_unit_token_budget=memory_unit_token_budget,
@@ -451,6 +457,18 @@ class ContextAssembler:
             kept.append(entry)
         kept.reverse()
         return kept
+
+    def entries_outside_history_window(self, group_id: str, budget: int) -> list[Any]:
+        """尚未被记忆单元覆盖、又已经滑出提示词历史窗口的原文。
+
+        这段原文模型从哪条路都看不到：不在注入的历史里，也还没变成可检索的记忆
+        单元。后台 checkpoint 据此优先整理它们。窗口算法与聊天组装时完全一致。
+        """
+        entries = self._cacheable_history_entries(group_id)
+        window = self._anchored_history_window(group_id, entries, budget)
+        if not window:
+            return []
+        return entries[: len(entries) - len(window)]
 
     def _anchored_history_window(self, group_id: str, entries: list[Any], budget: int) -> list[Any]:
         """按块推进的历史窗口：起点锚定在某条消息上，超出预算才整块前移。
