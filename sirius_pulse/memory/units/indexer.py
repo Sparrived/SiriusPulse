@@ -37,6 +37,9 @@ COLD_SEMANTIC_CANDIDATES = 20
 #: 相对截断：分数低于本轮最高分这个比例的单元不注入。top_k 只是上限，真正决定
 #: 注入几条的是与问题的相关度。
 RELATIVE_SCORE_CUTOFF = 0.6
+#: 两条单元的余弦达到这个值就视为同一件事的不同说法，注入时只留一条。
+#: 依据线上活跃单元实测：改写之间的最近邻余弦中位数 0.948，其余单元 0.802。
+PARAPHRASE_SIMILARITY = 0.88
 #: 不会被冷层捞回的退休原因：模型或真人明确说过「不要进提示词」，以及已过期。
 _NEVER_COLD_REASONS = frozenset({"model", "manual", "expired"})
 
@@ -242,10 +245,12 @@ class MemoryUnitIndexer:
                 for unit, best in zip(pool, sims.max(axis=1)):
                     semantic_scores[unit.unit_id] = float(best)
         cold_ids = set()
-        for unit, similarity in cold_hits:
+        cold_vectors: dict[str, np.ndarray] = {}
+        for unit, similarity, vector in cold_hits:
             semantic_scores[unit.unit_id] = similarity
             cold_ids.add(unit.unit_id)
-        candidates = [*units, *(unit for unit, _ in cold_hits)]
+            cold_vectors[unit.unit_id] = vector
+        candidates = [*units, *(unit for unit, _, _ in cold_hits)]
 
         keyword_queries = self._keyword_queries(variants)
         keyword_scores = {
@@ -289,7 +294,37 @@ class MemoryUnitIndexer:
         if scored:
             floor = scored[0][1] * RELATIVE_SCORE_CUTOFF
             scored = [item for item in scored if item[1] >= floor]
-        return scored[:top_k]
+        return self._drop_paraphrases(scored, cold_vectors, top_k)
+
+    def _drop_paraphrases(
+        self,
+        scored: list[tuple[MemoryUnit, float]],
+        cold_vectors: dict[str, np.ndarray],
+        top_k: int,
+    ) -> list[tuple[MemoryUnit, float]]:
+        """同一件事的几种说法只留分数最高的那条，把名额让给不同的事。
+
+        线上同一条「谁是她的主人」被反复提炼成几十种说法，一次检索能占掉四五个
+        名额。改写之间的余弦中位数约 0.95，而不同事实之间多在 0.80 左右，
+        ``PARAPHRASE_SIMILARITY`` 取在两者之间。没有向量的单元不参与比较，照常保留。
+        """
+        kept: list[tuple[MemoryUnit, float]] = []
+        kept_vectors: list[np.ndarray] = []
+        for unit, score in scored:
+            if len(kept) >= top_k:
+                break
+            vector = cold_vectors.get(unit.unit_id)
+            if vector is None:
+                vector = self._unit_vector(unit)
+            if vector is not None and any(
+                other.shape == vector.shape and float(other @ vector) >= PARAPHRASE_SIMILARITY
+                for other in kept_vectors
+            ):
+                continue
+            kept.append((unit, score))
+            if vector is not None:
+                kept_vectors.append(vector)
+        return kept
 
     # ------------------------------------------------------------------
     # 向量与查询
@@ -388,7 +423,7 @@ class MemoryUnitIndexer:
         query_matrix: np.ndarray | None,
         weights: np.ndarray,
         allowed: Callable[[MemoryUnit], bool],
-    ) -> list[tuple[MemoryUnit, float]]:
+    ) -> list[tuple[MemoryUnit, float, np.ndarray]]:
         """在冷层里找语义足够接近的单元；冷层向量没准备好时这一轮直接跳过。"""
         if query_matrix is None or self.cold_source is None or not group_id:
             return []
@@ -397,7 +432,7 @@ class MemoryUnitIndexer:
             return []
         sims = (cold.matrix.astype(np.float32) @ query_matrix.T) * weights
         best = sims.max(axis=1)
-        hits: list[tuple[MemoryUnit, float]] = []
+        hits: list[tuple[MemoryUnit, float, np.ndarray]] = []
         for row in np.argsort(-best):
             similarity = float(best[row])
             if similarity < COLD_MIN_SEMANTIC or len(hits) >= COLD_SEMANTIC_CANDIDATES:
@@ -405,7 +440,7 @@ class MemoryUnitIndexer:
             unit = cold.units[row] if row < len(cold.units) else None
             # 只对排在前面的几条复查资格（可能刚过期）与可见范围，不扫整组。
             if unit is not None and is_cold_eligible(unit) and allowed(unit):
-                hits.append((unit, similarity))
+                hits.append((unit, similarity, cold.matrix[row].astype(np.float32)))
         return hits
 
     def list_all(self) -> list[MemoryUnit]:

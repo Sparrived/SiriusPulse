@@ -25,7 +25,7 @@ from sirius_pulse.life.presence import reply_factor as _snapshot_reply_factor
 from sirius_pulse.life.presence import snapshot
 from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.state import LifeStateStore
-from sirius_pulse.models.emotion import EmotionState
+from sirius_pulse.models.emotion import describe_mood
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +84,7 @@ def _mood_label(engine: Any) -> str:
     emotion = getattr(engine, "assistant_emotion", None)
     if emotion is None:
         return ""
-    basic = EmotionState(valence=emotion.valence, arousal=emotion.arousal).basic_emotion
-    return basic.name_cn if basic else ""
+    return describe_mood(emotion.valence, emotion.arousal)
 
 
 def presence_context(engine: Any, now: datetime | None = None, *, chat_id: str = "") -> str:

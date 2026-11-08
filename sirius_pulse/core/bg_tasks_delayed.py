@@ -150,6 +150,29 @@ class DelayedQueueTasks:
         )
 
     @staticmethod
+    def _impressions_context(engine: Any, items: list[Any], message_content: str) -> str:
+        """这一轮说话的人、以及消息里点到名字的人，她心里对他们的印象。"""
+        if not getattr(engine, "work_path", None):
+            return ""
+        try:
+            from sirius_pulse.memory.impressions import (
+                impression_store,
+                pick_people,
+                render_impressions,
+            )
+
+            speakers: list[str] = []
+            for item in reversed(items):
+                for uid in [getattr(item, "user_id", ""), *getattr(item, "related_user_ids", [])]:
+                    if uid and uid not in speakers:
+                        speakers.append(uid)
+            people = pick_people(impression_store(engine).all(), speakers, message_content or "")
+            return render_impressions(people)
+        except Exception:
+            logger.warning("人物印象暂不可用，本轮不注入", exc_info=True)
+            return ""
+
+    @staticmethod
     def _recent_search_context(engine: Any, group_id: str, current_texts: list[str]) -> str:
         """当前消息之前的最近几句对话，供记忆检索补全短追问的指代。"""
         basic = getattr(engine, "basic_memory", None)
@@ -1007,6 +1030,8 @@ class DelayedQueueTasks:
                         # 提醒她先用 send_midway_msg 报个方向，别让人干等。
                         enter_notice += "（这一轮你没有对群里说话；如果这次工作要花一会儿，"
                         enter_notice += "先用 send_midway_msg 简短说明你在做什么。）"
+                    # 工作细则只在真正开工时送到，不常驻在每一轮闲聊的 system prompt 里。
+                    enter_notice += "\n\n" + PromptFactory.build_work_mode_guide()
                     messages.append(
                         {"role": "tool", "tool_call_id": tc.id, "content": enter_notice}
                     )
@@ -1650,6 +1675,13 @@ class DelayedQueueTasks:
         if presence:
             bundle.dynamic_context = (
                 f"{bundle.dynamic_context}\n\n{presence}" if bundle.dynamic_context else presence
+            )
+        people_context = self._impressions_context(engine, items, message_content)
+        if people_context:
+            bundle.dynamic_context = (
+                f"{bundle.dynamic_context}\n\n{people_context}"
+                if bundle.dynamic_context
+                else people_context
             )
         people = getattr(engine, "person_service", None)
         if people is not None:

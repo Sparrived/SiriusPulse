@@ -784,15 +784,13 @@ class ToolEngineContextImpl:
         self._save_emotion()
 
     def mood_label(self) -> str:
-        """Her current mood as a short Chinese word (e.g. 「满足」)."""
-        from sirius_pulse.models.emotion import EmotionState
+        """Her current mood as a short Chinese phrase (e.g. 「心情不错，挺来劲的」)."""
+        from sirius_pulse.models.emotion import describe_mood
 
         emotion = getattr(self._engine, "assistant_emotion", None)
         if emotion is None:
             return ""
-        state = EmotionState(valence=emotion.valence, arousal=emotion.arousal)
-        basic = state.basic_emotion
-        return basic.name_cn if basic else ""
+        return describe_mood(emotion.valence, emotion.arousal)
 
     def _save_emotion(self) -> None:
         # 心情写在 engine_state/assistant_emotion.json 里：这是 EngineStateStore 的活，

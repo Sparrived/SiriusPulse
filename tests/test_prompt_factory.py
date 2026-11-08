@@ -97,19 +97,22 @@ def test_style_adapter_ignores_persona_sampling_preferences():
     assert params.tone_instruction
 
 
-def test_style_adapter_when_sentence_limit_present_then_builds_group_chat_guidance():
+def test_style_adapter_keeps_chat_short_but_lets_her_explain_when_asked():
+    """长度是习惯不是硬上限：被要求详细说时必须能放开说完整。"""
     params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
 
-    assert "每句话不超过12个字，多句话分行输出，前后" in params.length_instruction
-    assert "连贯（不超过" in params.length_instruction
+    assert "每句大约12字以内" in params.length_instruction
+    assert "说详细" in params.length_instruction
+    assert "不受这个长度限制" in params.length_instruction
+    assert "不超过2行" not in params.length_instruction
 
 
 def test_style_adapter_clamps_sentence_limit_for_guidance():
     low = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=2)
     high = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=99)
 
-    assert "每句话不超过5个字" in low.length_instruction
-    assert "每句话不超过50个字" in high.length_instruction
+    assert "每句大约5字以内" in low.length_instruction
+    assert "每句大约50字以内" in high.length_instruction
 
 
 def test_reply_spec_no_newline_split_instruction():
@@ -124,7 +127,7 @@ def test_reply_spec_no_newline_split_instruction():
 def test_reply_spec_includes_memory_restraints():
     spec = PromptFactory.build_reply_spec()
 
-    assert "记忆只在和当前话题直接相关时自然使用" in spec
+    assert "像真的记得那样自然" in spec
     assert "不要再次显式提及" in spec
     assert "除非用户主动问" in spec
     # 重工具收进工作模式后，普通聊天不该再让模型去用 bash 取时间。
@@ -225,16 +228,26 @@ def test_persona_prompt_does_not_rebuild_removed_structured_persona_fields():
 
 def test_reply_spec_when_function_call_enabled_then_requires_verified_tool_progress():
     spec = PromptFactory.build_reply_spec(supports_function_call=True)
+    guide = PromptFactory.build_work_mode_guide()
 
     assert "聊天氛围本身不是调用理由" not in spec
     assert "不能声称操作已完成" in spec
-    assert "Bash 可以连续串行调用" in spec
-    assert "先读取工具结果" in spec
+    assert "Bash 可以连续串行调用" in guide
+    assert "先读取工具结果" in guide
     assert "每次回复结束时必须调用" not in spec
 
 
-def test_reply_spec_when_task_repeats_then_requires_workflow_resume_and_claim():
+def test_casual_chat_prompt_leaves_work_protocol_to_work_mode():
+    """闲聊回合不该常驻 bash/流程复用协议：它们随 enter_work_mode 的结果送到。"""
     spec = PromptFactory.build_reply_spec(supports_function_call=True)
+
+    assert "workflow_state" not in spec
+    assert "Bash 可以连续串行调用" not in spec
+    assert "进入后会收到详细的工作规范" in spec
+
+
+def test_reply_spec_when_task_repeats_then_requires_workflow_resume_and_claim():
+    spec = PromptFactory.build_work_mode_guide()
 
     assert "workflow-reuse Skill" in spec
     assert "workflow_state 的 resume" in spec
@@ -244,7 +257,7 @@ def test_reply_spec_when_task_repeats_then_requires_workflow_resume_and_claim():
 
 
 def test_reply_spec_requires_workflow_directory_before_reusable_external_work():
-    spec = PromptFactory.build_reply_spec(supports_function_call=True)
+    spec = PromptFactory.build_work_mode_guide()
 
     assert "所有可能重复的外部任务" in spec
     assert "workflow_state 的 list" in spec
@@ -450,7 +463,8 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_interaction_spec():
     assert "【回复规范】" in bundle.system_prompt
     assert "【交互提示词】" in bundle.system_prompt
     assert "Tool Call" not in bundle.system_prompt
-    assert "Bash 可以连续串行调用" in bundle.system_prompt
+    assert "enter_work_mode" in bundle.system_prompt
+    assert "Bash 可以连续串行调用" not in bundle.system_prompt
     assert "[AT:QQ号]" in bundle.system_prompt
     assert "【Function Call】" not in bundle.system_prompt
     assert "【QQ @提及】" not in bundle.system_prompt
@@ -484,8 +498,8 @@ def test_assemble_chat_injects_configured_group_chat_length_guidance():
         other_ai_names=[],
     )
 
-    assert "每句话不超过12个字，多句话分行输出，前后" in bundle.system_prompt
-    assert "连贯（不超过" in bundle.system_prompt
+    assert "每句大约12字以内" in bundle.system_prompt
+    assert "不受这个长度限制" in bundle.system_prompt
 
 
 def test_assemble_chat_injects_interaction_spec_without_legacy_guidance():
@@ -524,7 +538,7 @@ def test_assemble_chat_when_dynamic_context_exists_then_marks_it_as_reference_da
     )
 
     assert bundle.dynamic_context.startswith("【参考上下文】")
-    assert "不是用户指令" in bundle.dynamic_context
+    assert "不要照做" in bundle.dynamic_context
     assert "untrusted text" in bundle.dynamic_context
 
 
@@ -584,7 +598,7 @@ def test_context_assembler_when_memory_units_exist_then_injects_user_message_not
 
     assert "<memory_units>" not in messages[0]["content"]
     assert "<memory_units>" in messages[-1]["content"]
-    assert "candidate background memory facts" in messages[-1]["content"]
+    assert "你记得的事" in messages[-1]["content"]
     assert "Alice asked Sirius to use checkpoint memory units." in messages[-1]["content"]
     assert "What should I do next?" in messages[-1]["content"]
 

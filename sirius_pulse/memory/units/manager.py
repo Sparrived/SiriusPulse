@@ -508,6 +508,10 @@ class MemoryUnitManager:
             cross_group_enabled=False,
         )
 
+    def list_group_ids(self) -> list[str]:
+        """所有有记忆单元的群（含私聊会话），供需要跨群汇总的后台任务使用。"""
+        return self._store.list_group_ids()
+
     def get_units_for_group(self, group_id: str) -> list[MemoryUnit]:
         self.ensure_group_loaded(group_id)
         return [unit for unit in self._indexer.list_all() if unit.group_id == group_id]

@@ -76,6 +76,7 @@ class BackgroundTasks:
             asyncio.create_task(self._memory_unit_checkpointer(), name="memory_checkpoint"),
             asyncio.create_task(self._sticker_cache_warmup(), name="sticker_cache_warmup"),
             asyncio.create_task(self._memory_dedupe_job_worker(), name="memory_dedupe"),
+            asyncio.create_task(self._person_impression_worker(), name="person_impression"),
         ]
         for t in tasks:
             engine._bg_tasks.add(t)
@@ -136,6 +137,26 @@ class BackgroundTasks:
                     engine._log_inner_thought(f"整理了 {promoted_total} 条结构化记忆单元。")
             except Exception as exc:
                 logger.warning("Memory checkpoint failed: %s", exc)
+            await asyncio.sleep(interval)
+
+    async def _person_impression_worker(self) -> None:
+        """定期把熟人的新记忆合成进她对这个人的印象。"""
+        from sirius_pulse.memory.impressions import PersonImpressionUpdater
+
+        engine = self._engine
+        updater = PersonImpressionUpdater(engine)
+        # 启动后先等一会儿：刚启动时记忆还在加载，聊天也最需要模型配额。
+        await asyncio.sleep(
+            float(engine.config.get("person_impression_initial_delay_seconds", 300))
+        )
+        interval = float(engine.config.get("person_impression_interval_seconds", 900))
+        while engine._bg_running:
+            try:
+                updated = await updater.run_once()
+                if updated:
+                    engine._log_inner_thought(f"重新想了想 {updated} 个人。")
+            except Exception as exc:
+                logger.warning("Person impression update failed: %s", exc)
             await asyncio.sleep(interval)
 
     async def _checkpoint_memory_once(self) -> int:

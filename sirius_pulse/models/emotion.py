@@ -44,6 +44,33 @@ class BasicEmotion(Enum):
         return self.value[2]
 
 
+def describe_mood(valence: float, arousal: float) -> str:
+    """把她的情绪坐标说成一句人话，而不是 19 个标签里最近的那个词。
+
+    她的基线在 (0.2, 0.3)，最近的标签恰好是「中性」：于是绝大多数时候提示词里写的
+    都是「心情：中性」，等于告诉模型「没有情绪」。这里按愉悦度分档、再用唤醒度
+    补一个状态词，平稳时也是「心情还不错、挺放松」这样有温度的说法。
+    """
+    v = max(-1.0, min(1.0, float(valence)))
+    a = max(0.0, min(1.0, float(arousal)))
+    high, low = a >= 0.6, a <= 0.25
+    if v >= 0.5:
+        return "特别开心，有点兴奋" if high else "心情很好"
+    if v >= 0.25:
+        if high:
+            return "心情不错，挺来劲的"
+        return "心情不错，懒洋洋的" if low else "心情不错"
+    if v >= 0.05:
+        return "心情平稳，挺放松" if not high else "心情平稳，有点坐不住"
+    if v >= -0.2:
+        if high:
+            return "有点烦"
+        return "有点提不起劲" if low else "心情平平"
+    if v >= -0.5:
+        return "有点烦躁" if high else "有点低落"
+    return "很生气" if high else "心情很差"
+
+
 @dataclass(slots=True)
 class EmotionState:
     """2D emotion state with valence (-1~+1) and arousal (0~1)."""

@@ -281,11 +281,27 @@ def test_short_follow_up_recalls_memory_through_recent_conversation(tmp_path, mo
 
 
 def test_number_of_injected_memories_follows_relevance_not_a_fixed_five(tmp_path, monkeypatch):
-    relevant = [_unit(f"hotpot-{i}", f"第{i}次吃火锅的记录。") for i in range(12)]
-    unrelated = [_unit("exam", "阿青下周考试，考完去旅行。", keywords=["火锅"])]
-    manager, _ = _manager(tmp_path, [*relevant, *unrelated], monkeypatch)
+    others = [word for word in _VOCAB if word != "火锅"]
+    relevant = [_unit(f"hotpot-{i}", f"和大家吃火锅那次还聊到了{word}。") for i, word in enumerate(others)]
+    manager, _ = _manager(tmp_path, relevant, monkeypatch)
     manager.prepare_retrieval("火锅", group_id=GROUP)
 
     found = [unit.unit_id for unit in manager.retrieve("火锅", group_id=GROUP, top_k=10)]
 
     assert len(found) == 10 and all(unit_id.startswith("hotpot-") for unit_id in found)
+
+
+def test_paraphrases_of_one_fact_take_a_single_memory_slot(tmp_path, monkeypatch):
+    paraphrases = [
+        _unit("master-1", "临雀是开发她的人，她最亲近临雀。部署"),
+        _unit("master-2", "她由临雀开发，临雀是她最亲近的人。部署"),
+        _unit("master-3", "临雀开发了她，两人非常亲近。部署"),
+    ]
+    other = _unit("deploy-cat", "临雀上周部署时被猫踩了键盘。")
+    manager, _ = _manager(tmp_path, [*paraphrases, other], monkeypatch)
+    manager.prepare_retrieval("部署", group_id=GROUP)
+
+    found = [unit.unit_id for unit in manager.retrieve("部署", group_id=GROUP, top_k=10)]
+
+    assert sum(unit_id.startswith("master-") for unit_id in found) == 1
+    assert "deploy-cat" in found

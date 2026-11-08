@@ -116,6 +116,14 @@ _DEFAULT_TASK_REGISTRY: dict[str, TaskConfig] = {
         timeout=45.0,
         fallback_model_name="fallback_generate",
     ),
+    # 人物印象：后台把关于某个人的零散记忆合成她心里对这个人的整体印象与关系温度，
+    # 每次只处理一两个人、输出结构化 JSON，适合绑一个守格式、便宜的模型。
+    # 与其他任务一样**必须留在本表里**，否则 AMKR 侧没有这个任务。
+    "person_impression": TaskConfig(
+        model_name="person_impression",
+        timeout=45.0,
+        retries=0,
+    ),
     # 生图任务：发往 AMKR 的 /v1/images/* 端点，必须由运维在 AMKR 面板里绑定
     # 一个真正的生图模型（不绑就是 404）。超时给足，生图 30–300 秒都算正常。
     "image_generate": TaskConfig(

@@ -34,6 +34,7 @@ TASK_LABELS: dict[str, str] = {
     "life_plan": "晨间计划",
     "life_reflect": "夜间回顾",
     "life_dream": "夜里的梦",
+    "person_impression": "人物印象",
     "image_generate": "生图",
 }
 

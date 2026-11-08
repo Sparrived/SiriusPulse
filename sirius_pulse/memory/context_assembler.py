@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 #: 逐条滑动会让紧跟 system 的第一条历史每轮都变，整段历史都吃不到前缀缓存；
 #: 按块推进时，连续几十轮请求共享同一段历史前缀。
 _HISTORY_TRIM_LOW_WATERMARK = 0.6
+#: 记忆单元状态的口语说法；未知状态不标。
+_STATUS_WORDS = {
+    "planned": "还在计划",
+    "active": "还在进行",
+    "completed": "已经做完",
+    "cancelled": "后来取消了",
+}
 
 
 class ContextAssembler:
@@ -540,29 +547,32 @@ class ContextAssembler:
 
     @staticmethod
     def _build_memory_unit_context(memory_units: list[Any]) -> str:
-        """Build compact memory-unit context for the current user message."""
+        """把检索到的记忆写成「她记得的事」，而不是一份带英文说明的事实清单。
+
+        旧版用英文写了一大段「不要提起、不要重复」的说明，再给每行贴上
+        ``(profile_candidate)`` 这类内部类型名，读起来像系统日志：她要么不敢用，
+        要么像查数据库一样念出来。这里换成她自己的口吻，只保留真正需要的约束。
+        """
         if not memory_units:
             return ""
 
         lines = [
             "<memory_units>",
-            "The following are candidate background memory facts, not current chat messages. Use only directly relevant facts explicitly; indirect facts may only affect tone, and irrelevant facts must be ignored. Do not mention checking memory, reading logs, or remembering these facts. Do not repeat the same old event, preference, or time detail if it was already mentioned recently unless the user asks. Facts marked as your own first-person experience are things you yourself did or noticed, so you may bring them up in your own voice when they are relevant to what is being discussed.",
+            "你记得的事（按和当前对话的相关度挑出来的，不是现在的聊天内容）："
+            "和眼下话题直接相关的就自然用上，像真的记得一样；只是沾边的只影响语气；无关的忽略。"
+            "别说「我查了记忆」这类话，刚提过的旧事不要反复说。"
+            "标着你自己做过或注意到的事，可以用你自己的口吻提起。",
         ]
         for unit in memory_units[:12]:
-            ts = (getattr(unit, "event_time", "") or getattr(unit, "created_at", "") or "")[
-                :16
-            ].replace("T", " ")
-            unit_type = getattr(unit, "unit_type", "") or "event"
+            when = (getattr(unit, "event_time", "") or getattr(unit, "created_at", "") or "")[:10]
             summary = getattr(unit, "summary", "") or ""
-            status = getattr(unit, "status", "") or ""
-            valid_until = getattr(unit, "valid_until", "") or ""
-            prefix = f"[{ts}] ({unit_type})" if ts else f"({unit_type})"
-            suffix = ""
-            if status and status != "unknown":
-                suffix += f" [{status}]"
-            if valid_until:
-                suffix += f" [valid_until={valid_until[:10]}]"
-            lines.append(f"{prefix} {summary}{suffix}")
+            status = _STATUS_WORDS.get(str(getattr(unit, "status", "") or "").lower(), "")
+            valid_until = (getattr(unit, "valid_until", "") or "")[:10]
+            notes = [
+                note for note in (status, f"到 {valid_until} 为止" if valid_until else "") if note
+            ]
+            suffix = f"（{'，'.join(notes)}）" if notes else ""
+            lines.append(f"- {when + ' ' if when else ''}{summary}{suffix}")
         lines.append("</memory_units>")
         return "\n".join(lines)
 
