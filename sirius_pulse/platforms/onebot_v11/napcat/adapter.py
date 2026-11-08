@@ -2308,7 +2308,8 @@ class NapCatAdapter(BaseAdapter):
             reply = result.get("reply")
             message_group = result.get("message_group")
             if message_group is not None:
-                # 多模态消息：通过 MessageGroup 发送（图片/语音/文件等）
+                # 多模态消息：通过 MessageGroup 发送（图片/语音/文件等）；
+                # 插件的说明文字已由引擎并在图前，这里不再单独发 reply。
                 if parsed.message_type == "group":
                     await self.send_group_message(group_id, message_group)
                 else:

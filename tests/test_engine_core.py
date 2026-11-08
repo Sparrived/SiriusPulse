@@ -19,6 +19,7 @@ from sirius_pulse.providers.mock import MockProvider
 
 _LONG_REPLY = "第一段。\n第二段。\n第三段。\n第四段。"
 _SHORT_REPLY = "部署完成，服务已恢复。"
+_TEXT_ONLY_CAPTION = "AMKR 账号资源 · 3 项（已脱敏）"
 
 
 class _ToolCallingProvider(MockProvider):
@@ -274,6 +275,15 @@ async def test_engine_when_long_reply_is_delivered_as_image_then_dedup_leaves_it
         pytest.param("", "direct", [], "", [], True, id="image-only"),
         pytest.param("图已生成", "direct", [], "", ["图已生成"], True, id="image-and-text"),
         pytest.param(
+            _TEXT_ONLY_CAPTION,
+            "direct",
+            [],
+            "",
+            [_TEXT_ONLY_CAPTION],
+            True,
+            id="caption-only-in-text",
+        ),
+        pytest.param(
             "",
             "direct",
             ["开始统计", "正在绘图"],
@@ -311,7 +321,11 @@ async def test_plugin_shortcut_delivers_output_to_onebot(
         "base64://iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
         "/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
     )
-    message_group = MessageGroup(([TextSegment(text)] if text else []) + [ImageSegment(image_ref)])
+    # 有的插件自己把说明放进图文消息，有的只放在 text 里；两种都要原样到达群里。
+    caption_in_group = text and text != _TEXT_ONLY_CAPTION
+    message_group = MessageGroup(
+        ([TextSegment(text)] if caption_in_group else []) + [ImageSegment(image_ref)]
+    )
     responses = [PluginResponse.ok(partial) for partial in partials]
     responses.append(
         PluginResponse.fail(error)
@@ -387,6 +401,9 @@ async def test_plugin_shortcut_delivers_output_to_onebot(
         assert len(sent) == len(partials) + bool(error or expect_image)
         if expect_image:
             assert sent[-1]["message"][-1] == {"type": "image", "data": {"file": image_ref}}
+        if expect_image and text:
+            # 说明与图片是同一条消息，文字在前。
+            assert sent[-1]["message"][0] == {"type": "text", "data": {"text": text}}
     finally:
         await adapter.close()
         await engine.event_bus.close()

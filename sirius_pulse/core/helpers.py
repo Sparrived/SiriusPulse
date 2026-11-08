@@ -12,6 +12,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.adapters.models import MessageGroup, TextSegment
 from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.interaction_markers import (
@@ -23,6 +24,20 @@ if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 
 logger = logging.getLogger(__name__)
+
+
+def _caption_message_group(message_group: Any, caption: str | None) -> Any:
+    """插件同时给出文字与 message_group 时，把文字放在图前，合成同一条消息发出。
+
+    插件已经自己把这段文字放进 message_group 的，不再重复添加。
+    """
+    caption = (caption or "").strip()
+    if not caption or not isinstance(message_group, MessageGroup):
+        return message_group
+    existing = "".join(seg.text for seg in message_group if isinstance(seg, TextSegment))
+    if caption in existing:
+        return message_group
+    return MessageGroup([TextSegment(caption), *message_group.segments])
 
 
 class Helpers:
@@ -544,6 +559,7 @@ class Helpers:
                 )
                 if cleaned
             ]
+        final_message_group = _caption_message_group(final_message_group, final_reply)
 
         # 将最终回复录入记忆链（与正常 Pipeline 回复一致，仅成功时记录）
         if final_reply and any_success:
