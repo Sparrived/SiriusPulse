@@ -8,6 +8,7 @@ CI/CD 检查脚本
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -104,7 +105,24 @@ def main() -> int:
         optional=False
     )
 
-    # 7. 测试覆盖率（可选）
+    # 7. Go 侧车检查（可选：缺 Go 工具链或未检出侧车模块时跳过）
+    go_module = PROJECT_ROOT / "go" / "llm-transport"
+    go_binary = shutil.which("go")
+    if go_binary and (go_module / "go.mod").is_file():
+        all_passed &= run_command(
+            [go_binary, "-C", str(go_module), "vet", "./..."],
+            "go vet（LLM 传输侧车）",
+            optional=True,
+        )
+        all_passed &= run_command(
+            [go_binary, "-C", str(go_module), "test", "./...", "-count=1"],
+            "go test（LLM 传输侧车）",
+            optional=True,
+        )
+    else:
+        print("\n⚠ 未检测到 Go 工具链或 go/llm-transport 模块，跳过 Go 侧车检查\n")
+
+    # 8. 测试覆盖率（可选）
     all_passed &= run_command(
         ["python", "-m", "pytest", "-q", "--cov=sirius_pulse", "--cov-report=term-missing"],
         "pytest 覆盖率报告",

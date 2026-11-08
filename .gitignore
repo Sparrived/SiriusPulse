@@ -77,3 +77,6 @@ intent_analysis_report.json
 
 # Hy-Memory 分析文档（非代码）
 hy-memory-research/
+
+# LLM 传输侧车二进制（构建产物，由 scripts/build_llm_transport.py 生成，不入库）
+go/llm-transport/bin/

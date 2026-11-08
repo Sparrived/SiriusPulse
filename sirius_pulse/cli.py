@@ -377,6 +377,30 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     )
     LOG = logging.getLogger("sirius.main")
 
+    # LLM 传输层（可选 Go 侧车）。放在起 worker 之前：每个人格的 provider 构建
+    # 都会复用这个已就绪的进程，而不是各自在引擎构建路径上同步等一次启动。
+    # 不配置 ``llm_transport``（默认 python）时这里一行都不会执行。
+    from sirius_pulse.providers.amkr import load_amkr_settings
+    from sirius_pulse.utils.llm_sidecar import get_sidecar, stop_sidecar
+
+    amkr_settings = load_amkr_settings(DATA_DIR)
+    if amkr_settings.uses_go_transport and amkr_settings.configured:
+        sidecar = get_sidecar(
+            binary=amkr_settings.llm_transport_binary,
+            port=amkr_settings.llm_transport_port,
+        )
+        if sidecar is not None:
+            LOG.info("LLM 传输层: Go 侧车已就绪 (%s, pid=%s)", sidecar.base_url, sidecar.pid)
+        elif not amkr_settings.llm_transport_fallback:
+            LOG.error(
+                "LLM 传输层配置为 go，但 Go 侧车启动失败且已禁用回退"
+                "（llm_transport_fallback=false）。请先运行 "
+                "`python scripts/build_llm_transport.py`，或把 llm_transport 改回 python。"
+            )
+            raise SystemExit(1)
+        else:
+            LOG.warning("LLM 传输层配置为 go，但 Go 侧车不可用：已回退到 Python 传输层")
+
     from sirius_pulse.webui import WebUIServer
 
     webui = WebUIServer(
@@ -484,6 +508,9 @@ async def _cmd_run(args: argparse.Namespace) -> None:
             reaper_task.cancel()
             await asyncio.gather(reaper_task, return_exceptions=True)
         await webui.stop()
+        # 侧车是纯传输层：worker 都停完再收，等价于「在飞请求已经结束」。
+        # 未启用 Go 传输层时这里是空操作。
+        stop_sidecar()
         LOG.info("所有服务已停止")
 
 

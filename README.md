@@ -87,6 +87,14 @@ Perception → Signal → PreFilter → Generate → BackgroundUpdate
 - 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 自主行为 / 晨间计划 / 睡前回顾…），模型选择与采样参数下沉到 AMKR 的任务定义
 - 模型调用只用该人格工作空间的**推理 key**（建空间时自动签发），管理员 Key 仅用于建空间与注册任务
 
+### 🚄 **LLM 传输层（可选 Go 侧车）**
+- **默认不启用**：`llm_transport` 不配置时，所有调用走的仍是进程内的 `OpenAICompatibleProvider`（httpx + 本地 SSE 聚合），行为与以往完全一致
+- 这是一次 **B 方案的传输层迁移**：只把「对 AMKR 的 HTTP 调用 + SSE 聚合 + 多模态内联」交给 Go 侧车（`go/llm-transport/`），**prompt 组装、工具循环、重试、兜底任务与 token 记账全部留在 Python**
+- 启用两步：① 构建二进制 `python scripts/build_llm_transport.py`（加 `--test` 会先跑 `go vet` 与 `go test`）；② 在 `data/global_config.json` 里加 `"llm_transport": "go"`
+- 侧车的启停、健康检查与崩溃重启都由 Python 负责（进程级单例，多个人格共用一个）；启动失败时按 `llm_transport_fallback`（默认 `true`）回退到 Python 传输层并留一条 WARN 日志
+- 可用配置：`llm_transport`（`python`/`go`）、`llm_transport_port`（`0`＝自动分配空闲端口）、`llm_transport_binary`（二进制路径，留空则依次找环境变量 `SIRIUS_LLM_TRANSPORT_BIN`、`go/llm-transport/bin/`、`PATH`）、`llm_transport_fallback`（默认 `true`）
+- 两侧唯一的跨语言约定是报文契约，见 [go/llm-transport/CONTRACT.md](go/llm-transport/CONTRACT.md)；生图端点不在该契约内，启用后仍走 Python 传输层
+
 ### 🎯 **双重扩展机制**
 - **工具系统**（Tools）：AI 通过标准 function calling 自主调用工具，提供多个内置工具
 - **插件系统**（Plugins）：用户通过 `/` `#` `!` 前缀显式命令触发
@@ -262,7 +270,8 @@ sirius_pulse/
 │
 ├── providers/               # LLM 接入层（统一指向 AMKR）
 │   ├── base.py              # LLMProvider 基类接口
-│   ├── openai_compatible.py # 唯一的真实实现，端点指向 AMKR
+│   ├── openai_compatible.py # 默认实现：进程内 httpx + SSE 聚合，端点指向 AMKR
+│   ├── go_transport.py      # 可选实现：HTTP/SSE/多模态交给 Go 侧车
 │   ├── amkr.py              # AMKR 连接配置解析与两把工作空间凭据的存放
 │   ├── amkr_sync.py         # 建 AMKR 工作空间并注册任务名
 │   └── mock.py              # Mock Provider（测试用）
@@ -280,7 +289,8 @@ sirius_pulse/
 ```
 
 仓库根目录另有 `plugins/`（外部 Plugin 的 Git 子模块，含 GitHub 监控、Sub2API 监控等），
-不属于 `sirius_pulse` 包。
+不属于 `sirius_pulse` 包。`go/llm-transport/` 是可选的传输侧车（Go 源码 + 报文契约
+`CONTRACT.md`），二进制由 `scripts/build_llm_transport.py` 生成、不入库。
 
 ---
 

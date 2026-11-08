@@ -15,6 +15,17 @@ Sirius Pulse 不再自带多供应商注册表：所有模型调用都指向同�
 ``amkr_public_url``  ``SIRIUS_AMKR_PUBLIC_URL``  空（回环后端时回落同源反代 ``/amkr/``）
 ===================  ==========================  ============================
 
+另有一组**可选**的传输层配置（默认关闭，缺省时行为与以前完全一致）：
+
+===================  ==========================  ============================
+配置键                环境变量                     默认值
+===================  ==========================  ============================
+``llm_transport``    空                           ``python``（可选 ``go``）
+``llm_transport_port`` 空                         ``0``（自动分配空闲端口）
+``llm_transport_binary`` ``SIRIUS_LLM_TRANSPORT_BIN`` 空（按仓库内 ``go/llm-transport/bin/``、``PATH`` 兜底）
+``llm_transport_fallback`` 空                    ``true``（侧车不可用时回退 Python 传输层）
+===================  ==========================  ============================
+
 工作空间是本应用在**共享** AMKR 里的命名空间：多个 AI 服务共用一个 AMKR
 实例时，各自持有一个空间，任务名可以重名（``cognition_analyze`` 等），
 互不干扰。
@@ -84,6 +95,52 @@ AMKR_PROXY_PREFIX = "/amkr"
 # 本应用在 AMKR 中的默认工作空间名。
 AMKR_DEFAULT_WORKSPACE = "sirius-pulse"
 
+# ── LLM 传输层（可选 Go 侧车）────────────────────────────────
+#
+# ``python``（默认）＝ 进程内 httpx + 本地 SSE 聚合，与改造前完全一致；
+# ``go`` ＝ 把「对 AMKR 的 HTTP 调用 + SSE 聚合 + 多模态内联」交给可选的 Go
+# 侧车（``go/llm-transport/``），编排/重试/统计仍全部在 Python。侧车二进制不在
+# 仓库里，要先跑 ``scripts/build_llm_transport.py``，所以默认值必须是 ``python``。
+LLM_TRANSPORT_PYTHON = "python"
+LLM_TRANSPORT_GO = "go"
+
+
+def _resolve_llm_transport(raw: object) -> str:
+    """把配置里的传输层取值归一成 ``python`` / ``go``。
+
+    只认 ``go``（大小写与首尾空白不敏感）；缺失、空串、拼错一律按 ``python``。
+    这个默认值就是「行为零变化」的开关：宁可忽略一个拼错的配置，也不要因为认错
+    而把全部流量切到可能还没装好的侧车上。
+    """
+    if str(raw or "").strip().lower() == LLM_TRANSPORT_GO:
+        return LLM_TRANSPORT_GO
+    return LLM_TRANSPORT_PYTHON
+
+
+def _resolve_llm_transport_port(raw: object) -> int:
+    """侧车端口；``0`` 表示自动分配。非法值按 ``0`` 处理。"""
+    try:
+        port = int(str(raw if raw is not None else "").strip() or 0)
+    except (TypeError, ValueError):
+        return 0
+    return port if 0 <= port <= 65535 else 0
+
+
+def _resolve_bool(raw: object, *, default: bool) -> bool:
+    """宽松解析布尔配置：认 ``bool`` 与 ``1/0``/``true/false``/``yes/no``/``on/off``。
+
+    配置是手写的 JSON，把 ``"false"``（字符串）当成真值会是那种「看起来配了、
+    其实没生效」的坑，所以这里显式两种都认。
+    """
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw if raw is not None else "").strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return default
+
 
 def _resolve_api_key(raw: str) -> str:
     """解析 API Key 的间接写法。
@@ -110,6 +167,17 @@ class AmkrSettings:
     workspace: str = AMKR_DEFAULT_WORKSPACE
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     public_url: str = ""
+    # ── LLM 传输层（可选 Go 侧车）──
+    # 四个字段都是**新增且带默认值**的，因此没写这些键的旧配置解析结果与以前一致。
+    llm_transport: str = LLM_TRANSPORT_PYTHON
+    llm_transport_port: int = 0
+    llm_transport_binary: str = ""
+    llm_transport_fallback: bool = True
+
+    @property
+    def uses_go_transport(self) -> bool:
+        """是否把传输层交给 Go 侧车（默认 ``False``，即纯 Python 路径）。"""
+        return self.llm_transport == LLM_TRANSPORT_GO
 
     @property
     def configured(self) -> bool:
@@ -187,12 +255,22 @@ def load_amkr_settings(global_data_path: Path | str) -> AmkrSettings:
         os.getenv("SIRIUS_AMKR_PUBLIC_URL", "").strip()
         or str(data.get("amkr_public_url", "") or "").strip()
     )
+    # 传输层四个键都是可选的：缺失就是「纯 Python 路径」，与改造前完全一致。
+    # 侧车二进制路径只在这里取配置值，环境变量与仓库内默认位置由
+    # ``utils.llm_sidecar.resolve_binary`` 按顺序兜底。
+    llm_transport_binary = str(data.get("llm_transport_binary", "") or "").strip()
 
     return AmkrSettings(
         base_url=base_url.rstrip("/"),
         api_key=_resolve_api_key(raw_key),
         workspace=workspace,
         public_url=public_url.rstrip("/"),
+        llm_transport=_resolve_llm_transport(data.get("llm_transport", "")),
+        llm_transport_port=_resolve_llm_transport_port(data.get("llm_transport_port", 0)),
+        llm_transport_binary=llm_transport_binary,
+        llm_transport_fallback=_resolve_bool(
+            data.get("llm_transport_fallback", True), default=True
+        ),
     )
 
 

@@ -32,11 +32,14 @@ from sirius_pulse.providers.amkr_sync import (
     register_persona_tasks_async,
     workspace_for,
 )
+from sirius_pulse.providers.base import AsyncLLMProvider
+from sirius_pulse.providers.go_transport import GoTransportProvider
 from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.tools.executor import ToolExecutor
 from sirius_pulse.tools.mcp_client import MCPClientManager, load_mcp_config
 from sirius_pulse.tools.registry import ToolRegistry
+from sirius_pulse.utils.llm_sidecar import get_sidecar
 
 LOG = logging.getLogger("sirius.platforms.runtime")
 MCP_STARTUP_TIMEOUT_SECONDS = 30.0
@@ -126,7 +129,7 @@ def _build_provider(
     settings: AmkrSettings,
     workspace: str = "",
     inference_key: str = "",
-) -> OpenAICompatibleProvider | None:
+) -> AsyncLLMProvider | None:
     """按 AMKR 连接配置构建唯一的 provider。
 
     未配置凭据时返回 ``None``，由调用方决定如何报告不就绪。
@@ -140,16 +143,46 @@ def _build_provider(
     把它放进每次对话补全的请求头，等于让模型调用路径随时可以升级成管理操作。
     推理 key 缺失时**不回落**到管理员凭据——那会把一个配置疏漏静默变成一次越权，
     宁可让调用方显式拿到未就绪。
+
+    **传输层**：``settings.llm_transport`` 为 ``python``（默认）时返回
+    :class:`OpenAICompatibleProvider`，与改造前完全一致；为 ``go`` 且 Go 侧车可用时
+    返回 :class:`GoTransportProvider`（HTTP/SSE/多模态在侧车，编排与统计仍在 Python）。
+    侧车不可用时按 ``settings.llm_transport_fallback`` 处理：默认回退到 Python provider
+    并留 WARN 日志；关掉回退则返回 ``None``，让「不就绪」显式暴露出来。
     """
     if not settings.configured:
         return None
     if not inference_key.strip():
         return None
+    resolved_workspace = workspace or settings.workspace
+    if settings.uses_go_transport:
+        sidecar = get_sidecar(
+            binary=settings.llm_transport_binary,
+            port=settings.llm_transport_port,
+        )
+        if sidecar is not None:
+            return GoTransportProvider(
+                sidecar_url=sidecar.base_url,
+                sidecar_token=sidecar.token,
+                base_url=settings.base_url,
+                api_key=inference_key,
+                timeout_seconds=settings.timeout_seconds,
+                workspace=resolved_workspace,
+                sidecar=sidecar,
+            )
+        if not settings.llm_transport_fallback:
+            LOG.error(
+                "LLM 传输层配置为 go，但 Go 侧车不可用且已禁用回退（llm_transport_fallback=false）。"
+                "请先运行 `python scripts/build_llm_transport.py`，"
+                "或把 llm_transport 改回 python。"
+            )
+            return None
+        LOG.warning("LLM 传输层配置为 go，但 Go 侧车不可用：已回退到 Python 传输层")
     return OpenAICompatibleProvider(
         base_url=settings.base_url,
         api_key=inference_key,
         timeout_seconds=settings.timeout_seconds,
-        workspace=workspace or settings.workspace,
+        workspace=resolved_workspace,
     )
 
 
@@ -249,7 +282,7 @@ class EngineRuntime:
             LOG.warning("引擎未就绪: 引擎初始化失败: %s", exc)
             return False
 
-    def _build_provider(self) -> OpenAICompatibleProvider | None:
+    def _build_provider(self) -> AsyncLLMProvider | None:
         """按 AMKR 连接配置构建 provider。
 
         配置来自 ``global_config.json``，环境变量优先；工作空间取本 persona 的
@@ -258,6 +291,8 @@ class EngineRuntime:
         凭据用该空间的**推理 key**（不是 ``settings.api_key``）。这把 key 被 AMKR
         钉死在这个空间上，因此它在模型调用路径上即使泄漏也换不来别的空间，更做不了
         管理操作。空间还没有推理 key 时返回 ``None``（不就绪），不回落。
+
+        返回的可能是传输层在 Go 侧车的 provider；两者对调用方是同一个接口。
         """
         settings = load_amkr_settings(self.global_data_path)
         workspace = workspace_for(settings, self.work_path.name)
