@@ -453,6 +453,40 @@ def test_engine_proxy_when_unbound_or_bound_then_persona_and_lookup_defaults_are
     }
 
 
+@pytest.mark.asyncio
+async def test_a_plugin_can_draw_with_her_own_reference_images(tmp_path):
+    """插件生图：走 image_generate 任务名，带上人格自己的形象图（三视图排在前面）。"""
+    from sirius_pulse.providers.base import ImageGenerationResult
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "extra.png").write_bytes(b"extra")
+    (assets / "turnaround.png").write_bytes(b"sheet")
+    (assets / "notes.txt").write_text("不是图片", encoding="utf-8")
+    requests = []
+
+    async def generate_image_async(request):
+        requests.append(request)
+        return ImageGenerationResult(image_bytes=b"png", mime_type="image/png")
+
+    engine = SimpleNamespace(
+        identity_resolver=None,
+        user_manager=None,
+        brain=SimpleNamespace(
+            persona_assets_dir=assets, generate_image_async=generate_image_async
+        ),
+    )
+    proxy = PluginContext.create(engine=engine, plugin_name="demo").engine
+
+    references = proxy.get_persona_reference_images(limit=1)
+    result = await proxy.generate_image("月光下的猫", reference_images=references)
+
+    assert references == [("turnaround.png", b"sheet")]
+    assert result == {"image_bytes": b"png", "mime_type": "image/png"}
+    assert requests[0].model == "image_generate" and requests[0].prompt == "月光下的猫"
+    assert PluginContext.create(plugin_name="demo").engine.get_persona_reference_images() == []
+
+
 def test_plugin_config_manager_when_workspaces_differ_then_managers_are_not_shared(tmp_path):
     first = get_config_manager(tmp_path / "first")
     second = get_config_manager(tmp_path / "second")

@@ -326,6 +326,64 @@ class EngineProxy:
             return (reasoning, reply)
         return reply
 
+    async def generate_image(
+        self,
+        prompt: str,
+        *,
+        reference_images: list[tuple[str, bytes]] | None = None,
+        timeout_seconds: float = 300.0,
+    ) -> dict[str, Any]:
+        """让 AMKR 画一张图，返回 ``{"image_bytes": bytes, "mime_type": str}``。
+
+        与 ``image_generate`` Tool 的直接生图同一条路：任务名固定 ``image_generate``，
+        有参考图走编辑端点，没有走文生图端点。这里**不**接受真实人物的受管参考图——
+        那要走视觉资产系统的授权与审计；插件只该传自己有权使用的图（比如人格自己的
+        形象图，见 :meth:`get_persona_reference_images`）。调用频率由插件自己限额。
+        """
+        if self._engine is None:
+            raise RuntimeError("引擎未绑定，无法生图")
+        from sirius_pulse.providers.base import ImageGenerationRequest
+
+        request = ImageGenerationRequest(
+            model="image_generate",
+            prompt=prompt,
+            reference_images=list(reference_images or []),
+            timeout_seconds=timeout_seconds,
+        )
+        started = time.perf_counter()
+        result = await self._engine.brain.generate_image_async(request)
+        logger.info(
+            "[plugin:%s] 生图完成：%d 张参考图，%.1f 秒",
+            self._plugin_name,
+            len(request.reference_images),
+            time.perf_counter() - started,
+        )
+        return {"image_bytes": result.image_bytes, "mime_type": result.mime_type}
+
+    def get_persona_reference_images(
+        self, limit: int = 3, max_bytes: int = 20 * 1024 * 1024
+    ) -> list[tuple[str, bytes]]:
+        """人格自己的形象参考图（``{persona}/assets/``），按三视图、正视图优先排序。
+
+        给插件生图时保持她的长相与服装一致用。读不到、太大的图直接跳过。
+        """
+        if self._engine is None:
+            return []
+        from sirius_pulse.utils.persona_assets import collect_persona_assets
+
+        brain = getattr(self._engine, "brain", None)
+        images: list[tuple[str, bytes]] = []
+        for asset in collect_persona_assets(getattr(brain, "persona_assets_dir", None)):
+            if len(images) >= max(0, limit):
+                break
+            try:
+                if asset.path.stat().st_size > max_bytes:
+                    continue
+                images.append((asset.path.name, asset.path.read_bytes()))
+            except OSError:
+                continue
+        return images
+
     def get_persona_name(self) -> str:
         """获取当前人格名称。"""
         if self._engine is None:
