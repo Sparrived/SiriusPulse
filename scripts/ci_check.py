@@ -4,10 +4,15 @@ CI/CD 检查脚本
 
 该脚本执行代码质量检查、类型检查和测试，确保代码符合项目标准。
 可在 CI/CD 流程中或本地开发时使用。
+
+Go 侧车是**必需**的 LLM 传输实现（Python 侧已没有第二套），因此 Go 工具链、
+侧车单测与二进制构建都是必需步骤，缺任何一项都算失败；二进制必须在 pytest
+之前产出，否则依赖侧车的 E2E 用例会整组跳过，看起来却像是通过。
 """
 
 from __future__ import annotations
 
+import platform
 import shutil
 import subprocess
 import sys
@@ -17,6 +22,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SIRIUS_CHAT = PROJECT_ROOT / "sirius_pulse"
 TESTS = PROJECT_ROOT / "tests"
+GO_MODULE = PROJECT_ROOT / "go" / "llm-transport"
+# 侧车二进制的落点必须与 sirius_pulse/utils/llm_sidecar.py 一致：
+# PROJECT_ROOT / DEFAULT_BINARY_DIR / BINARY_NAME（非 Windows 没有 .exe 后缀）。
+LLM_TRANSPORT_BINARY = GO_MODULE / "bin" / (
+    "llm-transport.exe" if platform.system() == "Windows" else "llm-transport"
+)
 
 
 def run_command(cmd: list[str], description: str, *, optional: bool = False) -> bool:
@@ -52,6 +63,20 @@ def run_command(cmd: list[str], description: str, *, optional: bool = False) -> 
     except Exception as e:
         print(f"✗ 运行失败: {e}\n")
         return False if not optional else True
+
+
+def report_missing(description: str) -> bool:
+    """
+    报告一项无法执行、且不允许跳过的检查。
+
+    Args:
+        description: 缺了什么、怎么补
+
+    Returns:
+        永远为 False，便于写成 ``all_passed &= report_missing(...)``
+    """
+    print(f"\n✗ {description}\n")
+    return False
 
 
 def main() -> int:
@@ -98,29 +123,55 @@ def main() -> int:
         optional=True
     )
 
-    # 6. 单元测试（必须）
+    # 6. Go 侧车（必需：Python 侧的传输实现已全部删除，没有二进制应用就起不来）
+    go_binary = shutil.which("go")
+    if not go_binary:
+        all_passed &= report_missing(
+            "未找到 go 可执行文件：请安装 Go 1.24+ 并加入 PATH"
+            "（侧车是唯一的传输实现，缺工具链不能跳过）"
+        )
+    elif not (GO_MODULE / "go.mod").is_file():
+        all_passed &= report_missing(f"未找到 Go 模块：{GO_MODULE / 'go.mod'}")
+    else:
+        all_passed &= run_command(
+            [go_binary, "-C", str(GO_MODULE), "vet", "./..."],
+            "go vet（LLM 传输侧车）",
+        )
+        all_passed &= run_command(
+            [go_binary, "-C", str(GO_MODULE), "test", "./...", "-count=1"],
+            "go test（LLM 传输侧车）",
+        )
+        # 二进制必须在 pytest 之前产出：找不到侧车的 E2E 用例会整组跳过，
+        # 而「跳过」和「通过」在只看退出码的流水线上长得一样。
+        LLM_TRANSPORT_BINARY.parent.mkdir(parents=True, exist_ok=True)
+        all_passed &= run_command(
+            [
+                go_binary,
+                "-C",
+                str(GO_MODULE),
+                "build",
+                "-trimpath",
+                "-o",
+                str(LLM_TRANSPORT_BINARY),
+                "./cmd/llm-transport",
+            ],
+            "go build（产出 LLM 传输侧车二进制）",
+        )
+        if LLM_TRANSPORT_BINARY.is_file():
+            size_kb = LLM_TRANSPORT_BINARY.stat().st_size / 1024
+            print(
+                "✓ 侧车二进制已就位："
+                f"{LLM_TRANSPORT_BINARY.relative_to(PROJECT_ROOT)}（{size_kb:.0f} KB）\n"
+            )
+        else:
+            all_passed &= report_missing(f"go build 没有产出二进制：{LLM_TRANSPORT_BINARY}")
+
+    # 7. 单元测试（必须；含需要侧车二进制的 E2E 用例）
     all_passed &= run_command(
         ["python", "-m", "pytest", "-q", "--tb=short"],
         "pytest 单元测试",
         optional=False
     )
-
-    # 7. Go 侧车检查（可选：缺 Go 工具链或未检出侧车模块时跳过）
-    go_module = PROJECT_ROOT / "go" / "llm-transport"
-    go_binary = shutil.which("go")
-    if go_binary and (go_module / "go.mod").is_file():
-        all_passed &= run_command(
-            [go_binary, "-C", str(go_module), "vet", "./..."],
-            "go vet（LLM 传输侧车）",
-            optional=True,
-        )
-        all_passed &= run_command(
-            [go_binary, "-C", str(go_module), "test", "./...", "-count=1"],
-            "go test（LLM 传输侧车）",
-            optional=True,
-        )
-    else:
-        print("\n⚠ 未检测到 Go 工具链或 go/llm-transport 模块，跳过 Go 侧车检查\n")
 
     # 8. 测试覆盖率（可选）
     all_passed &= run_command(

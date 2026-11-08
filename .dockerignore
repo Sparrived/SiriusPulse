@@ -22,3 +22,6 @@ docs/
 .idea/
 .env
 .env.*
+# 宿主机构建出来的侧车二进制：镜像由 go-build 阶段自己编译，
+# 本地产物（含 Windows 的 .exe）不该送进构建上下文。
+go/llm-transport/bin/

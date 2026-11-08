@@ -1,18 +1,21 @@
 """把 LLM 的传输层交给 Go 侧车（``go/llm-transport``）的 provider。
 
-契约见 ``go/llm-transport/CONTRACT.md``。这一层只做三件事：
+契约见 ``go/llm-transport/CONTRACT.md``。这一层只做四件事：
 
 1. 把 :class:`GenerationRequest` 翻成契约 §2 的报文（``upstream`` + ``request``）。
    ``messages`` **原样**交给侧车——本地图片转 data URL、超大图降采样都在 Go 侧做，
    Python 这条路径上不再碰图片字节；
 2. 把契约 §3 的成功响应还原成 :class:`GenerationResult`，并把 ``usage`` 原样交给
    ``set_last_generation_usage``（token 记账仍全部留在 Python）；
-3. 把契约 §6 的错误码映射回本仓库既有的四类 ``ProviderError``。
+3. 把契约 §6 的错误码映射回本仓库既有的四类 ``ProviderError``；
+4. 生图与图像编辑走契约 §5.1 的 ``POST /v1/generate-image``：只发任务名、prompt
+   与参考图字节，端点选择、``edits`` 的「先 multipart 后 JSON」回退、浏览器 UA
+   与 mime 判定全在侧车。
 
 **不重试**：重试归 ``Brain``。传输层换了，编排与失败策略一行都没变，这也是这次
 迁移的边界——Go 只做 HTTP + SSE 聚合 + 多模态内联。
 
-与 :class:`OpenAICompatibleProvider` 相比还有两处刻意的差别：
+与改造前相比还有两处刻意的差别：
 
 - **长生命周期的 httpx 客户端**。原实现每个请求新建一次 client，握手与连接池都白
   扔掉；这里持有到 :meth:`aclose` 为止。
@@ -24,6 +27,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import threading
@@ -50,7 +54,6 @@ from sirius_pulse.providers.base import (
     resolve_generation_timeout_seconds,
     set_last_generation_usage,
 )
-from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 
 if TYPE_CHECKING:
     from sirius_pulse.utils.llm_sidecar import LLMSidecar
@@ -76,12 +79,12 @@ _ERR_UPSTREAM_TIMEOUT = "UPSTREAM_TIMEOUT"
 class GoTransportProvider(AsyncLLMProvider):
     """传输在 Go 侧车、编排在 Python 的 provider。
 
-    入参出参与 :class:`OpenAICompatibleProvider` 完全一致（同样的
-    ``GenerationRequest`` / ``GenerationResult`` / 异常类型），所以 ``Brain``、
-    ``cognition`` 这些调用方不需要知道自己拿到的是哪种传输层。
+    入参出参与迁移前的 Python 传输层完全一致（同样的 ``GenerationRequest`` /
+    ``GenerationResult`` / 异常类型），所以 ``Brain``、``cognition`` 这些调用方
+    不需要知道自己拿到的是哪种传输层。
 
-    生图端点不在契约 v1 覆盖范围内，仍委托给内部的
-    :class:`OpenAICompatibleProvider`：换传输层不该减少能力。
+    对话补全（契约 §2）与生图（契约 §5.1）都在侧车里：Python 这条路径上不再有
+    任何直连 AMKR 的 HTTP 代码。
     """
 
     _provider_name = "go-transport"
@@ -108,7 +111,6 @@ class GoTransportProvider(AsyncLLMProvider):
         self._client: httpx.AsyncClient | None = None
         self._client_loop: asyncio.AbstractEventLoop | None = None
         self._client_lock = threading.Lock()
-        self._image_provider: OpenAICompatibleProvider | None = None
 
     # ── 对外接口 ──────────────────────────────────────────────
 
@@ -171,7 +173,7 @@ class GoTransportProvider(AsyncLLMProvider):
             self._raise_for_sidecar_error(
                 response.status_code,
                 raw,
-                request=request,
+                model=request.model,
                 url=url,
             )
         result = self._parse_generation_body(
@@ -183,7 +185,7 @@ class GoTransportProvider(AsyncLLMProvider):
 
         # 契约 §4.6（v1.1）：空响应**不再由侧车判定**——侧车照样回 200 + 空 content，
         # 是否算失败属于业务语义，由这里决定。`return_reasoning=True` 只取思维链是合法
-        # 场景，不能因为正文为空就报错。判定形式与 OpenAICompatibleProvider 保持一致。
+        # 场景，不能因为正文为空就报错。
         if not result.content and not result.tool_calls and not return_reasoning:
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
@@ -206,21 +208,59 @@ class GoTransportProvider(AsyncLLMProvider):
         return result
 
     async def generate_image_async(self, request: ImageGenerationRequest) -> ImageGenerationResult:
-        """生图仍走 Python 传输层（契约只覆盖对话补全，不含生图端点）。
+        """把一次生图 / 图像编辑交给侧车（契约 §5.1）。
 
-        共用同一份 AMKR 地址、工作空间与推理 key；内部 provider 直到第一次生图时
-        才创建，纯聊天场景不会多一个客户端。
+        端点选择、``edits`` 的「先 multipart 后 JSON」回退、浏览器 UA、``b64_json``
+        与 url 下载的取舍、mime 判定都在侧车里；这里只发任务名、prompt 与参考图
+        **字节**——参考图来自内存里的表情库与用户上传，不保证有可读的本地路径。
+
+        超时是**整请求总超时**（契约 §5.1.2）：与迁移前一致，下限 120 秒。
         """
-        provider = self._image_provider
-        if provider is None:
-            provider = OpenAICompatibleProvider(
-                base_url=self._base_url,
-                api_key=self._api_key,
-                timeout_seconds=self._timeout_seconds,
-                workspace=self._workspace,
+        timeout_seconds = request.timeout_seconds or max(float(self._timeout_seconds), 120.0)
+        base_url, token = self._resolve_endpoint()
+        url = f"{base_url}/v1/generate-image"
+        payload = self._build_image_payload(request, timeout_seconds)
+
+        logger.info(
+            f"正在通过 LLM 传输层向 {request.model} 要一张图，"
+            f"参考图 {len(request.reference_images)} 张，超时 {timeout_seconds:.1f} 秒～"
+        )
+        try:
+            response = await self._ensure_client().post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
             )
-            self._image_provider = provider
-        return await provider.generate_image_async(request)
+        except httpx.HTTPError as exc:
+            logger.error(
+                f"[生图失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"| {type(exc).__name__}: {exc or '(无详细信息)'}",
+                exc_info=True,
+            )
+            raise ProviderConnectionError(
+                self._provider_name,
+                f"生图请求异常：{exc}",
+                original_error=exc,
+            ) from exc
+
+        raw = response.text
+        if response.status_code >= 400:
+            self._raise_for_sidecar_error(
+                response.status_code,
+                raw,
+                model=request.model,
+                url=url,
+                label="[生图失败]",
+            )
+        return self._parse_image_body(
+            raw,
+            model=request.model,
+            status_code=response.status_code,
+            url=url,
+        )
 
     async def aclose(self) -> None:
         """关闭长生命周期的 HTTP 客户端。
@@ -279,6 +319,34 @@ class GoTransportProvider(AsyncLLMProvider):
             },
         }
 
+    def _build_image_payload(
+        self, request: ImageGenerationRequest, timeout_seconds: float
+    ) -> dict[str, object]:
+        """构造契约 §5.1.1 的报文。
+
+        参考图只传**字节**：它们来自内存里的表情库 / 用户上传，不保证有可读的本地
+        路径（契约 §5.1.1）。``filename`` 仅供侧车兜底推断 mime。
+        """
+        return {
+            "upstream": {
+                "base_url": self._base_url,
+                "api_key": self._api_key,
+                "workspace": self._workspace,
+                "timeout_seconds": _wire_timeout_seconds(timeout_seconds),
+            },
+            "request": {
+                "model": request.model,
+                "prompt": request.prompt,
+                "reference_images": [
+                    {
+                        "filename": filename,
+                        "data_base64": base64.b64encode(data).decode("ascii"),
+                    }
+                    for filename, data in request.reference_images
+                ],
+            },
+        }
+
     def _parse_generation_body(
         self,
         raw: str,
@@ -310,7 +378,7 @@ class GoTransportProvider(AsyncLLMProvider):
             )
 
         usage = data.get("usage")
-        # 契约要求原样透传；上游 ``usage: {}`` 视为没有（与 OpenAICompatibleProvider 一致）。
+        # 契约要求原样透传；上游 ``usage: {}`` 视为没有（与迁移前一致）。
         set_last_generation_usage(dict(usage) if isinstance(usage, dict) and usage else None)
 
         content = data.get("content")
@@ -341,6 +409,61 @@ class GoTransportProvider(AsyncLLMProvider):
             )
         return parsed or None
 
+    def _parse_image_body(
+        self,
+        raw: str,
+        *,
+        model: str,
+        status_code: int,
+        url: str,
+    ) -> ImageGenerationResult:
+        """解析契约 §5.1.3 的成功响应，把 ``image_base64`` 解回原始字节。"""
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                f"[生图失败] {model} | Provider: {self._provider_name} | URL: {url} "
+                f"| 传输层响应 JSON 解析失败: {exc} | raw: {raw[:200]}"
+            )
+            raise ProviderResponseError(
+                self._provider_name,
+                f"生图接口响应无法解析为 JSON：{exc}",
+                http_status=status_code,
+                response_body=raw,
+            ) from exc
+        encoded = data.get("image_base64") if isinstance(data, dict) else None
+        if not isinstance(encoded, str) or not encoded:
+            logger.error(
+                f"[生图失败] {model} | Provider: {self._provider_name} | URL: {url} "
+                f"| 响应里没有 image_base64 | raw: {raw[:200]}"
+            )
+            raise ProviderResponseError(
+                self._provider_name,
+                "生图接口没有返回图片数据。",
+                http_status=status_code,
+                response_body=raw,
+            )
+        try:
+            # 严格解码：侧车给的必须是**原始字节**的 base64，掺了杂字符说明响应已被改坏。
+            image_bytes = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise ProviderResponseError(
+                self._provider_name,
+                f"生图接口返回的 image_base64 无法解码：{exc}",
+                http_status=status_code,
+                response_body=raw,
+            ) from exc
+        if not image_bytes:
+            raise ProviderResponseError(
+                self._provider_name,
+                "生图接口返回了空图片。",
+                http_status=status_code,
+                response_body=raw,
+            )
+        mime_type = str(data.get("mime_type") or "").strip() or "image/png"
+        logger.info(f"{self._provider_name} 的画好了：{mime_type}，{len(image_bytes)} 字节")
+        return ImageGenerationResult(image_bytes=image_bytes, mime_type=mime_type)
+
     # ── 内部：错误映射（契约 §6）──────────────────────────────
 
     def _raise_for_sidecar_error(
@@ -348,8 +471,9 @@ class GoTransportProvider(AsyncLLMProvider):
         status_code: int,
         raw: str,
         *,
-        request: GenerationRequest,
+        model: str,
         url: str,
+        label: str = "[模型调用失败]",
     ) -> NoReturn:
         """把侧车的错误响应翻成本仓库既有的四类 provider 异常。
 
@@ -359,7 +483,7 @@ class GoTransportProvider(AsyncLLMProvider):
         error = _read_error_payload(raw)
         if error is None:
             logger.error(
-                f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"{label} {model} | Provider: {self._provider_name} | URL: {url} "
                 f"| HTTP {status_code}: {raw[:500]}"
             )
             detail = raw[:200]
@@ -387,7 +511,7 @@ class GoTransportProvider(AsyncLLMProvider):
         )
         http_status = _error_http_status(error, status_code)
         logger.error(
-            f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+            f"{label} {model} | Provider: {self._provider_name} | URL: {url} "
             f"| {error_code or '(未知错误码)'} | HTTP {http_status}: {message}"
         )
 

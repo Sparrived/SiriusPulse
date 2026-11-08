@@ -2,6 +2,21 @@ ARG SIRIUS_ENV_CACHE_IMAGE=environment
 ARG SIRIUS_BROWSER_CACHE_IMAGE=browser-empty
 ARG SIRIUS_ENV_CACHE_KEY
 
+# LLM 传输侧车（Go）。Python 侧已经没有任何传输实现，镜像里缺这个二进制应用就起不来，
+# 所以它和 Python 依赖一样是构建期必需产物，而不是可选组件。构建参数与
+# scripts/build_llm_transport.py 保持一致（-trimpath、./cmd/llm-transport）；关掉 CGO
+# 是为了拿到静态链接的二进制，运行阶段的基础镜像与 glibc 版本因而无关紧要。
+# 侧车只依赖标准库，这一步不需要网络（除拉取本阶段基础镜像）。
+FROM golang:1.24.2-bookworm AS go-build
+
+ENV CGO_ENABLED=0
+
+WORKDIR /build
+
+COPY go/llm-transport/ ./
+
+RUN go build -trimpath -o /out/llm-transport ./cmd/llm-transport
+
 FROM python:3.12-slim AS browser-empty
 
 RUN mkdir -p /ms-playwright
@@ -57,6 +72,10 @@ RUN rm -rf /app/sirius_pulse /app/sirius_pulse.egg-info \
     && mkdir -p /app/plugins \
     && chown sirius:sirius /app /app/plugins
 COPY --chown=sirius:sirius sirius_pulse ./sirius_pulse
+# 侧车二进制必须落在 sirius_pulse/utils/llm_sidecar.py 推导出的位置：
+# PROJECT_ROOT（= /app）/ DEFAULT_BINARY_DIR（go/llm-transport/bin）/ BINARY_NAME，
+# 而 Linux 下 BINARY_NAME 是 llm-transport，没有 .exe 后缀。换路径等于让镜像找不到侧车。
+COPY --from=go-build --chown=sirius:sirius /out/llm-transport /app/go/llm-transport/bin/llm-transport
 USER sirius
 RUN uv sync --frozen --no-dev
 

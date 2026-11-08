@@ -1,8 +1,10 @@
-// Package server 提供 sidecar 的两个端点：POST /v1/generate 与 GET /health。
+// Package server 提供 sidecar 的三个端点：POST /v1/generate、POST /v1/generate-image
+// 与 GET /health。
 package server
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -47,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /v1/generate", s.authorize(s.handleGenerate))
+	mux.HandleFunc("POST /v1/generate-image", s.authorize(s.handleGenerateImage))
 	return mux
 }
 
@@ -80,7 +83,7 @@ func (s *Server) handleGenerate(writer http.ResponseWriter, request *http.Reques
 		s.reject(writer, "请求体不是合法 JSON："+err.Error(), started)
 		return
 	}
-	if validationErr := validateGenerateRequest(&payload); validationErr != "" {
+	if validationErr := validateUpstream(payload.Upstream); validationErr != "" {
 		s.reject(writer, validationErr, started)
 		return
 	}
@@ -114,6 +117,44 @@ func (s *Server) handleGenerate(writer http.ResponseWriter, request *http.Reques
 	s.logf("调用成功 | model=%s | purpose=%s | path=%s | 内容 %d 字 | 工具调用 %d | 图片内联 %d | %.1fms",
 		payload.Request.Model, payload.Request.Purpose, result.Path,
 		len([]rune(result.Content)), len(result.ToolCalls), conversions, result.UpstreamMs)
+}
+
+// handleGenerateImage 是 POST /v1/generate-image 的入口（契约 §5.1/§6）。
+func (s *Server) handleGenerateImage(writer http.ResponseWriter, request *http.Request) {
+	started := time.Now()
+	var payload contract.GenerateImageRequest
+	decoder := json.NewDecoder(request.Body)
+	if err := decoder.Decode(&payload); err != nil {
+		s.reject(writer, "请求体不是合法 JSON："+err.Error(), started)
+		return
+	}
+	if validationErr := validateUpstream(payload.Upstream); validationErr != "" {
+		s.reject(writer, validationErr, started)
+		return
+	}
+
+	result, err := s.Client.GenerateImage(request.Context(), &payload)
+	if err != nil {
+		upstreamErr := asUpstreamError(err)
+		s.writeError(writer, upstreamErr)
+		s.logf("生图失败 | model=%s | 参考图 %d 张 | status=%d | error=%s | %s | %.1fms",
+			payload.Request.Model, len(payload.Request.ReferenceImages), upstreamErr.HTTPStatus,
+			upstreamErr.Code, upstreamErr.Message, elapsedMilliseconds(started))
+		return
+	}
+
+	s.writeJSON(writer, http.StatusOK, contract.GenerateImageResponse{
+		ImageBase64: base64.StdEncoding.EncodeToString(result.ImageBytes),
+		MimeType:    result.MimeType,
+		Transport: contract.ImageTransport{
+			Endpoint:   result.Endpoint,
+			Downloaded: result.Downloaded,
+			UpstreamMs: result.UpstreamMs,
+		},
+	})
+	s.logf("生图成功 | model=%s | endpoint=%s | %s | %d 字节 | 下载=%t | %.1fms",
+		payload.Request.Model, result.Endpoint, result.MimeType, len(result.ImageBytes),
+		result.Downloaded, result.UpstreamMs)
 }
 
 // reject 输出 INVALID_REQUEST（契约 §6 的 400 行）。
@@ -157,15 +198,15 @@ func (s *Server) logf(format string, args ...any) {
 	}
 }
 
-// validateGenerateRequest 校验契约 §6 中 400 的三类条件。
-func validateGenerateRequest(payload *contract.GenerateRequest) string {
-	if strings.TrimSpace(payload.Upstream.BaseURL) == "" {
+// validateUpstream 校验两类端点共用的 400 条件（契约 §6）。
+func validateUpstream(config contract.Upstream) string {
+	if strings.TrimSpace(config.BaseURL) == "" {
 		return "缺少 upstream.base_url。"
 	}
-	if strings.TrimSpace(payload.Upstream.APIKey) == "" {
+	if strings.TrimSpace(config.APIKey) == "" {
 		return "缺少 upstream.api_key。"
 	}
-	if payload.Upstream.TimeoutSeconds <= 0 {
+	if config.TimeoutSeconds <= 0 {
 		return "upstream.timeout_seconds 必须大于 0。"
 	}
 	return ""

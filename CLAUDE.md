@@ -8,6 +8,8 @@ Sirius Pulse (灵动月白) is an async roleplay chat framework for QQ group cha
 
 All LLM traffic goes through **AMKR** (`auto-model-key-router`), an external local OpenAI-compatible router that owns vendors, API key pools, model selection and sampling parameters. Sirius Pulse sends **task names** (e.g. `response_generate`, `memory_extract`) as the `model` field and AMKR resolves them into real models.
 
+The only transport implementation is the Go sidecar (`go/llm-transport/`, pure stdlib, contract in `go/llm-transport/CONTRACT.md`). Python has no HTTP/SSE transport of its own, so build the binary first — `python scripts/build_llm_transport.py` — or nothing can talk to AMKR.
+
 Python 3.12+. Package name: `sirius-pulse`. MIT license.
 
 ## Commands
@@ -19,6 +21,15 @@ uv pip install -e ".[dev,test,provider,quality]"
 # Or without uv
 pip install -e ".[dev,test,provider,quality]"
 ```
+
+### Go sidecar (LLM transport, required)
+```bash
+python scripts/build_llm_transport.py           # → go/llm-transport/bin/llm-transport[.exe]; not committed
+python scripts/build_llm_transport.py --test    # go vet + go test, then build
+go -C go/llm-transport vet ./...                # Go checks only
+go -C go/llm-transport test ./... -count=1
+```
+`run` is not ready without this binary: there is no Python transport left to fall back to. Go 1.24+ is required and `go/llm-transport/` uses only the standard library, so the build works offline. Docker compiles it in the separate `go-build` stage.
 
 ### Run
 ```bash
@@ -40,6 +51,8 @@ There is no interactive TUI: `python main.py` with no subcommand prints help.
 
 pytest config: `testpaths=["tests"]`, `asyncio_mode="strict"` (in pyproject.toml).
 Use the project venv — the system Python lacks runtime deps such as `mcp`.
+E2E tests that boot the Go sidecar need the binary and Go 1.24+: run
+`python scripts/build_llm_transport.py` first (Docker and `scripts/ci_check.py` do it for you).
 
 ### Lint & Format
 ```bash
@@ -49,7 +62,7 @@ isort --check-only sirius_pulse tests        # Import order check
 isort sirius_pulse tests                     # Auto-sort imports
 flake8 --max-line-length=100 sirius_pulse    # Lint
 mypy sirius_pulse --ignore-missing-imports   # Type check (advisory)
-python scripts/ci_check.py                   # Full CI check pipeline
+python scripts/ci_check.py                   # Full CI check pipeline (Go 1.24+ required: builds the sidecar)
 ```
 
 Style: black profile, line-length=100, target Python 3.12, Google-style docstrings.
@@ -93,7 +106,7 @@ CLI (cli.py) ──→ _cmd_run() — 同进程 asyncio 任务，每个人格一
 ### Key Module Boundaries
 
 - **`sirius_pulse/core/`** — The engine brain. `EmotionalGroupChatEngine` is a final class composed via mixins (`engine_core.py` for init/lifecycle, `pipeline.py` for the 5-stage pipeline, `bg_tasks.py` for background tasks, `helpers.py` for tool/plugin integration). Don't mix provider-specific logic into core.
-- **`sirius_pulse/providers/`** — The only LLM boundary. `OpenAICompatibleProvider` (`openai_compatible.py`) points at AMKR; `amkr.py` parses the connection config; `amkr_sync.py` registers task names into AMKR. There are no vendor implementations and no local routing registry — adding one back is a regression. Optional second transport: `go_transport.py` hands the HTTP/SSE-aggregation/multimodal work to a Go sidecar (`go/llm-transport/`, wire contract in `go/llm-transport/CONTRACT.md`); it stays off unless `llm_transport` is set to `go` in `global_config.json`, and orchestration/retries/token accounting always stay in Python.
+- **`sirius_pulse/providers/`** — The only LLM boundary, and it has exactly one transport: `GoTransportProvider` (`go_transport.py`) bridges every completion, multimodal and image-generation call to the Go sidecar (`go/llm-transport/`, wire contract in `go/llm-transport/CONTRACT.md`). `base.py` holds the `LLMProvider` / `AsyncLLMProvider` protocols plus the request/result models, `mock.py` is test-only, `amkr.py` parses the connection config, `amkr_sync.py` registers task names into AMKR. **There is no Python transport implementation**: HTTP calls, SSE aggregation, multimodal inlining and image generation all happen in the sidecar, while orchestration, retries and token accounting stay in Python. Adding a Python transport (or vendor implementations / a local routing registry) back is a regression.
 - **`sirius_pulse/adapters/`** — Platform-agnostic message types (`TextSegment`, `ImageSegment`, `MessageGroup`, etc. in `models.py`) and `BaseAdapter` abstract class.
 - **`sirius_pulse/platforms/`** — Concrete platform implementations. Currently only OneBot v11 via NapCat (`platforms/onebot_v11/napcat/adapter.py`). `runtime.py` bridges platform adapters to the engine.
 - **`sirius_pulse/memory/`** — Layered memory: basic (retains the raw tail until a checkpoint memory unit covers it; compaction triggers above `DEFAULT_BASIC_MEMORY_CHECKPOINT_TOKEN_TRIGGER` and drains to `..._TARGET`, after which the covered raw entries leave the window and only memory units are retrieved; `DEFAULT_BASIC_MEMORY_HARD_LIMIT` is only a RAM safety ceiling above that trigger, and `DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET` caps what the chat prompt injects), memory_units (LLM-extracted structured units: metadata in per-group JSON, vectors packed into float32 sidecars under `memory_units/vectors/`, retrieved by RAG through an in-memory index that hydrates vectors only for units that can be injected), semantic (vector search at group/user/global levels), user (unified identity resolution), impressions (her first-person impression of each regular: summary, shared history, follow-ups and warmth, synthesized in the background from group-chat memory units by the `person_impression` task and injected for the speaker/mentioned people each turn). There is no biography/diary/evolution-chain subsystem; `memory/life/` (her daily plan, projects and work files, and a small self-note overwritten nightly) is a life loop, not a memory pipeline — it never extracts facts about other people.

@@ -1,8 +1,9 @@
 """LLM 传输侧车（Go）的进程生命周期。
 
-侧车是可选的：只有 ``data/global_config.json`` 里 ``llm_transport`` 配成 ``go``
-时才会被拉起。它只承担「对 AMKR 的 HTTP 调用 + SSE 聚合 + 多模态内联」，prompt
-组装、工具循环、重试、兜底任务与 token 记账仍全部留在 Python。
+侧车是**唯一**的传输实现——Python 侧既不做对话补全的 HTTP/SSE 聚合，也不做生图，
+因此它由 ``_cmd_run`` 无条件拉起，没有开关。它只承担「对 AMKR 的 HTTP 调用 +
+SSE 聚合 + 多模态内联 + 生图」，prompt 组装、工具循环、重试、兜底任务与 token
+记账仍全部留在 Python。
 
 进程与网络这一侧的约定见 ``go/llm-transport/CONTRACT.md`` §1：
 
@@ -18,8 +19,9 @@
 - **重启权在 Python**。契约明确 Go 侧不做自动重启，崩溃后的重启发生在
   :meth:`LLMSidecar.ensure_running`：它在每次生成前被调用，存活检查只是一次
   ``poll()``，只有进程真的死了才走启动流程。
-- **启动失败不致命**。调用方按 ``llm_transport_fallback`` 决定是否回退到纯 Python
-  传输层；本模块只负责抛 :class:`SidecarError` 并留日志，不替调用方做决定。
+- **启动失败即不就绪**。没有降级路径：调用方（``cli.py``）直接 ``SystemExit(1)``，
+  ``platforms/runtime.py::_build_provider`` 返回 ``None``。本模块只负责抛
+  :class:`SidecarError` 并留日志，不替调用方做决定。
 """
 
 from __future__ import annotations
@@ -82,8 +84,8 @@ STOP_TIMEOUT_SECONDS = 5.0
 class SidecarError(RuntimeError):
     """侧车定位/启动/健康检查失败。
 
-    调用方按 ``llm_transport_fallback`` 决定回退到纯 Python 传输层还是显式失败；
-    本异常只描述「为什么起不来」，不包含任何降级动作。
+    本异常只描述「为什么起不来」，不包含任何降级动作——Python 侧没有可回退的
+    传输实现，失败就是不就绪。
     """
 
 

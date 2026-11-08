@@ -32,6 +32,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
       
+      - name: Set up Go
+        # 侧车是唯一的 LLM 传输实现，构建它需要 Go。版本与 Dockerfile 的
+        # golang:1.24.2 对齐；不用 stable，免得 Go 升大版本时 CI 突然变红。
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          # 侧车模块只用标准库、没有 go.sum，模块缓存没有内容可存。
+          cache: false
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
@@ -39,6 +48,12 @@ jobs:
           # transports and must not trigger plugin dependency installation.
           pip install -e .[test]
       
+      - name: Build LLM transport sidecar
+        # 必须在 pytest 之前：依赖侧车的 E2E 用例找不到二进制会整组 skip，
+        # 而「跳过」在只看退出码的流水线上和通过长得一样。--test 顺带把
+        # go vet 与 go test 纳入 CI。
+        run: python scripts/build_llm_transport.py --test
+
       - name: Run tests with pytest
         run: |
           pytest -q --tb=short --cov=sirius_pulse --cov-report=xml

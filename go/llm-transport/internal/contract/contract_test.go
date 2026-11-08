@@ -149,8 +149,8 @@ func TestVersionMajorIsZero(t *testing.T) {
 // 每次按 CONTRACT.md 升版本时，这里跟着改——它就是「代码版本」与「契约版本」
 // 必须同步的那道闸。
 func TestVersionTracksContract(t *testing.T) {
-	if Version != "0.1.1" {
-		t.Fatalf("version = %q，与契约 §9（1.1 → 侧车 0.1.1）不一致", Version)
+	if Version != "0.2.0" {
+		t.Fatalf("version = %q，与契约 §9（1.2 → 侧车 0.2.0）不一致", Version)
 	}
 }
 

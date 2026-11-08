@@ -1,7 +1,8 @@
 // Command llm-transport 是 Sirius Pulse 的 LLM 传输侧车。
 //
-// 它只做三件事：对 AMKR 发 HTTP 请求、把 SSE 增量聚合成完整回复、把本地图片内联
-// 成 data URL。编排、重试与 token 记账全部留在 Python 侧（契约见 CONTRACT.md）。
+// 它只做四件事：对 AMKR 发 HTTP 请求、把 SSE 增量聚合成完整回复、把本地图片内联
+// 成 data URL、按契约 §5.1 生成/编辑图片。编排、重试与 token 记账全部留在 Python 侧
+// （契约见 CONTRACT.md）。
 package main
 
 import (

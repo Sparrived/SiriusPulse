@@ -1,10 +1,18 @@
 """可编程的假 AMKR：给 LLM 传输层（Go 侧车）端到端用例当上游。
 
-只实现一个端点——``POST /v1/chat/completions``，也就是契约里侧车唯一会打的地址
-（``go/llm-transport/CONTRACT.md`` §4）。场景由 :meth:`FakeAmkr.set_scenario`
-在用例内切换，因此一个假上游就能覆盖「多帧正文 / 思维链 / 分块 tool_calls /
-末尾 usage 帧 / 流内 error 事件 / 坏帧 / 非 SSE 回退 / HTML 200 / 401 / 429 /
-500 / 块间静默超时」这些分支。
+实现侧车真正会打的两组地址：
+
+- **对话补全** ``POST /v1/chat/completions``（契约 §4）。场景由
+  :meth:`FakeAmkr.set_scenario` 在用例内切换，因此一个假上游就能覆盖「多帧正文 /
+  思维链 / 分块 tool_calls / 末尾 usage 帧 / 流内 error 事件 / 坏帧 / 非 SSE 回退 /
+  HTML 200 / 401 / 429 / 500 / 块间静默超时」这些分支。
+- **生图与图像编辑** ``POST /v1/images/generations``（无参考图）与
+  ``POST /v1/images/edits``（有参考图），以及生成图片的 ``GET`` 下载地址
+  （契约 §5.1）。场景由 :meth:`FakeAmkr.set_image_scenario` 切换，覆盖
+  「b64_json / url 下载 / 下载 404 / 下载空内容 / 非法 JSON / 空 data /
+  b64 解码失败 / 空 b64 / edits 4xx 回退 JSON / 401/403/408/429 不回退」。
+
+两条链路各有独立的场景开关，互不干扰：生图用例不会因为聊天的场景名而改变行为。
 
 **为什么用线程内的 ``http.server`` 而不是 aiohttp**：被测对象是一个独立进程，
 它只认 ``127.0.0.1:<port>`` 上的真实 TCP 连接，不需要调用方的事件循环配合；
@@ -15,23 +23,57 @@
 
 from __future__ import annotations
 
+import base64
+import email
 import json
 import sys
 import threading
 import time
 from dataclasses import dataclass
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
-__all__ = ["FakeAmkr", "RecordedRequest", "SSE_CONTENT_TYPE"]
+__all__ = [
+    "BROWSER_USER_AGENT",
+    "FakeAmkr",
+    "IMAGE_SCENARIOS",
+    "JPEG_1PX",
+    "PNG_1PX",
+    "RecordedRequest",
+    "SSE_CONTENT_TYPE",
+]
 
 SSE_CONTENT_TYPE = "text/event-stream"
 JSON_CONTENT_TYPE = "application/json"
+
+#: 契约 §5.1.2/§5.1.4：所有图像请求（含下载）必须带浏览器 UA，上游套了 Cloudflare
+#: 校验，默认 UA 会被 403（error code 1010）。断言写成常量的同一份，任一环节漏带
+#: 都会在用例里直接对不上。
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
 
 #: 上游把「内容策略拦截」的说明文字当正文返回时的识别标记（契约 §4.7）。
 CONTENT_POLICY_TEXT = (
     "Sorry, the prompt could not be submitted because it contains sensitive words."
 )
+
+#: 真 PNG 字节（1×1 透明）：侧车按魔数判 mime，所以不能用只造前缀的假字节。
+PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+)
+
+#: 真 JPEG 字节（1×1 白色）：用来验证「按字节判 mime 而不是按后缀猜」。
+JPEG_1PX = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+    "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA"
+    "AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="
+)
+
+#: 生成图片的下载路径前缀：侧车拿到 ``url`` 后会自己再 GET 一次。
+_DOWNLOAD_PREFIX = "/files/"
 
 
 @dataclass(slots=True)
@@ -41,6 +83,22 @@ class RecordedRequest:
     path: str
     headers: dict[str, str]
     body: bytes
+    method: str = "POST"
+
+    @property
+    def content_type(self) -> str:
+        """``Content-Type`` 原值（multipart 用例要断言它的形态）。"""
+        return self.headers.get("content-type", "")
+
+    @property
+    def user_agent(self) -> str:
+        """``User-Agent`` 原值（契约 §5.1.2 第 4 条）。"""
+        return self.headers.get("user-agent", "")
+
+    @property
+    def is_multipart(self) -> bool:
+        """是否是 multipart/form-data 请求（``edits`` 的「先标准」形态）。"""
+        return self.content_type.startswith("multipart/form-data;")
 
     @property
     def json_body(self) -> dict[str, Any] | None:
@@ -50,6 +108,38 @@ class RecordedRequest:
         except (json.JSONDecodeError, UnicodeDecodeError):
             return None
         return parsed if isinstance(parsed, dict) else None
+
+    def multipart_fields(self) -> dict[str, list[tuple[bytes, str]]]:
+        """把 multipart 请求体拆成 ``{字段名: [(原始字节, 部件声明的 Content-Type)]}``。
+
+        用标准库的 mail 解析器而不是手写分隔符切分：侧车用的 multipart writer 会把
+        字段名、文件名与 Content-Type 都放在部件头里，交给解析器才不会漏掉转义。
+
+        ``image`` 是**重复**的文件字段（契约 §5.1.2 第 3 条明确不许用 ``image[]``），
+        所以值必须是列表，保留到达顺序供用例逐张比对。
+        """
+        if not self.is_multipart:
+            raise AssertionError(f"不是 multipart 请求：{self.content_type!r}")
+        raw = (
+            b"Content-Type: "
+            + self.content_type.encode("latin-1")
+            + b"\r\nMIME-Version: 1.0\r\n\r\n"
+            + self.body
+        )
+        message = email.message_from_bytes(raw)
+        parts = message.get_payload()
+        if not isinstance(parts, list):
+            raise AssertionError("请求体不是 multipart/form-data")
+        fields: dict[str, list[tuple[bytes, str]]] = {}
+        for part in parts:
+            if not isinstance(part, Message):
+                continue
+            name = part.get_param("name", header="content-disposition")
+            payload = part.get_payload(decode=True) or b""
+            if not isinstance(name, str):
+                continue
+            fields.setdefault(name, []).append((payload, part.get_content_type()))
+        return fields
 
 
 class Responder:
@@ -356,11 +446,140 @@ _SCENARIOS: dict[str, Callable[[Any, Responder, RecordedRequest], None]] = {
 }
 
 
+# ── 图像场景（契约 §5.1：``/v1/images/generations`` 与 ``/v1/images/edits``）──
+def _image_result_bytes(amkr: "FakeAmkr") -> bytes:
+    """本次「上游画出来的图」：默认真 PNG，用例可换（如 JPEG 验 mime 判定）。"""
+    configured = amkr.options.get("image_bytes")
+    return configured if isinstance(configured, bytes) else PNG_1PX
+
+
+def _image_mime_of(data: bytes) -> str:
+    """按魔数给下载响应一个诚实的 ``Content-Type``。"""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    return "application/octet-stream"
+
+
+def _image_b64_payload(amkr: "FakeAmkr") -> dict[str, Any]:
+    """契约 §5.1.2 第 6 条的首选形态：``data[0].b64_json``。"""
+    return {"data": [{"b64_json": base64.b64encode(_image_result_bytes(amkr)).decode("ascii")}]}
+
+
+def _image_url_payload(amkr: "FakeAmkr") -> dict[str, Any]:
+    """次选形态：只给 ``url``，由侧车自己再 GET 一次。"""
+    filename = str(amkr.options.get("image_filename") or "result.png")
+    return {"data": [{"url": f"{amkr.base_url}{_DOWNLOAD_PREFIX}{filename}"}]}
+
+
+def _image_b64(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    responder.send_json(200, _image_b64_payload(amkr))
+
+
+def _image_url(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    responder.send_json(200, _image_url_payload(amkr))
+
+
+def _image_download_failing(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    """上游给了链接，但那张图拿不到：下载失败必须报错，不能当成空图。"""
+    responder.send_json(200, _image_url_payload(amkr))
+
+
+def _image_invalid_json(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    """2xx 但正文不是 JSON（反代错误页是典型来源）。"""
+    responder.send(
+        200,
+        b"<html><body>502 Bad Gateway from reverse proxy</body></html>",
+        content_type="text/html",
+    )
+
+
+def _image_empty_data(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    responder.send_json(200, {"data": []})
+
+
+def _image_non_object_item(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    """``data[0]`` 不是对象：与空 data 同类，属于结构异常。"""
+    responder.send_json(200, {"data": ["oops"]})
+
+
+def _image_bad_b64(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    """``b64_json`` 掺了非法字符：严格解码必须失败，而不是丢掉坏字符硬解。"""
+    responder.send_json(200, {"data": [{"b64_json": "@@这不是 base64@@"}]})
+
+
+def _image_empty_b64(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    """``b64_json`` 是空串：与「没给 b64_json」同义——迁移前也是先判空串再取 url。"""
+    responder.send_json(200, {"data": [{"b64_json": ""}]})
+
+
+def _image_edits_json_fallback(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    """先拒 multipart、再认 JSON：有些网关只认 JSON 形态的 ``images[].image_url``。"""
+    if request.is_multipart:
+        responder.send_json(400, {"error": {"message": "images endpoint requires an image model"}})
+        return
+    responder.send_json(200, _image_b64_payload(amkr))
+
+
+def _image_edits_all_rejected(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+    """两种形态都被拒：报错必须来自最后一次尝试。"""
+    responder.send_json(422, {"detail": [{"msg": "prompt missing"}]})
+
+
+def _image_status_scenario(status: int) -> Callable[[Any, Responder, RecordedRequest], None]:
+    def _scenario(amkr: Any, responder: Responder, request: RecordedRequest) -> None:
+        responder.send_json(status, {"error": {"message": f"上游返回 {status}"}})
+
+    return _scenario
+
+
+#: 图像链路的场景表。默认 ``b64``：一条成功路径就能让生图 E2E 跑起来。
+IMAGE_SCENARIOS: dict[str, Callable[[Any, Responder, RecordedRequest], None]] = {
+    "b64": _image_b64,
+    "url": _image_url,
+    "download_404": _image_download_failing,
+    "download_empty": _image_download_failing,
+    "invalid_json": _image_invalid_json,
+    "empty_data": _image_empty_data,
+    "non_object_item": _image_non_object_item,
+    "bad_b64": _image_bad_b64,
+    "empty_b64": _image_empty_b64,
+    "edits_json_fallback": _image_edits_json_fallback,
+    "edits_all_rejected": _image_edits_all_rejected,
+    "status_401": _image_status_scenario(401),
+    "status_403": _image_status_scenario(403),
+    "status_408": _image_status_scenario(408),
+    "status_429": _image_status_scenario(429),
+}
+
+#: 生图请求真正会打的两个上游路径（契约 §5.1.2 第 2 条）。
+_IMAGE_PATHS = ("/v1/images/generations", "/v1/images/edits")
+
+
+def _serve_image_download(amkr: "FakeAmkr", responder: Responder, request: RecordedRequest) -> None:
+    """``GET {url}``：把「生成出来的图」按场景发回去，或按场景失败。"""
+    if amkr.image_scenario == "download_404":
+        responder.send_json(404, {"error": {"message": "图片不存在"}})
+        return
+    if amkr.image_scenario == "download_empty":
+        responder.send(200, b"", content_type="image/png")
+        return
+    data = _image_result_bytes(amkr)
+    responder.send(200, data, content_type=_image_mime_of(data))
+
+
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "FakeAmkr/1.0"
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的命名约定
+        self._handle("POST")
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的命名约定
+        self._handle("GET")
+
+    def _handle(self, method: str) -> None:
         amkr: FakeAmkr = self.server.amkr  # type: ignore[attr-defined]
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
@@ -368,6 +587,7 @@ class _Handler(BaseHTTPRequestHandler):
             path=self.path,
             headers={key.lower(): value for key, value in self.headers.items()},
             body=body,
+            method=method,
         )
         amkr.record(recorded)
         responder = Responder(self)
@@ -403,8 +623,11 @@ class _Server(ThreadingHTTPServer):
 class FakeAmkr:
     """线程内的假 AMKR。用 ``with FakeAmkr() as amkr:`` 或 ``start()/stop()``。"""
 
-    def __init__(self, scenario: str = "text", **options: object) -> None:
+    def __init__(
+        self, scenario: str = "text", image_scenario: str = "b64", **options: object
+    ) -> None:
         self._scenario = scenario
+        self._image_scenario = image_scenario
         self.options: dict[str, object] = dict(options)
         self._requests: list[RecordedRequest] = []
         self._lock = threading.Lock()
@@ -451,6 +674,17 @@ class FakeAmkr:
         self._scenario = name
         self.options.update(options)
 
+    def set_image_scenario(self, name: str, **options: object) -> None:
+        """切换生图链路的场景（与聊天场景互不影响）。"""
+        if name not in IMAGE_SCENARIOS:
+            raise KeyError(f"未知生图场景: {name}")
+        self._image_scenario = name
+        self.options.update(options)
+
+    @property
+    def image_scenario(self) -> str:
+        return self._image_scenario
+
     @property
     def requests(self) -> list[RecordedRequest]:
         with self._lock:
@@ -463,13 +697,29 @@ class FakeAmkr:
             raise AssertionError("假 AMKR 没有收到任何请求")
         return requests[-1]
 
+    @property
+    def image_requests(self) -> list[RecordedRequest]:
+        """打向 ``/v1/images/*`` 的请求（生图与图像编辑）。"""
+        return [item for item in self.requests if item.path in _IMAGE_PATHS]
+
+    @property
+    def download_requests(self) -> list[RecordedRequest]:
+        """侧车为取回生成图片而发的 ``GET``。"""
+        return [item for item in self.requests if item.method == "GET"]
+
     # ── 内部 ──────────────────────────────────────────
     def record(self, request: RecordedRequest) -> None:
         with self._lock:
             self._requests.append(request)
 
     def dispatch(self, request: RecordedRequest, responder: Responder) -> None:
-        if request.path != "/v1/chat/completions":
-            responder.send_json(404, {"error": {"message": f"未知路径 {request.path}"}})
+        if request.path == "/v1/chat/completions":
+            _SCENARIOS[self._scenario](self, responder, request)
             return
-        _SCENARIOS[self._scenario](self, responder, request)
+        if request.path in _IMAGE_PATHS:
+            IMAGE_SCENARIOS[self._image_scenario](self, responder, request)
+            return
+        if request.method == "GET" and request.path.startswith(_DOWNLOAD_PREFIX):
+            _serve_image_download(self, responder, request)
+            return
+        responder.send_json(404, {"error": {"message": f"未知路径 {request.path}"}})

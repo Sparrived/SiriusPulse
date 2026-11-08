@@ -19,7 +19,6 @@ from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
-from sirius_pulse.providers.base import prepare_openai_compatible_messages
 from sirius_pulse.utils.image_bytes import downscale_image_bytes
 
 _QQ_SIGNED_URL = (
@@ -399,38 +398,21 @@ def test_context_history_when_image_present_then_xml_omits_src():
     assert "rkey" not in rendered
 
 
-# ── 传输层：超大本地图降采样后再内联 ──
+# ── 图片压缩：落缓存前的降采样（内联本身已归 Go 侧）──
+#
+# 本地路径 → data URL、超大图降采样、按字节判 mime 现在全由侧车做，端到端断言在
+# ``tests/test_go_transport.py``。这里只剩适配器落缓存时用的压缩函数——它仍在
+# Python 侧，因为缓存目录由适配器管理。
 
 
-def test_prepare_messages_when_local_image_exceeds_limit_then_data_url_is_downscaled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """base64 会放大 4/3，超大原图应在内联前降采样。"""
-    import sirius_pulse.providers.base as provider_base
+def test_downscale_image_bytes_when_image_exceeds_limit_then_shrinks() -> None:
+    """超大图必须真的变小：丢图等于模型彻底看不到它。"""
+    shrunk = downscale_image_bytes(_png_bytes((600, 600)), max_bytes=2048)
 
-    monkeypatch.setattr(provider_base, "MAX_INLINE_IMAGE_BYTES", 2048)
-    image_path = tmp_path / "huge.png"
-    image_path.write_bytes(_png_bytes((600, 600)))
-
-    prepared, stats = prepare_openai_compatible_messages(
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "看图"},
-                    {"type": "image_url", "image_url": {"url": str(image_path)}},
-                ],
-            }
-        ]
-    )
-
-    assert stats["local_image_path_conversions"] == 1
-    data_url = prepared[0]["content"][1]["image_url"]["url"]
-    assert data_url.startswith("data:image/jpeg;base64,")
-    import base64
-
-    encoded = data_url.split(",", 1)[1]
-    assert len(base64.b64decode(encoded)) <= 2048
+    assert shrunk is not None
+    assert len(shrunk) <= 2048
+    # 压缩输出恒为 JPEG，扩展名必须与之相符，否则上游 MIME 会推断错。
+    assert shrunk.startswith(b"\xff\xd8\xff")
 
 
 def test_downscale_image_bytes_when_undecodable_then_returns_none():
@@ -438,54 +420,5 @@ def test_downscale_image_bytes_when_undecodable_then_returns_none():
     assert downscale_image_bytes(b"not-an-image") is None
 
 
-# ── 传输层：媒体类型按字节判定（后缀会骗人，声明错上游直接 400） ──
-
-
-def test_prepare_messages_when_png_saved_as_jpg_then_media_type_follows_bytes(tmp_path: Path):
-    """缓存常把图片统一存成 .jpg；内容仍是 PNG 时必须声明 image/png。
-
-    回归背景：换到真 Claude API 后出现
-    `messages.N.content.M.image.source.base64: The image was specified using
-    the image/jpeg media type, but the image appears to be a image/png image`
-    —— 上游按字节校验媒体类型，按后缀猜出来的类型会让整个请求 400。
-    """
-    image_path = tmp_path / "cached.jpg"
-    image_path.write_bytes(_png_bytes((16, 16)))
-
-    prepared, stats = prepare_openai_compatible_messages(
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "看图"},
-                    {"type": "image_url", "image_url": {"url": str(image_path)}},
-                ],
-            }
-        ]
-    )
-
-    assert stats["local_image_path_conversions"] == 1
-    data_url = prepared[0]["content"][1]["image_url"]["url"]
-    assert data_url.startswith("data:image/png;base64,"), data_url[:40]
-
-
-def test_prepare_messages_when_jpeg_saved_as_png_then_media_type_follows_bytes(tmp_path: Path):
-    """反向同样成立：真 JPEG 存成 .png 时不得声明成 image/png。"""
-    from PIL import Image
-
-    image_path = tmp_path / "cached.png"
-    buffer = io.BytesIO()
-    Image.new("RGB", (16, 16), (10, 120, 200)).save(buffer, format="JPEG")
-    image_path.write_bytes(buffer.getvalue())
-
-    prepared, _ = prepare_openai_compatible_messages(
-        [
-            {
-                "role": "user",
-                "content": [{"type": "image_url", "image_url": {"url": str(image_path)}}],
-            }
-        ]
-    )
-
-    data_url = prepared[0]["content"][0]["image_url"]["url"]
-    assert data_url.startswith("data:image/jpeg;base64,"), data_url[:40]
+# 「按字节判 mime，后缀会骗人」的端到端断言在 tests/test_go_transport.py
+# （``test_local_image_mime_follows_the_bytes``）：内联已经整段搬到 Go 侧。

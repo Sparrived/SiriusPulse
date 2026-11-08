@@ -46,15 +46,26 @@ var imageMagicPrefixes = []struct {
 	{[]byte("GIF89a"), "image/gif"},
 }
 
-// SniffImageMime 按魔数判定图片媒体类型，认不出时回退 image/jpeg。
-func SniffImageMime(data []byte) string {
+// DetectImageMime 按魔数判定图片媒体类型；第二个返回值表示是否认出。
+//
+// 与 SniffImageMime 的差别只在「认不出」时：生图链路（契约 §5.1.2.7）在魔数之后
+// 还要按后缀猜、再兜底 image/png，因此需要区分「认出来是 JPEG」与「根本没认出」。
+func DetectImageMime(data []byte) (string, bool) {
 	for _, magic := range imageMagicPrefixes {
 		if bytes.HasPrefix(data, magic.prefix) {
-			return magic.mime
+			return magic.mime, true
 		}
 	}
 	if len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
-		return "image/webp"
+		return "image/webp", true
+	}
+	return "", false
+}
+
+// SniffImageMime 按魔数判定图片媒体类型，认不出时回退 image/jpeg。
+func SniffImageMime(data []byte) string {
+	if mime, ok := DetectImageMime(data); ok {
+		return mime
 	}
 	return defaultImageMime
 }

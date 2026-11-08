@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """构建 LLM 传输侧车（Go）二进制。
 
-侧车是可选的：不配置 ``llm_transport=go`` 时框架仍走纯 Python 的
-``OpenAICompatibleProvider``。需要启用时先跑本脚本产出二进制：
+侧车是**必需**的：Python 侧已经没有任何传输实现（``OpenAICompatibleProvider``
+已删除），运行前必须先跑本脚本产出二进制，否则应用不就绪：
 
     python scripts/build_llm_transport.py            # 构建到 go/llm-transport/bin/
     python scripts/build_llm_transport.py --test     # 先跑 go test 再构建
@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
 
     size_kb = output.stat().st_size / 1024
     print(f"\n✓ 已构建：{output}（{size_kb:.0f} KB）")
-    print("启用方式：在 data/global_config.json 里设置 \"llm_transport\": \"go\"")
+    print("二进制不入库：换机器或清理工作区后需要重新构建。")
     return 0
 
 
