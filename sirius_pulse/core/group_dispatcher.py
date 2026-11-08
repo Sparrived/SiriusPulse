@@ -622,7 +622,14 @@ class GroupDispatcher:
             # A message that explicitly names a persona — by @-mention
             # (known_targets) or by text (text_target_worker_id) — is
             # "addressed" and must never be silently dropped.
-            addressed = bool(known_targets or text_target_worker_id)
+            # Plugin commands are also addressed to their owning bot: the
+            # candidate only carries reason="plugin_candidate" when this
+            # engine's registry matched the command.
+            plugin_addressed = any(
+                str(row["reason"] or "").strip() == "plugin_candidate"
+                for row in candidates
+            )
+            addressed = bool(known_targets or text_target_worker_id or plugin_addressed)
             active_worker = str(state["active_worker_id"] or "")
             if active_worker:
                 # Defer addressed messages so the adapter retries them once the
@@ -1012,6 +1019,9 @@ class GroupDispatcher:
                 and sender_account_id != self.account_id
             )
             is_human = sender_type not in {"other_ai", "system"}
+            # Slash commands are addressed to whichever bot owns the plugin;
+            # never let the reply cooldown swallow them.
+            plugin_addressed = bool(message_text and message_text.lstrip().startswith("/"))
             if is_peer:
                 if open_target:
                     eligible = [row for row in eligible if str(row["worker_id"]) == open_target]
@@ -1045,6 +1055,7 @@ class GroupDispatcher:
                 )
                 if (
                     not known_targets
+                    and not plugin_addressed
                     and float(state["last_reply_at"] or 0)
                     and now - float(state["last_reply_at"]) < self.min_reply_interval_seconds
                 ):

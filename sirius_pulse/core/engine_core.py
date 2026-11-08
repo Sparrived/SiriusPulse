@@ -1551,15 +1551,23 @@ class _EmotionalGroupChatEngineBase:
             message.mentions_current_bot or self._message_explicitly_mentions_current_bot(message)
         )
         if content.lstrip().startswith("/"):
-            return {
-                "should_reply": True,
-                "score": 1.5,
-                "threshold": 0.0,
-                "reason": "plugin_candidate",
-                "urgency_score": 100.0,
-                "strategy": "immediate",
-                "delay_seconds": 0.0,
-            }
+            plugin_registry = getattr(self, "_plugin_registry", None)
+            plugin_match = None
+            if plugin_registry is not None:
+                try:
+                    plugin_match = plugin_registry.match_message(content)
+                except Exception:
+                    plugin_match = None
+            if plugin_match is not None:
+                return {
+                    "should_reply": True,
+                    "score": 1.5,
+                    "threshold": 0.0,
+                    "reason": "plugin_candidate",
+                    "urgency_score": 100.0,
+                    "strategy": "immediate",
+                    "delay_seconds": 0.0,
+                }
 
         user_id = (
             participants[0].user_id
@@ -1775,6 +1783,31 @@ class _EmotionalGroupChatEngineBase:
         # 工作模式期间不新起一轮回复：消息先暂存，等模型点名时才补进上下文。
         work_run = self._work_mode_runs.get(group_id)
         if work_run is not None:
+            # 插件命令不参与工作模式的暂存：它们应当立即执行，否则用户会
+            # 看到 /抽卡 之类的命令被吞掉，直到工作模式结束才被当成闲聊。
+            plugin_registry = getattr(self, "_plugin_registry", None)
+            plugin_match = None
+            if plugin_registry is not None and (content or "").lstrip().startswith("/"):
+                try:
+                    plugin_match = plugin_registry.match_message(content)
+                except Exception:
+                    plugin_match = None
+            if plugin_match is not None:
+                from sirius_pulse.core.plugin_intent_verifier import PluginIntentResult
+
+                plugin_result = PluginIntentResult(
+                    is_plugin=True,
+                    plugin_name=plugin_match.plugin_name,
+                    confidence=1.0,
+                    reason="rule_match_work_mode",
+                )
+                self._log_inner_thought(
+                    f"工作模式下收到插件命令，直接执行 {plugin_match.plugin_name}～"
+                )
+                self._background_update(group_id, message, None, None, user_id)
+                return await self._execute_verified_plugin(
+                    plugin_result, message, group_id, user_id
+                )
             mentioned = self._message_explicitly_mentions_current_bot(message)
             work_run.stash_message(
                 content,
