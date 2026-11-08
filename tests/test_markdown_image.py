@@ -55,8 +55,9 @@ def test_has_rich_structure_ignores_plain_text_and_inline_symbols(text):
         ("第一行\n第二行\n第三行\n第四行", False),
         ("第一行\n\n第二行\n\n第三行\n\n第四行", False),
         ("第一行\n第二行\n\n\n第三行", False),
-        ("甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15, True),
-        ("abcdefghijklmnopqrstuvwxyz\n" * 4, True),
+        ("甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15, False),
+        ("x" * 52 + "\n" + "x" * 52 + "\n" + "x" * 52 + "\n" + "x" * 52, True),
+        ("甲" * 20 + "\n" + "乙" * 20 + "\n" + "丙" * 20 + "\n" + "丁" * 20, True),
         ("| 项目 | 状态 |\n|------|------|\n| WebUI | 正常 |", True),
     ],
 )
@@ -87,33 +88,53 @@ def test_merge_short_plain_text_only_joins_short_plain_replies(text, expected):
 @pytest.mark.parametrize(
     "text, expected",
     [
-        # 四条十字的短句：20 + 20 刚好压进两句
+        # 四条十字的短句：攒满 20 字就换句，20 + 20
         (
             "甲" * 10 + "\n" + "乙" * 10 + "\n" + "丙" * 10 + "\n" + "丁" * 10,
             "甲" * 10 + "乙" * 10 + "\n" + "丙" * 10 + "丁" * 10,
         ),
-        # 单句 20 字算压得下，21 字就断开
+        # 11 还没满 20，补上 10 撑到 21 才换句
         (
             "甲" * 11 + "\n" + "乙" * 10 + "\n" + "丙" * 10 + "\n" + "丁" * 10,
-            "甲" * 11 + "\n" + "乙" * 10 + "丙" * 10 + "\n" + "丁" * 10,
+            "甲" * 11 + "乙" * 10 + "\n" + "丙" * 10 + "丁" * 10,
         ),
         # ASCII 按半个字计：四行各一个字重，合并后仍要补空格
         ("OK\n收到\n明白\n好的", "OK 收到明白好的"),
-        # 四行各 15 字，两两相加都超过 20，只能原样交给图片通道
+        # 四行各 15 字：15 + 15 = 30 撑满一句，只在 50 的硬顶以内
         (
             "甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15,
-            "甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15,
+            "甲" * 15 + "乙" * 15 + "\n" + "丙" * 15 + "丁" * 15,
+        ),
+        # 19 + 40 会超过 50 的硬顶，19 单独一句，剩下的短句并在一起
+        (
+            "甲" * 19 + "\n" + "乙" * 40 + "\n" + "丙" * 3 + "\n" + "丁" * 3,
+            "甲" * 19 + "\n" + "乙" * 40 + "\n" + "丙" * 3 + "丁" * 3,
+        ),
+        # 每行都满 20 字：一行就撑满一句，挤不进三条，交给图片通道
+        (
+            "甲" * 20 + "\n" + "乙" * 20 + "\n" + "丙" * 20 + "\n" + "丁" * 20,
+            "甲" * 20 + "\n" + "乙" * 20 + "\n" + "丙" * 20 + "\n" + "丁" * 20,
         ),
         # 三条以内的短文本仍走整体合并
         ("第一行\n第二行\n第三行", "第一行第二行第三行"),
     ],
 )
 def test_merge_short_plain_text_packs_adjacent_lines_into_up_to_three_sentences(text, expected):
-    """超过三条消息的普通文本按加权字数逐句前后合并，最多三句。"""
+    """超过三条消息的普通文本按「攒满 20 字换句、硬顶 50」前后合并，最多三句。"""
     merged = merge_short_plain_text(text)
     assert merged == expected
     if not should_send_as_image(text):
         assert count_text_messages(merged) <= 3
+
+
+def test_merge_short_plain_text_packs_a_real_four_line_reply_into_two_messages():
+    """线上这种四行回话：攒满 20 字换句后正好两条，不再刷成四条气泡或一张卡片。"""
+    text = "才不给你看喵！\n" "万一把本猫的猫耳和尾巴重构丢了怎么办！\n" "而且现在指针全指向睡觉了，\n" "谁也别想动本猫的代码，呼噜噜——"
+
+    assert should_send_as_image(text) is False
+    assert merge_short_plain_text(text) == (
+        "才不给你看喵！万一把本猫的猫耳和尾巴重构丢了怎么办！\n" "而且现在指针全指向睡觉了，谁也别想动本猫的代码，呼噜噜——"
+    )
 
 
 @pytest.mark.asyncio

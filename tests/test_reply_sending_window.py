@@ -152,6 +152,40 @@ async def test_napcat_four_short_lines_are_merged_into_one_message():
 
 
 @pytest.mark.asyncio
+async def test_napcat_four_line_reply_is_sent_as_two_messages():
+    """四行短话按「攒满 20 字换句」合并后发两条，不再碎成四个气泡。"""
+    adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))
+    sent: list[object] = []
+
+    async def fake_send_group_msg(group_id, message):
+        sent.append(message)
+        return {"ok": True}
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+
+    ok = await adapter._send_group_text(
+        "100",
+        "才不给你看喵！\n" "万一把本猫的猫耳和尾巴重构丢了怎么办！\n" "而且现在指针全指向睡觉了，\n" "谁也别想动本猫的代码，呼噜噜——",
+    )
+
+    assert ok is True
+    assert sent == [
+        [
+            {
+                "type": "text",
+                "data": {"text": "才不给你看喵！万一把本猫的猫耳和尾巴重构丢了怎么办！"},
+            }
+        ],
+        [
+            {
+                "type": "text",
+                "data": {"text": "而且现在指针全指向睡觉了，谁也别想动本猫的代码，呼噜噜——"},
+            }
+        ],
+    ]
+
+
+@pytest.mark.asyncio
 async def test_napcat_delayed_short_multiline_reply_is_merged():
     adapter = NapCatAdapter(
         "ws://example.invalid",

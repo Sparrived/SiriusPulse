@@ -88,8 +88,10 @@ _MIN_TABLE_ROWS = 2
 _MIN_LIST_ITEMS = 2
 # 平台按换行符把一段回复拆成多条消息；超过这个条数就该合并或整段转图片，避免刷屏。
 _MAX_TEXT_MESSAGES = 3
-# 逐句合并时单句允许的最大字数（ASCII 字母、数字、符号按半个字计）。
-_SENTENCE_WEIGHT_LIMIT = 20.0
+# 逐句合并的目标字数：一句攒满就换下一句（ASCII 字母、数字、符号按半个字计）。
+_SENTENCE_TARGET_WEIGHT = 20.0
+# 单句硬顶：整行加进来会撑破这个字数才提前换句；行本身超长时不拆分。
+_SENTENCE_WEIGHT_LIMIT = 50.0
 # 三行以内的普通文本不足这个字数时，删掉换行合并成一条消息，避免碎片化。
 _SHORT_TEXT_MERGE_WEIGHT = 50.0
 # 常见但 Pygments 认不出的围栏标签，映射到它支持的别名。
@@ -214,28 +216,35 @@ def _join_text_lines(lines: list[str]) -> str:
 
 
 def _pack_sentences(lines: list[str]) -> list[str] | None:
-    """把相邻行前后合并成句子，单句不超过 ``_SENTENCE_WEIGHT_LIMIT``。
+    """把相邻行前后合并成句子：一句攒满 ``_SENTENCE_TARGET_WEIGHT`` 就换下一句。
 
-    合并后仍需超过 ``_MAX_TEXT_MESSAGES`` 句时返回 ``None``，说明这段文本
-    压不进有限的几条消息，应该交给「图片 + 合并转发」通道。
+    单句受 ``_SENTENCE_WEIGHT_LIMIT`` 约束——整行加进来会撑破时才提前换句；
+    行本身超长时不拆分，只能独占一句。合并后仍需超过 ``_MAX_TEXT_MESSAGES``
+    句时返回 ``None``，说明这段文本压不进有限的几条消息，应该交给
+    「图片 + 合并转发」通道。
     """
     if not lines:
         return None
     packed: list[str] = []
     current = ""
     for line in lines:
-        if not current:
-            current = line
-            continue
-        candidate = _join_text_lines([current, line])
-        if _weighted_text_length(candidate) > _SENTENCE_WEIGHT_LIMIT:
-            packed.append(current)
-            if len(packed) >= _MAX_TEXT_MESSAGES:
-                return None
-            current = line
+        if current:
+            candidate = _join_text_lines([current, line])
+            if (
+                _weighted_text_length(current) >= _SENTENCE_TARGET_WEIGHT
+                or _weighted_text_length(candidate) > _SENTENCE_WEIGHT_LIMIT
+            ):
+                packed.append(current)
+                current = line
+            else:
+                current = candidate
         else:
-            current = candidate
-    packed.append(current)
+            current = line
+        if _weighted_text_length(current) >= _SENTENCE_TARGET_WEIGHT:
+            packed.append(current)
+            current = ""
+    if current:
+        packed.append(current)
     return packed if len(packed) <= _MAX_TEXT_MESSAGES else None
 
 

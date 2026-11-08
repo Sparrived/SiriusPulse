@@ -17,11 +17,11 @@ from sirius_pulse.plugins.registry import PluginRegistry
 from sirius_pulse.providers.base import GenerationRequest, GenerationResult, ToolCall
 from sirius_pulse.providers.mock import MockProvider
 
-# 四段都超过 20 加权字：逐句合并也压不进三条消息，注定走「图片 + 合并转发」。
-_LONG_REPLY = """第一段回复要长到压不进三条消息里。
-第二段也拖长一些，逐句合并同样放不下。
-第三段继续加长，这一轮只能交给图片通道。
-第四段收尾，每一行都超过二十个字了。"""
+# 每行都满 20 加权字：逐句合并时一行就撑满一句，四条压不进三条，注定走「图片 + 合并转发」。
+_LONG_REPLY = """第一段回复要长到根本压不进三条消息里去。
+第二段同样拖长一些，逐句合并也完全并不到一起。
+第三段继续加长，这一轮只能交给图片通道去处理。
+第四段收尾，每一行都超过二十个字，怎么排都排不下。"""
 _SHORT_REPLY = "部署完成，服务已恢复。"
 _TEXT_ONLY_CAPTION = "AMKR 账号资源 · 3 项（已脱敏）"
 
