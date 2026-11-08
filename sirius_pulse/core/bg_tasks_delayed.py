@@ -1362,8 +1362,10 @@ class DelayedQueueTasks:
                 _save_work_run()
 
             if notebook_only:
-                # 一次工具轮后直接回复，避免小本整理占用多轮聊天。
-                force_notebook_final = True
+                # 小本写成功后直接回复，避免小本整理占用多轮聊天；失败（含误调已移除的
+                # read）则让模型看到错误后再改一次，仍受 max_tool_rounds 约束。
+                if not send_next_tool_output:
+                    force_notebook_final = True
                 messages.append(
                     {
                         "role": "user",

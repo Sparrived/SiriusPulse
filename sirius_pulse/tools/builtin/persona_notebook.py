@@ -27,7 +27,8 @@ TOOL_META = {
     "name": "persona_notebook",
     "description": (
         "【适用场景】维护当前会话的短期即时便签、约定、待办与临时状态，不向聊天发送消息。\n"
-        "【使用方法】通过 action 操作：read 查看条目与容量；add 写入/更新条目（需稳定 entry_id 与 text）；"
+        "【使用方法】当前便签已自动放在上下文的 <persona_notebook> 中（每行为 [条目ID] 正文；"
+        "没有这个块就说明还是空的），无需读取，直接操作：add 写入/更新条目（需稳定 entry_id 与 text）；"
         "patch 修改局部内容；remove 删除条目；batch 批量原子操作；organize 登记整理提议。\n"
         "【注意事项】仅作用于当前会话，不跨群或跨聊天共享；受 2048 tokens 容量硬上限限制；严禁记录密码或凭据等敏感信息。"
     ),
@@ -38,7 +39,7 @@ TOOL_META = {
     "parameters": {
         "action": {
             "type": "string",
-            "choices": ["read", "add", "patch", "remove", "batch", "organize"],
+            "choices": ["add", "patch", "remove", "batch", "organize"],
             "required": True,
         },
         "entry_id": {
@@ -93,7 +94,10 @@ def run(
     try:
         if invocation_context is None or not str(invocation_context.group_id or "").strip():
             raise PermissionError("缺少当前聊天上下文，无法维护聊天便签")
-        if action not in {"read", "add", "patch", "remove", "batch", "organize"}:
+        if action == "read":
+            # 便签每轮都自动注入上下文，读取只会白占一个工具轮。
+            raise ValueError("便签已在上下文的 <persona_notebook> 中，无需读取；请直接 add/patch/remove")
+        if action not in {"add", "patch", "remove", "batch", "organize"}:
             raise ValueError("action 无效")
         if engine_context is None or not engine_context.get_work_path():
             raise ValueError("缺少当前人格的工作目录")
@@ -103,35 +107,31 @@ def run(
         store = PersonaNotebookStore.for_chat(
             engine_context.get_work_path(), invocation_context.group_id, budget=budget
         )
-        result: dict[str, Any] = {"status": "read", "saved": False, "results": []}
-        if action != "read":
-            if budget == 0:
-                raise ValueError("当前聊天便签已关闭，请先配置 persona_notebook_token_budget 为1-2048")
-            if action == "organize":
-                return {
-                    "success": True,
-                    "status": "maintenance_requested",
-                    "saved": False,
-                    "message": "已提出稍后整理当前聊天的小本，尚未开始整理。",
-                    "group_id": invocation_context.group_id,
-                }
-            if action == "batch":
-                if not isinstance(operations, list) or not 1 <= len(operations) <= 32:
-                    raise ValueError("batch 必须包含1-32个操作")
-                prepared = []
-                for item in operations:
-                    if not isinstance(item, dict) or set(item) - {"op", "entry_id", "text"}:
-                        raise ValueError("batch 操作只允许 op、entry_id、text 字段")
-                    prepared.append(
-                        _operation(
-                            item.get("op", ""), item.get("entry_id", ""), item.get("text", "")
-                        )
-                    )
-            else:
-                prepared = [_operation(action, entry_id, text)]
-            result = store.apply_or_enqueue(prepared)
-            if result["status"] == "pending":
-                result["message"] = "小本容量不足，整项已暂存待整理，尚未写入小本。"
+        if budget == 0:
+            raise ValueError("当前聊天便签已关闭，请先配置 persona_notebook_token_budget 为1-2048")
+        if action == "organize":
+            return {
+                "success": True,
+                "status": "maintenance_requested",
+                "saved": False,
+                "message": "已提出稍后整理当前聊天的小本，尚未开始整理。",
+                "group_id": invocation_context.group_id,
+            }
+        if action == "batch":
+            if not isinstance(operations, list) or not 1 <= len(operations) <= 32:
+                raise ValueError("batch 必须包含1-32个操作")
+            prepared = []
+            for item in operations:
+                if not isinstance(item, dict) or set(item) - {"op", "entry_id", "text"}:
+                    raise ValueError("batch 操作只允许 op、entry_id、text 字段")
+                prepared.append(
+                    _operation(item.get("op", ""), item.get("entry_id", ""), item.get("text", ""))
+                )
+        else:
+            prepared = [_operation(action, entry_id, text)]
+        result: dict[str, Any] = store.apply_or_enqueue(prepared)
+        if result["status"] == "pending":
+            result["message"] = "小本容量不足，整项已暂存待整理，尚未写入小本。"
         rendered = store.render(budget=2048)
         return {
             "success": True,

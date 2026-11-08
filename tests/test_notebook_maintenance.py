@@ -88,7 +88,7 @@ def test_organize_is_only_a_request_and_idle_worker_uses_exact_chat(tmp_path: Pa
 
 def test_pending_worker_conflict_does_not_overwrite_new_chat_text(tmp_path: Path):
     store = PersonaNotebookStore.for_chat(tmp_path, GROUP)
-    filler = "界" * 2000
+    filler = "界" * 1985
     store.add(filler, entry_id="full")
     queued = store.apply_or_enqueue(
         [{"op": "add", "entry_id": "new", "entry": {"text": "待保存的新约定"}}]
