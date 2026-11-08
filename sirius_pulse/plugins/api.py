@@ -11,6 +11,7 @@
         PluginContext,            # 运行时上下文
         EngineProxy,              # 引擎安全代理
         PluginDataStore,          # 持久化 KV 存储
+        PersonImageError,         # 受管人物生图没做成（带 code）
         CommandAST,               # 指令抽象语法树
         PluginCommandMeta,        # @command 装饰器记录的元数据
         PluginCommandGroupMeta,   # @command_group 装饰器记录的元数据
@@ -63,6 +64,7 @@ from sirius_pulse.plugins.models import (
     TriggerType,
     UserMention,
 )
+from sirius_pulse.plugins.person_image import PersonImageError
 
 __all__ = [
     "BackgroundTaskSpec",
@@ -75,6 +77,7 @@ __all__ = [
     "ImageAttachment",
     "MessageReference",
     "PatternType",
+    "PersonImageError",
     "PluginBase",
     "PluginCommandDef",
     "PluginCommandGroupDef",

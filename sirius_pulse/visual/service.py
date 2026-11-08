@@ -1309,6 +1309,26 @@ class VisualService:
     # ==================================================================
     # 编译与输入快照
     # ==================================================================
+    def has_generation_reference(self, person_id: str, access: Any) -> bool:
+        """该人物在当前会话范围内有没有能进正式参考集的形象图（只看登记状态，不读图）。
+
+        与 :meth:`compile_generation` 选修订的规则一致：可见档案的已启用修订，
+        未停用、参考集里至少一张可用素材。给“先告诉用户画不画得了”用，不是授权判断。
+        """
+        if not person_id or self.store.subject_deleted(person_id):
+            return False
+        profile = self._select_profile(person_id, access)
+        if profile is None or profile.get("active_revision") is None:
+            return False
+        revision = self.store.revision(str(profile["profile_id"]), int(profile["active_revision"]))
+        if revision is None or str(revision.get("status")) in {"retired", "rejected"}:
+            return False
+        for item in self._revision_reference_items(revision):
+            asset = self.store.asset(str(item.get("asset_id") or ""))
+            if asset is not None and str(asset.get("status")) == "available":
+                return True
+        return False
+
     async def compile_generation(
         self,
         *,

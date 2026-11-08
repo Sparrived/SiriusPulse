@@ -481,6 +481,7 @@ class Helpers:
             message_id=getattr(message, "message_id", ""),
             content=getattr(message, "content", ""),
             speaker_name=getattr(message, "speaker", ""),
+            evidence_ref=str(getattr(message, "evidence_ref", "") or ""),
         )
 
         if engine._plugin_executor is None:

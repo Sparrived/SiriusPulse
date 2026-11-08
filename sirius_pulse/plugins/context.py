@@ -337,8 +337,9 @@ class EngineProxy:
 
         与 ``image_generate`` Tool 的直接生图同一条路：任务名固定 ``image_generate``，
         有参考图走编辑端点，没有走文生图端点。这里**不**接受真实人物的受管参考图——
-        那要走视觉资产系统的授权与审计；插件只该传自己有权使用的图（比如人格自己的
-        形象图，见 :meth:`get_persona_reference_images`）。调用频率由插件自己限额。
+        那要走视觉资产系统的授权与审计（见 :meth:`generate_person_image`）；插件只该传
+        自己有权使用的图（比如人格自己的形象图，见 :meth:`get_persona_reference_images`）。
+        调用频率由插件自己限额。
         """
         if self._engine is None:
             raise RuntimeError("引擎未绑定，无法生图")
@@ -359,6 +360,81 @@ class EngineProxy:
             time.perf_counter() - started,
         )
         return {"image_bytes": result.image_bytes, "mime_type": result.mime_type}
+
+    async def generate_person_image(
+        self,
+        prompt: str,
+        *,
+        user_id: str,
+        group_id: str,
+        persona_references: int = 2,
+        timeout_seconds: float = 300.0,
+    ) -> dict[str, Any]:
+        """把某个群友按他登记的人物形象画进图里（受管路径），返回同 :meth:`generate_image`，
+        另带 ``job_id``（视觉资产系统里的任务号）。
+
+        必须先有本人的同意（:meth:`grant_person_image_consent`）和视觉资产系统里已启用
+        的形象图。走与 ``image_generate`` Tool ``subjects`` 路径相同的编译、部署方人物生图
+        额度、预检、提交许可与结果隔离；同意绑在任务上，中途撤回则不交付。
+        人格自己若在视觉资产系统里登记了正式形象，就作为第二个人物主体一起编译；否则把
+        ``{persona}/assets/`` 里至多 ``persona_references`` 张形象图作为附加参考（0 表示不带她）。
+
+        Raises:
+            PersonImageError: ``code`` 说明哪一关没过（``consent_required``、
+                ``required_asset_missing``、``quota_exceeded``、``cancelled_by_revocation``…），
+                插件据此回退到不画真人的做法并如实告知。
+        """
+        from sirius_pulse.plugins import person_image
+
+        return await person_image.generate(
+            self._engine,
+            self._plugin_name,
+            prompt,
+            user_id=user_id,
+            group_id=group_id,
+            persona_references=persona_references,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def grant_person_image_consent(
+        self, *, user_id: str, group_id: str, evidence_ref: str
+    ) -> dict[str, Any]:
+        """记下本人同意被这个插件按其形象画进图里，返回 ``{"grant_id", "has_reference"}``。
+
+        ``evidence_ref`` 传本人这条指令的 ``ctx.message.evidence_ref``：必须是他本人在本群
+        发的、账号已绑定的消息，否则抛 ``PersonImageError("evidence_invalid")``。同意记在视觉
+        资产系统里（作用域是这个群、能力只有 ``upload_generate``），留审计、可撤回；
+        已同意过则原样返回。``has_reference`` 表示他现在有没有可用的形象图。
+        """
+        from sirius_pulse.plugins import person_image
+
+        return person_image.grant_consent(
+            self._engine,
+            self._plugin_name,
+            user_id=user_id,
+            group_id=group_id,
+            evidence_ref=evidence_ref,
+        )
+
+    async def revoke_person_image_consent(self, *, user_id: str, group_id: str) -> dict[str, Any]:
+        """撤回本人在这个群对这个插件的同意；无需证据，没同意过也安全。
+
+        还没提交的生成取消，依据这条同意画出的结果在视觉资产系统里隔离。返回
+        ``{"revoked", "cancelled_jobs", "isolated_assets"}``。插件自己存的成品由插件处理。
+        """
+        from sirius_pulse.plugins import person_image
+
+        return await person_image.revoke_consent(
+            self._engine, self._plugin_name, user_id=user_id, group_id=group_id
+        )
+
+    def get_person_image_consent(self, *, user_id: str, group_id: str) -> dict[str, Any]:
+        """``{"consented", "grant_id", "has_reference"}``：同意是否仍有效、有没有形象图。"""
+        from sirius_pulse.plugins import person_image
+
+        return person_image.consent_status(
+            self._engine, self._plugin_name, user_id=user_id, group_id=group_id
+        )
 
     def get_persona_reference_images(
         self, limit: int = 3, max_bytes: int = 20 * 1024 * 1024
@@ -608,6 +684,8 @@ class MessageContext:
     message_id: str = ""
     content: str = ""
     speaker_name: str = ""
+    #: 人物模块为这条消息记下的来源证据；本人同意类写入（如人物生图同意）凭它核验作者。
+    evidence_ref: str = ""
 
 
 @dataclass

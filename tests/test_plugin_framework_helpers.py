@@ -472,9 +472,7 @@ async def test_a_plugin_can_draw_with_her_own_reference_images(tmp_path):
     engine = SimpleNamespace(
         identity_resolver=None,
         user_manager=None,
-        brain=SimpleNamespace(
-            persona_assets_dir=assets, generate_image_async=generate_image_async
-        ),
+        brain=SimpleNamespace(persona_assets_dir=assets, generate_image_async=generate_image_async),
     )
     proxy = PluginContext.create(engine=engine, plugin_name="demo").engine
 
