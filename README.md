@@ -87,13 +87,12 @@ Perception → Signal → PreFilter → Generate → BackgroundUpdate
 - 认知任务按**任务名**路由（对话 / 分析 / 记忆 / 插件 / 自主行为 / 晨间计划 / 睡前回顾…），模型选择与采样参数下沉到 AMKR 的任务定义
 - 模型调用只用该人格工作空间的**推理 key**（建空间时自动签发），管理员 Key 仅用于建空间与注册任务
 
-### 🚄 **LLM 传输层（可选 Go 侧车）**
-- **默认不启用**：`llm_transport` 不配置时，所有调用走的仍是进程内的 `OpenAICompatibleProvider`（httpx + 本地 SSE 聚合），行为与以往完全一致
-- 这是一次 **B 方案的传输层迁移**：只把「对 AMKR 的 HTTP 调用 + SSE 聚合 + 多模态内联」交给 Go 侧车（`go/llm-transport/`），**prompt 组装、工具循环、重试、兜底任务与 token 记账全部留在 Python**
-- 启用两步：① 构建二进制 `python scripts/build_llm_transport.py`（加 `--test` 会先跑 `go vet` 与 `go test`）；② 在 `data/global_config.json` 里加 `"llm_transport": "go"`
-- 侧车的启停、健康检查与崩溃重启都由 Python 负责（进程级单例，多个人格共用一个）；启动失败时按 `llm_transport_fallback`（默认 `true`）回退到 Python 传输层并留一条 WARN 日志
-- 可用配置：`llm_transport`（`python`/`go`）、`llm_transport_port`（`0`＝自动分配空闲端口）、`llm_transport_binary`（二进制路径，留空则依次找环境变量 `SIRIUS_LLM_TRANSPORT_BIN`、`go/llm-transport/bin/`、`PATH`）、`llm_transport_fallback`（默认 `true`）
-- 两侧唯一的跨语言约定是报文契约，见 [go/llm-transport/CONTRACT.md](go/llm-transport/CONTRACT.md)；生图端点不在该契约内，启用后仍走 Python 传输层
+### 🚄 **LLM 传输层（Go 侧车，必需）**
+- **Python 侧没有任何传输实现**：对 AMKR 的 HTTP 调用、SSE 聚合、多模态内联与生图全部由 Go 侧车（`go/llm-transport/`）承担；**prompt 组装、工具循环、重试、兜底任务与 token 记账仍在 Python**
+- **运行前必须先构建二进制**：`python scripts/build_llm_transport.py`（加 `--test` 会先跑 `go vet` 与 `go test`），产物是 `go/llm-transport/bin/llm-transport`（Windows 下 `llm-transport.exe`），不入库。找不到二进制就是不就绪——没有回退到 Python 的实现
+- 侧车的启停、健康检查与崩溃重启都由 Python 负责（进程级单例，多个人格共用一个）
+- 可用配置：`llm_transport_binary`（二进制路径，留空则依次找环境变量 `SIRIUS_LLM_TRANSPORT_BIN`、`go/llm-transport/bin/`、`PATH`）、`llm_transport_port`（`0`＝自动分配空闲端口，需要固定端口给防火墙或监控放行时再指定）；老配置里残留的 `llm_transport` / `llm_transport_fallback` 会被忽略——Python 侧已没有另一种实现可切
+- 两侧唯一的跨语言约定是报文契约，见 [go/llm-transport/CONTRACT.md](go/llm-transport/CONTRACT.md)（v1.2 / 侧车 0.2.0；生图端点 `POST /v1/generate-image` 也在契约内）
 
 ### 🎯 **双重扩展机制**
 - **工具系统**（Tools）：AI 通过标准 function calling 自主调用工具，提供多个内置工具
@@ -124,7 +123,18 @@ pip install sirius-pulse
 
 > 🔌 **需要先有一个 AMKR**：Sirius Pulse 自身不再内置任何厂商实现，所有模型调用都会发往本地 [AMKR](https://github.com/Sparrived/auto-model-key-router)。先跑起 AMKR，再在 WebUI「阁楼」的「设置」里填入它的地址（默认 `http://127.0.0.1:8000`）与本地授权 Key。之后到阁楼的「AMKR」页点一次「给所有伙伴补登记」：本框架会先为这个人格建出工作空间（AMKR 只在这一刻返回它的**面板 key 与推理 key**，框架会把两把都存下来），再把用到的 12 个内置任务建好，模型则统一在 AMKR 自带面板里配置——该页面也可直接内嵌那个空间的面板。其中 `image_generate` 是生图工具专用的任务，要在面板里给它单独绑一个生图模型（例如 `gpt-image-2.5-flare`），否则生图调用会 404。若某个人格显示缺推理 key（例如空间建在这项能力之前），页面上可直接补一把。
 
-### 2️⃣ 启动运行
+### 2️⃣ 构建 LLM 传输侧车
+
+> ⚠️ **这一步是必需的**：Python 侧已经没有传输实现了，没有这个二进制 `sirius-pulse run` 会直接报「侧车不就绪」并退出。
+
+```bash
+python scripts/build_llm_transport.py          # 构建到 go/llm-transport/bin/
+python scripts/build_llm_transport.py --test   # 构建前先跑 go vet + go test
+```
+
+需要 Go 1.24+，纯标准库、无第三方依赖，可离线构建。二进制不入库（见 `.gitignore`），换机器或清理工作区后要重新构建。**Docker 部署不用手动执行这一步**：镜像里由 `go-build` 阶段编译到 `/app/go/llm-transport/bin/llm-transport`。二进制放在别处时，用 `llm_transport_binary` 或环境变量 `SIRIUS_LLM_TRANSPORT_BIN` 指过去。
+
+### 3️⃣ 启动运行
 
 ```bash
 sirius-pulse run
@@ -153,7 +163,7 @@ sirius-pulse webui
 | **小账本** | 她吃了多少星光（token）：趋势、什么时候最能吃、花在哪些环节 |
 | **阁楼** | 整座房子共用的设置与 AMKR 连接、AMKR 任务登记与推理 key、实时日志、重建回忆索引、关闭程序 |
 
-### 3️⃣ 后台运行
+### 4️⃣ 后台运行
 
 `sirius-pulse run` 在当前进程内为每个活跃人格创建一个 `PersonaWorker` 并作为 asyncio 任务运行，
 WebUI 也在同一进程内启动；仅当单独执行 `sirius-pulse webui` 时，WebUI 才以后台子进程方式运行。
@@ -270,8 +280,7 @@ sirius_pulse/
 │
 ├── providers/               # LLM 接入层（统一指向 AMKR）
 │   ├── base.py              # LLMProvider 基类接口
-│   ├── openai_compatible.py # 默认实现：进程内 httpx + SSE 聚合，端点指向 AMKR
-│   ├── go_transport.py      # 可选实现：HTTP/SSE/多模态交给 Go 侧车
+│   ├── go_transport.py      # 唯一的传输实现：桥接到 Go 侧车（HTTP/SSE/多模态/生图都在那边）
 │   ├── amkr.py              # AMKR 连接配置解析与两把工作空间凭据的存放
 │   ├── amkr_sync.py         # 建 AMKR 工作空间并注册任务名
 │   └── mock.py              # Mock Provider（测试用）
@@ -289,8 +298,9 @@ sirius_pulse/
 ```
 
 仓库根目录另有 `plugins/`（外部 Plugin 的 Git 子模块，含 GitHub 监控、Sub2API 监控等），
-不属于 `sirius_pulse` 包。`go/llm-transport/` 是可选的传输侧车（Go 源码 + 报文契约
-`CONTRACT.md`），二进制由 `scripts/build_llm_transport.py` 生成、不入库。
+不属于 `sirius_pulse` 包。`go/llm-transport/` 是**必需的**传输侧车（Go 源码 + 报文契约
+`CONTRACT.md`），二进制由 `scripts/build_llm_transport.py` 生成、不入库；Docker 镜像在
+`go-build` 阶段直接编译到 `/app/go/llm-transport/bin/llm-transport`。
 
 ---
 
@@ -453,6 +463,8 @@ python -m pytest tests/ --cov=sirius_pulse
 npm ci --prefix docs
 npm run build --prefix docs
 ```
+
+依赖侧车的 E2E 用例需要先有二进制：跑 `python -m pytest` 之前先执行一次 `python scripts/build_llm_transport.py`。`python scripts/ci_check.py` 已经把这个步骤内置，并把 Go 1.24+ 当作必需工具链（缺工具链直接失败，不再跳过）。
 
 CI 会分别运行核心测试、外部 Plugin 测试、Plugin 语法/manifest 与类元数据一致性校验、VitePress 构建，以及 wheel/sdist 外部 Plugin 源码排除检查。测试数量会随扩展变化，因此不在 README 中维护易过期的固定数字。
 

@@ -5,13 +5,15 @@
 侧车不 mock、HTTP 不 mock、SSE 用真的 chunked 逐帧下发，因此这里断言的是
 ``CONTRACT.md`` 真正被实现，而不是实现「看起来像」。
 
-覆盖三件事：
+覆盖四件事：
 
-1. **契约语义**（§2 报文 / §3 响应 / §4 聚合与超时 / §5 多模态 / §6 错误映射）；
-2. **与 Python 既有传输层的行为等价**（``openai_compatible.py`` 的四类异常、
-   usage 记账、空响应与 ``return_reasoning`` 的判定）；
-3. **默认配置回归防线**——不配 ``llm_transport`` 时必须仍然构造
-   ``OpenAICompatibleProvider``，即这次迁移对默认用户是零行为变化。
+1. **契约语义**（§2 报文 / §3 响应 / §4 聚合与超时 / §5 多模态 / §5.1 生图 /
+   §6 错误映射）；
+2. **与迁移前 Python 传输层的行为等价**（四类异常、usage 记账、空响应与
+   ``return_reasoning`` 的判定）；
+3. **provider 选择**——侧车是唯一实现：可用时拿到 ``GoTransportProvider``，
+   不可用时就绪失败（``None``），没有回退。
+4. **生图链路**：生成与编辑两条路径经真侧车往返，图片字节与媒体类型必须原样回来。
 
 侧车二进制缺失时整组跳过（不伪装成通过），提示先跑构建脚本。
 """
@@ -36,17 +38,15 @@ from sirius_pulse.exceptions import (
     ProviderContentFilteredError,
     ProviderResponseError,
 )
-from sirius_pulse.providers.amkr import (
-    LLM_TRANSPORT_GO,
-    LLM_TRANSPORT_PYTHON,
-    AmkrSettings,
-    load_amkr_settings,
+from sirius_pulse.providers.amkr import AmkrSettings, load_amkr_settings
+from sirius_pulse.providers.base import (
+    GenerationRequest,
+    ImageGenerationRequest,
+    get_last_generation_usage,
 )
-from sirius_pulse.providers.base import GenerationRequest, get_last_generation_usage
 from sirius_pulse.providers.go_transport import GoTransportProvider
-from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.utils.llm_sidecar import LLMSidecar, resolve_binary
-from tests.fake_amkr import FakeAmkr
+from tests.fake_amkr import JPEG_1PX, FakeAmkr
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GO_MODULE = PROJECT_ROOT / "go" / "llm-transport"
@@ -143,6 +143,32 @@ def _generate(
     return asyncio.run(main())
 
 
+def _image_request(
+    reference_images: list[tuple[str, bytes]] | None = None,
+    *,
+    timeout_seconds: float = 10,
+) -> ImageGenerationRequest:
+    """一次生图请求；``reference_images`` 非空即走「图像编辑」路径。"""
+    return ImageGenerationRequest(
+        model="person_image",
+        prompt="给我画一张窗外下着雨的图",
+        reference_images=list(reference_images or []),
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _generate_image(provider: GoTransportProvider, request: ImageGenerationRequest):
+    """跑一次生图并关闭客户端（与 :func:`_generate` 同一套事件循环纪律）。"""
+
+    async def main():
+        try:
+            return await provider.generate_image_async(request)
+        finally:
+            await provider.aclose()
+
+    return asyncio.run(main())
+
+
 def _closed_port() -> int:
     """拿一个刚刚被释放的端口，用来构造「侧车不可达」。"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -173,6 +199,8 @@ def test_upstream_request_matches_contract(amkr: FakeAmkr, sidecar: LLMSidecar) 
     # 契约 §2：绝不能出现采样参数（AMKR 的任务定义才是权威）
     for forbidden in ("temperature", "max_tokens", "top_p", "presence_penalty"):
         assert forbidden not in body, f"传输层不该下发采样参数 {forbidden}"
+    # 契约 §5.1.2 第 4 条：浏览器 UA 只给图像链路，聊天链路不要带（会绕过 AMKR 的路由假设）。
+    assert "Chrome/" not in request.user_agent
 
 
 @requires_binary
@@ -271,7 +299,7 @@ def test_usage_is_passed_through(amkr: FakeAmkr, sidecar: LLMSidecar) -> None:
 
 @requires_binary
 def test_empty_usage_is_none(amkr: FakeAmkr, sidecar: LLMSidecar) -> None:
-    """上游 ``usage: {}`` 视为没有（与 OpenAICompatibleProvider 一致，契约 §4.5）。"""
+    """上游 ``usage: {}`` 视为没有（与迁移前一致，契约 §4.5）。"""
     amkr.set_scenario("no_usage")
     _generate(_provider(amkr, sidecar), _request())
     assert get_last_generation_usage() is None
@@ -465,6 +493,198 @@ def test_remote_image_url_is_passed_verbatim(amkr: FakeAmkr, sidecar: LLMSidecar
     assert parts[1]["image_url"]["url"] == data_url
 
 
+@requires_binary
+@pytest.mark.parametrize(
+    ("filename", "data", "expected_mime"),
+    [
+        ("cached.jpg", PNG_1PX, "image/png"),
+        ("cached.png", JPEG_1PX, "image/jpeg"),
+    ],
+    ids=["png-saved-as-jpg", "jpeg-saved-as-png"],
+)
+def test_local_image_mime_follows_the_bytes(
+    amkr: FakeAmkr,
+    sidecar: LLMSidecar,
+    tmp_path: Path,
+    filename: str,
+    data: bytes,
+    expected_mime: str,
+) -> None:
+    """后缀会骗人：内联的 ``data:`` 媒体类型必须按字节判定（契约 §5.2）。
+
+    回归背景：媒体类型按后缀猜出来时，上游会按字节校验并 400，整条视觉通道废掉。
+    """
+    image_path = tmp_path / filename
+    image_path.write_bytes(data)
+
+    request = _request(
+        messages=[
+            {
+                "role": "user",
+                "content": [{"type": "image_url", "image_url": {"url": str(image_path)}}],
+            }
+        ]
+    )
+    _generate(_provider(amkr, sidecar), request)
+
+    url = (amkr.last_request.json_body or {})["messages"][1]["content"][0]["image_url"]["url"]
+    assert url.startswith(f"data:{expected_mime};base64,"), url[:40]
+    assert base64.b64decode(url.split(",", 1)[1]) == data
+
+
+# ── 契约 §5.1：生图与图像编辑（真链路）────────────────────
+@requires_binary
+def test_generate_image_returns_upstream_bytes(amkr: FakeAmkr, sidecar: LLMSidecar) -> None:
+    """无参考图 → 侧车打 ``/v1/images/generations``，图片字节与 mime 原样回来。"""
+    result = _generate_image(_provider(amkr, sidecar), _image_request())
+
+    assert result.image_bytes == PNG_1PX, "返回的字节必须与原图一致，不得二次编码"
+    assert result.mime_type == "image/png", "mime 要按魔数判定"
+
+    request = amkr.last_request
+    assert request.path == "/v1/images/generations", "参考图为空时走生成端点"
+    assert request.headers["authorization"] == "Bearer amkr_ik_test"
+    assert request.headers["x-amkr-workspace"] == "sirius-pulse/yuebai"
+    # 上游套了 Cloudflare 校验，图像请求必须带浏览器 UA（契约 §5.1.2 第 4 条）。
+    assert request.user_agent.startswith("Mozilla/5.0")
+    body = request.json_body or {}
+    assert body == {"model": "person_image", "prompt": "给我画一张窗外下着雨的图"}
+
+
+@requires_binary
+def test_edit_image_sends_repeated_multipart_image_fields(
+    amkr: FakeAmkr, sidecar: LLMSidecar
+) -> None:
+    """有参考图 → edits 端点，标准 multipart + **重复的** ``image`` 字段。"""
+    # 后缀与内容故意不一致：侧车必须按魔数声明每个部件的 Content-Type。
+    references = [("cached.jpg", PNG_1PX), ("cat.png", JPEG_1PX)]
+    result = _generate_image(_provider(amkr, sidecar), _image_request(references))
+
+    assert result.image_bytes == PNG_1PX
+    assert result.mime_type == "image/png"
+
+    request = amkr.image_requests[0]
+    assert request.path == "/v1/images/edits"
+    assert request.is_multipart, request.content_type
+    assert request.user_agent.startswith("Mozilla/5.0")
+    fields = request.multipart_fields()
+    assert fields["model"][0][0] == b"person_image"
+    assert fields["prompt"][0][0] == "给我画一张窗外下着雨的图".encode()
+    assert fields["image"] == [(PNG_1PX, "image/png"), (JPEG_1PX, "image/jpeg")]
+    assert "image[]" not in fields, "本地上游只认 image，不认 image[]（契约 §5.1.2 第 3 条）"
+
+
+@requires_binary
+def test_generate_image_reports_upstream_mime(amkr: FakeAmkr, sidecar: LLMSidecar) -> None:
+    """上游回 JPEG 时 ``mime_type`` 必须跟着字节走，而不是恒为 ``image/png``。"""
+    amkr.set_image_scenario("b64", image_bytes=JPEG_1PX)
+    result = _generate_image(_provider(amkr, sidecar), _image_request())
+
+    assert result.image_bytes == JPEG_1PX
+    assert result.mime_type == "image/jpeg"
+
+
+@requires_binary
+def test_generated_image_url_is_downloaded(amkr: FakeAmkr, sidecar: LLMSidecar) -> None:
+    """只有 ``url`` 时侧车自己再 GET 一次，下载请求同样要带浏览器 UA。"""
+    amkr.set_image_scenario("url", image_filename="result.png")
+    result = _generate_image(_provider(amkr, sidecar), _image_request())
+
+    assert result.image_bytes == PNG_1PX
+    assert result.mime_type == "image/png"
+
+    downloads = amkr.download_requests
+    assert [item.path for item in downloads] == ["/files/result.png"]
+    assert downloads[0].user_agent.startswith("Mozilla/5.0"), "CDN 也要过 Cloudflare 校验"
+
+
+@requires_binary
+@pytest.mark.parametrize(
+    ("scenario", "message"),
+    [
+        ("download_404", "下载生成图片失败，HTTP 404"),
+        ("download_empty", "下载生成图片得到空内容"),
+        ("invalid_json", "生图接口返回的不是合法 JSON"),
+        ("empty_data", "生图接口没有返回任何图片数据。"),
+        ("non_object_item", "生图接口没有返回任何图片数据。"),
+        ("bad_b64", "生图接口返回的 b64_json 无法解码"),
+        # 空的 b64_json 与「没给」同义：迁移前的 Python 实现也是先判空串再取 url，
+        # 所以这里不该报「空图片」——那条文案只在解出零字节时才触发。
+        ("empty_b64", "生图接口既没有 b64_json 也没有 url。"),
+    ],
+)
+def test_broken_image_responses_are_response_errors(
+    amkr: FakeAmkr, sidecar: LLMSidecar, scenario: str, message: str
+) -> None:
+    """契约 §5.1.4 的错误文案逐字一致——既有排障经验要继续有效。"""
+    amkr.set_image_scenario(scenario)
+    with pytest.raises(ProviderResponseError) as excinfo:
+        _generate_image(_provider(amkr, sidecar), _image_request())
+    assert message in str(excinfo.value)
+
+
+@requires_binary
+def test_edits_falls_back_to_json_when_multipart_rejected(
+    amkr: FakeAmkr, sidecar: LLMSidecar
+) -> None:
+    """multipart 被 4xx 拒绝 → 回退 JSON ``images[].image_url``（§5.1.2 第 3 条）。"""
+    amkr.set_image_scenario("edits_json_fallback")
+    result = _generate_image(_provider(amkr, sidecar), _image_request([("cat.png", PNG_1PX)]))
+
+    assert result.image_bytes == PNG_1PX
+    requests = amkr.image_requests
+    assert len(requests) == 2, "先标准 multipart、再回退 JSON，只允许两次"
+    assert requests[0].is_multipart
+    assert requests[0].user_agent.startswith("Mozilla/5.0")
+
+    fallback = requests[1]
+    assert not fallback.is_multipart
+    body = fallback.json_body or {}
+    assert body["model"] == "person_image"
+    assert body["prompt"] == "给我画一张窗外下着雨的图"
+    image_url = body["images"][0]["image_url"]
+    assert image_url.startswith("data:image/png;base64,"), image_url[:40]
+    assert base64.b64decode(image_url.split(",", 1)[1]) == PNG_1PX
+    assert fallback.user_agent.startswith("Mozilla/5.0")
+
+
+@requires_binary
+def test_edits_when_both_forms_are_rejected(amkr: FakeAmkr, sidecar: LLMSidecar) -> None:
+    """两种形态都被拒时抛出最后一次的真实原因，别把前一次的错盖掉。"""
+    amkr.set_image_scenario("edits_all_rejected")
+    with pytest.raises(ProviderResponseError) as excinfo:
+        _generate_image(_provider(amkr, sidecar), _image_request([("cat.png", PNG_1PX)]))
+
+    assert len(amkr.image_requests) == 2
+    assert "生图接口 HTTP 错误 422" in str(excinfo.value)
+
+
+@requires_binary
+@pytest.mark.parametrize(
+    ("scenario", "expected_type", "retryable"),
+    [
+        ("status_401", ProviderAuthError, False),
+        ("status_403", ProviderAuthError, False),
+        ("status_408", ProviderResponseError, False),
+        ("status_429", ProviderResponseError, True),
+    ],
+)
+def test_edits_never_retries_credentials_or_rate_limits(
+    amkr: FakeAmkr,
+    sidecar: LLMSidecar,
+    scenario: str,
+    expected_type: type[Exception],
+    retryable: bool,
+) -> None:
+    """凭据问题与限流不是形态不兼容：回退 JSON 只是白烧一次配额（§5.1.2 第 3 条）。"""
+    amkr.set_image_scenario(scenario)
+    with pytest.raises(expected_type) as excinfo:
+        _generate_image(_provider(amkr, sidecar), _image_request([("cat.png", PNG_1PX)]))
+
+    assert len(amkr.image_requests) == 1, "这四种状态码不该触发 JSON 回退"
+    assert excinfo.value.is_retryable is retryable  # type: ignore[attr-defined]
+
+
 # ── 契约 §3：transport 统计字段（直接打侧车，绕过 Python 桥接）──
 @requires_binary
 def test_sidecar_transport_fields(amkr: FakeAmkr, sidecar: LLMSidecar, tmp_path: Path) -> None:
@@ -575,8 +795,9 @@ def test_reasoning_only_succeeds_with_return_reasoning(amkr: FakeAmkr, sidecar: 
     assert result.content == ""
 
 
-# ── 配置：llm_transport 的解析与 provider 选择（回归防线）──
+# ── provider 选择：侧车是唯一实现，没有回退 ────────────────
 def _settings(**overrides: object) -> AmkrSettings:
+    """一份「AMKR 连接已配好」的设置（地址与凭据齐备）。"""
     fields: dict[str, object] = {
         "base_url": "http://127.0.0.1:8000",
         "api_key": "amkr_local_admin_key",
@@ -586,54 +807,40 @@ def _settings(**overrides: object) -> AmkrSettings:
     return AmkrSettings(**fields)  # type: ignore[arg-type]
 
 
-def test_default_transport_stays_python(monkeypatch: pytest.MonkeyPatch) -> None:
-    """**回归防线**：没配 ``llm_transport`` 时仍然构造纯 Python provider。"""
+class _StubSidecar:
+    """替身侧车句柄：``_build_provider`` 只用到地址与 token。"""
+
+    base_url = "http://127.0.0.1:18080"
+    token = "sidecar-token"
+
+
+def test_build_provider_uses_the_sidecar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """侧车可用时返回 ``GoTransportProvider``，连的是侧车地址而不是 AMKR。"""
     from sirius_pulse.platforms import runtime as runtime_module
 
-    def _boom(**kwargs: object) -> object:
-        raise AssertionError("默认配置不该拉起 Go 侧车")
-
-    monkeypatch.setattr(runtime_module, "get_sidecar", _boom)
-
+    monkeypatch.setattr(runtime_module, "get_sidecar", lambda **kwargs: _StubSidecar())
     provider = runtime_module._build_provider(_settings(), "sirius-pulse/yuebai", "amkr_ik_test")
-    assert isinstance(provider, OpenAICompatibleProvider)
-    assert not isinstance(provider, GoTransportProvider)
 
-
-def test_go_transport_builds_sidecar_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    from sirius_pulse.platforms import runtime as runtime_module
-
-    class _FakeSidecar:
-        base_url = "http://127.0.0.1:18080"
-        token = "sidecar-token"
-
-    monkeypatch.setattr(runtime_module, "get_sidecar", lambda **kwargs: _FakeSidecar())
-    provider = runtime_module._build_provider(
-        _settings(llm_transport=LLM_TRANSPORT_GO), "sirius-pulse/yuebai", "amkr_ik_test"
-    )
     assert isinstance(provider, GoTransportProvider)
+    assert provider._sidecar_url == _StubSidecar.base_url
+    assert provider._sidecar_token == _StubSidecar.token
+    assert provider._base_url == "http://127.0.0.1:8000"
+    assert provider._api_key == "amkr_ik_test"
+    assert provider._workspace == "sirius-pulse/yuebai"
 
 
-@pytest.mark.parametrize(("fallback", "expect_provider"), [(True, True), (False, False)])
-def test_go_transport_falls_back_to_python(
-    monkeypatch: pytest.MonkeyPatch, fallback: bool, expect_provider: bool
-) -> None:
-    """侧车起不来时：默认回退 Python；关掉回退则显式「不就绪」。"""
+def test_build_provider_without_sidecar_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**回归防线**：侧车起不来就明确「不就绪」，绝不回退到任何 Python 传输层。"""
     from sirius_pulse.platforms import runtime as runtime_module
 
     monkeypatch.setattr(runtime_module, "get_sidecar", lambda **kwargs: None)
-    provider = runtime_module._build_provider(
-        _settings(llm_transport=LLM_TRANSPORT_GO, llm_transport_fallback=fallback),
-        "sirius-pulse/yuebai",
-        "amkr_ik_test",
+    assert (
+        runtime_module._build_provider(_settings(), "sirius-pulse/yuebai", "amkr_ik_test") is None
     )
-    if expect_provider:
-        assert isinstance(provider, OpenAICompatibleProvider)
-    else:
-        assert provider is None
 
 
 def test_build_provider_without_credentials_is_none() -> None:
+    """凭据缺失时连侧车都不该拉起，直接不就绪。"""
     from sirius_pulse.platforms import runtime as runtime_module
 
     assert runtime_module._build_provider(_settings(api_key=""), "", "amkr_ik_test") is None
@@ -641,31 +848,31 @@ def test_build_provider_without_credentials_is_none() -> None:
 
 
 def test_settings_parse_transport_keys(tmp_path: Path) -> None:
-    """四个传输层键都可选：缺失即纯 Python，写错也按纯 Python 处理。"""
+    """传输层只剩「二进制 + 端口」两个键；老配置残留的开关必须被忽略、不报错。"""
     config = tmp_path / "global_config.json"
     config.write_text(
         json.dumps(
             {
                 "amkr_local_api_key": "amkr_local_admin_key",
-                "llm_transport": "GO",
-                "llm_transport_port": "18099",
+                # 老配置残留：传输层开关与回退开关都已删除，读到它们不能炸。
+                "llm_transport": "go",
                 "llm_transport_fallback": "false",
+                "llm_transport_port": "18099",
+                "llm_transport_binary": "D:/opt/llm-transport.exe",
             }
         ),
         encoding="utf-8",
     )
     settings = load_amkr_settings(tmp_path)
-    assert settings.llm_transport == LLM_TRANSPORT_GO
-    assert settings.uses_go_transport is True
     assert settings.llm_transport_port == 18099
-    assert settings.llm_transport_fallback is False
+    assert settings.llm_transport_binary == "D:/opt/llm-transport.exe"
+    assert not hasattr(settings, "llm_transport"), "侧车是唯一实现，开关不该还在"
+    assert not hasattr(settings, "llm_transport_fallback")
 
     config.write_text(json.dumps({"amkr_local_api_key": "k"}), encoding="utf-8")
-    default_settings = load_amkr_settings(tmp_path)
-    assert default_settings.llm_transport == LLM_TRANSPORT_PYTHON
-    assert default_settings.uses_go_transport is False
-    assert default_settings.llm_transport_port == 0
-    assert default_settings.llm_transport_fallback is True
+    defaults = load_amkr_settings(tmp_path)
+    assert defaults.llm_transport_port == 0, "0 表示自动分配空闲端口"
+    assert defaults.llm_transport_binary == ""
 
-    config.write_text(json.dumps({"llm_transport": "golang"}), encoding="utf-8")
-    assert load_amkr_settings(tmp_path).llm_transport == LLM_TRANSPORT_PYTHON
+    config.write_text(json.dumps({"llm_transport_port": "not-a-port"}), encoding="utf-8")
+    assert load_amkr_settings(tmp_path).llm_transport_port == 0

@@ -799,9 +799,9 @@ class Helpers:
     ) -> list[dict[str, Any]]:
         """Convert the last user message's string content into OpenAI multimodal list.
 
-        The chat vision channel only carries **local paths or data URLs**; the
-        transport layer in ``prepare_openai_compatible_messages`` turns local
-        paths into base64 data URLs. Platform image URLs are deliberately not
+        The chat vision channel only carries **local paths or data URLs**; the Go
+        sidecar (``go/llm-transport``) turns local paths into base64 data URLs when
+        it inlines multimodal parts. Platform image URLs are deliberately not
         forwarded: they carry short-lived signatures and a Referer check, so the
         upstream model's own download fails and it reports "cannot see the image".
         That invariant also filters values persisted before this rule existed.

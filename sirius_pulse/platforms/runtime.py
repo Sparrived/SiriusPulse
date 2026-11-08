@@ -34,7 +34,6 @@ from sirius_pulse.providers.amkr_sync import (
 )
 from sirius_pulse.providers.base import AsyncLLMProvider
 from sirius_pulse.providers.go_transport import GoTransportProvider
-from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 from sirius_pulse.token.token_store import TokenUsageStore
 from sirius_pulse.tools.executor import ToolExecutor
 from sirius_pulse.tools.mcp_client import MCPClientManager, load_mcp_config
@@ -144,45 +143,35 @@ def _build_provider(
     推理 key 缺失时**不回落**到管理员凭据——那会把一个配置疏漏静默变成一次越权，
     宁可让调用方显式拿到未就绪。
 
-    **传输层**：``settings.llm_transport`` 为 ``python``（默认）时返回
-    :class:`OpenAICompatibleProvider`，与改造前完全一致；为 ``go`` 且 Go 侧车可用时
-    返回 :class:`GoTransportProvider`（HTTP/SSE/多模态在侧车，编排与统计仍在 Python）。
-    侧车不可用时按 ``settings.llm_transport_fallback`` 处理：默认回退到 Python provider
-    并留 WARN 日志；关掉回退则返回 ``None``，让「不就绪」显式暴露出来。
+    **传输层**：唯一的实现是 :class:`GoTransportProvider`——HTTP、SSE 聚合与多模态
+    内联都在 Go 侧车（``go/llm-transport/``）里，编排、重试与 token 记账仍在 Python。
+    Python 侧不再保留任何直连 AMKR 的传输实现，因此侧车不可用时**没有回退**：这里
+    留一条 ERROR 日志并返回 ``None``，让「不就绪」显式暴露给调用方。
     """
     if not settings.configured:
         return None
     if not inference_key.strip():
         return None
     resolved_workspace = workspace or settings.workspace
-    if settings.uses_go_transport:
-        sidecar = get_sidecar(
-            binary=settings.llm_transport_binary,
-            port=settings.llm_transport_port,
+    sidecar = get_sidecar(
+        binary=settings.llm_transport_binary,
+        port=settings.llm_transport_port,
+    )
+    if sidecar is None:
+        LOG.error(
+            "Go 侧车（LLM 传输层）不可用：本框架没有纯 Python 传输实现，无法回退。"
+            "请先运行 `python scripts/build_llm_transport.py` 构建侧车二进制，"
+            "或用 llm_transport_binary / SIRIUS_LLM_TRANSPORT_BIN 指向已有二进制。"
         )
-        if sidecar is not None:
-            return GoTransportProvider(
-                sidecar_url=sidecar.base_url,
-                sidecar_token=sidecar.token,
-                base_url=settings.base_url,
-                api_key=inference_key,
-                timeout_seconds=settings.timeout_seconds,
-                workspace=resolved_workspace,
-                sidecar=sidecar,
-            )
-        if not settings.llm_transport_fallback:
-            LOG.error(
-                "LLM 传输层配置为 go，但 Go 侧车不可用且已禁用回退（llm_transport_fallback=false）。"
-                "请先运行 `python scripts/build_llm_transport.py`，"
-                "或把 llm_transport 改回 python。"
-            )
-            return None
-        LOG.warning("LLM 传输层配置为 go，但 Go 侧车不可用：已回退到 Python 传输层")
-    return OpenAICompatibleProvider(
+        return None
+    return GoTransportProvider(
+        sidecar_url=sidecar.base_url,
+        sidecar_token=sidecar.token,
         base_url=settings.base_url,
         api_key=inference_key,
         timeout_seconds=settings.timeout_seconds,
         workspace=resolved_workspace,
+        sidecar=sidecar,
     )
 
 

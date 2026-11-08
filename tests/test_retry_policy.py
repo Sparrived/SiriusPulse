@@ -3,8 +3,12 @@
 评估发现两处同源问题：
 1. `Brain._call_with_retry()` 无条件重试，忽略异常自带的 `is_retryable`。
    凭据失效（401/403）时重试只是白烧配额并放大故障。
-2. `openai_compatible.py` 把所有失败都包成 `RuntimeError`，于是结构化异常
-   （`ProviderAuthError` 等）从来没被抛出过，上游无法据此分流。
+2. 传输层曾把所有失败都包成 `RuntimeError`，于是结构化异常（`ProviderAuthError`
+   等）从来没被抛出过，上游无法据此分流。
+
+本文件只留**与传输实现无关**的断言：`Brain` 的重试/兜底策略，以及异常自带的重试
+语义（`ProviderResponseError.is_retryable` 的状态码规则）。「HTTP 状态码 → 哪个异常」
+的映射属于传输层，已由 `tests/test_go_transport.py` 的真链路用例覆盖。
 """
 
 from __future__ import annotations
@@ -12,7 +16,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import httpx
 import pytest
 
 from sirius_pulse.core.brain import Brain, ChatRequest
@@ -23,7 +26,6 @@ from sirius_pulse.exceptions import (
     ProviderResponseError,
 )
 from sirius_pulse.providers.base import GenerationResult
-from sirius_pulse.providers.openai_compatible import OpenAICompatibleProvider
 
 
 def _brain(provider, fallback: str = "fallback_generate", **config) -> Brain:
@@ -238,75 +240,7 @@ def test_plain_exception_still_retries():
     assert provider.calls == 2
 
 
-# ── provider 保留异常类型 ───────────────────────────────────────────
-
-
-def _provider() -> OpenAICompatibleProvider:
-    return OpenAICompatibleProvider(
-        base_url="http://amkr.invalid/v1",
-        api_key="amkr_ik_test",
-        timeout_seconds=5,
-    )
-
-
-def _request_with(provider: OpenAICompatibleProvider):
-    from sirius_pulse.providers.base import GenerationRequest
-
-    return GenerationRequest(
-        model="response_generate",
-        system_prompt="system",
-        messages=[{"role": "user", "content": "hi"}],
-        timeout_seconds=5,
-    )
-
-
-def _install_transport(provider, handler) -> None:
-    transport = httpx.MockTransport(handler)
-    provider._test_transport = transport  # type: ignore[attr-defined]
-
-
-def _patch_client(monkeypatch, provider) -> None:
-    """把 provider 里的 httpx.AsyncClient 换成带 MockTransport 的版本。"""
-    import sirius_pulse.providers.openai_compatible as mod
-
-    transport = getattr(provider, "_test_transport")
-
-    class _Client(httpx.AsyncClient):
-        def __init__(self, *args, **kwargs):
-            kwargs["transport"] = transport
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr(mod.httpx, "AsyncClient", _Client)
-
-
-def test_http_401_surfaces_as_provider_auth_error(monkeypatch):
-    provider = _provider()
-    _install_transport(provider, lambda request: httpx.Response(401, text="invalid key"))
-    _patch_client(monkeypatch, provider)
-
-    async def main():
-        return await provider.generate_async(_request_with(provider))
-
-    with pytest.raises(ProviderAuthError) as info:
-        asyncio.run(main())
-
-    assert info.value.is_retryable is False
-    assert info.value.http_status == 401
-
-
-def test_http_503_surfaces_as_retryable_provider_response_error(monkeypatch):
-    provider = _provider()
-    _install_transport(provider, lambda request: httpx.Response(503, text="overloaded"))
-    _patch_client(monkeypatch, provider)
-
-    async def main():
-        return await provider.generate_async(_request_with(provider))
-
-    with pytest.raises(ProviderResponseError) as info:
-        asyncio.run(main())
-
-    assert info.value.is_retryable is True
-    assert info.value.http_status == 503
+# ── 异常自带的重试语义（与传输实现无关）────────────────────────────
 
 
 @pytest.mark.parametrize("status", [500, 502, 504])
@@ -327,49 +261,3 @@ def test_client_side_failures_do_not_retry(status):
 def test_response_error_without_status_stays_retryable():
     """没有状态码的是本地格式判定，保持旧的乐观行为。"""
     assert ProviderResponseError("amkr", "格式错误").is_retryable is True
-
-
-def test_connection_failure_surfaces_as_provider_connection_error(monkeypatch):
-    provider = _provider()
-
-    def boom(request):
-        raise httpx.ConnectError("connection refused")
-
-    _install_transport(provider, boom)
-    _patch_client(monkeypatch, provider)
-
-    async def main():
-        return await provider.generate_async(_request_with(provider))
-
-    with pytest.raises(ProviderConnectionError) as info:
-        asyncio.run(main())
-
-    assert info.value.is_retryable is True
-
-
-def test_non_json_success_body_surfaces_as_provider_response_error(monkeypatch):
-    """反代返回 HTML 错误页时，报错要说清是「非 JSON」而不是 json 解析崩溃。"""
-    provider = _provider()
-    _install_transport(
-        provider,
-        lambda request: httpx.Response(200, text="<html>502 Bad Gateway</html>"),
-    )
-    _patch_client(monkeypatch, provider)
-
-    async def main():
-        return await provider.generate_async(_request_with(provider))
-
-    with pytest.raises(ProviderResponseError, match="非 JSON"):
-        asyncio.run(main())
-
-
-def test_empty_choices_surfaces_as_provider_response_error(monkeypatch):
-    provider = _provider()
-    _install_transport(provider, lambda request: httpx.Response(200, json={"choices": []}))
-    _patch_client(monkeypatch, provider)
-
-    async def main():
-        return await provider.generate_async(_request_with(provider))
-
-    with pytest.raises(ProviderResponseError, match="choices"):
-        asyncio.run(main())

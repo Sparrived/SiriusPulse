@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import base64
 import logging
-import mimetypes
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import unquote, urlparse
-
-from sirius_pulse.utils.image_bytes import (
-    MAX_INLINE_IMAGE_BYTES,
-    downscale_image_bytes,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -302,35 +295,6 @@ def build_generation_debug_context(
     }
 
 
-def build_chat_completion_payload(
-    request: GenerationRequest,
-    *,
-    provider_name: str,
-) -> dict[str, object]:
-    """Build the OpenAI-compatible chat completion body.
-
-    **不包含采样参数**。请求由 AMKR 按任务名路由，任务定义里的
-    ``temperature`` / ``max_tokens`` 才是权威；调用方再传一份会与任务冲突
-    （AMKR 对「调用方显式传了任务已固定的参数」直接回 400，不做静默覆盖），
-    所以这里不写、也不保留任何本地回退分支。需要调整取值时改 AMKR 侧的固定值。
-    ``provider_name`` 仅用于日志与调试上下文。
-    """
-    payload: dict[str, object] = {
-        "model": request.model,
-        "messages": [
-            {"role": "system", "content": request.system_prompt},
-            *request.messages,
-        ],
-    }
-    if request.response_format is not None:
-        payload["response_format"] = request.response_format
-    if request.tools is not None:
-        payload["tools"] = request.tools
-    if request.tool_choice is not None:
-        payload["tool_choice"] = request.tool_choice
-    return payload
-
-
 def _resolve_local_file_reference(value: str) -> Path | None:
     text = str(value).strip()
     if not text:
@@ -350,107 +314,6 @@ def _resolve_local_file_reference(value: str) -> Path | None:
 
     candidate = Path(text).expanduser()
     return candidate if candidate.is_file() else None
-
-
-#: 图片格式的魔数前缀。媒体类型必须按**字节**判定：文件名后缀会骗人
-#: （缓存常把各种图片统一存成 .jpg，内容却可能是 PNG），而 Anthropic 会校验
-#: 声明与实际是否一致，不匹配直接 400：
-#:   messages.N.content.M.image.source.base64: The image was specified using the
-#:   image/jpeg media type, but the image appears to be a image/png image
-_IMAGE_MAGIC_PREFIXES: tuple[tuple[bytes, str], ...] = (
-    # PNG 魔数 89 50 4E 47 0D 0A 1A 0A —— 用 fromhex 写，避免字节转义在编辑链路里被吃掉
-    (bytes.fromhex("89504e470d0a1a0a"), "image/png"),
-    (bytes.fromhex("ffd8ff"), "image/jpeg"),
-    (b"GIF87a", "image/gif"),
-    (b"GIF89a", "image/gif"),
-)
-
-
-def _sniff_image_mime(data: bytes) -> str | None:
-    """按魔数返回图片媒体类型；认不出来返回 None，调用方保留原有判定。"""
-    for prefix, mime in _IMAGE_MAGIC_PREFIXES:
-        if data.startswith(prefix):
-            return mime
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
-def _file_to_data_url(file_path: Path, *, default_mime: str) -> str:
-    mime_type, _ = mimetypes.guess_type(file_path.name)
-    resolved_mime = str(mime_type or default_mime).strip() or default_mime
-    if default_mime.startswith("image/") and not resolved_mime.startswith("image/"):
-        resolved_mime = default_mime
-    data = file_path.read_bytes()
-    limit = MAX_INLINE_IMAGE_BYTES
-    if default_mime.startswith("image/") and len(data) > limit:
-        # base64 会把体积再放大 4/3，超大原图内联前先降采样，避免请求体超限。
-        # 显式传入 limit：downscale_image_bytes 的默认值在定义时就已绑定，
-        # 不传就绕过了此处（及测试中）的配置。
-        shrunk = downscale_image_bytes(data, max_bytes=limit)
-        if shrunk is not None:
-            data = shrunk
-            resolved_mime = "image/jpeg"
-    if default_mime.startswith("image/"):
-        # 内容优先于后缀：上游按字节校验媒体类型，声明错了整个请求会被 400 拒掉。
-        sniffed = _sniff_image_mime(data)
-        if sniffed is not None:
-            resolved_mime = sniffed
-    encoded = base64.b64encode(data).decode("ascii")
-    return f"data:{resolved_mime};base64,{encoded}"
-
-
-def prepare_openai_compatible_messages(
-    messages: list[dict[str, object]],
-) -> tuple[list[dict[str, object]], dict[str, int]]:
-    """Normalize OpenAI-compatible multimodal messages for transport.
-
-    Local image paths are converted to data URLs so OpenAI-compatible HTTP
-    endpoints can consume them without requiring SDK-specific file upload APIs.
-    """
-    prepared_messages: list[dict[str, object]] = []
-    local_image_path_conversions = 0
-
-    for message in messages:
-        prepared_message = dict(message)
-        content = prepared_message.get("content")
-        if not isinstance(content, list):
-            prepared_messages.append(prepared_message)
-            continue
-
-        prepared_parts: list[object] = []
-        for part in content:
-            if not isinstance(part, dict):
-                prepared_parts.append(part)
-                continue
-
-            prepared_part = dict(part)
-            if str(prepared_part.get("type", "")).strip() == "image_url":
-                image_url = prepared_part.get("image_url")
-                if isinstance(image_url, dict):
-                    prepared_image_url = dict(image_url)
-                    raw_url = str(prepared_image_url.get("url", "")).strip()
-                    local_file = _resolve_local_file_reference(raw_url)
-                    if local_file is not None:
-                        prepared_image_url["url"] = _file_to_data_url(
-                            local_file,
-                            default_mime="image/jpeg",
-                        )
-                        prepared_part["image_url"] = prepared_image_url
-                        local_image_path_conversions += 1
-                    elif not raw_url.lower().startswith(("http://", "https://", "data:")):
-                        # 跳过无效的图片 URL（例如已清理的本地缓存路径），
-                        # 避免提供商返回 400 Bad Request。
-                        logger.warning("跳过无效的图片 URL（非本地文件且非网络地址）: %s", raw_url)
-                        continue
-            prepared_parts.append(prepared_part)
-
-        prepared_message["content"] = prepared_parts
-        prepared_messages.append(prepared_message)
-
-    return prepared_messages, {
-        "local_image_path_conversions": local_image_path_conversions,
-    }
 
 
 def resolve_generation_timeout_seconds(
