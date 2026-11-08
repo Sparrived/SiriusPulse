@@ -239,6 +239,28 @@ def test_her_own_life_moves_her_mood_but_baseline_only_drifts():
     assert mood.baseline_valence == pytest.approx(0.25)
 
 
+def test_her_mood_is_written_down_so_a_restart_still_knows_it(tmp_path):
+    """她自己的日子推动心情后要立刻落盘：重启回来还是这份心情。"""
+    from sirius_pulse.core.engine_persistence import EngineStateStore
+    from sirius_pulse.core.tool_engine_context import ToolEngineContextImpl
+
+    store = EngineStateStore(tmp_path)
+    engine = SimpleNamespace(
+        work_path=str(tmp_path),
+        identity_resolver=None,
+        user_manager=SimpleNamespace(get_user=lambda *_a: None),
+        _state_store=store,
+        assistant_emotion=AssistantEmotionState(),
+    )
+
+    ToolEngineContextImpl(engine).nudge_mood(0.4, 0.1, "读到一句很戳的话")
+
+    saved = store.load_assistant_emotion()
+    assert saved is not None
+    assert saved["valence"] == pytest.approx(engine.assistant_emotion.valence)
+    assert saved["valence"] > AssistantEmotionState().valence
+
+
 # --- 聊天侧：看得见的她 ------------------------------------------------------------
 
 

@@ -795,12 +795,14 @@ class ToolEngineContextImpl:
         return basic.name_cn if basic else ""
 
     def _save_emotion(self) -> None:
-        persistence = getattr(self._engine, "_persistence", None)
+        # 心情写在 engine_state/assistant_emotion.json 里：这是 EngineStateStore 的活，
+        # EnginePersistence 只有整体落盘（persist_full_state），没有单存心情的入口。
+        store = getattr(self._engine, "_state_store", None)
         emotion = getattr(self._engine, "assistant_emotion", None)
-        if persistence is None or emotion is None:
+        if store is None or emotion is None:
             return
         try:
-            persistence.save_assistant_emotion(dataclasses.asdict(emotion))
+            store.save_assistant_emotion(dataclasses.asdict(emotion))
         except Exception:
             logger.warning("保存心情状态失败", exc_info=True)
 
