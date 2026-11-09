@@ -34,8 +34,10 @@ from sirius_pulse.tools.builtin._internal._bash_runtime import (
 )
 from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.visual import policies as visual_policies
+from sirius_pulse.visual.collage import build_reference_collages, reference_note
 from sirius_pulse.visual.errors import VisualError
 from sirius_pulse.visual.images import optimize_image_bytes, sha256_bytes
+from sirius_pulse.visual.tooling import normalise_bool
 
 logger = logging.getLogger(__name__)
 
@@ -84,17 +86,27 @@ _config.group("生图").add(
     description="可选参考图列表（最多 8 张，单张不超过 20MB），支持本地文件路径或 http(s) URL。",
     default=[],
 )
+_config.group("生图").add(
+    "collage_references",
+    type="bool",
+    description=(
+        "可选：把参考图当作角色参考，最多四人拼成一张 2×2 拼图，最多发送四张拼图，"
+        "并在提示词中追加位置说明；启用时应为每个人物只提供一张代表性参考图。"
+    ),
+    default=False,
+)
 
 TOOL_META = {
     "name": "image_generate",
     "description": (
         "【适用场景】根据文本描述或参考图像生成新图片。\n"
         "【使用方法】传入 prompt 描述画面主体与构图风格；可选 subjects 绑定人物设定（如 {'ref': 'persona'} 画自己）；"
-        "可选 reference_images 提供参考图路径或 URL。\n"
+        "可选 reference_images 提供参考图路径或 URL；多角色参考可开启 collage_references，"
+        "系统会把每人一张代表图拼成少量 2×2 拼图并追加位置说明。\n"
         "【注意事项】异步任务，调用后仅返回任务 ID，不阻塞当前回复；生成完成后仅向内部回调产物路径，不自动外发；"
         "需发送产物至群聊/私聊时须在回调轮次显式调用 group_file_exec；禁止重复提交相同请求，未收到完成回调前不得谎称已画完。"
     ),
-    "version": "1.0.0",
+    "version": "1.1.0",
     "side_effect": "external_write",
     "tags": ["image", "generate", "background", "art"],
     "dependencies": ["httpx"],
@@ -121,6 +133,7 @@ async def run(
     reference_images: list[str] | None = None,
     subjects: Any = None,
     source_ref: str = "",
+    collage_references: bool = False,
     *,
     data_store: Any = None,
     chat_context: dict[str, Any] | None = None,
@@ -136,6 +149,7 @@ async def run(
     Args:
         prompt: 画面描述，不能为空。
         reference_images: 参考图来源（本地绝对路径或 http(s) URL），最多 8 张。
+        collage_references: 是否把多张人物参考图拼成少量 2×2 拼图再交给生图模型。
         data_store: 框架注入的持久化数据存储。
         chat_context: 框架注入的聊天上下文，用于记住结果要发回哪个群。
         invocation_context: 框架注入的调用者信息。
@@ -154,6 +168,7 @@ async def run(
     prompt_text = str(prompt or "").strip()
     if not prompt_text:
         return {"success": False, "error": "prompt 不能为空，请描述想画什么"}
+    collage_flag = normalise_bool(collage_references)
 
     try:
         references = _normalize_references(reference_images)
@@ -215,6 +230,7 @@ async def run(
             engine_context=engine_context,
             invocation_context=invocation_context,
             max_pending=max_pending,
+            collage_references=collage_flag,
         )
 
     managed_refs, denial = await _guard_legacy_references(
@@ -245,6 +261,7 @@ async def run(
             invocation_context=invocation_context,
             max_pending=max_pending,
             managed_only=True,
+            collage_references=collage_flag,
         )
 
     job_id = f"img_{uuid.uuid4().hex[:8]}"
@@ -279,6 +296,7 @@ async def run(
             "status": "pending",
             "prompt": prompt_text,
             "references": reference_names,
+            "collage_references": bool(collage_flag),
             "group_id": group_id,
             "user_id": user_id,
             "user_name": user_name,
@@ -385,6 +403,7 @@ async def _submit_person_job(
     invocation_context: Any,
     max_pending: int,
     managed_only: bool = False,
+    collage_references: bool = False,
 ) -> dict[str, Any]:
     """人物分支：绑定正式形象 → 本地输入快照 → 入现有后台队列。"""
     service, access = _visual_context(engine_context, invocation_context)
@@ -456,6 +475,7 @@ async def _submit_person_job(
                 "status": "pending",
                 "prompt": str(plan["prompt"]),
                 "references": names,
+                "collage_references": bool(collage_references),
                 "group_id": group_id,
                 "user_id": user_id,
                 "user_name": user_name,
@@ -836,6 +856,7 @@ async def _generate_image_for_job(
     job_id = str(job.get("id", ""))
     # 参考图缺失必须在领取许可与计费之前拒绝，不能悄悄少一张继续画。
     references = _read_reference_images(data_store, job, strict=visual)
+    collaged_references, collage_note = _collage_job_references(job, references)
     if visual:
         permit = await service.acquire_generation_permit(job_id)
         if not permit.get("allow"):
@@ -843,12 +864,16 @@ async def _generate_image_for_job(
         started = await service.mark_generation_submit_started(job_id)
         if not started.get("allow"):
             raise _VisualJobCancelled(str(started.get("code") or "cancelled_by_revocation"))
+    # 拼图位置说明只进本次请求；持久化的 job prompt 保持原样，回调摘要不出现内部提示。
+    prompt = str(job.get("prompt", ""))
+    if collage_note:
+        prompt = f"{prompt}\n{collage_note}"
     # wait_for 与 ``timeout_seconds`` 用同一个值：契约里 ctx 自己也会超时，这里
     # 只是再兜一层，保证后台 tick 不会因为引擎实现漏了超时而永远挂住。
     payload = await asyncio.wait_for(
         ctx.generate_image(
-            prompt=str(job.get("prompt", "")),
-            reference_images=references,
+            prompt=prompt,
+            reference_images=collaged_references,
             timeout_seconds=float(timeout),
         ),
         timeout=float(timeout),
@@ -1127,6 +1152,91 @@ def _read_reference_images(
             raise ValueError("人物生图参考图快照哈希或图序不一致，已拒绝计费请求")
     # 哈希校验针对原始快照；真正上传时用轻量副本，减少 multipart 体积与上游解码耗时。
     return [(name, optimize_image_bytes(data)) for name, data in images]
+
+
+def _collage_job_references(
+    job: dict[str, Any],
+    references: list[tuple[str, bytes]],
+) -> tuple[list[tuple[str, bytes]], str]:
+    """按任务开关把人物参考图拼成少量 2×2 拼图，返回（参考图, 位置说明）。
+
+    人物任务按 ``visual.references`` 的 person_id 去重，每人只取第一张代表图，
+    避免同一角色的多个视角被当成多个人；旧任务没有人物元数据，则每张参考图
+    视为一个人，名字取文件名去掉序号前缀。拼图失败或不足两人时原样返回，
+    保持"同一角色多视角"与"不因一张坏图而少参考"的旧行为。
+    """
+    if not job.get("collage_references") or len(references) < 2:
+        return references, ""
+    visual = job.get("visual") if isinstance(job.get("visual"), dict) else {}
+    metadata = visual.get("references") if isinstance(visual.get("references"), list) else []
+    if metadata:
+        people = _people_from_visual_references(
+            references, metadata, visual.get("subjects")
+        )
+    else:
+        people = [
+            (label, data) for label, (_name, data) in zip(_reference_labels(references), references)
+        ]
+    if len(people) < 2:
+        return references, ""
+    try:
+        collages = build_reference_collages(people)
+        note = reference_note(collages)
+    except Exception as exc:  # noqa: BLE001 - 拼图只是优化，失败不能拖垮生图
+        logger.warning("参考图拼图失败，改用原图: %s", exc)
+        return references, ""
+    if not collages:
+        return references, ""
+    collaged = [
+        (f"collage_{index:02d}.jpg", item.data) for index, item in enumerate(collages, start=1)
+    ]
+    return collaged, note
+
+
+def _people_from_visual_references(
+    references: list[tuple[str, bytes]],
+    metadata: list[Any],
+    subjects: Any,
+) -> list[tuple[str, bytes]]:
+    """把人物任务快照按 person_id 去重成每人一张代表图。"""
+    labels = _reference_labels(references)
+    display_names = {
+        str(item.get("person_id") or ""): str(item.get("display_name") or "")
+        for item in (subjects if isinstance(subjects, list) else [])
+        if isinstance(item, dict)
+    }
+    by_index = {
+        _int_value(item.get("index")): item
+        for item in metadata
+        if isinstance(item, dict) and _int_value(item.get("index")) > 0
+    }
+    people: list[tuple[str, bytes]] = []
+    seen: set[str] = set()
+    for position, (name, data) in enumerate(references):
+        item = by_index.get(position + 1) or (metadata[position] if position < len(metadata) else {})
+        if not isinstance(item, dict):
+            item = {}
+        person_id = str(item.get("person_id") or "").strip()
+        label = labels[position]
+        if person_id:
+            if person_id in seen:
+                continue
+            seen.add(person_id)
+            label = str(
+                item.get("display_name") or display_names.get(person_id) or label
+            )
+        people.append((label, data))
+    return people
+
+
+def _reference_labels(references: list[tuple[str, bytes]]) -> list[str]:
+    """参考图文件名去掉扩展名与 ``01_`` / ``02-`` / ``03 `` 序号前缀。"""
+    labels: list[str] = []
+    for index, (name, _data) in enumerate(references, start=1):
+        stem = Path(name).stem or name
+        label = re.sub(r"^(?:\d{1,4}[_\-\s]+)+", "", stem).strip() or stem
+        labels.append(label or f"角色{index}")
+    return labels
 
 
 def _write_generated_image(

@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image
 
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 from sirius_pulse.tools.builtin import image_generate
@@ -19,6 +21,12 @@ from sirius_pulse.tools.models import ToolInvocationContext
 
 _PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"fake-png-body"
 _GROUP_CONTEXT = {"group_id": "987654321", "user_id": "u-1", "adapter_type": "napcat"}
+
+
+def _real_png(color: tuple[int, int, int] = (90, 80, 160), size=(32, 40)) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _store(tmp_path: Path) -> ToolDataStore:
@@ -404,3 +412,118 @@ async def test_job_without_origin_keeps_artifact_and_skips_callback(tmp_path):
     assert job["callback_state"] == "skipped"
     assert job["notified"] is False
     assert ctx.callback_calls == ctx.dispatch_calls == []
+
+
+def _write_people(tmp_path: Path, names: tuple[str, ...]) -> list[str]:
+    paths: list[str] = []
+    for index, name in enumerate(names):
+        path = tmp_path / f"{name}.png"
+        path.write_bytes(_real_png((40 + index * 40, 90, 150)))
+        paths.append(str(path))
+    return paths
+
+
+@pytest.mark.asyncio
+async def test_collage_references_packs_four_people_into_one_image_and_guides_prompt(tmp_path):
+    store = _store(tmp_path)
+    references = _write_people(tmp_path, ("01_alice", "02-bob", "03 carol", "dave"))
+    await image_generate.run(
+        prompt="四个人在野餐",
+        reference_images=references,
+        collage_references=True,
+        data_store=store,
+        chat_context=_GROUP_CONTEXT,
+    )
+
+    job = _jobs(store)[0]
+    assert job["collage_references"] is True
+    ctx = _FakeCtx()
+    await image_generate._process_once(ctx, store)
+
+    sent = ctx.image_calls[0]["reference_images"]
+    assert len(sent) == 1 and sent[0][0] == "collage_01.jpg"
+    prompt = ctx.image_calls[0]["prompt"]
+    for name in ("alice", "bob", "carol", "dave"):
+        assert f"={name}" in prompt
+    assert "左上=alice" in prompt and "右下=dave" in prompt
+    assert "不要把拼图网格" in prompt
+    assert job["prompt"] == "四个人在野餐", "持久化提示词不写入内部拼图说明"
+    assert ctx.callback_calls[0]["request_summary"] == "四个人在野餐"
+
+
+@pytest.mark.asyncio
+async def test_without_collage_switch_individual_references_and_prompt_are_unchanged(tmp_path):
+    store = _store(tmp_path)
+    references = _write_people(tmp_path, ("01_alice", "02-bob", "03 carol", "dave"))
+    await image_generate.run(
+        prompt="四个人在野餐",
+        reference_images=references,
+        data_store=store,
+        chat_context=_GROUP_CONTEXT,
+    )
+
+    job = _jobs(store)[0]
+    assert job["collage_references"] is False
+    ctx = _FakeCtx()
+    await image_generate._process_once(ctx, store)
+
+    sent = ctx.image_calls[0]["reference_images"]
+    assert [name for name, _data in sent] == [
+        "01_01_alice.png",
+        "02_02-bob.png",
+        "03_03_carol.png",
+        "04_dave.png",
+    ]
+    assert ctx.image_calls[0]["prompt"] == "四个人在野餐"
+    assert "不要把拼图网格" not in ctx.image_calls[0]["prompt"]
+
+
+def _visual_job(references, metadata, subjects=None) -> dict[str, Any]:
+    return {
+        "collage_references": True,
+        "visual": {"references": metadata, "subjects": subjects or []},
+    }
+
+
+def test_collage_helper_uses_one_representative_image_per_person():
+    alice_a = ("01_ref.png", _real_png((200, 10, 10)))
+    alice_b = ("02_ref.png", _real_png((10, 200, 10)))
+    bob = ("03_ref.png", _real_png((10, 10, 200)))
+    job = _visual_job(
+        [alice_a, alice_b, bob],
+        [
+            {"index": 1, "person_id": "p-alice"},
+            {"index": 2, "person_id": "p-alice"},
+            {"index": 3, "person_id": "p-bob"},
+        ],
+        subjects=[
+            {"person_id": "p-alice", "display_name": "阿丽丝"},
+            {"person_id": "p-bob", "display_name": "鲍勃"},
+        ],
+    )
+
+    collaged, note = image_generate._collage_job_references(job, [alice_a, alice_b, bob])
+
+    assert len(collaged) == 1 and collaged[0][0] == "collage_01.jpg"
+    assert "左=阿丽丝" in note and "右=鲍勃" in note
+    # 拼图可解码，且只放阿丽丝的第一张代表图，第二个视角没有变成第三个人。
+    with Image.open(io.BytesIO(collaged[0][1])) as image:
+        assert image.format == "JPEG"
+        first_cell = image.getpixel((310, 310))
+    assert first_cell[0] > first_cell[1], "左上格应是阿丽丝的第一张红色代表图"
+    assert "第三个" not in note
+
+
+def test_collage_helper_keeps_multiple_views_of_one_person_unchanged():
+    alice_a = ("01_ref.png", _real_png((200, 10, 10)))
+    alice_b = ("02_ref.png", _real_png((10, 200, 10)))
+    job = _visual_job(
+        [alice_a, alice_b],
+        [{"index": 1, "person_id": "p-alice"}, {"index": 2, "person_id": "p-alice"}],
+        subjects=[{"person_id": "p-alice", "display_name": "阿丽丝"}],
+    )
+
+    collaged, note = image_generate._collage_job_references(job, [alice_a, alice_b])
+
+    assert collaged == [alice_a, alice_b]
+    assert note == ""
