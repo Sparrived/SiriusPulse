@@ -129,7 +129,11 @@ def _build_user_prompt(
         "(QQ number, qq_<number>, nickname, group card, and QQ name) in identity_aliases. "
         "Do not attach another speaker's identity forms to a unit about a different person, "
         "and do not record a form of address as the persona's own name unless the records "
-        "state it explicitly."
+        "state it explicitly. "
+        "Never turn a form of address, joke, or impersonation into identity: if someone "
+        "calls another person “X” or pretends to be “X”, keep “X” out of that person's "
+        "identity_aliases and do not write that they are “X”; describe it as an address "
+        "or an impersonation instead."
     )
 
 
