@@ -17,6 +17,7 @@ import html
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from contextvars import ContextVar
@@ -134,6 +135,109 @@ def _split_forward_node_texts(text: str, limit: int = _FORWARD_NODE_CHARS) -> li
     if current:
         chunks.append(current)
     return chunks or [""]
+
+
+#: 投递时按句子打包：一句说完至少攒到这么多字才换下一条消息，避免碎成气泡。
+_REPLY_PACK_WEIGHT = 20.0
+#: 句子终止符（含省略号、破折号式结尾），引号/括号跟着前一句走。
+_SENTENCE_TAIL_RE = re.compile(r"(?:[。！？!?～]+|…+|\.{3,})[”’」』】）)]*$")
+_SENTENCE_BREAK_RE = re.compile(r"(?:[。！？!?～]+|…+|\.{3,})[”’」』】）)]*")
+
+
+def _delivery_weight(text: str) -> float:
+    """按中文一字、ASCII 半字估算长度；空白不占字数。"""
+    total = 0.0
+    for char in str(text or ""):
+        if not char.isspace():
+            total += 0.5 if ord(char) < 128 else 1.0
+    return total
+
+
+def _join_delivery_fragments(left: str, right: str) -> str:
+    """把被换行拆开的同一句接回去；英文/数字之间补一个空格。"""
+    left = str(left or "").strip()
+    right = str(right or "").strip()
+    if not left:
+        return right
+    if not right:
+        return left
+    if re.search(r"[A-Za-z0-9.!?;:)]$", left) and re.match(r"[A-Za-z0-9]", right):
+        return f"{left} {right}"
+    return left + right
+
+
+def _ends_sentence(text: str) -> bool:
+    return bool(_SENTENCE_TAIL_RE.search(str(text or "").rstrip()))
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按标点切句；不按换行、逗号或顿号切。"""
+    source = str(text or "").strip()
+    if not source:
+        return []
+    pieces: list[str] = []
+    start = 0
+    for match in _SENTENCE_BREAK_RE.finditer(source):
+        piece = source[start : match.end()].strip()
+        if piece:
+            pieces.append(piece)
+        start = match.end()
+    tail = source[start:].strip()
+    if tail:
+        pieces.append(tail)
+    return pieces
+
+
+def _reply_sentence_units(text: str) -> list[str]:
+    """先把被换行拆断的句子接回去，再按标点切成完整句子。"""
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return []
+    merged: list[str] = []
+    buffer = ""
+    for line in lines:
+        buffer = line if not buffer else _join_delivery_fragments(buffer, line)
+        if _ends_sentence(buffer):
+            merged.append(buffer)
+            buffer = ""
+    if buffer:
+        merged.append(buffer)
+    units: list[str] = []
+    for chunk in merged:
+        units.extend(_split_sentences(chunk))
+    return units
+
+
+def _split_reply_for_delivery(text: str, *, merged: bool = False) -> list[str]:
+    """把回复拆成投递消息：句子为最小单位，按标点断句，绝不从逗号中间切断。
+
+    纯文本会先交给 ``merge_short_plain_text`` 压成不超过三条的短句；
+    有 Markdown/代码块等富文本结构时保持原来的逐行投递，避免拆坏格式。
+    """
+    source = str(text or "").strip()
+    if not source:
+        return []
+    if not merged:
+        source = _markdown_image.merge_short_plain_text(source)
+    if _markdown_image.has_rich_structure(source):
+        return [line for line in source.splitlines() if line.strip()]
+
+    units = _reply_sentence_units(source)
+    if not units:
+        return []
+    packed: list[str] = []
+    current = ""
+    for unit in units:
+        if current and _delivery_weight(current) >= _REPLY_PACK_WEIGHT:
+            packed.append(current)
+            current = ""
+        current = _join_delivery_fragments(current, unit) if current else unit
+        if _delivery_weight(current) >= _REPLY_PACK_WEIGHT:
+            packed.append(current)
+            current = ""
+    if current:
+        packed.append(current)
+    return packed
 
 
 def _extract_forward_nodes(payload: Any) -> list[Any]:
@@ -2789,8 +2893,8 @@ class NapCatAdapter(BaseAdapter):
             # Preserve ordinary multiline output but never retry generation once
             # a partial has escaped; a later LLM failure is explicitly unknown.
             partial_text = _markdown_image.merge_short_plain_text(text)
-            for line in [line for line in partial_text.splitlines() if line.strip()]:
-                sent = await send_text(line)
+            for part in _split_reply_for_delivery(partial_text, merged=True):
+                sent = await send_text(part)
                 known_outcome()
                 if not sent:
                     raise RuntimeError(f"Failed to send partial reply: {gid}")
@@ -2836,9 +2940,11 @@ class NapCatAdapter(BaseAdapter):
                 parts = result.setdefault(
                     "delivery_parts",
                     [
-                        {"kind": "text", "value": line}
-                        for line in reply_for_delivery.splitlines()
-                        if line.strip() and not result.get("rich_sent")
+                        {"kind": "text", "value": part}
+                        for part in _split_reply_for_delivery(
+                            reply_for_delivery, merged=True
+                        )
+                        if not result.get("rich_sent")
                     ]
                     + [
                         {"kind": "sticker", "value": name}
@@ -3196,8 +3302,8 @@ class NapCatAdapter(BaseAdapter):
                     text,
                     reply_refs,
                 )
-            # 最终兜底：按换行符拆分为多条消息，仅首条携带引用
-            lines = [line for line in text.splitlines() if line.strip()]
+            # 最终兜底：按句子 / 标点拆成多条消息，仅首条携带引用
+            lines = _split_reply_for_delivery(text, merged=True)
             if len(lines) > 1:
                 first = True
                 for line in lines:
@@ -3333,8 +3439,8 @@ class NapCatAdapter(BaseAdapter):
         async with self._get_reply_lock(key):
             if _ATOMIC_PROACTIVE_SEND.get():
                 return await self._send_private_text_single_locked(user_id, text)
-            # 最终兜底：按换行符拆分为多条消息
-            lines = [line for line in text.splitlines() if line.strip()]
+            # 最终兜底：按句子 / 标点拆成多条消息
+            lines = _split_reply_for_delivery(text, merged=True)
             if len(lines) > 1:
                 first = True
                 for line in lines:

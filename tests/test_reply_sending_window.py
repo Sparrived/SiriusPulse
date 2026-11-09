@@ -15,7 +15,10 @@ from sirius_pulse.core.pipeline import Pipeline
 from sirius_pulse.core.rhythm import RhythmAnalyzer
 from sirius_pulse.core.work_mode import WorkModeRun
 from sirius_pulse.models.models import Message
-from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
+from sirius_pulse.platforms.onebot_v11.napcat.adapter import (
+    NapCatAdapter,
+    _split_reply_for_delivery,
+)
 
 _DELAY_CONFIG = {
     "human_reply_chars_per_second": 10,
@@ -68,6 +71,59 @@ async def test_napcat_short_plain_multiline_reply_becomes_single_message():
 
     assert ok is True
     assert sent == [[{"type": "text", "data": {"text": "第一行第二行第三行"}}]]
+
+
+def test_split_reply_joins_a_sentence_broken_by_newline():
+    text = "现在本猫天天监督他、偶尔咬他一口，\n还能名正言顺赖着，划算多啦，哼！"
+
+    assert _split_reply_for_delivery(text) == [
+        "现在本猫天天监督他、偶尔咬他一口，还能名正言顺赖着，划算多啦，哼！"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_napcat_mid_sentence_newline_is_sent_as_one_message():
+    adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))
+    sent: list[object] = []
+
+    async def fake_send_group_msg(group_id, message):
+        sent.append(message)
+        return {"ok": True}
+
+    adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
+
+    text = "现在本猫天天监督他、偶尔咬他一口，\n还能名正言顺赖着，划算多啦，哼！"
+    ok = await adapter._send_group_text("100", text)
+
+    assert ok is True
+    assert sent == [
+        [
+            {
+                "type": "text",
+                "data": {
+                    "text": "现在本猫天天监督他、偶尔咬他一口，还能名正言顺赖着，划算多啦，哼！"
+                },
+            }
+        ]
+    ]
+
+
+def test_split_reply_uses_punctuation_without_relying_on_newlines():
+    text = (
+        "第一句足够长的回复内容在这里，超过二十个字。"
+        "第二句足够长的回复内容也在这里，超过二十个字！"
+    )
+
+    assert _split_reply_for_delivery(text) == [
+        "第一句足够长的回复内容在这里，超过二十个字。",
+        "第二句足够长的回复内容也在这里，超过二十个字！",
+    ]
+
+
+def test_split_reply_does_not_break_at_commas_or_dunhao():
+    text = "甲，乙、丙，丁。"
+
+    assert _split_reply_for_delivery(text) == ["甲，乙、丙，丁。"]
 
 
 @pytest.mark.asyncio

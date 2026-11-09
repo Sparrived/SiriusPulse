@@ -270,7 +270,8 @@ def test_reply_spec_requires_workflow_directory_before_reusable_external_work():
 def test_persona_prompt_when_structured_response_is_needed_then_keeps_plain_delivery():
     spec = PromptFactory.build_persona_prompt(name="月白")
 
-    assert "按换行符拆分成多条消息发送" in spec
+    assert "按标点符号" in spec
+    assert "不要用换行代替标点" in spec
     assert "发送的所有Markdown内容必须使用```进行包裹" not in spec
     assert "转译为图片发送" not in spec
     assert "group_file_exec" not in spec

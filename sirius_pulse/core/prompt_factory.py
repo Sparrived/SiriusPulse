@@ -182,7 +182,8 @@ class StyleAdapter:
         """
         max_sentence_chars = max(5, min(50, int(max_sentence_chars)))
         return (
-            f"平时像在群里随口聊天：一两句话、每句大约{max_sentence_chars}字以内，多句分行。"
+            f"平时像在群里随口聊天：一两句话、每句大约{max_sentence_chars}字以内，"
+            "多句用句号、问号或感叹号隔开；不要用换行代替标点。"
             "要解释清楚一件事、讲个经过，或者对方明确让你多说、说详细时，就放开说完整，"
             "不受这个长度限制。"
         )
@@ -237,7 +238,10 @@ class PromptFactory:
             identity_parts.append(custom_prompt)
 
         # 场景行为指导
-        identity_parts.append("你在一个多人聊天场景里。你的每条回复会被系统按换行符拆分成多条消息发送。")
+        identity_parts.append(
+            "你在一个多人聊天场景里。你的每条回复会被系统按标点符号"
+            "（句号、问号、感叹号、省略号）拆分成多条消息发送；不要用换行代替标点。"
+        )
         identity_parts.append(BE_YOURSELF_NOTE)
 
         return f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
