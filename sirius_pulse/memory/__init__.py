@@ -10,6 +10,7 @@ from sirius_pulse.memory.persona_notebook import (
     PersonaNotebookDataError,
     PersonaNotebookStore,
 )
+from sirius_pulse.memory.search import MemorySearchService
 from sirius_pulse.memory.units import (
     MemoryUnit,
     MemoryUnitFileStore,
@@ -31,6 +32,7 @@ __all__ = [
     "MemoryUnitIndexer",
     "MemoryUnitRetriever",
     "MemoryUnitFileStore",
+    "MemorySearchService",
     "ContextAssembler",
     "PersonaNotebookStore",
     "PersonaNotebookBudgetError",
