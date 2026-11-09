@@ -32,6 +32,8 @@ services:
       - ./sirius_pulse:/app/sirius_pulse:ro
       # External plugin source and _config.json remain on the host.
       - ./plugins:/app/plugins:rw
+      # Go LLM 传输层侧车：构建产物放宿主机，容器重建后不至于找不到二进制。
+      - ./go/llm-transport/bin/llm-transport:/usr/local/bin/llm-transport:ro
       - ${SIRIUS_CONTAINER_ADMIN_SOCKET:-/dev/null}:/run/sirius-container-admin.sock:ro
     command: ["run"]
     healthcheck:
