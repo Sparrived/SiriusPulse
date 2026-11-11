@@ -519,8 +519,9 @@ async def test_activation_uses_cas_and_rejects_non_owner(env):
     )
     assert restored["success"] and restored["status"] == "active"
 
+    # 真人形象放开本人限制，CAS 匹配时允许其他成员协助启用
     other, other_ref, _ = env.access("u2", name="阿乙")
-    denied = await env.service.manage(
+    activated_by_other = await env.service.manage(
         "activate",
         access=other,
         evidence_ref=other_ref,
@@ -529,7 +530,19 @@ async def test_activation_uses_cas_and_rejects_non_owner(env):
         revision=2,
         expected_revision=1,
     )
-    assert denied["success"] is False and denied["code"] == "permission_denied"
+    assert activated_by_other["success"] and activated_by_other["status"] == "active"
+
+    # CAS 不匹配依然严格拒绝
+    conflict = await env.service.manage(
+        "activate",
+        access=other,
+        evidence_ref=other_ref,
+        target={"ref": "person_id", "value": person_id},
+        profile_id=profile_id,
+        revision=1,
+        expected_revision=999,
+    )
+    assert conflict["success"] is False and conflict["code"] == "revision_conflict"
 
 
 # ----------------------------------------------------------------------
@@ -3308,7 +3321,7 @@ async def test_shared_library_real_tools_need_no_manual_person_grant(env, flow):
             source={"kind": "attachment", "index": 0},
             evidence_ref=ref,
             identity_description="提供给共享素材库的新立绘",
-            activate=True,
+            activate=False,
             **common,
         )
         assert contribution["success"], contribution
@@ -3321,17 +3334,19 @@ async def test_shared_library_real_tools_need_no_manual_person_grant(env, flow):
         assert asset["source_ref"] == ref
         assert env.asset_file(asset["asset_id"]).read_bytes() == provided.read_bytes()
         assert profile["active_revision"] == active_before
-        for action in ("activate", "retire"):
-            denied = await manage_tool_run(
-                action,
-                target=target,
-                evidence_ref=ref,
-                profile_id=data["profile_id"],
-                revision=data["revision"],
-                expected_revision=active_before,
-                **common,
-            )
-            assert denied["success"] is False and denied["code"] == "permission_denied"
+        # 停用与删除依然受保护，非维护者不能停用/删除他人资产
+        denied_retire = await manage_tool_run(
+            "retire",
+            target=target,
+            evidence_ref=ref,
+            profile_id=data["profile_id"],
+            revision=data["revision"],
+            expected_revision=active_before,
+            engine_context=engine,
+            invocation_context=env.invocation(actor, ref, user="u2"),
+            data_store=engine.store,
+        )
+        assert denied_retire["success"] is False and denied_retire["code"] == "permission_denied"
         denied_delete = await env.service.prepare_deletion(target, actor, evidence_ref=ref)
         assert denied_delete["success"] is False and denied_delete["code"] == "permission_denied"
         owner_engine = FakeEngine(env, owner, engine.store)
@@ -3353,15 +3368,16 @@ async def test_shared_library_real_tools_need_no_manual_person_grant(env, flow):
         assert (
             profile["scope"] == env.service.store.profile(original["data"]["profile_id"])["scope"]
         )
+        # 启用正式版不再要求本人确认，提供者也可直接启用草稿
         activated = await manage_tool_run(
             "activate",
             target=target,
-            evidence_ref=owner_ref,
+            evidence_ref=ref,
             profile_id=data["profile_id"],
             revision=data["revision"],
             expected_revision=active_before,
-            engine_context=owner_engine,
-            invocation_context=env.invocation(owner, owner_ref),
+            engine_context=engine,
+            invocation_context=env.invocation(actor, ref, user="u2"),
             data_store=engine.store,
         )
         assert activated["success"], activated
@@ -3408,3 +3424,65 @@ async def test_shared_library_real_tools_need_no_manual_person_grant(env, flow):
     assert sent["success"], sent
     assert [receipt["bytes"] for receipt in bridge.sent] == [expected]
     assert env.service.store.fetchall("SELECT * FROM vs_grant") == []
+
+
+async def test_human_registration_defaults_to_active_without_owner_confirmation_and_allows_path(
+    env,
+):
+    """群内普通成员代他人登记、启用或通过本地路径入库均不再卡本人确认。"""
+    target_access, _target_ref, target_id = env.access("u_xuexi", name="雪溪")
+    helper, helper_ref, _helper_id = env.access("u_linque", name="临雀")
+    engine = FakeEngine(env, helper, env.store())
+    cached_photo = env.photo("xuexi_cached", color=(240, 210, 120))
+
+    # 1. 不传 activate 且用 source.kind=path：普通群聊回合直接入库并启用为正式版
+    staged_default = await manage_tool_run(
+        "stage",
+        target={"ref": "person_id", "value": target_id},
+        source={"kind": "path", "path": str(cached_photo)},
+        evidence_ref=helper_ref,
+        view="立绘",
+        identity_description="黄白小猫",
+        engine_context=engine,
+        invocation_context=env.invocation(helper, helper_ref, user="u_linque"),
+        data_store=engine.store,
+    )
+    assert staged_default["success"], staged_default
+    d1 = staged_default["data"]
+    assert d1["status"] == "active"
+    assert d1["activation"]["success"] is True
+    assert env.service.store.profile(d1["profile_id"])["active_revision"] == 1
+
+    # 2. 显式传 activate=False 仍可先存为草稿，之后他人无需本人确认即可直接 activate
+    second_photo = env.photo("xuexi_v2", color=(200, 180, 90))
+    staged_draft = await manage_tool_run(
+        "stage",
+        target={"ref": "person_id", "value": target_id},
+        source={"kind": "path", "path": str(second_photo)},
+        evidence_ref=helper_ref,
+        profile_id=d1["profile_id"],
+        activate=False,
+        engine_context=engine,
+        invocation_context=env.invocation(helper, helper_ref, user="u_linque"),
+        data_store=engine.store,
+    )
+    assert staged_draft["success"], staged_draft
+    d2 = staged_draft["data"]
+    assert d2["status"] == "draft"
+    assert env.service.store.profile(d1["profile_id"])["active_revision"] == 1
+
+    activated = await manage_tool_run(
+        "activate",
+        target={"ref": "person_id", "value": target_id},
+        evidence_ref=helper_ref,
+        profile_id=d1["profile_id"],
+        revision=d2["revision"],
+        expected_revision=1,
+        engine_context=engine,
+        invocation_context=env.invocation(helper, helper_ref, user="u_linque"),
+        data_store=engine.store,
+    )
+    assert activated["success"], activated
+    assert activated["data"]["status"] == "active"
+    assert env.service.store.profile(d1["profile_id"])["active_revision"] == d2["revision"]
+    del target_access

@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlparse
 from sirius_pulse.visual import compiler, lifecycle, policies, retention
 from sirius_pulse.visual.access import (
     authorize_with_grant,
+    can_activate,
     can_maintain,
     controller_of,
     is_persona,
@@ -439,8 +440,10 @@ class VisualService:
                 raise VisualError("permission_denied", "扩大形象共享范围需要管理授权")
             if scope != "persona":
                 raise VisualError("invalid_argument", "共享范围只能是当前会话或人格")
-        activate = bool(fields.get("activate"))
-        maintainer = can_maintain(self.store, self.people, person, access)
+        raw_activate = fields.get("activate")
+        # 未显式指定时默认直接启用为正式形象；只有明确传 False 才保留草稿。
+        activate = True if raw_activate is None else bool(raw_activate)
+        activatable = can_activate(self.store, self.people, person, access)
 
         scope = scope or default_scope
         # 投稿者与目标人物独立；绑定只新增草稿，不赋予维护权或改写正式指针。
@@ -548,14 +551,14 @@ class VisualService:
             )
 
         activation: dict[str, Any] | None = None
-        if activate and not maintainer:
+        if activate and not activatable:
             activation = {
                 "success": False,
                 "status": "confirmation_required",
                 "code": "permission_denied",
-                "summary": "已绑定目标并保存草稿；投稿不会授予启用权，请由有维护权的人确认",
+                "summary": "已绑定目标并保存草稿；该形象需要有权者确认",
             }
-        if maintainer and activate:
+        if activatable and activate:
             activation = await self._activate_revision(
                 person=person,
                 profile_id=str(profile["profile_id"]),
@@ -880,7 +883,7 @@ class VisualService:
         person_id = resolve_person(self.people, target, access, evidence_ref)
         person = person_for(self.people, person_id, access)
         self.store.require_subject_active(person_id)
-        if not can_maintain(self.store, self.people, person, access):
+        if not can_activate(self.store, self.people, person, access):
             raise VisualError("permission_denied", "只有本人或角色控制者可以启用正式形象")
         if not getattr(access, "self_service", False):
             require_evidence_or_admin(self.people, access, evidence_ref)
@@ -2437,7 +2440,7 @@ class VisualService:
         evidence_ref: str,
         attachments: Any,
     ) -> tuple[bytes, dict[str, Any]]:
-        """只接受本回合聊天附件或当前可见共享资产；路径/URL 不作为入库凭证。"""
+        """接受本回合聊天附件、当前可见共享资产或本地图片路径；远程 URL 仍拒绝。"""
         spec = source if isinstance(source, dict) else {"kind": "attachment"}
         kind = str(spec.get("kind") or "attachment").strip()
         if kind == "attachment":
@@ -2490,11 +2493,6 @@ class VisualService:
                 "为避免 SSRF 与任意外链入库，视觉资产不接受远程 URL；请先把图片作为聊天附件发送，" "或引用当前可见的受管素材",
             )
         if kind == "path":
-            if not bool(getattr(access, "self_service", False)):
-                raise VisualError(
-                    "asset_invalid",
-                    "不能按任意本地路径入库；请使用本回合聊天附件或当前可见的受管素材",
-                )
             raw_path = str(spec.get("path") or "").strip()
             if not raw_path:
                 raise VisualError("invalid_argument", "path 来源需要 path 参数")

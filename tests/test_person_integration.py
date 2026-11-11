@@ -1403,18 +1403,24 @@ async def test_third_party_submission_binds_visible_target_without_inheriting_co
         activate=True,
         identity_description="由乙投稿的蓝色围巾参考",
     )
-    assert staged.success and staged.data["data"]["status"] == "draft", staged.data
+    assert staged.success, staged.data
     draft = staged.data["data"]
-    assert draft["activation"]["success"] is False
-    assert draft["activation"]["status"] == "confirmation_required"
-    assert draft["activation"]["code"] == "permission_denied"
-    assert draft["activation"]["summary"]
     profile = chat.visual.store.profile(draft["profile_id"])
     revision = chat.visual.store.revision(draft["profile_id"], draft["revision"])
     asset = chat.visual.store.asset(draft["asset_id"])
     uploader_id = chat.actor(upload_ref)
     assert profile["person_id"] == revision["person_id"] == asset["person_id"] == target_id
-    assert profile["active_revision"] is None
+    if target_kind == "persona":
+        assert draft["status"] == "draft", staged.data
+        assert draft["activation"]["success"] is False
+        assert draft["activation"]["status"] == "confirmation_required"
+        assert draft["activation"]["code"] == "permission_denied"
+        assert draft["activation"]["summary"]
+        assert profile["active_revision"] is None
+    else:
+        assert draft["status"] == "active", staged.data
+        assert draft["activation"]["success"] is True
+        assert profile["active_revision"] == draft["revision"]
     assert revision["created_by"] == asset["uploader_id"] == asset["actor_id"] == uploader_id
     assert asset["source_ref"] == upload_ref
     assert (
@@ -1422,10 +1428,13 @@ async def test_third_party_submission_binds_visible_target_without_inheriting_co
     ).read_bytes() == uploaded_photo.read_bytes()
     assert uploaded_photo.read_bytes() != admin_photo.read_bytes()
 
-    for action, extra in (
+    denied_actions = (
         ("activate", {"profile_id": draft["profile_id"], "revision": draft["revision"]}),
         ("retire", {"asset_id": draft["asset_id"]}),
-    ):
+    ) if target_kind == "persona" else (
+        ("retire", {"asset_id": draft["asset_id"]}),
+    )
+    for action, extra in denied_actions:
         denied = await chat.call(
             "visual_asset_manage",
             batch,
@@ -1450,7 +1459,8 @@ async def test_third_party_submission_binds_visible_target_without_inheriting_co
     assert not name_change.success and name_change.error == "permission_denied", name_change.data
     after = await chat.query(owner_ref, target, sections=["names", "claims"])
     assert after == before
-    assert chat.visual.store.profile(draft["profile_id"])["active_revision"] is None
+    expected_active = None if target_kind == "persona" else draft["revision"]
+    assert chat.visual.store.profile(draft["profile_id"])["active_revision"] == expected_active
     assert chat.visual.store.asset(draft["asset_id"])["status"] == "available"
 
     own_name = await chat.call(

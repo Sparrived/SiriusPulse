@@ -132,8 +132,23 @@ def controller_of(store: VisualStore, person: dict[str, Any]) -> str:
     return str(person.get("controller_id") or store.control(person_id) or "")
 
 
+def can_activate(store: VisualStore, people: Any, person: dict[str, Any], access: Any) -> bool:
+    """是否拥有启用正式形象的权限（stage 时直接设为主形象，或单独 activate）。
+
+    为避免资产登记过于死板，真人（human）与角色（character）的可见素材在登记或
+    启用时不再要求本人或特定控制者逐轮确认；任何人只要在本会话内均可直接启用为正式形象。
+    人格本体（persona）依然保留控制者与管理员保护，防止被随意篡改。
+    """
+    person_id = str(person.get("person_id") or "")
+    if not person_id or store.subject_deleted(person_id):
+        return False
+    if not is_persona(people, person_id):
+        return True
+    return can_maintain(store, people, person, access)
+
+
 def can_maintain(store: VisualStore, people: Any, person: dict[str, Any], access: Any) -> bool:
-    """是否拥有正式资料/形象的控制权（启用、授权、停用、删除）。"""
+    """是否拥有正式资料/形象的高级控制权（设置授权策略、停用、删除）。"""
     person_id = str(person.get("person_id") or "")
     if is_self(access, person_id):
         return True
@@ -234,7 +249,9 @@ def authorize_with_grant(
         return False, "consent_required", None
     if capability in GRANTABLE_CAPABILITIES:
         return True, "", None
-    if capability in {"activate", "delete"} and can_maintain(store, people, person, access):
+    if capability == "activate" and can_activate(store, people, person, access):
+        return True, "", None
+    if capability == "delete" and can_maintain(store, people, person, access):
         return True, "", None
     return False, "permission_denied", None
 

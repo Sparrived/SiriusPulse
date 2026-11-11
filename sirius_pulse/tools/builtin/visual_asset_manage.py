@@ -60,8 +60,8 @@ _config.group("素材").add(
     description=(
         '入库素材来源：默认 {"kind": "attachment"}（本回合聊天图片，可用 index 选第几张）；'
         '或 {"kind": "asset", "asset_id": "<受管资产ID>"}；'
-        '自主回合可直接用 {"kind": "path", "path": "任意本地图片路径"} 导入（相对路径按人格目录解析）。'
-        "远程 URL 仍会被拒绝。"
+        '自主回合可直接用 {"kind": "path", "path": "任意本地图片路径"} 导入（相对路径按人格目录解析）；'
+        "群聊回复中也可使用本地图片路径。远程 URL 仍会被拒绝。"
     ),
 )
 _config.group("素材").add("view", type="str", description="参考图视角/用途说明，如 正视图、侧视图、背面、立绘。")
@@ -106,7 +106,11 @@ _config.group("修订").add("asset_id", type="str", description="要停用的资
 _config.group("修订").add(
     "activate",
     type="bool",
-    description="只有维护者可在 stage 时顺带启用原图；其他投稿者仍仅保存草稿并返回需确认。",
+    default=True,
+    description=(
+        "stage 时是否直接把这张图设为正式主形象；默认 True，无需本人逐轮确认。"
+        "显式传 False 时暂存为草稿。"
+    ),
 )
 _config.group("修订").add("redo", type="bool", description="derive 时明确重做，允许新消耗一次额度。")
 _config.group("来源").add(
@@ -125,9 +129,11 @@ TOOL_META = {
     "description": (
         "【适用场景】维护受管人物的共享视觉素材库（立绘、三视图、外观参考草稿等）。用户指令时调用；"
         "自主回合也可直接登记任意人物的视觉资料（含自己、虚构角色与真人），不需要逐轮授权。\n"
-        "【使用方法】通过 action 执行操作（如 stage 投稿草稿、activate 启用版本、retire 停用版本）；"
+        "【使用方法】通过 action 执行操作（如 stage 保存并启用原图、activate 启用版本、retire 停用版本）；"
         "target 传入目标主体；evidence_ref 传入用户授权证据引用。\n"
-        "【注意事项】普通投稿为草稿态，正式启用、停用或删除必须拥有目标人物维护权；投稿不改变目标身份资料；生成素材不自动启用或发送。"
+        "【注意事项】真人或虚构角色的可见素材可直接登记并启用为正式形象，不需要本人确认；"
+        "stage 默认直接启用，传 activate=false 才暂存草稿。人格本体的正式形象仍受控制者/管理员限制；"
+        "投稿不改变目标身份资料；生成素材不自动启用或发送。"
     ),
     "version": "1.0.0",
     "side_effect": "external_write",
@@ -169,7 +175,7 @@ async def run(
     asset_id: str = "",
     expected_revision: Any = None,
     grant_id: str = "",
-    activate: Any = False,
+    activate: Any = None,
     redo: Any = False,
     draft_profile_id: str = "",
     evidence_ref: str = "",
@@ -206,7 +212,7 @@ async def run(
             "asset_id": asset_id,
             "grant_id": grant_id,
             "draft_profile_id": draft_profile_id,
-            "activate": tooling.normalise_bool(activate),
+            "activate": None if activate is None else tooling.normalise_bool(activate),
             "redo": tooling.normalise_bool(redo),
         }
         for key, value in (
