@@ -496,10 +496,14 @@ async def test_delayed_ack_failure_retries_only_remaining_lines_after_restart(
     queue, tasks, engine, adapter, socket = _delivery_harness(
         tmp_path, gid=gid, outcomes=("ok", "failed"), enabled=enabled
     )
+    # 投递按标点断句、换行不再切断半句话（见 test_reply_sending_window 的对应用例），
+    # 因此两条回复必须各自以句末标点收尾，才能再造出
+    # 「第一条已送达、第二条失败待重试」的场景。
+    reply_text = "first" * 10 + "。\n" + "second" * 10 + "。"
     engine.brain.chat.side_effect = [
         SimpleNamespace(
-            raw_text="first" * 10 + "\n" + "second" * 10,
-            clean_text="first" * 10 + "\n" + "second" * 10,
+            raw_text=reply_text,
+            clean_text=reply_text,
             tool_calls=[],
             reply_references=[],
         )
