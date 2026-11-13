@@ -14,6 +14,7 @@ from sirius_pulse.core.interaction_markers import (
     parse_interaction_markers,
 )
 from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.tool_call_runner import NOTEBOOK_TOOL, ToolCallRunner
 from sirius_pulse.core.work_mode import (
     SEND_MIDWAY_MSG,
     WORK_MODE_SOURCE_AUTONOMY,
@@ -25,8 +26,7 @@ from sirius_pulse.core.work_mode import (
     parse_arguments,
 )
 from sirius_pulse.providers.base import ToolCall
-from sirius_pulse.tools.executor import _bind_pending_source, _is_builtin_tool
-from sirius_pulse.tools.models import ToolInvocationContext, ToolResult
+from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.tools.pending_sources import pending_evidence_callers
 
 logger = logging.getLogger(__name__)
@@ -422,7 +422,8 @@ class ToolEngineContextImpl:
         )
         callback_id = str(getattr(invocation_context, "background_event_id", "") or "")
         extra_tools = [midway_message_tool()] if allow_midway else None
-        exclude_tool_names = () if notebook_enabled else ("persona_notebook",)
+        exclude_tool_names = () if notebook_enabled else (NOTEBOOK_TOOL,)
+        runner = ToolCallRunner(self._engine)
 
         # 一个回合只取一次时间：每轮重写会改掉这条 user 消息，后面累积的工具
         # 调用与结果就全部错过前缀缓存。
@@ -484,72 +485,17 @@ class ToolEngineContextImpl:
                     )
                     round_step["results"].append({"tool": tool_name, "output": tool_content})
                     continue
-                tool = (
-                    self._engine._tool_registry.get(tool_name)
-                    if self._engine._tool_registry
-                    else None
-                )
-                if tool_name == "persona_notebook" and not notebook_enabled:
-                    tool_content = "当前自主回合没有明确的聊天来源，不能读写任何聊天的小本。"
-                elif tool is None:
-                    tool_content = f"Tool '{tool_name}' not found"
+                if tool_name == NOTEBOOK_TOOL and not notebook_enabled:
+                    outcome = runner.reject(tool_call, "当前自主回合没有明确的聊天来源，不能读写任何聊天的小本。")
                 else:
-                    try:
-                        params = json.loads(tool_call.function_arguments or "{}")
-                    except json.JSONDecodeError:
-                        params = {}
-                    if not isinstance(params, dict):
-                        params = {}
-                    call_context, source_error = _bind_pending_source(
-                        tool, params, invocation_context
+                    outcome = await runner.execute(
+                        runner.prepare(tool_call, invocation_context),
+                        group_id=group_id,
+                        before_execute=before_tool,
                     )
-                    if source_error:
-                        executed = ToolResult(success=False, error=source_error)
-                        tool_content = executed.to_model_text()
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": tool_content,
-                            }
-                        )
-                        round_step["results"].append({"tool": tool_name, "output": tool_content})
-                        continue
-                    try:
-                        timeout = float(self.get_config_value("tool_execution_timeout", 30.0))
-                    except (TypeError, ValueError):
-                        timeout = 30.0
-                    if before_tool is not None:
-                        before_tool()
-                    executed = await self._engine._tool_executor.execute_async(
-                        tool,
-                        params,
-                        timeout=timeout,
-                        invocation_context=call_context,
-                        max_retries=2 if getattr(tool, "retry_safe", False) else 0,
-                    )
-                    tool_content = executed.to_model_text()
-                    if (
-                        tool_name == "persona_notebook"
-                        and executed.success
-                        and isinstance(executed.data, dict)
-                        and executed.data.get("status") in {"pending", "maintenance_requested"}
-                    ):
-                        manager = getattr(self._engine, "_bg_tasks_mgr", None)
-                        maintenance = getattr(manager, "notebook_maintenance", None)
-                        if maintenance is not None and _is_builtin_tool(tool, "persona_notebook"):
-                            maintenance.schedule(
-                                group_id,
-                                force=executed.data.get("status") == "maintenance_requested",
-                            )
-                    tool_multimodal.extend(
-                        {"type": "image_url", "image_url": {"url": block.value}}
-                        for block in executed.multimodal_blocks
-                    )
-                messages.append(
-                    {"role": "tool", "tool_call_id": tool_call.id, "content": tool_content}
-                )
-                round_step["results"].append({"tool": tool_name, "output": tool_content})
+                tool_multimodal.extend(outcome.multimodal)
+                messages.append(outcome.tool_message())
+                round_step["results"].append({"tool": tool_name, "output": outcome.content})
             if tool_multimodal:
                 messages.append({"role": "user", "content": tool_multimodal})
             store.save_run(run)

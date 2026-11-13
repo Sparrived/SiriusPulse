@@ -26,6 +26,12 @@ from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.interaction_markers import parse_interaction_markers
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
+from sirius_pulse.core.tool_call_runner import (
+    NOTEBOOK_TOOL,
+    ToolCallRunner,
+    retry_safe,
+    side_effect_name,
+)
 from sirius_pulse.core.work_mode import (
     ENTER_WORK_MODE,
     QUIT_WORK_MODE,
@@ -81,6 +87,11 @@ def _apply_grey_zone_hint(message_content: str, score: float | None) -> str:
 _AUTONOMOUS_MESSAGE_TOOLS = {
     "interaction_with_master",
 }
+
+#: 只读写她自己的人物/资产/小本记录，不受互动门槛限制（仍须是包内内置工具）。
+_ENGAGEMENT_EXEMPT_TOOLS = frozenset(
+    {"person_query", "person_update", "visual_asset_manage", NOTEBOOK_TOOL}
+)
 
 
 def _pending_evidence_callers(
@@ -232,19 +243,29 @@ class DelayedQueueTasks:
 
     @staticmethod
     def _side_effect_name(tool: Any, params: dict[str, Any] | None = None) -> str:
-        if (
-            getattr(tool, "name", "") == "interaction_with_master"
-            and str((params or {}).get("action", "")).strip().lower() == "status"
-        ):
-            return "read_only"
-        value = getattr(tool, "side_effect", "unknown")
-        return str(getattr(value, "value", value) or "unknown")
+        return side_effect_name(tool, params)
 
     @staticmethod
     def _retry_safe(tool: Any, params: dict[str, Any] | None = None) -> bool:
-        if getattr(tool, "name", "") == "interaction_with_master":
-            return str((params or {}).get("action", "")).strip().lower() == "status"
-        return bool(getattr(tool, "retry_safe", False))
+        return retry_safe(tool, params)
+
+    @classmethod
+    def _engagement_denial(
+        cls,
+        tool: Any,
+        params: dict[str, Any],
+        engagement: float,
+        is_developer: bool,
+    ) -> str:
+        """互动太少的人不能驱动工具；人物/小本这类内部记录与主人通道除外。"""
+        if engagement >= 0.1 or is_developer:
+            return ""
+        if cls._is_autonomous_message_tool(tool, params):
+            return ""
+        name = getattr(tool, "name", "")
+        if name in _ENGAGEMENT_EXEMPT_TOOLS and _is_builtin_tool(tool, name):
+            return ""
+        return f"Tool '{name}' 被拒绝：互动不足 (engagement={engagement:.2f})"
 
     @staticmethod
     def _tool_is_silent(tool: Any, tool_call: ToolCall) -> bool:
@@ -893,7 +914,7 @@ class DelayedQueueTasks:
 
         # Multi-round generation with function_call support
         from sirius_pulse.core.brain import Brain, ChatRequest
-        from sirius_pulse.tools.models import ToolInvocationContext, ToolResult
+        from sirius_pulse.tools.models import ToolInvocationContext
 
         max_tool_rounds = engine.config.get("max_tool_rounds", 8)
         partial_replies: list[str] = []
@@ -1233,131 +1254,75 @@ class DelayedQueueTasks:
                 )
 
                 # assistant 消息（含本轮的 tool_calls）已在流程控制工具处理前写入
-                try:
-                    tool_timeout = max(
-                        0.0, float(engine.config.get("tool_execution_timeout", 30.0))
-                    )
-                except (TypeError, ValueError):
-                    tool_timeout = 30.0
-
-                # 逐个执行 tool_call 并收集结果
-                from sirius_pulse.tools.executor import _bind_pending_source
                 from sirius_pulse.tools.pending_sources import pending_evidence_callers
 
+                runner = ToolCallRunner(engine)
                 base_evidence_callers = pending_evidence_callers(
                     engine, group_id, pending_evidence_refs
                 )
+                call_adapter_type = (
+                    item.adapter_type or getattr(engine, "_current_adapter_type", "") or ""
+                )
+
+                def _mark_generation_unsafe() -> None:
+                    # Tool retry_safe describes executor retries, not replaying an entire turn.
+                    engine.delayed_queue.mark_generation_unsafe(item_ids)
+                    persist_delayed_queue(engine)
+
                 for idx, tc in enumerate(regular_tools):
                     tool_name = tc.function_name
-                    try:
-                        params = json.loads(tc.function_arguments) if tc.function_arguments else {}
-                    except json.JSONDecodeError:
-                        params = {}
-                        logger.warning(
-                            "tool_call 参数解析失败: %s, arguments=%s",
-                            tool_name,
-                            "<redacted>"
-                            if tool_name == "persona_notebook"
-                            else tc.function_arguments,
-                        )
-
-                    tool = engine._tool_registry.get(tool_name)
-                    if tool is None:
-                        err_msg = f"Tool '{tool_name}' not found"
-                        logger.warning(err_msg)
-                        send_next_tool_output = True
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
-                        continue
-
-                    side_effect = self._side_effect_name(tool, params)
-
-                    # This batch-level gate precedes per-operation source selection.
-                    # The per-source engagement check runs again after binding.
-                    if (
-                        caller_engagement < 0.1
-                        and not caller_is_developer
-                        and not self._is_autonomous_message_tool(tool, params)
-                        and not (
-                            tool_name
-                            in {
-                                "person_query",
-                                "person_update",
-                                "visual_asset_manage",
-                                "persona_notebook",
-                            }
-                            and _is_builtin_tool(tool, tool_name)
-                        )
-                    ):
-                        err_msg = (
-                            f"Tool '{tool_name}' 被拒绝：互动不足 (engagement={caller_engagement:.2f})"
-                        )
-                        logger.warning(err_msg)
-                        agent_turn.deny_action(tc.id, tool_name, side_effect, err_msg)
-                        await self._emit_agent_turn(engine, agent_turn)
-                        send_next_tool_output = True
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
-                        continue
-                    call_context = ToolInvocationContext(
-                        caller=tool_caller,
-                        developer_profiles=developer_profiles,
-                        evidence_refs=tuple(pending_evidence_refs),
-                        evidence_callers=base_evidence_callers,
-                        group_id=group_id,
-                        adapter_type=item.adapter_type
-                        or getattr(engine, "_current_adapter_type", "")
-                        or "",
+                    prepared = runner.prepare(
+                        tc,
+                        ToolInvocationContext(
+                            caller=tool_caller,
+                            developer_profiles=developer_profiles,
+                            evidence_refs=tuple(pending_evidence_refs),
+                            evidence_callers=base_evidence_callers,
+                            group_id=group_id,
+                            adapter_type=call_adapter_type,
+                        ),
                     )
-                    call_context, source_error = _bind_pending_source(tool, params, call_context)
-                    call_caller = call_context.caller
-                    call_is_developer = call_context.caller_is_developer
-                    call_engagement = caller_engagement
-                    if call_caller is not None and call_caller.user_id != caller_user_id:
-                        semantic_profile = engine.semantic_memory.get_user_profile(
-                            group_id, call_caller.user_id
-                        )
-                        call_engagement = (
-                            semantic_profile.engagement_rate if semantic_profile else 0.0
-                        )
-                    # Engagement-based permission uses this operation's actual author.
-                    if (
-                        call_engagement < 0.1
-                        and not call_is_developer
-                        and not self._is_autonomous_message_tool(tool, params)
-                        and not (
-                            tool_name
-                            in {
-                                "person_query",
-                                "person_update",
-                                "visual_asset_manage",
-                                "persona_notebook",
-                            }
-                            and _is_builtin_tool(tool, tool_name)
-                        )
-                    ):
-                        err_msg = f"Tool '{tool_name}' 被拒绝：互动不足 (engagement={call_engagement:.2f})"
-                        logger.warning(err_msg)
-                        agent_turn.deny_action(tc.id, tool_name, side_effect, err_msg)
-                        await self._emit_agent_turn(engine, agent_turn)
+                    tool = prepared.tool
+                    params = prepared.params
+                    if tool is None:
+                        logger.warning(prepared.rejection)
                         send_next_tool_output = True
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        messages.append(runner.reject(tc, prepared.rejection).tool_message())
                         continue
 
-                    if tool.developer_only and not call_is_developer:
-                        err_msg = f"Tool '{tool_name}' 被拒绝：caller 不是 developer"
-                        logger.warning(err_msg)
-                        agent_turn.deny_action(tc.id, tool_name, side_effect, err_msg)
+                    side_effect = prepared.side_effect
+                    call_context = prepared.context
+                    call_caller = call_context.caller if call_context is not None else None
+                    call_is_developer = bool(
+                        call_context is not None and call_context.caller_is_developer
+                    )
+                    # The batch-level gate checks who asked; the per-source gate checks
+                    # the author this operation was actually bound to.
+                    denial = self._engagement_denial(
+                        tool, params, caller_engagement, caller_is_developer
+                    )
+                    if not denial:
+                        call_engagement = caller_engagement
+                        if call_caller is not None and call_caller.user_id != caller_user_id:
+                            semantic_profile = engine.semantic_memory.get_user_profile(
+                                group_id, call_caller.user_id
+                            )
+                            call_engagement = (
+                                semantic_profile.engagement_rate if semantic_profile else 0.0
+                            )
+                        denial = self._engagement_denial(
+                            tool, params, call_engagement, call_is_developer
+                        )
+                    if not denial and tool.developer_only and not call_is_developer:
+                        denial = f"Tool '{tool_name}' 被拒绝：caller 不是 developer"
+                    if not denial:
+                        denial = prepared.rejection
+                    if denial:
+                        logger.warning(denial)
+                        agent_turn.deny_action(tc.id, tool_name, side_effect, denial)
                         await self._emit_agent_turn(engine, agent_turn)
                         send_next_tool_output = True
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
-                        continue
-
-                    if source_error:
-                        err_msg = f"Tool '{tool_name}' 被拒绝：{source_error}"
-                        logger.warning(err_msg)
-                        agent_turn.deny_action(tc.id, tool_name, side_effect, err_msg)
-                        await self._emit_agent_turn(engine, agent_turn)
-                        send_next_tool_output = True
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        messages.append(runner.reject(tc, denial).tool_message())
                         continue
                     if not agent_turn.begin_action(
                         tool_call_id=tc.id,
@@ -1369,91 +1334,40 @@ class DelayedQueueTasks:
                         err_msg = f"Tool '{tool_name}' 被拒绝：本轮相同副作用动作已经执行过。"
                         await self._emit_agent_turn(engine, agent_turn)
                         send_next_tool_output = True
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": err_msg})
+                        messages.append(runner.reject(tc, err_msg).tool_message())
                         continue
 
                     agent_turn.advance(AgentTurnPhase.ACT)
                     await self._emit_agent_turn(engine, agent_turn)
 
-                    ctx = call_context
-                    logger.info(
-                        "Tool execute: %s(params=%s, caller=%s, group=%s)",
-                        tool_name,
-                        "<redacted>" if tool_name == "persona_notebook" else params,
-                        caller_user_id,
-                        group_id,
+                    outcome = await runner.execute(
+                        prepared, group_id=group_id, before_execute=_mark_generation_unsafe
                     )
-                    # Tool retry_safe describes executor retries, not replaying an entire turn.
-                    engine.delayed_queue.mark_generation_unsafe(item_ids)
-                    persist_delayed_queue(engine)
-                    try:
-                        result = await engine._tool_executor.execute_async(
-                            tool,
-                            params,
-                            timeout=tool_timeout,
-                            invocation_context=ctx,
-                            max_retries=2 if self._retry_safe(tool, params) else 0,
-                        )
-                        agent_turn.finish_action(
-                            tc.id,
-                            success=result.success,
-                            summary=("小本操作已处理" if result.success else "小本操作未确认")
-                            if tool_name == "persona_notebook"
-                            else (result.error if not result.success else result.to_display_text()),
-                        )
-                        agent_turn.advance(AgentTurnPhase.VERIFY)
-                        await self._emit_agent_turn(engine, agent_turn)
-                        logger.info(
-                            "Tool execute success: %s -> %s",
-                            tool_name,
-                            "success" if result.success else "failed",
-                        )
-                        tool_content = result.to_model_text()
-                        if result.success:
-                            if (
-                                tool_name == "persona_notebook"
-                                and isinstance(result.data, dict)
-                                and result.data.get("status")
-                                in {"pending", "maintenance_requested"}
-                            ):
-                                manager = getattr(engine, "_bg_tasks_mgr", None)
-                                maintenance = getattr(manager, "notebook_maintenance", None)
-                                if maintenance is not None and _is_builtin_tool(
-                                    tool, "persona_notebook"
-                                ):
-                                    maintenance.schedule(
-                                        group_id,
-                                        force=result.data.get("status") == "maintenance_requested",
-                                    )
+                    result = outcome.result
+                    assert result is not None
+                    agent_turn.finish_action(
+                        tc.id,
+                        success=result.success,
+                        summary=("小本操作已处理" if result.success else "小本操作未确认")
+                        if tool_name == NOTEBOOK_TOOL
+                        else (result.error if not result.success else result.to_display_text()),
+                    )
+                    agent_turn.advance(AgentTurnPhase.VERIFY)
+                    await self._emit_agent_turn(engine, agent_turn)
+                    if result.success:
+                        try:
                             self._note_external_delivery(
                                 engine, group_id, item, chat_result, tc, params, result
                             )
-                            # 收集多模态内容
-                            for block in result.multimodal_blocks:
-                                tool_multimodal.append(
-                                    {"type": "image_url", "image_url": {"url": block.value}}
-                                )
-                        else:
-                            logger.warning(
-                                "TOOL '%s' 执行失败: %s",
-                                tool_name,
-                                result.error or "Unknown error",
-                            )
-                            send_next_tool_output = True
-                    except Exception as exc:
-                        tool_content = ToolResult(success=False, error=str(exc)).to_model_text()
-                        agent_turn.finish_action(tc.id, success=False, summary=str(exc))
-                        agent_turn.advance(AgentTurnPhase.VERIFY)
-                        await self._emit_agent_turn(engine, agent_turn)
-                        logger.error("TOOL '%s' 执行异常: %s", tool_name, exc)
+                        except Exception:
+                            logger.warning("外部投递回执生成失败", exc_info=True)
+                    else:
                         send_next_tool_output = True
+                    tool_multimodal.extend(outcome.multimodal)
 
-                    # 添加 tool 结果消息
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": tool_content}
-                    )
+                    messages.append(outcome.tool_message())
                     if work_step is not None:
-                        work_step["results"].append({"tool": tool_name, "output": tool_content})
+                        work_step["results"].append({"tool": tool_name, "output": outcome.content})
 
                     # 内部小本无需发送节奏延迟；其他工具保留原有间隔。
                     if idx < len(regular_tools) - 1 and not notebook_only:
