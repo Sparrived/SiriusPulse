@@ -1288,7 +1288,10 @@ async def test_delayed_queue_when_text_accompanies_tool_then_both_are_sent_and_e
 
     assert sent == ["I will check."]
     execute_tool.assert_awaited_once()
-    assert results[0]["reply"] == "本轮工具调用上限已到，部分操作尚未完成。"
+    # 兜底话术会原样发到群里：必须是她的口吻，不能漏出工程提示。
+    reply = results[0]["reply"]
+    assert reply
+    assert "工具" not in reply and "上限" not in reply
 
 
 @pytest.mark.asyncio

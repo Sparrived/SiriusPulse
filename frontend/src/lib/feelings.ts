@@ -71,6 +71,9 @@ export const REASON: Record<string, string> = {
   reply_cooldown: '刚说过话，歇一会儿',
   pending_promoted_by_explicit_mention: '被点名，赶紧回',
   group_busy: '群里太热闹了',
+  prefix_filtered: '是给别的机器人的指令',
+  too_short: '太短了，不像在跟她说话',
+  keyword_not_mentioned: '没叫到她的名字',
 };
 
 export const HEAT: Record<string, string> = { cold: '冷清', warm: '正常', hot: '热闹' };

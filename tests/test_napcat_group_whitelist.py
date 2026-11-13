@@ -637,13 +637,14 @@ async def test_cancel_before_onebot_io_keeps_stable_event_retryable(tmp_path):
         },
     )
 
-    await adapter._api_send_lock.acquire()
+    channel_lock = adapter._api_send_locks.setdefault("group_100", asyncio.Lock())
+    await channel_lock.acquire()
     task = asyncio.create_task(adapter._handle_event(event))
     await asyncio.sleep(0.02)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    adapter._api_send_lock.release()
+    channel_lock.release()
 
     sent: list[str] = []
 

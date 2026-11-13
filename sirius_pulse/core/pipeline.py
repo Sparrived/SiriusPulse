@@ -311,12 +311,80 @@ class Pipeline:
         *,
         coordinated: bool = False,
     ) -> str:
-        """粗筛：决定是否调用主模型。
+        """粗筛：决定是否调用主模型，并把这次决定记进 ``decision_events``。
+
+        记录是给运维回答「她为什么没回这条」的唯一依据（WebUI 情绪天气页的
+        「她怎么决定要不要说话」）。交给群调度器裁决的消息（``coordinated``）
+        在这里还没有结论，不记。
 
         Returns:
             "pass" — 进入主模型生成
             "reject" — 跳过，不调用 LLM
         """
+        result = self._pre_filter_decide(
+            signal, content, user_id, group_id, sender_type, coordinated=coordinated
+        )
+        if signal.participation:
+            self._record_decision(group_id, user_id, signal)
+        return result
+
+    def _record_decision(self, group_id: str, user_id: str, signal: SignalAnalysis) -> None:
+        """把参与决策写进认知库；失败只告警，不影响回复。"""
+        participation = signal.participation or {}
+        store = getattr(self._engine, "cognition_store", None)
+        add_decision = getattr(store, "add_decision", None)
+        if not callable(add_decision):
+            return
+        engine = self._engine
+        context = participation.get("context") or {}
+        try:
+            add_decision(
+                group_id=group_id or "",
+                user_id=user_id or "",
+                strategy=str(participation.get("strategy") or "silent"),
+                score=float(participation.get("score", 0.0)),
+                threshold=float(participation.get("threshold", 0.5)),
+                reason=str(participation.get("reason") or ""),
+                directed_score=float(signal.directed_score),
+                urgency=float(signal.urgency_score),
+                entitlement=float(signal.entitlement_score),
+                sarcasm=float(signal.sarcasm_score),
+                heat_level=str(signal.heat_level or "warm"),
+                cooldown=float(context.get("cooldown_seconds", 0.0) or 0.0),
+                since_reply=float(context.get("seconds_since_reply", 0.0) or 0.0),
+                sensitivity=float(engine.config.get("sensitivity", 0.5)),
+                affinity=float(context.get("affinity_score", 0.0) or 0.0),
+            )
+        except Exception:
+            logger.warning(
+                "参与决策落库失败 (group=%s user=%s)，本轮回复继续",
+                group_id,
+                user_id,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _rule_participation(reason: str) -> dict[str, Any]:
+        """硬性规则直接拒绝时的决策记录（没有走评分模型）。"""
+        return {
+            "strategy": ResponseStrategy.SILENT.value,
+            "reason": reason,
+            "score": 0.0,
+            "threshold": 0.0,
+            "delay_seconds": 0.0,
+            "context": {"rule": reason},
+        }
+
+    def _pre_filter_decide(
+        self,
+        signal: SignalAnalysis,
+        content: str,
+        user_id: str,
+        group_id: str,
+        sender_type: str = "human",
+        *,
+        coordinated: bool = False,
+    ) -> str:
         engine = self._engine
 
         # 1. 消息前缀过滤
@@ -325,6 +393,7 @@ class Pipeline:
             text_stripped = content.lstrip()
             if any(text_stripped.startswith(p) for p in prefixes if p):
                 logger.debug("消息以配置前缀开头，跳过回复流程: %s", text_stripped[:50])
+                signal.participation = self._rule_participation("prefix_filtered")
                 return "reject"
 
         # 关键词模式只允许名称/别名命中，且不受普通评分模型影响。
@@ -347,11 +416,13 @@ class Pipeline:
         # 2. 极短消息过滤
         if len(content or "") <= 2 and not __import__("re").search(r"[一-鿿]", content or ""):
             if not signal.is_mentioned:
+                signal.participation = self._rule_participation("too_short")
                 return "reject"
 
         # 3. 过热 + 爆发 + 未指向 → 跳过
         if signal.heat_level == "overheated" and signal.burst_detected and not signal.is_mentioned:
             engine._log_inner_thought("群聊太热闹了，我先不插话了...")
+            signal.participation = self._rule_participation("group_busy")
             return "reject"
 
         # 4. @了别人且没@自己 → 跳过（由 compute_signal 的 other_mention 保护）
@@ -395,6 +466,14 @@ class Pipeline:
             life_factor=life_bridge.reply_factor(engine),
         )
         signal.participation = decision.to_dict()
+        # 决策记录要能回答「是不是刚说过话在冷却」「跟这个人熟不熟」。
+        signal.participation["context"].update(
+            {
+                "seconds_since_reply": round(min(seconds_since_reply, 86400.0), 1),
+                "cooldown_seconds": float(cooldown or 0.0),
+                "affinity_score": float(affinity or 0.0),
+            }
+        )
 
         if signal.entitlement_score < engine.expressiveness.entitlement_threshold:
             engine._log_inner_thought("这个话题我好像不太擅长...先谨慎一点吧")

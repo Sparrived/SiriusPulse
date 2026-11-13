@@ -252,7 +252,8 @@ def test_reply_time_coefficient_when_after_last_point_then_wraps_midnight():
     assert coefficient == 1.0
 
 
-def test_participation_when_time_curve_zeroes_score_then_stays_silent():
+def test_participation_when_time_curve_is_zero_then_direct_mention_still_gets_reply():
+    """深夜曲线压到 0 也不能吞掉有人直接 @ 她的消息。"""
     signal = SignalAnalysis(
         directed_score=0.9,
         is_mentioned=True,
@@ -270,9 +271,48 @@ def test_participation_when_time_curve_zeroes_score_then_stays_silent():
         reply_time_coefficient=0.0,
     )
 
+    assert decision.strategy == ResponseStrategy.IMMEDIATE
+    assert decision.reason == "addressed"
+
+
+def test_participation_when_time_curve_is_zero_then_private_message_still_gets_reply():
+    signal = SignalAnalysis(
+        directed_score=0.6,
+        is_question=True,
+        urgency_score=30,
+        relevance_score=0.6,
+        social_intent="neutral",
+    )
+
+    decision = _policy().evaluate(
+        signal=signal,
+        content="在吗，想问你个事",
+        is_private=True,
+        reply_time_coefficient=0.0,
+    )
+
+    assert decision.should_reply
+    assert decision.reason == "private_chat"
+
+
+def test_participation_when_time_curve_is_zero_then_she_does_not_volunteer():
+    signal = SignalAnalysis(
+        directed_score=0.0,
+        is_question=True,
+        urgency_score=40,
+        relevance_score=0.9,
+        social_intent="help_seeking",
+    )
+
+    decision = _policy().evaluate(
+        signal=signal,
+        content="有人知道这个报错怎么修吗",
+        is_private=False,
+        directed_gate=0.55,
+        reply_time_coefficient=0.0,
+    )
+
     assert decision.strategy == ResponseStrategy.SILENT
-    assert decision.context["raw_score"] > 0.0
-    assert decision.context["reply_time_coefficient"] == 0.0
     assert decision.score == 0.0
 
 

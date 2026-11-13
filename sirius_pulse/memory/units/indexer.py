@@ -163,6 +163,21 @@ class MemoryUnitIndexer:
         self._units.append(unit)
         return recomputed
 
+    def scratch(self, units: list[MemoryUnit]) -> "MemoryUnitIndexer":
+        """只含 ``units`` 的临时索引，供去重判定使用。
+
+        去重只在同一群（``same_boundary``）里找候选，没必要每判一条就把全局索引
+        清空重建一遍：那样每条新单元都是 O(全组) 的重建，且会顺带对缺向量的单元
+        在事件循环上同步发 embedding 请求。临时索引不补向量，调用方先在线程里补齐。
+        """
+        clone = MemoryUnitIndexer(embedding_client=self._embedding_client)
+        clone._units = list(units)
+        return clone
+
+    def set_units(self, units: list[MemoryUnit]) -> None:
+        """替换临时索引里的单元列表；向量缓存按 embedding 身份自动失效。"""
+        self._units = list(units)
+
     def semantic_candidates(
         self,
         incoming: MemoryUnit,

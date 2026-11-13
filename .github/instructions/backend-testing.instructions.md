@@ -35,7 +35,7 @@ description: "当新增或修改 Python 后端代码时使用，用于强制执�
 
 新增测试时遵循 `CLAUDE.md` 的 Testing Conventions 与以下要点：
 - 标准 `OrchestrationPolicy` 配置（禁止开启积压静默批处理 / 后台任务）
-- 设置 `pending_message_threshold=0`，并关闭辅助 LLM 任务（`memory_extract`、`event_extract`）
+- 关闭辅助 LLM 任务（`memory_extract`、`event_extract`）
 - 速度红线：单测 < 1 秒，套件 < 30 秒
 - 优先覆盖关键节点（用户输入 → 可观察输出/持久化）的端到端走通，不做实现细节断言
 

@@ -42,6 +42,8 @@ from sirius_pulse.providers.base import (
 
 logger = logging.getLogger(__name__)
 
+#: 不同群可并行生成的默认上限（同一群内由引擎的群级锁串行）。
+DEFAULT_MAX_CONCURRENT_LLM_CALLS = 3
 #: `max_concurrent_llm_calls = 0` 表示不限并发时给信号量的初值。
 #: asyncio.Semaphore 不接受无限，用一个足够大的数表达「不设限」。
 _UNLIMITED_CONCURRENCY = 1_000_000
@@ -305,9 +307,9 @@ class Brain:
         self._post_hooks: list[_PostHookEntry] = []
 
         # ── chat() 并发闸门 ──
-        # `max_concurrent_llm_calls` 早先只存在于配置模型里、没有任何运行时
-        # 消费者（死配置）。这里让它真正生效：0 表示不限制，默认 1 与旧行为
-        # （进程级单锁串行）完全一致。
+        # `max_concurrent_llm_calls`：0 表示不限制。默认 3——同一群的回合本来就由
+        # 引擎的群级锁串行，这道闸门只决定「不同群能否同时生成」；默认 1 会让一个
+        # 群跑满工具轮时，同一人格的其他群全部排队。
         self._chat_semaphore = asyncio.Semaphore(
             self._max_concurrent_llm_calls() or _UNLIMITED_CONCURRENCY
         )
@@ -838,10 +840,10 @@ class Brain:
         """每个引擎实例允许并发的 LLM 调用数（0 表示不限制）。
 
         该配置历史上只在 config 模型里存在、没有运行时消费者，属于死配置。
-        现在它真正参与调度：默认 1，与旧的进程级单锁行为一致；调大后不同群
-        的生成可以并行，避免一个群的 30 秒生成阻塞其余群。
+        默认 3：不同群的生成可以并行，避免一个群的 30 秒生成阻塞其余群；
+        同一群内的回合由引擎的群级锁保证串行。非法值退回 1（保守）。
         """
-        raw = self.config.get("max_concurrent_llm_calls", 1)
+        raw = self.config.get("max_concurrent_llm_calls", DEFAULT_MAX_CONCURRENT_LLM_CALLS)
         try:
             return max(0, int(raw))
         except (TypeError, ValueError):

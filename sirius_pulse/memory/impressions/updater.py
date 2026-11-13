@@ -134,6 +134,11 @@ class PersonImpressionUpdater:
         people = self._candidates(now)
         if not people:
             return 0
+        manager = getattr(self._engine, "memory_unit_manager", None)
+        preload = getattr(manager, "ensure_groups_loaded_async", None)
+        if callable(preload):
+            # 首次加载各群会读盘并补向量，放到线程里，别在印象任务里卡住聊天。
+            await preload()
         units = self._group_units()
         plans: list[
             tuple[int, Any, PersonImpression | None, list[MemoryUnit], list[MemoryUnit]]

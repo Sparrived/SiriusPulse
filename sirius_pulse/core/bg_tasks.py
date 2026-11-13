@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: 数据清理任务：启动后稍等再跑（别和启动时的加载抢），之后每天一次。
+_RETENTION_INITIAL_DELAY_SECONDS = 300.0
+_RETENTION_INTERVAL_SECONDS = 86400.0
+
 
 class BackgroundTasks:
     """后台任务管理组件。
@@ -77,6 +81,7 @@ class BackgroundTasks:
             asyncio.create_task(self._sticker_cache_warmup(), name="sticker_cache_warmup"),
             asyncio.create_task(self._memory_dedupe_job_worker(), name="memory_dedupe"),
             asyncio.create_task(self._person_impression_worker(), name="person_impression"),
+            asyncio.create_task(self._data_retention_worker(), name="data_retention"),
         ]
         for t in tasks:
             engine._bg_tasks.add(t)
@@ -102,6 +107,34 @@ class BackgroundTasks:
                 logger.warning("被动TOOL on_unload 失败: %s", exc)
         if hasattr(engine, "_passive_tool_unloaders"):
             engine._passive_tool_unloaders.clear()
+
+    async def _data_retention_worker(self) -> None:
+        """每天清理只用于事后分析的旧数据，免得表无限增长。
+
+        只清认知事件与参与决策（WebUI 情绪天气页的统计来源）：它们没有下游引用，
+        过期即可删。人物证据、记忆单元、聊天归档是可追溯的记录，不在这里删。
+        """
+        await asyncio.sleep(_RETENTION_INITIAL_DELAY_SECONDS)
+        while self._engine._bg_running:
+            self.prune_old_analytics()
+            await asyncio.sleep(_RETENTION_INTERVAL_SECONDS)
+
+    def prune_old_analytics(self) -> int:
+        """按 ``cognition_retention_days``（默认 30 天）删除旧认知/决策事件。"""
+        engine = self._engine
+        store = getattr(engine, "cognition_store", None)
+        cleanup = getattr(store, "cleanup_old_events", None)
+        if not callable(cleanup):
+            return 0
+        try:
+            days = max(1, int(engine.config.get("cognition_retention_days", 30)))
+        except (TypeError, ValueError):
+            days = 30
+        try:
+            return int(cleanup(days=days) or 0)
+        except Exception:
+            logger.warning("清理旧认知事件失败，明天再试", exc_info=True)
+            return 0
 
     async def _sticker_cache_warmup(self) -> None:
         """启动后异步预热表情包二元对立缓存。"""
@@ -179,10 +212,14 @@ class BackgroundTasks:
             1, int(engine.config.get("memory_unit_max_batches_per_group", 8))
         )
         promoted_total = 0
+        preload = getattr(engine.memory_unit_manager, "ensure_group_loaded_async", None)
         for group_id in list(engine.basic_memory.list_groups()):
             entries = engine.basic_memory.get_all(group_id)
             if not entries:
                 continue
+            # is_source_checkpointed 首次会整组读盘并补向量：先在线程里加载好。
+            if callable(preload):
+                await preload(group_id)
 
             # Reconcile raw entries restored after their units were persisted.
             checkpointed_ids = {

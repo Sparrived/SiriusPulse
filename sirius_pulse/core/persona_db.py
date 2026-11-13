@@ -31,6 +31,8 @@ class PersonaDatabase:
         )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # WAL + NORMAL 仍然崩溃安全，只是不再每次 commit 都 fsync。
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._ensure_meta_table()
         logger.info("PersonaDatabase 已打开: %s", self._db_path)

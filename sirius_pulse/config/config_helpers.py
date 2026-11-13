@@ -117,7 +117,13 @@ def _normalize_orchestration_defaults(
 ) -> dict[str, Any]:
     sanitized = _sanitize_nullable_mapping(value, fallback=fallback)
     sanitized.pop("task_budgets", None)
-    sanitized.pop("split_marker", None)
+    # 已删除的历史字段：分割由投递层按标点完成，静默批处理从未实现。
+    for legacy_key in (
+        "split_marker",
+        "enable_prompt_driven_splitting",
+        "pending_message_threshold",
+    ):
+        sanitized.pop(legacy_key, None)
     sanitized.pop("consolidation_enabled", None)
     policy = build_orchestration_policy_from_dict(sanitized)
     if policy is None:

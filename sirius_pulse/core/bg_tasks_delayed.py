@@ -45,6 +45,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: 收尾生成失败时发给群里的兜底话术。这些话会被群友看到，必须像她自己说的。
+_UNREADY_REPLY_FALLBACK = "抱歉，我刚才没能组织好回复，可以再说一次吗？"
+_TOOL_LIMIT_REPLY_FALLBACK = "这事我先弄到这儿，剩下的晚点再接着来～"
+
 # C 方案：指向性落在灰色区间时，把“要不要接话”交回模型判断。
 # 区间内既不能 100% 认定在叫自己（会抢别人的话），也不该直接静默（会漏掉真正找自己的消息）。
 _GREY_ZONE_DIRECTED_MIN = 0.45
@@ -810,8 +814,17 @@ class DelayedQueueTasks:
         search_context = self._recent_search_context(engine, group_id, raw_parts)
         # 查询编码要发网络请求、冷层向量要读盘：放到线程里提前做完，聊天主循环里的
         # 检索只剩内存运算。预取失败只会让这一轮少一路召回。
-        prepare = getattr(getattr(engine, "memory_unit_manager", None), "prepare_retrieval", None)
-        if callable(prepare):
+        manager = getattr(engine, "memory_unit_manager", None)
+        prepare_async = getattr(manager, "prepare_retrieval_async", None)
+        prepare = getattr(manager, "prepare_retrieval", None)
+        if callable(prepare_async):
+            await prepare_async(
+                raw_chat_content,
+                group_id=group_id,
+                context=search_context,
+                cross_group=bool(engine.config.get("cross_group_memory_enabled", True)),
+            )
+        elif callable(prepare):
             await asyncio.to_thread(
                 prepare, raw_chat_content, group_id=group_id, context=search_context
             )
@@ -1560,8 +1573,16 @@ class DelayedQueueTasks:
             strategy = "immediate"
 
         if ended_because_max_rounds:
+            if not clean_reply:
+                # 这句话会原样发到群里：只能是她自己的口吻，不能是工程提示。
+                # 具体原因留在日志里给运维看。
+                logger.warning(
+                    "工具链达到轮次上限且收尾回复为空，发送兜底话术: group=%s rounds=%d",
+                    group_id,
+                    max_tool_rounds,
+                )
             final_reply = clean_reply or (
-                "抱歉，我刚才没能组织好回复，可以再说一次吗？" if force_notebook_final else "本轮工具调用上限已到，部分操作尚未完成。"
+                _UNREADY_REPLY_FALLBACK if force_notebook_final else _TOOL_LIMIT_REPLY_FALLBACK
             )
         else:
             final_reply = clean_reply

@@ -13,8 +13,10 @@ AMKR 钉死在一个空间上，调不了管理接口。模型名必须写进该
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +41,15 @@ MODEL_FIELD = "embedding_model"
 DEFAULT_MODEL = "BAAI/bge-m3"
 
 
+def _in_event_loop() -> bool:
+    """当前线程是否正在跑 asyncio 事件循环。"""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 class EmbeddingClient:
     """同步 HTTP 客户端，封装对 AMKR ``/v1/embeddings`` 的调用。
 
@@ -61,6 +72,8 @@ class EmbeddingClient:
         self._available: bool | None = None  # None = 未检测
         self._retry_after = 0.0
         self._dimension: int | None = None
+        self._refresh_lock = threading.Lock()
+        self._refreshing = False
 
     @property
     def model(self) -> str:
@@ -78,12 +91,37 @@ class EmbeddingClient:
 
     @property
     def available(self) -> bool:
-        """服务是否可用（首次调用时会尝试健康检查）。"""
+        """服务是否可用（首次调用时会尝试健康检查）。
+
+        在事件循环线程里被调用时不做同步网络请求：健康检查最长 5 秒，放在循环里
+        会让所有群一起停顿。此时改为后台线程刷新，本次先返回已知状态（未知按不可用），
+        下一次调用就能拿到新结果。
+        """
         if self._available is None or (
             self._available is False and time.monotonic() >= self._retry_after
         ):
-            self._set_available(self._check_health())
+            if _in_event_loop():
+                self._refresh_in_background()
+            else:
+                self._set_available(self._check_health())
         return bool(self._available)
+
+    def _refresh_in_background(self) -> None:
+        with self._refresh_lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+            # 刷新期间别反复起线程：先把下次重试时间推后。
+            self._retry_after = time.monotonic() + UNAVAILABLE_RETRY_SECONDS
+
+        def _run() -> None:
+            try:
+                self._set_available(self._check_health())
+            finally:
+                with self._refresh_lock:
+                    self._refreshing = False
+
+        threading.Thread(target=_run, name="embedding-health", daemon=True).start()
 
     def check_health(self) -> bool:
         """强制重新检查服务健康状态并更新缓存。"""

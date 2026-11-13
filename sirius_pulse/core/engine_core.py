@@ -1745,7 +1745,9 @@ class _EmotionalGroupChatEngineBase:
         update_entry = getattr(getattr(self, "basic_store", None), "update_entry", None)
         if callable(update_entry):
             try:
-                update_entry(entry)
+                # 归档可达数 GB：补写放到线程里，别占事件循环。
+                # 先在事件循环里取快照，线程里序列化的就不会是正被改动的对象。
+                await asyncio.to_thread(update_entry, type(entry).from_dict(entry.to_dict()))
             except Exception:
                 logger.warning("图片描述写回基础记忆归档失败: group=%s", group_id, exc_info=True)
         return caption
@@ -2103,7 +2105,11 @@ class _EmotionalGroupChatEngineBase:
         candidate_plugins: list[str] = []
         if matcher is not None:
             try:
-                candidate_plugins = matcher.match_plugin_candidates(content)
+                # 匹配要同步请求 embedding（含首次健康检查）：放到线程里，
+                # 否则 AMKR 一慢，整个进程的所有群都跟着卡住。
+                candidate_plugins = await asyncio.to_thread(
+                    matcher.match_plugin_candidates, content
+                )
                 if not candidate_plugins:
                     return False, None
             except Exception:

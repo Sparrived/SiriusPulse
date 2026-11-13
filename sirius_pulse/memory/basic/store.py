@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 # Windows文件替换重试配置
 _REPLACE_MAX_RETRIES = 3
 _REPLACE_RETRY_DELAY = 0.1  # 100ms
+#: 原地补写时在文件末尾搜索的窗口。补写的都是刚记录的消息，4 MB 足够覆盖。
+_TAIL_WINDOW_BYTES = 4 * 1024 * 1024
 
 
 class BasicMemoryFileStore:
@@ -83,7 +85,12 @@ class BasicMemoryFileStore:
                 f.write(line)
 
     def update_entry(self, entry: BasicMemoryEntry) -> bool:
-        """Rewrite one archived entry without loading the whole JSONL file."""
+        """Rewrite one archived entry, normally touching only the file's tail.
+
+        调用方补写的都是刚记录的消息（图片描述等），它几乎总在文件末尾。归档可达
+        数 GB，逐行解析整个文件再整份重写会让每张图片都付出 O(归档大小) 的 I/O；
+        这里先在末尾窗口里找，找到就只重写那一行及其后的少量行，找不到才整份重写。
+        """
         if not entry.entry_id:
             return False
 
@@ -92,34 +99,81 @@ class BasicMemoryFileStore:
         with self._lock_for(path), archive_file_lock(path):
             if not path.exists():
                 return False
-
-            updated = False
-            tmp = self._tmp_path(path)
             try:
-                with path.open("r", encoding="utf-8") as src, tmp.open(
-                    "w", encoding="utf-8"
-                ) as dst:
-                    for raw_line in src:
-                        try:
-                            data = json.loads(raw_line)
-                        except json.JSONDecodeError:
-                            dst.write(raw_line)
-                            continue
-                        if isinstance(data, dict) and data.get("entry_id") == entry.entry_id:
-                            dst.write(replacement)
-                            updated = True
-                        else:
-                            dst.write(raw_line)
-                if updated:
-                    self._atomic_replace(tmp, path)
-                return updated
+                if self._update_in_tail(path, entry.entry_id, replacement.encode("utf-8")):
+                    return True
             except OSError:
                 return False
-            finally:
-                try:
-                    tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            return self._rewrite_entry(path, entry.entry_id, replacement)
+
+    @staticmethod
+    def _update_in_tail(path: Path, entry_id: str, replacement: bytes) -> bool:
+        """在文件末尾窗口里原地替换某条记录；窗口里没有它时返回 False。"""
+        needle = entry_id.encode("utf-8")
+        with path.open("r+b") as f:
+            size = f.seek(0, os.SEEK_END)
+            start = max(0, size - _TAIL_WINDOW_BYTES)
+            f.seek(start)
+            data = f.read()
+            pos = 0
+            if start > 0:
+                # 窗口从行中间开始：跳到下一行行首。
+                first_newline = data.find(b"\n")
+                if first_newline < 0:
+                    return False
+                pos = first_newline + 1
+            target: tuple[int, int] | None = None
+            while pos < len(data):
+                newline = data.find(b"\n", pos)
+                line_end = len(data) if newline < 0 else newline + 1
+                if needle in data[pos:line_end]:
+                    try:
+                        parsed = json.loads(data[pos:line_end])
+                    except ValueError:
+                        parsed = None
+                    if isinstance(parsed, dict) and parsed.get("entry_id") == entry_id:
+                        target = (pos, line_end)
+                pos = line_end
+            if target is None:
+                return False
+            line_start, line_end = target
+            f.seek(start + line_start)
+            f.write(replacement + data[line_end:])
+            f.truncate()
+            f.flush()
+            os.fsync(f.fileno())
+        return True
+
+    def _rewrite_entry(self, path: Path, entry_id: str, replacement: str) -> bool:
+        """整份重写归档以替换一条记录（目标不在末尾窗口时的兜底）。调用方持锁。"""
+        updated = False
+        tmp = self._tmp_path(path)
+        try:
+            with path.open("r", encoding="utf-8") as src, tmp.open("w", encoding="utf-8") as dst:
+                for raw_line in src:
+                    if entry_id not in raw_line:
+                        dst.write(raw_line)
+                        continue
+                    try:
+                        data = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        dst.write(raw_line)
+                        continue
+                    if isinstance(data, dict) and data.get("entry_id") == entry_id:
+                        dst.write(replacement)
+                        updated = True
+                    else:
+                        dst.write(raw_line)
+            if updated:
+                self._atomic_replace(tmp, path)
+            return updated
+        except OSError:
+            return False
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def read_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Read all archived entries for a group."""

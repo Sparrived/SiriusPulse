@@ -32,6 +32,12 @@ def configure_sqlite_connection(
         if not mode.replace("_", "").isalnum():
             raise ValueError(f"invalid SQLite journal_mode: {journal_mode!r}")
         conn.execute(f"PRAGMA journal_mode={mode}")
+        # 共享连接可能正处在事务里，此时 SQLite 不允许改安全级别；连接的主人在打开
+        # 时已经设过，这里跳过即可。
+        if mode == "WAL" and not conn.in_transaction:
+            # WAL 下 NORMAL 仍然崩溃安全（最多丢最后一次未 checkpoint 的提交），
+            # 但不再每次 commit 都 fsync：一条消息要提交好几次，FULL 会让每次都等磁盘。
+            conn.execute("PRAGMA synchronous=NORMAL")
     if foreign_keys:
         conn.execute("PRAGMA foreign_keys=ON")
     if query_only:

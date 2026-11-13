@@ -460,11 +460,11 @@ def test_config_helpers_when_local_tuning_shortcuts_are_used_then_session_config
     full = configure_full_orchestration(
         with_retries,
         task_retries={"event_extract": 4},
-        pending_message_threshold=0,
+        min_reply_interval_seconds=2.0,
     )
 
     assert with_retries is not config
     assert with_retries.orchestration.task_retries["memory_extract"] == 3
     # 模型与采样参数不再有入参，也不会被写进编排配置
     assert full.orchestration.task_retries["event_extract"] == 4
-    assert full.orchestration.pending_message_threshold == 0
+    assert full.orchestration.min_reply_interval_seconds == 2.0

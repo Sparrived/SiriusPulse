@@ -64,18 +64,18 @@ def _request(group_id: str) -> ChatRequest:
 # ── 并发闸门 ────────────────────────────────────────────────────────
 
 
-def test_default_concurrency_serializes_calls():
-    """默认值 1 必须与旧的进程级单锁行为一致，不得悄悄放开。"""
+def test_default_concurrency_lets_a_few_groups_generate_together():
+    """默认 3：一个群生成时别的群不必干等，但同时在飞的调用仍有上限。"""
     provider = _SlowProvider()
 
     async def main() -> None:
         brain = _brain(provider)
-        await asyncio.gather(*(brain.chat(_request(f"group-{i}")) for i in range(4)))
+        await asyncio.gather(*(brain.chat(_request(f"group-{i}")) for i in range(5)))
 
     asyncio.run(main())
 
-    assert provider.started == 4
-    assert provider.peak == 1
+    assert provider.started == 5
+    assert provider.peak == 3
 
 
 def test_configured_concurrency_lets_separate_groups_overlap():

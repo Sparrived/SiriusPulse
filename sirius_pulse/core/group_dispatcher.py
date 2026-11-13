@@ -9,14 +9,19 @@ short-lived lease before they enter the response pipeline.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from uuid import uuid4
+
+#: 收集各人格打分时的轮询间隔。轮询在线程里跑，间隔过密只会白白抢库锁。
+_COLLECTION_POLL_SECONDS = 0.02
 
 _OPEN_LOOP_RE = re.compile(
     r"(?:[?？]|你(?:怎么看|觉得|认为|说|来|接着|继续|补充)|" r"(?:轮到你|请你|想听你|能不能|要不要|是不是|对吧))"
@@ -103,16 +108,44 @@ class GroupDispatcher:
         self._clock = clock or time.time
         if not self.worker_id:
             raise ValueError("GroupDispatcher requires a worker_id")
+        self._conn: sqlite3.Connection | None = None
+        self._conn_lock = threading.RLock()
         self._initialize()
         self.register()
 
-    def _connect(self) -> sqlite3.Connection:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self.db_path), timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA journal_mode = WAL")
-        return conn
+    @contextlib.contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """借用本实例的长连接做一次事务（退出时提交，异常时回滚）。
+
+        以前每次操作都新开连接、重设 PRAGMA，而 ``coordinate`` 每条消息要轮询十几次。
+        长连接由一把可重入锁保护：调度在线程里轮询，其余调用在事件循环里，两边共用。
+        """
+        with self._conn_lock:
+            conn = self._conn
+            if conn is None:
+                self.db_path.parent.mkdir(parents=True, exist_ok=True)
+                conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA busy_timeout = 5000")
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                self._conn = conn
+            try:
+                with conn:
+                    yield conn
+            except sqlite3.Error:
+                # 连接可能已坏（文件被删、磁盘错误）：丢掉它，下次重新建立。
+                self._drop_connection()
+                raise
+
+    def _drop_connection(self) -> None:
+        with self._conn_lock:
+            conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
 
     def _initialize(self) -> None:
         with self._connect() as conn:
@@ -300,6 +333,7 @@ class GroupDispatcher:
                 "UPDATE dispatcher_workers SET last_seen = 0 WHERE worker_id = ?",
                 (self.worker_id,),
             )
+        self._drop_connection()
 
     async def coordinate(
         self,
@@ -317,8 +351,13 @@ class GroupDispatcher:
         reason: str = "",
         message_text: str = "",
     ) -> DispatchDecision:
-        """Collect local candidates, then grant the highest final score."""
-        self._submit_candidate(
+        """Collect local candidates, then grant the highest final score.
+
+        每一步都是带 ``busy_timeout`` 的写事务，多个人格争同一个库时可能等上几秒；
+        放到线程里做，等锁时不占事件循环。
+        """
+        await asyncio.to_thread(
+            self._submit_candidate,
             event_id=event_id,
             group_id=group_id,
             base_score=base_score,
@@ -334,15 +373,19 @@ class GroupDispatcher:
         )
         deadline = time.monotonic() + self.score_collection_seconds
         while True:
-            decision = self._finalize_candidate(event_id, group_id, force=False)
+            decision = await asyncio.to_thread(
+                self._finalize_candidate, event_id, group_id, force=False
+            )
             if decision is not None:
                 return decision
             if time.monotonic() >= deadline:
-                decision = self._finalize_candidate(event_id, group_id, force=True)
+                decision = await asyncio.to_thread(
+                    self._finalize_candidate, event_id, group_id, force=True
+                )
                 return decision or DispatchDecision(
                     "observe", event_id, reason="collection_timeout"
                 )
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(_COLLECTION_POLL_SECONDS)
 
     def _submit_candidate(
         self,

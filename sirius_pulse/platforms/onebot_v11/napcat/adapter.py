@@ -608,9 +608,10 @@ class NapCatAdapter(BaseAdapter):
         self._bot_admin_cache: dict[str, tuple[float, bool]] = {}
         self._group_metadata_ttl = 300.0
 
-        # API 限流：每群/私聊独立，每秒最多 1 条消息
+        # API 限流：每群/私聊独立，每秒最多 1 条消息。锁也按频道分：全局一把锁会让
+        # A 群等节流的那一秒里，B 群的消息也发不出去。
         self._last_api_call_at: dict[str, float] = {}
-        self._api_send_lock = asyncio.Lock()
+        self._api_send_locks: dict[str, asyncio.Lock] = {}
         self._event_bus_task: asyncio.Task | None = None
 
         # 消息处理锁：防止并发进入引擎 process_message 导致字典迭代时修改错误。
@@ -1029,7 +1030,10 @@ class NapCatAdapter(BaseAdapter):
         """
         if self._is_send_action(action):
             channel = self._send_channel_key(action, params)
-            async with self._api_send_lock:
+            lock = self._api_send_locks.get(channel)
+            if lock is None:
+                lock = self._api_send_locks[channel] = asyncio.Lock()
+            async with lock:
                 last = self._last_api_call_at.get(channel, 0.0)
                 elapsed = time.monotonic() - last
                 if elapsed < 1.0:
@@ -2394,15 +2398,21 @@ class NapCatAdapter(BaseAdapter):
                 group_id=group_id,
             )
             partial_sent_count = 0
+            # 半截回复 + 最终回复共用一份停顿总额，免得每段各停一次叠成十几秒。
+            pause_budget = self._reply_total_delay_budget()
             for partial in result.get("partial_replies", []):
                 if partial:
                     if parsed.message_type == "group":
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_part(partial)
+                            pause_budget -= await self._sleep_before_reply_part(
+                                partial, pause_budget
+                            )
                         sent = bool(await self._send_group_text(group_id, partial))
                     else:
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_part(partial)
+                            pause_budget -= await self._sleep_before_reply_part(
+                                partial, pause_budget
+                            )
                         sent = bool(await self._send_private_text(parsed.user_id, partial))
                     if sent:
                         response_parts.append(str(partial))
@@ -2424,12 +2434,12 @@ class NapCatAdapter(BaseAdapter):
                 if clean_reply:
                     if parsed.message_type == "group":
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_part(clean_reply)
+                            await self._sleep_before_reply_part(clean_reply, pause_budget)
                         if clean_reply:
                             sent = bool(await self._send_group_text(group_id, clean_reply))
                     else:
                         if partial_sent_count > 0:
-                            await self._sleep_before_reply_part(clean_reply)
+                            await self._sleep_before_reply_part(clean_reply, pause_budget)
                         if clean_reply:
                             sent = bool(await self._send_private_text(parsed.user_id, clean_reply))
                     if sent:
@@ -3306,9 +3316,10 @@ class NapCatAdapter(BaseAdapter):
             lines = _split_reply_for_delivery(text, merged=True)
             if len(lines) > 1:
                 first = True
+                budget = self._reply_total_delay_budget()
                 for line in lines:
                     if not first:
-                        await self._sleep_before_reply_part(line)
+                        budget -= await self._sleep_before_reply_part(line, budget)
                     refs = reply_refs if first else None
                     ok = await self._send_group_text_single_locked(group_id, line, refs)
                     if not ok:
@@ -3443,9 +3454,10 @@ class NapCatAdapter(BaseAdapter):
             lines = _split_reply_for_delivery(text, merged=True)
             if len(lines) > 1:
                 first = True
+                budget = self._reply_total_delay_budget()
                 for line in lines:
                     if not first:
-                        await self._sleep_before_reply_part(line)
+                        budget -= await self._sleep_before_reply_part(line, budget)
                     ok = await self._send_private_text_single_locked(user_id, line)
                     if not ok:
                         return False
@@ -3566,10 +3578,22 @@ class NapCatAdapter(BaseAdapter):
             self._reply_locks[key] = lock
         return lock
 
-    async def _sleep_before_reply_part(self, line: str) -> None:
+    async def _sleep_before_reply_part(self, line: str, budget: float | None = None) -> float:
+        """模拟打字停顿；``budget`` 是这条回复剩余的停顿总额，返回实际睡了多久。"""
         delay = self._reply_part_delay_seconds(line)
+        if budget is not None:
+            delay = min(delay, max(0.0, budget))
         if delay > 0:
             await asyncio.sleep(delay)
+        return max(0.0, delay)
+
+    def _reply_total_delay_budget(self) -> float:
+        """一条回复拆成多段时，段间停顿的累计上限。
+
+        每段单独算停顿（最长 7 秒）会层层叠加：三四段的回复光停顿就要十几秒，
+        群友看到的是她说一句卡半天。总额用完后只剩频道的每秒一条限速。
+        """
+        return max(0.0, self._config_float("human_reply_total_delay_seconds", 6.0))
 
     def _reply_part_delay_seconds(self, line: str) -> float:
         if self.plugin_config.get("human_reply_delay_enabled", True) is False:

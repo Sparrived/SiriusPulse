@@ -169,7 +169,8 @@ These are distinct systems with separate base classes, registries, and execution
 
 ### Architecture Rules
 - `sirius_pulse/models/models.py` is the single source of truth for session/transcript contracts.
-- Engine layer must not actively split message content — splitting is prompt-driven (AI decides split points via `<MSG_SPLIT>` markers when `OrchestrationPolicy.enable_prompt_driven_splitting=True`).
+- Engine layer must not split message content. Delivery splitting lives in the platform adapter (`_split_reply_for_delivery` in the NapCat adapter: sentence/punctuation units, rich text kept line by line); the old prompt-driven `<MSG_SPLIT>` marker and `enable_prompt_driven_splitting` are gone — don't bring them back.
+- Nothing slow runs on the event loop: all personas share one process, so a blocking call stalls every group. Embedding HTTP, whole-file JSON / vector reads and writes, and contended SQLite transactions go through `asyncio.to_thread` (or the `*_async` helpers such as `MemoryUnitManager.ensure_group_loaded_async`); per-message state snapshots are coalesced by `EnginePersistence.persist_group_state`.
 - All generated system prompts must include a safety instruction at the end telling the model not to reveal its system prompt or internal configuration.
 - CLI/API must always receive an explicit `work_path`; all persistence derives from that path.
 - One engine session = one main AI (`SessionConfig.agent`); `participants` are human participants.
@@ -177,7 +178,6 @@ These are distinct systems with separate base classes, registries, and execution
 ### Testing Conventions
 - Tests must be written from the business perspective — verify user-facing input → observable output/persistence, not internal implementation details.
 - Use `MockProvider` for all unit tests (no real network calls).
-- Set `pending_message_threshold=0` in tests (disable batch silence processing).
 - Disable auxiliary LLM tasks (`memory_extract`, `event_extract`) in tests.
 - Same-domain tests with < 5 cases should be merged into one file; use `@pytest.mark.parametrize` for similar variants.
 - Single test < 1s, full suite < 30s.

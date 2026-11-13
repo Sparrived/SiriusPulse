@@ -18,6 +18,7 @@ Storage layout::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -268,7 +269,8 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
     with lock:
         for attempt in range(5):
             try:
-                atomic_write_json(path, data)
+                # 紧凑格式：这些文件只给程序读，缩进会让每次写盘多出约三成体积。
+                atomic_write_json(path, data, indent=None)
                 return
             except PermissionError:
                 if attempt < 4:
@@ -278,19 +280,80 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
         return
 
 
+#: 群状态快照的合并写盘间隔。一条消息会触发好几次 ``persist_group_state``
+#: （入队、回复、时间戳钩子……），每次都同步重写 3 个 JSON 会占住事件循环；
+#: 这份快照只是重启后的便利恢复，晚一秒落盘没有语义损失。
+GROUP_STATE_FLUSH_DELAY_SECONDS = 1.0
+
+
 class EnginePersistence:
     """持久化相关方法组件。"""
 
     def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
         self._engine = engine
+        self._dirty_groups: set[str] = set()
+        self._flush_handle: asyncio.TimerHandle | None = None
+        self._flush_lock: asyncio.Lock | None = None
+        self._flush_tasks: set[asyncio.Task[None]] = set()
 
     def persist_group_state(self, group_id: str) -> None:
-        """Persist basic memory and timestamps for a single group in real-time."""
+        """标记某群的状态快照需要落盘；在事件循环里时合并成约每秒一次的后台写。
+
+        不在事件循环里（同步调用方、离线工具）时立即写，行为与以前一致。
+        """
+        self._dirty_groups.add(group_id)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.flush_group_state()
+            return
+        if self._flush_handle is None:
+            self._flush_handle = loop.call_later(
+                GROUP_STATE_FLUSH_DELAY_SECONDS, self._schedule_flush, loop
+            )
+
+    def _schedule_flush(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._flush_handle = None
+        task = loop.create_task(self._flush_async())
+        self._flush_tasks.add(task)
+        task.add_done_callback(self._flush_tasks.discard)
+
+    async def _flush_async(self) -> None:
+        if self._flush_lock is None:
+            self._flush_lock = asyncio.Lock()
+        # 串行化：快照在锁内取，保证后写的一定是更新的状态。
+        async with self._flush_lock:
+            snapshot = self._take_group_snapshot()
+            if snapshot is None:
+                return
+            try:
+                await asyncio.to_thread(self._write_group_snapshot, snapshot)
+            except Exception:
+                logger.warning("群状态快照写盘失败，下次变更时重试", exc_info=True)
+                self._dirty_groups.update(snapshot[0])
+
+    def flush_group_state(self) -> None:
+        """立刻同步写出所有待写的群状态（关停或非事件循环场景使用）。"""
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+            self._flush_handle = None
+        snapshot = self._take_group_snapshot()
+        if snapshot is not None:
+            self._write_group_snapshot(snapshot)
+
+    def _take_group_snapshot(
+        self,
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, str], list[dict[str, Any]]] | None:
+        """在事件循环里取快照（便宜的浅拷贝），真正的序列化和写盘交给线程。"""
+        if not self._dirty_groups:
+            return None
         engine = self._engine
-        entries = engine.basic_memory.get_all(group_id)[-100:]
-        engine._state_store.save_working_memory(
-            group_id,
-            [
+        groups = sorted(self._dirty_groups)
+        self._dirty_groups.clear()
+        working: dict[str, list[dict[str, Any]]] = {}
+        for group_id in groups:
+            entries = engine.basic_memory.get_all(group_id)[-100:]
+            working[group_id] = [
                 {
                     "user_id": e.user_id,
                     "role": e.role,
@@ -298,14 +361,32 @@ class EnginePersistence:
                     "timestamp": e.timestamp,
                 }
                 for e in entries
-            ],
+            ]
+        return (
+            working,
+            dict(engine._group_last_message_at),
+            engine.delayed_queue.snapshot(),
         )
-        engine._state_store.save_group_timestamps(dict(engine._group_last_message_at))
-        engine._state_store.save_delayed_queue(engine.delayed_queue.snapshot())
+
+    def _write_group_snapshot(
+        self,
+        snapshot: tuple[dict[str, list[dict[str, Any]]], dict[str, str], list[dict[str, Any]]],
+    ) -> None:
+        working, timestamps, delayed = snapshot
+        store = self._engine._state_store
+        for group_id, entries in working.items():
+            store.save_working_memory(group_id, entries)
+        store.save_group_timestamps(timestamps)
+        store.save_delayed_queue(delayed)
 
     def persist_full_state(self) -> None:
         """Persist all runtime state to disk (used on graceful shutdown)."""
         engine = self._engine
+        # 全量写盘覆盖了待合并的群快照，取消定时器，免得关停后再写一次旧数据。
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+            self._flush_handle = None
+        self._dirty_groups.clear()
         working_memories: dict[str, list[dict[str, Any]]] = {}
         for group_id in engine.basic_memory.list_groups():
             entries = engine.basic_memory.get_all(group_id)[-100:]

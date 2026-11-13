@@ -153,8 +153,6 @@ class OrchestrationPolicy:
     max_multimodal_inputs_per_turn: int = 4
     max_multimodal_value_length: int = 4096
 
-    # Prompt-driven content splitting (built-in marker; AI autonomously decides granularity)
-    enable_prompt_driven_splitting: bool = True
     memory_idle_consolidation_seconds: int = 3600
 
     # Memory Extract frequency control (避免调用过于频繁导致内容碎片化)
@@ -173,11 +171,6 @@ class OrchestrationPolicy:
     # Engagement decision system (参与决策系统, v0.14.0 重写)
     engagement_sensitivity: float = 0.5  # 0.0(极度克制) - 1.0(积极参与)
     heat_window_seconds: float = 60.0  # 热度分析滑动窗口（秒）
-
-    # Pending-message batching: when the queued messages for a session exceed
-    # this threshold, runtime enters backlog-silent mode and merges consecutive
-    # turns from the same speaker into a single model call. Set to 0 to disable.
-    pending_message_threshold: float = 4.0
 
     # Memory policy (centralized memory system configuration)
     memory: MemoryPolicy = field(default_factory=MemoryPolicy)
@@ -201,7 +194,7 @@ class OrchestrationPolicy:
     # generation exactly like the old process-wide lock did, so raising it is
     # what lets one group's long generation stop blocking the other groups.
     # The authoritative source at runtime is ``engine_state/orchestration.json``.
-    max_concurrent_llm_calls: int = 1
+    max_concurrent_llm_calls: int = 3
 
     # Tool system: allow AI to invoke external code via function_call (tools)
     enable_tools: bool = True
@@ -233,8 +226,6 @@ class OrchestrationPolicy:
             raise ValueError("engagement_sensitivity 必须在 [0,1] 范围内。")
         if self.heat_window_seconds <= 0:
             raise ValueError("heat_window_seconds 必须大于 0。")
-        if self.pending_message_threshold < 0:
-            raise ValueError("pending_message_threshold 不能小于 0。")
         if self.memory_idle_consolidation_seconds <= 0:
             raise ValueError("memory_idle_consolidation_seconds must be greater than 0.")
         if self.min_reply_interval_seconds < 0:

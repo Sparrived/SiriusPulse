@@ -52,6 +52,8 @@ class MemoryUnitManager:
             self, self._store, embedding_client, self._deduplicator
         )
         self._mutation_lock = asyncio.Lock()
+        #: 每个群一把加载锁：同一群的并发首次加载只读一次盘。
+        self._load_locks: dict[str, asyncio.Lock] = {}
         self._checkpointed_sources: dict[str, set[str]] = {}
         self._loaded_groups: set[str] = set()
         self._generation_backoff: dict[str, tuple[tuple[str, ...], float]] = {}
@@ -168,21 +170,20 @@ class MemoryUnitManager:
         # 新单元的向量一次请求补齐，且放到线程里：逐条同步请求会卡住聊天主循环。
         await asyncio.to_thread(self._indexer.encode_missing, units)
         async with self._mutation_lock:
-            self.ensure_group_loaded(group_id)
+            await self.ensure_group_loaded_async(group_id)
             # 去重的语义候选要覆盖全组（含退休单元）——退休只是不再注入，不代表
             # 同一条事实可以被重新写一遍。所以这里按「带向量」读取，而不是沿用
-            # ensure_group_loaded 为省内存而做的只读元数据。
-            existing = self._store.load(group_id)
-            # 索引里此刻只有「活跃单元带向量」（常驻路径为省内存故意如此），而语义去重
-            # 的候选必须覆盖全组含退休单元。先用带向量的全量刷新一次，别让退休单元
-            # 因为「内存里没有向量」而被漏判成 NEW。
-            self._indexer.replace_group(group_id, existing)
+            # ensure_group_loaded 为省内存而做的只读元数据。整组读盘放到线程里：
+            # 单群文件可达数百 MB，同步读会把所有群的回复一起卡住。
+            existing = await asyncio.to_thread(self._store.load, group_id)
+            # 去重只看本群，用临时索引而不是反复重建全局索引。
+            scratch = self._indexer.scratch(existing)
             accepted: dict[str, MemoryUnit] = {}
             for incoming in units:
                 verdict = await self._deduplicator.decide(
                     incoming,
                     existing,
-                    self._indexer,
+                    scratch,
                     brain=brain,
                     model_name=model_name,
                 )
@@ -193,10 +194,11 @@ class MemoryUnitManager:
                     now_iso=datetime.now(timezone.utc).isoformat(),
                 )
                 accepted[result.unit_id] = result
-                self._indexer.replace_group(group_id, existing)
-            self.retire_overflow(group_id, existing)
-            self._store.save(group_id, existing)
-            self._replace_loaded_group(group_id, existing)
+                # 合并出来的单元文本变了、向量被清空：补齐后它才能参与下一条的判定。
+                if result.should_prompt and not result.embedding:
+                    await asyncio.to_thread(self._indexer.encode_missing, [result])
+                scratch.set_units(existing)
+            await self._commit_group(group_id, existing)
             return list(accepted.values())
 
     def retire_overflow(self, group_id: str, units: list[MemoryUnit]) -> int:
@@ -249,27 +251,29 @@ class MemoryUnitManager:
         selected_ids = set(unit_ids)
         async with self._mutation_lock:
             for group_id in sorted(set(group_ids)):
-                loaded = self._store.load(group_id)
+                loaded = await asyncio.to_thread(self._store.load, group_id)
                 incoming = [unit for unit in loaded if unit.unit_id in selected_ids]
                 working = [unit for unit in loaded if unit.unit_id not in selected_ids]
-                self._indexer.replace_group(group_id, working)
+                await asyncio.to_thread(self._indexer.encode_missing, incoming)
+                scratch = self._indexer.scratch(working)
                 for unit in sorted(incoming, key=lambda item: (item.created_at, item.unit_id)):
                     verdict = await self._deduplicator.decide(
                         unit,
                         working,
-                        self._indexer,
+                        scratch,
                         brain=brain,
                         model_name=model_name,
                     )
-                    working, _accepted = apply_verdict(
+                    working, accepted = apply_verdict(
                         working,
                         unit,
                         verdict,
                         now_iso=datetime.now(timezone.utc).isoformat(),
                     )
-                    self._indexer.replace_group(group_id, working)
-                self._store.save(group_id, working)
-                self._replace_loaded_group(group_id, working)
+                    if accepted.should_prompt and not accepted.embedding:
+                        await asyncio.to_thread(self._indexer.encode_missing, [accepted])
+                    scratch.set_units(working)
+                await self._commit_group(group_id, working, retire=False)
 
     async def scan_duplicates(
         self,
@@ -294,35 +298,85 @@ class MemoryUnitManager:
         if not units:
             return
         async with self._mutation_lock:
-            self.ensure_group_loaded(group_id)
+            await self.ensure_group_loaded_async(group_id)
             # 追加不需要现成向量，按元数据读取即可；真正要注入的单元在写盘前补一次。
-            existing = self._store.load(group_id, with_embeddings=False)
+            existing = await asyncio.to_thread(self._store.load, group_id, with_embeddings=False)
             existing_ids = {unit.unit_id for unit in existing}
             changed = False
             for unit in units:
                 if unit.unit_id in existing_ids:
                     continue
-                self._indexer.add(unit)
                 existing.append(unit)
                 existing_ids.add(unit.unit_id)
-                self._checkpointed_sources.setdefault(group_id, set()).update(unit.source_ids)
                 changed = True
             if changed:
-                self.retire_overflow(group_id, existing)
-                # 只给会被注入的单元补向量；退休单元的向量留在磁盘，去重时再按需读。
-                self._store.hydrate_embeddings(
-                    group_id,
-                    existing,
-                    unit_ids={unit.unit_id for unit in existing if unit.should_prompt},
-                )
-                self._store.save(group_id, existing)
-                # 重新加载过的对象与索引里那一批不是同一批，退休标记必须同步进索引，
-                # 否则模型侧仍按旧标记召回。
-                self._replace_loaded_group(group_id, existing)
+                await self._commit_group(group_id, existing)
+
+    async def _commit_group(
+        self, group_id: str, units: list[MemoryUnit], *, retire: bool = True
+    ) -> None:
+        """退休超额单元、补齐可注入单元的向量、落盘并刷新索引。
+
+        读写向量文件和 embedding 请求都在线程里做；只有最后替换内存索引这一步回到
+        事件循环，此时所有单元都已带好向量，``indexer.add`` 不会再发网络请求。
+        """
+
+        def _prepare() -> None:
+            # 先给可注入单元补向量（磁盘上已有的直接读回，新单元才发请求），再退休超额：
+            # 刚写入就被挤进冷层的单元也得带着向量落盘，否则冷层语义召回永远找不到它。
+            # 早已退休的单元向量留在磁盘，去重时再按需读。
+            self._store.hydrate_embeddings(
+                group_id,
+                units,
+                unit_ids={unit.unit_id for unit in units if unit.should_prompt},
+            )
+            self._indexer.encode_missing(units)
+            if retire:
+                self.retire_overflow(group_id, units)
+            self._store.save(group_id, units)
+
+        await asyncio.to_thread(_prepare)
+        # 重新加载过的对象与索引里那一批不是同一批，退休标记必须同步进索引，
+        # 否则模型侧仍按旧标记召回。
+        self._replace_loaded_group(group_id, units)
 
     def ensure_group_loaded(self, group_id: str) -> None:
+        """同步加载某群；聊天回合应先 ``await ensure_group_loaded_async``。
+
+        同步版本留给 WebUI、离线工具这类不在聊天回合里的调用方，以及「异步预加载
+        已经做过、这里只是兜底」的检索路径。
+        """
         if group_id in self._loaded_groups:
             return
+        self._apply_group_load(group_id, self._read_group_for_index(group_id))
+
+    async def ensure_group_loaded_async(self, group_id: str) -> None:
+        """在线程里读盘、补向量，再回到事件循环把结果放进索引。
+
+        首次加载一个群可能要解析几十 MB 的 JSON 并发 embedding 请求；在事件循环里
+        同步做会让所有群、所有人格的回复一起停顿。
+        """
+        if not group_id or group_id in self._loaded_groups:
+            return
+        lock = self._load_locks.setdefault(group_id, asyncio.Lock())
+        async with lock:
+            if group_id in self._loaded_groups:
+                return
+            units = await asyncio.to_thread(self._read_group_for_index, group_id)
+            # 等线程期间若已被同步路径加载过，以那一份为准，别用旧快照覆盖。
+            if group_id in self._loaded_groups:
+                return
+            self._apply_group_load(group_id, units)
+
+    async def ensure_groups_loaded_async(self, group_ids: list[str] | None = None) -> None:
+        """预加载多个群（缺省为全部有单元的群）；供跨群检索和后台任务使用。"""
+        if group_ids is None:
+            group_ids = await asyncio.to_thread(self._store.list_group_ids)
+        for group_id in group_ids:
+            await self.ensure_group_loaded_async(group_id)
+
+    def _read_group_for_index(self, group_id: str) -> list[MemoryUnit]:
+        """读盘并补齐可注入单元的向量；不碰内存索引，可在线程里执行。"""
         # 只读元数据，不带向量：向量占单条单元的 99% 体积，而线上 90.6% 的向量属于
         # 永远不会被注入的退休单元（单群 7547/8047）。整组读向量是内存峰值的主因。
         units = self._store.load(group_id, with_embeddings=False)
@@ -335,14 +389,16 @@ class MemoryUnitManager:
         )
         if self._indexer.encode_missing(units):
             any_recomputed = True
-        for unit in units:
-            if self._indexer.add(unit):
-                any_recomputed = True
-            self._checkpointed_sources.setdefault(group_id, set()).update(unit.source_ids)
         # 旧格式（向量内联在 JSON 里）必须落一次盘才会搬进 sidecar，否则这次「省内存
         # 加载」省下的只是本次进程，几百 MB 的 JSON 会一直在每条消息的读路径上。
         if any_recomputed or self._store.is_legacy_layout(group_id):
             self._store.save(group_id, units)
+        return units
+
+    def _apply_group_load(self, group_id: str, units: list[MemoryUnit]) -> None:
+        for unit in units:
+            self._indexer.add(unit)
+            self._checkpointed_sources.setdefault(group_id, set()).update(unit.source_ids)
         self._loaded_groups.add(group_id)
         self._invalidate_cold(group_id)
         logger.info("Loaded %d checkpoint memory units for group %s", len(units), group_id)
@@ -410,6 +466,24 @@ class MemoryUnitManager:
                 self.build_cold_vectors(group_id)
         except Exception as exc:
             logger.warning("记忆检索预取失败，本轮退化为同步检索: %s", exc)
+
+    async def prepare_retrieval_async(
+        self,
+        query: str,
+        *,
+        group_id: str = "",
+        context: str = "",
+        cross_group: bool = False,
+    ) -> None:
+        """聊天回合检索前的全部慢活：加载群、编码查询、读冷层，都不占事件循环。"""
+        try:
+            if cross_group:
+                await self.ensure_groups_loaded_async()
+            elif group_id:
+                await self.ensure_group_loaded_async(group_id)
+        except Exception as exc:
+            logger.warning("记忆单元预加载失败，本轮退化为同步加载: %s", exc)
+        await asyncio.to_thread(self.prepare_retrieval, query, group_id=group_id, context=context)
 
     def is_source_checkpointed(self, group_id: str, entry_id: str) -> bool:
         self.ensure_group_loaded(group_id)

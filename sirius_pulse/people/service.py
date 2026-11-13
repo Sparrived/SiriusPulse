@@ -161,6 +161,12 @@ class PersonService:
                 "CREATE UNIQUE INDEX IF NOT EXISTS people_legacy_user ON people(legacy_user_id)"
                 " WHERE legacy_user_id!=''"
             )
+            # 可见性检查（_visible / get_person）按 person_id + group_id 查证据；没有索引时
+            # 每条消息都要全表扫一遍，而证据表每条消息都会长一行。
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS person_evidence_person_group"
+                " ON person_evidence(person_id, group_id)"
+            )
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS person_migrations(

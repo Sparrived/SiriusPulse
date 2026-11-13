@@ -93,15 +93,19 @@ class ParticipationPolicy:
     ) -> ParticipationDecision:
         """Decide whether to take part in a message.
 
-        ``life_factor`` comes from her own state (asleep, worn out).  Unlike the
-        time-of-day coefficient it only damps *volunteering* -- answering a need
-        or joining in.  Someone calling her directly, or messaging her in
-        private, still gets through: that is what waking someone up looks like.
+        ``life_factor`` comes from her own state (asleep, worn out) and the
+        time-of-day ``reply_time_coefficient`` comes from the operator's curve.
+        Both only damp *volunteering* -- answering a need or joining in.  The
+        curve may still *boost* direct calls, but never pushes them below 1.0:
+        someone @-ing her or messaging her in private must not be silently
+        ignored just because the operator lowered the late-night curve.
         """
         text = content or ""
         text_len = len(text.strip())
         coefficient = _clamp_coefficient(reply_time_coefficient)
         volunteer = _clamp_coefficient(coefficient * max(0.0, float(life_factor)))
+        # 被直接点名、私聊：时段曲线只能加成，不能压低。
+        directed = max(coefficient, _DIRECTED_COEFFICIENT_FLOOR)
         addressing = self._addressing_score(signal, directed_gate)
         reply_need = self._reply_need_score(signal, text)
         social = self._social_opportunity_score(signal, text, seconds_since_reply, affinity_score)
@@ -118,7 +122,7 @@ class ParticipationPolicy:
         if is_private:
             threshold = 0.2
             raw_score = max(addressing, reply_need, fit)
-            final_score = _scale_reply_score(raw_score, coefficient)
+            final_score = _scale_reply_score(raw_score, directed)
             if final_score >= threshold:
                 return self._decision(
                     signal,
@@ -137,7 +141,7 @@ class ParticipationPolicy:
                     fit,
                     suppression,
                     raw_score=raw_score,
-                    reply_time_coefficient=coefficient,
+                    reply_time_coefficient=directed,
                 )
             return self._decision(
                 signal,
@@ -152,7 +156,7 @@ class ParticipationPolicy:
                 fit,
                 suppression,
                 raw_score=raw_score,
-                reply_time_coefficient=coefficient,
+                reply_time_coefficient=directed,
             )
 
         direct_threshold, need_threshold, join_threshold = self._thresholds(
@@ -166,7 +170,7 @@ class ParticipationPolicy:
             need_threshold += 0.05
             join_threshold += 0.05
 
-        addressed_score = _scale_reply_score(addressing, coefficient)
+        addressed_score = _scale_reply_score(addressing, directed)
         if addressed_score >= direct_threshold and suppression < 0.9:
             strategy = (
                 ResponseStrategy.IMMEDIATE
@@ -187,7 +191,7 @@ class ParticipationPolicy:
                 fit,
                 suppression,
                 raw_score=addressing,
-                reply_time_coefficient=coefficient,
+                reply_time_coefficient=directed,
             )
 
         need_score = reply_need * 0.75 + fit * 0.25 - suppression * 0.25
@@ -468,6 +472,10 @@ class ParticipationPolicy:
 
 def _clamp(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
+
+
+#: 直接点名 / 私聊时时段系数的下限：曲线压不低「有人在叫她」。
+_DIRECTED_COEFFICIENT_FLOOR = 1.0
 
 
 def _clamp_coefficient(value: float) -> float:

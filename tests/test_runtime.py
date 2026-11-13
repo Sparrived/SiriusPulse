@@ -446,7 +446,8 @@ async def test_persona_worker_empty_orchestration_restores_defaults(tmp_path, ex
         )
     )
     assert [result.clean_text for result in results] == ["收到"] * 3
-    assert provider.peak == (explicit_limit or 1)
+    # 未显式配置时用默认上限 3：不同群可以同时生成。
+    assert provider.peak == (explicit_limit or 3)
 
 
 def test_persona_worker_all_reload_allows_empty_orchestration_before_rebuild(tmp_path, monkeypatch):

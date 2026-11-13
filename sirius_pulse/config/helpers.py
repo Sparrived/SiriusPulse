@@ -35,8 +35,6 @@ def build_orchestration_policy_from_dict(
         "task_retries",
         "max_multimodal_inputs_per_turn",
         "max_multimodal_value_length",
-        "enable_prompt_driven_splitting",
-        "split_marker",
         "memory_extract_batch_size",
         "memory_extract_min_content_length",
         "consolidation_enabled",
@@ -47,7 +45,6 @@ def build_orchestration_policy_from_dict(
         "consolidation_min_facts",
         "engagement_sensitivity",
         "heat_window_seconds",
-        "pending_message_threshold",
         "min_reply_interval_seconds",
         "message_debounce_seconds",
         "memory",
@@ -82,7 +79,6 @@ def build_orchestration_policy_from_dict(
     scalar_fields: dict[str, tuple[type, Any]] = {
         "max_multimodal_inputs_per_turn": (int, 4),
         "max_multimodal_value_length": (int, 4096),
-        "enable_prompt_driven_splitting": (bool, True),
         "memory_extract_batch_size": (int, 1),
         "memory_extract_min_content_length": (int, 0),
         "event_extract_batch_size": (int, 5),
@@ -93,12 +89,11 @@ def build_orchestration_policy_from_dict(
         "consolidation_min_facts": (int, 15),
         "engagement_sensitivity": (float, 0.5),
         "heat_window_seconds": (float, 60.0),
-        "pending_message_threshold": (int, 4),
         "min_reply_interval_seconds": (float, 0.0),
         "reply_frequency_window_seconds": (float, 60.0),
         "reply_frequency_max_replies": (int, 8),
         "reply_frequency_exempt_on_mention": (bool, True),
-        "max_concurrent_llm_calls": (int, 1),
+        "max_concurrent_llm_calls": (int, 3),
         "enable_tools": (bool, True),
         "max_tool_rounds": (int, 3),
         "tool_execution_timeout": (float, 30.0),
@@ -263,7 +258,7 @@ def configure_full_orchestration(
     Args:
         config: 会话配置对象
         task_retries: 任务重试次数映射
-        **extra_fields: 其他 OrchestrationPolicy 字段（如 pending_message_threshold）
+        **extra_fields: 其他 OrchestrationPolicy 字段（如 min_reply_interval_seconds）
 
     Returns:
         更新后的 SessionConfig 对象
@@ -272,7 +267,7 @@ def configure_full_orchestration(
         >>> config = configure_full_orchestration(
         ...     config,
         ...     task_retries={"memory_extract": 3},
-        ...     pending_message_threshold=0,
+        ...     min_reply_interval_seconds=2.0,
         ... )
     """
     if not config.orchestration:

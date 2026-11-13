@@ -377,8 +377,12 @@ class InitiativeService:
             f"（想叫他可以在开头用 [AT:{qq}]）；"
             f"如果不合适（他正忙着聊别的、这事已经有结果了、你刚问过），只输出 {_skip_tag()}。"
         )
-        prepare = getattr(getattr(engine, "memory_unit_manager", None), "prepare_retrieval", None)
-        if callable(prepare):
+        manager = getattr(engine, "memory_unit_manager", None)
+        prepare_async = getattr(manager, "prepare_retrieval_async", None)
+        prepare = getattr(manager, "prepare_retrieval", None)
+        if callable(prepare_async):
+            await prepare_async(thread, group_id=group_id)
+        elif callable(prepare):
             await asyncio.to_thread(prepare, thread, group_id=group_id)
         try:
             bundle = PromptFactory.assemble_chat(
