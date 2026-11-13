@@ -33,6 +33,7 @@ from sirius_pulse.core.intent import (
     Intention,
 )
 from sirius_pulse.tools.builtin._internal._qq_ops import current_group_id
+from sirius_pulse.tools.engine_context import WorkspaceAccess
 
 _MAX_WHAT_CHARS = 300
 _MAX_WHY_CHARS = 200
@@ -88,7 +89,7 @@ def run(
     kind: str = "",
     urgency: float = _DEFAULT_URGENCY,
     chat_context: dict[str, Any] | None = None,
-    engine_context: Any = None,
+    engine_context: WorkspaceAccess | None = None,
     invocation_context: Any = None,
 ) -> dict[str, Any]:
     """Record one do-intention she formed while actually thinking."""

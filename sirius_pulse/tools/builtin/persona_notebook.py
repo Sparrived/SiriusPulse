@@ -14,6 +14,7 @@ from sirius_pulse.memory.persona_notebook import (
 )
 from sirius_pulse.persona_config import normalize_persona_notebook_token_budget
 from sirius_pulse.token.utils import estimate_tokens
+from sirius_pulse.tools.engine_context import ConversationAccess, WorkspaceAccess
 from sirius_pulse.tools.models import ToolInvocationContext
 
 _ENTRY_ID = re.compile(r"[A-Za-z0-9_.:-]{1,80}\Z")
@@ -84,7 +85,7 @@ def _operation(op: str, entry_id: str, text: str) -> dict[str, Any]:
     return {"op": op, "entry_id": entry_id, field: {"text": text.strip()}}
 
 
-def after_success(result: Any, *, engine_context: Any, group_id: str) -> None:
+def after_success(result: Any, *, engine_context: ConversationAccess | None, group_id: str) -> None:
     """暂存待整理或明确要求整理时，请后台稍后整理这个聊天的小本。
 
     ``run()`` 在线程里执行，排期必须回到事件循环上做，所以放在这个钩子里。
@@ -93,9 +94,10 @@ def after_success(result: Any, *, engine_context: Any, group_id: str) -> None:
     status = data.get("status") if isinstance(data, dict) else None
     if status not in {"pending", "maintenance_requested"}:
         return
-    schedule = getattr(engine_context, "schedule_notebook_maintenance", None)
-    if callable(schedule):
-        schedule(group_id, force=status == "maintenance_requested")
+    if engine_context is not None:
+        engine_context.schedule_notebook_maintenance(
+            group_id, force=status == "maintenance_requested"
+        )
 
 
 def run(
@@ -103,7 +105,7 @@ def run(
     entry_id: str = "",
     text: str = "",
     operations: list[dict[str, Any]] | None = None,
-    engine_context: Any = None,
+    engine_context: WorkspaceAccess | None = None,
     invocation_context: ToolInvocationContext | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:

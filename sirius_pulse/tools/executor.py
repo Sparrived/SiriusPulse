@@ -398,8 +398,9 @@ class ToolExecutor:
         if chat_context.get("chat_type") != "group":
             return f"TOOL '{tool.name}' 只能在群聊中由管理员 Bot 执行"
         group_id = str(chat_context.get("chat_id") or chat_context.get("group_id") or "")
-        checker = getattr(self._engine_context, "is_qq_bot_group_admin", None)
-        if callable(checker) and checker(group_id):
+        if self._engine_context is not None and self._engine_context.is_qq_bot_group_admin(
+            group_id
+        ):
             return ""
         return f"TOOL '{tool.name}' 需要 Bot 是当前群管理员"
 

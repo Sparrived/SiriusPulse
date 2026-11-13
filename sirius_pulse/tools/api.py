@@ -4,7 +4,8 @@
 
     from sirius_pulse.tools.api import (
         ToolResult,              # 结构化返回结果
-        ToolEngineContext,       # 被动/后台工具的引擎上下文 Protocol
+        ToolEngineContext,       # 被动/后台工具的引擎上下文 Protocol（各领域接口的合集）
+        WorkspaceAccess,         # 按领域的小接口：工具只依赖用到的那几个
         ToolInvocationContext,   # 调用者身份信息
         ToolChainContext,        # Tool Chaining 上下文
         BackgroundTaskSpec,       # 后台任务规格
@@ -22,6 +23,17 @@ from __future__ import annotations
 
 from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.tools.data_store import ToolDataStore
+from sirius_pulse.tools.engine_context import (
+    AgentTurnAccess,
+    ConversationAccess,
+    DeliveryAccess,
+    GenerationAccess,
+    LifeAccess,
+    PeopleAccess,
+    ToolingAccess,
+    UserLookupAccess,
+    WorkspaceAccess,
+)
 from sirius_pulse.tools.models import (
     ToolChainContext,
     ToolEngineContext,
@@ -34,6 +46,15 @@ from sirius_pulse.tools.models import (
 from sirius_pulse.tools.security import ensure_developer_access
 
 __all__ = [
+    "AgentTurnAccess",
+    "ConversationAccess",
+    "DeliveryAccess",
+    "GenerationAccess",
+    "LifeAccess",
+    "PeopleAccess",
+    "ToolingAccess",
+    "UserLookupAccess",
+    "WorkspaceAccess",
     "BackgroundTaskSpec",
     "ToolChainContext",
     "ToolDataStore",

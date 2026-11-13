@@ -148,8 +148,8 @@ async def send_inspect_status_cards(
         if not chat_target(chat_context)[1]:
             record["error"] = "当前调用没有 QQ 会话上下文"
             continue
-        registry = getattr(engine_context, "tool_registry", None)
-        executor = getattr(engine_context, "tool_executor", None)
+        registry = engine_context.tool_registry if engine_context is not None else None
+        executor = engine_context.tool_executor if engine_context is not None else None
         if registry is None or executor is None:
             record["error"] = "Tool 运行上下文未就绪，无法发送状态卡片"
             continue

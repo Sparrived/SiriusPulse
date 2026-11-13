@@ -81,9 +81,7 @@ def handle_request(
     owner_name = invocation_context.caller_name if invocation_context else ""
     adapter_type = str(context.get("adapter_type", ""))
     if not adapter_type and engine_context is not None:
-        getter = getattr(engine_context, "get_current_adapter_type", None)
-        if callable(getter):
-            adapter_type = str(getter() or "")
+        adapter_type = str(engine_context.get_current_adapter_type() or "")
 
     scoped = [job for job in jobs if job.get("group_id") == group_id]
     action = request.get("action")
@@ -234,9 +232,7 @@ async def _run_job_locked(
     user_name = str(job.get("owner_name", ""))
     adapter_type = str(job.get("adapter_type", ""))
     if not adapter_type:
-        getter = getattr(ctx, "get_current_adapter_type", None)
-        if callable(getter):
-            adapter_type = str(getter() or "")
+        adapter_type = str(ctx.get_current_adapter_type() or "")
     event_id = _pending_payload_key(job, run_key)
     _prune_pending_payloads()
     cached = _pending_payloads.get(event_id)

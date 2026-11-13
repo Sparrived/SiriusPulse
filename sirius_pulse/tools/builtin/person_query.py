@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from sirius_pulse.people import PersonError
+from sirius_pulse.tools.engine_context import PeopleAccess
 
 _SECTIONS = {
     "names",
@@ -100,7 +101,7 @@ async def run(
     query: str = "",
     limit: int = 5,
     cursor: str = "",
-    engine_context: Any = None,
+    engine_context: PeopleAccess | None = None,
     invocation_context: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:

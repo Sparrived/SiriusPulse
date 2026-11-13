@@ -27,9 +27,11 @@ from sirius_pulse.tools.builtin._internal._bash_runtime import (
     expand_persona_path,
     home_root_path,
 )
+from sirius_pulse.tools.engine_context import PeopleAccess
 from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.visual.errors import VisualError
 from sirius_pulse.visual.images import optimize_image_bytes
+from sirius_pulse.visual.tooling import visual_context
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +103,7 @@ async def run(
     *,
     data_store: Any = None,
     invocation_context: ToolInvocationContext | None = None,
-    engine_context: Any = None,
+    engine_context: PeopleAccess | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """读取图片并返回多模态结果，让模型真正看到图片内容。"""
@@ -122,7 +124,7 @@ async def run(
             "error": (f"一次最多读 {_MAX_IMAGES} 张图片，这次给了 {len(sources) + len(asset_ids)} 张。"),
         }
 
-    service, access = _visual_context(engine_context, invocation_context)
+    service, access = visual_context(engine_context, invocation_context)
     if asset_ids and (service is None or access is None):
         return {
             "success": False,
@@ -227,19 +229,6 @@ async def run(
             "focus": focus_text,
         },
     }
-
-
-def _visual_context(engine_context: Any, invocation_context: Any) -> tuple[Any, Any]:
-    """旧引擎没有视觉服务时返回 (None, None)，原有读图路径保持不变。"""
-    service = None
-    getter = getattr(engine_context, "get_visual_service", None)
-    if callable(getter):
-        service = getter()
-    access = None
-    getter = getattr(engine_context, "get_person_access", None)
-    if callable(getter) and invocation_context is not None:
-        access = getter(invocation_context)
-    return service, access
 
 
 async def _guard_local_source(

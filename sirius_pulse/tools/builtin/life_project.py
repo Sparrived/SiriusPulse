@@ -29,6 +29,7 @@ from sirius_pulse.life.projects import (
     ProjectLimitError,
     ProjectStore,
 )
+from sirius_pulse.tools.engine_context import WorkspaceAccess
 
 _ACTIONS = ("write", "step", "start", "finish", "drop", "pause", "list")
 
@@ -133,7 +134,7 @@ def run(
     kind: str = "explore",
     why: str = "",
     outcome: str = "",
-    engine_context: Any = None,
+    engine_context: WorkspaceAccess | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     """Act on one of her projects."""

@@ -23,6 +23,7 @@ from sirius_pulse.tools.builtin._internal._qq_ops import (
     get_adapter,
     success_result,
 )
+from sirius_pulse.tools.engine_context import DeliveryAccess
 
 logger = logging.getLogger(__name__)
 
@@ -219,26 +220,24 @@ def _master_receipt(message: str) -> dict[str, Any] | None:
     }
 
 
-def _sticker_names(engine_context: Any) -> list[str]:
+def _sticker_names(engine_context: DeliveryAccess | None) -> list[str]:
     """当前人格可用的表情包名称；缺少上下文时返回空表。"""
-    lister = getattr(engine_context, "list_sticker_names", None)
-    if not callable(lister):
+    if engine_context is None:
         return []
     try:
-        return list(lister() or [])
+        return list(engine_context.list_sticker_names() or [])
     except Exception:
         return []
 
 
-async def _send_stickers(engine_context: Any, master_qq: str, names: list[str]) -> None:
+async def _send_stickers(
+    engine_context: DeliveryAccess | None, master_qq: str, names: list[str]
+) -> None:
     """把文本里解析出的表情包补发到主人私聊，失败只记日志。"""
     if not names or engine_context is None:
         return
-    sender = getattr(engine_context, "send_sticker_by_names", None)
-    if not callable(sender):
-        return
     try:
-        await sender(f"private_{master_qq}", list(names))
+        await engine_context.send_sticker_by_names(f"private_{master_qq}", list(names))
     except Exception:
         logger.warning("私聊表情包发送失败: %s", names, exc_info=True)
 

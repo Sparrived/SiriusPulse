@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from sirius_pulse.people import PersonError
+from sirius_pulse.tools.engine_context import PeopleAccess
 
 _ACTIONS = [
     "set_names",
@@ -77,7 +78,7 @@ async def run(
     value: str = "",
     source: str = "self_reported",
     name: str = "",
-    engine_context: Any = None,
+    engine_context: PeopleAccess | None = None,
     invocation_context: Any = None,
     **kwargs: Any,
 ) -> dict[str, Any]:

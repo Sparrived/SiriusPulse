@@ -8,6 +8,7 @@ from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
 from sirius_pulse.tools.models import ToolInvocationContext
+from sirius_pulse.visual.tooling import visual_context
 
 LOG = logging.getLogger(__name__)
 
@@ -180,7 +181,7 @@ async def _send_image(
                 LOG.warning("远程图片缓存失败，直接使用原始 URL: %s | %s", exc, image_path[:80])
 
     if image_path.startswith(("http://", "https://")):
-        service, access = _visual_context(engine_context, invocation_context)
+        service, access = visual_context(engine_context, invocation_context)
         if service is not None and access is not None:
             # 外链也核验实际字节，不能在缓存失败时退回不受管的 URL 转发。
             import base64
@@ -394,18 +395,6 @@ async def _upload_file(
         return {"success": False, "error": str(exc), "summary": f"文件上传失败: {exc}"}
 
 
-def _visual_context(engine_context: Any, invocation_context: Any) -> tuple[Any, Any]:
-    service = None
-    getter = getattr(engine_context, "get_visual_service", None)
-    if callable(getter):
-        service = getter()
-    access = None
-    getter = getattr(engine_context, "get_person_access", None)
-    if callable(getter) and invocation_context is not None:
-        access = getter(invocation_context)
-    return service, access
-
-
 async def _guard_managed_path(
     engine_context: Any,
     invocation_context: Any,
@@ -413,7 +402,7 @@ async def _guard_managed_path(
     data_store: Any,
 ) -> tuple[Any, Any, dict[str, Any]] | None:
     """受管人物素材外发前按实际能力校验；普通文件路径保持原行为。"""
-    service, access = _visual_context(engine_context, invocation_context)
+    service, access = visual_context(engine_context, invocation_context)
     if service is None or access is None:
         return None
     text = str(path or "").strip()

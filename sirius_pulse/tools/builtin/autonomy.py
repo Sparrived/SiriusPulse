@@ -82,6 +82,7 @@ from sirius_pulse.life.reflection import (
 from sirius_pulse.life.state import LifeStateStore, energy_at, energy_word
 from sirius_pulse.memory.units.models import MemoryUnit
 from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.tools.engine_context import ConversationAccess, DeliveryAccess, LifeAccess
 from sirius_pulse.utils.json_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
@@ -311,28 +312,23 @@ def _life(ctx: Any) -> Path:
     return life_dir(ctx.get_work_path() or ".")
 
 
-def _settle_mood(ctx: Any) -> None:
-    settle = getattr(ctx, "settle_mood", None)
-    if callable(settle):
-        try:
-            settle()
-        except Exception:
-            logger.debug("心情回落失败", exc_info=True)
-
-
-def _nudge(ctx: Any, delta: tuple[float, float], reason: str) -> None:
-    nudge = getattr(ctx, "nudge_mood", None)
-    if callable(nudge):
-        try:
-            nudge(delta[0], delta[1], reason)
-        except Exception:
-            logger.debug("心情变化失败", exc_info=True)
-
-
-def _mood_label(ctx: Any) -> str:
-    label = getattr(ctx, "mood_label", None)
+def _settle_mood(ctx: LifeAccess) -> None:
     try:
-        return str(label() or "") if callable(label) else ""
+        ctx.settle_mood()
+    except Exception:
+        logger.debug("心情回落失败", exc_info=True)
+
+
+def _nudge(ctx: LifeAccess, delta: tuple[float, float], reason: str) -> None:
+    try:
+        ctx.nudge_mood(delta[0], delta[1], reason)
+    except Exception:
+        logger.debug("心情变化失败", exc_info=True)
+
+
+def _mood_label(ctx: LifeAccess) -> str:
+    try:
+        return str(ctx.mood_label() or "")
     except Exception:
         return ""
 
@@ -684,9 +680,7 @@ async def _reflect_if_due(ctx: Any, schedule: DaySchedule, now: datetime) -> Non
                 projects.set_status(update.project_id, update.status, now=now)
             except (ProjectLimitError, ValueError):
                 pass
-    settle = getattr(ctx, "settle_mood", None)
-    if callable(settle):
-        settle(baseline_shift=result.mood_shift)
+    ctx.settle_mood(baseline_shift=result.mood_shift)
     ctx.log_inner_thought(f"睡前想了想今天：{result.note.recent[:60]}")
 
 
@@ -878,9 +872,8 @@ def _miss_people(ctx: Any, schedule: DaySchedule, now: datetime) -> list[Intenti
     (:func:`_decide_audience`) is where she writes the actual words and picks
     the chat, or decides not to bother them after all.
     """
-    lister = getattr(ctx, "list_acquaintances", None)
     miss_after = _option_int(ctx, "miss_after_days", _DEFAULT_MISS_AFTER_DAYS, ceiling=365)
-    if not callable(lister) or miss_after <= 0:
+    if miss_after <= 0:
         return []
     store = ctx.get_data_store("autonomy")
     ledger = MissLedger.from_dict(store.get(_MISS_STORE_KEY, {}))
@@ -891,7 +884,7 @@ def _miss_people(ctx: Any, schedule: DaySchedule, now: datetime) -> list[Intenti
     if ledger.today_count(today) >= max_per_day:
         return []
     try:
-        people = list(lister())
+        people = list(ctx.list_acquaintances())
         labels = {str(a.chat_id): str(a.label or a.chat_id) for a in ctx.list_audiences()}
     except Exception:
         logger.debug("读取认识的人或可达会话失败", exc_info=True)
@@ -943,12 +936,9 @@ def _miss_people(ctx: Any, schedule: DaySchedule, now: datetime) -> list[Intenti
     return created
 
 
-def _master_audience(ctx: Any) -> Any | None:
-    lister = getattr(ctx, "list_audiences", None)
-    if not callable(lister):
-        return None
+def _master_audience(ctx: DeliveryAccess) -> Any | None:
     try:
-        audiences = list(lister())
+        audiences = list(ctx.list_audiences())
     except Exception:
         return None
     return next((a for a in audiences if getattr(a, "kind", "") == "private"), None)
@@ -984,9 +974,8 @@ def _miss_master(ctx: Any, schedule: DaySchedule, now: datetime) -> Intention | 
     intentions = _load_intentions(ctx)
     if any(item.kind == _MASTER_MISS_KIND for item in intentions.open_items(now=now.isoformat())):
         return None
-    lister = getattr(ctx, "list_acquaintances", None)
     try:
-        people = list(lister()) if callable(lister) else []
+        people = list(ctx.list_acquaintances())
     except Exception:
         people = []
     person = next((p for p in people if p.user_id == master_uid), None)
@@ -1021,16 +1010,15 @@ def _miss_master(ctx: Any, schedule: DaySchedule, now: datetime) -> Intention | 
     return intention
 
 
-def _lively_group(ctx: Any, chats: list[str], now: datetime) -> tuple[str, str] | None:
+def _lively_group(
+    ctx: ConversationAccess, chats: list[str], now: datetime
+) -> tuple[str, str] | None:
     """主人常待的群里最近半小时在聊什么；给她一个「叫他来群里」的理由。"""
-    getter = getattr(ctx, "get_recent_messages", None)
-    if not callable(getter):
-        return None
     for chat in chats:
         if str(chat).startswith("private_"):
             continue
         try:
-            recent = list(getter(chat, 6))
+            recent = list(ctx.get_recent_messages(chat, 6))
         except Exception:
             continue
         lines = []

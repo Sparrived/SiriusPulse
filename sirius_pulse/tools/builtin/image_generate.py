@@ -33,12 +33,13 @@ from sirius_pulse.tools.builtin._internal._bash_runtime import (
     expand_persona_path,
     home_root_path,
 )
+from sirius_pulse.tools.engine_context import PeopleAccess
 from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.visual import policies as visual_policies
 from sirius_pulse.visual.collage import build_reference_collages, reference_note
 from sirius_pulse.visual.errors import VisualError
 from sirius_pulse.visual.images import optimize_image_bytes, sha256_bytes
-from sirius_pulse.visual.tooling import normalise_bool
+from sirius_pulse.visual.tooling import normalise_bool, visual_context
 
 logger = logging.getLogger(__name__)
 
@@ -378,19 +379,6 @@ def _normalize_subjects(raw: Any) -> list[dict[str, Any]]:
     return result
 
 
-def _visual_context(engine_context: Any, invocation_context: Any) -> tuple[Any, Any]:
-    """取视觉服务与逐调用权限；旧引擎没有这些方法时返回 (None, None)。"""
-    service = None
-    getter = getattr(engine_context, "get_visual_service", None)
-    if callable(getter):
-        service = getter()
-    access = None
-    getter = getattr(engine_context, "get_person_access", None)
-    if callable(getter) and invocation_context is not None:
-        access = getter(invocation_context)
-    return service, access
-
-
 async def _submit_person_job(
     *,
     prompt_text: str,
@@ -411,7 +399,7 @@ async def _submit_person_job(
     collage_references: bool = False,
 ) -> dict[str, Any]:
     """人物分支：绑定正式形象 → 本地输入快照 → 入现有后台队列。"""
-    service, access = _visual_context(engine_context, invocation_context)
+    service, access = visual_context(engine_context, invocation_context)
     if service is None or access is None:
         return {
             "success": False,
@@ -563,7 +551,7 @@ async def _guard_legacy_references(
     """旧路径传受管素材时按实际能力校验；普通临时参考保持原策略。"""
     if not references:
         return [], None
-    service, access = _visual_context(engine_context, invocation_context)
+    service, access = visual_context(engine_context, invocation_context)
     if service is None or access is None:
         return [], None
     managed: list[dict[str, Any]] = []
@@ -1297,12 +1285,11 @@ def _is_visual_job(job: dict[str, Any]) -> bool:
     return isinstance(job.get("visual"), dict) and bool(job.get("visual"))
 
 
-def _visual_service_of(ctx: Any) -> Any:
-    getter = getattr(ctx, "get_visual_service", None)
-    if not callable(getter):
+def _visual_service_of(ctx: PeopleAccess | None) -> Any:
+    if ctx is None:
         return None
     try:
-        return getter()
+        return ctx.get_visual_service()
     except Exception:  # noqa: BLE001 - 旧引擎/测试上下文没有视觉服务
         return None
 

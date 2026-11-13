@@ -6,9 +6,13 @@ Lead 的引擎实现负责提供 ``get_visual_service`` / ``get_person_service``
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.visual.errors import VisualError
+
+if TYPE_CHECKING:
+    from sirius_pulse.tools.engine_context import PeopleAccess
+    from sirius_pulse.tools.models import ToolInvocationContext
 
 
 def visual_service(engine_context: Any) -> Any:
@@ -19,13 +23,31 @@ def person_service(engine_context: Any) -> Any:
     return _service(engine_context, "get_person_service", "人物服务")
 
 
+def visual_context(
+    engine_context: PeopleAccess | None,
+    invocation_context: ToolInvocationContext | None,
+) -> tuple[Any, Any]:
+    """视觉资产服务与这次调用的权限上下文。
+
+    没有引擎上下文时（脚本或测试直接调用工具）返回 ``(None, None)``，工具按未接入
+    视觉服务的旧路径处理；没有逐调用上下文时权限为 None，由调用方拒绝受管资产。
+    """
+    if engine_context is None:
+        return None, None
+    access = (
+        engine_context.get_person_access(invocation_context)
+        if invocation_context is not None
+        else None
+    )
+    return engine_context.get_visual_service(), access
+
+
 def person_access(engine_context: Any, invocation_context: Any) -> Any:
     """从可信逐调用上下文构造 PersonAccess；模型参数永远不参与。"""
     if invocation_context is None:
         raise VisualError("permission_denied", "缺少逐调用上下文，不能确定操作者")
-    getter = getattr(engine_context, "get_person_access", None)
-    if callable(getter):
-        access = getter(invocation_context)
+    if engine_context is not None:
+        access = engine_context.get_person_access(invocation_context)
         if access is not None:
             return access
     people = person_service(engine_context)

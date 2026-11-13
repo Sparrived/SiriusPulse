@@ -12,6 +12,7 @@ from typing import Any
 
 from sirius_pulse.tools.builtin import image_generate
 from sirius_pulse.tools.builtin._internal import _bash_background
+from sirius_pulse.tools.engine_context import ToolEngineContext, WorkspaceAccess
 from sirius_pulse.tools.models import ToolInvocationContext
 
 _STATUS_TOOL_OUTPUT_CHARS = 2_000
@@ -68,7 +69,7 @@ async def run(
     action: str,
     task_id: str = "",
     *,
-    engine_context: Any = None,
+    engine_context: ToolEngineContext | None = None,
     invocation_context: ToolInvocationContext | None = None,
     chat_context: dict[str, Any] | None = None,
     **kwargs: Any,
@@ -157,18 +158,18 @@ class _Scope:
         return bool(self.group_id) and task.get("group_id") == self.group_id
 
 
-def _bash_owner(engine_context: Any) -> str:
+def _bash_owner(engine_context: WorkspaceAccess) -> str:
     return _bash_background.owner_key(engine_context.get_data_store("bash"))
 
 
-def _all_tasks(engine_context: Any) -> list[dict[str, Any]]:
+def _all_tasks(engine_context: ToolEngineContext) -> list[dict[str, Any]]:
     tasks = [job.describe() for job in _bash_background.list_jobs(_bash_owner(engine_context))]
     store = engine_context.get_data_store("image_generate")
     tasks.extend(image_generate.describe_job(job) for job in image_generate.list_jobs(store))
     return tasks
 
 
-def _find_task(engine_context: Any, task_id: str) -> dict[str, Any] | None:
+def _find_task(engine_context: WorkspaceAccess, task_id: str) -> dict[str, Any] | None:
     if task_id.startswith(_bash_background.TASK_PREFIX):
         job = _bash_background.get(_bash_owner(engine_context), task_id)
         return job.describe() if job is not None else None

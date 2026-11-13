@@ -20,6 +20,7 @@ from sirius_pulse.core.intent import (
     IntentFileStore,
     Intention,
 )
+from sirius_pulse.tools.engine_context import DeliveryAccess, WorkspaceAccess
 
 logger = logging.getLogger(__name__)
 
@@ -168,15 +169,15 @@ def _attach_audience(
     }
 
 
-def _load_store(engine_context: Any) -> Any:
+def _load_store(engine_context: WorkspaceAccess) -> Any:
     return IntentFileStore(engine_context.get_work_path()).load()
 
 
-def _save_store(engine_context: Any, store: Any) -> None:
+def _save_store(engine_context: WorkspaceAccess, store: Any) -> None:
     IntentFileStore(engine_context.get_work_path()).save(store)
 
 
-def _audience_label(engine_context: Any, audience: str) -> str:
+def _audience_label(engine_context: DeliveryAccess, audience: str) -> str:
     chat_id = str(audience or "").strip()
     if not chat_id:
         return ""

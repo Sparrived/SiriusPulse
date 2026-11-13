@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from sirius_pulse.memory.search import MemorySearchService
+from sirius_pulse.tools.engine_context import WorkspaceAccess
 from sirius_pulse.tools.models import ToolInvocationContext
 
 TOOL_META = {
@@ -80,7 +81,7 @@ async def run(
     until: str = "",
     user_id: str = "",
     *,
-    engine_context: Any = None,
+    engine_context: WorkspaceAccess | None = None,
     invocation_context: ToolInvocationContext | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
