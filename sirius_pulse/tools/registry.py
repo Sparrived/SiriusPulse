@@ -11,10 +11,11 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Collection
+from typing import Any, Callable, Collection
 
 from sirius_pulse.tools.dependency_resolver import resolve_tool_dependencies
 from sirius_pulse.tools.models import (
+    ToolActionMeta,
     ToolDefinition,
     ToolInvocationContext,
     ToolParameter,
@@ -69,6 +70,10 @@ class ToolRegistry:
 
     def all_tools(self) -> list[ToolDefinition]:
         return list(self._tools.values())
+
+    def names_where(self, predicate: Callable[[ToolDefinition], bool]) -> tuple[str, ...]:
+        """按元数据挑出工具名，例如所有 ``chat_scoped`` 的工具。"""
+        return tuple(tool.name for tool in self._tools.values() if predicate(tool))
 
     def passive_tools(self) -> list[ToolDefinition]:
         """Return all passive tools (those with background tasks or triggers)."""
@@ -233,6 +238,9 @@ class ToolRegistry:
 
         parameters = ToolRegistry._parse_parameters(meta.get("parameters", {}))
         config_parameters = ToolRegistry._parse_parameters(meta.get("config", {}))
+        source_optional = getattr(module, "request_source_optional", None)
+        after_success = getattr(module, "after_success", None)
+        raw_source_params = meta.get("request_source_params", [])
 
         return ToolDefinition(
             name=name,
@@ -257,7 +265,52 @@ class ToolRegistry:
             _trigger_factory=trigger_factory if callable(trigger_factory) else None,
             _on_load_factory=on_load_factory if callable(on_load_factory) else None,
             _on_unload_factory=on_unload_factory if callable(on_unload_factory) else None,
+            work_mode_only=bool(meta.get("work_mode_only", False)),
+            redact_logs=bool(meta.get("redact_logs", False)),
+            chat_scoped=bool(meta.get("chat_scoped", False)),
+            bookkeeping=bool(meta.get("bookkeeping", False)),
+            engagement_exempt=bool(meta.get("engagement_exempt", False)),
+            request_source=bool(meta.get("request_source", False)),
+            request_source_params=(
+                [str(p).strip() for p in raw_source_params if str(p).strip()]
+                if isinstance(raw_source_params, list)
+                else []
+            ),
+            action_param=str(meta.get("action_param", "action") or "action").strip(),
+            actions=ToolRegistry._parse_actions(meta.get("actions"), name),
+            _request_source_optional=source_optional if callable(source_optional) else None,
+            _after_success=after_success if callable(after_success) else None,
         )
+
+    @staticmethod
+    def _parse_actions(raw: Any, tool_name: str) -> dict[str, ToolActionMeta]:
+        """解析按 action 的行为覆盖；只认识的字段才生效，未知 side_effect 记警告后忽略。"""
+        if not isinstance(raw, dict):
+            return {}
+        actions: dict[str, ToolActionMeta] = {}
+        for action, spec in raw.items():
+            if not isinstance(spec, dict):
+                continue
+            side_effect: ToolSideEffect | None = None
+            if "side_effect" in spec:
+                try:
+                    side_effect = ToolSideEffect(str(spec["side_effect"]).strip().lower())
+                except ValueError:
+                    logger.warning(
+                        "TOOL '%s' action '%s' 的 side_effect 无效: %s",
+                        tool_name,
+                        action,
+                        spec["side_effect"],
+                    )
+            actions[str(action).strip().lower()] = ToolActionMeta(
+                side_effect=side_effect,
+                retry_safe=bool(spec["retry_safe"]) if "retry_safe" in spec else None,
+                silent=bool(spec["silent"]) if "silent" in spec else None,
+                engagement_exempt=(
+                    bool(spec["engagement_exempt"]) if "engagement_exempt" in spec else None
+                ),
+            )
+        return actions
 
     @staticmethod
     def _parse_parameters(raw_params: Any) -> list[ToolParameter]:
@@ -293,13 +346,15 @@ class ToolRegistry:
         chat_type: str | None = None,
         admin_allowed: bool = False,
         exclude_names: Collection[str] | None = None,
+        work_mode: bool | None = None,
     ) -> list[dict[str, Any]]:
         """构建 OpenAI tools 列表，用于原生 function_call。
 
         Args:
             invocation_context: 可选的调用上下文，用于 developer_only 过滤。
             adapter_type: 如果提供，只包含 adapter_types 为空或包含此类型的工具。
-            exclude_names: 本次调用要隐藏的工具名（如工作模式外的重工具）。
+            exclude_names: 本次调用要隐藏的工具名。
+            work_mode: False 时隐藏 ``work_mode_only`` 的重工具；None 表示不按工作模式过滤。
 
         Returns:
             OpenAI tools 格式的列表。
@@ -312,6 +367,7 @@ class ToolRegistry:
                 chat_type=chat_type,
                 admin_allowed=admin_allowed,
                 exclude_names=exclude_names,
+                work_mode=work_mode,
             )
         ]
 
@@ -323,6 +379,7 @@ class ToolRegistry:
         chat_type: str | None,
         admin_allowed: bool,
         exclude_names: Collection[str] | None = None,
+        work_mode: bool | None = None,
     ) -> list[ToolDefinition]:
         """Return model-callable tools after applying the shared access filters."""
         hidden = set(exclude_names or ())
@@ -331,6 +388,8 @@ class ToolRegistry:
             if not tool.model_visible:
                 continue
             if tool.name in hidden:
+                continue
+            if work_mode is False and tool.work_mode_only:
                 continue
             if tool._run_func is None and tool.is_passive:
                 continue

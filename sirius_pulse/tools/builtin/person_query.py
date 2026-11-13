@@ -27,6 +27,9 @@ TOOL_META = {
     ),
     "version": "1.1.0",
     "side_effect": "read_only",
+    "redact_logs": True,
+    "engagement_exempt": True,
+    "request_source": True,
     "tags": ["person", "profile", "identity"],
     "parameters": {
         "target": {
@@ -51,6 +54,20 @@ TOOL_META = {
         "cursor": {"type": "string", "required": False, "default": ""},
     },
 }
+
+
+#: 按明确标识查人：不需要知道是谁提的要求。
+_SOURCE_FREE_REFS = frozenset({"person_id", "name", "persona"})
+
+
+def request_source_optional(params: dict[str, Any]) -> bool:
+    """按明确的人物 ID / 名字 / 自己查资料时，可以不选指令来源。
+
+    框架仍保留调用者用于可见范围判断，但不会因此授予任何写权限；``requester``
+    这类要靠来源才能确定是谁的查询不在此列。
+    """
+    target = params.get("target")
+    return isinstance(target, dict) and str(target.get("ref") or "") in _SOURCE_FREE_REFS
 
 
 def _bounded(value: Any, budget: int) -> tuple[Any, bool]:

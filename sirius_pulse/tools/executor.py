@@ -20,19 +20,16 @@ from sirius_pulse.tools.models import (
     ToolSideEffect,
     build_chat_context,
 )
-from sirius_pulse.tools.pending_sources import identity_tool_needs_source
 from sirius_pulse.tools.security import validate_tool_access
 from sirius_pulse.tools.telemetry import ToolExecutionRecord, ToolTelemetry
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
 
-_PERSON_TOOLS = {"person_query", "person_update", "visual_asset_manage", "persona_notebook"}
 
-
-def _logged_params(tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
-    # 人物声明与私有资产不是通用工具诊断日志，完整内容只留在受控领域审计。
-    return {key: "<redacted>" for key in params} if tool_name in _PERSON_TOOLS else params
+def _logged_params(tool: ToolDefinition, params: dict[str, Any]) -> dict[str, Any]:
+    # 人物声明、私有资产与小本不进通用诊断日志，完整内容只留在受控领域审计。
+    return {key: "<redacted>" for key in params} if tool.redact_logs else params
 
 
 def _should_retry(exc: Exception) -> bool:
@@ -81,6 +78,11 @@ class ToolExecutor:
     def set_bridge(self, adapter_type: str, bridge: Any) -> None:
         """Register a platform bridge for a given adapter type."""
         self._bridges[adapter_type] = bridge
+
+    @property
+    def engine_context(self) -> Any | None:
+        """注入给内置工具的引擎上下文（未接入引擎时为 None）。"""
+        return self._engine_context
 
     def set_engine_context(self, engine_context: Any) -> None:
         """Register the limited engine context injected into trusted built-in tools."""
@@ -190,7 +192,7 @@ class ToolExecutor:
                 call_params["chat_context"] = dict(chat_context)
         if (
             self._engine_context is not None
-            and _can_receive_engine_context(tool)
+            and tool.trusted
             and injection_plan.accepts("engine_context")
         ):
             call_params["engine_context"] = self._engine_context
@@ -222,7 +224,7 @@ class ToolExecutor:
         logger.info(
             "Tool execute start: %s(params=%s, caller=%s)",
             tool.name,
-            _logged_params(tool.name, params),
+            _logged_params(tool, params),
             getattr(invocation_context, "caller_user_id", "") if invocation_context else "",
         )
 
@@ -240,7 +242,7 @@ class ToolExecutor:
             logger.info(
                 "Tool execute calling: %s(final_params=%s)",
                 tool.name,
-                _logged_params(tool.name, call_params),
+                _logged_params(tool, call_params),
             )
 
             # Run with optional retry for transient failures
@@ -261,9 +263,7 @@ class ToolExecutor:
                         "multimodal_blocks=%d",
                         tool.name,
                         tool_result.success,
-                        "<redacted>"
-                        if tool.name in _PERSON_TOOLS
-                        else tool_result.to_display_text()[:200],
+                        "<redacted>" if tool.redact_logs else tool_result.to_display_text()[:200],
                         len(tool_result.text_blocks),
                         len(tool_result.multimodal_blocks),
                     )
@@ -290,7 +290,7 @@ class ToolExecutor:
                         caller_id = getattr(invocation_context, "caller_user_id", "") or ""
                     summary = (
                         tool_result.to_display_text()[:500]
-                        if tool_result.success and tool.name not in _PERSON_TOOLS
+                        if tool_result.success and not tool.redact_logs
                         else ""
                     )
                     self._telemetry.record(
@@ -301,11 +301,11 @@ class ToolExecutor:
                             duration_ms=round(duration_ms, 2),
                             error=(
                                 tool_result.error
-                                if not tool_result.success and tool.name not in _PERSON_TOOLS
+                                if not tool_result.success and not tool.redact_logs
                                 else ""
                             ),
                             caller_user_id=caller_id,
-                            params=_logged_params(tool.name, params) if params else None,
+                            params=_logged_params(tool, params) if params else None,
                             result_summary=summary,
                         )
                     )
@@ -398,7 +398,7 @@ class ToolExecutor:
         logger.info(
             "Tool async execute start: %s(params=%s, caller=%s)",
             tool.name,
-            _logged_params(tool.name, params),
+            _logged_params(tool, params),
             getattr(invocation_context, "caller_user_id", "") if invocation_context else "",
         )
         try:
@@ -415,7 +415,7 @@ class ToolExecutor:
             logger.info(
                 "Tool async execute calling: %s(final_params=%s)",
                 tool.name,
-                _logged_params(tool.name, call_params),
+                _logged_params(tool, call_params),
             )
 
             tool_result: ToolResult | None = None
@@ -430,9 +430,7 @@ class ToolExecutor:
                         "multimodal_blocks=%d",
                         tool.name,
                         tool_result.success,
-                        "<redacted>"
-                        if tool.name in _PERSON_TOOLS
-                        else tool_result.to_display_text()[:200],
+                        "<redacted>" if tool.redact_logs else tool_result.to_display_text()[:200],
                         len(tool_result.text_blocks),
                         len(tool_result.multimodal_blocks),
                     )
@@ -464,7 +462,7 @@ class ToolExecutor:
                         )
                     summary = (
                         tool_result.to_display_text()[:500]
-                        if tool_result.success and tool.name not in _PERSON_TOOLS
+                        if tool_result.success and not tool.redact_logs
                         else ""
                     )
                     self._telemetry.record(
@@ -475,11 +473,11 @@ class ToolExecutor:
                             duration_ms=elapsed_ms,
                             error=(
                                 tool_result.error
-                                if not tool_result.success and tool.name not in _PERSON_TOOLS
+                                if not tool_result.success and not tool.redact_logs
                                 else ""
                             ),
                             caller_user_id=caller_id,
-                            params=_logged_params(tool.name, params) if params else None,
+                            params=_logged_params(tool, params) if params else None,
                             result_summary=summary,
                         )
                     )
@@ -592,6 +590,11 @@ def _self_initiated_block_reason(tool: ToolDefinition) -> str:
     return ""
 
 
+def _needs_request_source(tool: Any, params: dict[str, Any]) -> bool:
+    needs = getattr(tool, "needs_request_source", None)
+    return bool(callable(needs) and needs(params))
+
+
 def _bind_pending_source(
     tool: ToolDefinition,
     params: dict[str, Any],
@@ -602,8 +605,7 @@ def _bind_pending_source(
         context is None
         or context.self_initiated
         or context.evidence_callers is None
-        or not identity_tool_needs_source(tool, params)
-        or not _can_receive_engine_context(tool)
+        or not _needs_request_source(tool, params)
     ):
         return context, ""
     target = params.get("target")
@@ -617,12 +619,11 @@ def _bind_pending_source(
     if any(ref not in context.evidence_refs or ref not in authors for ref in selected):
         return context, "evidence_invalid: 只能使用本回合已接纳的真实指令来源"
     if not selected:
-        if tool.name == "person_query" and isinstance(target, dict):
-            ref = str(target.get("ref") or "")
-            if ref in {"person_id", "name", "persona"}:
-                # Keep the actor for scope checks, but never manufacture write
-                # authority from a read-only profile lookup.
-                return replace(context, evidence_refs=()), ""
+        optional = getattr(tool, "request_source_optional", None)
+        if callable(optional) and optional(params):
+            # Keep the actor for scope checks, but never manufacture write
+            # authority from a read-only lookup by explicit identity.
+            return replace(context, evidence_refs=()), ""
         selected = list(authors)
     identities = {authors[ref].user_id for ref in selected}
     if len(identities) != 1:
@@ -630,29 +631,6 @@ def _bind_pending_source(
     selected_ref = selected[0]
     caller = authors[selected_ref]
     return replace(context, caller=caller, evidence_refs=(selected_ref,)), ""
-
-
-def _is_builtin_tool(tool: Any, name: str) -> bool:
-    """Require the exact packaged built-in, not a user tool with the same name."""
-    source = getattr(tool, "source_path", None)
-    if source is None:
-        return False
-    try:
-        expected = Path(__file__).resolve().parent / "builtin" / f"{name}.py"
-        return Path(source).resolve() == expected.resolve()
-    except (OSError, ValueError):
-        return False
-
-
-def _can_receive_engine_context(tool: ToolDefinition) -> bool:
-    """Only package built-ins may receive the privileged engine context."""
-    if tool.source_path is None:
-        return False
-    try:
-        builtin_dir = (Path(__file__).resolve().parent / "builtin").resolve()
-        return tool.source_path.resolve().is_relative_to(builtin_dir)
-    except Exception:
-        return False
 
 
 class _InjectionPlan:

@@ -9,7 +9,7 @@
 - 绑定本回合已接纳的指令来源（只认框架给的 evidence，不认模型自报）；
 - 超时、按调用判断能否重试（同一个工具的不同 action 可能一个能重试一个不能）；
 - 执行、异常兜底成失败结果；
-- 小本写入后排期整理；
+- 成功后在事件循环上回调工具自己的 ``after_success``（如小本暂存后排期整理）；
 - 收集多模态结果。
 
 用法：编排方先 :meth:`ToolCallRunner.prepare`，按自己的策略决定
@@ -25,52 +25,33 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from sirius_pulse.providers.base import ToolCall
-from sirius_pulse.tools.executor import _bind_pending_source, _is_builtin_tool
+from sirius_pulse.tools.executor import _bind_pending_source
 from sirius_pulse.tools.models import ToolDefinition, ToolInvocationContext, ToolResult
 
 logger = logging.getLogger(__name__)
-
-NOTEBOOK_TOOL = "persona_notebook"
-
-#: 同一工具里只读的 action：副作用与能否重试都按这次调用实际做的事判断。
-_READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
-    "interaction_with_master": frozenset({"status"}),
-    "background_task": frozenset({"list", "status"}),
-}
 
 _DEFAULT_TOOL_TIMEOUT = 30.0
 _RETRIES_WHEN_SAFE = 2
 
 
-def _action(params: dict[str, Any] | None) -> str:
-    return str((params or {}).get("action", "")).strip().lower()
-
-
-def _is_read_only_call(tool: Any, params: dict[str, Any] | None) -> bool | None:
-    """按 action 判断这次调用是否只读；工具没有按 action 区分时返回 None。"""
-    actions = _READ_ONLY_ACTIONS.get(getattr(tool, "name", ""))
-    if actions is None:
-        return None
-    return _action(params) in actions
-
-
 def side_effect_name(tool: Any, params: dict[str, Any] | None = None) -> str:
-    """这次调用的副作用分类（字符串），供去重与审计。"""
-    if _is_read_only_call(tool, params):
-        return "read_only"
+    """这次调用的副作用分类（字符串），供去重与审计；按工具声明的 action 覆盖判断。"""
+    if isinstance(tool, ToolDefinition):
+        return tool.side_effect_for(params).value
     value = getattr(tool, "side_effect", "unknown")
     return str(getattr(value, "value", value) or "unknown")
 
 
 def retry_safe(tool: Any, params: dict[str, Any] | None = None) -> bool:
-    """这次调用失败后能否由执行器重试；会对外投递的 action 一律不重试。"""
-    read_only = _is_read_only_call(tool, params)
-    if read_only is not None:
-        return read_only
+    """这次调用失败后能否由执行器重试；会对外投递的 action 由工具声明为不可重试。"""
+    if isinstance(tool, ToolDefinition):
+        return tool.retry_safe_for(params)
     return bool(getattr(tool, "retry_safe", False))
 
 
-def parse_tool_arguments(tool_name: str, arguments: str | None) -> dict[str, Any]:
+def parse_tool_arguments(
+    tool_name: str, arguments: str | None, *, redact: bool = False
+) -> dict[str, Any]:
     """把模型给的参数 JSON 解析成字典；坏 JSON 或非对象都按空参数处理。"""
     if not arguments:
         return {}
@@ -80,7 +61,7 @@ def parse_tool_arguments(tool_name: str, arguments: str | None) -> dict[str, Any
         logger.warning(
             "tool_call 参数解析失败: %s, arguments=%s",
             tool_name,
-            "<redacted>" if tool_name == NOTEBOOK_TOOL else arguments,
+            "<redacted>" if redact else arguments,
         )
         return {}
     return params if isinstance(params, dict) else {}
@@ -153,7 +134,9 @@ class ToolCallRunner:
         name = call.function_name
         registry = getattr(self._engine, "_tool_registry", None)
         tool = registry.get(name) if registry is not None else None
-        params = parse_tool_arguments(name, call.function_arguments)
+        params = parse_tool_arguments(
+            name, call.function_arguments, redact=bool(getattr(tool, "redact_logs", False))
+        )
         if tool is None:
             return PreparedToolCall(call=call, tool=None, params=params, context=context)
         bound, source_error = _bind_pending_source(tool, params, context)
@@ -197,7 +180,13 @@ class ToolCallRunner:
             result = ToolResult(success=False, error=str(exc))
 
         if result.success:
-            self._after_success(tool, result, group_id)
+            after_success = getattr(tool, "after_success", None)
+            if callable(after_success):
+                after_success(
+                    result,
+                    engine_context=getattr(executor, "engine_context", None),
+                    group_id=group_id,
+                )
         else:
             logger.warning("TOOL '%s' 执行失败: %s", prepared.name, result.error or "Unknown error")
         return ToolCallOutcome(
@@ -209,16 +198,3 @@ class ToolCallRunner:
                 for block in result.multimodal_blocks
             ],
         )
-
-    def _after_success(self, tool: ToolDefinition, result: ToolResult, group_id: str) -> None:
-        """小本记下待整理的内容后，交给后台整理任务排期。"""
-        if tool.name != NOTEBOOK_TOOL or not _is_builtin_tool(tool, NOTEBOOK_TOOL):
-            return
-        data = result.data if isinstance(result.data, dict) else {}
-        status = data.get("status")
-        if status not in {"pending", "maintenance_requested"}:
-            return
-        manager = getattr(self._engine, "_bg_tasks_mgr", None)
-        maintenance = getattr(manager, "notebook_maintenance", None)
-        if maintenance is not None:
-            maintenance.schedule(group_id, force=status == "maintenance_requested")

@@ -110,6 +110,9 @@ TOOL_META = {
     ),
     "version": "1.1.0",
     "side_effect": "external_write",
+    # 只有画具体人物（subjects）时才需要确认是谁提的要求。
+    "request_source": True,
+    "request_source_params": ["subjects"],
     "tags": ["image", "generate", "background", "art"],
     "dependencies": ["httpx"],
     "parameters": _config.build(),

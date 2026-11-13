@@ -10,7 +10,7 @@ from sirius_pulse.providers.base import GenerationResult
 from sirius_pulse.tools import ToolDefinition, ToolRegistry
 
 
-def _tool(name: str) -> ToolDefinition:
+def _tool(name: str, *, work_mode_only: bool = False) -> ToolDefinition:
     def run(**kwargs):
         return {"success": True, "text": name}
 
@@ -20,6 +20,7 @@ def _tool(name: str) -> ToolDefinition:
         parameters=[],
         source_path=None,
         _run_func=run,
+        work_mode_only=work_mode_only,
     )
 
 
@@ -228,8 +229,9 @@ async def test_brain_chat_when_tool_choice_is_none_then_all_schemas_are_still_se
 async def test_brain_chat_when_not_in_work_mode_then_heavy_tools_are_hidden():
     provider = _Provider()
     registry = ToolRegistry()
-    registry.register(_tool("bash"))
-    registry.register(_tool("read_skill"))
+    # 是否是重工具由工具自己声明（work_mode_only），不看名字。
+    registry.register(_tool("bash", work_mode_only=True))
+    registry.register(_tool("read_skill", work_mode_only=True))
     registry.register(_tool("lookup"))
     brain = Brain(
         provider_async=provider,

@@ -147,6 +147,7 @@ TOOL_META = {
     "version": "2.2.0",
     "retry_safe": False,
     "side_effect": "external_write",
+    "work_mode_only": True,
     "tags": ["workflow", "state", "reuse", "idempotency"],
     "parameters": _config.build(),
 }

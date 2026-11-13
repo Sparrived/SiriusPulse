@@ -71,7 +71,14 @@ TOOL_META = {
     "allowed_when_self_initiated": True,
     "tags": ["napcat", "qq", "master", "chat", "status", "presence"],
     "silent": False,
-    "retry_safe": True,
+    "retry_safe": False,
+    "actions": {
+        # 读主人的公开设备状态：只读，可重试。
+        "status": {"side_effect": "read_only", "retry_safe": True},
+        # 私聊主人：发出去就是回复本身；网络抖动也不能补发第二遍；
+        # 这是她自己的通道，不受群里的互动门槛限制。
+        "message": {"silent": True, "retry_safe": False, "engagement_exempt": True},
+    },
     "parameters": _config.build(),
     "config": {
         "public_status_token": {
@@ -181,9 +188,35 @@ async def _send_message(
             master_qq=master_qq,
             chat_context=dict(chat_context or {}),
             raw=raw,
+            history_receipt=_master_receipt(message),
         )
     except Exception as exc:
         return failure_from_exception("和主人私聊", exc)
+
+
+#: 回执里引用的私聊原文上限：够她认出「这段话已经发过」即可，太长会把回执
+#: 本身变成一条挤占历史预算的噪声消息。
+_RECEIPT_SNIPPET_CHARS = 40
+
+
+def _master_receipt(message: str) -> dict[str, Any] | None:
+    """私聊投递后写回群聊历史的一条回执。
+
+    私聊不产生群聊文本，她下一轮看不到自己已经发过，就会把同一段话反复私聊给
+    主人。夜间暂存（``deferred``）还没送达，不走这里，也就不会写成已投递。
+    """
+    snippet = " ".join(str(message or "").split())
+    if not snippet:
+        return None
+    if len(snippet) > _RECEIPT_SNIPPET_CHARS:
+        snippet = snippet[: _RECEIPT_SNIPPET_CHARS - 3].rstrip() + "..."
+    return {
+        "content": (
+            f"（已私聊发给主人：「{snippet}」；"
+            "已完成私聊投递，除非主人明确要求重发，否则不要重复私聊）"
+        ),
+        "tags": [{"type": "private", "label": "主人"}],
+    }
 
 
 def _sticker_names(engine_context: Any) -> list[str]:

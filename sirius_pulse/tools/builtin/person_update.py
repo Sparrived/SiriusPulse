@@ -26,6 +26,9 @@ TOOL_META = {
     ),
     "version": "1.1.0",
     "side_effect": "external_write",
+    "redact_logs": True,
+    "engagement_exempt": True,
+    "request_source": True,
     "tags": ["person", "profile", "update"],
     "parameters": {
         "action": {"type": "string", "choices": _ACTIONS, "required": True},

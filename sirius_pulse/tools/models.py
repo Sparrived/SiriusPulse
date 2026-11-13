@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import logging
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -14,6 +15,8 @@ from sirius_pulse.config.models import ConfigParameter
 # Public compatibility export used by tools/__init__ and built-in task factories.
 from sirius_pulse.extension_runtime import BackgroundTaskSpec as BackgroundTaskSpec
 from sirius_pulse.memory.user.unified_models import UnifiedUser
+
+_logger = logging.getLogger(__name__)
 
 # Pre-compiled regex for tool-chain template placeholders (${tool_name} / ${tool_name.field})
 _TEMPLATE_RE = re.compile(r"\$\{([^}]+)\}")
@@ -203,6 +206,24 @@ class ToolSideEffect(enum.Enum):
     DESTRUCTIVE = "destructive"
 
 
+#: 包内内置工具所在目录；只有从这里加载的工具才被信任（见 ``ToolDefinition.trusted``）。
+BUILTIN_TOOLS_DIR = Path(__file__).resolve().parent / "builtin"
+
+
+@dataclass(slots=True, frozen=True)
+class ToolActionMeta:
+    """同一工具里某个 action 的行为覆盖；``None`` 表示沿用工具级声明。
+
+    多 action 工具（如 ``interaction_with_master`` 的 status / message）里，不同
+    action 的副作用、能否重试、是否静默可能完全不同，按这次调用实际做的事判断。
+    """
+
+    side_effect: ToolSideEffect | None = None
+    retry_safe: bool | None = None
+    silent: bool | None = None
+    engagement_exempt: bool | None = None
+
+
 @dataclass(slots=True)
 class ToolDefinition:
     """Complete definition of a loadable tool."""
@@ -237,6 +258,111 @@ class ToolDefinition:
     raw_parameters_schema: dict[str, Any] | None = None
     inject_runtime_params: bool = True
     allow_extra_parameters: bool = False
+    work_mode_only: bool = False
+    """只在工作模式里对模型可见的重工具；普通聊天只看得到 ``enter_work_mode``。"""
+    redact_logs: bool = False
+    """参数与结果属于人物声明、私有资产或小本：不进通用日志、遥测与 AgentTurn 摘要。"""
+    chat_scoped: bool = False
+    """只能在有可信聊天来源的回合里使用；没有来源的自主回合既看不到也调不了。"""
+    bookkeeping: bool = False
+    """她私人的记录工具（仅内置生效）：同轮正文只是草稿，整轮只调它时写完直接作答。"""
+    engagement_exempt: bool = False
+    """不受互动门槛限制（仅内置生效）。"""
+    request_source: bool = False
+    """调用要收窄到本回合已接纳的那条指令的作者（仅内置生效）。"""
+    request_source_params: list[str] = field(default_factory=list)
+    """非空时，只有这些参数之一有值才需要绑定指令来源。"""
+    action_param: str = "action"
+    actions: dict[str, ToolActionMeta] = field(default_factory=dict)
+    _request_source_optional: Callable[[dict[str, Any]], bool] | None = field(
+        default=None, repr=False
+    )
+    _after_success: Callable[..., Any] | None = field(default=None, repr=False)
+
+    def after_success(self, result: "ToolResult", *, engine_context: Any, group_id: str) -> None:
+        """成功后在事件循环上回调工具自己的 ``after_success``（仅内置生效）。
+
+        工具的 ``run()`` 可能在线程里执行，碰不到事件循环；需要排期后台工作（例如
+        小本暂存后请人整理）的工具在这里做。钩子出错只记日志，不影响本次结果。
+        """
+        hook = self._after_success
+        if hook is None or not self.trusted:
+            return
+        try:
+            hook(result, engine_context=engine_context, group_id=group_id)
+        except Exception:
+            _logger.warning("TOOL '%s' after_success 失败", self.name, exc_info=True)
+
+    @property
+    def trusted(self) -> bool:
+        """是否为包内内置工具。
+
+        特权元数据（互动豁免、指令来源绑定、私人记录、引擎上下文注入、历史回执）
+        只对内置工具生效：工作区里的工具即使同名、即使在 TOOL_META 里照抄声明，
+        也拿不到这些权限。
+        """
+        if self.source_path is None:
+            return False
+        try:
+            return Path(self.source_path).resolve().is_relative_to(BUILTIN_TOOLS_DIR)
+        except (OSError, ValueError):
+            return False
+
+    def action_of(self, params: dict[str, Any] | None) -> str:
+        return str((params or {}).get(self.action_param, "") or "").strip().lower()
+
+    def _action_meta(self, params: dict[str, Any] | None) -> ToolActionMeta | None:
+        if not self.actions:
+            return None
+        return self.actions.get(self.action_of(params))
+
+    def side_effect_for(self, params: dict[str, Any] | None) -> ToolSideEffect:
+        meta = self._action_meta(params)
+        if meta is not None and meta.side_effect is not None:
+            return meta.side_effect
+        return self.side_effect
+
+    def retry_safe_for(self, params: dict[str, Any] | None) -> bool:
+        meta = self._action_meta(params)
+        if meta is not None and meta.retry_safe is not None:
+            return meta.retry_safe
+        return self.retry_safe
+
+    def silent_for(self, params: dict[str, Any] | None) -> bool:
+        meta = self._action_meta(params)
+        if meta is not None and meta.silent is not None:
+            return meta.silent
+        return self.silent
+
+    def engagement_exempt_for(self, params: dict[str, Any] | None) -> bool:
+        if not self.trusted:
+            return False
+        meta = self._action_meta(params)
+        if meta is not None and meta.engagement_exempt is not None:
+            return meta.engagement_exempt
+        return self.engagement_exempt
+
+    def needs_request_source(self, params: dict[str, Any] | None) -> bool:
+        """这次调用是否要绑定到本回合已接纳的指令作者。"""
+        if not (self.request_source and self.trusted):
+            return False
+        if not self.request_source_params:
+            return True
+        return any((params or {}).get(name) for name in self.request_source_params)
+
+    def request_source_optional(self, params: dict[str, Any]) -> bool:
+        """按明确 ID 的只读查找可以不选来源：保留调用者做范围判断，但不授予写权限。"""
+        hook = self._request_source_optional
+        if hook is None or not self.trusted:
+            return False
+        try:
+            return bool(hook(params))
+        except Exception:
+            return False
+
+    @property
+    def is_bookkeeping(self) -> bool:
+        return self.bookkeeping and self.trusted
 
     def __post_init__(self) -> None:
         if self.passive_type is None and self.is_passive:
@@ -605,6 +731,10 @@ class ToolEngineContext(Protocol):
 
     def log_inner_thought(self, text: str) -> None:
         """记录引擎内部日志（内心活动）。"""
+        ...
+
+    def schedule_notebook_maintenance(self, group_id: str, *, force: bool = False) -> None:
+        """请后台稍后整理某个聊天的小本（暂存待整理或明确要求整理时）。"""
         ...
 
     def add_memory_entry(

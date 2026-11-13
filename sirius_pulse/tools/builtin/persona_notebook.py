@@ -34,6 +34,10 @@ TOOL_META = {
     ),
     "version": "2.0.0",
     "side_effect": "external_write",
+    "redact_logs": True,
+    "engagement_exempt": True,
+    "chat_scoped": True,
+    "bookkeeping": True,
     "allowed_when_self_initiated": True,
     "tags": ["memory", "persona", "notebook"],
     "parameters": {
@@ -78,6 +82,20 @@ def _operation(op: str, entry_id: str, text: str) -> dict[str, Any]:
         raise ValueError("text 必须为非空短文本，最多16000字符")
     field = "entry" if op == "add" else "changes"
     return {"op": op, "entry_id": entry_id, field: {"text": text.strip()}}
+
+
+def after_success(result: Any, *, engine_context: Any, group_id: str) -> None:
+    """暂存待整理或明确要求整理时，请后台稍后整理这个聊天的小本。
+
+    ``run()`` 在线程里执行，排期必须回到事件循环上做，所以放在这个钩子里。
+    """
+    data = getattr(result, "data", None)
+    status = data.get("status") if isinstance(data, dict) else None
+    if status not in {"pending", "maintenance_requested"}:
+        return
+    schedule = getattr(engine_context, "schedule_notebook_maintenance", None)
+    if callable(schedule):
+        schedule(group_id, force=status == "maintenance_requested")
 
 
 def run(

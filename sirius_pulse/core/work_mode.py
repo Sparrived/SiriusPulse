@@ -36,9 +36,6 @@ from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
 
-#: 只在工作模式内可见的重工具。
-WORK_MODE_ONLY_TOOL_NAMES = frozenset({"bash", "read_skill", "workflow_state", "group_file_exec"})
-
 ENTER_WORK_MODE = "enter_work_mode"
 QUIT_WORK_MODE = "quit_work_mode"
 SEND_MIDWAY_MSG = "send_midway_msg"

@@ -141,7 +141,12 @@ class _ToolRoundProvider(MockProvider):
 def _provider_work_mode_tasks(tmp_path, queue, rounds, *, max_tool_rounds=8):
     provider = _ToolRoundProvider(rounds)
     registry = ToolRegistry()
-    for name in ("group_file_exec", "interaction_with_master", "silent_notice", "bash"):
+    # 发图、私聊主人是否静默由内置工具按 action 声明；执行器在这些测试里是假的。
+    for name in ("group_file_exec", "interaction_with_master"):
+        registry.register(
+            ToolRegistry._load_tool_file(ToolRegistry.builtin_tools_dir() / f"{name}.py")
+        )
+    for name in ("silent_notice", "bash"):
         registry.register(
             ToolDefinition(name=name, description=name, silent=name == "silent_notice")
         )

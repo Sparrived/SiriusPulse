@@ -8,14 +8,11 @@ It deliberately cannot mint evidence from arbitrary history or XML content.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from sirius_pulse.memory.user.unified_models import UnifiedUser
 
 logger = logging.getLogger(__name__)
-
-_IDENTITY_TOOLS = {"person_query", "person_update", "visual_asset_manage", "image_generate"}
 
 
 def pending_evidence_callers(
@@ -54,19 +51,3 @@ def pending_evidence_callers(
         except Exception:
             logger.warning("待处理人物指令来源不可用；不授予操作权限", exc_info=True)
     return tuple(result)
-
-
-def identity_tool_needs_source(tool: Any, params: dict[str, Any]) -> bool:
-    """Only package built-ins use the person domain; scenery keeps old behavior."""
-    if tool.name not in _IDENTITY_TOOLS:
-        return False
-    source = getattr(tool, "source_path", None)
-    if source is None:
-        return False
-    try:
-        builtin = (Path(__file__).resolve().parent / "builtin").resolve()
-        if not Path(source).resolve().is_relative_to(builtin):
-            return False
-    except OSError:
-        return False
-    return tool.name != "image_generate" or bool(params.get("subjects"))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -1677,47 +1678,40 @@ async def test_delayed_queue_when_rich_reply_render_fails_then_falls_back_to_tex
     assert delivered == []
 
 
+def _builtin_tool(name: str):
+    from sirius_pulse.tools.registry import ToolRegistry
+
+    return ToolRegistry._load_tool_file(ToolRegistry.builtin_tools_dir() / f"{name}.py")
+
+
+_IMAGE_RECEIPT = {
+    "content": "（已发送图片 /tmp/sirius.png；除非用户明确要求重发，否则不要再发）",
+    "tags": [{"type": "image", "label": "/tmp/sirius.png"}],
+    "platform_message_id": "77",
+}
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("tool_call", "metadata", "expected_content", "expected_tags"),
-    [
-        (
-            ToolCall(
-                id="call-1",
-                function_name="group_file_exec",
-                function_arguments='{"action": "image", "image_path": "/tmp/sirius.png"}',
-            ),
-            {
-                "target_type": "group",
-                "target_id": "group-1",
-                "message_id": "77",
-                "group_file_exec_action": "image",
-            },
-            "（已发送图片 /tmp/sirius.png；除非用户明确要求重发，否则不要再发）",
-            [{"type": "image", "label": "/tmp/sirius.png"}],
-        ),
-        (
-            ToolCall(
-                id="call-1",
-                function_name="group_file_exec",
-                function_arguments='{"action": "file", "file_path": "/tmp/notes.md"}',
-            ),
-            {
-                "target_type": "group",
-                "target_id": "group-1",
-                "file_name": "notes.md",
-                "message_id": "78",
-                "group_file_exec_action": "file",
-            },
-            "（已发送文件「notes.md」；除非用户明确要求重发，否则不要再发）",
-            [{"type": "file", "label": "notes.md"}],
-        ),
-    ],
+    ("trusted", "expected"),
+    [(True, [_IMAGE_RECEIPT["content"]]), (False, [])],
 )
 async def test_delayed_queue_when_external_delivery_succeeds_then_records_receipt_for_next_turn(
-    tool_call, metadata, expected_content, expected_tags
+    trusted, expected
 ):
-    """静默投递的图片/文件必须留下历史，否则下一轮模型看不到自己发过而重发。"""
+    """静默投递必须留下历史，否则下一轮模型看不到自己发过而重发。
+
+    回执会进她的记忆，所以只有内置工具给的回执才写；同名的工作区工具不行。
+    """
+    tool = _builtin_tool("group_file_exec")
+    if not trusted:
+        tool.source_path = Path("/workspace/tools/group_file_exec.py")
+    tool_call = ToolCall(
+        id="call-1",
+        function_name="group_file_exec",
+        function_arguments='{"action": "image", "image_path": "/tmp/sirius.png"}',
+    )
+    metadata = {"target_type": "group", "target_id": "group-1", "history_receipt": _IMAGE_RECEIPT}
     queue = DelayedResponseQueue()
     item = queue.enqueue(
         "group-1",
@@ -1728,12 +1722,7 @@ async def test_delayed_queue_when_external_delivery_succeeds_then_records_receip
     item.enqueue_time = _past(item.window_seconds + 1)
     tasks, engine = _agent_tool_tasks(
         queue,
-        SimpleNamespace(
-            name="group_file_exec",
-            silent=False,
-            developer_only=False,
-            retry_safe=False,
-        ),
+        tool,
         [
             SimpleNamespace(
                 raw_text="",
@@ -1755,11 +1744,12 @@ async def test_delayed_queue_when_external_delivery_succeeds_then_records_receip
 
     await tasks.tick_delayed_queue("group-1")
 
-    assert [entry["content"] for entry in delivered] == [expected_content]
-    assert delivered[0]["group_id"] == "group-1"
-    assert delivered[0]["target_user_id"] == "u1"
-    assert delivered[0]["tags"] == expected_tags
-    assert delivered[0]["platform_message_id"] == metadata["message_id"]
+    assert [entry["content"] for entry in delivered] == expected
+    if expected:
+        assert delivered[0]["group_id"] == "group-1"
+        assert delivered[0]["target_user_id"] == "u1"
+        assert delivered[0]["tags"] == _IMAGE_RECEIPT["tags"]
+        assert delivered[0]["platform_message_id"] == "77"
 
 
 @pytest.mark.asyncio
@@ -1795,12 +1785,7 @@ async def test_delayed_queue_when_group_file_action_is_local_then_records_no_rec
     )
     tasks, engine = _agent_tool_tasks(
         queue,
-        SimpleNamespace(
-            name="group_file_exec",
-            silent=False,
-            developer_only=False,
-            retry_safe=False,
-        ),
+        _builtin_tool("group_file_exec"),
         [
             SimpleNamespace(
                 raw_text="",

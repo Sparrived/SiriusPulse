@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -57,13 +58,11 @@ async def test_flaky_network_never_resends_a_message_to_master(
             raise ConnectionError("network flapped")
         return {"status": "ok"}
 
-    tool = ToolDefinition(
-        name="interaction_with_master",
-        description="",
-        retry_safe=True,
-        allow_extra_parameters=True,
-        _run_func=run,
+    # 用内置工具自己的声明（按 action 区分能否重试），只把真正的发送换成会抖的假实现。
+    builtin = ToolRegistry._load_tool_file(
+        ToolRegistry.builtin_tools_dir() / "interaction_with_master.py"
     )
+    tool = replace(builtin, _run_func=run, inject_runtime_params=False)
     outcome = await _run(_engine(tmp_path, tool), _call(tool.name, f'{{"action": "{action}"}}'))
 
     assert len(calls) == attempts

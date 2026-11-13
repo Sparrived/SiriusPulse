@@ -42,6 +42,10 @@ TOOL_META = {
     ),
     "version": "1.0.0",
     "side_effect": "destructive",
+    "actions": {
+        "list": {"side_effect": "read_only", "retry_safe": True},
+        "status": {"side_effect": "read_only", "retry_safe": True},
+    },
     # 停止自己的后台任务不是对外投递，自主回合里也可以收拾自己开的摊子。
     "allowed_when_self_initiated": True,
     "tags": ["background", "task", "stop", "bash", "image"],

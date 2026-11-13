@@ -10,7 +10,6 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.core import life_bridge
@@ -27,8 +26,8 @@ from sirius_pulse.core.interaction_markers import parse_interaction_markers
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
 from sirius_pulse.core.tool_call_runner import (
-    NOTEBOOK_TOOL,
     ToolCallRunner,
+    parse_tool_arguments,
     retry_safe,
     side_effect_name,
 )
@@ -44,7 +43,7 @@ from sirius_pulse.core.work_mode import (
 )
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.builtin._internal import _markdown_image
-from sirius_pulse.tools.executor import _is_builtin_tool
+from sirius_pulse.tools.models import ToolDefinition
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -84,14 +83,14 @@ def _apply_grey_zone_hint(message_content: str, score: float | None) -> str:
     return message_content
 
 
-_AUTONOMOUS_MESSAGE_TOOLS = {
-    "interaction_with_master",
-}
+def _is_bookkeeping(tool: Any) -> bool:
+    """她私人的记录工具（如小本）：同轮正文只是草稿，见 ``ToolDefinition.bookkeeping``。"""
+    return isinstance(tool, ToolDefinition) and tool.is_bookkeeping
 
-#: 只读写她自己的人物/资产/小本记录，不受互动门槛限制（仍须是包内内置工具）。
-_ENGAGEMENT_EXEMPT_TOOLS = frozenset(
-    {"person_query", "person_update", "visual_asset_manage", NOTEBOOK_TOOL}
-)
+
+def _has_bookkeeping_tool(registry: Any) -> bool:
+    names_where = getattr(registry, "names_where", None)
+    return callable(names_where) and bool(names_where(_is_bookkeeping))
 
 
 def _pending_evidence_callers(
@@ -101,24 +100,6 @@ def _pending_evidence_callers(
     from sirius_pulse.tools.pending_sources import pending_evidence_callers
 
     return pending_evidence_callers(engine, group_id, evidence_refs)
-
-
-def _tool_action(tool_call: ToolCall) -> str:
-    """Return the action for a tool call that dispatches multiple operations."""
-    if tool_call.function_name not in {"group_file_exec", "interaction_with_master"}:
-        return ""
-    try:
-        params = json.loads(tool_call.function_arguments or "{}")
-    except json.JSONDecodeError:
-        return ""
-    return str(params.get("action", "")).strip().lower()
-
-
-def _composite_action(tool_call: ToolCall) -> str:
-    """Return the effective action for a composite file tool call."""
-    if tool_call.function_name != "group_file_exec":
-        return ""
-    return _tool_action(tool_call)
 
 
 def _build_assistant_tool_message(
@@ -257,25 +238,20 @@ class DelayedQueueTasks:
         engagement: float,
         is_developer: bool,
     ) -> str:
-        """互动太少的人不能驱动工具；人物/小本这类内部记录与主人通道除外。"""
+        """互动太少的人不能驱动工具；工具声明了 engagement_exempt 的除外（仅内置）。"""
         if engagement >= 0.1 or is_developer:
             return ""
-        if cls._is_autonomous_message_tool(tool, params):
+        if isinstance(tool, ToolDefinition) and tool.engagement_exempt_for(params):
             return ""
         name = getattr(tool, "name", "")
-        if name in _ENGAGEMENT_EXEMPT_TOOLS and _is_builtin_tool(tool, name):
-            return ""
         return f"Tool '{name}' 被拒绝：互动不足 (engagement={engagement:.2f})"
 
     @staticmethod
     def _tool_is_silent(tool: Any, tool_call: ToolCall) -> bool:
-        if tool is None:
+        """这次调用本身就是回复（发图、私聊主人……），同轮正文不必再单独发出。"""
+        if not isinstance(tool, ToolDefinition):
             return False
-        if tool_call.function_name == "group_file_exec":
-            return _composite_action(tool_call) == "image"
-        if tool_call.function_name == "interaction_with_master":
-            return _tool_action(tool_call) == "message"
-        return bool(getattr(tool, "silent", False))
+        return tool.silent_for(parse_tool_arguments(tool.name, tool_call.function_arguments))
 
     @staticmethod
     def _note_external_delivery(
@@ -283,91 +259,41 @@ class DelayedQueueTasks:
         group_id: str,
         item: Any,
         chat_result: Any,
-        tool_call: ToolCall,
-        params: dict[str, Any],
+        tool: Any,
         result: Any,
     ) -> None:
         """把已经投递到外部的静默动作写回历史，供下一轮模型自查。
 
-        group_file_exec 的 image/file 与 interaction_with_master 的 message 都是
-        静默投递：外部确实收到了内容，本轮却不产生任何群聊文本，
-        ``_record_assistant_message`` 因此不会留下记录。模型下一轮看不到自己发过，
-        于是群里重发同一张图、或把同一段话反复私聊给主人。这里按富文本卡片的既有
-        做法，用一条简短回执补上这条历史。只处理真正投递到外部的动作，list/
-        download/status 等本地动作不写。
+        发图、传文件、私聊主人都是静默投递：外部确实收到了内容，本轮却不产生任何
+        群聊文本，``_record_assistant_message`` 因此不会留下记录。模型下一轮看不到
+        自己发过，于是重发同一张图、或把同一段话反复私聊给主人。工具在真正投递
+        成功时把回执放进 ``internal_metadata["history_receipt"]``（content / tags /
+        platform_message_id），这里照抄写进历史。回执会进她的记忆，所以只认内置工具。
         """
+        if not (isinstance(tool, ToolDefinition) and tool.trusted):
+            return
+        metadata = getattr(result, "internal_metadata", None)
+        receipt = metadata.get("history_receipt") if isinstance(metadata, dict) else None
+        if not isinstance(receipt, dict) or not str(receipt.get("content") or "").strip():
+            return
         record = getattr(engine, "_record_assistant_message", None)
         if not callable(record):
             return
-
-        content: str
-        tags: list[dict[str, str]]
-        platform_message_id: str
-
-        if tool_call.function_name == "interaction_with_master":
-            content = DelayedQueueTasks._master_private_receipt(tool_call, params, result)
-            if not content:
-                return
-            tags = [{"type": "private", "label": "主人"}]
-            platform_message_id = ""
-        else:
-            action = _composite_action(tool_call)
-            if action not in {"image", "file"}:
-                return
-            metadata = getattr(result, "internal_metadata", {})
-            if not isinstance(metadata, dict):
-                return
-            if not (metadata.get("target_type") and metadata.get("target_id")):
-                return
-            if action == "file":
-                label = str(metadata.get("file_name") or params.get("file_path") or "").strip()
-                subject = f"文件「{label}」" if label else "文件"
-            else:
-                label = str(params.get("image_path") or "").strip()
-                subject = f"图片 {label}" if label else "图片"
-            content = f"（已发送{subject}；除非用户明确要求重发，否则不要再发）"
-            tags = [{"type": action, "label": label}]
-            platform_message_id = str(metadata.get("message_id") or "")
-
+        tags = receipt.get("tags")
         try:
             record(
                 group_id=group_id,
                 target_user_id=getattr(item, "user_id", "") or "",
-                content=content,
+                content=str(receipt["content"]),
                 system_prompt=getattr(chat_result, "system_prompt", ""),
-                tags=tags,
+                tags=list(tags) if isinstance(tags, list) else [],
                 injected_request=getattr(chat_result, "injected_request", {}),
                 injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                platform_message_id=platform_message_id,
+                platform_message_id=str(receipt.get("platform_message_id") or ""),
                 **_reasoning_memory_kwargs(chat_result),
             )
         except Exception as exc:  # 回执只是辅助信息，不能拖垮本轮回复
             logger.debug("外部投递回执写入失败: %s", exc)
-
-    # 回执里引用的私聊原文上限：够模型认出「这段话已经发过」即可，太长会把回执
-    # 本身变成一条挤占历史预算的噪声消息。
-    _MASTER_RECEIPT_SNIPPET_CHARS = 40
-
-    @staticmethod
-    def _master_private_receipt(
-        tool_call: ToolCall,
-        params: dict[str, Any],
-        result: Any,
-    ) -> str:
-        """生成「已私聊给主人」的回执文本；本次没有真正投递时返回空串。"""
-        if _tool_action(tool_call) != "message":
-            return ""
-        # 夜间暂存只把话写进意图，主人还没收到：写成已投递会让她以为发过了。
-        for source in (getattr(result, "internal_metadata", {}), getattr(result, "data", None)):
-            if isinstance(source, dict) and source.get("deferred"):
-                return ""
-        snippet = " ".join(str(params.get("message", "") or "").split())
-        if not snippet:
-            return ""
-        limit = DelayedQueueTasks._MASTER_RECEIPT_SNIPPET_CHARS
-        if len(snippet) > limit:
-            snippet = snippet[: limit - 3].rstrip() + "..."
-        return f"（已私聊发给主人：「{snippet}」；" "已完成私聊投递，除非主人明确要求重发，否则不要重复私聊）"
 
     @staticmethod
     def _tool_chain_message_text(message: Any) -> str:
@@ -992,12 +918,10 @@ class DelayedQueueTasks:
                         post_process=True,
                         inject_current_time=False,
                         work_mode=work_run is not None,
-                        defer_notebook_tool_text=(
+                        defer_bookkeeping_tool_text=(
                             work_run is None
                             and engine._tool_registry is not None
-                            and _is_builtin_tool(
-                                engine._tool_registry.get("persona_notebook"), "persona_notebook"
-                            )
+                            and _has_bookkeeping_tool(engine._tool_registry)
                         ),
                         extra_tools=control_tools(active=work_run is not None),
                     )
@@ -1190,10 +1114,10 @@ class DelayedQueueTasks:
                 not was_in_work_mode
                 and not control_calls
                 and bool(regular_tools)
-                and all(tc.function_name == "persona_notebook" for tc in regular_tools)
                 and engine._tool_registry is not None
-                and _is_builtin_tool(
-                    engine._tool_registry.get("persona_notebook"), "persona_notebook"
+                and all(
+                    _is_bookkeeping(engine._tool_registry.get(tc.function_name))
+                    for tc in regular_tools
                 )
             )
             if non_tool_text and notebook_only:
@@ -1348,8 +1272,9 @@ class DelayedQueueTasks:
                     agent_turn.finish_action(
                         tc.id,
                         success=result.success,
-                        summary=("小本操作已处理" if result.success else "小本操作未确认")
-                        if tool_name == NOTEBOOK_TOOL
+                        # 人物声明、私有资产与小本的内容不进 AgentTurn（会推给 WebUI）。
+                        summary=("操作已处理" if result.success else "操作未确认")
+                        if getattr(tool, "redact_logs", False)
                         else (result.error if not result.success else result.to_display_text()),
                     )
                     agent_turn.advance(AgentTurnPhase.VERIFY)
@@ -1357,7 +1282,7 @@ class DelayedQueueTasks:
                     if result.success:
                         try:
                             self._note_external_delivery(
-                                engine, group_id, item, chat_result, tc, params, result
+                                engine, group_id, item, chat_result, tool, result
                             )
                         except Exception:
                             logger.warning("外部投递回执生成失败", exc_info=True)
@@ -1695,22 +1620,3 @@ class DelayedQueueTasks:
                     + json.dumps(hints[:3], ensure_ascii=False)
                 )
         return bundle
-
-    @staticmethod
-    def _is_autonomous_message_tool(tool: Any, params: dict[str, Any] | None = None) -> bool:
-        """Return True for package built-ins that replace legacy prompt tags."""
-        tool_name = getattr(tool, "name", "")
-        if tool_name not in _AUTONOMOUS_MESSAGE_TOOLS:
-            return False
-        source_path = getattr(tool, "source_path", None)
-        if source_path is None:
-            return False
-        try:
-            builtin_dir = (Path(__file__).resolve().parents[1] / "tools" / "builtin").resolve()
-            if not source_path.resolve().is_relative_to(builtin_dir):
-                return False
-            if tool_name == "interaction_with_master":
-                return str((params or {}).get("action", "")).strip().lower() == "message"
-            return True
-        except Exception:
-            return False

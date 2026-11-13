@@ -14,7 +14,7 @@ from sirius_pulse.core.interaction_markers import (
     parse_interaction_markers,
 )
 from sirius_pulse.core.prompt_factory import PromptFactory
-from sirius_pulse.core.tool_call_runner import NOTEBOOK_TOOL, ToolCallRunner
+from sirius_pulse.core.tool_call_runner import ToolCallRunner
 from sirius_pulse.core.work_mode import (
     SEND_MIDWAY_MSG,
     WORK_MODE_SOURCE_AUTONOMY,
@@ -424,7 +424,7 @@ class ToolEngineContextImpl:
         )
         callback_id = str(getattr(invocation_context, "background_event_id", "") or "")
         extra_tools = [midway_message_tool()] if allow_midway else None
-        exclude_tool_names = () if notebook_enabled else (NOTEBOOK_TOOL,)
+        exclude_tool_names = () if notebook_enabled else self._chat_scoped_tool_names()
         runner = ToolCallRunner(self._engine)
 
         # 一个回合只取一次时间：每轮重写会改掉这条 user 消息，后面累积的工具
@@ -487,13 +487,15 @@ class ToolEngineContextImpl:
                     )
                     round_step["results"].append({"tool": tool_name, "output": tool_content})
                     continue
-                if tool_name == NOTEBOOK_TOOL and not notebook_enabled:
-                    outcome = runner.reject(tool_call, "当前自主回合没有明确的聊天来源，不能读写任何聊天的小本。")
+                prepared = runner.prepare(tool_call, invocation_context)
+                if not notebook_enabled and prepared.tool is not None and prepared.tool.chat_scoped:
+                    outcome = runner.reject(
+                        tool_call,
+                        f"当前自主回合没有明确的聊天来源，不能使用 {tool_name}" "（它只读写某个具体聊天里的内容）。",
+                    )
                 else:
                     outcome = await runner.execute(
-                        runner.prepare(tool_call, invocation_context),
-                        group_id=group_id,
-                        before_execute=before_tool,
+                        prepared, group_id=group_id, before_execute=before_tool
                     )
                 tool_multimodal.extend(outcome.multimodal)
                 messages.append(outcome.tool_message())
@@ -607,7 +609,7 @@ class ToolEngineContextImpl:
         """
         tool_desc = self.get_tool_descriptions(
             work_mode=True,
-            exclude_names=() if notebook_enabled else ("persona_notebook",),
+            exclude_names=() if notebook_enabled else self._chat_scoped_tool_names(),
         )
         system_prompt, messages = PromptFactory.build_autonomous_turn_sections(
             kind=kind,
@@ -649,7 +651,9 @@ class ToolEngineContextImpl:
         delivery tools), with the project's progress and the end of her work
         file in front of her instead of an open-ended "do anything".
         """
-        tool_desc = self.get_tool_descriptions(work_mode=True, exclude_names=("persona_notebook",))
+        tool_desc = self.get_tool_descriptions(
+            work_mode=True, exclude_names=self._chat_scoped_tool_names()
+        )
         system_prompt, messages = PromptFactory.build_life_work_sections(
             activity=activity,
             block_end=block_end,
@@ -1120,6 +1124,19 @@ class ToolEngineContextImpl:
             self_service=autonomous,
         )
 
+    def _chat_scoped_tool_names(self) -> tuple[str, ...]:
+        """没有可信聊天来源的回合要藏起来的工具（例如只读写某个聊天的小本）。"""
+        registry = getattr(self._engine, "_tool_registry", None)
+        if registry is None:
+            return ()
+        return registry.names_where(lambda tool: tool.chat_scoped)
+
+    def schedule_notebook_maintenance(self, group_id: str, *, force: bool = False) -> None:
+        manager = getattr(self._engine, "_bg_tasks_mgr", None)
+        maintenance = getattr(manager, "notebook_maintenance", None)
+        if maintenance is not None:
+            maintenance.schedule(group_id, force=force)
+
     def log_inner_thought(self, text: str) -> None:
         self._engine._log_inner_thought(text)
 
@@ -1154,7 +1171,6 @@ class ToolEngineContextImpl:
         """获取工具描述文本（用于被动工具的 prompt 注入）。"""
         if self._engine._tool_registry is None:
             return ""
-        from sirius_pulse.core.work_mode import WORK_MODE_ONLY_TOOL_NAMES
         from sirius_pulse.memory.user.unified_models import UnifiedUser
         from sirius_pulse.tools.models import ToolInvocationContext
 
@@ -1167,7 +1183,8 @@ class ToolEngineContextImpl:
         tools = self._engine._tool_registry.build_tools_list(
             invocation_context=ctx,
             adapter_type=adapter_type or self._engine._current_adapter_type or None,
-            exclude_names=set(exclude_names) | (set() if work_mode else WORK_MODE_ONLY_TOOL_NAMES),
+            exclude_names=set(exclude_names),
+            work_mode=work_mode,
         )
         if not tools:
             return ""

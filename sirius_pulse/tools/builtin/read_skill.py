@@ -23,6 +23,7 @@ TOOL_META = {
     "version": "1.0.0",
     "retry_safe": True,
     "side_effect": "read_only",
+    "work_mode_only": True,
     "tags": ["skill", "read", "reference"],
     "parameters": [
         {

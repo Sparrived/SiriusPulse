@@ -11,6 +11,7 @@ from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
 from sirius_pulse.core.intent import RESOLUTION_TELL, IntentFileStore
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.builtin import interaction_with_master
+from sirius_pulse.tools.registry import ToolRegistry
 
 
 class _FakeNapCatAdapter:
@@ -65,24 +66,31 @@ def test_metadata_exposes_unified_master_interaction() -> None:
 
 
 def test_runtime_preserves_action_specific_interaction_behavior() -> None:
-    tool = SimpleNamespace(
-        name="interaction_with_master",
-        source_path=Path(interaction_with_master.__file__),
-        side_effect="external_write",
-        retry_safe=True,
-        silent=False,
-    )
+    """私聊主人与读设备状态是两件不同的事：副作用、重试、静默与互动门槛各不相同。"""
+    tool = ToolRegistry._load_tool_file(Path(interaction_with_master.__file__))
     message_call = interaction_with_master_call("message")
     status_call = interaction_with_master_call("status")
+    message, status = {"action": "message"}, {"action": "status"}
 
-    assert DelayedQueueTasks._side_effect_name(tool, {"action": "message"}) == "external_write"
-    assert DelayedQueueTasks._side_effect_name(tool, {"action": "status"}) == "read_only"
-    assert DelayedQueueTasks._retry_safe(tool, {"action": "message"}) is False
-    assert DelayedQueueTasks._retry_safe(tool, {"action": "status"}) is True
-    assert DelayedQueueTasks._is_autonomous_message_tool(tool, {"action": "message"}) is True
-    assert DelayedQueueTasks._is_autonomous_message_tool(tool, {"action": "status"}) is False
+    assert DelayedQueueTasks._side_effect_name(tool, message) == "external_write"
+    assert DelayedQueueTasks._side_effect_name(tool, status) == "read_only"
+    assert DelayedQueueTasks._retry_safe(tool, message) is False
+    assert DelayedQueueTasks._retry_safe(tool, status) is True
+    # 私聊主人是她自己的通道，群里互动少的人触发也不拦；读状态不享受这个豁免。
+    assert DelayedQueueTasks._engagement_denial(tool, message, 0.0, False) == ""
+    assert "互动不足" in DelayedQueueTasks._engagement_denial(tool, status, 0.0, False)
     assert DelayedQueueTasks._tool_is_silent(tool, message_call) is True
     assert DelayedQueueTasks._tool_is_silent(tool, status_call) is False
+
+
+def test_workspace_copy_does_not_inherit_the_builtin_privileges(tmp_path: Path) -> None:
+    """同名的工作区工具照抄 TOOL_META 也拿不到互动豁免。"""
+    copy = tmp_path / "interaction_with_master.py"
+    copy.write_bytes(Path(interaction_with_master.__file__).read_bytes())
+    tool = ToolRegistry._load_tool_file(copy)
+
+    assert tool is not None and tool.trusted is False
+    assert "互动不足" in DelayedQueueTasks._engagement_denial(tool, {"action": "message"}, 0.0, False)
 
 
 def interaction_with_master_call(action: str) -> ToolCall:
@@ -114,6 +122,10 @@ async def test_message_action_sends_raw_private_message() -> None:
     assert adapter.private_messages == [("10001", message)]
     assert "通知" not in adapter.private_messages[0][1]
     assert "紧急度" not in adapter.private_messages[0][1]
+    # 私聊不产生群聊文本：回执写回历史，下一轮她才知道已经发过。
+    receipt = result["internal_metadata"]["history_receipt"]
+    assert receipt["content"].startswith("（已私聊发给主人：「刚刚发生了一件很有趣的事")
+    assert receipt["tags"] == [{"type": "private", "label": "主人"}]
 
 
 @pytest.mark.asyncio
@@ -190,6 +202,8 @@ async def test_night_message_on_her_own_time_waits_until_morning(
     assert adapter.private_messages == []
     assert result["success"] is True
     assert result["deferred"] is True
+    # 还没送达，不能写成已投递。
+    assert "history_receipt" not in result.get("internal_metadata", {})
     store = IntentFileStore(tmp_path).load()
     carried = store.all()[0]
     assert carried.what == "今天算出来一个挺有意思的东西，早上跟你讲。"

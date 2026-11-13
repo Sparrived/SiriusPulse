@@ -86,6 +86,13 @@ async def test_group_file_exec_sends_image_and_uploads_file(tmp_path: Path):
     assert file_result["success"] is True
     assert file_result["internal_metadata"]["group_file_exec_action"] == "file"
     assert [call[0] for call in adapter.calls] == ["send_group_msg", "upload_group_file"]
+    # 发出去的东西要在历史里留一条回执，下一轮她才知道已经发过。
+    image_receipt = image_result["internal_metadata"]["history_receipt"]
+    assert image_receipt["content"] == ("（已发送图片 https://example.test/image.png；除非用户明确要求重发，否则不要再发）")
+    assert image_receipt["tags"] == [{"type": "image", "label": "https://example.test/image.png"}]
+    file_receipt = file_result["internal_metadata"]["history_receipt"]
+    assert file_receipt["content"] == "（已发送文件「report.pdf」；除非用户明确要求重发，否则不要再发）"
+    assert file_receipt["tags"] == [{"type": "file", "label": "report.pdf"}]
 
 
 @pytest.mark.asyncio
@@ -176,6 +183,9 @@ async def test_group_file_exec_lists_and_downloads_group_files(tmp_path: Path):
     assert download_result["success"] is True
     assert download_result["internal_metadata"]["group_file_exec_action"] == "download"
     assert download_result["internal_metadata"]["file_id"] == "file-1"
+    # 列目录、下载只在本地，没有发给任何人，不留投递回执。
+    assert "history_receipt" not in list_result["internal_metadata"]
+    assert "history_receipt" not in download_result["internal_metadata"]
     assert adapter.calls[-2:] == [
         ("get_group_file_list", ("9001", "", 20)),
         ("download_group_file", ("9001", "file-1", "report.pdf", str(tmp_path))),

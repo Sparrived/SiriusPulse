@@ -31,7 +31,6 @@ from typing import Any, Callable
 
 from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter, StyleParams
 from sirius_pulse.core.utils import strip_conversation_history_xml
-from sirius_pulse.core.work_mode import WORK_MODE_ONLY_TOOL_NAMES
 from sirius_pulse.exceptions import ProviderContentFilteredError
 from sirius_pulse.providers.base import (
     GenerationResult,
@@ -122,8 +121,8 @@ class ChatRequest:
     """True 时才暴露工作模式专属的重工具（bash/read_skill/workflow_state/group_file_exec）。"""
     exclude_tool_names: tuple[str, ...] = ()
     """由可信调用方隐藏当前回合不可用的工具。"""
-    defer_notebook_tool_text: bool = False
-    """纯小本工具轮正文尚未发出，不运行面向对外回复的后处理。"""
+    defer_bookkeeping_tool_text: bool = False
+    """只调私人记录工具（bookkeeping）的一轮正文尚未发出，不运行面向对外回复的后处理。"""
     inject_current_time: bool = True
     """False 表示调用方已用 ``Brain.pin_current_time`` 把时间钉进消息链。
 
@@ -588,9 +587,10 @@ class Brain:
                         if self.current_admin_allowed_fn is not None
                         else False
                     ),
-                    # 重工具只在工作模式里可见，普通聊天只能看到 enter_work_mode。
-                    "exclude_names": set(request.exclude_tool_names)
-                    | (set() if request.work_mode else WORK_MODE_ONLY_TOOL_NAMES),
+                    "exclude_names": set(request.exclude_tool_names),
+                    # 重工具（work_mode_only）只在工作模式里可见，普通聊天只能看到
+                    # enter_work_mode。
+                    "work_mode": request.work_mode,
                 }
                 tools = self.tool_registry.build_tools_list(**tool_kwargs)
                 if not tools:
@@ -742,23 +742,19 @@ class Brain:
                 skipped=bool(ctx.get("skip_reply")),
             )
 
-            # 纯小本轮的正文是未送出的草稿，不能被当成已回复写入历史或去重。
-            from sirius_pulse.tools.executor import _is_builtin_tool
-
-            notebook_draft = (
-                request.defer_notebook_tool_text
+            # 只调私人记录工具（如小本）的这一轮，正文是未送出的草稿，
+            # 不能被当成已回复写入历史或去重。
+            bookkeeping_draft = (
+                request.defer_bookkeeping_tool_text
                 and bool(tool_calls)
                 and self.tool_registry is not None
                 and all(
-                    call.function_name == "persona_notebook"
-                    and _is_builtin_tool(
-                        self.tool_registry.get(call.function_name), call.function_name
-                    )
+                    getattr(self.tool_registry.get(call.function_name), "is_bookkeeping", False)
                     for call in tool_calls
                 )
             )
             # ── 5. 用户 post-hooks（post_process 总闸 + task_filter 过滤）──
-            if request.post_process and not notebook_draft:
+            if request.post_process and not bookkeeping_draft:
                 for entry in self._post_hooks:  # type: ignore[assignment]
                     if entry.task_filter is not None and task_name not in entry.task_filter:
                         continue

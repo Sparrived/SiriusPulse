@@ -137,6 +137,9 @@ TOOL_META = {
     ),
     "version": "1.0.0",
     "side_effect": "external_write",
+    "redact_logs": True,
+    "engagement_exempt": True,
+    "request_source": True,
     # 自助登记只写入人格自己的视觉库，不向外部发送；允许在自主回合执行。
     "allowed_when_self_initiated": True,
     "tags": ["person", "visual", "asset", "image", "consent"],

@@ -50,6 +50,9 @@ TOOL_META = {
     ),
     "version": "1.2.0",
     "side_effect": "external_write",
+    "work_mode_only": True,
+    # 发图本身就是回复：同轮正文不必再单独发；上传文件仍照常发正文。
+    "actions": {"image": {"silent": True}},
     "tags": ["napcat", "qq", "file", "messaging"],
     "adapter_types": ["napcat"],
     "parameters": _config.build(),
@@ -105,6 +108,23 @@ async def run(
         "group_file_exec_action": action_key,
     }
     return result
+
+
+def _delivery_receipt(kind: str, label: str, message_id: Any) -> dict[str, Any]:
+    """已经送达聊天的图片/文件写回历史的一条回执。
+
+    发图、传文件不产生聊天文本，她下一轮看不到自己发过，就会重发同一张图。
+    只有真正投递成功才生成；列目录、下载这类本地动作没有回执。
+    """
+    if kind == "file":
+        subject = f"文件「{label}」" if label else "文件"
+    else:
+        subject = f"图片 {label}" if label else "图片"
+    return {
+        "content": f"（已发送{subject}；除非用户明确要求重发，否则不要再发）",
+        "tags": [{"type": kind, "label": label}],
+        "platform_message_id": str(message_id or ""),
+    }
 
 
 async def _send_image(
@@ -257,6 +277,9 @@ async def _send_image(
                 "target_type": target_type,
                 "target_id": target_id,
                 "message_id": message_id,
+                "history_receipt": _delivery_receipt(
+                    "image", str(image_path or "").strip(), message_id
+                ),
             },
         }
     except Exception as exc:
@@ -359,6 +382,9 @@ async def _upload_file(
                 "target_id": target_id,
                 "file_name": display_name,
                 "message_id": message_id,
+                "history_receipt": _delivery_receipt(
+                    "file", str(display_name or file_path or "").strip(), message_id
+                ),
             },
         }
     except Exception as exc:

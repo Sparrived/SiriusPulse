@@ -75,6 +75,7 @@ TOOL_META = {
     ),
     "version": "1.6.0",
     "side_effect": "unknown",
+    "work_mode_only": True,
     "tags": ["bash", "shell", "file", "system", "container", "cron", "schedule"],
     "parameters": _config.build(),
     "config": {
