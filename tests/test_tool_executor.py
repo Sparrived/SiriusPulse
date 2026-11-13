@@ -373,3 +373,103 @@ def test_tool_executor_when_tool_raises_error_then_failure_is_visible_to_model(
 
     assert result.success is False
     assert "模拟错误" in result.to_display_text()
+
+
+def _telemetry(tmp_path: Path) -> list[dict[str, Any]]:
+    import json
+
+    path = tmp_path / "tool_data" / ".telemetry.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def _counter(data_store: Any) -> None:
+    data_store.set("count", int(data_store.get("count", 0)) + 1)
+
+
+def _sync_counter(data_store: Any = None) -> dict[str, Any]:
+    _counter(data_store)
+    return {"text": "记下了"}
+
+
+async def _async_counter(data_store: Any = None) -> dict[str, Any]:
+    _counter(data_store)
+    return {"text": "记下了"}
+
+
+def _sync_broken(**_: Any) -> None:
+    raise ValueError("接口坏了")
+
+
+async def _async_broken(**_: Any) -> None:
+    raise ValueError("接口坏了")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run", [_sync_counter, _async_counter], ids=["sync", "async"])
+async def test_tool_executor_saves_tool_data_the_same_way_for_sync_and_async_tools(
+    tmp_path: Path, run
+) -> None:
+    """工具写进数据存储的东西都要落盘，不管它是不是 async 写的。"""
+    executor = ToolExecutor(tmp_path)
+    tool = _make_tool("counter", run)
+
+    first = await executor.execute_async(tool, {}, invocation_context=_context())
+    second = await executor.execute_async(tool, {}, invocation_context=_context())
+
+    assert first.success and second.success
+    assert ToolExecutor(tmp_path).get_data_store("counter").get("count") == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run", [_sync_broken, _async_broken], ids=["sync", "async"])
+async def test_tool_executor_reports_a_crashing_tool_identically_for_sync_and_async(
+    tmp_path: Path, run
+) -> None:
+    executor = ToolExecutor(tmp_path)
+
+    result = await executor.execute_async(
+        _make_tool("broken", run), {}, invocation_context=_context("u7")
+    )
+
+    assert result.success is False and result.error == "接口坏了"
+    assert result.data is None
+    record = _telemetry(tmp_path)[-1]
+    assert record["tool_name"] == "broken" and record["success"] is False
+    assert record["error"] == "接口坏了" and record["caller_user_id"] == "u7"
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_logs_and_chains_a_refused_call(tmp_path: Path) -> None:
+    """被拒绝的调用也要留在使用记录里，并且同一轮后面的工具能看到它失败了。"""
+    from sirius_pulse.tools.models import ToolChainContext
+
+    executor = ToolExecutor(tmp_path)
+    chain = ToolChainContext()
+    tool = _make_tool("admin_only", _sync_counter, developer_only=True)
+
+    result = await executor.execute_async(
+        tool, {}, chain_context=chain, invocation_context=_context(is_developer=False)
+    )
+
+    assert result.success is False
+    assert chain.results["admin_only"] is result
+    assert _telemetry(tmp_path)[-1]["success"] is False
+
+
+def test_tool_executor_sync_entry_runs_async_tools_too(tmp_path: Path) -> None:
+    """脚本里没有事件循环时，同步入口也能跑 async 工具，结果与 await 一致。"""
+    result = ToolExecutor(tmp_path).execute(
+        _make_tool("counter", _async_counter), {}, invocation_context=_context()
+    )
+
+    assert result.success and "记下了" in result.to_display_text()
+
+
+@pytest.mark.asyncio
+async def test_tool_executor_sync_entry_still_works_inside_a_running_loop(tmp_path: Path) -> None:
+    result = ToolExecutor(tmp_path).execute(
+        _make_tool("counter", _sync_counter), {}, invocation_context=_context()
+    )
+
+    assert result.success
+    assert ToolExecutor(tmp_path).get_data_store("counter").get("count") == 1

@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 def _logged_params(tool: ToolDefinition, params: dict[str, Any]) -> dict[str, Any]:
     # 人物声明、私有资产与小本不进通用诊断日志，完整内容只留在受控领域审计。
     return {key: "<redacted>" for key in params} if tool.redact_logs else params
+
+
+def _caller_id(invocation_context: ToolInvocationContext | None) -> str:
+    return invocation_context.caller_user_id if invocation_context is not None else ""
 
 
 def _should_retry(exc: Exception) -> bool:
@@ -205,118 +210,26 @@ class ToolExecutor:
         invocation_context: ToolInvocationContext | None = None,
         max_retries: int = 0,
     ) -> ToolResult:
-        """Execute a tool synchronously with parameter validation and optional retry.
+        """同步入口：给没有 ``await`` 的调用方（脚本、测试）用，执行逻辑与
+        :meth:`execute_async` 完全相同。
 
-        If *chain_context* is provided, any ``${tool_name}`` / ``${tool_name.field}``
-        placeholders in parameter values are resolved against previously executed
-        tools' results before the tool is called.  After execution the result is
-        stored back into *chain_context* under ``tool.name`` for downstream use.
-
-        The data_store is automatically injected as a keyword argument
-        if the tool's run() function accepts it.
-
-        Args:
-            max_retries: Number of extra attempts for transient failures
-                (timeout, connection error, etc.).
+        已经在事件循环里时，这次调用放到独立线程的新事件循环里跑，并阻塞当前线程
+        直到结束——和以前的同步执行一样会占住调用方。引擎里一律用
+        :meth:`execute_async`；依赖主循环对象（例如平台适配器）的异步工具不要走这里。
         """
-        start_time = time.perf_counter()
-        tool_result: ToolResult | None = None
-        logger.info(
-            "Tool execute start: %s(params=%s, caller=%s)",
-            tool.name,
-            _logged_params(tool, params),
-            getattr(invocation_context, "caller_user_id", "") if invocation_context else "",
+        coro = self.execute_async(
+            tool,
+            params,
+            chain_context=chain_context,
+            invocation_context=invocation_context,
+            max_retries=max_retries,
         )
-
         try:
-            call_params, invocation_context, tool_result = self._prepare_call_params(
-                tool, params, chain_context, invocation_context
-            )
-            if tool_result is not None:
-                logger.warning("Tool execute rejected: %s -> %s", tool.name, tool_result.error)
-                return tool_result
-            assert call_params is not None
-            self._inject_runtime_params(tool, call_params, invocation_context)
-            data_store = self._get_data_store(tool.name)
-
-            logger.info(
-                "Tool execute calling: %s(final_params=%s)",
-                tool.name,
-                _logged_params(tool, call_params),
-            )
-
-            # Run with optional retry for transient failures
-            for attempt in range(max_retries + 1):
-                try:
-                    if inspect.iscoroutinefunction(tool._run_func):
-                        # Synchronous execute() cannot await; raise so caller uses execute_async
-                        raise RuntimeError(
-                            f"TOOL '{tool.name}' is async and must be executed via execute_async"
-                        )
-                    result = tool._run_func(**call_params)
-                    # Persist data store after execution
-                    data_store.save()
-                    tool_result = ToolResult.from_raw_result(result)
-                    tool_result.success = True if tool_result.error == "" else tool_result.success
-                    logger.info(
-                        "Tool execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
-                        "multimodal_blocks=%d",
-                        tool.name,
-                        tool_result.success,
-                        "<redacted>" if tool.redact_logs else tool_result.to_display_text()[:200],
-                        len(tool_result.text_blocks),
-                        len(tool_result.multimodal_blocks),
-                    )
-                    break
-                except Exception as exc:
-                    if attempt < max_retries and _should_retry(exc):
-                        logger.warning(
-                            "TOOL '%s' 第%d次执行失败（将重试）: %s",
-                            tool.name,
-                            attempt + 1,
-                            exc,
-                        )
-                        continue
-                    logger.error("TOOL '%s' 执行异常: %s", tool.name, exc)
-                    tool_result = ToolResult(success=False, error=str(exc))
-                    break
-        finally:
-            # Telemetry is best-effort and must not affect the result
-            if tool_result is not None:
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                try:
-                    caller_id = ""
-                    if invocation_context is not None:
-                        caller_id = getattr(invocation_context, "caller_user_id", "") or ""
-                    summary = (
-                        tool_result.to_display_text()[:500]
-                        if tool_result.success and not tool.redact_logs
-                        else ""
-                    )
-                    self._telemetry.record(
-                        ToolExecutionRecord(
-                            tool_name=tool.name,
-                            timestamp=time.time(),
-                            success=tool_result.success,
-                            duration_ms=round(duration_ms, 2),
-                            error=(
-                                tool_result.error
-                                if not tool_result.success and not tool.redact_logs
-                                else ""
-                            ),
-                            caller_user_id=caller_id,
-                            params=_logged_params(tool, params) if params else None,
-                            result_summary=summary,
-                        )
-                    )
-                except Exception:
-                    pass
-
-        # Record into chain context so subsequent tools can reference this result
-        if chain_context is not None and tool_result is not None:
-            chain_context.store(tool.name, tool_result)
-
-        return tool_result if tool_result is not None else ToolResult(success=False, error="未知错误")
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="tool-execute") as pool:
+            return pool.submit(asyncio.run, coro).result()
 
     async def execute_async(
         self,
@@ -327,173 +240,146 @@ class ToolExecutor:
         invocation_context: ToolInvocationContext | None = None,
         max_retries: int = 0,
     ) -> ToolResult:
-        """Execute a tool in a thread pool to avoid blocking the event loop.
+        """执行一次工具调用：校验参数、注入运行时参数、按需重试、记录遥测。
 
-        Async tools (coroutine functions) are awaited directly in the event
-        loop instead of being dispatched to a thread pool.
+        同步工具在线程池里跑（连同数据存储落盘），异步工具直接在事件循环上
+        ``await``，其余步骤两者完全一致。
 
-        Args:
-            tool: The tool definition to execute.
-            params: Parameters to pass to the tool.
-            timeout: Max seconds to wait. 0 means no limit.
-            chain_context: Optional chain context for template resolution and
-                result accumulation across a multi-tool round.
-            max_retries: Number of extra attempts for transient failures.
+        * ``chain_context``：先用它解析参数里的 ``${tool_name}`` / ``${tool_name.field}``
+          占位符，执行完再把结果存回去，供同一轮后面的工具引用。
+        * ``timeout``：最长等待秒数，0 表示不限；超时返回失败结果（线程里的同步工具
+          无法被强行中止，会在后台跑完）。
+        * ``max_retries``：暂时性失败（超时、连接错误等）额外重试的次数。
         """
-        if inspect.iscoroutinefunction(tool._run_func):
-            # Async tools run directly in the event loop so they can await
-            # bridge/adapter I/O without thread-pool indirection.
-            coro = self._execute_async_tool(
-                tool, params, chain_context, invocation_context, max_retries
+        run = self._execute(tool, params, chain_context, invocation_context, max_retries)
+        if timeout <= 0:
+            return await run
+        try:
+            return await asyncio.wait_for(run, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error("TOOL '%s' 执行超时 (限制 %.1f秒)", tool.name, timeout)
+            return ToolResult(
+                success=False,
+                error=f"TOOL执行超时（限制 {timeout:.0f} 秒），请稍后重试或联系管理员",
             )
-            if timeout > 0:
-                try:
-                    return await asyncio.wait_for(coro, timeout=timeout)
-                except asyncio.TimeoutError:
-                    logger.error("TOOL '%s' 执行超时 (限制 %.1f秒)", tool.name, timeout)
-                    return ToolResult(
-                        success=False,
-                        error=f"TOOL执行超时（限制 {timeout:.0f} 秒），请稍后重试或联系管理员",
-                    )
-            return await coro
 
-        if timeout > 0:
-            try:
-                return await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.execute,
-                        tool,
-                        params,
-                        chain_context,
-                        invocation_context,
-                        max_retries,
-                    ),
-                    timeout=timeout,
-                )
-            except asyncio.TimeoutError:
-                logger.error("TOOL '%s' 执行超时 (限制 %.1f秒)", tool.name, timeout)
-                return ToolResult(
-                    success=False,
-                    error=f"TOOL执行超时（限制 {timeout:.0f} 秒），请稍后重试或联系管理员",
-                )
-        return await asyncio.to_thread(
-            self.execute,
-            tool,
-            params,
-            chain_context,
-            invocation_context,
-            max_retries,
-        )
-
-    async def _execute_async_tool(
+    async def _execute(
         self,
         tool: ToolDefinition,
         params: dict[str, Any],
-        chain_context: ToolChainContext | None = None,
-        invocation_context: ToolInvocationContext | None = None,
-        max_retries: int = 0,
+        chain_context: ToolChainContext | None,
+        invocation_context: ToolInvocationContext | None,
+        max_retries: int,
     ) -> ToolResult:
-        """Execute an async tool directly in the event loop."""
+        """唯一的执行流程；拒绝、成功、失败都会记遥测并写回 chain_context。"""
         start_time = time.perf_counter()
         logger.info(
-            "Tool async execute start: %s(params=%s, caller=%s)",
+            "Tool execute start: %s(params=%s, caller=%s)",
             tool.name,
             _logged_params(tool, params),
-            getattr(invocation_context, "caller_user_id", "") if invocation_context else "",
+            _caller_id(invocation_context),
         )
         try:
             call_params, invocation_context, rejected = self._prepare_call_params(
                 tool, params, chain_context, invocation_context
             )
             if rejected is not None:
-                logger.warning("Tool async execute rejected: %s -> %s", tool.name, rejected.error)
-                return rejected
-            assert call_params is not None
-            self._inject_runtime_params(tool, call_params, invocation_context)
-            data_store = self._get_data_store(tool.name)
-
-            logger.info(
-                "Tool async execute calling: %s(final_params=%s)",
-                tool.name,
-                _logged_params(tool, call_params),
-            )
-
-            tool_result: ToolResult | None = None
-            for attempt in range(max_retries + 1):
-                try:
-                    result = await tool._run_func(**call_params)
-                    data_store.save()
-                    tool_result = ToolResult.from_raw_result(result)
-                    tool_result.success = True if tool_result.error == "" else tool_result.success
-                    logger.info(
-                        "Tool async execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
-                        "multimodal_blocks=%d",
-                        tool.name,
-                        tool_result.success,
-                        "<redacted>" if tool.redact_logs else tool_result.to_display_text()[:200],
-                        len(tool_result.text_blocks),
-                        len(tool_result.multimodal_blocks),
-                    )
-                    break
-                except Exception as exc:
-                    if attempt < max_retries and _should_retry(exc):
-                        logger.warning(
-                            "TOOL '%s' 第%d次执行失败（将重试）: %s",
-                            tool.name,
-                            attempt + 1,
-                            exc,
-                        )
-                        continue
-                    logger.error("TOOL '%s' 执行异常: %s", tool.name, exc)
-                    tool_result = ToolResult.from_raw_result(str(exc))
-                    tool_result.success = False
-                    tool_result.error = str(exc)
-                    break
-
-            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-            if tool_result is not None:
-                try:
-                    caller_id = ""
-                    if invocation_context is not None:
-                        caller_id = (
-                            getattr(invocation_context, "caller_user_id", "")
-                            or getattr(invocation_context, "caller", "")
-                            or ""
-                        )
-                    summary = (
-                        tool_result.to_display_text()[:500]
-                        if tool_result.success and not tool.redact_logs
-                        else ""
-                    )
-                    self._telemetry.record(
-                        ToolExecutionRecord(
-                            tool_name=tool.name,
-                            timestamp=time.time(),
-                            success=tool_result.success,
-                            duration_ms=elapsed_ms,
-                            error=(
-                                tool_result.error
-                                if not tool_result.success and not tool.redact_logs
-                                else ""
-                            ),
-                            caller_user_id=caller_id,
-                            params=_logged_params(tool, params) if params else None,
-                            result_summary=summary,
-                        )
-                    )
-                except Exception:
-                    pass
-
-            # Record into chain context so subsequent tools can reference this result
-            if chain_context is not None and tool_result is not None:
-                chain_context.store(tool.name, tool_result)
-
-            return (
-                tool_result if tool_result is not None else ToolResult(success=False, error="未知错误")
-            )
+                logger.warning("Tool execute rejected: %s -> %s", tool.name, rejected.error)
+                result = rejected
+            else:
+                assert call_params is not None
+                self._inject_runtime_params(tool, call_params, invocation_context)
+                logger.info(
+                    "Tool execute calling: %s(final_params=%s)",
+                    tool.name,
+                    _logged_params(tool, call_params),
+                )
+                result = await self._call_with_retries(tool, call_params, max_retries)
         except Exception as exc:
-            logger.error("Tool async execute exception: %s -> %s", tool.name, exc)
-            return ToolResult(success=False, error=str(exc))
+            logger.error("Tool execute exception: %s -> %s", tool.name, exc)
+            result = ToolResult(success=False, error=str(exc))
+
+        await asyncio.to_thread(
+            self._record_telemetry,
+            tool,
+            params,
+            invocation_context,
+            result,
+            (time.perf_counter() - start_time) * 1000,
+        )
+        if chain_context is not None:
+            chain_context.store(tool.name, result)
+        return result
+
+    async def _call_with_retries(
+        self, tool: ToolDefinition, call_params: dict[str, Any], max_retries: int
+    ) -> ToolResult:
+        assert tool._run_func is not None
+        run_func = tool._run_func
+        data_store = self._get_data_store(tool.name)
+        is_async = inspect.iscoroutinefunction(run_func)
+
+        def run_sync() -> Any:
+            raw = run_func(**call_params)
+            data_store.save()
+            return raw
+
+        for attempt in range(max_retries + 1):
+            try:
+                if is_async:
+                    raw = await run_func(**call_params)
+                    data_store.save()
+                else:
+                    # 同步工具与它的数据存储落盘都不能占住事件循环。
+                    raw = await asyncio.to_thread(run_sync)
+            except Exception as exc:
+                if attempt < max_retries and _should_retry(exc):
+                    logger.warning("TOOL '%s' 第%d次执行失败（将重试）: %s", tool.name, attempt + 1, exc)
+                    continue
+                logger.error("TOOL '%s' 执行异常: %s", tool.name, exc)
+                return ToolResult(success=False, error=str(exc))
+            result = ToolResult.from_raw_result(raw)
+            result.success = True if result.error == "" else result.success
+            logger.info(
+                "Tool execute done: %s -> success=%s | summary=%r | text_blocks=%d | "
+                "multimodal_blocks=%d",
+                tool.name,
+                result.success,
+                "<redacted>" if tool.redact_logs else result.to_display_text()[:200],
+                len(result.text_blocks),
+                len(result.multimodal_blocks),
+            )
+            return result
+        return ToolResult(success=False, error="未知错误")
+
+    def _record_telemetry(
+        self,
+        tool: ToolDefinition,
+        params: dict[str, Any],
+        invocation_context: ToolInvocationContext | None,
+        result: ToolResult,
+        duration_ms: float,
+    ) -> None:
+        """遥测是尽力而为的，任何错误都不能影响执行结果。"""
+        try:
+            self._telemetry.record(
+                ToolExecutionRecord(
+                    tool_name=tool.name,
+                    timestamp=time.time(),
+                    success=result.success,
+                    duration_ms=round(duration_ms, 2),
+                    error=result.error if not result.success and not tool.redact_logs else "",
+                    caller_user_id=_caller_id(invocation_context),
+                    params=_logged_params(tool, params) if params else None,
+                    result_summary=(
+                        result.to_display_text()[:500]
+                        if result.success and not tool.redact_logs
+                        else ""
+                    ),
+                )
+            )
+        except Exception:
+            pass
 
     def _validate_admin_requirement(
         self,
