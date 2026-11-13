@@ -61,6 +61,7 @@
 
 ### Removed
 
+- **群友很久没出现就主动问候**：`autonomy` 心跳里那条「亲近的人离开 `miss_after_days` 天 → 起一个 `kind=miss` 的念头 → 由受众回合写出问候并主动发出」的规则整条删除，连带 `miss_after_days` / `miss_again_after_days` / `max_miss_per_day` / `miss_min_closeness` 四个配置、`tool_data/autonomy.json` 里的 `missing` 账本、`life/missing.py` 的 `MissLedger` / `Missed` / `people_to_miss` 与只服务它的 `MISS_TONE_NOTE`。别人多久没出现不再是她主动开口的理由；「想主人」（`master_miss_after_hours` / `max_master_per_day`）那条规则不变。旧账本键留在文件里无害，只是不再有人读它。
 - **Python 传输层实现**：`sirius_pulse/providers/openai_compatible.py`（进程内 httpx 调用、SSE 逐帧聚合、多模态 base64 内联与 `generate_image_async`）、只服务于它的 `sirius_pulse/providers/response_utils.py`（上游响应归一化），以及只测它们的用例。侧车已是唯一传输实现，Python 侧不允许再自行向 AMKR 发请求。
 - **旧版运维控制台**：`sirius_pulse/webui/static/`（原生 JS 控制台）、`/legacy/` 与 `/static/` 路由、`tests/js/` 及只针对旧控制台的测试。插件 `ui_schema` 的浏览器端校验随前端移植到 `frontend/src/ui/params/schema.ts`，原有的失败即拒绝用例改为直接对它运行。前端产物缺失时 `/` 返回 503 并提示 `pnpm build`，不再退回旧版。
 

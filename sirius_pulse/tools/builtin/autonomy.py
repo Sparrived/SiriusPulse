@@ -30,12 +30,11 @@ Sharing is unchanged: a tell-intention with an audience is delivered by rule (no
 model call), at most once per cooldown and never while she is asleep; one whose
 audience is undecided gets one turn to decide, within its attempt budget.
 
-Missing people is a rule too: when someone she is close to has been away for
-``miss_after_days``, she forms a *thought* of checking in on them (a draft
+Missing her master is a rule too: when he has been away for
+``master_miss_after_hours``, she forms a *thought* of finding him (a draft
 tell-intention with no audience).  The words, and where to say them, come from
-the same audience turn; the rule never writes a greeting for her.  At most one
-thought per person per ``miss_again_after_days`` and ``max_miss_per_day`` a day,
-only toward people she can actually reach, and never while she is asleep.
+the same audience turn; the rule never writes a greeting for her.  At most
+``max_master_per_day`` times a day, and never while she is asleep.
 
 Cost per day is bounded: one plan, at most ``max_work_blocks_per_day`` work
 blocks, one reflection, one dream -- plus audience decisions, each capped per
@@ -67,7 +66,6 @@ from sirius_pulse.life.clock import DaySchedule, is_quiet_hours, to_local
 from sirius_pulse.life.dreams import DreamStore, is_dream_time, parse_dream
 from sirius_pulse.life.episodes import Episode
 from sirius_pulse.life.intent import RESOLUTION_TELL, IntentFileStore, Intention, IntentStore
-from sirius_pulse.life.missing import MissLedger, people_to_miss
 from sirius_pulse.life.projects import (
     MAX_ACTIVE_PROJECTS,
     STATUS_ACTIVE,
@@ -107,17 +105,6 @@ _PLAN_MAX_TRIES = 2
 _PLAN_RETRY_GAP_SECONDS = 30 * 60
 # Not worth planning a day that is nearly over.
 _PLAN_MIN_REMAINING_MINUTES = 60
-
-# Missing people: after this many days away someone close starts to be on her
-# mind; she thinks of the same person at most once per ``_MISS_AGAIN_DAYS``.
-_DEFAULT_MISS_AFTER_DAYS = 5
-_DEFAULT_MISS_AGAIN_DAYS = 7
-_DEFAULT_MAX_MISS_PER_DAY = 1
-_MAX_MISS_PER_DAY_CEILING = 2
-_DEFAULT_MISS_MIN_CLOSENESS = 0.5
-_MISS_URGENCY = 0.7
-_MISS_KIND = "miss"
-_MISS_STORE_KEY = "missing"
 
 # Missing her master: he is the one person who is glad to be bothered, so the bar is
 # hours, not days -- but still bounded, and never while she is asleep.
@@ -194,30 +181,6 @@ TOOL_META = {
             "default": _DEFAULT_SHARE_COOLDOWN_SECONDS,
             "group": "节奏",
         },
-        "miss_after_days": {
-            "type": "int",
-            "description": "亲近的人多少天没出现，她会开始惦记、想去问候一下，默认 5，设为 0 表示不主动想念。",
-            "default": _DEFAULT_MISS_AFTER_DAYS,
-            "group": "想念",
-        },
-        "miss_again_after_days": {
-            "type": "int",
-            "description": "同一个人至少隔几天才会再想起一次，默认 7。",
-            "default": _DEFAULT_MISS_AGAIN_DAYS,
-            "group": "想念",
-        },
-        "max_miss_per_day": {
-            "type": "int",
-            "description": "她一天最多惦记几个人（每人一次决定说什么的模型回合），默认 1，最多 2。",
-            "default": _DEFAULT_MAX_MISS_PER_DAY,
-            "group": "想念",
-        },
-        "miss_min_closeness": {
-            "type": "float",
-            "description": "多亲近才会想念（0 到 1，按聊天次数、对方回应她的程度和她对对方的好感算），默认 0.5。",
-            "default": _DEFAULT_MISS_MIN_CLOSENESS,
-            "group": "想念",
-        },
         "master_miss_after_hours": {
             "type": "int",
             "description": "主人多少小时没来找她（任何会话），她醒着时会想找主人说说话，默认 6，设为 0 表示不主动找。",
@@ -286,7 +249,6 @@ async def run_tick(ctx: Any) -> Episode | None:
         return None
 
     agenda = await _ensure_today_plan(ctx, schedule, now)
-    _miss_people(ctx, schedule, now)
     _miss_master(ctx, schedule, now)
 
     state = _load_state(store)
@@ -865,78 +827,6 @@ async def _decide_audience(ctx: Any, now: datetime) -> None:
         logger.warning("决定分享对象的回合失败，这次尝试已记下", exc_info=True)
 
 
-def _miss_people(ctx: Any, schedule: DaySchedule, now: datetime) -> list[Intention]:
-    """Turn "someone close has been away a long time" into a thought of checking in.
-
-    Pure rule, no model call.  The intention is a draft with no audience: its
-    ``what`` is her thought, not a message.  The audience turn
-    (:func:`_decide_audience`) is where she writes the actual words and picks
-    the chat, or decides not to bother them after all.
-    """
-    miss_after = _option_int(ctx, "miss_after_days", _DEFAULT_MISS_AFTER_DAYS, ceiling=365)
-    if miss_after <= 0:
-        return []
-    store = ctx.get_data_store("autonomy")
-    ledger = MissLedger.from_dict(store.get(_MISS_STORE_KEY, {}))
-    today = schedule.life_date(now)
-    max_per_day = _option_int(
-        ctx, "max_miss_per_day", _DEFAULT_MAX_MISS_PER_DAY, ceiling=_MAX_MISS_PER_DAY_CEILING
-    )
-    if ledger.today_count(today) >= max_per_day:
-        return []
-    try:
-        people = list(ctx.list_acquaintances())
-        labels = {str(a.chat_id): str(a.label or a.chat_id) for a in ctx.list_audiences()}
-    except Exception:
-        logger.debug("读取认识的人或可达会话失败", exc_info=True)
-        return []
-
-    intentions = _load_intentions(ctx)
-    already = {
-        ref
-        for item in intentions.open_items(now=now.isoformat())
-        if item.kind == _MISS_KIND
-        for ref in item.refs
-    }
-    missed = people_to_miss(
-        [p for p in people if f"user:{p.user_id}" not in already],
-        now=now,
-        today=today,
-        reachable=labels,
-        ledger=ledger,
-        miss_after_days=miss_after,
-        min_closeness=_option_float(ctx, "miss_min_closeness", _DEFAULT_MISS_MIN_CLOSENESS),
-        gap_days=_option_int(ctx, "miss_again_after_days", _DEFAULT_MISS_AGAIN_DAYS, ceiling=365),
-        max_per_day=max_per_day,
-    )
-    created: list[Intention] = []
-    for item in missed:
-        name = item.person.name
-        chat = item.chats[0]
-        intention = Intention.create(
-            what=f"想找{name}聊聊，问候一下{name}最近怎么样",
-            why=f"已经{item.days}天没见到{name}了，上次和{name}说话是在「{labels[chat]}」（{chat}）",
-            resolution=RESOLUTION_TELL,
-            kind=_MISS_KIND,
-            urgency=_MISS_URGENCY,
-            source="missing",
-            origin_group=chat,
-            refs=[f"user:{item.person.user_id}"],
-            draft=True,
-        )
-        intentions.add(intention)
-        ledger.record(item.person.user_id, today=today, now=now)
-        created.append(intention)
-        ctx.log_inner_thought(f"好久没见到{name}了，有点想找{name}聊聊")
-    if created:
-        _save_intentions(ctx, intentions)
-        store.set(_MISS_STORE_KEY, ledger.to_dict())
-        save = getattr(store, "save", None)
-        if callable(save):
-            save()
-    return created
-
-
 def _master_audience(ctx: DeliveryAccess) -> Any | None:
     try:
         audiences = list(ctx.list_audiences())
@@ -1159,14 +1049,6 @@ def _option_seconds(
         return max(minimum, float(raw))
     except (TypeError, ValueError):
         return float(default)
-
-
-def _option_float(ctx: Any, key: str, default: float) -> float:
-    store = ctx.get_data_store("autonomy")
-    try:
-        return _clamp(float(store.get(key, default)))
-    except (TypeError, ValueError):
-        return default
 
 
 def _option_int(ctx: Any, key: str, default: int, *, ceiling: int) -> int:

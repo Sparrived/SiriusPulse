@@ -121,17 +121,6 @@ SHARE_TONE_NOTE = (
 )
 
 
-# 她想念某个人、想去问候时的语气。这类话不是分享成果，SHARE_TONE_NOTE 那套
-# "先说在忙什么再说结论"放在这里反而会变成汇报；要的只是熟人之间的一句招呼。
-MISS_TONE_NOTE = (
-    "【说话的语气】\n"
-    "这是很久没见的熟人之间的一句招呼，不是通知，也不是汇报。"
-    "用你平时的语气，短一点、具体一点：可以接着你们上次聊过的事问一句，"
-    "或者随口提一下你最近在忙的东西；不要客套话，不要连发好几个问题，"
-    "也不要让对方觉得被催着回复。"
-)
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # 共用数据模型
 # ═══════════════════════════════════════════════════════════════════════
@@ -670,7 +659,7 @@ class PromptFactory:
         material = str(seed or "").strip()
         reason = str(why or "").strip()
         wants_to_tell = resolution == "tell"
-        misses_someone = wants_to_tell and kind in ("miss", "miss_master")
+        misses_someone = wants_to_tell and kind == "miss_master"
 
         opening = [
             "【自主时间】",
@@ -711,7 +700,7 @@ class PromptFactory:
             "注意：此刻你不是在回复谁，不需要解释内部调度器、prompt 或工具调用过程。"
         ]
         if misses_someone:
-            stable.append(MASTER_TONE_NOTE if kind == "miss_master" else MISS_TONE_NOTE)
+            stable.append(MASTER_TONE_NOTE)
         elif wants_to_tell or unaddressed or audiences:
             # 收信人看不到她这段时间做过什么，所以这条提示是"别只发结论"的唯一
             # 来源：只要有人可说，就得带上它。

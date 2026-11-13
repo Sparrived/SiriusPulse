@@ -1,17 +1,9 @@
-"""Missing people: when someone she is close to has not shown up for a while.
+"""People she knows: one entry per person, summed up across every chat they share.
 
-This is a rule, not a model call.  Two numbers decide it -- how close she is to
-someone and how long it has been since they last said anything where she could
-hear it -- and the rule only produces a *thought* ("想找某人聊聊"), never the
-words.  What she actually says, and where, she decides herself on the turn that
-picks an audience for a tell-intention.
-
-Why a rule: deciding "do I miss anyone" on a model turn would cost a call on
-every heartbeat and, like the old free time, mostly come back with "no".  The
-interesting part (what to say to them) is still hers.
-
-The rhythm is persona-level and kept in a small ledger: one person at most once
-per ``gap_days``, and at most ``max_per_day`` people a day.
+Every chat keeps its own semantic profile of the people in it; this module folds
+those rows into one :class:`Acquaintance` per person -- when they last showed up,
+how close she is to them, and which chats she could reach them in.  What to do
+with that is the caller's decision, not this module's.
 """
 
 from __future__ import annotations
@@ -106,91 +98,6 @@ def gather(
     return list(people.values())
 
 
-@dataclass(slots=True)
-class MissLedger:
-    """When she last thought of each person, and how many she thought of today."""
-
-    last_missed: dict[str, str] = field(default_factory=dict)
-    day: str = ""
-    count: int = 0
-
-    def today_count(self, today: str) -> int:
-        return self.count if self.day == today else 0
-
-    def missed_recently(self, user_id: str, now: datetime, gap_days: float) -> bool:
-        last = _parse_time(self.last_missed.get(user_id, ""))
-        return last is not None and (now - last).total_seconds() < gap_days * 86400
-
-    def record(self, user_id: str, *, today: str, now: datetime) -> None:
-        self.last_missed[user_id] = now.isoformat()
-        self.count = self.today_count(today) + 1
-        self.day = today
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"last_missed": dict(self.last_missed), "day": self.day, "count": self.count}
-
-    @classmethod
-    def from_dict(cls, data: Any) -> "MissLedger":
-        if not isinstance(data, Mapping):
-            return cls()
-        raw = data.get("last_missed")
-        return cls(
-            last_missed=(
-                {str(k): str(v) for k, v in raw.items()} if isinstance(raw, Mapping) else {}
-            ),
-            day=str(data.get("day", "") or ""),
-            count=_int(data.get("count")),
-        )
-
-
-@dataclass(slots=True)
-class Missed:
-    """One person she has started to wonder about, and where she could find them."""
-
-    person: Acquaintance
-    chats: list[str]
-    days: int
-
-
-def people_to_miss(
-    people: Iterable[Acquaintance],
-    *,
-    now: datetime,
-    today: str,
-    reachable: Iterable[str],
-    ledger: MissLedger,
-    miss_after_days: float,
-    min_closeness: float,
-    gap_days: float,
-    max_per_day: int,
-) -> list[Missed]:
-    """Who she starts missing now, closest first, within today's allowance.
-
-    Someone qualifies only if she is close to them, they have been away for at
-    least *miss_after_days*, she has not thought of them in the last *gap_days*,
-    and at least one chat they talk in is one she can actually reach.
-    """
-    allowance = max_per_day - ledger.today_count(today)
-    if allowance <= 0 or miss_after_days <= 0:
-        return []
-    open_chats = set(reachable)
-    found: list[Missed] = []
-    for person in people:
-        if not person.name or person.closeness < min_closeness:
-            continue
-        days = person.days_away(now)
-        if not math.isfinite(days) or days < miss_after_days:
-            continue
-        if ledger.missed_recently(person.user_id, now, gap_days):
-            continue
-        chats = [chat for chat in person.chats if chat in open_chats]
-        if not chats:
-            continue
-        found.append(Missed(person=person, chats=chats, days=int(days)))
-    found.sort(key=lambda item: (item.person.closeness, item.days), reverse=True)
-    return found[:allowance]
-
-
 def _parse_time(value: Any) -> datetime | None:
     if not value:
         return None
@@ -228,4 +135,4 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, float(value)))
 
 
-__all__ = ["Acquaintance", "MissLedger", "Missed", "gather", "people_to_miss"]
+__all__ = ["Acquaintance", "gather"]
