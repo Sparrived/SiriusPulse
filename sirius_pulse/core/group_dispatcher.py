@@ -23,6 +23,13 @@ from uuid import uuid4
 #: 收集各人格打分时的轮询间隔。轮询在线程里跑，间隔过密只会白白抢库锁。
 _COLLECTION_POLL_SECONDS = 0.02
 
+
+def _consume_task_exception(task: "asyncio.Future[Any]") -> None:
+    """取走后台任务的异常，避免调用方被取消后出现未取回异常的告警。"""
+    if not task.cancelled():
+        task.exception()
+
+
 _OPEN_LOOP_RE = re.compile(
     r"(?:[?？]|你(?:怎么看|觉得|认为|说|来|接着|继续|补充)|" r"(?:轮到你|请你|想听你|能不能|要不要|是不是|对吧))"
 )
@@ -301,6 +308,100 @@ class GroupDispatcher:
             return
         self.account_id = account_id
         self.register()
+
+    # ------------------------------------------------------------------
+    # 异步入口：事件循环里的调用方用这些，不要直接调同步方法。
+    #
+    # 每个操作都是一次写事务，多个人格争同一个库时可能在 busy_timeout 上等好几秒；
+    # 所有人格共用一个事件循环，同步等待会让所有群一起停顿。操作放进线程，并用
+    # shield 包住：调用方被取消时，已经开始的数据库写入照样做完，不会留下半截状态。
+    #
+    # 唯一例外是投递前的 ``begin_delivery`` 栅栏：它必须紧贴在不可撤销的平台 I/O
+    # 之前同步执行，中间多一个 await 就多一个「库里记了发送中、实际没发」的取消窗口。
+    # ------------------------------------------------------------------
+
+    async def _off_loop(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        task = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+        # 调用方被取消后没人再取结果：取走异常，免得「Task exception was never retrieved」。
+        task.add_done_callback(_consume_task_exception)
+        return await asyncio.shield(task)
+
+    async def admit_async(self, **kwargs: Any) -> DispatchDecision:
+        """``admit`` 的异步版本。被取消时若已拿到租约，先释放再把取消抛出去。
+
+        同步版本里取消只可能发生在 admit 之前或之后；放进线程后多了一个「库里已经
+        授予、调用方却被取消」的窗口。不当场释放的话，租约会占着这个群直到过期，
+        紧接着的重试只会被判成群忙。
+        """
+        task = asyncio.ensure_future(asyncio.to_thread(lambda: self.admit(**kwargs)))
+        task.add_done_callback(_consume_task_exception)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            try:
+                decision = await task
+            except asyncio.CancelledError:
+                # 清理途中又被取消：交给回调在后台释放。
+                task.add_done_callback(self._release_orphaned_grant)
+                raise
+            except Exception:
+                raise asyncio.CancelledError() from None
+            if decision.granted and decision.lease_id:
+                await self._off_loop(self.finish, decision.lease_id, sent=False)
+            raise
+
+    def _release_orphaned_grant(self, task: asyncio.Future[DispatchDecision]) -> None:
+        if task.cancelled() or task.exception() is not None:
+            return
+        decision = task.result()
+        if not decision.granted or not decision.lease_id:
+            return
+        loop = asyncio.get_running_loop()
+        release = loop.run_in_executor(None, lambda: self.finish(decision.lease_id, sent=False))
+        release.add_done_callback(_consume_task_exception)
+
+    async def finish_async(
+        self,
+        lease_id: str,
+        *,
+        sent: bool,
+        response_text: str = "",
+        uncertain: bool = False,
+    ) -> bool:
+        return bool(
+            await self._off_loop(
+                self.finish,
+                lease_id,
+                sent=sent,
+                response_text=response_text,
+                uncertain=uncertain,
+            )
+        )
+
+    async def renew_async(self, lease_id: str) -> bool:
+        return bool(await self._off_loop(self.renew, lease_id))
+
+    async def acknowledge_delivery_async(self, lease_id: str) -> None:
+        await self._off_loop(self.acknowledge_delivery, lease_id)
+
+    async def register_async(self) -> None:
+        await self._off_loop(self.register)
+
+    async def set_account_id_async(self, account_id: str) -> None:
+        account_id = str(account_id or "").strip()
+        # 绝大多数消息账号不变：不变时不必跳线程。
+        if not account_id or account_id == self.account_id:
+            return
+        await self._off_loop(self.set_account_id, account_id)
+
+    async def is_peer_account_async(self, account_id: str) -> bool:
+        account_id = str(account_id or "").strip()
+        if not account_id or account_id == self.account_id:
+            return False
+        return bool(await self._off_loop(self.is_peer_account, account_id))
+
+    async def close_async(self) -> None:
+        await self._off_loop(self.close)
 
     def is_peer_account(self, account_id: str) -> bool:
         """Return whether a live registered worker owns this other account."""

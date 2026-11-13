@@ -533,6 +533,19 @@ def _normalize_local_path(value: str) -> Path | None:
     return Path(text).expanduser()
 
 
+async def _dispatcher_call(dispatcher: Any, name: str, /, *args: Any, **kwargs: Any) -> Any:
+    """调用群调度器：有 ``<name>_async`` 就用它（在线程里执行），否则直接同步调用。
+
+    调度器的每个操作都是 SQLite 写事务，多个人格争库时会在 busy_timeout 上等；
+    所有人格共用事件循环，所以这里一律走异步入口。投递前的 ``begin_delivery``
+    栅栏不走这里，它必须紧贴平台 I/O 同步执行。
+    """
+    async_method = getattr(dispatcher, f"{name}_async", None)
+    if callable(async_method):
+        return await async_method(*args, **kwargs)
+    return getattr(dispatcher, name)(*args, **kwargs)
+
+
 class NapCatAdapter(BaseAdapter):
     """NapCat OneBot v11 正向 WebSocket 客户端 + 平台集成。
 
@@ -696,10 +709,10 @@ class NapCatAdapter(BaseAdapter):
             self._running = False
             await self._detach_engine_locked(self._engine)
             if self._dispatcher is not None:
-                self._dispatcher.close()
+                await _dispatcher_call(self._dispatcher, "close")
                 self._dispatcher = None
             if self._delivery_dispatcher is not None:
-                self._delivery_dispatcher.close()
+                await _dispatcher_call(self._delivery_dispatcher, "close")
                 self._delivery_dispatcher = None
             LOG.info("NapCatAdapter 平台集成已停止")
 
@@ -720,7 +733,7 @@ class NapCatAdapter(BaseAdapter):
         # schedule a retry while it is being cancelled.
         await self._cancel_event_handler_tasks()
         await self._cancel_dispatch_retry_tasks()
-        self._release_dispatch_leases()
+        await self._release_dispatch_leases()
         self._dispatch_delivery_active.clear()
         self._dispatch_leases.clear()
         if engine is not None:
@@ -2242,12 +2255,12 @@ class NapCatAdapter(BaseAdapter):
         dispatcher = self._get_dispatcher() if parsed.message_type == "group" else None
         qq_number = str(self.plugin_config.get("qq_number", "") or "").strip()
         if dispatcher is not None:
-            dispatcher.set_account_id(parsed.self_id or qq_number)
+            await _dispatcher_call(dispatcher, "set_account_id", parsed.self_id or qq_number)
 
         peer_ai_ids = self.plugin_config.get("peer_ai_ids", [])
-        is_peer_ai = str(parsed.user_id) in [str(v) for v in peer_ai_ids] or bool(
-            dispatcher is not None and dispatcher.is_peer_account(parsed.user_id)
-        )
+        is_peer_ai = str(parsed.user_id) in [str(v) for v in peer_ai_ids]
+        if not is_peer_ai and dispatcher is not None:
+            is_peer_ai = bool(await _dispatcher_call(dispatcher, "is_peer_account", parsed.user_id))
         mentions_current_bot = bool(
             (
                 parsed.message_type == "group"
@@ -2470,7 +2483,9 @@ class NapCatAdapter(BaseAdapter):
             LOG.exception("消息处理异常 (%s/%s): %s", group_id, parsed.user_id, exc)
         finally:
             if dispatch_lease_id and not dispatch_deferred and dispatcher is not None:
-                dispatcher.finish(
+                await _dispatcher_call(
+                    dispatcher,
+                    "finish",
                     dispatch_lease_id,
                     sent=dispatch_sent,
                     response_text="\n".join(response_parts),
@@ -2546,7 +2561,7 @@ class NapCatAdapter(BaseAdapter):
 
     # ─── 事件总线监听 ────────────────────────────────────
 
-    def _release_dispatch_leases(self) -> None:
+    async def _release_dispatch_leases(self) -> None:
         """Release deferred delivery leases that will not survive a rebind."""
         dispatcher = self._dispatcher
         if dispatcher is None:
@@ -2555,7 +2570,7 @@ class NapCatAdapter(BaseAdapter):
             if not lease_id:
                 continue
             try:
-                dispatcher.finish(lease_id, sent=False)
+                await _dispatcher_call(dispatcher, "finish", lease_id, sent=False)
             except Exception:
                 LOG.debug("释放重绑定前的群调度 lease 失败", exc_info=True)
 
@@ -2643,7 +2658,7 @@ class NapCatAdapter(BaseAdapter):
         interval = max(0.25, min(30.0, dispatcher.lease_seconds / 3.0))
         while True:
             await asyncio.sleep(interval)
-            if not dispatcher.renew(lease_id):
+            if not await _dispatcher_call(dispatcher, "renew", lease_id):
                 return
 
     async def _deliver_proactive_payload(
@@ -2802,7 +2817,7 @@ class NapCatAdapter(BaseAdapter):
             if previous:
                 dispatcher = self._get_delivery_dispatcher()
                 if dispatcher is not None:
-                    dispatcher.finish(previous, sent=False)
+                    await _dispatcher_call(dispatcher, "finish", previous, sent=False)
             return
         queue = getattr(engine, "delayed_queue", None)
         item_id = str(event.data.get("item_id", "") or "")
@@ -2822,8 +2837,10 @@ class NapCatAdapter(BaseAdapter):
             # lease to the durable item identity before generation or delivery.
             previous = self._dispatch_leases.pop(gid, "")
             if previous:
-                dispatcher.finish(previous, sent=False)
-            decision = dispatcher.admit(
+                await _dispatcher_call(dispatcher, "finish", previous, sent=False)
+            decision = await _dispatcher_call(
+                dispatcher,
+                "admit",
                 event_id=f"delayed:{self.adapter_route_id}:{gid}:{item_id or 'unknown'}",
                 group_id=gid,
                 sender_type="system",
@@ -2869,7 +2886,7 @@ class NapCatAdapter(BaseAdapter):
             io_pending = True
             return True
 
-        def known_outcome() -> None:
+        async def known_outcome() -> None:
             nonlocal io_pending
             if queue is not None:
                 queue.acknowledge_delivery_part(
@@ -2880,7 +2897,7 @@ class NapCatAdapter(BaseAdapter):
                 )
                 persist_delayed_queue(engine)
             if dispatcher is not None:
-                dispatcher.acknowledge_delivery(lease_id)
+                await _dispatcher_call(dispatcher, "acknowledge_delivery", lease_id)
             io_pending = False
 
         async def send_text(text: str, refs: Any = None) -> bool:
@@ -2905,7 +2922,7 @@ class NapCatAdapter(BaseAdapter):
             partial_text = _markdown_image.merge_short_plain_text(text)
             for part in _split_reply_for_delivery(partial_text, merged=True):
                 sent = await send_text(part)
-                known_outcome()
+                await known_outcome()
                 if not sent:
                     raise RuntimeError(f"Failed to send partial reply: {gid}")
 
@@ -2934,11 +2951,11 @@ class NapCatAdapter(BaseAdapter):
                     except Exception as exc:
                         LOG.warning("富文本发送失败，改为缓存正文投递: %s", exc)
                         result["rich_fallback"] = True
-                        known_outcome()
+                        await known_outcome()
                     else:
                         result["rich_sent"] = True
                         result["delivery_complete"] = True
-                        known_outcome()
+                        await known_outcome()
                         self._record_delayed_rich_history(
                             engine, gid, result, str(delivery.get("image_message_id", ""))
                         )
@@ -2980,7 +2997,7 @@ class NapCatAdapter(BaseAdapter):
                         sent = await self._send_pokes_after_reply(gid, [part["value"]])
                     if sent:
                         result["delivery_cursor"] = index + 1
-                    known_outcome()
+                    await known_outcome()
                     if not sent:
                         return
                 if not parts and not result.get("delivery_complete") and not sent_count:
@@ -3046,7 +3063,9 @@ class NapCatAdapter(BaseAdapter):
                         )
             finally:
                 if dispatcher is not None and lease_id:
-                    dispatcher.finish(
+                    await _dispatcher_call(
+                        dispatcher,
+                        "finish",
                         lease_id,
                         sent=complete,
                         uncertain=uncertain,
@@ -3182,7 +3201,9 @@ class NapCatAdapter(BaseAdapter):
                         delivery_started = False
                         delivery_uncertain = False
                         if dispatcher is not None:
-                            decision = dispatcher.admit(
+                            decision = await _dispatcher_call(
+                                dispatcher,
+                                "admit",
                                 event_id=dispatch_event_id,
                                 group_id=dispatch_group_id,
                                 sender_type="system",
@@ -3256,7 +3277,9 @@ class NapCatAdapter(BaseAdapter):
                                     local_event_key, accepted=accepted and not delivery_uncertain
                                 )
                             if dispatch_lease_id and dispatcher is not None:
-                                dispatcher.finish(
+                                await _dispatcher_call(
+                                    dispatcher,
+                                    "finish",
                                     dispatch_lease_id,
                                     sent=accepted,
                                     uncertain=delivery_uncertain,

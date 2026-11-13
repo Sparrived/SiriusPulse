@@ -226,7 +226,12 @@ class PersonaWorker:
             for adapter in self._adapters:
                 dispatcher = getattr(adapter, "_dispatcher", None)
                 if dispatcher is not None:
-                    dispatcher.register()
+                    # 心跳写调度库：放进线程，别在争库锁时卡住所有群。
+                    register_async = getattr(dispatcher, "register_async", None)
+                    if callable(register_async):
+                        await register_async()
+                    else:
+                        dispatcher.register()
             status: dict[str, Any] = {
                 "status": "running",
                 "pid": os.getpid(),

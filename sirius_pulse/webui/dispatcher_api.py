@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -208,7 +209,8 @@ async def api_dispatcher_overview(request: web.Request, data_dir: Path) -> web.R
     paths = _candidate_db_paths(data_dir, configs)
     snapshots = []
     for path in paths:
-        snapshot = GroupDispatcher.read_snapshot(path)
+        # 与人格共用事件循环：读库放进线程，别让 WebUI 轮询卡住回复。
+        snapshot = await asyncio.to_thread(GroupDispatcher.read_snapshot, path)
         if snapshot.get("available"):
             snapshots.append(snapshot)
     payload = _merge_snapshots(snapshots, paths)
