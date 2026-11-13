@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sirius_pulse.core.intent import (
+from sirius_pulse.life.intent import (
     RESOLUTION_TELL,
     IntentFileStore,
     Intention,

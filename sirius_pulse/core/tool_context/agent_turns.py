@@ -645,7 +645,7 @@ class AgentTurnMixin:
 
     def _unaddressed_intentions(self) -> list[dict[str, str]]:
         """她想说却还没决定说给谁的话，先给她自己看一眼。"""
-        from sirius_pulse.core.intent import IntentFileStore
+        from sirius_pulse.life.intent import IntentFileStore
 
         try:
             store = IntentFileStore(self.get_work_path()).load()

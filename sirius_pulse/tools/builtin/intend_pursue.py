@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sirius_pulse.core.intent import (
+from sirius_pulse.life.intent import (
     RESOLUTION_DO,
     IntentFileStore,
     Intention,

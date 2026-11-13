@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sirius_pulse.core.interaction_markers import (
+from sirius_pulse.adapters.interaction_markers import (
     collect_allowed_poke_user_ids,
     parse_interaction_markers,
 )
@@ -107,7 +107,7 @@ class DeliveryMixin:
         只返回确实可达的目标：群聊来自活跃群，私聊来自已配置的主人 QQ。
         不可达的目标不会出现，避免意图指向一个发不出去的会话而永远悬着。
         """
-        from sirius_pulse.core.intent import Audience
+        from sirius_pulse.life.intent import Audience
 
         audiences: list[Audience] = []
         stamps = getattr(self._engine, "_group_last_message_at", {}) or {}

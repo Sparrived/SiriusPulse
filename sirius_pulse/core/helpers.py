@@ -12,13 +12,13 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from sirius_pulse.adapters.models import MessageGroup, TextSegment
-from sirius_pulse.core.cognition import extract_keywords
-from sirius_pulse.core.identity_resolver import IdentityContext
-from sirius_pulse.core.interaction_markers import (
+from sirius_pulse.adapters.interaction_markers import (
     collect_allowed_poke_user_ids,
     parse_interaction_markers,
 )
+from sirius_pulse.adapters.models import MessageGroup, TextSegment
+from sirius_pulse.core.cognition import extract_keywords
+from sirius_pulse.core.identity_resolver import IdentityContext
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase

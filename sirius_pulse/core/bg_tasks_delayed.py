@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.adapters.interaction_markers import parse_interaction_markers
 from sirius_pulse.core import life_bridge
 from sirius_pulse.core.agent_turn import AgentTurn, AgentTurnPhase
 from sirius_pulse.core.constants import (
@@ -22,7 +23,6 @@ from sirius_pulse.core.constants import (
 from sirius_pulse.core.delayed_response_queue import _parse_iso, persist_delayed_queue
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
-from sirius_pulse.core.interaction_markers import parse_interaction_markers
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
 from sirius_pulse.core.tool_call_runner import (

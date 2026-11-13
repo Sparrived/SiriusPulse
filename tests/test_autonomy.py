@@ -17,11 +17,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from sirius_pulse.core.autonomy import is_quiet_hours
-from sirius_pulse.core.intent import RESOLUTION_TELL, IntentFileStore, Intention
 from sirius_pulse.life import life_dir
 from sirius_pulse.life.agenda import AgendaStore, Block, DayAgenda
+from sirius_pulse.life.clock import is_quiet_hours
 from sirius_pulse.life.dreams import DreamStore
+from sirius_pulse.life.intent import RESOLUTION_TELL, IntentFileStore, Intention
 from sirius_pulse.life.missing import gather
 from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.reflection import SelfNoteStore

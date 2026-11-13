@@ -10,13 +10,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from sirius_pulse.adapters.interaction_markers import parse_interaction_markers
 from sirius_pulse.config.config_builder import ConfigBuilder
-from sirius_pulse.core.intent import (
+from sirius_pulse.life.intent import (
     RESOLUTION_TELL,
     IntentFileStore,
     Intention,
 )
-from sirius_pulse.core.interaction_markers import parse_interaction_markers
 from sirius_pulse.tools.builtin._internal._qq_ops import (
     bridge_error,
     failure_from_exception,
@@ -246,7 +246,7 @@ def _is_quiet_now() -> bool:
     """Night window in local time; indirection point so tests can pin the clock."""
     from datetime import datetime, timezone
 
-    from sirius_pulse.core.autonomy import is_quiet_hours
+    from sirius_pulse.life.clock import is_quiet_hours
 
     return is_quiet_hours(datetime.now(timezone.utc))
 

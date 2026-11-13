@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from sirius_pulse.core.autonomy import Episode
-from sirius_pulse.core.intent import IntentFileStore, Intention, IntentStore
+from sirius_pulse.life.episodes import Episode
+from sirius_pulse.life.intent import IntentFileStore, Intention, IntentStore
 from sirius_pulse.utils.json_io import atomic_write_json
 from sirius_pulse.webui.autonomy_api import api_persona_autonomy_get
 

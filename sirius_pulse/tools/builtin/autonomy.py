@@ -51,11 +51,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.core.autonomy import Episode, is_quiet_hours
-from sirius_pulse.core.intent import RESOLUTION_TELL, IntentFileStore, Intention, IntentStore
-from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.extension_runtime import BackgroundTaskSpec
-from sirius_pulse.life import life_dir, schedule_from_config
+from sirius_pulse.life import life_dir
+from sirius_pulse.life import prompts as life_prompts
+from sirius_pulse.life import schedule_from_config
 from sirius_pulse.life.agenda import (
     BLOCK_DOING,
     BLOCK_DONE,
@@ -64,8 +63,10 @@ from sirius_pulse.life.agenda import (
     Block,
     DayAgenda,
 )
-from sirius_pulse.life.clock import DaySchedule, to_local
+from sirius_pulse.life.clock import DaySchedule, is_quiet_hours, to_local
 from sirius_pulse.life.dreams import DreamStore, is_dream_time, parse_dream
+from sirius_pulse.life.episodes import Episode
+from sirius_pulse.life.intent import RESOLUTION_TELL, IntentFileStore, Intention, IntentStore
 from sirius_pulse.life.missing import MissLedger, people_to_miss
 from sirius_pulse.life.projects import (
     MAX_ACTIVE_PROJECTS,
@@ -381,7 +382,7 @@ async def _ensure_today_plan(ctx: Any, schedule: DaySchedule, now: datetime) -> 
     note = SelfNoteStore(life).load()
     yesterday = agendas.load(schedule.life_date(now - timedelta(days=1)))
 
-    system_prompt, messages = PromptFactory.build_life_plan_prompt(
+    system_prompt, messages = life_prompts.build_life_plan_prompt(
         wake=schedule.wake,
         sleep=schedule.sleep,
         state_line=_state_line(ctx, schedule, now, 0),
@@ -647,7 +648,7 @@ async def _reflect_if_due(ctx: Any, schedule: DaySchedule, now: datetime) -> Non
     notes = SelfNoteStore(life)
     note = notes.load()
     active = [p for p in all_projects if p.status == STATUS_ACTIVE]
-    system_prompt, messages = PromptFactory.build_life_reflect_prompt(
+    system_prompt, messages = life_prompts.build_life_reflect_prompt(
         plan_note=agenda.note,
         blocks=_agenda_lines(agenda),
         steps=steps,
@@ -704,7 +705,7 @@ async def _dream_if_due(ctx: Any, schedule: DaySchedule, now: datetime) -> None:
     states.update(lambda s: setattr(s, "last_dream_date", day))
 
     persona = ctx.get_persona()
-    system_prompt, messages = PromptFactory.build_life_dream_prompt(
+    system_prompt, messages = life_prompts.build_life_dream_prompt(
         name=str(getattr(persona, "name", "") or ""),
         day=_agenda_lines(agenda),
         fragments=fragments,

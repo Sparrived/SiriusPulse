@@ -228,13 +228,12 @@ sirius_pulse/
 │   ├── bg_tasks.py          # 后台任务管理
 │   ├── bg_tasks_delayed.py  # 延迟队列任务
 │   ├── helpers.py           # 工具集成、被动 TOOL、插件集成
-│   ├── tool_engine_context.py  # 被动 TOOL 引擎交互适配器
+│   ├── tool_engine_context.py  # 工具拿到的引擎上下文（组合下面各领域的实现）
+│   ├── tool_context/        # 引擎上下文的各领域实现（每个领域一个 mixin）
 │   ├── cognition.py         # 统一认知分析器（情绪 + 意图）
 │   ├── participation.py     # 参与度策略评分
 │   ├── group_dispatcher.py  # 群调度与投递回执
-│   ├── autonomy.py          # 自主行为记录（Episode）与不外发时段
 │   ├── life_bridge.py       # 她的生活与聊天的接口（此刻的你、睡眠时的参与度）
-│   ├── intent.py            # 意图与 IntentStore
 │   ├── work_mode.py         # 工作模式
 │   ├── delayed_response_queue.py
 │   ├── rhythm.py            # 对话节奏分析
@@ -242,7 +241,12 @@ sirius_pulse/
 │   ├── brain.py             # LLM 调用层（含 Post-Hooks 链）
 │   └── ...
 │
-├── life/                    # 她自己的一天：作息、日程、项目与作品、睡前回顾
+├── life/                    # 她自己的一天（纯领域，不依赖 core / tools）
+│   ├── clock.py             # 作息与不外发时段
+│   ├── intent.py            # 意图与 IntentStore（想说给谁、想弄明白什么）
+│   ├── episodes.py          # 自主行为记录（Episode）
+│   ├── prompts.py           # 排日程 / 睡前回顾 / 做梦的提示词
+│   └── ...                  # 日程、项目与作品、回顾解析、梦、此刻的你
 │
 ├── memory/                  # 分层记忆系统
 │   ├── basic/               # 基础记忆（保留原始尾部）

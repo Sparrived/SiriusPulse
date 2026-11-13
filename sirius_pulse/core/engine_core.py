@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.adapters.interaction_markers import (
+    collect_allowed_poke_user_ids,
+    parse_interaction_markers,
+)
 from sirius_pulse.core import life_bridge
 from sirius_pulse.core.bg_tasks import BackgroundTasks
 from sirius_pulse.core.brain import Brain
@@ -30,10 +34,6 @@ from sirius_pulse.core.engine_sticker import EngineSticker
 from sirius_pulse.core.events import SessionEvent, SessionEventBus, SessionEventType
 from sirius_pulse.core.helpers import Helpers
 from sirius_pulse.core.identity_resolver import IdentityResolver
-from sirius_pulse.core.interaction_markers import (
-    collect_allowed_poke_user_ids,
-    parse_interaction_markers,
-)
 from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY, ModelRouter
 from sirius_pulse.core.participation import get_group_reply_strategy
 from sirius_pulse.core.pipeline import Pipeline

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
-from sirius_pulse.core.intent import RESOLUTION_TELL, IntentFileStore
+from sirius_pulse.life.intent import RESOLUTION_TELL, IntentFileStore
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.builtin import interaction_with_master
 from sirius_pulse.tools.registry import ToolRegistry
@@ -159,7 +159,7 @@ async def test_autonomous_turn_may_reach_the_tool_through_the_real_executor(
     adapter = _FakeNapCatAdapter(root="10001")
     # 注册表会重新加载模块，所以这里要打规范模块上的函数；直接改
     # interaction_with_master._is_quiet_now 打不到那个新实例。
-    monkeypatch.setattr("sirius_pulse.core.autonomy.is_quiet_hours", lambda now: False)
+    monkeypatch.setattr("sirius_pulse.life.clock.is_quiet_hours", lambda now: False)
 
     registry = ToolRegistry()
     registry.load_from_directory(tmp_path / "tools", auto_install_deps=False, include_builtin=True)

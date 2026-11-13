@@ -14,8 +14,8 @@ import json
 import time
 from typing import Any
 
+from sirius_pulse.adapters.interaction_markers import strip_interaction_markers
 from sirius_pulse.config.config_builder import ConfigBuilder
-from sirius_pulse.core.interaction_markers import strip_interaction_markers
 from sirius_pulse.tools.builtin._internal._qq_ops import (
     bridge_error,
     current_group_id,

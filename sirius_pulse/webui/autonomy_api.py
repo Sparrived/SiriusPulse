@@ -22,7 +22,7 @@ from typing import Any
 
 from aiohttp import web
 
-from sirius_pulse.core.intent import IntentFileStore
+from sirius_pulse.life.intent import IntentFileStore
 from sirius_pulse.utils.layout import WorkspaceLayout
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 

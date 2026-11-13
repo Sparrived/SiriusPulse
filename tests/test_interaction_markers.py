@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from sirius_pulse.adapters.interaction_markers import parse_interaction_markers
 from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 from sirius_pulse.core.helpers import Helpers
-from sirius_pulse.core.interaction_markers import parse_interaction_markers
 from sirius_pulse.memory.basic import BasicMemoryManager
 
 
