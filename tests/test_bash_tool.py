@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,18 +26,33 @@ class _Store:
         return self.data.get(key, default)
 
 
+class _FinishedProcess:
+    pid = 4242
+
+    def __init__(self, returncode: int) -> None:
+        self.returncode = returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def poll(self) -> int:
+        return self.returncode
+
+
 def _fake_bash(
     monkeypatch, stdout: bytes = b"ok\n", stderr: bytes = b"", returncode: int = 0
 ) -> dict[str, object]:
     calls: dict[str, object] = {}
 
-    def fake_run(args, **kwargs):
+    def fake_popen(args, **kwargs):
         calls["args"] = args
         calls.update(kwargs)
-        return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
+        # 标准输出与错误一起写进框架给的日志文件，和真实进程一样。
+        kwargs["stdout"].write(stdout + stderr)
+        return _FinishedProcess(returncode)
 
     monkeypatch.setattr(_bash_runtime, "find_bash", lambda: "bash")
-    monkeypatch.setattr(bash.subprocess, "run", fake_run)
+    monkeypatch.setattr(bash.subprocess, "Popen", fake_popen)
     return calls
 
 

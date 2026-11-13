@@ -167,6 +167,8 @@ def test_tool_registry_when_builtin_tools_load_then_napcat_tools_are_visible(
     assert [param.name for param in bash.config_parameters] == [
         "max_timeout_seconds",
         "max_output_chars",
+        "max_background_jobs",
+        "max_background_seconds",
     ]
     assert bash.developer_only is False
     assert (

@@ -458,6 +458,7 @@ class ToolEngineContext(Protocol):
         deliver_hint: str = "",
         artifact_path: str = "",
         error: str = "",
+        output: str = "",
         group_id: str,
         user_id: str = "",
         user_name: str = "",

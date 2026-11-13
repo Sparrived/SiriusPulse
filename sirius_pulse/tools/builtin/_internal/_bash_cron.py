@@ -265,6 +265,8 @@ async def _run_job_locked(
             cwd=str(job.get("cwd") or "."),
             timeout_seconds=10.0,
             max_output_chars=12_000,
+            # 定时任务要拿着输出立刻写消息，不能交给后台再回调。
+            background_on_timeout=False,
             data_store=ctx.get_data_store("bash"),
             chat_context=chat_context,
             engine_context=ctx,

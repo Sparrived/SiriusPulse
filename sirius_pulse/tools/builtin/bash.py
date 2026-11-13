@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import time
 from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
+from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.tools import cron_tasks
 from sirius_pulse.tools.builtin._internal import (
+    _bash_background,
     _bash_cron,
     _bash_runtime,
     _container_status_card,
 )
 from sirius_pulse.tools.models import ToolInvocationContext
+from sirius_pulse.visual.tooling import normalise_bool
 
 _DEFAULT_MAX_TIMEOUT = 15.0
 _DEFAULT_MAX_OUTPUT = 12_000
@@ -50,6 +54,12 @@ _config.group("Bash 执行").add(
     description="最多返回多少字符；实际值不会超过人格配置的上限。",
     default=8_000,
 )
+_config.group("Bash 执行").add(
+    "background_on_timeout",
+    type="bool",
+    description=("超时后是否转入后台继续执行（默认是）。转入后台时立即返回任务 ID，" "命令结束后会收到结果回调；填 false 则超时直接结束命令。"),
+    default=True,
+)
 
 TOOL_META = {
     "name": "bash",
@@ -59,9 +69,11 @@ TOOL_META = {
         "支持标准五字段 crontab 调度命令（crontab -l 查看任务、crontab -r 删除任务、"
         "printf '五字段cron 命令' | crontab - 注册任务）。\n"
         "【注意事项】命令运行在容器内而非宿主机，不支持 systemctl 或直接访问宿主机文件；"
-        "定时任务由内部调度器托管（不支持秒级字段）；执行 docker inspect 会向当前会话发送容器状态卡片。"
+        "定时任务由内部调度器托管（不支持秒级字段）；执行 docker inspect 会向当前会话发送容器状态卡片；"
+        "超时的命令默认转入后台并返回任务 ID（bash_xxxxxxxx），结束后会收到结果回调，"
+        "期间不要重复执行同一条命令，可用 background_task 查看进度或停止。"
     ),
-    "version": "1.5.0",
+    "version": "1.6.0",
     "side_effect": "unknown",
     "tags": ["bash", "shell", "file", "system", "container", "cron", "schedule"],
     "parameters": _config.build(),
@@ -78,12 +90,41 @@ TOOL_META = {
             "default": _DEFAULT_MAX_OUTPUT,
             "group": "限制",
         },
+        "max_background_jobs": {
+            "type": "int",
+            "description": "同时在后台运行的超时命令上限，范围 0 到 10；0 表示超时直接结束、不转后台。",
+            "default": _bash_background.DEFAULT_MAX_BACKGROUND_JOBS,
+            "group": "后台",
+        },
+        "max_background_seconds": {
+            "type": "number",
+            "description": "转入后台的命令最长运行多久（秒），到点整组结束，范围 60 到 86400。",
+            "default": _bash_background.DEFAULT_MAX_BACKGROUND_SECONDS,
+            "group": "后台",
+        },
     },
 }
 
 
 def create_background_tasks(ctx: Any) -> list[Any]:
-    return _bash_cron.create_background_tasks(ctx, run)
+    owner = _bash_background.owner_key(ctx.get_data_store("bash"))
+
+    async def _background_tick() -> None:
+        await _bash_background.process_once(ctx, owner)
+
+    return [
+        *_bash_cron.create_background_tasks(ctx, run),
+        BackgroundTaskSpec(
+            name="bash_background_jobs",
+            interval_seconds=_bash_background.TICK_SECONDS,
+            task_func=_background_tick,
+        ),
+    ]
+
+
+def create_on_unload(ctx: Any) -> None:
+    """人格停下时结束她名下仍在后台跑的命令，不留孤儿进程。"""
+    _bash_background.kill_all(_bash_background.owner_key(ctx.get_data_store("bash")))
 
 
 async def run(
@@ -91,6 +132,7 @@ async def run(
     cwd: str = ".",
     timeout_seconds: float = 10.0,
     max_output_chars: int = 8_000,
+    background_on_timeout: bool = True,
     data_store: Any = None,
     chat_context: dict[str, Any] | None = None,
     engine_context: Any = None,
@@ -153,9 +195,10 @@ async def run(
             "error": "系统未找到 Bash；请安装 Bash 或设置 SIRIUS_BASH_PATH。",
         }
 
+    task_id = _bash_background.new_task_id()
     try:
-        completed = await asyncio.to_thread(
-            subprocess.run,
+        log_path = _bash_background.log_dir(data_store) / f"{task_id}.log"
+        process = _bash_background.spawn(
             [
                 bash,
                 "-o",
@@ -169,33 +212,46 @@ async def run(
             ],
             cwd=str(cwd_path),
             env=environment,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
+            log_path=log_path,
+            popen=subprocess.Popen,
         )
-    except subprocess.TimeoutExpired as exc:
-        partial = _bash_runtime.decode_output(
-            (exc.stdout or b"") + (exc.stderr or b""), output_limit
-        )
-        detail = f"命令执行超时（上限 {timeout:g} 秒）"
-        if partial:
-            detail += f"\n部分输出:\n{partial}"
-        return {"success": False, "error": detail}
     except OSError as exc:
         return {"success": False, "error": f"启动 Bash 失败: {exc}"}
 
+    try:
+        returncode = await asyncio.to_thread(process.wait, timeout)
+    except subprocess.TimeoutExpired:
+        return await _handle_timeout(
+            task_id=task_id,
+            process=process,
+            log_path=log_path,
+            command_text=command_text,
+            cwd=str(cwd_path),
+            timeout=timeout,
+            output_limit=output_limit,
+            background=normalise_bool(background_on_timeout),
+            data_store=data_store,
+            chat_context=chat_context,
+            invocation_context=invocation_context,
+        )
+    except asyncio.CancelledError:
+        # 外层（工具执行超时、关停）取消了这次调用：结果已经没人接，别留孤儿进程。
+        asyncio.get_running_loop().run_in_executor(None, _bash_background.terminate_tree, process)
+        raise
+
+    raw_output = _read_and_remove(log_path)
     output, inspect_statuses, truncated = _bash_runtime.decode_output_with_inspect_status(
-        completed.stdout + completed.stderr, output_limit
+        raw_output, output_limit
     )
     metadata = {
         "cwd": str(cwd_path),
-        "returncode": completed.returncode,
+        "returncode": returncode,
         "command_length": len(command_text),
         "docker_bridge_enabled": True,
         "truncated": truncated,
     }
-    if completed.returncode != 0:
-        detail = f"命令退出码 {completed.returncode}"
+    if returncode != 0:
+        detail = f"命令退出码 {returncode}"
         if output:
             detail += f"\n{output}"
         detail += _bash_runtime.container_recovery_hint(command_text)
@@ -231,3 +287,100 @@ async def run(
         "text_blocks": ["\n".join(text_parts)],
         "internal_metadata": metadata,
     }
+
+
+def _read_and_remove(log_path: Any) -> bytes:
+    try:
+        raw = log_path.read_bytes()
+    except OSError:
+        return b""
+    try:
+        log_path.unlink()
+    except OSError:
+        pass
+    return raw
+
+
+def _store_number(
+    data_store: Any, key: str, default: float, minimum: float, maximum: float
+) -> float:
+    value = data_store.get(key, default) if data_store is not None else default
+    return _bash_runtime.bounded_number(value, default=default, minimum=minimum, maximum=maximum)
+
+
+async def _handle_timeout(
+    *,
+    task_id: str,
+    process: Any,
+    log_path: Any,
+    command_text: str,
+    cwd: str,
+    timeout: float,
+    output_limit: int,
+    background: bool,
+    data_store: Any,
+    chat_context: dict[str, Any] | None,
+    invocation_context: ToolInvocationContext | None,
+) -> dict[str, Any]:
+    """前台等不完：能转后台就转后台并给出任务 ID，否则结束命令并带回部分输出。"""
+    owner = _bash_background.owner_key(data_store)
+    max_jobs = int(
+        _store_number(
+            data_store, "max_background_jobs", _bash_background.DEFAULT_MAX_BACKGROUND_JOBS, 0, 10
+        )
+    )
+    full = background and max_jobs > 0 and _bash_background.running_count(owner) >= max_jobs
+    if background and max_jobs > 0 and not full:
+        lifetime = _store_number(
+            data_store,
+            "max_background_seconds",
+            _bash_background.DEFAULT_MAX_BACKGROUND_SECONDS,
+            60.0,
+            86_400.0,
+        )
+        context = dict(chat_context or {})
+        if not context and invocation_context is not None:
+            context = dict(invocation_context.chat_context)
+        caller = invocation_context
+        job = _bash_background.BashJob(
+            id=task_id,
+            owner=owner,
+            command=command_text,
+            cwd=cwd,
+            log_path=log_path,
+            process=process,
+            deadline=time.monotonic() + lifetime,
+            output_limit=output_limit,
+            group_id=str(context.get("group_id") or ""),
+            user_id=(caller.caller_user_id if caller is not None else "")
+            or str(context.get("user_id") or ""),
+            user_name=caller.caller_name if caller is not None else "",
+            adapter_type=str(context.get("adapter_type") or ""),
+            caller_is_developer=bool(caller is not None and caller.caller_is_developer),
+            self_initiated=bool(caller is not None and caller.self_initiated),
+        )
+        _bash_background.register(job)
+        partial = job.output_tail(output_limit)
+        text = (
+            f"命令运行超过 {timeout:g} 秒，已转入后台继续执行，任务 ID：{task_id}。"
+            "命令结束后你会收到结果回调；在那之前不要重复执行同一条命令，也不要假装已经有结果。"
+            f"想看进度或中途停止，用 background_task（action=status 或 stop，task_id={task_id}）。"
+        )
+        if partial:
+            text += f"\n目前的输出:\n{partial}"
+        return {
+            "success": True,
+            "summary": f"命令已转入后台（{task_id}）",
+            "text_blocks": [text],
+            "data": {"task_id": task_id, "status": "running"},
+            "internal_metadata": {"cwd": cwd, "background_task_id": task_id},
+        }
+
+    await asyncio.to_thread(_bash_background.terminate_tree, process)
+    partial = _bash_runtime.decode_output(_read_and_remove(log_path), output_limit)
+    detail = f"命令执行超时（上限 {timeout:g} 秒）"
+    if full:
+        detail += f"；后台任务已满（最多 {max_jobs} 个），没能转入后台"
+    if partial:
+        detail += f"\n部分输出:\n{partial}"
+    return {"success": False, "error": detail}

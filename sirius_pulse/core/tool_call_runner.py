@@ -35,6 +35,7 @@ NOTEBOOK_TOOL = "persona_notebook"
 #: 同一工具里只读的 action：副作用与能否重试都按这次调用实际做的事判断。
 _READ_ONLY_ACTIONS: dict[str, frozenset[str]] = {
     "interaction_with_master": frozenset({"status"}),
+    "background_task": frozenset({"list", "status"}),
 }
 
 _DEFAULT_TOOL_TIMEOUT = 30.0

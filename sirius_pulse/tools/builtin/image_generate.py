@@ -28,6 +28,7 @@ import httpx
 
 from sirius_pulse.config.config_builder import ConfigBuilder
 from sirius_pulse.extension_runtime import BackgroundTaskSpec
+from sirius_pulse.tools.builtin._internal import _background_jobs
 from sirius_pulse.tools.builtin._internal._bash_runtime import (
     expand_persona_path,
     home_root_path,
@@ -59,6 +60,10 @@ _MAX_RETAINED_JOBS = 100
 _PENDING_STATUSES = {"pending", "running"}
 _FINISHED_STATUSES = {"done", "failed", "cancelled"}
 
+#: 被 ``background_task`` 主动停止的任务使用的错误码。
+STOP_CODE = "stopped_by_request"
+_STOPPED_MESSAGE = "已按要求停止"
+
 _config = ConfigBuilder()
 _config.group("生图").add(
     "prompt",
@@ -89,10 +94,7 @@ _config.group("生图").add(
 _config.group("生图").add(
     "collage_references",
     type="bool",
-    description=(
-        "可选：把参考图当作角色参考，最多四人拼成一张 2×2 拼图，最多发送四张拼图，"
-        "并在提示词中追加位置说明；启用时应为每个人物只提供一张代表性参考图。"
-    ),
+    description=("可选：把参考图当作角色参考，最多四人拼成一张 2×2 拼图，最多发送四张拼图，" "并在提示词中追加位置说明；启用时应为每个人物只提供一张代表性参考图。"),
     default=False,
 )
 
@@ -810,6 +812,12 @@ async def _generate_one(ctx: Any, data_store: Any) -> None:
             if isolated:
                 fields["error"] = "授权已撤回或结果无法核实，图片已隔离，不交付也不启用"
         _update_job(data_store, job_id, **fields)
+    except _JobStopped:
+        if visual:
+            # 已跨过提交边界时领域服务会记成结果未知，不退额度、不重放。
+            await service.fail_generation(job_id, STOP_CODE)
+        _mark_stopped(data_store, job_id)
+        logger.info("生图任务已按要求中断: %s", job_id)
     except asyncio.CancelledError:
         raise
     except _VisualJobCancelled as exc:
@@ -833,6 +841,12 @@ async def _generate_one(ctx: Any, data_store: Any) -> None:
         if visual:
             await service.fail_generation(job_id, "generation_failed")
         _fail_job(data_store, job_id, str(exc))
+    finally:
+        _background_jobs.clear(_stop_key(job_id))
+
+
+class _JobStopped(Exception):
+    """``background_task`` 要求停止这张图；不是关停，也不是失败。"""
 
 
 class _VisualJobCancelled(Exception):
@@ -857,6 +871,10 @@ async def _generate_image_for_job(
     # 参考图缺失必须在领取许可与计费之前拒绝，不能悄悄少一张继续画。
     references = _read_reference_images(data_store, job, strict=visual)
     collaged_references, collage_note = _collage_job_references(job, references)
+    stop_key = _stop_key(job_id)
+    # 准备参考图、复查授权期间可能已经被要求停止：在领取许可与计费之前就收手。
+    if _background_jobs.stop_requested(stop_key):
+        raise _JobStopped()
     if visual:
         permit = await service.acquire_generation_permit(job_id)
         if not permit.get("allow"):
@@ -870,14 +888,22 @@ async def _generate_image_for_job(
         prompt = f"{prompt}\n{collage_note}"
     # wait_for 与 ``timeout_seconds`` 用同一个值：契约里 ctx 自己也会超时，这里
     # 只是再兜一层，保证后台 tick 不会因为引擎实现漏了超时而永远挂住。
-    payload = await asyncio.wait_for(
+    generation = asyncio.ensure_future(
         ctx.generate_image(
             prompt=prompt,
             reference_images=collaged_references,
             timeout_seconds=float(timeout),
-        ),
-        timeout=float(timeout),
+        )
     )
+    _background_jobs.track(stop_key, generation)
+    try:
+        payload = await asyncio.wait_for(generation, timeout=float(timeout))
+    except asyncio.CancelledError:
+        if _background_jobs.cancelled_by_request(stop_key):
+            raise _JobStopped() from None
+        raise
+    finally:
+        _background_jobs.untrack(stop_key)
     if not isinstance(payload, dict):
         raise ValueError("生图接口返回格式不正确")
     image_bytes = payload.get("image_bytes")
@@ -1170,9 +1196,7 @@ def _collage_job_references(
     visual = job.get("visual") if isinstance(job.get("visual"), dict) else {}
     metadata = visual.get("references") if isinstance(visual.get("references"), list) else []
     if metadata:
-        people = _people_from_visual_references(
-            references, metadata, visual.get("subjects")
-        )
+        people = _people_from_visual_references(references, metadata, visual.get("subjects"))
     else:
         people = [
             (label, data) for label, (_name, data) in zip(_reference_labels(references), references)
@@ -1213,7 +1237,9 @@ def _people_from_visual_references(
     people: list[tuple[str, bytes]] = []
     seen: set[str] = set()
     for position, (name, data) in enumerate(references):
-        item = by_index.get(position + 1) or (metadata[position] if position < len(metadata) else {})
+        item = by_index.get(position + 1) or (
+            metadata[position] if position < len(metadata) else {}
+        )
         if not isinstance(item, dict):
             item = {}
         person_id = str(item.get("person_id") or "").strip()
@@ -1222,9 +1248,7 @@ def _people_from_visual_references(
             if person_id in seen:
                 continue
             seen.add(person_id)
-            label = str(
-                item.get("display_name") or display_names.get(person_id) or label
-            )
+            label = str(item.get("display_name") or display_names.get(person_id) or label)
         people.append((label, data))
     return people
 
@@ -1540,3 +1564,85 @@ def _int_value(value: Any) -> int:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _stop_key(job_id: str) -> str:
+    return f"image_generate:{job_id}"
+
+
+def _mark_stopped(data_store: Any, job_id: str) -> dict[str, Any] | None:
+    # 停的人已经知道结果，不再回调 Agent。
+    return _update_job(
+        data_store,
+        job_id,
+        status="cancelled",
+        error=_STOPPED_MESSAGE,
+        error_code=STOP_CODE,
+        finished_at=_now_iso(),
+        stopped_by_request=True,
+        callback_state="skipped",
+    )
+
+
+def describe_job(job: dict[str, Any]) -> dict[str, Any]:
+    """供 ``background_task`` 展示的任务摘要；不暴露参考图与内部路径。"""
+    return {
+        "task_id": str(job.get("id") or ""),
+        "kind": "image_generate",
+        "status": str(job.get("status") or ""),
+        "prompt": str(job.get("prompt") or "")[:120],
+        "created_at": str(job.get("created_at") or ""),
+        "started_at": str(job.get("started_at") or ""),
+        "finished_at": str(job.get("finished_at") or ""),
+        "error": str(job.get("error") or "")[:200],
+        "group_id": str(job.get("group_id") or ""),
+    }
+
+
+def list_jobs(data_store: Any) -> list[dict[str, Any]]:
+    """当前队列里的全部任务（含已结束的），已删除的除外。"""
+    _reload_store(data_store)
+    return [job for job in _load_jobs(data_store) if not job.get("deleted")]
+
+
+async def stop_job(ctx: Any, data_store: Any, job_id: str) -> dict[str, Any] | None:
+    """停止一个生图任务；找不到返回 None。
+
+    排队中的直接撤下（受管任务同时退还额度）；正在画的打断等待，上游若已开始计费
+    则无法退回。两种情况都不会再回调 Agent。
+    """
+    _reload_store(data_store)
+    job = next(
+        (item for item in _load_jobs(data_store) if str(item.get("id", "")) == job_id),
+        None,
+    )
+    if job is None or job.get("deleted"):
+        return None
+    status = str(job.get("status") or "")
+    if status in _FINISHED_STATUSES:
+        return {**describe_job(job), "stopped": False, "message": "任务已经结束，无需停止"}
+    if status == "pending":
+        # 先在本地同步撤下（中间没有 await），轮询就不会在撤销途中把它领走。
+        updated = _mark_stopped(data_store, job_id) or job
+        _remove_reference_dir(data_store, job_id)
+        if _is_visual_job(job):
+            service = _visual_service_of(ctx)
+            if service is not None:
+                await service.cancel_generation(job_id, STOP_CODE)
+        logger.info("排队中的生图任务已撤下: %s", job_id)
+        return {
+            **describe_job(updated),
+            "stopped": True,
+            "message": "还没开始画，已经从队列里撤下",
+        }
+    interrupted = _background_jobs.request_stop(_stop_key(job_id))
+    return {
+        **describe_job(job),
+        "status": "stopping",
+        "stopped": True,
+        "message": (
+            "正在画的这张已经打断，任务很快会记为已停止；如果请求已经发给生图服务，额度可能已经用掉。"
+            if interrupted
+            else "已要求停止，这张图会在开始生成前被撤下。"
+        ),
+    }

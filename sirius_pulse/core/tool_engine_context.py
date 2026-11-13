@@ -208,6 +208,7 @@ class ToolEngineContextImpl:
         deliver_hint: str = "",
         artifact_path: str = "",
         error: str = "",
+        output: str = "",
         group_id: str,
         user_id: str = "",
         user_name: str = "",
@@ -237,6 +238,7 @@ class ToolEngineContextImpl:
                 deliver_hint=deliver_hint,
                 artifact_path=artifact_path,
                 error=error,
+                output=output,
                 tool_desc=self.get_tool_descriptions(
                     caller_is_developer=caller_is_developer,
                     adapter_type=adapter_type,
