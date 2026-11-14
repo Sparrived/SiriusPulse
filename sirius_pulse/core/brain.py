@@ -118,7 +118,7 @@ class ChatRequest:
     extra_tools: list[dict[str, Any]] | None = None
     tool_choice: str | None = None
     work_mode: bool = False
-    """True 时才暴露声明了 work_mode_only 的重工具（bash / read_skill / workflow_state）。"""
+    """True 时才暴露声明了 work_mode_only 的重工具（bash / file_ops / read_skill / workflow_state）。"""
     exclude_tool_names: tuple[str, ...] = ()
     """由可信调用方隐藏当前回合不可用的工具。"""
     defer_bookkeeping_tool_text: bool = False

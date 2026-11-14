@@ -64,7 +64,8 @@ _config.group("Bash 执行").add(
 TOOL_META = {
     "name": "bash",
     "description": (
-        "【适用场景】执行容器内文件处理、系统状态探测、脚本自动化，或管理项目级定时任务。\n"
+        "【适用场景】执行容器内系统状态探测、运行脚本与程序、脚本自动化，或管理项目级定时任务。"
+        "读、写、改、搜文件用 file_ops，不要用 cat / sed / python -c。\n"
         "【使用方法】传入 command 执行标准 Bash 命令，支持常规 Linux 命令及代理访问外部容器的 docker 命令；"
         "支持标准五字段 crontab 调度命令（crontab -l 查看任务、crontab -r 删除任务、"
         "printf '五字段cron 命令' | crontab - 注册任务）。\n"

@@ -192,5 +192,5 @@ def test_everyday_actions_do_not_need_work_mode() -> None:
     }
 
     assert {"group_file_exec", "reminder", "read_document"} <= in_chat
-    assert not {"bash", "read_skill", "workflow_state"} & in_chat
-    assert {"bash", "read_skill", "workflow_state"} <= at_work
+    assert not {"bash", "file_ops", "read_skill", "workflow_state"} & in_chat
+    assert {"bash", "file_ops", "read_skill", "workflow_state"} <= at_work

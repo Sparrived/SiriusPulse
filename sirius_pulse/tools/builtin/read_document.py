@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
-from sirius_pulse.tools.builtin._internal import _bash_runtime
+from sirius_pulse.tools.builtin._internal import _persona_paths
 from sirius_pulse.tools.engine_context import WorkspaceAccess
 from sirius_pulse.tools.models import ToolInvocationContext
 
@@ -84,22 +84,21 @@ def run(
     invocation_context: ToolInvocationContext | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    home = _bash_runtime.home_root_path(data_store)
     try:
-        target = _bash_runtime.expand_persona_path(str(path or ""), home=home)
+        target = _persona_paths.resolve(str(path or ""), data_store)
     except (OSError, ValueError) as exc:
         return {"success": False, "error": f"路径无效：{exc}"}
     if not str(path or "").strip():
         return {"success": False, "error": "path 不能为空"}
 
     developer = bool(invocation_context and invocation_context.caller_is_developer)
-    if not developer:
-        roots = _readable_roots(engine_context, data_store)
-        if not any(_is_within(target, root) for root in roots):
-            return {
-                "success": False,
-                "error": "只能读你的家目录、下载下来的群文件和工具产物目录里的文件",
-            }
+    if not _persona_paths.can_read(
+        target, engine_context=engine_context, data_store=data_store, developer=developer
+    ):
+        return {
+            "success": False,
+            "error": "只能读你的家目录、下载下来的群文件和工具产物目录里的文件",
+        }
     if not target.is_file():
         return {"success": False, "error": f"找不到这个文件：{path}"}
     if target.stat().st_size > _MAX_FILE_BYTES:
@@ -233,32 +232,6 @@ def _read_pptx(path: Path) -> str:
     except zipfile.BadZipFile as exc:
         raise DocumentError("这个 pptx 文件已损坏或不是 PPT 文档") from exc
     return "\n\n".join(pages)
-
-
-def _readable_roots(engine_context: WorkspaceAccess | None, data_store: Any) -> list[Path]:
-    """她自己的地方：家目录、下载下来的群文件、工具产物。"""
-    persona_dir: Path | None = None
-    if engine_context is not None:
-        work_path = engine_context.get_work_path()
-        if work_path:
-            persona_dir = Path(work_path)
-    if persona_dir is None:
-        runtime_root = _bash_runtime.runtime_root_path(data_store)
-        persona_dir = runtime_root.parent if runtime_root is not None else None
-    if persona_dir is None:
-        return []
-    return [
-        persona_dir / "home",
-        persona_dir / "group_files",
-        persona_dir / "tool_data" / "artifacts",
-    ]
-
-
-def _is_within(path: Path, root: Path) -> bool:
-    try:
-        return path.resolve().is_relative_to(root.resolve())
-    except (OSError, ValueError):
-        return False
 
 
 def _int(value: Any, default: int) -> int:
