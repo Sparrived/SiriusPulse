@@ -59,6 +59,14 @@ class ToolDataStore:
             self._dirty = False
             self._load()
 
+    @property
+    def lock(self) -> threading.RLock:
+        """存储自己的可重入锁：要做「读出列表 → 改 → 写回」时持有它，免得两条调用链互相覆盖。
+
+        工具模块会被注册表和别的工具各加载一份，模块级的锁并不共享；存储对象是共享的。
+        """
+        return self._lock
+
     def reload_if_changed(self) -> None:
         """文件在别处（例如 WebUI）被改过才重新加载；没改只多一次 stat。
 

@@ -64,6 +64,7 @@ class _Ctx:
         self.stores = {
             "bash": _BashStore(tmp_path, **bash_config),
             "image_generate": ToolDataStore(tmp_path / "tool_data" / "image_generate.json"),
+            "wake_me": ToolDataStore(tmp_path / "tool_data" / "wake_me.json"),
         }
         self.callbacks: list[dict[str, Any]] = []
         self.generation_started = asyncio.Event()

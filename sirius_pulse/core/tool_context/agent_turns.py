@@ -147,6 +147,7 @@ class AgentTurnMixin:
         self_initiated: bool = False,
         artifact_delivery_blocked: bool = False,
         before_tool: Callable[[], None] | None = None,
+        lead: str = "",
     ) -> dict[str, Any]:
         """内部回调续跑 Agent；正文只留轨迹，外发必须由 Agent 显式调用工具。
 
@@ -175,6 +176,7 @@ class AgentTurnMixin:
                     work_mode=True,
                 ),
                 can_speak=not self_initiated,
+                lead=lead,
             )
             # 回调不是新用户指令，但仍需要原聊天和工作目标来决定保留、加工还是发送。
             helpers = getattr(self._engine, "_helpers", None)

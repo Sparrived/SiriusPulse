@@ -1,7 +1,7 @@
-"""查看与停止交给后台的任务：超时转入后台的 bash 命令、后台生图任务。
+"""查看与停止交给后台的任务：超时转入后台的 bash 命令、后台生图任务、她给自己定的唤醒。
 
-各类后台任务的状态仍由各自的工具维护（bash 的进程登记表、生图的持久化队列），
-这里只是一个统一入口：按任务 ID 找到归属，再交给对应的实现去查看或停止。
+各类后台任务的状态仍由各自的工具维护（bash 的进程登记表、生图的持久化队列、
+wake_me 的唤醒表），这里只是一个统一入口：按任务 ID 找到归属，再交给对应的实现去查看或停止。
 
 权限：只能看到、停止当前会话发起的任务；developer 可以管理全部任务。
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sirius_pulse.tools.builtin import image_generate
+from sirius_pulse.tools.builtin import image_generate, wake_me
 from sirius_pulse.tools.builtin._internal import _bash_background
 from sirius_pulse.tools.engine_context import ToolEngineContext, WorkspaceAccess
 from sirius_pulse.tools.models import ToolInvocationContext
@@ -27,17 +27,21 @@ _STATUS_LABELS = {
     "done": "已完成",
     "failed": "失败",
     "cancelled": "已取消",
+    "waiting": "等待中",
+    "waking": "正在叫醒",
+    "missed": "错过了",
+    "interrupted": "被中断",
 }
-_KIND_LABELS = {"bash": "bash", "image_generate": "生图"}
-_ACTIVE_STATUSES = {"running", "pending", "stopping"}
+_KIND_LABELS = {"bash": "bash", "image_generate": "生图", "wake_me": "唤醒"}
+_ACTIVE_STATUSES = {"running", "pending", "stopping", "waiting", "waking"}
 
 TOOL_META = {
     "name": "background_task",
     "description": (
         "【适用场景】查看或停止你交给后台的任务：超时后转入后台的 bash 命令（bash_xxxxxxxx），"
-        "以及 image_generate 提交的后台生图任务。\n"
+        "image_generate 提交的后台生图任务，以及你用 wake_me 给自己定的唤醒（wake_xxxxxxxx）。\n"
         "【使用方法】action=list 列出当前会话仍在进行的后台任务；action=status 加 task_id "
-        "查看单个任务（bash 任务附带最近的输出）；action=stop 加 task_id 停止任务。\n"
+        "查看单个任务（bash 任务附带最近的输出）；action=stop 加 task_id 停止任务（唤醒就是取消）。\n"
         "【注意事项】停止后不会再收到这个任务的结果回调；生图请求一旦已经发给生图服务，"
         "停止只是不再等结果，额度可能已经用掉。只能管理当前会话发起的任务。"
     ),
@@ -124,6 +128,15 @@ async def run(
             message = f"任务 {task_id} 已经结束（{_status_label(task['status'])}），无需停止。"
         return _reply(message, {"task": task, "stopped": job.state == _bash_background.STOPPED})
 
+    if found["kind"] == "wake_me":
+        cancelled = wake_me.cancel(engine_context.get_data_store("wake_me"), task_id)
+        if cancelled is None:
+            return {"success": False, "error": f"找不到任务 {task_id}"}
+        if cancelled["stopped"]:
+            return _reply(f"已取消唤醒 {task_id}。", {"task": cancelled, "stopped": True})
+        status = _status_label(cancelled["status"])
+        return _reply(f"唤醒 {task_id} 已经{status}，无需取消。", {"task": cancelled, "stopped": False})
+
     stopped = await image_generate.stop_job(
         engine_context, engine_context.get_data_store("image_generate"), task_id
     )
@@ -166,6 +179,8 @@ def _all_tasks(engine_context: ToolEngineContext) -> list[dict[str, Any]]:
     tasks = [job.describe() for job in _bash_background.list_jobs(_bash_owner(engine_context))]
     store = engine_context.get_data_store("image_generate")
     tasks.extend(image_generate.describe_job(job) for job in image_generate.list_jobs(store))
+    wakes = engine_context.get_data_store("wake_me")
+    tasks.extend(wake_me.describe(wake) for wake in wake_me.list_wakes(wakes))
     return tasks
 
 
@@ -173,6 +188,11 @@ def _find_task(engine_context: WorkspaceAccess, task_id: str) -> dict[str, Any] 
     if task_id.startswith(_bash_background.TASK_PREFIX):
         job = _bash_background.get(_bash_owner(engine_context), task_id)
         return job.describe() if job is not None else None
+    if task_id.startswith(wake_me.TASK_PREFIX):
+        for wake in wake_me.list_wakes(engine_context.get_data_store("wake_me")):
+            if str(wake.get("id") or "") == task_id:
+                return wake_me.describe(wake)
+        return None
     store = engine_context.get_data_store("image_generate")
     for job in image_generate.list_jobs(store):
         if str(job.get("id") or "") == task_id:
