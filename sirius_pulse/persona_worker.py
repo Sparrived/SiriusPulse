@@ -24,7 +24,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.logging_config import configure_logging, setup_log_archival
+from sirius_pulse.logging_config import (
+    configure_logging,
+    current_persona,
+    setup_log_archival,
+)
 from sirius_pulse.persona_config import (
     NapCatAdapterConfig,
     PersonaAdaptersConfig,
@@ -37,6 +41,8 @@ from sirius_pulse.platforms.runtime import EngineRuntime
 from sirius_pulse.utils.json_io import replace_with_retry
 
 LOG = logging.getLogger("sirius.persona_worker")
+#: 热重载换下来的 provider 多久后关闭连接池：超过单次调用的总时长上限，在飞调用必然已结束。
+_RETIRED_PROVIDER_CLOSE_DELAY_SECONDS = 900.0
 
 
 class PersonaWorker:
@@ -62,28 +68,37 @@ class PersonaWorker:
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
+        # 之后这个任务里打的日志、创建的子任务都带上人格名，按人格写进各自的日志文件。
+        current_persona.set(self.persona_dir.name)
         LOG.info("启动人格工作进程: %s", self.persona_dir.name)
 
-        # 1. 加载配置
-        adapters_cfg = PersonaAdaptersConfig.load(self.paths.adapters)
-        experience = PersonaExperienceConfig.load(self.paths.experience)
-        LOG.info("加载 %d 个 adapter", len(adapters_cfg.adapters))
+        try:
+            # 1. 加载配置
+            adapters_cfg = PersonaAdaptersConfig.load(self.paths.adapters)
+            experience = PersonaExperienceConfig.load(self.paths.experience)
+            LOG.info("加载 %d 个 adapter", len(adapters_cfg.adapters))
 
-        # 2. Create EngineRuntime with experience parameters in plugin_config
-        plugin_config = self._build_plugin_config(experience)
-        self._runtime = EngineRuntime(
-            self.persona_dir,
-            plugin_config=plugin_config,
-        )
+            # 2. Create EngineRuntime with experience parameters in plugin_config
+            plugin_config = self._build_plugin_config(experience)
+            self._runtime = EngineRuntime(
+                self.persona_dir,
+                plugin_config=plugin_config,
+            )
 
-        # 3-4. 启动引擎和 Adapter。多个 Worker 共用外部 MCP 服务时，
-        # 初始化阶段串行，进入 ready 后仍然各自独立并行运行。
-        await self._start_with_lock(adapters_cfg, plugin_config)
+            # 3-4. 启动引擎和 Adapter。多个 Worker 共用外部 MCP 服务时，
+            # 初始化阶段串行，进入 ready 后仍然各自独立并行运行。
+            await self._start_with_lock(adapters_cfg, plugin_config)
 
-        # 5. 启动心跳
-        self._running = True
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        self._write_status({"status": "running", "pid": os.getpid(), "started_at": _now_iso()})
+            # 5. 启动心跳
+            self._running = True
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            self._write_status({"status": "running", "pid": os.getpid(), "started_at": _now_iso()})
+        except BaseException:
+            # 启动到一半失败：已经起来的 adapter / 引擎要收掉，否则重启后会有两份
+            # 在跑（同一个 QQ 连接、同一个后台任务）。
+            self._running = False
+            await self._cleanup()
+            raise
 
         LOG.info("人格「%s」已就绪，等待消息...", self.persona_dir.name)
 
@@ -223,34 +238,44 @@ class PersonaWorker:
 
     async def _heartbeat_loop(self) -> None:
         while self._running:
-            for adapter in self._adapters:
-                dispatcher = getattr(adapter, "_dispatcher", None)
-                if dispatcher is not None:
-                    # 心跳写调度库：放进线程，别在争库锁时卡住所有群。
-                    register_async = getattr(dispatcher, "register_async", None)
-                    if callable(register_async):
-                        await register_async()
-                    else:
-                        dispatcher.register()
-            status: dict[str, Any] = {
-                "status": "running",
-                "pid": os.getpid(),
-                "heartbeat_at": _now_iso(),
-            }
-            # 进程活着不等于人格在线：适配器可能已断线并耗尽重连。把连接健康
-            # 一并写进心跳，UI 才不会把「离线」显示成「运行中」。
-            #
-            # 注意：这里**不能**把 status 改成 "degraded" —— `_is_persona_running()`
-            # 只认 starting/running，改掉会让 WebUI 误判进程已停而重复拉起。
-            # 降级信息另用字段表达。
-            offline = self._adapter_connection_summary()
-            if offline is not None:
-                status["adapter_online"] = offline["online"]
-                status["adapter_offline_seconds"] = offline["offline_seconds"]
-                status["degraded"] = not offline["online"]
-            self._write_status(status)
-            self._check_config_reload()
+            try:
+                await self._heartbeat_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # 心跳顺带负责配置热重载：一次失败（如调度库短暂锁住）就让循环退出，
+                # 状态文件会冻结、热重载也从此停摆。
+                LOG.warning("心跳失败，下一轮继续", exc_info=True)
             await asyncio.sleep(10)
+
+    async def _heartbeat_once(self) -> None:
+        for adapter in self._adapters:
+            dispatcher = getattr(adapter, "_dispatcher", None)
+            if dispatcher is not None:
+                # 心跳写调度库：放进线程，别在争库锁时卡住所有群。
+                register_async = getattr(dispatcher, "register_async", None)
+                if callable(register_async):
+                    await register_async()
+                else:
+                    dispatcher.register()
+        status: dict[str, Any] = {
+            "status": "running",
+            "pid": os.getpid(),
+            "heartbeat_at": _now_iso(),
+        }
+        # 进程活着不等于人格在线：适配器可能已断线并耗尽重连。把连接健康
+        # 一并写进心跳，UI 才不会把「离线」显示成「运行中」。
+        #
+        # 注意：这里**不能**把 status 改成 "degraded" —— `_is_persona_running()`
+        # 只认 starting/running，改掉会让 WebUI 误判进程已停而重复拉起。
+        # 降级信息另用字段表达。
+        offline = self._adapter_connection_summary()
+        if offline is not None:
+            status["adapter_online"] = offline["online"]
+            status["adapter_offline_seconds"] = offline["offline_seconds"]
+            status["degraded"] = not offline["online"]
+        self._write_status(status)
+        self._check_config_reload()
 
     def _adapter_connection_summary(self) -> dict[str, Any] | None:
         """汇总各适配器连接状态；适配器不支持时返回 None。"""
@@ -485,13 +510,35 @@ class PersonaWorker:
             return
 
         # 同步到 engine 及其子系统
+        old_provider = getattr(engine, "provider_async", None)
         engine.provider_async = new_provider
         if hasattr(engine, "brain") and engine.brain:
             engine.brain.provider_async = new_provider
         if hasattr(engine, "cognition_analyzer") and engine.cognition_analyzer:
             engine.cognition_analyzer.provider_async = new_provider
+        self._retire_provider(old_provider, new_provider)
 
         LOG.info("AMKR 连接配置已热重载")
+
+    @staticmethod
+    def _retire_provider(old_provider: Any, new_provider: Any) -> None:
+        """换下来的 provider 过一会儿再关掉它的连接池。
+
+        不关的话每次热重载都留下一个永不释放的 HTTP 客户端；立即关又会打断还在
+        飞的请求。等到任何在飞调用都必然已结束（超过单次调用的总时长上限）再关。
+        """
+        aclose = getattr(old_provider, "aclose", None)
+        if old_provider is None or old_provider is new_provider or not callable(aclose):
+            return
+
+        def _report(done: asyncio.Future[Any]) -> None:
+            if not done.cancelled() and done.exception() is not None:
+                LOG.debug("旧 provider 关闭失败", exc_info=done.exception())
+
+        def _close() -> None:
+            asyncio.ensure_future(aclose()).add_done_callback(_report)
+
+        asyncio.get_running_loop().call_later(_RETIRED_PROVIDER_CLOSE_DELAY_SECONDS, _close)
 
     def _write_status(self, status: dict[str, Any]) -> None:
         try:

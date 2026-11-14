@@ -381,7 +381,8 @@ class WebUIServer:
     # ─── 全局 API: Embedding 状态 ──────────────────────────
 
     async def api_embedding_status(self, request: web.Request) -> web.Response:
-        return _json_response(self.get_embedding_status())
+        # 健康检查是同步网络请求（最长 5 秒）：放进线程，别让整个进程跟着等。
+        return _json_response(await asyncio.to_thread(self.get_embedding_status))
 
     async def api_embedding_rebuild(self, request: web.Request) -> web.Response:
         """用当前模型重建该人格的记忆单元向量索引。

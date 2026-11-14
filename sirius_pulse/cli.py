@@ -340,6 +340,12 @@ def _migrate_flat_to_personas() -> None:
 # ---------------------------------------------------------------------------
 
 
+#: 人格异常退出后的重启退避：首次 5 秒，翻倍到最多 5 分钟；稳定跑满 5 分钟后重置。
+_WORKER_RESTART_INITIAL_SECONDS = 5.0
+_WORKER_RESTART_MAX_SECONDS = 300.0
+_WORKER_HEALTHY_RUN_SECONDS = 300.0
+
+
 async def _cmd_run(args: argparse.Namespace) -> None:
     """启动活跃人格引擎 + WebUI。"""
     _migrate_flat_to_personas()
@@ -358,7 +364,6 @@ async def _cmd_run(args: argparse.Namespace) -> None:
 
     log_level = str(config.get("log_level", "INFO")).upper()
     webui_log_file = DATA_DIR / "logs" / "webui.log"
-    persona_log_file = persona_dirs[0] / "logs" / "persona.log"
     configure_logging(
         level=log_level,
         format_type="console",
@@ -369,11 +374,22 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         level=log_level,
         format_type="console",
     )
+    # 每个人格写自己目录下的 persona.log（WebUI 的日志页读的就是它）；不在任何
+    # 人格上下文里的引擎日志（启动阶段、WebUI 触发的操作）进 data/logs/runtime.log。
+    for persona_dir in persona_dirs:
+        add_filtered_file_handler(
+            persona_dir / "logs" / "persona.log",
+            logger_prefixes=PERSONA_LOGGER_PREFIXES,
+            level=log_level,
+            format_type="console",
+            persona=persona_dir.name,
+        )
     add_filtered_file_handler(
-        persona_log_file,
+        DATA_DIR / "logs" / "runtime.log",
         logger_prefixes=PERSONA_LOGGER_PREFIXES,
         level=log_level,
         format_type="console",
+        persona="",
     )
     LOG = logging.getLogger("sirius.main")
 
@@ -410,9 +426,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     # 预检 AMKR 的 embedding 能力。向量化已改由 AMKR 提供，本框架不再自己拉起
     # 本地模型服务；这里只确认「够得着、模型已配置、白名单已放行」，不成功就明确
     # 报错，而不是让每个人格在后台各失败一次。
-    import time
-
-    from sirius_pulse.embedding.client import create_embedding_client
+    from sirius_pulse.embedding.client import EmbeddingClient, create_embedding_client
 
     # 预检用第一个人格的工作空间。embedding 模型是全局配置，但凭据（推理 key）按人格
     # 工作空间存放，取错空间会拿到空 key、变成一次必然失败的 401。
@@ -420,15 +434,23 @@ async def _cmd_run(args: argparse.Namespace) -> None:
     emb_client = create_embedding_client(DATA_DIR, active)
     emb_model = emb_client.model
     LOG.info("检查 AMKR Embedding 可用性: %s (%s) ...", emb_model, emb_client._base_url)
+
+    def _embedding_ready(client: EmbeddingClient) -> bool:
+        if not client.check_health():
+            return False
+        try:
+            client.encode(["ping"])
+        except Exception as exc:
+            LOG.warning("AMKR Embedding 预热失败，稍后重试: %s", exc)
+            return False
+        return True
+
+    # 同步探测放进线程：WebUI 已经起来了，这里最长要等一分钟，期间页面得能打开。
     for _attempt in range(120):
-        if emb_client.check_health():
-            try:
-                _ = emb_client.encode(["ping"])
-                LOG.info("AMKR Embedding 已就绪: %s", emb_model)
-                break
-            except Exception as exc:
-                LOG.warning("AMKR Embedding 预热失败，稍后重试: %s", exc)
-        time.sleep(0.5)
+        if await asyncio.to_thread(_embedding_ready, emb_client):
+            LOG.info("AMKR Embedding 已就绪: %s", emb_model)
+            break
+        await asyncio.sleep(0.5)
     else:
         LOG.error("AMKR Embedding 在 60 秒内未就绪，无法启动人格")
         await webui.stop()
@@ -437,6 +459,7 @@ async def _cmd_run(args: argparse.Namespace) -> None:
         )
 
     from sirius_pulse.persona_worker import PersonaWorker
+    from sirius_pulse.utils.supervision import run_with_restarts
 
     # MCP 服务可能不支持同一时刻建立多个初始化会话；只串行启动阶段，
     # Worker 进入 ready 后仍然并行处理各自的消息。
@@ -470,9 +493,32 @@ async def _cmd_run(args: argparse.Namespace) -> None:
 
     LOG.info("按 Ctrl+C 停止所有服务")
 
+    persona_dir_by_name = {persona_dir.name: persona_dir for persona_dir in persona_dirs}
+
+    async def _run_supervised(name: str) -> None:
+        """跑一个人格；异常退出就重建 Worker、退避后重启，直到收到关停信号。
+
+        所有人格共用一个进程：一个人格启动失败不该让它从此悄无声息地离线，
+        也不该等到全部人格都结束才在日志里露面。
+        """
+
+        def _fresh_worker() -> None:
+            workers[name] = PersonaWorker(persona_dir_by_name[name], startup_lock=startup_lock)
+
+        await run_with_restarts(
+            f"人格「{name}」",
+            lambda: workers[name].run(),
+            should_continue=lambda: not stop_all_event.is_set(),
+            stop_event=stop_all_event,
+            before_restart=_fresh_worker,
+            initial_delay=_WORKER_RESTART_INITIAL_SECONDS,
+            max_delay=_WORKER_RESTART_MAX_SECONDS,
+            healthy_after=_WORKER_HEALTHY_RUN_SECONDS,
+        )
+
     worker_tasks = [
-        asyncio.create_task(worker.run(), name=f"persona-worker:{name}")
-        for name, worker in workers.items()
+        asyncio.create_task(_run_supervised(name), name=f"persona-worker:{name}")
+        for name in workers
     ]
     workers_done = asyncio.gather(*worker_tasks, return_exceptions=True)
     stop_task = asyncio.create_task(stop_all_event.wait())
@@ -489,9 +535,6 @@ async def _cmd_run(args: argparse.Namespace) -> None:
             {workers_done, stop_task}, return_when=asyncio.FIRST_COMPLETED
         )
         if workers_done in done and not stop_all_event.is_set():
-            for name, result in zip(workers, workers_done.result(), strict=True):
-                if isinstance(result, Exception):
-                    LOG.error("人格 Worker 异常退出: %s: %s", name, result)
             LOG.info("所有 Persona worker 已停止；WebUI 保持运行")
             await stop_all_event.wait()
     finally:

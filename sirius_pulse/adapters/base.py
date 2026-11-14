@@ -6,6 +6,7 @@ Plugin 通过 self.ctx.adapter 直接调用适配器方法，无需中间代理�
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -73,8 +74,6 @@ class BaseAdapter(ABC):
         Referer，交给上游模型只会得到 403 与「看不到图片」的幻觉。宁可明确
         地没有这张图，也不要给出一个必然失效的链接。
         """
-        import hashlib
-
         import aiohttp
 
         if not url.startswith(("http://", "https://")):
@@ -99,6 +98,17 @@ class BaseAdapter(ABC):
         except Exception as exc:
             logger.warning("图片下载异常: %s | %s", exc, url[:80])
             return ""
+
+        # 压缩（Pillow 解码重编码）、哈希、写盘、清理旧文件都放进线程：所有人格
+        # 共用一个事件循环，一张大图在这里卡上几百毫秒，所有群都跟着停。
+        return await asyncio.to_thread(
+            self._store_cached_image, data, ext, cache_dir, url, is_sticker
+        )
+
+    def _store_cached_image(
+        self, data: bytes, ext: str, cache_dir: Path, url: str, is_sticker: bool
+    ) -> str:
+        import hashlib
 
         if len(data) > self.MAX_CACHED_IMAGE_BYTES:
             shrunk = self._downscale_image_bytes(data)
@@ -129,7 +139,7 @@ class BaseAdapter(ABC):
 
         # 兜底保留上限：普通图片与表情包原图都靠它限制总量，避免无限堆积
         # （线上曾攒到 639MB / 1524 张）。
-        await self._cleanup_cache(cache_dir, max_files=200)
+        self._prune_cache_dir(cache_dir, max_files=200)
         return str(cache_path)
 
     def _downscale_image_bytes(
@@ -163,6 +173,11 @@ class BaseAdapter(ABC):
 
     async def _cleanup_cache(self, cache_dir: Path, max_files: int = 200) -> None:
         """清理缓存目录，保留最近 max_files 张图片（``.url`` 来源侧车随图片一起淘汰）。"""
+        await asyncio.to_thread(self._prune_cache_dir, cache_dir, max_files)
+
+    @staticmethod
+    def _prune_cache_dir(cache_dir: Path, max_files: int = 200) -> None:
+        """同步版本：列目录、按修改时间排序、删掉超出上限的旧文件。"""
         if not cache_dir.exists():
             return
         files = sorted(

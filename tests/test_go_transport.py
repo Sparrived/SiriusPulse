@@ -965,3 +965,32 @@ def test_old_sidecar_without_streaming_falls_back_to_whole_generation(monkeypatc
     first, second = asyncio.run(main())
     assert first.content == second.content == "在的"
     assert calls == ["/v1/generate-stream", "/v1/generate", "/v1/generate"]
+
+
+def test_a_call_that_never_finishes_is_aborted_at_the_total_deadline(monkeypatch) -> None:
+    """一直不出结果（上游只发心跳、或侧车卡死）的调用要被中止，而不是永远占着名额。"""
+    import sirius_pulse.providers.go_transport as go_transport
+
+    monkeypatch.setattr(go_transport, "_TOTAL_DEADLINE_FLOOR_SECONDS", 0.2)
+    monkeypatch.setattr(go_transport, "_TOTAL_DEADLINE_FACTOR", 0.0)
+
+    async def hang(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(30)
+        return httpx.Response(200, json={})
+
+    provider = GoTransportProvider(
+        sidecar_url="http://sidecar.test",
+        sidecar_token="t",
+        base_url="http://amkr.test",
+        api_key="amkr_ik_test",
+    )
+    monkeypatch.setattr(
+        provider,
+        "_ensure_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(hang)),
+    )
+
+    started = time.monotonic()
+    with pytest.raises(ProviderConnectionError, match="总时长"):
+        asyncio.run(provider.generate_async(_request(), on_text_delta=lambda _t: None))
+    assert time.monotonic() - started < 5

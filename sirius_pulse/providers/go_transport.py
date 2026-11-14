@@ -76,6 +76,21 @@ _ERR_PROVIDER_CONTENT_FILTERED = "PROVIDER_CONTENT_FILTERED"
 _ERR_PROVIDER_CONNECTION = "PROVIDER_CONNECTION_ERROR"
 _ERR_UPSTREAM_TIMEOUT = "UPSTREAM_TIMEOUT"
 
+#: 单次生成的总时长上限 = 静默超时 × 这个倍数，且不少于下面的下限。
+_TOTAL_DEADLINE_FACTOR = 6.0
+_TOTAL_DEADLINE_FLOOR_SECONDS = 180.0
+
+
+def total_deadline_seconds(timeout_seconds: float) -> float:
+    """一次生成最多等多久（秒）。
+
+    ``timeout_seconds`` 是块间静默超时（契约 §4.2），挡不住「一直有心跳却始终不出
+    结果」和「侧车本身卡死」。总时长给得很宽：长回复、慢推理都在它之内，只有真正
+    挂住的调用才会撞上。
+    """
+    return max(_TOTAL_DEADLINE_FLOOR_SECONDS, float(timeout_seconds) * _TOTAL_DEADLINE_FACTOR)
+
+
 #: 正文增量回调（契约 §3.1）。在读流的协程里同步调用，必须很便宜：要做 I/O 的
 #: 调用方自己起任务，别让侧车的下一行等着。
 TextDeltaCallback = Callable[[str], None]
@@ -135,7 +150,7 @@ class GoTransportProvider(AsyncLLMProvider):
         返回值仍是完整结果，内容以它为准。
         """
         timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
-        base_url, token = self._resolve_endpoint()
+        base_url, token = await self._resolve_endpoint()
         url = f"{base_url}/v1/generate"
         payload = self._build_payload(request, timeout_seconds)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -160,13 +175,33 @@ class GoTransportProvider(AsyncLLMProvider):
             logger.debug(f"[模型调用详情] {request.model} | 传输层请求:{debug_detail}")
 
         client = self._ensure_client()
-        result: GenerationResult | None = None
-        if on_text_delta is not None and not self._stream_unsupported:
-            result = await self._generate_streaming(
-                client, base_url, token, body, request=request, on_text_delta=on_text_delta
+        deadline = total_deadline_seconds(timeout_seconds)
+        try:
+            async with asyncio.timeout(deadline):
+                result: GenerationResult | None = None
+                if on_text_delta is not None and not self._stream_unsupported:
+                    result = await self._generate_streaming(
+                        client,
+                        base_url,
+                        token,
+                        body,
+                        request=request,
+                        on_text_delta=on_text_delta,
+                    )
+                if result is None:
+                    result = await self._generate_whole(client, url, token, body, request=request)
+        except TimeoutError as exc:
+            # 侧车的静默超时只看「多久没有数据」：上游一直发心跳、或侧车自己卡死时，
+            # 这一次调用会永远挂着，占住这个人格的并发名额和群的发言权。
+            logger.error(
+                f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"| 超过总时长 {deadline:.0f} 秒，已中止"
             )
-        if result is None:
-            result = await self._generate_whole(client, url, token, body, request=request)
+            raise ProviderConnectionError(
+                self._provider_name,
+                f"LLM 调用超过总时长 {deadline:.0f} 秒，已中止。",
+                original_error=exc,
+            ) from exc
 
         # 契约 §4.6（v1.1）：空响应**不再由侧车判定**——侧车照样回 200 + 空 content，
         # 是否算失败属于业务语义，由这里决定。`return_reasoning=True` 只取思维链是合法
@@ -365,7 +400,7 @@ class GoTransportProvider(AsyncLLMProvider):
         超时是**整请求总超时**（契约 §5.1.2）：与迁移前一致，下限 120 秒。
         """
         timeout_seconds = request.timeout_seconds or max(float(self._timeout_seconds), 120.0)
-        base_url, token = self._resolve_endpoint()
+        base_url, token = await self._resolve_endpoint()
         url = f"{base_url}/v1/generate-image"
         payload = self._build_image_payload(request, timeout_seconds)
 
@@ -424,16 +459,22 @@ class GoTransportProvider(AsyncLLMProvider):
 
     # ── 内部：报文与响应 ──────────────────────────────────────
 
-    def _resolve_endpoint(self) -> tuple[str, str]:
+    async def _resolve_endpoint(self) -> tuple[str, str]:
         """返回本次该用的 ``(sidecar_base_url, token)``。
 
         侧车是进程级单例，崩溃后会被 ``ensure_running()`` 重启，而重启可能换端口，
         所以每次都现取地址，而不是缓存一个可能已经失效的 URL。
+
+        存活时只是一次 ``poll()``，直接在事件循环里做；真要重启（等 READY + 健康检查，
+        最长十几秒）就放进线程——所有人格共用一个事件循环，同步等会让所有群一起卡住。
         """
         sidecar = self._sidecar
         if sidecar is None:
             return self._sidecar_url, self._sidecar_token
-        base_url = sidecar.ensure_running()
+        if sidecar.is_alive():
+            base_url = sidecar.base_url
+        else:
+            base_url = await asyncio.to_thread(sidecar.ensure_running)
         if not base_url:
             raise ProviderConnectionError(
                 self._provider_name,

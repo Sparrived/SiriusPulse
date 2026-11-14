@@ -41,6 +41,8 @@ from sirius_pulse.tools.registry import ToolRegistry
 from sirius_pulse.utils.llm_sidecar import get_sidecar
 
 LOG = logging.getLogger("sirius.platforms.runtime")
+#: 单个清理步骤最多等多久（秒）。卡死的关闭不能让进程永远退不出去。
+_CLEANUP_TIMEOUT_SECONDS = 30.0
 MCP_STARTUP_TIMEOUT_SECONDS = 30.0
 # ``EmbeddingClient`` is intentionally synchronous because it is also used by
 # synchronous memory code.  Runtime startup must therefore isolate its health
@@ -101,7 +103,7 @@ async def _wait_for_embedding_health(
         await asyncio.sleep(min(retry_delay, remaining))
 
 
-async def _await_cleanup(awaitable: Any) -> bool:
+async def _await_cleanup(awaitable: Any, *, timeout_seconds: float | None = None) -> bool:
     """Finish one async teardown operation before propagating cancellation.
 
     Lifecycle cancellation must stop admission, but it must not abandon an
@@ -109,14 +111,29 @@ async def _await_cleanup(awaitable: Any) -> bool:
     task is shielded and cancellation is reported to the caller after it has
     finished.  The return value lets a larger teardown continue all remaining
     cleanup steps before raising ``CancelledError``.
+
+    等待有上限：一个卡死的关闭（外部 MCP 服务不响应、适配器连接悬着）不能让
+    整个进程永远退不出去——连按 Ctrl+C 也没用。超时后放弃这一步，继续后面的清理。
     """
+    limit = _CLEANUP_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
     task = asyncio.ensure_future(awaitable)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + limit
     cancelled = False
     while not task.done():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
         try:
-            await asyncio.shield(task)
+            await asyncio.wait_for(asyncio.shield(task), remaining)
         except asyncio.CancelledError:
             cancelled = True
+        except TimeoutError:
+            break
+    if not task.done():
+        LOG.warning("清理步骤超过 %.0f 秒仍未完成，放弃等待，继续后面的清理", limit)
+        task.cancel()
+        return cancelled
     try:
         task.result()
     except asyncio.CancelledError:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -25,6 +26,7 @@ from sirius_pulse.core.constants import (
 from sirius_pulse.core.constants import DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET
 from sirius_pulse.memory.cold_detector import ColdState
 from sirius_pulse.utils.json_io import atomic_write_json
+from sirius_pulse.utils.supervision import run_with_restarts
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -32,6 +34,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: 数据清理任务：启动后稍等再跑（别和启动时的加载抢），之后每天一次。
+#: 后台循环异常退出后的重启退避；稳定跑过 10 分钟就把退避重置回初值。
+_BG_RESTART_INITIAL_SECONDS = 5.0
+_BG_RESTART_MAX_SECONDS = 300.0
+_BG_HEALTHY_RUN_SECONDS = 600.0
 _RETENTION_INITIAL_DELAY_SECONDS = 300.0
 _RETENTION_INTERVAL_SECONDS = 86400.0
 
@@ -75,17 +81,34 @@ class BackgroundTasks:
 
         self.notebook_maintenance = NotebookMaintenance(engine)
         self.notebook_maintenance.start()
-        tasks = [
-            asyncio.create_task(self.delayed.delayed_queue_ticker(), name="delayed_queue"),
-            asyncio.create_task(self._memory_unit_checkpointer(), name="memory_checkpoint"),
-            asyncio.create_task(self._sticker_cache_warmup(), name="sticker_cache_warmup"),
-            asyncio.create_task(self._memory_dedupe_job_worker(), name="memory_dedupe"),
-            asyncio.create_task(self._person_impression_worker(), name="person_impression"),
-            asyncio.create_task(self._data_retention_worker(), name="data_retention"),
+        loops: list[tuple[str, Callable[[], Awaitable[None]]]] = [
+            ("delayed_queue", self.delayed.delayed_queue_ticker),
+            ("memory_checkpoint", self._memory_unit_checkpointer),
+            ("sticker_cache_warmup", self._sticker_cache_warmup),
+            ("memory_dedupe", self._memory_dedupe_job_worker),
+            ("person_impression", self._person_impression_worker),
+            ("data_retention", self._data_retention_worker),
         ]
-        for t in tasks:
-            engine._bg_tasks.add(t)
-            t.add_done_callback(engine._bg_tasks.discard)
+        for name, factory in loops:
+            task = asyncio.create_task(self._supervised(name, factory), name=name)
+            engine._bg_tasks.add(task)
+            task.add_done_callback(engine._bg_tasks.discard)
+
+    async def _supervised(self, name: str, factory: Callable[[], Awaitable[None]]) -> None:
+        """跑一个后台循环；它抛异常就记下来、退避后重启，直到引擎停止。
+
+        这些循环一旦悄悄死掉，表现就是「她不再回复延迟消息」「记忆不再整理」，日志
+        里却什么都没有——以前任务的异常只会被 done 回调丢弃。
+        """
+        engine = self._engine
+        await run_with_restarts(
+            f"后台任务 {name}",
+            factory,
+            should_continue=lambda: bool(engine._bg_running),
+            initial_delay=_BG_RESTART_INITIAL_SECONDS,
+            max_delay=_BG_RESTART_MAX_SECONDS,
+            healthy_after=_BG_HEALTHY_RUN_SECONDS,
+        )
 
     def stop(self) -> None:
         """Cancel all background tasks and run passive TOOL unload hooks."""

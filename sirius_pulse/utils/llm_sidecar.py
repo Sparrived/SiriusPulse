@@ -74,6 +74,8 @@ SUPPORTED_MAJOR_VERSION = 0
 
 STARTUP_TIMEOUT_SECONDS = 10.0
 HEALTH_TIMEOUT_SECONDS = 5.0
+#: 重启失败后多久内直接判不可用，不再每次调用都等一轮启动。
+RESTART_COOLDOWN_SECONDS = 10.0
 HEALTH_POLL_INTERVAL_SECONDS = 0.1
 HEALTH_REQUEST_TIMEOUT_SECONDS = 2.0
 
@@ -151,6 +153,8 @@ class LLMSidecar:
         self._version = ""
         self._ready_event = threading.Event()
         self._ready_port = 0
+        #: 重启失败后到这个时刻之前不再尝试（monotonic 秒）。
+        self._restart_blocked_until = 0.0
 
     # ── 状态查询 ──────────────────────────────────────────────
 
@@ -256,12 +260,17 @@ class LLMSidecar:
         """
         if self.is_alive():
             return self.base_url
+        if time.monotonic() < self._restart_blocked_until:
+            # 刚重启失败过：这段时间内的调用直接失败，别让每一次调用都再等一轮启动。
+            return ""
         LOGGER.warning("LLM 传输层侧车未在运行，尝试重新启动")
         try:
             self.start()
         except SidecarError as exc:
             LOGGER.error("LLM 传输层侧车重启失败: %s", exc)
+            self._restart_blocked_until = time.monotonic() + RESTART_COOLDOWN_SECONDS
             return ""
+        self._restart_blocked_until = 0.0
         return self.base_url
 
     def stop(self) -> None:

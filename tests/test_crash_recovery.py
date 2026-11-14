@@ -97,6 +97,73 @@ async def test_reconnect_loop_clears_offline_marker_after_reconnect(tmp_path, mo
     assert adapter._offline_since is None
 
 
+@pytest.mark.asyncio
+async def test_a_request_waiting_for_its_ack_fails_as_soon_as_the_connection_drops(tmp_path):
+    """断线后还在等回执的请求要立刻失败，而不是各自干等满 30 秒的 api_timeout。"""
+    adapter = NapCatAdapter("ws://example.invalid", work_path=tmp_path)
+    dropped = asyncio.Event()
+
+    class _DroppingWS:
+        closed = False
+
+        async def send(self, payload: str) -> None:
+            dropped.set()  # 请求发出去了，连接随即断开
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await dropped.wait()
+            raise StopAsyncIteration
+
+    adapter.ws = _DroppingWS()  # type: ignore[assignment]
+    adapter._running = True
+    listener = asyncio.create_task(adapter._listen_loop())
+
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(RuntimeError, match="Connection lost"):
+        await adapter._call_api_inner("get_status", {})
+    await listener
+
+    assert asyncio.get_running_loop().time() - started < 2
+    assert adapter._pending == {}
+
+
+@pytest.mark.asyncio
+async def test_messages_arriving_while_the_engine_is_rebuilt_are_handled_afterwards(tmp_path):
+    """热重建那几秒里群友说的话不能丢：先暂存，接上新引擎后再处理。"""
+    from types import SimpleNamespace
+
+    adapter = NapCatAdapter("ws://example.invalid", work_path=tmp_path)
+    handled: list[dict] = []
+
+    async def record(event: dict) -> None:
+        handled.append(event)
+
+    adapter.on_event(record)
+    message = {
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 123,
+        "user_id": 456,
+        "self_id": 789,
+        "message_id": 1,
+        "raw_message": "她在吗",
+    }
+
+    adapter._detaching_engine = True  # 正在换引擎
+    await adapter._dispatch(message)
+    assert handled == []
+
+    await adapter.rebind_engine(SimpleNamespace())
+    for _ in range(50):
+        if handled:
+            break
+        await asyncio.sleep(0.01)
+
+    assert handled == [message]
+
+
 def test_start_child_reaper_skips_non_pid1(monkeypatch):
     """非 PID 1 不启动回收，避免抢走其他代码正要 wait() 的子进程。"""
     monkeypatch.setattr(os, "getpid", lambda: 4321)

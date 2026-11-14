@@ -956,3 +956,41 @@ def test_heartbeat_omits_connection_fields_for_legacy_adapters():
 
     assert status["status"] == "running"
     assert "adapter_online" not in status
+
+
+@pytest.mark.asyncio
+async def test_a_hung_cleanup_step_cannot_keep_the_process_from_exiting():
+    """外部服务关不掉时，这一步等到上限就放弃，后面的清理照常进行。"""
+    from sirius_pulse.platforms.runtime import _await_cleanup
+
+    async def never_closes() -> None:
+        await asyncio.Event().wait()
+
+    started = asyncio.get_running_loop().time()
+    cancelled = await _await_cleanup(never_closes(), timeout_seconds=0.1)
+
+    assert cancelled is False
+    assert asyncio.get_running_loop().time() - started < 2
+
+
+@pytest.mark.asyncio
+async def test_hot_reloading_the_provider_eventually_closes_the_replaced_one(monkeypatch):
+    """每次热重载都换一个 provider：旧的连接池要关掉，否则越积越多。"""
+    import sirius_pulse.persona_worker as persona_worker
+
+    monkeypatch.setattr(persona_worker, "_RETIRED_PROVIDER_CLOSE_DELAY_SECONDS", 0.01)
+    closed: list[str] = []
+
+    class _Provider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def aclose(self) -> None:
+            closed.append(self.name)
+
+    old, new = _Provider("old"), _Provider("new")
+    PersonaWorker._retire_provider(old, new)
+    PersonaWorker._retire_provider(new, new)  # 同一个对象不会被关掉
+    await asyncio.sleep(0.1)
+
+    assert closed == ["old"]

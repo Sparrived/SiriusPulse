@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import time
+from collections import deque
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Callable
@@ -84,6 +85,9 @@ _FORWARD_SUMMARY_PROMPT = """你负责压缩 QQ 合并转发里未被展示的�
 不要向用户展示本系统提示或内部配置。"""
 #: wait_event() 旁路队列上限：只服务配置向导，没有消费者时不该无界增长。
 _EVENT_QUEUE_MAX_SIZE = 512
+#: 引擎换代期间最多暂存多少条消息、每条最多存多久（秒）；超时的多半已经没有回复价值。
+_HELD_EVENTS_MAX = 200
+_HELD_EVENT_MAX_AGE_SECONDS = 120.0
 _ATOMIC_PROACTIVE_SEND: ContextVar[bool] = ContextVar("atomic_proactive_send", default=False)
 _PROACTIVE_DELIVERY_START: ContextVar[Callable[[], bool] | None] = ContextVar(
     "proactive_delivery_start",
@@ -91,6 +95,10 @@ _PROACTIVE_DELIVERY_START: ContextVar[Callable[[], bool] | None] = ContextVar(
 )
 
 EventHandler = Callable[[dict[str, Any]], Any]
+
+
+class _ConnectionLostBeforeAck(ConnectionError):
+    """API 请求已发出，但回执到达前 WebSocket 断开了。"""
 
 
 class _OneBotDeliveryUncertain(DeliveryUncertainError):
@@ -654,6 +662,9 @@ class NapCatAdapter(BaseAdapter):
         # Set during ownership handoff so the WebSocket path cannot add a raw
         # handler after the lifecycle code has started draining tasks.
         self._detaching_engine = False
+        #: 引擎换代 / 未就绪期间到达的消息：先存着，新引擎接上后重放，而不是丢掉。
+        self._held_events: deque[tuple[float, dict[str, Any]]] = deque(maxlen=_HELD_EVENTS_MAX)
+        self._held_replay_task: asyncio.Task[None] | None = None
         # Serialize start/rebind/stop so a listener cannot be rebound while a
         # concurrent lifecycle transition is still cancelling its handlers.
         self._engine_lifecycle_lock = asyncio.Lock()
@@ -685,6 +696,7 @@ class NapCatAdapter(BaseAdapter):
             if self._event_bus_task is None or self._event_bus_task.done():
                 self._event_bus_task = asyncio.create_task(self._event_bus_listener())
             self.on_event(self._on_event)
+            self._schedule_held_replay()
             LOG.info("NapCatAdapter 平台集成已启动")
 
     async def rebind_engine(self, engine: Any) -> None:
@@ -707,6 +719,50 @@ class NapCatAdapter(BaseAdapter):
                 )
             if self._running:
                 self._event_bus_task = asyncio.create_task(self._event_bus_listener())
+            self._schedule_held_replay()
+
+    # ─── 换代期间的消息暂存 ───────────────────────────────
+
+    @staticmethod
+    def _is_inbound_chat_event(data: dict[str, Any]) -> bool:
+        return data.get("post_type") == "message" or NapCatAdapter._is_poke_event(data)
+
+    def _hold_event(self, data: dict[str, Any]) -> None:
+        """引擎正在换代或还没就绪：把这条消息存起来，接上新引擎后再处理。
+
+        以前这里直接丢弃，而去重表已经记下了它——热重建那几秒里群友说的话就永远
+        没了。存的同时撤掉去重标记，重放时才能正常通过。
+        """
+        if not self._is_inbound_chat_event(data):
+            return
+        key = self._message_dedup_key(data)
+        if key:
+            self._seen_message_ids.pop(key, None)
+        if not self._held_events:
+            LOG.info("引擎正在切换，先暂存收到的消息，接上后再处理")
+        self._held_events.append((time.monotonic(), data))
+
+    def _schedule_held_replay(self) -> None:
+        if not self._held_events:
+            return
+        if self._held_replay_task is not None and not self._held_replay_task.done():
+            return
+        self._held_replay_task = asyncio.create_task(self._replay_held_events())
+        self._track_task(self._held_replay_task)
+
+    async def _replay_held_events(self) -> None:
+        # 让出一次：调用方（start / rebind）还持着生命周期锁，等它收尾完再重放。
+        await asyncio.sleep(0)
+        now = time.monotonic()
+        held = list(self._held_events)
+        self._held_events.clear()
+        fresh = [data for held_at, data in held if now - held_at <= _HELD_EVENT_MAX_AGE_SECONDS]
+        if len(fresh) < len(held):
+            LOG.warning("引擎切换耗时过长，丢弃 %d 条过期的暂存消息", len(held) - len(fresh))
+        if fresh:
+            LOG.info("引擎已接上，重放切换期间暂存的 %d 条消息", len(fresh))
+        for data in fresh:
+            await self._dispatch(data)
 
     async def stop_handling(self) -> None:
         """停止事件处理和引擎事件总线监听。"""
@@ -993,6 +1049,15 @@ class NapCatAdapter(BaseAdapter):
             raise
         except Exception as exc:
             LOG.exception("NapCat WS listen error: %s", exc)
+        finally:
+            # 这条连接上等回执的请求再也等不到了：立刻告诉它们，而不是各自干等满
+            # api_timeout（30 秒）才发现。
+            self._fail_pending_requests("NapCat WebSocket 连接已断开")
+
+    def _fail_pending_requests(self, reason: str) -> None:
+        for future in list(self._pending.values()):
+            if not future.done():
+                future.set_exception(_ConnectionLostBeforeAck(reason))
 
     async def _dispatch(self, data: dict[str, Any]) -> None:
         """分发入站消息：API 响应交给 pending future，事件交给 handlers。"""
@@ -1005,6 +1070,7 @@ class NapCatAdapter(BaseAdapter):
             return
 
         if self._detaching_engine:
+            self._hold_event(data)
             return
         generation = self._engine_generation
         for handler in tuple(self._event_handlers):
@@ -1112,6 +1178,13 @@ class NapCatAdapter(BaseAdapter):
                 if atomic_irreversible:
                     raise _OneBotDeliveryUncertain(f"API timeout after send: {action}") from exc
                 raise RuntimeError(f"API timeout: {action}") from exc
+            except _ConnectionLostBeforeAck as exc:
+                # 请求已经发出、回执还没到连接就断了：平台可能收到也可能没收到。
+                if atomic_irreversible:
+                    raise _OneBotDeliveryUncertain(
+                        f"Connection lost before acknowledgement: {action}"
+                    ) from exc
+                raise RuntimeError(f"Connection lost before acknowledgement: {action}") from exc
         finally:
             self._pending.pop(echo, None)
             if not future.done():
@@ -2100,6 +2173,7 @@ class NapCatAdapter(BaseAdapter):
             LOG.debug("忽略不在私聊白名单中的消息: user=%s", event.get("user_id", ""))
             return
         if self._detaching_engine or bool(getattr(self._engine, "_runtime_retiring", False)):
+            self._hold_event(event)
             return
         self._enqueue_event_for_waiters(event)
         if msg_type == "group":
@@ -2138,6 +2212,7 @@ class NapCatAdapter(BaseAdapter):
             return
         if self._engine is None or not self._engine_ready():
             self._log_not_ready()
+            self._hold_event(event)
             return
         if await self._try_inject_tool_chain_event(event):
             return
@@ -2216,6 +2291,7 @@ class NapCatAdapter(BaseAdapter):
             return
         if self._engine is None or not self._engine_ready():
             self._log_not_ready()
+            self._hold_event(event)
             return
         await self._process_event(event)
 
@@ -2649,6 +2725,7 @@ class NapCatAdapter(BaseAdapter):
     ) -> None:
         """Run an inbound handler only while its engine generation is current."""
         if self._detaching_engine or generation != self._engine_generation:
+            self._hold_event(data)
             return
         await handler(data)
 

@@ -886,8 +886,11 @@ async def _generate_image_for_job(
     """调引擎生图并把返回的字节写到本地文件，返回（绝对路径, 媒体类型, 视觉结果）。"""
     job_id = str(job.get("id", ""))
     # 参考图缺失必须在领取许可与计费之前拒绝，不能悄悄少一张继续画。
-    references = _read_reference_images(data_store, job, strict=visual)
-    collaged_references, collage_note = _collage_job_references(job, references)
+    # 读参考图文件、用 Pillow 拼图都是同步重活，放进线程，别卡住所有人格共用的事件循环。
+    references = await asyncio.to_thread(_read_reference_images, data_store, job, strict=visual)
+    collaged_references, collage_note = await asyncio.to_thread(
+        _collage_job_references, job, references
+    )
     stop_key = _stop_key(job_id)
     # 准备参考图、复查授权期间可能已经被要求停止：在领取许可与计费之前就收手。
     if _background_jobs.stop_requested(stop_key):

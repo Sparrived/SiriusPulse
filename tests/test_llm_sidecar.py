@@ -356,6 +356,28 @@ def test_ensure_running_returns_empty_when_restart_fails(
     assert sidecar.ensure_running() == ""
 
 
+def test_a_failed_restart_is_not_retried_by_every_call_during_the_cooldown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """侧车起不来时，紧接着的调用直接失败，而不是每次都再等一轮十几秒的启动。"""
+    sidecar = LLMSidecar(binary=str(tmp_path / "gone.exe"))
+    attempts: list[int] = []
+
+    def fail() -> None:
+        attempts.append(1)
+        raise SidecarError("起不来")
+
+    monkeypatch.setattr(sidecar, "start", fail)
+    assert sidecar.ensure_running() == ""
+    assert sidecar.ensure_running() == ""
+    assert attempts == [1]
+
+    monkeypatch.setattr("sirius_pulse.utils.llm_sidecar.RESTART_COOLDOWN_SECONDS", 0.0)
+    sidecar._restart_blocked_until = 0.0
+    assert sidecar.ensure_running() == ""
+    assert attempts == [1, 1]
+
+
 def test_matches_detects_config_change() -> None:
     sidecar = LLMSidecar(binary="a.exe", port=18085)
     assert sidecar.matches(binary="a.exe", port=18085) is True

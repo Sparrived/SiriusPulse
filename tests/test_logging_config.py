@@ -99,6 +99,41 @@ def test_add_filtered_file_handler_when_prefixes_are_configured_then_splits_reco
     assert "persona ready" not in webui_text
 
 
+def test_each_persona_writes_its_own_log_including_child_tasks_and_threads(tmp_path):
+    """所有人格共用一个进程：日志要按人格分开，后台子任务和线程里打的也一样。"""
+    import asyncio
+
+    from sirius_pulse.logging_config import current_persona
+
+    configure_logging(level="INFO", format_type="console")
+    logs = {name: tmp_path / name / "persona.log" for name in ("alice", "sirius")}
+    for name, path in logs.items():
+        add_filtered_file_handler(path, logger_prefixes=("core.",), level="INFO", persona=name)
+    runtime_log = tmp_path / "runtime.log"
+    add_filtered_file_handler(runtime_log, logger_prefixes=("core.",), level="INFO", persona="")
+    logger = logging.getLogger("core.engine")
+
+    async def persona_worker(name: str) -> None:
+        current_persona.set(name)
+        logger.info("%s 就绪", name)
+        await asyncio.create_task(asyncio.sleep(0, logger.info("%s 的后台任务", name)))
+        await asyncio.to_thread(logger.info, "%s 的线程", name)
+
+    async def main() -> None:
+        await asyncio.gather(persona_worker("alice"), persona_worker("sirius"))
+
+    logger.info("启动阶段")
+    asyncio.run(main())
+
+    alice = logs["alice"].read_text(encoding="utf-8")
+    sirius = logs["sirius"].read_text(encoding="utf-8")
+    assert all(f"alice {what}" in alice for what in ("就绪", "的后台任务", "的线程"))
+    assert "sirius" not in alice
+    assert "sirius 的线程" in sirius and "alice" not in sirius
+    runtime = runtime_log.read_text(encoding="utf-8")
+    assert "启动阶段" in runtime and "就绪" not in runtime
+
+
 def test_setup_log_archival_when_log_exists_then_moves_old_content_to_archive(tmp_path):
     log_file = tmp_path / "app.log"
     log_file.write_text("old content", encoding="utf-8")

@@ -16,6 +16,7 @@ import logging.handlers
 import shutil
 import sys
 from collections.abc import Sequence
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +26,15 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 # 日志格式类型
 LogFormat = Literal["console", "json"]
+
+#: 当前代码在替哪个人格干活。所有人格跑在同一个进程里，logger 却按模块命名，
+#: 光看 logger 名分不出是谁的日志。PersonaWorker 在自己的任务里设置它，之后创建的
+#: 子任务、``asyncio.to_thread`` 都会继承，于是每条日志都带上了人格名。
+current_persona: ContextVar[str] = ContextVar("sirius_current_persona", default="")
+
+#: 文件日志按大小轮转：单个文件上限与保留份数。不轮转时日志会无限增长。
+LOG_FILE_MAX_BYTES = 20 * 1024 * 1024
+LOG_FILE_BACKUP_COUNT = 5
 
 
 class JSONFormatter(logging.Formatter):
@@ -89,6 +99,31 @@ class FlushingFileHandler(logging.FileHandler):
             self.flush()  # 立即刷新到磁盘
         except Exception:
             self.handleError(record)
+
+
+class FlushingRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """按大小轮转、每条立即落盘的文件处理器。"""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            super().emit(record)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+
+class PersonaFilter(logging.Filter):
+    """只放行属于某个人格（或不属于任何人格）的日志。
+
+    ``persona=""`` 表示收「不在任何人格上下文里」的日志（启动、WebUI 触发的操作等）。
+    """
+
+    def __init__(self, persona: str) -> None:
+        super().__init__()
+        self.persona = persona
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return current_persona.get() == self.persona
 
 
 class FlushingTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
@@ -461,14 +496,26 @@ def add_filtered_file_handler(
     logger_prefixes: Sequence[str],
     level: LogLevel = "INFO",
     format_type: LogFormat = "console",
+    persona: str | None = None,
 ) -> logging.Handler:
-    """Attach a flushing file handler that only writes selected logger prefixes."""
+    """Attach a size-rotated, flushing file handler for selected logger prefixes.
+
+    ``persona`` 给出时只写该人格上下文里的日志（``""`` 表示不属于任何人格的日志）；
+    不给则不按人格过滤。
+    """
     log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    handler = FlushingFileHandler(log_path, encoding="utf-8")
+    handler = FlushingRotatingFileHandler(
+        log_path,
+        maxBytes=LOG_FILE_MAX_BYTES,
+        backupCount=LOG_FILE_BACKUP_COUNT,
+        encoding="utf-8",
+    )
     handler.setLevel(getattr(logging, level))
     handler.addFilter(LoggerNamePrefixFilter(logger_prefixes))
+    if persona is not None:
+        handler.addFilter(PersonaFilter(persona))
     if format_type == "json":
         handler.setFormatter(JSONFormatter())
     else:
@@ -493,6 +540,8 @@ __all__ = [
     "PlainFormatter",
     "ColoredFormatter",
     "LoggerNamePrefixFilter",
+    "PersonaFilter",
+    "current_persona",
     "LogLevel",
     "LogFormat",
 ]
