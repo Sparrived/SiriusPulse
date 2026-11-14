@@ -41,6 +41,12 @@ jobs:
           # 侧车模块只用标准库、没有 go.sum，模块缓存没有内容可存。
           cache: false
 
+      - name: Install CJK fonts
+        # 出图与插件的中日文回退依赖系统字体：ubuntu-latest 只带 DejaVu/Liberation，
+        # 没有中日文字形，插件里「可爱字体缺假名就退回完整中文字体」的断言会退无可退。
+        # 部署文档本来就要求装 Noto Sans CJK，CI 装同一份，跑的就是真实部署路径。
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
