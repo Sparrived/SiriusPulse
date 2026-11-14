@@ -51,6 +51,11 @@ type aggregator struct {
 	toolCalls    toolCallAccumulator
 	finishReason string
 	usage        json.RawMessage
+	// onDelta 收到每段正文增量（契约 §3.1 流式端点）；nil 表示只聚合不转发。
+	onDelta func(string)
+	// deltasMuted 在累积正文命中内容策略拦截文案后置位：之后的增量一律不再转发，
+	// 拒绝文案不能先漏给调用方再在结尾报错。
+	deltasMuted bool
 }
 
 func newAggregator() *aggregator {
@@ -61,11 +66,17 @@ func newAggregator() *aggregator {
 }
 
 // aggregateEventStream 把一条 OpenAI 兼容 SSE 流聚合成完整结果。
+func aggregateEventStream(reader io.Reader) (*Result, error) {
+	return aggregateEventStreamWithDeltas(reader, nil)
+}
+
+// aggregateEventStreamWithDeltas 聚合 SSE 流，并把正文增量逐段交给 onDelta。
 //
 // 只认单行 data: 帧（OpenAI 兼容流不会把一个 JSON 拆到多行），多行 data 会被
 // 当成坏帧跳过；跳过坏帧而不是整段失败，是为了不被上游心跳或半截帧毁掉整段回复。
-func aggregateEventStream(reader io.Reader) (*Result, error) {
+func aggregateEventStreamWithDeltas(reader io.Reader, onDelta func(string)) (*Result, error) {
 	acc := newAggregator()
+	acc.onDelta = onDelta
 	buffered := bufio.NewReaderSize(reader, 64*1024)
 	for {
 		line, readErr := buffered.ReadString('\n')
@@ -169,6 +180,7 @@ func (a *aggregator) applyChoices(raw json.RawMessage) {
 				}
 				if text := stringField(delta["content"]); text != "" {
 					a.content.WriteString(text)
+					a.forwardDelta(text)
 				}
 				a.toolCalls.merge(delta["tool_calls"])
 			}
@@ -177,6 +189,18 @@ func (a *aggregator) applyChoices(raw json.RawMessage) {
 			a.finishReason = finish
 		}
 	}
+}
+
+// forwardDelta 把一段正文增量转给调用方；累积正文一旦像拦截文案就永久静音。
+func (a *aggregator) forwardDelta(text string) {
+	if a.onDelta == nil || a.deltasMuted {
+		return
+	}
+	if isContentPolicyBlock(a.content.String()) {
+		a.deltasMuted = true
+		return
+	}
+	a.onDelta(text)
 }
 
 // result 产出聚合结果，并在末尾做内容策略检查。

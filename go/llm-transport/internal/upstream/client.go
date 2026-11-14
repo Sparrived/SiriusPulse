@@ -38,6 +38,17 @@ func NewClient() *Client {
 //
 // 返回的 *Error 已经带好错误码、返回状态与重试建议，调用方只需搬运。
 func (c *Client) Generate(ctx context.Context, req *contract.GenerateRequest) (*Result, error) {
+	return c.GenerateStreaming(ctx, req, nil)
+}
+
+// GenerateStreaming 同 Generate，另把正文增量逐段交给 onDelta（契约 §3.1）。
+//
+// onDelta 只在 SSE 路径上被调用；上游退回整段 JSON 时没有增量，调用方以最终结果为准。
+func (c *Client) GenerateStreaming(
+	ctx context.Context,
+	req *contract.GenerateRequest,
+	onDelta func(string),
+) (*Result, error) {
 	payload, err := buildRequestPayload(&req.Request)
 	if err != nil {
 		return nil, NewResponseError("构造上游请求体失败："+err.Error(), nil)
@@ -82,7 +93,7 @@ func (c *Client) Generate(ctx context.Context, req *contract.GenerateRequest) (*
 
 	var result *Result
 	if isEventStream(contentType) {
-		result, err = aggregateEventStream(body)
+		result, err = aggregateEventStreamWithDeltas(body, onDelta)
 		if err != nil {
 			return nil, classifyStreamError(err, watchdog, timeout)
 		}

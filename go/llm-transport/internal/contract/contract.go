@@ -7,7 +7,7 @@ package contract
 import "encoding/json"
 
 // Version 是 sidecar 的语义化版本，供 GET /health 与 Python 侧主版本校验使用（契约 §8/§9）。
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // 错误码（契约 §6）。
 const (
@@ -155,6 +155,27 @@ type HealthResponse struct {
 	Version string `json:"version"`
 	PID     int    `json:"pid"`
 }
+
+// StreamEvent 是 POST /v1/generate-stream 的一行 NDJSON（契约 §3.1）。
+//
+// Type 为 "delta" 时只有 Content；"result" 时 Result 与 /v1/generate 的成功响应体相同；
+// "error" 时 Error 与失败响应体的 error 字段相同。result / error 恰好出现一次且是最后一行。
+type StreamEvent struct {
+	Type    string            `json:"type"`
+	Content string            `json:"content,omitempty"`
+	Result  *GenerateResponse `json:"result,omitempty"`
+	Error   *ErrorBody        `json:"error,omitempty"`
+}
+
+// ContentTypeNDJSON 是流式端点的响应类型。
+const ContentTypeNDJSON = "application/x-ndjson"
+
+// StreamEvent 的 Type 取值。
+const (
+	StreamEventDelta  = "delta"
+	StreamEventResult = "result"
+	StreamEventError  = "error"
+)
 
 // ErrorResponse 是失败响应体（契约 §6）。
 type ErrorResponse struct {

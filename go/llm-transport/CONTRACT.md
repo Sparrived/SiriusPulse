@@ -1,4 +1,4 @@
-# LLM Transport Sidecar 契约（v1.2）
+# LLM Transport Sidecar 契约（v1.3）
 
 > 本文件是 Go 侧车与 Python 侧**唯一的接口约定**。两侧实现都必须以本文件为准；
 > 任何字段改名、语义变化，先改本文件再改代码。
@@ -16,7 +16,7 @@
 | 端口 | 由 Python 传入 `--port <n>`（Python 先绑 0 取空闲端口再释放）；`--port 0` 时打印实际端口 |
 | 就绪信号 | 监听成功后向 stdout 打印**单行** `READY <port>` 并 flush，然后进入服务 |
 | 鉴权 | 启动参数 `--token <t>`（或环境变量 `LLM_TRANSPORT_TOKEN`）。所有 `/v1/*` 请求必须带 `Authorization: Bearer <t>`，否则 401 |
-| 健康检查 | `GET /health` 免鉴权，返回 `{"status":"ok","version":"0.2.0","pid":1234}` |
+| 健康检查 | `GET /health` 免鉴权，返回 `{"status":"ok","version":"0.3.0","pid":1234}` |
 | 退出 | 收到 SIGINT/SIGTERM 后停止接新请求、等在飞请求最多 5 s、退出码 0 |
 | 日志 | 全部写 stderr（`READY` 之外不污染 stdout） |
 
@@ -71,6 +71,30 @@ Python 侧负责进程生命周期（启动、健康轮询、退出、异常重�
   }
 }
 ```
+
+## 3.1 流式生成：`POST /v1/generate-stream`
+
+请求体与 §2 完全相同，聚合语义与 §4 完全相同；区别只在响应怎么交回来。用途：让 Python
+在整段生成完之前先把第一句发出去。
+
+- 请求校验失败（§6 的 400/401）：照常返回 HTTP 400/401 + JSON 错误体，不进入流式。
+- 开始调用上游后：返回 HTTP 200，`Content-Type: application/x-ndjson`，每行一个 JSON 对象，
+  逐行 flush：
+
+```jsonc
+{"type": "delta", "content": "好呀。"}           // 正文增量，按到达顺序，0 到多行
+{"type": "result", "result": { /* 与 §3 的成功响应体完全相同 */ }}
+// 或者
+{"type": "error", "error": { /* 与 §6 错误响应体里的 error 字段完全相同 */ }}
+```
+
+- `result` / `error` **恰好一行，且是最后一行**。连接在此之前断开 = 传输失败。
+- 只转发 `delta.content`；思维链、工具调用不转发，以最后的 `result` 为准。
+- 上游退回整段 JSON（§4.9）时没有 `delta` 行，只有 `result`。
+- **拦截文案静音**：累积正文一旦命中 §4.7 的拦截标记，之后的增量一律不再转发（结尾照常
+  报 `PROVIDER_CONTENT_FILTERED`），拒绝文案的完整句子不会先漏给调用方。
+- `delta` 只是提示：Python 侧把它当作「可以提前发出去的正文」，而**内容的权威版本永远是
+  `result.content`**。
 
 ## 4. 语义对齐（v1.2 起以本文件为唯一权威）
 
@@ -234,6 +258,9 @@ HTTP 状态与错误码固定对应：
   `AsyncLLMProvider` 协议；成功时 `set_last_generation_usage(usage)`（`usage` 原样透传），
   失败时映射为本仓库既有异常类型（`ProviderConnectionError` / `ProviderAuthError` /
   `ProviderResponseError` / `ProviderContentFilteredError`），**不重试**（重试归 `Brain`）。
+- `GoTransportProvider.generate_async(request, on_text_delta=cb)`：给了回调时走 §3.1，
+  每个 `delta` 调一次 `cb(text)`；侧车返回 404（旧版本侧车没有流式端点）时自动退回 §2。
+  一旦调用方已经把增量发出去，`Brain` 不再重试或换兜底任务——已发出的半句收不回来。
 - `GoTransportProvider.generate_image_async(request)`：调用 §5.1，把
   `image_base64` 解回原始字节构造 `ImageGenerationResult`；异常映射同上。
 - 多模态：把 `messages` 原样交给 sidecar（**不**在 Python 侧做 data URL 转换）。
@@ -251,6 +278,7 @@ Python 侧启动时校验 `version` 主版本为 `0`（v1 契约期内）。
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| 1.3 | 2026-11-14 | 新增 §3.1 `POST /v1/generate-stream`（NDJSON 增量 + 最终结果/错误），用于提前发出回复的第一句；拦截文案出现后不再转发增量。§2/§3 不变。侧车版本号 **0.3.0**。 |
 | 1.2 | 2026-11-09 | 新增 §5.1 `POST /v1/generate-image`（图像生成 / 图像编辑），生图能力从 Python 迁到侧车；侧车版本号 **0.2.0**。**Python 侧不再保留任何对话补全或生图的传输实现**——侧车由可选变为必需（§7 同步更新）。 |
 | 1.1 | 2026-11-08 | 「空响应」判定从侧车移到 Python（§4.6）：`return_reasoning=True` 只取思维链是合法场景，侧车不再因 `content` 为空报错；对应错误表 §6 去掉「空响应」触发项。侧车版本号 0.1.1。 |
 | 1.0 | 2026-11-08 | 初版。 |

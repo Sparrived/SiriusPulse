@@ -232,3 +232,51 @@ func TestAggregateEventStreamEmptyAndTruncated(t *testing.T) {
 		t.Fatalf("截断流 content = %q", result.Content)
 	}
 }
+
+// TestAggregateEventStreamForwardsContentDeltas 覆盖契约 §3.1：正文增量按到达顺序逐段转发，
+// 思维链与工具调用不转发，聚合结果与不转发时一致。
+func TestAggregateEventStreamForwardsContentDeltas(t *testing.T) {
+	stream := strings.Join([]string{
+		sseLine(t, deltaFrame(map[string]any{"reasoning_content": "先想想"})),
+		sseLine(t, deltaFrame(map[string]any{"content": "好呀。"})),
+		sseLine(t, deltaFrame(map[string]any{"content": "我们周末去。"})),
+		"data: [DONE]",
+	}, "\n")
+
+	var deltas []string
+	result, err := aggregateEventStreamWithDeltas(strings.NewReader(stream), func(text string) {
+		deltas = append(deltas, text)
+	})
+	if err != nil {
+		t.Fatalf("聚合失败: %v", err)
+	}
+	if strings.Join(deltas, "|") != "好呀。|我们周末去。" {
+		t.Fatalf("deltas = %q", deltas)
+	}
+	if result.Content != "好呀。我们周末去。" {
+		t.Fatalf("content = %q", result.Content)
+	}
+}
+
+// TestAggregateEventStreamMutesDeltasOnceRefusalAppears 覆盖：累积正文一旦命中内容策略
+// 拦截文案就不再转发增量，拒绝文案的完整句子不会先漏给调用方。
+func TestAggregateEventStreamMutesDeltasOnceRefusalAppears(t *testing.T) {
+	stream := strings.Join([]string{
+		sseLine(t, deltaFrame(map[string]any{"content": "The prompt could "})),
+		sseLine(t, deltaFrame(map[string]any{"content": "not be submitted"})),
+		sseLine(t, deltaFrame(map[string]any{"content": " due to policy."})),
+		"data: [DONE]",
+	}, "\n")
+
+	var forwarded strings.Builder
+	_, err := aggregateEventStreamWithDeltas(strings.NewReader(stream), func(text string) {
+		forwarded.WriteString(text)
+	})
+	var upstreamErr *Error
+	if !errors.As(err, &upstreamErr) || upstreamErr.Code != contract.CodeProviderContentFiltered {
+		t.Fatalf("err = %v", err)
+	}
+	if isContentPolicyBlock(forwarded.String()) {
+		t.Fatalf("拒绝文案被转发出去了: %q", forwarded.String())
+	}
+}

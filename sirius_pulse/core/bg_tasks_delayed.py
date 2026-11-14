@@ -22,6 +22,7 @@ from sirius_pulse.core.delayed_response_queue import persist_delayed_queue
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import PromptFactory
+from sirius_pulse.core.reply_streaming import FirstSentenceStreamer
 from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
 from sirius_pulse.core.tool_call_runner import (
     ToolCallRunner,
@@ -256,6 +257,38 @@ class DelayedQueueTasks:
             return ""
         name = getattr(tool, "name", "")
         return f"Tool '{name}' 被拒绝：互动不足 (engagement={engagement:.2f})"
+
+    @staticmethod
+    def _first_sentence_streamer(
+        engine: Any,
+        group_id: str,
+        item: Any,
+        *,
+        on_partial_reply: Any | None,
+        eligible: bool,
+    ) -> FirstSentenceStreamer | None:
+        """普通聊天回合里，让第一句话不必等整段写完（见 ``core/reply_streaming``）。
+
+        工作模式的正文不外发、兜底收尾轮要整段处理，都不走这条路；没有半截发送回调
+        （例如离线调用）时也没法提前发。
+        """
+        if on_partial_reply is None or not eligible:
+            return None
+        if not bool(engine.config.get("stream_first_sentence", True)):
+            return None
+
+        async def _send_first_sentence(text: str) -> None:
+            await on_partial_reply(text)
+            # 提前发出的这句是独立的一条消息：现在就记进历史，排在剩下那部分前面。
+            record = getattr(engine, "_record_assistant_message", None)
+            if callable(record):
+                record(
+                    group_id=group_id,
+                    target_user_id=getattr(item, "user_id", "") or "",
+                    content=text,
+                )
+
+        return FirstSentenceStreamer(_send_first_sentence)
 
     @staticmethod
     def _tool_is_silent(tool: Any, tool_call: ToolCall) -> bool:
@@ -932,28 +965,43 @@ class DelayedQueueTasks:
                     if work_run is not None
                     else "response_generate"
                 )
-                chat_result = await engine.brain.chat(
-                    ChatRequest(
-                        group_id=group_id,
-                        user_id=item.user_id or "",
-                        system_prompt=system_prompt,
-                        messages=messages,
-                        task_name=round_task_name,
-                        enable_tools=enable_tools_for_round,
-                        caller_is_developer=caller_is_developer,
-                        post_process=True,
-                        inject_current_time=False,
-                        work_mode=work_run is not None,
-                        defer_bookkeeping_tool_text=(
-                            work_run is None
-                            and engine._tool_registry is not None
-                            and _has_bookkeeping_tool(engine._tool_registry)
-                        ),
-                        extra_tools=control_tools(active=work_run is not None),
-                    )
+                streamer = self._first_sentence_streamer(
+                    engine,
+                    group_id,
+                    item,
+                    on_partial_reply=on_partial_reply,
+                    eligible=work_run is None and not force_notebook_final,
                 )
+                try:
+                    chat_result = await engine.brain.chat(
+                        ChatRequest(
+                            group_id=group_id,
+                            user_id=item.user_id or "",
+                            system_prompt=system_prompt,
+                            messages=messages,
+                            task_name=round_task_name,
+                            enable_tools=enable_tools_for_round,
+                            caller_is_developer=caller_is_developer,
+                            post_process=True,
+                            inject_current_time=False,
+                            work_mode=work_run is not None,
+                            defer_bookkeeping_tool_text=(
+                                work_run is None
+                                and engine._tool_registry is not None
+                                and _has_bookkeeping_tool(engine._tool_registry)
+                            ),
+                            extra_tools=control_tools(active=work_run is not None),
+                            stream_sink=streamer,
+                        )
+                    )
+                finally:
+                    if streamer is not None:
+                        await streamer.settle()
+                if streamer is not None and streamer.sent_at is not None:
+                    last_partial_sent_at = streamer.sent_at
                 _round += 1
-            reply = chat_result.raw_text.strip()
+            # 消息链里要放她这一轮说的完整原话，包括已经提前发出去的第一句。
+            reply = (getattr(chat_result, "streamed_prefix", "") + chat_result.raw_text).strip()
             round_clean = chat_result.clean_text
             sticker_names_accumulated.extend(getattr(chat_result, "sticker_names", []) or [])
             poke_user_ids_accumulated.extend(getattr(chat_result, "poke_user_ids", []) or [])

@@ -381,3 +381,88 @@ func TestGenerateContentFilteredError(t *testing.T) {
 		t.Fatalf("content_preview = %q", errorBody.ContentPreview)
 	}
 }
+
+// postGenerateStream 调流式端点，返回状态码与逐行解析出的事件。
+func postGenerateStream(t *testing.T, sidecarURL string, body []byte) (int, []contract.StreamEvent) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, sidecarURL+"/v1/generate-stream", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer secret")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+	raw, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("读取响应失败: %v", err)
+	}
+	var events []contract.StreamEvent
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var event contract.StreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("不是 NDJSON 行: %q (%v)", line, err)
+		}
+		events = append(events, event)
+	}
+	return response.StatusCode, events
+}
+
+// TestGenerateStreamEmitsDeltasThenResult 覆盖契约 §3.1 的成功路径：增量逐行，最后一行是结果。
+func TestGenerateStreamEmitsDeltasThenResult(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.WriteHeader(http.StatusOK)
+		io.WriteString(writer, `data: {"choices":[{"delta":{"content":"好呀。"}}]}`+"\n\n")
+		io.WriteString(writer, `data: {"choices":[{"delta":{"content":"周末见。"},"finish_reason":"stop"}]}`+"\n\n")
+		io.WriteString(writer, "data: [DONE]\n\n")
+	}))
+	defer upstreamServer.Close()
+
+	sidecar := newSidecar(t, "secret")
+	body := generateRequestBody(t, upstreamServer.URL, "k", []contract.Message{userMessage(t, "hi")})
+	status, events := postGenerateStream(t, sidecar.URL, body)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	if len(events) != 3 {
+		t.Fatalf("events = %+v", events)
+	}
+	if events[0].Type != contract.StreamEventDelta || events[0].Content != "好呀。" ||
+		events[1].Type != contract.StreamEventDelta || events[1].Content != "周末见。" {
+		t.Fatalf("deltas = %+v", events[:2])
+	}
+	last := events[2]
+	if last.Type != contract.StreamEventResult || last.Result == nil || last.Result.Content != "好呀。周末见。" {
+		t.Fatalf("result = %+v", last)
+	}
+}
+
+// TestGenerateStreamReportsUpstreamErrorInBand 覆盖：开始流式后上游失败，以最后一行 error
+// 报出，错误码与 /v1/generate 相同。
+func TestGenerateStreamReportsUpstreamErrorInBand(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(writer, `{"error":{"message":"慢一点"}}`)
+	}))
+	defer upstreamServer.Close()
+
+	sidecar := newSidecar(t, "secret")
+	body := generateRequestBody(t, upstreamServer.URL, "k", []contract.Message{userMessage(t, "hi")})
+	status, events := postGenerateStream(t, sidecar.URL, body)
+	if status != http.StatusOK || len(events) != 1 {
+		t.Fatalf("status = %d events = %+v", status, events)
+	}
+	event := events[0]
+	if event.Type != contract.StreamEventError || event.Error == nil {
+		t.Fatalf("event = %+v", event)
+	}
+	if event.Error.ErrorCode != contract.CodeProviderResponseError || !event.Error.IsRetryable {
+		t.Fatalf("error = %+v", event.Error)
+	}
+}

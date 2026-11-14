@@ -31,6 +31,7 @@ import base64
 import json
 import logging
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import httpx
@@ -75,6 +76,10 @@ _ERR_PROVIDER_CONTENT_FILTERED = "PROVIDER_CONTENT_FILTERED"
 _ERR_PROVIDER_CONNECTION = "PROVIDER_CONNECTION_ERROR"
 _ERR_UPSTREAM_TIMEOUT = "UPSTREAM_TIMEOUT"
 
+#: 正文增量回调（契约 §3.1）。在读流的协程里同步调用，必须很便宜：要做 I/O 的
+#: 调用方自己起任务，别让侧车的下一行等着。
+TextDeltaCallback = Callable[[str], None]
+
 
 class GoTransportProvider(AsyncLLMProvider):
     """传输在 Go 侧车、编排在 Python 的 provider。
@@ -111,15 +116,23 @@ class GoTransportProvider(AsyncLLMProvider):
         self._client: httpx.AsyncClient | None = None
         self._client_loop: asyncio.AbstractEventLoop | None = None
         self._client_lock = threading.Lock()
+        #: 侧车是旧版本、没有流式端点（契约 §3.1）时置位，之后不再尝试。
+        self._stream_unsupported = False
 
     # ── 对外接口 ──────────────────────────────────────────────
 
     async def generate_async(
-        self, request: GenerationRequest, return_reasoning: bool = False
+        self,
+        request: GenerationRequest,
+        return_reasoning: bool = False,
+        on_text_delta: TextDeltaCallback | None = None,
     ) -> GenerationResult | tuple[str, GenerationResult]:
         """把一次生成交给侧车，返回聚合好的结果。
 
         When return_reasoning=True, returns (reasoning_content, GenerationResult) tuple.
+
+        ``on_text_delta`` 给出时走流式端点（契约 §3.1），正文增量到达一段回调一次；
+        返回值仍是完整结果，内容以它为准。
         """
         timeout_seconds = resolve_generation_timeout_seconds(request, self._timeout_seconds)
         base_url, token = self._resolve_endpoint()
@@ -147,6 +160,48 @@ class GoTransportProvider(AsyncLLMProvider):
             logger.debug(f"[模型调用详情] {request.model} | 传输层请求:{debug_detail}")
 
         client = self._ensure_client()
+        result: GenerationResult | None = None
+        if on_text_delta is not None and not self._stream_unsupported:
+            result = await self._generate_streaming(
+                client, base_url, token, body, request=request, on_text_delta=on_text_delta
+            )
+        if result is None:
+            result = await self._generate_whole(client, url, token, body, request=request)
+
+        # 契约 §4.6（v1.1）：空响应**不再由侧车判定**——侧车照样回 200 + 空 content，
+        # 是否算失败属于业务语义，由这里决定。`return_reasoning=True` 只取思维链是合法
+        # 场景，不能因为正文为空就报错。
+        if not result.content and not result.tool_calls and not return_reasoning:
+            logger.error(
+                f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"| 响应为空 | finish_reason={result.finish_reason}"
+            )
+            raise ProviderResponseError(
+                self._provider_name,
+                "提供商响应内容为空。",
+                http_status=200,
+            )
+
+        content = result.content or ""
+        logger.info(f"{self._provider_name} 的 {request.model} 回复我了，写了 {len(content)} 个字～")
+        logger.debug(
+            f"[模型输出] {request.model} | Provider: {self._provider_name} | URL: {url} "
+            f"| 响应内容:\n{content}"
+        )
+        if return_reasoning:
+            return (result.reasoning_content, result)
+        return result
+
+    async def _generate_whole(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        token: str,
+        body: bytes,
+        *,
+        request: GenerationRequest,
+    ) -> GenerationResult:
+        """契约 §2/§3：一次请求拿回整段结果。"""
         try:
             response = await client.post(
                 url,
@@ -176,36 +231,129 @@ class GoTransportProvider(AsyncLLMProvider):
                 model=request.model,
                 url=url,
             )
-        result = self._parse_generation_body(
+        return self._parse_generation_body(
             raw,
             request=request,
             status_code=response.status_code,
             url=url,
         )
 
-        # 契约 §4.6（v1.1）：空响应**不再由侧车判定**——侧车照样回 200 + 空 content，
-        # 是否算失败属于业务语义，由这里决定。`return_reasoning=True` 只取思维链是合法
-        # 场景，不能因为正文为空就报错。
-        if not result.content and not result.tool_calls and not return_reasoning:
+    async def _generate_streaming(
+        self,
+        client: httpx.AsyncClient,
+        base_url: str,
+        token: str,
+        body: bytes,
+        *,
+        request: GenerationRequest,
+        on_text_delta: TextDeltaCallback,
+    ) -> GenerationResult | None:
+        """契约 §3.1：逐行读 NDJSON，增量交给回调，最后一行给出结果或错误。
+
+        侧车没有这个端点（404，旧版本）时返回 ``None``，调用方改走整段生成。
+        """
+        url = f"{base_url}/v1/generate-stream"
+        callback: TextDeltaCallback | None = on_text_delta
+        try:
+            async with client.stream(
+                "POST",
+                url,
+                content=body,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            ) as response:
+                if response.status_code == 404:
+                    self._stream_unsupported = True
+                    logger.warning(
+                        "LLM 传输层侧车没有流式端点（版本过旧），改用整段生成；"
+                        "重新构建侧车即可启用：python scripts/build_llm_transport.py"
+                    )
+                    return None
+                if response.status_code >= 400:
+                    raw = (await response.aread()).decode("utf-8", errors="replace")
+                    self._raise_for_sidecar_error(
+                        response.status_code, raw, model=request.model, url=url
+                    )
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    event = self._parse_stream_event(line, request=request, url=url)
+                    kind = event.get("type")
+                    if kind == "delta":
+                        text = event.get("content")
+                        if callback is not None and isinstance(text, str) and text:
+                            try:
+                                callback(text)
+                            except Exception:
+                                # 回调坏了只影响「提前发」，完整结果照样返回。
+                                logger.warning("正文增量回调失败，本次不再转发", exc_info=True)
+                                callback = None
+                    elif kind == "result":
+                        return self._result_from_payload(
+                            event.get("result"),
+                            request=request,
+                            status_code=200,
+                            raw=line,
+                            url=url,
+                        )
+                    elif kind == "error":
+                        error = event.get("error")
+                        error = error if isinstance(error, dict) else {}
+                        # 流式端点已经回了 200，错误体里的 http_status 才是「若走
+                        # 整段端点会返回的状态」，按它走同一套异常映射。
+                        sidecar_status = error.get("http_status")
+                        status = (
+                            sidecar_status
+                            if isinstance(sidecar_status, int)
+                            and not isinstance(sidecar_status, bool)
+                            else 502
+                        )
+                        self._raise_for_sidecar_error(
+                            status,
+                            json.dumps({"error": error}, ensure_ascii=False),
+                            model=request.model,
+                            url=url,
+                        )
+        except httpx.HTTPError as exc:
             logger.error(
                 f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
-                f"| 响应为空 | finish_reason={result.finish_reason}"
+                f"| {type(exc).__name__}: {exc or '(无详细信息)'}",
+                exc_info=True,
+            )
+            raise ProviderConnectionError(
+                self._provider_name,
+                f"LLM 传输层请求异常：{exc}",
+                original_error=exc,
+            ) from exc
+        raise ProviderConnectionError(self._provider_name, "LLM 传输层的流式响应在给出结果之前中断了。")
+
+    def _parse_stream_event(
+        self, line: str, *, request: GenerationRequest, url: str
+    ) -> dict[str, Any]:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            logger.error(
+                f"[模型调用失败] {request.model} | Provider: {self._provider_name} | URL: {url} "
+                f"| 流式响应行不是 JSON: {line[:200]}"
             )
             raise ProviderResponseError(
                 self._provider_name,
-                "提供商响应内容为空。",
+                f"LLM 传输层流式响应无法解析为 JSON：{exc}",
                 http_status=200,
+                response_body=line,
+            ) from exc
+        if not isinstance(event, dict):
+            raise ProviderResponseError(
+                self._provider_name,
+                "LLM 传输层流式响应行的顶层结构不是对象。",
+                http_status=200,
+                response_body=line,
             )
-
-        content = result.content or ""
-        logger.info(f"{self._provider_name} 的 {request.model} 回复我了，写了 {len(content)} 个字～")
-        logger.debug(
-            f"[模型输出] {request.model} | Provider: {self._provider_name} | URL: {url} "
-            f"| 响应内容:\n{content}"
-        )
-        if return_reasoning:
-            return (result.reasoning_content, result)
-        return result
+        return event
 
     async def generate_image_async(self, request: ImageGenerationRequest) -> ImageGenerationResult:
         """把一次生图 / 图像编辑交给侧车（契约 §5.1）。
@@ -369,6 +517,20 @@ class GoTransportProvider(AsyncLLMProvider):
                 http_status=status_code,
                 response_body=raw,
             ) from exc
+        return self._result_from_payload(
+            data, request=request, status_code=status_code, raw=raw, url=url
+        )
+
+    def _result_from_payload(
+        self,
+        data: object,
+        *,
+        request: GenerationRequest,
+        status_code: int,
+        raw: str,
+        url: str,
+    ) -> GenerationResult:
+        """把契约 §3 的成功响应体（或 §3.1 的 result 字段）还原成结果。"""
         if not isinstance(data, dict):
             raise ProviderResponseError(
                 self._provider_name,

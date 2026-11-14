@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /v1/generate", s.authorize(s.handleGenerate))
+	mux.HandleFunc("POST /v1/generate-stream", s.authorize(s.handleGenerateStream))
 	mux.HandleFunc("POST /v1/generate-image", s.authorize(s.handleGenerateImage))
 	return mux
 }
@@ -101,7 +102,70 @@ func (s *Server) handleGenerate(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	s.writeJSON(writer, http.StatusOK, contract.GenerateResponse{
+	s.writeJSON(writer, http.StatusOK, generateResponse(result, conversions))
+	s.logf("调用成功 | model=%s | purpose=%s | path=%s | 内容 %d 字 | 工具调用 %d | 图片内联 %d | %.1fms",
+		payload.Request.Model, payload.Request.Purpose, result.Path,
+		len([]rune(result.Content)), len(result.ToolCalls), conversions, result.UpstreamMs)
+}
+
+// handleGenerateStream 是 POST /v1/generate-stream 的入口（契约 §3.1）。
+//
+// 请求体与 /v1/generate 相同。请求校验失败照常回 400 JSON；开始调用上游后改回
+// 200 + NDJSON：正文增量逐行 flush，最后一行是完整结果或错误（错误码与 §6 相同）。
+// Python 据此可以在整段生成完之前先把第一句发出去。
+func (s *Server) handleGenerateStream(writer http.ResponseWriter, request *http.Request) {
+	started := time.Now()
+	var payload contract.GenerateRequest
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		s.reject(writer, "请求体不是合法 JSON："+err.Error(), started)
+		return
+	}
+	if validationErr := validateUpstream(payload.Upstream); validationErr != "" {
+		s.reject(writer, validationErr, started)
+		return
+	}
+	preparedMessages, conversions := media.Inline(payload.Request.Messages)
+	payload.Request.Messages = preparedMessages
+
+	writer.Header().Set("Content-Type", contract.ContentTypeNDJSON)
+	writer.Header().Set("Cache-Control", "no-cache")
+	writer.WriteHeader(http.StatusOK)
+	flusher, _ := writer.(http.Flusher)
+	emit := func(event contract.StreamEvent) {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			return
+		}
+		_, _ = writer.Write(append(encoded, '\n'))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	deltas := 0
+	result, err := s.Client.GenerateStreaming(request.Context(), &payload, func(text string) {
+		deltas++
+		emit(contract.StreamEvent{Type: contract.StreamEventDelta, Content: text})
+	})
+	if err != nil {
+		upstreamErr := asUpstreamError(err)
+		body := errorBody(upstreamErr)
+		emit(contract.StreamEvent{Type: contract.StreamEventError, Error: &body})
+		s.logf("流式调用失败 | model=%s | purpose=%s | status=%d | error=%s | %s | 已转发增量 %d | %.1fms",
+			payload.Request.Model, payload.Request.Purpose, body.HTTPStatus,
+			upstreamErr.Code, upstreamErr.Message, deltas, elapsedMilliseconds(started))
+		return
+	}
+	response := generateResponse(result, conversions)
+	emit(contract.StreamEvent{Type: contract.StreamEventResult, Result: &response})
+	s.logf("流式调用成功 | model=%s | purpose=%s | path=%s | 内容 %d 字 | 增量 %d | 工具调用 %d | %.1fms",
+		payload.Request.Model, payload.Request.Purpose, result.Path,
+		len([]rune(result.Content)), deltas, len(result.ToolCalls), result.UpstreamMs)
+}
+
+// generateResponse 把聚合结果组装成契约 §3 的成功响应体。
+func generateResponse(result *upstream.Result, conversions int) contract.GenerateResponse {
+	return contract.GenerateResponse{
 		Content:          result.Content,
 		ReasoningContent: result.ReasoningContent,
 		ToolCalls:        result.ToolCalls,
@@ -113,10 +177,7 @@ func (s *Server) handleGenerate(writer http.ResponseWriter, request *http.Reques
 			UpstreamMs:            result.UpstreamMs,
 			Path:                  result.Path,
 		},
-	})
-	s.logf("调用成功 | model=%s | purpose=%s | path=%s | 内容 %d 字 | 工具调用 %d | 图片内联 %d | %.1fms",
-		payload.Request.Model, payload.Request.Purpose, result.Path,
-		len([]rune(result.Content)), len(result.ToolCalls), conversions, result.UpstreamMs)
+	}
 }
 
 // handleGenerateImage 是 POST /v1/generate-image 的入口（契约 §5.1/§6）。
@@ -166,18 +227,24 @@ func (s *Server) reject(writer http.ResponseWriter, message string, started time
 
 // writeError 把错误按契约 §6 的响应体写回。
 func (s *Server) writeError(writer http.ResponseWriter, err *upstream.Error) {
+	body := errorBody(err)
+	s.writeJSON(writer, body.HTTPStatus, contract.ErrorResponse{Error: body})
+}
+
+// errorBody 把错误转成契约 §6 的 error 字段；两个生成端点共用同一份。
+func errorBody(err *upstream.Error) contract.ErrorBody {
 	status := err.HTTPStatus
 	if status == 0 {
 		status = contract.StatusProviderFailure
 	}
-	s.writeJSON(writer, status, contract.ErrorResponse{Error: contract.ErrorBody{
+	return contract.ErrorBody{
 		ErrorCode:      err.Code,
 		Message:        err.Message,
 		HTTPStatus:     status,
 		UpstreamStatus: err.UpstreamStatus,
 		IsRetryable:    err.Retryable,
 		ContentPreview: err.ContentPreview,
-	}})
+	}
 }
 
 // writeJSON 输出 JSON 响应。

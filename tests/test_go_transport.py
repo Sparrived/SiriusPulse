@@ -876,3 +876,92 @@ def test_settings_parse_transport_keys(tmp_path: Path) -> None:
 
     config.write_text(json.dumps({"llm_transport_port": "not-a-port"}), encoding="utf-8")
     assert load_amkr_settings(tmp_path).llm_transport_port == 0
+
+
+# ── 契约 §3.1：流式端点 ───────────────────────────────────
+def _generate_streaming(provider: GoTransportProvider, request: GenerationRequest):
+    """跑一次带增量回调的生成，返回 (结果, 收到的增量列表)。"""
+    deltas: list[str] = []
+
+    async def main():
+        try:
+            return await provider.generate_async(request, on_text_delta=deltas.append)
+        finally:
+            await provider.aclose()
+
+    return asyncio.run(main()), deltas
+
+
+@requires_binary
+def test_streaming_reply_delivers_deltas_before_the_full_result(
+    amkr: FakeAmkr, sidecar: LLMSidecar
+) -> None:
+    result, deltas = _generate_streaming(_provider(amkr, sidecar), _request())
+    assert len(deltas) >= 2, "多帧正文必须逐段转发，而不是攒成一整段"
+    assert "".join(deltas) == result.content == "你好，世界"
+
+
+@requires_binary
+@pytest.mark.parametrize(
+    ("scenario", "error_type"),
+    [("content_filtered", ProviderContentFilteredError), ("error_event", ProviderResponseError)],
+)
+def test_streaming_failures_map_to_the_same_errors(
+    amkr: FakeAmkr, sidecar: LLMSidecar, scenario: str, error_type: type[Exception]
+) -> None:
+    """流式端点的失败与整段端点抛同一类异常；拦截文案不会先作为增量漏出来。"""
+    amkr.set_scenario(scenario)
+    deltas: list[str] = []
+    provider = _provider(amkr, sidecar)
+
+    async def main():
+        try:
+            return await provider.generate_async(_request(), on_text_delta=deltas.append)
+        finally:
+            await provider.aclose()
+
+    with pytest.raises(error_type):
+        asyncio.run(main())
+    assert "could not be submitted" not in "".join(deltas).lower()
+
+
+def test_old_sidecar_without_streaming_falls_back_to_whole_generation(monkeypatch) -> None:
+    """旧版本侧车没有流式端点（404）：退回整段生成，且之后不再尝试流式。"""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path == "/v1/generate-stream":
+            return httpx.Response(404, text="404 page not found")
+        return httpx.Response(
+            200,
+            json={
+                "content": "在的",
+                "reasoning_content": "",
+                "tool_calls": [],
+                "finish_reason": "stop",
+                "usage": None,
+                "transport": {},
+            },
+        )
+
+    provider = GoTransportProvider(
+        sidecar_url="http://sidecar.test",
+        sidecar_token="t",
+        base_url="http://amkr.test",
+        api_key="amkr_ik_test",
+    )
+    monkeypatch.setattr(
+        provider,
+        "_ensure_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    async def main():
+        first = await provider.generate_async(_request(), on_text_delta=lambda _t: None)
+        second = await provider.generate_async(_request(), on_text_delta=lambda _t: None)
+        return first, second
+
+    first, second = asyncio.run(main())
+    assert first.content == second.content == "在的"
+    assert calls == ["/v1/generate-stream", "/v1/generate", "/v1/generate"]

@@ -20,6 +20,7 @@ Hook 机制：
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -141,6 +142,12 @@ class ChatRequest:
     retry_max: int = 1  # 最多重试次数（总调用次数 = retry_max + 1）
     retry_delay: float = 1.0  # 重试间隔（秒）
 
+    # ── 流式（可选） ──
+    stream_sink: Any | None = None
+    """接收正文增量的对象：``on_delta(text)`` 同步回调，``committed`` 是它已经决定
+    发出去的那段原文前缀。给了它就走流式传输；``committed`` 非空后本轮不再重试、
+    不换兜底任务（已发出的半句收不回来），返回结果里会去掉这段前缀。"""
+
 
 @dataclass(slots=True)
 class ChatResult:
@@ -166,6 +173,19 @@ class ChatResult:
     reply_references: list[dict[str, str]] = field(default_factory=list)
     # 模型本轮主动输出跳过标记：没有正文是预期结果，投递层不能按失败去重试。
     skipped: bool = False
+    # 流式生成时已经提前发出去的原文前缀；raw_text / clean_text 是去掉它之后的部分。
+    streamed_prefix: str = ""
+
+
+def _accepts_text_delta(generate_async: Any) -> bool:
+    """provider 的 ``generate_async`` 是否接受 ``on_text_delta``（测试替身通常不接受）。"""
+    try:
+        parameters = inspect.signature(generate_async).parameters
+    except (TypeError, ValueError):
+        return False
+    return "on_text_delta" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
 
 
 def _tool_names_from_schemas(tools: list[dict[str, Any]] | None) -> list[str]:
@@ -665,6 +685,7 @@ class Brain:
                         purpose_desc=f"chat({request.task_name})",
                         rebuild_fn=_rebuild_gen_request,
                         fallback_model=getattr(cfg, "fallback_model_name", "") or None,
+                        stream_sink=request.stream_sink,
                     )
                 finally:
                     self._mark_main_reply_cooldown(request)
@@ -684,7 +705,19 @@ class Brain:
                 )
                 raise
 
-            reply = gen_result.content or ""
+            full_reply = gen_result.content or ""
+            reply = full_reply
+            streamed_prefix = str(getattr(request.stream_sink, "committed", "") or "")
+            if streamed_prefix:
+                # 这段已经作为独立的一条消息发出并记进历史了：后处理（去重、标记、
+                # 富文本、记忆）只该看剩下的部分，否则它会被再发一遍、再记一遍。
+                if reply.startswith(streamed_prefix):
+                    reply = reply[len(streamed_prefix) :]
+                else:
+                    logger.warning(
+                        "[%s] 流式提前发出的前缀与最终结果对不上，按原文继续",
+                        request.task_name,
+                    )
 
             # ── 4. 默认 post: 剥离模型回显的 XML 块 ──
             reply = strip_conversation_history_xml(reply)
@@ -705,7 +738,7 @@ class Brain:
             token_record = self._record_chat_tokens(
                 gen_request=gen_request,
                 system_prompt_used=gen_request.system_prompt,
-                reply=reply,
+                reply=full_reply if streamed_prefix else reply,
                 estimated_input_tokens=estimated_input_tokens,
                 duration_ms=duration_ms,
                 group_id=request.group_id,
@@ -740,6 +773,7 @@ class Brain:
                 has_tool_call=bool(tool_calls),
                 tool_calls=tool_calls,
                 skipped=bool(ctx.get("skip_reply")),
+                streamed_prefix=streamed_prefix,
             )
 
             # 只调私人记录工具（如小本）的这一轮，正文是未送出的草稿，
@@ -891,6 +925,7 @@ class Brain:
         purpose_desc: str,
         rebuild_fn: Callable[[], Any] | None = None,
         fallback_model: str | None = None,
+        stream_sink: Any | None = None,
     ) -> tuple[GenerationResult, Any, dict | None]:
         """调用 provider，在 transport 级异常时自动重试。
 
@@ -911,14 +946,23 @@ class Brain:
 
         current = gen_request
         last_exc: Exception | None = None
+        on_text_delta = getattr(stream_sink, "on_delta", None)
+        reset_stream = getattr(stream_sink, "reset", None)
         for attempt in range(retry_max + 1):
             try:
-                result = await self._provider_call(current)
+                if callable(reset_stream):
+                    # 上一次失败的半截增量不能和这一次的拼在一起。
+                    reset_stream()
+                result = await self._provider_call(current, on_text_delta=on_text_delta)
                 # 立即捕获 token 用量，避免后续 await 点被其他协程覆盖
                 real_usage = get_last_generation_usage()
                 return result, current, real_usage
             except Exception as exc:
                 last_exc = exc
+                # 已经有半句发到群里了：重来一遍会生成另一段话，和发出去的那半句对不上。
+                if getattr(stream_sink, "committed", ""):
+                    logger.error("%s 流式生成在已发出部分正文后失败，不再重试: %s", purpose_desc, exc)
+                    break
                 # 上游内容策略拦截：换备选任务名重发一次。拦的是 prompt 本身，
                 # 不是瞬时故障，按原任务重试只会再被拦，所以这里不占重试计数。
                 if (
@@ -978,11 +1022,19 @@ class Brain:
         # 所有重试均失败，抛出最后一次异常
         raise last_exc  # type: ignore[misc]
 
-    async def _provider_call(self, request: Any) -> GenerationResult:
-        """调用 provider 生成回复。"""
+    async def _provider_call(
+        self, request: Any, *, on_text_delta: Callable[[str], None] | None = None
+    ) -> GenerationResult:
+        """调用 provider 生成回复；给了 ``on_text_delta`` 且 provider 支持时走流式。"""
         from sirius_pulse.providers.base import LLMProvider
 
         if hasattr(self.provider_async, "generate_async"):
+            if on_text_delta is not None and _accepts_text_delta(
+                self.provider_async.generate_async
+            ):
+                return await self.provider_async.generate_async(
+                    request, on_text_delta=on_text_delta
+                )
             return await self.provider_async.generate_async(request)
         elif isinstance(self.provider_async, LLMProvider):
             text = await asyncio.to_thread(self.provider_async.generate, request)
