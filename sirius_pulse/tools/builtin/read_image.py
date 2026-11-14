@@ -84,9 +84,8 @@ _config.group("读图").add(
 TOOL_META = {
     "name": "read_image",
     "description": (
-        "【适用场景】需要查看或分析具体图片内容时使用（如核对聊天原图、形象设定图、本地图片文件）。\n"
-        "【使用方法】paths 传入 1-4 个本地文件路径或 http(s) URL，或 assets 传入视觉资产 ID；可选 focus 指定关注焦点。\n"
-        "【注意事项】仅支持标准图像格式（PNG/JPEG/GIF/WebP/BMP），单张不超过 20MB、合计不超过 32MB；不可用于读取文本或非图像文件。"
+        "看图片内容：聊天原图、形象设定图、本地图片或网络图片。支持 PNG/JPEG/GIF/WebP/BMP，"
+        "单张 20MB 以内。"
     ),
     "version": "1.0.0",
     "side_effect": "read_only",

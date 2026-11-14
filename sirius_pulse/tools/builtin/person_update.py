@@ -18,13 +18,7 @@ _ACTIONS = [
 
 TOOL_META = {
     "name": "person_update",
-    "description": (
-        "【适用场景】依据当前原消息指令维护人物称谓、更正属性声明、确认画像变更或登记原创角色。\n"
-        "【使用方法】action 选择操作（set_names/propose_claim/correct_claim/"
-        "retire_claim/confirm_change/create_character）；"
-        "target 传入主体引用；evidence_ref 传入来源消息证据引用。\n"
-        "【注意事项】必须具备有效证据引用；仅能维护授权范围内的资料，严禁篡改账号绑定、系统权限或任意画像字段。"
-    ),
+    "description": ("有人在聊天里让你改称呼、记下或更正关于某人的信息（生日、职业等）、" "确认一条待确认的变更，或登记一个原创角色时用。每次修改都要附上提出它的那条消息。"),
     "version": "1.1.0",
     "side_effect": "external_write",
     "redact_logs": True,
@@ -36,27 +30,19 @@ TOOL_META = {
             "type": "string",
             "choices": _ACTIONS,
             "description": (
-                "set_names 设称呼/别名（preferred_name、add_aliases、retire_names）；"
-                "propose_claim 记一条属性声明（field、value、source）；"
-                "correct_claim 更正已有声明（claim_id、value）；retire_claim 撤下声明（claim_id）；"
-                "confirm_change 确认一条待确认的变更（change_id）；"
-                "create_character 登记原创/虚构角色（name）。"
+                "set_names 改称呼/别名；propose_claim 记一条信息；correct_claim 更正；"
+                "retire_claim 撤下；confirm_change 确认待确认的变更；create_character 登记原创角色。"
             ),
             "required": True,
         },
         "target": {
             "type": "object",
-            "description": (
-                "改谁，写法同 person_query：{'ref': 'requester'}、{'ref': 'person_id', 'value': '<UUID>'}"
-                " 等；requester 必须是 evidence_ref 那条消息的作者。"
-            ),
+            "description": ("改谁，写法同 person_query；requester 指 evidence_ref 那条消息的作者。"),
             "required": True,
         },
         "evidence_ref": {
             "type": "string",
-            "description": (
-                "提出这次修改的那条消息的 evidence_ref（聊天记录里每条消息都带着），原样复制，不能编造。"
-            ),
+            "description": ("提出这次修改的那条消息的 evidence_ref（每条聊天消息都带着），原样复制。"),
             "required": True,
         },
         "preferred_name": {
@@ -81,10 +67,7 @@ TOOL_META = {
         },
         "expected_revision": {
             "type": "integer",
-            "description": (
-                "可选：person_query 返回的 revision。填了可以避免盖掉别人刚做的修改，"
-                "资料已被改过时会返回 revision_conflict，重新查一次再改。"
-            ),
+            "description": ("可选：person_query 返回的 revision，防止盖掉别人刚做的修改。"),
             "required": False,
         },
         "claim_id": {
@@ -101,7 +84,7 @@ TOOL_META = {
         },
         "field": {
             "type": "string",
-            "description": "propose_claim：属性名，用简短中文，如 生日、职业、所在城市；不能是账号或权限类字段。",
+            "description": "propose_claim：属性名，简短中文，如 生日、职业、所在城市。",
             "required": False,
         },
         "value": {
@@ -112,10 +95,7 @@ TOOL_META = {
         "source": {
             "type": "string",
             "choices": ["self_reported", "third_party", "inferred"],
-            "description": (
-                "propose_claim：信息从哪来。self_reported 本人说的；third_party 别人说的；"
-                "inferred 你自己推断的。"
-            ),
+            "description": ("propose_claim：self_reported 本人说的；third_party 别人说的；inferred 你推断的。"),
             "required": False,
             "default": "self_reported",
         },

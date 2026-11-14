@@ -90,7 +90,11 @@ _config.group("生图").add(
             "choices": ["persona", "requester", "person_id", "name", "mention_ref"],
             "required": True,
         },
-        {"name": "value", "type": "str", "description": "ref 为 person_id / name / mention_ref 时填写。"},
+        {
+            "name": "value",
+            "type": "str",
+            "description": "ref 为 person_id / name / mention_ref 时填写。",
+        },
     ],
 )
 _config.group("生图").add(
@@ -114,12 +118,9 @@ _config.group("生图").add(
 TOOL_META = {
     "name": "image_generate",
     "description": (
-        "【适用场景】根据文本描述或参考图像生成新图片。\n"
-        "【使用方法】传入 prompt 描述画面主体与构图风格；可选 subjects 绑定人物设定（如 {'ref': 'persona'} 画自己）；"
-        "可选 reference_images 提供参考图路径或 URL；多角色参考可开启 collage_references，"
-        "系统会把每人一张代表图拼成少量 2×2 拼图并追加位置说明。\n"
-        "【注意事项】异步任务，调用后仅返回任务 ID，不阻塞当前回复；生成完成后仅向内部回调产物路径，不自动外发；"
-        "需发送产物至群聊/私聊时须在回调轮次显式调用 group_file_exec；禁止重复提交相同请求，未收到完成回调前不得谎称已画完。"
+        "按描述画一张新图，可以带参考图，或用 subjects 指定画谁。这是后台任务：调用后只拿到任务 ID，"
+        "画完会回调告诉你图在哪；要发给别人，在回调那一轮用 group_file_exec 发。"
+        "没收到回调前别说已经画好，也别重复提交。"
     ),
     "version": "1.1.0",
     "side_effect": "external_write",

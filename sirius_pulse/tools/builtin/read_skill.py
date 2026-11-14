@@ -15,10 +15,8 @@ _MAX_FILE_BYTES = 512 * 1024
 TOOL_META = {
     "name": "read_skill",
     "description": (
-        "【适用场景】执行特定专业任务前，查阅操作规范（Agent Skill 文档）及附带的参考说明或脚本模板。\n"
-        "【使用方法】skill_name 留空时列出可用 Skill 列表；传入 skill_name 默认读取 SKILL.md；"
-        "通过 relative_path 读取 Skill 目录内的其他参考文件；长文档支持 offset 与 max_chars 分段读取。\n"
-        "【注意事项】只读工具，不执行脚本；如需执行 Skill 中的脚本，应在工作模式下使用 bash 工具运行。"
+        "做专门的任务前，先读对应 Skill 的操作说明和附带文件。不填 skill_name 会列出有哪些 Skill。"
+        "只读；要跑 Skill 里的脚本用 bash。"
     ),
     "version": "1.0.0",
     "retry_safe": True,

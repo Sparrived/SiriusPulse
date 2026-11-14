@@ -42,14 +42,8 @@ _REPEAT_LABELS = {"none": "", "daily": "，每天", "weekdays": "，每个工作
 TOOL_META = {
     "name": "reminder",
     "description": (
-        "【适用场景】有人托你到某个时间提醒他（或提醒群里）一件事，或者你答应了晚点再提起某件事。\n"
-        "【使用方法】action=add：at 填本地时间（如 2026-11-15 20:00；只写 20:00 表示接下来的那个"
-        " 20:00），或者用 in_minutes 填几分钟后；message 填到点时要发出去的原话，用你自己的口气"
-        "写完整，到时候会原样发出、不会再改写；群里要 @ 人就在 message 开头写 [AT:QQ号]；"
-        "可选 repeat=daily / weekdays / weekly 每天 / 工作日 / 每周重复。"
-        "action=list 查看这个聊天里还没到点的提醒；action=cancel 加 reminder_id 取消。\n"
-        "【注意事项】提醒只发到当前聊天；到点时就算你在睡觉也会照常发出（这是别人托你的事）；"
-        "只有设提醒的人或开发者能取消；更复杂的周期请在工作模式里用 bash 的 crontab。"
+        "有人托你到点提醒他（或提醒群里）一件事，或你答应了晚点再提起某事时用。"
+        "到点会把 message 原样发到这个聊天，你在睡觉也照发。只有设提醒的人或开发者能取消。"
     ),
     "version": "1.0.0",
     "side_effect": "external_write",

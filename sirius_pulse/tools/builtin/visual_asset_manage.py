@@ -16,6 +16,7 @@ from typing import Any
 from sirius_pulse.config.config_builder import ConfigBuilder
 from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.visual import tooling
+from sirius_pulse.visual.access import GRANTABLE_CAPABILITIES
 from sirius_pulse.visual.errors import VisualError
 
 logger = logging.getLogger(__name__)
@@ -38,99 +39,75 @@ _config.group("动作").add(
     required=True,
     choices=_ACTIONS,
     description=(
-        "要执行的动作：create_character 登记虚构角色；stage 保存原图/草稿；"
-        "derive 派生三视图候选；activate 启用某修订；set_policy 记录自动候选预授权或兼容许可；"
-        "revoke_consent 撤回授权；retire 停用修订或资产。"
+        "stage 保存一张原图（默认直接设为正式形象）；create_character 登记虚构角色；"
+        "derive 派生三视图候选；activate 启用某个修订；retire 停用修订或资产；"
+        "set_policy 允许以后自动生成三视图候选；revoke_consent 撤回这类允许。"
     ),
 )
 _config.group("主体").add(
     "target",
     type="str",
     description=(
-        '单个主体引用，JSON 对象或对象本身：{"ref": "requester"}、'
-        '{"ref": "persona"}、{"ref": "person_id", "value": "<UUID>"}、'
-        '{"ref": "name", "value": "<名称>"}。省略时默认 requester；'
-        "为其他人投稿须明确选定可见人物，投稿者不必是图中人物。"
-        "自主回合不能省略 target，请显式指定 persona 或 person_id。"
+        '是谁的素材：{"ref": "requester"}（默认，说话的人）、{"ref": "persona"}（你自己）、'
+        '{"ref": "person_id", "value": "<UUID>"} 或 {"ref": "name", "value": "<名称>"}。'
+        "自主回合必须写明。"
     ),
 )
 _config.group("素材").add(
     "source",
     type="str",
     description=(
-        '入库素材来源：默认 {"kind": "attachment"}（本回合聊天图片，可用 index 选第几张）；'
-        '或 {"kind": "asset", "asset_id": "<受管资产ID>"}；'
-        '自主回合可直接用 {"kind": "path", "path": "任意本地图片路径"} 导入（相对路径按人格目录解析）；'
-        "群聊回复中也可使用本地图片路径。远程 URL 仍会被拒绝。"
+        '图从哪来：默认 {"kind": "attachment", "index": 0}（本轮聊天里的图）；'
+        '{"kind": "asset", "asset_id": "..."}；或本地文件 {"kind": "path", "path": "..."}。'
+        "不收网络 URL。"
     ),
 )
-_config.group("素材").add("view", type="str", description="参考图视角/用途说明，如 正视图、侧视图、背面、立绘。")
+_config.group("素材").add("view", type="str", description="视角，如 正视图、侧视图、背面、立绘。")
 _config.group("素材").add(
-    "purpose",
-    type="str",
-    description="视觉档案用途：identity（默认）/outfit/pose/style/scene。",
+    "purpose", type="str", description="identity（默认）/ outfit / pose / style / scene。"
 )
-_config.group("素材").add(
-    "scope",
-    type="str",
-    description="默认当前会话范围（group:<群号>）；人格资料用 persona；仅应用管理员可扩大为 persona。",
-)
-_config.group("角色").add("name", type="str", description="create_character 时的角色名称。")
-_config.group("说明").add("identity_description", type="str", description="外观/身份特征说明。")
-_config.group("说明").add("default_outfit", type="str", description="默认服装说明。")
-_config.group("说明").add("variant_notes", type="str", description="版本差异或不可变限制。")
-_config.group("说明").add("inferred_details", type="str", description="推测/补全细节，需明确标注不确定。")
-_config.group("授权").add(
-    "capabilities",
-    type="list",
-    description="自动候选预授权或旧兼容能力：view / vision_read / upload_generate / external_send；不限制手动共享。",
-)
-_config.group("授权").add(
-    "mode",
-    type="str",
-    description="manual（默认）或 auto_candidate；不提供自动启用。",
-)
+_config.group("素材").add("scope", type="str", description="默认只在当前聊天可见；persona 表示所有聊天（需管理员）。")
+_config.group("角色").add("name", type="str", description="create_character：角色名。")
+_config.group("说明").add("identity_description", type="str", description="发色、五官等身份特征。")
+_config.group("说明").add("default_outfit", type="str", description="默认服装。")
+_config.group("说明").add("variant_notes", type="str", description="这个版本的差异或限制。")
+_config.group("说明").add("inferred_details", type="str", description="你推测补全的部分。")
 _config.group("授权").add(
     "revision_scope",
     type="str",
-    description="授权覆盖范围：selected（默认）/current/future。",
+    description="set_policy：selected（默认，只管当前正式图）或 future（以后的新图也算）。",
 )
-_config.group("授权").add("expires_at", type="str", description="授权到期时间（ISO 8601）。")
-_config.group("授权").add("max_uses", type="int", description="授权最多使用次数。")
-_config.group("授权").add("grant_id", type="str", description="要撤回的授权 ID。")
-_config.group("授权").add("grantee", type="str", description="允许使用此许可的人物 UUID；默认仅操作者本人。")
+_config.group("授权").add(
+    "expires_at", type="str", description="set_policy：到期时间（ISO 8601），和 max_uses 至少填一个。"
+)
+_config.group("授权").add("max_uses", type="int", description="set_policy：最多自动生成几次。")
+_config.group("授权").add("grant_id", type="str", description="revoke_consent：只撤这一条；不填则撤回此人的全部允许。")
 _config.group("修订").add("profile_id", type="str", description="视觉档案 ID。")
 _config.group("修订").add("revision", type="int", description="修订号。")
-_config.group("修订").add("expected_revision", type="int", description="启用时的当前预期修订（CAS）。")
-_config.group("修订").add("asset_id", type="str", description="要停用的资产 ID。")
+_config.group("修订").add(
+    "expected_revision", type="int", description="activate：你看到的当前修订号，防止覆盖别人的改动。"
+)
+_config.group("修订").add("asset_id", type="str", description="retire：要停用的资产 ID。")
 _config.group("修订").add(
     "activate",
     type="bool",
     default=True,
-    description=("stage 时是否直接把这张图设为正式主形象；默认 True，无需本人逐轮确认。" "显式传 False 时暂存为草稿。"),
+    description="stage：false 时只存为草稿，不设为正式形象。",
 )
-_config.group("修订").add("redo", type="bool", description="derive 时明确重做，允许新消耗一次额度。")
+_config.group("修订").add("redo", type="bool", description="derive：明确要重做一次（会再消耗额度）。")
 _config.group("来源").add(
     "evidence_ref",
     type="str",
-    description="本回合用户明确指令的来源引用（缺省时用框架注入的当轮证据）。",
+    description="提出这件事的那条消息的 evidence_ref；不填用本轮的。",
 )
-_config.group("来源").add(
-    "source_ref",
-    type="str",
-    description="本次创作/请求的来源引用，用于解析 requester 原作者。",
-)
+_config.group("来源").add("source_ref", type="str", description="这次请求的来源引用，用于认出原作者。")
 
 TOOL_META = {
     "name": "visual_asset_manage",
     "description": (
-        "【适用场景】维护受管人物的共享视觉素材库（立绘、三视图、外观参考草稿等）。用户指令时调用；"
-        "自主回合也可直接登记任意人物的视觉资料（含自己、虚构角色与真人），不需要逐轮授权。\n"
-        "【使用方法】通过 action 执行操作（如 stage 保存并启用原图、activate 启用版本、retire 停用版本）；"
-        "target 传入目标主体；evidence_ref 传入用户授权证据引用。\n"
-        "【注意事项】真人或虚构角色的可见素材可直接登记并启用为正式形象，不需要本人确认；"
-        "stage 默认直接启用，传 activate=false 才暂存草稿。人格本体的正式形象仍受控制者/管理员限制；"
-        "投稿不改变目标身份资料；生成素材不自动启用或发送。"
+        "管理人物的形象图库（立绘、三视图、外观参考）：有人让你记住谁长什么样、换形象、"
+        "做三视图时用，自主回合也能用。登记谁的形象都不用对方确认，之后画图会用上。"
+        "你自己（persona）的正式形象只有控制者或管理员能改；生成出来的图不会自动启用。"
     ),
     "version": "1.0.0",
     "side_effect": "external_write",
@@ -194,6 +171,12 @@ async def run(
         target_map = tooling.normalise_mapping(target, name="target")
         source_map = tooling.normalise_mapping(source, name="source")
         capabilities_list = _normalise_capabilities(capabilities)
+        if action == "set_policy" and not mode:
+            # 模型可见的 set_policy 只有一个意思：允许以后自动生成三视图候选。
+            # manual 是旧兼容许可，不限制任何共享，不再暴露给模型。
+            mode = "auto_candidate"
+        if action == "revoke_consent" and not grant_id and capabilities_list is None:
+            capabilities_list = sorted(GRANTABLE_CAPABILITIES)
         fields: dict[str, Any] = {
             "name": name,
             "identity_description": identity_description,

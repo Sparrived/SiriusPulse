@@ -27,11 +27,9 @@ _OPERATION_PROPERTIES = {
 TOOL_META = {
     "name": "persona_notebook",
     "description": (
-        "【适用场景】维护当前会话的短期即时便签、约定、待办与临时状态，不向聊天发送消息。\n"
-        "【使用方法】当前便签已自动放在上下文的 <persona_notebook> 中（每行为 [条目ID] 正文；"
-        "没有这个块就说明还是空的），无需读取，直接操作：add 写入/更新条目（需稳定 entry_id 与 text）；"
-        "patch 修改局部内容；remove 删除条目；batch 批量原子操作；organize 登记整理提议。\n"
-        "【注意事项】仅作用于当前会话，不跨群或跨聊天共享；受 2048 tokens 容量硬上限限制；严禁记录密码或凭据等敏感信息。"
+        "这个聊天的小本：记即时的线索、约定、待办和临时状态。"
+        "当前内容已经在上下文的 <persona_notebook> 里（每行 [条目ID] 正文；没有这个块就是空的），"
+        "不用读，直接改。只对这个聊天有效，别记密码之类的敏感信息。"
     ),
     "version": "2.0.0",
     "side_effect": "external_write",

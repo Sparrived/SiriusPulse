@@ -56,10 +56,7 @@ _config.group("网页查询").add(
 TOOL_META = {
     "name": "web_lookup",
     "description": (
-        "【适用场景】检索互联网实时资讯、外部知识资料，或抓取并阅读指定网页链接的正文。\n"
-        "【使用方法】action=search 时传入 query 进行搜索（可选 count 指定条数 1-5）；"
-        "action=read_url 时传入 url 抓取页面正文（可选 max_chars 与 timeout）。\n"
-        "【注意事项】只读工具；搜索依赖已配置的搜索 API Key；读取网页可能因目标反爬或网络超时失败，需做好降级处理。"
+        "上网搜资料，或读一个网页链接的正文。网页可能因为反爬或超时读不到。"
     ),
     "version": "1.0.0",
     "retry_safe": True,

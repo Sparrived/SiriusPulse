@@ -64,15 +64,10 @@ _config.group("Bash 执行").add(
 TOOL_META = {
     "name": "bash",
     "description": (
-        "【适用场景】执行容器内系统状态探测、运行脚本与程序、脚本自动化，或管理项目级定时任务。"
-        "读、写、改、搜文件用 file_ops，不要用 cat / sed / python -c。\n"
-        "【使用方法】传入 command 执行标准 Bash 命令，支持常规 Linux 命令及代理访问外部容器的 docker 命令；"
-        "支持标准五字段 crontab 调度命令（crontab -l 查看任务、crontab -r 删除任务、"
-        "printf '五字段cron 命令' | crontab - 注册任务）。\n"
-        "【注意事项】命令运行在容器内而非宿主机，不支持 systemctl 或直接访问宿主机文件；"
-        "定时任务由内部调度器托管（不支持秒级字段）；执行 docker inspect 会向当前会话发送容器状态卡片；"
-        "超时的命令默认转入后台并返回任务 ID（bash_xxxxxxxx），结束后会收到结果回调，"
-        "期间不要重复执行同一条命令，可用 background_task 查看进度或停止。"
+        "在容器里跑命令、脚本和程序，也可以用 crontab 管定时任务。读、写、改、搜文件用 file_ops。"
+        "命令跑在容器里，碰不到宿主机，也没有 systemctl；"
+        "docker inspect 会往聊天里发一张容器状态卡片。命令超时会转到后台并返回 bash_xxxxxxxx，"
+        "跑完会回调告诉你结果，期间别重复执行，可以用 background_task 查看或停止。"
     ),
     "version": "1.6.0",
     "side_effect": "unknown",

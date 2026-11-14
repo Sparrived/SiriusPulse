@@ -45,15 +45,9 @@ _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 TOOL_META = {
     "name": "file_ops",
     "description": (
-        "【适用场景】读、写、修改、列出、搜索你自己的文件（笔记、代码、项目文件），"
-        "代替用 bash 的 cat / sed / python -c 改文件。\n"
-        "【使用方法】action=read 读文件（带行号，长文件用 offset 接着读）；"
-        "write 整份写入 content（文件不存在会连同目录一起建）；"
-        "edit 把 old_text 精确替换成 new_text（old_text 要从文件里原样复制，必须只出现一次，"
-        "要全部替换就加 replace_all=true）；list 列目录；grep 按正则 pattern 搜内容，可用 glob 过滤文件名。"
-        "path 里 ~ 表示你的家目录。\n"
-        "【注意事项】只能写家目录里的文件；除开发者外只能读家目录、下载下来的聊天文件和工具产物目录。"
-        "改文件前先 read 看清原文；PDF/Word/PPT 用 read_document，图片用 read_image。"
+        "读、写、改、列出、搜索你自己的文件（笔记、代码、项目文件），"
+        "别用 bash 的 cat / sed / python -c。edit 前先 read 看清原文。只能写你的家目录（~）。"
+        "PDF/Word/PPT 用 read_document，图片用 read_image。"
     ),
     "version": "1.0.0",
     "side_effect": "read_only",

@@ -88,14 +88,11 @@ BE_YOURSELF_NOTE = (
 )
 
 
-def _join_turn_sections(
-    *, stable: list[str], situation: str, tool_desc: str, work_mode: bool
-) -> str:
+def _join_turn_sections(*, stable: list[str], situation: str, work_mode: bool) -> str:
     """非对话回合（定时 / 后台回调 / 自主）的 system prompt；约定见 ``utils.prompt_layout``。"""
     return join_turn_sections(
         stable=stable,
         situation=situation,
-        tool_desc=tool_desc,
         lead=WORK_MODE_TURN_NOTE if work_mode else "",
     )
 
@@ -540,7 +537,6 @@ class PromptFactory:
         *,
         job: dict[str, Any],
         command_output: str,
-        tool_desc: str = "",
         work_mode: bool = False,
     ) -> tuple[str, list[dict[str, str]]]:
         """Build a prompt for a Bash-registered proactive cron task.
@@ -566,7 +562,7 @@ class PromptFactory:
             f"{output}"
         )
         system_prompt = _join_turn_sections(
-            stable=[stable], situation=situation, tool_desc=tool_desc, work_mode=work_mode
+            stable=[stable], situation=situation, work_mode=work_mode
         )
         return system_prompt, [{"role": "user", "content": "（定时任务已触发）"}]
 
@@ -580,7 +576,6 @@ class PromptFactory:
         artifact_path: str = "",
         error: str = "",
         output: str = "",
-        tool_desc: str = "",
         work_mode: bool = False,
         can_speak: bool = True,
         lead: str = "",
@@ -634,7 +629,6 @@ class PromptFactory:
         system_prompt = _join_turn_sections(
             stable=["\n".join(rules)],
             situation="\n".join(lines),
-            tool_desc=tool_desc,
             work_mode=False,
         )
         return system_prompt, [{"role": "user", "content": "（后台任务结果已返回）"}]
@@ -644,7 +638,6 @@ class PromptFactory:
         *,
         kind: str,
         seed: str,
-        tool_desc: str = "",
         why: str = "",
         intention_id: str = "",
         resolution: str = "",
@@ -714,7 +707,6 @@ class PromptFactory:
         system_prompt = _join_turn_sections(
             stable=stable,
             situation="\n".join(opening),
-            tool_desc=tool_desc,
             work_mode=work_mode,
         )
         return system_prompt, [{"role": "user", "content": "（现在是你的自主时间）"}]
@@ -728,7 +720,6 @@ class PromptFactory:
         recent_steps: list[str],
         work_tail: str,
         state_line: str = "",
-        tool_desc: str = "",
         audiences: list[dict[str, str]] | None = None,
         work_mode: bool = False,
     ) -> tuple[str, list[dict[str, str]]]:
@@ -783,7 +774,6 @@ class PromptFactory:
         system_prompt = _join_turn_sections(
             stable=stable,
             situation="\n".join(situation),
-            tool_desc=tool_desc,
             work_mode=work_mode,
         )
         return system_prompt, [{"role": "user", "content": f"（到点了：{activity}）"}]

@@ -36,14 +36,9 @@ _ACTIONS = ("write", "step", "start", "finish", "drop", "pause", "list")
 TOOL_META = {
     "name": "life_project",
     "description": (
-        "【适用场景】管理你自己的长期项目（读一本书、学一样东西、写一篇东西、收集整理、动手做点什么），"
-        "并把真实的成果写进项目的作品里。\n"
-        "【使用方法】action=write：把这次做出的具体内容写进作品（content，可选 heading）；"
-        "action=step：记下这一步做了什么（did）和下一步（next_step）；"
-        "action=start：开新项目（title、kind=read/learn/write/collect/make/explore、why、next_step）；"
-        "action=finish / drop / pause：做完 / 放下 / 暂停（可选 outcome 说明）；action=list：查看手上的项目。\n"
-        f"【注意事项】同时进行的项目最多 {MAX_ACTIVE_PROJECTS} 个；作品里写具体内容，不写流水账。"
-        "project_id 形如 p-xxxxxxxx，用 list 查询。"
+        "管理你自己的长期项目（读书、学东西、写东西、收集整理、动手做），"
+        f"把真实做出来的东西写进项目的作品里。同时最多 {MAX_ACTIVE_PROJECTS} 个项目；"
+        "作品里写具体内容，不写流水账。"
     ),
     "version": "1.0.0",
     "model_visible": True,

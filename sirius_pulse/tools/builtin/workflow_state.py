@@ -46,10 +46,8 @@ _config.group("流程状态").add(
     "action",
     type="str",
     description=(
-        "固定流程：先 list 检查目录，再 resume；found=false 时 begin 并登记；然后 claim；"
-        "只有 claimed=true 才调用专用工具；"
-        "专用工具成功用 checkpoint，失败用 fail；checkpoint 的 next_step 为空时自动完成。"
-        "list/resume 只读，restart 开新一轮。"
+        "list 看这个聊天有哪些流程；resume 取回一个流程；begin 登记新流程；"
+        "claim 领下一步，claimed=true 才去执行；成功 checkpoint，失败 fail；restart 重来一轮。"
     ),
     required=True,
     choices=[
@@ -65,86 +63,62 @@ _config.group("流程状态").add(
 _config.group("流程状态").add(
     "key",
     type="str",
-    description="同一聊天内一项具体业务的稳定键；list 可留空列出全部流程，例如 napcat.like:123456。",
-    default="",
+    description="这件事的固定名字，如 napcat.like:123456；list 时可不填。",
 )
 _config.group("流程状态").add(
     "version",
     type="str",
-    description="流程参数和步骤契约版本；通常填 1，只有契约改变时才递增。",
-    default="1",
+    description="步骤约定的版本，默认 1；做法变了才加一。",
 )
 _config.group("流程步骤").add(
     "step",
     type="str",
-    description="当前要执行的稳定步骤；resume/checkpoint 返回的 next_step 非空时必须原样使用。",
-    default="",
+    description="要做的那一步；上次结果给了 next_step 就照抄。",
 )
 _config.group("流程步骤").add(
     "tool_name",
     type="str",
-    description="claim 时填写实际要调用的专用 Tool 名称，例如 napcat_call；checkpoint 时原样带回。",
-    default="",
+    description="claim：这一步要调用的工具名，如 napcat_call。",
 )
 _config.group("流程步骤").add(
     "idempotency_key",
     type="str",
-    description="claim/checkpoint/fail 使用同一个稳定幂等键；由业务事实组成，不能每次随机生成。",
-    default="",
+    description="这一步的固定标识，由具体事实拼成（不要随机）；claim/checkpoint/fail 用同一个。",
 )
 _config.group("流程步骤").add(
     "claim_token",
     type="str",
-    description="仅从 claim 返回值复制；checkpoint/fail 必须原样带回，不能猜测或重新生成。",
-    default="",
+    description="claim 返回的 claim_token，checkpoint/fail 时照抄。",
 )
 _config.group("流程步骤").add(
     "next_step",
     type="str",
-    description="只在 checkpoint 时填写下一步；没有下一步必须留空，工具会自动完成流程。",
-    default="",
+    description="checkpoint：下一步叫什么；全部做完就留空。",
 )
 _config.group("流程步骤").add(
     "lease_seconds",
     type="int",
-    description="claim 租约秒数；模型或进程中断后超过租约才允许接管，范围 30-3600。",
-    default=300,
+    description="claim：占住这一步多少秒（30-3600，默认 300），超时后别人才能接手。",
 )
 _config.group("并发保护").add(
     "expected_revision",
     type="int",
-    description="复制最近一次 workflow_state 返回的顶层 revision；所有写操作都必须填写。",
-    default=-1,
+    description="上一次 workflow_state 返回的 revision；写操作必填。",
 )
 _config.group("流程数据").add(
     "state_json",
     type="str",
-    description=("JSON 字符串而不是嵌套对象；begin/claim 放目标事实，checkpoint 放外部 ID 或结果摘要，" "只保存下次复用需要的最小数据。"),
-    default="{}",
+    description="JSON 字符串：下次接着做需要的最少数据（目标、外部 ID、结果摘要）。",
 )
-_config.group("流程数据").add(
-    "summary",
-    type="str",
-    description="步骤或流程的短摘要，不要填完整日志。",
-    default="",
-)
-_config.group("流程数据").add(
-    "error",
-    type="str",
-    description="fail 操作的可恢复错误摘要，不要填密钥或完整堆栈。",
-    default="",
-)
+_config.group("流程数据").add("summary", type="str", description="一句话摘要。")
+_config.group("流程数据").add("error", type="str", description="fail：出了什么错（不要带密钥或堆栈）。")
 
 TOOL_META = {
     "name": "workflow_state",
     "description": (
-        "【适用场景】有多个外部副作用步骤、可能做到一半被打断、之后要接着做的任务，"
-        "或用户让你继续/重试上次的流程时，用它记录进度、防止重复执行。"
-        "只做一个动作（点赞、发一张图、跑一条命令）直接调用对应工具，不要用它。\n"
-        "【使用方法】按生命周期顺序调用：① list 查询当前会话流程；② resume 恢复流程；③ 未命中时 begin 登记新流程；"
-        "④ claim 获取步骤租约；⑤ claimed=true 后执行目标专用工具；⑥ 成功调用 checkpoint（next_step 为空时自动完成），失败调用 fail。\n"
-        "【注意事项】严格遵循状态机约束：already_done=true 必须跳过重复执行；in_progress=true 不得并发抢占；"
-        "必须原样传递 revision、claim_token 与幂等键；已登记流程里的步骤不要绕过流程直接执行。"
+        "给分好几步、做到一半可能被打断的事记进度，下次接着做而不会重复。"
+        "单个动作（点赞、发图、跑一条命令）直接用对应工具，不要用它。"
+        "返回 already_done=true 的步骤跳过；in_progress=true 说明别人正在做，不要抢。"
     ),
     "version": "2.2.0",
     "retry_safe": False,

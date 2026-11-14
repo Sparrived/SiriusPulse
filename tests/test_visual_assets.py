@@ -3486,3 +3486,28 @@ async def test_human_registration_defaults_to_active_without_owner_confirmation_
     assert activated["data"]["status"] == "active"
     assert env.service.store.profile(d1["profile_id"])["active_revision"] == d2["revision"]
     del target_access
+
+
+async def test_tool_policy_actions_need_only_what_the_user_actually_said(env):
+    """「以后可以自动帮我画三视图」「别再自动画了」：模型不用拼授权模式和能力清单。"""
+    photo = env.photo("policy_via_tool", color=(40, 90, 160))
+    owner, ref, owner_id = env.access("u1", attachments=[photo])
+    assert (await env.stage(owner, ref))["success"]
+    engine = FakeEngine(env, owner, env.store())
+    common = dict(
+        target={"ref": "requester"},
+        evidence_ref=ref,
+        engine_context=engine,
+        invocation_context=env.invocation(owner, ref),
+        data_store=engine.store,
+    )
+
+    allowed = await manage_tool_run("set_policy", max_uses=2, **common)
+    assert allowed["success"], allowed
+    [grant] = env.service.store.grants_for(owner_id, status="active")
+    assert grant["mode"] == "auto_candidate"
+    assert "upload_generate" in grant["capabilities"]
+
+    revoked = await manage_tool_run("revoke_consent", **common)
+    assert revoked["success"], revoked
+    assert env.service.store.grants_for(owner_id, status="active") == []

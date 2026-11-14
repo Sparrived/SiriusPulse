@@ -38,12 +38,9 @@ _ACTIVE_STATUSES = {"running", "pending", "stopping", "waiting", "waking"}
 TOOL_META = {
     "name": "background_task",
     "description": (
-        "【适用场景】查看或停止你交给后台的任务：超时后转入后台的 bash 命令（bash_xxxxxxxx），"
-        "image_generate 提交的后台生图任务，以及你用 wake_me 给自己定的唤醒（wake_xxxxxxxx）。\n"
-        "【使用方法】action=list 列出当前会话仍在进行的后台任务；action=status 加 task_id "
-        "查看单个任务（bash 任务附带最近的输出）；action=stop 加 task_id 停止任务（唤醒就是取消）。\n"
-        "【注意事项】停止后不会再收到这个任务的结果回调；生图请求一旦已经发给生图服务，"
-        "停止只是不再等结果，额度可能已经用掉。只能管理当前会话发起的任务。"
+        "查看或停止你交给后台的事：转入后台的 bash 命令（bash_xxxxxxxx）、生图任务、"
+        "wake_me 定的唤醒（wake_xxxxxxxx）。停止后不会再收到它的结果；生图请求已经发出去的话，"
+        "停止只是不再等结果，额度可能已经用掉。"
     ),
     "version": "1.0.0",
     "side_effect": "destructive",

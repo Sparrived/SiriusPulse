@@ -94,14 +94,9 @@ class AgentTurnMixin:
         caller_is_developer: bool = False,
     ) -> dict[str, Any]:
         """Run a scheduled message through the same tool-call loop as chat."""
-        # 定时任务回合由框架自动进入工作模式，所以提示词里的工具清单也要按工作模式给。
-        tool_desc = self.get_tool_descriptions(
-            caller_is_developer=caller_is_developer, adapter_type=adapter_type, work_mode=True
-        )
         system_prompt, messages = PromptFactory.build_scheduled_task_sections(
             job=job,
             command_output=command_output,
-            tool_desc=tool_desc,
             work_mode=True,
         )
         self._engine._tool_executor.set_chat_context(
@@ -171,11 +166,6 @@ class AgentTurnMixin:
                 artifact_path=artifact_path,
                 error=error,
                 output=output,
-                tool_desc=self.get_tool_descriptions(
-                    caller_is_developer=caller_is_developer,
-                    adapter_type=adapter_type,
-                    work_mode=True,
-                ),
                 can_speak=not self_initiated,
                 lead=lead,
             )
@@ -543,14 +533,9 @@ class AgentTurnMixin:
         No shared executor state is mutated, so this is safe to run while a
         normal reply is in flight.
         """
-        tool_desc = self.get_tool_descriptions(
-            work_mode=True,
-            exclude_names=() if notebook_enabled else self._chat_scoped_tool_names(),
-        )
         system_prompt, messages = PromptFactory.build_autonomous_turn_sections(
             kind=kind,
             seed=seed,
-            tool_desc=tool_desc,
             why=why,
             intention_id=intention_id,
             resolution=resolution,
@@ -587,9 +572,6 @@ class AgentTurnMixin:
         delivery tools), with the project's progress and the end of her work
         file in front of her instead of an open-ended "do anything".
         """
-        tool_desc = self.get_tool_descriptions(
-            work_mode=True, exclude_names=self._chat_scoped_tool_names()
-        )
         system_prompt, messages = PromptFactory.build_life_work_sections(
             activity=activity,
             block_end=block_end,
@@ -597,7 +579,6 @@ class AgentTurnMixin:
             recent_steps=recent_steps,
             work_tail=work_tail,
             state_line=state_line,
-            tool_desc=tool_desc,
             audiences=self._audience_dicts(),
             work_mode=True,
         )

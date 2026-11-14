@@ -20,12 +20,7 @@ _SECTIONS = {
 }
 TOOL_META = {
     "name": "person_query",
-    "description": (
-        "【适用场景】查询当前会话可见范围内的人物资料、画像设定、别名称谓及视觉信息。\n"
-        "【使用方法】target 指定查询主体（支持 requester/persona/person_id/name/mention_ref 等键值对）；"
-        "sections 筛选信息模块；detail 指定 summary 或 detail 级别。\n"
-        "【注意事项】只读工具；同名主体最多返回 5 个候选对象；不暴露底层账号、原始聊天或内部文件路径。"
-    ),
+    "description": ("查一个人的资料：怎么称呼、记下的信息、和别人的关系、形象等。只读。"),
     "version": "1.1.0",
     "side_effect": "read_only",
     "redact_logs": True,
@@ -47,10 +42,9 @@ TOOL_META = {
             "type": "array",
             "items": {"type": "string", "enum": sorted(_SECTIONS)},
             "description": (
-                "要哪些信息，默认 names + visual。names 称呼与别名；claims 属性声明"
-                "（如生日、职业，含 claim_id）；relationships 与他人的关系；memories 与此人有关的"
-                "记忆摘要（可配合 query）；visual 当前形象；changes 待确认的资料变更（含 change_id）；"
-                "consents / jobs 视觉授权与生图任务（需要相应权限）。只要用到的，别全选。"
+                "要哪些信息（默认 names + visual），只选用得到的：names 称呼；claims 生日职业等"
+                "（含 claim_id）；relationships 关系；memories 相关记忆（可配合 query）；visual 形象；"
+                "changes 待确认变更（含 change_id）；consents / jobs 视觉授权与生图任务。"
             ),
             "required": False,
             "default": ["names", "visual"],
@@ -58,13 +52,13 @@ TOOL_META = {
         "detail": {
             "type": "string",
             "choices": ["summary", "detail"],
-            "description": "summary 精简（约 1500 字以内）；detail 更完整（约 6000 字以内），确实需要细节时再用。",
+            "description": "summary 精简（默认）；detail 更完整，确实需要细节时再用。",
             "required": False,
             "default": "summary",
         },
         "query": {
             "type": "string",
-            "description": "只对 sections 里的 memories 起作用：只看与这个关键词有关的记忆。",
+            "description": "memories：只看与这个关键词有关的记忆。",
             "required": False,
             "default": "",
         },
@@ -76,7 +70,7 @@ TOOL_META = {
         },
         "cursor": {
             "type": "string",
-            "description": "按名字查的翻页：把上次结果里的 next_cursor 原样传回；其他情况留空。",
+            "description": "按名字查的翻页：上次结果里的 next_cursor。",
             "required": False,
             "default": "",
         },
