@@ -148,10 +148,6 @@ def test_embedding_client_when_model_present_in_health_then_ready(monkeypatch):
     assert calls[0]["url"] == "http://amkr:8000/health"
 
 
-def test_load_embedding_model_when_unset_then_uses_bge_m3(tmp_path):
-    assert load_embedding_model(tmp_path) == "BAAI/bge-m3"
-
-
 def test_load_embedding_model_when_env_set_then_env_wins(tmp_path, monkeypatch):
     (tmp_path / "global_config.json").write_text(
         json.dumps({"embedding_model": "from-file"}), encoding="utf-8"

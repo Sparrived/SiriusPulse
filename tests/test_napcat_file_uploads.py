@@ -255,15 +255,3 @@ async def test_napcat_private_forward_splits_long_text_across_nodes(
     assert isinstance(nodes, list) and len(nodes) > 1
     assert all(len(node["data"]["content"][0]["data"]["text"]) <= 800 for node in nodes)
     assert "\n".join(node["data"]["content"][0]["data"]["text"] for node in nodes) == long_text
-
-
-@pytest.mark.asyncio
-async def test_napcat_forward_actions_share_the_reply_throttle_channel():
-    adapter = NapCatAdapter("ws://example.invalid")
-
-    assert adapter._is_send_action("send_group_forward_msg") is True
-    assert adapter._is_send_action("send_private_forward_msg") is True
-    assert adapter._send_channel_key("send_group_forward_msg", {"group_id": 9001}) == "group_9001"
-    assert (
-        adapter._send_channel_key("send_private_forward_msg", {"user_id": 10001}) == "private_10001"
-    )

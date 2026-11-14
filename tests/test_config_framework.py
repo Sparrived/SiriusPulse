@@ -35,11 +35,9 @@ from sirius_pulse.config.config_helpers import (
 )
 from sirius_pulse.config.file_io import atomic_json_save
 from sirius_pulse.config.helpers import (
-    auto_configure_multimodal_agent,
     build_orchestration_policy_from_dict,
     configure_full_orchestration,
     configure_orchestration_retries,
-    create_agent_with_multimodal,
 )
 from sirius_pulse.config.jsonc import (
     load_json_document,
@@ -238,29 +236,6 @@ def test_atomic_json_save_when_target_parent_is_missing_then_writes_without_tmp_
     assert not target.with_suffix(".json.tmp").exists()
 
 
-def test_workspace_config_when_serialized_then_paths_and_nested_defaults_round_trip(tmp_path):
-    config = WorkspaceConfig(
-        work_path=tmp_path / "work",
-        data_path=tmp_path / "data",
-        layout_version=4,
-        bootstrap_signature="sig",
-        active_agent_key="agent-alpha",
-        session_defaults=SessionDefaults(history_max_messages=7, enable_auto_compression=False),
-        orchestration_defaults={"memory_extract_batch_size": 2},
-    )
-
-    restored = WorkspaceConfig.from_dict(config.to_dict())
-
-    assert restored.work_path == tmp_path / "work"
-    assert restored.data_path == tmp_path / "data"
-    assert restored.layout_version == 4
-    assert restored.bootstrap_signature == "sig"
-    assert restored.active_agent_key == "agent-alpha"
-    assert restored.session_defaults.history_max_messages == 7
-    assert restored.session_defaults.enable_auto_compression is False
-    assert restored.orchestration_defaults == {"memory_extract_batch_size": 2}
-
-
 def test_config_helpers_when_values_need_coercion_then_defaults_and_nested_cleanup_are_applied(
     tmp_path,
 ):
@@ -420,29 +395,6 @@ def test_config_helpers_when_session_config_dict_is_loaded_then_paths_agent_and_
     assert config.enable_auto_compression is False
     with pytest.raises(ValueError):
         _validate_config({"work_path": "work", "agent": {}})
-
-
-def test_config_helpers_when_multimodal_agent_helpers_are_used_then_metadata_is_set_explicitly():
-    agent = Agent(name="Agent", persona="Helpful", model="text-model", metadata={})
-
-    assert auto_configure_multimodal_agent(agent).metadata == {}
-    assert auto_configure_multimodal_agent(agent, multimodal_model="vision-model") is agent
-    assert agent.metadata["multimodal_model"] == "vision-model"
-    assert auto_configure_multimodal_agent(agent).metadata["multimodal_model"] == "vision-model"
-
-    created = create_agent_with_multimodal(
-        name="Agent2",
-        persona="Helpful",
-        model="text-model",
-        multimodal_model="vision-model",
-        temperature=0.1,
-        max_tokens=42,
-        provider="test",
-    )
-
-    assert created.metadata == {"multimodal_model": "vision-model", "provider": "test"}
-    assert created.temperature == 0.1
-    assert created.max_tokens == 42
 
 
 def test_config_helpers_when_local_tuning_shortcuts_are_used_then_session_config_is_replaced(

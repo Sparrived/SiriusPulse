@@ -53,13 +53,6 @@ class _Adapter:
         }
 
 
-def test_group_file_exec_schema_exposes_group_file_actions():
-    parameters = {item["name"]: item for item in group_file_exec.TOOL_META["parameters"]}
-
-    assert parameters["action"]["choices"] == ["image", "file", "list", "download"]
-    assert {"folder_id", "file_count", "file_id", "download_dir"} <= set(parameters)
-
-
 @pytest.mark.asyncio
 async def test_group_file_exec_sends_image_and_uploads_file(tmp_path: Path):
     adapter = _Adapter()

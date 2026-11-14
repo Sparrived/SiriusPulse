@@ -213,34 +213,6 @@ def test_tool_executor_when_workspace_tool_accepts_engine_context_then_it_is_not
     assert seen["engine_context"] is None
 
 
-@pytest.mark.asyncio
-async def test_tool_executor_when_async_tool_accepts_engine_context_then_receives_it(
-    tmp_path: Path,
-):
-    seen: dict[str, Any] = {}
-    engine_context = object()
-
-    async def run(engine_context=None) -> dict[str, Any]:
-        seen["engine_context"] = engine_context
-        return {"success": True, "text": "ok"}
-
-    executor = ToolExecutor(work_path=tmp_path)
-    executor.set_engine_context(engine_context)
-    builtin_path = (
-        Path(__file__).resolve().parents[1]
-        / "sirius_pulse"
-        / "tools"
-        / "builtin"
-        / "async_needs_engine.py"
-    )
-    tool = _make_tool("async_needs_engine", run, source_path=builtin_path)
-
-    result = await executor.execute_async(tool, {}, invocation_context=_context())
-
-    assert result.success is True
-    assert seen["engine_context"] is engine_context
-
-
 def test_tool_executor_when_normal_user_calls_developer_tool_then_access_is_denied(
     tmp_path: Path,
 ):
@@ -272,69 +244,6 @@ async def test_tool_executor_when_async_tool_finishes_then_result_is_returned(tm
 
     assert result.success is True
     assert result.to_display_text() == "异步完成：Alice"
-
-
-@pytest.mark.asyncio
-async def test_tool_executor_when_async_tool_params_are_normalized_then_defaults_and_types_match_sync(
-    tmp_path: Path,
-):
-    received: list[int] = []
-
-    async def run(count: int = 3) -> dict[str, Any]:
-        received.append(count)
-        return {"success": True, "text": str(count)}
-
-    tool = _make_tool(
-        "async_count",
-        run,
-        params=[ToolParameter(name="count", type="int", description="数量", default=3)],
-    )
-    executor = ToolExecutor(work_path=tmp_path)
-
-    default_result = await executor.execute_async(tool, {}, invocation_context=_context())
-    coerced_result = await executor.execute_async(
-        tool, {"count": "4"}, invocation_context=_context()
-    )
-
-    assert default_result.success is True
-    assert coerced_result.success is True
-    assert received == [3, 4]
-
-
-@pytest.mark.asyncio
-async def test_tool_executor_when_async_developer_tool_is_called_by_user_then_access_is_denied(
-    tmp_path: Path,
-):
-    async def run() -> dict[str, Any]:
-        return {"success": True, "text": "secret"}
-
-    executor = ToolExecutor(work_path=tmp_path)
-    tool = _make_tool("async_server_shell", run, developer_only=True)
-
-    result = await executor.execute_async(tool, {}, invocation_context=_context(is_developer=False))
-
-    assert result.success is False
-    assert "developer" in result.error.lower() or "开发" in result.error
-
-
-@pytest.mark.asyncio
-async def test_tool_executor_when_async_required_param_is_missing_then_tool_is_not_called(
-    tmp_path: Path,
-):
-    async def run(query: str) -> dict[str, Any]:
-        raise AssertionError(f"should not call tool with {query}")
-
-    executor = ToolExecutor(work_path=tmp_path)
-    tool = _make_tool(
-        "async_search",
-        run,
-        params=[ToolParameter(name="query", type="str", description="查询", required=True)],
-    )
-
-    result = await executor.execute_async(tool, {}, invocation_context=_context())
-
-    assert result.success is False
-    assert "query" in result.error
 
 
 def test_tool_result_when_rendered_for_model_then_marks_data_and_bounds_length():

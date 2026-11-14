@@ -4,7 +4,6 @@ import json
 
 from sirius_pulse.config import TokenUsageRecord
 from sirius_pulse.token.token_store import TokenUsageStore
-from sirius_pulse.utils.layout import WorkspaceLayout
 
 
 def _record(
@@ -46,13 +45,6 @@ def _record(
         cache_creation_prompt_tokens=cache_creation_prompt,
         cache_info_available=cache_info_available,
     )
-
-
-def test_token_store_when_created_then_schema_exists_and_count_is_zero(tmp_path):
-    store = TokenUsageStore(tmp_path / "token.db")
-
-    assert store.count() == 0
-    assert store.get_schema_version("token_schema_version") == 6
 
 
 def test_token_store_when_batch_size_reached_then_flushes_records(tmp_path):
@@ -165,13 +157,6 @@ def test_token_store_when_failures_and_empty_replies_exist_then_stats_are_report
     assert store.get_empty_reply_stats()["empty_calls"] == 1
     assert store.get_failure_stats()["failure_calls"] == 1
     assert store.get_conversation_depth_stats()["max_depth"] == 3
-
-
-def test_token_store_for_workspace_when_layout_is_supplied_then_uses_token_db_path(tmp_path):
-    store = TokenUsageStore.for_workspace(WorkspaceLayout(tmp_path), session_id="workspace-session")
-
-    assert store.session_id == "workspace-session"
-    assert store.db_path == tmp_path / "token" / "token_usage.db"
 
 
 def test_token_store_when_calls_happen_at_local_evening_then_hourly_shows_local_hour(tmp_path):

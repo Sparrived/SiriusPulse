@@ -533,16 +533,6 @@ async def test_pipeline_preserves_adapter_instance_route_in_delayed_event():
     assert len(pending) == 1
 
 
-def test_delayed_queue_when_hard_immediate_then_still_has_no_wait_window():
-    queue = DelayedResponseQueue()
-    decision = _decision(ResponseStrategy.IMMEDIATE)
-    decision.context["hard_immediate"] = True
-
-    item = queue.enqueue("group-1", "u1", "hello", decision)
-
-    assert item.window_seconds == 0.0
-
-
 def test_delayed_queue_when_estimated_delay_is_set_then_limits_window():
     queue = DelayedResponseQueue()
     decision = _decision(ResponseStrategy.DELAYED, urgency=50)

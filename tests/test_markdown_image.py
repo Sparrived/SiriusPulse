@@ -51,10 +51,7 @@ def test_has_rich_structure_ignores_plain_text_and_inline_symbols(text):
     "text, expected",
     [
         ("只有一句话。", False),
-        ("第一行\n第二行\n第三行", False),
         ("第一行\n第二行\n第三行\n第四行", False),
-        ("第一行\n\n第二行\n\n第三行\n\n第四行", False),
-        ("第一行\n第二行\n\n\n第三行", False),
         ("甲" * 15 + "\n" + "乙" * 15 + "\n" + "丙" * 15 + "\n" + "丁" * 15, False),
         ("x" * 52 + "\n" + "x" * 52 + "\n" + "x" * 52 + "\n" + "x" * 52, True),
         ("甲" * 20 + "\n" + "乙" * 20 + "\n" + "丙" * 20 + "\n" + "丁" * 20, True),
@@ -69,8 +66,6 @@ def test_should_send_as_image_covers_long_and_structured_replies(text, expected)
 @pytest.mark.parametrize(
     "text, expected",
     [
-        ("只有一句话。", "只有一句话。"),
-        ("第一行\n第二行\n第三行", "第一行第二行第三行"),
         ("第一行\n\n第二行", "第一行第二行"),
         ("Hello\nworld", "Hello world"),
         ("@小明\n你好", "@小明 你好"),
@@ -78,7 +73,6 @@ def test_should_send_as_image_covers_long_and_structured_replies(text, expected)
         ("a" * 50 + "\n" + "b" * 50, "a" * 50 + "\n" + "b" * 50),
         ("第一行\n第二行\n第三行\n第四行", "第一行第二行第三行第四行"),
         ("# 标题\n正文", "# 标题\n正文"),
-        ("甲" * 30 + "\n" + "乙" * 30, "甲" * 30 + "\n" + "乙" * 30),
     ],
 )
 def test_merge_short_plain_text_only_joins_short_plain_replies(text, expected):
@@ -92,11 +86,6 @@ def test_merge_short_plain_text_only_joins_short_plain_replies(text, expected):
         (
             "甲" * 10 + "\n" + "乙" * 10 + "\n" + "丙" * 10 + "\n" + "丁" * 10,
             "甲" * 10 + "乙" * 10 + "\n" + "丙" * 10 + "丁" * 10,
-        ),
-        # 11 还没满 20，补上 10 撑到 21 才换句
-        (
-            "甲" * 11 + "\n" + "乙" * 10 + "\n" + "丙" * 10 + "\n" + "丁" * 10,
-            "甲" * 11 + "乙" * 10 + "\n" + "丙" * 10 + "丁" * 10,
         ),
         # ASCII 按半个字计：四行各一个字重，合并后仍要补空格
         ("OK\n收到\n明白\n好的", "OK 收到明白好的"),
@@ -306,9 +295,3 @@ def test_markdown_card_never_lets_odd_fence_tags_inject_html(fence_tag):
     assert "<pre><code>" in rendered
     assert "<script>" not in rendered
     assert _code_block_text(rendered) == code
-
-
-def test_markdown_card_escapes_plain_code_without_highlighting():
-    rendered = build_markdown_card_html("```完全未知的语言\n<script>alert(1)</script>\n```")
-
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered

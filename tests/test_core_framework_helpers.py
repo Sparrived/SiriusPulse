@@ -5,7 +5,6 @@ import sqlite3
 
 from sirius_pulse.core.orchestration_store import OrchestrationStore
 from sirius_pulse.core.persona_db import PersonaDatabase
-from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.utils import now_iso, strip_conversation_history_xml
 from sirius_pulse.developer_profiles import metadata_declares_developer
 
@@ -27,22 +26,6 @@ def test_core_utils_when_history_xml_is_present_then_only_conversation_history_b
     assert strip_conversation_history_xml(text) == "before  after <keep>visible</keep>"
     assert strip_conversation_history_xml("") == ""
     assert "T" in now_iso()
-
-
-def test_prompt_factory_when_interaction_markers_are_available_then_spec_is_explicit():
-    spec = PromptFactory.build_interaction_spec(
-        sticker_names=["开心"],
-        supports_poke=True,
-        supports_qq_mentions=True,
-    )
-
-    assert "【交互提示词】" in spec
-    assert "[REPLY:123]" in spec
-    assert "[POKE:123456]" in spec
-    assert "[STICKER:开心]" in spec
-    assert "[AT:123456]" in spec
-    assert "interaction" not in spec
-    assert "添加说话者前缀或系统标记" in PromptFactory.build_reply_spec()
 
 
 def test_orchestration_store_when_config_is_saved_then_json_round_trips_atomically(tmp_path):

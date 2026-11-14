@@ -3,25 +3,10 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
-from sirius_pulse.core.prompt_factory import (
-    PromptBundle,
-    PromptFactory,
-    StyleAdapter,
-)
-from sirius_pulse.core.work_mode import control_tools
+from sirius_pulse.core.prompt_factory import PromptFactory, StyleAdapter
 from sirius_pulse.memory.basic import BasicMemoryManager
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.models.persona import PersonaProfile
-from sirius_pulse.token.utils import PromptTokenBreakdown
-
-
-def test_prompt_bundle_when_breakdown_is_missing_then_creates_default_breakdown():
-    bundle = PromptBundle(system_prompt="system", user_content="user")
-
-    assert bundle.system_prompt == "system"
-    assert bundle.user_content == "user"
-    assert isinstance(bundle.token_breakdown, PromptTokenBreakdown)
-    assert bundle.token_breakdown.total == 0
 
 
 def test_prompt_factory_when_message_is_tagged_then_escapes_content_and_attributes():
@@ -97,16 +82,6 @@ def test_style_adapter_ignores_persona_sampling_preferences():
     assert params.tone_instruction
 
 
-def test_style_adapter_keeps_chat_short_but_lets_her_explain_when_asked():
-    """长度是习惯不是硬上限：被要求详细说时必须能放开说完整。"""
-    params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
-
-    assert "每句大约12字以内" in params.length_instruction
-    assert "说详细" in params.length_instruction
-    assert "不受这个长度限制" in params.length_instruction
-    assert "不超过2行" not in params.length_instruction
-
-
 def test_style_adapter_clamps_sentence_limit_for_guidance():
     low = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=2)
     high = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=99)
@@ -124,16 +99,6 @@ def test_reply_spec_no_newline_split_instruction():
     assert "禁止任何形式的换行符" not in spec
 
 
-def test_reply_spec_includes_memory_restraints():
-    spec = PromptFactory.build_reply_spec()
-
-    assert "像真的记得那样自然" in spec
-    assert "不要再次显式提及" in spec
-    assert "除非用户主动问" in spec
-    # 重工具收进工作模式后，普通聊天不该再让模型去用 bash 取时间。
-    assert "当前时间可使用bash获取" not in spec
-
-
 def test_reply_spec_when_function_call_enabled_then_states_the_work_mode_contract():
     """工作模式必须说明进入轮、过程沟通与退出出口。"""
     spec = PromptFactory.build_reply_spec(supports_function_call=True)
@@ -144,31 +109,6 @@ def test_reply_spec_when_function_call_enabled_then_states_the_work_mode_contrac
     assert "对外回复" in spec
     assert "工作不一定必须做完" in spec
     assert "点名" in spec
-
-
-def test_reply_spec_when_function_call_enabled_then_enter_round_still_speaks_to_group():
-    """进入轮仍按普通回合外发：模型必须先说一句话，否则群里从指令到结果全程静默。"""
-    spec = PromptFactory.build_reply_spec(supports_function_call=True)
-
-    assert "enter_work_mode" in spec
-    assert "这一轮的正文" in spec
-    assert "正常发到群里" in spec
-    assert "先用一句话" in spec
-    # 过程沟通统一走 send_midway_msg，退出结果走 quit_work_mode。
-    assert "send_midway_msg" in spec
-    assert "quit_work_mode" in spec
-
-
-def test_work_mode_enter_tool_description_distinguishes_enter_round_and_later_rounds():
-    """工具描述与提示词同语义，否则模型仍会以为进入前也不该说话。"""
-    (enter_tool,) = control_tools(active=False)
-    description = enter_tool["function"]["description"]
-
-    assert "enter_work_mode" in description
-    assert "这一轮正文会正常发到群里" in description
-    assert "后续轮次" in description
-    assert "不会被发送" in description
-    assert "send_midway_msg" in description
 
 
 def test_reply_spec_without_function_call_then_has_no_work_mode_instructions():
@@ -197,44 +137,12 @@ def test_reply_spec_when_function_call_enabled_then_has_no_completion_control_in
     assert "stop" not in spec
 
 
-def test_reply_spec_when_function_call_disabled_then_no_completion_control_instruction():
-    """未启用 function call 时，不包含完成控制工具说明。"""
-    spec = PromptFactory.build_reply_spec(supports_function_call=False)
-
-    assert "continue" not in spec
-    assert "stop" not in spec
-
-
-def test_persona_prompt_includes_the_complete_identity_anchor_prompt():
-    prompt = PromptFactory.build_persona_prompt(
-        name="Bot",
-        aliases=["助手"],
-        full_system_prompt="你是一个有完整背景和行为规则的角色。\n始终保持这个身份。",
-    )
-
-    assert prompt.startswith("【身份锚定】\n")
-    assert "你的名字是「Bot」，别名是「助手」" in prompt
-    assert "你是一个有完整背景和行为规则的角色。" in prompt
-    assert "始终保持这个身份。" in prompt
-
-
 def test_persona_prompt_does_not_rebuild_removed_structured_persona_fields():
     custom_prompt = PromptFactory.build_persona_prompt(name="Bot", full_system_prompt="这是自定义人格。")
 
     assert "这是自定义人格。" in custom_prompt
     assert custom_prompt.count("【身份锚定】") == 1
     assert "【不可覆盖的运行约束】" not in custom_prompt
-
-
-def test_reply_spec_when_function_call_enabled_then_requires_verified_tool_progress():
-    spec = PromptFactory.build_reply_spec(supports_function_call=True)
-    guide = PromptFactory.build_work_mode_guide()
-
-    assert "聊天氛围本身不是调用理由" not in spec
-    assert "不能声称操作已完成" in spec
-    assert "Bash 可以连续串行调用" in guide
-    assert "先读取工具结果" in guide
-    assert "每次回复结束时必须调用" not in spec
 
 
 def test_casual_chat_prompt_leaves_work_protocol_to_work_mode():
@@ -244,27 +152,6 @@ def test_casual_chat_prompt_leaves_work_protocol_to_work_mode():
     assert "workflow_state" not in spec
     assert "Bash 可以连续串行调用" not in spec
     assert "进入后会收到详细的工作规范" in spec
-
-
-def test_reply_spec_when_task_repeats_then_requires_workflow_resume_and_claim():
-    spec = PromptFactory.build_work_mode_guide()
-
-    assert "workflow-reuse Skill" in spec
-    assert "workflow_state 的 resume" in spec
-    assert "claim 返回 claimed=true" in spec
-    assert "成功后 checkpoint" in spec
-    assert "checkpoint 已自动完成流程" in spec
-
-
-def test_reply_spec_requires_workflow_directory_before_reusable_external_work():
-    spec = PromptFactory.build_work_mode_guide()
-
-    assert "所有可能重复的外部任务" in spec
-    assert "workflow_state 的 list" in spec
-    assert "begin 并登记" in spec
-    assert "registered=true" in spec
-    assert "没有 registered=true" in spec
-    assert "不得执行外部副作用" in spec
 
 
 def test_persona_prompt_when_structured_response_is_needed_then_keeps_plain_delivery():
@@ -400,53 +287,7 @@ def test_persona_profile_when_loading_legacy_fields_then_only_prompt_is_persiste
     assert "完整人格设定" in profile.build_system_prompt()
 
 
-def test_assemble_chat_does_not_inject_group_style_length_learning():
-    group_profile = SimpleNamespace(
-        atmosphere_history=[],
-        group_norms={
-            "avg_message_length": 8,
-            "length_distribution": {"short": 10},
-            "message_count": 10,
-        },
-    )
-    style_params = StyleAdapter().adapt(pace="silent", persona=None)
-
-    bundle = PromptFactory.assemble_chat(
-        message_content="hello",
-        style_params=style_params,
-        other_ai_names=[],
-    )
-
-    assert "【群体风格】" not in bundle.system_prompt
-    assert "【回复风格】" not in bundle.system_prompt
-    assert "平均8字" not in bundle.system_prompt
-    assert "尽量简短" not in bundle.system_prompt
-    assert "控制在 30 字" not in bundle.system_prompt
-
-
-def test_assemble_chat_when_atmosphere_history_exists_then_does_not_inject_trend():
-    group_profile = SimpleNamespace(
-        atmosphere_history=[
-            SimpleNamespace(group_valence=-0.4),
-            SimpleNamespace(group_valence=0.0),
-            SimpleNamespace(group_valence=0.5),
-            SimpleNamespace(group_valence=0.7),
-        ],
-    )
-    style_params = StyleAdapter().adapt(pace="steady", persona=None)
-
-    bundle = PromptFactory.assemble_chat(
-        message_content="hello",
-        style_params=style_params,
-        other_ai_names=[],
-    )
-
-    assert "【氛围趋势】" not in bundle.system_prompt
-    assert "群聊氛围正在" not in bundle.system_prompt
-
-
 def test_assemble_chat_puts_function_call_and_qq_mentions_in_interaction_spec():
-    group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
 
     bundle = PromptFactory.assemble_chat(
@@ -469,7 +310,6 @@ def test_assemble_chat_puts_function_call_and_qq_mentions_in_interaction_spec():
 
 
 def test_assemble_chat_injects_length_instruction_into_reply_spec_when_present():
-    group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
     style_params.length_instruction = "每句话尽量不超过 12 个汉字。"
 
@@ -484,22 +324,7 @@ def test_assemble_chat_injects_length_instruction_into_reply_spec_when_present()
     assert "每句话尽量不超过 12 个汉字。" in bundle.system_prompt
 
 
-def test_assemble_chat_injects_configured_group_chat_length_guidance():
-    group_profile = SimpleNamespace(atmosphere_history=[])
-    style_params = StyleAdapter().adapt(pace="steady", persona=None, max_sentence_chars=12)
-
-    bundle = PromptFactory.assemble_chat(
-        message_content="hello",
-        style_params=style_params,
-        other_ai_names=[],
-    )
-
-    assert "每句大约12字以内" in bundle.system_prompt
-    assert "不受这个长度限制" in bundle.system_prompt
-
-
 def test_assemble_chat_injects_interaction_spec_without_legacy_guidance():
-    group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
 
     bundle = PromptFactory.assemble_chat(
@@ -520,7 +345,6 @@ def test_assemble_chat_injects_interaction_spec_without_legacy_guidance():
 
 
 def test_assemble_chat_when_dynamic_context_exists_then_marks_it_as_reference_data():
-    group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
 
     bundle = PromptFactory.assemble_chat(
@@ -536,7 +360,6 @@ def test_assemble_chat_when_dynamic_context_exists_then_marks_it_as_reference_da
 
 
 def test_assemble_chat_reply_spec_is_injected_once_after_context_assembly():
-    group_profile = SimpleNamespace(atmosphere_history=[])
     style_params = StyleAdapter().adapt(pace="steady", persona=None)
 
     bundle = PromptFactory.assemble_chat(

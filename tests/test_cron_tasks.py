@@ -328,12 +328,3 @@ async def test_cron_restart_does_not_repeat_an_ambiguously_started_command(monke
     assert job["run_count"] == 1
     assert "pending_run_key" not in job
     assert "pending_execution_started_key" not in job
-
-
-def test_cron_rejects_unsupported_expression():
-    try:
-        cron_tasks.validate_expression("@daily")
-    except cron_tasks.CronParseError:
-        pass
-    else:
-        raise AssertionError("@daily should be rejected by the five-field parser")

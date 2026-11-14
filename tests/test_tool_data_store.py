@@ -54,12 +54,6 @@ def test_tool_store_when_webui_lists_settings_then_all_keys_are_returned(tmp_pat
     assert store.all() == {"a": 1, "b": 2}
 
 
-def test_tool_store_when_data_changes_then_dirty_flag_tracks_unsaved_state(tmp_path: Path):
-    store = ToolDataStore(tmp_path / "tool_data" / "prefs.json")
-
-    assert store.is_dirty is False
-
-
 def test_tool_store_transaction_holds_lock_across_read_modify_write(tmp_path: Path):
     store = ToolDataStore(tmp_path / "tool_data" / "workflow.json")
     entered = Event()

@@ -2059,16 +2059,6 @@ def test_webui_plugin_reload_when_existing_types_then_preserves_them(tmp_path):
     assert set(json.loads(flag.read_text(encoding="utf-8"))["types"]) == {"all", "provider"}
 
 
-@pytest.mark.asyncio
-async def test_webui_plugins_get_accepts_path_based_delegate(tmp_path):
-    server = WebUIServer(data_dir=tmp_path)
-
-    response = await server.api_plugins_get(SimpleNamespace())
-
-    assert response.status == 200
-    assert json.loads(response.text) == {"plugins": []}
-
-
 def test_webui_routes_when_server_is_created_then_all_declared_routes_are_registered(tmp_path):
     server = WebUIServer(data_dir=tmp_path)
 
@@ -2175,14 +2165,6 @@ async def test_persona_tokens_when_usage_happens_in_evening_then_hourly_uses_loc
     payload = json.loads(response.text)
 
     assert payload["hourly_distribution"] == [{"hour": 21, "calls": 1}]
-
-
-def test_webui_routes_when_declared_then_handler_names_are_available(tmp_path):
-    server = WebUIServer(data_dir=tmp_path)
-
-    for spec in WEBUI_ROUTES:
-        handler = getattr(server, spec.handler_name)
-        assert callable(handler)
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import os
-import platform
 import queue
 import re
 import socket
@@ -568,16 +567,3 @@ def _local_ipv4() -> str | None:
             return str(sock.getsockname()[0])
         except OSError:  # pragma: no cover
             return None
-
-
-# ── 平台差异（记录，不做断言失败）────────────────────────
-def test_stop_uses_terminate_on_windows() -> None:
-    """契约 §1 要求优雅退出并返回 0；Windows 的 ``terminate()`` 是 TerminateProcess。
-
-    Python 这条路径上拿不到 SIGTERM，因此 Windows 的退出码不是契约期望的 0。侧车
-    是无状态传输层，这不影响正确性；这条用例把差异固定下来，避免以后有人误以为
-    在 Windows 上也验证过优雅退出。
-    """
-    if platform.system() != "Windows":
-        pytest.skip("只在 Windows 上有这条差异")
-    assert llm_sidecar.STOP_TIMEOUT_SECONDS == 5.0

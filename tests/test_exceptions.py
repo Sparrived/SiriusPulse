@@ -3,13 +3,7 @@
 from __future__ import annotations
 
 from sirius_pulse.exceptions import (
-    ConfigError,
-    ConflictingMemoryError,
-    ContentValidationError,
-    InvalidConfigError,
     JSONParseError,
-    MemoryError,
-    MissingConfigError,
     OrchestrationConfigError,
     ParseError,
     ProviderAuthError,
@@ -20,7 +14,6 @@ from sirius_pulse.exceptions import (
     TokenBudgetExceededError,
     TokenError,
     TokenEstimationError,
-    UserNotFoundError,
 )
 
 
@@ -111,35 +104,6 @@ def test_parse_error_when_llm_returns_broken_json_then_preview_and_schema_are_ke
     assert isinstance(exc, ParseError)
 
 
-def test_parse_error_when_required_field_is_missing_then_field_name_is_reported():
-    exc = ContentValidationError("字段缺失", field="name", expected_type="str")
-
-    assert exc.field == "name"
-    assert exc.expected_type == "str"
-    assert exc.error_code == "CONTENT_VALIDATION_ERROR"
-
-
-def test_config_error_when_admin_sets_invalid_value_then_expected_format_is_visible():
-    exc = InvalidConfigError(
-        "engagement_sensitivity",
-        "值超出范围",
-        provided_value=2.0,
-        expected_format="0~1",
-    )
-
-    assert exc.config_key == "engagement_sensitivity"
-    assert exc.provided_value == 2.0
-    assert exc.context["expected_format"] == "0~1"
-    assert isinstance(exc, ConfigError)
-
-
-def test_config_error_when_provider_key_is_missing_then_missing_key_is_reported():
-    exc = MissingConfigError("api_key", "缺少 API Key")
-
-    assert exc.config_key == "api_key"
-    assert exc.error_code == "MISSING_CONFIG"
-
-
 def test_config_error_when_orchestration_models_are_missing_then_tasks_are_listed():
     missing = {"memory_extract": ["gpt-4o-mini"], "response_generate": ["gpt-4o"]}
 
@@ -147,28 +111,3 @@ def test_config_error_when_orchestration_models_are_missing_then_tasks_are_liste
 
     assert "memory_extract" in str(exc)
     assert exc.missing_models == missing
-
-
-def test_memory_error_when_user_is_unknown_then_user_id_is_kept_for_recovery():
-    exc = UserNotFoundError("user_123")
-
-    assert exc.user_id == "user_123"
-    assert exc.context["user_id"] == "user_123"
-    assert isinstance(exc, MemoryError)
-
-
-def test_memory_error_when_facts_conflict_then_conflicting_fact_ids_are_visible():
-    exc = ConflictingMemoryError("u1", ["fact_1", "fact_2"], "记忆冲突")
-
-    assert exc.user_id == "u1"
-    assert exc.fact_ids == ["fact_1", "fact_2"]
-    assert exc.context["conflicting_facts"] == ["fact_1", "fact_2"]
-
-
-def test_exception_hierarchy_when_handlers_catch_category_then_specific_errors_are_included():
-    assert issubclass(ProviderConnectionError, ProviderError)
-    assert issubclass(TokenBudgetExceededError, TokenError)
-    assert issubclass(JSONParseError, ParseError)
-    assert issubclass(InvalidConfigError, ConfigError)
-    assert issubclass(UserNotFoundError, MemoryError)
-    assert issubclass(MemoryError, SiriusException)

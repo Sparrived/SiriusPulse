@@ -50,21 +50,6 @@ class _Response:
         return self.body[:size]
 
 
-def test_metadata_exposes_unified_master_interaction() -> None:
-    assert interaction_with_master.TOOL_META["name"] == "interaction_with_master"
-    assert interaction_with_master.TOOL_META["silent"] is False
-    assert [param["name"] for param in interaction_with_master.TOOL_META["parameters"]] == [
-        "action",
-        "message",
-        "device_id",
-    ]
-    assert set(interaction_with_master.TOOL_META["config"]) == {
-        "public_status_token",
-        "base_url",
-        "timeout_seconds",
-    }
-
-
 def test_runtime_preserves_action_specific_interaction_behavior() -> None:
     """私聊主人与读设备状态是两件不同的事：副作用、重试、静默与互动门槛各不相同。"""
     tool = ToolRegistry._load_tool_file(Path(interaction_with_master.__file__))

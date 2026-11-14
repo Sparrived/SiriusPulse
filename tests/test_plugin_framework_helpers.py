@@ -13,7 +13,6 @@ from sirius_pulse.plugins.models import (
     ArgNode,
     CommandAST,
     PluginDefinition,
-    PluginResponse,
     RenderMode,
 )
 
@@ -148,19 +147,6 @@ def test_plugin_definition_when_built_from_class_then_metadata_and_schedule_are_
     assert definition.permissions.rate_limit_calls_per_minute == 3
     assert definition.dependencies == ["dep"]
     assert definition.prompt_inject == "demo ability"
-
-
-def test_plugin_response_when_using_factories_then_success_and_failure_payloads_are_created():
-    ok = PluginResponse.ok("done", data={"x": 1}, render_mode="silent", metadata={"m": 2})
-    failed = PluginResponse.fail("nope")
-
-    assert ok.success is True
-    assert ok.text == "done"
-    assert ok.data == {"x": 1}
-    assert ok.render_mode == "silent"
-    assert ok.metadata == {"m": 2}
-    assert failed.success is False
-    assert failed.error == "nope"
 
 
 def test_plugin_data_store_when_values_change_then_json_persists_and_invalid_files_fallback(

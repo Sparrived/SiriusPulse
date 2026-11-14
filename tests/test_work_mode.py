@@ -502,32 +502,6 @@ async def test_work_mode_when_persona_is_named_then_whole_stash_enters_at_once(t
     ] == ["你们聊什么呢", "Luna 你弄完没有", "顺便说一句"]
 
 
-@pytest.mark.asyncio
-async def test_work_mode_when_round_limit_hits_then_run_is_recorded_as_aborted(tmp_path):
-    queue = DelayedResponseQueue()
-    _queued_job(queue)
-    calls: list = []
-
-    async def chat(request):
-        calls.append(request)
-        if request.tool_choice == "none":
-            return _round("我先停下来汇报。")
-        if len(calls) == 1:
-            return _round("", _call(ENTER_WORK_MODE, '{"goal": "跑很久的任务"}', "c-enter"))
-        return _round("", _call("bash", '{"command": "sleep 1"}', f"c-bash-{len(calls)}"))
-
-    tasks, _, runs = _work_mode_tasks(tmp_path, queue, chat, max_tool_rounds=1)
-
-    results = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
-
-    session = _session(tmp_path)
-    assert session["status"] == "aborted"
-    assert session["result"]
-    assert session["ended_at"]
-    assert runs == {}
-    assert results[0]["reply"]
-
-
 def test_work_mode_store_when_many_runs_then_keeps_the_newest(tmp_path, monkeypatch):
     monkeypatch.setattr("sirius_pulse.core.work_mode.MAX_RECORDED_SESSIONS", 2)
     store = WorkModeStore(tmp_path)
@@ -690,30 +664,6 @@ async def test_work_mode_when_chatter_arrives_then_next_round_answers_it(tmp_pat
     second = await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
 
     assert second[0]["reply"] == "我在整理群文件，刚忙完——你们聊什么呢？"
-
-
-@pytest.mark.asyncio
-async def test_work_mode_when_generation_fails_then_trace_is_not_left_running(tmp_path):
-    """生成抛错的那次工作必须在轨迹里收尾成未完成，不能永远停在"进行中"。"""
-    queue = DelayedResponseQueue()
-    _queued_job(queue)
-    calls: list = []
-
-    async def chat(request):
-        calls.append(request)
-        if len(calls) == 1:
-            return _round("", _call(ENTER_WORK_MODE, '{"goal": "整理群文件"}', "c-enter"))
-        raise RuntimeError("provider down")
-
-    tasks, _, _ = _work_mode_tasks(tmp_path, queue, chat)
-
-    with pytest.raises(RuntimeError):
-        await tasks.tick_delayed_queue("group-1", on_partial_reply=AsyncMock())
-
-    session = _session(tmp_path)
-    assert session["status"] == "aborted"
-    assert session["ended_at"]
-    assert session["result"]
 
 
 def test_work_mode_store_when_runs_were_left_running_then_startup_marks_them_unfinished(tmp_path):

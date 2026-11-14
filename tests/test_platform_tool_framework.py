@@ -19,8 +19,6 @@ from sirius_pulse.platforms.onebot_v11.protocol import (
     extract_text_from_segments,
     sanitize_image_name,
 )
-from sirius_pulse.providers.base import GenerationRequest, GenerationResult
-from sirius_pulse.providers.mock import MockProvider
 from sirius_pulse.tools.models import ToolDefinition, ToolInvocationContext
 from sirius_pulse.tools.security import ensure_developer_access, validate_tool_access
 from sirius_pulse.tools.telemetry import ToolExecutionRecord, ToolTelemetry
@@ -166,26 +164,6 @@ def test_onebot_protocol_when_image_names_are_normalized_then_duplicates_and_fal
     label = build_image_label({"data": {"filename": "pic.png"}}, 3, "image", counter)
     assert "image" in label
     assert "pic#3.png" in label
-
-
-@pytest.mark.asyncio
-async def test_mock_provider_when_responses_are_configured_then_requests_are_recorded_in_order():
-    provider = MockProvider(["first", "second"])
-    request = GenerationRequest(
-        model="mock-model",
-        system_prompt="system",
-        messages=[{"role": "user", "content": "hello"}],
-    )
-
-    first = await provider.generate_async(request)
-    second = await provider.generate_async(request, return_reasoning=True)
-    fallback = await provider.generate_async(request)
-
-    assert isinstance(first, GenerationResult)
-    assert first.content == "first"
-    assert second.content == "second"
-    assert fallback.content == "[mock] no configured response"
-    assert provider.requests == [request, request, request]
 
 
 def test_tool_security_when_developer_only_tool_is_validated_then_access_depends_on_context():

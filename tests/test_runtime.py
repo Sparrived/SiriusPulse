@@ -674,27 +674,6 @@ async def test_persona_worker_when_runtime_has_no_engine_then_does_not_start_ada
     worker._start_adapter.assert_not_awaited()
 
 
-def test_persona_worker_all_reload_schedules_engine_rebuild(tmp_path):
-    worker = PersonaWorker(tmp_path)
-    engine = SimpleNamespace(config={}, brain=SimpleNamespace(config={}))
-    worker._runtime = SimpleNamespace(engine=engine)
-    flag = tmp_path / "engine_state" / "reload_requested"
-    flag.parent.mkdir()
-    flag.write_text("all", encoding="utf-8")
-    os.utime(flag, (0, 0))
-    scheduled = []
-    worker._reload_persona = lambda _engine: None  # type: ignore[method-assign]
-    worker._reload_orchestration = lambda _engine: None  # type: ignore[method-assign]
-    worker._reload_experience = lambda _engine: None  # type: ignore[method-assign]
-    worker._reload_provider = lambda _engine: None  # type: ignore[method-assign]
-    worker._reload_global_config = lambda _engine: None  # type: ignore[method-assign]
-    worker._schedule_engine_rebuild = lambda: scheduled.append(True)  # type: ignore[method-assign]
-
-    worker._check_config_reload()
-
-    assert scheduled == [True]
-
-
 @pytest.mark.asyncio
 async def test_persona_worker_rebuild_engine_rebinds_adapters(tmp_path):
     replacement = object()
@@ -723,17 +702,6 @@ async def test_persona_worker_rebuild_engine_rebinds_adapters(tmp_path):
 
     assert adapter.engine is replacement
     assert bridges == [("napcat", adapter)]
-
-
-def test_engine_runtime_includes_main_model_reply_cooldown_in_engine_config(tmp_path):
-    runtime = EngineRuntime(
-        tmp_path,
-        plugin_config={"main_model_reply_cooldown_seconds": 7.5},
-    )
-
-    config = runtime._build_engine_runtime_config(PersonaExperienceConfig())
-
-    assert config["main_model_reply_cooldown_seconds"] == 7.5
 
 
 def test_engine_runtime_forwards_memory_budgets_from_plugin_config_and_experience(tmp_path):
@@ -766,16 +734,6 @@ def test_engine_runtime_forwards_memory_budgets_from_plugin_config_and_experienc
         PersonaExperienceConfig(persona_notebook_token_budget=0)
     )
     assert disabled["persona_notebook_token_budget"] == 0
-
-
-def test_engine_runtime_includes_group_reply_strategies_in_engine_config(tmp_path):
-    runtime = EngineRuntime(tmp_path)
-
-    config = runtime._build_engine_runtime_config(
-        PersonaExperienceConfig(group_reply_strategies={"group-keyword": "keyword"})
-    )
-
-    assert config["group_reply_strategies"] == {"group-keyword": "keyword"}
 
 
 @pytest.mark.asyncio

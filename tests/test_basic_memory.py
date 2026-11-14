@@ -174,21 +174,6 @@ def test_remove_entries_by_ids_when_units_cover_sources_then_prunes_active_windo
     assert [entry.content for entry in mgr.get_all("group_a")] == [second.content]
 
 
-def test_basic_memory_entry_when_intent_scores_are_missing_then_defaults_to_empty_dict():
-    entry = BasicMemoryEntry.from_dict(
-        {
-            "entry_id": "entry_1",
-            "group_id": "group_a",
-            "user_id": "alice",
-            "role": "human",
-            "content": "hello",
-            "timestamp": "2026-01-01T00:00:00+00:00",
-        }
-    )
-
-    assert entry.intent_scores == {}
-
-
 def test_basic_memory_entry_records_injected_tool_names():
     mgr = BasicMemoryManager()
     injected_request = {

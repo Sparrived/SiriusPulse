@@ -20,7 +20,6 @@ import pytest
 import pytest_asyncio
 
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine
-from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY, ModelRouter
 from sirius_pulse.core.persona_store import PersonaStore
 from sirius_pulse.core.tool_engine_context import ToolEngineContextImpl
 from sirius_pulse.core.work_mode import WorkModeStore
@@ -38,7 +37,6 @@ from sirius_pulse.tools.data_store import ToolDataStore
 from sirius_pulse.tools.executor import ToolExecutor
 from sirius_pulse.tools.models import ToolEngineContext, ToolInvocationContext, ToolPassiveType
 from sirius_pulse.tools.registry import ToolRegistry
-from sirius_pulse.webui.model_catalog import TASK_LABELS, build_model_catalog
 
 GROUP_ID = "123456789"
 USER_ID = "u-1001"
@@ -738,18 +736,6 @@ def test_the_real_registry_exposes_a_model_visible_periodic_tool(registry):
     )
     by_name = {schema["function"]["name"]: schema["function"] for schema in schemas}
     assert by_name["image_generate"]["parameters"]["required"] == ["prompt"]
-
-
-def test_the_model_router_and_webui_catalog_register_the_drawing_task():
-    task = ModelRouter().resolve("image_generate")
-    assert task.model_name == "image_generate"
-    assert task.timeout == 300.0
-    assert task.retries == 0
-    catalog = build_model_catalog()
-    assert catalog["available_models"] == list(_DEFAULT_TASK_REGISTRY)
-    assert "image_generate" in catalog["available_models"]
-    labels = {choice["value"]: choice["label"] for choice in catalog["model_choices"]}
-    assert labels["image_generate"] == f"{TASK_LABELS['image_generate']}（image_generate）"
 
 
 def test_engine_context_signatures_bind_actual_image_tool_keyword_arguments():

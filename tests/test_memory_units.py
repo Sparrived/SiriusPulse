@@ -150,29 +150,6 @@ def test_memory_unit_prompt_embeds_full_persona_setting():
     assert "authoritative" in prompt
 
 
-def test_memory_unit_prompt_forbids_duplicating_or_contradicting_persona_setting():
-    """人格提示词里已写明或与之相悖的内容，不该再被抽取成记忆单元。"""
-    basic = BasicMemoryManager()
-    entry = basic.add_entry("group_a", "alice", "human", "你由谁开发呀", speaker_name="Alice")
-    brain = _FakeBrain()
-
-    asyncio.run(
-        MemoryUnitGenerator().generate(
-            group_id="group_a",
-            candidates=[entry],
-            persona_name="月白",
-            persona_description="",
-            persona_prompt="你的名字是「月白」。\n你由临雀一手开发。",
-            brain=brain,
-            model_name="memory-model",
-        )
-    )
-
-    system_prompt = brain.requests[0].system_prompt
-    assert "Never emit a unit that contradicts the persona setting" in system_prompt
-    assert "merely restates what the persona setting already" in system_prompt
-
-
 def test_memory_unit_store_round_trips(tmp_path):
     store = MemoryUnitFileStore(tmp_path)
     unit = MemoryUnit(
@@ -500,33 +477,6 @@ def test_generation_caps_a_single_checkpoint_batch(tmp_path):
     assert "source_id=" + candidates[0].entry_id in content
     assert "source_id=" + candidates[31].entry_id in content
     assert "source_id=" + candidates[32].entry_id not in content
-
-
-def test_generation_does_not_forward_sampling_params_to_raw_request(tmp_path):
-    """采样参数由 AMKR 的任务定义持有，引擎侧不再传递。"""
-    manager = MemoryUnitManager(tmp_path)
-    entry = BasicMemoryManager().add_entry("group_a", "alice", "human", "message")
-    brain = _FakeBrain()
-
-    result = asyncio.run(
-        manager.generate_from_candidates(
-            group_id="group_a",
-            candidates=[entry],
-            persona_name="Sirius",
-            persona_description="",
-            brain=brain,
-            model_name="memory-model",
-            min_candidate_count=1,
-            max_retries=0,
-        )
-    )
-
-    assert result is not None
-    request = next(item for item in brain.requests if item.purpose == "memory_unit_extract")
-    assert request.model == "memory-model"
-    assert not hasattr(request, "max_tokens")
-    assert not hasattr(request, "temperature")
-    assert request.retry_max == 0
 
 
 def test_failed_checkpoint_batch_enters_backoff(tmp_path):

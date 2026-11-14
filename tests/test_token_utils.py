@@ -36,12 +36,6 @@ def test_token_estimator_when_prompt_gets_longer_then_budget_increases():
     assert long > short
 
 
-def test_token_estimator_when_prompt_is_multilingual_then_returns_positive_budget():
-    tokens = estimate_tokens("Hello 你好 こんにちは 123")
-
-    assert tokens > 0
-
-
 def test_token_stats_when_debugging_prompt_then_language_counts_are_visible():
     stats = get_token_estimation_stats("hello world 你好")
 

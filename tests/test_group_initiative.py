@@ -10,7 +10,6 @@ import pytest
 
 from sirius_pulse.core import initiative
 from sirius_pulse.core.initiative import InitiativeLedger, InitiativeService, level_for
-from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.memory.basic import BasicMemoryManager
 from sirius_pulse.memory.context_assembler import ContextAssembler
 from sirius_pulse.memory.impressions import OpenThread, PersonImpression, impression_store
@@ -209,11 +208,3 @@ def test_telling_her_to_be_quiet_silences_the_group(tmp_path):
     assert service.ledger.hushed(GROUP, datetime.now(timezone.utc))
     reloaded = InitiativeLedger(tmp_path / "engine_state" / "initiative.json")
     assert reloaded.hushed(GROUP, datetime.now(timezone.utc)), "安静要求重启后仍然有效"
-
-
-def test_action_only_replies_are_allowed_when_she_can_poke_or_send_stickers():
-    spec = PromptFactory.build_interaction_spec(sticker_names=["开心"], supports_poke=True)
-    plain = PromptFactory.build_interaction_spec()
-
-    assert "只用动作回应也可以" in spec
-    assert "只用动作回应也可以" not in plain

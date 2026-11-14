@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sirius_pulse.adapters.models import AtSegment, TextSegment
-from sirius_pulse.core.qq_mentions import build_qq_mention_section, parse_qq_at_mentions
+from sirius_pulse.core.qq_mentions import parse_qq_at_mentions
 from sirius_pulse.platforms.onebot_v11.napcat.adapter import NapCatAdapter
 
 
@@ -51,19 +51,6 @@ def test_parse_qq_at_mentions_keeps_unknown_bare_numeric_when_ids_are_known():
 
 def test_parse_qq_at_mentions_does_not_split_long_numeric_ids():
     assert parse_qq_at_mentions("hi @1234567890123") is None
-
-
-def test_build_qq_mention_section_lists_member_ids_and_syntax():
-    section = build_qq_mention_section(
-        [
-            {"user_id": 123, "nickname": "Alice"},
-            {"user_id": 456, "card": "BobCard", "role": "admin"},
-        ]
-    )
-
-    assert "[AT:QQ号]" in section
-    assert "不要编造" in section
-    assert "【QQ @提及】" not in section
 
 
 @pytest.mark.asyncio

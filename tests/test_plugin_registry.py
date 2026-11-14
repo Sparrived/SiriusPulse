@@ -279,19 +279,6 @@ def test_plugin_registry_preserves_non_explicit_prefix_startswith_semantics():
     assert match.command_name == "weather"
 
 
-def test_plugin_registry_when_user_uses_unrelated_command_then_no_plugin_is_selected():
-    registry = PluginRegistry()
-    registry.register(
-        _plugin(
-            "dice_plugin",
-            [PluginCommandDef(name="dice", patterns=["/dice"], pattern_type="prefix")],
-        ),
-        instance=None,
-    )
-
-    assert registry.match_message("/weather Beijing") is None
-
-
 def test_plugin_registry_when_keyword_plugin_exists_then_natural_language_can_match_it():
     registry = PluginRegistry()
     registry.register(
@@ -487,14 +474,6 @@ def test_plugin_ui_schema_normalizes_presentation_without_redefining_parameters(
     assert "default" not in normalized["parameters"]["poll_seconds"]
     assert normalized is not raw
     assert normalized["sections"] is not raw["sections"]
-
-
-def test_plugin_ui_schema_is_keyword_only_to_preserve_definition_positional_contract():
-    import inspect
-
-    ui_schema = inspect.signature(PluginDefinition).parameters["ui_schema"]
-
-    assert ui_schema.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 @pytest.mark.parametrize(

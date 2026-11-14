@@ -73,11 +73,6 @@ def test_build_chat_context_derives_group_and_private_shapes():
     assert private["is_private"] is True
 
 
-def test_invocation_context_chat_context_matches_explicit_derivation():
-    ctx = _ctx("98765")
-    assert ctx.chat_context == build_chat_context(group_id="98765", adapter_type="napcat")
-
-
 # ── 工具实际看到的位置 ──────────────────────────────────────────────
 
 

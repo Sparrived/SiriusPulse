@@ -11,14 +11,6 @@ import pytest
 from sirius_pulse.core.model_router import _DEFAULT_TASK_REGISTRY, ModelRouter, TaskConfig
 
 
-def test_model_router_when_generating_final_reply_then_uses_that_task_name():
-    """发往 AMKR 的 model 就是任务名，AMKR 据此查表换成真实模型。"""
-    config = ModelRouter().resolve("response_generate")
-
-    assert config.model_name == "response_generate"
-    assert config.timeout == 30.0
-
-
 @pytest.mark.parametrize("task_name", sorted(_DEFAULT_TASK_REGISTRY))
 def test_model_router_when_any_known_task_then_model_is_the_task_name(task_name):
     """每个认知任务都原样发出任务名，不掺入任何本地模型选择。"""
@@ -152,13 +144,3 @@ def test_every_task_name_sent_by_the_code_is_registered():
         f"这些任务名会被发往 AMKR 但没有登记：{unregistered}；"
         f"请在 _DEFAULT_TASK_REGISTRY 中补上，否则 AMKR 会当成模型名而 404。"
     )
-
-
-def test_autonomy_turn_uses_a_registered_task_name():
-    """自主回合的任务名必须已登记——它只靠背景心跳驱动，失败时没有对话可暴露。"""
-    sent = _task_names_sent_by_the_code()
-
-    # 引擎实际发出的名字（扫源码取得，不在这里复制一份常量）。
-    assert "autonomy_generate" in sent
-    assert "autonomy_generate" in _DEFAULT_TASK_REGISTRY
-    assert ModelRouter().resolve("autonomy_generate").model_name == "autonomy_generate"

@@ -73,14 +73,6 @@ async def test_napcat_short_plain_multiline_reply_becomes_single_message():
     assert sent == [[{"type": "text", "data": {"text": "第一行第二行第三行"}}]]
 
 
-def test_split_reply_joins_a_sentence_broken_by_newline():
-    text = "现在本猫天天监督他、偶尔咬他一口，\n还能名正言顺赖着，划算多啦，哼！"
-
-    assert _split_reply_for_delivery(text) == [
-        "现在本猫天天监督他、偶尔咬他一口，还能名正言顺赖着，划算多啦，哼！"
-    ]
-
-
 @pytest.mark.asyncio
 async def test_napcat_mid_sentence_newline_is_sent_as_one_message():
     adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))

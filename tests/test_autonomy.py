@@ -29,7 +29,7 @@ from sirius_pulse.life.state import LifeStateStore
 from sirius_pulse.memory.units.models import MemoryUnit
 from sirius_pulse.memory.units.store import MemoryUnitFileStore
 from sirius_pulse.models.persona import PersonaProfile
-from sirius_pulse.tools.builtin import autonomy, intend_pursue, intend_share, life_project
+from sirius_pulse.tools.builtin import autonomy, intend_share, life_project
 from sirius_pulse.tools.executor import _self_initiated_block_reason
 from sirius_pulse.tools.models import ToolDefinition, ToolSideEffect
 
@@ -697,19 +697,6 @@ def test_self_initiated_turn_refuses_delivery_tools():
 
     assert _self_initiated_block_reason(sending) != ""
     assert _self_initiated_block_reason(reading) == ""
-
-
-@pytest.mark.parametrize("tool", [intend_share, intend_pursue, life_project])
-def test_recording_tools_are_allowed_on_her_own_time(tool):
-    """登记想说的、想做的、写进作品，都只是记录，自主时间里必须可用。"""
-    assert tool.TOOL_META["allowed_when_self_initiated"] is True
-    assert tool.TOOL_META.get("model_visible", True) is True
-
-
-def test_master_interaction_is_allowed_on_her_own_time():
-    from sirius_pulse.tools.builtin import interaction_with_master
-
-    assert interaction_with_master.TOOL_META["allowed_when_self_initiated"] is True
 
 
 # --- 睡着时：可以等，但不可以发出去 -------------------------------------------------

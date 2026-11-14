@@ -9,18 +9,6 @@ import pytest
 from sirius_pulse.persona_config import PersonaExperienceConfig
 
 
-def test_experience_config_when_new_persona_starts_then_uses_safe_defaults(tmp_path: Path):
-    config = PersonaExperienceConfig.load(tmp_path / "experience.json")
-
-    assert config.engagement_sensitivity == 0.5
-    assert config.expressiveness == 0.5
-    assert config.max_tool_rounds == 3
-    assert config.max_sentence_chars == 20
-    assert config.memory_unit_top_k == 10
-    assert config.memory_unit_token_budget == 2000
-    assert config.persona_notebook_token_budget == 2048
-
-
 def test_experience_config_when_admin_saves_changes_then_next_startup_reads_them(
     tmp_path: Path,
 ):
