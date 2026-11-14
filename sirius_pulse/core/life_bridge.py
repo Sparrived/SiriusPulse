@@ -1,13 +1,15 @@
 """Where her life meets the chat engine.
 
 The life loop itself runs in the ``autonomy`` tool's heartbeat.  This module is
-the chat side of it, kept to three small hooks so the pipeline stays readable:
+the chat side of it, kept to a few small hooks so the pipeline stays readable:
 
 - :func:`reply_factor` scales participation: asleep, she only answers someone who
   really calls for her; worn out, she chimes in a little less.
 - :func:`presence_context` is the 【此刻的你】 block for a chat turn.
 - :func:`record_reply` counts how much she has talked today (it tires her) and
   notices when a reply woke her up at night.
+- :func:`home_overview` is the 【你的家目录 ~】 glance handed to her when she starts
+  working, so she does not open every turn with ``ls -la ~``.
 
 Everything here is best-effort: a missing or broken life directory must never
 break a chat reply, so failures fall back to "no effect".
@@ -15,11 +17,15 @@ break a chat reply, so failures fall back to "no effect".
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from sirius_pulse.life import DaySchedule, life_dir, schedule_from_config
+from sirius_pulse.life.home import summarize_home
 from sirius_pulse.life.presence import LifeSnapshot, render_presence
 from sirius_pulse.life.presence import reply_factor as _snapshot_reply_factor
 from sirius_pulse.life.presence import snapshot
@@ -132,3 +138,33 @@ def record_reply(engine: Any, now: datetime | None = None) -> None:
                 store.update(lambda state: state.record_woken(now))
     except Exception:
         logger.debug("记录回复对生活状态的影响失败", exc_info=True)
+
+
+#: 家目录概览缓存多久：一次工作里几轮回合、几次回调接连开工时不必每次都重新遍历。
+HOME_OVERVIEW_TTL_SECONDS = 300.0
+
+
+async def home_overview(engine: Any, now: datetime | None = None) -> str:
+    """开工前给她的家目录概览；读不到就返回空串，不影响回合本身。
+
+    遍历家目录是文件系统 I/O（线上几千个文件），所有人格共用一个事件循环，所以放到
+    线程里做，并按人格缓存几分钟。
+    """
+    work_path = _work_path(engine)
+    if not work_path:
+        return ""
+    cache = getattr(engine, "_home_overview_cache", None)
+    clock = time.monotonic()
+    if isinstance(cache, tuple) and clock - cache[0] < HOME_OVERVIEW_TTL_SECONDS:
+        return cache[1]
+    current = now or datetime.now(timezone.utc)
+    try:
+        text = await asyncio.to_thread(summarize_home, Path(work_path) / "home", now=current)
+    except Exception:
+        logger.debug("生成家目录概览失败", exc_info=True)
+        return ""
+    try:
+        engine._home_overview_cache = (clock, text)
+    except AttributeError:
+        pass
+    return text

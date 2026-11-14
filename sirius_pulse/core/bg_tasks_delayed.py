@@ -1023,6 +1023,9 @@ class DelayedQueueTasks:
                         enter_notice += "先用 send_midway_msg 简短说明你在做什么。）"
                     # 工作细则只在真正开工时送到，不常驻在每一轮闲聊的 system prompt 里。
                     enter_notice += "\n\n" + PromptFactory.build_work_mode_guide()
+                    home_context = await life_bridge.home_overview(engine)
+                    if home_context:
+                        enter_notice += "\n\n" + home_context
                     messages.append(
                         {"role": "tool", "tool_call_id": tc.id, "content": enter_notice}
                     )

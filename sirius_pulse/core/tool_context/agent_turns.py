@@ -13,6 +13,7 @@ import json
 import logging
 from typing import Any, Callable
 
+from sirius_pulse.core import life_bridge
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.tool_call_runner import ToolCallRunner
 from sirius_pulse.core.work_mode import (
@@ -292,10 +293,13 @@ class AgentTurnMixin:
         render_notebook = getattr(assembler, "build_persona_notebook_context", None)
         if notebook_enabled and callable(render_notebook):
             notebook_context = render_notebook(group_id)
-        if notebook_context:
-            from sirius_pulse.core.brain import Brain
+        # 开工前替她看一眼家目录，省得每次都先 ls 一遍（概览在线程里生成并缓存）。
+        home_context = await life_bridge.home_overview(self._engine)
+        for context in (notebook_context, home_context):
+            if context:
+                from sirius_pulse.core.brain import Brain
 
-            messages = Brain._inject_user_context_message(messages, notebook_context)
+                messages = Brain._inject_user_context_message(messages, context)
 
         store = WorkModeStore(self._engine.work_path)
         run = WorkModeRun(
