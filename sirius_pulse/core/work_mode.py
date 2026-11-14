@@ -57,19 +57,17 @@ _ENTER_TOOL: dict[str, Any] = {
     "function": {
         "name": ENTER_WORK_MODE,
         "description": (
-            "【适用场景】需要执行多步工具协作或重型任务（bash、file_ops、read_skill、workflow_state）时"
-            "进入工作模式；只是发一张图或一个文件不需要进入。\n"
-            "【使用方法】传入 goal 明确执行目标与验收标准。调用 enter_work_mode 的这一轮正文会正常发到群里，"
-            "应先用一句话向会话同步行动计划。\n"
-            "【注意事项】进入工作模式后的后续轮次正文为内部工作记录、不会被发送，"
-            "对外交互必须使用 send_midway_msg；任务完成或遇阻需协助时调用 quit_work_mode 退出。"
+            "多步的活（查资料、跑代码、处理文件）先进入工作模式，才能用 bash、file_ops 等重工具；"
+            "只发一张图或一个文件不用进。这一轮的正文照常发到群里，先用一句话说你要做什么。"
+            "进入后正文不再外发：过程要说的话用 send_midway_msg，做完或卡住就用 quit_work_mode 退出，"
+            "它的 result 就是对外回复；工作不一定必须做完，卡住了如实说明卡点。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "goal": {
                     "type": "string",
-                    "description": "任务目标与完成标准描述。",
+                    "description": "要做成什么、怎样算做完。",
                 }
             },
             "required": ["goal"],
@@ -82,17 +80,15 @@ _QUIT_TOOL: dict[str, Any] = {
     "function": {
         "name": QUIT_WORK_MODE,
         "description": (
-            "【适用场景】工作模式任务执行完毕，或遭遇阻塞需要向外界求助并返回普通聊天模式时调用。\n"
-            "【使用方法】传入 result 总结任务执行结果（已完成项、未完成项或卡点说明），"
-            "该内容将作为最终对外回复发送。\n"
-            "【注意事项】退出时必须提供明确详实的 result；若任务受阻应如实说明卡点与所需支持，严禁虚报完成状态。"
+            "做完了，或卡住需要别人帮忙时，退出工作模式回到聊天。"
+            "result 会作为对外回复发出：说清做成了什么、没做成什么、卡在哪；没做成的不要说成做成了。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "result": {
                     "type": "string",
-                    "description": "工作结果汇报（已完成项、未完成项或卡点与求助信息）。",
+                    "description": "对外回复：做成了什么、没做成什么、卡在哪。",
                 }
             },
             "required": ["result"],
@@ -105,13 +101,12 @@ _MIDWAY_TOOL: dict[str, Any] = {
     "function": {
         "name": SEND_MIDWAY_MSG,
         "description": (
-            "【适用场景】处于工作模式中，需要向会话同步关键里程碑、发起必要确认或提出疑问时调用。\n"
-            "【使用方法】传入 message 作为向会话公开发送的消息正文；调用后继续停留在工作模式执行后续步骤。\n"
-            "【注意事项】仅在确需与用户沟通或同步关键进度时调用，普通内部思考与中间过程无需频繁外发。"
+            "工作模式里对群里说一句话：报个关键进展、确认一件事或提个问题，说完继续工作。"
+            "中间过程和自己的思考不用发。"
         ),
         "parameters": {
             "type": "object",
-            "properties": {"message": {"type": "string", "description": "向当前会话公开发送的消息正文。"}},
+            "properties": {"message": {"type": "string", "description": "要发到群里的话。"}},
             "required": ["message"],
         },
     },

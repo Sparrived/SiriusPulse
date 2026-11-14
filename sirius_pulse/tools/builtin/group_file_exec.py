@@ -51,15 +51,10 @@ _config.group("群文件管理").add(
 TOOL_META = {
     "name": "group_file_exec",
     "description": (
-        "【适用场景】向当前会话发送图片/文件，下载别人发来的文件，或查看 QQ 群文件。"
-        "纯文字回复直接在正文输出，无需调用。\n"
-        "【使用方法】通过 action 选择：image（发送图片，传 image_path）、"
-        "file（上传文件，传 file_path 与 file_name）、"
-        "list（获取群文件列表，可选 folder_id、file_count）、download（下载文件，传 file_id）。"
-        '有人在聊天里发文件时，消息里会出现 [文件："名字" 大小 file_id=…]；'
-        "要看内容就用 download 传这个 file_id，再用 read_document 读下载到的路径。\n"
-        "【注意事项】发送文件须传真实有效的本地路径（~ 展开为主目录）或 URL；"
-        "list 只在群聊可用，download 群聊私聊都能用；在线传输的文件下载不了。"
+        "往这个聊天发图片或文件、下载别人发来的文件、查看群文件。纯文字回复直接写在正文里。"
+        '聊天里收到的文件会显示成 [文件："名字" 大小 file_id=…]：'
+        "要看内容就 download 这个 file_id，再用 read_document 读下载到的路径。"
+        "list 只在群聊能用；在线传输的文件下载不了。"
     ),
     "version": "1.3.0",
     "side_effect": "external_write",

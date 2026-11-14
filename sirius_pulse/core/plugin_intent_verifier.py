@@ -16,6 +16,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from sirius_pulse.utils.prompt_layout import TURN_SAFETY_NOTE
+
 if TYPE_CHECKING:
     from sirius_pulse.core.brain import Brain
     from sirius_pulse.core.model_router import ModelRouter
@@ -156,12 +158,11 @@ class PluginIntentVerifier:
         # 获取模型配置（使用 cognition_analyze 任务，通常配置较快的模型）
         cfg = self._model_router.resolve("cognition_analyze")
 
-        # 构建身份信息
-        aliases_str = "、".join(persona_aliases) if persona_aliases else "无"
-        identity_section = f"## AI 身份\n" f"- 名称：{persona_name}\n" f"- 别名：{aliases_str}\n"
+        aliases = f"（别名：{'、'.join(persona_aliases)}）" if persona_aliases else ""
 
         system_prompt = (
-            f"你是一个插件意图验证器。你正在帮助 AI「{persona_name}」判断用户是否在请求它执行某个功能。\n"
+            f"你是一个插件意图验证器。你正在帮助 AI「{persona_name}」{aliases}"
+            "判断用户是否在请求它执行某个功能。\n"
             "\n"
             "## 重要判断原则\n"
             f"1. **只有用户明确请求「{persona_name}」执行功能时才返回 true**\n"
@@ -181,7 +182,6 @@ class PluginIntentVerifier:
             "- 表达感受：「今天好热啊」「下雨天心情不好」\n"
             "- 信息分享：「我看新闻说...」「我听说...」\n"
             "- 用户在和别人对话（不是在和AI对话）\n"
-            f"\n{identity_section}"
             "\n"
             "## 可用插件\n"
             f"{plugin_desc}\n"
@@ -191,7 +191,8 @@ class PluginIntentVerifier:
             "plugin_name 只能从本次候选插件中选择。\n"
             "严格返回 JSON，不要添加其他文本：\n"
             '{"is_plugin": true/false, "plugin_name": "插件名或空字符串", '
-            '"confidence": 0.0-1.0, "slots": {"参数名": "值"}, "reason": "一句话说明判断依据"}'
+            '"confidence": 0.0-1.0, "slots": {"参数名": "值"}, "reason": "一句话说明判断依据"}\n'
+            f"{TURN_SAFETY_NOTE}"
         )
 
         # 上下文复用 ContextAssembler 的 XML 格式

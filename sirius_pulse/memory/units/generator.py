@@ -10,6 +10,7 @@ from typing import Any
 
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.memory.units.models import MemoryUnit, MemoryUnitGenerationResult
+from sirius_pulse.utils.prompt_layout import TURN_SAFETY_NOTE
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ class MemoryUnitGenerator:
         source_by_id = {entry.entry_id: entry for entry in candidates}
 
         parsed: dict[str, Any] | None = None
-        system_prompt = _SYSTEM_PROMPT
+        system_prompt = _SYSTEM_PROMPT + TURN_SAFETY_NOTE
         for attempt in range(max_retries + 1):
             raw_request = RawRequest(
                 model=model_name,
@@ -196,7 +197,9 @@ class MemoryUnitGenerator:
             if parsed is not None:
                 break
             if attempt < max_retries:
-                system_prompt = _SYSTEM_PROMPT + "\nReturn only valid JSON, no markdown."
+                system_prompt = (
+                    _SYSTEM_PROMPT + "Return only valid JSON, no markdown.\n" + TURN_SAFETY_NOTE
+                )
 
         if parsed is None:
             return None

@@ -400,7 +400,16 @@ class InitiativeService:
                 system_prompt=bundle.system_prompt,
                 search_query=thread,
                 content_is_tagged=True,
-                dynamic_context=render_impressions([impression]) if impression else "",
+                dynamic_context=PromptFactory.with_reference_header(
+                    "\n\n".join(
+                        part
+                        for part in (
+                            bundle.dynamic_context,
+                            render_impressions([impression]) if impression else "",
+                        )
+                        if part
+                    )
+                ),
                 history_token_budget=6000,
             )
             result = await engine.brain.chat(

@@ -522,12 +522,12 @@ def test_first_inbound_without_engagement_gets_one_optional_name_hint_not_repeat
     first = tasks._build_delayed_prompt(item, "g")
     assert "周末有什么推荐" in first.user_content
     assert ref in first.user_content and ref in first.dynamic_context
-    assert "首选称呼未确认" in first.dynamic_context
-    assert "不阻塞回答" in first.dynamic_context
+    assert "还不知道想被怎么称呼" in first.dynamic_context
+    assert "不用为此打断回答" in first.dynamic_context
     followup, _ = _delayed_message(chat, "newcomer", "先推荐几个公园吧")
     second = tasks._build_delayed_prompt(followup, "g")
     assert "推荐几个公园" in second.user_content
-    assert "首选称呼未确认" not in second.dynamic_context
+    assert "还不知道想被怎么称呼" not in second.dynamic_context
     assert not chat.people.should_ask_name(chat.actor(ref))
 
 
@@ -537,11 +537,11 @@ def test_refusing_to_give_name_preserves_chat_and_suppresses_followup_prompt(con
     item, ref = _delayed_message(chat, "private-user", "别再问我名字，聊风景就好")
     refusal = tasks._build_delayed_prompt(item, "g")
     assert "聊风景就好" in refusal.user_content
-    assert "首选称呼未确认" not in refusal.dynamic_context
+    assert "还不知道想被怎么称呼" not in refusal.dynamic_context
     followup, _ = _delayed_message(chat, "private-user", "山里的枫叶现在红了吗？")
     continued = tasks._build_delayed_prompt(followup, "g")
     assert "枫叶" in continued.user_content
-    assert "首选称呼未确认" not in continued.dynamic_context
+    assert "还不知道想被怎么称呼" not in continued.dynamic_context
     assert not chat.people.should_ask_name(chat.actor(ref))
 
 
@@ -565,7 +565,7 @@ async def test_delayed_prompt_uses_current_group_name_never_private_chat_name(
     assert "保密称呼" not in bundle.dynamic_context, bundle.dynamic_context
     if public_name:
         assert public_name in bundle.dynamic_context
-        assert "首选称呼未确认" not in bundle.dynamic_context
+        assert "还不知道想被怎么称呼" not in bundle.dynamic_context
     else:
         assert "preferred_name" not in bundle.dynamic_context
 
@@ -1180,7 +1180,7 @@ def test_optional_name_hint_after_eight_days_respects_prior_refusal(conversation
     first_item, ref = _delayed_message(chat, "name-private-user", content)
     first = tasks._build_delayed_prompt(first_item, "g")
     assert "介绍公园" in first.user_content
-    assert ("首选称呼未确认" in first.dynamic_context) is (not declined)
+    assert ("还不知道想被怎么称呼" in first.dynamic_context) is (not declined)
     actor_id = chat.actor(ref)
     row = chat.people.conn.execute(
         "SELECT declined FROM person_ask_state WHERE actor_id=?", (actor_id,)
@@ -1196,7 +1196,7 @@ def test_optional_name_hint_after_eight_days_respects_prior_refusal(conversation
     later = tasks._build_delayed_prompt(later_item, "g")
     assert "公园怎么去" in later.user_content
     assert later_ref in later.user_content
-    assert ("首选称呼未确认" in later.dynamic_context) is (not declined)
+    assert ("还不知道想被怎么称呼" in later.dynamic_context) is (not declined)
     final_row = chat.people.conn.execute(
         "SELECT declined,last_asked FROM person_ask_state WHERE actor_id=?", (actor_id,)
     ).fetchone()

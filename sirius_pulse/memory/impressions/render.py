@@ -10,7 +10,7 @@ from sirius_pulse.memory.impressions.models import PersonImpression
 MAX_PEOPLE_PER_TURN = 4
 _MAX_SHARED_SHOWN = 3
 _MAX_THREADS_SHOWN = 2
-_HEADER = "【你心里对他们的印象】这是你自己对这些人的了解和感觉。它只是背景，不要沿用其中的情绪口吻，也不要主动复述；自然地带进相处里就好，惦记的事只在合适的时候提一次，别追着问。"
+_HEADER = "【你心里对他们的印象】这是你自己对这些人的了解和感觉。不要沿用其中的情绪口吻，也不要主动复述；自然地带进相处里就好，惦记的事只在合适的时候提一次，别追着问。"
 
 
 def pick_people(

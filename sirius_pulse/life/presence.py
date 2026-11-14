@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from sirius_pulse.life.agenda import AgendaStore
-from sirius_pulse.life.clock import PHASE_LABELS, DaySchedule, to_local
+from sirius_pulse.life.clock import PHASE_LABELS, DaySchedule
 from sirius_pulse.life.dreams import Dream, DreamStore, last_nights_dream
 from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.reflection import SelfNoteStore
@@ -106,16 +106,17 @@ def render_presence(
     mood: str = "",
     projects: ProjectStore | None = None,
 ) -> str:
-    local = to_local(now)
+    # 具体时刻已经在每轮的【当前时间】里，这里只说一天里的哪个阶段。
+    del now
     lines = ["【此刻的你】"]
     if snap.asleep:
         lines.append(
-            f"- 现在 {local:%H:%M}，你平时 {schedule.sleep} 睡、{schedule.wake} 起，"
+            f"- 你平时 {schedule.sleep} 睡、{schedule.wake} 起，"
             "本来已经睡下了，是被消息吵醒的，还迷迷糊糊的。回得短一点、带点困意都很自然。"
         )
     else:
         lines.append(
-            f"- 现在是{PHASE_LABELS.get(snap.phase, '白天')} {local:%H:%M}"
+            f"- 现在是{PHASE_LABELS.get(snap.phase, '白天')}"
             f"（你平时 {schedule.sleep} 睡、{schedule.wake} 起）。"
         )
         if snap.woken_last_night:
