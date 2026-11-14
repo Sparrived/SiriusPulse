@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from sirius_pulse.memory.basic.file_lock import archive_file_lock
@@ -21,6 +22,19 @@ _REPLACE_MAX_RETRIES = 3
 _REPLACE_RETRY_DELAY = 0.1  # 100ms
 #: 原地补写时在文件末尾搜索的窗口。补写的都是刚记录的消息，4 MB 足够覆盖。
 _TAIL_WINDOW_BYTES = 4 * 1024 * 1024
+#: 倒读归档时每次读多少。
+_TAIL_READ_CHUNK_BYTES = 1024 * 1024
+
+
+def _parse_archive_line(raw: bytes) -> BasicMemoryEntry | None:
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return BasicMemoryEntry.from_dict(data) if isinstance(data, dict) else None
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 class BasicMemoryFileStore:
@@ -174,6 +188,48 @@ class BasicMemoryFileStore:
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def archive_paths(self) -> list[Path]:
+        """所有群的归档文件。"""
+        return sorted(self._base_dir.glob("*.jsonl"))
+
+    def read_tail(
+        self,
+        path: Path,
+        *,
+        stop: Callable[[BasicMemoryEntry], bool],
+        max_entries: int,
+        max_bytes: int,
+    ) -> list[BasicMemoryEntry]:
+        """从归档末尾往前读，遇到 ``stop(entry)`` 为真或触到上限即停，按时间正序返回。
+
+        崩溃恢复只需要「上次完整落盘之后」的那一小段；归档可达数 GB，从头读不可接受。
+        末尾那行若是写了一半的残行，解析失败直接跳过。
+        """
+        entries: list[BasicMemoryEntry] = []
+        with self._lock_for(path), archive_file_lock(path), path.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            carry = b""
+            scanned = 0
+            while position > 0 and scanned < max_bytes:
+                step = min(_TAIL_READ_CHUNK_BYTES, position)
+                position -= step
+                handle.seek(position)
+                carry = handle.read(step) + carry
+                scanned += step
+                lines = carry.split(b"\n")
+                # 还没读到文件开头时，第一段可能是半行，留到下一轮拼完整。
+                carry = lines.pop(0) if position > 0 else b""
+                for raw in reversed(lines):
+                    entry = _parse_archive_line(raw)
+                    if entry is None:
+                        continue
+                    if stop(entry):
+                        return entries[::-1]
+                    entries.append(entry)
+                    if len(entries) >= max_entries:
+                        return entries[::-1]
+        return entries[::-1]
 
     def read_all(self, group_id: str) -> list[BasicMemoryEntry]:
         """Read all archived entries for a group."""

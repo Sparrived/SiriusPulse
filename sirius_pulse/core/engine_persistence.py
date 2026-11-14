@@ -202,6 +202,13 @@ class EngineStateStore:
         except (OSError, json.JSONDecodeError):
             return None
 
+    def basic_memory_saved_at(self) -> float | None:
+        """``basic_memory.json`` 最后一次完整落盘的时间（epoch 秒）；没有则为 None。"""
+        try:
+            return (self._base / "basic_memory.json").stat().st_mtime
+        except OSError:
+            return None
+
     def load_user_manager(self) -> dict[str, Any] | None:
         """Load user manager state."""
         path = self._base / "user_manager.json"
@@ -278,6 +285,25 @@ def _atomic_write(path: Path, data: dict[str, Any]) -> None:
                 else:
                     raise
         return
+
+
+#: 崩溃恢复从单个群归档末尾最多倒读多少字节 / 接回多少条。与快照的读取上限同量级：
+#: 接回的内容本来就该在内存窗口里，再多就是早被整理过的旧闲聊了。
+_REPLAY_MAX_BYTES = _MAX_BASIC_MEMORY_STATE_BYTES
+_REPLAY_MAX_ENTRIES = 10_000
+
+
+def _epoch(timestamp: str) -> float | None:
+    """ISO 时间戳转 epoch 秒；不带时区的按 UTC。"""
+    if not timestamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
 #: 群状态快照的合并写盘间隔。一条消息会触发好几次 ``persist_group_state``
@@ -421,6 +447,61 @@ class EnginePersistence:
         """Persist all runtime state to disk."""
         self.persist_full_state()
 
+    def replay_unsaved_entries(self, snapshot_saved_at: float | None) -> int:
+        """把归档里比基础记忆快照新、又还没被记忆单元覆盖的条目接回窗口。
+
+        每个群的分界线是快照里该群窗口最新一条的时间；窗口为空时用快照落盘时间；
+        连快照都没有时只靠上限兜底。已被记忆单元引用的条目不再接回，免得重复提取。
+        """
+        engine = self._engine
+        store = getattr(engine, "basic_store", None)
+        if store is None:
+            return 0
+        manager = engine.basic_memory
+        units = getattr(engine, "memory_unit_manager", None)
+        checkpointed_ids = getattr(units, "checkpointed_source_ids", None)
+        max_entries = manager.hard_limit if manager.hard_limit > 0 else _REPLAY_MAX_ENTRIES
+        total = 0
+        for path in store.archive_paths():
+            cutoff: dict[str, Any] = {}
+
+            def stop(entry: Any, cutoff: dict[str, Any] = cutoff) -> bool:
+                if "at" not in cutoff:
+                    window = manager.get_all(entry.group_id)
+                    cutoff["known"] = {item.entry_id for item in window}
+                    stamps = [_epoch(item.timestamp) for item in window]
+                    cutoff["at"] = max(
+                        (stamp for stamp in stamps if stamp is not None),
+                        default=snapshot_saved_at,
+                    )
+                at = cutoff["at"]
+                stamp = _epoch(entry.timestamp)
+                return at is not None and stamp is not None and stamp < at
+
+            tail = store.read_tail(
+                path, stop=stop, max_entries=max_entries, max_bytes=_REPLAY_MAX_BYTES
+            )
+            if not tail:
+                continue
+            group_id = tail[0].group_id
+            known = set(cutoff.get("known", set()))
+            if callable(checkpointed_ids):
+                known |= checkpointed_ids(group_id)
+            missing = [
+                entry
+                for entry in tail
+                if entry.group_id == group_id and entry.entry_id not in known
+            ]
+            restored = manager.restore_entries(group_id, missing)
+            if restored:
+                logger.warning(
+                    "群 %s 上次没有正常退出，从归档接回了 %d 条还没整理进记忆的聊天",
+                    group_id,
+                    restored,
+                )
+            total += restored
+        return total
+
     def load_state(self) -> None:
         """Restore runtime state from disk."""
         engine = self._engine
@@ -429,6 +510,7 @@ class EnginePersistence:
 
             # Basic memory
             basic_mem_data = state.get("basic_memory")
+            snapshot_saved_at = engine._state_store.basic_memory_saved_at()
             if basic_mem_data:
                 try:
                     from sirius_pulse.memory.basic import BasicMemoryManager
@@ -439,6 +521,17 @@ class EnginePersistence:
                     from sirius_pulse.memory.basic import BasicMemoryManager
 
                     engine.basic_memory = BasicMemoryManager()
+                    snapshot_saved_at = None
+            elif snapshot_saved_at is not None:
+                # 快照文件在但没读出来（过大或损坏）：它的时间不能当分界线。
+                snapshot_saved_at = None
+
+            # basic_memory.json 只在正常退出/重建时写。被强杀时，上次完整落盘之后的
+            # 聊天只存在于追加式归档里——从那里接回来，否则这段对话永远不会进记忆单元。
+            try:
+                self.replay_unsaved_entries(snapshot_saved_at)
+            except Exception:
+                logger.warning("从归档接回未落盘的聊天失败", exc_info=True)
 
             # Assistant emotion
             ae = state.get("assistant_emotion")

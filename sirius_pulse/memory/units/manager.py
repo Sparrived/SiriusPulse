@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -26,9 +28,69 @@ from sirius_pulse.memory.units.indexer import (
 )
 from sirius_pulse.memory.units.maintenance import MemoryUnitDedupeMaintenance
 from sirius_pulse.memory.units.models import MemoryUnit, MemoryUnitGenerationResult
-from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.memory.units.store import (
+    GroupSignature,
+    MemoryUnitFileStore,
+    MemoryUnitStoreError,
+)
 
 logger = logging.getLogger(__name__)
+
+#: 单元文件暂时写不得时，同一批候选多久后重试。比 LLM 失败的退避短：文件被占用
+#: 通常几秒内就好，坏文件也会在下次写入时被挪走留档。
+_STORE_FAILURE_BACKOFF_SECONDS = 300.0
+
+
+@dataclass(frozen=True, slots=True)
+class _UnitBase:
+    """一次「读-改-写」开始时磁盘上的状态：文件版本 + 每条单元的内容指纹。"""
+
+    signature: GroupSignature
+    fingerprints: dict[str, str]
+
+
+def unit_fingerprint(unit: MemoryUnit) -> str:
+    """单元除向量以外全部内容的指纹，用来判断某条单元有没有被改过。"""
+    data = unit.to_dict()
+    data.pop("embedding", None)
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def rebase_unit_changes(
+    base: dict[str, str],
+    ours: list[MemoryUnit],
+    theirs: list[MemoryUnit],
+) -> list[MemoryUnit]:
+    """把「从 base 改到 ours」的改动重放到别人已写入的 theirs 上。
+
+    - 我们新增的单元：追加（对方已有同 ID 时保留对方的）。
+    - 我们改过、对方没动的单元：用我们的版本。
+    - 对方删掉的单元：保持删除，不让我们的旧副本把它复活。
+    - 双方都改过同一条：保留对方的——对方几乎总是 WebUI 里的真人编辑。
+    - 我们删掉、对方没动的单元：删除。
+    """
+    theirs_index = {unit.unit_id: index for index, unit in enumerate(theirs)}
+    theirs_prints = {unit.unit_id: unit_fingerprint(unit) for unit in theirs}
+    result = list(theirs)
+    ours_ids: set[str] = set()
+    for unit in ours:
+        ours_ids.add(unit.unit_id)
+        base_print = base.get(unit.unit_id)
+        index = theirs_index.get(unit.unit_id)
+        if base_print is None:
+            if index is None:
+                result.append(unit)
+            continue
+        if index is None or unit_fingerprint(unit) == base_print:
+            continue
+        if theirs_prints[unit.unit_id] == base_print:
+            result[index] = unit
+    removed = {
+        unit_id
+        for unit_id, base_print in base.items()
+        if unit_id not in ours_ids and theirs_prints.get(unit_id) == base_print
+    }
+    return [unit for unit in result if unit.unit_id not in removed]
 
 
 class MemoryUnitManager:
@@ -131,12 +193,22 @@ class MemoryUnitManager:
             self._generation_backoff.pop(group_id, None)
             return result
 
-        canonical_results = await self.reconcile_units(
-            group_id,
-            result.units,
-            brain=brain,
-            model_name=model_name,
-        )
+        try:
+            canonical_results = await self.reconcile_units(
+                group_id,
+                result.units,
+                brain=brain,
+                model_name=model_name,
+            )
+        except MemoryUnitStoreError as exc:
+            # 单元文件此刻写不得（读不出来，或读失败后又变了）。这批原始记录保持
+            # 未处理，过一会儿重读重试；不能把它们当已归档从窗口里移走。
+            logger.error("Memory checkpoint for group %s not saved: %s", group_id, exc)
+            self._generation_backoff[group_id] = (
+                candidate_key,
+                time.monotonic() + _STORE_FAILURE_BACKOFF_SECONDS,
+            )
+            return None
         self._generation_backoff.pop(group_id, None)
         return MemoryUnitGenerationResult(units=canonical_results)
 
@@ -175,7 +247,7 @@ class MemoryUnitManager:
             # 同一条事实可以被重新写一遍。所以这里按「带向量」读取，而不是沿用
             # ensure_group_loaded 为省内存而做的只读元数据。整组读盘放到线程里：
             # 单群文件可达数百 MB，同步读会把所有群的回复一起卡住。
-            existing = await asyncio.to_thread(self._store.load, group_id)
+            existing, base = await asyncio.to_thread(self._load_for_update, group_id)
             # 去重只看本群，用临时索引而不是反复重建全局索引。
             scratch = self._indexer.scratch(existing)
             accepted: dict[str, MemoryUnit] = {}
@@ -198,7 +270,7 @@ class MemoryUnitManager:
                 if result.should_prompt and not result.embedding:
                     await asyncio.to_thread(self._indexer.encode_missing, [result])
                 scratch.set_units(existing)
-            await self._commit_group(group_id, existing)
+            await self._commit_group(group_id, existing, base=base)
             return list(accepted.values())
 
     def retire_overflow(self, group_id: str, units: list[MemoryUnit]) -> int:
@@ -251,7 +323,7 @@ class MemoryUnitManager:
         selected_ids = set(unit_ids)
         async with self._mutation_lock:
             for group_id in sorted(set(group_ids)):
-                loaded = await asyncio.to_thread(self._store.load, group_id)
+                loaded, base = await asyncio.to_thread(self._load_for_update, group_id)
                 incoming = [unit for unit in loaded if unit.unit_id in selected_ids]
                 working = [unit for unit in loaded if unit.unit_id not in selected_ids]
                 await asyncio.to_thread(self._indexer.encode_missing, incoming)
@@ -273,7 +345,7 @@ class MemoryUnitManager:
                     if accepted.should_prompt and not accepted.embedding:
                         await asyncio.to_thread(self._indexer.encode_missing, [accepted])
                     scratch.set_units(working)
-                await self._commit_group(group_id, working, retire=False)
+                await self._commit_group(group_id, working, retire=False, base=base)
 
     async def scan_duplicates(
         self,
@@ -300,7 +372,9 @@ class MemoryUnitManager:
         async with self._mutation_lock:
             await self.ensure_group_loaded_async(group_id)
             # 追加不需要现成向量，按元数据读取即可；真正要注入的单元在写盘前补一次。
-            existing = await asyncio.to_thread(self._store.load, group_id, with_embeddings=False)
+            existing, base = await asyncio.to_thread(
+                self._load_for_update, group_id, with_embeddings=False
+            )
             existing_ids = {unit.unit_id for unit in existing}
             changed = False
             for unit in units:
@@ -310,18 +384,39 @@ class MemoryUnitManager:
                 existing_ids.add(unit.unit_id)
                 changed = True
             if changed:
-                await self._commit_group(group_id, existing)
+                await self._commit_group(group_id, existing, base=base)
+
+    def _load_for_update(
+        self, group_id: str, *, with_embeddings: bool = True
+    ) -> tuple[list[MemoryUnit], _UnitBase]:
+        """为「读-改-写」读取一组单元，并记下读到的版本。
+
+        版本先于读取取：读的过程中若有人写入，提交时必然发现版本不符，走合并而不是
+        覆盖。读失败时的空列表会被 store 记为可疑，提交时被拒绝。
+        """
+        signature = self._store.signature(group_id)
+        units = self._store.load(group_id, with_embeddings=with_embeddings)
+        fingerprints = {unit.unit_id: unit_fingerprint(unit) for unit in units}
+        return units, _UnitBase(signature, fingerprints)
 
     async def _commit_group(
-        self, group_id: str, units: list[MemoryUnit], *, retire: bool = True
+        self,
+        group_id: str,
+        units: list[MemoryUnit],
+        *,
+        retire: bool = True,
+        base: _UnitBase | None = None,
     ) -> None:
         """退休超额单元、补齐可注入单元的向量、落盘并刷新索引。
 
         读写向量文件和 embedding 请求都在线程里做；只有最后替换内存索引这一步回到
         事件循环，此时所有单元都已带好向量，``indexer.add`` 不会再发网络请求。
+
+        ``base`` 是这批单元读出时的版本。去重要 await 好几次 LLM，期间 WebUI 可能
+        改过同一个文件：此时把本次改动合并到磁盘上的新内容上，而不是整组覆盖。
         """
 
-        def _prepare() -> None:
+        def _prepare() -> list[MemoryUnit]:
             # 先给可注入单元补向量（磁盘上已有的直接读回，新单元才发请求），再退休超额：
             # 刚写入就被挤进冷层的单元也得带着向量落盘，否则冷层语义召回永远找不到它。
             # 早已退休的单元向量留在磁盘，去重时再按需读。
@@ -333,12 +428,31 @@ class MemoryUnitManager:
             self._indexer.encode_missing(units)
             if retire:
                 self.retire_overflow(group_id, units)
-            self._store.save(group_id, units)
+            with self._store.group_lock(group_id):
+                final = units
+                if base is not None and self._store.signature(group_id) != base.signature:
+                    theirs = self._store.load(group_id)
+                    if self._store.is_suspect(group_id):
+                        raise MemoryUnitStoreError(
+                            f"memory units of group {group_id} became unreadable during update"
+                        )
+                    final = rebase_unit_changes(base.fingerprints, units, theirs)
+                    logger.warning(
+                        "Memory units of group %s changed during update; merged %d local units "
+                        "onto %d on disk",
+                        group_id,
+                        len(units),
+                        len(theirs),
+                    )
+                    if retire:
+                        self.retire_overflow(group_id, final)
+                self._store.save_locked(group_id, final)
+            return final
 
-        await asyncio.to_thread(_prepare)
+        final = await asyncio.to_thread(_prepare)
         # 重新加载过的对象与索引里那一批不是同一批，退休标记必须同步进索引，
         # 否则模型侧仍按旧标记召回。
-        self._replace_loaded_group(group_id, units)
+        self._replace_loaded_group(group_id, final)
 
     def ensure_group_loaded(self, group_id: str) -> None:
         """同步加载某群；聊天回合应先 ``await ensure_group_loaded_async``。
@@ -379,7 +493,11 @@ class MemoryUnitManager:
         """读盘并补齐可注入单元的向量；不碰内存索引，可在线程里执行。"""
         # 只读元数据，不带向量：向量占单条单元的 99% 体积，而线上 90.6% 的向量属于
         # 永远不会被注入的退休单元（单群 7547/8047）。整组读向量是内存峰值的主因。
+        signature = self._store.signature(group_id)
         units = self._store.load(group_id, with_embeddings=False)
+        if self._store.is_suspect(group_id):
+            # 文件读不出来：这份「空」只能拿来检索，绝不能写回去。
+            return units
         # 存量分组可能早就超额或早已过期（限额是后加的），加载时立即生效，不必等
         # 下一次 checkpoint；否则要等到有新对话才会收敛。
         any_recomputed = bool(self.retire_overflow(group_id, units))
@@ -392,7 +510,12 @@ class MemoryUnitManager:
         # 旧格式（向量内联在 JSON 里）必须落一次盘才会搬进 sidecar，否则这次「省内存
         # 加载」省下的只是本次进程，几百 MB 的 JSON 会一直在每条消息的读路径上。
         if any_recomputed or self._store.is_legacy_layout(group_id):
-            self._store.save(group_id, units)
+            # 这次写盘只是顺手收敛（退休标记、补向量、迁移格式），下次加载还会再做；
+            # 期间文件被别人改过就放弃，不能拿旧读数盖掉别人的修改。
+            try:
+                self._store.save(group_id, units, expected_signature=signature)
+            except MemoryUnitStoreError as exc:
+                logger.info("Skipped memory unit housekeeping write for %s: %s", group_id, exc)
         return units
 
     def _apply_group_load(self, group_id: str, units: list[MemoryUnit]) -> None:
@@ -488,6 +611,18 @@ class MemoryUnitManager:
     def is_source_checkpointed(self, group_id: str, entry_id: str) -> bool:
         self.ensure_group_loaded(group_id)
         return entry_id in self._checkpointed_sources.get(group_id, set())
+
+    def checkpointed_source_ids(self, group_id: str) -> set[str]:
+        """某群已被记忆单元引用的原始条目 ID；只读元数据，不建索引、不发 embedding。
+
+        给启动时的崩溃恢复用：那时还不该为了一个集合去加载整群向量。
+        """
+        if group_id in self._loaded_groups:
+            return set(self._checkpointed_sources.get(group_id, set()))
+        sources: set[str] = set()
+        for unit in self._store.load(group_id, with_embeddings=False):
+            sources.update(unit.source_ids)
+        return sources
 
     def retrieve(
         self,

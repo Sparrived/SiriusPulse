@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ from aiohttp import web
 from sirius_pulse.memory.basic.file_lock import archive_file_lock
 from sirius_pulse.memory.units.deduplicator import normalize_summary
 from sirius_pulse.persona_config import PersonaConfigPaths
-from sirius_pulse.utils.json_io import replace_with_retry
+from sirius_pulse.utils.json_io import atomic_write_json, replace_with_retry
 from sirius_pulse.webui.persona_manager_api import _is_persona_running
 from sirius_pulse.webui.server_utils import _json_response, handle_api_errors
 
@@ -799,8 +800,37 @@ def _load_memory_units_file(path: Path) -> tuple[str, list[dict[str, Any]]]:
     return group_id, units
 
 
+class _UnitFileUnreadable(Exception):
+    """单元文件存在但读不出来：此时写回等于清空整组，必须拒绝。"""
+
+
+def _load_memory_units_for_write(path: Path) -> list[dict[str, Any]]:
+    """为「读-改-写」读取单元；文件存在却读不出来时抛错而不是返回空列表。"""
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise _UnitFileUnreadable(str(path)) from exc
+    if not isinstance(data, dict):
+        raise _UnitFileUnreadable(str(path))
+    return [item for item in data.get("units", []) if isinstance(item, dict)]
+
+
+def _memory_unit_lock(data_dir: Path, group_id: str) -> Any:
+    """与 ``MemoryUnitFileStore.group_lock`` 同一把跨进程锁（同一个锁文件）。
+
+    引擎去重要 await 好几次 LLM 才写盘；不共用一把锁，WebUI 的修改会被引擎的整组
+    写回覆盖，或者 WebUI 写回一个刚被引擎删掉的向量文件名。
+    """
+    return archive_file_lock(_memory_unit_file(data_dir, group_id))
+
+
+_UNREADABLE_RESPONSE = ({"error": "这个群的记忆文件暂时读不出来，没有做任何改动"}, 503)
+
+
 def _save_memory_units_file(data_dir: Path, group_id: str, units: list[dict[str, Any]]) -> None:
-    """写回单元文件，并保留向量 sidecar 的引用与格式版本。
+    """写回单元文件，并保留向量 sidecar 的引用与格式版本。调用方持有 ``_memory_unit_lock``。
 
     WebUI 只编辑元数据，向量存放在 ``memory_units/vectors/`` 下的独立文件里。这里
     必须把 ``vector_file`` 原样带回去：丢掉它，整组向量就会变成无人引用的孤儿文件，
@@ -824,7 +854,7 @@ def _save_memory_units_file(data_dir: Path, group_id: str, units: list[dict[str,
         existing = None
     if isinstance(existing, dict) and isinstance(existing.get(VECTOR_FILE_KEY), str):
         payload[VECTOR_FILE_KEY] = existing[VECTOR_FILE_KEY]
-    _atomic_write_json(path, payload)
+    atomic_write_json(path, payload, durable=True)
 
 
 def _string_list(value: Any) -> list[str]:
@@ -928,30 +958,34 @@ async def api_persona_memory_units_post(request: web.Request, data_dir: Path) ->
     _apply_manual_prompt_flag(unit, body)
     if not unit["summary"]:
         return _json_response({"error": "摘要不能为空"}, 400)
+    payload, status = await asyncio.to_thread(_create_memory_unit, data_dir, unit)
+    return _json_response(payload, status)
+
+
+def _create_memory_unit(data_dir: Path, unit: dict[str, Any]) -> tuple[dict[str, Any], int]:
     group_id = unit["group_id"]
-    _, units = _load_memory_units_file(_memory_unit_file(data_dir, group_id))
-    if any(item.get("unit_id") == unit["unit_id"] for item in units):
-        return _json_response({"error": "记忆单元已存在"}, 409)
-    if any(
-        normalize_summary(str(item.get("summary") or "")) == normalize_summary(unit["summary"])
-        for item in units
-    ):
-        return _json_response(
-            {
-                "success": True,
-                "unit": next(
-                    item
-                    for item in units
-                    if normalize_summary(str(item.get("summary") or ""))
-                    == normalize_summary(unit["summary"])
-                ),
-            },
-            200,
+    summary_key = normalize_summary(unit["summary"])
+    with _memory_unit_lock(data_dir, group_id):
+        try:
+            units = _load_memory_units_for_write(_memory_unit_file(data_dir, group_id))
+        except _UnitFileUnreadable:
+            return _UNREADABLE_RESPONSE
+        if any(item.get("unit_id") == unit["unit_id"] for item in units):
+            return {"error": "记忆单元已存在"}, 409
+        duplicate = next(
+            (
+                item
+                for item in units
+                if normalize_summary(str(item.get("summary") or "")) == summary_key
+            ),
+            None,
         )
-    units.append(unit)
-    _save_memory_units_file(data_dir, group_id, units)
+        if duplicate is not None:
+            return {"success": True, "unit": duplicate}, 200
+        units.append(unit)
+        _save_memory_units_file(data_dir, group_id, units)
     _queue_memory_reconcile(data_dir, group_ids=[group_id], unit_ids=[unit["unit_id"]])
-    return _json_response({"success": True, "unit": unit}, 201)
+    return {"success": True, "unit": unit}, 201
 
 
 @handle_api_errors
@@ -972,41 +1006,65 @@ async def api_persona_memory_unit_put(request: web.Request, data_dir: Path) -> w
     if not isinstance(body, dict):
         return _json_response({"error": "Invalid JSON"}, 400)
 
+    payload, status = await asyncio.to_thread(_update_memory_unit, data_dir, unit_id, body)
+    return _json_response(payload, status)
+
+
+def _find_memory_unit_group(data_dir: Path, unit_id: str) -> str | None:
+    """只读地找出某条单元所在的分组；真正修改前还要在锁内重读确认。"""
     base_dir = _memory_units_dir(data_dir)
-    old_group = ""
-    old_units: list[dict[str, Any]] = []
-    old_index = -1
-    found = False
-    if base_dir.exists():
-        for path in base_dir.glob("*.json"):
-            group_id, units = _load_memory_units_file(path)
-            for index, unit in enumerate(units):
-                if str(unit.get("unit_id")) == unit_id:
-                    old_group, old_units, old_index, found = group_id, units, index, True
-                    break
-            if found:
-                break
-    if not found:
-        return _json_response({"error": "记忆单元不存在"}, 404)
+    if not base_dir.exists():
+        return None
+    for path in base_dir.glob("*.json"):
+        group_id, units = _load_memory_units_file(path)
+        if any(str(unit.get("unit_id")) == unit_id for unit in units):
+            return group_id
+    return None
 
-    updated = _normalize_memory_unit(
-        {**old_units[old_index], **body, "unit_id": unit_id}, old_group
-    )
-    _apply_manual_prompt_flag(
-        updated, body, previous=bool(old_units[old_index].get("should_prompt", True))
-    )
-    if not updated["summary"]:
-        return _json_response({"error": "摘要不能为空"}, 400)
 
-    old_units.pop(old_index)
-    _save_memory_units_file(data_dir, old_group, old_units)
-    new_group = updated["group_id"]
-    _, new_units = _load_memory_units_file(_memory_unit_file(data_dir, new_group))
-    new_units = [unit for unit in new_units if str(unit.get("unit_id")) != unit_id]
-    new_units.append(updated)
-    _save_memory_units_file(data_dir, new_group, new_units)
+def _update_memory_unit(
+    data_dir: Path, unit_id: str, body: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    old_group = _find_memory_unit_group(data_dir, unit_id)
+    if old_group is None:
+        return {"error": "记忆单元不存在"}, 404
+    with _memory_unit_lock(data_dir, old_group):
+        try:
+            old_units = _load_memory_units_for_write(_memory_unit_file(data_dir, old_group))
+        except _UnitFileUnreadable:
+            return _UNREADABLE_RESPONSE
+        old_index = next(
+            (i for i, unit in enumerate(old_units) if str(unit.get("unit_id")) == unit_id), -1
+        )
+        if old_index < 0:
+            return {"error": "记忆单元不存在"}, 404
+        updated = _normalize_memory_unit(
+            {**old_units[old_index], **body, "unit_id": unit_id}, old_group
+        )
+        _apply_manual_prompt_flag(
+            updated, body, previous=bool(old_units[old_index].get("should_prompt", True))
+        )
+        if not updated["summary"]:
+            return {"error": "摘要不能为空"}, 400
+        new_group = updated["group_id"]
+        if new_group == old_group:
+            old_units[old_index] = updated
+        else:
+            old_units.pop(old_index)
+        _save_memory_units_file(data_dir, old_group, old_units)
+    if new_group != old_group:
+        # 两把锁先后拿、不嵌套：锁不可重入，嵌套还可能和引擎反序加锁互相等死。
+        with _memory_unit_lock(data_dir, new_group):
+            try:
+                new_units = _load_memory_units_for_write(_memory_unit_file(data_dir, new_group))
+            except _UnitFileUnreadable:
+                LOG.error("记忆单元 %s 已移出 %s，但目标群文件读不出来", unit_id, old_group)
+                return _UNREADABLE_RESPONSE
+            new_units = [unit for unit in new_units if str(unit.get("unit_id")) != unit_id]
+            new_units.append(updated)
+            _save_memory_units_file(data_dir, new_group, new_units)
     _queue_memory_reconcile(data_dir, group_ids=[old_group, new_group], unit_ids=[unit_id])
-    return _json_response({"success": True, "unit": updated})
+    return {"success": True, "unit": updated}, 200
 
 
 @handle_api_errors
@@ -1021,17 +1079,25 @@ async def api_persona_memory_unit_delete(request: web.Request, data_dir: Path) -
     if not unit_id:
         return _json_response({"error": "缺少记忆单元 ID"}, 400)
 
-    base_dir = _memory_units_dir(data_dir)
-    if not base_dir.exists():
-        return _json_response({"error": "记忆单元不存在"}, 404)
-    for path in base_dir.glob("*.json"):
-        group_id, units = _load_memory_units_file(path)
+    payload, status = await asyncio.to_thread(_delete_memory_unit, data_dir, unit_id)
+    return _json_response(payload, status)
+
+
+def _delete_memory_unit(data_dir: Path, unit_id: str) -> tuple[dict[str, Any], int]:
+    group_id = _find_memory_unit_group(data_dir, unit_id)
+    if group_id is None:
+        return {"error": "记忆单元不存在"}, 404
+    with _memory_unit_lock(data_dir, group_id):
+        try:
+            units = _load_memory_units_for_write(_memory_unit_file(data_dir, group_id))
+        except _UnitFileUnreadable:
+            return _UNREADABLE_RESPONSE
         kept = [unit for unit in units if str(unit.get("unit_id")) != unit_id]
-        if len(kept) != len(units):
-            _save_memory_units_file(data_dir, group_id, kept)
-            _queue_memory_reconcile(data_dir, group_ids=[group_id], unit_ids=[unit_id])
-            return _json_response({"success": True})
-    return _json_response({"error": "记忆单元不存在"}, 404)
+        if len(kept) == len(units):
+            return {"error": "记忆单元不存在"}, 404
+        _save_memory_units_file(data_dir, group_id, kept)
+    _queue_memory_reconcile(data_dir, group_ids=[group_id], unit_ids=[unit_id])
+    return {"success": True}, 200
 
 
 @handle_api_errors

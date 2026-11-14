@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -38,18 +39,34 @@ def replace_with_retry(tmp: Path | str, target: Path | str) -> None:
             time.sleep(_REPLACE_BACKOFF_SECONDS * (attempt + 1))
 
 
-def atomic_write_json(path: Path | str, data: Any, *, indent: int | None = 2) -> None:
+def write_bytes_durably(path: Path | str, data: bytes) -> None:
+    """写文件并 fsync，保证 rename 之前内容已经落到磁盘。
+
+    只做 tmp + rename 的话，断电后 rename 可能先于数据落盘，留下一个长度为零或
+    内容残缺的「新」文件——原子替换挡住的是进程中途崩溃，挡不住掉电。
+    """
+    with Path(path).open("wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def atomic_write_json(
+    path: Path | str, data: Any, *, indent: int | None = 2, durable: bool = False
+) -> None:
     """原子写入 JSON 文件：先写临时文件，再 rename 替换。
 
-    避免写入过程中断导致文件损坏。
+    避免写入过程中断导致文件损坏。``durable=True`` 时额外 fsync：只给丢了就无法
+    重建的数据用（记忆单元），每条消息都要写的快照不值得为它多等一次磁盘。
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(data, ensure_ascii=False, indent=indent),
-        encoding="utf-8",
-    )
+    text = json.dumps(data, ensure_ascii=False, indent=indent)
+    if durable:
+        write_bytes_durably(tmp, text.encode("utf-8"))
+    else:
+        tmp.write_text(text, encoding="utf-8")
     replace_with_retry(tmp, p)
 
 

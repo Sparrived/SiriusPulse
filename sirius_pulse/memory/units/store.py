@@ -9,16 +9,39 @@ import re
 import shutil
 import uuid
 from array import array
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
+from sirius_pulse.memory.basic.file_lock import archive_file_lock
 from sirius_pulse.memory.units.models import MemoryUnit, embedding_text
-from sirius_pulse.utils.json_io import atomic_write_json, replace_with_retry
+from sirius_pulse.utils.json_io import atomic_write_json, replace_with_retry, write_bytes_durably
 from sirius_pulse.utils.layout import WorkspaceLayout
 
 logger = logging.getLogger(__name__)
+
+#: 单元文件的读取结果。``unreadable`` 是 I/O 层面的失败（Windows 上被杀软/索引
+#: 短暂占用最常见），可能下一刻就好；``corrupt`` 是内容本身坏了，重试也读不出来。
+PayloadStatus = Literal["missing", "ok", "corrupt", "unreadable"]
+#: 文件版本标记：(mtime_ns, size)。文件不存在时为 None。
+GroupSignature = tuple[int, int] | None
+
+
+class MemoryUnitStoreError(RuntimeError):
+    """拒绝写入：磁盘上的单元文件此刻读不出来，或在读失败之后又变了。
+
+    写入是整组覆盖，所以「没读到」绝不能被当成「没有」：拿着空列表写回去就等于
+    清空整个群的记忆。调用方应当放弃这次写入、稍后重读再试。
+    """
+
+
+class MemoryUnitConflictError(MemoryUnitStoreError):
+    """单元文件在调用方读取之后被别人（通常是 WebUI）改过。"""
+
 
 #: 取 group_id 时只读文件头这么多字节。``atomic_write_json`` 的 payload 固定以
 #: ``{"group_id": ...}`` 开头，ID 必然落在开头几行内，因此 4 KiB 足够。
@@ -57,10 +80,58 @@ class MemoryUnitFileStore:
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._vectors_dir = self._base_dir / VECTORS_DIR_NAME
         self._group_ids: set[str] | None = None
+        #: 最近一次 ``load`` 没读出来的分组。它们在内存里的「空」是假的，写盘前必须
+        #: 重新确认磁盘状态，见 ``_read_vector_index_for_write``。
+        self._suspect_groups: set[str] = set()
 
-    def save(self, group_id: str, units: list[MemoryUnit]) -> None:
+    def save(
+        self,
+        group_id: str,
+        units: list[MemoryUnit],
+        *,
+        expected_signature: GroupSignature | Literal["any"] = "any",
+    ) -> None:
+        """整组写回。``expected_signature`` 给出时，文件版本不符就拒绝写入。"""
+        with self.group_lock(group_id):
+            self.save_locked(group_id, units, expected_signature=expected_signature)
+
+    def save_locked(
+        self,
+        group_id: str,
+        units: list[MemoryUnit],
+        *,
+        expected_signature: GroupSignature | Literal["any"] = "any",
+    ) -> None:
+        """同 ``save``，但调用方已经持有 ``group_lock``（锁不可重入）。"""
+        if expected_signature != "any" and self.signature(group_id) != expected_signature:
+            raise MemoryUnitConflictError(f"memory units of group {group_id} changed on disk")
         self._write_payload(group_id, units)
         self._note_group(group_id, bool(units))
+        self._suspect_groups.discard(group_id)
+
+    @contextmanager
+    def group_lock(self, group_id: str) -> Iterator[None]:
+        """跨进程的分组写锁；所有「读-改-写」单元文件的地方都要持有它。
+
+        引擎与 WebUI 都会改写同一个分组文件。不加锁时一方的整组写回会覆盖另一方
+        的修改，或让 JSON 指向刚被删掉的向量文件。锁不可重入：持锁期间不要再调
+        ``save``，改用 ``save_locked``。
+        """
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+        with archive_file_lock(self._path(group_id)):
+            yield
+
+    def signature(self, group_id: str) -> GroupSignature:
+        """当前文件版本 (mtime_ns, size)；用来发现「读完之后被别人改过」。"""
+        try:
+            stat = self._path(group_id).stat()
+        except FileNotFoundError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def is_suspect(self, group_id: str) -> bool:
+        """最近一次读取该分组失败：内存里的单元列表不可信，别拿它写盘。"""
+        return group_id in self._suspect_groups
 
     def _note_group(self, group_id: str, has_units: bool) -> None:
         """就地更新 group_id 缓存，避免每次写盘后都重扫整个目录。
@@ -125,12 +196,26 @@ class MemoryUnitFileStore:
             return match.group(1)
 
     @staticmethod
-    def _read_payload(path: Path) -> dict[str, Any] | None:
+    def _load_payload(path: Path) -> tuple[PayloadStatus, dict[str, Any] | None]:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError):
-            return None
-        return data if isinstance(data, dict) else None
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return "missing", None
+        except UnicodeDecodeError:
+            return "corrupt", None
+        except OSError:
+            return "unreadable", None
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return "corrupt", None
+        if not isinstance(data, dict):
+            return "corrupt", None
+        return "ok", data
+
+    @classmethod
+    def _read_payload(cls, path: Path) -> dict[str, Any] | None:
+        return cls._load_payload(path)[1]
 
     # ------------------------------------------------------------------
     # 读
@@ -144,13 +229,17 @@ class MemoryUnitFileStore:
         的单元调 ``hydrate_embeddings``——退休单元的向量没有任何检索价值，让它们
         常驻内存正是内存占用失控的主因。
         """
-        path = self._path(group_id)
-        if not path.exists():
+        status, data = self._load_payload(self._path(group_id))
+        if status == "missing":
+            self._suspect_groups.discard(group_id)
             return []
-        data = self._read_payload(path)
         if data is None:
-            logger.warning("Failed to load memory units for group %s: unreadable payload", group_id)
+            # 读路径照常降级为空（聊天不能因为一个坏文件就报错），但记下来：写路径
+            # 必须知道这个「空」是假的。
+            self._suspect_groups.add(group_id)
+            logger.error("Failed to load memory units for group %s: %s payload", group_id, status)
             return []
+        self._suspect_groups.discard(group_id)
         items = [item for item in data.get("units", []) if isinstance(item, dict)]
         units = [MemoryUnit.from_dict(item) for item in items]
         if not with_embeddings:
@@ -264,7 +353,9 @@ class MemoryUnitFileStore:
         中断，磁盘上留下的都是「旧 JSON + 旧向量」或「新 JSON + 新向量」这样自洽的
         组合，不会出现摘要与向量错配。
         """
-        previous_name, previous_bin, previous_index, inline = self._read_vector_index(group_id)
+        previous_name, previous_bin, previous_index, inline = self._read_vector_index_for_write(
+            group_id
+        )
         items, blob = self._serialize(units, previous_bin, previous_index, inline)
         new_name = self._write_vector_blob(group_id, blob)
         payload: dict[str, Any] = {
@@ -274,8 +365,41 @@ class MemoryUnitFileStore:
         }
         if new_name is not None:
             payload[VECTOR_FILE_KEY] = new_name
-        atomic_write_json(self._path(group_id), payload)
+        atomic_write_json(self._path(group_id), payload, durable=True)
         self._discard_vector_file(previous_name, keep=new_name)
+
+    def _read_vector_index_for_write(
+        self, group_id: str
+    ) -> tuple[str | None, Path | None, dict[str, tuple[int, int, str]], dict[str, list[float]]]:
+        """写盘前的读取：确认覆盖不会丢掉读不出来的数据。
+
+        - 读不出来（I/O 失败）：拒绝写，稍后重试，文件很可能没坏。
+        - 内容损坏：先把原文件改名留档再写，坏文件不会被悄悄覆盖掉。
+        - 上次 ``load`` 失败、现在却读得出来：调用方手里的是基于「空」做出的改动，
+          写回去会清掉整组，拒绝。
+        """
+        path = self._path(group_id)
+        status, data = self._load_payload(path)
+        if status == "unreadable":
+            raise MemoryUnitStoreError(f"memory units of group {group_id} are unreadable")
+        if status == "corrupt":
+            self._quarantine(path)
+            data = None
+        elif status == "ok" and group_id in self._suspect_groups:
+            raise MemoryUnitStoreError(
+                f"memory units of group {group_id} became readable after a failed load; "
+                "reload before writing"
+            )
+        return self._vector_index_of(data)
+
+    def _quarantine(self, path: Path) -> None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        target = path.with_name(f"{path.name}.corrupt-{stamp}")
+        try:
+            replace_with_retry(path, target)
+        except OSError as exc:
+            raise MemoryUnitStoreError(f"cannot move corrupt memory unit file {path}") from exc
+        logger.error("Corrupt memory unit file moved aside to %s; rewriting the group", target)
 
     def is_legacy_layout(self, group_id: str) -> bool:
         """判断某分组的文件是否还是「向量内联」的旧格式。
@@ -350,7 +474,7 @@ class MemoryUnitFileStore:
         name = f"{self._safe_name(group_id)}.{uuid.uuid4().hex}.bin"
         path = self._vectors_dir / name
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_bytes(blob)
+        write_bytes_durably(tmp, blob)
         replace_with_retry(tmp, path)
         return name
 
@@ -371,7 +495,11 @@ class MemoryUnitFileStore:
         此时 ``units`` 是「不带向量读入」的，若把 ``None`` 当成「没有向量」，第一次
         落盘就会清空整组向量。内联向量在这里被读出来当作沿用来源。
         """
-        data = self._read_payload(self._path(group_id))
+        return self._vector_index_of(self._read_payload(self._path(group_id)))
+
+    def _vector_index_of(
+        self, data: dict[str, Any] | None
+    ) -> tuple[str | None, Path | None, dict[str, tuple[int, int, str]], dict[str, list[float]]]:
         if data is None:
             return None, None, {}, {}
         items = [item for item in data.get("units", []) if isinstance(item, dict)]
@@ -394,7 +522,7 @@ class MemoryUnitFileStore:
             staged: dict[str, Path] = {}
             staged_vectors: dict[str, Path] = {}
             for group_id, units in groups.items():
-                old_name, old_bin, old_index, inline = self._read_vector_index(group_id)
+                old_name, old_bin, old_index, inline = self._read_vector_index_for_write(group_id)
                 items, blob = self._serialize(units, old_bin, old_index, inline)
                 payload: dict[str, Any] = {
                     "group_id": group_id,
@@ -405,11 +533,13 @@ class MemoryUnitFileStore:
                 if blob:
                     new_name = f"{self._safe_name(group_id)}.{uuid.uuid4().hex}.bin"
                     vector_path = stage_dir / new_name
-                    vector_path.write_bytes(blob)
+                    write_bytes_durably(vector_path, blob)
                     staged_vectors[group_id] = vector_path
                     payload[VECTOR_FILE_KEY] = new_name
                 path = stage_dir / f"{self._safe_name(group_id)}.json"
-                path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                write_bytes_durably(
+                    path, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+                )
                 staged[group_id] = path
                 previous[group_id] = old_name
                 new_names[group_id] = new_name
@@ -425,6 +555,7 @@ class MemoryUnitFileStore:
             shutil.rmtree(stage_dir, ignore_errors=True)
         for group_id, units in groups.items():
             self._note_group(group_id, bool(units))
+            self._suspect_groups.discard(group_id)
 
     @staticmethod
     def _replace_staged(staged: Path, destination: Path) -> None:

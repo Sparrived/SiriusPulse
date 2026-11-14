@@ -264,6 +264,22 @@ class BasicMemoryManager:
                 self._heat_state.pop(gid, None)
         return removed
 
+    def restore_entries(self, group_id: str, entries: list[BasicMemoryEntry]) -> int:
+        """把崩溃前没来得及落盘的条目接回窗口末尾（保留原 entry_id），返回接回条数。
+
+        ``entries`` 按发生顺序给出（归档的追加顺序），这里不再排序。
+        """
+        if not entries:
+            return 0
+        gid = group_id or "default"
+        window = self._windows.setdefault(gid, deque())
+        known = {entry.entry_id for entry in window}
+        restored = [entry for entry in entries if entry.entry_id not in known]
+        window.extend(restored)
+        self._trim_window(gid)
+        self._update_heat(gid)
+        return len(restored)
+
     def clear_group(self, group_id: str) -> None:
         """Clear basic memory for a specific group."""
         self._windows.pop(group_id or "default", None)
