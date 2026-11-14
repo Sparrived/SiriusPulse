@@ -51,7 +51,6 @@ TOOL_META = {
     ),
     "version": "1.2.0",
     "side_effect": "external_write",
-    "work_mode_only": True,
     # 发图本身就是回复：同轮正文不必再单独发；上传文件仍照常发正文。
     "actions": {"image": {"silent": True}},
     "tags": ["napcat", "qq", "file", "messaging"],

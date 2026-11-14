@@ -175,3 +175,22 @@ def test_every_argument_she_can_fill_in_is_explained() -> None:
     ]
 
     assert unexplained == []
+
+
+def test_everyday_actions_do_not_need_work_mode() -> None:
+    """发一张图、设个提醒、读个文档都是聊天里的事，不该先进工作模式；重工具仍然藏着。"""
+    registry = ToolRegistry()
+    registry._load_builtin_tools(auto_install_deps=False)
+
+    in_chat = {
+        tool["function"]["name"]
+        for tool in registry.build_tools_list(work_mode=False, adapter_type="napcat")
+    }
+    at_work = {
+        tool["function"]["name"]
+        for tool in registry.build_tools_list(work_mode=True, adapter_type="napcat")
+    }
+
+    assert {"group_file_exec", "reminder", "read_document"} <= in_chat
+    assert not {"bash", "read_skill", "workflow_state"} & in_chat
+    assert {"bash", "read_skill", "workflow_state"} <= at_work

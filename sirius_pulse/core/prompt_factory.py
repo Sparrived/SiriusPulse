@@ -55,7 +55,7 @@ TAG_SKIP_REPLY = "[SKIP]"
 # 交付约定（定时任务的最终正文仍然会发到原聊天）。
 WORK_MODE_TURN_NOTE = (
     "【工作模式】\n"
-    "你现在在工作模式里：bash、read_skill、workflow_state、group_file_exec 可以直接使用，"
+    "你现在在工作模式里：bash、read_skill、workflow_state 可以直接使用，"
     "适合先动手把事情做完再说话。"
     "动手时一次只推进一个可验证步骤，先读工具结果再决定下一步；"
     "相互依赖的命令不要并行堆叠，也不要猜测上一步尚未返回的路径和内容。"

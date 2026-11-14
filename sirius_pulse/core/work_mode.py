@@ -1,7 +1,7 @@
 """工作模式：工具循环里的任务完成态。
 
-普通聊天不暴露重工具（``bash`` / ``read_skill`` / ``workflow_state`` /
-``group_file_exec``），模型要完成多步任务时先调用 ``enter_work_mode``。进入后：
+普通聊天不暴露重工具（``bash`` / ``read_skill`` / ``workflow_state``，即声明了
+``work_mode_only`` 的工具），模型要完成多步任务时先调用 ``enter_work_mode``。进入后：
 
 - 重工具解锁，但模型自己的正文不再对外输出，只有工具结果和
   ``send_midway_msg`` 会真正发出去；
@@ -57,8 +57,8 @@ _ENTER_TOOL: dict[str, Any] = {
     "function": {
         "name": ENTER_WORK_MODE,
         "description": (
-            "【适用场景】需要执行多步工具协作或重型任务（bash、read_skill、workflow_state、"
-            "group_file_exec）时进入工作模式。\n"
+            "【适用场景】需要执行多步工具协作或重型任务（bash、read_skill、workflow_state）时"
+            "进入工作模式；只是发一张图或一个文件不需要进入。\n"
             "【使用方法】传入 goal 明确执行目标与验收标准。调用 enter_work_mode 的这一轮正文会正常发到群里，"
             "应先用一句话向会话同步行动计划。\n"
             "【注意事项】进入工作模式后的后续轮次正文为内部工作记录、不会被发送，"
