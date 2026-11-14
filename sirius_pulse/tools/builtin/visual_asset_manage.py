@@ -107,10 +107,7 @@ _config.group("修订").add(
     "activate",
     type="bool",
     default=True,
-    description=(
-        "stage 时是否直接把这张图设为正式主形象；默认 True，无需本人逐轮确认。"
-        "显式传 False 时暂存为草稿。"
-    ),
+    description=("stage 时是否直接把这张图设为正式主形象；默认 True，无需本人逐轮确认。" "显式传 False 时暂存为草稿。"),
 )
 _config.group("修订").add("redo", type="bool", description="derive 时明确重做，允许新消耗一次额度。")
 _config.group("来源").add(

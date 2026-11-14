@@ -1429,10 +1429,12 @@ async def test_third_party_submission_binds_visible_target_without_inheriting_co
     assert uploaded_photo.read_bytes() != admin_photo.read_bytes()
 
     denied_actions = (
-        ("activate", {"profile_id": draft["profile_id"], "revision": draft["revision"]}),
-        ("retire", {"asset_id": draft["asset_id"]}),
-    ) if target_kind == "persona" else (
-        ("retire", {"asset_id": draft["asset_id"]}),
+        (
+            ("activate", {"profile_id": draft["profile_id"], "revision": draft["revision"]}),
+            ("retire", {"asset_id": draft["asset_id"]}),
+        )
+        if target_kind == "persona"
+        else (("retire", {"asset_id": draft["asset_id"]}),)
     )
     for action, extra in denied_actions:
         denied = await chat.call(

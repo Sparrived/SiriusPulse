@@ -37,9 +37,7 @@ class ReferenceCollage:
 
 
 def _to_rgb(image: Image.Image) -> Image.Image:
-    if image.mode in ("RGBA", "LA") or (
-        image.mode == "P" and "transparency" in image.info
-    ):
+    if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
         rgba = image.convert("RGBA")
         canvas = Image.new("RGB", rgba.size, "white")
         canvas.paste(rgba, mask=rgba.getchannel("A"))
@@ -120,8 +118,7 @@ def build_reference_collages(
     if max_images <= 0:
         return []
     groups = [
-        list(people[index : index + per_collage])
-        for index in range(0, len(people), per_collage)
+        list(people[index : index + per_collage]) for index in range(0, len(people), per_collage)
     ]
     collages: list[ReferenceCollage] = []
     for group in groups[:max_images]:
@@ -136,14 +133,10 @@ def reference_note(collages: Sequence[ReferenceCollage]) -> str:
     lines: list[str] = []
     for index, collage in enumerate(collages, 1):
         if len(collage.names) == 1:
-            lines.append(
-                f"第 {index} 张参考图是「{collage.names[0]}」，这个角色的长相和服装严格按这张图。"
-            )
+            lines.append(f"第 {index} 张参考图是「{collage.names[0]}」，这个角色的长相和服装严格按这张图。")
             continue
         positions = _positions(collage.columns, collage.rows)
-        mapping = "，".join(
-            f"{position}={name}" for position, name in zip(positions, collage.names)
-        )
+        mapping = "，".join(f"{position}={name}" for position, name in zip(positions, collage.names))
         lines.append(
             f"第 {index} 张参考图是一张 {collage.columns}×{collage.rows} 的角色拼图"
             f"（{mapping}）；请从对应格子取角色形象，不要把拼图网格、分割线、"

@@ -22,9 +22,7 @@ def _png(color: tuple[int, int, int] = (90, 80, 160), size=(48, 64)) -> bytes:
     return buffer.getvalue()
 
 
-def _rgba_png(
-    color: tuple[int, int, int, int], size: tuple[int, int] = (48, 48)
-) -> bytes:
+def _rgba_png(color: tuple[int, int, int, int], size: tuple[int, int] = (48, 48)) -> bytes:
     buffer = io.BytesIO()
     Image.new("RGBA", size, color).save(buffer, format="PNG")
     return buffer.getvalue()
@@ -32,8 +30,7 @@ def _rgba_png(
 
 def test_collage_packs_four_people_into_one_reference_image():
     people = [
-        (name, _png((index * 30, 80, 160)))
-        for index, name in enumerate(("a", "b", "c", "d"))
+        (name, _png((index * 30, 80, 160))) for index, name in enumerate(("a", "b", "c", "d"))
     ]
     refs = collage.build_reference_collages(people)
 
@@ -95,7 +92,5 @@ def test_collage_composites_transparency_on_white():
     with Image.open(io.BytesIO(refs[0].data)) as image:
         assert image.mode == "RGB"
         # 第一格中心：透明图缩略后居中贴在这一格里，白底直接透出来。
-        pixel = image.getpixel(
-            (collage.GAP + collage.CELL // 2, collage.GAP + collage.CELL // 2)
-        )
+        pixel = image.getpixel((collage.GAP + collage.CELL // 2, collage.GAP + collage.CELL // 2))
     assert all(channel > 240 for channel in pixel), pixel

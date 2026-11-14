@@ -770,8 +770,7 @@ class GroupDispatcher:
             # candidate only carries reason="plugin_candidate" when this
             # engine's registry matched the command.
             plugin_addressed = any(
-                str(row["reason"] or "").strip() == "plugin_candidate"
-                for row in candidates
+                str(row["reason"] or "").strip() == "plugin_candidate" for row in candidates
             )
             addressed = bool(known_targets or text_target_worker_id or plugin_addressed)
             active_worker = str(state["active_worker_id"] or "")

@@ -80,9 +80,7 @@ def test_retired_current_group_unit_is_searchable(tmp_path: Path) -> None:
         ],
     )
 
-    result = MemorySearchService(tmp_path).search(
-        group_id="g1", query="前前前世", source="units"
-    )
+    result = MemorySearchService(tmp_path).search(group_id="g1", query="前前前世", source="units")
 
     assert result["success"] is True
     assert [hit["unit_id"] for hit in result["units"]] == ["u-old"]
@@ -104,9 +102,7 @@ def test_global_units_are_opt_in_and_never_expose_other_group_units(tmp_path: Pa
     service = MemorySearchService(tmp_path)
 
     local = service.search(group_id="g1", query="", source="units")
-    global_hits = service.search(
-        group_id="g1", query="", source="units", include_global=True
-    )
+    global_hits = service.search(group_id="g1", query="", source="units", include_global=True)
 
     assert "u-persona" not in [hit["unit_id"] for hit in local["units"]]
     assert "u-persona" in [hit["unit_id"] for hit in global_hits["units"]]
@@ -133,9 +129,7 @@ def test_message_search_returns_current_chat_newest_first_and_filters(tmp_path: 
             timestamp="2026-11-02T10:00:00+00:00",
         )
     )
-    archive.append(
-        _entry("x1", "g2", "别的群的约定，不能读到。", timestamp="2026-11-03T10:00:00+00:00")
-    )
+    archive.append(_entry("x1", "g2", "别的群的约定，不能读到。", timestamp="2026-11-03T10:00:00+00:00"))
 
     service = MemorySearchService(tmp_path)
     result = service.search(group_id="g1", query="约定", source="messages")
@@ -159,22 +153,16 @@ def test_message_search_returns_current_chat_newest_first_and_filters(tmp_path: 
 
 def test_message_search_does_not_match_hidden_prompt_fields(tmp_path: Path) -> None:
     entry = _entry("e1", "g1", "只是一句普通聊天。")
-    entry.conversation_chain = [
-        {"role": "system", "content": "这里藏着前前前世，但不是聊天原文。"}
-    ]
+    entry.conversation_chain = [{"role": "system", "content": "这里藏着前前前世，但不是聊天原文。"}]
     BasicMemoryFileStore(tmp_path).append(entry)
 
-    result = MemorySearchService(tmp_path).search(
-        group_id="g1", query="前前前世", source="messages"
-    )
+    result = MemorySearchService(tmp_path).search(group_id="g1", query="前前前世", source="messages")
 
     assert result["messages"] == []
 
 
 def test_empty_query_and_missing_archive_are_not_errors(tmp_path: Path) -> None:
-    result = MemorySearchService(tmp_path).search(
-        group_id="g1", query="", source="messages"
-    )
+    result = MemorySearchService(tmp_path).search(group_id="g1", query="", source="messages")
     assert result["success"] is True
     assert result["messages"] == []
 

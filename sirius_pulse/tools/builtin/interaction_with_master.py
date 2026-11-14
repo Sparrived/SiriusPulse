@@ -212,10 +212,7 @@ def _master_receipt(message: str) -> dict[str, Any] | None:
     if len(snippet) > _RECEIPT_SNIPPET_CHARS:
         snippet = snippet[: _RECEIPT_SNIPPET_CHARS - 3].rstrip() + "..."
     return {
-        "content": (
-            f"（已私聊发给主人：「{snippet}」；"
-            "已完成私聊投递，除非主人明确要求重发，否则不要重复私聊）"
-        ),
+        "content": (f"（已私聊发给主人：「{snippet}」；" "已完成私聊投递，除非主人明确要求重发，否则不要重复私聊）"),
         "tags": [{"type": "private", "label": "主人"}],
     }
 

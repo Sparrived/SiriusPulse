@@ -188,9 +188,7 @@ class MemorySearchService:
         user_id: str,
     ) -> list[dict[str, Any]]:
         store = MemoryUnitFileStore(self.work_path)
-        candidates: list[MemoryUnit] = list(
-            store.load(group_id, with_embeddings=False)
-        )
+        candidates: list[MemoryUnit] = list(store.load(group_id, with_embeddings=False))
         if include_global:
             for other_group in store.list_group_ids():
                 if other_group == group_id:
@@ -230,9 +228,7 @@ class MemorySearchService:
                     " ".join([*unit.participants, *unit.identity_aliases, *unit.retrieval_terms]),
                 ).casefold()
                 phrase = normalized_query in support
-                matched = sum(
-                    1 for term in terms if term in primary or term in support
-                )
+                matched = sum(1 for term in terms if term in primary or term in support)
                 if not phrase and matched == 0:
                     continue
                 score = 0.0
@@ -262,8 +258,7 @@ class MemorySearchService:
     def _unit_matches_user(unit: MemoryUnit, wanted: str) -> bool:
         values = [unit.scope_id, *unit.participants]
         return any(
-            unicodedata.normalize("NFKC", str(value or "")).casefold() == wanted
-            for value in values
+            unicodedata.normalize("NFKC", str(value or "")).casefold() == wanted for value in values
         )
 
     def _search_messages(
@@ -308,16 +303,18 @@ class MemorySearchService:
                 haystack = unicodedata.normalize(
                     "NFKC", f"{entry.content} {entry.speaker_name}"
                 ).casefold()
-                if normalized_query not in haystack and not any(
-                    term in haystack for term in terms
-                ):
+                if normalized_query not in haystack and not any(term in haystack for term in terms):
                     # grep only sees the raw JSON; hidden prompt/conversation
                     # fields must not make an unrelated message look relevant.
                     continue
             if not _within(entry.timestamp, start, end):
                 continue
             entries.append(entry)
-        entries.sort(key=lambda entry: _parse_time(entry.timestamp) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+        entries.sort(
+            key=lambda entry: _parse_time(entry.timestamp)
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
         return [_entry_hit(entry) for entry in entries[:limit]]
 
     @staticmethod

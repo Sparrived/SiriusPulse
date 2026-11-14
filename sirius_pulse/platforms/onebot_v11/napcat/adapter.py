@@ -2968,9 +2968,7 @@ class NapCatAdapter(BaseAdapter):
                     "delivery_parts",
                     [
                         {"kind": "text", "value": part}
-                        for part in _split_reply_for_delivery(
-                            reply_for_delivery, merged=True
-                        )
+                        for part in _split_reply_for_delivery(reply_for_delivery, merged=True)
                         if not result.get("rich_sent")
                     ]
                     + [

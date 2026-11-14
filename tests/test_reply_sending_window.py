@@ -92,19 +92,14 @@ async def test_napcat_mid_sentence_newline_is_sent_as_one_message():
         [
             {
                 "type": "text",
-                "data": {
-                    "text": "现在本猫天天监督他、偶尔咬他一口，还能名正言顺赖着，划算多啦，哼！"
-                },
+                "data": {"text": "现在本猫天天监督他、偶尔咬他一口，还能名正言顺赖着，划算多啦，哼！"},
             }
         ]
     ]
 
 
 def test_split_reply_uses_punctuation_without_relying_on_newlines():
-    text = (
-        "第一句足够长的回复内容在这里，超过二十个字。"
-        "第二句足够长的回复内容也在这里，超过二十个字！"
-    )
+    text = "第一句足够长的回复内容在这里，超过二十个字。" "第二句足够长的回复内容也在这里，超过二十个字！"
 
     assert _split_reply_for_delivery(text) == [
         "第一句足够长的回复内容在这里，超过二十个字。",

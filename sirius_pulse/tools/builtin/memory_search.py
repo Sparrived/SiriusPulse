@@ -96,7 +96,12 @@ async def run(
         group_id = str(getattr(invocation_context, "group_id", "") or "").strip()
         if not group_id:
             return {"success": False, "error": "缺少当前会话上下文"}
-        if not isinstance(query, str) or not isinstance(since, str) or not isinstance(until, str) or not isinstance(user_id, str):
+        if (
+            not isinstance(query, str)
+            or not isinstance(since, str)
+            or not isinstance(until, str)
+            or not isinstance(user_id, str)
+        ):
             return {"success": False, "error": "query、since、until、user_id 必须是字符串"}
         if not isinstance(source, str) or source not in {"both", "units", "messages"}:
             return {"success": False, "error": "source 必须是 both、units 或 messages"}

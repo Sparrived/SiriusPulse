@@ -227,10 +227,7 @@ class PromptFactory:
             identity_parts.append(custom_prompt)
 
         # 场景行为指导
-        identity_parts.append(
-            "你在一个多人聊天场景里。你的每条回复会被系统按标点符号"
-            "（句号、问号、感叹号、省略号）拆分成多条消息发送；不要用换行代替标点。"
-        )
+        identity_parts.append("你在一个多人聊天场景里。你的每条回复会被系统按标点符号" "（句号、问号、感叹号、省略号）拆分成多条消息发送；不要用换行代替标点。")
         identity_parts.append(BE_YOURSELF_NOTE)
 
         return f"{TAG_IDENTITY_ANCHOR}\n" + "\n".join(identity_parts)
