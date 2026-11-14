@@ -55,11 +55,27 @@ def run(name: str, **kwargs):
 """
 
 
+def _restrict_actions(schema: dict[str, Any], action_param: str, allowed: frozenset[str]) -> bool:
+    """把工具 schema 里 action 的可选值收窄到 ``allowed``；一个都不剩时返回 False。"""
+    parameters = schema.get("function", {}).get("parameters", {})
+    prop = parameters.get("properties", {}).get(action_param)
+    choices = prop.get("enum") if isinstance(prop, dict) else None
+    if not isinstance(choices, list):
+        return bool(allowed)
+    kept = [choice for choice in choices if str(choice).strip().lower() in allowed]
+    if not kept:
+        return False
+    prop["enum"] = kept
+    return True
+
+
 class ToolRegistry:
     """Discovers and manages tool definitions from a directory."""
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
+        self.data_store_provider: Callable[[str], Any] | None = None
+        """按工具名取它的数据存储；运行时由执行器接上，用于 ``available_actions`` 钩子。"""
 
     @property
     def tool_names(self) -> list[str]:
@@ -240,6 +256,7 @@ class ToolRegistry:
         config_parameters = ToolRegistry._parse_parameters(meta.get("config", {}))
         source_optional = getattr(module, "request_source_optional", None)
         after_success = getattr(module, "after_success", None)
+        available_actions = getattr(module, "available_actions", None)
         raw_source_params = meta.get("request_source_params", [])
 
         return ToolDefinition(
@@ -280,6 +297,7 @@ class ToolRegistry:
             actions=ToolRegistry._parse_actions(meta.get("actions"), name),
             _request_source_optional=source_optional if callable(source_optional) else None,
             _after_success=after_success if callable(after_success) else None,
+            _available_actions=available_actions if callable(available_actions) else None,
         )
 
     @staticmethod
@@ -359,17 +377,35 @@ class ToolRegistry:
         Returns:
             OpenAI tools 格式的列表。
         """
-        return [
-            tool.to_tool_schema()
-            for tool in self._available_model_tools(
-                invocation_context=invocation_context,
-                adapter_type=adapter_type,
-                chat_type=chat_type,
-                admin_allowed=admin_allowed,
-                exclude_names=exclude_names,
-                work_mode=work_mode,
-            )
-        ]
+        schemas: list[dict[str, Any]] = []
+        for tool in self._available_model_tools(
+            invocation_context=invocation_context,
+            adapter_type=adapter_type,
+            chat_type=chat_type,
+            admin_allowed=admin_allowed,
+            exclude_names=exclude_names,
+            work_mode=work_mode,
+        ):
+            schema = tool.to_tool_schema()
+            allowed = self._configured_actions(tool)
+            if allowed is not None and not _restrict_actions(schema, tool.action_param, allowed):
+                continue
+            schemas.append(schema)
+        return schemas
+
+    def _configured_actions(self, tool: ToolDefinition) -> frozenset[str] | None:
+        """这个工具按当前配置能用的 action；没接数据存储或工具不限制时为 ``None``。"""
+        if tool._available_actions is None or not tool.trusted:
+            return None
+        provider = self.data_store_provider
+        if provider is None:
+            return None
+        try:
+            data_store = provider(tool.name)
+        except Exception:
+            logger.warning("TOOL '%s' 取数据存储失败", tool.name, exc_info=True)
+            return None
+        return tool.available_actions(data_store)
 
     def _available_model_tools(
         self,

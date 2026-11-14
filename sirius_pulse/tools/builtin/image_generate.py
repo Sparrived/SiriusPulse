@@ -78,8 +78,20 @@ _config.group("生图").add(
     description=(
         "人物主体引用列表：支持 {'ref': 'persona'}（自身）、{'ref': 'requester'}（请求者）、"
         "{'ref': 'person_id', 'value': '<UUID>'}（已登记人物），由系统自动绑定人物设定与正式形象。"
+        "每一项是对象，不要写成 JSON 字符串。"
     ),
     default=[],
+    # 不声明数组项时，部分模型会把每一项写成 JSON 字符串。
+    fields=[
+        {
+            "name": "ref",
+            "type": "str",
+            "description": "persona=你自己，requester=提要求的人，person_id / name / mention_ref 需配合 value。",
+            "choices": ["persona", "requester", "person_id", "name", "mention_ref"],
+            "required": True,
+        },
+        {"name": "value", "type": "str", "description": "ref 为 person_id / name / mention_ref 时填写。"},
+    ],
 )
 _config.group("生图").add(
     "source_ref",
@@ -346,37 +358,50 @@ def _normalize_subjects(raw: Any) -> list[dict[str, Any]]:
         text = raw.strip()
         if not text:
             return []
-        parsed: Any = None
-        if text.startswith(("{", "[")):
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                # 模型偶尔会写成 Python 字面量（单引号），这里兼容一下。
-                try:
-                    import ast
-
-                    candidate = ast.literal_eval(text)
-                    if isinstance(candidate, (dict, list)):
-                        parsed = candidate
-                except (ValueError, SyntaxError):
-                    parsed = None
-            if parsed is None and text.startswith(("{", "[")):
-                raise ValueError(
-                    'subjects 必须是 JSON 对象数组，例如 [{"ref": "persona"}]'
-                    ' 或 [{"ref": "person_id", "value": "<UUID>"}]'
-                )
-        raw = parsed if parsed is not None else [{"ref": "name", "value": text}]
+        raw = _parse_subject_literal(text) if text.startswith(("{", "[")) else text
+        if isinstance(raw, str):
+            raw = [{"ref": "name", "value": text}]
     if isinstance(raw, dict):
         return [dict(raw)]
     if not isinstance(raw, (list, tuple)):
         raise ValueError("subjects 必须是主体引用数组")
     result: list[dict[str, Any]] = []
     for item in raw:
+        if isinstance(item, str) and item.strip().startswith("{"):
+            # 线上常见：[ "{\"ref\": \"persona\"}" ]——对象被写成了字符串。
+            # 以前它被当成人名去找，于是一律 not_found_or_not_visible。
+            item = _parse_subject_literal(item.strip())
         if isinstance(item, dict):
             result.append(dict(item))
+        elif isinstance(item, str) and item.strip() in _BARE_SUBJECT_REFS:
+            result.append({"ref": item.strip()})
         elif isinstance(item, str) and item.strip():
             result.append({"ref": "name", "value": item.strip()})
     return result
+
+
+#: 不带 value 的主体引用：模型偶尔只写 ["persona"]，不该被当成叫 persona 的人。
+_BARE_SUBJECT_REFS = frozenset({"persona", "requester"})
+
+
+def _parse_subject_literal(text: str) -> Any:
+    """解析写成字符串的主体对象或数组；兼容 Python 字面量（单引号）。"""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    try:
+        import ast
+
+        candidate = ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        candidate = None
+    if isinstance(candidate, (dict, list)):
+        return candidate
+    raise ValueError(
+        'subjects 必须是 JSON 对象数组，例如 [{"ref": "persona"}]'
+        ' 或 [{"ref": "person_id", "value": "<UUID>"}]'
+    )
 
 
 async def _submit_person_job(

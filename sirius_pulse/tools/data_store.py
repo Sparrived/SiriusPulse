@@ -29,10 +29,18 @@ class ToolDataStore:
         self._data: dict[str, Any] = {}
         self._dirty = False
         self._lock = threading.RLock()
+        self._loaded_mtime_ns: int | None = None
         self._load()
+
+    def _stat_mtime_ns(self) -> int | None:
+        try:
+            return self._path.stat().st_mtime_ns
+        except OSError:
+            return None
 
     def _load(self) -> None:
         with self._lock:
+            self._loaded_mtime_ns = self._stat_mtime_ns()
             if self._path.exists():
                 try:
                     raw = self._path.read_text(encoding="utf-8")
@@ -51,6 +59,16 @@ class ToolDataStore:
             self._dirty = False
             self._load()
 
+    def reload_if_changed(self) -> None:
+        """文件在别处（例如 WebUI）被改过才重新加载；没改只多一次 stat。
+
+        有未落盘修改时不覆盖，免得丢掉工具自己刚写的数据。
+        """
+        with self._lock:
+            if self._dirty or self._stat_mtime_ns() == self._loaded_mtime_ns:
+                return
+            self._load()
+
     def save(self) -> None:
         """持久化当前数据到磁盘（仅在修改后写入）。
 
@@ -63,6 +81,7 @@ class ToolDataStore:
 
             atomic_json_save(self._path, self._data)
             self._dirty = False
+            self._loaded_mtime_ns = self._stat_mtime_ns()
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value by key."""

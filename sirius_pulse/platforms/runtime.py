@@ -394,6 +394,8 @@ class EngineRuntime:
                 LOG.info("用户 TOOL 已加载 %d 个", user_loaded)
 
         executor = ToolExecutor(self.work_path)
+        # 工具可以按自己的配置收窄摆给模型的 action（available_actions 钩子）。
+        registry.data_store_provider = executor.get_data_store
         mcp_manager = MCPClientManager(load_mcp_config(PersonaConfigPaths(self.work_path).mcp))
         self._mcp_manager = mcp_manager
         try:

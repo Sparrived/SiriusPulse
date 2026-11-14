@@ -633,6 +633,57 @@ async def test_explicit_empty_subjects_scenery_needs_no_person_evidence_and_uses
     assert not chat.visual.store.profiles_for(chat.people.persona_id)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "subjects",
+    [[{"ref": "persona"}], ['{"ref": "persona"}'], ["persona"]],
+    ids=["object", "object-written-as-string", "bare-ref"],
+)
+async def test_drawing_herself_finds_her_however_the_subject_is_written(conversation, subjects):
+    """线上 65 次「画你自己」因为 subjects 写成了字符串，被当成人名去找而失败。"""
+    chat = conversation
+    ref = chat.message("alice", "画一张你自己吧")
+
+    result = await chat.call(
+        "image_generate",
+        chat.invocation(ref),
+        prompt="画月白在窗边看书",
+        subjects=subjects,
+        source_ref=ref,
+    )
+
+    # 还没给她登记正式形象：找到了她本人，卡在「没有正式形象」，而不是「找不到这个人」。
+    assert result.success is False
+    assert result.data["code"] != "not_found_or_not_visible", result.error
+    assert "正式视觉形象" in result.error
+
+
+@pytest.mark.asyncio
+async def test_why_a_redacted_tool_failed_is_still_visible_in_telemetry(conversation):
+    """视觉资产工具不记参数和错误原文，但要留下错误码，排查时才知道是哪类失败。"""
+    chat = conversation
+    ref = chat.message("alice", "把这张存成我的形象")
+
+    result = await chat.call(
+        "visual_asset_manage",
+        chat.invocation(ref),
+        action="save",
+        target={"ref": "requester"},
+        evidence_ref=ref,
+    )
+
+    assert result.success is False
+    telemetry = chat.executor.get_data_store("visual_asset_manage").store_path.parent
+    records = [
+        json.loads(line)
+        for line in (telemetry / ".telemetry.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    record = records[-1]
+    assert record["tool_name"] == "visual_asset_manage"
+    assert record["error"] == "" and record["result_summary"] == ""
+    assert record["error_code"] == result.data["code"] and record["error_code"]
+
+
 @pytest.fixture
 def memory_conversation(conversation):
     from sirius_pulse.memory.units import MemoryUnitFileStore, MemoryUnitManager

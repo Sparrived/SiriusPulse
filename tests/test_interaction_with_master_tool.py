@@ -383,6 +383,34 @@ async def test_status_action_reports_missing_token_without_network(monkeypatch) 
     assert called is False
 
 
+def test_status_is_only_offered_once_the_mds_token_is_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """没配令牌时她看不到 status；在 WebUI 填好令牌后，下一轮就出现，不用重启。"""
+    from sirius_pulse.tools.data_store import ToolDataStore
+    from sirius_pulse.tools.executor import ToolExecutor
+
+    monkeypatch.delenv("MDS_PUBLIC_STATUS_TOKEN", raising=False)
+    registry = ToolRegistry()
+    registry.register(ToolRegistry._load_tool_file(Path(interaction_with_master.__file__)))
+    executor = ToolExecutor(tmp_path)
+    registry.data_store_provider = executor.get_data_store
+
+    def offered_actions() -> list[str]:
+        (schema,) = registry.build_tools_list(adapter_type="napcat")
+        return schema["function"]["parameters"]["properties"]["action"]["enum"]
+
+    before = offered_actions()
+    # WebUI 用它自己的存储实例写同一个文件。
+    webui = ToolDataStore(executor.get_data_store("interaction_with_master").store_path)
+    webui.set("public_status_token", "mds-token")
+    webui.save()
+    after = offered_actions()
+
+    assert before == ["message"]
+    assert after == ["message", "status"]
+
+
 @pytest.mark.asyncio
 async def test_status_action_reports_malformed_json(monkeypatch) -> None:
     monkeypatch.setenv("MDS_PUBLIC_STATUS_TOKEN", "env-token")

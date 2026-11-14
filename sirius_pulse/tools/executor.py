@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -35,6 +36,20 @@ def _logged_params(tool: ToolDefinition, params: dict[str, Any]) -> dict[str, An
 
 def _caller_id(invocation_context: ToolInvocationContext | None) -> str:
     return invocation_context.caller_user_id if invocation_context is not None else ""
+
+
+_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def _error_code(result: ToolResult) -> str:
+    """工具结果里的稳定错误码；只认 snake_case 标识符，不会带出用户内容。"""
+    data = result.data if isinstance(result.data, dict) else {}
+    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+    for candidate in (data.get("code"), nested.get("code")):
+        code = str(candidate or "").strip()
+        if _ERROR_CODE_RE.match(code):
+            return code
+    return ""
 
 
 def _should_retry(exc: Exception) -> bool:
@@ -369,6 +384,7 @@ class ToolExecutor:
                     success=result.success,
                     duration_ms=round(duration_ms, 2),
                     error=result.error if not result.success and not tool.redact_logs else "",
+                    error_code="" if result.success else _error_code(result),
                     caller_user_id=_caller_id(invocation_context),
                     params=_logged_params(tool, params) if params else None,
                     result_summary=(

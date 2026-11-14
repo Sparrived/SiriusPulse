@@ -281,6 +281,26 @@ class ToolDefinition:
         default=None, repr=False
     )
     _after_success: Callable[..., Any] | None = field(default=None, repr=False)
+    _available_actions: Callable[[Any], Any] | None = field(default=None, repr=False)
+
+    def available_actions(self, data_store: Any) -> frozenset[str] | None:
+        """按当前配置可用的 action；``None`` 表示不限制。
+
+        工具模块可以导出 ``available_actions(data_store)``：某个 action 依赖的配置
+        还没填时，就别把它摆给模型——否则她会一次次去调一个注定失败的动作。
+        钩子出错时不限制，免得一个工具的 bug 让它整个消失。
+        """
+        hook = self._available_actions
+        if hook is None:
+            return None
+        try:
+            actions = hook(data_store)
+        except Exception:
+            _logger.warning("TOOL '%s' available_actions 失败", self.name, exc_info=True)
+            return None
+        if actions is None:
+            return None
+        return frozenset(str(action).strip().lower() for action in actions)
 
     def after_success(self, result: "ToolResult", *, engine_context: Any, group_id: str) -> None:
         """成功后在事件循环上回调工具自己的 ``after_success``（仅内置生效）。

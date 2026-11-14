@@ -21,6 +21,8 @@ class ToolExecutionRecord:
     success: bool
     duration_ms: float
     error: str = ""
+    error_code: str = ""
+    """失败时工具给的稳定错误码（如 consent_required）；redact_logs 的工具也照记。"""
     caller_user_id: str = ""
     params: dict[str, Any] | None = None
     result_summary: str = ""
