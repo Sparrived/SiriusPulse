@@ -807,8 +807,13 @@ class NapCatAdapter(BaseAdapter):
             max_activity_penalty=float(
                 self.plugin_config.get("dispatch_max_activity_penalty", 0.6)
             ),
+            group_ids_provider=self._dispatch_group_ids,
         )
         return self._dispatcher
+
+    def _dispatch_group_ids(self) -> list[str]:
+        """登记给调度器的「我在哪些群」（群白名单）；空列表表示不缩小范围。"""
+        return self._get_allowed_group_ids()
 
     def _get_delivery_dispatcher(self) -> GroupDispatcher | None:
         """Keep delivery receipts even when public-turn arbitration is disabled."""

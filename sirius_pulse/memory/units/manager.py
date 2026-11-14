@@ -612,6 +612,10 @@ class MemoryUnitManager:
         self.ensure_group_loaded(group_id)
         return entry_id in self._checkpointed_sources.get(group_id, set())
 
+    def encode_query(self, text: str) -> Any:
+        """消息的查询向量（与记忆检索共用缓存）；语义检索不可用时为 None。"""
+        return self._indexer.encode_query(text)
+
     def checkpointed_source_ids(self, group_id: str) -> set[str]:
         """某群已被记忆单元引用的原始条目 ID；只读元数据，不建索引、不发 embedding。
 

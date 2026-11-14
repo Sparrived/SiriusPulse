@@ -910,3 +910,46 @@ def test_group_dispatcher_observes_undirected_chatter_while_group_is_busy(tmp_pa
         assert chatter.reason == "group_busy"
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("beta_groups", "waits_for_beta"),
+    [(["g2"], False), (["g1", "g2"], True)],
+)
+def test_a_message_only_waits_for_personas_that_are_in_its_group(
+    tmp_path: Path, beta_groups: list[str], waits_for_beta: bool
+):
+    """另一个人格不在这个群时，不该让每条消息都把收集窗口等满。"""
+
+    async def run() -> None:
+        import time
+
+        clock = _Clock()
+        db_path = tmp_path / "dispatcher.db"
+        alpha = _dispatcher(
+            db_path,
+            clock,
+            "alpha",
+            "100",
+            score_collection_seconds=1.0,
+            group_ids_provider=lambda: ["g1"],
+        )
+        _dispatcher(
+            db_path,
+            clock,
+            "beta",
+            "200",
+            score_collection_seconds=1.0,
+            group_ids_provider=lambda: beta_groups,
+        )
+
+        started = time.monotonic()
+        decision = await alpha.coordinate(
+            event_id="m1", group_id="g1", base_score=0.8, should_reply=True
+        )
+        waited = time.monotonic() - started
+
+        assert decision.granted
+        assert (waited >= 0.9) is waits_for_beta
+
+    asyncio.run(run())

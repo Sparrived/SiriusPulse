@@ -105,9 +105,11 @@ class Helpers:
         if plugin_registry is not None and embedding_client is not None:
             from sirius_pulse.core.plugin_intent_matcher import PluginIntentMatcher
 
+            units = getattr(self._engine, "memory_unit_manager", None)
             self._engine._plugin_intent_matcher = PluginIntentMatcher(
                 embedding_client=embedding_client,
                 plugin_registry=plugin_registry,
+                query_encoder=getattr(units, "encode_query", None),
             )
         else:
             self._engine._plugin_intent_matcher = None

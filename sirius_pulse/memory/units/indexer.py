@@ -368,6 +368,25 @@ class MemoryUnitIndexer:
         if missing:
             self._encode_into_cache(missing)
 
+    def encode_query(self, text: str) -> np.ndarray | None:
+        """一条消息的查询向量（单位化），与检索共用缓存。
+
+        同一条消息先过插件意图匹配、几秒后又作为记忆检索的查询：两处各发一次
+        embedding 请求是纯浪费。这里按检索用的规范化文本做键，先到者付费，后到者
+        命中缓存。会发网络请求，调用方应在线程里调用。
+        """
+        variants = self._query_variants(text)
+        if not variants or not self.semantic_available:
+            return None
+        key = (self._model_key(), variants[0])
+        with self._query_lock:
+            cached = self._query_cache.get(key)
+        if cached is None:
+            self._encode_into_cache([variants[0]])
+            with self._query_lock:
+                cached = self._query_cache.get(key)
+        return cached
+
     def _model_key(self) -> str:
         return str(getattr(self._embedding_client, "model", "") or "")
 

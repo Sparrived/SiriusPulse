@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -19,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 #: 收集各人格打分时的轮询间隔。轮询在线程里跑，间隔过密只会白白抢库锁。
 _COLLECTION_POLL_SECONDS = 0.02
@@ -98,8 +101,12 @@ class GroupDispatcher:
         activity_penalty_per_reply: float = 0.12,
         max_activity_penalty: float = 0.6,
         clock: Callable[[], float] | None = None,
+        group_ids_provider: Callable[[], list[str]] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
+        #: 本 worker 负责的群（白名单）。登记进库后，收集分数只等真正在这个群里的
+        #: worker；不提供时视为「哪个群都可能在」，与旧行为一致。
+        self._group_ids_provider = group_ids_provider
         self.worker_id = str(worker_id).strip()
         self.account_id = str(account_id).strip()
         self.priority = float(priority)
@@ -162,7 +169,8 @@ class GroupDispatcher:
                     worker_id TEXT PRIMARY KEY,
                     account_id TEXT NOT NULL DEFAULT '',
                     priority REAL NOT NULL DEFAULT 0,
-                    last_seen REAL NOT NULL
+                    last_seen REAL NOT NULL,
+                    group_ids TEXT
                 );
                 CREATE TABLE IF NOT EXISTS dispatcher_groups (
                     group_id TEXT PRIMARY KEY,
@@ -237,6 +245,13 @@ class GroupDispatcher:
                 conn.execute(
                     "ALTER TABLE dispatcher_events ADD COLUMN reason TEXT NOT NULL DEFAULT ''"
                 )
+            worker_columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(dispatcher_workers)").fetchall()
+            }
+            if "group_ids" not in worker_columns:
+                # NULL = 没登记过负责哪些群（旧版本 worker），按「每个群都在」处理。
+                conn.execute("ALTER TABLE dispatcher_workers ADD COLUMN group_ids TEXT")
             group_columns = {
                 str(row[1])
                 for row in conn.execute("PRAGMA table_info(dispatcher_groups)").fetchall()
@@ -289,17 +304,31 @@ class GroupDispatcher:
 
     def register(self) -> None:
         now = self._clock()
+        # 只有明确的非空白名单才缩小范围；空或读不出来都按「每个群都可能在」登记，
+        # 宁可多等一个收集窗口，也不能漏掉一个真在群里的人格。
+        group_ids: str | None = None
+        if self._group_ids_provider is not None:
+            try:
+                groups = sorted({str(g) for g in self._group_ids_provider() if g})
+            except Exception:
+                logger.warning("读取 worker 负责的群失败，按全部群登记", exc_info=True)
+                groups = []
+            if groups:
+                group_ids = json.dumps(groups)
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO dispatcher_workers(worker_id, account_id, priority, last_seen)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO dispatcher_workers(
+                    worker_id, account_id, priority, last_seen, group_ids
+                )
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(worker_id) DO UPDATE SET
                     account_id=excluded.account_id,
                     priority=excluded.priority,
-                    last_seen=excluded.last_seen
+                    last_seen=excluded.last_seen,
+                    group_ids=excluded.group_ids
                 """,
-                (self.worker_id, self.account_id, self.priority, now),
+                (self.worker_id, self.account_id, self.priority, now, group_ids),
             )
 
     def set_account_id(self, account_id: str) -> None:
@@ -662,6 +691,27 @@ class GroupDispatcher:
                     return str(worker["worker_id"] or "")
         return ""
 
+    def _expected_candidates(self, conn: sqlite3.Connection, group_id: str, now: float) -> int:
+        """这个群应该等几个 worker 交分数：只算在线、且负责这个群的。
+
+        按进程里所有 worker 计数时，只要有一个人格不在这个群，每条消息都得把收集
+        窗口等满。
+        """
+        rows = conn.execute(
+            "SELECT group_ids FROM dispatcher_workers WHERE last_seen > ?",
+            (now - self.registry_ttl_seconds,),
+        ).fetchall()
+        expected = 0
+        for row in rows:
+            raw = row["group_ids"]
+            try:
+                groups = json.loads(str(raw)) if raw is not None else None
+            except (TypeError, ValueError):
+                groups = None
+            if not isinstance(groups, list) or str(group_id) in {str(g) for g in groups}:
+                expected += 1
+        return expected
+
     def _finalize_candidate(
         self,
         event_id: str,
@@ -685,10 +735,7 @@ class GroupDispatcher:
                 "SELECT * FROM dispatcher_candidates WHERE event_id=? ORDER BY worker_id",
                 (event_id,),
             ).fetchall()
-            expected = conn.execute(
-                "SELECT COUNT(*) FROM dispatcher_workers WHERE last_seen > ?",
-                (now - self.registry_ttl_seconds,),
-            ).fetchone()[0]
+            expected = self._expected_candidates(conn, group_id, now)
             if (
                 not force
                 and len(candidates) < max(1, int(expected))

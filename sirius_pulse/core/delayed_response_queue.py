@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_GENERATION_RETRIES = 2
 
 # Heat-based window multipliers: hotter groups = longer wait
+#: 还在等的 DELAYED 条目多久检查一次「话题停顿 / 冷场」这类提前触发。
+_EARLY_TRIGGER_POLL_SECONDS = 1.0
+
 _HEAT_WINDOW_MULT = {
     "cold": 0.7,
     "warm": 1.0,
@@ -67,6 +70,94 @@ class DelayedResponseQueue:
         self._in_flight: dict[str, DelayedResponseItem] = {}
         # Batch payloads live with the existing queue, never in a second outbox.
         self._deliveries: dict[str, dict[str, Any]] = {}
+        #: 队列里有新东西可判时叫醒 ticker；否则入队的消息要等 ticker 下一次醒来。
+        self._on_change: Callable[[], None] | None = None
+
+    def set_wake_callback(self, callback: Callable[[], None] | None) -> None:
+        """登记「队列变了」的回调（ticker 用它代替固定间隔轮询）。"""
+        self._on_change = callback
+
+    def _changed(self) -> None:
+        if self._on_change is not None:
+            self._on_change()
+
+    def due_items(
+        self,
+        group_id: str,
+        recent_messages: list[dict[str, Any]],
+        rhythm: RhythmAnalysis | None = None,
+    ) -> list[DelayedResponseItem]:
+        """此刻 ``tick()`` 会触发的条目（不改动队列）。
+
+        ticker 必须和 ``tick()`` 用同一套判定：只看窗口到期的话，「话题停顿就插话」
+        「冷场过半窗口就开口」这些提前触发永远没人去检查，窗口比新鲜度上限还长的
+        条目（如 natural_join）就只会过期作废。
+        """
+        due: list[DelayedResponseItem] = []
+        now = datetime.now(timezone.utc)
+        for item in self._queues.get(group_id, []):
+            if not isinstance(item, DelayedResponseItem) or item.status != "pending":
+                continue
+            if self._has_payload(item.item_id):
+                # 已备好的投递只等窗口，不做话题判定。
+                enqueue_dt = _parse_iso(item.enqueue_time)
+                if enqueue_dt and (now - enqueue_dt).total_seconds() >= item.window_seconds:
+                    due.append(item)
+            elif self._evaluate_item(item, recent_messages, rhythm) == "trigger":
+                due.append(item)
+        return due
+
+    def drop_stale(self, group_id: str) -> int:
+        """作废已超过新鲜度上限、还没开口的条目，返回作废条数。"""
+        now = datetime.now(timezone.utc)
+        kept: list[DelayedResponseItem] = []
+        dropped = 0
+        for item in self._queues.get(group_id, []):
+            if (
+                isinstance(item, DelayedResponseItem)
+                and item.status == "pending"
+                and not self._has_payload(item.item_id)
+            ):
+                ttl = self._freshness_ttl_for_item(item)
+                enqueue_dt = _parse_iso(item.enqueue_time)
+                if ttl is not None and enqueue_dt and (now - enqueue_dt).total_seconds() >= ttl:
+                    item.status = "cancelled"
+                    dropped += 1
+                    continue
+            kept.append(item)
+        if dropped:
+            self._queues[group_id] = kept
+        return dropped
+
+    def seconds_until_next_check(self, group_id: str, *, emitted: set[str]) -> float | None:
+        """距离该群下一次可能有条目到点还有多久；没有待判条目时为 None。
+
+        还在等的 DELAYED 条目随时可能因话题停顿而触发，停顿只能逐秒看，所以它们
+        让 ticker 每秒醒一次。
+        """
+        now = datetime.now(timezone.utc)
+        best: float | None = None
+        for item in self._queues.get(group_id, []):
+            if not isinstance(item, DelayedResponseItem) or item.status != "pending":
+                continue
+            if item.item_id in emitted:
+                continue
+            enqueue_dt = _parse_iso(item.enqueue_time)
+            if enqueue_dt is None:
+                continue
+            elapsed = (now - enqueue_dt).total_seconds()
+            candidates = [item.window_seconds - elapsed]
+            ttl = self._freshness_ttl_for_item(item)
+            if ttl is not None:
+                candidates.append(ttl - elapsed)
+            if (
+                item.strategy_decision.strategy != ResponseStrategy.IMMEDIATE
+                and not self._has_payload(item.item_id)
+            ):
+                candidates.append(_EARLY_TRIGGER_POLL_SECONDS)
+            wait = max(0.0, min(candidates))
+            best = wait if best is None else min(best, wait)
+        return best
 
     def mark_generation_started(self, item_ids: Iterable[str]) -> None:
         ids = list(item_ids)
@@ -269,6 +360,7 @@ class DelayedResponseQueue:
                     len(item.message_content),
                     item.window_seconds,
                 )
+                self._changed()
                 return item
 
         item = DelayedResponseItem(
@@ -304,6 +396,7 @@ class DelayedResponseQueue:
             heat_level,
             pace,
         )
+        self._changed()
         return item
 
     def tick(
@@ -430,6 +523,7 @@ class DelayedResponseQueue:
             item.retry_count,
             item.group_id,
         )
+        self._changed()
         return True
 
     def requeue_in_flight(
@@ -575,6 +669,7 @@ class DelayedResponseQueue:
             restored += 1
         if restored:
             logger.info("已从磁盘恢复 %d 条延迟队列条目", restored)
+            self._changed()
         return restored
 
     def get_pending(
@@ -656,6 +751,7 @@ class DelayedResponseQueue:
                 group_id,
                 item.window_seconds,
             )
+            self._changed()
             return item
         return None
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -366,15 +367,15 @@ async def test_delayed_queue_when_generation_fails_then_requeues_and_ticker_retr
     assert item.item_id not in engine._delayed_event_emitted["group-1"]
 
     # 下一轮 ticker 应重新把它当作 newly_expired 并再次投递触发事件。
-    emit = AsyncMock(return_value=True)
+    async def _emit_once(event):
+        engine._bg_running = False  # 发出一次触发后让 ticker 退出
+        return True
+
+    emit = AsyncMock(side_effect=_emit_once)
     engine.event_bus.emit = emit
     item.enqueue_time = _past(item.window_seconds + 1)
 
-    async def _fast_sleep(seconds):
-        engine._bg_running = False
-
-    monkeypatch.setattr("sirius_pulse.core.bg_tasks_delayed.asyncio.sleep", _fast_sleep)
-    await tasks.delayed_queue_ticker()
+    await asyncio.wait_for(tasks.delayed_queue_ticker(), timeout=5)
 
     emit.assert_awaited_once()
     event = emit.await_args.args[0]
@@ -2113,3 +2114,65 @@ async def test_delayed_queue_when_max_round_fallback_reply_is_rich_then_sends_im
     assert results[0]["reply"] == markdown
     assert results[0]["rich_reply"] is True
     assert delivered == []
+
+
+def _natural_join() -> StrategyDecision:
+    """路人插话：等 28 秒，但 14 秒后就不新鲜了——只能靠话题停顿提前开口。"""
+    decision = StrategyDecision(
+        strategy=ResponseStrategy.DELAYED,
+        urgency=20.0,
+        reason="natural_join",
+        context={"freshness_ttl_seconds": 14.0},
+    )
+    decision.estimated_delay_seconds = 28.0
+    return decision
+
+
+def test_natural_join_speaks_up_when_the_group_pauses_before_it_goes_stale():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue("group-1", "u1", "这个游戏好玩吗", _natural_join())
+    item.enqueue_time = _past(11)
+    lull = [{"role": "human", "content": "这个游戏好玩吗", "timestamp": _past(11)}]
+    still_chatting = [{"role": "human", "content": "我觉得一般", "timestamp": _past(1)}]
+
+    assert queue.due_items("group-1", still_chatting) == []
+    assert queue.due_items("group-1", lull) == [item]
+
+
+def test_natural_join_is_dropped_once_the_moment_has_passed():
+    queue = DelayedResponseQueue()
+    item = queue.enqueue("group-1", "u1", "这个游戏好玩吗", _natural_join())
+    item.enqueue_time = _past(15)
+
+    assert queue.drop_stale("group-1") == 1
+    assert queue.get_pending("group-1") == []
+
+
+@pytest.mark.asyncio
+async def test_a_newly_queued_message_wakes_the_ticker_right_away():
+    """协调过的消息窗口为 0：不能等 ticker 睡满 10 秒才开口。"""
+    queue = DelayedResponseQueue()
+    tasks, engine = _agent_tool_tasks(
+        queue, SimpleNamespace(name="lookup", silent=False, developer_only=False), [], AsyncMock()
+    )
+    engine.config["delayed_queue_tick_interval_seconds"] = 10
+    engine._delayed_event_emitted = {}
+    engine._group_last_message_at = {"group-1": datetime.now(timezone.utc).isoformat()}
+    engine._bg_running = True
+    emitted = asyncio.Event()
+
+    async def _emit(event):
+        engine._bg_running = False
+        emitted.set()
+        return True
+
+    engine.event_bus.emit = AsyncMock(side_effect=_emit)
+    ticker = asyncio.create_task(tasks.delayed_queue_ticker())
+    await asyncio.sleep(0.05)  # ticker 已经睡下
+
+    started = asyncio.get_running_loop().time()
+    queue.enqueue("group-1", "u1", "@她 在吗", _decision(ResponseStrategy.IMMEDIATE))
+    await asyncio.wait_for(emitted.wait(), timeout=2)
+    await asyncio.wait_for(ticker, timeout=2)
+
+    assert asyncio.get_running_loop().time() - started < 1.0

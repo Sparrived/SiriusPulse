@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.adapters.interaction_markers import parse_interaction_markers
@@ -19,7 +18,7 @@ from sirius_pulse.core.constants import (
     DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
     DEFAULT_MEMORY_UNIT_TOP_K,
 )
-from sirius_pulse.core.delayed_response_queue import _parse_iso, persist_delayed_queue
+from sirius_pulse.core.delayed_response_queue import persist_delayed_queue
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import PromptFactory
@@ -50,6 +49,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: 收尾生成失败时发给群里的兜底话术。这些话会被群友看到，必须像她自己说的。
+#: ticker 两次醒来的最短间隔，防止「已到点但还没被取走」的条目让它空转。
+_TICKER_MIN_SLEEP_SECONDS = 0.05
+
+#: 一轮里两次对外投递之间的间隔，模拟真人连发的节奏、也避开平台风控。
+_DELIVERY_PACING_SECONDS = 2.0
+
+
+def _delivered_externally(result: Any) -> bool:
+    """工具确实往群里/私聊投递了内容（以投递回执为准）。"""
+    metadata = getattr(result, "internal_metadata", None)
+    return isinstance(metadata, dict) and isinstance(metadata.get("history_receipt"), dict)
+
+
 _UNREADY_REPLY_FALLBACK = "抱歉，我刚才没能组织好回复，可以再说一次吗？"
 _TOOL_LIMIT_REPLY_FALLBACK = "这事我先弄到这儿，剩下的晚点再接着来～"
 
@@ -363,82 +375,93 @@ class DelayedQueueTasks:
         return bool(injected)
 
     async def delayed_queue_ticker(self) -> None:
-        """Smart-sleep ticker for the delayed queue.
+        """Event-driven ticker for the delayed queue.
 
-        Wakes up at the next pending item's expiry time (or max interval)
-        and emits DELAYED_RESPONSE_TRIGGERED events for expired items only.
-        Actual reply generation and delivery is handled by the external
-        caller via tick_delayed_queue().
+        Sleeps until the next item could become due, or until the queue changes
+        (enqueue / promote / requeue wake it immediately). Due-ness uses the same
+        rule as ``tick()``—window expiry *and* the early triggers (topic gap,
+        silent pace)—and stale items past their freshness TTL are dropped here.
+        Actual reply generation and delivery is handled by the external caller
+        via tick_delayed_queue().
         """
         engine = self._engine
         max_interval = engine.config.get("delayed_queue_tick_interval_seconds", 10)
-        while engine._bg_running:
-            # Compute how long we can sleep until the next item expires
-            next_wake = max_interval
-            now = datetime.now(timezone.utc)
-            for group_id in list(engine._group_last_message_at.keys()):
-                for item in engine.delayed_queue.get_pending(group_id):
-                    enqueue_dt = _parse_iso(item.enqueue_time)
-                    if enqueue_dt:
-                        remaining = item.window_seconds - (now - enqueue_dt).total_seconds()
-                        if remaining <= 0:
-                            next_wake = 0
-                            break
-                        next_wake = min(next_wake, remaining)
-                    if next_wake <= 0:
-                        break
-                if next_wake <= 0:
-                    break
-
-            # Guard against busy-loop when items are already expired but not yet
-            # consumed by the external delivery loop.
-            if next_wake <= 0:
-                next_wake = 1.0
-
-            await asyncio.sleep(next_wake)
-
-            now = datetime.now(timezone.utc)
-            for group_id in list(engine._group_last_message_at.keys()):
+        wake = asyncio.Event()
+        engine.delayed_queue.set_wake_callback(wake.set)
+        try:
+            while engine._bg_running:
+                # 先清再算：清之后才入队的消息会重新置位，不会被这一轮睡过去。
+                wake.clear()
                 try:
-                    pending = engine.delayed_queue.get_pending(group_id)
-                    # Per-group emitted tracking: only clean up IDs that no longer
-                    # exist in this group's pending list.
-                    emitted = engine._delayed_event_emitted.setdefault(group_id, set())
-                    existing_ids = {i.item_id for i in pending}
-                    emitted &= existing_ids
+                    next_wake = self._ticker_sleep_seconds(max_interval)
+                except Exception:
+                    logger.warning("计算延迟队列唤醒时间失败", exc_info=True)
+                    next_wake = max_interval
+                try:
+                    await asyncio.wait_for(wake.wait(), timeout=next_wake)
+                except TimeoutError:
+                    pass
+                for group_id in list(engine._group_last_message_at.keys()):
+                    try:
+                        await self._emit_due_items(group_id)
+                    except Exception as exc:
+                        logger.warning("Delayed queue tick failed for %s: %s", group_id, exc)
+        finally:
+            engine.delayed_queue.set_wake_callback(None)
 
-                    expired = []
-                    for item in pending:
-                        enqueue_dt = _parse_iso(item.enqueue_time)
-                        if enqueue_dt and (now - enqueue_dt).total_seconds() >= item.window_seconds:
-                            expired.append(item)
+    def _ticker_sleep_seconds(self, max_interval: float) -> float:
+        engine = self._engine
+        next_wake = float(max_interval)
+        for group_id in list(engine._group_last_message_at.keys()):
+            emitted = engine._delayed_event_emitted.get(group_id, set())
+            wait = engine.delayed_queue.seconds_until_next_check(group_id, emitted=emitted)
+            if wait is not None:
+                next_wake = min(next_wake, wait)
+        # 下限防空转：已到点但还没被投递循环取走的条目由 emitted 挡住，不参与计算。
+        return max(_TICKER_MIN_SLEEP_SECONDS, next_wake)
 
-                    newly_expired = [i for i in expired if i.item_id not in emitted]
-                    if newly_expired:
-                        engine._log_inner_thought("之前记下的延迟回复，现在该开口了～")
-                        for item in newly_expired:
-                            event_data = {
-                                "group_id": group_id,
-                                "item_id": item.item_id,
-                                "adapter_type": item.adapter_type or "",
-                            }
-                            if item.adapter_route_id:
-                                event_data["adapter_route_id"] = item.adapter_route_id
-                            accepted = await engine.event_bus.emit(
-                                SessionEvent(
-                                    type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
-                                    data=event_data,
-                                )
-                            )
-                            # Queue admission is not platform delivery, but it
-                            # is the first required hand-off.  A closed/full/
-                            # unsubscribed bus must leave the item eligible for
-                            # a later ticker retry instead of suppressing it
-                            # forever in the emitted set.
-                            if accepted:
-                                emitted.add(item.item_id)
-                except Exception as exc:
-                    logger.warning("Delayed queue tick failed for %s: %s", group_id, exc)
+    async def _emit_due_items(self, group_id: str) -> None:
+        engine = self._engine
+        queue = engine.delayed_queue
+        if queue.drop_stale(group_id):
+            persist_delayed_queue(engine)
+        pending = queue.get_pending(group_id)
+        # Per-group emitted tracking: only clean up IDs that no longer exist in
+        # this group's pending list.
+        emitted = engine._delayed_event_emitted.setdefault(group_id, set())
+        emitted &= {i.item_id for i in pending}
+        if not pending or all(item.item_id in emitted for item in pending):
+            return
+        recent = engine._helpers.get_recent_messages(group_id, n=10)
+        rhythm = engine.rhythm_analyzer.analyze(group_id, recent)
+        due = [
+            item
+            for item in queue.due_items(group_id, recent, rhythm)
+            if item.item_id not in emitted
+        ]
+        if not due:
+            return
+        engine._log_inner_thought("之前记下的延迟回复，现在该开口了～")
+        for item in due:
+            event_data = {
+                "group_id": group_id,
+                "item_id": item.item_id,
+                "adapter_type": item.adapter_type or "",
+            }
+            if item.adapter_route_id:
+                event_data["adapter_route_id"] = item.adapter_route_id
+            accepted = await engine.event_bus.emit(
+                SessionEvent(
+                    type=SessionEventType.DELAYED_RESPONSE_TRIGGERED,
+                    data=event_data,
+                )
+            )
+            # Queue admission is not platform delivery, but it is the first
+            # required hand-off.  A closed/full/unsubscribed bus must leave the
+            # item eligible for a later ticker retry instead of suppressing it
+            # forever in the emitted set.
+            if accepted:
+                emitted.add(item.item_id)
 
     async def tick_delayed_queue(
         self,
@@ -599,6 +622,10 @@ class DelayedQueueTasks:
             item_id=item_id,
         )
         if not triggered:
+            if item_id is not None:
+                # ticker 按「话题停顿」发的触发，到这里时可能又有人说话了，条目继续
+                # 等。撤掉已发标记，ticker 才会在下一次停顿时再叫它。
+                engine._delayed_event_emitted.get(group_id, set()).discard(item_id)
             return []
         item_ids = [item.item_id for item in triggered]
         engine.delayed_queue.mark_generation_started(item_ids)
@@ -1294,9 +1321,15 @@ class DelayedQueueTasks:
                     if work_step is not None:
                         work_step["results"].append({"tool": tool_name, "output": outcome.content})
 
-                    # 内部小本无需发送节奏延迟；其他工具保留原有间隔。
-                    if idx < len(regular_tools) - 1 and not notebook_only:
-                        await asyncio.sleep(2)
+                    # 节奏间隔只为了别让两次对外投递（发图、传文件、私聊）挤在一起；
+                    # 查资料、读文件这类没往外发东西的工具接着跑，不必干等。
+                    if (
+                        idx < len(regular_tools) - 1
+                        and not notebook_only
+                        and result.success
+                        and _delivered_externally(result)
+                    ):
+                        await asyncio.sleep(_DELIVERY_PACING_SECONDS)
 
             if work_step is not None:
                 _save_work_run()
@@ -1613,8 +1646,7 @@ class DelayedQueueTasks:
                         hints.append(f"- {who}：希望被叫「{preferred[:80]}」。")
                     elif people.should_ask_name(actor):
                         hints.append(
-                            f"- {who}：还不知道想被怎么称呼，合适时自然问一次，不用为此打断回答；"
-                            "对方说了就用 person_update 记下。"
+                            f"- {who}：还不知道想被怎么称呼，合适时自然问一次，不用为此打断回答；" "对方说了就用 person_update 记下。"
                         )
                         people.mark_name_asked(actor)
                 except Exception:

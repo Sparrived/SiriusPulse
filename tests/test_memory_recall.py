@@ -238,6 +238,36 @@ def test_prefetched_retrieval_sends_no_embedding_request_inside_the_chat_turn(
     assert len(embedder.calls) == calls_before
 
 
+def test_one_message_is_embedded_once_for_plugin_matching_and_memory_recall(tmp_path, monkeypatch):
+    """同一条消息先过插件意图匹配、再拿去召回记忆：只该发一次 embedding 请求。"""
+    from sirius_pulse.core.plugin_intent_matcher import PluginIntentMatcher
+
+    manager, embedder = _manager(tmp_path, [_unit("cat", "小林家的猫叫团子。")], monkeypatch)
+    plugin = SimpleNamespace(
+        description="查询游戏战绩",
+        permissions=SimpleNamespace(hidden_from_intent=False),
+        natural_language=None,
+        commands=[],
+    )
+    registry = SimpleNamespace(plugin_names=["game"], get=lambda name: plugin)
+    matcher = PluginIntentMatcher(
+        embedding_client=embedder,
+        plugin_registry=registry,
+        query_encoder=manager.encode_query,
+    )
+    matcher.match_plugin_candidates("占位")  # 首次调用建插件索引，不计入
+    embedder.calls.clear()
+
+    assert matcher.match_plugin_candidates("帮我查下游戏战绩") == ["game"]
+    assert matcher.match_plugin_candidates("你家猫最近怎样") == []
+    manager.prepare_retrieval("你家猫最近怎样", group_id=GROUP)
+    found = manager.retrieve("你家猫最近怎样", group_id=GROUP)
+
+    assert [unit.unit_id for unit in found] == ["cat"]
+    encoded = [text for call in embedder.calls for text in call]
+    assert encoded.count("你家猫最近怎样") == 1
+
+
 def test_overflow_retired_memory_is_still_recalled_when_it_is_exactly_relevant(
     tmp_path, monkeypatch
 ):
