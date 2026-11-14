@@ -138,11 +138,13 @@ _config.group("流程数据").add(
 TOOL_META = {
     "name": "workflow_state",
     "description": (
-        "【适用场景】多步骤外部操作的状态持久化与幂等执行，防止重复执行外部副作用。\n"
+        "【适用场景】有多个外部副作用步骤、可能做到一半被打断、之后要接着做的任务，"
+        "或用户让你继续/重试上次的流程时，用它记录进度、防止重复执行。"
+        "只做一个动作（点赞、发一张图、跑一条命令）直接调用对应工具，不要用它。\n"
         "【使用方法】按生命周期顺序调用：① list 查询当前会话流程；② resume 恢复流程；③ 未命中时 begin 登记新流程；"
         "④ claim 获取步骤租约；⑤ claimed=true 后执行目标专用工具；⑥ 成功调用 checkpoint（next_step 为空时自动完成），失败调用 fail。\n"
         "【注意事项】严格遵循状态机约束：already_done=true 必须跳过重复执行；in_progress=true 不得并发抢占；"
-        "必须原样传递 revision、claim_token 与幂等键，严禁绕过流程直接执行副作用。"
+        "必须原样传递 revision、claim_token 与幂等键；已登记流程里的步骤不要绕过流程直接执行。"
     ),
     "version": "2.2.0",
     "retry_safe": False,

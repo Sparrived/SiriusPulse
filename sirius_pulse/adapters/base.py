@@ -340,6 +340,16 @@ class BaseAdapter(ABC):
         """下载群文件到本地。"""
         return {}
 
+    async def download_private_file(
+        self,
+        user_id: str,
+        file_id: str,
+        file_name: str = "",
+        destination_dir: str = "",
+    ) -> dict[str, Any]:
+        """下载私聊里收到的文件到本地。"""
+        return {}
+
     # ── 通用 API ──
 
     @abstractmethod

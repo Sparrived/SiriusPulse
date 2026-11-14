@@ -77,6 +77,22 @@ def _docx(paragraphs: list[str]) -> bytes:
     return buffer.getvalue()
 
 
+def _pptx(slides: list[list[str]]) -> bytes:
+    """每页若干段文字，按页码的字符串顺序写进压缩包（slide10 会排在 slide2 前面）。"""
+    ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("ppt/presentation.xml", "<p:presentation/>")
+        numbered = list(enumerate(slides, start=1))
+        for number, paragraphs in sorted(numbered, key=lambda item: str(item[0])):
+            body = "".join(f"<a:p><a:r><a:t>{text}</a:t></a:r></a:p>" for text in paragraphs)
+            archive.writestr(
+                f"ppt/slides/slide{number}.xml",
+                f'<p:sld xmlns:a="{ns}" xmlns:p="urn:p"><p:txBody>{body}</p:txBody></p:sld>',
+            )
+    return buffer.getvalue()
+
+
 @pytest.mark.parametrize(
     ("name", "content", "expected"),
     [
@@ -89,6 +105,7 @@ def _docx(paragraphs: list[str]) -> bytes:
         ),
         ("minutes.docx", _docx(["会议纪要", "下周三交初稿"]), "下周三交初稿"),
         ("report.pdf", _pdf(["Quarterly report", "Revenue grew 12 percent"]), "Revenue grew 12"),
+        ("talk.pptx", _pptx([["技术分享"], ["适配器分层"]]), "--- 第 2 页 ---\n适配器分层"),
     ],
 )
 def test_documents_sent_in_the_group_can_be_read(
@@ -129,6 +146,7 @@ def test_a_long_document_is_read_in_pieces_until_the_end(tmp_path: Path) -> None
         ("archive.bin", b"\x00\x01\x02binary", "不是文本文件"),
         ("old.doc", b"legacy", "旧版 Office"),
         ("broken.docx", b"not a zip", "已损坏"),
+        ("broken.pptx", b"not a zip", "已损坏"),
     ],
 )
 def test_unreadable_files_get_a_reason_she_can_pass_on(

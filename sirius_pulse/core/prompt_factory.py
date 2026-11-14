@@ -309,16 +309,12 @@ class PromptFactory:
             "工作不一定必须做完，遇阻可在 `result` 中说明卡点并求助。"
             "工作模式内 Bash 可以连续串行调用：一次只推进一个可验证步骤，先读取工具结果再决定下一步，"
             "禁止盲目并行或臆测结果；任务完成后停止调用工具。\n"
-            "【流程复用规范】所有可能重复的外部任务均须执行前置状态检查。"
-            "标准顺序：先调用 workflow_state 的 list 检查流程目录；"
-            "存在候选或目标时调用 workflow_state 的 resume 恢复；"
-            "若未找到流程则 begin 并登记，且新建流程必须返回 registered=true"
-            "（没有 registered=true 时不得执行外部副作用）；"
-            "接着调用 claim，只有 claim 返回 claimed=true 才调用专用 Tool；"
-            "执行成功后 checkpoint，执行失败后 fail；若 next_step 为空则 checkpoint 已自动完成流程。"
-            "already_done 严禁重复调用，in_progress 禁止抢占，completed 须 restart 后重跑；"
-            "当用户指示继续、重试或沿用上一轮流程时，先查阅 workflow-reuse Skill 并调用 "
-            "workflow_state 的 resume，禁止用 bash 重复执行已成功步骤。"
+            "【流程复用规范】只做一个动作（点个赞、发一张图、跑一条命令）直接调用对应工具，"
+            "不需要 workflow_state。workflow_state 只用于两种情况："
+            "一是有多个外部副作用步骤、做到一半可能被打断、之后要接着做的任务"
+            "（先 list/resume，未找到再 begin，每步 claim 后执行、成功 checkpoint、失败 fail）；"
+            "二是用户说继续、重试或照上次的流程做——这时先查阅 workflow-reuse Skill 并调用 "
+            "workflow_state 的 resume，already_done 的步骤不要重做，禁止用 bash 重复已成功的步骤。"
         )
 
     @staticmethod

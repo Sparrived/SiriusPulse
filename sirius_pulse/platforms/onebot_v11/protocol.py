@@ -231,6 +231,45 @@ def extract_image_urls(message: list[dict[str, Any]]) -> list[str]:
     return urls
 
 
+def format_file_size(value: Any) -> str:
+    """把字节数写成人读的大小；读不出来就返回空串。"""
+    try:
+        size = int(str(value).strip())
+    except (TypeError, ValueError):
+        return ""
+    if size < 0:
+        return ""
+    for unit, scale in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if size >= scale:
+            return f"{size / scale:.1f}{unit}"
+    return f"{size}B"
+
+
+def render_file_label(seg_type: str, data: dict[str, Any]) -> str:
+    """聊天里收到的文件写成一个标签，带上下载要用的 file_id。
+
+    普通文件：``[文件："周报.pdf" 1.2MB file_id=/abc]``——她看到这个标签才知道有人发了文件，
+    要读内容就拿 file_id 去下载。在线传输的文件（``onlinefile``）对方不在线就收不到，
+    标签直接说明这一点，免得她拿一个下载不了的东西去试。
+    """
+    name = sanitize_image_name(
+        str(data.get("file") or data.get("name") or data.get("fileName") or "")
+    )
+    name = name or "未命名文件"
+    size = format_file_size(data.get("file_size", data.get("fileSize")))
+    if seg_type == "onlinefile":
+        kind = "在线文件夹" if data.get("isDir") else "在线文件"
+        size_part = f" {size}" if size else ""
+        return f'[{kind}："{name}"{size_part}，在线传输收不下来，需要的话请对方改发普通文件]'
+    parts = [f'"{name}"']
+    if size:
+        parts.append(size)
+    file_id = str(data.get("file_id") or "").strip()
+    if file_id:
+        parts.append(f"file_id={file_id}")
+    return f"[文件：{' '.join(parts)}]"
+
+
 def extract_sender_names(event: dict[str, Any]) -> tuple[str, str]:
     sender = event.get("sender", {})
     nickname = str(sender.get("nickname", "") or "").strip()

@@ -16,7 +16,10 @@ _config = ConfigBuilder()
 _config.group("图片与文件").add(
     "action",
     type="str",
-    description="操作类型：image 发送图片；file 上传文件；list 读取群文件列表；download 下载群文件。",
+    description=(
+        "操作类型：image 发送图片；file 上传文件；list 读取群文件列表；"
+        "download 下载聊天里收到的文件或群文件。"
+    ),
     required=True,
     choices=["image", "file", "list", "download"],
 )
@@ -29,13 +32,17 @@ _config.group("图片与文件").add(
 _config.group("图片与文件").add(
     "file_name",
     type="str",
-    description="action=file 时在聊天中显示的文件名；action=download 时的本地文件名。",
+    description="action=file 时在聊天中显示的文件名；action=download 时的本地文件名，留空沿用原文件名。",
 )
 _config.group("群文件管理").add("folder_id", type="str", description="action=list 时要读取的群文件夹 ID；留空读取根目录。")
 _config.group("群文件管理").add(
     "file_count", type="int", description="action=list 时最多读取的文件数。", default=50
 )
-_config.group("群文件管理").add("file_id", type="str", description="action=download 时从群文件列表得到的文件 ID。")
+_config.group("群文件管理").add(
+    "file_id",
+    type="str",
+    description="action=download 时的文件 ID：聊天消息里 [文件：… file_id=…] 标签上的，或群文件列表里的。",
+)
 _config.group("群文件管理").add(
     "download_dir",
     type="str",
@@ -44,12 +51,17 @@ _config.group("群文件管理").add(
 TOOL_META = {
     "name": "group_file_exec",
     "description": (
-        "【适用场景】向当前会话发送图片/文件，或读取、下载 QQ 群文件。纯文字回复直接在正文输出，无需调用。\n"
-        "【使用方法】通过 action 选择：image（发送图片，传 image_path）、file（上传文件，传 file_path 与 file_name）、"
-        "list（获取群文件列表，可选 folder_id、file_count）、download（下载群文件，传 file_id 与 file_name）。\n"
-        "【注意事项】发送文件须传真实有效的本地路径（~ 展开为主目录）或 URL；群文件管理（list/download）仅在群聊有效，私聊不可用。"
+        "【适用场景】向当前会话发送图片/文件，下载别人发来的文件，或查看 QQ 群文件。"
+        "纯文字回复直接在正文输出，无需调用。\n"
+        "【使用方法】通过 action 选择：image（发送图片，传 image_path）、"
+        "file（上传文件，传 file_path 与 file_name）、"
+        "list（获取群文件列表，可选 folder_id、file_count）、download（下载文件，传 file_id）。"
+        '有人在聊天里发文件时，消息里会出现 [文件："名字" 大小 file_id=…]；'
+        "要看内容就用 download 传这个 file_id，再用 read_document 读下载到的路径。\n"
+        "【注意事项】发送文件须传真实有效的本地路径（~ 展开为主目录）或 URL；"
+        "list 只在群聊可用，download 群聊私聊都能用；在线传输的文件下载不了。"
     ),
-    "version": "1.2.0",
+    "version": "1.3.0",
     "side_effect": "external_write",
     # 发图本身就是回复：同轮正文不必再单独发；上传文件仍照常发正文。
     "actions": {"image": {"silent": True}},
@@ -98,7 +110,7 @@ async def run(
     elif action_key == "list":
         result = await _list_group_files(bridge, chat_context, folder_id, file_count)
     elif action_key == "download":
-        result = await _download_group_file(bridge, chat_context, file_id, file_name, download_dir)
+        result = await _download_file(bridge, chat_context, file_id, file_name, download_dir)
     else:
         return {"success": False, "error": f"不支持的文件管理 action: {action}"}
 
@@ -501,41 +513,43 @@ async def _list_group_files(
         return {"success": False, "error": str(exc), "summary": f"群文件列表读取失败: {exc}"}
 
 
-async def _download_group_file(
+async def _download_file(
     bridge: Any,
     chat_context: dict[str, Any] | None,
     file_id: str,
     file_name: str,
     download_dir: str,
 ) -> dict[str, Any]:
+    """下载聊天里收到的文件：群聊走群文件接口，私聊走私聊文件接口。"""
     adapter = getattr(bridge, "adapter", None) or bridge
-    target_type, group_id = _chat_target(chat_context)
+    target_type, target_id = _chat_target(chat_context)
     if adapter is None:
         return {
             "success": False,
             "error": "adapter 未就绪",
             "summary": "下载失败：NapCat 适配器未连接",
         }
-    if target_type != "group" or not group_id:
+    if target_type not in {"group", "private"} or not target_id:
         return {
             "success": False,
-            "error": "群文件只能在群聊上下文中下载",
-            "summary": "下载失败：当前不是群聊",
+            "error": "只能在群聊或私聊里下载收到的文件",
+            "summary": "下载失败：没有聊天上下文",
         }
 
     file_id = str(file_id or "").strip()
     if not file_id:
-        return {"success": False, "error": "file_id 不能为空", "summary": "下载失败：缺少群文件 ID"}
-    download_fn = getattr(adapter, "download_group_file", None)
+        return {"success": False, "error": "file_id 不能为空", "summary": "下载失败：缺少文件 ID"}
+    method = "download_group_file" if target_type == "group" else "download_private_file"
+    download_fn = getattr(adapter, method, None)
     if not callable(download_fn):
         return {
             "success": False,
-            "error": "当前适配器不支持群文件下载",
-            "summary": "下载失败：适配器不支持群文件下载",
+            "error": "当前适配器不支持下载文件",
+            "summary": "下载失败：适配器不支持下载文件",
         }
 
     try:
-        result = await download_fn(group_id, file_id, file_name, str(download_dir or "").strip())
+        result = await download_fn(target_id, file_id, file_name, str(download_dir or "").strip())
         payload = result if isinstance(result, dict) else {}
         output_path = str(payload.get("path", "")).strip()
         if not output_path:
@@ -549,12 +563,14 @@ async def _download_group_file(
         size_text = f"，大小 {size} 字节" if isinstance(size, int) else ""
         return {
             "success": True,
-            "summary": f"群文件「{display_name}」已下载到 {output_path}",
-            "text_blocks": [f"群文件下载成功: {output_path}{size_text}"],
+            "summary": f"文件「{display_name}」已下载到 {output_path}",
+            "text_blocks": [
+                f"文件下载成功: {output_path}{size_text}。要看文字内容，用 read_document 读这个路径。"
+            ],
             "data": payload,
             "internal_metadata": {
-                "target_type": "group",
-                "target_id": group_id,
+                "target_type": target_type,
+                "target_id": target_id,
                 "file_id": file_id,
                 "file_name": display_name,
                 "path": output_path,
@@ -562,7 +578,7 @@ async def _download_group_file(
             },
         }
     except Exception as exc:
-        return {"success": False, "error": str(exc), "summary": f"群文件下载失败: {exc}"}
+        return {"success": False, "error": str(exc), "summary": f"文件下载失败: {exc}"}
 
 
 def _clamp_file_count(value: Any) -> int:

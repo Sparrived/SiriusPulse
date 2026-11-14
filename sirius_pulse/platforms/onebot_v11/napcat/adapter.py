@@ -65,6 +65,8 @@ _FORWARD_READ_MAX_NODES = 40
 _FORWARD_READ_MAX_CHARS = 3000
 _FORWARD_READ_MAX_DEPTH = 3
 _FORWARD_READ_MAX_IMAGES = 9
+#: 记住最近多少个收到的文件（file_id → 文件名/直链），用于之后按 file_id 下载。
+_RECEIVED_FILES_MAX = 256
 _FORWARD_READ_MAX_FETCHES = 8
 _FORWARD_READ_NODE_CHARS = 600
 _FORWARD_READ_TIMEOUT = 6.0
@@ -590,6 +592,9 @@ class NapCatAdapter(BaseAdapter):
         self._work_path = _wp
         self._image_cache_dir = _wp / "image_cache"
         self._sticker_cache_dir = _wp / "sticker_cache"
+        # 最近在聊天里收到的文件：file_id → 文件名与消息里带的直链。
+        # 下载时她可能没传文件名，或者私聊取链接失败，靠这里兜底。
+        self._received_files: dict[str, dict[str, str]] = {}
 
         # 引擎集成（原 Bridge 字段）
         self.plugin_config = dict(config or {})
@@ -1319,16 +1324,45 @@ class NapCatAdapter(BaseAdapter):
         url = str((response.get("data", {}) or {}).get("url", "")).strip()
         if not url.startswith(("http://", "https://")):
             raise RuntimeError("NapCat 未返回有效的群文件下载链接")
+        return await self._save_download(url, file_id, file_name, destination_dir)
 
+    async def download_private_file(
+        self,
+        user_id: str | int,
+        file_id: str,
+        file_name: str = "",
+        destination_dir: str = "",
+    ) -> dict[str, Any]:
+        """把私聊里收到的文件下载到当前人格的 group_files 目录。
+
+        私聊文件没有群文件那样的长期 ID：NapCat 只能凭消息里的 file_id 现取链接，
+        取不到时退回消息本身带的直链（可能已过期）。
+        """
+        url = ""
+        try:
+            response = await self.call_api("get_private_file_url", {"file_id": str(file_id)})
+            url = str((response.get("data", {}) or {}).get("url", "")).strip()
+        except Exception as exc:  # noqa: BLE001 - 取链接失败时还有消息直链可用
+            LOG.debug("获取私聊文件链接失败 (user=%s): %s", user_id, exc)
+        if not url.startswith(("http://", "https://")):
+            url = self._received_files.get(str(file_id), {}).get("url", "")
+        if not url.startswith(("http://", "https://")):
+            raise RuntimeError("拿不到这个私聊文件的下载链接，可能已过期，请对方重新发一次")
+        return await self._save_download(url, file_id, file_name, destination_dir)
+
+    async def _save_download(
+        self, url: str, file_id: str, file_name: str, destination_dir: str
+    ) -> dict[str, Any]:
         output_dir = (
             Path(destination_dir).expanduser()
             if destination_dir
             else self._work_path / "group_files"
         )
-        safe_name = _safe_download_name(file_name)
+        remembered = self._received_files.get(str(file_id), {}).get("name", "")
+        safe_name = _safe_download_name(file_name or remembered)
         if safe_name in {".", ".."}:
             safe_name = ""
-        safe_name = safe_name or str(file_id)
+        safe_name = safe_name or _safe_download_name(str(file_id)).strip("/") or "file"
         output_path = output_dir / safe_name
         temporary_path = output_path.with_name(f".{output_path.name}.{uuid4().hex}.part")
         await asyncio.to_thread(output_dir.mkdir, parents=True, exist_ok=True)
@@ -1564,8 +1598,25 @@ class NapCatAdapter(BaseAdapter):
                 parts.append(("\n" if parts else "") + forward_text + "\n")
                 if vision_segments is not None:
                     vision_segments.extend(forward_segments)
+            elif seg_type in {"file", "onlinefile"}:
+                parts.append(self._receive_file_segment(seg_type, data))
 
         return "".join(parts).strip()
+
+    def _receive_file_segment(self, seg_type: str, data: dict[str, Any]) -> str:
+        """记下收到的文件（之后下载要用），返回给她看的标签。"""
+        from ..protocol import render_file_label
+
+        file_id = str(data.get("file_id") or "").strip()
+        if seg_type == "file" and file_id:
+            self._received_files.pop(file_id, None)
+            self._received_files[file_id] = {
+                "name": str(data.get("file") or data.get("name") or "").strip(),
+                "url": str(data.get("url") or "").strip(),
+            }
+            while len(self._received_files) > _RECEIVED_FILES_MAX:
+                self._received_files.pop(next(iter(self._received_files)))
+        return render_file_label(seg_type, data)
 
     async def _resolve_quote_content(
         self,
@@ -1843,6 +1894,8 @@ class NapCatAdapter(BaseAdapter):
                 parts.append(("\n" if parts else "") + forward_text + "\n")
                 if vision_segments is not None:
                     vision_segments.extend(forward_segments)
+            elif seg_type in {"file", "onlinefile"}:
+                parts.append(self._receive_file_segment(seg_type, data))
 
         return "".join(parts).strip()
 
