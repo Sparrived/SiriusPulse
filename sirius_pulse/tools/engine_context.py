@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 if TYPE_CHECKING:
+    from sirius_pulse.life.clock import DaySchedule
     from sirius_pulse.tools.models import ToolInvocationContext
 
 
@@ -282,6 +283,10 @@ class LifeAccess(Protocol):
 
     def list_acquaintances(self) -> list[Any]:
         """她认识的人（``life.missing.Acquaintance``）：最后出现时间、亲近程度与聊过的会话。"""
+        ...
+
+    def get_day_schedule(self) -> DaySchedule:
+        """她的作息（几点睡、几点起）。睡着的时段就是不对外发消息的时段。"""
         ...
 
 

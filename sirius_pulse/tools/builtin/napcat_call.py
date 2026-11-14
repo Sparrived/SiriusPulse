@@ -141,8 +141,9 @@ TOOL_META = {
         "get_group_member_info(群成员信息, user_id)、set_group_ban(禁言, user_id, duration)、"
         "set_group_whole_ban(全员禁言, enable)、set_group_kick(移出群, user_id)、"
         "set_group_card(改群名片, user_id, card)。\n"
-        "【注意事项】管理操作需自身具备管理权限；群聊调用会自动注入 group_id；"
-        "可查阅 read_skill('napcat-cookbook') 获取完整接口规范。"
+        "【注意事项】禁言、移出群这类管理操作只在提出要求的人是开发者时执行，且 Bot 本身要是群管理员；"
+        "群聊调用会自动注入 group_id；"
+        "上面列出的常用接口直接调用即可；需要其它接口时进入工作模式，用 read_skill('napcat-cookbook') 查完整接口规范。"
     ),
     "version": "1.0.0",
     "side_effect": "external_write",

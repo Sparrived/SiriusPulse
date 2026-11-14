@@ -32,34 +32,98 @@ TOOL_META = {
     "request_source": True,
     "tags": ["person", "profile", "update"],
     "parameters": {
-        "action": {"type": "string", "choices": _ACTIONS, "required": True},
-        "target": {"type": "object", "description": "人物引用；requester 必须是来源消息作者。", "required": True},
-        "evidence_ref": {"type": "string", "required": True},
-        "preferred_name": {"type": "string", "required": False, "default": ""},
+        "action": {
+            "type": "string",
+            "choices": _ACTIONS,
+            "description": (
+                "set_names 设称呼/别名（preferred_name、add_aliases、retire_names）；"
+                "propose_claim 记一条属性声明（field、value、source）；"
+                "correct_claim 更正已有声明（claim_id、value）；retire_claim 撤下声明（claim_id）；"
+                "confirm_change 确认一条待确认的变更（change_id）；"
+                "create_character 登记原创/虚构角色（name）。"
+            ),
+            "required": True,
+        },
+        "target": {
+            "type": "object",
+            "description": (
+                "改谁，写法同 person_query：{'ref': 'requester'}、{'ref': 'person_id', 'value': '<UUID>'}"
+                " 等；requester 必须是 evidence_ref 那条消息的作者。"
+            ),
+            "required": True,
+        },
+        "evidence_ref": {
+            "type": "string",
+            "description": (
+                "提出这次修改的那条消息的 evidence_ref（聊天记录里每条消息都带着），原样复制，不能编造。"
+            ),
+            "required": True,
+        },
+        "preferred_name": {
+            "type": "string",
+            "description": "set_names：对方希望被怎么称呼；留空则不改。",
+            "required": False,
+            "default": "",
+        },
         "add_aliases": {
             "type": "array",
             "items": {"type": "string"},
+            "description": "set_names：要新增的别名或昵称。",
             "required": False,
             "default": [],
         },
         "retire_names": {
             "type": "array",
             "items": {"type": "string"},
+            "description": "set_names：不再使用的称呼。",
             "required": False,
             "default": [],
         },
-        "expected_revision": {"type": "integer", "required": False},
-        "claim_id": {"type": "string", "required": False, "default": ""},
-        "change_id": {"type": "string", "required": False, "default": ""},
-        "field": {"type": "string", "required": False},
-        "value": {"type": "string", "required": False},
+        "expected_revision": {
+            "type": "integer",
+            "description": (
+                "可选：person_query 返回的 revision。填了可以避免盖掉别人刚做的修改，"
+                "资料已被改过时会返回 revision_conflict，重新查一次再改。"
+            ),
+            "required": False,
+        },
+        "claim_id": {
+            "type": "string",
+            "description": "correct_claim / retire_claim：那条声明的 ID（person_query 的 claims 里有）。",
+            "required": False,
+            "default": "",
+        },
+        "change_id": {
+            "type": "string",
+            "description": "confirm_change：待确认变更的 ID（person_query 的 changes 里有）。",
+            "required": False,
+            "default": "",
+        },
+        "field": {
+            "type": "string",
+            "description": "propose_claim：属性名，用简短中文，如 生日、职业、所在城市；不能是账号或权限类字段。",
+            "required": False,
+        },
+        "value": {
+            "type": "string",
+            "description": "propose_claim：属性值；correct_claim：更正后的值。",
+            "required": False,
+        },
         "source": {
             "type": "string",
             "choices": ["self_reported", "third_party", "inferred"],
+            "description": (
+                "propose_claim：信息从哪来。self_reported 本人说的；third_party 别人说的；"
+                "inferred 你自己推断的。"
+            ),
             "required": False,
             "default": "self_reported",
         },
-        "name": {"type": "string", "required": False},
+        "name": {
+            "type": "string",
+            "description": "create_character：角色名称。",
+            "required": False,
+        },
     },
 }
 

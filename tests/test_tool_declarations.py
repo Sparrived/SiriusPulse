@@ -158,3 +158,20 @@ async def test_notebook_asks_for_tidying_only_when_it_needs_it(
 
     assert outcome.ok, outcome.content
     assert scheduled == expected
+
+
+def test_every_argument_she_can_fill_in_is_explained() -> None:
+    """她看得到的每个内置工具参数都要有说明，不然只能靠猜，猜错就被拒、再重试。"""
+    registry = ToolRegistry()
+    registry._load_builtin_tools(auto_install_deps=False)
+    unexplained = [
+        f"{tool.name}.{name}"
+        for tool in registry.all_tools()
+        if tool.model_visible
+        for name, spec in tool.to_tool_schema()["function"]["parameters"]
+        .get("properties", {})
+        .items()
+        if not str(spec.get("description", "")).strip()
+    ]
+
+    assert unexplained == []

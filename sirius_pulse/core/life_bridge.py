@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 _AUTONOMY_TOOL = "autonomy"
 
 
+def day_schedule(engine: Any) -> DaySchedule:
+    """她的作息；没配置或读不到时用默认作息。"""
+    return _schedule(engine)
+
+
 def _schedule(engine: Any) -> DaySchedule:
     executor = getattr(engine, "_tool_executor", None)
     if executor is None:

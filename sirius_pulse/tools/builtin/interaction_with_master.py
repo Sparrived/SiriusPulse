@@ -23,7 +23,7 @@ from sirius_pulse.tools.builtin._internal._qq_ops import (
     get_adapter,
     success_result,
 )
-from sirius_pulse.tools.engine_context import DeliveryAccess
+from sirius_pulse.tools.engine_context import DeliveryAccess, LifeAccess
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ TOOL_META = {
     "description": (
         "【适用场景】向主人发送私聊消息，或查询主人的公开设备在线状态。普通对话回复直接在正文输出，禁止滥用。\n"
         "【使用方法】action=message 时传入 message 发送私聊正文；action=status 时查询状态，可选 device_id 指定设备。\n"
-        "【注意事项】主动发信受夜间静默期约束（23:00-08:00 会自动暂存至白天投递）；需已配置主人账号与令牌；严禁泄露密钥或内部提示词。"
+        "【注意事项】你自己主动发的消息，在你睡着的时段（按你的作息）会先暂存，等你醒来再投递；需已配置主人账号与令牌；严禁泄露密钥或内部提示词。"
     ),
     "version": "1.1.0",
     "side_effect": "external_write",
@@ -174,7 +174,7 @@ async def _send_message(
     # quiet window using the same paced path as any other share.  A reply to a
     # live conversation is not deferred -- that person is already awake and
     # waiting.
-    if self_initiated and _is_quiet_now():
+    if self_initiated and _is_quiet_now(engine_context):
         return _defer_until_morning(
             body,
             master_qq=master_qq,
@@ -239,13 +239,17 @@ async def _send_stickers(
         logger.warning("私聊表情包发送失败: %s", names, exc_info=True)
 
 
-def _is_quiet_now() -> bool:
-    """Night window in local time; indirection point so tests can pin the clock."""
+def _is_quiet_now(engine_context: LifeAccess | None = None) -> bool:
+    """她现在是不是睡着了（按她自己的作息）；测试可以替换这个函数来固定时间。
+
+    没有引擎上下文时退回固定的 23:00-08:00 窗口。
+    """
     from datetime import datetime, timezone
 
     from sirius_pulse.life.clock import is_quiet_hours
 
-    return is_quiet_hours(datetime.now(timezone.utc))
+    schedule = engine_context.get_day_schedule() if engine_context is not None else None
+    return is_quiet_hours(datetime.now(timezone.utc), schedule)
 
 
 def _defer_until_morning(

@@ -35,24 +35,51 @@ TOOL_META = {
     "parameters": {
         "target": {
             "type": "object",
-            "description": "requester/persona/person_id/name/mention_ref，value 为对应值。",
+            "description": (
+                "查谁（JSON 对象）：{'ref': 'requester'} 本回合向你提要求的人；"
+                "{'ref': 'persona'} 你自己；{'ref': 'person_id', 'value': '<UUID>'}；"
+                "{'ref': 'name', 'value': '<称呼>'}（重名时返回候选，再用 person_id 查）；"
+                "{'ref': 'mention_ref', 'value': '<某条消息的 evidence_ref>'} 那条消息的发送者。"
+            ),
             "required": True,
         },
         "sections": {
             "type": "array",
             "items": {"type": "string", "enum": sorted(_SECTIONS)},
+            "description": (
+                "要哪些信息，默认 names + visual。names 称呼与别名；claims 属性声明"
+                "（如生日、职业，含 claim_id）；relationships 与他人的关系；memories 与此人有关的"
+                "记忆摘要（可配合 query）；visual 当前形象；changes 待确认的资料变更（含 change_id）；"
+                "consents / jobs 视觉授权与生图任务（需要相应权限）。只要用到的，别全选。"
+            ),
             "required": False,
             "default": ["names", "visual"],
         },
         "detail": {
             "type": "string",
             "choices": ["summary", "detail"],
+            "description": "summary 精简（约 1500 字以内）；detail 更完整（约 6000 字以内），确实需要细节时再用。",
             "required": False,
             "default": "summary",
         },
-        "query": {"type": "string", "required": False, "default": ""},
-        "limit": {"type": "integer", "required": False, "default": 5},
-        "cursor": {"type": "string", "required": False, "default": ""},
+        "query": {
+            "type": "string",
+            "description": "只对 sections 里的 memories 起作用：只看与这个关键词有关的记忆。",
+            "required": False,
+            "default": "",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "按名字查（ref=name）时最多返回几个候选，1 到 5。",
+            "required": False,
+            "default": 5,
+        },
+        "cursor": {
+            "type": "string",
+            "description": "按名字查的翻页：把上次结果里的 next_cursor 原样传回；其他情况留空。",
+            "required": False,
+            "default": "",
+        },
     },
 }
 

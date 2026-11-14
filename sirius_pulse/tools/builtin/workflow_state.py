@@ -83,7 +83,7 @@ _config.group("流程步骤").add(
 _config.group("流程步骤").add(
     "tool_name",
     type="str",
-    description="claim 时填写实际要调用的专用 Tool 名称，例如 qq_like；checkpoint 时原样带回。",
+    description="claim 时填写实际要调用的专用 Tool 名称，例如 napcat_call；checkpoint 时原样带回。",
     default="",
 )
 _config.group("流程步骤").add(

@@ -45,6 +45,10 @@ TOOL_META = {
         "action": {
             "type": "string",
             "choices": ["add", "patch", "remove", "batch", "organize"],
+            "description": (
+                "add 写入或整条更新（entry_id + text）；patch 改一部分（entry_id + text）；"
+                "remove 删除（entry_id）；batch 一次做多步（operations）；organize 请后台稍后整理小本。"
+            ),
             "required": True,
         },
         "entry_id": {

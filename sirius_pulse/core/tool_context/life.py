@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sirius_pulse.life.clock import DaySchedule
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,11 @@ class LifeMixin:
             store.save_assistant_emotion(dataclasses.asdict(emotion))
         except Exception:
             logger.warning("保存心情状态失败", exc_info=True)
+
+    def get_day_schedule(self) -> DaySchedule:
+        from sirius_pulse.core.life_bridge import day_schedule
+
+        return day_schedule(self._engine)
 
     def list_acquaintances(self) -> list[Any]:
         """她认识的人：每人最后一次出现的时间、亲近程度，以及在哪些会话里聊过。

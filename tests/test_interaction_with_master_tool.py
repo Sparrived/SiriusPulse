@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import pytest
 
 from sirius_pulse.core.bg_tasks_delayed import DelayedQueueTasks
+from sirius_pulse.life.clock import DaySchedule, to_local
 from sirius_pulse.life.intent import RESOLUTION_TELL, IntentFileStore
 from sirius_pulse.providers.base import ToolCall
 from sirius_pulse.tools.builtin import interaction_with_master
@@ -125,11 +127,25 @@ async def test_message_action_when_root_is_missing_returns_clear_failure() -> No
 
 
 class _EngineContext:
-    def __init__(self, work_path: Path) -> None:
+    def __init__(self, work_path: Path, schedule: DaySchedule | None = None) -> None:
         self._work_path = work_path
+        self._schedule = schedule or DaySchedule()
 
     def get_work_path(self) -> str:
         return str(self._work_path)
+
+    def get_day_schedule(self) -> DaySchedule:
+        return self._schedule
+
+
+def _schedule_around_now(*, asleep: bool) -> DaySchedule:
+    """一个以此刻为中心的作息：asleep=True 时她此刻正睡着，否则正醒着。"""
+    now = to_local(datetime.now(timezone.utc))
+    before = (now - timedelta(hours=2)).strftime("%H:%M")
+    after = (now + timedelta(hours=2)).strftime("%H:%M")
+    if asleep:
+        return DaySchedule.from_strings(wake=after, sleep=before)
+    return DaySchedule.from_strings(wake=before, sleep=after)
 
 
 @pytest.mark.asyncio
@@ -144,7 +160,7 @@ async def test_autonomous_turn_may_reach_the_tool_through_the_real_executor(
     adapter = _FakeNapCatAdapter(root="10001")
     # 注册表会重新加载模块，所以这里要打规范模块上的函数；直接改
     # interaction_with_master._is_quiet_now 打不到那个新实例。
-    monkeypatch.setattr("sirius_pulse.life.clock.is_quiet_hours", lambda now: False)
+    monkeypatch.setattr("sirius_pulse.life.clock.is_quiet_hours", lambda *_: False)
 
     registry = ToolRegistry()
     registry.load_from_directory(tmp_path / "tools", auto_install_deps=False, include_builtin=True)
@@ -174,7 +190,7 @@ async def test_night_message_on_her_own_time_waits_until_morning(
 ) -> None:
     """夜里她主动想到的话不能 03:00 砸过去，先存成意图，早上再走投递。"""
     adapter = _FakeNapCatAdapter(root="10001")
-    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda: True)
+    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda *_: True)
 
     result = await interaction_with_master.run(
         action="message",
@@ -203,7 +219,7 @@ async def test_night_message_still_sends_when_it_is_a_live_reply(
 ) -> None:
     """对话正在进行时她在回话，不是在自言自语：这条不该被压到早上。"""
     adapter = _FakeNapCatAdapter(root="10001")
-    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda: True)
+    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda *_: True)
 
     result = await interaction_with_master.run(
         action="message",
@@ -224,7 +240,7 @@ async def test_night_message_without_engine_context_fails_closed(
 ) -> None:
     """存不下来就不发——降级成"照发"正好违背了夜间静默本身。"""
     adapter = _FakeNapCatAdapter(root="10001")
-    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda: True)
+    monkeypatch.setattr(interaction_with_master, "_is_quiet_now", lambda *_: True)
 
     result = await interaction_with_master.run(
         action="message",
@@ -381,3 +397,28 @@ async def test_status_action_reports_malformed_json(monkeypatch) -> None:
         "error": "MDS 返回的不是合法 JSON。",
         "summary": "主人当前状态读取失败",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("asleep", "delivered"),
+    [(True, False), (False, True)],
+    ids=["asleep-holds", "awake-sends"],
+)
+async def test_her_own_message_waits_only_while_she_is_asleep_by_her_schedule(
+    tmp_path: Path, asleep: bool, delivered: bool
+) -> None:
+    """夜里不发看的是她自己的作息，不是写死的 23:00-08:00。"""
+    adapter = _FakeNapCatAdapter(root="10001")
+
+    result = await interaction_with_master.run(
+        action="message",
+        message="突然想到一件事，回头跟你说。",
+        bridge=adapter,
+        engine_context=_EngineContext(tmp_path, _schedule_around_now(asleep=asleep)),
+        invocation_context=SimpleNamespace(self_initiated=True),
+    )
+
+    assert result["success"] is True
+    assert bool(adapter.private_messages) is delivered
+    assert bool(result.get("deferred")) is (not delivered)
