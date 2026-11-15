@@ -12,7 +12,7 @@ import pytest
 from sirius_pulse.memory.units.indexer import MemoryUnitIndexer
 from sirius_pulse.memory.units.manager import rebuild_memory_unit_embeddings
 from sirius_pulse.memory.units.models import MemoryUnit
-from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.memory.units.store import MemoryUnitStore
 
 
 class _StubEmbedding:
@@ -106,7 +106,7 @@ def test_rebuild_memory_unit_embeddings_when_dimensions_stale_then_persists_new_
     tmp_path,
 ):
     """重建必须落盘：只在内存里改，重启后又回到旧维度。"""
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     store.save("group_a", [_unit("u1", embedding=[0.5] * 512)])
     client = _StubEmbedding(dimension=1024)
 
@@ -118,7 +118,7 @@ def test_rebuild_memory_unit_embeddings_when_dimensions_stale_then_persists_new_
 
 
 def test_rebuild_memory_unit_embeddings_when_nothing_stale_then_skips_write(tmp_path, monkeypatch):
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     store.save("group_a", [_unit("u1", embedding=[0.5] * 1024)])
     client = _StubEmbedding(dimension=1024)
 
@@ -139,7 +139,7 @@ def test_rebuild_memory_unit_embeddings_when_batch_encode_fails_then_reports_fai
     线上 64 条一批偶发超时，接口原本照样返回成功，用户以为索引已修好，实际那批还留在
     旧维度。失败的条数要如实上报，界面才能提示重试。
     """
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     store.save(
         "group_a",
         [_unit("u1", embedding=[0.5] * 512), _unit("u2", embedding=[0.5] * 512)],
@@ -163,7 +163,7 @@ def test_rebuild_memory_unit_embeddings_when_one_unit_fails_then_retries_rest(
     tmp_path,
 ):
     """一批里个别条目失败时二分重试救回其余条目，只报真正失败的那条。"""
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     store.save(
         "group_a",
         [_unit("u%d" % i, embedding=[0.5] * 512) for i in range(4)],
@@ -193,7 +193,7 @@ def test_rebuild_memory_unit_embeddings_when_one_unit_fails_then_retries_rest(
 
 
 def test_rebuild_memory_unit_embeddings_when_no_client_then_zero(tmp_path):
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     store.save("group_a", [_unit("u1", embedding=[0.5] * 512)])
 
     assert rebuild_memory_unit_embeddings(None, store) == (0, 0)

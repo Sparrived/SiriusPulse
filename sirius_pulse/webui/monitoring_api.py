@@ -165,21 +165,14 @@ def _read_token_usage(persona_dir: Path) -> dict[str, Any]:
 
 
 def _count_memory_units(persona_dir: Path) -> int:
-    """统计记忆单元目录下所有 JSON 文件中的单元总数。"""
-    units_dir = persona_dir / "memory_units"
-    if not units_dir.exists():
-        return 0
-    total = 0
+    """统计 persona.db 里的记忆单元总数。"""
+    from sirius_pulse.memory.units.store import MemoryUnitStore, MemoryUnitStoreError
+
     try:
-        for path in units_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                total += len(data.get("units", []))
-            except (OSError, json.JSONDecodeError):
-                continue
-    except OSError:
+        return MemoryUnitStore(persona_dir).count()
+    except MemoryUnitStoreError:
+        LOG.debug("读取记忆单元数失败: %s", persona_dir, exc_info=True)
         return 0
-    return total
 
 
 def _count_cognition_events(persona_dir: Path) -> int:
@@ -216,7 +209,9 @@ def _check_config_files(persona_dir: Path) -> tuple[str, list[str]]:
 
 def _check_memory_system(persona_dir: Path) -> str:
     """检查记忆系统是否可访问（至少有一个记忆子目录存在）。"""
-    has_memory = any((persona_dir / d).exists() for d in ("memory_units", "archive", "token"))
+    has_memory = any(
+        (persona_dir / d).exists() for d in ("persona.db", "memory_units", "archive", "token")
+    )
     if not has_memory:
         return "empty"
     return "ok"

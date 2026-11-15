@@ -80,7 +80,7 @@ from sirius_pulse.life.reflection import (
 )
 from sirius_pulse.life.state import LifeStateStore, energy_at, energy_word
 from sirius_pulse.memory.units.models import MemoryUnit
-from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.memory.units.store import MemoryUnitStore
 from sirius_pulse.tools.engine_context import ConversationAccess, DeliveryAccess, LifeAccess
 from sirius_pulse.utils.json_io import atomic_write_json
 
@@ -699,7 +699,7 @@ def _dream_fragments(ctx: Any, schedule: DaySchedule, day: str) -> tuple[str, li
     are skipped: her day already comes in through the agenda.
     """
     try:
-        store = MemoryUnitFileStore(Path(ctx.get_work_path() or "."))
+        store = MemoryUnitStore(Path(ctx.get_work_path() or "."))
         by_chat: dict[str, list[MemoryUnit]] = {}
         for group_id in store.list_group_ids():
             for unit in store.load(group_id, with_embeddings=False):

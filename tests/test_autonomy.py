@@ -27,7 +27,7 @@ from sirius_pulse.life.projects import ProjectStore
 from sirius_pulse.life.reflection import SelfNoteStore
 from sirius_pulse.life.state import LifeStateStore
 from sirius_pulse.memory.units.models import MemoryUnit
-from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.memory.units.store import MemoryUnitStore
 from sirius_pulse.models.persona import PersonaProfile
 from sirius_pulse.tools.builtin import autonomy, intend_share, life_project
 from sirius_pulse.tools.executor import _self_initiated_block_reason
@@ -498,7 +498,7 @@ def _dream(**overrides) -> str:
 def _chat_memory(tmp_path, group_id: str, *summaries: str, at=None) -> None:
     """某个群当天整理出来的记忆片段。"""
     stamp = (at or _cn(20)).isoformat()
-    MemoryUnitFileStore(tmp_path).save(
+    MemoryUnitStore(tmp_path).save(
         group_id,
         [
             MemoryUnit(unit_id=f"{group_id}-{i}", group_id=group_id, created_at=stamp, summary=text)

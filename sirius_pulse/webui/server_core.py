@@ -247,7 +247,7 @@ class WebUIServer:
     def get_embedding_status(self) -> dict[str, Any]:
         """返回 embedding 状态：AMKR 可达性与当前模型名。
 
-        记忆单元的向量内联在 ``memory_units/*.json`` 里，不持久化所用模型名，
+        记忆单元的向量存在 ``persona.db`` 的 ``memory_unit_vectors`` 表里，不持久化所用模型名，
         因此这里无法再比对"已建索引的模型"，``index_stale`` 恒为 ``False``。
         """
         from sirius_pulse.embedding.client import create_embedding_client
@@ -430,11 +430,11 @@ class WebUIServer:
         """
         from sirius_pulse.embedding.client import create_embedding_client
         from sirius_pulse.memory.units.manager import rebuild_memory_unit_embeddings
-        from sirius_pulse.memory.units.store import MemoryUnitFileStore
+        from sirius_pulse.memory.units.store import MemoryUnitStore
 
         persona_dir = self.persona_dir
         client = create_embedding_client(self.data_dir, persona_dir.name)
-        return rebuild_memory_unit_embeddings(client, MemoryUnitFileStore(persona_dir))
+        return rebuild_memory_unit_embeddings(client, MemoryUnitStore(persona_dir))
 
     # ─── 全局 API: 通用工具 ────────────────────────────────
 

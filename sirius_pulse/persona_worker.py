@@ -479,8 +479,8 @@ class PersonaWorker:
     def _reload_memory_index(self, engine: Any) -> None:
         """丢弃记忆单元的内存缓存，下次检索时从磁盘重新加载。
 
-        WebUI 的「重建索引」在另一个进程里重写了 ``memory_units/*.json`` 与其中的
-        向量；本进程缓存的是重建前的旧向量，不丢弃就会继续按旧维度检索。
+        WebUI 的「重建索引」在另一个进程里重写了 ``persona.db`` 里的单元向量；本进程
+        缓存的是重建前的旧向量，不丢弃就会继续按旧维度检索。
         """
         reloaded = []
         units = getattr(engine, "memory_unit_manager", None)

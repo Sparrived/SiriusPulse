@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from sirius_pulse.embedding.client import EmbeddingClient
 from sirius_pulse.memory.units.deduplicator import MemoryUnitDeduplicator, apply_verdict
 from sirius_pulse.memory.units.indexer import MemoryUnitIndexer
 from sirius_pulse.memory.units.models import MemoryUnit
-from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.memory.units.store import MemoryUnitStore
+from sirius_pulse.utils.json_io import write_bytes_durably
 
 if TYPE_CHECKING:
     from sirius_pulse.memory.units.manager import MemoryUnitManager
@@ -24,7 +26,7 @@ class MemoryUnitDedupeMaintenance:
     def __init__(
         self,
         manager: "MemoryUnitManager",
-        store: MemoryUnitFileStore,
+        store: MemoryUnitStore,
         embedding_client: EmbeddingClient | None,
         deduplicator: MemoryUnitDeduplicator,
     ) -> None:
@@ -109,23 +111,42 @@ class MemoryUnitDedupeMaintenance:
         ):
             return {"status": "stale"}
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        backup_dir = self._store.base_dir.parent / "backups" / "memory_units" / stamp
-        backup_dir.parent.mkdir(parents=True, exist_ok=True)
-        if self._store.base_dir.exists():
-            shutil.copytree(self._store.base_dir, backup_dir)
-        else:
-            backup_dir.mkdir()
+        backup_dir = self._store.work_path / "backups" / "memory_units" / stamp
+        self._export_backup(backup_dir, current)
         prepared = {
             group_id: [MemoryUnit.from_dict(item) for item in group_report.get("final_units", [])]
             for group_id, group_report in report_groups.items()
         }
         try:
+            # 一个事务替换全部分组：失败时库里什么都没变，只需把索引恢复成原样。
             self._store.save_many_atomically(prepared)
-            for group_id, units in prepared.items():
-                self._manager._replace_loaded_group(group_id, units)
         except Exception as exc:
-            self._store.save_many_atomically(current)
             for group_id, units in current.items():
                 self._manager._replace_loaded_group(group_id, units)
             return {"status": "failed", "error": str(exc), "backup": str(backup_dir)}
+        for group_id, units in prepared.items():
+            self._manager._replace_loaded_group(group_id, units)
         return {"status": "completed", "backup": str(backup_dir)}
+
+    @staticmethod
+    def _export_backup(backup_dir: Path, groups: dict[str, list[MemoryUnit]]) -> None:
+        """应用前把受影响分组的单元（不含向量，向量可按文本重算）导出成 JSON 留档。"""
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for group_id, units in groups.items():
+            items = []
+            for unit in units:
+                item = unit.to_dict()
+                item.pop("embedding", None)
+                items.append(item)
+            write_bytes_durably(
+                backup_dir / f"{safe_group_file_name(group_id)}.json",
+                json.dumps(
+                    {"group_id": group_id, "units": items}, ensure_ascii=False, indent=2
+                ).encode("utf-8"),
+            )
+
+
+def safe_group_file_name(name: str) -> str:
+    base = re.sub(r"[^a-zA-Z0-9_\-一-鿿]+", "_", name.strip())
+    base = re.sub(r"_+", "_", base).strip("_")
+    return base or "default"
