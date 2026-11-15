@@ -1,9 +1,17 @@
 """Cross-persona group turn arbitration.
 
-The persona workers are separate OS processes, so an in-memory asyncio lock
-cannot prevent two accounts from replying to the same group.  This small
-SQLite-backed coordinator owns one active turn per group and gives workers a
-short-lived lease before they enter the response pipeline.
+All persona workers run in one process.  The coordinator owns one active turn
+per group and gives workers a short-lived lease before they enter the response
+pipeline.
+
+协调状态（worker 登记、群的租约、候选打分、事件）放在一个**进程内共享的内存
+SQLite** 里：同一个 ``db_path`` 的所有实例共用一份，读写是微秒级的内存操作，
+不再有文件锁、``busy_timeout`` 和线程跳转，收集分数也不再轮询，而是提交候选时
+直接唤醒等待方。规则本身仍是原来那套 SQL，没有重写。
+
+只有重启后必须记得的东西落盘：``db_path`` 文件被 ATTACH 为 ``durable``，里面
+只有提醒 / 延迟回复的**投递回执**和「正在发送」的标记。进程在发送途中死掉时，
+下次启动把这些标记转成 ``uncertain`` 回执，保证不会重发。
 """
 
 from __future__ import annotations
@@ -23,14 +31,138 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-#: 收集各人格打分时的轮询间隔。轮询在线程里跑，间隔过密只会白白抢库锁。
-_COLLECTION_POLL_SECONDS = 0.02
+#: 需要跨重启记住投递结果的事件：提醒与延迟回复会在重启后重放，其余消息不会。
+_DURABLE_EVENT_PREFIXES = ("reminder:", "delayed:")
 
 
-def _consume_task_exception(task: "asyncio.Future[Any]") -> None:
-    """取走后台任务的异常，避免调用方被取消后出现未取回异常的告警。"""
-    if not task.cancelled():
-        task.exception()
+class _SharedDispatcherStore:
+    """同一个 ``db_path`` 在本进程里的唯一一份协调状态。"""
+
+    def __init__(self, durable_path: Path) -> None:
+        self.lock = threading.RLock()
+        durable_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(":memory:", check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("ATTACH DATABASE ? AS durable", (str(durable_path),))
+        conn.execute("PRAGMA durable.busy_timeout = 5000")
+        conn.execute("PRAGMA durable.journal_mode = WAL")
+        conn.execute("PRAGMA durable.synchronous = NORMAL")
+        self.conn = conn
+        #: event_id → (所属事件循环, 唤醒信号, 正在等的人数)。
+        self._signals: dict[str, list[Any]] = {}
+        with self.lock, conn:
+            self._prepare_durable(conn)
+
+    @staticmethod
+    def _prepare_durable(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS durable.dispatcher_delivery_receipts (
+                event_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS durable.dispatcher_inflight (
+                event_id TEXT PRIMARY KEY,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        legacy = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM durable.sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "dispatcher_events" in legacy:
+            # 旧版本把整套协调状态都放在这个文件里。只有投递结果需要带过来：
+            # 当时还在发送中的，同样按「不确定是否已送达」处理，不能重放。
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO durable.dispatcher_delivery_receipts(
+                    event_id, status, created_at
+                )
+                SELECT event_id,
+                       CASE WHEN status='sending' THEN 'uncertain' ELSE status END,
+                       updated_at
+                FROM durable.dispatcher_events
+                WHERE (event_id LIKE 'reminder:%' OR event_id LIKE 'delayed:%')
+                    AND status IN ('sent', 'uncertain', 'sending')
+                """
+            )
+        for table in (
+            "dispatcher_candidates",
+            "dispatcher_events",
+            "dispatcher_worker_stats",
+            "dispatcher_groups",
+            "dispatcher_workers",
+        ):
+            if table in legacy:
+                conn.execute(f"DROP TABLE durable.{table}")
+        # 上次进程在发送途中退出：这些事件可能已经送达，记为 uncertain，禁止重放。
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO durable.dispatcher_delivery_receipts(
+                event_id, status, created_at
+            )
+            SELECT event_id, 'uncertain', updated_at FROM durable.dispatcher_inflight
+            """
+        )
+        conn.execute("DELETE FROM durable.dispatcher_inflight")
+
+    def acquire_signal(self, event_id: str) -> asyncio.Event:
+        """登记「我在等这个事件的收集结果」，拿到共用的唤醒信号。"""
+        loop = asyncio.get_running_loop()
+        with self.lock:
+            current = self._signals.get(event_id)
+            if current is None or current[0] is not loop:
+                current = [loop, asyncio.Event(), 0]
+                self._signals[event_id] = current
+            current[2] += 1
+            return current[1]
+
+    def release_signal(self, event_id: str) -> None:
+        with self.lock:
+            current = self._signals.get(event_id)
+            if current is None:
+                return
+            current[2] -= 1
+            if current[2] <= 0:
+                self._signals.pop(event_id, None)
+
+    def notify(self, event_id: str) -> None:
+        """有新候选交上来：叫醒正在等这个事件收集结果的人。"""
+        with self.lock:
+            current = self._signals.get(event_id)
+        if current is None:
+            return
+        loop, signal = current[0], current[1]
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            signal.set()
+        elif not loop.is_closed():
+            loop.call_soon_threadsafe(signal.set)
+
+
+_SHARED_STORES: dict[str, _SharedDispatcherStore] = {}
+_SHARED_STORES_LOCK = threading.Lock()
+
+
+def _shared_store(path: Path, *, create: bool = True) -> _SharedDispatcherStore | None:
+    key = str(path.resolve())
+    with _SHARED_STORES_LOCK:
+        store = _SHARED_STORES.get(key)
+        if store is None and create:
+            store = _SharedDispatcherStore(path)
+            _SHARED_STORES[key] = store
+        return store
 
 
 _OPEN_LOOP_RE = re.compile(
@@ -79,10 +211,11 @@ class DispatchDecision:
 
 
 class GroupDispatcher:
-    """Coordinate one public persona turn per group across worker processes."""
+    """Coordinate one public persona turn per group across the persona workers.
 
-    # ponytail: SQLite is sufficient for same-host workers; use a service if
-    # persona workers move to different hosts.
+    所有人格在同一进程里，协调状态在内存里共享（见模块说明）。若将来人格分到
+    不同进程或主机，这里要换成一个独立的协调服务。
+    """
 
     def __init__(
         self,
@@ -122,44 +255,17 @@ class GroupDispatcher:
         self._clock = clock or time.time
         if not self.worker_id:
             raise ValueError("GroupDispatcher requires a worker_id")
-        self._conn: sqlite3.Connection | None = None
-        self._conn_lock = threading.RLock()
+        self._store = _shared_store(self.db_path)
+        assert self._store is not None
         self._initialize()
         self.register()
 
     @contextlib.contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        """借用本实例的长连接做一次事务（退出时提交，异常时回滚）。
-
-        以前每次操作都新开连接、重设 PRAGMA，而 ``coordinate`` 每条消息要轮询十几次。
-        长连接由一把可重入锁保护：调度在线程里轮询，其余调用在事件循环里，两边共用。
-        """
-        with self._conn_lock:
-            conn = self._conn
-            if conn is None:
-                self.db_path.parent.mkdir(parents=True, exist_ok=True)
-                conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
-                conn.row_factory = sqlite3.Row
-                conn.execute("PRAGMA busy_timeout = 5000")
-                conn.execute("PRAGMA journal_mode = WAL")
-                conn.execute("PRAGMA synchronous = NORMAL")
-                self._conn = conn
-            try:
-                with conn:
-                    yield conn
-            except sqlite3.Error:
-                # 连接可能已坏（文件被删、磁盘错误）：丢掉它，下次重新建立。
-                self._drop_connection()
-                raise
-
-    def _drop_connection(self) -> None:
-        with self._conn_lock:
-            conn, self._conn = self._conn, None
-        if conn is not None:
-            try:
-                conn.close()
-            except sqlite3.Error:
-                pass
+        """借共享的内存连接做一次事务（退出时提交，异常时回滚）。"""
+        store = self._store
+        with store.lock, store.conn as conn:
+            yield conn
 
     def _initialize(self) -> None:
         with self._connect() as conn:
@@ -205,11 +311,6 @@ class GroupDispatcher:
                     response_delay_seconds REAL NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS dispatcher_delivery_receipts (
-                    event_id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS dispatcher_candidates (
                     event_id TEXT NOT NULL,
@@ -290,6 +391,32 @@ class GroupDispatcher:
                     conn.execute(
                         f"ALTER TABLE dispatcher_candidates ADD COLUMN {name} {definition}"
                     )
+            # 内存里的事件进入 / 离开「发送中」时，同步落盘的在途标记：进程在发送
+            # 途中死掉，下次启动据此记为 uncertain。只有提醒与延迟回复需要。
+            conn.executescript(
+                """
+                CREATE TEMP TRIGGER IF NOT EXISTS dispatcher_inflight_mark
+                AFTER UPDATE OF status ON main.dispatcher_events
+                WHEN NEW.status = 'sending'
+                    AND (NEW.event_id LIKE 'reminder:%' OR NEW.event_id LIKE 'delayed:%')
+                BEGIN
+                    INSERT OR REPLACE INTO durable.dispatcher_inflight(event_id, updated_at)
+                    VALUES (NEW.event_id, NEW.updated_at);
+                END;
+                CREATE TEMP TRIGGER IF NOT EXISTS dispatcher_inflight_clear
+                AFTER UPDATE OF status ON main.dispatcher_events
+                WHEN OLD.status = 'sending' AND NEW.status <> 'sending'
+                BEGIN
+                    DELETE FROM durable.dispatcher_inflight WHERE event_id = NEW.event_id;
+                END;
+                CREATE TEMP TRIGGER IF NOT EXISTS dispatcher_inflight_drop
+                AFTER DELETE ON main.dispatcher_events
+                WHEN OLD.status = 'sending'
+                BEGIN
+                    DELETE FROM durable.dispatcher_inflight WHERE event_id = OLD.event_id;
+                END;
+                """
+            )
             # Upgrade existing terminal reminder rows into the non-expiring
             # receipt ledger before normal event pruning can remove them.
             conn.execute(
@@ -350,44 +477,16 @@ class GroupDispatcher:
     # ------------------------------------------------------------------
 
     async def _off_loop(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-        task = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
-        # 调用方被取消后没人再取结果：取走异常，免得「Task exception was never retrieved」。
-        task.add_done_callback(_consume_task_exception)
-        return await asyncio.shield(task)
+        """保留给调用方的异步入口；状态在内存里，直接同步执行即可。
+
+        以前这里要把每次写事务丢进线程（争文件锁可能等好几秒）。现在一次操作是
+        微秒级的内存读写，也就没有「线程里已授予、调用方却被取消」的窗口了。
+        """
+        return fn(*args, **kwargs)
 
     async def admit_async(self, **kwargs: Any) -> DispatchDecision:
-        """``admit`` 的异步版本。被取消时若已拿到租约，先释放再把取消抛出去。
-
-        同步版本里取消只可能发生在 admit 之前或之后；放进线程后多了一个「库里已经
-        授予、调用方却被取消」的窗口。不当场释放的话，租约会占着这个群直到过期，
-        紧接着的重试只会被判成群忙。
-        """
-        task = asyncio.ensure_future(asyncio.to_thread(lambda: self.admit(**kwargs)))
-        task.add_done_callback(_consume_task_exception)
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            try:
-                decision = await task
-            except asyncio.CancelledError:
-                # 清理途中又被取消：交给回调在后台释放。
-                task.add_done_callback(self._release_orphaned_grant)
-                raise
-            except Exception:
-                raise asyncio.CancelledError() from None
-            if decision.granted and decision.lease_id:
-                await self._off_loop(self.finish, decision.lease_id, sent=False)
-            raise
-
-    def _release_orphaned_grant(self, task: asyncio.Future[DispatchDecision]) -> None:
-        if task.cancelled() or task.exception() is not None:
-            return
-        decision = task.result()
-        if not decision.granted or not decision.lease_id:
-            return
-        loop = asyncio.get_running_loop()
-        release = loop.run_in_executor(None, lambda: self.finish(decision.lease_id, sent=False))
-        release.add_done_callback(_consume_task_exception)
+        """``admit`` 的异步版本（同步执行，中途不会被取消打断）。"""
+        return self.admit(**kwargs)
 
     async def finish_async(
         self,
@@ -463,7 +562,6 @@ class GroupDispatcher:
                 "UPDATE dispatcher_workers SET last_seen = 0 WHERE worker_id = ?",
                 (self.worker_id,),
             )
-        self._drop_connection()
 
     async def coordinate(
         self,
@@ -483,11 +581,12 @@ class GroupDispatcher:
     ) -> DispatchDecision:
         """Collect local candidates, then grant the highest final score.
 
-        每一步都是带 ``busy_timeout`` 的写事务，多个人格争同一个库时可能等上几秒；
-        放到线程里做，等锁时不占事件循环。
+        交完自己的分数后等其他人格：每有人交分数就被唤醒重算一次，交齐或到收集
+        窗口上限就裁决。不再轮询。
         """
-        await asyncio.to_thread(
-            self._submit_candidate,
+        store = self._store
+        signal = store.acquire_signal(event_id)
+        self._submit_candidate(
             event_id=event_id,
             group_id=group_id,
             base_score=base_score,
@@ -501,21 +600,27 @@ class GroupDispatcher:
             reason=reason,
             message_text=message_text,
         )
+        store.notify(event_id)
         deadline = time.monotonic() + self.score_collection_seconds
-        while True:
-            decision = await asyncio.to_thread(
-                self._finalize_candidate, event_id, group_id, force=False
-            )
-            if decision is not None:
-                return decision
-            if time.monotonic() >= deadline:
-                decision = await asyncio.to_thread(
-                    self._finalize_candidate, event_id, group_id, force=True
-                )
-                return decision or DispatchDecision(
-                    "observe", event_id, reason="collection_timeout"
-                )
-            await asyncio.sleep(_COLLECTION_POLL_SECONDS)
+        try:
+            while True:
+                signal.clear()
+                decision = self._finalize_candidate(event_id, group_id, force=False)
+                if decision is not None:
+                    return decision
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    decision = self._finalize_candidate(event_id, group_id, force=True)
+                    return decision or DispatchDecision(
+                        "observe", event_id, reason="collection_timeout"
+                    )
+                try:
+                    await asyncio.wait_for(signal.wait(), timeout=remaining)
+                except TimeoutError:
+                    pass
+        finally:
+            store.notify(event_id)  # 自己裁决完，叫醒还在等的人去读结果
+            store.release_signal(event_id)
 
     def _submit_candidate(
         self,
@@ -1564,170 +1669,171 @@ class GroupDispatcher:
         now: float | None = None,
         event_limit: int = 80,
     ) -> dict[str, object]:
-        """Read coordinator state without registering a WebUI worker."""
+        """Read coordinator state without registering a WebUI worker.
+
+        协调状态在本进程内存里：有人格在跑时直接读那一份；没有（例如只开了 WebUI）
+        就说明当前没有可看的协调状态。
+        """
         path = Path(db_path)
-        if not path.exists():
-            return {"available": False, "db_path": str(path)}
-
         current = time.time() if now is None else float(now)
+        store = _shared_store(path, create=False) if path.exists() else None
+        if store is None:
+            return {"available": False, "db_path": str(path)}
         try:
-            conn = sqlite3.connect(str(path), timeout=1.0)
-            conn.row_factory = sqlite3.Row
-            tables = {
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            required = {
-                "dispatcher_workers",
-                "dispatcher_groups",
-                "dispatcher_worker_stats",
-                "dispatcher_events",
-            }
-            if not required.issubset(tables):
-                conn.close()
-                return {"available": False, "db_path": str(path), "reason": "schema_missing"}
+            with store.lock:
+                return cls._snapshot_from(store.conn, path, current, event_limit)
+        except sqlite3.Error as exc:
+            return {"available": False, "db_path": str(path), "reason": str(exc)}
 
-            event_columns = {
-                str(row[1])
-                for row in conn.execute("PRAGMA table_info(dispatcher_events)").fetchall()
+    @staticmethod
+    def _snapshot_from(
+        conn: sqlite3.Connection, path: Path, current: float, event_limit: int
+    ) -> dict[str, object]:
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        required = {
+            "dispatcher_workers",
+            "dispatcher_groups",
+            "dispatcher_worker_stats",
+            "dispatcher_events",
+        }
+        if not required.issubset(tables):
+            return {"available": False, "db_path": str(path), "reason": "schema_missing"}
+
+        event_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(dispatcher_events)").fetchall()
+        }
+        group_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(dispatcher_groups)").fetchall()
+        }
+        workers = [
+            {
+                "worker_id": str(row["worker_id"] or ""),
+                "account_id": str(row["account_id"] or ""),
+                "priority": float(row["priority"] or 0),
+                "last_seen": float(row["last_seen"] or 0),
+                "online": float(row["last_seen"] or 0) > current - 180.0,
+                "last_reply_at": float(row["last_reply_at"] or 0),
+                "reply_count": int(row["reply_count"] or 0),
+                "recent_reply_count": int(row["recent_reply_count"] or 0),
             }
-            group_columns = {
-                str(row[1])
-                for row in conn.execute("PRAGMA table_info(dispatcher_groups)").fetchall()
-            }
-            workers = [
-                {
-                    "worker_id": str(row["worker_id"] or ""),
-                    "account_id": str(row["account_id"] or ""),
-                    "priority": float(row["priority"] or 0),
-                    "last_seen": float(row["last_seen"] or 0),
-                    "online": float(row["last_seen"] or 0) > current - 180.0,
-                    "last_reply_at": float(row["last_reply_at"] or 0),
-                    "reply_count": int(row["reply_count"] or 0),
-                    "recent_reply_count": int(row["recent_reply_count"] or 0),
-                }
-                for row in conn.execute(
-                    """
-                    SELECT w.worker_id, w.account_id, w.priority, w.last_seen,
-                           COALESCE(MAX(s.last_reply_at), 0) AS last_reply_at,
-                           COALESCE(SUM(s.reply_count), 0) AS reply_count,
-                           COALESCE((
-                               SELECT COUNT(*)
-                               FROM dispatcher_events AS recent_events
-                               WHERE recent_events.worker_id=w.worker_id
-                                 AND recent_events.status='sent'
-                                 AND recent_events.updated_at>=?
-                           ), 0) AS recent_reply_count
-                    FROM dispatcher_workers AS w
-                    LEFT JOIN dispatcher_worker_stats AS s ON s.worker_id=w.worker_id
-                    GROUP BY w.worker_id, w.account_id, w.priority, w.last_seen
-                    ORDER BY w.last_seen DESC, w.priority DESC, w.worker_id ASC
-                    """,
-                    (current - 300.0,),
-                ).fetchall()
-            ]
-            groups = []
             for row in conn.execute(
                 """
-                SELECT * FROM dispatcher_groups
-                ORDER BY CASE WHEN active_worker_id <> '' THEN 0 ELSE 1 END,
-                         COALESCE(last_reply_at, 0) DESC, group_id ASC
-                LIMIT 200
-                """
-            ).fetchall():
-                expires_at = float(row["active_expires_at"] or 0)
-                active = bool(row["active_worker_id"] and expires_at > current)
-                groups.append(
-                    {
-                        "group_id": str(row["group_id"] or ""),
-                        "last_reply_at": float(row["last_reply_at"] or 0),
-                        "last_human_at": float(row["last_human_at"] or 0),
-                        "peer_turns": int(row["peer_turns"] or 0),
-                        "peer_window_started_at": float(row["peer_window_started_at"] or 0),
-                        "peer_required": bool(row["peer_required"] or 0)
-                        if "peer_required" in group_columns
-                        else False,
-                        "active": active,
-                        "active_worker_id": str(row["active_worker_id"] or "") if active else "",
-                        "active_event_id": str(row["active_event_id"] or "") if active else "",
-                        "active_lease_id": str(row["active_lease_id"] or "") if active else "",
-                        "active_expires_at": expires_at if active else 0,
-                        "active_remaining_seconds": max(0.0, expires_at - current) if active else 0,
-                    }
-                )
-
-            def event_value(row: sqlite3.Row, name: str, default: Any) -> Any:
-                return row[name] if name in event_columns else default
-
-            limit = max(1, min(int(event_limit), 200))
-            events = [
-                {
-                    "event_id": str(row["event_id"] or ""),
-                    "group_id": str(row["group_id"] or ""),
-                    "worker_id": str(row["worker_id"] or ""),
-                    "lease_id": str(row["lease_id"] or ""),
-                    "status": str(row["status"] or ""),
-                    "reason": str(event_value(row, "reason", "") or ""),
-                    "base_score": float(event_value(row, "base_score", 0) or 0),
-                    "final_score": float(event_value(row, "final_score", 0) or 0),
-                    "activity_penalty": float(event_value(row, "activity_penalty", 0) or 0),
-                    "response_strategy": str(
-                        event_value(row, "response_strategy", "immediate") or "immediate"
-                    ),
-                    "response_delay_seconds": float(
-                        event_value(row, "response_delay_seconds", 0) or 0
-                    ),
-                    "created_at": float(row["created_at"] or 0),
-                    "updated_at": float(row["updated_at"] or 0),
-                }
-                for row in conn.execute(
-                    """
-                    SELECT * FROM dispatcher_events
-                    ORDER BY updated_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
-            ]
-            since = current - 86400.0
-            counts = conn.execute(
-                """
-                SELECT
-                    COUNT(*) AS decisions,
-                    SUM(
-                        CASE WHEN status IN ('granted', 'sent', 'silent', 'expired')
-                        THEN 1 ELSE 0 END
-                    ) AS granted,
-                    SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) AS sent,
-                    SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END) AS observed
-                FROM dispatcher_events
-                WHERE updated_at >= ?
+                SELECT w.worker_id, w.account_id, w.priority, w.last_seen,
+                       COALESCE(MAX(s.last_reply_at), 0) AS last_reply_at,
+                       COALESCE(SUM(s.reply_count), 0) AS reply_count,
+                       COALESCE((
+                           SELECT COUNT(*)
+                           FROM dispatcher_events AS recent_events
+                           WHERE recent_events.worker_id=w.worker_id
+                             AND recent_events.status='sent'
+                             AND recent_events.updated_at>=?
+                       ), 0) AS recent_reply_count
+                FROM dispatcher_workers AS w
+                LEFT JOIN dispatcher_worker_stats AS s ON s.worker_id=w.worker_id
+                GROUP BY w.worker_id, w.account_id, w.priority, w.last_seen
+                ORDER BY w.last_seen DESC, w.priority DESC, w.worker_id ASC
                 """,
-                (since,),
-            ).fetchone()
-            conn.close()
-            return {
-                "available": True,
-                "db_path": str(path),
-                "updated_at": current,
-                "workers": workers,
-                "groups": groups,
-                "events": events,
-                "summary": {
-                    "workers_total": len(workers),
-                    "workers_online": sum(1 for item in workers if item["online"]),
-                    "groups_total": len(groups),
-                    "active_turns": sum(1 for item in groups if item["active"]),
-                    "decisions_24h": int(counts["decisions"] or 0),
-                    "granted_24h": int(counts["granted"] or 0),
-                    "sent_24h": int(counts["sent"] or 0),
-                    "observed_24h": int(counts["observed"] or 0),
-                },
+                (current - 300.0,),
+            ).fetchall()
+        ]
+        groups = []
+        for row in conn.execute(
+            """
+            SELECT * FROM dispatcher_groups
+            ORDER BY CASE WHEN active_worker_id <> '' THEN 0 ELSE 1 END,
+                     COALESCE(last_reply_at, 0) DESC, group_id ASC
+            LIMIT 200
+            """
+        ).fetchall():
+            expires_at = float(row["active_expires_at"] or 0)
+            active = bool(row["active_worker_id"] and expires_at > current)
+            groups.append(
+                {
+                    "group_id": str(row["group_id"] or ""),
+                    "last_reply_at": float(row["last_reply_at"] or 0),
+                    "last_human_at": float(row["last_human_at"] or 0),
+                    "peer_turns": int(row["peer_turns"] or 0),
+                    "peer_window_started_at": float(row["peer_window_started_at"] or 0),
+                    "peer_required": bool(row["peer_required"] or 0)
+                    if "peer_required" in group_columns
+                    else False,
+                    "active": active,
+                    "active_worker_id": str(row["active_worker_id"] or "") if active else "",
+                    "active_event_id": str(row["active_event_id"] or "") if active else "",
+                    "active_lease_id": str(row["active_lease_id"] or "") if active else "",
+                    "active_expires_at": expires_at if active else 0,
+                    "active_remaining_seconds": max(0.0, expires_at - current) if active else 0,
+                }
+            )
+
+        def event_value(row: sqlite3.Row, name: str, default: Any) -> Any:
+            return row[name] if name in event_columns else default
+
+        limit = max(1, min(int(event_limit), 200))
+        events = [
+            {
+                "event_id": str(row["event_id"] or ""),
+                "group_id": str(row["group_id"] or ""),
+                "worker_id": str(row["worker_id"] or ""),
+                "lease_id": str(row["lease_id"] or ""),
+                "status": str(row["status"] or ""),
+                "reason": str(event_value(row, "reason", "") or ""),
+                "base_score": float(event_value(row, "base_score", 0) or 0),
+                "final_score": float(event_value(row, "final_score", 0) or 0),
+                "activity_penalty": float(event_value(row, "activity_penalty", 0) or 0),
+                "response_strategy": str(
+                    event_value(row, "response_strategy", "immediate") or "immediate"
+                ),
+                "response_delay_seconds": float(event_value(row, "response_delay_seconds", 0) or 0),
+                "created_at": float(row["created_at"] or 0),
+                "updated_at": float(row["updated_at"] or 0),
             }
-        except (OSError, sqlite3.Error) as exc:
-            return {"available": False, "db_path": str(path), "reason": str(exc)}
+            for row in conn.execute(
+                """
+                SELECT * FROM dispatcher_events
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        ]
+        since = current - 86400.0
+        counts = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS decisions,
+                SUM(
+                    CASE WHEN status IN ('granted', 'sent', 'silent', 'expired')
+                    THEN 1 ELSE 0 END
+                ) AS granted,
+                SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) AS sent,
+                SUM(CASE WHEN status='observed' THEN 1 ELSE 0 END) AS observed
+            FROM dispatcher_events
+            WHERE updated_at >= ?
+            """,
+            (since,),
+        ).fetchone()
+        return {
+            "available": True,
+            "db_path": str(path),
+            "updated_at": current,
+            "workers": workers,
+            "groups": groups,
+            "events": events,
+            "summary": {
+                "workers_total": len(workers),
+                "workers_online": sum(1 for item in workers if item["online"]),
+                "groups_total": len(groups),
+                "active_turns": sum(1 for item in groups if item["active"]),
+                "decisions_24h": int(counts["decisions"] or 0),
+                "granted_24h": int(counts["granted"] or 0),
+                "sent_24h": int(counts["sent"] or 0),
+                "observed_24h": int(counts["observed"] or 0),
+            },
+        }
 
     def _expire_all_active_leases(self, conn: sqlite3.Connection, now: float) -> None:
         group_ids = [

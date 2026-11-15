@@ -85,7 +85,7 @@ async def test_retiring_engine_does_not_process_new_raw_group_events(tmp_path):
         processed.append(event)
         return True
 
-    adapter._engine = SimpleNamespace(_runtime_retiring=True, is_ready=lambda: True)
+    adapter._engine = SimpleNamespace(runtime_retiring=True, is_ready=lambda: True)
     adapter._process_event = fake_process_event  # type: ignore[method-assign]
 
     await adapter._on_event(_group_event("100"))
@@ -238,7 +238,7 @@ async def test_delayed_event_for_retiring_engine_does_not_consume_queue(tmp_path
         return []
 
     adapter._engine = SimpleNamespace(
-        _runtime_retiring=True,
+        runtime_retiring=True,
         tick_delayed_queue=fake_tick_delayed_queue,
     )
     await adapter._handle_event(
@@ -626,7 +626,7 @@ async def test_cancel_before_onebot_io_keeps_stable_event_retryable(tmp_path):
     )
     adapter._running = True
     adapter.ws = SimpleNamespace(closed=False)  # type: ignore[assignment]
-    adapter._engine = SimpleNamespace(_runtime_retiring=False)
+    adapter._engine = SimpleNamespace(runtime_retiring=False)
     event = SessionEvent(
         type=SessionEventType.REMINDER_TRIGGERED,
         data={
@@ -695,7 +695,7 @@ async def test_private_proactive_event_selects_one_concrete_napcat_route(tmp_pat
         _current_adapter_type="",
         _active_private_groups=set(),
         _group_last_message_at={},
-        _runtime_retiring=False,
+        runtime_retiring=False,
         event_bus=bus,
         resolve_adapter_types=lambda _group_id: ["napcat"],
         resolve_adapter_route_counts=lambda _group_id: {"napcat": 2},

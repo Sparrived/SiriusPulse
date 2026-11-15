@@ -23,7 +23,7 @@ import time
 from collections import deque
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -56,6 +56,9 @@ from sirius_pulse.core.qq_mentions import parse_qq_at_mentions
 from sirius_pulse.models.models import Message, UnifiedUser
 from sirius_pulse.tools.builtin._internal import _markdown_image
 from sirius_pulse.tools.builtin._internal._markdown_image import to_image_reference
+
+if TYPE_CHECKING:
+    from sirius_pulse.platforms.engine_port import PlatformEngine
 
 LOG = logging.getLogger("sirius.platforms.napcat")
 _DISPATCH_EVENT_TIME_BUCKET_SECONDS = 5
@@ -616,7 +619,7 @@ class NapCatAdapter(BaseAdapter):
             route_digest = hashlib.sha256(str(ws_url).encode("utf-8")).hexdigest()[:16]
             self.adapter_route_id = f"{self.adapter_type}:endpoint-{route_digest}"
         self._enabled = True
-        self._engine: Any = None
+        self._engine: PlatformEngine | None = None
         self._last_not_ready_log: float = 0.0
         # 离线可观测性：断线起点、上次播报时间、是否已耗尽重试
         self._offline_since: float | None = None
@@ -2172,7 +2175,7 @@ class NapCatAdapter(BaseAdapter):
         ):
             LOG.debug("忽略不在私聊白名单中的消息: user=%s", event.get("user_id", ""))
             return
-        if self._detaching_engine or bool(getattr(self._engine, "_runtime_retiring", False)):
+        if self._detaching_engine or bool(getattr(self._engine, "runtime_retiring", False)):
             self._hold_event(event)
             return
         self._enqueue_event_for_waiters(event)
@@ -2379,7 +2382,9 @@ class NapCatAdapter(BaseAdapter):
 
         # 记录 Bot 自身的 platform_uid
         if self._engine is not None and parsed.self_id:
-            self._engine._bot_platform_uids["qq_native_sirius_pulse"] = parsed.self_id
+            set_self_id = getattr(self._engine, "set_platform_self_id", None)
+            if callable(set_self_id):
+                set_self_id("qq_native_sirius_pulse", parsed.self_id)
         if parsed.message_type == "group":
             await self._publish_group_metadata(parsed.group_id, parsed.self_id)
 
@@ -2672,7 +2677,7 @@ class NapCatAdapter(BaseAdapter):
                 and not self._detaching_engine
                 and self._engine is engine
                 and generation == self._engine_generation
-                and not getattr(engine, "_runtime_retiring", False)
+                and not getattr(engine, "runtime_retiring", False)
                 and time.monotonic() < deadline
             ):
                 await asyncio.sleep(0.5)
@@ -2680,7 +2685,7 @@ class NapCatAdapter(BaseAdapter):
                     self._detaching_engine
                     or self._engine is not engine
                     or generation != self._engine_generation
-                    or getattr(engine, "_runtime_retiring", False)
+                    or getattr(engine, "runtime_retiring", False)
                 ):
                     return
                 if await self._process_event(event):
@@ -2766,7 +2771,7 @@ class NapCatAdapter(BaseAdapter):
             self._running
             and not self._detaching_engine
             and engine is not None
-            and not getattr(engine, "_runtime_retiring", False)
+            and not getattr(engine, "runtime_retiring", False)
         ):
             try:
                 async for event in engine.event_bus.subscribe():
@@ -2774,7 +2779,7 @@ class NapCatAdapter(BaseAdapter):
                         not self._running
                         or self._detaching_engine
                         or self._engine is not engine
-                        or getattr(engine, "_runtime_retiring", False)
+                        or getattr(engine, "runtime_retiring", False)
                     ):
                         break
                     self._track_event_handler(event, engine)
@@ -2918,10 +2923,16 @@ class NapCatAdapter(BaseAdapter):
                 return
 
     @staticmethod
+    def _release_delayed_trigger(engine: Any, group_id: str, item_id: str) -> None:
+        release = getattr(engine, "release_delayed_trigger", None)
+        if item_id and callable(release):
+            release(group_id, item_id)
+
+    @staticmethod
     def _record_delayed_rich_history(
         engine: Any, gid: str, result: dict[str, Any], message_id: str = ""
     ) -> None:
-        record = getattr(engine, "_record_assistant_message", None)
+        record = getattr(engine, "record_assistant_message", None)
         if not callable(record) or result.get("rich_recorded"):
             return
         result["rich_recorded"] = True
@@ -3210,7 +3221,7 @@ class NapCatAdapter(BaseAdapter):
         if (
             engine is None
             or self._engine is not engine
-            or getattr(engine, "_runtime_retiring", False)
+            or getattr(engine, "runtime_retiring", False)
         ):
             return
         try:
@@ -3228,18 +3239,17 @@ class NapCatAdapter(BaseAdapter):
                 gid = str(event.data.get("group_id", ""))
                 if gid in self._dispatch_delivery_active:
                     item_id = str(event.data.get("item_id", "") or "")
-                    emitted = getattr(engine, "_delayed_event_emitted", None)
-                    if item_id and isinstance(emitted, dict):
-                        emitted.setdefault(gid, set()).discard(item_id)
+                    if item_id:
+                        self._release_delayed_trigger(engine, gid, item_id)
                     return
                 self._dispatch_delivery_active.add(gid)
                 try:
                     await self._deliver_delayed_event(event, engine, gid, source_route)
                 finally:
                     self._dispatch_delivery_active.discard(gid)
-                    emitted = getattr(engine, "_delayed_event_emitted", None)
-                    if isinstance(emitted, dict):
-                        emitted.setdefault(gid, set()).discard(str(event.data.get("item_id", "")))
+                    self._release_delayed_trigger(
+                        engine, gid, str(event.data.get("item_id", "") or "")
+                    )
             elif event.type == SessionEventType.REMINDER_TRIGGERED:
                 gid = str(event.data.get("group_id", ""))
                 reply = event.data.get("reply", "")
@@ -3648,7 +3658,7 @@ class NapCatAdapter(BaseAdapter):
         if not sticker_names:
             return False
         try:
-            result = await self._engine._send_stickers_by_names(
+            result = await self._engine.send_stickers_by_names(
                 group_id,
                 sticker_names,
                 adapter=self,
@@ -3774,7 +3784,7 @@ class NapCatAdapter(BaseAdapter):
     def _engine_ready(self) -> bool:
         """检查引擎是否已就绪。"""
         engine = self._engine
-        if engine is None or bool(getattr(engine, "_runtime_retiring", False)):
+        if engine is None or bool(getattr(engine, "runtime_retiring", False)):
             return False
         return getattr(engine, "is_ready", lambda: True)()
 

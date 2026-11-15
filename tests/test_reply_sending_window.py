@@ -158,7 +158,7 @@ async def test_napcat_delayed_partials_wait_between_each_sent_message(monkeypatc
     adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
     adapter._engine = SimpleNamespace(
         tick_delayed_queue=fake_tick_delayed_queue,
-        _send_stickers_by_names=AsyncMock(),
+        send_stickers_by_names=AsyncMock(),
     )
     monkeypatch.setattr(
         "sirius_pulse.platforms.onebot_v11.napcat.adapter.asyncio.sleep",
@@ -256,7 +256,7 @@ async def test_napcat_delayed_short_multiline_reply_is_merged():
     adapter.send_group_msg = fake_send_group_msg  # type: ignore[method-assign]
     adapter._engine = SimpleNamespace(
         tick_delayed_queue=fake_tick_delayed_queue,
-        _send_stickers_by_names=AsyncMock(),
+        send_stickers_by_names=AsyncMock(),
     )
 
     await adapter._handle_event(

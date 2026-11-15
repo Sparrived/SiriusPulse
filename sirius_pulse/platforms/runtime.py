@@ -483,25 +483,11 @@ class EngineRuntime:
                 # engines whose registration hook is incomplete.
                 LOG.warning("注册 adapter 主动消息路由失败: %s", type(bridge).__name__, exc_info=True)
 
-        executor = getattr(self._engine, "_tool_executor", None)
-        if executor is not None:
-            executor.set_bridge(adapter_type, bridge)
-            LOG.info("平台 bridge 已注入 tool executor: %s → %s", adapter_type, type(bridge).__name__)
-        # 同时直接存储在引擎上，方便 plugin 直接取用
-        self._engine._adapter = bridge
-
-        # 将 adapter 注入到所有已加载 Plugin 实例的 ctx 中
-        # 定时任务（如 chat_analyzer 的每日分析）需要 adapter 来调用平台 API
-        plugin_registry = getattr(self._engine, "_plugin_registry", None)
-        if plugin_registry is not None:
-            count = 0
-            for name in list(plugin_registry.plugin_names):
-                instance = plugin_registry.get_instance(name)
-                if instance is not None and hasattr(instance, "_ctx") and instance._ctx is not None:
-                    instance._ctx.adapter = bridge
-                    count += 1
-            if count > 0:
-                LOG.info("平台 adapter 已注入 %d 个 Plugin 实例", count)
+        # 工具执行器、插件（定时任务要用 adapter 调平台 API）都从引擎拿平台桥接。
+        count = self._engine.bind_platform_bridge(adapter_type, bridge)
+        LOG.info("平台 bridge 已注入: %s → %s", adapter_type, type(bridge).__name__)
+        if count > 0:
+            LOG.info("平台 adapter 已注入 %d 个 Plugin 实例", count)
 
     def _plugins_dir(self) -> Path:
         """Resolve the shared plugin directory for this runtime.
@@ -869,7 +855,7 @@ class EngineRuntime:
             # Rebuilt engines are published only after their old counterpart has
             # been retired.  Adapters use this marker to reject late old events.
             try:
-                setattr(engine, "_runtime_retiring", False)
+                engine.runtime_retiring = False
             except Exception:
                 LOG.debug("引擎不支持 runtime retiring 标记", exc_info=True)
             self._engine = engine
@@ -881,7 +867,7 @@ class EngineRuntime:
                     try:
                         started = await self._plugin_executor.start_background_tasks(
                             running_check=lambda: bool(
-                                engine._bg_running and self._engine is engine
+                                engine.background_running and self._engine is engine
                             )
                         )
                         self._plugin_tasks_started = True
@@ -969,7 +955,7 @@ class EngineRuntime:
             # Stop adapters from admitting late events while the caller is
             # rebuilding and has not yet rebound them to the replacement.
             try:
-                setattr(engine, "_runtime_retiring", True)
+                engine.runtime_retiring = True
             except Exception:
                 LOG.debug("引擎不支持 runtime retiring 标记", exc_info=True)
             try:
@@ -1001,13 +987,10 @@ class EngineRuntime:
                 engine.stop_background_tasks()
             except Exception as exc:
                 LOG.warning("停止后台任务失败: %s", exc)
-            manager = getattr(engine, "_bg_tasks_mgr", None)
-            maintenance = getattr(manager, "notebook_maintenance", None)
-            if maintenance is not None:
+            wait_closed = getattr(engine, "wait_background_closed", None)
+            if callable(wait_closed):
                 try:
-                    cleanup_cancelled = (
-                        await _await_cleanup(maintenance.wait_closed()) or cleanup_cancelled
-                    )
+                    cleanup_cancelled = await _await_cleanup(wait_closed()) or cleanup_cancelled
                 except Exception as exc:
                     LOG.warning("等待聊天小本整理收尾失败: %s", type(exc).__name__)
             event_bus = getattr(engine, "event_bus", None)

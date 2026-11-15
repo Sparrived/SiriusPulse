@@ -512,6 +512,69 @@ class _EmotionalGroupChatEngineBase:
             return False
         return bool(is_admin)
 
+    # ── 平台层接口（见 platforms/engine_port.py 的 PlatformEngine / ManagedEngine）──
+    # 适配器与运行时只通过这些公开成员与引擎打交道，不再按名字读私有状态：
+    # 私有属性改名不会报错，只会让读取方悄悄拿到默认值。
+
+    @property
+    def runtime_retiring(self) -> bool:
+        """引擎正在被热重建替换：适配器据此不再收新消息、不再往外发。"""
+        return bool(self._runtime_retiring)
+
+    @runtime_retiring.setter
+    def runtime_retiring(self, value: bool) -> None:
+        self._runtime_retiring = bool(value)
+
+    def is_ready(self) -> bool:
+        """能否接收新消息（退役中的引擎不能）。"""
+        return not self._runtime_retiring
+
+    @property
+    def background_running(self) -> bool:
+        return bool(self._bg_running)
+
+    async def wait_background_closed(self) -> None:
+        """等后台任务里需要收尾的部分（聊天小本整理）真正结束。"""
+        maintenance = getattr(self._bg_tasks_mgr, "notebook_maintenance", None)
+        if maintenance is not None:
+            await maintenance.wait_closed()
+
+    def set_platform_self_id(self, platform_key: str, uid: str) -> None:
+        """记下她在某个平台上的账号（用于识别「在叫她」）。"""
+        if platform_key and uid:
+            self._bot_platform_uids[platform_key] = uid
+
+    def release_delayed_trigger(self, group_id: str, item_id: str) -> None:
+        """撤掉某条延迟回复的「已发触发」标记，让 ticker 之后能再叫它。"""
+        if item_id:
+            self._delayed_event_emitted.setdefault(group_id, set()).discard(item_id)
+
+    def record_assistant_message(self, **kwargs: Any) -> None:
+        """把平台确认已发出的内容写回历史（参数同 ``_record_assistant_message``）。"""
+        self._record_assistant_message(**kwargs)
+
+    async def send_stickers_by_names(
+        self, group_id: str, names: list[str], *, adapter: Any | None = None
+    ) -> dict[str, Any]:
+        return await self._send_stickers_by_names(group_id, names, adapter=adapter)
+
+    def bind_platform_bridge(self, adapter_type: str, bridge: Any) -> int:
+        """把平台桥接交给工具执行器与已加载的插件；返回拿到它的插件数。"""
+        if self._tool_executor is not None:
+            self._tool_executor.set_bridge(adapter_type, bridge)
+        # 插件直接从引擎取用当前平台桥接。
+        self._adapter = bridge
+        count = 0
+        registry = self._plugin_registry
+        if registry is not None:
+            for name in list(registry.plugin_names):
+                instance = registry.get_instance(name)
+                ctx = getattr(instance, "_ctx", None) if instance is not None else None
+                if ctx is not None:
+                    ctx.adapter = bridge
+                    count += 1
+        return count
+
     def set_plugin_runtime(
         self,
         *,

@@ -17,6 +17,9 @@ class _Engine:
         self.processed_participants = []
         self.observed: list[str] = []
 
+    def set_platform_self_id(self, platform_key, uid):
+        self._bot_platform_uids[platform_key] = uid
+
     async def process_message(self, *, message, participants, group_id):
         self.processed.append(message.speaker or "")
         self.processed_messages.append(message)
@@ -437,6 +440,9 @@ def _delivery_harness(tmp_path, *, gid="100", outcomes=("ok",), queue=None, enab
     engine._state_store = EngineStateStore(tmp_path)
     engine.tick_delayed_queue = tasks.tick_delayed_queue
     engine._delayed_event_emitted = {}
+    engine.release_delayed_trigger = lambda group_id, item_id: (
+        engine._delayed_event_emitted.setdefault(group_id, set()).discard(item_id)
+    )
     adapter = NapCatAdapter(
         "ws://example.invalid",
         work_path=tmp_path,
@@ -679,7 +685,7 @@ async def test_rich_payload_is_cached_before_io_and_fallback_retries_text_only(
             raw_text="# title\nbody", clean_text="# title\nbody", tool_calls=[], reply_references=[]
         )
     ]
-    engine._record_assistant_message = Mock()
+    engine.record_assistant_message = Mock()
 
     async def render(*args, **kwargs):
         assert (
@@ -706,14 +712,14 @@ async def test_rich_payload_is_cached_before_io_and_fallback_retries_text_only(
     elif render_outcome == "ok":
         assert item.status == "sent"
         assert socket.requests == []
-        engine._record_assistant_message.assert_called_once()
+        engine.record_assistant_message.assert_called_once()
     else:
         assert item.status == "pending"
-        engine._record_assistant_message.assert_not_called()
+        engine.record_assistant_message.assert_not_called()
         await adapter._handle_event(_delivery_event(item))
         assert item.status == "sent"
         assert len(socket.requests) == 3
-        engine._record_assistant_message.assert_called_once()
+        engine.record_assistant_message.assert_called_once()
     renderer.assert_awaited_once()
     engine.brain.chat.assert_awaited_once()
 

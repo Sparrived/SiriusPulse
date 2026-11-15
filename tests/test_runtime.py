@@ -73,12 +73,17 @@ def test_engine_runtime_plugin_config_cannot_relax_manifest_security(tmp_path):
 
 def test_engine_runtime_when_tool_bridge_has_routes_then_registers_proactive_destinations(tmp_path):
     registrations = []
+    bridges = []
 
     class Engine:
         _tool_executor = None
 
         def register_adapter(self, *args, **kwargs):
             registrations.append((args, kwargs))
+
+        def bind_platform_bridge(self, adapter_type, bridge):
+            bridges.append((adapter_type, bridge))
+            return 0
 
     class Adapter:
         def get_configured_group_ids(self):
@@ -103,7 +108,7 @@ def test_engine_runtime_when_tool_bridge_has_routes_then_registers_proactive_des
             },
         )
     ]
-    assert runtime._engine._adapter is adapter
+    assert bridges == [("custom", adapter)]
 
 
 def test_engine_runtime_when_work_path_is_persona_dir_then_loads_global_amkr_settings(tmp_path):
@@ -853,7 +858,7 @@ async def test_engine_runtime_reload_retires_and_closes_old_event_bus(tmp_path):
 
     await runtime.reload_engine()
 
-    assert engine._runtime_retiring is True
+    assert engine.runtime_retiring is True
     assert stopped == [True]
     event_bus.close.assert_awaited_once()
     assert runtime.engine is None

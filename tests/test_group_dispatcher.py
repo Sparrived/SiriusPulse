@@ -953,3 +953,112 @@ def test_a_message_only_waits_for_personas_that_are_in_its_group(
         assert (waited >= 0.25) is waits_for_beta
 
     asyncio.run(run())
+
+
+def _simulate_process_restart(db_path: Path) -> None:
+    """进程退出：内存里的协调状态全部丢失，只剩落盘的那部分。"""
+    from sirius_pulse.core import group_dispatcher
+
+    store = group_dispatcher._SHARED_STORES.pop(str(db_path.resolve()), None)
+    if store is not None:
+        store.conn.close()
+
+
+def test_a_reminder_interrupted_mid_send_is_not_resent_after_a_crash(tmp_path: Path):
+    """发送途中进程被杀：重启后它可能已经送达，必须按 uncertain 处理，不能重发。"""
+    clock = _Clock()
+    db_path = tmp_path / "dispatcher.db"
+    dispatcher = _dispatcher(db_path, clock, "alpha", "100")
+    event_id = "reminder:g1:wake-up"
+    decision = dispatcher.admit(
+        event_id=event_id, group_id="g1", sender_type="system", preferred_worker_id="alpha"
+    )
+    assert decision.granted
+    assert dispatcher.begin_delivery(decision.lease_id)  # 正在往 QQ 发
+
+    _simulate_process_restart(db_path)
+
+    restarted = _dispatcher(db_path, _Clock(clock.value + 5), "alpha", "100")
+    retry = restarted.admit(
+        event_id=event_id, group_id="g1", sender_type="system", preferred_worker_id="alpha"
+    )
+    assert not retry.granted
+    assert retry.reason == "event_uncertain"
+
+
+def test_a_delivered_reminder_stays_delivered_across_restarts_but_chat_state_does_not(
+    tmp_path: Path,
+):
+    clock = _Clock()
+    db_path = tmp_path / "dispatcher.db"
+    dispatcher = _dispatcher(db_path, clock, "alpha", "100")
+    reminder = dispatcher.admit(
+        event_id="reminder:g1:a", group_id="g1", sender_type="system", preferred_worker_id="alpha"
+    )
+    assert dispatcher.finish(reminder.lease_id, sent=True)
+    chat = dispatcher.admit(event_id="m1", group_id="g2")
+    assert chat.granted  # 普通聊天的租约只在内存里
+
+    _simulate_process_restart(db_path)
+
+    restarted = _dispatcher(db_path, _Clock(clock.value + 1), "alpha", "100")
+    again = restarted.admit(
+        event_id="reminder:g1:a", group_id="g1", sender_type="system", preferred_worker_id="alpha"
+    )
+    assert again.reason == "event_sent"
+    assert restarted.admit(event_id="m2", group_id="g2").granted, "旧进程的租约不该把群锁住"
+
+
+def test_receipts_in_an_old_dispatcher_file_are_carried_over(tmp_path: Path):
+    """旧版本把整套状态写在 dispatcher.db 里：升级后已送达 / 发送中的提醒都不能重发。"""
+    import sqlite3
+
+    db_path = tmp_path / "dispatcher.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE dispatcher_events (
+            event_id TEXT PRIMARY KEY, group_id TEXT, worker_id TEXT, lease_id TEXT,
+            status TEXT, reason TEXT, created_at REAL, updated_at REAL
+        );
+        INSERT INTO dispatcher_events VALUES
+            ('reminder:g1:sent', 'g1', 'alpha', 'l1', 'sent', '', 1, 1),
+            ('delayed:g1:half', 'g1', 'alpha', 'l2', 'sending', '', 1, 1);
+        """
+    )
+    legacy.commit()
+    legacy.close()
+
+    dispatcher = _dispatcher(db_path, _Clock(), "alpha", "100")
+
+    for event_id, reason in (
+        ("reminder:g1:sent", "event_sent"),
+        ("delayed:g1:half", "event_uncertain"),
+    ):
+        decision = dispatcher.admit(
+            event_id=event_id, group_id="g1", sender_type="system", preferred_worker_id="alpha"
+        )
+        assert decision.reason == reason
+
+
+def test_the_decision_comes_as_soon_as_every_persona_in_the_group_has_scored(tmp_path: Path):
+    """人都到齐就裁决，不必等满收集窗口，也不靠轮询。"""
+
+    async def run() -> None:
+        import time
+
+        clock = _Clock()
+        db_path = tmp_path / "dispatcher.db"
+        alpha = _dispatcher(db_path, clock, "alpha", "100", score_collection_seconds=1.0)
+        beta = _dispatcher(db_path, clock, "beta", "200", score_collection_seconds=1.0)
+
+        started = time.monotonic()
+        first, second = await asyncio.gather(
+            alpha.coordinate(event_id="m1", group_id="g1", base_score=0.4, should_reply=True),
+            beta.coordinate(event_id="m1", group_id="g1", base_score=0.9, should_reply=True),
+        )
+
+        assert time.monotonic() - started < 0.5
+        assert second.granted and not first.granted
+
+    asyncio.run(run())

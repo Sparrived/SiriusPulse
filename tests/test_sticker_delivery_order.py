@@ -39,7 +39,7 @@ async def test_napcat_delayed_delivery_sends_text_before_sticker(sticker_accepte
     emit = AsyncMock()
     adapter._engine = SimpleNamespace(
         tick_delayed_queue=AsyncMock(return_value=[result]),
-        _send_stickers_by_names=fake_send_stickers,
+        send_stickers_by_names=fake_send_stickers,
         event_bus=SimpleNamespace(emit=emit),
     )
     adapter._get_allowed_group_ids = lambda: ["100"]  # type: ignore[method-assign]
@@ -69,7 +69,7 @@ async def test_napcat_private_qq_sticker_effect_uses_canonical_private_target():
         targets.append(str(group_id))
         return {"success": True}
 
-    adapter._engine = SimpleNamespace(_send_stickers_by_names=fake_send_stickers)
+    adapter._engine = SimpleNamespace(send_stickers_by_names=fake_send_stickers)
 
     accepted = await adapter._deliver_proactive_payload(
         group_id="private_qq_200",
