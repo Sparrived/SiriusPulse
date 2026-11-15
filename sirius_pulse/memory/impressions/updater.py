@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
@@ -139,7 +140,8 @@ class PersonImpressionUpdater:
         if callable(preload):
             # 首次加载各群会读盘并补向量，放到线程里，别在印象任务里卡住聊天。
             await preload()
-        units = self._group_units()
+        # 汇总要读各群的全部单元（含退休的），放到线程里查库。
+        units = await asyncio.to_thread(self._group_units)
         plans: list[
             tuple[int, Any, PersonImpression | None, list[MemoryUnit], list[MemoryUnit]]
         ] = []

@@ -686,13 +686,13 @@ async def test_why_a_redacted_tool_failed_is_still_visible_in_telemetry(conversa
 
 @pytest.fixture
 def memory_conversation(conversation):
-    from sirius_pulse.memory.units import MemoryUnitFileStore, MemoryUnitManager
+    from sirius_pulse.memory.units import MemoryUnitStore, MemoryUnitManager
 
     chat = conversation
     manager = MemoryUnitManager(chat.root, embedding_client=None)
     chat.engine.memory_unit_manager = manager
     chat.people.memory_units = manager
-    return chat, MemoryUnitFileStore(chat.root)
+    return chat, MemoryUnitStore(chat.root)
 
 
 def _person_memory(unit_id: str, identity: str, summary: str, *, group: str = "g", **fields):
@@ -750,7 +750,7 @@ async def test_person_memory_query_selects_the_requested_topic_after_cold_load(
         _person_memory("alice-bread", "alice", "甲学习酸面包烘焙，练习天然酵种发酵。"),
     ]
     store.save("g", units)
-    before = {path: path.read_bytes() for path in store.base_dir.rglob("*") if path.is_file()}
+    before = _stored_rows(store)
     assert len(store.load("g", with_embeddings=False)) == 2
     memories = await _query_memories(chat, ref, person_id, query)
     assert memories["status"] == ("available" if expected else "empty"), memories
@@ -758,9 +758,22 @@ async def test_person_memory_query_selects_the_requested_topic_after_cold_load(
     expected_summaries = [unit.summary for unit in units if unit.unit_id in expected]
     assert [item["summary"] for item in memories["items"]] == expected_summaries
     assert all(item["scope"] == "group" for item in memories["items"])
-    assert before == {
-        path: path.read_bytes() for path in store.base_dir.rglob("*") if path.is_file()
-    }
+    assert before == _stored_rows(store), "只读查询不得改动任何记忆"
+
+
+def _stored_rows(store) -> tuple[list[tuple], list[tuple]]:
+    """记忆库里单元与向量两张表的完整内容，用来确认只读路径没有写库。"""
+    import sqlite3
+
+    conn = sqlite3.connect(store.db_path)
+    try:
+        units = conn.execute("SELECT * FROM memory_units ORDER BY group_id, unit_id").fetchall()
+        vectors = conn.execute(
+            "SELECT * FROM memory_unit_vectors ORDER BY group_id, unit_id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return units, vectors
 
 
 @pytest.mark.asyncio
@@ -908,11 +921,11 @@ async def test_user_scope_memory_is_readable_only_for_its_owner_not_other_partic
 @pytest.mark.asyncio
 @pytest.mark.parametrize("query", ["", "天文观星"])
 async def test_person_query_reports_unavailable_without_a_memory_manager(conversation, query):
-    from sirius_pulse.memory.units import MemoryUnitFileStore
+    from sirius_pulse.memory.units import MemoryUnitStore
 
     chat = conversation
     ref = chat.message("alice", "查查我之前的天文观星经历")
-    store = MemoryUnitFileStore(chat.root)
+    store = MemoryUnitStore(chat.root)
     store.save("g", [_person_memory("unconnected-memory", "alice", "甲曾经天文观星。")])
     memories = await _query_memories(chat, ref, chat.actor(ref), query)
     assert memories["status"] == "unavailable", memories
@@ -1131,7 +1144,7 @@ async def test_private_profile_and_visual_values_persist_but_not_in_general_logs
 
 def test_real_memory_initialization_injects_persisted_units_into_person_service(tmp_path):
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
-    from sirius_pulse.memory.units import MemoryUnitFileStore
+    from sirius_pulse.memory.units import MemoryUnitStore
     from sirius_pulse.models.persona import PersonaProfile
 
     database = PersonaDatabase(tmp_path / "persona.db")
@@ -1156,7 +1169,7 @@ def test_real_memory_initialization_injects_persisted_units_into_person_service(
         )
         person_id = engine.person_service.person_id_for_user("alice")
         assert person_id
-        MemoryUnitFileStore(tmp_path).save(
+        MemoryUnitStore(tmp_path).save(
             "g", [_person_memory("startup-camping", "alice", "甲在本群介绍了露营路线。")]
         )
         memories = engine.person_service.memory_summary(

@@ -12,7 +12,7 @@ from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.memory.basic.store import BasicMemoryFileStore
 from sirius_pulse.memory.search import MemorySearchService
 from sirius_pulse.memory.units.models import MemoryUnit
-from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.memory.units.store import MemoryUnitStore
 from sirius_pulse.tools.builtin import memory_search
 from sirius_pulse.tools.models import ToolInvocationContext
 
@@ -65,7 +65,7 @@ def _entry(
 
 
 def test_retired_current_group_unit_is_searchable(tmp_path: Path) -> None:
-    units = MemoryUnitFileStore(tmp_path)
+    units = MemoryUnitStore(tmp_path)
     units.save(
         "g1",
         [
@@ -90,7 +90,7 @@ def test_retired_current_group_unit_is_searchable(tmp_path: Path) -> None:
 
 
 def test_global_units_are_opt_in_and_never_expose_other_group_units(tmp_path: Path) -> None:
-    units = MemoryUnitFileStore(tmp_path)
+    units = MemoryUnitStore(tmp_path)
     units.save("g1", [_unit("u-current", "g1", "当前群的普通事实。")])
     units.save(
         "g2",
@@ -177,7 +177,7 @@ class _EngineContext:
 
 @pytest.mark.asyncio
 async def test_memory_search_tool_uses_trusted_group_and_returns_hits(tmp_path: Path) -> None:
-    units = MemoryUnitFileStore(tmp_path)
+    units = MemoryUnitStore(tmp_path)
     units.save("g1", [_unit("u1", "g1", "月白记得旧约定。")])
     archive = BasicMemoryFileStore(tmp_path)
     archive.append(_entry("e1", "g1", "约定要一起看月亮。"))

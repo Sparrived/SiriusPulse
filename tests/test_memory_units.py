@@ -6,9 +6,9 @@ import json
 from sirius_pulse.memory.basic.manager import BasicMemoryManager
 from sirius_pulse.memory.units import (
     MemoryUnit,
-    MemoryUnitFileStore,
     MemoryUnitGenerator,
     MemoryUnitManager,
+    MemoryUnitStore,
 )
 
 
@@ -151,7 +151,7 @@ def test_memory_unit_prompt_embeds_full_persona_setting():
 
 
 def test_memory_unit_store_round_trips(tmp_path):
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     unit = MemoryUnit(
         unit_id="mem_1",
         group_id="group_a",
@@ -211,9 +211,7 @@ def test_memory_unit_manager_loads_cross_group_persona_units_when_enabled(tmp_pa
 
 
 def test_manager_loads_legacy_inline_vectors_and_migrates_them(tmp_path):
-    """存量文件是向量内联的：加载后必须仍能召回，并把向量搬进 sidecar。"""
-    from sirius_pulse.memory.units.store import VECTORS_DIR_NAME
-
+    """存量文件是向量内联的旧 JSON：首次访问就导入 persona.db，向量一条不丢、仍能召回。"""
     base = tmp_path / "memory_units"
     base.mkdir(parents=True, exist_ok=True)
     (base / "group_a.json").write_text(
@@ -244,18 +242,16 @@ def test_manager_loads_legacy_inline_vectors_and_migrates_them(tmp_path):
     assert [unit.unit_id for unit in manager.retrieve("concise", group_id="group_a")] == [
         "mem_legacy"
     ]
-
-    raw = json.loads((base / "group_a.json").read_text(encoding="utf-8"))
-    assert "embedding" not in raw["units"][0], "旧格式必须已迁移"
-    assert raw["vector_file"]
-    assert list((base / VECTORS_DIR_NAME).glob("*.bin")), "向量必须已落进 sidecar"
+    assert not (base / "group_a.json").exists(), "原文件应已移进备份"
+    assert list((tmp_path / "backups" / "memory_units_json").glob("*/group_a.json"))
+    assert MemoryUnitStore(tmp_path).load("group_a")[0].embedding == [0.5] * 8
 
 
 def test_manager_loads_retired_units_without_their_vectors(tmp_path):
     """退休单元的向量没有检索价值，不该常驻内存——线上 90.6% 的向量属于它们。"""
-    from sirius_pulse.memory.units import MemoryUnitFileStore
+    from sirius_pulse.memory.units import MemoryUnitStore
 
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     active = MemoryUnit(
         unit_id="mem_active",
         group_id="group_a",
@@ -281,10 +277,10 @@ def test_manager_loads_retired_units_without_their_vectors(tmp_path):
 
     indexed = {unit.unit_id: unit for unit in manager._indexer.list_all()}
     assert indexed["mem_active"].embedding is not None
-    assert indexed["mem_retired"].embedding is None
+    assert "mem_retired" not in indexed, "常驻索引只放可注入单元"
 
     # 退休不删除：单元本身必须还在，且仍可从磁盘读回完整内容。
-    on_disk = MemoryUnitFileStore(tmp_path).load("group_a")
+    on_disk = MemoryUnitStore(tmp_path).load("group_a")
     assert [unit.unit_id for unit in on_disk] == ["mem_active", "mem_retired"]
     assert on_disk[1].embedding is not None
 

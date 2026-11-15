@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from sirius_pulse.memory.units import MemoryUnit, MemoryUnitFileStore, MemoryUnitManager
+from sirius_pulse.memory.units import MemoryUnit, MemoryUnitManager, MemoryUnitStore
 
 _PAST = "2020-01-01T00:00:00+00:00"
 
@@ -49,7 +49,7 @@ def test_retired_units_stay_on_disk_and_loadable(tmp_path, monkeypatch):
     manager.retire_overflow("group-a", manager.get_units_for_group("group-a"))
     manager._store.save("group-a", manager.get_units_for_group("group-a"))
 
-    on_disk = MemoryUnitFileStore(tmp_path).load("group-a")
+    on_disk = MemoryUnitStore(tmp_path).load("group-a")
     assert len(on_disk) == 3, "退休不得删除记忆单元"
     retired = [unit for unit in on_disk if not unit.should_prompt]
     assert [unit.unit_id for unit in retired] == ["mem-3"]
@@ -67,7 +67,7 @@ def test_expired_units_are_retired_but_retained(tmp_path):
     manager.ensure_group_loaded("group-a")
     assert manager.retrieve("评审会", group_id="group-a", top_k=5) == []
 
-    on_disk = MemoryUnitFileStore(tmp_path).load("group-a")
+    on_disk = MemoryUnitStore(tmp_path).load("group-a")
     assert [unit.unit_id for unit in on_disk] == ["mem-dead"]
     assert on_disk[0].should_prompt is False
 
@@ -130,10 +130,10 @@ def test_retired_unit_still_counts_as_an_existing_fact(tmp_path):
         unit.should_prompt = False
     writer._store.save("group-a", loaded)
 
-    # 新进程：常驻加载只带元数据，退休单元没有向量。
+    # 新进程：常驻索引只放可注入单元，退休单元及其向量都不进内存。
     fresh = MemoryUnitManager(tmp_path, embedding_client=_StubEmbedding())
     fresh.ensure_group_loaded("group-a")
-    assert {u.unit_id: u.embedding for u in fresh._indexer.list_all()}["mem-old"] is None
+    assert "mem-old" not in {u.unit_id for u in fresh._indexer.list_all()}
 
     # 语义等价但文字不同的新单元必须仍被认出是「已存在的事实」。
     asyncio.run(
@@ -145,7 +145,7 @@ def test_retired_unit_still_counts_as_an_existing_fact(tmp_path):
         )
     )
 
-    on_disk = MemoryUnitFileStore(tmp_path).load("group-a")
+    on_disk = MemoryUnitStore(tmp_path).load("group-a")
     assert len(on_disk) == 1, f"退休单元没有挡住重复事实: {[u.summary for u in on_disk]}"
 
 
@@ -192,9 +192,9 @@ def test_checkpoint_releases_retired_vectors_from_the_index(tmp_path):
     )
 
     indexed = {unit.unit_id: unit for unit in manager._indexer.list_all()}
-    assert indexed["mem-retired"].embedding is None, "退休向量必须离开内存索引"
+    assert "mem-retired" not in indexed, "退休单元（连同向量）必须离开内存索引"
     assert indexed["mem-active"].embedding is not None, "活跃单元仍要能语义检索"
 
     # 磁盘那一份必须原样保留：真人追溯与后续去重都依赖它。
-    on_disk = {unit.unit_id: unit for unit in MemoryUnitFileStore(tmp_path).load("group-a")}
+    on_disk = {unit.unit_id: unit for unit in MemoryUnitStore(tmp_path).load("group-a")}
     assert on_disk["mem-retired"].embedding is not None

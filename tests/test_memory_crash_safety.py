@@ -13,7 +13,7 @@ import pytest
 from sirius_pulse.core.engine_persistence import EnginePersistence, EngineStateStore
 from sirius_pulse.memory.basic import BasicMemoryFileStore, BasicMemoryManager
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
-from sirius_pulse.memory.units import MemoryUnit, MemoryUnitFileStore, MemoryUnitManager
+from sirius_pulse.memory.units import MemoryUnit, MemoryUnitManager, MemoryUnitStore
 from sirius_pulse.memory.units.deduplicator import DedupVerdict
 from sirius_pulse.memory.units.store import MemoryUnitStoreError
 from sirius_pulse.webui.memory_api import (
@@ -52,7 +52,7 @@ def _request(body: dict | None = None, *, match: dict | None = None):
 
 
 def _summaries(work_path: Path, group_id: str = "g1") -> dict[str, str]:
-    return {u.unit_id: u.summary for u in MemoryUnitFileStore(work_path).load(group_id)}
+    return {u.unit_id: u.summary for u in MemoryUnitStore(work_path).load(group_id)}
 
 
 # ---------------------------------------------------------------------------
@@ -129,52 +129,66 @@ def test_clean_restart_restores_nothing_extra(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# 单元文件读不出来时，绝不能拿「空」覆盖整个群
+# 记忆读不出来时，绝不能当成「没有记忆」，更不能拿「空」去覆盖
 # ---------------------------------------------------------------------------
 
 
-def test_a_corrupt_unit_file_is_kept_aside_instead_of_overwritten(tmp_path: Path):
-    store = MemoryUnitFileStore(tmp_path)
-    store.save("g1", [_unit("m1", "她养了一只猫")])
-    path = tmp_path / "memory_units" / "g1.json"
-    path.write_text('{"group_id": "g1", "units": [', encoding="utf-8")  # 断电留下的残文件
+def test_a_corrupt_legacy_unit_file_is_kept_aside_instead_of_lost(tmp_path: Path):
+    """升级前断电留下的半截 JSON：导不进来，但原样留进备份，其它群照常迁移。"""
+    legacy = tmp_path / "memory_units"
+    legacy.mkdir()
+    (legacy / "g1.json").write_text('{"group_id": "g1", "units": [', encoding="utf-8")
+    (legacy / "g2.json").write_text(
+        '{"group_id": "g2", "units": [{"unit_id": "m1", "summary": "她养了一只猫"}]}',
+        encoding="utf-8",
+    )
 
+    store = MemoryUnitStore(tmp_path)
     assert store.load("g1") == []
-    store.save("g1", [_unit("m2", "她喜欢下雨天")])
+    assert _summaries(tmp_path, "g2") == {"m1": "她养了一只猫"}
 
-    kept = list(path.parent.glob("g1.json.corrupt-*"))
+    kept = list((tmp_path / "backups" / "memory_units_json").glob("*/g1.json"))
     assert len(kept) == 1 and kept[0].read_text(encoding="utf-8").startswith('{"group_id"')
+    store.save("g1", [_unit("m2", "她喜欢下雨天")])
     assert _summaries(tmp_path) == {"m2": "她喜欢下雨天"}
 
 
-def test_a_file_that_failed_to_load_is_not_overwritten_once_readable_again(tmp_path: Path):
-    """读失败（如被杀软短暂占用）之后的「空」是假的：拿它写回会清空整组。"""
-    store = MemoryUnitFileStore(tmp_path)
-    store.save("g1", [_unit("m1", "她养了一只猫")])
-    path = tmp_path / "memory_units" / "g1.json"
-    good = path.read_bytes()
-    path.write_text("not json", encoding="utf-8")
-    assert store.load("g1") == []
-    path.write_bytes(good)  # 文件又能读了
+def _break_database(work_path: Path) -> bytes:
+    """把 persona.db 换成一个读不出来的文件（磁盘损坏、被别的程序覆盖）。"""
+    for suffix in ("-wal", "-shm"):
+        (work_path / f"persona.db{suffix}").unlink(missing_ok=True)
+    garbage = b"not a sqlite database" * 64
+    (work_path / "persona.db").write_bytes(garbage)
+    return garbage
+
+
+def test_an_unreadable_database_is_never_read_as_an_empty_group(tmp_path: Path):
+    MemoryUnitStore(tmp_path).save("g1", [_unit("m1", "她养了一只猫")])
+    garbage = _break_database(tmp_path)
 
     with pytest.raises(MemoryUnitStoreError):
-        store.save("g1", [_unit("m2", "她喜欢下雨天")])
+        MemoryUnitStore(tmp_path).load("g1")
 
-    assert _summaries(tmp_path) == {"m1": "她养了一只猫"}
+    # 聊天侧降级为本轮不召回，而不是报错；也不会把这个群标成「已加载、没有记忆」。
+    manager = MemoryUnitManager(tmp_path)
+    assert manager.retrieve("猫", group_id="g1") == []
+    assert "g1" not in manager._loaded_groups
+    with pytest.raises(MemoryUnitStoreError):
+        asyncio.run(manager.add_units("g1", [_unit("m2", "她喜欢下雨天")]))
+    assert (tmp_path / "persona.db").read_bytes() == garbage
 
 
 @pytest.mark.asyncio
-async def test_webui_refuses_to_add_a_unit_to_an_unreadable_group(tmp_path: Path):
-    MemoryUnitFileStore(tmp_path).save("g1", [_unit("m1", "她养了一只猫")])
-    path = tmp_path / "memory_units" / "g1.json"
-    path.write_text('{"group_id": "g1", "units": [', encoding="utf-8")
+async def test_webui_refuses_to_add_a_unit_when_memory_is_unreadable(tmp_path: Path):
+    MemoryUnitStore(tmp_path).save("g1", [_unit("m1", "她养了一只猫")])
+    garbage = _break_database(tmp_path)
 
     response = await api_persona_memory_units_post(
         _request({"group_id": "g1", "summary": "她喜欢下雨天"}), tmp_path
     )
 
     assert response.status == 503
-    assert path.read_text(encoding="utf-8") == '{"group_id": "g1", "units": ['
+    assert (tmp_path / "persona.db").read_bytes() == garbage
 
 
 # ---------------------------------------------------------------------------

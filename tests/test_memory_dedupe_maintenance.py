@@ -1,6 +1,6 @@
 import asyncio
 
-from sirius_pulse.memory.units import MemoryUnit, MemoryUnitManager
+from sirius_pulse.memory.units import MemoryUnit, MemoryUnitManager, MemoryUnitStore
 
 
 def _unit(unit_id, group_id, summary):
@@ -67,24 +67,27 @@ def test_apply_rejects_stale_report_without_changing_files(tmp_path):
     assert manager.get_units_for_group("group-a") == before
 
 
-def test_apply_rolls_back_all_groups_when_staged_replace_fails(tmp_path, monkeypatch):
+def test_apply_rolls_back_all_groups_when_a_group_write_fails(tmp_path, monkeypatch):
     manager = _manager(tmp_path)
     report = asyncio.run(manager.scan_duplicates(brain=_Brain(), model_name="memory-model"))
     before_a = manager.get_units_for_group("group-a")
     before_b = manager.get_units_for_group("group-b")
-    original = manager._store._replace_staged
+    original = manager._store._replace_group_rows
     calls = 0
 
-    def fail_second(staged, destination):
+    def fail_second(tx, group_id, units, replace_vectors):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise OSError("disk failed")
-        original(staged, destination)
+        original(tx, group_id, units, replace_vectors)
 
-    monkeypatch.setattr(manager._store, "_replace_staged", fail_second)
+    monkeypatch.setattr(manager._store, "_replace_group_rows", fail_second)
     result = asyncio.run(manager.apply_duplicate_report(report))
 
     assert result["status"] == "failed"
     assert manager.get_units_for_group("group-a") == before_a
     assert manager.get_units_for_group("group-b") == before_b
+    # 第一个分组的写入也必须随事务一起回滚，而不只是内存索引看起来没变。
+    fresh = MemoryUnitStore(tmp_path)
+    assert [u.unit_id for u in fresh.load("group-a")] == [u.unit_id for u in before_a]

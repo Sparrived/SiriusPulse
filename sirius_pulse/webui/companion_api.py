@@ -133,16 +133,15 @@ def _recent_conversation(persona_dir: Path, since: datetime) -> dict[str, Any]:
 
 
 def _memory_counts(persona_dir: Path, since: datetime) -> dict[str, int]:
-    from sirius_pulse.webui.memory_api import _load_memory_units_file, _memory_units_dir
+    from sirius_pulse.memory.units.store import MemoryUnitStore, MemoryUnitStoreError
 
-    total = 0
-    new = 0
-    units_dir = _memory_units_dir(persona_dir)
-    for path in units_dir.glob("*.json") if units_dir.is_dir() else []:
-        _, units = _load_memory_units_file(path)
-        total += len(units)
-        new += sum(1 for unit in units if (_parse_ts(unit.get("created_at")) or since) > since)
-    return {"total": total, "new": new}
+    try:
+        stamps = MemoryUnitStore(persona_dir).created_at_values()
+    except MemoryUnitStoreError:
+        LOG.debug("读取记忆单元失败: %s", persona_dir, exc_info=True)
+        stamps = []
+    new = sum(1 for stamp in stamps if (_parse_ts(stamp) or since) > since)
+    return {"total": len(stamps), "new": new}
 
 
 def _recent_episodes(persona_dir: Path, since: datetime) -> list[dict[str, Any]]:

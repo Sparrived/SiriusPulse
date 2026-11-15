@@ -20,7 +20,7 @@ from typing import Any
 
 from sirius_pulse.memory.basic.models import BasicMemoryEntry
 from sirius_pulse.memory.units.models import MemoryUnit
-from sirius_pulse.memory.units.store import MemoryUnitFileStore
+from sirius_pulse.memory.units.store import MemoryUnitStore
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ class MemorySearchService:
         end: datetime | None,
         user_id: str,
     ) -> list[dict[str, Any]]:
-        store = MemoryUnitFileStore(self.work_path)
+        store = MemoryUnitStore(self.work_path)
         candidates: list[MemoryUnit] = list(store.load(group_id, with_embeddings=False))
         if include_global:
             for other_group in store.list_group_ids():

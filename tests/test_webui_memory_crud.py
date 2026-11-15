@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sirius_pulse.memory.units import MemoryUnit, MemoryUnitFileStore
+from sirius_pulse.memory.units import MemoryUnit, MemoryUnitStore
 from sirius_pulse.webui.memory_api import (
     api_persona_memory_dedupe_apply,
     api_persona_memory_dedupe_scan,
@@ -102,7 +102,7 @@ async def test_editing_a_unit_keeps_the_groups_vectors(tmp_path):
     线上向量以独立 sidecar 存放。WebUI 若在写回时丢掉 ``vector_file`` 引用，整组
     单元就会失去语义检索能力，而单元看起来「一切正常」——静默失效。
     """
-    store = MemoryUnitFileStore(tmp_path)
+    store = MemoryUnitStore(tmp_path)
     keep = MemoryUnit(
         unit_id="mem-keep",
         group_id="group-a",
@@ -127,7 +127,7 @@ async def test_editing_a_unit_keeps_the_groups_vectors(tmp_path):
     )
 
     assert response.status == 200
-    reloaded = {unit.unit_id: unit for unit in MemoryUnitFileStore(tmp_path).load("group-a")}
+    reloaded = {unit.unit_id: unit for unit in MemoryUnitStore(tmp_path).load("group-a")}
     assert reloaded["mem-keep"].embedding == [0.5] * 8, "未被编辑的单元必须保住向量"
     assert reloaded["mem-edit"].summary == "Alice asked about the deployment."
     # 文本变了，旧向量必须作废（否则过期向量会参与语义检索），但不能影响别的单元。
