@@ -8,7 +8,6 @@ import time
 from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
-from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.tools import cron_tasks
 from sirius_pulse.tools.builtin._internal import (
     _bash_background,
@@ -104,18 +103,9 @@ TOOL_META = {
 
 
 def create_background_tasks(ctx: Any) -> list[Any]:
-    owner = _bash_background.owner_key(ctx.get_data_store("bash"))
-
-    async def _background_tick() -> None:
-        await _bash_background.process_once(ctx, owner)
-
     return [
         *_bash_cron.create_background_tasks(ctx, run),
-        BackgroundTaskSpec(
-            name="bash_background_jobs",
-            interval_seconds=_bash_background.TICK_SECONDS,
-            task_func=_background_tick,
-        ),
+        _bash_background.due_job_kind(ctx, ctx.get_data_store("bash")),
     ]
 
 
@@ -176,7 +166,8 @@ async def run(
         if cron_request is not None:
             if data_store is None:
                 return {"success": False, "error": "crontab 需要可持久化的 Bash 数据存储"}
-            return _bash_cron.handle_request(
+            return await asyncio.to_thread(
+                _bash_cron.handle_request,
                 cron_request,
                 cwd=cwd_path,
                 data_store=data_store,
@@ -356,7 +347,7 @@ async def _handle_timeout(
             caller_is_developer=bool(caller is not None and caller.caller_is_developer),
             self_initiated=bool(caller is not None and caller.self_initiated),
         )
-        _bash_background.register(job)
+        _bash_background.register(job, data_store)
         partial = job.output_tail(output_limit)
         text = (
             f"命令运行超过 {timeout:g} 秒，已转入后台继续执行，任务 ID：{task_id}。"

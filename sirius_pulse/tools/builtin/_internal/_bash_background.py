@@ -2,15 +2,18 @@
 
 前台等不完的命令不再被直接杀掉。``bash`` 工具在超时那一刻把进程交给这里登记，
 立刻给模型一个 ``bash_xxxxxxxx`` 任务 ID；进程继续跑，输出一直写在
-``runtime/bg/<id>.log``。人格的后台轮询（:func:`process_once`）发现进程结束后，
-像生图那样把结果回调给 Agent，恢复一轮内部工作回合。
+``runtime/bg/<id>.log``。每个后台命令在 ``persona.db`` 的到期任务表里有一行
+（``kind = bash_background``）：还在跑或结果还没交回时每隔两秒到期一次，统一的 ticker
+到点调 :func:`process_once`，发现进程结束后像生图那样把结果回调给 Agent，恢复一轮
+内部工作回合；没有后台命令时这一类完全不醒。
 
 几条约束：
 
 - 进程放在独立进程组里，停止时整组结束，管道和子进程不会残留；
 - 每个后台任务都有最长存活时间，到点整组结束，免得忘了的命令一直占资源；
-- 登记表在内存里、按人格隔离（同一进程跑多个人格）；进程本身也活不过重启，
-  所以没有必要落盘。人格卸载时会结束它名下所有后台进程；
+- 进程句柄在内存里、按人格隔离（同一进程跑多个人格）；表里那一行只是它的描述，
+  供 ``background_task`` 列出和查找。进程活不过重启，重启后表里还标着运行中的
+  记为「被中断」。人格卸载时会结束它名下所有后台进程；
 - 被主动停止的任务不再回调——停的人已经知道结果了。
 """
 
@@ -29,11 +32,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from sirius_pulse.scheduling.due_jobs import DueJobBoard, DueJobKind, board_for_store
 from sirius_pulse.tools.builtin._internal import _bash_runtime
 
 logger = logging.getLogger(__name__)
 
 TASK_PREFIX = "bash_"
+KIND = "bash_background"
+INTERRUPTED = "interrupted"
 DEFAULT_MAX_BACKGROUND_JOBS = 3
 DEFAULT_MAX_BACKGROUND_SECONDS = 1800.0
 TICK_SECONDS = 2.0
@@ -113,6 +119,110 @@ class BashJob:
 
 
 _jobs: dict[str, BashJob] = {}
+#: 每个人格（owner）的到期任务表；登记第一个后台命令时接上。
+_boards: dict[str, DueJobBoard] = {}
+
+
+def due_job_kind(ctx: Any, data_store: Any) -> DueJobKind:
+    """交给统一 ticker 的处理方式：有后台命令在跑或待回调时每两秒看一次。"""
+    owner = owner_key(data_store)
+    attach(owner, data_store)
+
+    async def _handle() -> None:
+        await process_once(ctx, owner)
+
+    async def _recover() -> None:
+        await asyncio.to_thread(recover_interrupted, owner)
+
+    return DueJobKind(
+        kind=KIND,
+        handler=_handle,
+        data_store=data_store,
+        retry_seconds=TICK_SECONDS,
+        on_start=_recover,
+        name="bash_background_jobs",
+    )
+
+
+def attach(owner: str, data_store: Any) -> DueJobBoard | None:
+    """记下这个人格的到期任务表；存储不在人格目录里（测试替身）时只留在内存。"""
+    board = _boards.get(owner)
+    if board is not None:
+        return board
+    try:
+        board = board_for_store(data_store)
+    except (OSError, ValueError):
+        return None
+    _boards[owner] = board
+    return board
+
+
+def recover_interrupted(owner: str) -> int:
+    """上个进程留下、标着运行中的后台命令：进程已经不在了，记为被中断，不再回调。"""
+    board = _boards.get(owner)
+    if board is None:
+        return 0
+    stale = [
+        job
+        for job in board.jobs(KIND)
+        if job.id not in _jobs and (job.payload.get("status") == RUNNING or job.due_at is not None)
+    ]
+    for job in stale:
+        board.patch(
+            job.id,
+            {"status": INTERRUPTED, "callback_state": "skipped", "finished_at": _now_iso()},
+            due_at=None,
+        )
+    return len(stale)
+
+
+def list_rows(data_store: Any) -> list[dict[str, Any]]:
+    """表里该人格的后台命令；还在内存里的用实时状态。"""
+    owner = owner_key(data_store)
+    board = attach(owner, data_store)
+    if board is None:
+        return [job.describe() for job in list_jobs(owner)]
+    rows = []
+    for row in board.jobs(KIND):
+        live = get(owner, row.id)
+        rows.append(live.describe() if live is not None else describe_row(row.payload))
+    return rows
+
+
+def describe_row(payload: dict[str, Any]) -> dict[str, Any]:
+    """表里记下的描述（进程已不在内存里时用）。"""
+    keys = (
+        "task_id",
+        "kind",
+        "status",
+        "command",
+        "cwd",
+        "started_at",
+        "elapsed_seconds",
+        "returncode",
+        "finished_at",
+        "log_path",
+        "group_id",
+    )
+    described = {key: payload.get(key) for key in keys}
+    described["kind"] = "bash"
+    described["command"] = str(described.get("command") or "")
+    described["elapsed_seconds"] = float(described.get("elapsed_seconds") or 0.0)
+    return described
+
+
+def _sync(job: BashJob) -> None:
+    """把内存里的状态写回表里那一行；还要再看的，两秒后到期。"""
+    board = _boards.get(job.owner)
+    if board is None:
+        return
+    payload = {
+        **job.describe(),
+        "callback_state": job.callback_state,
+        "callback_attempts": job.callback_attempts,
+    }
+    watching = job.state == RUNNING or job.callback_state == "pending"
+    board.put(KIND, job.id, payload, due_at=time.time() + TICK_SECONDS if watching else None)
 
 
 def owner_key(data_store: Any) -> str:
@@ -163,8 +273,11 @@ def spawn(
         )
 
 
-def register(job: BashJob) -> None:
+def register(job: BashJob, data_store: Any = None) -> None:
     _jobs[job.id] = job
+    if data_store is not None:
+        attach(job.owner, data_store)
+    _sync(job)
     _prune(job.owner)
 
 
@@ -226,6 +339,7 @@ async def stop(owner: str, task_id: str) -> BashJob | None:
         _finish(job, STOPPED)
         # 停的人已经知道结果，不再回调。
         job.callback_state = "skipped"
+        await asyncio.to_thread(_sync, job)
         logger.info("后台 Bash 任务已按要求停止: %s", job.id)
     return job
 
@@ -245,6 +359,7 @@ def kill_all(owner: str) -> None:
             pass
         _finish(job, STOPPED)
         job.callback_state = "skipped"
+        _sync(job)
 
 
 def _finish(job: BashJob, state: str) -> None:
@@ -270,15 +385,24 @@ async def refresh(owner: str) -> None:
 
 async def process_once(ctx: Any, owner: str) -> None:
     """后台轮询一次：刷新状态，最多把一个结束的任务回调给 Agent。"""
-    await refresh(owner)
-    for job in list_jobs(owner):
-        if job.state not in {EXITED, EXPIRED} or job.callback_state != "pending":
-            continue
-        if not job.group_id:
-            job.callback_state = "skipped"
-            continue
-        if await _deliver(ctx, job):
-            return
+    try:
+        await refresh(owner)
+        for job in list_jobs(owner):
+            if job.state not in {EXITED, EXPIRED} or job.callback_state != "pending":
+                continue
+            if not job.group_id:
+                job.callback_state = "skipped"
+                continue
+            if await _deliver(ctx, job):
+                return
+    finally:
+        jobs = list_jobs(owner)
+
+        def _sync_all() -> None:
+            for job in jobs:
+                _sync(job)
+
+        await asyncio.to_thread(_sync_all)
 
 
 async def _deliver(ctx: Any, job: BashJob) -> bool:
@@ -348,8 +472,11 @@ def _prune(owner: str) -> None:
         for job in list_jobs(owner)
         if job.finished and job.callback_state not in {"pending", "running"}
     ]
+    board = _boards.get(owner)
     for job in done[:-_MAX_RETAINED_FINISHED] if len(done) > _MAX_RETAINED_FINISHED else []:
         _jobs.pop(job.id, None)
+        if board is not None:
+            board.delete(job.id)
         try:
             job.log_path.unlink(missing_ok=True)
         except OSError:

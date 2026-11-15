@@ -11,7 +11,9 @@
   免得她一次次把自己叫醒空转；
 - 查看与取消走 ``background_task``（ID 形如 ``wake_xxxxxxxx``）。
 
-唤醒存在本工具的数据存储里（``tool_data/wake_me.json``），后台心跳每隔十几秒检查一次。
+唤醒存在人格 ``persona.db`` 的到期任务表里（``kind = wake_me``，见
+:mod:`sirius_pulse.scheduling.due_jobs`），到点由统一的 ticker 叫醒；旧版本
+``tool_data/wake_me.json`` 里的记录在第一次读表时自动迁移过来。
 """
 
 from __future__ import annotations
@@ -23,16 +25,19 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.life.clock import is_quiet_hours, to_local
+from sirius_pulse.scheduling.due_jobs import DueJobBoard, DueJobKind, board_for_store
 from sirius_pulse.tools.builtin.reminder import parse_local_time
 from sirius_pulse.tools.models import ToolInvocationContext
 
 logger = logging.getLogger(__name__)
 
 TASK_PREFIX = "wake_"
-_STORE_KEY = "wakes"
-_TICK_SECONDS = 15.0
+KIND = "wake_me"
+#: 旧版本 JSON 存储里的键，只用于迁移。
+_LEGACY_KEY = "wakes"
+#: 到点了却没叫成（会话正忙、她在睡、回合失败）时，隔多久再试。
+_RETRY_SECONDS = 15.0
 _MIN_DELAY = timedelta(minutes=1)
 _MAX_DELAY = timedelta(days=7)
 #: 进程停过、或者一直在等她醒：晚了这么久还没叫成就记为错过。
@@ -193,8 +198,7 @@ def run(
             ),
             "attempts": 0,
         }
-        wakes.append(wake)
-        _store(data_store, wakes)
+        _board(data_store).put(KIND, wake["id"], wake, due_at=due)
     return {
         "success": True,
         "text_blocks": [
@@ -227,27 +231,38 @@ def _due_time(in_minutes: Any, at: Any, now: datetime) -> datetime:
 # ---------------------------------------------------------------------------
 
 
-def create_background_tasks(ctx: Any) -> list[BackgroundTaskSpec]:
+def create_background_tasks(ctx: Any) -> list[DueJobKind]:
     data_store = ctx.get_data_store("wake_me")
     recover_interrupted(data_store)
 
-    async def _tick() -> None:
-        await deliver_due(ctx, data_store)
+    async def _handle() -> None:
+        # 一次叫一个；同一时刻到点的几个，叫完一个接着叫下一个。
+        while await deliver_due(ctx, data_store) == DONE:
+            pass
 
-    return [BackgroundTaskSpec(name="wake_me_due", interval_seconds=_TICK_SECONDS, task_func=_tick)]
+    return [
+        DueJobKind(
+            kind=KIND,
+            handler=_handle,
+            data_store=data_store,
+            retry_seconds=_RETRY_SECONDS,
+            name="wake_me_due",
+        )
+    ]
 
 
 def recover_interrupted(data_store: Any) -> int:
     """进程重启时还在「叫醒中」的：那一轮可能已经做了事，不再重跑，记为中断。"""
     with _guard(data_store):
-        _refresh(data_store)
-        wakes = _load(data_store)
-        stuck = [w for w in wakes if w.get("status") == WAKING]
+        board = _board(data_store)
+        stuck = [w for w in board.payloads(KIND) if w.get("status") == WAKING]
         for wake in stuck:
-            wake["status"] = INTERRUPTED
-            wake["finished_at"] = datetime.now(timezone.utc).isoformat()
-        if stuck:
-            _store(data_store, wakes)
+            _patch(
+                board,
+                str(wake.get("id")),
+                status=INTERRUPTED,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
     return len(stuck)
 
 
@@ -257,38 +272,7 @@ async def deliver_due(ctx: Any, data_store: Any, now: datetime | None = None) ->
     返回这次叫的那个唤醒的新状态（还要再叫时是 ``pending``）；没有要叫的返回 ``None``。
     """
     current = now or datetime.now(timezone.utc)
-    with _guard(data_store):
-        _refresh(data_store)
-        wakes = _load(data_store)
-        changed = False
-        target: dict[str, Any] | None = None
-        asleep: bool | None = None
-        for wake in sorted(wakes, key=lambda w: str(w.get("due_at"))):
-            if wake.get("status") != PENDING:
-                continue
-            due = _parse(wake.get("due_at"))
-            if due is None or due > current:
-                continue
-            if current - due > _MISSED_AFTER:
-                wake["status"] = MISSED
-                wake["finished_at"] = current.isoformat()
-                changed = True
-                logger.warning("唤醒错过了时间，不再补叫: %s", wake.get("id"))
-                continue
-            if wake.get("self_initiated"):
-                if asleep is None:
-                    asleep = _asleep(ctx, current)
-                if asleep:
-                    continue
-            target = wake
-            break
-        if target is not None:
-            target["status"] = WAKING
-            changed = True
-        if changed:
-            data_store.set(_STORE_KEY, wakes)
-    if changed:
-        await asyncio.to_thread(data_store.save)
+    target = await asyncio.to_thread(_claim_due, ctx, data_store, current)
     if target is None:
         return None
 
@@ -298,25 +282,45 @@ async def deliver_due(ctx: Any, data_store: Any, now: datetime | None = None) ->
     except asyncio.CancelledError:
         # 关停打断：已经动过工具就不再重跑，没动过的下次照叫。
         _settle(data_store, target, INTERRUPTED if tools_ran[0] else PENDING, None)
-        data_store.save()
         raise
-    _settle(data_store, target, status, attempts)
-    await asyncio.to_thread(data_store.save)
+    await asyncio.to_thread(_settle, data_store, target, status, attempts)
     return status
 
 
-def _settle(data_store: Any, target: dict[str, Any], status: str, attempts: int | None) -> None:
+def _claim_due(ctx: Any, data_store: Any, current: datetime) -> dict[str, Any] | None:
+    """挑出最早到点、现在能叫的一个，标成「叫醒中」；顺手把晚太久的记为错过。"""
     with _guard(data_store):
-        wakes = _load(data_store)
-        for wake in wakes:
-            if wake.get("id") != target.get("id"):
+        board = _board(data_store)
+        asleep: bool | None = None
+        for wake in sorted(board.payloads(KIND), key=lambda w: str(w.get("due_at"))):
+            if wake.get("status") != PENDING:
                 continue
-            wake["status"] = status
-            if attempts is not None:
-                wake["attempts"] = attempts
-            if status != PENDING:
-                wake["finished_at"] = datetime.now(timezone.utc).isoformat()
-        _store(data_store, wakes, save=False)
+            due = _parse(wake.get("due_at"))
+            if due is None or due > current:
+                continue
+            wake_id = str(wake.get("id"))
+            if current - due > _MISSED_AFTER:
+                _patch(board, wake_id, status=MISSED, finished_at=current.isoformat())
+                logger.warning("唤醒错过了时间，不再补叫: %s", wake_id)
+                continue
+            if wake.get("self_initiated"):
+                if asleep is None:
+                    asleep = _asleep(ctx, current)
+                if asleep:
+                    continue
+            _patch(board, wake_id, status=WAKING)
+            return {**wake, "status": WAKING}
+    return None
+
+
+def _settle(data_store: Any, target: dict[str, Any], status: str, attempts: int | None) -> None:
+    fields: dict[str, Any] = {"status": status}
+    if attempts is not None:
+        fields["attempts"] = attempts
+    if status != PENDING:
+        fields["finished_at"] = datetime.now(timezone.utc).isoformat()
+    with _guard(data_store):
+        _patch(_board(data_store), str(target.get("id")), **fields)
 
 
 async def _wake(
@@ -382,8 +386,7 @@ def _asleep(ctx: Any, now: datetime) -> bool:
 
 def list_wakes(data_store: Any) -> list[dict[str, Any]]:
     with _guard(data_store):
-        _refresh(data_store)
-        return [dict(w) for w in _load(data_store)]
+        return _load(data_store)
 
 
 def describe(wake: dict[str, Any]) -> dict[str, Any]:
@@ -402,18 +405,20 @@ def describe(wake: dict[str, Any]) -> dict[str, Any]:
 def cancel(data_store: Any, wake_id: str) -> dict[str, Any] | None:
     """取消一个还没叫的唤醒；返回取消后的描述，找不到返回 None。"""
     with _guard(data_store):
-        _refresh(data_store)
-        wakes = _load(data_store)
-        for wake in wakes:
-            if wake.get("id") != wake_id:
-                continue
-            if wake.get("status") == PENDING:
-                wake["status"] = CANCELLED
-                wake["finished_at"] = datetime.now(timezone.utc).isoformat()
-                _store(data_store, wakes)
-                return {**describe(wake), "stopped": True}
-            return {**describe(wake), "stopped": False}
-    return None
+        board = _board(data_store)
+        job = board.get(wake_id)
+        if job is None or job.kind != KIND:
+            return None
+        wake = job.payload
+        if wake.get("status") == PENDING:
+            cancelled = _patch(
+                board,
+                wake_id,
+                status=CANCELLED,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            return {**describe(cancelled or wake), "stopped": True}
+        return {**describe(wake), "stopped": False}
 
 
 # ---------------------------------------------------------------------------
@@ -422,25 +427,41 @@ def cancel(data_store: Any, wake_id: str) -> dict[str, Any] | None:
 
 
 def _refresh(data_store: Any) -> None:
+    """读回磁盘上的最新配置（上限可能在 WebUI 里改过）。"""
     reload_if_changed = getattr(data_store, "reload_if_changed", None)
     if callable(reload_if_changed):
         reload_if_changed()
 
 
+def _board(data_store: Any) -> DueJobBoard:
+    """该人格的到期任务表；旧 JSON 里的唤醒顺手迁过来。"""
+    board = board_for_store(data_store)
+    board.import_legacy(KIND, data_store, _LEGACY_KEY, _next_check)
+    return board
+
+
+def _next_check(wake: dict[str, Any]) -> datetime | None:
+    """表里的 ``due_at``：还没叫的到点时刻，其余不用再看。"""
+    return _parse(wake.get("due_at")) if wake.get("status") == PENDING else None
+
+
 def _load(data_store: Any) -> list[dict[str, Any]]:
-    raw = data_store.get(_STORE_KEY, [])
-    return [dict(item) for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+    return _board(data_store).payloads(KIND)
 
 
-def _store(data_store: Any, wakes: list[dict[str, Any]], *, save: bool = True) -> None:
-    finished = [w for w in wakes if w.get("status") not in {PENDING, WAKING}]
-    overflow = len(finished) - _MAX_RETAINED_FINISHED
-    if overflow > 0:
-        drop = {id(w) for w in finished[:overflow]}
-        wakes = [w for w in wakes if id(w) not in drop]
-    data_store.set(_STORE_KEY, wakes)
-    if save:
-        data_store.save()
+def _patch(board: DueJobBoard, wake_id: str, **fields: Any) -> dict[str, Any] | None:
+    """改一条并按新状态改下次到点时间；结束的旧记录只留最近若干条。"""
+    with board.transaction():
+        job = board.get(wake_id)
+        if job is None or job.kind != KIND:
+            return None
+        updated = board.patch(wake_id, fields, due_at=_next_check({**job.payload, **fields}))
+        finished = [
+            w for w in board.jobs(KIND) if w.payload.get("status") not in {PENDING, WAKING}
+        ]
+        for old in finished[: max(0, len(finished) - _MAX_RETAINED_FINISHED)]:
+            board.delete(old.id)
+    return updated.payload if updated is not None else None
 
 
 def _config_int(data_store: Any, key: str, default: int, low: int, high: int) -> int:
