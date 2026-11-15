@@ -31,7 +31,9 @@ _MONTH_NAMES = {
         start=1,
     )
 }
-_WEEKDAY_NAMES = {name: index for index, name in enumerate(("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"))}
+_WEEKDAY_NAMES = {
+    name: index for index, name in enumerate(("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"))
+}
 _FIELD_NAMES: dict[int, dict[str, int]] = {3: _MONTH_NAMES, 4: _WEEKDAY_NAMES}
 #: 找下一次触发时最多往后看几天；「2 月 31 日」这种永远不会到的表达式到此为止。
 _SEARCH_DAYS = 366 * 5
@@ -75,9 +77,7 @@ class _Schedule:
 
     def matches(self, moment: datetime) -> bool:
         return (
-            moment.minute in self.minutes
-            and moment.hour in self.hours
-            and self.matches_day(moment)
+            moment.minute in self.minutes and moment.hour in self.hours and self.matches_day(moment)
         )
 
 

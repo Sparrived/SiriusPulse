@@ -250,11 +250,11 @@ class _Harness:
         )
 
     async def tick(self):
-        await self.spec.task_func()
+        await self.spec.handler()
 
     def jobs(self):
-        return ToolDataStore(self.executor.get_data_store("image_generate").store_path).get(
-            "jobs", []
+        return image_generate._load_jobs(
+            ToolDataStore(self.executor.get_data_store("image_generate").store_path)
         )
 
     def job(self, index=0):
@@ -438,14 +438,15 @@ async def test_completed_state_write_failure_never_replays_callback_side_effects
     ]
     await harness.submit("画一只猫")
     store = harness.executor.get_data_store("image_generate")
-    save = store.save
+    board = image_generate._board(store)
+    patch = board.patch
 
-    def fail_completion_write():
-        if any(job.get("callback_state") == "completed" for job in store.get("jobs", [])):
-            raise OSError("disk unavailable at callback commit")
-        save()
+    def fail_completion_write(job_id, fields=None, **kwargs):
+        if (fields or {}).get("callback_state") == "completed":
+            raise sqlite3.OperationalError("disk I/O error at callback commit")
+        return patch(job_id, fields, **kwargs)
 
-    monkeypatch.setattr(store, "save", fail_completion_write)
+    monkeypatch.setattr(board, "patch", fail_completion_write)
     await harness.tick()
     assert harness.job()["callback_state"] == "running"
     assert harness.job()["callback_unsafe"] is True
@@ -454,7 +455,7 @@ async def test_completed_state_write_failure_never_replays_callback_side_effects
     await harness.tick()
     assert len(harness.platform.requests) == 1
     assert len(harness.provider.requests) == count
-    monkeypatch.setattr(store, "save", save)
+    monkeypatch.setattr(board, "patch", patch)
     await harness.restart()
     await harness.tick()
     assert harness.job()["callback_state"] == "uncertain"
@@ -504,8 +505,7 @@ async def test_self_initiated_callback_does_not_gain_delivery_permission(harness
     store = harness.executor.get_data_store("image_generate")
     jobs = harness.jobs()
     jobs[0]["self_initiated"] = True
-    store.set("jobs", jobs)
-    store.save()
+    image_generate._save_jobs(store, jobs)
     harness.provider.steps = [
         lambda _request: _call(
             "group_file_exec", {"action": "image", "image_path": harness.job()["image_path"]}
@@ -612,8 +612,7 @@ async def test_self_initiated_callback_has_no_midway_speaking_channel(harness):
     store = harness.executor.get_data_store("image_generate")
     jobs = harness.jobs()
     jobs[0]["self_initiated"] = True
-    store.set("jobs", jobs)
-    store.save()
+    image_generate._save_jobs(store, jobs)
     internal = "这张猫只留作自己的素材。"
     harness.provider.steps = [
         _call("send_midway_msg", {"message": "我画好了一只猫。"}),
@@ -663,8 +662,7 @@ async def test_legacy_callback_cannot_resend_original_artifact_but_may_send_new_
         notify_turn_done=True,
         result_text="旧通知绝不能补发",
     )
-    store.set("jobs", [job])
-    store.save()
+    image_generate._save_jobs(store, [job])
     harness.provider.steps = [
         _call(
             "group_file_exec", {"action": "image", "image_path": path_prefix + job["image_path"]}
@@ -755,3 +753,21 @@ def test_engine_context_signatures_bind_actual_image_tool_keyword_arguments():
                 **{keyword.arg: None for keyword in call.keywords if keyword.arg},
             )
         assert callable(getattr(ToolEngineContext, name, None))
+
+
+@pytest.mark.asyncio
+async def test_a_submitted_image_is_drawn_by_the_engines_shared_ticker_without_polling(harness):
+    """引擎只起一个到期任务 ticker；提交生图会立刻唤醒它，不用等哪个轮询间隔。"""
+    ticker = harness.engine._passive_tool_tasks.get("due_jobs")
+    assert ticker is not None and not ticker.done()
+    assert "image_generate_jobs" not in harness.engine._passive_tool_tasks
+    harness.engine._bg_running = True
+    try:
+        await harness.submit("画一只猫")
+        for _ in range(100):
+            if harness.job()["status"] != "pending":
+                break
+            await asyncio.sleep(0.02)
+        assert harness.job()["status"] in {"running", "done"}
+    finally:
+        harness.engine._bg_running = False

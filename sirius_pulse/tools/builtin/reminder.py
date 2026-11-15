@@ -155,7 +155,9 @@ async def run(
             now=current,
         )
     if action == "list":
-        pending = [r for r in await asyncio.to_thread(_load, data_store) if _pending_in(r, group_id)]
+        pending = [
+            r for r in await asyncio.to_thread(_load, data_store) if _pending_in(r, group_id)
+        ]
         if not pending:
             return _reply("这个聊天里没有待发的提醒。", {"reminders": []})
         pending.sort(key=lambda r: str(r.get("due_at")))

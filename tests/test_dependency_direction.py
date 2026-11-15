@@ -2,6 +2,7 @@
 
 - ``tools/``（含内置工具）通过注入的引擎上下文访问引擎，不直接 import ``core``；
 - ``life/`` 是她自己生活的纯领域逻辑，既不依赖 ``core`` 也不依赖 ``tools``；
+- ``scheduling/`` 是引擎与工具共用的统一调度，同样两边都不依赖；
 - 被双方共用的小模块（交互标记、prompt 排列约定）同样不依赖 ``core``。
 
 这里扫的是源码里所有 import（包括函数内的延迟 import），不只看文件顶部。
@@ -44,6 +45,8 @@ def _violations(paths: list[Path], forbidden: tuple[str, ...]) -> list[str]:
     [
         ("tools", ("sirius_pulse.core",)),
         ("life", ("sirius_pulse.core", "sirius_pulse.tools")),
+        # 统一调度（到期任务表、ticker、cron）被引擎和工具共用，两边都不能依赖。
+        ("scheduling", ("sirius_pulse.core", "sirius_pulse.tools")),
     ],
 )
 def test_domain_packages_do_not_reach_into_the_engine(area: str, forbidden: tuple[str, ...]):

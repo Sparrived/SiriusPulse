@@ -2,7 +2,10 @@
 
 生图接口通常要跑几十秒到几分钟，远超一次工具调用的执行超时。所以 ``run()`` 只把
 请求写进持久化队列并立刻返回"已提交"；真正的生成与交付由 ``create_background_tasks``
-注册的轮询任务完成：
+登记给统一 ticker 的处理器完成。队列就是 ``persona.db`` 到期任务表里 ``kind =
+image_generate`` 的那些行（见 :mod:`sirius_pulse.scheduling.due_jobs`）：排队中、或已结束
+但还没交回 Agent 的任务处于到期状态，提交新任务会立刻唤醒 ticker。旧版本
+``tool_data/image_generate.json`` 里的 ``jobs`` 在第一次读表时自动迁移过来。
 
 1. 调 ``ctx.generate_image`` 生成图片，把字节落到本地文件；
 2. 把产物路径或错误回调给 Agent，恢复内部工具回合；
@@ -18,6 +21,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +31,7 @@ from urllib.parse import urlparse
 import httpx
 
 from sirius_pulse.config.config_builder import ConfigBuilder
-from sirius_pulse.extension_runtime import BackgroundTaskSpec
+from sirius_pulse.scheduling.due_jobs import DueJobBoard, DueJobKind, board_for_store
 from sirius_pulse.tools.builtin._internal import _background_jobs
 from sirius_pulse.tools.builtin._internal._bash_runtime import (
     expand_persona_path,
@@ -45,7 +49,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_SECONDS = 300
 _DEFAULT_MAX_PENDING_JOBS = 3
+#: 一轮只画一张、只回调一个：还有到期的任务时，隔这么久再处理下一轮。
 _INTERVAL_SECONDS = 2.0
+KIND = "image_generate"
+#: 旧版本 JSON 存储里的键，只用于迁移。
+_LEGACY_KEY = "jobs"
 
 _MAX_REFERENCE_IMAGES = 8
 _MAX_REFERENCE_BYTES = 20 * 1024 * 1024
@@ -684,26 +692,37 @@ def build_visual_queue(data_store: Any) -> VisualJobQueue | None:
     return VisualJobQueue(data_store)
 
 
-def create_background_tasks(ctx: Any) -> list[BackgroundTaskSpec]:
-    """注册生图队列轮询任务。
+def create_background_tasks(ctx: Any) -> list[DueJobKind]:
+    """把生图队列登记给统一 ticker。
 
-    只有每个进程的第一次 tick 需要处理"上个进程留下的 running 任务"，所以恢复
-    标记用闭包变量而不是写进 data_store：写进去的话，第二次进程启动时会读到
-    True，崩溃残留的 running 就永远不会被标失败了。
+    只有每个进程的第一次处理需要恢复"上个进程留下的 running 任务"，所以恢复
+    标记用闭包变量而不是写进存储：写进去的话，第二次进程启动时会读到
+    True，崩溃残留的 running 就永远不会被标失败了。恢复在 ticker 起来时就做
+    （``on_start``），不等有任务到期——残留的 running 本身不会到期。
     """
     first_tick = True
+
+    async def _recover() -> None:
+        nonlocal first_tick
+        if first_tick:
+            first_tick = False
+            data_store = ctx.get_data_store("image_generate")
+            await _process_once(ctx, data_store, recover_interrupted=True, work=False)
 
     async def _tick() -> None:
         nonlocal first_tick
         data_store = ctx.get_data_store("image_generate")
-        await _process_once(ctx, data_store, recover_interrupted=first_tick)
-        first_tick = False
+        recover, first_tick = first_tick, False
+        await _process_once(ctx, data_store, recover_interrupted=recover)
 
     return [
-        BackgroundTaskSpec(
+        DueJobKind(
+            kind=KIND,
+            handler=_tick,
+            data_store=ctx.get_data_store("image_generate"),
+            retry_seconds=_INTERVAL_SECONDS,
+            on_start=_recover,
             name="image_generate_jobs",
-            interval_seconds=_INTERVAL_SECONDS,
-            task_func=_tick,
         )
     ]
 
@@ -713,16 +732,18 @@ async def _process_once(
     data_store: Any,
     *,
     recover_interrupted: bool = True,
+    work: bool = True,
 ) -> None:
-    """跑一次轮询：最多生成一张图、最多处理一个内部结果回调。
+    """处理一轮：最多生成一张图、最多处理一个内部结果回调。
 
-    单 tick 只做一张图，避免把人/账号的并发生图额度打满；处理时间再长也只是
-    这个 tick 变长，``BackgroundTaskSpec.run_loop`` 会在它返回后再等下一个间隔。
+    一轮只做一张图，避免把人/账号的并发生图额度打满；处理时间再长也只是
+    这一轮变长，ticker 在它返回后才会为生图再起下一轮。
 
     Args:
         ctx: 引擎注入的工具上下文，需提供生图与主动消息方法。
         data_store: 该 TOOL 的持久化数据存储。
-        recover_interrupted: 是否为进程启动后的第一次 tick（用于恢复残留任务）。
+        recover_interrupted: 是否为进程启动后的第一次处理（用于恢复残留任务）。
+        work: 为 False 时只做恢复，不生成也不回调。
     """
     _reload_store(data_store)
     if recover_interrupted:
@@ -732,6 +753,8 @@ async def _process_once(
         if changed:
             # 这里到 save() 之间没有 await，整表写回是安全的。
             _save_jobs(data_store, jobs)
+    if not work:
+        return
     try:
         await _generate_one(ctx, data_store)
         await _notify_one(ctx, data_store)
@@ -1477,16 +1500,46 @@ def _fail_job(data_store: Any, job_id: str, error: str) -> None:
     )
 
 
+def _board(data_store: Any) -> DueJobBoard:
+    """该人格的到期任务表；旧 JSON 队列里的任务顺手迁过来。"""
+    board = board_for_store(data_store)
+    board.import_legacy(KIND, data_store, _LEGACY_KEY, _next_check)
+    return board
+
+
+def _next_check(job: dict[str, Any]) -> float | None:
+    """表里的 ``due_at``：排队中、或已结束待回调的任务马上要处理，其余不用看。"""
+    if job.get("deleted"):
+        return None
+    status = job.get("status")
+    if status == "pending":
+        return time.time()
+    if (
+        status in _FINISHED_STATUSES
+        and not _delivery_finished(job)
+        and job.get("callback_state") != "running"
+    ):
+        return time.time()
+    return None
+
+
 def _load_jobs(data_store: Any) -> list[dict[str, Any]]:
-    raw = data_store.get("jobs", [])
-    if not isinstance(raw, list):
-        return []
-    return [job for job in raw if isinstance(job, dict)]
+    return _board(data_store).payloads(KIND)
 
 
 def _save_jobs(data_store: Any, jobs: list[dict[str, Any]]) -> None:
-    data_store.set("jobs", _trim_jobs(jobs))
-    data_store.save()
+    """整表写回（按 ID）：给出的任务写入，表里有而列表里没有的删掉。"""
+    rows = [
+        (str(job["id"]), job, _next_check(job))
+        for job in _trim_jobs([job for job in jobs if isinstance(job, dict) and job.get("id")])
+    ]
+    _board(data_store).replace(KIND, rows)
+
+
+def find_job(data_store: Any, job_id: str) -> dict[str, Any] | None:
+    """按 ID 取一条任务（含已删除的墓碑）；找不到返回 None。"""
+    job = _board(data_store).get(job_id)
+    return job.payload if job is not None and job.kind == KIND else None
 
 
 def _reload_store(data_store: Any) -> None:
@@ -1503,14 +1556,14 @@ def _update_job(data_store: Any, job_id: str, **fields: Any) -> dict[str, Any] |
     却永远等不到结果。任务本身只由这个 worker 改，所以按 id 合并足够。
     """
     _reload_store(data_store)
-    jobs = _load_jobs(data_store)
-    for job in jobs:
-        if str(job.get("id", "")) == job_id:
-            if job.get("deleted"):
-                return job
-            job.update(fields)
-            _save_jobs(data_store, jobs)
-            return job
+    board = _board(data_store)
+    with board.transaction():
+        current = board.get(job_id)
+        if current is not None and current.kind == KIND:
+            if current.payload.get("deleted"):
+                return current.payload
+            updated = board.patch(job_id, fields, due_at=_next_check({**current.payload, **fields}))
+            return updated.payload if updated is not None else None
     logger.warning("生图任务已不在存储中: %s", job_id)
     return None
 
@@ -1631,10 +1684,7 @@ async def stop_job(ctx: Any, data_store: Any, job_id: str) -> dict[str, Any] | N
     则无法退回。两种情况都不会再回调 Agent。
     """
     _reload_store(data_store)
-    job = next(
-        (item for item in _load_jobs(data_store) if str(item.get("id", "")) == job_id),
-        None,
-    )
+    job = find_job(data_store, job_id)
     if job is None or job.get("deleted"):
         return None
     status = str(job.get("status") or "")

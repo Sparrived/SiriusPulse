@@ -456,9 +456,7 @@ def _patch(board: DueJobBoard, wake_id: str, **fields: Any) -> dict[str, Any] | 
         if job is None or job.kind != KIND:
             return None
         updated = board.patch(wake_id, fields, due_at=_next_check({**job.payload, **fields}))
-        finished = [
-            w for w in board.jobs(KIND) if w.payload.get("status") not in {PENDING, WAKING}
-        ]
+        finished = [w for w in board.jobs(KIND) if w.payload.get("status") not in {PENDING, WAKING}]
         for old in finished[: max(0, len(finished) - _MAX_RETAINED_FINISHED)]:
             board.delete(old.id)
     return updated.payload if updated is not None else None

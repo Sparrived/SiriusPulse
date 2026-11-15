@@ -34,7 +34,7 @@ def _store(tmp_path: Path) -> ToolDataStore:
 
 
 def _jobs(store: ToolDataStore) -> list[dict[str, Any]]:
-    return ToolDataStore(store.store_path).get("jobs", [])
+    return image_generate._load_jobs(ToolDataStore(store.store_path))
 
 
 class _FakeCtx:
@@ -99,11 +99,13 @@ class _CtxWithStore(_FakeCtx):
         return self.store
 
 
-def test_background_task_spec_polls_the_queue(tmp_path):
+def test_the_queue_is_handled_by_the_shared_due_job_ticker(tmp_path):
     specs = image_generate.create_background_tasks(_CtxWithStore(_store(tmp_path)))
     assert len(specs) == 1
+    assert specs[0].kind == "image_generate"
     assert specs[0].name == "image_generate_jobs"
-    assert specs[0].interval_seconds == pytest.approx(2.0)
+    # 还有排队的任务时，一轮做完隔两秒再做下一轮，和以前的轮询节奏一样。
+    assert specs[0].retry_seconds == pytest.approx(2.0)
 
 
 @pytest.mark.asyncio

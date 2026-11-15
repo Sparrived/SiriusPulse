@@ -35,6 +35,13 @@ def _png(color: tuple[int, int, int] = (200, 30, 30), size: tuple[int, int] = (4
     return buffer.getvalue()
 
 
+def _queue_bytes(engine) -> bytes:
+    """生图队列（到期任务表里的 image_generate 行）的完整快照。"""
+    return json.dumps(
+        image_generate._load_jobs(engine.store), ensure_ascii=False, sort_keys=True
+    ).encode("utf-8")
+
+
 class FakeQueue:
     """记录领域服务交给现有生图队列的派生任务。"""
 
@@ -2620,7 +2627,7 @@ async def test_shared_asset_can_bind_another_subject_without_widening_private_sc
             data_store=engine.store,
         )
         assert reread["success"] is False and not reread.get("multimodal_blocks")
-        queue_before = engine.store.store_path.read_bytes()
+        queue_before = _queue_bytes(engine)
         prepared = await env.service.prepare_deletion(
             {"ref": "requester"},
             owner,
@@ -2631,7 +2638,7 @@ async def test_shared_asset_can_bind_another_subject_without_widening_private_sc
         assert counts["assets"] == len(lineage_ids), counts
         assert counts["jobs"] == 1 and counts["task_copies"] == len(copies)
         assert all(path.is_file() for path in [*lineage_paths, *copies, independent_path])
-        assert engine.store.store_path.read_bytes() == queue_before
+        assert _queue_bytes(engine) == queue_before
         deleted = await env.service.execute_deletion(
             prepared["data"]["confirm_token"],
             owner,
@@ -3183,7 +3190,7 @@ async def test_final_confirmed_visual_deletion_scrubs_sensitive_metadata_and_que
         return {table: env.service.store.fetchall(f'SELECT * FROM "{table}"') for table in tables}
 
     before = visual_snapshot()
-    queue_before = engine.store.store_path.read_bytes()
+    queue_before = _queue_bytes(engine)
     for secret in secrets:
         assert secret in json.dumps(before, ensure_ascii=False)
         assert secret in json.dumps(json.loads(queue_before), ensure_ascii=False)
@@ -3195,7 +3202,7 @@ async def test_final_confirmed_visual_deletion_scrubs_sensitive_metadata_and_que
     assert {key: value for key, value in previewed.items() if key != "vs_deletion"} == {
         key: value for key, value in before.items() if key != "vs_deletion"
     }
-    assert engine.store.store_path.read_bytes() == queue_before
+    assert _queue_bytes(engine) == queue_before
     assert source_path.is_file() and all(path.is_file() for path in copies)
     generated_before = len(engine.generated)
     callbacks_before = len(engine.callbacks)
@@ -3205,7 +3212,7 @@ async def test_final_confirmed_visual_deletion_scrubs_sensitive_metadata_and_que
     )
     assert deleted["success"] and deleted["data"]["generation_blocked"]
     remaining = json.dumps(visual_snapshot(), ensure_ascii=False)
-    queue_after = json.loads(engine.store.store_path.read_text(encoding="utf-8"))
+    queue_after = image_generate._load_jobs(engine.store)
     for secret in secrets:
         assert secret not in remaining, f"删除后 SQLite 仍保留敏感内容：{secret}"
         assert secret not in json.dumps(queue_after, ensure_ascii=False)
@@ -3240,7 +3247,7 @@ async def test_final_confirmed_visual_deletion_scrubs_sensitive_metadata_and_que
         assert any(word in disclosure for word in ("不删", "不删除", "不含", "不包括", "保留", "不覆盖", "不在"))
 
     after_delete = visual_snapshot()
-    queue_tombstone = engine.store.store_path.read_bytes()
+    queue_tombstone = _queue_bytes(engine)
     visual_files = {
         path: path.read_bytes()
         for path in (env.work / "visual_assets").rglob("*")
@@ -3256,7 +3263,7 @@ async def test_final_confirmed_visual_deletion_scrubs_sensitive_metadata_and_que
     assert late_result["code"] == "cancelled_by_revocation"
     assert not late_artifact.exists()
     assert visual_snapshot() == after_delete
-    assert engine.store.store_path.read_bytes() == queue_tombstone
+    assert _queue_bytes(engine) == queue_tombstone
     assert {
         path: path.read_bytes()
         for path in (env.work / "visual_assets").rglob("*")
@@ -3269,7 +3276,7 @@ async def test_final_confirmed_visual_deletion_scrubs_sensitive_metadata_and_que
     assert len(engine.callbacks) == callbacks_before
     for secret in secrets:
         assert secret not in json.dumps(visual_snapshot(), ensure_ascii=False)
-        assert secret not in engine.store.store_path.read_text(encoding="utf-8")
+        assert secret not in _queue_bytes(engine).decode("utf-8")
     assert not reference_dir.exists() and all(not path.exists() for path in output_paths)
     bridge = _VisualReceiptBridge()
     for path in [source_path, *copies, *output_paths]:

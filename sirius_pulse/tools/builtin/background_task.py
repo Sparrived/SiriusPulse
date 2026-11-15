@@ -1,15 +1,19 @@
 """查看与停止交给后台的任务：超时转入后台的 bash 命令、后台生图任务、她给自己定的唤醒。
 
-各类后台任务的状态仍由各自的工具维护（bash 的进程登记表、生图的持久化队列、
-wake_me 的唤醒表），这里只是一个统一入口：按任务 ID 找到归属，再交给对应的实现去查看或停止。
+这几类任务都登记在人格 ``persona.db`` 的到期任务表里（见
+:mod:`sirius_pulse.scheduling.due_jobs`），这里按表列出、按任务 ID 找到那一行，
+再按它的 ``kind`` 交给对应的工具去描述或停止（bash 的进程句柄、生图的进行中请求
+都只有工具自己拿得到）。
 
 权限：只能看到、停止当前会话发起的任务；developer 可以管理全部任务。
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
+from sirius_pulse.scheduling.due_jobs import DueJob, DueJobBoard, board_for_store
 from sirius_pulse.tools.builtin import image_generate, wake_me
 from sirius_pulse.tools.builtin._internal import _bash_background
 from sirius_pulse.tools.engine_context import ToolEngineContext, WorkspaceAccess
@@ -82,7 +86,11 @@ async def run(
     scope = _Scope.of(invocation_context, chat_context)
 
     if action == "list":
-        tasks = [task for task in _all_tasks(engine_context) if scope.allows(task)]
+        tasks = [
+            task
+            for task in await asyncio.to_thread(_all_tasks, engine_context)
+            if scope.allows(task)
+        ]
         active = [task for task in tasks if task["status"] in _ACTIVE_STATUSES]
         if not active:
             return _reply("现在没有在后台进行的任务。", {"tasks": []})
@@ -94,7 +102,7 @@ async def run(
     if not task_id:
         return {"success": False, "error": f"action={action} 需要 task_id"}
 
-    found = _find_task(engine_context, task_id)
+    found = await asyncio.to_thread(_find_task, engine_context, task_id)
     if found is None or not scope.allows(found):
         return {
             "success": False,
@@ -126,7 +134,9 @@ async def run(
         return _reply(message, {"task": task, "stopped": job.state == _bash_background.STOPPED})
 
     if found["kind"] == "wake_me":
-        cancelled = wake_me.cancel(engine_context.get_data_store("wake_me"), task_id)
+        cancelled = await asyncio.to_thread(
+            wake_me.cancel, engine_context.get_data_store("wake_me"), task_id
+        )
         if cancelled is None:
             return {"success": False, "error": f"找不到任务 {task_id}"}
         if cancelled["stopped"]:
@@ -172,29 +182,36 @@ def _bash_owner(engine_context: WorkspaceAccess) -> str:
     return _bash_background.owner_key(engine_context.get_data_store("bash"))
 
 
+def _board(engine_context: WorkspaceAccess) -> DueJobBoard:
+    """该人格的到期任务表；先让各工具把旧 JSON 里的记录迁过来。"""
+    image_generate.list_jobs(engine_context.get_data_store("image_generate"))
+    wake_me.list_wakes(engine_context.get_data_store("wake_me"))
+    bash_store = engine_context.get_data_store("bash")
+    _bash_background.attach(_bash_background.owner_key(bash_store), bash_store)
+    return board_for_store(engine_context.get_data_store("wake_me"))
+
+
+def _describe(engine_context: WorkspaceAccess, job: DueJob) -> dict[str, Any] | None:
+    """按 kind 交给对应工具描述；不归 background_task 管的类（提醒、心跳……）返回 None。"""
+    if job.kind == _bash_background.KIND:
+        live = _bash_background.get(_bash_owner(engine_context), job.id)
+        return live.describe() if live is not None else _bash_background.describe_row(job.payload)
+    if job.kind == image_generate.KIND:
+        return None if job.payload.get("deleted") else image_generate.describe_job(job.payload)
+    if job.kind == wake_me.KIND:
+        return wake_me.describe(job.payload)
+    return None
+
+
 def _all_tasks(engine_context: ToolEngineContext) -> list[dict[str, Any]]:
-    tasks = [job.describe() for job in _bash_background.list_jobs(_bash_owner(engine_context))]
-    store = engine_context.get_data_store("image_generate")
-    tasks.extend(image_generate.describe_job(job) for job in image_generate.list_jobs(store))
-    wakes = engine_context.get_data_store("wake_me")
-    tasks.extend(wake_me.describe(wake) for wake in wake_me.list_wakes(wakes))
-    return tasks
+    board = _board(engine_context)
+    described = (_describe(engine_context, job) for job in board.jobs())
+    return [task for task in described if task is not None]
 
 
 def _find_task(engine_context: WorkspaceAccess, task_id: str) -> dict[str, Any] | None:
-    if task_id.startswith(_bash_background.TASK_PREFIX):
-        job = _bash_background.get(_bash_owner(engine_context), task_id)
-        return job.describe() if job is not None else None
-    if task_id.startswith(wake_me.TASK_PREFIX):
-        for wake in wake_me.list_wakes(engine_context.get_data_store("wake_me")):
-            if str(wake.get("id") or "") == task_id:
-                return wake_me.describe(wake)
-        return None
-    store = engine_context.get_data_store("image_generate")
-    for job in image_generate.list_jobs(store):
-        if str(job.get("id") or "") == task_id:
-            return image_generate.describe_job(job)
-    return None
+    job = _board(engine_context).get(task_id)
+    return _describe(engine_context, job) if job is not None else None
 
 
 def _status_label(status: str) -> str:

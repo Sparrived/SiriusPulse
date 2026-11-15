@@ -68,6 +68,8 @@ PERSONA_LOGGER_PREFIXES = (
     # docker logs：自主行为整整两天什么都没做，而人格日志里一条痕迹都没有。
     # 漏在这些前缀之外的模块日志同理，所以下面的守护测试会核对全量 logger 名称。
     "sirius_pulse.extension_runtime",
+    # 统一调度的 ticker：提醒、唤醒、生图、心跳的失败都从这里记。
+    "sirius_pulse.scheduling.",
     "sirius_pulse.adapters.",
     "sirius_pulse.config.",
     "sirius_pulse.persona_config",

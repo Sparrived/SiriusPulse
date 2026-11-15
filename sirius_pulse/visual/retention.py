@@ -159,28 +159,31 @@ def prepare_deletion(
     }
 
 
+#: 生图队列在到期任务表里的 kind（``tools/builtin/image_generate.py`` 的 ``KIND``）。
+_IMAGE_QUEUE_KIND = "image_generate"
+
+
 def _scrub_queue(work_path: Path, job_ids: set[str]) -> int:
-    """复用原队列格式与原子保存；终态墓碑不再携带输入或触发回调。"""
+    """生图队列（到期任务表）里的这些任务换成终态墓碑：不再携带输入，也不会再触发回调。"""
+    from sirius_pulse.scheduling.due_jobs import board_for_dir
     from sirius_pulse.tools.data_store import ToolDataStore
 
-    path = work_path / "tool_data" / "image_generate.json"
-    if not path.is_file():
-        return 0
-    if not isinstance(json.loads(path.read_text(encoding="utf-8")), dict):
-        raise ValueError("生图队列格式无效")
-    queue = ToolDataStore(path)
-    with queue.transaction():
-        queue.reload()
-        jobs = queue.get("jobs", [])
-        if not isinstance(jobs, list):
+    board = board_for_dir(work_path)
+    legacy = work_path / "tool_data" / "image_generate.json"
+    if legacy.is_file():
+        if not isinstance(json.loads(legacy.read_text(encoding="utf-8")), dict):
             raise ValueError("生图队列格式无效")
+        # 引擎还没把旧 JSON 队列迁过来时，先迁再清，墓碑才不会被迁移覆盖回去。
+        board.import_legacy(_IMAGE_QUEUE_KIND, ToolDataStore(legacy), "jobs", lambda _job: None)
+    with board.transaction():
         scrubbed = 0
-        replacements = []
-        for job in jobs:
-            if isinstance(job, dict) and str(job.get("id") or "") in job_ids:
-                replacements.append(
+        for row in board.jobs(_IMAGE_QUEUE_KIND):
+            if row.id in job_ids:
+                board.put(
+                    _IMAGE_QUEUE_KIND,
+                    row.id,
                     {
-                        "id": job["id"],
+                        "id": row.id,
                         "status": "cancelled",
                         "deleted": True,
                         "isolated": True,
@@ -189,14 +192,10 @@ def _scrub_queue(work_path: Path, job_ids: set[str]) -> int:
                         "visual": {"deleted": True},
                         "callback_state": "skipped",
                         "notified": True,
-                    }
+                    },
+                    due_at=None,
                 )
                 scrubbed += 1
-            else:
-                replacements.append(job)
-        if scrubbed:
-            queue.set("jobs", replacements)
-            queue.save()
         return scrubbed
 
 

@@ -102,6 +102,8 @@ class DueJobBoard:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        # 撤权清理会把任务换成墓碑：被覆盖的旧内容（提示词、参考图路径）不留在空闲页里。
+        self._conn.execute("PRAGMA secure_delete=ON")
         self._conn.executescript(_SCHEMA)
         self._depth = 0
         self._listeners: dict[int, Callable[[], None]] = {}
@@ -209,9 +211,7 @@ class DueJobBoard:
     # 写
     # ------------------------------------------------------------------
 
-    def put(
-        self, kind: str, job_id: str, payload: dict[str, Any], *, due_at: Any = None
-    ) -> DueJob:
+    def put(self, kind: str, job_id: str, payload: dict[str, Any], *, due_at: Any = None) -> DueJob:
         """新增或整行覆盖；覆盖时保留原来的登记时间。"""
         now = time.time()
         due = _timestamp(due_at)
@@ -267,9 +267,7 @@ class DueJobBoard:
             )
         return cursor.rowcount
 
-    def replace(
-        self, kind: str, rows: Iterable[tuple[str, dict[str, Any], Any]]
-    ) -> None:
+    def replace(self, kind: str, rows: Iterable[tuple[str, dict[str, Any], Any]]) -> None:
         """整类替换：给出的行写入（保留原登记时间与顺序），没给出的删掉。"""
         items = [(str(job_id), payload, _timestamp(due)) for job_id, payload, due in rows]
         now = time.time()

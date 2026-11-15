@@ -613,7 +613,7 @@ async def test_explicit_empty_subjects_scenery_needs_no_person_evidence_and_uses
     assert submitted.data["data"]["status"] == "pending"
     store = chat.executor.get_data_store("image_generate")
     reopened = ToolDataStore(store.store_path)
-    jobs = reopened.get("jobs", [])
+    jobs = image_generate._load_jobs(reopened)
     assert len(jobs) == 1
     assert jobs[0]["id"] == submitted.data["data"]["job_id"]
     assert jobs[0]["references"] == [] and "visual" not in jobs[0]
@@ -625,7 +625,7 @@ async def test_explicit_empty_subjects_scenery_needs_no_person_evidence_and_uses
     assert backend.calls[0]["reference_images"] == []
     assert len(backend.callbacks) == 1 and backend.callbacks[0]["outcome"] == "success"
     reopened.reload()
-    completed = reopened.get("jobs", [])[0]
+    completed = image_generate._load_jobs(reopened)[0]
     assert completed["status"] == "done"
     assert Path(completed["image_path"]).is_file()
     assert completed["callback_state"] == "completed"
