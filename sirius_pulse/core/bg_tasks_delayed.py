@@ -1,18 +1,17 @@
 """延迟队列相关后台任务。
 
-包含延迟队列轮询、延迟响应处理等功能。
+包含延迟队列轮询、延迟响应处理等功能。队列取出一批消息后，这里负责认人、拼提示词；
+多轮工具循环本身在 ``core/reply_turn.py``。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING, Any
 
-from sirius_pulse.adapters.interaction_markers import parse_interaction_markers
 from sirius_pulse.core import life_bridge
-from sirius_pulse.core.agent_turn import AgentTurn, AgentTurnPhase
+from sirius_pulse.core.agent_turn import AgentTurn
 from sirius_pulse.core.constants import (
     DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
     DEFAULT_MAX_TOOL_ROUNDS,
@@ -23,55 +22,47 @@ from sirius_pulse.core.delayed_response_queue import persist_delayed_queue
 from sirius_pulse.core.events import SessionEvent, SessionEventType
 from sirius_pulse.core.identity_resolver import IdentityContext
 from sirius_pulse.core.prompt_factory import PromptFactory
-from sirius_pulse.core.reply_streaming import FirstSentenceStreamer
-from sirius_pulse.core.sticker_delivery import dedupe_sticker_names
-from sirius_pulse.core.tool_call_runner import (
-    ToolCallRunner,
-    parse_tool_arguments,
-    retry_safe,
-    side_effect_name,
+from sirius_pulse.core.reply_turn import (
+    ChatReplyTurn,
+    ReplyCaller,
+    append_tool_chain_messages,
+    emit_agent_turn,
+    engagement_denial,
+    first_sentence_streamer,
+    note_external_delivery,
+    tool_chain_message_text,
+    tool_is_silent,
 )
-from sirius_pulse.core.work_mode import (
-    ENTER_WORK_MODE,
-    QUIT_WORK_MODE,
-    SEND_MIDWAY_MSG,
-    WorkModeRun,
-    WorkModeStore,
-    control_tools,
-    is_control_tool,
-    parse_arguments,
-)
-from sirius_pulse.providers.base import ToolCall
-from sirius_pulse.tools.builtin._internal import _markdown_image
-from sirius_pulse.tools.models import ToolDefinition
+from sirius_pulse.core.tool_call_runner import retry_safe, side_effect_name
+from sirius_pulse.core.tool_loop import assistant_tool_message as _build_assistant_tool_message
+from sirius_pulse.core.tool_loop import resolve_max_tool_rounds
+from sirius_pulse.tools.builtin._internal import _markdown_image  # noqa: F401  (测试从这里打桩)
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
 
 logger = logging.getLogger(__name__)
 
-#: 收尾生成失败时发给群里的兜底话术。这些话会被群友看到，必须像她自己说的。
+__all__ = ["DelayedQueueTasks", "_build_assistant_tool_message"]
+
 #: ticker 两次醒来的最短间隔，防止「已到点但还没被取走」的条目让它空转。
 _TICKER_MIN_SLEEP_SECONDS = 0.05
-
-#: 一轮里两次对外投递之间的间隔，模拟真人连发的节奏、也避开平台风控。
-_DELIVERY_PACING_SECONDS = 2.0
-
-
-def _delivered_externally(result: Any) -> bool:
-    """工具确实往群里/私聊投递了内容（以投递回执为准）。"""
-    metadata = getattr(result, "internal_metadata", None)
-    return isinstance(metadata, dict) and isinstance(metadata.get("history_receipt"), dict)
-
-
-_UNREADY_REPLY_FALLBACK = "抱歉，我刚才没能组织好回复，可以再说一次吗？"
-_TOOL_LIMIT_REPLY_FALLBACK = "这事我先弄到这儿，剩下的晚点再接着来～"
 
 # C 方案：指向性落在灰色区间时，把“要不要接话”交回模型判断。
 # 区间内既不能 100% 认定在叫自己（会抢别人的话），也不该直接静默（会漏掉真正找自己的消息）。
 _GREY_ZONE_DIRECTED_MIN = 0.45
 _GREY_ZONE_DIRECTED_MAX = 0.70
 _GREY_ZONE_SKIP_HINT = "（这条消息不一定是在叫你；如果你判断它其实是在叫别人，就只输出 [SKIP]，系统不会发送任何内容）"
+
+#: 对方明确不想被问名字时的说法；命中就不再提示她问。
+_DECLINE_NAME_PHRASES = (
+    "别再问我名字",
+    "不要再问我的名字",
+    "不用问我名字",
+    "不想告诉你名字",
+    "不想说名字",
+    "别问我的名字",
+)
 
 
 def _grey_zone_directed_score(item: Any) -> float | None:
@@ -96,16 +87,6 @@ def _apply_grey_zone_hint(message_content: str, score: float | None) -> str:
     return message_content
 
 
-def _is_bookkeeping(tool: Any) -> bool:
-    """她私人的记录工具（如小本）：同轮正文只是草稿，见 ``ToolDefinition.bookkeeping``。"""
-    return isinstance(tool, ToolDefinition) and tool.is_bookkeeping
-
-
-def _has_bookkeeping_tool(registry: Any) -> bool:
-    names_where = getattr(registry, "names_where", None)
-    return callable(names_where) and bool(names_where(_is_bookkeeping))
-
-
 def _pending_evidence_callers(
     engine: Any, group_id: str, evidence_refs: list[str]
 ) -> tuple[tuple[str, Any], ...]:
@@ -115,35 +96,123 @@ def _pending_evidence_callers(
     return pending_evidence_callers(engine, group_id, evidence_refs)
 
 
-def _build_assistant_tool_message(
-    reply: str,
-    tool_calls: list[ToolCall],
-    reasoning_content: str = "",
-) -> dict[str, Any]:
-    """Build the assistant message that precedes the matching tool results."""
-    message: dict[str, Any] = {
-        "role": "assistant",
-        "content": reply or None,
-        "tool_calls": [
-            {
-                "id": tool_call.id,
-                "type": tool_call.type or "function",
-                "function": {
-                    "name": tool_call.function_name,
-                    "arguments": tool_call.function_arguments,
-                },
-            }
-            for tool_call in tool_calls
-        ],
-    }
-    if reasoning_content:
-        message["reasoning_content"] = reasoning_content
-    return message
+def _coerce_queue_item(item: Any, group_id: str) -> Any:
+    """Defensive: if _queues was corrupted externally, an item may be a dict."""
+    if not isinstance(item, dict):
+        return item
+    logger.warning(
+        "tick_delayed_queue: triggered[0] is dict (item_id=%s), converting to DelayedResponseItem",
+        item.get("item_id", "unknown"),
+    )
+    from sirius_pulse.models.response_strategy import (
+        DelayedResponseItem,
+        ResponseStrategy,
+        StrategyDecision,
+    )
+
+    sd_raw = item.get("strategy_decision", {}) or {}
+    try:
+        strategy_val = sd_raw.get("strategy", "silent")
+        if isinstance(strategy_val, str):
+            strategy_enum = ResponseStrategy(strategy_val)
+        else:
+            strategy_enum = ResponseStrategy.SILENT
+    except Exception:
+        strategy_enum = ResponseStrategy.SILENT
+    strategy_decision = StrategyDecision(
+        strategy=strategy_enum,
+        score=float(sd_raw.get("score", 0.0)),
+        threshold=float(sd_raw.get("threshold", 0.5)),
+        urgency=float(sd_raw.get("urgency", 0.0)),
+        relevance=float(sd_raw.get("relevance", 0.0)),
+        reason=str(sd_raw.get("reason", "")),
+        estimated_delay_seconds=float(sd_raw.get("estimated_delay_seconds", 0.0)),
+        context=dict(sd_raw.get("context", {})),
+    )
+    return DelayedResponseItem(
+        item_id=item.get("item_id", ""),
+        group_id=item.get("group_id", group_id),
+        user_id=item.get("user_id", ""),
+        channel=item.get("channel"),
+        channel_user_id=item.get("channel_user_id"),
+        message_content=item.get("message_content", ""),
+        strategy_decision=strategy_decision,
+        candidate_memories=item.get("candidate_memories", []),
+        enqueue_time=item.get("enqueue_time", ""),
+        window_seconds=float(item.get("window_seconds", 30.0)),
+        status=item.get("status", "pending"),
+        multimodal_inputs=item.get("multimodal_inputs", []),
+        adapter_type=item.get("adapter_type"),
+        adapter_route_id=item.get("adapter_route_id"),
+        evidence_refs=[str(ref) for ref in item.get("evidence_refs", []) if ref],
+    )
 
 
-def _reasoning_memory_kwargs(chat_result: Any) -> dict[str, str]:
-    reasoning_content = str(getattr(chat_result, "reasoning_content", "") or "").strip()
-    return {"reasoning_content": reasoning_content} if reasoning_content else {}
+def _identity_aliases(triggered: list[Any], caller_profile: Any) -> list[str]:
+    """这一轮说话人的所有叫法：记忆检索靠它认出「说的是我」的旧记录。"""
+    aliases: list[str] = []
+    for merged_item in triggered:
+        for identity in (
+            getattr(merged_item, "user_id", ""),
+            getattr(merged_item, "channel_user_id", ""),
+            getattr(merged_item, "speaker_name", ""),
+        ):
+            identity = str(identity or "").strip()
+            if identity and identity not in aliases:
+                aliases.append(identity)
+    if caller_profile is not None:
+        profile_identities = [
+            getattr(caller_profile, "user_id", ""),
+            getattr(caller_profile, "name", ""),
+            *getattr(caller_profile, "identities", {}).values(),
+            *getattr(caller_profile, "identity_anchors", []),
+        ]
+        for identity in profile_identities:
+            identity = str(identity or "").strip()
+            if identity and identity not in aliases:
+                aliases.append(identity)
+            if identity.isdigit() and f"qq_{identity}" not in aliases:
+                aliases.append(f"qq_{identity}")
+    return aliases
+
+
+def _turn_images(
+    triggered: list[Any], pending_history: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    """这一轮要带给模型的图片：触发条目上的，加上她上次开口之后群里发的。
+
+    Recent-message images are needed because an image sent on its own (or attached
+    to an earlier text message) only survives as a caption/XML placeholder otherwise,
+    and pure-image messages never reach the delayed queue at all. 表情包也一并带上：
+    它们不进视觉通道，但本地路径要列进文本，模型才能把表情包原图当生图参考图。
+    """
+    unanswered_from = 0
+    for idx in range(len(pending_history) - 1, -1, -1):
+        if pending_history[idx].get("role") == "assistant":
+            unanswered_from = idx + 1
+            break
+    images: list[dict[str, str]] = []
+    seen_values: set[str] = set()
+    for source in (
+        *[getattr(i, "multimodal_inputs", None) for i in triggered],
+        *[r.get("multimodal_inputs") for r in pending_history[unanswered_from:]],
+    ):
+        for m in source or []:
+            if m.get("type") != "image":
+                continue
+            value = str(m.get("value", ""))
+            if not value or value in seen_values:
+                continue
+            seen_values.add(value)
+            images.append(m)
+    return images
+
+
+def _append_context(bundle: Any, block: str) -> None:
+    if block:
+        bundle.dynamic_context = (
+            f"{bundle.dynamic_context}\n\n{block}" if bundle.dynamic_context else block
+        )
 
 
 class DelayedQueueTasks:
@@ -152,11 +221,16 @@ class DelayedQueueTasks:
     def __init__(self, engine: _EmotionalGroupChatEngineBase) -> None:
         self._engine = engine
 
-    @staticmethod
-    async def _emit_agent_turn(engine: Any, turn: AgentTurn) -> None:
-        await engine.event_bus.emit(
-            SessionEvent(type=SessionEventType.AGENT_TURN_UPDATED, data=turn.to_event_data())
-        )
+    # 回合内的小判断已经搬到 ``core/reply_turn``；这些别名留给按旧名调用的地方。
+    _emit_agent_turn = staticmethod(emit_agent_turn)
+    _first_sentence_streamer = staticmethod(first_sentence_streamer)
+    _tool_is_silent = staticmethod(tool_is_silent)
+    _note_external_delivery = staticmethod(note_external_delivery)
+    _tool_chain_message_text = staticmethod(tool_chain_message_text)
+    _append_tool_chain_messages = staticmethod(append_tool_chain_messages)
+    _engagement_denial = staticmethod(engagement_denial)
+    _side_effect_name = staticmethod(side_effect_name)
+    _retry_safe = staticmethod(retry_safe)
 
     @staticmethod
     def _scene_context(engine: Any, group_id: str, adapter_type: str | None) -> str:
@@ -234,179 +308,6 @@ class DelayedQueueTasks:
             speaker = getattr(entry, "speaker_name", "") or getattr(entry, "user_id", "") or ""
             lines.append(f"{speaker}: {content[:120]}" if speaker else content[:120])
         return "\n".join(lines[-3:])
-
-    @staticmethod
-    def _side_effect_name(tool: Any, params: dict[str, Any] | None = None) -> str:
-        return side_effect_name(tool, params)
-
-    @staticmethod
-    def _retry_safe(tool: Any, params: dict[str, Any] | None = None) -> bool:
-        return retry_safe(tool, params)
-
-    @classmethod
-    def _engagement_denial(
-        cls,
-        tool: Any,
-        params: dict[str, Any],
-        engagement: float,
-        is_developer: bool,
-    ) -> str:
-        """互动太少的人不能驱动工具；工具声明了 engagement_exempt 的除外（仅内置）。"""
-        if engagement >= 0.1 or is_developer:
-            return ""
-        if isinstance(tool, ToolDefinition) and tool.engagement_exempt_for(params):
-            return ""
-        name = getattr(tool, "name", "")
-        return f"Tool '{name}' 被拒绝：互动不足 (engagement={engagement:.2f})"
-
-    @staticmethod
-    def _first_sentence_streamer(
-        engine: Any,
-        group_id: str,
-        item: Any,
-        *,
-        on_partial_reply: Any | None,
-        eligible: bool,
-    ) -> FirstSentenceStreamer | None:
-        """普通聊天回合里，让第一句话不必等整段写完（见 ``core/reply_streaming``）。
-
-        工作模式的正文不外发、兜底收尾轮要整段处理，都不走这条路；没有半截发送回调
-        （例如离线调用）时也没法提前发。
-        """
-        if on_partial_reply is None or not eligible:
-            return None
-        if not bool(engine.config.get("stream_first_sentence", True)):
-            return None
-
-        async def _send_first_sentence(text: str) -> None:
-            await on_partial_reply(text)
-            # 提前发出的这句是独立的一条消息：现在就记进历史，排在剩下那部分前面。
-            record = getattr(engine, "_record_assistant_message", None)
-            if callable(record):
-                record(
-                    group_id=group_id,
-                    target_user_id=getattr(item, "user_id", "") or "",
-                    content=text,
-                )
-
-        return FirstSentenceStreamer(_send_first_sentence)
-
-    @staticmethod
-    def _tool_is_silent(tool: Any, tool_call: ToolCall) -> bool:
-        """这次调用本身就是回复（发图、私聊主人……），同轮正文不必再单独发出。"""
-        if not isinstance(tool, ToolDefinition):
-            return False
-        return tool.silent_for(parse_tool_arguments(tool.name, tool_call.function_arguments))
-
-    @staticmethod
-    def _note_external_delivery(
-        engine: Any,
-        group_id: str,
-        item: Any,
-        chat_result: Any,
-        tool: Any,
-        result: Any,
-    ) -> None:
-        """把已经投递到外部的静默动作写回历史，供下一轮模型自查。
-
-        发图、传文件、私聊主人都是静默投递：外部确实收到了内容，本轮却不产生任何
-        群聊文本，``_record_assistant_message`` 因此不会留下记录。模型下一轮看不到
-        自己发过，于是重发同一张图、或把同一段话反复私聊给主人。工具在真正投递
-        成功时把回执放进 ``internal_metadata["history_receipt"]``（content / tags /
-        platform_message_id），这里照抄写进历史。回执会进她的记忆，所以只认内置工具。
-        """
-        if not (isinstance(tool, ToolDefinition) and tool.trusted):
-            return
-        metadata = getattr(result, "internal_metadata", None)
-        receipt = metadata.get("history_receipt") if isinstance(metadata, dict) else None
-        if not isinstance(receipt, dict) or not str(receipt.get("content") or "").strip():
-            return
-        record = getattr(engine, "_record_assistant_message", None)
-        if not callable(record):
-            return
-        tags = receipt.get("tags")
-        try:
-            record(
-                group_id=group_id,
-                target_user_id=getattr(item, "user_id", "") or "",
-                content=str(receipt["content"]),
-                system_prompt=getattr(chat_result, "system_prompt", ""),
-                tags=list(tags) if isinstance(tags, list) else [],
-                injected_request=getattr(chat_result, "injected_request", {}),
-                injected_tool_names=getattr(chat_result, "injected_tool_names", []),
-                platform_message_id=str(receipt.get("platform_message_id") or ""),
-                **_reasoning_memory_kwargs(chat_result),
-            )
-        except Exception as exc:  # 回执只是辅助信息，不能拖垮本轮回复
-            logger.debug("外部投递回执写入失败: %s", exc)
-
-    @staticmethod
-    def _tool_chain_message_text(message: Any) -> str:
-        """点名消息的注入文本：图片/表情包带上读图描述和本地路径。
-
-        描述写在 ``multimodal_inputs`` 上（历史 XML 取的就是它），而工具链当轮注入
-        用的是 ``content`` 原文——纯图片消息的原文只有一个文件名哈希，模型在这一轮
-        看不出内容，要等下一轮重建 XML 才知道。本地路径一并给出，模型才能在工具链
-        里把刚收到的图当参考图交给 ``image_generate``。
-        """
-        from sirius_pulse.utils.image_paths import resolve_local_image_path
-
-        text = str(getattr(message, "content", "") or "")
-        images = [
-            item
-            for item in (getattr(message, "multimodal_inputs", None) or [])
-            if item.get("type") == "image"
-        ]
-        if not images:
-            return text
-        captions = [str(item.get("caption", "")).strip() for item in images]
-        caption = "；".join(dict.fromkeys(c for c in captions if c))
-        local_paths: list[str] = []
-        for item in images:
-            local_path = resolve_local_image_path(item.get("value", ""))
-            if local_path and local_path not in local_paths:
-                local_paths.append(local_path)
-        suffix_parts: list[str] = []
-        if caption and caption not in text:
-            tag = "动画表情" if any(item.get("sub_type") == "1" for item in images) else "图片描述"
-            suffix_parts.append(f"[{tag}：{caption}]")
-        if local_paths:
-            suffix_parts.append("[本地图片路径：" + "；".join(local_paths) + "]")
-        if not suffix_parts:
-            return text
-        return f"{text} {' '.join(suffix_parts)}".strip()
-
-    @staticmethod
-    def _append_tool_chain_messages(
-        engine: Any,
-        messages: list[dict[str, Any]],
-        group_id: str,
-        evidence_refs: list[str] | None = None,
-    ) -> bool:
-        """Append explicitly addressed messages captured during tool work."""
-        pop_messages = getattr(engine, "pop_tool_chain_messages", None)
-        if not callable(pop_messages):
-            return False
-
-        injected = pop_messages(group_id)
-        for message in injected:
-            ref = str(getattr(message, "evidence_ref", "") or "")
-            if ref and evidence_refs is not None and ref not in evidence_refs:
-                evidence_refs.append(ref)
-            messages.append(
-                {
-                    "role": "user",
-                    "content": PromptFactory.tag_message(
-                        DelayedQueueTasks._tool_chain_message_text(message),
-                        speaker=str(getattr(message, "speaker", "") or ""),
-                        user_id=str(getattr(message, "channel_user_id", "") or ""),
-                        platform_message_id=str(getattr(message, "message_id", "") or ""),
-                        evidence_ref=ref,
-                        group_id=group_id,
-                    ),
-                }
-            )
-        return bool(injected)
 
     async def delayed_queue_ticker(self) -> None:
         """Event-driven ticker for the delayed queue.
@@ -626,22 +527,67 @@ class DelayedQueueTasks:
         """Process delayed response queue for a group.
 
         If multiple items trigger in the same tick, merge them into a single
-        prompt so the model generates only one consolidated reply.
-        Supports multi-round TOOL execution similar to immediate responses.
+        prompt so the model generates only one consolidated reply, then run the
+        multi-round tool loop (:class:`ChatReplyTurn`).
 
         Args:
             group_id: The group / private chat to tick.
             on_partial_reply: Optional async callable used for model output the
-                group should see immediately: text that accompanies a tool call
-                outside work mode, text following a failed tool call, and
-                ``send_midway_msg`` inside work mode. In work mode the model's
-                own text is never sent.
+                group should see immediately (see :class:`ChatReplyTurn`).
         """
         engine = self._engine
         # 工作模式内部自带循环；期间不放行新的 tick，避免同一个群并排跑两轮。
         is_work_mode_active = getattr(engine, "is_work_mode_active", None)
         if callable(is_work_mode_active) and is_work_mode_active(group_id):
             return []
+        taken = self._take_triggered(
+            group_id, adapter_type=adapter_type, adapter_route_id=adapter_route_id, item_id=item_id
+        )
+        if taken is None:
+            return []
+        triggered, pending_history = taken
+        item_ids = [item.item_id for item in triggered]
+        engine.delayed_queue.mark_generation_started(item_ids)
+        persist_delayed_queue(engine)
+        triggered[0] = _coerce_queue_item(triggered[0], group_id)
+        caller = self._resolve_caller(group_id, triggered[0])
+        evidence_refs = list(
+            dict.fromkeys(
+                ref
+                for triggered_item in triggered
+                for ref in getattr(triggered_item, "evidence_refs", [])
+                if ref
+            )
+        )
+        system_prompt, messages, agent_turn = await self._prepare_reply_messages(
+            group_id, triggered, caller, pending_history
+        )
+        turn = ChatReplyTurn(
+            engine,
+            group_id=group_id,
+            triggered=triggered,
+            caller=caller,
+            system_prompt=system_prompt,
+            messages=messages,
+            evidence_refs=evidence_refs,
+            agent_turn=agent_turn,
+            max_tool_rounds=resolve_max_tool_rounds(
+                engine.config.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
+            ),
+            on_partial_reply=self._unsafe_after_partial(on_partial_reply, item_ids),
+        )
+        return await turn.run()
+
+    def _take_triggered(
+        self,
+        group_id: str,
+        *,
+        adapter_type: str | None,
+        adapter_route_id: str | None,
+        item_id: str | None,
+    ) -> tuple[list[Any], list[dict[str, Any]]] | None:
+        """从队列里取出这一轮要回的条目；没有可回的返回 None。"""
+        engine = self._engine
         recent = engine._helpers.get_recent_messages(group_id, n=10)
         # 节奏和队列判定只需要短窗口；未被 assistant 回复切断的图片则要从整段
         # 未完成对话里收集，否则图片先发、文字后发且中间消息较多时会丢失参考路径。
@@ -655,76 +601,33 @@ class DelayedQueueTasks:
             adapter_route_id=adapter_route_id,
             item_id=item_id,
         )
-        if not triggered:
-            if item_id is not None:
-                # ticker 按「话题停顿」发的触发，到这里时可能又有人说话了，条目继续
-                # 等。撤掉已发标记，ticker 才会在下一次停顿时再叫它。
-                engine._delayed_event_emitted.get(group_id, set()).discard(item_id)
-            return []
-        item_ids = [item.item_id for item in triggered]
-        engine.delayed_queue.mark_generation_started(item_ids)
-        persist_delayed_queue(engine)
-        if on_partial_reply is not None:
-            send_partial = on_partial_reply
+        if triggered:
+            return triggered, pending_history
+        if item_id is not None:
+            # ticker 按「话题停顿」发的触发，到这里时可能又有人说话了，条目继续
+            # 等。撤掉已发标记，ticker 才会在下一次停顿时再叫它。
+            engine._delayed_event_emitted.get(group_id, set()).discard(item_id)
+        return None
 
-            async def on_partial_reply(text: str) -> None:
-                engine.delayed_queue.mark_generation_unsafe(item_ids)
-                persist_delayed_queue(engine)
-                await send_partial(text)
+    def _unsafe_after_partial(
+        self, on_partial_reply: Any | None, item_ids: list[str]
+    ) -> Any | None:
+        """群里一旦看到了半截回复，这一轮就不能整轮重跑：先落这条边界再发。"""
+        if on_partial_reply is None:
+            return None
+        engine = self._engine
 
-        # Determine caller from the first triggered item
-        caller_profile = None
-        item = triggered[0]
-        # Defensive: if _queues was corrupted externally, item may be a dict.
-        if isinstance(item, dict):
-            logger.warning(
-                "tick_delayed_queue: triggered[0] is dict (item_id=%s), converting to DelayedResponseItem",
-                item.get("item_id", "unknown"),
-            )
-            from sirius_pulse.models.response_strategy import (
-                DelayedResponseItem,
-                ResponseStrategy,
-                StrategyDecision,
-            )
+        async def _send(text: str) -> None:
+            engine.delayed_queue.mark_generation_unsafe(item_ids)
+            persist_delayed_queue(engine)
+            await on_partial_reply(text)
 
-            sd_raw = item.get("strategy_decision", {}) or {}
-            try:
-                strategy_val = sd_raw.get("strategy", "silent")
-                if isinstance(strategy_val, str):
-                    strategy_enum = ResponseStrategy(strategy_val)
-                else:
-                    strategy_enum = ResponseStrategy.SILENT
-            except Exception:
-                strategy_enum = ResponseStrategy.SILENT
-            strategy_decision = StrategyDecision(
-                strategy=strategy_enum,
-                score=float(sd_raw.get("score", 0.0)),
-                threshold=float(sd_raw.get("threshold", 0.5)),
-                urgency=float(sd_raw.get("urgency", 0.0)),
-                relevance=float(sd_raw.get("relevance", 0.0)),
-                reason=str(sd_raw.get("reason", "")),
-                estimated_delay_seconds=float(sd_raw.get("estimated_delay_seconds", 0.0)),
-                context=dict(sd_raw.get("context", {})),
-            )
-            item = DelayedResponseItem(
-                item_id=item.get("item_id", ""),
-                group_id=item.get("group_id", group_id),
-                user_id=item.get("user_id", ""),
-                channel=item.get("channel"),
-                channel_user_id=item.get("channel_user_id"),
-                message_content=item.get("message_content", ""),
-                strategy_decision=strategy_decision,
-                candidate_memories=item.get("candidate_memories", []),
-                enqueue_time=item.get("enqueue_time", ""),
-                window_seconds=float(item.get("window_seconds", 30.0)),
-                status=item.get("status", "pending"),
-                multimodal_inputs=item.get("multimodal_inputs", []),
-                adapter_type=item.get("adapter_type"),
-                adapter_route_id=item.get("adapter_route_id"),
-                evidence_refs=[str(ref) for ref in item.get("evidence_refs", []) if ref],
-            )
-            triggered[0] = item
+        return _send
 
+    def _resolve_caller(self, group_id: str, item: Any) -> ReplyCaller:
+        """认出这一轮是谁在叫她，以及她的互动度（决定能不能驱动工具）。"""
+        engine = self._engine
+        profile = None
         resolved_uid: str | None = None
         if item.channel and item.channel_user_id:
             # 使用 IdentityResolver 统一解析
@@ -738,78 +641,40 @@ class DelayedQueueTasks:
             )
             if resolution.user_id:
                 resolved_uid = resolution.user_id
-                caller_profile = engine.user_manager.get_user(resolved_uid, group_id)
-        if caller_profile is None and item.user_id:
+                profile = engine.user_manager.get_user(resolved_uid, group_id)
+        if profile is None and item.user_id:
             # 队列携带框架 ID；生成/查询路径不能用显示名再注册或绑定账号。
-            caller_profile = engine.user_manager.get_user(item.user_id, group_id)
-            if caller_profile is not None:
+            profile = engine.user_manager.get_user(item.user_id, group_id)
+            if profile is not None:
                 resolved_uid = item.user_id
-        caller_is_developer = bool(caller_profile and caller_profile.is_developer)
-        pending_evidence_refs = list(
-            dict.fromkeys(
-                ref
-                for triggered_item in triggered
-                for ref in getattr(triggered_item, "evidence_refs", [])
-                if ref
-            )
-        )
-
-        # Engagement rate for TOOL permission control
-        caller_engagement = 0.0
+        engagement = 0.0
         if resolved_uid:
             semantic_profile = engine.semantic_memory.get_user_profile(group_id, resolved_uid)
             if semantic_profile:
-                caller_engagement = semantic_profile.engagement_rate
+                engagement = semantic_profile.engagement_rate
+        return ReplyCaller(
+            profile=profile,
+            resolved_uid=resolved_uid,
+            is_developer=bool(profile and profile.is_developer),
+            engagement=engagement,
+        )
 
-        # Merge all triggered items into one prompt and one generation call
-        adapter_type = getattr(triggered[0], "adapter_type", None) if triggered else None
+    async def _prepare_reply_messages(
+        self,
+        group_id: str,
+        triggered: list[Any],
+        caller: ReplyCaller,
+        pending_history: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]], AgentTurn]:
+        """拼出这一轮的 system prompt 与消息链（记忆 RAG + XML 历史 + 图片）。"""
+        engine = self._engine
         bundle = self._build_delayed_prompt(
             triggered,
             group_id,
-            caller_is_developer=caller_is_developer,
-            adapter_type=adapter_type,
+            caller_is_developer=caller.is_developer,
+            adapter_type=getattr(triggered[0], "adapter_type", None),
         )
-
-        # Use ContextAssembler to build full messages with memory-unit RAG + XML history
-        memory_unit_top_k = engine.config.get("memory_unit_top_k", DEFAULT_MEMORY_UNIT_TOP_K)
-        memory_unit_token_budget = int(
-            engine.config.get("memory_unit_token_budget", DEFAULT_MEMORY_UNIT_TOKEN_BUDGET)
-        )
-        history_token_budget = int(
-            engine.config.get(
-                "basic_memory_history_token_budget",
-                DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
-            )
-        )
-
-        # 获取当前发言者信息
-        speaker_uid = resolved_uid or ""
-        identity_aliases: list[str] = []
-        for merged_item in triggered:
-            for identity in (
-                getattr(merged_item, "user_id", ""),
-                getattr(merged_item, "channel_user_id", ""),
-                getattr(merged_item, "speaker_name", ""),
-            ):
-                identity = str(identity or "").strip()
-                if identity and identity not in identity_aliases:
-                    identity_aliases.append(identity)
-        if caller_profile is not None:
-            profile_identities = [
-                getattr(caller_profile, "user_id", ""),
-                getattr(caller_profile, "name", ""),
-                *getattr(caller_profile, "identities", {}).values(),
-                *getattr(caller_profile, "identity_anchors", []),
-            ]
-            for identity in profile_identities:
-                identity = str(identity or "").strip()
-                if identity and identity not in identity_aliases:
-                    identity_aliases.append(identity)
-                if identity.isdigit() and f"qq_{identity}" not in identity_aliases:
-                    identity_aliases.append(f"qq_{identity}")
-        speaker_display = getattr(triggered[0], "speaker_name", "") if triggered else ""
-
-        # 提取原始聊天内容用于日记检索，避免 XML 标签干扰
+        # 提取原始聊天内容用于记忆检索，避免 XML 标签干扰
         raw_parts = [
             text
             for triggered_item in triggered
@@ -819,41 +684,29 @@ class DelayedQueueTasks:
         ]
         raw_chat_content = "\n".join(raw_parts) if raw_parts else bundle.user_content
         search_context = self._recent_search_context(engine, group_id, raw_parts)
-        # 查询编码要发网络请求、冷层向量要读盘：放到线程里提前做完，聊天主循环里的
-        # 检索只剩内存运算。预取失败只会让这一轮少一路召回。
-        manager = getattr(engine, "memory_unit_manager", None)
-        prepare_async = getattr(manager, "prepare_retrieval_async", None)
-        prepare = getattr(manager, "prepare_retrieval", None)
-        if callable(prepare_async):
-            await prepare_async(
-                raw_chat_content,
-                group_id=group_id,
-                context=search_context,
-                cross_group=bool(engine.config.get("cross_group_memory_enabled", True)),
-            )
-        elif callable(prepare):
-            await asyncio.to_thread(
-                prepare, raw_chat_content, group_id=group_id, context=search_context
-            )
+        await self._prefetch_retrieval(group_id, raw_chat_content, search_context)
         agent_turn = AgentTurn(
             group_id=group_id,
             item_ids=[triggered_item.item_id for triggered_item in triggered],
             query=raw_chat_content,
         )
-        await self._emit_agent_turn(engine, agent_turn)
+        await emit_agent_turn(engine, agent_turn)
 
+        cross_group = bool(engine.config.get("cross_group_memory_enabled", True))
         msgs, _ = engine.context_assembler.build_messages_with_breakdown(
             group_id=group_id,
             current_query=bundle.user_content,
             system_prompt=bundle.system_prompt,
             search_query=raw_chat_content,
             search_context=search_context,
-            memory_unit_top_k=memory_unit_top_k,
-            memory_unit_token_budget=memory_unit_token_budget,
+            memory_unit_top_k=engine.config.get("memory_unit_top_k", DEFAULT_MEMORY_UNIT_TOP_K),
+            memory_unit_token_budget=int(
+                engine.config.get("memory_unit_token_budget", DEFAULT_MEMORY_UNIT_TOKEN_BUDGET)
+            ),
             include_pending=False,
-            speaker_user_id=speaker_uid,
-            speaker_name=speaker_display,
-            identity_aliases=identity_aliases,
+            speaker_user_id=caller.resolved_uid or "",
+            speaker_name=getattr(triggered[0], "speaker_name", ""),
+            identity_aliases=_identity_aliases(triggered, caller.profile),
             mentioned_user_ids=list(
                 dict.fromkeys(
                     user_id
@@ -862,715 +715,37 @@ class DelayedQueueTasks:
                     if user_id
                 )
             ),
-            cross_group_enabled=bool(engine.config.get("cross_group_memory_enabled", True)),
+            cross_group_enabled=cross_group,
             content_is_tagged=True,
             dynamic_context=bundle.dynamic_context,
-            history_token_budget=history_token_budget,
+            history_token_budget=int(
+                engine.config.get(
+                    "basic_memory_history_token_budget",
+                    DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+                )
+            ),
         )
-        system_prompt = msgs[0]["content"]
-        messages = msgs[1:]
-
-        # Collect multimodal inputs from triggered items AND recent messages, then
-        # inject into the last user message. Recent-message images are needed because
-        # an image sent on its own (or attached to an earlier text message) only
-        # survives as a caption/XML placeholder otherwise, and pure-image messages
-        # never reach the delayed queue at all. 表情包也一并带上：它们不进视觉通道，
-        # 但本地路径要列进文本，模型才能把表情包原图当生图参考图。
-        unanswered_from = 0
-        for idx in range(len(pending_history) - 1, -1, -1):
-            if pending_history[idx].get("role") == "assistant":
-                unanswered_from = idx + 1
-                break
-        all_multimodal: list[dict[str, str]] = []
-        seen_values: set[str] = set()
-        for source in (
-            *[getattr(i, "multimodal_inputs", None) for i in triggered],
-            *[r.get("multimodal_inputs") for r in pending_history[unanswered_from:]],
-        ):
-            for m in source or []:
-                if m.get("type") != "image":
-                    continue
-                value = str(m.get("value", ""))
-                if not value or value in seen_values:
-                    continue
-                seen_values.add(value)
-                all_multimodal.append(m)
-
-        messages = engine._helpers.inject_multimodal_into_user_message(messages, all_multimodal)
-
-        # Multi-round generation with function_call support
-        from sirius_pulse.core.brain import Brain, ChatRequest
-        from sirius_pulse.tools.models import ToolInvocationContext
-
-        max_tool_rounds = engine.config.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
-        partial_replies: list[str] = []
-        last_partial_sent_at: float | None = None
-        send_next_tool_output = False
-        _round = 0
-        tool_calls: list[ToolCall] = []
-        reply = ""
-        chat_result: Any = None
-        sticker_names_accumulated: list[str] = []
-        poke_user_ids_accumulated: list[str] = []
-        pending_chat_result: Any = None
-        ended_because_max_rounds = False
-        force_notebook_final = False
-        max_round_reply: Any | None = None
-        tool_chain_active = False
-        work_run: WorkModeRun | None = None
-        work_store: WorkModeStore | None = None
-        work_final_reply: str | None = None
-        delivery_complete = False
-
-        def _save_work_run() -> None:
-            """轨迹落盘；没有开始过工作模式就没有可写的东西。"""
-            if work_run is not None and work_store is not None:
-                work_store.save_run(work_run)
-
-        # 一个回合只取一次时间：每轮重写会改掉这条 user 消息，后面累积的工具
-        # 调用与结果就全部错过前缀缓存。
-        Brain.pin_current_time(messages)
-
-        while True:
-            # 本轮开始时的工作模式状态：本轮才调用 enter_work_mode 的话，本轮正文
-            # 仍按普通聊天规则外发。
-            was_in_work_mode = work_run is not None
-            if work_run is not None:
-                # 暂存的群消息只有被点名时才一次性补进来，其余轮次保持前缀不变。
-                work_run.take_flushed()
-                for stashed in work_run.take_flushed_for_model():
-                    messages.append({"role": "user", "content": stashed})
-                for ref in work_run.flushed_evidence_refs:
-                    if ref not in pending_evidence_refs:
-                        pending_evidence_refs.append(ref)
-                work_run.flushed_evidence_refs = []
-            self._append_tool_chain_messages(engine, messages, group_id, pending_evidence_refs)
-            enable_tools_for_round = bool(engine.config.get("enable_tools", True))
-
-            if pending_chat_result is not None:
-                chat_result = pending_chat_result
-                pending_chat_result = None
-            else:
-                if _round > max_tool_rounds or (force_notebook_final and _round > 0):
-                    ended_because_max_rounds = bool(
-                        tool_calls
-                        and engine._tool_registry is not None
-                        and engine._tool_executor is not None
-                    )
-                    break
-                agent_turn.advance(AgentTurnPhase.DECIDE)
-                await self._emit_agent_turn(engine, agent_turn)
-                # 工作模式期间可以换一个任务名，也就是换 AMKR 里的模型。
-                round_task_name = (
-                    (work_run.task_name or "response_generate")
-                    if work_run is not None
-                    else "response_generate"
-                )
-                streamer = self._first_sentence_streamer(
-                    engine,
-                    group_id,
-                    item,
-                    on_partial_reply=on_partial_reply,
-                    eligible=work_run is None and not force_notebook_final,
-                )
-                try:
-                    chat_result = await engine.brain.chat(
-                        ChatRequest(
-                            group_id=group_id,
-                            user_id=item.user_id or "",
-                            system_prompt=system_prompt,
-                            messages=messages,
-                            task_name=round_task_name,
-                            enable_tools=enable_tools_for_round,
-                            caller_is_developer=caller_is_developer,
-                            post_process=True,
-                            inject_current_time=False,
-                            work_mode=work_run is not None,
-                            defer_bookkeeping_tool_text=(
-                                work_run is None
-                                and engine._tool_registry is not None
-                                and _has_bookkeeping_tool(engine._tool_registry)
-                            ),
-                            extra_tools=control_tools(active=work_run is not None),
-                            stream_sink=streamer,
-                        )
-                    )
-                finally:
-                    if streamer is not None:
-                        await streamer.settle()
-                if streamer is not None and streamer.sent_at is not None:
-                    last_partial_sent_at = streamer.sent_at
-                _round += 1
-            # 消息链里要放她这一轮说的完整原话，包括已经提前发出去的第一句。
-            reply = (getattr(chat_result, "streamed_prefix", "") + chat_result.raw_text).strip()
-            round_clean = chat_result.clean_text
-            sticker_names_accumulated.extend(getattr(chat_result, "sticker_names", []) or [])
-            poke_user_ids_accumulated.extend(getattr(chat_result, "poke_user_ids", []) or [])
-            agent_turn.set_candidates(getattr(chat_result, "injected_tool_names", []))
-
-            # 分类工具调用：流程控制工具由本循环处理，其余交给 ToolExecutor
-            tool_calls = chat_result.tool_calls or []
-            control_calls = [tc for tc in tool_calls if is_control_tool(tc.function_name)]
-            regular_tools = [tc for tc in tool_calls if not is_control_tool(tc.function_name)]
-            report_next_tool_output = send_next_tool_output
-            send_next_tool_output = False
-            agent_turn.advance(AgentTurnPhase.PLAN if tool_calls else AgentTurnPhase.RESPOND)
-            await self._emit_agent_turn(engine, agent_turn)
-
-            # ── 工作模式流程控制工具：由本循环直接处理，不进 ToolExecutor ──
-            has_executable_tools = bool(
-                regular_tools
-                and engine._tool_registry is not None
-                and engine._tool_executor is not None
-            )
-            if tool_calls and (control_calls or has_executable_tools):
-                messages.append(
-                    _build_assistant_tool_message(
-                        reply,
-                        tool_calls,
-                        getattr(chat_result, "reasoning_content", ""),
-                    )
-                )
-
-            quit_result: str | None = None
-            for tc in control_calls:
-                params = parse_arguments(tc.function_arguments)
-                if tc.function_name == SEND_MIDWAY_MSG:
-                    midway_text = str(params.get("message", "") or "").strip()
-                    midway_markers = parse_interaction_markers(
-                        midway_text,
-                        available_stickers=getattr(engine, "_sticker_names", []) or [],
-                    )
-                    midway_text = midway_markers.text
-                    sticker_names_accumulated.extend(midway_markers.sticker_names)
-                    if midway_text and on_partial_reply is not None:
-                        await on_partial_reply(midway_text)
-                        last_partial_sent_at = time.monotonic()
-                        if work_run is not None:
-                            work_run.add_step(kind="midway", text=midway_text)
-                        midway_result = "消息已发送给群里。"
-                    elif not midway_text and midway_markers.sticker_names:
-                        midway_result = "表情包已记录，会随本轮结果发出。"
-                    elif not midway_text:
-                        midway_result = "message 为空，没有发送。"
-                    else:
-                        midway_result = "当前没有可用的发送通道，消息没有发出去。"
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": midway_result}
-                    )
-                elif tc.function_name == ENTER_WORK_MODE:
-                    goal = str(params.get("goal", "") or "").strip()
-                    if work_run is None:
-                        work_run = WorkModeRun(group_id=group_id, goal=goal)
-                        work_store = WorkModeStore(engine.work_path)
-                        work_run.store = work_store
-                        # 每次进入时重新读设置：改完设置不需要重启人格。
-                        work_run.task_name = work_store.work_task_name()
-                        engine.begin_work_mode(group_id, work_run)
-                        # 工作模式有自己的暂存窗口，前面那轮开着的工具链窗口得关上。
-                        if tool_chain_active:
-                            end_tool_chain = getattr(engine, "end_tool_chain", None)
-                            if callable(end_tool_chain):
-                                end_tool_chain(group_id)
-                            tool_chain_active = False
-                        _save_work_run()
-                        engine._log_inner_thought(f"进入工作模式：{goal}")
-                        if not round_clean.strip():
-                            # 模型调用工具时几乎不写正文（线上进入工作模式的 19 轮全是
-                            # 0 字，提示词劝不动），所以框架补一句进展，别让群里干等到
-                            # 结果才第一次看到她说话。
-                            goal_preview = goal if len(goal) <= 80 else goal[:80] + "…"
-                            status_text = (
-                                f"收到，开始处理：{goal_preview}" if goal_preview else "收到，开始处理，稍后汇报结果。"
-                            )
-                            if on_partial_reply is not None:
-                                await on_partial_reply(status_text)
-                                last_partial_sent_at = time.monotonic()
-                                engine._log_inner_thought(f"进入轮无正文，补发进展：{status_text[:40]}...")
-                    # 怎么说话、怎么退出写在下面的【工作模式规范】里，这里只报状态。
-                    enter_notice = "已进入工作模式，重工具已解锁。"
-                    if not round_clean.strip():
-                        # 进入轮一句话都没对群里说时，群里只会看到她突然开始做事。
-                        # 提醒她先用 send_midway_msg 报个方向，别让人干等。
-                        enter_notice += "（这一轮你没有对群里说话；如果这次工作要花一会儿，"
-                        enter_notice += "先用 send_midway_msg 简短说明你在做什么。）"
-                    # 工作细则只在真正开工时送到，不常驻在每一轮闲聊的 system prompt 里。
-                    enter_notice += "\n\n" + PromptFactory.build_work_mode_guide()
-                    home_context = await life_bridge.home_overview(engine)
-                    if home_context:
-                        enter_notice += "\n\n" + home_context
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tc.id, "content": enter_notice}
-                    )
-                elif tc.function_name == QUIT_WORK_MODE:
-                    quit_result = str(params.get("result", "") or "").strip()
-                    if quit_result:
-                        messages.append(
-                            {"role": "tool", "tool_call_id": tc.id, "content": "已退出工作模式。"}
-                        )
-                    else:
-                        # result 是这次工作唯一的对外出口。让它空着退出等于这一轮群里
-                        # 什么都收不到（模型漏参、参数 JSON 截断都会走到这里），所以
-                        # 空 result 不算退出，只回一句提醒让它补上。
-                        quit_result = None
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": (
-                                    "result 为空，不能这样退出：群里会收不到任何结果。"
-                                    "请用一句话说明这次工作做完了什么、没做完什么，"
-                                    "再调用 quit_work_mode。"
-                                ),
-                            }
-                        )
-
-            work_step: dict[str, Any] | None = None
-            if work_run is not None:
-                work_step = {
-                    "round": len(work_run.steps) + 1,
-                    "text": round_clean,
-                    "tools": [
-                        {"name": tc.function_name, "arguments": tc.function_arguments}
-                        for tc in tool_calls
-                    ],
-                    "results": [],
-                }
-                work_run.steps.append(work_step)
-                _save_work_run()
-
-            if quit_result is not None:
-                quit_markers = parse_interaction_markers(
-                    quit_result,
-                    available_stickers=getattr(engine, "_sticker_names", []) or [],
-                )
-                sticker_names_accumulated.extend(quit_markers.sticker_names)
-                work_final_reply = quit_markers.text
-                if work_run is not None:
-                    work_run.finish(result=work_final_reply)
-                    _save_work_run()
-                engine._log_inner_thought(f"退出工作模式，结果：{work_final_reply[:40]}...")
-                break
-
-            # 没有调用任何工具 → 文本作为最终回复
-            if not tool_calls:
-                if work_run is not None:
-                    # 工作模式里正文不外发，也不能就此结束：催她继续或主动退出。
-                    messages.append({"role": "assistant", "content": reply or "(无输出)"})
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "【工具链控制信息】你还在工作模式中。"
-                                "上面的话没有人会看到；想对外说话用 send_midway_msg。"
-                                "继续推进任务，做完了或者做不下去就用 quit_work_mode 退出并说明结果。"
-                            ),
-                        }
-                    )
-                    continue
-                if self._append_tool_chain_messages(
-                    engine, messages, group_id, pending_evidence_refs
-                ):
-                    continue
-                agent_turn.advance(AgentTurnPhase.RESPOND)
-                await self._emit_agent_turn(engine, agent_turn)
-                break
-
-            def _tool_is_silent(tool_call: ToolCall) -> bool:
-                tool = (
-                    engine._tool_registry.get(tool_call.function_name)
-                    if engine._tool_registry is not None
-                    else None
-                )
-                return self._tool_is_silent(tool, tool_call)
-
-            non_tool_text = round_clean
-            all_silent = bool(regular_tools) and all(_tool_is_silent(tc) for tc in regular_tools)
-            notebook_only = (
-                not was_in_work_mode
-                and not control_calls
-                and bool(regular_tools)
-                and engine._tool_registry is not None
-                and all(
-                    _is_bookkeeping(engine._tool_registry.get(tc.function_name))
-                    for tc in regular_tools
-                )
-            )
-            if non_tool_text and notebook_only:
-                # 它可能也是对用户的回答：留作草稿让下一轮完整作答，不先发整理播报。
-                pass
-            elif non_tool_text and was_in_work_mode:
-                # 工作模式内模型正文一律不外发，只有工具结果和 send_midway_msg 有效。
-                engine._log_inner_thought(f"工作模式内正文不外发，留在自己的上下文里：{non_tool_text[:40]}...")
-            elif non_tool_text and (report_next_tool_output or not all_silent):
-                # 普通聊天里伴随工具调用的正文照常发出去，不再悄悄留在消息链里。
-                if on_partial_reply is None:
-                    logger.debug("伴随工具调用的模型输出没有可用发送回调，保留在消息链中")
-                else:
-                    if report_next_tool_output:
-                        engine._log_inner_thought(f"工具调用出现问题，转发下一轮模型输出：{non_tool_text[:40]}...")
-                    else:
-                        engine._log_inner_thought(f"正文与工具调用同轮返回，先发正文：{non_tool_text[:40]}...")
-                    await on_partial_reply(non_tool_text)
-                    last_partial_sent_at = time.monotonic()
-
-            # 2. 执行普通工具
-            tool_multimodal: list[dict[str, Any]] = []
-            if (
-                regular_tools
-                and engine._tool_registry is not None
-                and engine._tool_executor is not None
-            ):
-                # 工作模式有自己的暂存窗口，别再开工具链注入窗口，免得两条路各记一份。
-                if work_run is None:
-                    begin_tool_chain = getattr(engine, "begin_tool_chain", None)
-                    if callable(begin_tool_chain):
-                        begin_tool_chain(group_id)
-                        tool_chain_active = True
-                from sirius_pulse.memory.user.unified_models import UnifiedUser
-
-                caller_user_id = resolved_uid or item.user_id
-                tool_caller = (
-                    caller_profile
-                    if isinstance(caller_profile, UnifiedUser)
-                    else UnifiedUser(
-                        user_id=caller_user_id,
-                        name=caller_profile.name if caller_profile else caller_user_id,
-                        metadata={"is_developer": caller_is_developer},
-                    )
-                )
-                developer_profiles: list[UnifiedUser] = []
-                group_entries = engine.user_manager.entries.get(group_id, {})
-                for profile in group_entries.values():
-                    if profile.is_developer:
-                        developer_profiles.append(profile)
-
-                engine._tool_executor.set_chat_context(
-                    group_id=group_id,
-                    user_id=caller_user_id or "",
-                    # 用本条待发回复自己的平台来源：这是本次调用的权威取值，
-                    # 引擎级「当前适配器」可能已被并发的另一群覆盖。
-                    adapter_type=item.adapter_type or getattr(engine, "_current_adapter_type", ""),
-                )
-
-                # assistant 消息（含本轮的 tool_calls）已在流程控制工具处理前写入
-                from sirius_pulse.tools.pending_sources import pending_evidence_callers
-
-                runner = ToolCallRunner(engine)
-                base_evidence_callers = pending_evidence_callers(
-                    engine, group_id, pending_evidence_refs
-                )
-                call_adapter_type = (
-                    item.adapter_type or getattr(engine, "_current_adapter_type", "") or ""
-                )
-
-                def _mark_generation_unsafe() -> None:
-                    # Tool retry_safe describes executor retries, not replaying an entire turn.
-                    engine.delayed_queue.mark_generation_unsafe(item_ids)
-                    persist_delayed_queue(engine)
-
-                for idx, tc in enumerate(regular_tools):
-                    tool_name = tc.function_name
-                    prepared = runner.prepare(
-                        tc,
-                        ToolInvocationContext(
-                            caller=tool_caller,
-                            developer_profiles=developer_profiles,
-                            evidence_refs=tuple(pending_evidence_refs),
-                            evidence_callers=base_evidence_callers,
-                            group_id=group_id,
-                            adapter_type=call_adapter_type,
-                        ),
-                    )
-                    tool = prepared.tool
-                    params = prepared.params
-                    if tool is None:
-                        logger.warning(prepared.rejection)
-                        send_next_tool_output = True
-                        messages.append(runner.reject(tc, prepared.rejection).tool_message())
-                        continue
-
-                    side_effect = prepared.side_effect
-                    call_context = prepared.context
-                    call_caller = call_context.caller if call_context is not None else None
-                    call_is_developer = bool(
-                        call_context is not None and call_context.caller_is_developer
-                    )
-                    # The batch-level gate checks who asked; the per-source gate checks
-                    # the author this operation was actually bound to.
-                    denial = self._engagement_denial(
-                        tool, params, caller_engagement, caller_is_developer
-                    )
-                    if not denial:
-                        call_engagement = caller_engagement
-                        if call_caller is not None and call_caller.user_id != caller_user_id:
-                            semantic_profile = engine.semantic_memory.get_user_profile(
-                                group_id, call_caller.user_id
-                            )
-                            call_engagement = (
-                                semantic_profile.engagement_rate if semantic_profile else 0.0
-                            )
-                        denial = self._engagement_denial(
-                            tool, params, call_engagement, call_is_developer
-                        )
-                    if not denial and tool.developer_only and not call_is_developer:
-                        denial = f"Tool '{tool_name}' 被拒绝：caller 不是 developer"
-                    if not denial:
-                        denial = prepared.rejection
-                    if denial:
-                        logger.warning(denial)
-                        agent_turn.deny_action(tc.id, tool_name, side_effect, denial)
-                        await self._emit_agent_turn(engine, agent_turn)
-                        send_next_tool_output = True
-                        messages.append(runner.reject(tc, denial).tool_message())
-                        continue
-                    if not agent_turn.begin_action(
-                        tool_call_id=tc.id,
-                        tool_name=tool_name,
-                        params=params,
-                        side_effect=side_effect,
-                        deduplicate=side_effect != "read_only",
-                    ):
-                        err_msg = f"Tool '{tool_name}' 被拒绝：本轮相同副作用动作已经执行过。"
-                        await self._emit_agent_turn(engine, agent_turn)
-                        send_next_tool_output = True
-                        messages.append(runner.reject(tc, err_msg).tool_message())
-                        continue
-
-                    agent_turn.advance(AgentTurnPhase.ACT)
-                    await self._emit_agent_turn(engine, agent_turn)
-
-                    outcome = await runner.execute(
-                        prepared, group_id=group_id, before_execute=_mark_generation_unsafe
-                    )
-                    result = outcome.result
-                    assert result is not None
-                    agent_turn.finish_action(
-                        tc.id,
-                        success=result.success,
-                        # 人物声明、私有资产与小本的内容不进 AgentTurn（会推给 WebUI）。
-                        summary=("操作已处理" if result.success else "操作未确认")
-                        if getattr(tool, "redact_logs", False)
-                        else (result.error if not result.success else result.to_display_text()),
-                    )
-                    agent_turn.advance(AgentTurnPhase.VERIFY)
-                    await self._emit_agent_turn(engine, agent_turn)
-                    if result.success:
-                        try:
-                            self._note_external_delivery(
-                                engine, group_id, item, chat_result, tool, result
-                            )
-                        except Exception:
-                            logger.warning("外部投递回执生成失败", exc_info=True)
-                    else:
-                        send_next_tool_output = True
-                    tool_multimodal.extend(outcome.multimodal)
-
-                    messages.append(outcome.tool_message())
-                    if work_step is not None:
-                        work_step["results"].append({"tool": tool_name, "output": outcome.content})
-
-                    # 节奏间隔只为了别让两次对外投递（发图、传文件、私聊）挤在一起；
-                    # 查资料、读文件这类没往外发东西的工具接着跑，不必干等。
-                    if (
-                        idx < len(regular_tools) - 1
-                        and not notebook_only
-                        and result.success
-                        and _delivered_externally(result)
-                    ):
-                        await asyncio.sleep(_DELIVERY_PACING_SECONDS)
-
-            if work_step is not None:
-                _save_work_run()
-
-            if notebook_only:
-                # 小本写成功后直接回复，避免小本整理占用多轮聊天；失败（含误调已移除的
-                # read）则让模型看到错误后再改一次，仍受 max_tool_rounds 约束。
-                if not send_next_tool_output:
-                    force_notebook_final = True
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "【内部控制信息】刚才小本工具同轮的正文尚未发送，"
-                            "只是你的草稿。请继续自然回应用户的问题；"
-                            "一般不必主动播报整理小本，若对方明确询问则按工具结果如实回答，"
-                            "待整理不等于已写入。"
-                        ),
-                    }
-                )
-
-            # 静默只免去普通聊天的后续回复，工作模式仍须继续剩余动作并显式收尾。
-            if work_run is None and all_silent and not notebook_only and not send_next_tool_output:
-                if not self._append_tool_chain_messages(
-                    engine, messages, group_id, pending_evidence_refs
-                ):
-                    delivery_complete = True
-                    chat_result.clean_text = ""
-                    break
-
-            # 如果有多模态内容，作为 user 消息注入
-            if tool_multimodal:
-                messages.append({"role": "user", "content": tool_multimodal})
-
-        if tool_chain_active:
-            end_tool_chain = getattr(engine, "end_tool_chain", None)
-            if callable(end_tool_chain):
-                end_tool_chain(group_id)
-
-        # 工作模式只由 quit_work_mode 正常收尾；循环因别的原因结束（轮次上限、
-        # 静默退出等）时如实记成未完成，并释放暂存窗口。
-        if work_run is not None:
-            if work_run.status == "running":
-                work_run.finish(
-                    result=work_final_reply or "工作模式被中断，任务未完成。",
-                    status="aborted",
-                )
-            _save_work_run()
-
-        # Let the model turn the accumulated tool results into the final reply.
-        if ended_because_max_rounds:
-            logger.debug(
-                "Chain hit max_tool_rounds=%d; asking the model for a final reply",
-                max_tool_rounds,
-            )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "【内部控制信息】请停止调用工具，直接自然回应用户；" "不用主动汇报小本整理，若被明确询问则按工具回执如实回答。"
-                        if force_notebook_final
-                        else (
-                            "【工具链控制信息】本轮已经达到工具调用轮次上限。"
-                            "请停止调用工具，直接给出最终回复；根据上方工具结果说明已完成、"
-                            "未完成的内容及原因，不要声称未经验证的操作已经完成。"
-                        )
-                    ),
-                }
-            )
-            try:
-                candidate = await engine.brain.chat(
-                    ChatRequest(
-                        group_id=group_id,
-                        user_id=item.user_id or "",
-                        system_prompt=system_prompt,
-                        messages=messages,
-                        task_name="response_generate",
-                        enable_tools=bool(engine.config.get("enable_tools", True)),
-                        caller_is_developer=caller_is_developer,
-                        post_process=True,
-                        inject_current_time=False,
-                        # 工具清单与前面各轮逐字一致才接得上前缀缓存，
-                        # 用 tool_choice 禁止调用而不是摘掉工具。
-                        work_mode=work_run is not None,
-                        extra_tools=control_tools(active=work_run is not None),
-                        tool_choice="none",
-                    )
-                )
-                if getattr(candidate, "tool_calls", None):
-                    logger.warning(
-                        "Final tool-limit reply unexpectedly requested tools; using fallback"
-                    )
-                else:
-                    max_round_reply = candidate
-            except Exception as exc:
-                logger.warning("Final tool-limit reply generation failed: %s", exc)
-
-        # 最终回复：hooks 已处理 pin/dedup/memory/timestamp
-        if ended_because_max_rounds:
-            if max_round_reply is not None:
-                chat_result = max_round_reply
-                clean_reply = max_round_reply.clean_text
-            else:
-                clean_reply = ""
-        else:
-            clean_reply = chat_result.clean_text if chat_result else ""
-
-        # Determine return strategy
-        from sirius_pulse.models.response_strategy import ResponseStrategy
-
-        strategy = "delayed"
-        if any(i.strategy_decision.strategy == ResponseStrategy.IMMEDIATE for i in triggered):
-            strategy = "immediate"
-
-        if ended_because_max_rounds:
-            if not clean_reply:
-                # 这句话会原样发到群里：只能是她自己的口吻，不能是工程提示。
-                # 具体原因留在日志里给运维看。
-                logger.warning(
-                    "工具链达到轮次上限且收尾回复为空，发送兜底话术: group=%s rounds=%d",
-                    group_id,
-                    max_tool_rounds,
-                )
-            final_reply = clean_reply or (
-                _UNREADY_REPLY_FALLBACK if force_notebook_final else _TOOL_LIMIT_REPLY_FALLBACK
-            )
-        else:
-            final_reply = clean_reply
-
-        # quit_work_mode 的 result 是这次工作的对外结果，直接作为本轮回复发出。
-        if work_final_reply is not None:
-            final_reply = work_final_reply
-        elif work_run is not None and not final_reply:
-            # 兜底：进了工作模式就必须留下一个对外结果。轮次用尽、模型没话说、
-            # 收尾轮也失败时，宁可说实话被打断，也不能让群里一声不响。
-            final_reply = work_run.result
-
-        # Fast tools can finish before the client has had time to visually render
-        # the partial reply. Keep a minimum lead window without delaying tool work.
-        if final_reply and last_partial_sent_at is not None:
-            try:
-                lead_seconds = max(
-                    0.0,
-                    float(engine.config.get("partial_reply_lead_seconds", 1.5)),
-                )
-            except (TypeError, ValueError):
-                lead_seconds = 1.5
-            remaining = lead_seconds - (time.monotonic() - last_partial_sent_at)
-            if remaining > 0:
-                await asyncio.sleep(remaining)
-
-        rich_reply = bool(final_reply and _markdown_image.should_send_as_image(final_reply))
-        rich_history = (
-            {
-                "target_user_id": item.user_id,
-                "system_prompt": getattr(chat_result, "system_prompt", ""),
-                "injected_request": getattr(chat_result, "injected_request", {}),
-                "injected_tool_names": getattr(chat_result, "injected_tool_names", []),
-                **_reasoning_memory_kwargs(chat_result),
-            }
-            if rich_reply
-            else {}
+        messages = engine._helpers.inject_multimodal_into_user_message(
+            msgs[1:], _turn_images(triggered, pending_history)
         )
+        return msgs[0]["content"], messages, agent_turn
 
-        # 获取引用回复信息
-        reply_references = chat_result.reply_references if chat_result else []
-        sticker_names = dedupe_sticker_names(sticker_names_accumulated)
-        poke_user_ids = list(dict.fromkeys(poke_user_ids_accumulated))[:1]
-
-        # The caller owns platform delivery; do not emit a second consumptive trigger.
-        agent_turn.advance(AgentTurnPhase.RESPOND)
-        await self._emit_agent_turn(engine, agent_turn)
-
-        return [
-            {
-                "strategy": strategy,
-                "item_id": triggered[0].item_id,
-                "reply": final_reply,
-                # 模型主动 [SKIP]：没有正文是预期结果，投递层按「已出结果」收尾，
-                # 不再当成生成失败去回队重试。
-                "skip_reply": bool(getattr(chat_result, "skipped", False)),
-                "partial_replies": partial_replies,
-                "reply_references": reply_references,
-                "sticker_names": sticker_names,
-                "poke_user_ids": poke_user_ids,
-                "agent_turn_id": agent_turn.turn_id,
-                "agent_turn": agent_turn.to_event_data(),
-                "delivery_complete": delivery_complete,
-                "rich_reply": rich_reply,
-                "rich_history": rich_history,
-            }
-        ]
+    async def _prefetch_retrieval(self, group_id: str, query: str, search_context: str) -> None:
+        """查询编码要发网络请求、冷层向量要读盘：放到线程里提前做完，聊天主循环里的
+        检索只剩内存运算。预取失败只会让这一轮少一路召回。"""
+        engine = self._engine
+        manager = getattr(engine, "memory_unit_manager", None)
+        prepare_async = getattr(manager, "prepare_retrieval_async", None)
+        prepare = getattr(manager, "prepare_retrieval", None)
+        if callable(prepare_async):
+            await prepare_async(
+                query,
+                group_id=group_id,
+                context=search_context,
+                cross_group=bool(engine.config.get("cross_group_memory_enabled", True)),
+            )
+        elif callable(prepare):
+            await asyncio.to_thread(prepare, query, group_id=group_id, context=search_context)
 
     def _build_delayed_prompt(
         self,
@@ -1627,80 +802,59 @@ class DelayedQueueTasks:
                 else []
             ),
         )
-        presence = life_bridge.presence_context(engine, chat_id=group_id)
-        if presence:
-            bundle.dynamic_context = (
-                f"{bundle.dynamic_context}\n\n{presence}" if bundle.dynamic_context else presence
-            )
-        scene_context = self._scene_context(engine, group_id, adapter_type)
-        if scene_context:
-            bundle.dynamic_context = (
-                f"{bundle.dynamic_context}\n\n{scene_context}"
-                if bundle.dynamic_context
-                else scene_context
-            )
-        people_context = self._impressions_context(engine, items, message_content)
-        if people_context:
-            bundle.dynamic_context = (
-                f"{bundle.dynamic_context}\n\n{people_context}"
-                if bundle.dynamic_context
-                else people_context
-            )
-        people = getattr(engine, "person_service", None)
-        if people is not None:
-            from sirius_pulse.people import PersonAccess
-
-            hints = []
-            sources: dict[str, list[dict[str, Any]]] = {}
-            for item in items:
-                for ref in getattr(item, "evidence_refs", []):
-                    try:
-                        evidence = people.get_evidence(ref)
-                        if evidence["group_id"] == group_id:
-                            sources.setdefault(evidence["actor_id"], []).append(evidence)
-                    except Exception:
-                        logger.warning("人物称呼来源暂不可用，保持原聊天流程")
-            for actor, evidence_items in sources.items():
-                try:
-                    content = "\n".join(item.get("content", "") for item in evidence_items)
-                    declined = any(
-                        phrase in content
-                        for phrase in (
-                            "别再问我名字",
-                            "不要再问我的名字",
-                            "不用问我名字",
-                            "不想告诉你名字",
-                            "不想说名字",
-                            "别问我的名字",
-                        )
-                    )
-                    if declined:
-                        people.should_ask_name(actor, declined=True)
-                        continue
-                    access = PersonAccess(actor_id=people.persona_id, group_id=group_id)
-                    person = people.get_person(actor, access)
-                    preferred = next(
-                        (
-                            n["name"]
-                            for n in person["names"]
-                            if n["name_type"] == "preferred" and n["scope"] == group_id
-                        ),
-                        "",
-                    )
-                    # 用消息标签上的 evidence_ref 指人：和最近消息里的写法一致，
-                    # person_update 记称呼时也正好要它。
-                    ref = evidence_items[-1].get("evidence_ref", "")
-                    who = f"evidence_ref={ref} 那条消息的发送者"
-                    if preferred:
-                        hints.append(f"- {who}：希望被叫「{preferred[:80]}」。")
-                    elif people.should_ask_name(actor):
-                        hints.append(
-                            f"- {who}：还不知道想被怎么称呼，合适时自然问一次，不用为此打断回答；" "对方说了就用 person_update 记下。"
-                        )
-                        people.mark_name_asked(actor)
-                except Exception:
-                    logger.warning("人物称呼提示暂不可用，保持原聊天流程")
-            if hints:
-                bundle.dynamic_context += "\n\n【怎么称呼他们】\n" + "\n".join(hints[:3])
+        _append_context(bundle, life_bridge.presence_context(engine, chat_id=group_id))
+        _append_context(bundle, self._scene_context(engine, group_id, adapter_type))
+        _append_context(bundle, self._impressions_context(engine, items, message_content))
+        hints = self._name_hints(items, group_id)
+        if hints:
+            bundle.dynamic_context += "\n\n【怎么称呼他们】\n" + "\n".join(hints[:3])
         bundle.dynamic_context = PromptFactory.with_reference_header(bundle.dynamic_context)
         return bundle
+
+    def _name_hints(self, items: list[Any], group_id: str) -> list[str]:
+        """这一轮说话的人希望被怎么称呼；还不知道的，提示她合适时问一次。"""
+        people = getattr(self._engine, "person_service", None)
+        if people is None:
+            return []
+        from sirius_pulse.people import PersonAccess
+
+        hints: list[str] = []
+        sources: dict[str, list[dict[str, Any]]] = {}
+        for item in items:
+            for ref in getattr(item, "evidence_refs", []):
+                try:
+                    evidence = people.get_evidence(ref)
+                    if evidence["group_id"] == group_id:
+                        sources.setdefault(evidence["actor_id"], []).append(evidence)
+                except Exception:
+                    logger.warning("人物称呼来源暂不可用，保持原聊天流程")
+        for actor, evidence_items in sources.items():
+            try:
+                content = "\n".join(item.get("content", "") for item in evidence_items)
+                if any(phrase in content for phrase in _DECLINE_NAME_PHRASES):
+                    people.should_ask_name(actor, declined=True)
+                    continue
+                access = PersonAccess(actor_id=people.persona_id, group_id=group_id)
+                person = people.get_person(actor, access)
+                preferred = next(
+                    (
+                        n["name"]
+                        for n in person["names"]
+                        if n["name_type"] == "preferred" and n["scope"] == group_id
+                    ),
+                    "",
+                )
+                # 用消息标签上的 evidence_ref 指人：和最近消息里的写法一致，
+                # person_update 记称呼时也正好要它。
+                ref = evidence_items[-1].get("evidence_ref", "")
+                who = f"evidence_ref={ref} 那条消息的发送者"
+                if preferred:
+                    hints.append(f"- {who}：希望被叫「{preferred[:80]}」。")
+                elif people.should_ask_name(actor):
+                    hints.append(
+                        f"- {who}：还不知道想被怎么称呼，合适时自然问一次，不用为此打断回答；" "对方说了就用 person_update 记下。"
+                    )
+                    people.mark_name_asked(actor)
+            except Exception:
+                logger.warning("人物称呼提示暂不可用，保持原聊天流程")
+        return hints

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -16,7 +17,17 @@ from typing import Any, Callable
 from sirius_pulse.core import life_bridge
 from sirius_pulse.core.constants import DEFAULT_MAX_TOOL_ROUNDS
 from sirius_pulse.core.prompt_factory import PromptFactory
-from sirius_pulse.core.tool_call_runner import ToolCallRunner
+from sirius_pulse.core.tool_call_runner import ToolCallOutcome, ToolCallRunner
+from sirius_pulse.core.tool_loop import (
+    append_tool_multimodal,
+    append_tool_outcome,
+    assistant_tool_message,
+    open_work_run,
+    record_tool_round,
+    request_closing_round,
+    resolve_max_tool_rounds,
+    save_work_run,
+)
 from sirius_pulse.core.work_mode import (
     SEND_MIDWAY_MSG,
     WORK_MODE_SOURCE_AUTONOMY,
@@ -292,21 +303,21 @@ class AgentTurnMixin:
 
                 messages = Brain._inject_user_context_message(messages, context)
 
-        store = WorkModeStore(self._engine.work_path)
-        run = WorkModeRun(
+        run = open_work_run(
+            self._engine.work_path,
             group_id=group_id,
             goal=goal or source,
             source=source,
-            task_name=store.work_task_name() or task_name,
+            fallback_task_name=task_name,
         )
-        run.store = store
-        store.save_run(run)
-        max_rounds = max(1, int(self.get_config_value("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)))
+        save_work_run(run)
+        max_rounds = resolve_max_tool_rounds(
+            self.get_config_value("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS), minimum=1
+        )
 
         try:
             return await self._run_work_mode_rounds(
                 run=run,
-                store=store,
                 system_prompt=system_prompt,
                 messages=messages,
                 group_id=group_id,
@@ -327,7 +338,6 @@ class AgentTurnMixin:
         self,
         *,
         run: WorkModeRun,
-        store: WorkModeStore,
         system_prompt: str,
         messages: list[dict[str, Any]],
         group_id: str,
@@ -340,8 +350,6 @@ class AgentTurnMixin:
         before_tool: Callable[[], None] | None = None,
         notebook_enabled: bool = True,
     ) -> Any:
-        last_result: Any = None
-        ended_by_round_limit = True
         # 回调回合的正文只留工作轨迹，框架不会替她发到聊天里。聊天里的工作模式靠
         # send_midway_msg 对外说话，这里必须给出同一个入口，否则「画好啦」这类话
         # 只能烂在轨迹里、群里永远收不到。自主回合仍然禁止对外发送：产物先留作她
@@ -349,10 +357,33 @@ class AgentTurnMixin:
         allow_midway = run.source == WORK_MODE_SOURCE_PASSIVE_TOOL and not bool(
             getattr(invocation_context, "self_initiated", False)
         )
-        callback_id = str(getattr(invocation_context, "background_event_id", "") or "")
-        extra_tools = [midway_message_tool()] if allow_midway else None
-        exclude_tool_names = () if notebook_enabled else self._chat_scoped_tool_names()
-        runner = ToolCallRunner(self._engine)
+        request = functools.partial(
+            self._chat_request,
+            group_id=group_id,
+            user_id=user_id,
+            system_prompt=system_prompt,
+            messages=messages,
+            task_name=run.task_name,
+            adapter_type=adapter_type,
+            caller_is_developer=caller_is_developer,
+            work_mode=True,
+            post_process=post_process,
+            inject_current_time=False,
+            extra_tools=[midway_message_tool()] if allow_midway else None,
+            exclude_tool_names=() if notebook_enabled else self._chat_scoped_tool_names(),
+        )
+        round_tools = functools.partial(
+            self._run_work_round_tools,
+            run=run,
+            messages=messages,
+            runner=ToolCallRunner(self._engine),
+            invocation_context=invocation_context,
+            group_id=group_id,
+            adapter_type=adapter_type,
+            allow_midway=allow_midway,
+            before_tool=before_tool,
+            notebook_enabled=notebook_enabled,
+        )
 
         # 一个回合只取一次时间：每轮重写会改掉这条 user 消息，后面累积的工具
         # 调用与结果就全部错过前缀缓存。
@@ -360,76 +391,22 @@ class AgentTurnMixin:
 
         Brain.pin_current_time(messages)
 
+        last_result: Any = None
+        ended_by_round_limit = True
         for _ in range(max_rounds):
-            result = await self._engine.brain.chat(
-                self._chat_request(
-                    group_id=group_id,
-                    user_id=user_id,
-                    system_prompt=system_prompt,
-                    messages=messages,
-                    task_name=run.task_name,
-                    adapter_type=adapter_type,
-                    caller_is_developer=caller_is_developer,
-                    work_mode=True,
-                    post_process=post_process,
-                    inject_current_time=False,
-                    extra_tools=extra_tools,
-                    exclude_tool_names=exclude_tool_names,
-                )
-            )
+            result = await self._engine.brain.chat(request())
             last_result = result
             tool_calls = list(getattr(result, "tool_calls", []) or [])
-            step = {
-                "text": str(getattr(result, "clean_text", "") or "").strip(),
-                "tools": [
-                    {"name": tool_call.function_name, "arguments": tool_call.function_arguments}
-                    for tool_call in tool_calls
-                ],
-                "results": [],
-            }
-            run.add_step(**step)
+            text = str(getattr(result, "clean_text", "") or "").strip()
+            # 持有本轮轨迹的引用：中途发言会往 run.steps 里再插一条，不能让工具结果
+            # 挂到那条中途记录上。
+            round_step = record_tool_round(run, text=text, tool_calls=tool_calls)
             if not tool_calls:
                 ended_by_round_limit = False
                 break
-
-            # 持有本轮轨迹的引用：中途发言会往 run.steps 里再插一条，不能让工具结果
-            # 挂到那条中途记录上。
-            round_step = run.steps[-1]
-            messages.append(self._assistant_tool_message(result.raw_text, tool_calls))
-            tool_multimodal: list[dict[str, Any]] = []
-            for tool_call in tool_calls:
-                tool_name = tool_call.function_name
-                if tool_name == SEND_MIDWAY_MSG:
-                    tool_content = await self._handle_midway_message(
-                        tool_call=tool_call,
-                        allow=allow_midway,
-                        run=run,
-                        group_id=group_id,
-                        adapter_type=adapter_type,
-                        callback_id=callback_id,
-                        before_tool=before_tool,
-                    )
-                    messages.append(
-                        {"role": "tool", "tool_call_id": tool_call.id, "content": tool_content}
-                    )
-                    round_step["results"].append({"tool": tool_name, "output": tool_content})
-                    continue
-                prepared = runner.prepare(tool_call, invocation_context)
-                if not notebook_enabled and prepared.tool is not None and prepared.tool.chat_scoped:
-                    outcome = runner.reject(
-                        tool_call,
-                        f"当前自主回合没有明确的聊天来源，不能使用 {tool_name}" "（它只读写某个具体聊天里的内容）。",
-                    )
-                else:
-                    outcome = await runner.execute(
-                        prepared, group_id=group_id, before_execute=before_tool
-                    )
-                tool_multimodal.extend(outcome.multimodal)
-                messages.append(outcome.tool_message())
-                round_step["results"].append({"tool": tool_name, "output": outcome.content})
-            if tool_multimodal:
-                messages.append({"role": "user", "content": tool_multimodal})
-            store.save_run(run)
+            messages.append(assistant_tool_message(result.raw_text, tool_calls))
+            await round_tools(tool_calls=tool_calls, round_step=round_step)
+            save_work_run(run)
         final_text = str(getattr(last_result, "clean_text", "") or "").strip()
 
         # 撞上限说明最后一轮仍是工具调用，带回来的正文是空的：她刚读了一堆东西，
@@ -437,18 +414,7 @@ class AgentTurnMixin:
         # 这次的结果。它只在真的撞到上限时才发生，所以代价有界（多一次调用）。
         if ended_by_round_limit:
             wrap_up = await self._final_round_after_limit(
-                messages=messages,
-                system_prompt=system_prompt,
-                group_id=group_id,
-                user_id=user_id,
-                task_name=run.task_name,
-                adapter_type=adapter_type,
-                caller_is_developer=caller_is_developer,
-                run=run,
-                store=store,
-                post_process=post_process,
-                extra_tools=extra_tools,
-                exclude_tool_names=exclude_tool_names,
+                run=run, messages=messages, request=request(tool_choice="none")
             )
             # 收尾轮没写出东西时，退回最后一轮可能夹带的文字；两者都空才是真的空。
             wrap_up_text = str(getattr(wrap_up, "clean_text", "") or "").strip()
@@ -460,57 +426,94 @@ class AgentTurnMixin:
             result=final_text,
             status="aborted" if ended_by_round_limit else "completed",
         )
-        store.save_run(run)
+        save_work_run(run)
         return last_result
+
+    async def _run_work_round_tools(
+        self,
+        *,
+        tool_calls: list[ToolCall],
+        round_step: dict[str, Any],
+        run: WorkModeRun,
+        messages: list[dict[str, Any]],
+        runner: ToolCallRunner,
+        invocation_context: ToolInvocationContext,
+        group_id: str,
+        adapter_type: str,
+        allow_midway: bool,
+        before_tool: Callable[[], None] | None,
+        notebook_enabled: bool,
+    ) -> None:
+        """执行工作回合里一轮的全部工具调用，结果回给模型并记进本轮轨迹。"""
+        multimodal: list[dict[str, Any]] = []
+        for tool_call in tool_calls:
+            if tool_call.function_name == SEND_MIDWAY_MSG:
+                content = await self._handle_midway_message(
+                    tool_call=tool_call,
+                    allow=allow_midway,
+                    run=run,
+                    group_id=group_id,
+                    adapter_type=adapter_type,
+                    callback_id=str(getattr(invocation_context, "background_event_id", "") or ""),
+                    before_tool=before_tool,
+                )
+                outcome = ToolCallOutcome(call=tool_call, content=content)
+            else:
+                outcome = await self._run_work_tool(
+                    runner,
+                    tool_call,
+                    invocation_context,
+                    group_id=group_id,
+                    before_tool=before_tool,
+                    notebook_enabled=notebook_enabled,
+                )
+            append_tool_outcome(messages, outcome, step=round_step, multimodal=multimodal)
+        append_tool_multimodal(messages, multimodal)
+
+    @staticmethod
+    async def _run_work_tool(
+        runner: ToolCallRunner,
+        tool_call: ToolCall,
+        invocation_context: ToolInvocationContext,
+        *,
+        group_id: str,
+        before_tool: Callable[[], None] | None,
+        notebook_enabled: bool,
+    ) -> ToolCallOutcome:
+        prepared = runner.prepare(tool_call, invocation_context)
+        if not notebook_enabled and prepared.tool is not None and prepared.tool.chat_scoped:
+            return runner.reject(
+                tool_call,
+                f"当前自主回合没有明确的聊天来源，不能使用 {tool_call.function_name}" "（它只读写某个具体聊天里的内容）。",
+            )
+        return await runner.execute(prepared, group_id=group_id, before_execute=before_tool)
 
     async def _final_round_after_limit(
         self,
         *,
-        messages: list[dict[str, Any]],
-        system_prompt: str,
-        group_id: str,
-        user_id: str,
-        task_name: str,
-        adapter_type: str,
-        caller_is_developer: bool,
         run: WorkModeRun,
-        store: WorkModeStore,
-        post_process: bool = True,
-        extra_tools: list[dict[str, Any]] | None = None,
-        exclude_tool_names: tuple[str, ...] = (),
+        messages: list[dict[str, Any]],
+        request: Any,
     ) -> Any:
         """Ask for the closing prose once the tool rounds are used up.
 
-        工具清单与前面各轮逐字一致（它是前缀的第一段，摘掉就整段错过缓存），
-        用 ``tool_choice="none"`` 禁止调用，而不是靠提示词请求模型别调用。
-        个别上游无视 ``none`` 仍回了工具调用时，只取正文、不执行。失败不该
-        让整次工作消失，所以异常只记一条日志，返回 ``None`` 交给调用方退回原文。
+        ``request`` 与前面各轮同一份工具清单，只加 ``tool_choice="none"``（见
+        :func:`request_closing_round`）。个别上游无视 ``none`` 仍回了工具调用时，
+        只取正文、不执行。失败返回 ``None``，交给调用方退回原文。
         """
-        messages.append({"role": "user", "content": _TOOL_LIMIT_WRAP_UP})
-        try:
-            result = await self._engine.brain.chat(
-                self._chat_request(
-                    group_id=group_id,
-                    user_id=user_id,
-                    system_prompt=system_prompt,
-                    messages=messages,
-                    task_name=task_name,
-                    adapter_type=adapter_type,
-                    caller_is_developer=caller_is_developer,
-                    work_mode=True,
-                    post_process=post_process,
-                    inject_current_time=False,
-                    extra_tools=extra_tools,
-                    exclude_tool_names=exclude_tool_names,
-                    tool_choice="none",
-                )
-            )
-        except Exception as exc:
-            logger.warning("工具轮次用尽后的收尾回合失败: %s", exc)
+        result = await request_closing_round(
+            self._engine.brain.chat,
+            request,
+            messages=messages,
+            prompt=_TOOL_LIMIT_WRAP_UP,
+            failure_log="工具轮次用尽后的收尾回合失败: %s",
+        )
+        if result is None:
             return None
-        step_text = str(getattr(result, "clean_text", "") or "").strip()
-        run.add_step(text=step_text, tools=[], results=[])
-        store.save_run(run)
+        run.add_step(
+            text=str(getattr(result, "clean_text", "") or "").strip(), tools=[], results=[]
+        )
+        save_work_run(run)
         return result
 
     async def run_autonomous_turn(
@@ -700,24 +703,6 @@ class AgentTurnMixin:
         kwargs.setdefault("enable_tools", True)
         kwargs.setdefault("post_process", True)
         return ChatRequest(**kwargs)
-
-    @staticmethod
-    def _assistant_tool_message(reply: str, tool_calls: list[ToolCall]) -> dict[str, Any]:
-        return {
-            "role": "assistant",
-            "content": reply or None,
-            "tool_calls": [
-                {
-                    "id": call.id,
-                    "type": call.type or "function",
-                    "function": {
-                        "name": call.function_name,
-                        "arguments": call.function_arguments,
-                    },
-                }
-                for call in tool_calls
-            ],
-        }
 
     @staticmethod
     def _build_caller(user_id: str, user_name: str, caller_is_developer: bool) -> Any:
