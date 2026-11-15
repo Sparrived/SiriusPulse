@@ -39,6 +39,7 @@ from sirius_pulse.core.work_mode import (
     parse_arguments,
 )
 from sirius_pulse.providers.base import ToolCall
+from sirius_pulse.tools.builtin import image_generate
 from sirius_pulse.tools.models import ToolInvocationContext
 from sirius_pulse.tools.pending_sources import pending_evidence_callers
 
@@ -56,22 +57,17 @@ def _job_admitted_evidence_refs(
     try:
         executor = getattr(engine, "_tool_executor", None)
         store = executor.get_data_store(tool_name) if executor is not None else None
-        jobs = store.get("jobs", []) if store is not None else []
         expected = job_id.removeprefix(f"{tool_name}:")
-        if not expected or "/" in expected or "\\" in expected:
+        if store is None or not expected or "/" in expected or "\\" in expected:
             return []
-        for job in reversed(jobs if isinstance(jobs, list) else []):
-            if (
-                isinstance(job, dict)
-                and str(job.get("id") or "") == expected
-                and str(job.get("group_id") or "") == group_id
-            ):
-                visual = job.get("visual") if isinstance(job.get("visual"), dict) else {}
-                manifest = (
-                    visual.get("manifest") if isinstance(visual.get("manifest"), dict) else {}
-                )
-                ref = str(manifest.get("source_ref") or "")
-                return [ref] if ref else []
+        if tool_name != image_generate.KIND:
+            return []
+        job = image_generate.find_job(store, expected)
+        if job is not None and str(job.get("group_id") or "") == group_id:
+            visual = job.get("visual") if isinstance(job.get("visual"), dict) else {}
+            manifest = visual.get("manifest") if isinstance(visual.get("manifest"), dict) else {}
+            ref = str(manifest.get("source_ref") or "")
+            return [ref] if ref else []
     except Exception:
         logger.warning("后台任务来源不可用，回调不授予人物资料写权限", exc_info=True)
     return []

@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from sirius_pulse.config.config_builder import ConfigBuilder
-from sirius_pulse.extension_runtime import BackgroundTaskSpec
+from sirius_pulse.scheduling.due_jobs import DueJobKind
 from sirius_pulse.visual import tooling
 from sirius_pulse.visual.access import GRANTABLE_CAPABILITIES
 from sirius_pulse.visual.errors import VisualError
@@ -233,7 +233,7 @@ async def run(
         return _error_result(VisualError("invalid_argument", str(exc)))
 
 
-def create_background_tasks(ctx: Any) -> list[BackgroundTaskSpec]:
+def create_background_tasks(ctx: Any) -> list[DueJobKind]:
     """注册自动候选控制器：只补齐缺项，不新增每轮视觉或 LLM 调用。"""
 
     async def _tick() -> None:
@@ -247,11 +247,17 @@ def create_background_tasks(ctx: Any) -> list[BackgroundTaskSpec]:
             return
         await service.auto_candidates(queue, limit=1)
 
+    try:
+        data_store = ctx.get_data_store("image_generate")
+    except Exception:  # noqa: BLE001 - 引擎尚未就绪时按人格目录定位到期任务表
+        data_store = None
     return [
-        BackgroundTaskSpec(
+        DueJobKind(
+            kind="visual_auto_candidates",
+            handler=_tick,
+            data_store=data_store,
+            every_seconds=_AUTO_INTERVAL_SECONDS,
             name="visual_auto_candidates",
-            interval_seconds=_AUTO_INTERVAL_SECONDS,
-            task_func=_tick,
         )
     ]
 

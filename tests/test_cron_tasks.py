@@ -9,6 +9,7 @@ from sirius_pulse.memory.user.unified_models import UnifiedUser
 from sirius_pulse.tools import cron_tasks
 from sirius_pulse.tools.builtin import bash
 from sirius_pulse.tools.builtin._internal import _bash_cron
+from sirius_pulse.tools.data_store import ToolDataStore
 from sirius_pulse.tools.models import ToolInvocationContext
 
 
@@ -85,24 +86,19 @@ def test_crontab_text_does_not_intercept_an_unrelated_shell_command():
     assert cron_tasks.parse_crontab_command("echo crontab") is None
 
 
-class _CronStore:
-    def __init__(self):
-        self.data = {}
-        self.saved = 0
+def _cron_store(tmp_path) -> ToolDataStore:
+    return ToolDataStore(tmp_path / "tool_data" / "bash.json")
 
-    def get(self, key, default=None):
-        return self.data.get(key, default)
 
-    def set(self, key, value):
-        self.data[key] = value
-
-    def save(self):
-        self.saved += 1
+def _seed_legacy_jobs(store: ToolDataStore, jobs: list[dict]) -> None:
+    """按旧版本的格式写进 bash.json：第一次读表时由迁移搬进 due_jobs。"""
+    store.set("cron_jobs", jobs)
+    store.save()
 
 
 @pytest.mark.asyncio
 async def test_bash_crontab_registers_lists_and_removes_jobs(tmp_path):
-    store = _CronStore()
+    store = _cron_store(tmp_path)
     invocation = ToolInvocationContext(
         caller=UnifiedUser(user_id="u1", name="Alice", metadata={"is_developer": False})
     )
@@ -132,12 +128,12 @@ async def test_bash_crontab_registers_lists_and_removes_jobs(tmp_path):
     assert listed["success"] is True
     assert "*/5 * * * * echo hello" in listed["text_blocks"][0]
     assert removed["success"] is True
-    assert store.data["cron_jobs"] == []
+    assert _bash_cron.list_jobs(store) == []
 
 
 @pytest.mark.asyncio
 async def test_bash_crontab_stdin_replaces_the_current_chat_crontab(tmp_path):
-    store = _CronStore()
+    store = _cron_store(tmp_path)
     context = {"group_id": "group-1", "adapter_type": "napcat"}
     invocation = ToolInvocationContext(caller=UnifiedUser(user_id="u1", name="Alice", metadata={}))
 
@@ -156,12 +152,13 @@ async def test_bash_crontab_stdin_replaces_the_current_chat_crontab(tmp_path):
         invocation_context=invocation,
     )
 
-    assert len(store.data["cron_jobs"]) == 1
-    assert store.data["cron_jobs"][0]["command"] == "echo new"
+    jobs = _bash_cron.list_jobs(store)
+    assert len(jobs) == 1
+    assert jobs[0]["command"] == "echo new"
 
 
 @pytest.mark.asyncio
-async def test_recurring_cron_occurrences_use_distinct_proactive_event_ids():
+async def test_recurring_cron_occurrences_use_distinct_proactive_event_ids(tmp_path):
     dispatched: list[str] = []
 
     async def run_command(*_args, **_kwargs):
@@ -175,7 +172,7 @@ async def test_recurring_cron_occurrences_use_distinct_proactive_event_ids():
         return True
 
     ctx = SimpleNamespace(
-        get_data_store=lambda _name: _CronStore(),
+        get_data_store=lambda _name: _cron_store(tmp_path),
         generate_scheduled_message=generate_scheduled_message,
         dispatch_proactive_message=dispatch_proactive_message,
     )
@@ -198,21 +195,24 @@ async def test_recurring_cron_occurrences_use_distinct_proactive_event_ids():
 
 
 @pytest.mark.asyncio
-async def test_failed_cron_delivery_retries_same_occurrence_before_advancing(monkeypatch):
-    store = _CronStore()
-    store.data["cron_jobs"] = [
-        {
-            "id": "cron-retry",
-            "expression": "* * * * *",
-            "command": "echo retry",
-            "group_id": "100",
-            "owner_user_id": "u1",
-            "owner_name": "Alice",
-            "adapter_type": "napcat",
-            "last_run_key": "",
-            "run_count": 0,
-        }
-    ]
+async def test_failed_cron_delivery_retries_same_occurrence_before_advancing(monkeypatch, tmp_path):
+    store = _cron_store(tmp_path)
+    _seed_legacy_jobs(
+        store,
+        [
+            {
+                "id": "cron-retry",
+                "expression": "* * * * *",
+                "command": "echo retry",
+                "group_id": "100",
+                "owner_user_id": "u1",
+                "owner_name": "Alice",
+                "adapter_type": "napcat",
+                "last_run_key": "",
+                "run_count": 0,
+            }
+        ],
+    )
     event_ids: list[str] = []
     command_runs = 0
     message_generations = 0
@@ -246,13 +246,13 @@ async def test_failed_cron_delivery_retries_same_occurrence_before_advancing(mon
     )
 
     await _bash_cron.check_tasks(ctx, run_command)
-    failed = store.data["cron_jobs"][0]
+    failed = _bash_cron.list_jobs(store)[0]
     assert failed["last_run_key"] == ""
     assert failed["pending_run_key"] == "cron:202608100800"
     assert failed["run_count"] == 0
 
     await _bash_cron.check_tasks(ctx, run_command)
-    delivered = store.data["cron_jobs"][0]
+    delivered = _bash_cron.list_jobs(store)[0]
     assert delivered["last_run_key"] == "cron:202608100800"
     assert "pending_run_key" not in delivered
     assert delivered["run_count"] == 1
@@ -266,21 +266,24 @@ async def test_failed_cron_delivery_retries_same_occurrence_before_advancing(mon
 
 
 @pytest.mark.asyncio
-async def test_cron_restart_does_not_repeat_an_ambiguously_started_command(monkeypatch):
-    store = _CronStore()
-    store.data["cron_jobs"] = [
-        {
-            "id": "cron-restart",
-            "expression": "* * * * *",
-            "command": "touch external-side-effect",
-            "group_id": "100",
-            "owner_user_id": "u1",
-            "owner_name": "Alice",
-            "adapter_type": "napcat",
-            "last_run_key": "",
-            "run_count": 0,
-        }
-    ]
+async def test_cron_restart_does_not_repeat_an_ambiguously_started_command(monkeypatch, tmp_path):
+    store = _cron_store(tmp_path)
+    _seed_legacy_jobs(
+        store,
+        [
+            {
+                "id": "cron-restart",
+                "expression": "* * * * *",
+                "command": "touch external-side-effect",
+                "group_id": "100",
+                "owner_user_id": "u1",
+                "owner_name": "Alice",
+                "adapter_type": "napcat",
+                "last_run_key": "",
+                "run_count": 0,
+            }
+        ],
+    )
     command_runs = 0
     dispatches = 0
     _bash_cron._pending_payloads.clear()
@@ -313,7 +316,7 @@ async def test_cron_restart_does_not_repeat_an_ambiguously_started_command(monke
     await _bash_cron.check_tasks(ctx, run_command)
     assert command_runs == 1
     assert dispatches == 1
-    assert store.data["cron_jobs"][0]["pending_execution_started_key"] == ("cron:202608100800")
+    assert _bash_cron.list_jobs(store)[0]["pending_execution_started_key"] == ("cron:202608100800")
 
     # Simulate process restart: command-derived payload is intentionally not
     # persisted because it may contain credentials.
@@ -321,7 +324,7 @@ async def test_cron_restart_does_not_repeat_an_ambiguously_started_command(monke
     _bash_cron._pending_payload_locks.clear()
     await _bash_cron.check_tasks(ctx, run_command)
 
-    job = store.data["cron_jobs"][0]
+    job = _bash_cron.list_jobs(store)[0]
     assert command_runs == 1
     assert dispatches == 1
     assert job["last_run_key"] == "cron:202608100800"

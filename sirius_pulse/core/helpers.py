@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import re
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.adapters.interaction_markers import (
@@ -19,6 +20,12 @@ from sirius_pulse.adapters.interaction_markers import (
 from sirius_pulse.adapters.models import MessageGroup, TextSegment
 from sirius_pulse.core.cognition import extract_keywords
 from sirius_pulse.core.identity_resolver import IdentityContext
+from sirius_pulse.scheduling.due_jobs import (
+    DueJobKind,
+    DueJobTicker,
+    board_for_dir,
+    board_for_store,
+)
 
 if TYPE_CHECKING:
     from sirius_pulse.core.engine_core import _EmotionalGroupChatEngineBase
@@ -599,6 +606,7 @@ class Helpers:
         from sirius_pulse.core.tool_engine_context import ToolEngineContextImpl
 
         ctx = ToolEngineContextImpl(engine)
+        due_kinds: list[DueJobKind] = []
         for tool in engine._tool_registry.passive_tools():
             try:
                 # 生命周期：on_load（通过 asyncio.create_task 调度，与后台任务生命周期一致）
@@ -627,6 +635,9 @@ class Helpers:
                     if not isinstance(specs, list):
                         specs = [specs]
                     for spec in specs:
+                        if isinstance(spec, DueJobKind):
+                            due_kinds.append(spec)
+                            continue
                         task = asyncio.create_task(
                             spec.run_loop(lambda: engine._bg_running),
                             name=f"passive_tool_{spec.name}",
@@ -652,8 +663,29 @@ class Helpers:
             except Exception as exc:
                 logger.warning("注册被动TOOL失败 (%s): %s", tool.name, exc)
 
+        if due_kinds:
+            self._start_due_job_ticker(due_kinds)
+
         if engine._passive_tool_triggers:
             self._wrap_event_bus_for_triggers()
+
+    def _start_due_job_ticker(self, kinds: list[DueJobKind]) -> None:
+        """所有到期任务共用一个 ticker：睡到最近的到期时刻，新任务登记时立即唤醒。"""
+        engine = self._engine
+        store = next((spec.data_store for spec in kinds if spec.data_store is not None), None)
+        try:
+            board = board_for_store(store) if store is not None else board_for_dir(engine.work_path)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            logger.warning("到期任务表不可用，提醒/唤醒/生图等后台任务不会运行: %s", exc)
+            return
+        ticker = DueJobTicker(board, kinds)
+        task = asyncio.create_task(
+            ticker.run(lambda: engine._bg_running), name="passive_tool_due_jobs"
+        )
+        engine._passive_tool_tasks["due_jobs"] = task
+        engine._bg_tasks.add(task)
+        task.add_done_callback(engine._bg_tasks.discard)
+        logger.info("到期任务 ticker 已启动: %s", ", ".join(ticker.kinds))
 
     def _wrap_event_bus_for_triggers(self) -> None:
         """Wrap event_bus.emit so passive TOOL triggers fire on matching events."""

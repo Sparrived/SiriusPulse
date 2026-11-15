@@ -50,7 +50,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.life import life_dir
 from sirius_pulse.life import prompts as life_prompts
 from sirius_pulse.life import schedule_from_config
@@ -81,6 +80,7 @@ from sirius_pulse.life.reflection import (
 from sirius_pulse.life.state import LifeStateStore, energy_at, energy_word
 from sirius_pulse.memory.units.models import MemoryUnit
 from sirius_pulse.memory.units.store import MemoryUnitStore
+from sirius_pulse.scheduling.due_jobs import DueJobKind
 from sirius_pulse.tools.engine_context import ConversationAccess, DeliveryAccess, LifeAccess
 from sirius_pulse.utils.json_io import atomic_write_json
 
@@ -203,19 +203,19 @@ TOOL_META = {
 }
 
 
-def create_background_tasks(ctx: Any) -> list[BackgroundTaskSpec]:
-    """Register the life heartbeat."""
+def create_background_tasks(ctx: Any) -> list[DueJobKind]:
+    """Register the life heartbeat with the shared due-job ticker."""
 
     async def _tick() -> None:
         await run_tick(ctx)
 
     return [
-        BackgroundTaskSpec(
+        DueJobKind(
+            kind="autonomy",
+            handler=_tick,
+            data_store=ctx.get_data_store("autonomy"),
+            every_seconds=_option_seconds(ctx, "check_interval_seconds", _DEFAULT_INTERVAL_SECONDS),
             name="autonomy_tick",
-            interval_seconds=_option_seconds(
-                ctx, "check_interval_seconds", _DEFAULT_INTERVAL_SECONDS
-            ),
-            task_func=_tick,
         )
     ]
 

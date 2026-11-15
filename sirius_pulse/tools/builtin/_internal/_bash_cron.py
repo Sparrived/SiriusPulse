@@ -1,4 +1,10 @@
-"""Project crontab storage and scheduling for the built-in Bash tool."""
+"""Bash 工具的 crontab：登记、到点执行与投递。
+
+定时任务存在人格 ``persona.db`` 的到期任务表里（``kind = bash_cron``，见
+:mod:`sirius_pulse.scheduling.due_jobs`），每行的 ``due_at`` 是表达式下一次命中的整分钟，
+由统一的 ticker 到点叫醒；不再每十秒扫一遍。旧版本 ``tool_data/bash.json`` 里的
+``cron_jobs`` 在第一次读表时自动迁移过来。
+"""
 
 from __future__ import annotations
 
@@ -11,10 +17,14 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from sirius_pulse.memory.user.unified_models import UnifiedUser
+from sirius_pulse.scheduling.due_jobs import DueJobBoard, DueJobKind, board_for_store
 from sirius_pulse.tools import cron_tasks
-from sirius_pulse.tools.models import BackgroundTaskSpec, ToolInvocationContext
+from sirius_pulse.tools.models import ToolInvocationContext
 
 logger = logging.getLogger(__name__)
+KIND = "bash_cron"
+#: 旧版本 JSON 存储里的键，只用于迁移。
+_LEGACY_KEY = "cron_jobs"
 CommandRunner = Callable[..., Awaitable[dict[str, Any]]]
 _PENDING_PAYLOAD_TTL_SECONDS = 24 * 60 * 60
 _MAX_PENDING_PAYLOADS = 256
@@ -41,19 +51,45 @@ def _prune_pending_payloads() -> None:
             _pending_payload_locks.pop(key, None)
 
 
-def create_background_tasks(ctx: Any, run_command: CommandRunner) -> list[BackgroundTaskSpec]:
+def create_background_tasks(ctx: Any, run_command: CommandRunner) -> list[DueJobKind]:
     async def _check() -> None:
         await check_tasks(ctx, run_command)
 
     return [
-        BackgroundTaskSpec(
+        DueJobKind(
+            kind=KIND,
+            handler=_check,
+            data_store=ctx.get_data_store("bash"),
+            # 投递没被平台确认的那一次，隔这么久重试同一个 occurrence。
+            retry_seconds=max(1.0, float(ctx.get_config_value("cron_check_interval_seconds", 10))),
             name="bash_cron_check",
-            interval_seconds=max(
-                1.0, float(ctx.get_config_value("cron_check_interval_seconds", 10))
-            ),
-            task_func=_check,
         )
     ]
+
+
+def list_jobs(data_store: Any) -> list[dict[str, Any]]:
+    """该人格登记的全部定时任务（所有聊天）。"""
+    return _board(data_store).payloads(KIND)
+
+
+def _board(data_store: Any) -> DueJobBoard:
+    board = board_for_store(data_store)
+    board.import_legacy(KIND, data_store, _LEGACY_KEY, _first_check)
+    return board
+
+
+def _first_check(job: dict[str, Any]) -> datetime | None:
+    """迁移进来的任务：有没投递完的 occurrence 就马上看，否则等下一次命中。"""
+    if job.get("pending_run_key"):
+        return datetime.now(timezone.utc)
+    return _next_fire(job, datetime.now(cron_tasks.CRON_TIMEZONE))
+
+
+def _next_fire(job: dict[str, Any], after: datetime) -> datetime | None:
+    try:
+        return cron_tasks.next_fire(str(job.get("expression", "")), after)
+    except cron_tasks.CronParseError:
+        return None
 
 
 def handle_request(
@@ -70,11 +106,8 @@ def handle_request(
     if not group_id:
         return {"success": False, "error": "crontab 任务必须绑定当前聊天会话"}
 
-    jobs = [
-        job
-        for job in (data_store.get("cron_jobs", []) if data_store else [])
-        if isinstance(job, dict)
-    ]
+    board = _board(data_store)
+    jobs = board.payloads(KIND)
     owner_id = (
         invocation_context.caller_user_id if invocation_context else str(context.get("user_id", ""))
     )
@@ -100,10 +133,10 @@ def handle_request(
         }
 
     if action == "remove":
-        kept = [job for job in jobs if job.get("group_id") != group_id]
-        removed = len(jobs) - len(kept)
-        data_store.set("cron_jobs", kept)
-        data_store.save()
+        with board.transaction():
+            for job in scoped:
+                board.delete(str(job.get("id", "")))
+        removed = len(scoped)
         return {
             "success": True,
             "summary": f"已删除 {removed} 个定时任务",
@@ -111,7 +144,6 @@ def handle_request(
         }
 
     created: list[dict[str, Any]] = []
-    replacement = [job for job in jobs if job.get("group_id") != group_id]
     for entry in request.get("entries", []):
         job = {
             "id": f"cron_{uuid.uuid4().hex[:12]}",
@@ -130,10 +162,14 @@ def handle_request(
             "last_run_key": "",
             "run_count": 0,
         }
-        replacement.append(job)
         created.append(job)
-    data_store.set("cron_jobs", replacement)
-    data_store.save()
+    # crontab - 是覆盖语义：这个聊天原有的定时任务整体换成新的一份。
+    now = datetime.now(cron_tasks.CRON_TIMEZONE)
+    with board.transaction():
+        for job in scoped:
+            board.delete(str(job.get("id", "")))
+        for job in created:
+            board.put(KIND, job["id"], job, due_at=_next_fire(job, now))
     lines = ["✅ 已注册内部定时任务："]
     lines.extend(f"[{job['id']}] {job['expression']} {job['command']}" for job in created)
     return {
@@ -145,22 +181,22 @@ def handle_request(
 
 async def check_tasks(ctx: Any, run_command: CommandRunner) -> None:
     store = ctx.get_data_store("bash")
-    jobs = [job for job in (store.get("cron_jobs", []) or []) if isinstance(job, dict)]
+    board = await asyncio.to_thread(_board, store)
+    jobs = await asyncio.to_thread(board.payloads, KIND)
     if not jobs:
         return
 
     now = datetime.now(cron_tasks.CRON_TIMEZONE)
-    changed = False
-    remaining: list[dict[str, Any]] = []
     for job in jobs:
+        job_id = str(job.get("id", ""))
         if not job.get("group_id") or not job.get("command"):
-            changed = True
+            await asyncio.to_thread(board.delete, job_id)
             continue
         pending_run_key = str(job.get("pending_run_key", "") or "")
         due, due_run_key = cron_tasks.task_is_due(job, now)
         run_key = pending_run_key or due_run_key
         if not pending_run_key and (not due or job.get("last_run_key") == due_run_key):
-            remaining.append(job)
+            await asyncio.to_thread(board.set_due, job_id, _next_fire(job, now))
             continue
 
         # Persist the occurrence identity and an at-most-once execution fence
@@ -172,9 +208,7 @@ async def check_tasks(ctx: Any, run_command: CommandRunner) -> None:
         allow_command_execution = not execution_started
         if allow_command_execution:
             job["pending_execution_started_key"] = run_key
-        changed = True
-        store.set("cron_jobs", jobs)
-        store.save()
+        await asyncio.to_thread(board.put, KIND, job_id, job, due_at=None)
         try:
             accepted = await _run_job(
                 ctx,
@@ -191,11 +225,12 @@ async def check_tasks(ctx: Any, run_command: CommandRunner) -> None:
             job["run_count"] = int(job.get("run_count", 0) or 0) + 1
             job.pop("pending_run_key", None)
             job.pop("pending_execution_started_key", None)
-        remaining.append(job)
-
-    if changed:
-        store.set("cron_jobs", remaining)
-        store.save()
+            next_check = _next_fire(job, now)
+        else:
+            # 这一次还没投递成功：保持到期，ticker 隔一会儿重试同一个 occurrence。
+            next_check = datetime.now(timezone.utc)
+        if await asyncio.to_thread(board.get, job_id) is not None:
+            await asyncio.to_thread(board.put, KIND, job_id, job, due_at=next_check)
 
 
 async def _run_job(

@@ -9,25 +9,31 @@
 - 到点时即使她在睡觉也照常发——这是别人托她的事，和她自己主动说话不一样；
 - 进程停过的话，晚了不超过几个小时的提醒照发，再晚的记为错过，不再补发。
 
-提醒存在本工具的数据存储里（``tool_data/reminder.json``），由后台心跳每隔十几秒检查一次。
+提醒存在人格 ``persona.db`` 的到期任务表里（``kind = reminder``，见
+:mod:`sirius_pulse.scheduling.due_jobs`），到点由统一的 ticker 叫醒；设提醒时会立刻唤醒它。
+旧版本存在 ``tool_data/reminder.json`` 的提醒在第一次读表时自动迁移过来。
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sirius_pulse.extension_runtime import BackgroundTaskSpec
 from sirius_pulse.life.clock import LOCAL_TIMEZONE, to_local
+from sirius_pulse.scheduling.due_jobs import DueJobBoard, DueJobKind, board_for_store
 from sirius_pulse.tools.engine_context import DeliveryAccess, ToolEngineContext
 from sirius_pulse.tools.models import ToolInvocationContext
 
 logger = logging.getLogger(__name__)
 
-_STORE_KEY = "reminders"
-_TICK_SECONDS = 15.0
+KIND = "reminder"
+#: 旧版本 JSON 存储里的键，只用于迁移。
+_LEGACY_KEY = "reminders"
+#: 到点却没发出去（平台没确认）时，隔多久再试。
+_RETRY_SECONDS = 15.0
 _DEFAULT_MAX_PENDING = 20
 _MAX_MESSAGE_CHARS = 500
 _MIN_LEAD = timedelta(seconds=30)
@@ -136,7 +142,8 @@ async def run(
     action = str(action or "").strip().lower()
 
     if action == "add":
-        return _add(
+        return await asyncio.to_thread(
+            _add,
             data_store,
             group_id=group_id,
             adapter_type=str(context.get("adapter_type") or ""),
@@ -148,14 +155,18 @@ async def run(
             now=current,
         )
     if action == "list":
-        pending = [r for r in _load(data_store) if _pending_in(r, group_id)]
+        pending = [
+            r for r in await asyncio.to_thread(_load, data_store) if _pending_in(r, group_id)
+        ]
         if not pending:
             return _reply("这个聊天里没有待发的提醒。", {"reminders": []})
         pending.sort(key=lambda r: str(r.get("due_at")))
         lines = ["这个聊天里待发的提醒："] + [_describe(r) for r in pending]
         return _reply("\n".join(lines), {"reminders": [_public(r) for r in pending]})
     if action == "cancel":
-        return _cancel(data_store, group_id, reminder_id, invocation_context)
+        return await asyncio.to_thread(
+            _cancel, data_store, group_id, reminder_id, invocation_context
+        )
     return {"success": False, "error": f"不支持的 action: {action}（可用 add/list/cancel）"}
 
 
@@ -220,8 +231,7 @@ def _add(
         "created_at": now.isoformat(),
         "sent_count": 0,
     }
-    reminders.append(reminder)
-    _save(data_store, reminders)
+    _board(data_store).put(KIND, reminder["id"], reminder, due_at=due)
     logger.info("已设提醒: %s @ %s (%s)", reminder["id"], reminder["due_at"], repeat)
     return _reply(
         f"已设好提醒 {reminder['id']}：{_local_label(due)}{_REPEAT_LABELS[repeat]}，" f"到时会发出：{text}",
@@ -257,12 +267,20 @@ def _cancel(
 # ---------------------------------------------------------------------------
 
 
-def create_background_tasks(ctx: ToolEngineContext) -> list[BackgroundTaskSpec]:
-    async def _tick() -> None:
-        await deliver_due(ctx, ctx.get_data_store("reminder"))
+def create_background_tasks(ctx: ToolEngineContext) -> list[DueJobKind]:
+    data_store = ctx.get_data_store("reminder")
+
+    async def _handle() -> None:
+        await deliver_due(ctx, data_store)
 
     return [
-        BackgroundTaskSpec(name="reminder_due", interval_seconds=_TICK_SECONDS, task_func=_tick)
+        DueJobKind(
+            kind=KIND,
+            handler=_handle,
+            data_store=data_store,
+            retry_seconds=_RETRY_SECONDS,
+            name="reminder_due",
+        )
     ]
 
 
@@ -271,7 +289,7 @@ async def deliver_due(ctx: DeliveryAccess, data_store: Any, now: datetime | None
     current = now or datetime.now(timezone.utc)
     _reload(data_store)
     sent = 0
-    for reminder in _load(data_store):
+    for reminder in await asyncio.to_thread(_load, data_store):
         if reminder.get("status") != "pending":
             continue
         due = _parse_stored(reminder.get("due_at"))
@@ -279,7 +297,9 @@ async def deliver_due(ctx: DeliveryAccess, data_store: Any, now: datetime | None
             continue
         reminder_id = str(reminder.get("id"))
         if current - due > _MISSED_AFTER:
-            _after_occurrence(data_store, reminder, due, current, delivered=False)
+            await asyncio.to_thread(
+                _after_occurrence, data_store, reminder, due, current, delivered=False
+            )
             logger.warning("提醒错过了发送时间，不再补发: %s", reminder_id)
             continue
         try:
@@ -295,7 +315,9 @@ async def deliver_due(ctx: DeliveryAccess, data_store: Any, now: datetime | None
             delivered = False
         if delivered:
             sent += 1
-            _after_occurrence(data_store, reminder, due, current, delivered=True)
+            await asyncio.to_thread(
+                _after_occurrence, data_store, reminder, due, current, delivered=True
+            )
     return sent
 
 
@@ -441,28 +463,38 @@ def _reload(data_store: Any) -> None:
         reload_store()
 
 
+def _board(data_store: Any) -> DueJobBoard:
+    """该人格的到期任务表；旧 JSON 里的提醒顺手迁过来。"""
+    board = board_for_store(data_store)
+    board.import_legacy(KIND, data_store, _LEGACY_KEY, _next_check)
+    return board
+
+
+def _next_check(reminder: dict[str, Any]) -> datetime | None:
+    """表里的 ``due_at``：待发的到点时刻，其余不用再看。"""
+    if reminder.get("status") != "pending":
+        return None
+    return _parse_stored(reminder.get("due_at"))
+
+
 def _load(data_store: Any) -> list[dict[str, Any]]:
-    raw = data_store.get(_STORE_KEY, [])
-    return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
-
-
-def _save(data_store: Any, reminders: list[dict[str, Any]]) -> None:
-    finished = [r for r in reminders if r.get("status") != "pending"]
-    overflow = len(finished) - _MAX_RETAINED_FINISHED
-    if overflow > 0:
-        drop = {id(r) for r in finished[:overflow]}
-        reminders = [r for r in reminders if id(r) not in drop]
-    data_store.set(_STORE_KEY, reminders)
-    data_store.save()
+    return _board(data_store).payloads(KIND)
 
 
 def _update(data_store: Any, reminder_id: str, **fields: Any) -> dict[str, Any] | None:
-    """只改一条：先读回磁盘上的最新列表再写，避免盖掉发送期间别处做的改动。"""
-    _reload(data_store)
-    reminders = _load(data_store)
-    for reminder in reminders:
-        if reminder.get("id") == reminder_id:
-            reminder.update(fields)
-            _save(data_store, reminders)
-            return reminder
-    return None
+    """只改一条，并按新状态改下次到点时间；结束的旧记录只留最近若干条。"""
+    board = _board(data_store)
+    with board.transaction():
+        job = board.get(reminder_id)
+        if job is None or job.kind != KIND:
+            return None
+        payload = {**job.payload, **fields}
+        updated = board.patch(reminder_id, fields, due_at=_next_check(payload))
+        _prune(board)
+    return updated.payload if updated is not None else None
+
+
+def _prune(board: DueJobBoard) -> None:
+    finished = [job for job in board.jobs(KIND) if job.payload.get("status") != "pending"]
+    for job in finished[: max(0, len(finished) - _MAX_RETAINED_FINISHED)]:
+        board.delete(job.id)

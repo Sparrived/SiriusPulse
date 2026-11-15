@@ -4,8 +4,8 @@
     - cron 表达式：用于每日/每周等周期性事件
     - interval：固定间隔秒数
 
-注意：完整 cron 解析需要安装 croniter 库。当前实现使用简化的分钟级轮询。
-cron 一律按本地（中国）时间解读，与宿主机时区无关；星期字段 0 和 7 都表示周日。
+cron 的解析与匹配和 bash 的 crontab 共用 :mod:`sirius_pulse.scheduling.cron`：一律按本地（中国）
+时间解读，与宿主机时区无关；星期字段 0 和 7 都表示周日。
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable
 
 from sirius_pulse.life.clock import LOCAL_TIMEZONE
+from sirius_pulse.scheduling.cron import cron_matches
 
 logger = logging.getLogger(__name__)
 
@@ -202,77 +203,15 @@ class PluginScheduler:
 
     @staticmethod
     def _check_simple_cron(cron: str, now: float, last_run: float) -> bool:
-        """简化 cron 检查（仅支持分钟级粒度，按本地时间）。
+        """分钟级 cron 检查，按本地时间；规则与 bash 的 crontab 共用 :mod:`sirius_pulse.scheduling.cron`。
 
-        支持格式：
-            "* * * * *"（每分钟）
-            "0 8 * * *"（每天 8:00）
-            "*/5 * * * *"（每 5 分钟）
-            "0 9 * * 0"（每周日 9:00，周日写 0 或 7 均可）
+        同一分钟里已经跑过就不再触发。表达式不合法时视为永不触发。
         """
         now_local = datetime.fromtimestamp(now, LOCAL_TIMEZONE)
-
-        # 如果上次运行在同一分钟，跳过
         if last_run > 0:
             last_local = datetime.fromtimestamp(last_run, LOCAL_TIMEZONE)
             if last_local.replace(second=0, microsecond=0) == now_local.replace(
                 second=0, microsecond=0
             ):
                 return False
-
-        try:
-            parts = cron.strip().split()
-            if len(parts) != 5:
-                return False
-
-            minute, hour, day, month, weekday = parts
-
-            # 检查分钟
-            if minute != "*" and not _match_field(minute, now_local.minute):
-                return False
-            # 检查小时
-            if hour != "*" and not _match_field(hour, now_local.hour):
-                return False
-            # 检查日
-            if day != "*" and not _match_field(day, now_local.day):
-                return False
-            # 检查月
-            if month != "*" and not _match_field(month, now_local.month):
-                return False
-            # 检查星期：Python 周一=0，cron 周日=0（7 也表示周日）
-            if weekday != "*":
-                cron_weekday = (now_local.weekday() + 1) % 7
-                if not _match_field(weekday, cron_weekday) and not (
-                    cron_weekday == 0 and _match_field(weekday, 7)
-                ):
-                    return False
-
-            return True
-        except Exception:
-            return False
-
-
-def _match_field(pattern: str, value: int) -> bool:
-    """检查单个 cron 字段是否匹配。"""
-    # */N 格式
-    if pattern.startswith("*/"):
-        try:
-            step = int(pattern[2:])
-            return value % step == 0
-        except ValueError:
-            return False
-    # 逗号分隔
-    if "," in pattern:
-        return any(_match_field(p.strip(), value) for p in pattern.split(","))
-    # 范围格式
-    if "-" in pattern:
-        try:
-            lo, hi = pattern.split("-")
-            return int(lo) <= value <= int(hi)
-        except ValueError:
-            return False
-    # 精确值
-    try:
-        return int(pattern) == value
-    except ValueError:
-        return False
+        return cron_matches(cron.strip(), now_local)
