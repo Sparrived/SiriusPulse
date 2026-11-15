@@ -56,6 +56,8 @@ def _agent_tool_tasks(
     engine = SimpleNamespace(
         config={
             "max_tool_rounds": max_tool_rounds,
+            # 半截回复后的「先让对方看到」停顿是真实等待；只在专门测它的用例里打开。
+            "partial_reply_lead_seconds": 0,
         },
         delayed_queue=queue,
         _helpers=SimpleNamespace(
@@ -1217,7 +1219,7 @@ async def test_delayed_queue_when_text_accompanies_tool_then_both_are_sent_and_e
     profile = SimpleNamespace(name="Alice", is_developer=False)
     execute_tool = AsyncMock(return_value=ToolResult(success=True, data={"ok": True}))
     engine = SimpleNamespace(
-        config={"max_tool_rounds": 0},
+        config={"max_tool_rounds": 0, "partial_reply_lead_seconds": 0},
         delayed_queue=queue,
         _helpers=SimpleNamespace(
             get_recent_messages=lambda group_id, n: [],

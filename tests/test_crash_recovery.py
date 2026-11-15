@@ -32,6 +32,7 @@ async def test_reconnect_loop_keeps_retrying_after_many_failures(tmp_path, monke
     adapter = NapCatAdapter("ws://example.invalid", work_path=tmp_path)
     adapter.reconnect_interval = 0.01
     adapter._RECONNECT_BASE_DELAY = 0.001
+    adapter._RECONNECT_MAX_DELAY = 0.005  # 指数退避会翻倍到秒级，测的是「不放弃」而不是等多久
 
     attempts = 0
 

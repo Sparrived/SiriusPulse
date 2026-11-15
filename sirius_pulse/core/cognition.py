@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sirius_pulse.models.emotion import EmotionState, EmpathyStrategy
+from sirius_pulse.utils.prompt_layout import ensure_safety_note
 
 logger = logging.getLogger(__name__)
 from sirius_pulse.models.intent_v3 import (
@@ -474,7 +475,7 @@ class CognitionAnalyzer:
 
         request = GenerationRequest(
             model=self.model_name,
-            system_prompt="你是聊天机器人里的图像理解模块，只输出图片描述。",
+            system_prompt=ensure_safety_note("你是聊天机器人里的图像理解模块，只输出图片描述。"),
             messages=[{"role": "user", "content": content}],
             timeout_seconds=45,
             purpose="image_caption",

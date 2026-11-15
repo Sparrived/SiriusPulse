@@ -52,6 +52,7 @@ def _request() -> ChatRequest:
         user_id="u1",
         system_prompt="system",
         messages=[{"role": "user", "content": "hello"}],
+        retry_delay=0.0,  # 重试间隔是真实等待，测的是重不重试而不是等多久
     )
 
 

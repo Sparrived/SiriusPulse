@@ -14,6 +14,7 @@ import logging
 from typing import Any, Callable
 
 from sirius_pulse.core import life_bridge
+from sirius_pulse.core.constants import DEFAULT_MAX_TOOL_ROUNDS
 from sirius_pulse.core.prompt_factory import PromptFactory
 from sirius_pulse.core.tool_call_runner import ToolCallRunner
 from sirius_pulse.core.work_mode import (
@@ -300,7 +301,7 @@ class AgentTurnMixin:
         )
         run.store = store
         store.save_run(run)
-        max_rounds = max(1, int(self.get_config_value("max_tool_rounds", 8)))
+        max_rounds = max(1, int(self.get_config_value("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)))
 
         try:
             return await self._run_work_mode_rounds(

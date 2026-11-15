@@ -10,7 +10,7 @@ All LLM traffic goes through **AMKR** (`auto-model-key-router`), an external loc
 
 The only transport implementation is the Go sidecar (`go/llm-transport/`, pure stdlib, contract in `go/llm-transport/CONTRACT.md`). Python has no HTTP/SSE transport of its own, so build the binary first — `python scripts/build_llm_transport.py` — or nothing can talk to AMKR.
 
-Python 3.12+. Package name: `sirius-pulse`. MIT license.
+Python 3.12+. Package name: `sirius-pulse`. AGPL-3.0 license (see `LICENSE`).
 
 ## Commands
 

@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from sirius_pulse.core.constants import DEFAULT_MAX_TOOL_ROUNDS
 from sirius_pulse.core.emotional_engine import EmotionalGroupChatEngine, create_emotional_engine
 from sirius_pulse.core.persona_db import PersonaDatabase
 from sirius_pulse.core.persona_store import PersonaStore
@@ -711,7 +712,9 @@ class EngineRuntime:
                 )
             ),
             "reply_time_curve_points": exp.reply_time_curve_points,
-            "max_tool_rounds": int(self.plugin_config.get("max_tool_rounds", 3)),
+            "max_tool_rounds": int(
+                self.plugin_config.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
+            ),
             "partial_reply_lead_seconds": float(
                 self.plugin_config.get("partial_reply_lead_seconds", 1.5)
             ),

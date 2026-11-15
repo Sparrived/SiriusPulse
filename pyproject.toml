@@ -22,7 +22,7 @@ dependencies = [
 	"beautifulsoup4>=4.11.0",
 	"tiktoken>=0.5.0",
 	"aiohttp>=3.8.0",
-	"httpx>=0.24.0",  # 核心 Provider 使用的异步 HTTP 客户端
+	"httpx>=0.24.0",  # Python 与 Go 传输层侧车之间的异步 HTTP 客户端
 	"websockets>=11.0.0",
 	"playwright>=1.57.0",
 	"pygments>=2.17.0",  # 富文本卡片代码块语法高亮
@@ -48,12 +48,12 @@ test = [
 	"pytest-cov>=4.0.0",
 	"pytest-xdist>=3.0.0",  # 并行测试执行
 ]
-provider = [
-	"tenacity>=8.0.0",  # 重试库，用于提高可靠性
-]
+# 保留空的 provider 附加项，旧的安装命令（.[dev,test,provider,quality]）照常可用；
+# 重试由 Brain 自己实现，不依赖 tenacity。
+provider = []
 dev = [
 	"sirius-pulse[test]",  # 继承测试依赖（pytest 系列）
-	"sirius-pulse[provider]",  # 继承 provider 附加依赖（tenacity；httpx 为核心依赖）
+	"sirius-pulse[provider]",  # 继承 provider 附加项（目前为空；httpx 为核心依赖）
 	"sirius-pulse[quality]",  # 继承质量依赖（tiktoken）
 	"black==23.12.1",  # 代码格式化
 	"isort>=5.13.0",  # Import排序

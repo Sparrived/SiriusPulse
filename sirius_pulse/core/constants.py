@@ -51,6 +51,9 @@ DEFAULT_MEMORY_UNIT_TOP_K = 10
 # 每群可参与检索注入的记忆单元上限。超出的按 显著度×置信度 与时间排序后软退休
 # （should_prompt=False），单元本身保留在磁盘与 WebUI 中，仍可被真人追溯和手动恢复。
 DEFAULT_MEMORY_UNIT_ACTIVE_LIMIT = 500
+#: 一轮回复（含工作模式）最多连续调用几轮工具。人格配置 experience.json 的
+#: max_tool_rounds 覆盖它；各处的兜底默认值都引用这一个，免得分叉。
+DEFAULT_MAX_TOOL_ROUNDS = 3
 
 # ── 反馈相关 ──────────────────────────────────────────────
 FEEDBACK_TIMEOUT_SECONDS = 120

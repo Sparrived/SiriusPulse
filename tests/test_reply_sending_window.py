@@ -197,7 +197,15 @@ async def test_napcat_four_short_lines_are_merged_into_one_message():
 @pytest.mark.asyncio
 async def test_napcat_four_line_reply_is_sent_as_two_messages():
     """四行短话按「攒满 20 字换句」合并后发两条，不再碎成四个气泡。"""
-    adapter = NapCatAdapter("ws://example.invalid", config=dict(_DELAY_CONFIG))
+    # 这里只看怎么分段；段间停顿由本文件其他用例专门验证。
+    adapter = NapCatAdapter(
+        "ws://example.invalid",
+        config={
+            **_DELAY_CONFIG,
+            "human_reply_min_delay_seconds": 0,
+            "human_reply_max_delay_seconds": 0,
+        },
+    )
     sent: list[object] = []
 
     async def fake_send_group_msg(group_id, message):

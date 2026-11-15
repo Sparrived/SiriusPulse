@@ -414,3 +414,22 @@ async def test_plugin_shortcut_delivers_output_to_onebot(
         engine.cognition_store.close()
         engine.user_manager.close()
         engine._memory_storage.close()
+
+
+def test_tool_execution_timeout_in_orchestration_reaches_tool_calls(tmp_path):
+    """orchestration.json 里写的工具超时要真的作用到工具调用上，删掉后回到默认。"""
+    from sirius_pulse.core.orchestration_store import OrchestrationStore
+    from sirius_pulse.core.tool_call_runner import ToolCallRunner
+
+    OrchestrationStore.save(tmp_path, {"tool_execution_timeout": 90})
+    engine = engine_core._EmotionalGroupChatEngineBase.__new__(
+        engine_core._EmotionalGroupChatEngineBase
+    )
+    engine.work_path = tmp_path
+    engine.config = {}
+    engine._init_orchestration_and_task_models()
+
+    assert ToolCallRunner(engine).timeout() == 90.0
+
+    engine._init_orchestration_and_task_models(orchestration={})
+    assert ToolCallRunner(engine).timeout() == 30.0

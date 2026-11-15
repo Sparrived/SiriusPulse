@@ -39,6 +39,7 @@ from sirius_pulse.providers.base import (
     ImageGenerationResult,
     ToolCall,
 )
+from sirius_pulse.utils.prompt_layout import ensure_safety_note
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +490,9 @@ class Brain:
 
         gen_request = GenerationRequest(
             model=request.model,
-            system_prompt=request.system_prompt,
+            # 各处拼 prompt 的代码总有漏加安全说明的：在构造请求时统一补上，
+            # 记录下来的请求与真正发出去的保持一致。
+            system_prompt=ensure_safety_note(request.system_prompt),
             messages=request.messages,
             timeout_seconds=request.timeout_seconds,
             purpose=request.purpose,
@@ -625,7 +628,7 @@ class Brain:
 
             gen_request = GenerationRequest(
                 model=cfg.model_name,
-                system_prompt=system_prompt.strip(),
+                system_prompt=ensure_safety_note(system_prompt.strip()),
                 messages=messages_with_time,
                 tools=tools,
                 tool_choice=request.tool_choice,
@@ -649,7 +652,7 @@ class Brain:
                 fresh_messages = self._messages_with_current_time(request)
                 return GenerationRequest(
                     model=cfg.model_name,
-                    system_prompt=base_system_prompt.strip(),
+                    system_prompt=ensure_safety_note(base_system_prompt.strip()),
                     messages=fresh_messages,
                     tools=tools,
                     tool_choice=request.tool_choice,

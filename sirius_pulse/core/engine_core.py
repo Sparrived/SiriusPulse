@@ -200,13 +200,20 @@ class _EmotionalGroupChatEngineBase:
         # 定义、没有任何运行时消费者，属于死配置。这里显式带进 engine.config，
         # 供 Brain 建立并发闸门。构造时显式传入的键优先，且热重载时同样跳过，
         # 免得一次重载把调用方写死的取值冲掉。
-        if "max_concurrent_llm_calls" not in getattr(self, "_explicit_config_keys", ()):
-            raw_concurrency = orch.get("max_concurrent_llm_calls")
-            if isinstance(raw_concurrency, (int, float)) and not isinstance(raw_concurrency, bool):
-                self.config["max_concurrent_llm_calls"] = int(raw_concurrency)
+        # tool_execution_timeout 同理：以前文档里写着、解析器也认，却从没被带进
+        # engine.config，工具超时永远是代码里的默认值。
+        for key, caster in (
+            ("max_concurrent_llm_calls", int),
+            ("tool_execution_timeout", float),
+        ):
+            if key in getattr(self, "_explicit_config_keys", ()):
+                continue
+            raw_value = orch.get(key)
+            if isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool):
+                self.config[key] = caster(raw_value)
             else:
                 # 热重载时该项被删掉要跟着回落到默认值，不能留着上一轮的旧值。
-                self.config.pop("max_concurrent_llm_calls", None)
+                self.config.pop(key, None)
 
     def _init_memory_system(self) -> None:
         # 共享同一个 SQLite 存储（persona.db）
@@ -374,6 +381,21 @@ class _EmotionalGroupChatEngineBase:
         # 工作模式：任务期间进来的群消息先暂存，只有点名当前人格时才补进上下文，
         # 这样工作期间的提示词前缀不动、缓存命中不被破坏。
         self._work_mode_runs: dict[str, Any] = {}
+        # 以下状态由各自的模块按需填充，但必须在这里声明：别处按名字读取它们，
+        # 不声明的话改名不会报错，只会让读取方悄悄拿到默认值
+        # （见 tests/test_engine_attribute_contract.py）。
+        #: 引擎正在被热重建替换：适配器据此不再收新消息、不再往外发。
+        self._runtime_retiring: bool = False
+        #: 每个群这一轮可借用的图片编号 → 原图路径（core/borrowed_images）。
+        self._borrowed_images: dict[str, dict[str, str]] = {}
+        #: 群内主动发言服务（core/initiative，首次使用时创建）。
+        self._initiative_service: Any | None = None
+        #: 人物印象存储（memory/impressions，首次使用时创建）。
+        self._impression_store: Any | None = None
+        #: 今天已回复次数 {date, count}（core/life_bridge）。
+        self._life_replies: dict[str, Any] | None = None
+        #: 家目录概览缓存 (monotonic 时刻, 文本)（core/life_bridge）。
+        self._home_overview_cache: tuple[float, str] | None = None
         # 上一个进程留下的 running 轨迹一定是残留（运行态只在内存里），启动时收尾，
         # 否则页面上会永远挂着几段"进行中"的工作。
         try:

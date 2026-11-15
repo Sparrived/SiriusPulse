@@ -730,3 +730,36 @@ def test_context_assembler_removes_checkpointed_sources_from_recent_history():
 
     assert "checkpointed human" not in joined
     assert "fresh reply" in joined
+
+
+def test_every_request_through_brain_carries_the_safety_note_once():
+    """各处拼 prompt 的代码总会有漏加安全说明的：出口统一补上，已带的不重复。"""
+    import asyncio
+
+    from sirius_pulse.core.brain import Brain, RawRequest
+    from sirius_pulse.providers.base import GenerationResult
+    from sirius_pulse.utils.prompt_layout import TURN_SAFETY_NOTE
+
+    sent: list[str] = []
+
+    class _Model:
+        async def generate_async(self, request, return_reasoning=False):
+            sent.append(request.system_prompt)
+            return GenerationResult(content="好")
+
+    brain = Brain(
+        provider_async=_Model(),
+        model_router=SimpleNamespace(resolve=lambda *a, **k: SimpleNamespace(timeout=30)),
+        persona=SimpleNamespace(name="月白", build_system_prompt=lambda: ""),
+    )
+
+    async def main() -> None:
+        await brain.raw_call(RawRequest(model="sticker_pair", system_prompt="给表情配一句话。"))
+        await brain.raw_call(
+            RawRequest(model="memory_extract", system_prompt=f"整理记忆。\n\n{TURN_SAFETY_NOTE}")
+        )
+
+    asyncio.run(main())
+
+    assert sent[0].endswith(TURN_SAFETY_NOTE)
+    assert [prompt.count(TURN_SAFETY_NOTE) for prompt in sent] == [1, 1]

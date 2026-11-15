@@ -15,6 +15,7 @@ from sirius_pulse.core import life_bridge
 from sirius_pulse.core.agent_turn import AgentTurn, AgentTurnPhase
 from sirius_pulse.core.constants import (
     DEFAULT_BASIC_MEMORY_HISTORY_TOKEN_BUDGET,
+    DEFAULT_MAX_TOOL_ROUNDS,
     DEFAULT_MEMORY_UNIT_TOKEN_BUDGET,
     DEFAULT_MEMORY_UNIT_TOP_K,
 )
@@ -901,7 +902,7 @@ class DelayedQueueTasks:
         from sirius_pulse.core.brain import Brain, ChatRequest
         from sirius_pulse.tools.models import ToolInvocationContext
 
-        max_tool_rounds = engine.config.get("max_tool_rounds", 8)
+        max_tool_rounds = engine.config.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)
         partial_replies: list[str] = []
         last_partial_sent_at: float | None = None
         send_next_tool_output = False

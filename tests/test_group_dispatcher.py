@@ -931,7 +931,7 @@ def test_a_message_only_waits_for_personas_that_are_in_its_group(
             clock,
             "alpha",
             "100",
-            score_collection_seconds=1.0,
+            score_collection_seconds=0.3,
             group_ids_provider=lambda: ["g1"],
         )
         _dispatcher(
@@ -939,7 +939,7 @@ def test_a_message_only_waits_for_personas_that_are_in_its_group(
             clock,
             "beta",
             "200",
-            score_collection_seconds=1.0,
+            score_collection_seconds=0.3,
             group_ids_provider=lambda: beta_groups,
         )
 
@@ -950,6 +950,6 @@ def test_a_message_only_waits_for_personas_that_are_in_its_group(
         waited = time.monotonic() - started
 
         assert decision.granted
-        assert (waited >= 0.9) is waits_for_beta
+        assert (waited >= 0.25) is waits_for_beta
 
     asyncio.run(run())

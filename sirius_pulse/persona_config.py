@@ -652,7 +652,8 @@ class PersonaConfigPaths:
 
     @property
     def orchestration(self) -> Path:
-        return self.dir / "orchestration.json"
+        """引擎真正加载的编排配置（``OrchestrationStore``）；人格根目录下的旧文件已不再读取。"""
+        return self.dir / "engine_state" / "orchestration.json"
 
     @property
     def adapters(self) -> Path:

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, cast
@@ -33,6 +34,7 @@ from sirius_pulse.persona_generation.templates import (
     persist_generated_agent_profile,
 )
 from sirius_pulse.providers.base import AsyncLLMProvider, GenerationRequest, LLMProvider
+from sirius_pulse.utils.prompt_layout import ensure_safety_note
 
 ROLEPLAY_GENERATION_MAX_TOKENS_DEFAULT = 5120
 ROLEPLAY_GENERATION_TIMEOUT_SECONDS_DEFAULT = 120.0
@@ -42,6 +44,9 @@ async def _acall_provider(
     provider: LLMProvider | AsyncLLMProvider,
     request_payload: GenerationRequest,
 ) -> str:
+    request_payload = replace(
+        request_payload, system_prompt=ensure_safety_note(request_payload.system_prompt or "")
+    )
     generate_async = getattr(provider, "generate_async", None)
     if callable(generate_async):
         async_fn = cast(Callable[[GenerationRequest], Awaitable[str]], generate_async)
