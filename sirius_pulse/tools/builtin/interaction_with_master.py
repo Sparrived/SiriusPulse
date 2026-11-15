@@ -61,8 +61,7 @@ _config.group("状态查询").add(
 TOOL_META = {
     "name": "interaction_with_master",
     "description": (
-        "私聊给主人发消息，或查主人公开设备的在线状态（配好 MDS 令牌才有 status）。"
-        "平常回话直接写在正文里，别用它。你主动发的消息碰上你睡觉会等你醒了再发。"
+        "私聊给主人发消息，或查主人公开设备的在线状态（配好 MDS 令牌才有 status）。" "平常回话直接写在正文里，别用它。你主动发的消息碰上你睡觉会等你醒了再发。"
     ),
     "version": "1.1.0",
     "side_effect": "external_write",

@@ -686,7 +686,7 @@ async def test_why_a_redacted_tool_failed_is_still_visible_in_telemetry(conversa
 
 @pytest.fixture
 def memory_conversation(conversation):
-    from sirius_pulse.memory.units import MemoryUnitStore, MemoryUnitManager
+    from sirius_pulse.memory.units import MemoryUnitManager, MemoryUnitStore
 
     chat = conversation
     manager = MemoryUnitManager(chat.root, embedding_client=None)

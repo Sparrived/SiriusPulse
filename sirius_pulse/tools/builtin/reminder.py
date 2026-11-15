@@ -48,8 +48,7 @@ _REPEAT_LABELS = {"none": "", "daily": "，每天", "weekdays": "，每个工作
 TOOL_META = {
     "name": "reminder",
     "description": (
-        "有人托你到点提醒他（或提醒群里）一件事，或你答应了晚点再提起某事时用。"
-        "到点会把 message 原样发到这个聊天，你在睡觉也照发。只有设提醒的人或开发者能取消。"
+        "有人托你到点提醒他（或提醒群里）一件事，或你答应了晚点再提起某事时用。" "到点会把 message 原样发到这个聊天，你在睡觉也照发。只有设提醒的人或开发者能取消。"
     ),
     "version": "1.0.0",
     "side_effect": "external_write",

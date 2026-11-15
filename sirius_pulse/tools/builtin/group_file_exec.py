@@ -16,10 +16,7 @@ _config = ConfigBuilder()
 _config.group("图片与文件").add(
     "action",
     type="str",
-    description=(
-        "操作类型：image 发送图片；file 上传文件；list 读取群文件列表；"
-        "download 下载聊天里收到的文件或群文件。"
-    ),
+    description=("操作类型：image 发送图片；file 上传文件；list 读取群文件列表；" "download 下载聊天里收到的文件或群文件。"),
     required=True,
     choices=["image", "file", "list", "download"],
 )
@@ -559,9 +556,7 @@ async def _download_file(
         return {
             "success": True,
             "summary": f"文件「{display_name}」已下载到 {output_path}",
-            "text_blocks": [
-                f"文件下载成功: {output_path}{size_text}。要看文字内容，用 read_document 读这个路径。"
-            ],
+            "text_blocks": [f"文件下载成功: {output_path}{size_text}。要看文字内容，用 read_document 读这个路径。"],
             "data": payload,
             "internal_metadata": {
                 "target_type": target_type,

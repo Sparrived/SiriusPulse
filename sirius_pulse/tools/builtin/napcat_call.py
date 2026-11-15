@@ -118,9 +118,7 @@ _config = ConfigBuilder()
 _config.group("NapCat API").add(
     "action",
     type="str",
-    description=(
-        "NapCat / OneBot 的接口名，如 send_like。"
-    ),
+    description=("NapCat / OneBot 的接口名，如 send_like。"),
     required=True,
 )
 _config.group("NapCat API").add(

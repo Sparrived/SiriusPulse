@@ -80,8 +80,7 @@ _QUIT_TOOL: dict[str, Any] = {
     "function": {
         "name": QUIT_WORK_MODE,
         "description": (
-            "做完了，或卡住需要别人帮忙时，退出工作模式回到聊天。"
-            "result 会作为对外回复发出：说清做成了什么、没做成什么、卡在哪；没做成的不要说成做成了。"
+            "做完了，或卡住需要别人帮忙时，退出工作模式回到聊天。" "result 会作为对外回复发出：说清做成了什么、没做成什么、卡在哪；没做成的不要说成做成了。"
         ),
         "parameters": {
             "type": "object",
@@ -100,10 +99,7 @@ _MIDWAY_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": SEND_MIDWAY_MSG,
-        "description": (
-            "工作模式里对群里说一句话：报个关键进展、确认一件事或提个问题，说完继续工作。"
-            "中间过程和自己的思考不用发。"
-        ),
+        "description": ("工作模式里对群里说一句话：报个关键进展、确认一件事或提个问题，说完继续工作。" "中间过程和自己的思考不用发。"),
         "parameters": {
             "type": "object",
             "properties": {"message": {"type": "string", "description": "要发到群里的话。"}},

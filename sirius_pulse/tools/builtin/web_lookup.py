@@ -55,9 +55,7 @@ _config.group("网页查询").add(
 
 TOOL_META = {
     "name": "web_lookup",
-    "description": (
-        "上网搜资料，或读一个网页链接的正文。网页可能因为反爬或超时读不到。"
-    ),
+    "description": ("上网搜资料，或读一个网页链接的正文。网页可能因为反爬或超时读不到。"),
     "version": "1.0.0",
     "retry_safe": True,
     "side_effect": "read_only",

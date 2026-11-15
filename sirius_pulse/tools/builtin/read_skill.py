@@ -15,8 +15,7 @@ _MAX_FILE_BYTES = 512 * 1024
 TOOL_META = {
     "name": "read_skill",
     "description": (
-        "做专门的任务前，先读对应 Skill 的操作说明和附带文件。不填 skill_name 会列出有哪些 Skill。"
-        "只读；要跑 Skill 里的脚本用 bash。"
+        "做专门的任务前，先读对应 Skill 的操作说明和附带文件。不填 skill_name 会列出有哪些 Skill。" "只读；要跑 Skill 里的脚本用 bash。"
     ),
     "version": "1.0.0",
     "retry_safe": True,

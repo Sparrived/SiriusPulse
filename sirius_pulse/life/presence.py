@@ -111,8 +111,7 @@ def render_presence(
     lines = ["【此刻的你】"]
     if snap.asleep:
         lines.append(
-            f"- 你平时 {schedule.sleep} 睡、{schedule.wake} 起，"
-            "本来已经睡下了，是被消息吵醒的，还迷迷糊糊的。回得短一点、带点困意都很自然。"
+            f"- 你平时 {schedule.sleep} 睡、{schedule.wake} 起，" "本来已经睡下了，是被消息吵醒的，还迷迷糊糊的。回得短一点、带点困意都很自然。"
         )
     else:
         lines.append(

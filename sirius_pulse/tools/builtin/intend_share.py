@@ -33,10 +33,7 @@ _DEFAULT_URGENCY = 0.7
 
 TOOL_META = {
     "name": "intend_share",
-    "description": (
-        "记下一件之后想主动跟某人说的事。只是登记，什么时候说出去由后台按节奏安排，"
-        "你睡觉的时段不会发。"
-    ),
+    "description": ("记下一件之后想主动跟某人说的事。只是登记，什么时候说出去由后台按节奏安排，" "你睡觉的时段不会发。"),
     "version": "1.0.0",
     "model_visible": True,
     "side_effect": "external_write",

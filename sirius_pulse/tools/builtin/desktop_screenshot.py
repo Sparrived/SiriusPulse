@@ -27,10 +27,7 @@ _config.group("截图设置").add(
 
 TOOL_META = {
     "name": "desktop_screenshot",
-    "description": (
-        "截一张电脑桌面，看当前窗口、报错弹窗等。只在开发者要你看时用；截图只给你自己看，"
-        "不会发出去。"
-    ),
+    "description": ("截一张电脑桌面，看当前窗口、报错弹窗等。只在开发者要你看时用；截图只给你自己看，" "不会发出去。"),
     "version": "1.1.0",
     "side_effect": "read_only",
     "tags": ["system", "image"],

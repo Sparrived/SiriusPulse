@@ -83,10 +83,7 @@ _config.group("读图").add(
 
 TOOL_META = {
     "name": "read_image",
-    "description": (
-        "看图片内容：聊天原图、形象设定图、本地图片或网络图片。支持 PNG/JPEG/GIF/WebP/BMP，"
-        "单张 20MB 以内。"
-    ),
+    "description": ("看图片内容：聊天原图、形象设定图、本地图片或网络图片。支持 PNG/JPEG/GIF/WebP/BMP，" "单张 20MB 以内。"),
     "version": "1.0.0",
     "side_effect": "read_only",
     "tags": ["image", "vision", "read"],

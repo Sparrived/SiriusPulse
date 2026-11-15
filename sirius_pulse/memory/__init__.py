@@ -13,11 +13,11 @@ from sirius_pulse.memory.persona_notebook import (
 from sirius_pulse.memory.search import MemorySearchService
 from sirius_pulse.memory.units import (
     MemoryUnit,
-    MemoryUnitStore,
     MemoryUnitGenerator,
     MemoryUnitIndexer,
     MemoryUnitManager,
     MemoryUnitRetriever,
+    MemoryUnitStore,
 )
 from sirius_pulse.memory.user.unified_manager import UnifiedUserManager
 from sirius_pulse.memory.user.unified_models import UnifiedUser
