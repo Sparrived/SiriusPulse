@@ -391,32 +391,10 @@ class GroupDispatcher:
                     conn.execute(
                         f"ALTER TABLE dispatcher_candidates ADD COLUMN {name} {definition}"
                     )
-            # 内存里的事件进入 / 离开「发送中」时，同步落盘的在途标记：进程在发送
-            # 途中死掉，下次启动据此记为 uncertain。只有提醒与延迟回复需要。
-            conn.executescript(
-                """
-                CREATE TEMP TRIGGER IF NOT EXISTS dispatcher_inflight_mark
-                AFTER UPDATE OF status ON main.dispatcher_events
-                WHEN NEW.status = 'sending'
-                    AND (NEW.event_id LIKE 'reminder:%' OR NEW.event_id LIKE 'delayed:%')
-                BEGIN
-                    INSERT OR REPLACE INTO durable.dispatcher_inflight(event_id, updated_at)
-                    VALUES (NEW.event_id, NEW.updated_at);
-                END;
-                CREATE TEMP TRIGGER IF NOT EXISTS dispatcher_inflight_clear
-                AFTER UPDATE OF status ON main.dispatcher_events
-                WHEN OLD.status = 'sending' AND NEW.status <> 'sending'
-                BEGIN
-                    DELETE FROM durable.dispatcher_inflight WHERE event_id = NEW.event_id;
-                END;
-                CREATE TEMP TRIGGER IF NOT EXISTS dispatcher_inflight_drop
-                AFTER DELETE ON main.dispatcher_events
-                WHEN OLD.status = 'sending'
-                BEGIN
-                    DELETE FROM durable.dispatcher_inflight WHERE event_id = OLD.event_id;
-                END;
-                """
-            )
+            # 在途标记改由 Python 显式落盘（见 _mark_inflight / _clear_inflight）：
+            # SQLite 禁止触发器体内的 INSERT / DELETE 使用限定表名，旧版本会直接
+            # 报 "qualified table names are not allowed ... within triggers"，
+            # 而这条记录必须写进另一个库（durable），所以不能再靠触发器。
             # Upgrade existing terminal reminder rows into the non-expiring
             # receipt ledger before normal event pruning can remove them.
             conn.execute(
@@ -1589,6 +1567,12 @@ class GroupDispatcher:
                 """,
                 (now, lease_id),
             )
+            sending = conn.execute(
+                "SELECT event_id FROM dispatcher_events WHERE lease_id=? AND status='sending'",
+                (lease_id,),
+            ).fetchone()
+            if sending is not None:
+                self._mark_inflight(conn, str(sending["event_id"] or ""), now)
             conn.execute(
                 """
                 UPDATE dispatcher_groups SET active_expires_at=?
@@ -1610,6 +1594,12 @@ class GroupDispatcher:
                 "WHERE lease_id=? AND worker_id=? AND status='sending'",
                 (self._clock(), lease_id, self.worker_id),
             )
+            reverted = conn.execute(
+                "SELECT event_id FROM dispatcher_events WHERE lease_id=? AND status='granted'",
+                (lease_id,),
+            ).fetchone()
+            if reverted is not None:
+                self._clear_inflight(conn, str(reverted["event_id"] or ""))
 
     def renew(self, lease_id: str) -> bool:
         """Extend a live owned lease while platform delivery is in progress."""
@@ -1889,12 +1879,39 @@ class GroupDispatcher:
         )
 
     @staticmethod
+    def _mark_inflight(conn: sqlite3.Connection, event_id: str, now: float) -> None:
+        """记下「正在发送」的提醒 / 延迟事件，供进程崩溃后判定 uncertain。
+
+        只有重启后会重放的事件需要这条记录，普通聊天不落盘。
+        """
+        if not event_id.startswith(_DURABLE_EVENT_PREFIXES):
+            return
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO durable.dispatcher_inflight(event_id, updated_at)
+            VALUES (?, ?)
+            """,
+            (event_id, now),
+        )
+
+    @staticmethod
+    def _clear_inflight(conn: sqlite3.Connection, event_id: str) -> None:
+        """事件有了确定结果、或退回未发送之后，撤掉在途标记。"""
+        if not event_id:
+            return
+        conn.execute(
+            "DELETE FROM durable.dispatcher_inflight WHERE event_id=?",
+            (event_id,),
+        )
+
+    @staticmethod
     def _record_delivery_receipt(
         conn: sqlite3.Connection,
         event_id: str,
         status: str,
         now: float,
     ) -> None:
+        GroupDispatcher._clear_inflight(conn, event_id)
         if not event_id.startswith(("reminder:", "delayed:")) or status not in {
             "sent",
             "uncertain",
