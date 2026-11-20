@@ -3128,22 +3128,40 @@ class NapCatAdapter(BaseAdapter):
                     ),
                 )
                 cursor = int(result.get("delivery_cursor", 0))
+                # 旧队列每个候选占一格；游标越过表情说明已有一张确认送达。
+                sticker_acknowledged = any(part["kind"] == "sticker" for part in parts[:cursor])
                 persist_delayed_queue(engine)
-                for index in range(cursor, len(parts)):
-                    part = parts[index]
+                while cursor < len(parts):
+                    part = parts[cursor]
+                    next_cursor = cursor + 1
                     if part["kind"] == "text":
-                        sent = await send_text(
-                            part["value"], result.get("reply_references", []) if index == 0 else []
-                        )
+                        references = result.get("reply_references", []) if cursor == 0 else []
+                        sent = await send_text(part["value"], references)
                     elif part["kind"] == "sticker":
-                        sent = await self._send_stickers_after_reply(gid, [part["value"]])
+                        # 一组候选只选一张，但保留旧队列的扁平游标。
+                        run_end = cursor + 1
+                        while run_end < len(parts) and parts[run_end]["kind"] == "sticker":
+                            run_end += 1
+                        if sticker_acknowledged:
+                            result["delivery_cursor"] = run_end
+                            cursor = run_end
+                            continue
+                        names = [candidate["value"] for candidate in parts[cursor:run_end]]
+                        sent = await self._send_stickers_after_reply(gid, names)
+                        if sent:
+                            sticker_acknowledged = True
+                            next_cursor = run_end
                     else:
-                        sent = await self._send_pokes_after_reply(gid, [part["value"]])
+                        # 等待或续发期间，群聊投递权限可能已被撤销。
+                        sent = self._is_group_allowed(gid) and await self._send_pokes_after_reply(
+                            gid, [part["value"]]
+                        )
                     if sent:
-                        result["delivery_cursor"] = index + 1
+                        result["delivery_cursor"] = next_cursor
                     await known_outcome()
                     if not sent:
                         return
+                    cursor = next_cursor
                 if not parts and not result.get("delivery_complete") and not sent_count:
                     if result.get("skip_reply"):
                         # 模型这一轮主动 [SKIP]：本来就没有正文要发，这不是投递失败，
